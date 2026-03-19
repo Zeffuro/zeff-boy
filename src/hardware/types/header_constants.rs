@@ -1,0 +1,20 @@
+pub const LOGO_START: usize = 0x104;
+pub const LOGO_END: usize = 0x134;
+pub const TITLE_START: usize = 0x134;
+pub const TITLE_END_NEW: usize = 0x143;
+pub const TITLE_END_OLD: usize = 0x144;
+pub const NEW_LICENSEE_CODE_START: usize = 0x144;
+pub const NEW_LICENSEE_CODE_END: usize = 0x146;
+pub const SGB_IDX: usize = 0x146;
+pub const CARTRIDGE_TYPE_IDX: usize = 0x147;
+pub const ROM_SIZE_IDX: usize = 0x148;
+pub const RAM_SIZE_IDX: usize = 0x149;
+pub const DESTINATION_IDX: usize = 0x14A;
+pub const LICENSEE_CODE_IDX: usize = 0x14B;
+pub const GAME_VERSION_IDX: usize = 0x14C;
+pub const HEADER_CHECKSUM_IDX: usize = 0x14D;
+pub const GLOBAL_CHECKSUM_START: usize = 0x14E;
+pub const GLOBAL_CHECKSUM_END: usize = 0x150;
+
+pub const OVERSEAS_CODE: u8 = 0x01;
+pub const NEW_LICENSEE_CODE_MAGIC: u8 = 0x33;
