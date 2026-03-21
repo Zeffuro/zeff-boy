@@ -1,6 +1,20 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
 
+fn read_hl_timed(cpu: &mut CPU, bus: &mut Bus) -> u8 {
+    cpu.bus_read_timed(bus, cpu.get_hl())
+}
+
+fn modify_hl_timed<F>(cpu: &mut CPU, bus: &mut Bus, f: F)
+where
+    F: FnOnce(&mut CPU, u8) -> u8,
+{
+    let addr = cpu.get_hl();
+    let val = cpu.bus_read_timed(bus, addr);
+    let result = f(cpu, val);
+    cpu.bus_write_timed(bus, addr, result);
+}
+
 // 0x07: RLCA
 pub(crate) fn rlca(cpu: &mut CPU, _bus: &mut Bus) {
     let carry = (cpu.a & 0x80) != 0;
@@ -65,10 +79,7 @@ pub(crate) fn rlc_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 06: RLC (HL)
 pub(crate) fn rlc_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.rlc(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.rlc(val));
 }
 
 // 0xCB 07: RLC A
@@ -110,10 +121,7 @@ pub(crate) fn rrc_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 0E: RRC (HL)
 pub(crate) fn rrc_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.rrc(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.rrc(val));
 }
 
 // 0xCB 0F: RRC A
@@ -155,10 +163,7 @@ pub(crate) fn rl_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 16: RL (HL)
 pub(crate) fn rl_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.rl(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.rl(val));
 }
 
 // 0xCB 17: RL A
@@ -200,10 +205,7 @@ pub(crate) fn rr_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 1E: RR (HL)
 pub(crate) fn rr_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.rr(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.rr(val));
 }
 
 // 0xCB 1F: RR A
@@ -245,10 +247,7 @@ pub(crate) fn sla_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 26: SLA (HL)
 pub(crate) fn sla_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.sla(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.sla(val));
 }
 
 // 0xCB 27: SLA A
@@ -290,10 +289,7 @@ pub(crate) fn sra_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 2E: SRA (HL)
 pub(crate) fn sra_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.sra(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.sra(val));
 }
 
 // 0xCB 2F: SRA A
@@ -335,10 +331,7 @@ pub(crate) fn swap_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 36: SWAP (HL)
 pub(crate) fn swap_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.swap(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.swap(val));
 }
 
 // 0xCB 37: SWAP A
@@ -380,10 +373,7 @@ pub(crate) fn srl_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xCB 3E: SRL (HL)
 pub(crate) fn srl_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
-    let result = cpu.srl(val);
-    bus.write_byte(addr, result);
+    modify_hl_timed(cpu, bus, |cpu, val| cpu.srl(val));
 }
 
 // 0xCB 3F: SRL A
@@ -406,7 +396,7 @@ pub(crate) fn bit_0_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(0, cpu.h); }
 // 0xCB 45: BIT 0, L
 pub(crate) fn bit_0_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(0, cpu.l); }
 // 0xCB 46: BIT 0, (HL)
-pub(crate) fn bit_0_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(0, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_0_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(0, val); }
 // 0xCB 47: BIT 0, A
 pub(crate) fn bit_0_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(0, cpu.a); }
 
@@ -423,7 +413,7 @@ pub(crate) fn bit_1_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(1, cpu.h); }
 // 0xCB 4D: BIT 1, L
 pub(crate) fn bit_1_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(1, cpu.l); }
 // 0xCB 4E: BIT 1, (HL)
-pub(crate) fn bit_1_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(1, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_1_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(1, val); }
 // 0xCB 4F: BIT 1, A
 pub(crate) fn bit_1_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(1, cpu.a); }
 
@@ -440,7 +430,7 @@ pub(crate) fn bit_2_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(2, cpu.h); }
 // 0xCB 55: BIT 2, L
 pub(crate) fn bit_2_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(2, cpu.l); }
 // 0xCB 56: BIT 2, (HL)
-pub(crate) fn bit_2_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(2, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_2_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(2, val); }
 // 0xCB 57: BIT 2, A
 pub(crate) fn bit_2_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(2, cpu.a); }
 
@@ -457,7 +447,7 @@ pub(crate) fn bit_3_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(3, cpu.h); }
 // 0xCB 5D: BIT 3, L
 pub(crate) fn bit_3_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(3, cpu.l); }
 // 0xCB 5E: BIT 3, (HL)
-pub(crate) fn bit_3_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(3, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_3_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(3, val); }
 // 0xCB 5F: BIT 3, A
 pub(crate) fn bit_3_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(3, cpu.a); }
 
@@ -474,7 +464,7 @@ pub(crate) fn bit_4_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(4, cpu.h); }
 // 0xCB 65: BIT 4, L
 pub(crate) fn bit_4_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(4, cpu.l); }
 // 0xCB 66: BIT 4, (HL)
-pub(crate) fn bit_4_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(4, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_4_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(4, val); }
 // 0xCB 67: BIT 4, A
 pub(crate) fn bit_4_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(4, cpu.a); }
 
@@ -491,7 +481,7 @@ pub(crate) fn bit_5_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(5, cpu.h); }
 // 0xCB 6D: BIT 5, L
 pub(crate) fn bit_5_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(5, cpu.l); }
 // 0xCB 6E: BIT 5, (HL)
-pub(crate) fn bit_5_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(5, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_5_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(5, val); }
 // 0xCB 6F: BIT 5, A
 pub(crate) fn bit_5_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(5, cpu.a); }
 
@@ -508,7 +498,7 @@ pub(crate) fn bit_6_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(6, cpu.h); }
 // 0xCB 75: BIT 6, L
 pub(crate) fn bit_6_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(6, cpu.l); }
 // 0xCB 76: BIT 6, (HL)
-pub(crate) fn bit_6_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(6, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_6_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(6, val); }
 // 0xCB 77: BIT 6, A
 pub(crate) fn bit_6_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(6, cpu.a); }
 
@@ -525,7 +515,7 @@ pub(crate) fn bit_7_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(7, cpu.h); }
 // 0xCB 7D: BIT 7, L
 pub(crate) fn bit_7_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(7, cpu.l); }
 // 0xCB 7E: BIT 7, (HL)
-pub(crate) fn bit_7_hl(cpu: &mut CPU, bus: &mut Bus) { cpu.bit(7, bus.read_byte(cpu.get_hl())); }
+pub(crate) fn bit_7_hl(cpu: &mut CPU, bus: &mut Bus) { let val = read_hl_timed(cpu, bus); cpu.bit(7, val); }
 // 0xCB 7F: BIT 7, A
 pub(crate) fn bit_7_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.bit(7, cpu.a); }
 
@@ -544,7 +534,7 @@ pub(crate) fn res_0_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(0, cpu.h)
 // 0xCB 85: RES 0, L
 pub(crate) fn res_0_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(0, cpu.l); }
 // 0xCB 86: RES 0, (HL)
-pub(crate) fn res_0_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(0, v)); }
+pub(crate) fn res_0_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(0, v)); }
 // 0xCB 87: RES 0, A
 pub(crate) fn res_0_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(0, cpu.a); }
 
@@ -561,7 +551,7 @@ pub(crate) fn res_1_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(1, cpu.h)
 // 0xCB 8D: RES 1, L
 pub(crate) fn res_1_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(1, cpu.l); }
 // 0xCB 8E: RES 1, (HL)
-pub(crate) fn res_1_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(1, v)); }
+pub(crate) fn res_1_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(1, v)); }
 // 0xCB 8F: RES 1, A
 pub(crate) fn res_1_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(1, cpu.a); }
 
@@ -578,7 +568,7 @@ pub(crate) fn res_2_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(2, cpu.h)
 // 0xCB 95: RES 2, L
 pub(crate) fn res_2_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(2, cpu.l); }
 // 0xCB 96: RES 2, (HL)
-pub(crate) fn res_2_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(2, v)); }
+pub(crate) fn res_2_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(2, v)); }
 // 0xCB 97: RES 2, A
 pub(crate) fn res_2_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(2, cpu.a); }
 
@@ -595,7 +585,7 @@ pub(crate) fn res_3_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(3, cpu.h)
 // 0xCB 9D: RES 3, L
 pub(crate) fn res_3_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(3, cpu.l); }
 // 0xCB 9E: RES 3, (HL)
-pub(crate) fn res_3_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(3, v)); }
+pub(crate) fn res_3_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(3, v)); }
 // 0xCB 9F: RES 3, A
 pub(crate) fn res_3_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(3, cpu.a); }
 
@@ -612,7 +602,7 @@ pub(crate) fn res_4_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(4, cpu.h)
 // 0xCB A5: RES 4, L
 pub(crate) fn res_4_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(4, cpu.l); }
 // 0xCB A6: RES 4, (HL)
-pub(crate) fn res_4_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(4, v)); }
+pub(crate) fn res_4_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(4, v)); }
 // 0xCB A7: RES 4, A
 pub(crate) fn res_4_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(4, cpu.a); }
 
@@ -629,7 +619,7 @@ pub(crate) fn res_5_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(5, cpu.h)
 // 0xCB AD: RES 5, L
 pub(crate) fn res_5_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(5, cpu.l); }
 // 0xCB AE: RES 5, (HL)
-pub(crate) fn res_5_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(5, v)); }
+pub(crate) fn res_5_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(5, v)); }
 // 0xCB AF: RES 5, A
 pub(crate) fn res_5_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(5, cpu.a); }
 
@@ -646,7 +636,7 @@ pub(crate) fn res_6_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(6, cpu.h)
 // 0xCB B5: RES 6, L
 pub(crate) fn res_6_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(6, cpu.l); }
 // 0xCB B6: RES 6, (HL)
-pub(crate) fn res_6_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(6, v)); }
+pub(crate) fn res_6_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(6, v)); }
 // 0xCB B7: RES 6, A
 pub(crate) fn res_6_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(6, cpu.a); }
 
@@ -663,7 +653,7 @@ pub(crate) fn res_7_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.res(7, cpu.h)
 // 0xCB BD: RES 7, L
 pub(crate) fn res_7_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.res(7, cpu.l); }
 // 0xCB BE: RES 7, (HL)
-pub(crate) fn res_7_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.res(7, v)); }
+pub(crate) fn res_7_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.res(7, v)); }
 // 0xCB BF: RES 7, A
 pub(crate) fn res_7_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.res(7, cpu.a); }
 
@@ -682,7 +672,7 @@ pub(crate) fn set_0_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(0, cpu.h)
 // 0xCB C5: SET 0, L
 pub(crate) fn set_0_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(0, cpu.l); }
 // 0xCB C6: SET 0, (HL)
-pub(crate) fn set_0_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(0, v)); }
+pub(crate) fn set_0_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(0, v)); }
 // 0xCB C7: SET 0, A
 pub(crate) fn set_0_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(0, cpu.a); }
 
@@ -699,7 +689,7 @@ pub(crate) fn set_1_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(1, cpu.h)
 // 0xCB CD: SET 1, L
 pub(crate) fn set_1_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(1, cpu.l); }
 // 0xCB CE: SET 1, (HL)
-pub(crate) fn set_1_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(1, v)); }
+pub(crate) fn set_1_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(1, v)); }
 // 0xCB CF: SET 1, A
 pub(crate) fn set_1_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(1, cpu.a); }
 
@@ -716,7 +706,7 @@ pub(crate) fn set_2_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(2, cpu.h)
 // 0xCB D5: SET 2, L
 pub(crate) fn set_2_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(2, cpu.l); }
 // 0xCB D6: SET 2, (HL)
-pub(crate) fn set_2_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(2, v)); }
+pub(crate) fn set_2_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(2, v)); }
 // 0xCB D7: SET 2, A
 pub(crate) fn set_2_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(2, cpu.a); }
 
@@ -733,7 +723,7 @@ pub(crate) fn set_3_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(3, cpu.h)
 // 0xCB DD: SET 3, L
 pub(crate) fn set_3_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(3, cpu.l); }
 // 0xCB DE: SET 3, (HL)
-pub(crate) fn set_3_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(3, v)); }
+pub(crate) fn set_3_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(3, v)); }
 // 0xCB DF: SET 3, A
 pub(crate) fn set_3_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(3, cpu.a); }
 
@@ -750,7 +740,7 @@ pub(crate) fn set_4_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(4, cpu.h)
 // 0xCB E5: SET 4, L
 pub(crate) fn set_4_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(4, cpu.l); }
 // 0xCB E6: SET 4, (HL)
-pub(crate) fn set_4_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(4, v)); }
+pub(crate) fn set_4_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(4, v)); }
 // 0xCB E7: SET 4, A
 pub(crate) fn set_4_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(4, cpu.a); }
 
@@ -767,7 +757,7 @@ pub(crate) fn set_5_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(5, cpu.h)
 // 0xCB ED: SET 5, L
 pub(crate) fn set_5_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(5, cpu.l); }
 // 0xCB EE: SET 5, (HL)
-pub(crate) fn set_5_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(5, v)); }
+pub(crate) fn set_5_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(5, v)); }
 // 0xCB EF: SET 5, A
 pub(crate) fn set_5_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(5, cpu.a); }
 
@@ -784,7 +774,7 @@ pub(crate) fn set_6_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(6, cpu.h)
 // 0xCB F5: SET 6, L
 pub(crate) fn set_6_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(6, cpu.l); }
 // 0xCB F6: SET 6, (HL)
-pub(crate) fn set_6_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(6, v)); }
+pub(crate) fn set_6_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(6, v)); }
 // 0xCB F7: SET 6, A
 pub(crate) fn set_6_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(6, cpu.a); }
 
@@ -801,6 +791,7 @@ pub(crate) fn set_7_h(cpu: &mut CPU, _bus: &mut Bus) { cpu.h = cpu.set(7, cpu.h)
 // 0xCB FD: SET 7, L
 pub(crate) fn set_7_l(cpu: &mut CPU, _bus: &mut Bus) { cpu.l = cpu.set(7, cpu.l); }
 // 0xCB FE: SET 7, (HL)
-pub(crate) fn set_7_hl(cpu: &mut CPU, bus: &mut Bus) { let a = cpu.get_hl(); let v = bus.read_byte(a); bus.write_byte(a, cpu.set(7, v)); }
+pub(crate) fn set_7_hl(cpu: &mut CPU, bus: &mut Bus) { modify_hl_timed(cpu, bus, |cpu, v| cpu.set(7, v)); }
 // 0xCB FF: SET 7, A
 pub(crate) fn set_7_a(cpu: &mut CPU, _bus: &mut Bus) { cpu.a = cpu.set(7, cpu.a); }
+

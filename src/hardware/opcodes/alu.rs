@@ -2,7 +2,8 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
 
 // 0x03: INC BC
-pub(crate) fn inc_bc(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn inc_bc(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.get_bc().wrapping_add(1);
     cpu.set_bc(value);
 }
@@ -18,7 +19,8 @@ pub(crate) fn dec_b(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x09: ADD HL, BC
-pub(crate) fn add_hl_bc(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn add_hl_bc(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let hl = cpu.get_hl();
     let bc = cpu.get_bc();
     let result = hl.wrapping_add(bc);
@@ -29,7 +31,8 @@ pub(crate) fn add_hl_bc(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x0B: DEC BC
-pub(crate) fn dec_bc(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn dec_bc(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.get_bc().wrapping_sub(1);
     cpu.set_bc(value);
 }
@@ -45,7 +48,8 @@ pub(crate) fn dec_c(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x13: INC DE
-pub(crate) fn inc_de(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn inc_de(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.get_de().wrapping_add(1);
     cpu.set_de(value);
 }
@@ -61,7 +65,8 @@ pub(crate) fn dec_d(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x19: ADD HL, DE
-pub(crate) fn add_hl_de(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn add_hl_de(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let hl = cpu.get_hl();
     let de = cpu.get_de();
     let result = hl.wrapping_add(de);
@@ -72,7 +77,8 @@ pub(crate) fn add_hl_de(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x1B: DEC DE
-pub(crate) fn dec_de(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn dec_de(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.get_de().wrapping_sub(1);
     cpu.set_de(value);
 }
@@ -88,7 +94,8 @@ pub(crate) fn dec_e(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x23: INC HL
-pub(crate) fn inc_hl(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn inc_hl(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.get_hl().wrapping_add(1);
     cpu.set_hl(value);
 }
@@ -131,7 +138,8 @@ pub(crate) fn daa(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x29: ADD HL, HL
-pub(crate) fn add_hl_hl(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn add_hl_hl(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let hl = cpu.get_hl();
     let result = hl.wrapping_add(hl);
     cpu.set_n(false);
@@ -141,7 +149,8 @@ pub(crate) fn add_hl_hl(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x2B: DEC HL
-pub(crate) fn dec_hl(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn dec_hl(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.get_hl().wrapping_sub(1);
     cpu.set_hl(value);
 }
@@ -164,7 +173,8 @@ pub(crate) fn cpl(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x33: INC SP
-pub(crate) fn inc_sp(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn inc_sp(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.sp.wrapping_add(1);
     cpu.sp = value;
 }
@@ -172,17 +182,17 @@ pub(crate) fn inc_sp(cpu: &mut CPU, _bus: &mut Bus) {
 // 0x34: INC (HL)
 pub(crate) fn inc_hl_val(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
+    let val = cpu.bus_read_timed(bus, addr);
     let new_val = cpu.inc(val);
-    bus.write_byte(addr, new_val);
+    cpu.bus_write_timed(bus, addr, new_val);
 }
 
 // 0x35: DEC (HL)
 pub(crate) fn dec_hl_val(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
-    let val = bus.read_byte(addr);
+    let val = cpu.bus_read_timed(bus, addr);
     let new_val = cpu.dec(val);
-    bus.write_byte(addr, new_val);
+    cpu.bus_write_timed(bus, addr, new_val);
 }
 
 // 0x37: SCF - Set Carry Flag
@@ -193,7 +203,8 @@ pub(crate) fn scf(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x39: ADD HL, SP
-pub(crate) fn add_hl_sp(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn add_hl_sp(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let hl = cpu.get_hl();
     let sp = cpu.sp;
     let result = hl.wrapping_add(sp);
@@ -204,7 +215,8 @@ pub(crate) fn add_hl_sp(cpu: &mut CPU, _bus: &mut Bus) {
 }
 
 // 0x3B: DEC SP
-pub(crate) fn dec_sp(cpu: &mut CPU, _bus: &mut Bus) {
+pub(crate) fn dec_sp(cpu: &mut CPU, bus: &mut Bus) {
+    cpu.tick_internal_timed(bus, 4);
     let value = cpu.sp.wrapping_sub(1);
     cpu.sp = value;
 }
@@ -259,7 +271,8 @@ pub(crate) fn add_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x86: ADD (HL)
 pub(crate) fn add_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.add(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.add(value);
 }
 
 // 0x87: ADD A
@@ -299,7 +312,8 @@ pub(crate) fn adc_a_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x8E: ADC A, (HL)
 pub(crate) fn adc_a_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.adc(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.adc(value);
 }
 
 // 0x8F: ADC A, A
@@ -340,7 +354,8 @@ pub(crate) fn sub_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x96: SUB (HL)
 pub(crate) fn sub_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.sub(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.sub(value);
 }
 
 // 0x97: SUB A
@@ -380,7 +395,8 @@ pub(crate) fn sbc_a_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x9E: SBC A, (HL)
 pub(crate) fn sbc_a_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.sbc(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.sbc(value);
 }
 
 // 0x9F: SBC A, A
@@ -420,7 +436,8 @@ pub(crate) fn and_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xA6: AND (HL)
 pub(crate) fn and_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.logical_and(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.logical_and(value);
 }
 
 // 0xA7: AND A
@@ -460,7 +477,8 @@ pub(crate) fn xor_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xAE: XOR (HL)
 pub(crate) fn xor_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.logical_xor(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.logical_xor(value);
 }
 
 // 0xAF: XOR A
@@ -500,7 +518,8 @@ pub(crate) fn or_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xB6: OR (HL)
 pub(crate) fn or_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.logical_or(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.logical_or(value);
 }
 
 // 0xB7: OR A
@@ -540,7 +559,8 @@ pub(crate) fn cp_l(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xBE: CP (HL)
 pub(crate) fn cp_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.compare(bus.read_byte(cpu.get_hl()));
+    let value = cpu.bus_read_timed(bus, cpu.get_hl());
+    cpu.compare(value);
 }
 
 // 0xBF: CP A
@@ -550,37 +570,38 @@ pub(crate) fn cp_a(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0xC6: ADC A, (d8)
 pub(crate) fn add_a_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.add(value);
 }
 
 // 0xCE: ADC A, (d8)
 pub(crate) fn adc_a_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.adc(value);
 }
 
 // 0xD6: SUB A, (d8)
 pub(crate) fn sub_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.sub(value);
 }
 
 // 0xDE: SBC A, (d8)
 pub(crate) fn sbc_a_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.sbc(value);
 }
 
 // 0xE6: AND (d8)
 pub(crate) fn and_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.logical_and(value);
 }
 
 // 0xE8: ADD SP, r8
 pub(crate) fn add_sp_r8(cpu: &mut CPU, bus: &mut Bus) {
-    let offset = cpu.fetch8(bus) as i8 as i16 as u16;
+    let offset = cpu.fetch8_timed(bus) as i8 as i16 as u16;
+    cpu.tick_internal_timed(bus, 8);
     let sp = cpu.sp;
     let result = sp.wrapping_add(offset);
     cpu.set_flags(
@@ -594,18 +615,18 @@ pub(crate) fn add_sp_r8(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xEE: XOR (d8)
 pub(crate) fn xor_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.logical_xor(value);
 }
 
 // 0xF6: OR (d8)
 pub(crate) fn or_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.logical_or(value);
 }
 
 // 0xFE: CP (d8)
 pub(crate) fn cp_d8(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.fetch8(bus);
+    let value = cpu.fetch8_timed(bus);
     cpu.compare(value);
 }

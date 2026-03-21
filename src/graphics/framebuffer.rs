@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::graphics::gpu::texture_sampler_bind_group_layout;
 
 pub(crate) struct FramebufferRenderer {
     screen_texture: wgpu::Texture,
@@ -31,27 +32,7 @@ impl FramebufferRenderer {
             ..Default::default()
         });
 
-        let screen_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("screen bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let screen_bgl = texture_sampler_bind_group_layout(device, "screen bgl");
 
         let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("screen bind group"),

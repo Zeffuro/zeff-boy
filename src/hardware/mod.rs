@@ -4,6 +4,8 @@ pub(crate) mod opcodes;
 pub(crate) mod rom_header;
 pub(crate) mod types;
 pub(crate) mod ppu;
+pub(crate) mod joypad;
+pub(crate) mod sgb;
 mod timer;
 mod apu;
 mod io;

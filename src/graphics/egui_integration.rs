@@ -24,6 +24,18 @@ impl EguiRenderer {
         format: wgpu::TextureFormat,
     ) -> Result<Self> {
         let ctx = egui::Context::default();
+        let mut style = (*ctx.style()).clone();
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new(13.0, egui::FontFamily::Monospace),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Monospace,
+            egui::FontId::new(13.0, egui::FontFamily::Monospace),
+        );
+        ctx.set_visuals(egui::Visuals::dark());
+        ctx.set_style(style);
+
         let state = egui_winit::State::new(
             ctx.clone(),
             ctx.viewport_id(),

@@ -75,6 +75,7 @@ pub(crate) enum FrameError {
 
 pub(crate) struct RenderResult {
     pub(crate) open_file_requested: bool,
+    pub(crate) debug_actions: crate::debug::DebugUiActions,
 }
 
 pub(crate) struct Graphics {
@@ -135,11 +136,20 @@ impl Graphics {
             .upload_framebuffer(&self.gpu.queue, framebuffer);
     }
 
+    pub(crate) fn set_uncapped_present_mode(&mut self, uncapped: bool) {
+        self.gpu.set_uncapped_present_mode(uncapped);
+    }
+
     pub(crate) fn render(
         &mut self,
         debug_info: Option<&crate::debug::DebugInfo>,
         viewer_data: Option<&crate::debug::DebugViewerData>,
+        rom_info_view: Option<&crate::debug::RomInfoViewData>,
+        disassembly_view: Option<&crate::debug::DisassemblyView>,
+        memory_page: Option<&[(u16, u8)]>,
         debug_windows: &mut crate::debug::DebugWindowState,
+        settings: &mut crate::settings::Settings,
+        show_settings_window: &mut bool,
     ) -> Result<RenderResult, FrameError> {
         let frame = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -156,6 +166,7 @@ impl Graphics {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.egui.begin_frame(&self.window);
+        let mut debug_actions = crate::debug::DebugUiActions::none();
         let menu_actions = crate::debug::draw_menu_bar(
             self.egui.context(),
             self.aspect_ratio_mode,
@@ -164,15 +175,71 @@ impl Graphics {
         if let Some(mode) = menu_actions.aspect_ratio_mode {
             self.aspect_ratio_mode = mode;
         }
+        if menu_actions.open_settings_requested {
+            *show_settings_window = true;
+        }
+        if *show_settings_window {
+            crate::debug::draw_settings_window(
+                self.egui.context(),
+                settings,
+                debug_windows,
+                show_settings_window,
+            );
+        }
 
         if let Some(info) = debug_info {
-            crate::debug::draw_debug_ui(self.egui.context(), info);
+            if debug_windows.show_cpu_debug {
+                debug_actions = crate::debug::draw_debug_ui(
+                    self.egui.context(),
+                    info,
+                    debug_windows,
+                );
+            }
             if let Some(data) = viewer_data {
+                if debug_windows.show_apu_viewer {
+                    debug_actions.apu_channel_mutes = crate::debug::draw_apu_viewer(
+                        self.egui.context(),
+                        data,
+                        &mut debug_windows.show_apu_viewer,
+                    );
+                }
+                if debug_windows.show_rom_info {
+                    if let Some(rom_info) = rom_info_view {
+                        crate::debug::draw_rom_info(
+                            self.egui.context(),
+                            rom_info,
+                            &mut debug_windows.show_rom_info,
+                        );
+                    }
+                }
+                if debug_windows.show_disassembler {
+                    if let Some(view) = disassembly_view {
+                        let toggles = crate::debug::draw_disassembler_window(
+                            self.egui.context(),
+                            view,
+                            &mut debug_windows.show_disassembler,
+                        );
+                        debug_actions.toggle_breakpoints.extend(toggles);
+                    }
+                }
+                if debug_windows.show_memory_viewer {
+                    if let Some(page) = memory_page {
+                        let writes = crate::debug::draw_memory_viewer(
+                            self.egui.context(),
+                            debug_windows,
+                            page,
+                        );
+                        debug_actions.memory_writes.extend(writes);
+                    }
+                }
                 if debug_windows.show_tile_viewer {
                     crate::debug::draw_tile_viewer(
                         self.egui.context(),
                         &data.vram,
                         data.ppu.bgp,
+                        data.cgb_mode,
+                        &data.bg_palette_ram,
+                        &data.obj_palette_ram,
                         &mut debug_windows.show_tile_viewer,
                     );
                 }
@@ -181,6 +248,8 @@ impl Graphics {
                         self.egui.context(),
                         &data.vram,
                         data.ppu,
+                        data.cgb_mode,
+                        &data.bg_palette_ram,
                         &mut debug_windows.show_tilemap_viewer,
                     );
                 }
@@ -197,6 +266,9 @@ impl Graphics {
                         data.ppu.bgp,
                         data.ppu.obp0,
                         data.ppu.obp1,
+                        data.cgb_mode,
+                        &data.bg_palette_ram,
+                        &data.obj_palette_ram,
                         &mut debug_windows.show_palette_viewer,
                     );
                 }
@@ -286,6 +358,7 @@ impl Graphics {
 
         Ok(RenderResult {
             open_file_requested: menu_actions.open_file_requested,
+            debug_actions,
         })
     }
 }

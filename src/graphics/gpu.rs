@@ -7,6 +7,7 @@ pub(crate) struct GpuContext {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    present_modes: Vec<wgpu::PresentMode>,
 }
 
 impl GpuContext {
@@ -37,7 +38,9 @@ impl GpuContext {
             .get_default_config(&adapter, width, height)
             .ok_or_else(|| anyhow!("surface not supported by adapter"))?;
 
-        config.present_mode = wgpu::PresentMode::AutoVsync;
+        let capabilities = surface.get_capabilities(&adapter);
+        let present_modes = capabilities.present_modes;
+        config.present_mode = select_present_mode(false, &present_modes);
         surface.configure(&device, &config);
 
         Ok(Self {
@@ -45,6 +48,7 @@ impl GpuContext {
             device,
             queue,
             config,
+            present_modes,
         })
     }
 
@@ -53,5 +57,68 @@ impl GpuContext {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
     }
+
+    pub(crate) fn set_uncapped_present_mode(&mut self, uncapped: bool) {
+        let desired = select_present_mode(uncapped, &self.present_modes);
+        if self.config.present_mode == desired {
+            return;
+        }
+
+        self.config.present_mode = desired;
+        self.surface.configure(&self.device, &self.config);
+    }
+}
+
+fn select_present_mode(uncapped: bool, supported_modes: &[wgpu::PresentMode]) -> wgpu::PresentMode {
+    if uncapped {
+        if supported_modes.contains(&wgpu::PresentMode::AutoNoVsync) {
+            return wgpu::PresentMode::AutoNoVsync;
+        }
+        if supported_modes.contains(&wgpu::PresentMode::Immediate) {
+            return wgpu::PresentMode::Immediate;
+        }
+        if supported_modes.contains(&wgpu::PresentMode::Mailbox) {
+            return wgpu::PresentMode::Mailbox;
+        }
+    }
+
+    if supported_modes.contains(&wgpu::PresentMode::AutoVsync) {
+        return wgpu::PresentMode::AutoVsync;
+    }
+    if supported_modes.contains(&wgpu::PresentMode::Fifo) {
+        return wgpu::PresentMode::Fifo;
+    }
+
+    supported_modes
+        .first()
+        .copied()
+        .unwrap_or(wgpu::PresentMode::Fifo)
+}
+
+pub(crate) fn texture_sampler_bind_group_layout(
+    device: &wgpu::Device,
+    label: &str,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
 }
 

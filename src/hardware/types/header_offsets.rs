@@ -1,7 +1,7 @@
 pub(crate) const LOGO_START: usize = 0x104;
 pub(crate) const LOGO_END: usize = 0x134;
 pub(crate) const MANUFACTURER_CODE_START: usize = 0x13F;
-pub(crate) const MANUFACTURER_CODE_END:   usize = 0x143;
+pub(crate) const MANUFACTURER_CODE_END: usize = 0x143;
 pub(crate) const TITLE_START: usize = 0x134;
 pub(crate) const TITLE_END_CGB: usize = 0x13F;
 pub(crate) const TITLE_END_NEW: usize = 0x143;
@@ -21,7 +21,8 @@ pub(crate) const GLOBAL_CHECKSUM_START: usize = 0x14E;
 pub(crate) const GLOBAL_CHECKSUM_END: usize = 0x150;
 
 pub(crate) const CGB_FLAG_COMPATIBLE: u8 = 0x80;
-pub(crate) const CGB_FLAG_EXCLUSIVE:  u8 = 0xC0;
-pub(crate) const SGB_FLAG_SUPPORTED:  u8 = 0x03;
+pub(crate) const CGB_FLAG_EXCLUSIVE: u8 = 0xC0;
+pub(crate) const SGB_FLAG_SUPPORTED: u8 = 0x03;
 pub(crate) const OVERSEAS_CODE: u8 = 0x01;
 pub(crate) const NEW_LICENSEE_CODE_MAGIC: u8 = 0x33;
+

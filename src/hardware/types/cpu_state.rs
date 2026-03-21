@@ -14,3 +14,4 @@ pub(crate) enum CPUState {
     Reset,
     Suspended,
 }
+

@@ -15,6 +15,8 @@ pub(crate) fn draw_oam_viewer(ctx: &egui::Context, oam: &[u8], open: &mut bool) 
                 ui.strong("FlipY");
                 ui.strong("Prio");
                 ui.strong("Pal");
+                ui.strong("CGB Pal");
+                ui.strong("VRAM");
                 ui.end_row();
 
                 for i in 0..40usize {
@@ -28,6 +30,8 @@ pub(crate) fn draw_oam_viewer(ctx: &egui::Context, oam: &[u8], open: &mut bool) 
                     ui.monospace(if sprite.flip_y() { "Y" } else { "N" });
                     ui.monospace(if sprite.bg_priority() { "BG" } else { "FG" });
                     ui.monospace(format!("{}", sprite.palette_number()));
+                    ui.monospace(format!("{}", sprite.cgb_obj_palette_index()));
+                    ui.monospace(format!("{}", sprite.cgb_vram_bank()));
                     ui.end_row();
                 }
             });

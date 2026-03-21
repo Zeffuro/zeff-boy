@@ -1,7 +1,8 @@
-pub(crate) mod control;
-pub(crate) mod arithmetic;
+pub(crate) mod flow;
+pub(crate) mod alu;
 pub(crate) mod load;
 pub(crate) mod dispatch;
-mod rotate;
+pub(crate) mod bitwise;
 pub(crate) mod cycles;
 mod cb;
+

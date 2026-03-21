@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use crate::hardware::types::CartridgeType;
 use crate::hardware::types::RamSize;
 use crate::hardware::types::RomSize;
-use crate::hardware::types::header_constants;
+use crate::hardware::types::header_offsets as header_constants;
 
 #[derive(Debug)]
 pub(crate) struct RomHeader {
@@ -121,7 +121,7 @@ impl RomHeader {
         })
     }
 
-    pub(crate) fn display_info(&self) {
+    pub(crate) fn display_info(&self, rom: &[u8]) {
         log::info!("--- ROM HEADER INFO ---");
         log::info!("Title: {}", self.title);
         log::info!("Manufacturer: {}", self.manufacturer_code.as_deref().unwrap_or("Unknown"));
@@ -136,8 +136,29 @@ impl RomHeader {
         log::info!("Game Version: {}", self.game_version);
         log::info!("Header Checksum: {:#04X}", self.header_checksum);
         log::info!("Global Checksum: {:#06X}", self.global_checksum);
+        log::info!("Header checksum valid: {}", self.verify_header_checksum(rom));
+        log::info!("Global checksum valid: {}", self.verify_global_checksum(rom));
         log::info!("Publisher: {}", self.publisher());
         log::info!("-----------------------");
+    }
+
+    pub(crate) fn verify_header_checksum(&self, rom: &[u8]) -> bool {
+        let mut checksum: u8 = 0;
+        for addr in 0x0134..=0x014C {
+            let byte = rom.get(addr).copied().unwrap_or(0);
+            checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
+        }
+        checksum == self.header_checksum
+    }
+
+    pub(crate) fn verify_global_checksum(&self, rom: &[u8]) -> bool {
+        let mut checksum: u16 = 0;
+        for (i, &byte) in rom.iter().enumerate() {
+            if i != 0x014E && i != 0x014F {
+                checksum = checksum.wrapping_add(byte as u16);
+            }
+        }
+        checksum == self.global_checksum
     }
 
     pub(crate) fn publisher(&self) -> &'static str {

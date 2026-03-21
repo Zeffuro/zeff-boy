@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use egui::epaint::Primitive;
 use egui::{ClippedPrimitive, TextureId};
 use wgpu::util::DeviceExt;
+use crate::graphics::gpu::texture_sampler_bind_group_layout;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -64,28 +65,7 @@ impl EguiPainter {
                 }],
             });
 
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("egui texture bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+        let texture_bind_group_layout = texture_sampler_bind_group_layout(device, "egui texture bgl");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("egui shader"),
@@ -224,13 +204,21 @@ impl EguiPainter {
             });
 
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mag_filter = match delta.options.magnification {
+                egui::TextureFilter::Nearest => wgpu::FilterMode::Nearest,
+                egui::TextureFilter::Linear => wgpu::FilterMode::Linear,
+            };
+            let min_filter = match delta.options.minification {
+                egui::TextureFilter::Nearest => wgpu::FilterMode::Nearest,
+                egui::TextureFilter::Linear => wgpu::FilterMode::Linear,
+            };
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("egui sampler"),
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
                 address_mode_v: wgpu::AddressMode::ClampToEdge,
                 address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
+                mag_filter,
+                min_filter,
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });

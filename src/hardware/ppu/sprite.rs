@@ -33,5 +33,13 @@ impl SpriteEntry {
     pub(crate) fn palette_number(&self) -> u8 {
         (self.flags >> 4) & 1
     }
+
+    pub(crate) fn cgb_obj_palette_index(&self) -> u8 {
+        self.flags & 0x07
+    }
+
+    pub(crate) fn cgb_vram_bank(&self) -> usize {
+        ((self.flags >> 3) & 0x01) as usize
+    }
 }
 
