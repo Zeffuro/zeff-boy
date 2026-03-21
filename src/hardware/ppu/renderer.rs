@@ -150,7 +150,11 @@ fn render_sprites(
     });
 
     for sprite in sprites_on_line.iter().rev() {
-        let dmg_palette = if sprite.palette_number() == 1 { obp1 } else { obp0 };
+        let dmg_palette = if sprite.palette_number() == 1 {
+            obp1
+        } else {
+            obp0
+        };
 
         let flip_x = sprite.flip_x();
         let flip_y = sprite.flip_y();
@@ -254,14 +258,12 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     let tile_data_unsigned = ppu.lcdc & 0x10 != 0;
     let win_tile_map_base: usize = if ppu.lcdc & 0x40 != 0 { 0x1C00 } else { 0x1800 };
 
-    let mut window_used_this_line = false;
     let mut bg_color_ids = [0u8; SCREEN_W];
 
     for x in 0..SCREEN_W {
         let color_id = if let Some(window_color) =
             render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, ly, x)
         {
-            window_used_this_line = true;
             window_color
         } else {
             render_bg_line(ppu, vram, tile_data_unsigned, bg_tile_map_base, ly, x)
@@ -274,9 +276,7 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         ppu.framebuffer[offset..offset + 4].copy_from_slice(&rgba);
     }
 
-    if window_used_this_line {
-        ppu.window_line_counter += 1;
-    }
+    ppu.increment_window_line_counter_after_scanline();
 
     render_sprites(
         false,
@@ -316,12 +316,11 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     let bg_tile_map_base: usize = if ppu.lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
     let win_tile_map_base: usize = if ppu.lcdc & 0x40 != 0 { 0x1C00 } else { 0x1800 };
     let tile_data_unsigned = ppu.lcdc & 0x10 != 0;
-    let mut window_used_this_line = false;
     let mut bg_color_ids = [0u8; SCREEN_W];
     let mut bg_priority_flags = [false; SCREEN_W];
 
     for x in 0..SCREEN_W {
-        let (map_base, map_x, map_y, is_window) = {
+        let (map_base, map_x, map_y) = {
             let window_enabled = ppu.lcdc & 0x20 != 0;
             let win_x = ppu.wx as i32 - 7;
             let win_y = ppu.wy as usize;
@@ -330,21 +329,15 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
                     win_tile_map_base,
                     (x as i32 - win_x) as usize,
                     ppu.window_line_counter as usize,
-                    true,
                 )
             } else {
                 (
                     bg_tile_map_base,
                     (x + ppu.scx as usize) & 0xFF,
                     (ly + ppu.scy as usize) & 0xFF,
-                    false,
                 )
             }
         };
-
-        if is_window {
-            window_used_this_line = true;
-        }
 
         let tile_row = map_y / 8;
         let tile_col = map_x / 8;
@@ -357,8 +350,16 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         let tile_data_addr = tile_data_address(tile_index, tile_data_unsigned);
         let line_in_tile = map_y % 8;
         let pixel_in_tile = map_x % 8;
-        let source_line = if attrs.flip_y { 7 - line_in_tile } else { line_in_tile };
-        let source_pixel = if attrs.flip_x { 7 - pixel_in_tile } else { pixel_in_tile };
+        let source_line = if attrs.flip_y {
+            7 - line_in_tile
+        } else {
+            line_in_tile
+        };
+        let source_pixel = if attrs.flip_x {
+            7 - pixel_in_tile
+        } else {
+            pixel_in_tile
+        };
 
         let banked_tile_addr = attrs.vram_bank * 0x2000 + tile_data_addr;
         let color_id = decode_tile_pixel(vram, banked_tile_addr, source_line, source_pixel);
@@ -370,9 +371,7 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         ppu.framebuffer[offset..offset + 4].copy_from_slice(&rgba);
     }
 
-    if window_used_this_line {
-        ppu.window_line_counter += 1;
-    }
+    ppu.increment_window_line_counter_after_scanline();
 
     render_sprites(
         true,
@@ -413,4 +412,3 @@ mod tests {
         assert!(!cgb_sprite_hidden_by_bg(0x90, true, 3, true));
     }
 }
-

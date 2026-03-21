@@ -21,31 +21,31 @@ impl TimerClock {
 
     pub(crate) fn increment_cycles(self, mode: HardwareMode) -> u32 {
         match (self, mode) {
-            (TimerClock::Div256, HardwareMode::DMG) |
-            (TimerClock::Div256, HardwareMode::SGB2) |
-            (TimerClock::Div256, HardwareMode::CGBNormal) => 1024,
+            (TimerClock::Div256, HardwareMode::DMG)
+            | (TimerClock::Div256, HardwareMode::SGB2)
+            | (TimerClock::Div256, HardwareMode::CGBNormal) => 1024,
 
-            (TimerClock::Div4, HardwareMode::DMG) |
-            (TimerClock::Div4, HardwareMode::SGB2) |
-            (TimerClock::Div4, HardwareMode::CGBNormal) => 16,
+            (TimerClock::Div4, HardwareMode::DMG)
+            | (TimerClock::Div4, HardwareMode::SGB2)
+            | (TimerClock::Div4, HardwareMode::CGBNormal) => 16,
 
-            (TimerClock::Div16, HardwareMode::DMG) |
-            (TimerClock::Div16, HardwareMode::SGB2) |
-            (TimerClock::Div16, HardwareMode::CGBNormal) => 64,
+            (TimerClock::Div16, HardwareMode::DMG)
+            | (TimerClock::Div16, HardwareMode::SGB2)
+            | (TimerClock::Div16, HardwareMode::CGBNormal) => 64,
 
-            (TimerClock::Div64, HardwareMode::DMG) |
-            (TimerClock::Div64, HardwareMode::SGB2) |
-            (TimerClock::Div64, HardwareMode::CGBNormal) => 256,
+            (TimerClock::Div64, HardwareMode::DMG)
+            | (TimerClock::Div64, HardwareMode::SGB2)
+            | (TimerClock::Div64, HardwareMode::CGBNormal) => 256,
 
             (TimerClock::Div256, HardwareMode::SGB1) => 1024,
-            (TimerClock::Div4,   HardwareMode::SGB1) => 16,
-            (TimerClock::Div16,  HardwareMode::SGB1) => 64,
-            (TimerClock::Div64,  HardwareMode::SGB1) => 256,
+            (TimerClock::Div4, HardwareMode::SGB1) => 16,
+            (TimerClock::Div16, HardwareMode::SGB1) => 64,
+            (TimerClock::Div64, HardwareMode::SGB1) => 256,
 
             (TimerClock::Div256, HardwareMode::CGBDouble) => 512,
-            (TimerClock::Div4,   HardwareMode::CGBDouble) => 8,
-            (TimerClock::Div16,  HardwareMode::CGBDouble) => 32,
-            (TimerClock::Div64,  HardwareMode::CGBDouble) => 128,
+            (TimerClock::Div4, HardwareMode::CGBDouble) => 8,
+            (TimerClock::Div16, HardwareMode::CGBDouble) => 32,
+            (TimerClock::Div64, HardwareMode::CGBDouble) => 128,
         }
     }
 }

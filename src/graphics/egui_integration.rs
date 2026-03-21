@@ -46,7 +46,11 @@ impl EguiRenderer {
         );
         let painter = EguiPainter::new(device, format)?;
 
-        Ok(Self { ctx, state, painter })
+        Ok(Self {
+            ctx,
+            state,
+            painter,
+        })
     }
 
     pub(crate) fn context(&self) -> &egui::Context {
@@ -95,4 +99,3 @@ impl EguiRenderer {
         )
     }
 }
-

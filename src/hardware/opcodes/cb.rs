@@ -3,7 +3,11 @@ use crate::hardware::cpu::CPU;
 use crate::hardware::opcodes::cycles::CB_CYCLE_TABLE;
 
 pub(crate) fn unimplemented_cb_prefix_handler(cpu: &mut CPU, opcode: u8) {
-    log::warn!("Unimplemented CB opcode CB {:02X} at PC={:04X}", opcode, cpu.pc.wrapping_sub(1));
+    log::warn!(
+        "Unimplemented CB opcode CB {:02X} at PC={:04X}",
+        opcode,
+        cpu.pc.wrapping_sub(1)
+    );
 }
 
 pub(crate) fn execute_cb_prefix(cpu: &mut CPU, bus: &mut Bus) {

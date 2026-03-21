@@ -76,7 +76,10 @@ pub(crate) fn draw_menu_bar(
                     ui.close();
                 }
                 if ui
-                    .selectable_label(current_mode == AspectRatioMode::IntegerScale, "Integer Scale")
+                    .selectable_label(
+                        current_mode == AspectRatioMode::IntegerScale,
+                        "Integer Scale",
+                    )
                     .clicked()
                 {
                     selected_mode = Some(AspectRatioMode::IntegerScale);
@@ -151,13 +154,31 @@ pub(crate) fn draw_settings_window(
                     HardwareModePreference::ForceCgb => "CGB",
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut settings.hardware_mode_preference, HardwareModePreference::Auto, "Auto");
-                    ui.selectable_value(&mut settings.hardware_mode_preference, HardwareModePreference::ForceDmg, "DMG");
-                    ui.selectable_value(&mut settings.hardware_mode_preference, HardwareModePreference::ForceCgb, "CGB");
+                    ui.selectable_value(
+                        &mut settings.hardware_mode_preference,
+                        HardwareModePreference::Auto,
+                        "Auto",
+                    );
+                    ui.selectable_value(
+                        &mut settings.hardware_mode_preference,
+                        HardwareModePreference::ForceDmg,
+                        "DMG",
+                    );
+                    ui.selectable_value(
+                        &mut settings.hardware_mode_preference,
+                        HardwareModePreference::ForceCgb,
+                        "CGB",
+                    );
                 });
 
-            ui.add(egui::Slider::new(&mut settings.fast_forward_multiplier, 1..=16).text("Fast-forward frames/tick"));
-            ui.add(egui::Slider::new(&mut settings.uncapped_frames_per_tick, 1..=240).text("Uncapped frames/tick"));
+            ui.add(
+                egui::Slider::new(&mut settings.fast_forward_multiplier, 1..=16)
+                    .text("Fast-forward frames/tick"),
+            );
+            ui.add(
+                egui::Slider::new(&mut settings.uncapped_frames_per_tick, 1..=240)
+                    .text("Uncapped frames/tick"),
+            );
             ui.checkbox(&mut settings.uncapped_speed, "Start in uncapped mode");
 
             ui.separator();
@@ -195,6 +216,10 @@ pub(crate) fn draw_settings_window(
                 egui::Slider::new(&mut settings.master_volume, 0.0..=1.0)
                     .text("Master volume")
                     .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+            );
+            ui.checkbox(
+                &mut settings.mute_audio_during_fast_forward,
+                "Mute audio while fast-forward is held",
             );
 
             ui.separator();
@@ -275,7 +300,10 @@ pub(crate) fn draw_debug_ui(
             ui.separator();
 
             ui.heading("Last Opcode");
-            ui.monospace(format!("@ {:04X} = {:02X}", info.last_opcode_pc, info.last_opcode));
+            ui.monospace(format!(
+                "@ {:04X} = {:02X}",
+                info.last_opcode_pc, info.last_opcode
+            ));
             ui.separator();
 
             ui.heading("Interrupts");
@@ -289,7 +317,11 @@ pub(crate) fn draw_debug_ui(
             ui.horizontal_wrapped(|ui| {
                 for (i, name) in int_names.iter().enumerate() {
                     let ie = if info.ie & (1 << i) != 0 { "E" } else { "." };
-                    let ifr = if info.if_reg & (1 << i) != 0 { "F" } else { "." };
+                    let ifr = if info.if_reg & (1 << i) != 0 {
+                        "F"
+                    } else {
+                        "."
+                    };
                     ui.monospace(format!("{}:{}{}", name, ie, ifr));
                 }
             });
@@ -362,7 +394,9 @@ pub(crate) fn draw_debug_ui(
                     {
                         u16::from_str_radix(hex, 16).ok()
                     } else {
-                        u16::from_str_radix(trimmed, 16).ok().or_else(|| trimmed.parse().ok())
+                        u16::from_str_radix(trimmed, 16)
+                            .ok()
+                            .or_else(|| trimmed.parse().ok())
                     };
                     if let Some(addr) = parsed {
                         actions.add_breakpoint = Some(addr);
@@ -400,9 +434,21 @@ pub(crate) fn draw_debug_ui(
                         WatchType::ReadWrite => "Read/Write",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut window_state.watchpoint_type, WatchType::Read, "Read");
-                        ui.selectable_value(&mut window_state.watchpoint_type, WatchType::Write, "Write");
-                        ui.selectable_value(&mut window_state.watchpoint_type, WatchType::ReadWrite, "Read/Write");
+                        ui.selectable_value(
+                            &mut window_state.watchpoint_type,
+                            WatchType::Read,
+                            "Read",
+                        );
+                        ui.selectable_value(
+                            &mut window_state.watchpoint_type,
+                            WatchType::Write,
+                            "Write",
+                        );
+                        ui.selectable_value(
+                            &mut window_state.watchpoint_type,
+                            WatchType::ReadWrite,
+                            "Read/Write",
+                        );
                     });
                 if ui.button("Add WP").clicked() {
                     let trimmed = window_state.watchpoint_input.trim();
@@ -412,7 +458,9 @@ pub(crate) fn draw_debug_ui(
                     {
                         u16::from_str_radix(hex, 16).ok()
                     } else {
-                        u16::from_str_radix(trimmed, 16).ok().or_else(|| trimmed.parse().ok())
+                        u16::from_str_radix(trimmed, 16)
+                            .ok()
+                            .or_else(|| trimmed.parse().ok())
                     };
                     if let Some(addr) = parsed {
                         actions.add_watchpoint = Some((addr, window_state.watchpoint_type));
@@ -448,4 +496,3 @@ pub(crate) fn draw_debug_ui(
 
     actions
 }
-

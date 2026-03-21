@@ -39,8 +39,7 @@ pub(crate) fn draw_rom_info(ctx: &egui::Context, info: &RomInfoViewData, open: &
             ui.monospace(format!("Mapper: {}", info.cartridge_state.mapper));
             ui.monospace(format!(
                 "ROM Bank: {}  RAM Bank: {}",
-                info.cartridge_state.active_rom_bank,
-                info.cartridge_state.active_ram_bank
+                info.cartridge_state.active_rom_bank, info.cartridge_state.active_ram_bank
             ));
             ui.monospace(format!(
                 "RAM Enabled: {}",

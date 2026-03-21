@@ -6,9 +6,17 @@ pub(crate) fn tile_data_address(tile_index: u8, tile_data_unsigned: bool) -> usi
     }
 }
 
-pub(crate) fn decode_tile_pixel(vram: &[u8], tile_data_addr: usize, line: usize, pixel: usize) -> u8 {
+pub(crate) fn decode_tile_pixel(
+    vram: &[u8],
+    tile_data_addr: usize,
+    line: usize,
+    pixel: usize,
+) -> u8 {
     let lo = vram.get(tile_data_addr + line * 2).copied().unwrap_or(0);
-    let hi = vram.get(tile_data_addr + line * 2 + 1).copied().unwrap_or(0);
+    let hi = vram
+        .get(tile_data_addr + line * 2 + 1)
+        .copied()
+        .unwrap_or(0);
     let bit = 7 - pixel as u8;
     ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1)
 }

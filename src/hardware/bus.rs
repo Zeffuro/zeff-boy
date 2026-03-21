@@ -1,16 +1,16 @@
-use log::warn;
-use anyhow::Result;
+use crate::hardware::cartridge::Cartridge;
 use crate::hardware::io::IO;
 use crate::hardware::rom_header::RomHeader;
-use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::hardware::types::constants::*;
 use crate::hardware::sgb::SgbEvent;
-use crate::hardware::cartridge::Cartridge;
+use crate::hardware::types::constants::*;
+use crate::hardware::types::hardware_mode::HardwareMode;
+use anyhow::Result;
+use log::warn;
 pub(crate) struct Bus {
     pub(crate) cartridge: Cartridge,
     pub(crate) hardware_mode: HardwareMode,
-    pub(crate) vram:[u8; VRAM_SIZE * 2],          // CGB has 2x8KB VRAM banks
-    pub(crate) wram: [u8; WRAM_SIZE * 8],         // CGB has 8x4KB WRAM banks
+    pub(crate) vram: [u8; VRAM_SIZE * 2], // CGB has 2x8KB VRAM banks
+    pub(crate) wram: [u8; WRAM_SIZE * 8], // CGB has 8x4KB WRAM banks
     pub(crate) vram_bank: u8,
     pub(crate) wram_bank: u8,
     pub(crate) key1: u8,
@@ -26,19 +26,35 @@ pub(crate) struct Bus {
     oam_dma_source_base: u16,
     oam_dma_index: u16,
     oam_dma_t_cycle_accum: u64,
-    pub(crate) oam: [u8; OAM_SIZE],               // 0xFE00..0xFE9F
-    pub(crate) io_bank: [u8; IO_SIZE],            // 0xFF00..0xFF7F
-    pub(crate) hram: [u8; HRAM_SIZE],             // 0xFF80..0xFFFE
-    pub(crate) ie: u8,                            // 0xFFFF
-    pub(crate) if_reg: u8,                        // 0xFF0F
+    pub(crate) oam: [u8; OAM_SIZE],    // 0xFE00..0xFE9F
+    pub(crate) io_bank: [u8; IO_SIZE], // 0xFF00..0xFF7F
+    pub(crate) hram: [u8; HRAM_SIZE],  // 0xFF80..0xFFFE
+    pub(crate) ie: u8,                 // 0xFFFF
+    pub(crate) if_reg: u8,             // 0xFF0F
     pub(crate) io: IO,
     pub(crate) trace_cpu_accesses: bool,
     cpu_read_trace: Vec<(u16, u8)>,
     cpu_write_trace: Vec<(u16, u8, u8)>,
 }
 
+pub(crate) enum CpuAccessTraceEvent {
+    Read {
+        addr: u16,
+        value: u8,
+    },
+    Write {
+        addr: u16,
+        old_value: u8,
+        new_value: u8,
+    },
+}
+
 impl Bus {
-    pub(crate) fn new(rom: Vec<u8>, header: &RomHeader, hardware_mode: HardwareMode) -> Result<Box<Self>> {
+    pub(crate) fn new(
+        rom: Vec<u8>,
+        header: &RomHeader,
+        hardware_mode: HardwareMode,
+    ) -> Result<Box<Self>> {
         let cartridge = Cartridge::new(rom, header);
 
         Ok(Box::new(Self {
@@ -62,19 +78,22 @@ impl Bus {
             oam_dma_index: 0,
             oam_dma_t_cycle_accum: 0,
             oam: [0; OAM_SIZE],
-            io_bank:[0; IO_SIZE],
+            io_bank: [0; IO_SIZE],
             hram: [0; HRAM_SIZE],
             ie: 0,
             if_reg: 0xE1,
             io: IO::new(),
             trace_cpu_accesses: false,
-            cpu_read_trace: Vec::new(),
-            cpu_write_trace: Vec::new(),
+            cpu_read_trace: Vec::with_capacity(8),
+            cpu_write_trace: Vec::with_capacity(4),
         }))
         .map(|mut bus| {
             bus.io.timer.mode = bus.hardware_mode;
             bus.io.serial.mode = bus.hardware_mode;
-            bus.io.ppu.set_sgb_mode(matches!(bus.hardware_mode, HardwareMode::SGB1 | HardwareMode::SGB2));
+            bus.io.ppu.set_sgb_mode(matches!(
+                bus.hardware_mode,
+                HardwareMode::SGB1 | HardwareMode::SGB2
+            ));
             bus.key1 = match bus.hardware_mode {
                 HardwareMode::CGBDouble => 0xFE,
                 _ => 0x7E,
@@ -84,7 +103,10 @@ impl Bus {
     }
 
     fn is_cgb_mode(&self) -> bool {
-        matches!(self.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble)
+        matches!(
+            self.hardware_mode,
+            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+        )
     }
 
     fn active_vram_offset(&self) -> usize {
@@ -157,11 +179,19 @@ impl Bus {
         self.cpu_write_trace.clear();
     }
 
-    pub(crate) fn take_cpu_access_trace(&mut self) -> (Vec<(u16, u8)>, Vec<(u16, u8, u8)>) {
-        (
-            std::mem::take(&mut self.cpu_read_trace),
-            std::mem::take(&mut self.cpu_write_trace),
-        )
+    pub(crate) fn drain_cpu_access_trace(&mut self, mut on_event: impl FnMut(CpuAccessTraceEvent)) {
+        for &(addr, value) in &self.cpu_read_trace {
+            on_event(CpuAccessTraceEvent::Read { addr, value });
+        }
+        for &(addr, old_value, new_value) in &self.cpu_write_trace {
+            on_event(CpuAccessTraceEvent::Write {
+                addr,
+                old_value,
+                new_value,
+            });
+        }
+        self.cpu_read_trace.clear();
+        self.cpu_write_trace.clear();
     }
 
     pub(crate) fn step_oam_dma(&mut self, t_cycles: u64) {
@@ -281,42 +311,41 @@ impl Bus {
         }
     }
 
-
     #[allow(unreachable_patterns)]
     pub(crate) fn read_byte(&self, addr: u16) -> u8 {
         match addr {
             ROM_BANK_0_START..=ROM_BANK_N_END => self.cartridge.read_rom(addr),
-            VRAM_START..=VRAM_END             => {
+            VRAM_START..=VRAM_END => {
                 if !self.io.ppu.cpu_vram_accessible() {
                     return 0xFF;
                 }
                 let local = (addr - VRAM_START) as usize;
                 self.vram[self.active_vram_offset() + local]
             }
-            ERAM_START..=ERAM_END             => self.cartridge.read_ram(addr),
-            WRAM_0_START..=WRAM_0_END         => self.wram[(addr - WRAM_0_START) as usize],
-            WRAM_N_START..=WRAM_N_END         => {
+            ERAM_START..=ERAM_END => self.cartridge.read_ram(addr),
+            WRAM_0_START..=WRAM_0_END => self.wram[(addr - WRAM_0_START) as usize],
+            WRAM_N_START..=WRAM_N_END => {
                 let local = (addr - WRAM_N_START) as usize;
                 self.wram[self.active_wram_bank() * WRAM_SIZE + local]
             }
-            ECHO_RAM_START..=ECHO_RAM_END     => {
+            ECHO_RAM_START..=ECHO_RAM_END => {
                 let mirror_addr = addr - ECHO_RAM_OFFSET;
                 self.read_byte(mirror_addr)
             }
-            OAM_START..=OAM_END               => {
+            OAM_START..=OAM_END => {
                 if !self.io.ppu.cpu_oam_accessible() {
                     return 0xFF;
                 }
                 self.oam[(addr - OAM_START) as usize]
             }
             NOT_USABLE_START..=NOT_USABLE_END => 0xFF,
-            SERIAL_SB                         => self.io.serial.sb,
-            SERIAL_SC                         => self.io.serial.sc,
-            INTERRUPT_IF                      => self.if_reg,
-            IO_START..=IO_END                 => self.read_io(addr),
-            HRAM_START..=HRAM_END             => self.hram[(addr - HRAM_START) as usize],
-            IE_ADDR                           => self.ie,
-            _                                 => 0xFF,
+            SERIAL_SB => self.io.serial.sb,
+            SERIAL_SC => self.io.serial.sc,
+            INTERRUPT_IF => self.if_reg,
+            IO_START..=IO_END => self.read_io(addr),
+            HRAM_START..=HRAM_END => self.hram[(addr - HRAM_START) as usize],
+            IE_ADDR => self.ie,
+            _ => 0xFF,
         }
     }
 
@@ -327,7 +356,7 @@ impl Bus {
                 self.cartridge.write_rom(addr, value);
                 0
             }
-            VRAM_START..=VRAM_END             => {
+            VRAM_START..=VRAM_END => {
                 if !self.io.ppu.cpu_vram_accessible() {
                     return 0;
                 }
@@ -336,25 +365,25 @@ impl Bus {
                 self.vram[index] = value;
                 0
             }
-            ERAM_START..=ERAM_END             => {
+            ERAM_START..=ERAM_END => {
                 self.cartridge.write_ram(addr, value);
                 0
             }
-            WRAM_0_START..=WRAM_0_END         => {
+            WRAM_0_START..=WRAM_0_END => {
                 self.wram[(addr - WRAM_0_START) as usize] = value;
                 0
             }
-            WRAM_N_START..=WRAM_N_END         => {
+            WRAM_N_START..=WRAM_N_END => {
                 let local = (addr - WRAM_N_START) as usize;
                 let index = self.active_wram_bank() * WRAM_SIZE + local;
                 self.wram[index] = value;
                 0
             }
-            ECHO_RAM_START..=ECHO_RAM_END     => {
+            ECHO_RAM_START..=ECHO_RAM_END => {
                 let mirror_addr = addr - ECHO_RAM_OFFSET;
                 self.write_byte(mirror_addr, value)
-            },
-            OAM_START..=OAM_END               => {
+            }
+            OAM_START..=OAM_END => {
                 if !self.io.ppu.cpu_oam_accessible() {
                     return 0;
                 }
@@ -365,16 +394,16 @@ impl Bus {
                 warn!("Attempted illegal write to ROM at address {:04X}", addr);
                 0
             }
-            IO_START..=IO_END                 => self.write_io(addr, value),
-            HRAM_START..=HRAM_END             => {
+            IO_START..=IO_END => self.write_io(addr, value),
+            HRAM_START..=HRAM_END => {
                 self.hram[(addr - HRAM_START) as usize] = value;
                 0
             }
-            IE_ADDR                           => {
+            IE_ADDR => {
                 self.ie = value;
                 0
             }
-            _                                 => {
+            _ => {
                 warn!("Attempted illegal write to UNKNOWN at address {:04X}", addr);
                 0
             }
@@ -383,60 +412,100 @@ impl Bus {
 
     fn read_io(&self, addr: u16) -> u8 {
         match addr {
-            JOYP_P1   => self.io.joypad.read(),
+            JOYP_P1 => self.io.joypad.read(),
             SERIAL_SB => self.io.serial.sb,
             SERIAL_SC => self.io.serial.sc,
 
-            TIMER_DIV  => self.io.timer.div,
+            TIMER_DIV => self.io.timer.div,
             TIMER_TIMA => self.io.timer.tima,
-            TIMER_TMA  => self.io.timer.tma,
-            TIMER_TAC  => self.io.timer.tac,
+            TIMER_TMA => self.io.timer.tma,
+            TIMER_TAC => self.io.timer.tac,
 
             INTERRUPT_IF => self.if_reg | 0xE0,
 
             PPU_LCDC => self.io.ppu.lcdc,
             PPU_STAT => self.io.ppu.stat | 0x80,
-            PPU_SCY  => self.io.ppu.scy,
-            PPU_SCX  => self.io.ppu.scx,
-            PPU_LY   => self.io.ppu.ly,
-            PPU_LYC  => self.io.ppu.lyc,
-            PPU_WY   => self.io.ppu.wy,
-            PPU_WX   => self.io.ppu.wx,
-            PPU_BGP  => self.io.ppu.bgp,
+            PPU_SCY => self.io.ppu.scy,
+            PPU_SCX => self.io.ppu.scx,
+            PPU_LY => self.io.ppu.ly,
+            PPU_LYC => self.io.ppu.lyc,
+            PPU_WY => self.io.ppu.wy,
+            PPU_WX => self.io.ppu.wx,
+            PPU_BGP => self.io.ppu.bgp,
             PPU_OBP0 => self.io.ppu.obp0,
             PPU_OBP1 => self.io.ppu.obp1,
-            PPU_DMA  => self.io_bank[(addr - IO_START) as usize],
+            PPU_DMA => self.io_bank[(addr - IO_START) as usize],
             CGB_KEY1 => {
-                if self.is_cgb_mode() { self.key1 } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.key1
+                } else {
+                    0xFF
+                }
             }
             CGB_BCPS => {
-                if self.is_cgb_mode() { self.io.ppu.read_bcps() } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.io.ppu.read_bcps()
+                } else {
+                    0xFF
+                }
             }
             CGB_BCPD => {
-                if self.is_cgb_mode() { self.io.ppu.read_bcpd() } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.io.ppu.read_bcpd()
+                } else {
+                    0xFF
+                }
             }
             CGB_OCPS => {
-                if self.is_cgb_mode() { self.io.ppu.read_ocps() } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.io.ppu.read_ocps()
+                } else {
+                    0xFF
+                }
             }
             CGB_OCPD => {
-                if self.is_cgb_mode() { self.io.ppu.read_ocpd() } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.io.ppu.read_ocpd()
+                } else {
+                    0xFF
+                }
             }
             CGB_HDMA1 => {
-                if self.is_cgb_mode() { self.hdma1 } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.hdma1
+                } else {
+                    0xFF
+                }
             }
             CGB_HDMA2 => {
-                if self.is_cgb_mode() { self.hdma2 } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.hdma2
+                } else {
+                    0xFF
+                }
             }
             CGB_HDMA3 => {
-                if self.is_cgb_mode() { self.hdma3 } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.hdma3
+                } else {
+                    0xFF
+                }
             }
             CGB_HDMA4 => {
-                if self.is_cgb_mode() { self.hdma4 } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.hdma4
+                } else {
+                    0xFF
+                }
             }
             CGB_HDMA5 => {
-                if self.is_cgb_mode() { self.hdma5 } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.hdma5
+                } else {
+                    0xFF
+                }
             }
-            PPU_VBK  => {
+            PPU_VBK => {
                 if self.is_cgb_mode() {
                     0xFE | (self.vram_bank & 0x01)
                 } else {
@@ -452,7 +521,11 @@ impl Bus {
             }
             NR10..=NR52 | WAVE_RAM_START..=WAVE_RAM_END => self.io.apu.read(addr),
             CGB_PCM12 | CGB_PCM34 => {
-                if self.is_cgb_mode() { self.io.apu.read(addr) } else { 0xFF }
+                if self.is_cgb_mode() {
+                    self.io.apu.read(addr)
+                } else {
+                    0xFF
+                }
             }
 
             _ => self.io_bank[(addr - IO_START) as usize],
@@ -476,23 +549,23 @@ impl Bus {
 
             TIMER_DIV => self.io.timer.reset_div(),
             TIMER_TIMA => self.io.timer.write_tima(value),
-            TIMER_TMA  => self.io.timer.tma = value,
-            TIMER_TAC  => self.io.timer.write_tac(value),
+            TIMER_TMA => self.io.timer.tma = value,
+            TIMER_TAC => self.io.timer.write_tac(value),
 
             INTERRUPT_IF => self.if_reg = value & 0x1F,
 
             PPU_LCDC => self.io.ppu.lcdc = value,
             PPU_STAT => self.io.ppu.stat = (self.io.ppu.stat & 0x07) | (value & 0xF8),
-            PPU_SCY  => self.io.ppu.scy = value,
-            PPU_SCX  => self.io.ppu.scx = value,
-            PPU_LY   => self.io.ppu.ly = 0,
-            PPU_LYC  => self.io.ppu.lyc = value,
-            PPU_WY   => self.io.ppu.wy = value,
-            PPU_WX   => self.io.ppu.wx = value,
-            PPU_BGP  => self.io.ppu.bgp = value,
+            PPU_SCY => self.io.ppu.scy = value,
+            PPU_SCX => self.io.ppu.scx = value,
+            PPU_LY => self.io.ppu.ly = 0,
+            PPU_LYC => self.io.ppu.lyc = value,
+            PPU_WY => self.io.ppu.wy = value,
+            PPU_WX => self.io.ppu.wx = value,
+            PPU_BGP => self.io.ppu.bgp = value,
             PPU_OBP0 => self.io.ppu.obp0 = value,
             PPU_OBP1 => self.io.ppu.obp1 = value,
-            PPU_DMA  => {
+            PPU_DMA => {
                 self.oam_dma_source_base = (value as u16) << 8;
                 self.oam_dma_index = 0;
                 self.oam_dma_t_cycle_accum = 0;
@@ -548,7 +621,7 @@ impl Bus {
                     return self.execute_hdma_transfer(value);
                 }
             }
-            PPU_VBK  => {
+            PPU_VBK => {
                 if self.is_cgb_mode() {
                     self.vram_bank = value & 0x01;
                 }
@@ -579,8 +652,7 @@ impl Bus {
             }
             SgbEvent::PalSet(index) => self.io.ppu.set_sgb_active_palette(index),
             SgbEvent::MaskEn(mode) => self.io.ppu.set_sgb_mask_mode(mode),
-            SgbEvent::MltReq => {
-            }
+            SgbEvent::MltReq => {}
         }
     }
 }

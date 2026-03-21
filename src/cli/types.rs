@@ -33,4 +33,3 @@ pub(crate) struct CliArgs {
     pub(crate) mode_override: Option<HardwareModePreference>,
     pub(crate) headless: Option<HeadlessOptions>,
 }
-

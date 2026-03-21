@@ -108,11 +108,12 @@ pub(crate) fn draw_tile_viewer(
                 }
             }
 
-            let texture = ui.ctx().load_texture("tile_viewer", image, egui::TextureOptions::NEAREST);
+            let texture =
+                ui.ctx()
+                    .load_texture("tile_viewer", image, egui::TextureOptions::NEAREST);
             let display_size = egui::vec2((width as f32) * 2.0, (height as f32) * 2.0);
             egui::ScrollArea::both().show(ui, |ui| {
                 ui.image((texture.id(), display_size));
             });
         });
 }
-

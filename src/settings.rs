@@ -264,6 +264,7 @@ pub(crate) struct Settings {
     pub(crate) show_fps: bool,
     pub(crate) key_bindings: KeyBindings,
     pub(crate) master_volume: f32,
+    pub(crate) mute_audio_during_fast_forward: bool,
 }
 
 impl Default for Settings {
@@ -276,6 +277,7 @@ impl Default for Settings {
             show_fps: true,
             key_bindings: KeyBindings::default(),
             master_volume: 1.0,
+            mute_audio_during_fast_forward: false,
         }
     }
 }
@@ -333,4 +335,3 @@ impl Settings {
         self.save_to_path(&Self::active_path());
     }
 }
-

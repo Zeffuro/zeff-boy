@@ -23,5 +23,7 @@ pub(crate) use palette_viewer::draw_palette_viewer;
 pub(crate) use rom_info::draw_rom_info;
 pub(crate) use tile_viewer::draw_tile_viewer;
 pub(crate) use tilemap_viewer::draw_tilemap_viewer;
-pub(crate) use types::{DebugInfo, DebugViewerData, DebugWindowState, OpcodeLog, PpuSnapshot, RomInfoViewData};
+pub(crate) use types::{
+    DebugInfo, DebugViewerData, DebugWindowState, OpcodeLog, PpuSnapshot, RomInfoViewData,
+};
 pub(crate) use ui::{DebugUiActions, draw_debug_ui, draw_menu_bar, draw_settings_window};

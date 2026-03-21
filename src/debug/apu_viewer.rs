@@ -35,7 +35,10 @@ fn draw_waveform(ui: &mut egui::Ui, id: &str, samples: &[f32; 512], height: f32)
         egui::StrokeKind::Outside,
     );
     painter.line_segment(
-        [egui::pos2(rect.left(), mid_y), egui::pos2(rect.right(), mid_y)],
+        [
+            egui::pos2(rect.left(), mid_y),
+            egui::pos2(rect.right(), mid_y),
+        ],
         egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
     );
 
@@ -56,7 +59,11 @@ fn draw_waveform(ui: &mut egui::Ui, id: &str, samples: &[f32; 512], height: f32)
         points,
         egui::Stroke::new(1.25, egui::Color32::from_rgb(90, 220, 140)),
     ));
-    ui.label(egui::RichText::new(id).small().color(egui::Color32::from_gray(150)));
+    ui.label(
+        egui::RichText::new(id)
+            .small()
+            .color(egui::Color32::from_gray(150)),
+    );
 }
 
 pub(crate) fn draw_apu_viewer(
@@ -73,10 +80,19 @@ pub(crate) fn draw_apu_viewer(
         .default_width(380.0)
         .show(ctx, |ui| {
             ui.heading("Master");
-            ui.monospace(format!("NR50:{:02X}  NR51:{:02X}  NR52:{:02X}", regs[reg_index(NR50)], regs[reg_index(NR51)], data.apu_nr52));
+            ui.monospace(format!(
+                "NR50:{:02X}  NR51:{:02X}  NR52:{:02X}",
+                regs[reg_index(NR50)],
+                regs[reg_index(NR51)],
+                data.apu_nr52
+            ));
             ui.monospace(format!(
                 "Power:{}  CH1:{} CH2:{} CH3:{} CH4:{}",
-                if data.apu_nr52 & 0x80 != 0 { "ON" } else { "OFF" },
+                if data.apu_nr52 & 0x80 != 0 {
+                    "ON"
+                } else {
+                    "OFF"
+                },
                 if data.apu_nr52 & 0x01 != 0 { "1" } else { "-" },
                 if data.apu_nr52 & 0x02 != 0 { "1" } else { "-" },
                 if data.apu_nr52 & 0x04 != 0 { "1" } else { "-" },
@@ -87,13 +103,24 @@ pub(crate) fn draw_apu_viewer(
             ui.separator();
             draw_channel_header(ui, "CH1 (Square + Sweep)", data.apu_nr52 & 0x01 != 0);
             mutes_changed |= ui.checkbox(&mut muted[0], "Mute CH1").changed();
-            ui.monospace(format!("NR10:{:02X} NR11:{:02X} NR12:{:02X} NR13:{:02X} NR14:{:02X}", regs[reg_index(NR10)], regs[reg_index(NR11)], regs[reg_index(NR12)], regs[reg_index(NR13)], regs[reg_index(NR14)]));
+            ui.monospace(format!(
+                "NR10:{:02X} NR11:{:02X} NR12:{:02X} NR13:{:02X} NR14:{:02X}",
+                regs[reg_index(NR10)],
+                regs[reg_index(NR11)],
+                regs[reg_index(NR12)],
+                regs[reg_index(NR13)],
+                regs[reg_index(NR14)]
+            ));
             ui.monospace(format!(
                 "Duty:{} Len:{} Vol:{} Env:{} P:{} Freq:{:03X}",
                 duty_from_nrx1(regs[reg_index(NR11)]),
                 regs[reg_index(NR11)] & 0x3F,
                 regs[reg_index(NR12)] >> 4,
-                if regs[reg_index(NR12)] & 0x08 != 0 { "+" } else { "-" },
+                if regs[reg_index(NR12)] & 0x08 != 0 {
+                    "+"
+                } else {
+                    "-"
+                },
                 regs[reg_index(NR12)] & 0x07,
                 (u16::from(regs[reg_index(NR14)] & 0x07) << 8) | u16::from(regs[reg_index(NR13)]),
             ));
@@ -102,13 +129,23 @@ pub(crate) fn draw_apu_viewer(
             ui.separator();
             draw_channel_header(ui, "CH2 (Square)", data.apu_nr52 & 0x02 != 0);
             mutes_changed |= ui.checkbox(&mut muted[1], "Mute CH2").changed();
-            ui.monospace(format!("NR21:{:02X} NR22:{:02X} NR23:{:02X} NR24:{:02X}", regs[reg_index(NR21)], regs[reg_index(NR22)], regs[reg_index(NR23)], regs[reg_index(NR24)]));
+            ui.monospace(format!(
+                "NR21:{:02X} NR22:{:02X} NR23:{:02X} NR24:{:02X}",
+                regs[reg_index(NR21)],
+                regs[reg_index(NR22)],
+                regs[reg_index(NR23)],
+                regs[reg_index(NR24)]
+            ));
             ui.monospace(format!(
                 "Duty:{} Len:{} Vol:{} Env:{} P:{} Freq:{:03X}",
                 duty_from_nrx1(regs[reg_index(NR21)]),
                 regs[reg_index(NR21)] & 0x3F,
                 regs[reg_index(NR22)] >> 4,
-                if regs[reg_index(NR22)] & 0x08 != 0 { "+" } else { "-" },
+                if regs[reg_index(NR22)] & 0x08 != 0 {
+                    "+"
+                } else {
+                    "-"
+                },
                 regs[reg_index(NR22)] & 0x07,
                 (u16::from(regs[reg_index(NR24)] & 0x07) << 8) | u16::from(regs[reg_index(NR23)]),
             ));
@@ -117,10 +154,21 @@ pub(crate) fn draw_apu_viewer(
             ui.separator();
             draw_channel_header(ui, "CH3 (Wave)", data.apu_nr52 & 0x04 != 0);
             mutes_changed |= ui.checkbox(&mut muted[2], "Mute CH3").changed();
-            ui.monospace(format!("NR30:{:02X} NR31:{:02X} NR32:{:02X} NR33:{:02X} NR34:{:02X}", regs[reg_index(NR30)], regs[reg_index(NR31)], regs[reg_index(NR32)], regs[reg_index(NR33)], regs[reg_index(NR34)]));
+            ui.monospace(format!(
+                "NR30:{:02X} NR31:{:02X} NR32:{:02X} NR33:{:02X} NR34:{:02X}",
+                regs[reg_index(NR30)],
+                regs[reg_index(NR31)],
+                regs[reg_index(NR32)],
+                regs[reg_index(NR33)],
+                regs[reg_index(NR34)]
+            ));
             ui.monospace(format!(
                 "DAC:{} Len:{} Level:{} Freq:{:03X}",
-                if regs[reg_index(NR30)] & 0x80 != 0 { "ON" } else { "OFF" },
+                if regs[reg_index(NR30)] & 0x80 != 0 {
+                    "ON"
+                } else {
+                    "OFF"
+                },
                 regs[reg_index(NR31)],
                 (regs[reg_index(NR32)] >> 5) & 0x03,
                 (u16::from(regs[reg_index(NR34)] & 0x07) << 8) | u16::from(regs[reg_index(NR33)]),
@@ -130,15 +178,29 @@ pub(crate) fn draw_apu_viewer(
             ui.separator();
             draw_channel_header(ui, "CH4 (Noise)", data.apu_nr52 & 0x08 != 0);
             mutes_changed |= ui.checkbox(&mut muted[3], "Mute CH4").changed();
-            ui.monospace(format!("NR41:{:02X} NR42:{:02X} NR43:{:02X} NR44:{:02X}", regs[reg_index(NR41)], regs[reg_index(NR42)], regs[reg_index(NR43)], regs[reg_index(NR44)]));
+            ui.monospace(format!(
+                "NR41:{:02X} NR42:{:02X} NR43:{:02X} NR44:{:02X}",
+                regs[reg_index(NR41)],
+                regs[reg_index(NR42)],
+                regs[reg_index(NR43)],
+                regs[reg_index(NR44)]
+            ));
             ui.monospace(format!(
                 "Len:{} Vol:{} Env:{} P:{} Poly(s={},w={},r={})",
                 regs[reg_index(NR41)] & 0x3F,
                 regs[reg_index(NR42)] >> 4,
-                if regs[reg_index(NR42)] & 0x08 != 0 { "+" } else { "-" },
+                if regs[reg_index(NR42)] & 0x08 != 0 {
+                    "+"
+                } else {
+                    "-"
+                },
                 regs[reg_index(NR42)] & 0x07,
                 regs[reg_index(NR43)] >> 4,
-                if regs[reg_index(NR43)] & 0x08 != 0 { "7" } else { "15" },
+                if regs[reg_index(NR43)] & 0x08 != 0 {
+                    "7"
+                } else {
+                    "15"
+                },
                 regs[reg_index(NR43)] & 0x07,
             ));
             draw_waveform(ui, "CH4", &data.apu_channel_samples[3], 64.0);
@@ -156,10 +218,5 @@ pub(crate) fn draw_apu_viewer(
             });
         });
 
-    if mutes_changed {
-        Some(muted)
-    } else {
-        None
-    }
+    if mutes_changed { Some(muted) } else { None }
 }
-

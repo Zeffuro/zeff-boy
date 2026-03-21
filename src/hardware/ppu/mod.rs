@@ -3,10 +3,10 @@ mod renderer;
 mod sprite;
 mod tiles;
 
-pub(crate) use sprite::SpriteEntry;
+pub(crate) use palette::PALETTE_COLORS;
 pub(crate) use palette::apply_palette;
 pub(crate) use palette::cgb_palette_rgba;
-pub(crate) use palette::PALETTE_COLORS;
+pub(crate) use sprite::SpriteEntry;
 pub(crate) use tiles::decode_tile_pixel;
 pub(crate) use tiles::tile_data_address;
 
@@ -54,8 +54,9 @@ pub(crate) struct PPU {
     pub(crate) sgb_active_palette: u8,
     pub(crate) sgb_palettes: [[u16; 4]; 4],
 
-    window_line_counter: u8,
-    window_was_active: bool,
+    pub(crate) window_line_counter: u8,
+    pub(crate) window_was_active_this_frame: bool,
+    prev_stat_line: bool,
 }
 
 impl PPU {
@@ -92,7 +93,19 @@ impl PPU {
             ],
 
             window_line_counter: 0,
-            window_was_active: false,
+            window_was_active_this_frame: false,
+            prev_stat_line: false,
+        }
+    }
+
+    pub(crate) fn window_visible_on_current_line(&self) -> bool {
+        self.ly < SCREEN_H as u8 && self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= 166
+    }
+
+    pub(crate) fn increment_window_line_counter_after_scanline(&mut self) {
+        if self.window_visible_on_current_line() {
+            self.window_line_counter = self.window_line_counter.saturating_add(1);
+            self.window_was_active_this_frame = true;
         }
     }
 
@@ -102,6 +115,8 @@ impl PPU {
             self.ly = 0;
             self.stat = (self.stat & !0x03) | 0;
             self.window_line_counter = 0;
+            self.window_was_active_this_frame = false;
+            self.prev_stat_line = false;
             return 0;
         }
 
@@ -123,14 +138,12 @@ impl PPU {
 
             if self.ly == 144 {
                 interrupts |= 0x01;
-                self.window_line_counter = 0;
             }
             if self.ly >= 154 {
                 self.ly = 0;
                 self.window_line_counter = 0;
+                self.window_was_active_this_frame = false;
             }
-
-            self.check_lyc(&mut interrupts);
         }
 
         let previous_mode = self.stat & 0x03;
@@ -146,13 +159,10 @@ impl PPU {
 
         if current_mode != previous_mode {
             self.stat = (self.stat & !0x03) | current_mode;
+        }
 
-            match current_mode {
-                0 if self.stat & 0x08 != 0 => interrupts |= 0x02,
-                1 if self.stat & 0x10 != 0 => interrupts |= 0x02,
-                2 if self.stat & 0x20 != 0 => interrupts |= 0x02,
-                _ => {}
-            }
+        if self.update_stat_interrupt() {
+            interrupts |= 0x02;
         }
 
         interrupts
@@ -178,15 +188,23 @@ impl PPU {
         !self.lcd_enabled() || self.mode() != 3
     }
 
-    fn check_lyc(&mut self, interrupts: &mut u8) {
-        if self.ly == self.lyc {
+    fn update_stat_interrupt(&mut self) -> bool {
+        let ly_match = self.ly == self.lyc;
+        if ly_match {
             self.stat |= 0x04;
-            if self.stat & 0x40 != 0 {
-                *interrupts |= 0x02;
-            }
         } else {
             self.stat &= !0x04;
         }
+
+        let mode = self.stat & 0x03;
+        let stat_line = (self.stat & 0x40 != 0 && ly_match)
+            || (self.stat & 0x20 != 0 && mode == 2)
+            || (self.stat & 0x10 != 0 && mode == 1)
+            || (self.stat & 0x08 != 0 && mode == 0);
+
+        let rising_edge = stat_line && !self.prev_stat_line;
+        self.prev_stat_line = stat_line;
+        rising_edge
     }
 
     pub(crate) fn set_sgb_mode(&mut self, enabled: bool) {
@@ -236,3 +254,111 @@ fn rgb555_to_rgba(color: u16) -> [u8; 4] {
     [expand(r5), expand(g5), expand(b5), 255]
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stat_interrupt_triggers_only_on_rising_edge() {
+        let mut ppu = PPU::new();
+
+        ppu.stat = (ppu.stat & !0x03) | 0x08;
+        ppu.ly = 10;
+        ppu.lyc = 0;
+
+        assert!(ppu.update_stat_interrupt());
+        assert!(!ppu.update_stat_interrupt());
+
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        assert!(!ppu.update_stat_interrupt());
+
+        ppu.stat = (ppu.stat & !0x03) | 0x00;
+        assert!(ppu.update_stat_interrupt());
+    }
+
+    #[test]
+    fn stat_update_tracks_lyc_coincidence_flag() {
+        let mut ppu = PPU::new();
+
+        ppu.stat = (ppu.stat & !0x03) | 0x40;
+        ppu.ly = 7;
+        ppu.lyc = 7;
+
+        assert!(ppu.update_stat_interrupt());
+        assert_ne!(ppu.stat & 0x04, 0);
+
+        ppu.ly = 8;
+        assert!(!ppu.update_stat_interrupt());
+        assert_eq!(ppu.stat & 0x04, 0);
+    }
+
+    #[test]
+    fn window_counter_resets_on_frame_wrap_not_vblank_start() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let oam = [0u8; 160];
+
+        ppu.lcdc = 0xA0;
+        ppu.wy = 0;
+        ppu.wx = 7;
+
+        for _ in 0..144 {
+            ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        }
+
+        assert_eq!(ppu.ly, 144);
+        assert_eq!(ppu.window_line_counter, 144);
+        assert!(ppu.window_was_active_this_frame);
+
+        ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        assert_eq!(ppu.ly, 145);
+        assert_eq!(ppu.window_line_counter, 144);
+
+        for _ in 0..9 {
+            ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        }
+
+        assert_eq!(ppu.ly, 0);
+        assert_eq!(ppu.window_line_counter, 0);
+        assert!(!ppu.window_was_active_this_frame);
+    }
+
+    #[test]
+    fn window_counter_freezes_when_window_disabled_between_scanlines() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let oam = [0u8; 160];
+
+        ppu.lcdc = 0xA0;
+        ppu.wy = 0;
+        ppu.wx = 7;
+
+        ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        assert_eq!(ppu.window_line_counter, 2);
+
+        ppu.lcdc &= !0x20;
+        for _ in 0..4 {
+            ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        }
+        assert_eq!(ppu.window_line_counter, 2);
+    }
+
+    #[test]
+    fn window_counter_requires_wx_visibility_range() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let oam = [0u8; 160];
+
+        ppu.lcdc = 0xA0;
+        ppu.wy = 0;
+        ppu.wx = 167;
+
+        for _ in 0..8 {
+            ppu.step(DOTS_PER_LINE, &vram, &oam, false);
+        }
+
+        assert_eq!(ppu.window_line_counter, 0);
+        assert!(!ppu.window_was_active_this_frame);
+    }
+}

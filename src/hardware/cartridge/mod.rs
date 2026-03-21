@@ -1,17 +1,17 @@
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::CartridgeType;
 
-mod rom_only;
 mod mbc1;
 mod mbc2;
 mod mbc3;
 mod mbc5;
+mod rom_only;
 
-use rom_only::RomOnly;
 use mbc1::Mbc1;
 use mbc2::Mbc2;
 use mbc3::Mbc3;
 use mbc5::Mbc5;
+use rom_only::RomOnly;
 
 #[derive(Clone)]
 pub(crate) struct CartridgeDebugInfo {
@@ -72,7 +72,10 @@ impl Cartridge {
                 Cartridge::Mbc5(Mbc5::new(rom, header.ram_size.size_bytes()))
             }
             _ => {
-                log::warn!("Unsupported MBC: {:?}. Defaulting to MBC1 to attempt execution.", header.cartridge_type);
+                log::warn!(
+                    "Unsupported MBC: {:?}. Defaulting to MBC1 to attempt execution.",
+                    header.cartridge_type
+                );
                 Cartridge::Mbc1(Mbc1::new(rom, header.ram_size.size_bytes()))
             }
         }
@@ -164,5 +167,3 @@ fn write_banked_ram(ram: &mut [u8], bank: usize, addr: u16, value: u8) {
         *byte = value;
     }
 }
-
-

@@ -8,9 +8,9 @@ use winit::{
 };
 
 mod egui_integration;
+mod egui_painter;
 mod framebuffer;
 mod gpu;
-mod egui_painter;
 
 use egui_integration::EguiRenderer;
 use framebuffer::FramebufferRenderer;
@@ -89,9 +89,8 @@ pub(crate) struct Graphics {
 
 impl Graphics {
     pub(crate) async fn new(event_loop: &ActiveEventLoop) -> Result<Self> {
-        let window = Arc::new(
-            event_loop.create_window(WindowAttributes::default().with_title("zeff-boy"))?,
-        );
+        let window =
+            Arc::new(event_loop.create_window(WindowAttributes::default().with_title("zeff-boy"))?);
 
         let size = window.inner_size();
         let width = size.width.max(1);
@@ -167,11 +166,8 @@ impl Graphics {
 
         self.egui.begin_frame(&self.window);
         let mut debug_actions = crate::debug::DebugUiActions::none();
-        let menu_actions = crate::debug::draw_menu_bar(
-            self.egui.context(),
-            self.aspect_ratio_mode,
-            debug_windows,
-        );
+        let menu_actions =
+            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, debug_windows);
         if let Some(mode) = menu_actions.aspect_ratio_mode {
             self.aspect_ratio_mode = mode;
         }
@@ -189,11 +185,34 @@ impl Graphics {
 
         if let Some(info) = debug_info {
             if debug_windows.show_cpu_debug {
-                debug_actions = crate::debug::draw_debug_ui(
-                    self.egui.context(),
-                    info,
-                    debug_windows,
-                );
+                debug_actions =
+                    crate::debug::draw_debug_ui(self.egui.context(), info, debug_windows);
+            }
+            if debug_windows.show_rom_info {
+                if let Some(rom_info) = rom_info_view {
+                    crate::debug::draw_rom_info(
+                        self.egui.context(),
+                        rom_info,
+                        &mut debug_windows.show_rom_info,
+                    );
+                }
+            }
+            if debug_windows.show_disassembler {
+                if let Some(view) = disassembly_view {
+                    let toggles = crate::debug::draw_disassembler_window(
+                        self.egui.context(),
+                        view,
+                        &mut debug_windows.show_disassembler,
+                    );
+                    debug_actions.toggle_breakpoints.extend(toggles);
+                }
+            }
+            if debug_windows.show_memory_viewer {
+                if let Some(page) = memory_page {
+                    let writes =
+                        crate::debug::draw_memory_viewer(self.egui.context(), debug_windows, page);
+                    debug_actions.memory_writes.extend(writes);
+                }
             }
             if let Some(data) = viewer_data {
                 if debug_windows.show_apu_viewer {
@@ -202,35 +221,6 @@ impl Graphics {
                         data,
                         &mut debug_windows.show_apu_viewer,
                     );
-                }
-                if debug_windows.show_rom_info {
-                    if let Some(rom_info) = rom_info_view {
-                        crate::debug::draw_rom_info(
-                            self.egui.context(),
-                            rom_info,
-                            &mut debug_windows.show_rom_info,
-                        );
-                    }
-                }
-                if debug_windows.show_disassembler {
-                    if let Some(view) = disassembly_view {
-                        let toggles = crate::debug::draw_disassembler_window(
-                            self.egui.context(),
-                            view,
-                            &mut debug_windows.show_disassembler,
-                        );
-                        debug_actions.toggle_breakpoints.extend(toggles);
-                    }
-                }
-                if debug_windows.show_memory_viewer {
-                    if let Some(page) = memory_page {
-                        let writes = crate::debug::draw_memory_viewer(
-                            self.egui.context(),
-                            debug_windows,
-                            page,
-                        );
-                        debug_actions.memory_writes.extend(writes);
-                    }
                 }
                 if debug_windows.show_tile_viewer {
                     crate::debug::draw_tile_viewer(
@@ -282,7 +272,8 @@ impl Graphics {
         }
 
         let full_output = self.egui.end_frame(&self.window);
-        let menu_bar_height = menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
+        let menu_bar_height =
+            menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
 
         let mut encoder = self
             .gpu
@@ -362,4 +353,3 @@ impl Graphics {
         })
     }
 }
-

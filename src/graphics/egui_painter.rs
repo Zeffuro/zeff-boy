@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
+use crate::graphics::gpu::texture_sampler_bind_group_layout;
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::Primitive;
 use egui::{ClippedPrimitive, TextureId};
 use wgpu::util::DeviceExt;
-use crate::graphics::gpu::texture_sampler_bind_group_layout;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -38,13 +38,7 @@ pub(crate) struct EguiPainter {
 
 fn image_to_rgba8(image: &egui::ImageData) -> Vec<u8> {
     match image {
-        egui::ImageData::Color(color) => {
-            color
-                .pixels
-                .iter()
-                .flat_map(|c| c.to_array())
-                .collect()
-        }
+        egui::ImageData::Color(color) => color.pixels.iter().flat_map(|c| c.to_array()).collect(),
     }
 }
 
@@ -65,13 +59,14 @@ impl EguiPainter {
                 }],
             });
 
-        let texture_bind_group_layout = texture_sampler_bind_group_layout(device, "egui texture bgl");
+        let texture_bind_group_layout =
+            texture_sampler_bind_group_layout(device, "egui texture bgl");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("egui shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
-                include_str!("../shaders/egui.wgsl"),
-            )),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                "../shaders/egui.wgsl"
+            ))),
         });
 
         let uniform = ScreenUniform {
@@ -359,14 +354,18 @@ impl EguiPainter {
             let ppp = pixels_per_point;
             let size_in_pixels = [screen_width, screen_height];
 
-            let x0 =
-                (clip_rect.min.x * ppp).floor().clamp(0.0, size_in_pixels[0] as f32) as u32;
-            let y0 =
-                (clip_rect.min.y * ppp).floor().clamp(0.0, size_in_pixels[1] as f32) as u32;
-            let x1 =
-                (clip_rect.max.x * ppp).ceil().clamp(0.0, size_in_pixels[0] as f32) as u32;
-            let y1 =
-                (clip_rect.max.y * ppp).ceil().clamp(0.0, size_in_pixels[1] as f32) as u32;
+            let x0 = (clip_rect.min.x * ppp)
+                .floor()
+                .clamp(0.0, size_in_pixels[0] as f32) as u32;
+            let y0 = (clip_rect.min.y * ppp)
+                .floor()
+                .clamp(0.0, size_in_pixels[1] as f32) as u32;
+            let x1 = (clip_rect.max.x * ppp)
+                .ceil()
+                .clamp(0.0, size_in_pixels[0] as f32) as u32;
+            let y1 = (clip_rect.max.y * ppp)
+                .ceil()
+                .clamp(0.0, size_in_pixels[1] as f32) as u32;
 
             if x1 <= x0 || y1 <= y0 {
                 continue;

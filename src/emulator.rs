@@ -1,10 +1,13 @@
-use std::path::Path;
-use crate::hardware::{cpu::CPU, bus::Bus};
-use crate::hardware::rom_header::RomHeader;
-use crate::rom_loader;
 use crate::debug::{DebugController, DebugInfo, OpcodeLog, PpuSnapshot};
-use crate::hardware::types::{IMEState, CPUState};
+use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
+use crate::hardware::types::{CPUState, IMEState};
+use crate::hardware::{
+    bus::{Bus, CpuAccessTraceEvent},
+    cpu::CPU,
+};
+use crate::rom_loader;
+use std::path::Path;
 
 const CYCLES_PER_FRAME: u64 = 70224;
 type RegisterSeed = (u8, u8, u8, u8, u8, u8, u8, u8);
@@ -51,7 +54,8 @@ impl Emulator {
             header.is_sgb_supported,
             header.old_licensee_code,
         );
-        if matches!(mode_preference, HardwareModePreference::ForceCgb) && !header.is_cgb_compatible {
+        if matches!(mode_preference, HardwareModePreference::ForceCgb) && !header.is_cgb_compatible
+        {
             log::warn!(
                 "ForceCgb requested for DMG-only ROM; falling back to DMG mode for compatibility"
             );
@@ -107,14 +111,22 @@ impl Emulator {
         self.cpu.step(&mut self.bus);
 
         if watch_active {
-            let (reads, writes) = self.bus.take_cpu_access_trace();
-            for (addr, value) in reads {
-                self.debug.check_watch_read(addr, value);
-            }
-            for (addr, old_value, new_value) in writes {
-                self.debug.check_watch_write(addr, old_value, new_value);
-            }
-            if self.debug.hit_watchpoint.is_some() {
+            let hit_watchpoint = {
+                let debug = &mut self.debug;
+                self.bus.drain_cpu_access_trace(|event| match event {
+                    CpuAccessTraceEvent::Read { addr, value } => {
+                        debug.check_watch_read(addr, value)
+                    }
+                    CpuAccessTraceEvent::Write {
+                        addr,
+                        old_value,
+                        new_value,
+                    } => debug.check_watch_write(addr, old_value, new_value),
+                });
+                debug.hit_watchpoint.is_some()
+            };
+
+            if hit_watchpoint {
                 self.cpu.running = CPUState::Suspended;
             }
         }
@@ -134,12 +146,9 @@ impl Emulator {
         self.last_opcode_pc = pc_before;
 
         debug_assert_eq!(
-            self.cpu.timed_cycles_accounted,
-            self.cpu.last_step_cycles,
+            self.cpu.timed_cycles_accounted, self.cpu.last_step_cycles,
             "peripheral timing is expected to be fully CPU-driven (pc={:#06X}, opcode={:#04X}, cb_prefix={})",
-            pc_before,
-            opcode_at_pc,
-            cb_prefix
+            pc_before, opcode_at_pc, cb_prefix
         );
 
         (pc_before, op, cb_prefix, self.cpu.last_step_cycles)

@@ -169,4 +169,3 @@ mod tests {
         assert_eq!(ppu.bcps & 0x3F, 0x02);
     }
 }
-

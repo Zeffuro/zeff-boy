@@ -3,12 +3,12 @@ mod bitops;
 mod registers;
 
 use crate::hardware::bus::Bus;
-use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::opcodes::cycles::CYCLE_TABLE;
 use crate::hardware::opcodes::dispatch::execute_opcode;
-use crate::hardware::types::constants::*;
 use crate::hardware::types::CPUState;
 use crate::hardware::types::IMEState;
+use crate::hardware::types::constants::*;
+use crate::hardware::types::hardware_mode::HardwareMode;
 
 pub(crate) struct CPU {
     pub(crate) pc: u16,
@@ -226,7 +226,10 @@ impl CPU {
         }
         bus.io.apu.step(t_cycles);
 
-        let cgb_mode = matches!(bus.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble);
+        let cgb_mode = matches!(
+            bus.hardware_mode,
+            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+        );
         let previous_ppu_mode = bus.io.ppu.mode();
         let ppu_interrupt = bus.io.ppu.step(t_cycles, &bus.vram, &bus.oam, cgb_mode);
         bus.if_reg |= ppu_interrupt;
@@ -418,7 +421,13 @@ mod tests {
 
         assert_eq!(delta, 4 + 32);
         assert!(!bus.hdma_active);
-        assert_eq!(&bus.vram[0..0x10], &[0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F]);
+        assert_eq!(
+            &bus.vram[0..0x10],
+            &[
+                0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D,
+                0x8E, 0x8F
+            ]
+        );
     }
 
     #[test]
@@ -441,6 +450,12 @@ mod tests {
 
         assert_eq!(delta, 4 + 64);
         assert!(!bus.hdma_active);
-        assert_eq!(&bus.vram[0..0x10], &[0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F]);
+        assert_eq!(
+            &bus.vram[0..0x10],
+            &[
+                0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+                0x4E, 0x4F
+            ]
+        );
     }
 }

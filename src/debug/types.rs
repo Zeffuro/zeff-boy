@@ -1,8 +1,8 @@
-use std::collections::VecDeque;
+use crate::debug::breakpoints::WatchType;
 use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use crate::debug::breakpoints::WatchType;
 use crate::settings::BindingAction;
+use std::collections::VecDeque;
 
 pub(crate) struct DebugInfo {
     pub(crate) pc: u16,
@@ -108,6 +108,18 @@ impl DebugWindowState {
             rebinding_action: None,
         }
     }
+
+    pub(crate) fn any_viewer_open(&self) -> bool {
+        self.show_apu_viewer
+            || self.show_tile_viewer
+            || self.show_tilemap_viewer
+            || self.show_oam_viewer
+            || self.show_palette_viewer
+    }
+
+    pub(crate) fn any_vram_viewer_open(&self) -> bool {
+        self.show_tile_viewer || self.show_tilemap_viewer
+    }
 }
 
 pub(crate) struct RomInfoViewData {
@@ -172,4 +184,3 @@ impl OpcodeLog {
         self.entries.iter().rev().take(n).cloned().collect()
     }
 }
-

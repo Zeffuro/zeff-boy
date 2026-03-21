@@ -125,7 +125,9 @@ impl DebugController {
             if watch.address != addr {
                 continue;
             }
-            if matches!(watch.watch_type, WatchType::Write | WatchType::ReadWrite) && old_val != new_val {
+            if matches!(watch.watch_type, WatchType::Write | WatchType::ReadWrite)
+                && old_val != new_val
+            {
                 watch.last_value = Some(new_val);
                 self.hit_watchpoint = Some(WatchHit {
                     address: addr,
@@ -143,4 +145,3 @@ impl DebugController {
         self.hit_watchpoint = None;
     }
 }
-

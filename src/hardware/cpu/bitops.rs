@@ -64,4 +64,3 @@ impl CPU {
         value & !(1 << bit)
     }
 }
-

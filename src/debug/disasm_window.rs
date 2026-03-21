@@ -27,12 +27,7 @@ pub(crate) fn draw_disassembler_window(
                         .map(|b| format!("{:02X}", b))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    let row = format!(
-                        "{:04X}: {:<11} {}",
-                        line.address,
-                        bytes,
-                        line.mnemonic
-                    );
+                    let row = format!("{:04X}: {:<11} {}", line.address, bytes, line.mnemonic);
 
                     ui.horizontal(|ui| {
                         if has_breakpoint {
@@ -42,7 +37,8 @@ pub(crate) fn draw_disassembler_window(
                         }
 
                         let text = if is_pc {
-                            egui::RichText::new(row).background_color(egui::Color32::from_rgb(45, 65, 45))
+                            egui::RichText::new(row)
+                                .background_color(egui::Color32::from_rgb(45, 65, 45))
                         } else {
                             egui::RichText::new(row)
                         };
@@ -64,4 +60,3 @@ pub(crate) fn draw_disassembler_window(
 
     toggles
 }
-

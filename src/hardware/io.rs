@@ -1,9 +1,9 @@
-use crate::hardware::ppu::PPU;
-use crate::hardware::joypad::Joypad;
-use crate::hardware::sgb::SgbState;
-use crate::hardware::serial::Serial;
-use crate::hardware::timer::Timer;
 use crate::hardware::apu::Apu;
+use crate::hardware::joypad::Joypad;
+use crate::hardware::ppu::PPU;
+use crate::hardware::serial::Serial;
+use crate::hardware::sgb::SgbState;
+use crate::hardware::timer::Timer;
 
 pub(crate) struct IO {
     pub(crate) joypad: Joypad,

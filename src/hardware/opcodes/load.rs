@@ -18,7 +18,6 @@ pub(crate) fn ld_b_d8(cpu: &mut CPU, bus: &mut Bus) {
     cpu.b = cpu.fetch8_timed(bus);
 }
 
-
 // 0x08 - LD (a16), SP
 pub(crate) fn ld_a16_sp(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.fetch16_timed(bus);

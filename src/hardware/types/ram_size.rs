@@ -1,12 +1,12 @@
 /// RAM size from header byte (0x149).
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum RamSize {
-    None,        // $00
-    Unused,      // $01 (not used, historically error)
-    Kb8,         // $02 — 8 KiB (1 bank)
-    Kb32,        // $03 — 32 KiB (4 banks)
-    Kb128,       // $04 — 128 KiB (16 banks)
-    Kb64,        // $05 — 64 KiB (8 banks)
+    None,   // $00
+    Unused, // $01 (not used, historically error)
+    Kb8,    // $02 — 8 KiB (1 bank)
+    Kb32,   // $03 — 32 KiB (4 banks)
+    Kb128,  // $04 — 128 KiB (16 banks)
+    Kb64,   // $05 — 64 KiB (8 banks)
     Unknown(u8),
 }
 

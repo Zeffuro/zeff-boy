@@ -1,5 +1,5 @@
-use super::{build_debug_info, read_banked_ram, write_banked_ram};
 use super::CartridgeDebugInfo;
+use super::{build_debug_info, read_banked_ram, write_banked_ram};
 
 pub(crate) struct RomOnly {
     rom: Vec<u8>,
@@ -36,4 +36,3 @@ impl RomOnly {
         build_debug_info("ROM_ONLY", 0, 0, !self.ram.is_empty(), None)
     }
 }
-

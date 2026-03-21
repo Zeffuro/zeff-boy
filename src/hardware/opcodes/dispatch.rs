@@ -2,7 +2,11 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
 
 pub(crate) fn unimplemented_handler(cpu: &mut CPU, opcode: u8) {
-    log::warn!("Unimplemented opcode {:02X} at PC={:04X}", opcode, cpu.pc.wrapping_sub(1));
+    log::warn!(
+        "Unimplemented opcode {:02X} at PC={:04X}",
+        opcode,
+        cpu.pc.wrapping_sub(1)
+    );
 }
 
 pub(crate) fn execute_opcode(cpu: &mut CPU, bus: &mut Bus, opcode: u8) {

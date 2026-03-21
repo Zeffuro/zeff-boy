@@ -1,17 +1,17 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum RomSize {
-    Kb32,     // $00
-    Kb64,     // $01
-    Kb128,    // $02
-    Kb256,    // $03
-    Kb512,    // $04
-    Mb1,      // $05
-    Mb2,      // $06
-    Mb4,      // $07
-    Mb8,      // $08
-    Kb1100,   // $52 (1.1 MiB/72 banks)
-    Kb1200,   // $53 (1.2 MiB/80 banks)
-    Kb1500,   // $54 (1.5 MiB/96 banks)
+    Kb32,   // $00
+    Kb64,   // $01
+    Kb128,  // $02
+    Kb256,  // $03
+    Kb512,  // $04
+    Mb1,    // $05
+    Mb2,    // $06
+    Mb4,    // $07
+    Mb8,    // $08
+    Kb1100, // $52 (1.1 MiB/72 banks)
+    Kb1200, // $53 (1.2 MiB/80 banks)
+    Kb1500, // $54 (1.5 MiB/96 banks)
     Unknown(u8),
 }
 

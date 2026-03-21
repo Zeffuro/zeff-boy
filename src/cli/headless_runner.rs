@@ -25,10 +25,16 @@ pub(crate) fn run_headless(
 
     for _ in 0..opts.max_frames {
         if opts.trace_opcodes {
-            let target = emulator.cpu.cycles.wrapping_add(Emulator::cycles_per_frame());
+            let target = emulator
+                .cpu
+                .cycles
+                .wrapping_add(Emulator::cycles_per_frame());
             while emulator.cpu.cycles < target {
                 let (pc, op, cb_prefix, step_cycles) = emulator.step_instruction();
-                if matches!(emulator.cpu.running, crate::hardware::types::CPUState::Suspended) {
+                if matches!(
+                    emulator.cpu.running,
+                    crate::hardware::types::CPUState::Suspended
+                ) {
                     println!(
                         "{}",
                         format_headless_breakpoint(
@@ -136,7 +142,10 @@ pub(crate) fn run_headless(
             }
         } else {
             emulator.step_frame();
-            if matches!(emulator.cpu.running, crate::hardware::types::CPUState::Suspended) {
+            if matches!(
+                emulator.cpu.running,
+                crate::hardware::types::CPUState::Suspended
+            ) {
                 println!(
                     "{}",
                     format_headless_breakpoint(
@@ -163,7 +172,12 @@ pub(crate) fn run_headless(
     let serial_text = String::from_utf8_lossy(serial_bytes);
     println!(
         "{}",
-        format_headless_summary(opts.max_frames, emulator.cpu.cycles, emulator.cpu.pc, serial_bytes.len())
+        format_headless_summary(
+            opts.max_frames,
+            emulator.cpu.cycles,
+            emulator.cpu.pc,
+            serial_bytes.len()
+        )
     );
     if !serial_text.is_empty() {
         println!("{}", format_headless_serial(&serial_text));
@@ -171,13 +185,13 @@ pub(crate) fn run_headless(
 
     if let Some(expected) = &opts.expect_serial {
         if !serial_text.contains(expected) {
-            return Err(
-                format!("expected serial output containing {:?}, got {:?}", expected, serial_text)
-                    .into(),
-            );
+            return Err(format!(
+                "expected serial output containing {:?}, got {:?}",
+                expected, serial_text
+            )
+            .into());
         }
     }
 
     Ok(())
 }
-

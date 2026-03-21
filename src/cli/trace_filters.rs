@@ -1,5 +1,5 @@
-use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::IMEState;
+use crate::hardware::types::hardware_mode::HardwareMode;
 
 use super::types::HeadlessOptions;
 
@@ -75,4 +75,3 @@ pub(super) fn should_trace_op(
 
     true
 }
-

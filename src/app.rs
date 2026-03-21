@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
@@ -11,13 +12,17 @@ use winit::{
 
 use crate::{
     audio::AudioOutput,
-    debug::{DebugViewerData, DebugWindowState, DisassemblyView, FpsTracker, RomInfoViewData, disassemble_around},
+    debug::{
+        DebugViewerData, DebugWindowState, DisassemblyView, FpsTracker, RomInfoViewData,
+        disassemble_around,
+    },
+    emu_thread::{EmuResponse, EmuThread},
     emulator::Emulator,
     graphics,
     graphics::Graphics,
     hardware::joypad::JoypadKey,
-    hardware::types::hardware_mode::HardwareMode,
     hardware::types::CPUState,
+    hardware::types::hardware_mode::HardwareMode,
     input::GamepadHandler,
     settings::Settings,
 };
@@ -26,7 +31,8 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.uncapped_speed;
     let mut app = App {
-        emulator,
+        emulator: emulator.map(|emu| Arc::new(Mutex::new(emu))),
+        emu_thread: None,
         audio: None,
         gamepad: GamepadHandler::new(),
         gfx: None,
@@ -41,6 +47,7 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         show_settings_window: false,
         debug_step_requested: false,
         debug_continue_requested: false,
+        latest_frame: None,
     };
 
     event_loop.run_app(&mut app)?;
@@ -48,7 +55,8 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
 }
 
 struct App {
-    emulator: Option<Emulator>,
+    emulator: Option<Arc<Mutex<Emulator>>>,
+    emu_thread: Option<EmuThread>,
     audio: Option<AudioOutput>,
     gamepad: Option<GamepadHandler>,
     gfx: Option<Graphics>,
@@ -63,6 +71,7 @@ struct App {
     show_settings_window: bool,
     debug_step_requested: bool,
     debug_continue_requested: bool,
+    latest_frame: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,6 +84,21 @@ enum SpeedMode {
 const GB_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
 
 impl App {
+    fn ensure_emu_thread(&mut self) {
+        if self.emu_thread.is_some() {
+            return;
+        }
+        if let Some(emu) = self.emulator.as_ref() {
+            self.emu_thread = Some(EmuThread::spawn(Arc::clone(emu)));
+        }
+    }
+
+    fn stop_emu_thread(&mut self) {
+        if let Some(mut thread) = self.emu_thread.take() {
+            thread.shutdown();
+        }
+    }
+
     fn speed_mode(&self) -> SpeedMode {
         if self.fast_forward_held {
             SpeedMode::FastForward
@@ -156,9 +180,10 @@ impl App {
             return;
         };
 
-        let Some(emu) = self.emulator.as_mut() else {
+        let Some(emu) = self.emulator.as_ref() else {
             return;
         };
+        let mut emu = emu.lock().expect("emulator mutex poisoned");
 
         match key_event.state {
             ElementState::Pressed => {
@@ -180,7 +205,9 @@ impl App {
                     emu.bus.io.apu.set_sample_rate(audio.sample_rate());
                 }
                 log::info!("Loaded ROM: {}", path.display());
-                self.emulator = Some(emu);
+                self.stop_emu_thread();
+                self.emulator = Some(Arc::new(Mutex::new(emu)));
+                self.ensure_emu_thread();
                 self.fps_tracker = FpsTracker::new();
                 self.last_frame_time = Instant::now();
             }
@@ -214,7 +241,8 @@ impl App {
             }
         }
 
-        if let (Some(gamepad), Some(emu)) = (&mut self.gamepad, &mut self.emulator) {
+        if let (Some(gamepad), Some(emu)) = (&mut self.gamepad, &self.emulator) {
+            let mut emu = emu.lock().expect("emulator mutex poisoned");
             for (key, pressed) in gamepad.poll() {
                 if pressed {
                     if emu.bus.io.joypad.key_down(key) {
@@ -251,9 +279,11 @@ impl App {
             }
         };
 
-        if let Some(emu) = &mut self.emulator {
-            let suspended = matches!(emu.cpu.running, CPUState::Suspended);
-            if suspended {
+        if let Some(emu) = &self.emulator {
+            let mut emu = emu.lock().expect("emulator mutex poisoned");
+            emu.bus.io.apu.debug_capture_enabled = self.debug_windows.show_apu_viewer;
+
+            if matches!(emu.cpu.running, CPUState::Suspended) {
                 if self.debug_continue_requested {
                     emu.debug.clear_hits();
                     emu.debug.break_on_next = false;
@@ -266,20 +296,29 @@ impl App {
                     self.debug_step_requested = false;
                 }
             }
+        }
 
-            if !matches!(emu.cpu.running, CPUState::Suspended) {
-                for _ in 0..frames_to_step {
-                    emu.step_frame();
-                    if matches!(emu.cpu.running, CPUState::Suspended) {
-                        break;
-                    }
-                }
+        if frames_to_step > 0 {
+            if let Some(thread) = &self.emu_thread {
+                thread.send_step_frames(frames_to_step);
             }
+        }
 
-            if let Some(audio) = &self.audio {
-                let samples = emu.bus.io.apu.drain_samples();
-                if !samples.is_empty() {
-                    audio.queue_samples(&samples, self.settings.master_volume);
+        if let Some(thread) = &self.emu_thread {
+            let fast_forward_active = matches!(self.speed_mode(), SpeedMode::FastForward);
+            while let Some(response) = thread.try_recv() {
+                match response {
+                    EmuResponse::FrameReady(frame) => self.latest_frame = Some(frame),
+                    EmuResponse::AudioSamples(samples) => {
+                        if let Some(audio) = &self.audio {
+                            audio.queue_samples(
+                                &samples,
+                                self.settings.master_volume,
+                                fast_forward_active,
+                                self.settings.mute_audio_during_fast_forward,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -288,82 +327,155 @@ impl App {
             self.fps_tracker.tick();
         }
 
-        let fb_copy = self.emulator.as_ref().map(|emu| emu.framebuffer().to_vec());
-
-        let debug_info = self.emulator.as_ref().map(|emu| {
-            let mut info = emu.snapshot();
-            info.fps = if self.settings.show_fps { self.fps_tracker.fps() } else { 0.0 };
-            info.speed_mode_label = self.speed_mode_label();
-            info
-        });
-
-        let viewer_data = self.emulator.as_ref().map(|emu| DebugViewerData {
-            vram: emu.vram().to_vec(),
-            oam: emu.oam().to_vec(),
-            apu_regs: emu.bus.io.apu.regs_snapshot(),
-            apu_wave_ram: emu.bus.io.apu.wave_ram_snapshot(),
-            apu_nr52: emu.bus.io.apu.nr52_raw(),
-            apu_channel_samples: [
-                emu.bus.io.apu.channel_debug_samples_ordered(0),
-                emu.bus.io.apu.channel_debug_samples_ordered(1),
-                emu.bus.io.apu.channel_debug_samples_ordered(2),
-                emu.bus.io.apu.channel_debug_samples_ordered(3),
-            ],
-            apu_master_samples: emu.bus.io.apu.master_debug_samples_ordered(),
-            apu_channel_muted: emu.bus.io.apu.channel_mutes(),
-            ppu: emu.ppu_registers(),
-            cgb_mode: matches!(emu.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble),
-            bg_palette_ram: emu.bus.io.ppu.bg_palette_ram,
-            obj_palette_ram: emu.bus.io.ppu.obj_palette_ram,
-        });
-
-        let disassembly_view = self.emulator.as_ref().map(|emu| {
-            let mut breakpoints: Vec<u16> = emu.debug.breakpoints.iter().copied().collect();
-            breakpoints.sort_unstable();
-            DisassemblyView {
-                pc: emu.cpu.pc,
-                lines: disassemble_around(|addr| emu.bus.read_byte(addr), emu.cpu.pc, 12, 26),
-                breakpoints,
+        if let Some(frame) = self.latest_frame.take() {
+            if let Some(gfx) = self.gfx.as_mut() {
+                gfx.upload_framebuffer(&frame);
             }
-        });
-
-        let rom_info_view = self.emulator.as_ref().map(|emu| {
-            let header = emu.rom_info();
-            let rom_bytes = emu.bus.cartridge.rom_bytes();
-            let manufacturer = header
-                .manufacturer_code
-                .as_deref()
-                .unwrap_or("N/A")
-                .to_string();
-            RomInfoViewData {
-                title: header.title.clone(),
-                manufacturer,
-                publisher: header.publisher().to_string(),
-                cartridge_type: format!("{:?}", header.cartridge_type),
-                rom_size: format!("{:?}", header.rom_size),
-                ram_size: format!("{:?}", header.ram_size),
-                cgb_flag: header.cgb_flag,
-                sgb_flag: header.sgb_flag,
-                is_cgb_compatible: header.is_cgb_compatible,
-                is_cgb_exclusive: header.is_cgb_exclusive,
-                is_sgb_supported: header.is_sgb_supported,
-                header_checksum_valid: header.verify_header_checksum(rom_bytes),
-                global_checksum_valid: header.verify_global_checksum(rom_bytes),
-                hardware_mode: emu.hardware_mode,
-                cartridge_state: emu.cartridge_state(),
-            }
-        });
-
-        let memory_page = self
-            .emulator
-            .as_ref()
-            .map(|emu| emu.read_memory_range(self.debug_windows.memory_view_start, 256));
-
-        let Some(gfx) = self.gfx.as_mut() else { return; };
-
-        if let Some(fb) = &fb_copy {
-            gfx.upload_framebuffer(fb);
         }
+
+        let any_viewer_open = self.debug_windows.any_viewer_open();
+        let any_vram_viewer_open = self.debug_windows.any_vram_viewer_open();
+        let show_apu_viewer = self.debug_windows.show_apu_viewer;
+        let show_disassembler = self.debug_windows.show_disassembler;
+        let show_rom_info = self.debug_windows.show_rom_info;
+        let show_memory_viewer = self.debug_windows.show_memory_viewer;
+
+        let (debug_info, viewer_data, disassembly_view, rom_info_view, memory_page) =
+            if let Some(emu) = self.emulator.as_ref() {
+                let emu = emu.lock().expect("emulator mutex poisoned");
+
+                let debug_info = {
+                    let mut info = emu.snapshot();
+                    info.fps = if self.settings.show_fps {
+                        self.fps_tracker.fps()
+                    } else {
+                        0.0
+                    };
+                    info.speed_mode_label = self.speed_mode_label();
+                    Some(info)
+                };
+
+                let viewer_data = if any_viewer_open {
+                    Some(DebugViewerData {
+                        vram: if any_vram_viewer_open {
+                            emu.vram().to_vec()
+                        } else {
+                            Vec::new()
+                        },
+                        oam: emu.oam().to_vec(),
+                        apu_regs: if show_apu_viewer {
+                            emu.bus.io.apu.regs_snapshot()
+                        } else {
+                            [0; 0x17]
+                        },
+                        apu_wave_ram: if show_apu_viewer {
+                            emu.bus.io.apu.wave_ram_snapshot()
+                        } else {
+                            [0; 0x10]
+                        },
+                        apu_nr52: if show_apu_viewer {
+                            emu.bus.io.apu.nr52_raw()
+                        } else {
+                            0
+                        },
+                        apu_channel_samples: if show_apu_viewer {
+                            [
+                                emu.bus.io.apu.channel_debug_samples_ordered(0),
+                                emu.bus.io.apu.channel_debug_samples_ordered(1),
+                                emu.bus.io.apu.channel_debug_samples_ordered(2),
+                                emu.bus.io.apu.channel_debug_samples_ordered(3),
+                            ]
+                        } else {
+                            [[0.0; 512]; 4]
+                        },
+                        apu_master_samples: if show_apu_viewer {
+                            emu.bus.io.apu.master_debug_samples_ordered()
+                        } else {
+                            [0.0; 512]
+                        },
+                        apu_channel_muted: if show_apu_viewer {
+                            emu.bus.io.apu.channel_mutes()
+                        } else {
+                            [false; 4]
+                        },
+                        ppu: emu.ppu_registers(),
+                        cgb_mode: matches!(
+                            emu.hardware_mode,
+                            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+                        ),
+                        bg_palette_ram: emu.bus.io.ppu.bg_palette_ram,
+                        obj_palette_ram: emu.bus.io.ppu.obj_palette_ram,
+                    })
+                } else {
+                    None
+                };
+
+                let disassembly_view = if show_disassembler {
+                    let mut breakpoints: Vec<u16> = emu.debug.breakpoints.iter().copied().collect();
+                    breakpoints.sort_unstable();
+                    Some(DisassemblyView {
+                        pc: emu.cpu.pc,
+                        lines: disassemble_around(
+                            |addr| emu.bus.read_byte(addr),
+                            emu.cpu.pc,
+                            12,
+                            26,
+                        ),
+                        breakpoints,
+                    })
+                } else {
+                    None
+                };
+
+                let rom_info_view = if show_rom_info {
+                    let header = emu.rom_info();
+                    let rom_bytes = emu.bus.cartridge.rom_bytes();
+                    let manufacturer = header
+                        .manufacturer_code
+                        .as_deref()
+                        .unwrap_or("N/A")
+                        .to_string();
+                    Some(RomInfoViewData {
+                        title: header.title.clone(),
+                        manufacturer,
+                        publisher: header.publisher().to_string(),
+                        cartridge_type: format!("{:?}", header.cartridge_type),
+                        rom_size: format!("{:?}", header.rom_size),
+                        ram_size: format!("{:?}", header.ram_size),
+                        cgb_flag: header.cgb_flag,
+                        sgb_flag: header.sgb_flag,
+                        is_cgb_compatible: header.is_cgb_compatible,
+                        is_cgb_exclusive: header.is_cgb_exclusive,
+                        is_sgb_supported: header.is_sgb_supported,
+                        header_checksum_valid: header.verify_header_checksum(rom_bytes),
+                        global_checksum_valid: header.verify_global_checksum(rom_bytes),
+                        hardware_mode: emu.hardware_mode,
+                        cartridge_state: emu.cartridge_state(),
+                    })
+                } else {
+                    None
+                };
+
+                let memory_page = if show_memory_viewer {
+                    Some(emu.read_memory_range(self.debug_windows.memory_view_start, 256))
+                } else {
+                    None
+                };
+
+                (
+                    debug_info,
+                    viewer_data,
+                    disassembly_view,
+                    rom_info_view,
+                    memory_page,
+                )
+            } else {
+                (None, None, None, None, None)
+            };
+
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
 
         let previous_settings = self.settings.clone();
         match gfx.render(
@@ -380,7 +492,8 @@ impl App {
                 if result.open_file_requested {
                     self.open_file_dialog();
                 }
-                if let Some(emu) = self.emulator.as_mut() {
+                if let Some(emu) = self.emulator.as_ref() {
+                    let mut emu = emu.lock().expect("emulator mutex poisoned");
                     if let Some(addr) = result.debug_actions.add_breakpoint {
                         emu.debug.add_breakpoint(addr);
                     }
@@ -435,13 +548,16 @@ impl ApplicationHandler for App {
 
         if self.audio.is_none() {
             self.audio = AudioOutput::new();
-            if let (Some(audio), Some(emu)) = (self.audio.as_ref(), self.emulator.as_mut()) {
+            if let (Some(audio), Some(emu)) = (self.audio.as_ref(), self.emulator.as_ref()) {
+                let mut emu = emu.lock().expect("emulator mutex poisoned");
                 emu.bus.io.apu.set_sample_rate(audio.sample_rate());
             }
         }
 
-        let mut gfx = pollster::block_on(Graphics::new(event_loop))
-            .expect("failed to initialize graphics");
+        self.ensure_emu_thread();
+
+        let mut gfx =
+            pollster::block_on(Graphics::new(event_loop)).expect("failed to initialize graphics");
         gfx.set_uncapped_present_mode(self.uncapped_speed);
         self.window_id = Some(gfx.window().id());
         self.gfx = Some(gfx);
@@ -472,7 +588,10 @@ impl ApplicationHandler for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.stop_emu_thread();
+                event_loop.exit()
+            }
             WindowEvent::Resized(size) => {
                 let gfx = self.gfx.as_mut().expect("graphics initialized");
                 gfx.resize(size.width, size.height)
@@ -484,6 +603,7 @@ impl ApplicationHandler for App {
         }
 
         if self.exit_requested {
+            self.stop_emu_thread();
             event_loop.exit();
         }
     }

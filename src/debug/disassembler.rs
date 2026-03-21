@@ -300,4 +300,3 @@ fn fmt_signed(value: i8) -> String {
 fn fmt_rel(offset: i8, target: u16) -> String {
     format!("{} (${:04X})", fmt_signed(offset), target)
 }
-

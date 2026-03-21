@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 
+const NORMAL_QUEUE_MS: usize = 200;
+const FAST_FORWARD_QUEUE_MS: usize = 40;
+
 pub(crate) struct AudioOutput {
     _stream: cpal::Stream,
     buffer: Arc<Mutex<VecDeque<f32>>>,
@@ -46,19 +49,35 @@ impl AudioOutput {
         self.sample_rate
     }
 
-    pub(crate) fn queue_samples(&self, samples: &[f32], master_volume: f32) {
+    pub(crate) fn queue_samples(
+        &self,
+        samples: &[f32],
+        master_volume: f32,
+        fast_forward_active: bool,
+        mute_during_fast_forward: bool,
+    ) {
         let mut buf = self.buffer.lock().expect("audio queue mutex poisoned");
+        if fast_forward_active && mute_during_fast_forward {
+            buf.clear();
+            return;
+        }
+
         let gain = master_volume.clamp(0.0, 1.0);
+
+        buf.reserve(samples.len());
         for sample in samples {
             buf.push_back(*sample * gain);
         }
 
-        let max_samples = self.sample_rate as usize * 4;
+        let queue_ms = if fast_forward_active {
+            FAST_FORWARD_QUEUE_MS
+        } else {
+            NORMAL_QUEUE_MS
+        };
+        let max_samples = (self.sample_rate as usize * queue_ms / 1000).max(2);
         if buf.len() > max_samples {
             let trim = buf.len() - max_samples;
-            for _ in 0..trim {
-                let _ = buf.pop_front();
-            }
+            drop(buf.drain(..trim));
         }
     }
 
@@ -145,5 +164,3 @@ impl AudioOutput {
         }
     }
 }
-
-

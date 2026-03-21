@@ -23,7 +23,8 @@ pub(crate) fn draw_memory_viewer(
                 ui.label("Address:");
                 let response = ui.text_edit_singleline(&mut state.memory_jump_input);
                 let input_has_focus = response.has_focus();
-                let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let pressed_enter =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui.button("Go").clicked() || pressed_enter {
                     if let Some(addr) = parse_u16_hex(&state.memory_jump_input) {
                         state.memory_view_start = addr & 0xFFF0;
@@ -41,13 +42,15 @@ pub(crate) fn draw_memory_viewer(
                     state.memory_view_start = state.memory_view_start.saturating_sub(0x10);
                 }
                 if ui.button("+0x10").clicked() {
-                    state.memory_view_start = state.memory_view_start.saturating_add(0x10).min(MAX_START);
+                    state.memory_view_start =
+                        state.memory_view_start.saturating_add(0x10).min(MAX_START);
                 }
                 if ui.button("-0x100").clicked() {
                     state.memory_view_start = state.memory_view_start.saturating_sub(0x100);
                 }
                 if ui.button("+0x100").clicked() {
-                    state.memory_view_start = state.memory_view_start.saturating_add(0x100).min(MAX_START);
+                    state.memory_view_start =
+                        state.memory_view_start.saturating_add(0x100).min(MAX_START);
                 }
             });
 
@@ -56,7 +59,8 @@ pub(crate) fn draw_memory_viewer(
                 if scroll >= 1.0 {
                     state.memory_view_start = state.memory_view_start.saturating_sub(0x10);
                 } else if scroll <= -1.0 {
-                    state.memory_view_start = state.memory_view_start.saturating_add(0x10).min(MAX_START);
+                    state.memory_view_start =
+                        state.memory_view_start.saturating_add(0x10).min(MAX_START);
                 }
             }
 
@@ -106,14 +110,18 @@ pub(crate) fn draw_memory_viewer(
                         #[cfg(not(debug_assertions))]
                         {
                             if flash > 0 {
-                                ui.colored_label(egui::Color32::LIGHT_RED, format!("{:02X}", value));
+                                ui.colored_label(
+                                    egui::Color32::LIGHT_RED,
+                                    format!("{:02X}", value),
+                                );
                             } else {
                                 ui.monospace(format!("{:02X}", value));
                             }
                         }
                     }
 
-                    let ascii: String = memory_page[row_start..(row_start + BYTES_PER_ROW).min(memory_page.len())]
+                    let ascii: String = memory_page
+                        [row_start..(row_start + BYTES_PER_ROW).min(memory_page.len())]
                         .iter()
                         .map(|(_, b)| printable_ascii(*b))
                         .collect();
@@ -162,7 +170,9 @@ fn sync_flash_state(state: &mut DebugWindowState, memory_page: &[(u16, u8)]) {
         state.memory_flash_ticks = vec![0; PAGE_SIZE];
     }
 
-    if state.memory_prev_start == Some(state.memory_view_start) && state.memory_prev_bytes.len() == current.len() {
+    if state.memory_prev_start == Some(state.memory_view_start)
+        && state.memory_prev_bytes.len() == current.len()
+    {
         for (i, value) in current.iter().enumerate() {
             if *value != state.memory_prev_bytes[i] {
                 state.memory_flash_ticks[i] = 12;
@@ -186,7 +196,9 @@ fn parse_u16_hex(input: &str) -> Option<u16> {
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
-    u16::from_str_radix(hex, 16).ok().or_else(|| trimmed.parse::<u16>().ok())
+    u16::from_str_radix(hex, 16)
+        .ok()
+        .or_else(|| trimmed.parse::<u16>().ok())
 }
 
 fn parse_u8_hex(input: &str) -> Option<u8> {
@@ -195,7 +207,9 @@ fn parse_u8_hex(input: &str) -> Option<u8> {
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
-    u8::from_str_radix(hex, 16).ok().or_else(|| trimmed.parse::<u8>().ok())
+    u8::from_str_radix(hex, 16)
+        .ok()
+        .or_else(|| trimmed.parse::<u8>().ok())
 }
 
 fn printable_ascii(byte: u8) -> char {
@@ -205,4 +219,3 @@ fn printable_ascii(byte: u8) -> char {
         '.'
     }
 }
-

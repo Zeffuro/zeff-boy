@@ -28,7 +28,9 @@ fn parse_u8_arg(value: &str, flag: &str) -> Result<u8, Box<dyn std::error::Error
 
 fn parse_pc_range_arg(value: &str) -> Result<(u16, u16), Box<dyn std::error::Error>> {
     let Some((start_raw, end_raw)) = value.split_once('-') else {
-        return Err("--trace-pc-range must be start-end (decimal or hex, e.g. 0x0100-0x01FF)".into());
+        return Err(
+            "--trace-pc-range must be start-end (decimal or hex, e.g. 0x0100-0x01FF)".into(),
+        );
     };
     let start = parse_u16_arg(start_raw, "--trace-pc-range")?;
     let end = parse_u16_arg(end_raw, "--trace-pc-range")?;
@@ -145,7 +147,10 @@ pub(crate) fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
     Ok(CliArgs {
         rom_path,
         mode_override,
-        headless: if headless_enabled { Some(headless) } else { None },
+        headless: if headless_enabled {
+            Some(headless)
+        } else {
+            None
+        },
     })
 }
-

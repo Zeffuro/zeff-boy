@@ -178,4 +178,3 @@ mod tests {
         assert!(feed_packet(&mut state, packet).is_none());
     }
 }
-

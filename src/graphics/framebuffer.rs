@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::graphics::gpu::texture_sampler_bind_group_layout;
+use anyhow::Result;
 
 pub(crate) struct FramebufferRenderer {
     screen_texture: wgpu::Texture,
@@ -51,16 +51,17 @@ impl FramebufferRenderer {
 
         let screen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
-                include_str!("../shaders/screen.wgsl"),
-            )),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                "../shaders/screen.wgsl"
+            ))),
         });
 
-        let screen_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("screen pipeline layout"),
-            bind_group_layouts: &[Some(&screen_bgl)],
-            immediate_size: 0,
-        });
+        let screen_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("screen pipeline layout"),
+                bind_group_layouts: &[Some(&screen_bgl)],
+                immediate_size: 0,
+            });
 
         let screen_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("screen pipeline"),
@@ -124,4 +125,3 @@ impl FramebufferRenderer {
         pass.draw(0..3, 0..1);
     }
 }
-

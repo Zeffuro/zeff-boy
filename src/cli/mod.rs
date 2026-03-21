@@ -6,4 +6,3 @@ mod types;
 
 pub(crate) use headless_runner::run_headless;
 pub(crate) use parse::parse_args;
-

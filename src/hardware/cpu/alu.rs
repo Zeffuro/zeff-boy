@@ -20,7 +20,12 @@ impl CPU {
         let result = a + val + carry;
 
         self.a = result as u8;
-        self.set_flags(self.a == 0, false, (a ^ val ^ result) & 0x10 != 0, result > 0xFF);
+        self.set_flags(
+            self.a == 0,
+            false,
+            (a ^ val ^ result) & 0x10 != 0,
+            result > 0xFF,
+        );
     }
 
     pub(crate) fn sbc(&mut self, value: u8) {
@@ -79,4 +84,3 @@ impl CPU {
         self.set_flags(self.a == 0, false, false, false);
     }
 }
-

@@ -42,4 +42,3 @@ impl SpriteEntry {
         ((self.flags >> 3) & 0x01) as usize
     }
 }
-

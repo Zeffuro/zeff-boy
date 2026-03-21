@@ -25,4 +25,3 @@ pub(crate) const CGB_FLAG_EXCLUSIVE: u8 = 0xC0;
 pub(crate) const SGB_FLAG_SUPPORTED: u8 = 0x03;
 pub(crate) const OVERSEAS_CODE: u8 = 0x01;
 pub(crate) const NEW_LICENSEE_CODE_MAGIC: u8 = 0x33;
-

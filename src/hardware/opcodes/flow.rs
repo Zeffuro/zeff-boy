@@ -1,14 +1,13 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
-use crate::hardware::types::{CPUState, IMEState};
 #[cfg(test)]
 use crate::hardware::rom_header::RomHeader;
 #[cfg(test)]
 use crate::hardware::types::hardware_mode::HardwareMode;
+use crate::hardware::types::{CPUState, IMEState};
 
 // 0x00: NOP - No Operation
-pub(crate) fn nop(_: &mut CPU, _: &mut Bus) {
-}
+pub(crate) fn nop(_: &mut CPU, _: &mut Bus) {}
 
 // 0x10: STOP - Stop CPU
 pub(crate) fn stop(cpu: &mut CPU, bus: &mut Bus) {
@@ -91,7 +90,6 @@ pub(crate) fn jp_nz_a16(cpu: &mut CPU, bus: &mut Bus) {
         cpu.tick_internal_timed(bus, 4);
     }
 }
-
 
 // 0xC3: JP a16 - Jump to address
 pub(crate) fn jp_a16(cpu: &mut CPU, bus: &mut Bus) {
@@ -381,4 +379,3 @@ mod tests {
         assert_eq!(cpu.pc, 0xC001);
     }
 }
-

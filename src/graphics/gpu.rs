@@ -121,4 +121,3 @@ pub(crate) fn texture_sampler_bind_group_layout(
         ],
     })
 }
-

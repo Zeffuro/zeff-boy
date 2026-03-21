@@ -94,7 +94,12 @@ pub(super) fn format_op_tail_line(
     )
 }
 
-pub(super) fn format_headless_summary(frames: u64, cycles: u64, pc: u16, serial_bytes: usize) -> String {
+pub(super) fn format_headless_summary(
+    frames: u64,
+    cycles: u64,
+    pc: u16,
+    serial_bytes: usize,
+) -> String {
     format!(
         "[headless] frames={} cycles={} pc={:04X} serial_bytes={}",
         frames, cycles, pc, serial_bytes
@@ -111,4 +116,3 @@ pub(super) fn format_headless_breakpoint(pc: u16, cycles: u64, a: u8, f: u8, sp:
         pc, cycles, a, f, sp
     )
 }
-

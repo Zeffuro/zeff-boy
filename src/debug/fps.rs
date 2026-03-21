@@ -18,7 +18,11 @@ impl FpsTracker {
         self.timestamps.push_back(now);
 
         while self.timestamps.len() > 1 {
-            if now.duration_since(*self.timestamps.front().unwrap()).as_secs_f64() > 1.0 {
+            if now
+                .duration_since(*self.timestamps.front().unwrap())
+                .as_secs_f64()
+                > 1.0
+            {
                 self.timestamps.pop_front();
             } else {
                 break;
@@ -39,4 +43,3 @@ impl FpsTracker {
         (self.timestamps.len() - 1) as f64 / elapsed
     }
 }
-

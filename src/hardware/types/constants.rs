@@ -34,7 +34,6 @@ pub(crate) const OAM_SIZE: usize = 0xA0;
 pub(crate) const IO_SIZE: usize = 0x80;
 pub(crate) const HRAM_SIZE: usize = 0x7F;
 
-
 pub(crate) const SERIAL_SB: u16 = 0xFF01;
 pub(crate) const SERIAL_SC: u16 = 0xFF02;
 pub(crate) const TIMER_DIV: u16 = 0xFF04;
@@ -78,4 +77,3 @@ pub(crate) const INT_STAT: u16 = 0x0048;
 pub(crate) const INT_TIMER: u16 = 0x0050;
 pub(crate) const INT_SERIAL: u16 = 0x0058;
 pub(crate) const INT_JOYPAD: u16 = 0x0060;
-

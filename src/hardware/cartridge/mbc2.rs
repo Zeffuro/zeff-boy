@@ -1,5 +1,5 @@
-use super::{build_debug_info, read_banked_rom, read_fixed_rom};
 use super::CartridgeDebugInfo;
+use super::{build_debug_info, read_banked_rom, read_fixed_rom};
 
 pub(crate) struct Mbc2 {
     rom: Vec<u8>,
@@ -67,4 +67,3 @@ impl Mbc2 {
         build_debug_info("MBC2", self.rom_bank, 0, self.ram_enable, None)
     }
 }
-

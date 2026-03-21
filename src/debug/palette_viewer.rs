@@ -1,4 +1,4 @@
-use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, PALETTE_COLORS};
+use crate::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba};
 
 fn draw_palette_row(ui: &mut egui::Ui, label: &str, value: u8) {
     ui.label(format!("{} ({:02X})", label, value));
@@ -12,15 +12,23 @@ fn draw_palette_row(ui: &mut egui::Ui, label: &str, value: u8) {
                 egui::Color32::BLACK
             };
             egui::Frame::NONE.fill(color).show(ui, |ui| {
-                ui.add_sized([36.0, 24.0], egui::Label::new(
-                    egui::RichText::new(format!("{}", color_id)).color(text_color),
-                ));
+                ui.add_sized(
+                    [36.0, 24.0],
+                    egui::Label::new(
+                        egui::RichText::new(format!("{}", color_id)).color(text_color),
+                    ),
+                );
             });
         }
     });
 }
 
-fn draw_cgb_palette_section(ui: &mut egui::Ui, title: &str, row_prefix: &str, palette_ram: &[u8; 64]) {
+fn draw_cgb_palette_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    row_prefix: &str,
+    palette_ram: &[u8; 64],
+) {
     ui.separator();
     ui.label(title);
     for palette in 0u8..8 {
@@ -61,7 +69,8 @@ pub(crate) fn draw_palette_viewer(
             ui.label("Base DMG shades:");
             ui.horizontal(|ui| {
                 for rgba in PALETTE_COLORS {
-                    let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+                    let color =
+                        egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
                     egui::Frame::NONE.fill(color).show(ui, |ui| {
                         ui.add_space(24.0);
                         ui.add_sized([24.0, 16.0], egui::Label::new(""));
@@ -75,4 +84,3 @@ pub(crate) fn draw_palette_viewer(
             }
         });
 }
-

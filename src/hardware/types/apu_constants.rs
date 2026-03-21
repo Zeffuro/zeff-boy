@@ -47,4 +47,3 @@ pub(crate) const NR44_READ_MASK: u8 = 0xBF;
 pub(crate) const NR50_READ_MASK: u8 = 0x00;
 pub(crate) const NR51_READ_MASK: u8 = 0x00;
 pub(crate) const NR52_READ_MASK: u8 = 0x70;
-

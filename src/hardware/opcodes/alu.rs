@@ -238,7 +238,6 @@ pub(crate) fn ccf(cpu: &mut CPU, _bus: &mut Bus) {
     cpu.set_c(!cpu.get_c());
 }
 
-
 // 0x80: ADD B
 pub(crate) fn add_b(cpu: &mut CPU, _bus: &mut Bus) {
     cpu.add(cpu.b);

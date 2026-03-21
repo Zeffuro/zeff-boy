@@ -37,4 +37,3 @@ pub(crate) fn draw_oam_viewer(ctx: &egui::Context, oam: &[u8], open: &mut bool) 
             });
         });
 }
-
