@@ -1,6 +1,6 @@
 /// RAM size from header byte (0x149).
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum RamSize {
+pub(crate) enum RamSize {
     None,        // $00
     Unused,      // $01 (not used, historically error)
     Kb8,         // $02 — 8 KiB (1 bank)
@@ -11,7 +11,7 @@ pub enum RamSize {
 }
 
 impl RamSize {
-    pub fn from_byte(byte: u8) -> Self {
+    pub(crate) fn from_byte(byte: u8) -> Self {
         match byte {
             0x00 => RamSize::None,
             0x01 => RamSize::Unused,
@@ -23,7 +23,7 @@ impl RamSize {
         }
     }
 
-    pub fn size_bytes(&self) -> usize {
+    pub(crate) fn size_bytes(&self) -> usize {
         match self {
             RamSize::None | RamSize::Unused => 0,
             RamSize::Kb8 => 8 * 1024,
@@ -34,7 +34,7 @@ impl RamSize {
         }
     }
 
-    pub fn banks(&self) -> usize {
+    pub(crate) fn banks(&self) -> usize {
         match self {
             RamSize::None | RamSize::Unused => 0,
             RamSize::Kb8 => 1,

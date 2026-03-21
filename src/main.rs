@@ -1,37 +1,27 @@
 mod hardware;
-
-use hardware::cpu::CPU;
-use hardware::mmu::MMU;
 mod rom_loader;
+mod graphics;
+mod app;
+mod emulator;
+mod debug;
 
 use std::path::Path;
 use env_logger::Env;
+use crate::emulator::Emulator;
 
-const ROM: &str = "test-roms/gb-test-roms/cpu_instrs/cpu_instrs.gb";
-
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    let rom_path = Path::new(ROM);
-    let rom = rom_loader::load_rom(rom_path).unwrap();
+    let args: Vec<String> = std::env::args().collect();
 
-    log::info!("ROM loaded: {} bytes", rom.len());
-
-    let mut mmu = match MMU::new(rom) {
-        Ok(mmu) => mmu,
-        Err(e) => {
-            log::error!("Failed to parse ROM header: {}", e);
-            return;
-        }
+    let emulator = if args.len() >= 2 {
+        let path = Path::new(&args[1]);
+        Some(Emulator::from_rom(path)?)
+    } else {
+        None
     };
 
-    log::info!("Game title: {}", mmu.header.title);
-    log::info!("Cartridge type: {:?}", mmu.header.cartridge_type);
-    log::info!("Publisher: {}", mmu.header.publisher()); // as implemented above
+    app::run(emulator)?;
 
-    let mut cpu = CPU::new(&mut mmu);
-
-    for _ in 0..100 {
-        cpu.step();
-    }
+    Ok(())
 }

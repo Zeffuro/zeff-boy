@@ -11,3 +11,8 @@ log = "0.4.29"
 wgpu = "29.0.0"
 winit = "0.30.13"
 phf = { version = "0.13.1", features = ["macros"] }
+pollster = "0.4.0"
+egui = "0.33.3"
+egui-winit = "0.33.3"
+bytemuck = { version = "1.24", features = ["derive"] }
+rfd = "0.17.2"

@@ -1,5 +1,11 @@
-pub mod cpu;
-pub mod mmu;
-pub mod opcodes;
-mod rom_header;
-pub mod types;
+pub(crate) mod cpu;
+pub(crate) mod bus;
+pub(crate) mod opcodes;
+pub(crate) mod rom_header;
+pub(crate) mod types;
+pub(crate) mod ppu;
+mod timer;
+mod apu;
+mod io;
+mod serial;
+pub(crate) mod cartridge;

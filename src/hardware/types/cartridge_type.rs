@@ -1,5 +1,5 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum CartridgeType {
+pub(crate) enum CartridgeType {
     RomOnly,                    // $00
     Mbc1,                       // $01
     Mbc1Ram,                    // $02
@@ -32,7 +32,7 @@ pub enum CartridgeType {
 }
 
 impl CartridgeType {
-    pub fn from_byte(byte: u8) -> Self {
+    pub(crate) fn from_byte(byte: u8) -> Self {
         match byte {
             0x00 => CartridgeType::RomOnly,
             0x01 => CartridgeType::Mbc1,

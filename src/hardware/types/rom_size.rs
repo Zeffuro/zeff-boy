@@ -1,5 +1,5 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum RomSize {
+pub(crate) enum RomSize {
     Kb32,     // $00
     Kb64,     // $01
     Kb128,    // $02
@@ -16,7 +16,7 @@ pub enum RomSize {
 }
 
 impl RomSize {
-    pub fn from_byte(byte: u8) -> Self {
+    pub(crate) fn from_byte(byte: u8) -> Self {
         match byte {
             0x00 => RomSize::Kb32,
             0x01 => RomSize::Kb64,
@@ -34,7 +34,7 @@ impl RomSize {
         }
     }
 
-    pub fn size_bytes(&self) -> usize {
+    pub(crate) fn size_bytes(&self) -> usize {
         match self {
             RomSize::Kb32 => 32 * 1024,
             RomSize::Kb64 => 64 * 1024,
@@ -52,7 +52,7 @@ impl RomSize {
         }
     }
 
-    pub fn banks(&self) -> usize {
+    pub(crate) fn banks(&self) -> usize {
         match self {
             RomSize::Kb32 => 2,
             RomSize::Kb64 => 4,
