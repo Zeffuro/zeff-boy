@@ -1,3 +1,6 @@
+use crate::save_state::{StateReader, StateWriter};
+use anyhow::Result;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum JoypadKey {
     Right,
@@ -66,6 +69,18 @@ impl Joypad {
     pub(crate) fn key_up(&mut self, key: JoypadKey) {
         let _ = self.set_key_state(key, false);
     }
+    
+    pub(crate) fn apply_pressed_masks(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
+        let old_buttons = self.buttons;
+        let old_dpad = self.dpad;
+
+        self.buttons = (!buttons_pressed) & 0x0F;
+        self.dpad = (!dpad_pressed) & 0x0F;
+
+        let newly_pressed_buttons = old_buttons & !self.buttons;
+        let newly_pressed_dpad = old_dpad & !self.dpad;
+        (newly_pressed_buttons | newly_pressed_dpad) != 0
+    }
 
     fn set_key_state(&mut self, key: JoypadKey, pressed: bool) -> bool {
         let (group, bit) = match key {
@@ -89,5 +104,21 @@ impl Joypad {
             *group |= mask;
             false
         }
+    }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(self.buttons);
+        writer.write_u8(self.dpad);
+        writer.write_bool(self.select_buttons);
+        writer.write_bool(self.select_dpad);
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        Ok(Self {
+            buttons: reader.read_u8()?,
+            dpad: reader.read_u8()?,
+            select_buttons: reader.read_bool()?,
+            select_dpad: reader.read_bool()?,
+        })
     }
 }

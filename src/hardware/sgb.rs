@@ -1,3 +1,6 @@
+use crate::save_state::{StateReader, StateWriter};
+use anyhow::Result;
+
 #[derive(Clone, Copy)]
 pub(crate) enum SgbEvent {
     Pal01([u16; 4], [u16; 4]),
@@ -126,6 +129,30 @@ impl SgbState {
                 None
             }
         }
+    }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_bool(self.collecting);
+        writer.write_u8(self.bit_count);
+        writer.write_u8(self.current_byte);
+        writer.write_bytes(&self.packet);
+        writer.write_u64(self.packet_pos as u64);
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        let collecting = reader.read_bool()?;
+        let bit_count = reader.read_u8()?;
+        let current_byte = reader.read_u8()?;
+        let mut packet = [0u8; 16];
+        reader.read_exact(&mut packet)?;
+        let packet_pos = reader.read_u64()? as usize;
+        Ok(Self {
+            collecting,
+            bit_count,
+            current_byte,
+            packet,
+            packet_pos: packet_pos.min(16),
+        })
     }
 }
 

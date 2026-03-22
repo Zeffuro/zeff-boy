@@ -1,5 +1,7 @@
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::timer_clock::TimerClock;
+use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
+use anyhow::Result;
 
 pub(crate) struct Timer {
     pub(crate) div: u8,
@@ -94,5 +96,39 @@ impl Timer {
         }
 
         interrupt
+    }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(self.div);
+        writer.write_u8(self.tima);
+        writer.write_u8(self.tma);
+        writer.write_u8(self.tac);
+        writer.write_u16(self.sys_counter);
+        writer.write_u8(encode_hardware_mode(self.mode));
+        writer.write_bool(self.prev_bit);
+        writer.write_bool(self.overflow_pending);
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        Ok(Self {
+            div: reader.read_u8()?,
+            tima: reader.read_u8()?,
+            tma: reader.read_u8()?,
+            tac: reader.read_u8()?,
+            sys_counter: reader.read_u16()?,
+            mode: decode_hardware_mode(reader.read_u8()?)?,
+            prev_bit: reader.read_bool()?,
+            overflow_pending: reader.read_bool()?,
+        })
+    }
+}
+
+fn encode_hardware_mode(mode: HardwareMode) -> u8 {
+    match mode {
+        HardwareMode::DMG => 0,
+        HardwareMode::SGB1 => 1,
+        HardwareMode::SGB2 => 2,
+        HardwareMode::CGBNormal => 3,
+        HardwareMode::CGBDouble => 4,
     }
 }

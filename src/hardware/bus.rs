@@ -4,8 +4,10 @@ use crate::hardware::rom_header::RomHeader;
 use crate::hardware::sgb::SgbEvent;
 use crate::hardware::types::constants::*;
 use crate::hardware::types::hardware_mode::HardwareMode;
+use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
 use anyhow::Result;
 use log::warn;
+
 pub(crate) struct Bus {
     pub(crate) cartridge: Cartridge,
     pub(crate) hardware_mode: HardwareMode,
@@ -144,6 +146,99 @@ impl Bus {
             _ => 0x7E,
         };
         true
+    }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(encode_hardware_mode(self.hardware_mode));
+        self.cartridge.write_state(writer);
+        writer.write_bytes(&self.vram);
+        writer.write_bytes(&self.wram);
+        writer.write_u8(self.vram_bank);
+        writer.write_u8(self.wram_bank);
+        writer.write_u8(self.key1);
+        writer.write_u8(self.hdma1);
+        writer.write_u8(self.hdma2);
+        writer.write_u8(self.hdma3);
+        writer.write_u8(self.hdma4);
+        writer.write_u8(self.hdma5);
+        writer.write_bool(self.hdma_active);
+        writer.write_bool(self.hdma_hblank);
+        writer.write_u8(self.hdma_blocks_left);
+        writer.write_bool(self.oam_dma_active);
+        writer.write_u16(self.oam_dma_source_base);
+        writer.write_u16(self.oam_dma_index);
+        writer.write_u64(self.oam_dma_t_cycle_accum);
+        writer.write_bytes(&self.oam);
+        writer.write_bytes(&self.io_bank);
+        writer.write_bytes(&self.hram);
+        writer.write_u8(self.ie);
+        writer.write_u8(self.if_reg);
+        self.io.write_state(writer);
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        let hardware_mode = decode_hardware_mode(reader.read_u8()?)?;
+        let cartridge = Cartridge::read_state(reader)?;
+
+        let mut bus = Self {
+            cartridge,
+            hardware_mode,
+            vram: [0; VRAM_SIZE * 2],
+            wram: [0; WRAM_SIZE * 8],
+            vram_bank: 0,
+            wram_bank: 1,
+            key1: 0x7E,
+            hdma1: 0xFF,
+            hdma2: 0xFF,
+            hdma3: 0xFF,
+            hdma4: 0xFF,
+            hdma5: 0xFF,
+            hdma_active: false,
+            hdma_hblank: false,
+            hdma_blocks_left: 0,
+            oam_dma_active: false,
+            oam_dma_source_base: 0,
+            oam_dma_index: 0,
+            oam_dma_t_cycle_accum: 0,
+            oam: [0; OAM_SIZE],
+            io_bank: [0; IO_SIZE],
+            hram: [0; HRAM_SIZE],
+            ie: 0,
+            if_reg: 0,
+            io: IO::new(),
+            trace_cpu_accesses: false,
+            cpu_read_trace: Vec::with_capacity(8),
+            cpu_write_trace: Vec::with_capacity(4),
+        };
+
+        reader.read_exact(&mut bus.vram)?;
+        reader.read_exact(&mut bus.wram)?;
+        bus.vram_bank = reader.read_u8()?;
+        bus.wram_bank = reader.read_u8()?;
+        bus.key1 = reader.read_u8()?;
+        bus.hdma1 = reader.read_u8()?;
+        bus.hdma2 = reader.read_u8()?;
+        bus.hdma3 = reader.read_u8()?;
+        bus.hdma4 = reader.read_u8()?;
+        bus.hdma5 = reader.read_u8()?;
+        bus.hdma_active = reader.read_bool()?;
+        bus.hdma_hblank = reader.read_bool()?;
+        bus.hdma_blocks_left = reader.read_u8()?;
+        bus.oam_dma_active = reader.read_bool()?;
+        bus.oam_dma_source_base = reader.read_u16()?;
+        bus.oam_dma_index = reader.read_u16()?;
+        bus.oam_dma_t_cycle_accum = reader.read_u64()?;
+        reader.read_exact(&mut bus.oam)?;
+        reader.read_exact(&mut bus.io_bank)?;
+        reader.read_exact(&mut bus.hram)?;
+        bus.ie = reader.read_u8()?;
+        bus.if_reg = reader.read_u8()?;
+        bus.io = IO::read_state(reader)?;
+
+        bus.trace_cpu_accesses = false;
+        bus.cpu_read_trace.clear();
+        bus.cpu_write_trace.clear();
+        Ok(bus)
     }
 
     pub(crate) fn cpu_read_byte(&mut self, addr: u16) -> u8 {
@@ -654,6 +749,16 @@ impl Bus {
             SgbEvent::MaskEn(mode) => self.io.ppu.set_sgb_mask_mode(mode),
             SgbEvent::MltReq => {}
         }
+    }
+}
+
+fn encode_hardware_mode(mode: HardwareMode) -> u8 {
+    match mode {
+        HardwareMode::DMG => 0,
+        HardwareMode::SGB1 => 1,
+        HardwareMode::SGB2 => 2,
+        HardwareMode::CGBNormal => 3,
+        HardwareMode::CGBDouble => 4,
     }
 }
 

@@ -75,6 +75,10 @@ pub(crate) enum FrameError {
 
 pub(crate) struct RenderResult {
     pub(crate) open_file_requested: bool,
+    pub(crate) save_state_file_requested: bool,
+    pub(crate) load_state_file_requested: bool,
+    pub(crate) save_state_slot: Option<u8>,
+    pub(crate) load_state_slot: Option<u8>,
     pub(crate) debug_actions: crate::debug::DebugUiActions,
 }
 
@@ -349,6 +353,10 @@ impl Graphics {
 
         Ok(RenderResult {
             open_file_requested: menu_actions.open_file_requested,
+            save_state_file_requested: menu_actions.save_state_file_requested,
+            load_state_file_requested: menu_actions.load_state_file_requested,
+            save_state_slot: menu_actions.save_state_slot,
+            load_state_slot: menu_actions.load_state_slot,
             debug_actions,
         })
     }

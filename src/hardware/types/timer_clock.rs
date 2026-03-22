@@ -41,7 +41,6 @@ impl TimerClock {
             | (TimerClock::Div64, HardwareMode::CGBNormal)
             | (TimerClock::Div64, HardwareMode::CGBDouble) => 256,
 
-            // SGB1 remains the same
             (TimerClock::Div256, HardwareMode::SGB1) => 1024,
             (TimerClock::Div4, HardwareMode::SGB1) => 16,
             (TimerClock::Div16, HardwareMode::SGB1) => 64,

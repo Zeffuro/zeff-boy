@@ -1,5 +1,7 @@
 use super::CartridgeDebugInfo;
 use super::{build_debug_info, read_banked_rom, read_fixed_rom};
+use crate::save_state::{StateReader, StateWriter};
+use anyhow::Result;
 
 pub(crate) struct Mbc2 {
     rom: Vec<u8>,
@@ -65,5 +67,38 @@ impl Mbc2 {
 
     pub(crate) fn debug_info(&self) -> CartridgeDebugInfo {
         build_debug_info("MBC2", self.rom_bank, 0, self.ram_enable, None)
+    }
+
+    pub(crate) fn restore_rom_bytes(&mut self, rom: Vec<u8>) {
+        self.rom = rom;
+    }
+
+    pub(super) fn ram_bytes(&self) -> &[u8] {
+        &self.ram
+    }
+
+    pub(super) fn load_ram_bytes(&mut self, bytes: &[u8]) {
+        let copy_len = self.ram.len().min(bytes.len());
+        self.ram[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        if copy_len < self.ram.len() {
+            self.ram[copy_len..].fill(0);
+        }
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_bytes(&self.ram);
+        writer.write_bool(self.ram_enable);
+        writer.write_u64(self.rom_bank as u64);
+    }
+
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        let mut ram = [0u8; 0x200];
+        reader.read_exact(&mut ram)?;
+        Ok(Self {
+            rom: Vec::new(),
+            ram,
+            ram_enable: reader.read_bool()?,
+            rom_bank: reader.read_u64()? as usize,
+        })
     }
 }

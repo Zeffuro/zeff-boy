@@ -1,5 +1,7 @@
 use super::CartridgeDebugInfo;
 use super::{build_debug_info, read_banked_ram, write_banked_ram};
+use crate::save_state::{StateReader, StateWriter};
+use anyhow::Result;
 
 pub(crate) struct RomOnly {
     rom: Vec<u8>,
@@ -34,5 +36,33 @@ impl RomOnly {
 
     pub(crate) fn debug_info(&self) -> CartridgeDebugInfo {
         build_debug_info("ROM_ONLY", 0, 0, !self.ram.is_empty(), None)
+    }
+
+    pub(crate) fn restore_rom_bytes(&mut self, rom: Vec<u8>) {
+        self.rom = rom;
+    }
+
+    pub(super) fn ram_bytes(&self) -> &[u8] {
+        &self.ram
+    }
+
+    pub(super) fn load_ram_bytes(&mut self, bytes: &[u8]) {
+        let copy_len = self.ram.len().min(bytes.len());
+        self.ram[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        if copy_len < self.ram.len() {
+            self.ram[copy_len..].fill(0);
+        }
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_len(self.ram.len());
+        writer.write_bytes(&self.ram);
+    }
+
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        Ok(Self {
+            rom: Vec::new(),
+            ram: reader.read_vec(0x20_000)?,
+        })
     }
 }

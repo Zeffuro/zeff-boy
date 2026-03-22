@@ -9,6 +9,8 @@ use crate::hardware::types::CPUState;
 use crate::hardware::types::IMEState;
 use crate::hardware::types::constants::*;
 use crate::hardware::types::hardware_mode::HardwareMode;
+use crate::save_state::{StateReader, StateWriter};
+use anyhow::{Result, bail};
 
 pub(crate) struct CPU {
     pub(crate) pc: u16,
@@ -216,6 +218,46 @@ impl CPU {
         self.halt_bug_active = true;
     }
 
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u16(self.pc);
+        writer.write_u16(self.sp);
+        writer.write_u8(self.a);
+        writer.write_u8(self.f);
+        writer.write_u8(self.b);
+        writer.write_u8(self.c);
+        writer.write_u8(self.d);
+        writer.write_u8(self.e);
+        writer.write_u8(self.h);
+        writer.write_u8(self.l);
+        writer.write_u8(encode_ime_state(self.ime));
+        writer.write_u8(encode_cpu_state(self.running));
+        writer.write_u64(self.cycles);
+        writer.write_u64(self.last_step_cycles);
+        writer.write_u64(self.timed_cycles_accounted);
+        writer.write_bool(self.halt_bug_active);
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        Ok(Self {
+            pc: reader.read_u16()?,
+            sp: reader.read_u16()?,
+            a: reader.read_u8()?,
+            f: reader.read_u8()?,
+            b: reader.read_u8()?,
+            c: reader.read_u8()?,
+            d: reader.read_u8()?,
+            e: reader.read_u8()?,
+            h: reader.read_u8()?,
+            l: reader.read_u8()?,
+            ime: decode_ime_state(reader.read_u8()?)?,
+            running: decode_cpu_state(reader.read_u8()?)?,
+            cycles: reader.read_u64()?,
+            last_step_cycles: reader.read_u64()?,
+            timed_cycles_accounted: reader.read_u64()?,
+            halt_bug_active: reader.read_bool()?,
+        })
+    }
+
     fn tick_peripherals(&mut self, bus: &mut Bus, t_cycles: u64) {
         self.timed_cycles_accounted = self.timed_cycles_accounted.wrapping_add(t_cycles);
 
@@ -252,6 +294,46 @@ impl CPU {
         } else {
             self.pc = self.pc.wrapping_add(1);
         }
+    }
+}
+
+fn encode_ime_state(state: IMEState) -> u8 {
+    match state {
+        IMEState::Enabled => 0,
+        IMEState::Disabled => 1,
+        IMEState::PendingEnable => 2,
+    }
+}
+
+fn decode_ime_state(tag: u8) -> Result<IMEState> {
+    match tag {
+        0 => Ok(IMEState::Enabled),
+        1 => Ok(IMEState::Disabled),
+        2 => Ok(IMEState::PendingEnable),
+        _ => bail!("invalid IME state tag in save-state file: {tag}"),
+    }
+}
+
+fn encode_cpu_state(state: CPUState) -> u8 {
+    match state {
+        CPUState::Running => 0,
+        CPUState::Halted => 1,
+        CPUState::Stopped => 2,
+        CPUState::InterruptHandling => 3,
+        CPUState::Reset => 4,
+        CPUState::Suspended => 5,
+    }
+}
+
+fn decode_cpu_state(tag: u8) -> Result<CPUState> {
+    match tag {
+        0 => Ok(CPUState::Running),
+        1 => Ok(CPUState::Halted),
+        2 => Ok(CPUState::Stopped),
+        3 => Ok(CPUState::InterruptHandling),
+        4 => Ok(CPUState::Reset),
+        5 => Ok(CPUState::Suspended),
+        _ => bail!("invalid CPU state tag in save-state file: {tag}"),
     }
 }
 

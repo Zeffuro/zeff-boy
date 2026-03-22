@@ -44,6 +44,9 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         last_frame_time: Instant::now(),
         uncapped_speed,
         fast_forward_held: false,
+        shift_held: false,
+        host_input: HostInputState::new(),
+        last_state_dir: None,
         show_settings_window: false,
         debug_step_requested: false,
         debug_continue_requested: false,
@@ -68,6 +71,9 @@ struct App {
     last_frame_time: Instant,
     uncapped_speed: bool,
     fast_forward_held: bool,
+    shift_held: bool,
+    host_input: HostInputState,
+    last_state_dir: Option<PathBuf>,
     show_settings_window: bool,
     debug_step_requested: bool,
     debug_continue_requested: bool,
@@ -84,6 +90,63 @@ enum SpeedMode {
 const GB_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
 
 impl App {
+    fn keycode_to_state_slot(key: KeyCode) -> Option<u8> {
+        match key {
+            KeyCode::F1 => Some(1),
+            KeyCode::F2 => Some(2),
+            KeyCode::F3 => Some(3),
+            KeyCode::F4 => Some(4),
+            _ => None,
+        }
+    }
+
+    fn save_state_slot(&mut self, slot: u8) {
+        let Some(emu) = self.emulator.as_ref() else {
+            return;
+        };
+        let emu = emu.lock().expect("emulator mutex poisoned");
+        match emu.save_state(slot) {
+            Ok(path) => log::info!("Saved state to {}", path),
+            Err(err) => log::error!("Failed to save state in slot {}: {}", slot, err),
+        }
+    }
+
+    fn load_state_slot(&mut self, slot: u8) {
+        let Some(emu) = self.emulator.as_ref() else {
+            return;
+        };
+        let mut emu = emu.lock().expect("emulator mutex poisoned");
+        match emu.load_state(slot) {
+            Ok(path) => {
+                self.apply_host_input_to_joypad(&mut emu);
+                self.latest_frame = Some(emu.framebuffer().to_vec());
+                log::info!("Loaded state from {}", path);
+            }
+            Err(err) => log::error!("Failed to load state from slot {}: {}", slot, err),
+        }
+    }
+
+    fn apply_host_input_to_joypad(&self, emu: &mut Emulator) {
+        let buttons_pressed = self.host_input.buttons_pressed();
+        let dpad_pressed = self.host_input.dpad_pressed();
+        if emu
+            .bus
+            .io
+            .joypad
+            .apply_pressed_masks(buttons_pressed, dpad_pressed)
+        {
+            emu.bus.if_reg |= 0x10;
+        }
+    }
+
+    fn sync_host_input_to_joypad(&self) {
+        let Some(emu) = self.emulator.as_ref() else {
+            return;
+        };
+        let mut emu = emu.lock().expect("emulator mutex poisoned");
+        self.apply_host_input_to_joypad(&mut emu);
+    }
+
     fn ensure_emu_thread(&mut self) {
         if self.emu_thread.is_some() {
             return;
@@ -145,6 +208,10 @@ impl App {
             return;
         };
 
+        if matches!(key_code, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
+            self.shift_held = key_event.state == ElementState::Pressed;
+        }
+
         if let Some(action) = self.debug_windows.rebinding_action {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
                 self.settings.key_bindings.set(action, key_code);
@@ -173,6 +240,18 @@ impl App {
                 }
                 return;
             }
+            KeyCode::F1 | KeyCode::F2 | KeyCode::F3 | KeyCode::F4 => {
+                if key_event.state == ElementState::Pressed && !key_event.repeat {
+                    if let Some(slot) = Self::keycode_to_state_slot(key_code) {
+                        if self.shift_held {
+                            self.load_state_slot(slot);
+                        } else {
+                            self.save_state_slot(slot);
+                        }
+                    }
+                }
+                return;
+            }
             _ => {}
         }
 
@@ -180,32 +259,37 @@ impl App {
             return;
         };
 
-        let Some(emu) = self.emulator.as_ref() else {
-            return;
-        };
-        let mut emu = emu.lock().expect("emulator mutex poisoned");
-
         match key_event.state {
             ElementState::Pressed => {
                 if key_event.repeat {
                     return;
                 }
-                if emu.bus.io.joypad.key_down(gb_key) {
-                    emu.bus.if_reg |= 0x10;
-                }
+                self.host_input.set_keyboard(gb_key, true);
             }
-            ElementState::Released => emu.bus.io.joypad.key_up(gb_key),
+            ElementState::Released => self.host_input.set_keyboard(gb_key, false),
         }
+
+        self.sync_host_input_to_joypad();
     }
 
     fn load_rom(&mut self, path: &std::path::Path) {
+        self.stop_emu_thread();
+        if let Some(current) = self.emulator.as_ref() {
+            let current = current.lock().expect("emulator mutex poisoned");
+            match current.flush_battery_sram() {
+                Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
+                Ok(None) => {}
+                Err(err) => log::error!("Failed to save battery RAM before ROM switch: {}", err),
+            }
+        }
+
         match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
             Ok(mut emu) => {
                 if let Some(audio) = &self.audio {
                     emu.bus.io.apu.set_sample_rate(audio.sample_rate());
                 }
+                self.apply_host_input_to_joypad(&mut emu);
                 log::info!("Loaded ROM: {}", path.display());
-                self.stop_emu_thread();
                 self.emulator = Some(Arc::new(Mutex::new(emu)));
                 self.ensure_emu_thread();
                 self.fps_tracker = FpsTracker::new();
@@ -229,6 +313,104 @@ impl App {
         }
     }
 
+    fn default_save_state_dir() -> PathBuf {
+        if let Some(config_dir) = dirs::config_dir() {
+            return config_dir.join("zeff-boy").join("saves");
+        }
+
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("saves")
+    }
+
+    fn default_state_file_name(&self) -> String {
+        let Some(emu) = self.emulator.as_ref() else {
+            return "save.state".to_string();
+        };
+        let emu = emu.lock().expect("emulator mutex poisoned");
+        emu.rom_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|stem| format!("{stem}.state"))
+            .unwrap_or_else(|| "save.state".to_string())
+    }
+
+    fn state_dialog_dir(&self) -> PathBuf {
+        if let Some(dir) = &self.last_state_dir {
+            return dir.clone();
+        }
+
+        if let Some(emu) = self.emulator.as_ref() {
+            let emu = emu.lock().expect("emulator mutex poisoned");
+            if let Some(parent) = emu.rom_path().parent() {
+                return parent.to_path_buf();
+            }
+        }
+
+        Self::default_save_state_dir()
+    }
+
+    fn save_state_file_dialog(&mut self) {
+        let Some(_emu) = self.emulator.as_ref() else {
+            return;
+        };
+
+        let file = rfd::FileDialog::new()
+            .set_title("Save State As")
+            .set_directory(self.state_dialog_dir())
+            .add_filter("Zeff Boy Save State", &["state"])
+            .set_file_name(&self.default_state_file_name())
+            .save_file();
+
+        let Some(path) = file else {
+            return;
+        };
+
+        self.last_state_dir = path.parent().map(|p| p.to_path_buf());
+
+        let Some(emu) = self.emulator.as_ref() else {
+            return;
+        };
+        let emu = emu.lock().expect("emulator mutex poisoned");
+
+        match emu.save_state_to_path(&path) {
+            Ok(()) => log::info!("Saved state to {}", path.display()),
+            Err(err) => log::error!("Failed to save state to {}: {}", path.display(), err),
+        }
+    }
+
+    fn load_state_file_dialog(&mut self) {
+        let Some(_emu) = self.emulator.as_ref() else {
+            return;
+        };
+
+        let file = rfd::FileDialog::new()
+            .set_title("Load State")
+            .set_directory(self.state_dialog_dir())
+            .add_filter("Zeff Boy Save State", &["state"])
+            .pick_file();
+
+        let Some(path) = file else {
+            return;
+        };
+
+        self.last_state_dir = path.parent().map(|p| p.to_path_buf());
+
+        let Some(emu) = self.emulator.as_ref() else {
+            return;
+        };
+        let mut emu = emu.lock().expect("emulator mutex poisoned");
+
+        match emu.load_state_from_path(&path) {
+            Ok(()) => {
+                self.apply_host_input_to_joypad(&mut emu);
+                self.latest_frame = Some(emu.framebuffer().to_vec());
+                log::info!("Loaded state from {}", path.display());
+            }
+            Err(err) => log::error!("Failed to load state from {}: {}", path.display(), err),
+        }
+    }
+
     fn handle_dropped_file(&mut self, path: PathBuf) {
         self.load_rom(&path);
     }
@@ -241,16 +423,14 @@ impl App {
             }
         }
 
-        if let (Some(gamepad), Some(emu)) = (&mut self.gamepad, &self.emulator) {
-            let mut emu = emu.lock().expect("emulator mutex poisoned");
+        if let Some(gamepad) = &mut self.gamepad {
+            let mut changed = false;
             for (key, pressed) in gamepad.poll() {
-                if pressed {
-                    if emu.bus.io.joypad.key_down(key) {
-                        emu.bus.if_reg |= 0x10;
-                    }
-                } else {
-                    emu.bus.io.joypad.key_up(key);
-                }
+                self.host_input.set_gamepad(key, pressed);
+                changed = true;
+            }
+            if changed {
+                self.sync_host_input_to_joypad();
             }
         }
 
@@ -492,6 +672,18 @@ impl App {
                 if result.open_file_requested {
                     self.open_file_dialog();
                 }
+                if result.save_state_file_requested {
+                    self.save_state_file_dialog();
+                }
+                if result.load_state_file_requested {
+                    self.load_state_file_dialog();
+                }
+                if let Some(slot) = result.save_state_slot {
+                    self.save_state_slot(slot);
+                }
+                if let Some(slot) = result.load_state_slot {
+                    self.load_state_slot(slot);
+                }
                 if let Some(emu) = self.emulator.as_ref() {
                     let mut emu = emu.lock().expect("emulator mutex poisoned");
                     if let Some(addr) = result.debug_actions.add_breakpoint {
@@ -537,6 +729,56 @@ impl App {
         if self.settings != previous_settings {
             self.settings.save();
         }
+    }
+}
+
+#[derive(Default)]
+struct HostInputState {
+    keyboard_pressed: u8,
+    gamepad_pressed: u8,
+}
+
+impl HostInputState {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn set_keyboard(&mut self, key: JoypadKey, pressed: bool) {
+        Self::set_mask_bit(&mut self.keyboard_pressed, key, pressed);
+    }
+
+    fn set_gamepad(&mut self, key: JoypadKey, pressed: bool) {
+        Self::set_mask_bit(&mut self.gamepad_pressed, key, pressed);
+    }
+
+    fn dpad_pressed(&self) -> u8 {
+        (self.keyboard_pressed | self.gamepad_pressed) & 0x0F
+    }
+
+    fn buttons_pressed(&self) -> u8 {
+        ((self.keyboard_pressed | self.gamepad_pressed) >> 4) & 0x0F
+    }
+
+    fn set_mask_bit(mask: &mut u8, key: JoypadKey, pressed: bool) {
+        let bit = joypad_host_bit(key);
+        if pressed {
+            *mask |= bit;
+        } else {
+            *mask &= !bit;
+        }
+    }
+}
+
+fn joypad_host_bit(key: JoypadKey) -> u8 {
+    match key {
+        JoypadKey::Right => 1 << 0,
+        JoypadKey::Left => 1 << 1,
+        JoypadKey::Up => 1 << 2,
+        JoypadKey::Down => 1 << 3,
+        JoypadKey::A => 1 << 4,
+        JoypadKey::B => 1 << 5,
+        JoypadKey::Select => 1 << 6,
+        JoypadKey::Start => 1 << 7,
     }
 }
 
@@ -590,6 +832,14 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => {
                 self.stop_emu_thread();
+                if let Some(emu) = self.emulator.as_ref() {
+                    let emu = emu.lock().expect("emulator mutex poisoned");
+                    match emu.flush_battery_sram() {
+                        Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
+                        Ok(None) => {}
+                        Err(err) => log::error!("Failed to save battery RAM on exit: {}", err),
+                    }
+                }
                 event_loop.exit()
             }
             WindowEvent::Resized(size) => {

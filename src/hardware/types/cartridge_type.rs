@@ -65,4 +65,21 @@ impl CartridgeType {
             unknown => CartridgeType::Unknown(unknown),
         }
     }
+
+    pub(crate) fn is_battery_backed(self) -> bool {
+        matches!(
+            self,
+            CartridgeType::RomRamBattery
+                | CartridgeType::Mbc1RamBattery
+                | CartridgeType::Mbc2Battery
+                | CartridgeType::Mbc3TimerBattery
+                | CartridgeType::Mbc3TimerRamBattery
+                | CartridgeType::Mbc3RamBattery
+                | CartridgeType::Mbc5RamBattery
+                | CartridgeType::Mbc5RumbleRamBattery
+                | CartridgeType::Mmm01RamBattery
+                | CartridgeType::Mbc7SensorRumbleRamBattery
+                | CartridgeType::HuC1RamBattery
+        )
+    }
 }

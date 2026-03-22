@@ -7,7 +7,13 @@ use crate::hardware::{
     cpu::CPU,
 };
 use crate::rom_loader;
-use std::path::Path;
+use crate::save_state::{
+    SAVE_STATE_VERSION, SaveStateRef, read_from_file, slot_path, validate_compatibility,
+    write_to_file,
+};
+use anyhow::Result as AnyResult;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
 const CYCLES_PER_FRAME_NORMAL: u64 = 70224;
 const CYCLES_PER_FRAME_DOUBLE: u64 = 140448;
@@ -27,6 +33,8 @@ pub(crate) struct Emulator {
     pub(crate) last_opcode: u8,
     pub(crate) last_opcode_pc: u16,
     pub(crate) debug: DebugController,
+    pub(crate) rom_hash: [u8; 32],
+    rom_path: PathBuf,
 }
 
 impl Emulator {
@@ -50,6 +58,7 @@ impl Emulator {
         mode_preference: HardwareModePreference,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let rom = rom_loader::load_rom(path)?;
+        let rom_hash = Self::compute_rom_hash(&rom);
         log::info!("ROM loaded: {} bytes", rom.len());
 
         let header = RomHeader::from_rom(&rom)?;
@@ -78,10 +87,133 @@ impl Emulator {
             last_opcode: 0,
             last_opcode_pc: 0,
             debug: DebugController::new(),
+            rom_hash,
+            rom_path: path.to_path_buf(),
         };
 
         emulator.apply_post_boot_state();
+        if let Some(sram_path) = emulator.try_load_battery_sram()? {
+            log::info!("Loaded battery save from {}", sram_path);
+        }
         Ok(emulator)
+    }
+
+    pub(crate) fn flush_battery_sram(&self) -> AnyResult<Option<String>> {
+        if !self.header.cartridge_type.is_battery_backed() {
+            return Ok(None);
+        }
+
+        let sram = self.bus.cartridge.dump_sram();
+        if sram.is_empty() {
+            return Ok(None);
+        }
+
+        let save_path = rom_loader::save_file_path_for_rom(&self.rom_path);
+        rom_loader::write_save_file(&save_path, &sram)?;
+        Ok(Some(save_path.display().to_string()))
+    }
+
+    fn try_load_battery_sram(&mut self) -> AnyResult<Option<String>> {
+        if !self.header.cartridge_type.is_battery_backed() {
+            return Ok(None);
+        }
+
+        let expected_len = self.bus.cartridge.sram_len();
+        if expected_len == 0 {
+            return Ok(None);
+        }
+
+        let save_path = rom_loader::save_file_path_for_rom(&self.rom_path);
+        if !save_path.exists() {
+            return Ok(None);
+        }
+
+        let loaded = rom_loader::load_save_file(&save_path)?;
+        if loaded.len() != expected_len {
+            log::warn!(
+                "SRAM size mismatch for {}: got {} bytes, expected {} (will truncate/pad)",
+                save_path.display(),
+                loaded.len(),
+                expected_len
+            );
+        }
+
+        let mut adjusted = vec![0u8; expected_len];
+        let copy_len = expected_len.min(loaded.len());
+        adjusted[..copy_len].copy_from_slice(&loaded[..copy_len]);
+        self.bus.cartridge.load_sram(&adjusted);
+
+        Ok(Some(save_path.display().to_string()))
+    }
+
+    fn compute_rom_hash(rom: &[u8]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(rom);
+        hasher.finalize().into()
+    }
+
+    pub(crate) fn rom_path(&self) -> &Path {
+        &self.rom_path
+    }
+
+    pub(crate) fn save_state(&self, slot: u8) -> AnyResult<String> {
+        let path = slot_path(self.rom_hash, slot)?;
+        self.save_state_to_path(&path)?;
+        Ok(path.display().to_string())
+    }
+
+    pub(crate) fn save_state_to_path(&self, path: &Path) -> AnyResult<()> {
+        let state = SaveStateRef {
+            version: SAVE_STATE_VERSION,
+            rom_hash: self.rom_hash,
+            cpu: &self.cpu,
+            bus: self.bus.as_ref(),
+            hardware_mode_preference: self.hardware_mode_preference,
+            hardware_mode: self.hardware_mode,
+            cycle_count: self.cycle_count,
+            last_opcode: self.last_opcode,
+            last_opcode_pc: self.last_opcode_pc,
+        };
+        write_to_file(&path, &state)?;
+        Ok(())
+    }
+
+    pub(crate) fn load_state(&mut self, slot: u8) -> AnyResult<String> {
+        let path = slot_path(self.rom_hash, slot)?;
+        self.load_state_from_path(&path)?;
+        Ok(path.display().to_string())
+    }
+
+    pub(crate) fn load_state_from_path(&mut self, path: &Path) -> AnyResult<()> {
+        let state = read_from_file(&path)?;
+        validate_compatibility(&state, self.rom_hash)?;
+
+        let current_sample_rate = self.bus.io.apu.sample_rate;
+        let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
+        let mut restored_bus = state.bus;
+        restored_bus.cartridge.restore_rom_bytes(rom_bytes);
+        restored_bus.io.timer.mode = restored_bus.hardware_mode;
+        restored_bus.io.serial.mode = restored_bus.hardware_mode;
+        restored_bus.io.apu.set_sample_rate(current_sample_rate);
+        restored_bus.io.ppu.set_sgb_mode(matches!(
+            restored_bus.hardware_mode,
+            HardwareMode::SGB1 | HardwareMode::SGB2
+        ));
+
+        self.cpu = state.cpu;
+        self.bus = Box::new(restored_bus);
+        self.hardware_mode_preference = state.hardware_mode_preference;
+        self.hardware_mode = state.hardware_mode;
+        self.cycle_count = state.cycle_count;
+        self.last_opcode = state.last_opcode;
+        self.last_opcode_pc = state.last_opcode_pc;
+
+        self.opcode_log = OpcodeLog::new(32);
+        self.debug = DebugController::new();
+        self.bus.trace_cpu_accesses = false;
+        self.bus.begin_cpu_access_trace();
+
+        Ok(())
     }
 
     fn apply_post_boot_state(&mut self) {

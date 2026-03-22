@@ -1,6 +1,8 @@
 use std::io::{self, Write};
 
 use crate::hardware::types::hardware_mode::HardwareMode;
+use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
+use anyhow::Result;
 
 pub(crate) struct Serial {
     pub(crate) sb: u8,
@@ -56,6 +58,33 @@ impl Serial {
         }
 
         false
+    }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(self.sb);
+        writer.write_u8(self.sc);
+        writer.write_u64(self.cycles);
+        writer.write_u8(encode_hardware_mode(self.mode));
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        Ok(Self {
+            sb: reader.read_u8()?,
+            sc: reader.read_u8()?,
+            cycles: reader.read_u64()?,
+            mode: decode_hardware_mode(reader.read_u8()?)?,
+            output_log: Vec::new(),
+        })
+    }
+}
+
+fn encode_hardware_mode(mode: HardwareMode) -> u8 {
+    match mode {
+        HardwareMode::DMG => 0,
+        HardwareMode::SGB1 => 1,
+        HardwareMode::SGB2 => 2,
+        HardwareMode::CGBNormal => 3,
+        HardwareMode::CGBDouble => 4,
     }
 }
 

@@ -20,3 +20,4 @@ gilrs = "0.11"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 dirs = "6.0.0"
+sha2 = "0.10.9"

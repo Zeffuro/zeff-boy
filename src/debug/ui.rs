@@ -34,6 +34,10 @@ impl DebugUiActions {
 pub(crate) struct MenuActions {
     pub(crate) open_file_requested: bool,
     pub(crate) open_settings_requested: bool,
+    pub(crate) save_state_file_requested: bool,
+    pub(crate) load_state_file_requested: bool,
+    pub(crate) save_state_slot: Option<u8>,
+    pub(crate) load_state_slot: Option<u8>,
     pub(crate) aspect_ratio_mode: Option<AspectRatioMode>,
     pub(crate) menu_bar_height_points: f32,
 }
@@ -45,6 +49,10 @@ pub(crate) fn draw_menu_bar(
 ) -> MenuActions {
     let mut open_file_requested = false;
     let mut open_settings_requested = false;
+    let mut save_state_file_requested = false;
+    let mut load_state_file_requested = false;
+    let mut save_state_slot = None;
+    let mut load_state_slot = None;
     let mut selected_mode = None;
 
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
@@ -57,6 +65,29 @@ pub(crate) fn draw_menu_bar(
                 if ui.button("Settings").clicked() {
                     open_settings_requested = true;
                     ui.close();
+                }
+                ui.separator();
+                if ui.button("Save State (File...)...").clicked() {
+                    save_state_file_requested = true;
+                    ui.close();
+                }
+                if ui.button("Load State (File...)...").clicked() {
+                    load_state_file_requested = true;
+                    ui.close();
+                }
+                ui.separator();
+                for slot in 1..=4u8 {
+                    if ui.button(format!("Save State (Slot {slot})")).clicked() {
+                        save_state_slot = Some(slot);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                for slot in 1..=4u8 {
+                    if ui.button(format!("Load State (Slot {slot})")).clicked() {
+                        load_state_slot = Some(slot);
+                        ui.close();
+                    }
                 }
             });
 
@@ -131,6 +162,10 @@ pub(crate) fn draw_menu_bar(
     MenuActions {
         open_file_requested,
         open_settings_requested,
+        save_state_file_requested,
+        load_state_file_requested,
+        save_state_slot,
+        load_state_slot,
         aspect_ratio_mode: selected_mode,
         menu_bar_height_points: ctx.available_rect().min.y.max(0.0),
     }

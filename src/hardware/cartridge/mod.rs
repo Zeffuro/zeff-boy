@@ -1,5 +1,7 @@
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::CartridgeType;
+use crate::save_state::{StateReader, StateWriter};
+use anyhow::{Result, bail};
 
 mod mbc1;
 mod mbc2;
@@ -138,6 +140,83 @@ impl Cartridge {
             Cartridge::Mbc2(c) => c.debug_info(),
             Cartridge::Mbc3(c) => c.debug_info(),
             Cartridge::Mbc5(c) => c.debug_info(),
+        }
+    }
+
+    pub(crate) fn restore_rom_bytes(&mut self, rom: Vec<u8>) {
+        match self {
+            Cartridge::RomOnly(c) => c.restore_rom_bytes(rom),
+            Cartridge::Mbc1(c) => c.restore_rom_bytes(rom),
+            Cartridge::Mbc2(c) => c.restore_rom_bytes(rom),
+            Cartridge::Mbc3(c) => c.restore_rom_bytes(rom),
+            Cartridge::Mbc5(c) => c.restore_rom_bytes(rom),
+        }
+    }
+
+    pub(crate) fn sram_len(&self) -> usize {
+        match self {
+            Cartridge::RomOnly(c) => c.ram_bytes().len(),
+            Cartridge::Mbc1(c) => c.ram_bytes().len(),
+            Cartridge::Mbc2(c) => c.ram_bytes().len(),
+            Cartridge::Mbc3(c) => c.ram_bytes().len(),
+            Cartridge::Mbc5(c) => c.ram_bytes().len(),
+        }
+    }
+
+    pub(crate) fn dump_sram(&self) -> Vec<u8> {
+        match self {
+            Cartridge::RomOnly(c) => c.ram_bytes().to_vec(),
+            Cartridge::Mbc1(c) => c.ram_bytes().to_vec(),
+            Cartridge::Mbc2(c) => c.ram_bytes().to_vec(),
+            Cartridge::Mbc3(c) => c.ram_bytes().to_vec(),
+            Cartridge::Mbc5(c) => c.ram_bytes().to_vec(),
+        }
+    }
+
+    pub(crate) fn load_sram(&mut self, bytes: &[u8]) {
+        match self {
+            Cartridge::RomOnly(c) => c.load_ram_bytes(bytes),
+            Cartridge::Mbc1(c) => c.load_ram_bytes(bytes),
+            Cartridge::Mbc2(c) => c.load_ram_bytes(bytes),
+            Cartridge::Mbc3(c) => c.load_ram_bytes(bytes),
+            Cartridge::Mbc5(c) => c.load_ram_bytes(bytes),
+        }
+    }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        match self {
+            Cartridge::RomOnly(c) => {
+                writer.write_u8(0);
+                c.write_state(writer);
+            }
+            Cartridge::Mbc1(c) => {
+                writer.write_u8(1);
+                c.write_state(writer);
+            }
+            Cartridge::Mbc2(c) => {
+                writer.write_u8(2);
+                c.write_state(writer);
+            }
+            Cartridge::Mbc3(c) => {
+                writer.write_u8(3);
+                c.write_state(writer);
+            }
+            Cartridge::Mbc5(c) => {
+                writer.write_u8(4);
+                c.write_state(writer);
+            }
+        }
+    }
+
+    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+        let mapper_tag = reader.read_u8()?;
+        match mapper_tag {
+            0 => Ok(Cartridge::RomOnly(RomOnly::read_state(reader)?)),
+            1 => Ok(Cartridge::Mbc1(Mbc1::read_state(reader)?)),
+            2 => Ok(Cartridge::Mbc2(Mbc2::read_state(reader)?)),
+            3 => Ok(Cartridge::Mbc3(Mbc3::read_state(reader)?)),
+            4 => Ok(Cartridge::Mbc5(Mbc5::read_state(reader)?)),
+            _ => bail!("invalid cartridge mapper tag in save-state file: {mapper_tag}"),
         }
     }
 }

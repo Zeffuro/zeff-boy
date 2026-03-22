@@ -17,6 +17,13 @@ pub(crate) fn run_headless(
     opts: &HeadlessOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut emulator = Emulator::from_rom_with_mode(path, mode_preference)?;
+    let flush_battery = |emulator: &Emulator| {
+        match emulator.flush_battery_sram() {
+            Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
+            Ok(None) => {}
+            Err(err) => log::error!("Failed to save battery RAM: {}", err),
+        }
+    };
     if let Some(addr) = opts.break_at {
         emulator.debug.add_breakpoint(addr);
     }
@@ -45,6 +52,7 @@ pub(crate) fn run_headless(
                             emulator.cpu.sp,
                         )
                     );
+                    flush_battery(&emulator);
                     return Ok(());
                 }
                 let if_reg = emulator.bus.if_reg;
@@ -156,6 +164,7 @@ pub(crate) fn run_headless(
                         emulator.cpu.sp,
                     )
                 );
+                flush_battery(&emulator);
                 return Ok(());
             }
         }
@@ -185,6 +194,7 @@ pub(crate) fn run_headless(
 
     if let Some(expected) = &opts.expect_serial {
         if !serial_text.contains(expected) {
+            flush_battery(&emulator);
             return Err(format!(
                 "expected serial output containing {:?}, got {:?}",
                 expected, serial_text
@@ -192,6 +202,8 @@ pub(crate) fn run_headless(
             .into());
         }
     }
+
+    flush_battery(&emulator);
 
     Ok(())
 }

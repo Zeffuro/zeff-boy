@@ -8,6 +8,7 @@ mod graphics;
 mod hardware;
 mod input;
 mod rom_loader;
+mod save_state;
 mod settings;
 
 use crate::emulator::Emulator;
