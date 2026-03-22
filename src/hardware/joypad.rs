@@ -69,7 +69,7 @@ impl Joypad {
     pub(crate) fn key_up(&mut self, key: JoypadKey) {
         let _ = self.set_key_state(key, false);
     }
-    
+
     pub(crate) fn apply_pressed_masks(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
         let old_buttons = self.buttons;
         let old_dpad = self.dpad;

@@ -262,7 +262,11 @@ impl CPU {
         self.timed_cycles_accounted = self.timed_cycles_accounted.wrapping_add(t_cycles);
 
         let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
-        let system_t_cycles = if is_double_speed { t_cycles / 2 } else { t_cycles };
+        let system_t_cycles = if is_double_speed {
+            t_cycles / 2
+        } else {
+            t_cycles
+        };
 
         if bus.io.timer.step(t_cycles) {
             bus.if_reg |= 0x04;
@@ -279,13 +283,18 @@ impl CPU {
         );
 
         let previous_ppu_mode = bus.io.ppu.mode();
-        let ppu_interrupt = bus.io.ppu.step(system_t_cycles, &bus.vram, &bus.oam, cgb_mode);
+        let ppu_interrupt = bus
+            .io
+            .ppu
+            .step(system_t_cycles, &bus.vram, &bus.oam, cgb_mode);
         bus.if_reg |= ppu_interrupt;
 
         let current_ppu_mode = bus.io.ppu.mode();
         bus.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
 
         bus.step_oam_dma(t_cycles);
+
+        bus.cartridge.step(system_t_cycles);
     }
 
     fn advance_pc_after_fetch(&mut self) {

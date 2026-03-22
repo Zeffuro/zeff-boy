@@ -17,12 +17,10 @@ pub(crate) fn run_headless(
     opts: &HeadlessOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut emulator = Emulator::from_rom_with_mode(path, mode_preference)?;
-    let flush_battery = |emulator: &Emulator| {
-        match emulator.flush_battery_sram() {
-            Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
-            Ok(None) => {}
-            Err(err) => log::error!("Failed to save battery RAM: {}", err),
-        }
+    let flush_battery = |emulator: &Emulator| match emulator.flush_battery_sram() {
+        Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
+        Ok(None) => {}
+        Err(err) => log::error!("Failed to save battery RAM: {}", err),
     };
     if let Some(addr) = opts.break_at {
         emulator.debug.add_breakpoint(addr);

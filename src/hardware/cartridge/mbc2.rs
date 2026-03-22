@@ -1,5 +1,7 @@
 use super::CartridgeDebugInfo;
-use super::{build_debug_info, read_banked_rom, read_fixed_rom};
+use super::{
+    RAM_BASE_ADDR, build_debug_info, is_ram_enable, load_ram_into, read_banked_rom, read_fixed_rom,
+};
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 
@@ -32,7 +34,7 @@ impl Mbc2 {
         match addr {
             0x0000..=0x1FFF => {
                 if addr & 0x0100 == 0 {
-                    self.ram_enable = (value & 0x0F) == 0x0A;
+                    self.ram_enable = is_ram_enable(value);
                 }
             }
             0x2000..=0x3FFF => {
@@ -49,7 +51,7 @@ impl Mbc2 {
         if !self.ram_enable {
             return 0xFF;
         }
-        let idx = ((addr - 0xA000) as usize) & 0x01FF;
+        let idx = ((addr - RAM_BASE_ADDR) as usize) & 0x01FF;
         0xF0 | (self.ram[idx] & 0x0F)
     }
 
@@ -57,7 +59,7 @@ impl Mbc2 {
         if !self.ram_enable {
             return;
         }
-        let idx = ((addr - 0xA000) as usize) & 0x01FF;
+        let idx = ((addr - RAM_BASE_ADDR) as usize) & 0x01FF;
         self.ram[idx] = value & 0x0F;
     }
 
@@ -78,17 +80,20 @@ impl Mbc2 {
     }
 
     pub(super) fn load_ram_bytes(&mut self, bytes: &[u8]) {
-        let copy_len = self.ram.len().min(bytes.len());
-        self.ram[..copy_len].copy_from_slice(&bytes[..copy_len]);
-        if copy_len < self.ram.len() {
-            self.ram[copy_len..].fill(0);
-        }
+        load_ram_into(&mut self.ram, bytes);
     }
 
     pub(super) fn write_state(&self, writer: &mut StateWriter) {
         writer.write_bytes(&self.ram);
         writer.write_bool(self.ram_enable);
         writer.write_u64(self.rom_bank as u64);
+    }
+
+    pub(super) fn bess_mbc_writes(&self) -> Vec<(u16, u8)> {
+        vec![
+            (0x0000, if self.ram_enable { 0x0A } else { 0x00 }),
+            (0x2100, (self.rom_bank & 0x0F) as u8),
+        ]
     }
 
     pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {

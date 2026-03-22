@@ -3,7 +3,9 @@ use crate::debug::DebugWindowState;
 use crate::debug::breakpoints::WatchType;
 use crate::graphics::AspectRatioMode;
 use crate::hardware::types::hardware_mode::HardwareModePreference;
-use crate::settings::{BindingAction, Settings};
+use crate::settings::{
+    BindingAction, InputBindingAction, LeftStickMode, Settings, TiltBindingAction, TiltInputMode,
+};
 
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<u16>,
@@ -219,7 +221,11 @@ pub(crate) fn draw_settings_window(
             ui.separator();
             ui.heading("Input");
             if let Some(action) = state.rebinding_action {
-                ui.label(format!("Press a key for {}...", binding_label(action)));
+                let label = match action {
+                    InputBindingAction::Joypad(a) => joypad_binding_label(a),
+                    InputBindingAction::Tilt(a) => tilt_binding_label(a),
+                };
+                ui.label(format!("Press a key for {}...", label));
             }
             for action in [
                 BindingAction::Up,
@@ -232,15 +238,100 @@ pub(crate) fn draw_settings_window(
                 BindingAction::Select,
             ] {
                 ui.horizontal(|ui| {
-                    ui.label(binding_label(action));
+                    ui.label(joypad_binding_label(action));
                     let key_name = format!("{:?}", settings.key_bindings.get(action));
-                    let capture_label = if state.rebinding_action == Some(action) {
-                        format!("Press key... ({key_name})")
-                    } else {
-                        key_name
-                    };
+                    let capture_label =
+                        if state.rebinding_action == Some(InputBindingAction::Joypad(action)) {
+                            format!("Press key... ({key_name})")
+                        } else {
+                            key_name
+                        };
                     if ui.button(capture_label).clicked() {
-                        state.rebinding_action = Some(action);
+                        state.rebinding_action = Some(InputBindingAction::Joypad(action));
+                    }
+                });
+            }
+
+            ui.separator();
+            ui.heading("MBC7 Tilt");
+            egui::ComboBox::from_label("Left stick behavior")
+                .selected_text(match settings.left_stick_mode {
+                    LeftStickMode::Auto => "Auto (Tilt on MBC7, D-pad otherwise)",
+                    LeftStickMode::Tilt => "Always Tilt",
+                    LeftStickMode::Dpad => "Always D-pad",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut settings.left_stick_mode,
+                        LeftStickMode::Auto,
+                        "Auto (Tilt on MBC7, D-pad otherwise)",
+                    );
+                    ui.selectable_value(
+                        &mut settings.left_stick_mode,
+                        LeftStickMode::Tilt,
+                        "Always Tilt",
+                    );
+                    ui.selectable_value(
+                        &mut settings.left_stick_mode,
+                        LeftStickMode::Dpad,
+                        "Always D-pad",
+                    );
+                });
+            egui::ComboBox::from_label("Tilt input source")
+                .selected_text(match settings.tilt_input_mode {
+                    TiltInputMode::Keyboard => "Keyboard (WASD)",
+                    TiltInputMode::Mouse => "Mouse",
+                    TiltInputMode::Auto => "Auto-detect",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut settings.tilt_input_mode,
+                        TiltInputMode::Keyboard,
+                        "Keyboard (WASD)",
+                    );
+                    ui.selectable_value(
+                        &mut settings.tilt_input_mode,
+                        TiltInputMode::Mouse,
+                        "Mouse",
+                    );
+                    ui.selectable_value(
+                        &mut settings.tilt_input_mode,
+                        TiltInputMode::Auto,
+                        "Auto-detect",
+                    );
+                });
+            ui.checkbox(&mut settings.tilt_invert_x, "Invert tilt X");
+            ui.checkbox(&mut settings.tilt_invert_y, "Invert tilt Y");
+            ui.checkbox(
+                &mut settings.stick_tilt_bypass_lerp,
+                "Use direct left-stick tilt (bypass lerp while stick is active)",
+            );
+            ui.add(
+                egui::Slider::new(&mut settings.tilt_sensitivity, 0.1..=3.0)
+                    .text("Tilt sensitivity"),
+            );
+            ui.add(egui::Slider::new(&mut settings.tilt_lerp, 0.0..=1.0).text("Tilt smoothing"));
+            ui.add(egui::Slider::new(&mut settings.tilt_deadzone, 0.0..=0.5).text("Tilt deadzone"));
+            if ui.button("Reset tilt keys to WASD").clicked() {
+                settings.tilt_key_bindings.set_wasd_defaults();
+            }
+            for action in [
+                TiltBindingAction::Up,
+                TiltBindingAction::Down,
+                TiltBindingAction::Left,
+                TiltBindingAction::Right,
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(tilt_binding_label(action));
+                    let key_name = format!("{:?}", settings.tilt_key_bindings.get(action));
+                    let capture_label =
+                        if state.rebinding_action == Some(InputBindingAction::Tilt(action)) {
+                            format!("Press key... ({key_name})")
+                        } else {
+                            key_name
+                        };
+                    if ui.button(capture_label).clicked() {
+                        state.rebinding_action = Some(InputBindingAction::Tilt(action));
                     }
                 });
             }
@@ -269,7 +360,7 @@ pub(crate) fn draw_settings_window(
         });
 }
 
-fn binding_label(action: BindingAction) -> &'static str {
+fn joypad_binding_label(action: BindingAction) -> &'static str {
     match action {
         BindingAction::Up => "Up",
         BindingAction::Down => "Down",
@@ -279,6 +370,15 @@ fn binding_label(action: BindingAction) -> &'static str {
         BindingAction::B => "B",
         BindingAction::Start => "Start",
         BindingAction::Select => "Select",
+    }
+}
+
+fn tilt_binding_label(action: TiltBindingAction) -> &'static str {
+    match action {
+        TiltBindingAction::Up => "Tilt Up",
+        TiltBindingAction::Down => "Tilt Down",
+        TiltBindingAction::Left => "Tilt Left",
+        TiltBindingAction::Right => "Tilt Right",
     }
 }
 
@@ -301,6 +401,56 @@ pub(crate) fn draw_debug_ui(
                 "HW mode: {:?} (pref: {:?})",
                 info.hardware_mode, info.hardware_mode_preference
             ));
+
+            ui.separator();
+            ui.collapsing("Tilt Input", |ui| {
+                ui.monospace(format!(
+                    "MBC7 active: {}",
+                    if info.tilt_is_mbc7 { "yes" } else { "no" }
+                ));
+                ui.monospace(format!(
+                    "Left stick routes to: {}",
+                    if info.tilt_stick_controls_tilt {
+                        "tilt"
+                    } else {
+                        "d-pad"
+                    }
+                ));
+                ui.monospace(format!(
+                    "Keyboard  x:{:>6.2} y:{:>6.2}",
+                    info.tilt_keyboard.0, info.tilt_keyboard.1
+                ));
+                ui.monospace(format!(
+                    "Mouse     x:{:>6.2} y:{:>6.2}",
+                    info.tilt_mouse.0, info.tilt_mouse.1
+                ));
+                ui.monospace(format!(
+                    "LeftStick x:{:>6.2} y:{:>6.2}",
+                    info.tilt_left_stick.0, info.tilt_left_stick.1
+                ));
+                ui.separator();
+                ui.monospace(format!(
+                    "Target    x:{:>6.2} y:{:>6.2}",
+                    info.tilt_target.0, info.tilt_target.1
+                ));
+                ui.monospace(format!(
+                    "Smoothed  x:{:>6.2} y:{:>6.2}",
+                    info.tilt_smoothed.0, info.tilt_smoothed.1
+                ));
+
+                let smoothed_x = ((info.tilt_smoothed.0 + 1.0) * 0.5).clamp(0.0, 1.0);
+                let smoothed_y = ((info.tilt_smoothed.1 + 1.0) * 0.5).clamp(0.0, 1.0);
+                ui.add(
+                    egui::ProgressBar::new(smoothed_x)
+                        .show_percentage()
+                        .text("Smoothed X (-1..1)"),
+                );
+                ui.add(
+                    egui::ProgressBar::new(smoothed_y)
+                        .show_percentage()
+                        .text("Smoothed Y (-1..1)"),
+                );
+            });
             ui.separator();
 
             ui.heading("CPU Registers");

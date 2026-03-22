@@ -9,9 +9,9 @@ use crate::hardware::cpu::CPU;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 
 pub(crate) const SAVE_STATE_VERSION: u32 = 1;
-pub(crate) const SAVE_STATE_FORMAT_VERSION: u32 = 1;
+pub(crate) const SAVE_STATE_FORMAT_VERSION: u32 = 2;
 const SAVE_STATE_EXTENSION: &str = "state";
-const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
+pub(crate) const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 pub(crate) struct StateWriter {
@@ -54,6 +54,10 @@ impl StateWriter {
     pub(crate) fn write_len(&mut self, len: usize) {
         self.write_u32(len as u32);
     }
+
+    pub(crate) fn position(&self) -> usize {
+        self.bytes.len()
+    }
 }
 
 pub(crate) struct StateReader<'a> {
@@ -66,13 +70,10 @@ impl<'a> StateReader<'a> {
         Self { bytes, offset: 0 }
     }
 
-    pub(crate) fn finish(self) -> Result<()> {
-        if self.offset == self.bytes.len() {
-            Ok(())
-        } else {
-            bail!("save-state file has unexpected trailing data")
-        }
+    pub(crate) fn is_exhausted(&self) -> bool {
+        self.offset >= self.bytes.len()
     }
+
 
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self
@@ -191,10 +192,7 @@ pub(crate) fn write_to_file(path: &Path, state: &SaveStateRef<'_>) -> Result<()>
         .with_context(|| format!("failed to finalize save state: {}", path.display()))
 }
 
-pub(crate) fn read_from_file(path: &Path) -> Result<SaveState> {
-    let bytes = fs::read(path)
-        .with_context(|| format!("failed to read save state: {}", path.display()))?;
-
+pub(crate) fn decode_on_thread(bytes: Vec<u8>) -> Result<SaveState> {
     let decode_thread = std::thread::Builder::new()
         .name("save-state-decode".to_string())
         .stack_size(SAVE_STATE_DECODE_STACK_SIZE)
@@ -204,6 +202,13 @@ pub(crate) fn read_from_file(path: &Path) -> Result<SaveState> {
     decode_thread
         .join()
         .map_err(|_| anyhow!("save-state decode thread panicked"))?
+}
+
+pub(crate) fn read_from_file(path: &Path) -> Result<SaveState> {
+    let bytes =
+        fs::read(path).with_context(|| format!("failed to read save state: {}", path.display()))?;
+
+    decode_on_thread(bytes)
 }
 
 fn temp_path_for(path: &Path) -> PathBuf {
@@ -234,6 +239,8 @@ fn encode_state(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
     writer.write_u8(state.last_opcode);
     writer.write_u16(state.last_opcode_pc);
     state.bus.write_state(&mut writer);
+
+    crate::bess::append_bess(&mut writer, state.cpu, state.bus, state.hardware_mode)?;
 
     Ok(writer.into_bytes())
 }
@@ -267,7 +274,9 @@ fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     let last_opcode_pc = reader.read_u16()?;
     let bus = Bus::read_state(&mut reader)?;
 
-    reader.finish()?;
+    if !reader.is_exhausted() && !crate::bess::has_bess_footer(bytes) {
+        bail!("save-state file has unexpected trailing data");
+    }
 
     Ok(SaveState {
         version,
@@ -377,6 +386,7 @@ pub(crate) fn validate_compatibility(state: &SaveState, expected_rom_hash: [u8; 
 mod tests {
     use super::{
         SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, decode_state,
+        encode_state,
     };
     use crate::hardware::bus::Bus;
     use crate::hardware::cpu::CPU;
@@ -437,7 +447,8 @@ mod tests {
         path.push(format!("zeff-boy-save-state-roundtrip-{unique}.state"));
 
         super::write_to_file(&path, &state).expect("serialize full save-state should succeed");
-        let restored = super::read_from_file(&path).expect("deserialize full save-state should succeed");
+        let restored =
+            super::read_from_file(&path).expect("deserialize full save-state should succeed");
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(restored.rom_hash, state.rom_hash);
@@ -445,5 +456,64 @@ mod tests {
         assert_eq!(restored.bus.vram, bus.vram);
         assert_eq!(restored.bus.wram, bus.wram);
         assert!(restored.bus.io.ppu.framebuffer.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn encoded_state_has_bess_footer() {
+        let rom = vec![0u8; 0x8000];
+        let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
+        let bus = *Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+        let cpu = CPU::new();
+        let state = SaveStateRef {
+            version: SAVE_STATE_VERSION,
+            rom_hash: [0xAB; 32],
+            cpu: &cpu,
+            bus: &bus,
+            hardware_mode_preference: HardwareModePreference::Auto,
+            hardware_mode: HardwareMode::DMG,
+            cycle_count: 0,
+            last_opcode: 0x00,
+            last_opcode_pc: 0x0100,
+        };
+
+        let bytes = encode_state(&state).expect("encode should succeed");
+
+        assert!(bytes.len() >= 8);
+        assert_eq!(&bytes[bytes.len() - 4..], b"BESS");
+
+        let footer_offset = bytes.len() - 8;
+        let first_block_offset =
+            u32::from_le_bytes(bytes[footer_offset..footer_offset + 4].try_into().unwrap());
+        assert!(first_block_offset < bytes.len() as u32);
+
+        let name_id = &bytes[first_block_offset as usize..first_block_offset as usize + 4];
+        assert_eq!(name_id, b"NAME");
+    }
+
+    #[test]
+    fn bess_footer_does_not_break_native_decode() {
+        let rom = vec![0u8; 0x8000];
+        let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
+        let bus = *Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+        let cpu = CPU::new();
+        let state = SaveStateRef {
+            version: SAVE_STATE_VERSION,
+            rom_hash: [0xCD; 32],
+            cpu: &cpu,
+            bus: &bus,
+            hardware_mode_preference: HardwareModePreference::Auto,
+            hardware_mode: HardwareMode::DMG,
+            cycle_count: 42,
+            last_opcode: 0x76,
+            last_opcode_pc: 0x0200,
+        };
+
+        let bytes = encode_state(&state).expect("encode should succeed");
+        let restored = decode_state(&bytes).expect("decode should succeed with BESS trailing data");
+
+        assert_eq!(restored.rom_hash, [0xCD; 32]);
+        assert_eq!(restored.cycle_count, 42);
+        assert_eq!(restored.last_opcode, 0x76);
+        assert_eq!(restored.last_opcode_pc, 0x0200);
     }
 }

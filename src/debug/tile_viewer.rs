@@ -1,3 +1,4 @@
+use crate::debug::DebugWindowState;
 use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel};
 
 pub(crate) fn draw_tile_viewer(
@@ -7,10 +8,10 @@ pub(crate) fn draw_tile_viewer(
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
     obj_palette_ram: &[u8; 64],
-    open: &mut bool,
+    window_state: &mut DebugWindowState,
 ) {
     egui::Window::new("Tile Data")
-        .open(open)
+        .open(&mut window_state.show_tile_viewer)
         .default_width(320.0)
         .show(ctx, |ui| {
             let bank_select_id = ui.make_persistent_id("tile_viewer_vram_bank");
@@ -78,42 +79,94 @@ pub(crate) fn draw_tile_viewer(
 
             let width = 16 * 8;
             let height = 24 * 8;
-            let mut image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-            let bank_base = vram_bank * 0x2000;
 
-            for tile in 0..384usize {
-                let tile_x = tile % 16;
-                let tile_y = tile / 16;
-                let tile_addr = bank_base + tile * 16;
-
-                for y in 0..8usize {
-                    for x in 0..8usize {
-                        let color_id = decode_tile_pixel(vram, tile_addr, y, x);
-                        let rgba = if use_cgb_colors {
-                            let palette_ram = if use_obj_palette {
-                                obj_palette_ram
-                            } else {
-                                bg_palette_ram
-                            };
-                            cgb_palette_rgba(palette_ram, cgb_palette_index, color_id)
-                        } else {
-                            apply_palette(bgp, color_id)
-                        };
-                        let px = tile_x * 8 + x;
-                        let py = tile_y * 8 + y;
-                        image[(px, py)] = egui::Color32::from_rgba_unmultiplied(
-                            rgba[0], rgba[1], rgba[2], rgba[3],
-                        );
-                    }
-                }
+            let options_changed = window_state.tile_viewer_last_vram_bank != Some(vram_bank)
+                || window_state.tile_viewer_last_use_cgb_colors != Some(use_cgb_colors)
+                || window_state.tile_viewer_last_use_obj_palette != Some(use_obj_palette)
+                || window_state.tile_viewer_last_cgb_palette_index != Some(cgb_palette_index);
+            if options_changed {
+                window_state.tile_viewer_vram_dirty = true;
+                window_state.tile_viewer_last_vram_bank = Some(vram_bank);
+                window_state.tile_viewer_last_use_cgb_colors = Some(use_cgb_colors);
+                window_state.tile_viewer_last_use_obj_palette = Some(use_obj_palette);
+                window_state.tile_viewer_last_cgb_palette_index = Some(cgb_palette_index);
             }
 
-            let texture =
-                ui.ctx()
-                    .load_texture("tile_viewer", image, egui::TextureOptions::NEAREST);
+            if window_state.tile_viewer_image.size != [width, height] {
+                window_state.tile_viewer_image =
+                    egui::ColorImage::filled([width, height], egui::Color32::BLACK);
+                window_state.tile_viewer_vram_dirty = true;
+            }
+
+            let bank_base = vram_bank * 0x2000;
+            if window_state.tile_viewer_vram_dirty {
+                render_tile_viewer_into_image(
+                    &mut window_state.tile_viewer_image,
+                    vram,
+                    bgp,
+                    use_cgb_colors,
+                    use_obj_palette,
+                    cgb_palette_index,
+                    bg_palette_ram,
+                    obj_palette_ram,
+                    bank_base,
+                );
+                window_state.tile_viewer_vram_dirty = false;
+            }
+
+            let texture = window_state.tile_viewer_texture.get_or_insert_with(|| {
+                ui.ctx().load_texture(
+                    "tile_viewer",
+                    window_state.tile_viewer_image.clone(),
+                    egui::TextureOptions::NEAREST,
+                )
+            });
+            texture.set(
+                window_state.tile_viewer_image.clone(),
+                egui::TextureOptions::NEAREST,
+            );
+
             let display_size = egui::vec2((width as f32) * 2.0, (height as f32) * 2.0);
             egui::ScrollArea::both().show(ui, |ui| {
                 ui.image((texture.id(), display_size));
             });
         });
+}
+
+fn render_tile_viewer_into_image(
+    image: &mut egui::ColorImage,
+    vram: &[u8],
+    bgp: u8,
+    use_cgb_colors: bool,
+    use_obj_palette: bool,
+    cgb_palette_index: u8,
+    bg_palette_ram: &[u8; 64],
+    obj_palette_ram: &[u8; 64],
+    bank_base: usize,
+) {
+    for tile in 0..384usize {
+        let tile_x = tile % 16;
+        let tile_y = tile / 16;
+        let tile_addr = bank_base + tile * 16;
+
+        for y in 0..8usize {
+            for x in 0..8usize {
+                let color_id = decode_tile_pixel(vram, tile_addr, y, x);
+                let rgba = if use_cgb_colors {
+                    let palette_ram = if use_obj_palette {
+                        obj_palette_ram
+                    } else {
+                        bg_palette_ram
+                    };
+                    cgb_palette_rgba(palette_ram, cgb_palette_index, color_id)
+                } else {
+                    apply_palette(bgp, color_id)
+                };
+                let px = tile_x * 8 + x;
+                let py = tile_y * 8 + y;
+                image[(px, py)] =
+                    egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+            }
+        }
+    }
 }

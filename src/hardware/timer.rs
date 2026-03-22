@@ -17,7 +17,7 @@ pub(crate) struct Timer {
 impl Timer {
     pub(crate) fn new() -> Self {
         Self {
-            div: 0,
+            div: 0xAD,
             tima: 0,
             tma: 0,
             tac: 0,
@@ -26,6 +26,14 @@ impl Timer {
             prev_bit: false,
             overflow_pending: false,
         }
+    }
+
+    /// Apply BESS DIV value: sets sys_counter = DIV << 8 and resets edge state.
+    pub(crate) fn apply_bess_div(&mut self, div: u8) {
+        self.div = div;
+        self.sys_counter = (div as u16) << 8;
+        self.prev_bit = false;
+        self.overflow_pending = false;
     }
 
     fn timer_bit_mask(&self) -> u16 {

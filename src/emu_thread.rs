@@ -8,12 +8,15 @@ use crate::emulator::Emulator;
 use crate::hardware::types::CPUState;
 
 pub(crate) enum EmuCommand {
-    StepFrames(usize),
+    StepFrames {
+        frames: usize,
+        host_tilt: (f32, f32),
+    },
     Shutdown,
 }
 
 pub(crate) enum EmuResponse {
-    FrameReady(Vec<u8>),
+    FrameReady { frame: Vec<u8>, rumble: bool },
     AudioSamples(Vec<f32>),
 }
 
@@ -31,7 +34,7 @@ impl EmuThread {
         let join = thread::spawn(move || {
             while let Ok(command) = cmd_rx.recv() {
                 match command {
-                    EmuCommand::StepFrames(frames) => {
+                    EmuCommand::StepFrames { frames, host_tilt } => {
                         if frames == 0 {
                             continue;
                         }
@@ -40,6 +43,8 @@ impl EmuThread {
                             Ok(emu) => emu,
                             Err(_) => break,
                         };
+
+                        emu.set_mbc7_host_tilt(host_tilt.0, host_tilt.1);
 
                         if !matches!(emu.cpu.running, CPUState::Suspended) {
                             for _ in 0..frames {
@@ -51,7 +56,11 @@ impl EmuThread {
                         }
 
                         let frame = emu.framebuffer().to_vec();
-                        if resp_tx.send(EmuResponse::FrameReady(frame)).is_err() {
+                        let rumble = emu.bus.cartridge.rumble_active();
+                        if resp_tx
+                            .send(EmuResponse::FrameReady { frame, rumble })
+                            .is_err()
+                        {
                             break;
                         }
 
@@ -74,8 +83,10 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn send_step_frames(&self, frames: usize) {
-        let _ = self.cmd_tx.send(EmuCommand::StepFrames(frames));
+    pub(crate) fn send_step_frames(&self, frames: usize, host_tilt: (f32, f32)) {
+        let _ = self
+            .cmd_tx
+            .send(EmuCommand::StepFrames { frames, host_tilt });
     }
 
     pub(crate) fn try_recv(&self) -> Option<EmuResponse> {

@@ -43,4 +43,3 @@ pub(crate) fn write_save_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> 
 
     fs::rename(&tmp_path, path)
 }
-

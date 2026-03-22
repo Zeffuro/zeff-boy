@@ -234,7 +234,7 @@ impl Graphics {
                         data.cgb_mode,
                         &data.bg_palette_ram,
                         &data.obj_palette_ram,
-                        &mut debug_windows.show_tile_viewer,
+                        debug_windows,
                     );
                 }
                 if debug_windows.show_tilemap_viewer {
@@ -244,7 +244,7 @@ impl Graphics {
                         data.ppu,
                         data.cgb_mode,
                         &data.bg_palette_ram,
-                        &mut debug_windows.show_tilemap_viewer,
+                        debug_windows,
                     );
                 }
                 if debug_windows.show_oam_viewer {

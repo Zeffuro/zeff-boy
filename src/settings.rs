@@ -20,6 +20,48 @@ pub(crate) enum BindingAction {
     Select,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TiltBindingAction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputBindingAction {
+    Joypad(BindingAction),
+    Tilt(TiltBindingAction),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LeftStickMode {
+    Dpad,
+    Tilt,
+    Auto,
+}
+
+impl Default for LeftStickMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TiltInputMode {
+    Keyboard,
+    Mouse,
+    Auto,
+}
+
+impl Default for TiltInputMode {
+    fn default() -> Self {
+        Self::Keyboard
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeyBindings {
     pub(crate) up: KeyCode,
@@ -72,6 +114,103 @@ impl KeyBindings {
             BindingAction::Start => self.start = key,
             BindingAction::Select => self.select = key,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TiltKeyBindings {
+    pub(crate) up: KeyCode,
+    pub(crate) down: KeyCode,
+    pub(crate) left: KeyCode,
+    pub(crate) right: KeyCode,
+}
+
+impl Default for TiltKeyBindings {
+    fn default() -> Self {
+        Self {
+            up: KeyCode::KeyW,
+            down: KeyCode::KeyS,
+            left: KeyCode::KeyA,
+            right: KeyCode::KeyD,
+        }
+    }
+}
+
+impl TiltKeyBindings {
+    pub(crate) fn get(&self, action: TiltBindingAction) -> KeyCode {
+        match action {
+            TiltBindingAction::Up => self.up,
+            TiltBindingAction::Down => self.down,
+            TiltBindingAction::Left => self.left,
+            TiltBindingAction::Right => self.right,
+        }
+    }
+
+    pub(crate) fn set(&mut self, action: TiltBindingAction, key: KeyCode) {
+        match action {
+            TiltBindingAction::Up => self.up = key,
+            TiltBindingAction::Down => self.down = key,
+            TiltBindingAction::Left => self.left = key,
+            TiltBindingAction::Right => self.right = key,
+        }
+    }
+
+    pub(crate) fn set_wasd_defaults(&mut self) {
+        *self = Self::default();
+    }
+}
+
+impl Serialize for TiltKeyBindings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("TiltKeyBindings", 4)?;
+        state.serialize_field("up", &keycode_to_string(self.up))?;
+        state.serialize_field("down", &keycode_to_string(self.down))?;
+        state.serialize_field("left", &keycode_to_string(self.left))?;
+        state.serialize_field("right", &keycode_to_string(self.right))?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for TiltKeyBindings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawTiltKeyBindings {
+            up: Option<String>,
+            down: Option<String>,
+            left: Option<String>,
+            right: Option<String>,
+        }
+
+        let raw = RawTiltKeyBindings::deserialize(deserializer)?;
+        let defaults = Self::default();
+        Ok(Self {
+            up: raw
+                .up
+                .as_deref()
+                .and_then(keycode_from_string)
+                .unwrap_or(defaults.up),
+            down: raw
+                .down
+                .as_deref()
+                .and_then(keycode_from_string)
+                .unwrap_or(defaults.down),
+            left: raw
+                .left
+                .as_deref()
+                .and_then(keycode_from_string)
+                .unwrap_or(defaults.left),
+            right: raw
+                .right
+                .as_deref()
+                .and_then(keycode_from_string)
+                .unwrap_or(defaults.right),
+        })
     }
 }
 
@@ -263,6 +402,15 @@ pub(crate) struct Settings {
     pub(crate) uncapped_speed: bool,
     pub(crate) show_fps: bool,
     pub(crate) key_bindings: KeyBindings,
+    pub(crate) tilt_key_bindings: TiltKeyBindings,
+    pub(crate) left_stick_mode: LeftStickMode,
+    pub(crate) tilt_input_mode: TiltInputMode,
+    pub(crate) tilt_sensitivity: f32,
+    pub(crate) tilt_lerp: f32,
+    pub(crate) tilt_deadzone: f32,
+    pub(crate) tilt_invert_x: bool,
+    pub(crate) tilt_invert_y: bool,
+    pub(crate) stick_tilt_bypass_lerp: bool,
     pub(crate) master_volume: f32,
     pub(crate) mute_audio_during_fast_forward: bool,
 }
@@ -276,6 +424,15 @@ impl Default for Settings {
             uncapped_speed: false,
             show_fps: true,
             key_bindings: KeyBindings::default(),
+            tilt_key_bindings: TiltKeyBindings::default(),
+            left_stick_mode: LeftStickMode::Auto,
+            tilt_input_mode: TiltInputMode::default(),
+            tilt_sensitivity: 1.0,
+            tilt_lerp: 0.25,
+            tilt_deadzone: 0.12,
+            tilt_invert_x: false,
+            tilt_invert_y: false,
+            stick_tilt_bypass_lerp: true,
             master_volume: 1.0,
             mute_audio_during_fast_forward: false,
         }

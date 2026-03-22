@@ -19,7 +19,10 @@ pub(crate) fn stop(cpu: &mut CPU, bus: &mut Bus) {
 
         bus.io.apu.step(apu_delay);
 
-        let cgb_mode = matches!(bus.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble);
+        let cgb_mode = matches!(
+            bus.hardware_mode,
+            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+        );
         let prev_mode = bus.io.ppu.mode();
 
         let int = bus.io.ppu.step(apu_delay, &bus.vram, &bus.oam, cgb_mode);

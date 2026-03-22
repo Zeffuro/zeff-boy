@@ -1,7 +1,8 @@
 use crate::debug::breakpoints::WatchType;
 use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use crate::settings::BindingAction;
+use crate::settings::InputBindingAction;
+use egui::{Color32, ColorImage, TextureHandle};
 use std::collections::VecDeque;
 
 pub(crate) struct DebugInfo {
@@ -43,6 +44,14 @@ pub(crate) struct DebugInfo {
     pub(crate) watchpoints: Vec<String>,
     pub(crate) hit_breakpoint: Option<u16>,
     pub(crate) hit_watchpoint: Option<String>,
+
+    pub(crate) tilt_is_mbc7: bool,
+    pub(crate) tilt_stick_controls_tilt: bool,
+    pub(crate) tilt_left_stick: (f32, f32),
+    pub(crate) tilt_keyboard: (f32, f32),
+    pub(crate) tilt_mouse: (f32, f32),
+    pub(crate) tilt_target: (f32, f32),
+    pub(crate) tilt_smoothed: (f32, f32),
 }
 
 #[derive(Clone, Copy)]
@@ -80,7 +89,30 @@ pub(crate) struct DebugWindowState {
     pub(crate) breakpoint_input: String,
     pub(crate) watchpoint_input: String,
     pub(crate) watchpoint_type: WatchType,
-    pub(crate) rebinding_action: Option<BindingAction>,
+    pub(crate) rebinding_action: Option<InputBindingAction>,
+    pub(crate) tilemap_image: ColorImage,
+    pub(crate) tilemap_texture: Option<TextureHandle>,
+    pub(crate) tilemap_vram_dirty: bool,
+    pub(crate) tilemap_last_vram_signature: u64,
+    pub(crate) tilemap_last_bg_palette_signature: u64,
+    pub(crate) tilemap_last_lcdc: u8,
+    pub(crate) tilemap_last_bgp: u8,
+    pub(crate) tilemap_last_cgb_mode: bool,
+    pub(crate) tilemap_last_use_window_map: Option<bool>,
+    pub(crate) tilemap_last_show_attr_overlay: Option<bool>,
+    pub(crate) tilemap_last_render_cgb_colors: Option<bool>,
+    pub(crate) tile_viewer_image: ColorImage,
+    pub(crate) tile_viewer_texture: Option<TextureHandle>,
+    pub(crate) tile_viewer_vram_dirty: bool,
+    pub(crate) tile_viewer_last_vram_signature: u64,
+    pub(crate) tile_viewer_last_bg_palette_signature: u64,
+    pub(crate) tile_viewer_last_obj_palette_signature: u64,
+    pub(crate) tile_viewer_last_bgp: u8,
+    pub(crate) tile_viewer_last_cgb_mode: bool,
+    pub(crate) tile_viewer_last_vram_bank: Option<usize>,
+    pub(crate) tile_viewer_last_use_cgb_colors: Option<bool>,
+    pub(crate) tile_viewer_last_use_obj_palette: Option<bool>,
+    pub(crate) tile_viewer_last_cgb_palette_index: Option<u8>,
 }
 
 impl DebugWindowState {
@@ -106,6 +138,29 @@ impl DebugWindowState {
             watchpoint_input: String::new(),
             watchpoint_type: WatchType::Write,
             rebinding_action: None,
+            tilemap_image: ColorImage::filled([256, 256], Color32::BLACK),
+            tilemap_texture: None,
+            tilemap_vram_dirty: true,
+            tilemap_last_vram_signature: 0,
+            tilemap_last_bg_palette_signature: 0,
+            tilemap_last_lcdc: 0,
+            tilemap_last_bgp: 0,
+            tilemap_last_cgb_mode: false,
+            tilemap_last_use_window_map: None,
+            tilemap_last_show_attr_overlay: None,
+            tilemap_last_render_cgb_colors: None,
+            tile_viewer_image: ColorImage::filled([128, 192], Color32::BLACK),
+            tile_viewer_texture: None,
+            tile_viewer_vram_dirty: true,
+            tile_viewer_last_vram_signature: 0,
+            tile_viewer_last_bg_palette_signature: 0,
+            tile_viewer_last_obj_palette_signature: 0,
+            tile_viewer_last_bgp: 0,
+            tile_viewer_last_cgb_mode: false,
+            tile_viewer_last_vram_bank: None,
+            tile_viewer_last_use_cgb_colors: None,
+            tile_viewer_last_use_obj_palette: None,
+            tile_viewer_last_cgb_palette_index: None,
         }
     }
 
@@ -120,6 +175,72 @@ impl DebugWindowState {
     pub(crate) fn any_vram_viewer_open(&self) -> bool {
         self.show_tile_viewer || self.show_tilemap_viewer
     }
+
+    pub(crate) fn invalidate_tilemap_cache(&mut self) {
+        self.tilemap_vram_dirty = true;
+    }
+
+    pub(crate) fn update_tilemap_dirty_inputs(
+        &mut self,
+        vram: &[u8],
+        bg_palette_ram: &[u8; 64],
+        ppu: PpuSnapshot,
+        cgb_mode: bool,
+    ) {
+        let vram_sig = fold_bytes(vram);
+        let bg_palette_sig = fold_bytes(bg_palette_ram);
+        let changed = self.tilemap_last_vram_signature != vram_sig
+            || self.tilemap_last_bg_palette_signature != bg_palette_sig
+            || self.tilemap_last_lcdc != ppu.lcdc
+            || self.tilemap_last_bgp != ppu.bgp
+            || self.tilemap_last_cgb_mode != cgb_mode;
+
+        self.tilemap_vram_dirty |= changed;
+        self.tilemap_last_vram_signature = vram_sig;
+        self.tilemap_last_bg_palette_signature = bg_palette_sig;
+        self.tilemap_last_lcdc = ppu.lcdc;
+        self.tilemap_last_bgp = ppu.bgp;
+        self.tilemap_last_cgb_mode = cgb_mode;
+    }
+
+    pub(crate) fn invalidate_tile_viewer_cache(&mut self) {
+        self.tile_viewer_vram_dirty = true;
+    }
+
+    pub(crate) fn update_tile_viewer_dirty_inputs(
+        &mut self,
+        vram: &[u8],
+        bg_palette_ram: &[u8; 64],
+        obj_palette_ram: &[u8; 64],
+        bgp: u8,
+        cgb_mode: bool,
+    ) {
+        let vram_sig = fold_bytes(vram);
+        let bg_palette_sig = fold_bytes(bg_palette_ram);
+        let obj_palette_sig = fold_bytes(obj_palette_ram);
+        let changed = self.tile_viewer_last_vram_signature != vram_sig
+            || self.tile_viewer_last_bg_palette_signature != bg_palette_sig
+            || self.tile_viewer_last_obj_palette_signature != obj_palette_sig
+            || self.tile_viewer_last_bgp != bgp
+            || self.tile_viewer_last_cgb_mode != cgb_mode;
+
+        self.tile_viewer_vram_dirty |= changed;
+        self.tile_viewer_last_vram_signature = vram_sig;
+        self.tile_viewer_last_bg_palette_signature = bg_palette_sig;
+        self.tile_viewer_last_obj_palette_signature = obj_palette_sig;
+        self.tile_viewer_last_bgp = bgp;
+        self.tile_viewer_last_cgb_mode = cgb_mode;
+    }
+}
+
+fn fold_bytes(bytes: &[u8]) -> u64 {
+    // Small, deterministic rolling hash for cheap dirty detection.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0001_0000_01b3);
+    }
+    hash
 }
 
 pub(crate) struct RomInfoViewData {

@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod bess;
 mod cli;
 mod debug;
 mod emu_thread;
@@ -10,6 +11,7 @@ mod input;
 mod rom_loader;
 mod save_state;
 mod settings;
+mod ui;
 
 use crate::emulator::Emulator;
 use crate::settings::Settings;

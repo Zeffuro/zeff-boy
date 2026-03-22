@@ -82,4 +82,24 @@ impl CartridgeType {
                 | CartridgeType::HuC1RamBattery
         )
     }
+
+    pub(crate) fn is_mbc3_with_rtc(self) -> bool {
+        matches!(
+            self,
+            CartridgeType::Mbc3TimerBattery | CartridgeType::Mbc3TimerRamBattery
+        )
+    }
+
+    pub(crate) fn is_mbc5_with_rumble(self) -> bool {
+        matches!(
+            self,
+            CartridgeType::Mbc5Rumble
+                | CartridgeType::Mbc5RumbleRam
+                | CartridgeType::Mbc5RumbleRamBattery
+        )
+    }
+
+    pub(crate) fn is_mbc7(self) -> bool {
+        matches!(self, CartridgeType::Mbc7SensorRumbleRamBattery)
+    }
 }

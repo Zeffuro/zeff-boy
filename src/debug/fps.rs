@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-/// FPS tracker
+// FPS tracker
 pub(crate) struct FpsTracker {
     timestamps: VecDeque<Instant>,
 }
