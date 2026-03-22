@@ -44,7 +44,6 @@ impl HostInputState {
         let mut use_x = ax >= deadzone;
         let mut use_y = ay >= deadzone;
 
-        // Cardinal snap keeps stick intent stable for games that only read one axis.
         const CARDINAL_SNAP: f32 = 0.18; // ~tan(10deg)
         if use_x && use_y {
             if ay < ax * CARDINAL_SNAP {

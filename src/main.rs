@@ -1,6 +1,5 @@
 mod app;
 mod audio;
-mod bess;
 mod cli;
 mod debug;
 mod emu_thread;

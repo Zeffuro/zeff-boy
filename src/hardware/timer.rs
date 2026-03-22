@@ -27,8 +27,7 @@ impl Timer {
             overflow_pending: false,
         }
     }
-
-    /// Apply BESS DIV value: sets sys_counter = DIV << 8 and resets edge state.
+    
     pub(crate) fn apply_bess_div(&mut self, div: u8) {
         self.div = div;
         self.sys_counter = (div as u16) << 8;

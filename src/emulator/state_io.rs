@@ -3,8 +3,8 @@ use crate::debug::{DebugController, OpcodeLog};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::rom_loader;
 use crate::save_state::{
-    SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, slot_path, validate_compatibility,
-    write_to_file,
+    SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, has_bess_footer, import_bess, slot_path,
+    validate_compatibility, write_to_file,
 };
 use anyhow::{Result as AnyResult, bail};
 use std::path::Path;
@@ -110,7 +110,6 @@ impl Emulator {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("failed to read save state: {}: {e}", path.display()))?;
 
-        // Try native ZBSTATE format first
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {
             let state = crate::save_state::decode_on_thread(bytes)?;
             validate_compatibility(&state, self.rom_hash)?;
@@ -146,10 +145,9 @@ impl Emulator {
             return Ok(());
         }
 
-        // Try foreign BESS format
-        if crate::bess::has_bess_footer(&bytes) {
+        if has_bess_footer(&bytes) {
             let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
-            let import = crate::bess::import_bess(&bytes, &rom_bytes, &self.header)?;
+            let import = import_bess(&bytes, &rom_bytes, &self.header)?;
 
             let current_sample_rate = self.bus.io.apu.sample_rate;
             let mut restored_bus = import.bus;

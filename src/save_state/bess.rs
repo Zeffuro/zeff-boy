@@ -10,7 +10,7 @@ use crate::hardware::types::CPUState;
 use crate::hardware::types::IMEState;
 use crate::hardware::types::constants::{HRAM_SIZE, OAM_SIZE};
 use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::save_state::StateWriter;
+use super::StateWriter;
 
 const BESS_MAGIC: &[u8; 4] = b"BESS";
 const BESS_MAJOR: u16 = 1;
@@ -544,4 +544,5 @@ fn now_unix_seconds() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
+
 

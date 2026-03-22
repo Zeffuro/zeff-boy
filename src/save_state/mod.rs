@@ -4,6 +4,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod bess;
+
+pub(crate) use bess::{has_bess_footer, import_bess};
+
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
@@ -240,7 +244,7 @@ fn encode_state(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
     writer.write_u16(state.last_opcode_pc);
     state.bus.write_state(&mut writer);
 
-    crate::bess::append_bess(&mut writer, state.cpu, state.bus, state.hardware_mode)?;
+    bess::append_bess(&mut writer, state.cpu, state.bus, state.hardware_mode)?;
 
     Ok(writer.into_bytes())
 }
@@ -274,7 +278,7 @@ fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     let last_opcode_pc = reader.read_u16()?;
     let bus = Bus::read_state(&mut reader)?;
 
-    if !reader.is_exhausted() && !crate::bess::has_bess_footer(bytes) {
+    if !reader.is_exhausted() && !bess::has_bess_footer(bytes) {
         bail!("save-state file has unexpected trailing data");
     }
 
@@ -517,3 +521,4 @@ mod tests {
         assert_eq!(restored.last_opcode_pc, 0x0200);
     }
 }
+
