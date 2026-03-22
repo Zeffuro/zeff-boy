@@ -9,7 +9,8 @@ use crate::hardware::{
 use crate::rom_loader;
 use std::path::Path;
 
-const CYCLES_PER_FRAME: u64 = 70224;
+const CYCLES_PER_FRAME_NORMAL: u64 = 70224;
+const CYCLES_PER_FRAME_DOUBLE: u64 = 140448;
 type RegisterSeed = (u8, u8, u8, u8, u8, u8, u8, u8);
 
 const DMG_POST_BOOT_REGISTERS: RegisterSeed = (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D);
@@ -29,8 +30,12 @@ pub(crate) struct Emulator {
 }
 
 impl Emulator {
-    pub(crate) fn cycles_per_frame() -> u64 {
-        CYCLES_PER_FRAME
+    pub(crate) fn cycles_per_frame(mode: HardwareMode) -> u64 {
+        if mode == HardwareMode::CGBDouble {
+            CYCLES_PER_FRAME_DOUBLE
+        } else {
+            CYCLES_PER_FRAME_NORMAL
+        }
     }
 
     fn post_boot_registers_for_mode(mode: HardwareMode) -> RegisterSeed {
@@ -110,6 +115,8 @@ impl Emulator {
 
         self.cpu.step(&mut self.bus);
 
+        self.hardware_mode = self.bus.hardware_mode;
+
         if watch_active {
             let hit_watchpoint = {
                 let debug = &mut self.debug;
@@ -158,7 +165,10 @@ impl Emulator {
         if matches!(self.cpu.running, CPUState::Suspended) {
             return;
         }
-        let target = self.cpu.cycles.wrapping_add(CYCLES_PER_FRAME);
+
+        let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
+        let target = self.cpu.cycles.wrapping_add(frame_cycles);
+
         while self.cpu.cycles < target && !matches!(self.cpu.running, CPUState::Suspended) {
             let _ = self.step_instruction();
         }
@@ -231,6 +241,11 @@ impl Emulator {
             mem_around_pc.push((addr, self.bus.read_byte(addr)));
         }
 
+        let speed_mode_label = match self.hardware_mode {
+            HardwareMode::CGBDouble => "Double",
+            _ => "Normal",
+        };
+
         DebugInfo {
             pc: self.cpu.pc,
             sp: self.cpu.sp,
@@ -248,7 +263,7 @@ impl Emulator {
             last_opcode: self.last_opcode,
             last_opcode_pc: self.last_opcode_pc,
             fps: 0.0,
-            speed_mode_label: "Normal",
+            speed_mode_label,
             ppu: self.ppu_registers(),
             hardware_mode: self.hardware_mode,
             hardware_mode_preference: self.hardware_mode_preference,

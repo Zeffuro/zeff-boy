@@ -2,7 +2,6 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
 #[cfg(test)]
 use crate::hardware::rom_header::RomHeader;
-#[cfg(test)]
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::{CPUState, IMEState};
 
@@ -11,8 +10,24 @@ pub(crate) fn nop(_: &mut CPU, _: &mut Bus) {}
 
 // 0x10: STOP - Stop CPU
 pub(crate) fn stop(cpu: &mut CPU, bus: &mut Bus) {
-    let _ = cpu.fetch8(bus);
+    let _ = cpu.fetch8_timed(bus);
     if bus.maybe_switch_cgb_speed() {
+        let delay = 8200;
+
+        let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
+        let apu_delay = if is_double_speed { delay / 2 } else { delay };
+
+        bus.io.apu.step(apu_delay);
+
+        let cgb_mode = matches!(bus.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble);
+        let prev_mode = bus.io.ppu.mode();
+
+        let int = bus.io.ppu.step(apu_delay, &bus.vram, &bus.oam, cgb_mode);
+        bus.if_reg |= int;
+        bus.maybe_step_hblank_hdma(prev_mode, bus.io.ppu.mode());
+
+        let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
+        cpu.timed_cycles_accounted += if is_double_speed { delay * 2 } else { delay };
         return;
     }
     cpu.running = CPUState::Stopped;

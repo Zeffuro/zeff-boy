@@ -56,6 +56,9 @@ pub(crate) struct PPU {
 
     pub(crate) window_line_counter: u8,
     pub(crate) window_was_active_this_frame: bool,
+    pub(crate) window_y_triggered: bool,
+    pub(crate) cgb_mode: bool,
+    pub(crate) rendered_current_line: bool,
     prev_stat_line: bool,
 }
 
@@ -94,12 +97,22 @@ impl PPU {
 
             window_line_counter: 0,
             window_was_active_this_frame: false,
+            window_y_triggered: false,
+            cgb_mode: false,
+            rendered_current_line: false,
             prev_stat_line: false,
         }
     }
 
+    pub(crate) fn window_enable_condition(&self) -> bool {
+        if !self.cgb_mode && self.lcdc & 0x01 == 0 {
+            return false;
+        }
+        self.lcdc & 0x20 != 0
+    }
+
     pub(crate) fn window_visible_on_current_line(&self) -> bool {
-        self.ly < SCREEN_H as u8 && self.lcdc & 0x20 != 0 && self.ly >= self.wy && self.wx <= 166
+        self.ly < SCREEN_H as u8 && self.window_enable_condition() && self.window_y_triggered && self.wx <= 166
     }
 
     pub(crate) fn increment_window_line_counter_after_scanline(&mut self) {
@@ -110,6 +123,8 @@ impl PPU {
     }
 
     pub(crate) fn step(&mut self, cycles: u64, vram: &[u8], oam: &[u8], cgb_mode: bool) -> u8 {
+        self.cgb_mode = cgb_mode;
+
         if self.lcdc & 0x80 == 0 {
             self.cycles = 0;
             self.ly = 0;
@@ -120,13 +135,30 @@ impl PPU {
             return 0;
         }
 
-        self.cycles += cycles;
+        if self.ly == self.wy {
+            self.window_y_triggered = true;
+        }
+
+        let previous_mode = self.stat & 0x03;
         let mut interrupts = 0u8;
+
+        self.cycles += cycles;
+        if !self.rendered_current_line && self.cycles >= OAM_DOTS + DRAW_DOTS {
+            if self.ly < 144 {
+                if cgb_mode {
+                    renderer::render_scanline_cgb(self, vram, oam);
+                } else {
+                    renderer::render_scanline_dmg(self, vram, oam);
+                }
+            }
+            self.rendered_current_line = true;
+        }
+
 
         while self.cycles >= DOTS_PER_LINE {
             self.cycles -= DOTS_PER_LINE;
 
-            if self.ly < 144 {
+            if !self.rendered_current_line && self.ly < 144 {
                 if cgb_mode {
                     renderer::render_scanline_cgb(self, vram, oam);
                 } else {
@@ -135,6 +167,7 @@ impl PPU {
             }
 
             self.ly += 1;
+            self.rendered_current_line = false;
 
             if self.ly == 144 {
                 interrupts |= 0x01;
@@ -143,10 +176,14 @@ impl PPU {
                 self.ly = 0;
                 self.window_line_counter = 0;
                 self.window_was_active_this_frame = false;
+                self.window_y_triggered = false;
+            }
+
+            if self.ly == self.wy {
+                self.window_y_triggered = true;
             }
         }
 
-        let previous_mode = self.stat & 0x03;
         let current_mode = if self.ly >= 144 {
             1 // VBlank
         } else if self.cycles <= OAM_DOTS {
@@ -176,6 +213,7 @@ impl PPU {
         self.lcdc & 0x80 != 0
     }
 
+
     pub(crate) fn cpu_vram_accessible(&self) -> bool {
         !self.lcd_enabled() || self.mode() != 3
     }
@@ -187,6 +225,7 @@ impl PPU {
     pub(crate) fn cpu_palette_accessible(&self) -> bool {
         !self.lcd_enabled() || self.mode() != 3
     }
+
 
     fn update_stat_interrupt(&mut self) -> bool {
         let ly_match = self.ly == self.lyc;

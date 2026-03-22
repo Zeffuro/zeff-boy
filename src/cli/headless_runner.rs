@@ -28,7 +28,7 @@ pub(crate) fn run_headless(
             let target = emulator
                 .cpu
                 .cycles
-                .wrapping_add(Emulator::cycles_per_frame());
+                .wrapping_add(Emulator::cycles_per_frame(emulator.hardware_mode));
             while emulator.cpu.cycles < target {
                 let (pc, op, cb_prefix, step_cycles) = emulator.step_instruction();
                 if matches!(

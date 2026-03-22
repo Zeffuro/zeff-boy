@@ -73,10 +73,9 @@ fn render_window_line(
     ly: usize,
     x: usize,
 ) -> Option<u8> {
-    let window_enabled = ppu.lcdc & 0x20 != 0;
     let win_x = ppu.wx as i32 - 7;
-    let win_y = ppu.wy as usize;
-    if !window_enabled || ly < win_y || win_x >= SCREEN_W as i32 || (x as i32) < win_x {
+
+    if !ppu.window_visible_on_current_line() || win_x >= SCREEN_W as i32 || (x as i32) < win_x {
         return None;
     }
 
@@ -321,10 +320,8 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
     for x in 0..SCREEN_W {
         let (map_base, map_x, map_y) = {
-            let window_enabled = ppu.lcdc & 0x20 != 0;
             let win_x = ppu.wx as i32 - 7;
-            let win_y = ppu.wy as usize;
-            if window_enabled && ly >= win_y && win_x < SCREEN_W as i32 && (x as i32) >= win_x {
+            if ppu.window_visible_on_current_line() && win_x < SCREEN_W as i32 && (x as i32) >= win_x {
                 (
                     win_tile_map_base,
                     (x as i32 - win_x) as usize,
