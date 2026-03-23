@@ -1,23 +1,71 @@
-use std::sync::{
-    Arc, Mutex,
-    mpsc::{self, Receiver, Sender},
-};
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
+use crate::debug::DebugUiActions;
 use crate::emulator::Emulator;
 use crate::hardware::types::CPUState;
+use crate::ui;
+
+pub(crate) struct SnapshotRequest {
+    pub(crate) any_viewer_open: bool,
+    pub(crate) any_vram_viewer_open: bool,
+    pub(crate) show_apu_viewer: bool,
+    pub(crate) show_disassembler: bool,
+    pub(crate) show_rom_info: bool,
+    pub(crate) show_memory_viewer: bool,
+    pub(crate) memory_view_start: u16,
+}
+
+pub(crate) struct FrameInput {
+    pub(crate) frames: usize,
+    pub(crate) host_tilt: (f32, f32),
+    pub(crate) buttons_pressed: u8,
+    pub(crate) dpad_pressed: u8,
+    pub(crate) debug_step: bool,
+    pub(crate) debug_continue: bool,
+    pub(crate) apu_capture_enabled: bool,
+    pub(crate) debug_actions: DebugUiActions,
+    pub(crate) snapshot: SnapshotRequest,
+}
+
+pub(crate) struct FrameResult {
+    pub(crate) frame: Vec<u8>,
+    pub(crate) rumble: bool,
+    pub(crate) audio_samples: Vec<f32>,
+    pub(crate) ui_data: ui::UiFrameData,
+    pub(crate) is_mbc7: bool,
+}
 
 pub(crate) enum EmuCommand {
-    StepFrames {
-        frames: usize,
-        host_tilt: (f32, f32),
+    StepFrames(FrameInput),
+    SaveStateSlot(u8),
+    LoadStateSlot {
+        slot: u8,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
     },
+    SaveStateToPath(PathBuf),
+    LoadStateFromPath {
+        path: PathBuf,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
+    },
+    SetSampleRate(u32),
     Shutdown,
 }
 
 pub(crate) enum EmuResponse {
-    FrameReady { frame: Vec<u8>, rumble: bool },
-    AudioSamples(Vec<f32>),
+    FrameReady(FrameResult),
+    SaveStateOk(String),
+    SaveStateFailed(String),
+    LoadStateOk {
+        path: String,
+        framebuffer: Vec<u8>,
+    },
+    LoadStateFailed(String),
+    SramFlushed(Option<String>),
+    ShutdownComplete,
 }
 
 pub(crate) struct EmuThread {
@@ -27,27 +75,41 @@ pub(crate) struct EmuThread {
 }
 
 impl EmuThread {
-    pub(crate) fn spawn(emulator: Arc<Mutex<Emulator>>) -> Self {
+    pub(crate) fn spawn(mut emu: Emulator) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (resp_tx, resp_rx) = mpsc::channel();
 
         let join = thread::spawn(move || {
             while let Ok(command) = cmd_rx.recv() {
                 match command {
-                    EmuCommand::StepFrames { frames, host_tilt } => {
-                        if frames == 0 {
-                            continue;
+                    EmuCommand::StepFrames(input) => {
+                        Self::apply_debug_actions(&mut emu, &input.debug_actions);
+
+                        if emu
+                            .bus
+                            .io
+                            .joypad
+                            .apply_pressed_masks(input.buttons_pressed, input.dpad_pressed)
+                        {
+                            emu.bus.if_reg |= 0x10;
+                        }
+                        emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+                        emu.bus.io.apu.debug_capture_enabled = input.apu_capture_enabled;
+
+                        if matches!(emu.cpu.running, CPUState::Suspended) {
+                            if input.debug_continue {
+                                emu.debug.clear_hits();
+                                emu.debug.break_on_next = false;
+                                emu.cpu.running = CPUState::Running;
+                            } else if input.debug_step {
+                                emu.debug.clear_hits();
+                                emu.debug.break_on_next = true;
+                                emu.cpu.running = CPUState::Running;
+                            }
                         }
 
-                        let mut emu = match emulator.lock() {
-                            Ok(emu) => emu,
-                            Err(_) => break,
-                        };
-
-                        emu.set_mbc7_host_tilt(host_tilt.0, host_tilt.1);
-
-                        if !matches!(emu.cpu.running, CPUState::Suspended) {
-                            for _ in 0..frames {
+                        if input.frames > 0 && !matches!(emu.cpu.running, CPUState::Suspended) {
+                            for _ in 0..input.frames {
                                 emu.step_frame();
                                 if matches!(emu.cpu.running, CPUState::Suspended) {
                                     break;
@@ -55,23 +117,111 @@ impl EmuThread {
                             }
                         }
 
+                        let ui_data = ui::collect_emu_snapshot(&emu, &input.snapshot);
+
                         let frame = emu.framebuffer().to_vec();
                         let rumble = emu.bus.cartridge.rumble_active();
+                        let audio_samples = emu.bus.io.apu.drain_samples();
+                        let is_mbc7 = emu.is_mbc7_cartridge();
+
                         if resp_tx
-                            .send(EmuResponse::FrameReady { frame, rumble })
+                            .send(EmuResponse::FrameReady(FrameResult {
+                                frame,
+                                rumble,
+                                audio_samples,
+                                ui_data,
+                                is_mbc7,
+                            }))
                             .is_err()
                         {
                             break;
                         }
+                    }
 
-                        let samples = emu.bus.io.apu.drain_samples();
-                        if !samples.is_empty()
-                            && resp_tx.send(EmuResponse::AudioSamples(samples)).is_err()
-                        {
+                    EmuCommand::SaveStateSlot(slot) => {
+                        let resp = match emu.save_state(slot) {
+                            Ok(path) => EmuResponse::SaveStateOk(path),
+                            Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
+                        };
+                        if resp_tx.send(resp).is_err() {
                             break;
                         }
                     }
-                    EmuCommand::Shutdown => break,
+
+                    EmuCommand::LoadStateSlot {
+                        slot,
+                        buttons_pressed,
+                        dpad_pressed,
+                    } => {
+                        let resp = match emu.load_state(slot) {
+                            Ok(path) => {
+                                emu.bus
+                                    .io
+                                    .joypad
+                                    .apply_pressed_masks(buttons_pressed, dpad_pressed);
+                                let fb = emu.framebuffer().to_vec();
+                                EmuResponse::LoadStateOk {
+                                    path,
+                                    framebuffer: fb,
+                                }
+                            }
+                            Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
+                        };
+                        if resp_tx.send(resp).is_err() {
+                            break;
+                        }
+                    }
+
+                    EmuCommand::SaveStateToPath(path) => {
+                        let resp = match emu.save_state_to_path(&path) {
+                            Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                            Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
+                        };
+                        if resp_tx.send(resp).is_err() {
+                            break;
+                        }
+                    }
+
+                    EmuCommand::LoadStateFromPath {
+                        path,
+                        buttons_pressed,
+                        dpad_pressed,
+                    } => {
+                        let resp = match emu.load_state_from_path(&path) {
+                            Ok(()) => {
+                                emu.bus
+                                    .io
+                                    .joypad
+                                    .apply_pressed_masks(buttons_pressed, dpad_pressed);
+                                let fb = emu.framebuffer().to_vec();
+                                EmuResponse::LoadStateOk {
+                                    path: path.display().to_string(),
+                                    framebuffer: fb,
+                                }
+                            }
+                            Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
+                        };
+                        if resp_tx.send(resp).is_err() {
+                            break;
+                        }
+                    }
+
+                    EmuCommand::SetSampleRate(rate) => {
+                        emu.bus.io.apu.set_sample_rate(rate);
+                    }
+
+                    EmuCommand::Shutdown => {
+                        let sram_path = match emu.flush_battery_sram() {
+                            Ok(path) => path,
+                            Err(err) => {
+                                log::error!("Failed to flush SRAM on shutdown: {}", err);
+                                None
+                            }
+                        };
+                        let _ = resp_tx.send(EmuResponse::SramFlushed(sram_path));
+                        let _ = resp_tx.send(EmuResponse::ShutdownComplete);
+                        break;
+                    }
                 }
             }
         });
@@ -83,18 +233,52 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn send_step_frames(&self, frames: usize, host_tilt: (f32, f32)) {
-        let _ = self
-            .cmd_tx
-            .send(EmuCommand::StepFrames { frames, host_tilt });
+    fn apply_debug_actions(emu: &mut Emulator, actions: &DebugUiActions) {
+        if let Some(addr) = actions.add_breakpoint {
+            emu.debug.add_breakpoint(addr);
+        }
+        if let Some((addr, watch_type)) = actions.add_watchpoint {
+            emu.debug.add_watchpoint(addr, watch_type);
+        }
+        for addr in &actions.remove_breakpoints {
+            emu.debug.remove_breakpoint(*addr);
+        }
+        for addr in &actions.toggle_breakpoints {
+            emu.debug.toggle_breakpoint(*addr);
+        }
+        if let Some(mutes) = actions.apu_channel_mutes {
+            emu.bus.io.apu.set_channel_mutes(mutes);
+        }
+        #[cfg(debug_assertions)]
+        for (addr, value) in &actions.memory_writes {
+            emu.bus.write_byte(*addr, *value);
+        }
+    }
+
+    pub(crate) fn send(&self, cmd: EmuCommand) {
+        let _ = self.cmd_tx.send(cmd);
     }
 
     pub(crate) fn try_recv(&self) -> Option<EmuResponse> {
         self.resp_rx.try_recv().ok()
     }
 
+    pub(crate) fn recv(&self) -> Option<EmuResponse> {
+        self.resp_rx.recv().ok()
+    }
+
     pub(crate) fn shutdown(&mut self) {
         let _ = self.cmd_tx.send(EmuCommand::Shutdown);
+        loop {
+            match self.resp_rx.recv() {
+                Ok(EmuResponse::ShutdownComplete) => break,
+                Ok(EmuResponse::SramFlushed(Some(path))) => {
+                    log::info!("Saved battery RAM to {}", path);
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }

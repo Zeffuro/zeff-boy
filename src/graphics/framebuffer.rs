@@ -19,7 +19,7 @@ impl FramebufferRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -59,8 +59,8 @@ impl FramebufferRenderer {
         let screen_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("screen pipeline layout"),
-                bind_group_layouts: &[Some(&screen_bgl)],
-                immediate_size: 0,
+                bind_group_layouts: &[&screen_bgl],
+                push_constant_ranges: &[],
             });
 
         let screen_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -86,7 +86,7 @@ impl FramebufferRenderer {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             cache: None,
-            multiview_mask: None,
+            multiview: None,
         });
 
         Ok(Self {

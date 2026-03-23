@@ -23,12 +23,8 @@ impl App {
             return;
         }
 
-        let joypad_changed = self.handle_joypad_key(key_event, key_code);
+        self.handle_joypad_key(key_event, key_code);
         self.handle_tilt_key(key_event, key_code);
-
-        if joypad_changed {
-            self.sync_host_input_to_joypad();
-        }
     }
 
     fn handle_rebinding_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
@@ -62,9 +58,7 @@ impl App {
                     self.uncapped_speed = !self.uncapped_speed;
                     self.settings.uncapped_speed = self.uncapped_speed;
                     self.settings.save();
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_uncapped_present_mode(self.uncapped_speed);
-                    }
+                    // Present mode update is handled by sync_speed_setting() next tick.
                 }
                 true
             }

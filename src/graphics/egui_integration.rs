@@ -2,18 +2,16 @@ use anyhow::Result;
 use egui::ClippedPrimitive;
 use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window};
 
-use crate::graphics::egui_painter::EguiPainter;
 use crate::graphics::gpu::GpuContext;
 
 pub(crate) struct EguiFrameOutput {
     pub(crate) full_output: egui::FullOutput,
-    pub(crate) paint_jobs: Vec<ClippedPrimitive>,
 }
 
 pub(crate) struct EguiRenderer {
     ctx: egui::Context,
     state: egui_winit::State,
-    painter: EguiPainter,
+    renderer: egui_wgpu::Renderer,
 }
 
 impl EguiRenderer {
@@ -44,12 +42,17 @@ impl EguiRenderer {
             None,
             None,
         );
-        let painter = EguiPainter::new(device, format)?;
+
+        let renderer = egui_wgpu::Renderer::new(
+            device,
+            format,
+            egui_wgpu::RendererOptions::default(),
+        );
 
         Ok(Self {
             ctx,
             state,
-            painter,
+            renderer,
         })
     }
 
@@ -71,31 +74,54 @@ impl EguiRenderer {
         let full_output = self.ctx.end_pass();
         self.state
             .handle_platform_output(window, full_output.platform_output.clone());
-        let paint_jobs = self
-            .ctx
-            .tessellate(full_output.shapes.clone(), full_output.pixels_per_point);
-
-        EguiFrameOutput {
-            full_output,
-            paint_jobs,
-        }
+        EguiFrameOutput { full_output }
     }
 
-    pub(crate) fn paint(
+    pub(crate) fn prepare(
         &mut self,
         gpu: &GpuContext,
-        render_pass: &mut wgpu::RenderPass<'_>,
+        encoder: &mut wgpu::CommandEncoder,
         output: &EguiFrameOutput,
-    ) -> Result<()> {
-        self.painter.paint(
+    ) -> (Vec<ClippedPrimitive>, egui_wgpu::ScreenDescriptor) {
+        let paint_jobs = self.ctx.tessellate(
+            output.full_output.shapes.clone(),
+            output.full_output.pixels_per_point,
+        );
+
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [gpu.config.width, gpu.config.height],
+            pixels_per_point: output.full_output.pixels_per_point,
+        };
+
+        for (id, delta) in &output.full_output.textures_delta.set {
+            self.renderer
+                .update_texture(&gpu.device, &gpu.queue, *id, delta);
+        }
+
+        self.renderer.update_buffers(
             &gpu.device,
             &gpu.queue,
-            render_pass,
-            gpu.config.width,
-            gpu.config.height,
-            output.full_output.pixels_per_point,
-            &output.paint_jobs,
-            &output.full_output.textures_delta,
-        )
+            encoder,
+            &paint_jobs,
+            &screen_descriptor,
+        );
+
+        (paint_jobs, screen_descriptor)
+    }
+
+    pub(crate) fn render_to_pass(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        paint_jobs: &[ClippedPrimitive],
+        screen_descriptor: &egui_wgpu::ScreenDescriptor,
+    ) {
+        self.renderer
+            .render(render_pass, paint_jobs, screen_descriptor);
+    }
+
+    pub(crate) fn cleanup(&mut self, output: &EguiFrameOutput) {
+        for id in &output.full_output.textures_delta.free {
+            self.renderer.free_texture(id);
+        }
     }
 }

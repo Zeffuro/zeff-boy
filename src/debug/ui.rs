@@ -1,11 +1,13 @@
 use crate::debug::DebugInfo;
 use crate::debug::DebugWindowState;
 use crate::debug::breakpoints::WatchType;
+use crate::debug::dock::{DebugTab, toggle_dock_tab};
 use crate::graphics::AspectRatioMode;
 use crate::hardware::types::hardware_mode::HardwareModePreference;
 use crate::settings::{
     BindingAction, InputBindingAction, LeftStickMode, Settings, TiltBindingAction, TiltInputMode,
 };
+use egui_dock::DockState;
 
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<u16>,
@@ -47,7 +49,7 @@ pub(crate) struct MenuActions {
 pub(crate) fn draw_menu_bar(
     ctx: &egui::Context,
     current_mode: AspectRatioMode,
-    debug_windows: &mut DebugWindowState,
+    dock_state: &mut DockState<DebugTab>,
 ) -> MenuActions {
     let mut open_file_requested = false;
     let mut open_settings_requested = false;
@@ -122,39 +124,39 @@ pub(crate) fn draw_menu_bar(
 
             ui.menu_button("Debug", |ui| {
                 if ui.button("CPU / Debug").clicked() {
-                    debug_windows.show_cpu_debug = !debug_windows.show_cpu_debug;
+                    toggle_dock_tab(dock_state, DebugTab::CpuDebug);
                     ui.close();
                 }
                 if ui.button("APU / Sound").clicked() {
-                    debug_windows.show_apu_viewer = !debug_windows.show_apu_viewer;
+                    toggle_dock_tab(dock_state, DebugTab::ApuViewer);
                     ui.close();
                 }
                 if ui.button("ROM Info").clicked() {
-                    debug_windows.show_rom_info = !debug_windows.show_rom_info;
+                    toggle_dock_tab(dock_state, DebugTab::RomInfo);
                     ui.close();
                 }
                 if ui.button("Disassembler").clicked() {
-                    debug_windows.show_disassembler = !debug_windows.show_disassembler;
+                    toggle_dock_tab(dock_state, DebugTab::Disassembler);
                     ui.close();
                 }
                 if ui.button("Memory Viewer").clicked() {
-                    debug_windows.show_memory_viewer = !debug_windows.show_memory_viewer;
+                    toggle_dock_tab(dock_state, DebugTab::MemoryViewer);
                     ui.close();
                 }
                 if ui.button("Tile Data").clicked() {
-                    debug_windows.show_tile_viewer = !debug_windows.show_tile_viewer;
+                    toggle_dock_tab(dock_state, DebugTab::TileViewer);
                     ui.close();
                 }
                 if ui.button("Tile Map").clicked() {
-                    debug_windows.show_tilemap_viewer = !debug_windows.show_tilemap_viewer;
+                    toggle_dock_tab(dock_state, DebugTab::TilemapViewer);
                     ui.close();
                 }
                 if ui.button("OAM / Sprites").clicked() {
-                    debug_windows.show_oam_viewer = !debug_windows.show_oam_viewer;
+                    toggle_dock_tab(dock_state, DebugTab::OamViewer);
                     ui.close();
                 }
                 if ui.button("Palettes").clicked() {
-                    debug_windows.show_palette_viewer = !debug_windows.show_palette_viewer;
+                    toggle_dock_tab(dock_state, DebugTab::PaletteViewer);
                     ui.close();
                 }
             });
@@ -382,18 +384,13 @@ fn tilt_binding_label(action: TiltBindingAction) -> &'static str {
     }
 }
 
-pub(crate) fn draw_debug_ui(
-    ctx: &egui::Context,
+
+pub(super) fn draw_debug_ui_content(
+    ui: &mut egui::Ui,
     info: &DebugInfo,
     window_state: &mut DebugWindowState,
-) -> DebugUiActions {
-    let mut actions = DebugUiActions::none();
-    egui::Window::new("CPU / Debug")
-        .open(&mut window_state.show_cpu_debug)
-        .default_pos([10.0, 10.0])
-        .default_width(260.0)
-        .resizable(true)
-        .show(ctx, |ui| {
+    actions: &mut DebugUiActions,
+) {
             ui.heading("Performance");
             ui.label(format!("FPS: {:.1} ({})", info.fps, info.speed_mode_label));
             ui.label(format!("Total cycles: {}", info.cycles));
@@ -677,7 +674,4 @@ pub(crate) fn draw_debug_ui(
             if let Some(hit) = &info.hit_watchpoint {
                 ui.monospace(format!("Watch hit: {}", hit));
             }
-        });
-
-    actions
 }

@@ -8,7 +8,6 @@ use winit::{
 };
 
 mod egui_integration;
-mod egui_painter;
 mod framebuffer;
 mod gpu;
 
@@ -66,10 +65,8 @@ fn calculate_viewport(
 
 pub(crate) enum FrameError {
     Timeout,
-    Occluded,
     Outdated,
     Lost,
-    Validation,
     OutOfMemory,
 }
 
@@ -139,9 +136,6 @@ impl Graphics {
             .upload_framebuffer(&self.gpu.queue, framebuffer);
     }
 
-    pub(crate) fn set_uncapped_present_mode(&mut self, uncapped: bool) {
-        self.gpu.set_uncapped_present_mode(uncapped);
-    }
 
     pub(crate) fn render(
         &mut self,
@@ -153,25 +147,27 @@ impl Graphics {
         debug_windows: &mut crate::debug::DebugWindowState,
         settings: &mut crate::settings::Settings,
         show_settings_window: &mut bool,
+        dock_state: &mut egui_dock::DockState<crate::debug::DebugTab>,
     ) -> Result<RenderResult, FrameError> {
-        let frame = match self.gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout => return Err(FrameError::Timeout),
-            wgpu::CurrentSurfaceTexture::Occluded => return Err(FrameError::Occluded),
-            wgpu::CurrentSurfaceTexture::Outdated => return Err(FrameError::Outdated),
-            wgpu::CurrentSurfaceTexture::Lost => return Err(FrameError::Lost),
-            wgpu::CurrentSurfaceTexture::Validation => return Err(FrameError::Validation),
-        };
+        let frame = self
+            .gpu
+            .surface
+            .get_current_texture()
+            .map_err(|e| match e {
+                wgpu::SurfaceError::Timeout => FrameError::Timeout,
+                wgpu::SurfaceError::Outdated => FrameError::Outdated,
+                wgpu::SurfaceError::Lost => FrameError::Lost,
+                wgpu::SurfaceError::OutOfMemory => FrameError::OutOfMemory,
+                _ => FrameError::Lost,
+            })?;
 
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.egui.begin_frame(&self.window);
-        let mut debug_actions = crate::debug::DebugUiActions::none();
         let menu_actions =
-            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, debug_windows);
+            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, dock_state);
         if let Some(mode) = menu_actions.aspect_ratio_mode {
             self.aspect_ratio_mode = mode;
         }
@@ -187,87 +183,23 @@ impl Graphics {
             );
         }
 
-        if let Some(info) = debug_info {
-            if debug_windows.show_cpu_debug {
-                debug_actions =
-                    crate::debug::draw_debug_ui(self.egui.context(), info, debug_windows);
-            }
-            if debug_windows.show_rom_info {
-                if let Some(rom_info) = rom_info_view {
-                    crate::debug::draw_rom_info(
-                        self.egui.context(),
-                        rom_info,
-                        &mut debug_windows.show_rom_info,
-                    );
-                }
-            }
-            if debug_windows.show_disassembler {
-                if let Some(view) = disassembly_view {
-                    let toggles = crate::debug::draw_disassembler_window(
-                        self.egui.context(),
-                        view,
-                        &mut debug_windows.show_disassembler,
-                    );
-                    debug_actions.toggle_breakpoints.extend(toggles);
-                }
-            }
-            if debug_windows.show_memory_viewer {
-                if let Some(page) = memory_page {
-                    let writes =
-                        crate::debug::draw_memory_viewer(self.egui.context(), debug_windows, page);
-                    debug_actions.memory_writes.extend(writes);
-                }
-            }
-            if let Some(data) = viewer_data {
-                if debug_windows.show_apu_viewer {
-                    debug_actions.apu_channel_mutes = crate::debug::draw_apu_viewer(
-                        self.egui.context(),
-                        data,
-                        &mut debug_windows.show_apu_viewer,
-                    );
-                }
-                if debug_windows.show_tile_viewer {
-                    crate::debug::draw_tile_viewer(
-                        self.egui.context(),
-                        &data.vram,
-                        data.ppu.bgp,
-                        data.cgb_mode,
-                        &data.bg_palette_ram,
-                        &data.obj_palette_ram,
-                        debug_windows,
-                    );
-                }
-                if debug_windows.show_tilemap_viewer {
-                    crate::debug::draw_tilemap_viewer(
-                        self.egui.context(),
-                        &data.vram,
-                        data.ppu,
-                        data.cgb_mode,
-                        &data.bg_palette_ram,
-                        debug_windows,
-                    );
-                }
-                if debug_windows.show_oam_viewer {
-                    crate::debug::draw_oam_viewer(
-                        self.egui.context(),
-                        &data.oam,
-                        &mut debug_windows.show_oam_viewer,
-                    );
-                }
-                if debug_windows.show_palette_viewer {
-                    crate::debug::draw_palette_viewer(
-                        self.egui.context(),
-                        data.ppu.bgp,
-                        data.ppu.obp0,
-                        data.ppu.obp1,
-                        data.cgb_mode,
-                        &data.bg_palette_ram,
-                        &data.obj_palette_ram,
-                        &mut debug_windows.show_palette_viewer,
-                    );
-                }
-            }
+        let debug_actions;
+        if debug_info.is_some() {
+            let mut tab_viewer = crate::debug::DebugTabViewer {
+                debug_info,
+                viewer_data,
+                rom_info_view,
+                disassembly_view,
+                memory_page,
+                window_state: debug_windows,
+                actions: crate::debug::DebugUiActions::none(),
+            };
+            egui_dock::DockArea::new(dock_state)
+                .style(egui_dock::Style::from_egui(self.egui.context().style().as_ref()))
+                .show(self.egui.context(), &mut tab_viewer);
+            debug_actions = tab_viewer.actions;
         } else {
+            debug_actions = crate::debug::DebugUiActions::none();
             egui::CentralPanel::default().show(self.egui.context(), |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.heading("Drag & drop a ROM file, or use File > Open");
@@ -307,7 +239,6 @@ impl Graphics {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
-                multiview_mask: None,
             });
 
             if debug_info.is_some() {
@@ -324,29 +255,34 @@ impl Graphics {
             }
         }
 
-        // EGUI Overlay
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+        // EGUI: prepare
+        let (paint_jobs, screen_desc) =
+            self.egui.prepare(&self.gpu, &mut encoder, &full_output);
 
+        // EGUI: render
+        {
+            let mut render_pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
             self.egui
-                .paint(&self.gpu, &mut render_pass, &full_output)
-                .expect("egui paint failed");
+                .render_to_pass(&mut render_pass, &paint_jobs, &screen_desc);
         }
+
+        self.egui.cleanup(&full_output);
 
         self.gpu.queue.submit(Some(encoder.finish()));
         frame.present();

@@ -1,57 +1,74 @@
 use super::App;
 use crate::debug::FpsTracker;
+use crate::emu_thread::{EmuCommand, EmuResponse, EmuThread};
 use crate::emulator::Emulator;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 impl App {
     pub(super) fn save_state_slot(&mut self, slot: u8) {
-        let Some(emu) = self.emulator.as_ref() else {
+        if self.emu_thread.is_none() {
             return;
-        };
-        let emu = emu.lock().expect("emulator mutex poisoned");
-        match emu.save_state(slot) {
-            Ok(path) => log::info!("Saved state to {}", path),
-            Err(err) => log::error!("Failed to save state in slot {}: {}", slot, err),
+        }
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::SaveStateSlot(slot));
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::SaveStateOk(path)) => {
+                log::info!("Saved state to {}", path);
+            }
+            Some(EmuResponse::SaveStateFailed(err)) => {
+                log::error!("Failed to save state in slot {}: {}", slot, err);
+            }
+            _ => {}
         }
     }
 
     pub(super) fn load_state_slot(&mut self, slot: u8) {
-        let Some(emu) = self.emulator.as_ref() else {
+        if self.emu_thread.is_none() {
             return;
-        };
-        let mut emu = emu.lock().expect("emulator mutex poisoned");
-        match emu.load_state(slot) {
-            Ok(path) => {
-                self.apply_host_input_to_joypad(&mut emu);
-                self.latest_frame = Some(emu.framebuffer().to_vec());
+        }
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::LoadStateSlot {
+                slot,
+                buttons_pressed: self.host_input.buttons_pressed(),
+                dpad_pressed: self.host_input.dpad_pressed(),
+            });
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::LoadStateOk { path, framebuffer }) => {
+                self.latest_frame = Some(framebuffer);
                 log::info!("Loaded state from {}", path);
             }
-            Err(err) => log::error!("Failed to load state from slot {}: {}", slot, err),
+            Some(EmuResponse::LoadStateFailed(err)) => {
+                log::error!("Failed to load state from slot {}: {}", slot, err);
+            }
+            _ => {}
         }
     }
 
     pub(super) fn load_rom(&mut self, path: &Path) {
+        // Stop the old emu thread (flushes SRAM via Shutdown command)
         self.stop_emu_thread();
-        if let Some(current) = self.emulator.as_ref() {
-            let current = current.lock().expect("emulator mutex poisoned");
-            match current.flush_battery_sram() {
-                Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
-                Ok(None) => {}
-                Err(err) => log::error!("Failed to save battery RAM before ROM switch: {}", err),
-            }
-        }
 
         match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
             Ok(mut emu) => {
                 if let Some(audio) = &self.audio {
                     emu.bus.io.apu.set_sample_rate(audio.sample_rate());
                 }
-                self.apply_host_input_to_joypad(&mut emu);
+                // Apply current host input before handing to emu thread
+                let buttons = self.host_input.buttons_pressed();
+                let dpad = self.host_input.dpad_pressed();
+                emu.bus.io.joypad.apply_pressed_masks(buttons, dpad);
+
                 log::info!("Loaded ROM: {}", path.display());
-                self.emulator = Some(Arc::new(Mutex::new(emu)));
-                self.ensure_emu_thread();
+
+                // Cache metadata
+                self.cached_is_mbc7 = emu.is_mbc7_cartridge();
+                self.cached_rom_path = Some(emu.rom_path().to_path_buf());
+
+                // Hand ownership to emu thread
+                self.emu_thread = Some(EmuThread::spawn(emu));
                 self.fps_tracker = FpsTracker::new();
                 self.last_frame_time = Instant::now();
             }
@@ -84,12 +101,9 @@ impl App {
     }
 
     fn default_state_file_name(&self) -> String {
-        let Some(emu) = self.emulator.as_ref() else {
-            return "save.state".to_string();
-        };
-        let emu = emu.lock().expect("emulator mutex poisoned");
-        emu.rom_path()
-            .file_stem()
+        self.cached_rom_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
             .map(|stem| format!("{stem}.state"))
             .unwrap_or_else(|| "save.state".to_string())
@@ -100,9 +114,8 @@ impl App {
             return dir.clone();
         }
 
-        if let Some(emu) = self.emulator.as_ref() {
-            let emu = emu.lock().expect("emulator mutex poisoned");
-            if let Some(parent) = emu.rom_path().parent() {
+        if let Some(rom_path) = &self.cached_rom_path {
+            if let Some(parent) = rom_path.parent() {
                 return parent.to_path_buf();
             }
         }
@@ -111,9 +124,9 @@ impl App {
     }
 
     pub(super) fn save_state_file_dialog(&mut self) {
-        let Some(_emu) = self.emulator.as_ref() else {
+        if self.emu_thread.is_none() {
             return;
-        };
+        }
 
         let file = rfd::FileDialog::new()
             .set_title("Save State As")
@@ -128,21 +141,24 @@ impl App {
 
         self.last_state_dir = path.parent().map(|p| p.to_path_buf());
 
-        let Some(emu) = self.emulator.as_ref() else {
-            return;
-        };
-        let emu = emu.lock().expect("emulator mutex poisoned");
-
-        match emu.save_state_to_path(&path) {
-            Ok(()) => log::info!("Saved state to {}", path.display()),
-            Err(err) => log::error!("Failed to save state to {}: {}", path.display(), err),
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::SaveStateToPath(path.clone()));
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::SaveStateOk(saved)) => {
+                log::info!("Saved state to {}", saved);
+            }
+            Some(EmuResponse::SaveStateFailed(err)) => {
+                log::error!("Failed to save state to {}: {}", path.display(), err);
+            }
+            _ => {}
         }
     }
 
     pub(super) fn load_state_file_dialog(&mut self) {
-        let Some(_emu) = self.emulator.as_ref() else {
+        if self.emu_thread.is_none() {
             return;
-        };
+        }
 
         let file = rfd::FileDialog::new()
             .set_title("Load State")
@@ -156,18 +172,22 @@ impl App {
 
         self.last_state_dir = path.parent().map(|p| p.to_path_buf());
 
-        let Some(emu) = self.emulator.as_ref() else {
-            return;
-        };
-        let mut emu = emu.lock().expect("emulator mutex poisoned");
-
-        match emu.load_state_from_path(&path) {
-            Ok(()) => {
-                self.apply_host_input_to_joypad(&mut emu);
-                self.latest_frame = Some(emu.framebuffer().to_vec());
-                log::info!("Loaded state from {}", path.display());
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::LoadStateFromPath {
+                path: path.clone(),
+                buttons_pressed: self.host_input.buttons_pressed(),
+                dpad_pressed: self.host_input.dpad_pressed(),
+            });
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::LoadStateOk { path: p, framebuffer }) => {
+                self.latest_frame = Some(framebuffer);
+                log::info!("Loaded state from {}", p);
             }
-            Err(err) => log::error!("Failed to load state from {}: {}", path.display(), err),
+            Some(EmuResponse::LoadStateFailed(err)) => {
+                log::error!("Failed to load state from {}: {}", path.display(), err);
+            }
+            _ => {}
         }
     }
 

@@ -46,41 +46,36 @@ fn draw_cgb_palette_section(
     }
 }
 
-pub(crate) fn draw_palette_viewer(
-    ctx: &egui::Context,
+
+pub(super) fn draw_palette_viewer_content(
+    ui: &mut egui::Ui,
     bgp: u8,
     obp0: u8,
     obp1: u8,
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
     obj_palette_ram: &[u8; 64],
-    open: &mut bool,
 ) {
-    egui::Window::new("Palettes")
-        .open(open)
-        .default_width(280.0)
-        .show(ctx, |ui| {
-            draw_palette_row(ui, "BGP", bgp);
-            ui.separator();
-            draw_palette_row(ui, "OBP0", obp0);
-            ui.separator();
-            draw_palette_row(ui, "OBP1", obp1);
-            ui.separator();
-            ui.label("Base DMG shades:");
-            ui.horizontal(|ui| {
-                for rgba in PALETTE_COLORS {
-                    let color =
-                        egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
-                    egui::Frame::NONE.fill(color).show(ui, |ui| {
-                        ui.add_space(24.0);
-                        ui.add_sized([24.0, 16.0], egui::Label::new(""));
-                    });
-                }
+    draw_palette_row(ui, "BGP", bgp);
+    ui.separator();
+    draw_palette_row(ui, "OBP0", obp0);
+    ui.separator();
+    draw_palette_row(ui, "OBP1", obp1);
+    ui.separator();
+    ui.label("Base DMG shades:");
+    ui.horizontal(|ui| {
+        for rgba in PALETTE_COLORS {
+            let color =
+                egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+            egui::Frame::NONE.fill(color).show(ui, |ui| {
+                ui.add_space(24.0);
+                ui.add_sized([24.0, 16.0], egui::Label::new(""));
             });
+        }
+    });
 
-            if cgb_mode {
-                draw_cgb_palette_section(ui, "CGB BG palettes:", "BG", bg_palette_ram);
-                draw_cgb_palette_section(ui, "CGB OBJ palettes:", "OB", obj_palette_ram);
-            }
-        });
+    if cgb_mode {
+        draw_cgb_palette_section(ui, "CGB BG palettes:", "BG", bg_palette_ram);
+        draw_cgb_palette_section(ui, "CGB OBJ palettes:", "OB", obj_palette_ram);
+    }
 }

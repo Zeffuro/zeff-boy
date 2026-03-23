@@ -1,5 +1,5 @@
 use super::{App, GB_FRAME_DURATION, SpeedMode};
-use crate::{audio::AudioOutput, graphics::Graphics};
+use crate::{audio::AudioOutput, emu_thread::EmuThread, graphics::Graphics};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
 impl App {
@@ -7,10 +7,8 @@ impl App {
         if self.emu_thread.is_some() {
             return;
         }
-        if let Some(emu) = self.emulator.as_ref() {
-            self.emu_thread = Some(crate::emu_thread::EmuThread::spawn(std::sync::Arc::clone(
-                emu,
-            )));
+        if let Some(emu) = self.initial_emulator.take() {
+            self.emu_thread = Some(EmuThread::spawn(emu));
         }
     }
 
@@ -21,17 +19,23 @@ impl App {
 
         if self.audio.is_none() {
             self.audio = AudioOutput::new();
-            if let (Some(audio), Some(emu)) = (self.audio.as_ref(), self.emulator.as_ref()) {
-                let mut emu = emu.lock().expect("emulator mutex poisoned");
-                emu.bus.io.apu.set_sample_rate(audio.sample_rate());
+            if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
+                thread.send(crate::emu_thread::EmuCommand::SetSampleRate(
+                    audio.sample_rate(),
+                ));
             }
         }
 
         self.ensure_emu_thread();
 
-        let mut gfx =
+        if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
+            thread.send(crate::emu_thread::EmuCommand::SetSampleRate(
+                audio.sample_rate(),
+            ));
+        }
+
+        let gfx =
             pollster::block_on(Graphics::new(event_loop)).expect("failed to initialize graphics");
-        gfx.set_uncapped_present_mode(self.uncapped_speed);
         let size = gfx.window().inner_size();
         self.window_size = (size.width as f32, size.height as f32);
         self.window_id = Some(gfx.window().id());

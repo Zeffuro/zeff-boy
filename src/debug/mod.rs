@@ -2,6 +2,7 @@ mod apu_viewer;
 mod breakpoints;
 mod disasm_window;
 mod disassembler;
+pub(crate) mod dock;
 mod fps;
 mod memory_viewer;
 mod oam_viewer;
@@ -12,18 +13,11 @@ mod tilemap_viewer;
 mod types;
 mod ui;
 
-pub(crate) use apu_viewer::draw_apu_viewer;
 pub(crate) use breakpoints::DebugController;
-pub(crate) use disasm_window::draw_disassembler_window;
 pub(crate) use disassembler::{DisassemblyView, disassemble_around};
+pub(crate) use dock::{DebugTab, DebugTabViewer, create_default_dock_state, sync_show_flags};
 pub(crate) use fps::FpsTracker;
-pub(crate) use memory_viewer::draw_memory_viewer;
-pub(crate) use oam_viewer::draw_oam_viewer;
-pub(crate) use palette_viewer::draw_palette_viewer;
-pub(crate) use rom_info::draw_rom_info;
-pub(crate) use tile_viewer::draw_tile_viewer;
-pub(crate) use tilemap_viewer::draw_tilemap_viewer;
 pub(crate) use types::{
     DebugInfo, DebugViewerData, DebugWindowState, OpcodeLog, PpuSnapshot, RomInfoViewData,
 };
-pub(crate) use ui::{DebugUiActions, draw_debug_ui, draw_menu_bar, draw_settings_window};
+pub(crate) use ui::{DebugUiActions, draw_menu_bar, draw_settings_window};
