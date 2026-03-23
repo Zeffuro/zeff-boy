@@ -27,3 +27,11 @@ dirs = "6.0.0"
 sha2 = "0.10.9"
 rtrb = "0.3.3"
 egui_dock = "0.18"
+crossbeam-channel = "0.5"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+

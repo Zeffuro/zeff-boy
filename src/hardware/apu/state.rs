@@ -81,6 +81,7 @@ impl Apu {
         apu.sample_buffer.clear();
         apu.sample_cycle_accum = 0.0;
         apu.debug_capture_enabled = false;
+        apu.sample_generation_enabled = true;
         apu.debug_capture_cycle_accum = 0;
         for history in &mut apu.channel_debug_history {
             history.clear();

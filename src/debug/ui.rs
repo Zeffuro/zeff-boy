@@ -33,6 +33,15 @@ impl DebugUiActions {
             continue_requested: false,
         }
     }
+
+    pub(crate) fn has_pending(&self) -> bool {
+        self.add_breakpoint.is_some()
+            || self.add_watchpoint.is_some()
+            || !self.remove_breakpoints.is_empty()
+            || !self.toggle_breakpoints.is_empty()
+            || !self.memory_writes.is_empty()
+            || self.apu_channel_mutes.is_some()
+    }
 }
 
 pub(crate) struct MenuActions {
@@ -212,13 +221,19 @@ pub(crate) fn draw_settings_window(
 
             ui.add(
                 egui::Slider::new(&mut settings.fast_forward_multiplier, 1..=16)
-                    .text("Fast-forward frames/tick"),
+                    .text("Fast-forward multiplier"),
             );
             ui.add(
                 egui::Slider::new(&mut settings.uncapped_frames_per_tick, 1..=240)
                     .text("Uncapped frames/tick"),
             );
             ui.checkbox(&mut settings.uncapped_speed, "Start in uncapped mode");
+            ui.checkbox(&mut settings.frame_skip, "Frame skip when behind")
+                .on_hover_text(
+                    "When enabled, skip emulation frames to stay in real-time if the \
+                     host can't keep up. When disabled, the emulator catches up \
+                     gradually (more accurate, may drift behind).",
+                );
 
             ui.separator();
             ui.heading("Input");

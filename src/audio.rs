@@ -71,7 +71,7 @@ impl AudioOutput {
             NORMAL_QUEUE_MS
         };
         let max_samples = (self.sample_rate as usize * queue_ms / 1000).max(2);
-        
+
         let occupied = RING_BUFFER_CAPACITY - self.producer.slots();
         if occupied > max_samples {
             return;
@@ -108,13 +108,14 @@ impl AudioOutput {
         channels: u16,
         mut consumer: rtrb::Consumer<f32>,
     ) -> Option<cpal::Stream> {
+        let mut scratch = Vec::<f32>::new();
         device
             .build_output_stream(
                 config,
                 move |data: &mut [i16], _| {
-                    let mut temp = vec![0.0f32; data.len()];
-                    fill_output_f32(&mut temp, channels, &mut consumer);
-                    for (dst, sample) in data.iter_mut().zip(temp.iter()) {
+                    scratch.resize(data.len(), 0.0);
+                    fill_output_f32(&mut scratch, channels, &mut consumer);
+                    for (dst, sample) in data.iter_mut().zip(scratch.iter()) {
                         *dst = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                     }
                 },
@@ -130,13 +131,14 @@ impl AudioOutput {
         channels: u16,
         mut consumer: rtrb::Consumer<f32>,
     ) -> Option<cpal::Stream> {
+        let mut scratch = Vec::<f32>::new();
         device
             .build_output_stream(
                 config,
                 move |data: &mut [u16], _| {
-                    let mut temp = vec![0.0f32; data.len()];
-                    fill_output_f32(&mut temp, channels, &mut consumer);
-                    for (dst, sample) in data.iter_mut().zip(temp.iter()) {
+                    scratch.resize(data.len(), 0.0);
+                    fill_output_f32(&mut scratch, channels, &mut consumer);
+                    for (dst, sample) in data.iter_mut().zip(scratch.iter()) {
                         let normalized = (sample.clamp(-1.0, 1.0) + 1.0) * 0.5;
                         *dst = (normalized * u16::MAX as f32) as u16;
                     }

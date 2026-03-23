@@ -1,5 +1,5 @@
-use super::{App, GB_FRAME_DURATION, SpeedMode};
-use crate::{emu_thread::EmuResponse, graphics};
+use super::{App, MAX_FRAMES_PER_TICK, SpeedMode};
+use crate::graphics;
 use std::time::Instant;
 
 impl App {
@@ -30,21 +30,21 @@ impl App {
 
     pub(super) fn compute_frames_to_step(&mut self, now: Instant) -> usize {
         match self.speed_mode() {
-            SpeedMode::FastForward => {
-                self.last_frame_time = now;
-                self.settings.fast_forward_multiplier
-            }
             SpeedMode::Uncapped => {
                 self.last_frame_time = now;
                 self.settings.uncapped_frames_per_tick
             }
-            SpeedMode::Normal => {
-                let mut frames = 0;
-                while self.last_frame_time + GB_FRAME_DURATION <= now {
+            SpeedMode::Normal | SpeedMode::FastForward => {
+                let effective_duration = self.effective_frame_duration();
+
+                let mut frames = 0usize;
+                while self.last_frame_time + effective_duration <= now {
                     frames += 1;
-                    self.last_frame_time += GB_FRAME_DURATION;
-                    if frames > 3 {
-                        self.last_frame_time = now;
+                    self.last_frame_time += effective_duration;
+                    if frames >= MAX_FRAMES_PER_TICK {
+                        if self.settings.frame_skip {
+                            self.last_frame_time = now;
+                        }
                         break;
                     }
                 }
@@ -55,15 +55,12 @@ impl App {
 
     pub(super) fn drain_emu_responses(&mut self) {
         loop {
-            let response = match &self.emu_thread {
-                Some(thread) => thread.try_recv(),
+            let result = match &self.emu_thread {
+                Some(thread) => thread.try_recv_frame(),
                 None => return,
             };
-            match response {
-                Some(EmuResponse::FrameReady(result)) => {
-                    self.process_frame_result(result);
-                }
-                Some(_) => {}
+            match result {
+                Some(frame_result) => self.process_frame_result(frame_result),
                 None => break,
             }
         }

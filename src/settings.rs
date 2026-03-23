@@ -413,6 +413,7 @@ pub(crate) struct Settings {
     pub(crate) stick_tilt_bypass_lerp: bool,
     pub(crate) master_volume: f32,
     pub(crate) mute_audio_during_fast_forward: bool,
+    pub(crate) frame_skip: bool,
 }
 
 impl Default for Settings {
@@ -435,6 +436,7 @@ impl Default for Settings {
             stick_tilt_bypass_lerp: true,
             master_volume: 1.0,
             mute_audio_during_fast_forward: false,
+            frame_skip: false,
         }
     }
 }

@@ -1,4 +1,4 @@
-use super::{App, GB_FRAME_DURATION, SpeedMode};
+use super::{App, SpeedMode};
 use crate::{audio::AudioOutput, emu_thread::EmuThread, graphics::Graphics};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
@@ -48,9 +48,10 @@ impl App {
         };
 
         match self.speed_mode() {
-            SpeedMode::Normal => {
+            SpeedMode::Normal | SpeedMode::FastForward => {
+                let effective = self.effective_frame_duration();
                 let now = std::time::Instant::now();
-                let next_frame_time = self.last_frame_time + GB_FRAME_DURATION;
+                let next_frame_time = self.last_frame_time + effective;
                 if now >= next_frame_time {
                     event_loop.set_control_flow(ControlFlow::Poll);
                     gfx.window().request_redraw();
@@ -58,7 +59,7 @@ impl App {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
                 }
             }
-            SpeedMode::Uncapped | SpeedMode::FastForward => {
+            SpeedMode::Uncapped => {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 gfx.window().request_redraw();
             }

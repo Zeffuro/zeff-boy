@@ -276,8 +276,10 @@ pub(crate) struct DebugViewerData {
     pub(crate) obj_palette_ram: [u8; 64],
 }
 
+type OpcodeEntry = (u16, u8, bool);
+
 pub(crate) struct OpcodeLog {
-    entries: VecDeque<String>,
+    entries: VecDeque<OpcodeEntry>,
     capacity: usize,
 }
 
@@ -289,19 +291,26 @@ impl OpcodeLog {
         }
     }
 
+    #[inline]
     pub(crate) fn push(&mut self, pc: u16, opcode: u8, is_cb: bool) {
-        let label = if is_cb {
-            format!("{:04X}: CB {:02X}", pc, opcode)
-        } else {
-            format!("{:04X}: {:02X}", pc, opcode)
-        };
         if self.entries.len() >= self.capacity {
             self.entries.pop_front();
         }
-        self.entries.push_back(label);
+        self.entries.push_back((pc, opcode, is_cb));
     }
 
     pub(crate) fn recent(&self, n: usize) -> Vec<String> {
-        self.entries.iter().rev().take(n).cloned().collect()
+        self.entries
+            .iter()
+            .rev()
+            .take(n)
+            .map(|&(pc, op, is_cb)| {
+                if is_cb {
+                    format!("{:04X}: CB {:02X}", pc, op)
+                } else {
+                    format!("{:04X}: {:02X}", pc, op)
+                }
+            })
+            .collect()
     }
 }

@@ -18,7 +18,9 @@ impl Apu {
         if self.debug_capture_enabled {
             self.capture_debug_samples(t_cycles);
         }
-        self.generate_samples(t_cycles);
+        if self.sample_generation_enabled {
+            self.generate_samples(t_cycles);
+        }
 
         self.update_nr52_status();
     }

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+
+use crossbeam_channel::{self as chan, Receiver, Sender, TrySendError};
 
 use crate::debug::DebugUiActions;
 use crate::emulator::Emulator;
@@ -8,8 +9,10 @@ use crate::hardware::types::CPUState;
 use crate::ui;
 
 pub(crate) struct SnapshotRequest {
+    pub(crate) want_debug_info: bool,
     pub(crate) any_viewer_open: bool,
     pub(crate) any_vram_viewer_open: bool,
+    pub(crate) show_oam_viewer: bool,
     pub(crate) show_apu_viewer: bool,
     pub(crate) show_disassembler: bool,
     pub(crate) show_rom_info: bool,
@@ -25,8 +28,10 @@ pub(crate) struct FrameInput {
     pub(crate) debug_step: bool,
     pub(crate) debug_continue: bool,
     pub(crate) apu_capture_enabled: bool,
+    pub(crate) skip_audio: bool,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) snapshot: SnapshotRequest,
+    pub(crate) reusable_framebuffer: Option<Vec<u8>>,
 }
 
 pub(crate) struct FrameResult {
@@ -56,7 +61,6 @@ pub(crate) enum EmuCommand {
 }
 
 pub(crate) enum EmuResponse {
-    FrameReady(FrameResult),
     SaveStateOk(String),
     SaveStateFailed(String),
     LoadStateOk {
@@ -70,14 +74,18 @@ pub(crate) enum EmuResponse {
 
 pub(crate) struct EmuThread {
     cmd_tx: Sender<EmuCommand>,
+    frame_rx: Receiver<FrameResult>,
     resp_rx: Receiver<EmuResponse>,
     join: Option<JoinHandle<()>>,
 }
 
 impl EmuThread {
     pub(crate) fn spawn(mut emu: Emulator) -> Self {
-        let (cmd_tx, cmd_rx) = mpsc::channel();
-        let (resp_tx, resp_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = chan::unbounded();
+        let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(1);
+        let (resp_tx, resp_rx) = chan::unbounded();
+        
+        let drain_rx = frame_rx.clone();
 
         let join = thread::spawn(move || {
             while let Ok(command) = cmd_rx.recv() {
@@ -95,6 +103,7 @@ impl EmuThread {
                         }
                         emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
                         emu.bus.io.apu.debug_capture_enabled = input.apu_capture_enabled;
+                        emu.bus.io.apu.sample_generation_enabled = !input.skip_audio;
 
                         if matches!(emu.cpu.running, CPUState::Suspended) {
                             if input.debug_continue {
@@ -119,22 +128,32 @@ impl EmuThread {
 
                         let ui_data = ui::collect_emu_snapshot(&emu, &input.snapshot);
 
-                        let frame = emu.framebuffer().to_vec();
+                        let src = emu.framebuffer();
+                        let mut frame = input.reusable_framebuffer.unwrap_or_default();
+                        frame.resize(src.len(), 0);
+                        frame.copy_from_slice(src);
+
                         let rumble = emu.bus.cartridge.rumble_active();
                         let audio_samples = emu.bus.io.apu.drain_samples();
                         let is_mbc7 = emu.is_mbc7_cartridge();
 
-                        if resp_tx
-                            .send(EmuResponse::FrameReady(FrameResult {
-                                frame,
-                                rumble,
-                                audio_samples,
-                                ui_data,
-                                is_mbc7,
-                            }))
-                            .is_err()
-                        {
-                            break;
+                        let result = FrameResult {
+                            frame,
+                            rumble,
+                            audio_samples,
+                            ui_data,
+                            is_mbc7,
+                        };
+                        
+                        match frame_tx.try_send(result) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(result)) => {
+                                let _ = drain_rx.try_recv(); // drop stale frame
+                                if frame_tx.try_send(result).is_err() {
+                                    break; // disconnected
+                                }
+                            }
+                            Err(TrySendError::Disconnected(_)) => break,
                         }
                     }
 
@@ -228,6 +247,7 @@ impl EmuThread {
 
         Self {
             cmd_tx,
+            frame_rx,
             resp_rx,
             join: Some(join),
         }
@@ -259,8 +279,8 @@ impl EmuThread {
         let _ = self.cmd_tx.send(cmd);
     }
 
-    pub(crate) fn try_recv(&self) -> Option<EmuResponse> {
-        self.resp_rx.try_recv().ok()
+    pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
+        self.frame_rx.try_recv().ok()
     }
 
     pub(crate) fn recv(&self) -> Option<EmuResponse> {
@@ -269,6 +289,7 @@ impl EmuThread {
 
     pub(crate) fn shutdown(&mut self) {
         let _ = self.cmd_tx.send(EmuCommand::Shutdown);
+        while self.frame_rx.try_recv().is_ok() {}
         loop {
             match self.resp_rx.recv() {
                 Ok(EmuResponse::ShutdownComplete) => break,

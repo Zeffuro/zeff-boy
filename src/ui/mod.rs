@@ -18,7 +18,11 @@ pub(crate) fn collect_emu_snapshot(
     emu: &Emulator,
     req: &SnapshotRequest,
 ) -> UiFrameData {
-    let debug_info = Some(emu.snapshot());
+    let debug_info = if req.want_debug_info {
+        Some(emu.snapshot())
+    } else {
+        None
+    };
 
     let viewer_data = if req.any_viewer_open {
         let ppu = emu.ppu_registers();
@@ -36,7 +40,11 @@ pub(crate) fn collect_emu_snapshot(
 
         Some(DebugViewerData {
             vram,
-            oam: emu.oam().to_vec(),
+            oam: if req.show_oam_viewer {
+                emu.oam().to_vec()
+            } else {
+                Vec::new()
+            },
             apu_regs: if req.show_apu_viewer {
                 emu.bus.io.apu.regs_snapshot()
             } else {
