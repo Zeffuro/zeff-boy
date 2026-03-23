@@ -1,6 +1,7 @@
 use super::{App, SpeedMode};
 use crate::{audio::AudioOutput, emu_thread::EmuThread, graphics::Graphics};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::window::Fullscreen;
 
 impl App {
     pub(super) fn ensure_emu_thread(&mut self) {
@@ -9,6 +10,11 @@ impl App {
         }
         if let Some(emu) = self.initial_emulator.take() {
             self.emu_thread = Some(EmuThread::spawn(emu));
+            if self.uncapped_speed {
+                if let Some(thread) = &self.emu_thread {
+                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(true));
+                }
+            }
         }
     }
 
@@ -42,13 +48,25 @@ impl App {
         self.gfx = Some(gfx);
     }
 
+    pub(super) fn toggle_fullscreen(&mut self) {
+        let Some(gfx) = &self.gfx else {
+            return;
+        };
+        let window = gfx.window();
+        if window.fullscreen().is_some() {
+            window.set_fullscreen(None);
+        } else {
+            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+    }
+
     pub(super) fn schedule_next_frame(&mut self, event_loop: &ActiveEventLoop) {
         let Some(gfx) = &self.gfx else {
             return;
         };
 
         match self.speed_mode() {
-            SpeedMode::Normal | SpeedMode::FastForward => {
+            SpeedMode::Normal => {
                 let effective = self.effective_frame_duration();
                 let now = std::time::Instant::now();
                 let next_frame_time = self.last_frame_time + effective;
@@ -58,6 +76,10 @@ impl App {
                 } else {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
                 }
+            }
+            SpeedMode::FastForward => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                gfx.window().request_redraw();
             }
             SpeedMode::Uncapped => {
                 event_loop.set_control_flow(ControlFlow::Poll);

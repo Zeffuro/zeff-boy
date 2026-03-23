@@ -3,8 +3,6 @@ use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 
 impl Apu {
-    /// Apply IO register values from a BESS save state (FF00–FF7F array).
-    /// Sets APU registers without triggering side effects (no sound pulses).
     pub(crate) fn apply_bess_io(&mut self, io_regs: &[u8]) {
         // NR52 (FF26) — master enable only, write first per BESS spec
         self.nr52 = io_regs[0x26] & 0x80;

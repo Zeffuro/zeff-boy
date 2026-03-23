@@ -38,18 +38,11 @@ impl GpuContext {
             .ok_or_else(|| anyhow!("surface not supported by adapter"))?;
 
         let capabilities = surface.get_capabilities(&adapter);
-
-        // Prefer a non-sRGB surface format so egui colours are correct
-        // (egui outputs sRGB-space colours directly and does not want the GPU
-        // to apply an additional sRGB conversion on write).
+        
         if let Some(&fmt) = capabilities.formats.iter().find(|f| !f.is_srgb()) {
             config.format = fmt;
         }
-
-        // Always use vsync.  Switching present modes at runtime is unreliable
-        // on systems with overlay layers (OBS, Steam, Overwolf, NVIDIA Optimus)
-        // and causes wgpu device-lost panics.  Speed control is handled
-        // entirely through frame count in compute_frames_to_step().
+        
         config.present_mode = if capabilities.present_modes.contains(&wgpu::PresentMode::AutoVsync)
         {
             wgpu::PresentMode::AutoVsync

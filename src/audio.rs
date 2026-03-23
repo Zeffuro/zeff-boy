@@ -57,9 +57,6 @@ impl AudioOutput {
         mute_during_fast_forward: bool,
     ) {
         if fast_forward_active && mute_during_fast_forward {
-            while self.producer.slots() < RING_BUFFER_CAPACITY {
-                break;
-            }
             return;
         }
 

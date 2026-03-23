@@ -36,6 +36,21 @@ pub(crate) enum InputBindingAction {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum ShaderPreset {
+    None,
+    CRT,
+    Scanlines,
+    LCDGrid,
+}
+
+impl Default for ShaderPreset {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum LeftStickMode {
     Dpad,
     Tilt,
@@ -393,6 +408,14 @@ fn keycode_from_string(name: &str) -> Option<KeyCode> {
     }
 }
 
+const MAX_RECENT_ROMS: usize = 10;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct RecentRomEntry {
+    pub(crate) path: String,
+    pub(crate) name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -412,8 +435,18 @@ pub(crate) struct Settings {
     pub(crate) tilt_invert_y: bool,
     pub(crate) stick_tilt_bypass_lerp: bool,
     pub(crate) master_volume: f32,
+    #[serde(skip)]
+    pub(crate) pre_mute_volume: Option<f32>,
     pub(crate) mute_audio_during_fast_forward: bool,
     pub(crate) frame_skip: bool,
+    pub(crate) enable_memory_editing: bool,
+    pub(crate) auto_save_state: bool,
+    pub(crate) recent_roms: Vec<RecentRomEntry>,
+    pub(crate) speedup_key: String,
+    pub(crate) rewind_enabled: bool,
+    pub(crate) rewind_key: String,
+    pub(crate) shader_preset: ShaderPreset,
+    pub(crate) open_debug_tabs: Vec<String>,
 }
 
 impl Default for Settings {
@@ -435,13 +468,54 @@ impl Default for Settings {
             tilt_invert_y: false,
             stick_tilt_bypass_lerp: true,
             master_volume: 1.0,
+            pre_mute_volume: None,
             mute_audio_during_fast_forward: false,
             frame_skip: false,
+            enable_memory_editing: false,
+            auto_save_state: false,
+            recent_roms: Vec::new(),
+            speedup_key: "Backquote".to_string(),
+            rewind_enabled: true,
+            rewind_key: "KeyR".to_string(),
+            shader_preset: ShaderPreset::None,
+            open_debug_tabs: vec!["CpuDebug".to_string()],
         }
     }
 }
 
 impl Settings {
+    pub(crate) fn speedup_key_code(&self) -> KeyCode {
+        keycode_from_string(&self.speedup_key).unwrap_or(KeyCode::Backquote)
+    }
+
+    pub(crate) fn rewind_key_code(&self) -> KeyCode {
+        keycode_from_string(&self.rewind_key).unwrap_or(KeyCode::KeyR)
+    }
+
+    pub(crate) fn add_recent_rom(&mut self, path: &Path) {
+        let path_str = path.to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+
+        // Remove existing entry for the same path
+        self.recent_roms.retain(|r| r.path != path_str);
+
+        // Insert at front
+        self.recent_roms.insert(
+            0,
+            RecentRomEntry {
+                path: path_str,
+                name,
+            },
+        );
+
+        // Cap size
+        self.recent_roms.truncate(MAX_RECENT_ROMS);
+    }
+
     fn legacy_path() -> PathBuf {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
@@ -454,6 +528,13 @@ impl Settings {
 
     fn active_path() -> PathBuf {
         Self::config_path().unwrap_or_else(Self::legacy_path)
+    }
+
+    pub(crate) fn settings_dir() -> PathBuf {
+        Self::active_path()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 
     fn load_from_path(path: &Path) -> Option<Self> {

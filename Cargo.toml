@@ -28,6 +28,9 @@ sha2 = "0.10.9"
 rtrb = "0.3.3"
 egui_dock = "0.18"
 crossbeam-channel = "0.5"
+lz4_flex = "0.11"
+open = "5"
+png = "0.17"
 
 [profile.dev]
 opt-level = 1

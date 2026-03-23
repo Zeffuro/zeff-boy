@@ -94,11 +94,27 @@ pub(super) fn draw_apu_viewer_content(
         if data.apu_nr52 & 0x04 != 0 { "1" } else { "-" },
         if data.apu_nr52 & 0x08 != 0 { "1" } else { "-" },
     ));
+
+    // Unmute All button
+    ui.horizontal(|ui| {
+        if ui.small_button("Unmute All").clicked() {
+            muted = [false; 4];
+            mutes_changed = true;
+        }
+    });
+
     draw_waveform(ui, "Master mix", &data.apu_master_samples, 84.0);
 
     ui.separator();
     draw_channel_header(ui, "CH1 (Square + Sweep)", data.apu_nr52 & 0x01 != 0);
-    mutes_changed |= ui.checkbox(&mut muted[0], "Mute CH1").changed();
+    ui.horizontal(|ui| {
+        mutes_changed |= ui.checkbox(&mut muted[0], "Mute").changed();
+        if ui.small_button("Solo").clicked() {
+            muted = [true, true, true, true];
+            muted[0] = false;
+            mutes_changed = true;
+        }
+    });
     ui.monospace(format!(
         "NR10:{:02X} NR11:{:02X} NR12:{:02X} NR13:{:02X} NR14:{:02X}",
         regs[reg_index(NR10)],
@@ -124,7 +140,14 @@ pub(super) fn draw_apu_viewer_content(
 
     ui.separator();
     draw_channel_header(ui, "CH2 (Square)", data.apu_nr52 & 0x02 != 0);
-    mutes_changed |= ui.checkbox(&mut muted[1], "Mute CH2").changed();
+    ui.horizontal(|ui| {
+        mutes_changed |= ui.checkbox(&mut muted[1], "Mute").changed();
+        if ui.small_button("Solo").clicked() {
+            muted = [true, true, true, true];
+            muted[1] = false;
+            mutes_changed = true;
+        }
+    });
     ui.monospace(format!(
         "NR21:{:02X} NR22:{:02X} NR23:{:02X} NR24:{:02X}",
         regs[reg_index(NR21)],
@@ -149,7 +172,14 @@ pub(super) fn draw_apu_viewer_content(
 
     ui.separator();
     draw_channel_header(ui, "CH3 (Wave)", data.apu_nr52 & 0x04 != 0);
-    mutes_changed |= ui.checkbox(&mut muted[2], "Mute CH3").changed();
+    ui.horizontal(|ui| {
+        mutes_changed |= ui.checkbox(&mut muted[2], "Mute").changed();
+        if ui.small_button("Solo").clicked() {
+            muted = [true, true, true, true];
+            muted[2] = false;
+            mutes_changed = true;
+        }
+    });
     ui.monospace(format!(
         "NR30:{:02X} NR31:{:02X} NR32:{:02X} NR33:{:02X} NR34:{:02X}",
         regs[reg_index(NR30)],
@@ -173,7 +203,14 @@ pub(super) fn draw_apu_viewer_content(
 
     ui.separator();
     draw_channel_header(ui, "CH4 (Noise)", data.apu_nr52 & 0x08 != 0);
-    mutes_changed |= ui.checkbox(&mut muted[3], "Mute CH4").changed();
+    ui.horizontal(|ui| {
+        mutes_changed |= ui.checkbox(&mut muted[3], "Mute").changed();
+        if ui.small_button("Solo").clicked() {
+            muted = [true, true, true, true];
+            muted[3] = false;
+            mutes_changed = true;
+        }
+    });
     ui.monospace(format!(
         "NR41:{:02X} NR42:{:02X} NR43:{:02X} NR44:{:02X}",
         regs[reg_index(NR41)],

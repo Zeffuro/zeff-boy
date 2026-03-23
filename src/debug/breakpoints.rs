@@ -28,6 +28,8 @@ pub(crate) struct DebugController {
     pub(crate) break_on_next: bool,
     pub(crate) hit_breakpoint: Option<u16>,
     pub(crate) hit_watchpoint: Option<WatchHit>,
+    breakpoints_active: bool,
+    watchpoints_active: bool,
 }
 
 impl DebugController {
@@ -38,21 +40,26 @@ impl DebugController {
             break_on_next: false,
             hit_breakpoint: None,
             hit_watchpoint: None,
+            breakpoints_active: false,
+            watchpoints_active: false,
         }
     }
 
     pub(crate) fn add_breakpoint(&mut self, addr: u16) {
         self.breakpoints.insert(addr);
+        self.breakpoints_active = true;
     }
 
     pub(crate) fn remove_breakpoint(&mut self, addr: u16) {
         self.breakpoints.remove(&addr);
+        self.breakpoints_active = !self.breakpoints.is_empty();
     }
 
     pub(crate) fn toggle_breakpoint(&mut self, addr: u16) {
         if !self.breakpoints.remove(&addr) {
             self.breakpoints.insert(addr);
         }
+        self.breakpoints_active = !self.breakpoints.is_empty();
     }
 
     pub(crate) fn add_watchpoint(&mut self, addr: u16, watch_type: WatchType) {
@@ -68,10 +75,12 @@ impl DebugController {
             watch_type,
             last_value: None,
         });
+        self.watchpoints_active = true;
     }
 
+    #[inline]
     pub(crate) fn should_break(&mut self, pc: u16) -> bool {
-        if self.breakpoints.is_empty() && !self.break_on_next {
+        if !self.breakpoints_active && !self.break_on_next {
             return false;
         }
 
@@ -89,8 +98,9 @@ impl DebugController {
         false
     }
 
+    #[inline]
     pub(crate) fn has_watchpoints(&self) -> bool {
-        !self.watchpoints.is_empty()
+        self.watchpoints_active
     }
 
     pub(crate) fn check_watch_read(&mut self, addr: u16, value: u8) {

@@ -1,10 +1,13 @@
 use egui_dock::{DockState, TabViewer};
 
 use super::apu_viewer::draw_apu_viewer_content;
+use super::breakpoints_window::draw_breakpoints_content;
+use super::cheats_window::draw_cheats_content;
 use super::disasm_window::draw_disassembler_content;
 use super::memory_viewer::draw_memory_viewer_content;
 use super::oam_viewer::draw_oam_viewer_content;
 use super::palette_viewer::draw_palette_viewer_content;
+use super::perf_monitor::draw_performance_content;
 use super::rom_info::draw_rom_info_content;
 use super::tile_viewer::draw_tile_viewer_content;
 use super::tilemap_viewer::draw_tilemap_viewer_content;
@@ -22,6 +25,9 @@ pub(crate) enum DebugTab {
     TilemapViewer,
     OamViewer,
     PaletteViewer,
+    Performance,
+    Breakpoints,
+    Cheats,
 }
 
 impl DebugTab {
@@ -36,6 +42,44 @@ impl DebugTab {
             Self::TilemapViewer => "Tile Map",
             Self::OamViewer => "OAM / Sprites",
             Self::PaletteViewer => "Palettes",
+            Self::Performance => "Performance",
+            Self::Breakpoints => "Breakpoints",
+            Self::Cheats => "Cheats",
+        }
+    }
+
+    pub(crate) fn persist_name(self) -> &'static str {
+        match self {
+            Self::CpuDebug => "CpuDebug",
+            Self::ApuViewer => "ApuViewer",
+            Self::RomInfo => "RomInfo",
+            Self::Disassembler => "Disassembler",
+            Self::MemoryViewer => "MemoryViewer",
+            Self::TileViewer => "TileViewer",
+            Self::TilemapViewer => "TilemapViewer",
+            Self::OamViewer => "OamViewer",
+            Self::PaletteViewer => "PaletteViewer",
+            Self::Performance => "Performance",
+            Self::Breakpoints => "Breakpoints",
+            Self::Cheats => "Cheats",
+        }
+    }
+
+    pub(crate) fn from_persist_name(name: &str) -> Option<Self> {
+        match name {
+            "CpuDebug" => Some(Self::CpuDebug),
+            "ApuViewer" => Some(Self::ApuViewer),
+            "RomInfo" => Some(Self::RomInfo),
+            "Disassembler" => Some(Self::Disassembler),
+            "MemoryViewer" => Some(Self::MemoryViewer),
+            "TileViewer" => Some(Self::TileViewer),
+            "TilemapViewer" => Some(Self::TilemapViewer),
+            "OamViewer" => Some(Self::OamViewer),
+            "PaletteViewer" => Some(Self::PaletteViewer),
+            "Performance" => Some(Self::Performance),
+            "Breakpoints" => Some(Self::Breakpoints),
+            "Cheats" => Some(Self::Cheats),
+            _ => None,
         }
     }
 }
@@ -44,6 +88,27 @@ pub(crate) fn create_default_dock_state() -> DockState<DebugTab> {
     let mut dock = DockState::new(vec![]);
     dock.add_window(vec![DebugTab::CpuDebug]);
     dock
+}
+
+pub(crate) fn create_dock_from_saved_tabs(tab_names: &[String]) -> DockState<DebugTab> {
+    let tabs: Vec<DebugTab> = tab_names
+        .iter()
+        .filter_map(|name| DebugTab::from_persist_name(name))
+        .collect();
+    if tabs.is_empty() {
+        return create_default_dock_state();
+    }
+    let mut dock = DockState::new(vec![]);
+    for tab in tabs {
+        dock.add_window(vec![tab]);
+    }
+    dock
+}
+
+pub(crate) fn save_open_tabs(dock: &DockState<DebugTab>) -> Vec<String> {
+    dock.iter_all_tabs()
+        .map(|(_, tab)| tab.persist_name().to_string())
+        .collect()
 }
 
 pub(crate) fn toggle_dock_tab(dock: &mut DockState<DebugTab>, tab: DebugTab) {
@@ -67,6 +132,9 @@ pub(crate) fn sync_show_flags(
     debug_windows.show_tilemap_viewer = dock.find_tab(&DebugTab::TilemapViewer).is_some();
     debug_windows.show_oam_viewer = dock.find_tab(&DebugTab::OamViewer).is_some();
     debug_windows.show_palette_viewer = dock.find_tab(&DebugTab::PaletteViewer).is_some();
+    debug_windows.show_performance = dock.find_tab(&DebugTab::Performance).is_some();
+    debug_windows.show_breakpoints_window = dock.find_tab(&DebugTab::Breakpoints).is_some();
+    debug_windows.show_cheats = dock.find_tab(&DebugTab::Cheats).is_some();
 }
 
 pub(crate) struct DebugTabViewer<'a> {
@@ -160,6 +228,28 @@ impl TabViewer for DebugTabViewer<'_> {
                     );
                 }
             }
+            DebugTab::Performance => {
+                if let Some(info) = self.debug_info {
+                    draw_performance_content(
+                        ui,
+                        info,
+                        &mut self.window_state.perf_history,
+                    );
+                }
+            }
+            DebugTab::Breakpoints => {
+                if let Some(info) = self.debug_info {
+                    draw_breakpoints_content(
+                        ui,
+                        info,
+                        self.window_state,
+                        &mut self.actions,
+                    );
+                }
+            }
+            DebugTab::Cheats => {
+                draw_cheats_content(ui, self.window_state);
+            }
         }
     }
 
@@ -167,4 +257,3 @@ impl TabViewer for DebugTabViewer<'_> {
         [false, true]
     }
 }
-

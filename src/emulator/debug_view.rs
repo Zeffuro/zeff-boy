@@ -1,5 +1,5 @@
 use super::Emulator;
-use crate::debug::{DebugInfo, PpuSnapshot};
+use crate::debug::{DebugInfo, PpuSnapshot, WatchpointInfo};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::{CPUState, IMEState};
 
@@ -26,15 +26,6 @@ impl Emulator {
 
     pub(crate) fn is_mbc7_cartridge(&self) -> bool {
         self.header.cartridge_type.is_mbc7()
-    }
-
-    pub(crate) fn read_memory_range(&self, start: u16, len: u16) -> Vec<(u16, u8)> {
-        (0..len)
-            .map(|i| {
-                let addr = start.wrapping_add(i);
-                (addr, self.bus.read_byte(addr))
-            })
-            .collect()
     }
 
     pub(crate) fn ppu_registers(&self) -> PpuSnapshot {
@@ -69,10 +60,10 @@ impl Emulator {
         };
 
         let start = self.cpu.pc;
-        let mut mem_around_pc = Vec::with_capacity(32);
-        for i in 0u16..32 {
-            let addr = start.wrapping_add(i);
-            mem_around_pc.push((addr, self.bus.read_byte(addr)));
+        let mut mem_around_pc = [(0u16, 0u8); 32];
+        for (i, entry) in mem_around_pc.iter_mut().enumerate() {
+            let addr = start.wrapping_add(i as u16);
+            *entry = (addr, self.bus.read_byte(addr));
         }
 
         let speed_mode_label = match self.hardware_mode {
@@ -98,6 +89,7 @@ impl Emulator {
             last_opcode_pc: self.last_opcode_pc,
             fps: 0.0,
             speed_mode_label,
+            frames_in_flight: 0,
             ppu: self.ppu_registers(),
             hardware_mode: self.hardware_mode,
             hardware_mode_preference: self.hardware_mode_preference,
@@ -118,15 +110,13 @@ impl Emulator {
                 .debug
                 .watchpoints
                 .iter()
-                .map(|w| format!("{:04X} ({:?})", w.address, w.watch_type))
+                .map(|w| WatchpointInfo {
+                    address: w.address,
+                    watch_type: w.watch_type,
+                })
                 .collect(),
             hit_breakpoint: self.debug.hit_breakpoint,
-            hit_watchpoint: self.debug.hit_watchpoint.map(|hit| {
-                format!(
-                    "{:?} @ {:04X}: {:02X} -> {:02X}",
-                    hit.watch_type, hit.address, hit.old_value, hit.new_value
-                )
-            }),
+            hit_watchpoint: self.debug.hit_watchpoint,
             tilt_is_mbc7: false,
             tilt_stick_controls_tilt: false,
             tilt_left_stick: (0.0, 0.0),

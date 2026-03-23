@@ -58,6 +58,9 @@ impl PPU {
     }
 
     pub(crate) fn write_bcpd(&mut self, value: u8) {
+        if !self.cpu_palette_accessible() {
+            return;
+        }
         let index = (self.bcps & 0x3F) as usize;
         self.bg_palette_ram[index] = value;
         if self.bcps & 0x80 != 0 {
@@ -82,6 +85,9 @@ impl PPU {
     }
 
     pub(crate) fn write_ocpd(&mut self, value: u8) {
+        if !self.cpu_palette_accessible() {
+            return;
+        }
         let index = (self.ocps & 0x3F) as usize;
         self.obj_palette_ram[index] = value;
         if self.ocps & 0x80 != 0 {

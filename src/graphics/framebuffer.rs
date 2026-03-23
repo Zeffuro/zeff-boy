@@ -1,10 +1,67 @@
 use crate::graphics::gpu::texture_sampler_bind_group_layout;
+use crate::settings::ShaderPreset;
 use anyhow::Result;
 
 pub(crate) struct FramebufferRenderer {
     screen_texture: wgpu::Texture,
     screen_bind_group: wgpu::BindGroup,
     screen_pipeline: wgpu::RenderPipeline,
+    screen_bgl: wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+    current_preset: ShaderPreset,
+}
+
+fn shader_source(preset: ShaderPreset) -> &'static str {
+    match preset {
+        ShaderPreset::None => include_str!("../shaders/screen.wgsl"),
+        ShaderPreset::CRT => include_str!("../shaders/crt.wgsl"),
+        ShaderPreset::Scanlines => include_str!("../shaders/scanlines.wgsl"),
+        ShaderPreset::LCDGrid => include_str!("../shaders/lcd_grid.wgsl"),
+    }
+}
+
+fn create_pipeline(
+    device: &wgpu::Device,
+    bgl: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+    preset: ShaderPreset,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("screen shader"),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source(preset))),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("screen pipeline layout"),
+        bind_group_layouts: &[bgl],
+        push_constant_ranges: &[],
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("screen pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        cache: None,
+        multiview: None,
+    })
 }
 
 impl FramebufferRenderer {
@@ -49,52 +106,27 @@ impl FramebufferRenderer {
             ],
         });
 
-        let screen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("screen shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "../shaders/screen.wgsl"
-            ))),
-        });
-
-        let screen_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("screen pipeline layout"),
-                bind_group_layouts: &[&screen_bgl],
-                push_constant_ranges: &[],
-            });
-
-        let screen_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("screen pipeline"),
-            layout: Some(&screen_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &screen_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &screen_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            cache: None,
-            multiview: None,
-        });
+        let preset = ShaderPreset::None;
+        let screen_pipeline = create_pipeline(device, &screen_bgl, format, preset);
 
         Ok(Self {
             screen_texture,
             screen_bind_group,
             screen_pipeline,
+            screen_bgl,
+            format,
+            current_preset: preset,
         })
     }
+
+    pub(crate) fn set_shader(&mut self, device: &wgpu::Device, preset: ShaderPreset) {
+        if self.current_preset == preset {
+            return;
+        }
+        self.screen_pipeline = create_pipeline(device, &self.screen_bgl, self.format, preset);
+        self.current_preset = preset;
+    }
+
 
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {
         queue.write_texture(

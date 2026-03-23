@@ -1,5 +1,7 @@
 mod app;
 mod audio;
+mod audio_recorder;
+mod cheats;
 mod cli;
 mod debug;
 mod emu_thread;
@@ -7,6 +9,8 @@ mod emulator;
 mod graphics;
 mod hardware;
 mod input;
+mod replay;
+mod rewind;
 mod rom_loader;
 mod save_state;
 mod settings;
@@ -47,3 +51,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+ 
+ 

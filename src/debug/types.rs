@@ -1,9 +1,15 @@
-use crate::debug::breakpoints::WatchType;
+use crate::cheats::CheatCode;
+use crate::debug::breakpoints::{WatchHit, WatchType};
 use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::settings::InputBindingAction;
 use egui::{Color32, ColorImage, TextureHandle};
 use std::collections::VecDeque;
+
+pub(crate) struct WatchpointInfo {
+    pub(crate) address: u16,
+    pub(crate) watch_type: WatchType,
+}
 
 pub(crate) struct DebugInfo {
     pub(crate) pc: u16,
@@ -25,6 +31,7 @@ pub(crate) struct DebugInfo {
 
     pub(crate) fps: f64,
     pub(crate) speed_mode_label: &'static str,
+    pub(crate) frames_in_flight: usize,
     pub(crate) ppu: PpuSnapshot,
     pub(crate) hardware_mode: HardwareMode,
     pub(crate) hardware_mode_preference: HardwareModePreference,
@@ -37,13 +44,13 @@ pub(crate) struct DebugInfo {
     pub(crate) if_reg: u8,
     pub(crate) ie: u8,
 
-    pub(crate) mem_around_pc: Vec<(u16, u8)>,
+    pub(crate) mem_around_pc: [(u16, u8); 32],
 
-    pub(crate) recent_ops: Vec<String>,
+    pub(crate) recent_ops: Vec<(u16, u8, bool)>,
     pub(crate) breakpoints: Vec<u16>,
-    pub(crate) watchpoints: Vec<String>,
+    pub(crate) watchpoints: Vec<WatchpointInfo>,
     pub(crate) hit_breakpoint: Option<u16>,
-    pub(crate) hit_watchpoint: Option<String>,
+    pub(crate) hit_watchpoint: Option<WatchHit>,
 
     pub(crate) tilt_is_mbc7: bool,
     pub(crate) tilt_stick_controls_tilt: bool,
@@ -85,11 +92,16 @@ pub(crate) struct DebugWindowState {
     pub(crate) memory_prev_bytes: Vec<u8>,
     pub(crate) memory_flash_ticks: Vec<u8>,
     pub(crate) memory_edit_addr: Option<u16>,
+    pub(crate) memory_edit_addr_input: String,
     pub(crate) memory_edit_value: String,
+    pub(crate) enable_memory_editing: bool,
     pub(crate) breakpoint_input: String,
     pub(crate) watchpoint_input: String,
     pub(crate) watchpoint_type: WatchType,
     pub(crate) rebinding_action: Option<InputBindingAction>,
+    pub(crate) rebinding_speedup: bool,
+    pub(crate) rebinding_rewind: bool,
+    pub(crate) last_disasm_pc: Option<u16>,
     pub(crate) tilemap_image: ColorImage,
     pub(crate) tilemap_texture: Option<TextureHandle>,
     pub(crate) tilemap_vram_dirty: bool,
@@ -113,6 +125,15 @@ pub(crate) struct DebugWindowState {
     pub(crate) tile_viewer_last_use_cgb_colors: Option<bool>,
     pub(crate) tile_viewer_last_use_obj_palette: Option<bool>,
     pub(crate) tile_viewer_last_cgb_palette_index: Option<u8>,
+    pub(crate) show_performance: bool,
+    pub(crate) show_breakpoints_window: bool,
+    pub(crate) show_cheats: bool,
+    pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
+    pub(crate) settings_tab: usize,
+    pub(crate) cheats: Vec<CheatCode>,
+    pub(crate) cheat_input: String,
+    pub(crate) cheat_name_input: String,
+    pub(crate) cheat_parse_error: Option<String>,
 }
 
 impl DebugWindowState {
@@ -133,11 +154,16 @@ impl DebugWindowState {
             memory_prev_bytes: Vec::new(),
             memory_flash_ticks: vec![0; 256],
             memory_edit_addr: None,
+            memory_edit_addr_input: String::new(),
             memory_edit_value: String::new(),
+            enable_memory_editing: false,
             breakpoint_input: String::new(),
             watchpoint_input: String::new(),
             watchpoint_type: WatchType::Write,
             rebinding_action: None,
+            rebinding_speedup: false,
+            rebinding_rewind: false,
+            last_disasm_pc: None,
             tilemap_image: ColorImage::filled([256, 256], Color32::BLACK),
             tilemap_texture: None,
             tilemap_vram_dirty: true,
@@ -161,6 +187,15 @@ impl DebugWindowState {
             tile_viewer_last_use_cgb_colors: None,
             tile_viewer_last_use_obj_palette: None,
             tile_viewer_last_cgb_palette_index: None,
+            show_performance: false,
+            show_breakpoints_window: false,
+            show_cheats: false,
+            perf_history: crate::debug::perf_monitor::PerfHistory::new(),
+            settings_tab: 0,
+            cheats: Vec::new(),
+            cheat_input: String::new(),
+            cheat_name_input: String::new(),
+            cheat_parse_error: None,
         }
     }
 
@@ -243,6 +278,7 @@ fn fold_bytes(bytes: &[u8]) -> u64 {
     hash
 }
 
+#[derive(Clone)]
 pub(crate) struct RomInfoViewData {
     pub(crate) title: String,
     pub(crate) manufacturer: String,
@@ -281,6 +317,7 @@ type OpcodeEntry = (u16, u8, bool);
 pub(crate) struct OpcodeLog {
     entries: VecDeque<OpcodeEntry>,
     capacity: usize,
+    pub(crate) enabled: bool,
 }
 
 impl OpcodeLog {
@@ -288,29 +325,27 @@ impl OpcodeLog {
         Self {
             entries: VecDeque::with_capacity(capacity),
             capacity,
+            enabled: true,
         }
     }
 
     #[inline]
     pub(crate) fn push(&mut self, pc: u16, opcode: u8, is_cb: bool) {
+        if !self.enabled {
+            return;
+        }
         if self.entries.len() >= self.capacity {
             self.entries.pop_front();
         }
         self.entries.push_back((pc, opcode, is_cb));
     }
 
-    pub(crate) fn recent(&self, n: usize) -> Vec<String> {
+    pub(crate) fn recent(&self, n: usize) -> Vec<(u16, u8, bool)> {
         self.entries
             .iter()
             .rev()
             .take(n)
-            .map(|&(pc, op, is_cb)| {
-                if is_cb {
-                    format!("{:04X}: CB {:02X}", pc, op)
-                } else {
-                    format!("{:04X}: {:02X}", pc, op)
-                }
-            })
+            .copied()
             .collect()
     }
 }

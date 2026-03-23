@@ -28,6 +28,22 @@ impl App {
     }
 
     fn handle_rebinding_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
+        if self.debug_windows.rebinding_speedup {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.settings.speedup_key = format!("{key_code:?}");
+                self.debug_windows.rebinding_speedup = false;
+            }
+            return true;
+        }
+
+        if self.debug_windows.rebinding_rewind {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.settings.rewind_key = format!("{key_code:?}");
+                self.debug_windows.rebinding_rewind = false;
+            }
+            return true;
+        }
+
         let Some(action) = self.debug_windows.rebinding_action else {
             return false;
         };
@@ -44,21 +60,24 @@ impl App {
     }
 
     fn handle_shortcut_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
-        match key_code {
-            KeyCode::Tab => {
-                match key_event.state {
-                    ElementState::Pressed if !key_event.repeat => self.fast_forward_held = true,
-                    ElementState::Released => self.fast_forward_held = false,
-                    _ => {}
-                }
-                true
+        if key_code == self.settings.speedup_key_code() {
+            match key_event.state {
+                ElementState::Pressed if !key_event.repeat => self.fast_forward_held = true,
+                ElementState::Released => self.fast_forward_held = false,
+                _ => {}
             }
+            return true;
+        }
+
+        match key_code {
             KeyCode::F11 => {
                 if key_event.state == ElementState::Pressed && !key_event.repeat {
                     self.uncapped_speed = !self.uncapped_speed;
                     self.settings.uncapped_speed = self.uncapped_speed;
                     self.settings.save();
-                    // Present mode update is handled by sync_speed_setting() next tick.
+                    if let Some(thread) = &self.emu_thread {
+                        thread.send(crate::emu_thread::EmuCommand::SetUncapped(self.uncapped_speed));
+                    }
                 }
                 true
             }
@@ -71,6 +90,31 @@ impl App {
                             self.save_state_slot(slot);
                         }
                     }
+                }
+                true
+            }
+            KeyCode::F5 => {
+                if key_event.state == ElementState::Pressed && !key_event.repeat {
+                    self.debug_continue_requested = true;
+                }
+                true
+            }
+            KeyCode::F10 => {
+                if key_event.state == ElementState::Pressed && !key_event.repeat {
+                    self.debug_step_requested = true;
+                }
+                true
+            }
+            KeyCode::F12 => {
+                if key_event.state == ElementState::Pressed && !key_event.repeat {
+                    self.toggle_fullscreen();
+                }
+                true
+            }
+            _ if key_code == self.settings.rewind_key_code() => {
+                match key_event.state {
+                    ElementState::Pressed => self.rewind_held = true,
+                    ElementState::Released => self.rewind_held = false,
                 }
                 true
             }

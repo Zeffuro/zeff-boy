@@ -124,6 +124,13 @@ pub(super) fn draw_tile_viewer_content(
     );
 
     let display_size = egui::vec2((width as f32) * 2.0, (height as f32) * 2.0);
+    ui.horizontal(|ui| {
+        super::export::export_png_button(
+            ui,
+            "tiles.png",
+            &window_state.tile_viewer_image,
+        );
+    });
     egui::ScrollArea::both().show(ui, |ui| {
         ui.image((texture.id(), display_size));
     });

@@ -26,6 +26,23 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VSOut {
 
 @fragment
 fn fs_main(v: VSOut) -> @location(0) vec4<f32> {
-    return textureSample(t_screen, s_screen, v.uv);
+    let texSize = vec2<f32>(160.0, 144.0);
+    let color = textureSample(t_screen, s_screen, v.uv);
+
+    let pixelX = v.uv.x * texSize.x;
+    let pixelY = v.uv.y * texSize.y;
+    let gridX = fract(pixelX);
+    let gridY = fract(pixelY);
+
+    let borderSize = 0.12;
+    var gridFade = 1.0;
+    if gridX < borderSize || gridX > (1.0 - borderSize) {
+        gridFade = 0.7;
+    }
+    if gridY < borderSize || gridY > (1.0 - borderSize) {
+        gridFade = 0.7;
+    }
+
+    return vec4<f32>(color.rgb * gridFade, 1.0);
 }
 

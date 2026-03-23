@@ -76,6 +76,15 @@ pub(crate) struct RenderResult {
     pub(crate) load_state_file_requested: bool,
     pub(crate) save_state_slot: Option<u8>,
     pub(crate) load_state_slot: Option<u8>,
+    pub(crate) load_recent_rom: Option<std::path::PathBuf>,
+    pub(crate) toolbar_settings_changed: bool,
+    pub(crate) toggle_fullscreen: bool,
+    pub(crate) start_audio_recording: bool,
+    pub(crate) stop_audio_recording: bool,
+    pub(crate) start_replay_recording: bool,
+    pub(crate) stop_replay_recording: bool,
+    pub(crate) load_replay: bool,
+    pub(crate) take_screenshot: bool,
     pub(crate) debug_actions: crate::debug::DebugUiActions,
 }
 
@@ -107,7 +116,7 @@ impl Graphics {
             egui,
             framebuffer,
             size,
-            aspect_ratio_mode: AspectRatioMode::Stretch,
+            aspect_ratio_mode: AspectRatioMode::IntegerScale,
         })
     }
 
@@ -148,7 +157,15 @@ impl Graphics {
         settings: &mut crate::settings::Settings,
         show_settings_window: &mut bool,
         dock_state: &mut egui_dock::DockState<crate::debug::DebugTab>,
+        toast_manager: &mut crate::debug::ToastManager,
+        speed_mode_label: Option<&str>,
+        is_recording_audio: bool,
+        is_recording_replay: bool,
+        is_playing_replay: bool,
+        is_rewinding: bool,
     ) -> Result<RenderResult, FrameError> {
+        self.framebuffer.set_shader(&self.gpu.device, settings.shader_preset);
+
         let frame = self
             .gpu
             .surface
@@ -167,7 +184,7 @@ impl Graphics {
 
         self.egui.begin_frame(&self.window);
         let menu_actions =
-            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, dock_state);
+            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, dock_state, settings, speed_mode_label, is_recording_audio, is_recording_replay, is_playing_replay);
         if let Some(mode) = menu_actions.aspect_ratio_mode {
             self.aspect_ratio_mode = mode;
         }
@@ -205,6 +222,27 @@ impl Graphics {
                     ui.heading("Drag & drop a ROM file, or use File > Open");
                 });
             });
+        }
+
+        toast_manager.draw(self.egui.context());
+
+        if is_rewinding {
+            egui::Area::new(egui::Id::new("rewind_overlay"))
+                .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -10.0))
+                .order(egui::Order::Foreground)
+                .show(self.egui.context(), |ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgba_unmultiplied(120, 50, 20, 210))
+                        .inner_margin(egui::Margin::symmetric(12, 6))
+                        .corner_radius(4.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("⏪ Rewinding…")
+                                    .color(egui::Color32::WHITE)
+                                    .size(15.0),
+                            );
+                        });
+                });
         }
 
         let full_output = self.egui.end_frame(&self.window);
@@ -293,6 +331,15 @@ impl Graphics {
             load_state_file_requested: menu_actions.load_state_file_requested,
             save_state_slot: menu_actions.save_state_slot,
             load_state_slot: menu_actions.load_state_slot,
+            load_recent_rom: menu_actions.load_recent_rom,
+            toolbar_settings_changed: menu_actions.toolbar_settings_changed,
+            toggle_fullscreen: menu_actions.toggle_fullscreen,
+            start_audio_recording: menu_actions.start_audio_recording,
+            stop_audio_recording: menu_actions.stop_audio_recording,
+            start_replay_recording: menu_actions.start_replay_recording,
+            stop_replay_recording: menu_actions.stop_replay_recording,
+            load_replay: menu_actions.load_replay,
+            take_screenshot: menu_actions.take_screenshot,
             debug_actions,
         })
     }

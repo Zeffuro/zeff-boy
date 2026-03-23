@@ -8,6 +8,7 @@ use crate::settings::{
     BindingAction, InputBindingAction, LeftStickMode, Settings, TiltBindingAction, TiltInputMode,
 };
 use egui_dock::DockState;
+use std::path::PathBuf;
 
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<u16>,
@@ -52,6 +53,15 @@ pub(crate) struct MenuActions {
     pub(crate) save_state_slot: Option<u8>,
     pub(crate) load_state_slot: Option<u8>,
     pub(crate) aspect_ratio_mode: Option<AspectRatioMode>,
+    pub(crate) load_recent_rom: Option<PathBuf>,
+    pub(crate) toolbar_settings_changed: bool,
+    pub(crate) toggle_fullscreen: bool,
+    pub(crate) start_audio_recording: bool,
+    pub(crate) stop_audio_recording: bool,
+    pub(crate) start_replay_recording: bool,
+    pub(crate) stop_replay_recording: bool,
+    pub(crate) load_replay: bool,
+    pub(crate) take_screenshot: bool,
     pub(crate) menu_bar_height_points: f32,
 }
 
@@ -59,6 +69,11 @@ pub(crate) fn draw_menu_bar(
     ctx: &egui::Context,
     current_mode: AspectRatioMode,
     dock_state: &mut DockState<DebugTab>,
+    settings: &mut Settings,
+    speed_mode_label: Option<&str>,
+    is_recording_audio: bool,
+    is_recording_replay: bool,
+    is_playing_replay: bool,
 ) -> MenuActions {
     let mut open_file_requested = false;
     let mut open_settings_requested = false;
@@ -67,6 +82,15 @@ pub(crate) fn draw_menu_bar(
     let mut save_state_slot = None;
     let mut load_state_slot = None;
     let mut selected_mode = None;
+    let mut load_recent_rom = None;
+    let mut toolbar_settings_changed = false;
+    let mut toggle_fullscreen = false;
+    let mut start_audio_recording = false;
+    let mut stop_audio_recording = false;
+    let mut start_replay_recording = false;
+    let mut stop_replay_recording = false;
+    let mut load_replay = false;
+    let mut take_screenshot = false;
 
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
@@ -75,32 +99,90 @@ pub(crate) fn draw_menu_bar(
                     open_file_requested = true;
                     ui.close();
                 }
+                if !settings.recent_roms.is_empty() {
+                    ui.menu_button("Recent ROMs", |ui| {
+                        let recent = settings.recent_roms.clone();
+                        for entry in &recent {
+                            let path = std::path::Path::new(&entry.path);
+                            let exists = path.exists();
+                            let label = if exists {
+                                entry.name.clone()
+                            } else {
+                                format!("{} (missing)", entry.name)
+                            };
+                            let button = ui.add_enabled(exists, egui::Button::new(label));
+                            if button.on_hover_text(&entry.path).clicked() {
+                                load_recent_rom = Some(PathBuf::from(&entry.path));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
                 if ui.button("Settings").clicked() {
                     open_settings_requested = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Save State (File...)...").clicked() {
-                    save_state_file_requested = true;
-                    ui.close();
-                }
-                if ui.button("Load State (File...)...").clicked() {
-                    load_state_file_requested = true;
-                    ui.close();
-                }
+                ui.menu_button("Save State", |ui| {
+                    for slot in 1..=4u8 {
+                        if ui.button(format!("Slot {slot}")).clicked() {
+                            save_state_slot = Some(slot);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Save to File...").clicked() {
+                        save_state_file_requested = true;
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Load State", |ui| {
+                    for slot in 1..=4u8 {
+                        if ui.button(format!("Slot {slot}")).clicked() {
+                            load_state_slot = Some(slot);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Load from File...").clicked() {
+                        load_state_file_requested = true;
+                        ui.close();
+                    }
+                });
                 ui.separator();
-                for slot in 1..=4u8 {
-                    if ui.button(format!("Save State (Slot {slot})")).clicked() {
-                        save_state_slot = Some(slot);
+                if is_recording_audio {
+                    if ui.button("⏹ Stop Recording").clicked() {
+                        stop_audio_recording = true;
+                        ui.close();
+                    }
+                } else {
+                    if ui.button("🎙 Record Audio...").clicked() {
+                        start_audio_recording = true;
                         ui.close();
                     }
                 }
                 ui.separator();
-                for slot in 1..=4u8 {
-                    if ui.button(format!("Load State (Slot {slot})")).clicked() {
-                        load_state_slot = Some(slot);
+                if is_recording_replay {
+                    if ui.button("⏹ Stop Replay Recording").clicked() {
+                        stop_replay_recording = true;
                         ui.close();
                     }
+                } else if is_playing_replay {
+                    ui.label("▶ Replay playing...");
+                } else {
+                    if ui.button("⏺ Record Replay...").clicked() {
+                        start_replay_recording = true;
+                        ui.close();
+                    }
+                    if ui.button("▶ Play Replay...").clicked() {
+                        load_replay = true;
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button("📷 Screenshot...").clicked() {
+                    take_screenshot = true;
+                    ui.close();
                 }
             });
 
@@ -129,6 +211,28 @@ pub(crate) fn draw_menu_bar(
                     selected_mode = Some(AspectRatioMode::IntegerScale);
                     ui.close();
                 }
+                ui.separator();
+                if ui.button("Fullscreen (F12)").clicked() {
+                    toggle_fullscreen = true;
+                    ui.close();
+                }
+                ui.separator();
+                ui.menu_button("Shader", |ui| {
+                    use crate::settings::ShaderPreset;
+                    let presets = [
+                        (ShaderPreset::None, "None"),
+                        (ShaderPreset::Scanlines, "Scanlines"),
+                        (ShaderPreset::LCDGrid, "LCD Grid"),
+                        (ShaderPreset::CRT, "CRT"),
+                    ];
+                    for (preset, label) in presets {
+                        if ui.selectable_label(settings.shader_preset == preset, label).clicked() {
+                            settings.shader_preset = preset;
+                            toolbar_settings_changed = true;
+                            ui.close();
+                        }
+                    }
+                });
             });
 
             ui.menu_button("Debug", |ui| {
@@ -168,6 +272,72 @@ pub(crate) fn draw_menu_bar(
                     toggle_dock_tab(dock_state, DebugTab::PaletteViewer);
                     ui.close();
                 }
+                ui.separator();
+                if ui.button("Performance").clicked() {
+                    toggle_dock_tab(dock_state, DebugTab::Performance);
+                    ui.close();
+                }
+                if ui.button("Breakpoints").clicked() {
+                    toggle_dock_tab(dock_state, DebugTab::Breakpoints);
+                    ui.close();
+                }
+                if ui.button("Cheats").clicked() {
+                    toggle_dock_tab(dock_state, DebugTab::Cheats);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Reset Layout").clicked() {
+                    *dock_state = crate::debug::create_default_dock_state();
+                    ui.close();
+                }
+            });
+
+            ui.menu_button("Help", |ui| {
+                if ui.button("GitHub Repository").clicked() {
+                    let _ = open::that("https://github.com/zeffuro/zeff-boy");
+                    ui.close();
+                }
+                if ui.button("Open Settings Folder").clicked() {
+                    let dir = crate::settings::Settings::settings_dir();
+                    let _ = open::that(&dir);
+                    ui.close();
+                }
+            });
+
+            // Right-aligned toolbar: speed mode + volume
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(label) = speed_mode_label {
+                    ui.label(
+                        egui::RichText::new(label)
+                            .small()
+                            .color(egui::Color32::LIGHT_GRAY),
+                    );
+                    ui.separator();
+                }
+
+                let muted = settings.master_volume <= 0.001;
+                let icon = if muted { "🔇" } else { "🔊" };
+                if ui.small_button(icon).clicked() {
+                    if muted {
+                        settings.master_volume =
+                            settings.pre_mute_volume.take().unwrap_or(1.0);
+                    } else {
+                        settings.pre_mute_volume = Some(settings.master_volume);
+                        settings.master_volume = 0.0;
+                    }
+                    toolbar_settings_changed = true;
+                }
+
+                let vol_before = settings.master_volume;
+                ui.spacing_mut().slider_width = 80.0;
+                ui.add(
+                    egui::Slider::new(&mut settings.master_volume, 0.0..=1.0)
+                        .show_value(false)
+                        .text(""),
+                );
+                if (settings.master_volume - vol_before).abs() > f32::EPSILON {
+                    toolbar_settings_changed = true;
+                }
             });
         });
     });
@@ -180,6 +350,15 @@ pub(crate) fn draw_menu_bar(
         save_state_slot,
         load_state_slot,
         aspect_ratio_mode: selected_mode,
+        load_recent_rom,
+        toolbar_settings_changed,
+        toggle_fullscreen,
+        start_audio_recording,
+        stop_audio_recording,
+        start_replay_recording,
+        stop_replay_recording,
+        load_replay,
+        take_screenshot,
         menu_bar_height_points: ctx.available_rect().min.y.max(0.0),
     }
 }
@@ -192,58 +371,167 @@ pub(crate) fn draw_settings_window(
 ) {
     egui::Window::new("Settings")
         .open(open)
-        .default_width(360.0)
+        .default_width(400.0)
         .show(ctx, |ui| {
-            ui.heading("Emulation");
-            egui::ComboBox::from_label("Hardware mode")
-                .selected_text(match settings.hardware_mode_preference {
-                    HardwareModePreference::Auto => "Auto",
-                    HardwareModePreference::ForceDmg => "DMG",
-                    HardwareModePreference::ForceCgb => "CGB",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut settings.hardware_mode_preference,
-                        HardwareModePreference::Auto,
-                        "Auto",
-                    );
-                    ui.selectable_value(
-                        &mut settings.hardware_mode_preference,
-                        HardwareModePreference::ForceDmg,
-                        "DMG",
-                    );
-                    ui.selectable_value(
-                        &mut settings.hardware_mode_preference,
-                        HardwareModePreference::ForceCgb,
-                        "CGB",
-                    );
-                });
+            const TABS: &[&str] = &["Emulation", "Controls", "Audio", "UI"];
 
-            ui.add(
-                egui::Slider::new(&mut settings.fast_forward_multiplier, 1..=16)
-                    .text("Fast-forward multiplier"),
-            );
-            ui.add(
-                egui::Slider::new(&mut settings.uncapped_frames_per_tick, 1..=240)
-                    .text("Uncapped frames/tick"),
-            );
-            ui.checkbox(&mut settings.uncapped_speed, "Start in uncapped mode");
-            ui.checkbox(&mut settings.frame_skip, "Frame skip when behind")
-                .on_hover_text(
-                    "When enabled, skip emulation frames to stay in real-time if the \
-                     host can't keep up. When disabled, the emulator catches up \
-                     gradually (more accurate, may drift behind).",
-                );
+            ui.horizontal(|ui| {
+                for (i, &label) in TABS.iter().enumerate() {
+                    if ui.selectable_label(state.settings_tab == i, label).clicked() {
+                        state.settings_tab = i;
+                    }
+                }
+            });
+            ui.separator();
+
+            match state.settings_tab {
+                0 => draw_settings_emulation(ui, settings),
+                1 => draw_settings_controls(ui, settings, state),
+                2 => draw_settings_audio(ui, settings),
+                3 => draw_settings_ui(ui, settings),
+                _ => {}
+            }
 
             ui.separator();
-            ui.heading("Input");
-            if let Some(action) = state.rebinding_action {
-                let label = match action {
-                    InputBindingAction::Joypad(a) => joypad_binding_label(a),
-                    InputBindingAction::Tilt(a) => tilt_binding_label(a),
-                };
-                ui.label(format!("Press a key for {}...", label));
+            if ui.button("Reset to defaults").clicked() {
+                *settings = Settings::default();
+                state.rebinding_action = None;
             }
+        });
+}
+
+fn draw_settings_emulation(ui: &mut egui::Ui, settings: &mut Settings) {
+    ui.heading("Hardware");
+    egui::ComboBox::from_label("Hardware mode")
+        .selected_text(match settings.hardware_mode_preference {
+            HardwareModePreference::Auto => "Auto",
+            HardwareModePreference::ForceDmg => "DMG",
+            HardwareModePreference::ForceCgb => "CGB",
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut settings.hardware_mode_preference,
+                HardwareModePreference::Auto,
+                "Auto",
+            );
+            ui.selectable_value(
+                &mut settings.hardware_mode_preference,
+                HardwareModePreference::ForceDmg,
+                "DMG",
+            );
+            ui.selectable_value(
+                &mut settings.hardware_mode_preference,
+                HardwareModePreference::ForceCgb,
+                "CGB",
+            );
+        });
+
+    ui.separator();
+    ui.heading("Speed");
+    ui.add(
+        egui::Slider::new(&mut settings.fast_forward_multiplier, 1..=16)
+            .text("Fast-forward multiplier"),
+    );
+    ui.add(
+        egui::Slider::new(&mut settings.uncapped_frames_per_tick, 1..=240)
+            .text("Uncapped frames/tick"),
+    );
+    ui.checkbox(&mut settings.uncapped_speed, "Start in uncapped mode");
+    ui.checkbox(&mut settings.frame_skip, "Frame skip when behind")
+        .on_hover_text(
+            "When enabled, skip emulation frames to stay in real-time if the \
+             host can't keep up. When disabled, the emulator catches up \
+             gradually (more accurate, may drift behind).",
+        );
+    ui.checkbox(&mut settings.auto_save_state, "Auto save/load state")
+        .on_hover_text(
+            "Automatically save emulator state when closing and \
+             restore it when loading the same ROM.",
+        );
+
+    ui.separator();
+    ui.heading("Rewind");
+    ui.checkbox(&mut settings.rewind_enabled, "Enable rewind")
+        .on_hover_text(
+            "Hold the rewind key to rewind gameplay. \
+             Captures a snapshot every 4 frames (~10 seconds of history).",
+        );
+}
+
+fn draw_settings_controls(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    state: &mut DebugWindowState,
+) {
+    ui.heading("System Shortcuts");
+    egui::Grid::new("system_shortcuts")
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("Speed-up (hold)");
+            let key_label = if state.rebinding_speedup {
+                format!("Press key... ({})", settings.speedup_key)
+            } else {
+                settings.speedup_key.clone()
+            };
+            if ui.button(key_label).clicked() {
+                state.rebinding_speedup = true;
+                state.rebinding_action = None;
+            }
+            ui.end_row();
+
+            ui.label("Toggle uncapped");
+            ui.label(egui::RichText::new("F11").color(egui::Color32::GRAY));
+            ui.end_row();
+
+            ui.label("Continue (debug)");
+            ui.label(egui::RichText::new("F5").color(egui::Color32::GRAY));
+            ui.end_row();
+
+            ui.label("Step (debug)");
+            ui.label(egui::RichText::new("F10").color(egui::Color32::GRAY));
+            ui.end_row();
+
+            ui.label("Save state (slot 1-4)");
+            ui.label(egui::RichText::new("F1-F4").color(egui::Color32::GRAY));
+            ui.end_row();
+
+            ui.label("Load state (slot 1-4)");
+            ui.label(egui::RichText::new("Shift+F1-F4").color(egui::Color32::GRAY));
+            ui.end_row();
+
+            ui.label("Fullscreen");
+            ui.label(egui::RichText::new("F12").color(egui::Color32::GRAY));
+            ui.end_row();
+
+            ui.label("Rewind (hold)");
+            let rewind_label = if state.rebinding_rewind {
+                format!("Press key... ({})", settings.rewind_key)
+            } else {
+                settings.rewind_key.clone()
+            };
+            if ui.button(rewind_label).clicked() {
+                state.rebinding_rewind = true;
+                state.rebinding_action = None;
+                state.rebinding_speedup = false;
+            }
+            ui.end_row();
+        });
+
+    ui.separator();
+    ui.heading("Joypad Bindings");
+    if let Some(action) = state.rebinding_action {
+        let label = match action {
+            InputBindingAction::Joypad(a) => joypad_binding_label(a),
+            InputBindingAction::Tilt(a) => tilt_binding_label(a),
+        };
+        ui.label(
+            egui::RichText::new(format!("Press a key for {}...", label))
+                .color(egui::Color32::YELLOW),
+        );
+    }
+    egui::Grid::new("joypad_bindings")
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
             for action in [
                 BindingAction::Up,
                 BindingAction::Down,
@@ -254,127 +542,133 @@ pub(crate) fn draw_settings_window(
                 BindingAction::Start,
                 BindingAction::Select,
             ] {
-                ui.horizontal(|ui| {
-                    ui.label(joypad_binding_label(action));
-                    let key_name = format!("{:?}", settings.key_bindings.get(action));
-                    let capture_label =
-                        if state.rebinding_action == Some(InputBindingAction::Joypad(action)) {
-                            format!("Press key... ({key_name})")
-                        } else {
-                            key_name
-                        };
-                    if ui.button(capture_label).clicked() {
-                        state.rebinding_action = Some(InputBindingAction::Joypad(action));
-                    }
-                });
+                ui.label(joypad_binding_label(action));
+                let key_name = format!("{:?}", settings.key_bindings.get(action));
+                let capture_label =
+                    if state.rebinding_action == Some(InputBindingAction::Joypad(action)) {
+                        format!("Press key... ({key_name})")
+                    } else {
+                        key_name
+                    };
+                if ui.button(capture_label).clicked() {
+                    state.rebinding_action = Some(InputBindingAction::Joypad(action));
+                }
+                ui.end_row();
             }
+        });
 
-            ui.separator();
-            ui.heading("MBC7 Tilt");
-            egui::ComboBox::from_label("Left stick behavior")
-                .selected_text(match settings.left_stick_mode {
-                    LeftStickMode::Auto => "Auto (Tilt on MBC7, D-pad otherwise)",
-                    LeftStickMode::Tilt => "Always Tilt",
-                    LeftStickMode::Dpad => "Always D-pad",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut settings.left_stick_mode,
-                        LeftStickMode::Auto,
-                        "Auto (Tilt on MBC7, D-pad otherwise)",
-                    );
-                    ui.selectable_value(
-                        &mut settings.left_stick_mode,
-                        LeftStickMode::Tilt,
-                        "Always Tilt",
-                    );
-                    ui.selectable_value(
-                        &mut settings.left_stick_mode,
-                        LeftStickMode::Dpad,
-                        "Always D-pad",
-                    );
-                });
-            egui::ComboBox::from_label("Tilt input source")
-                .selected_text(match settings.tilt_input_mode {
-                    TiltInputMode::Keyboard => "Keyboard (WASD)",
-                    TiltInputMode::Mouse => "Mouse",
-                    TiltInputMode::Auto => "Auto-detect",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut settings.tilt_input_mode,
-                        TiltInputMode::Keyboard,
-                        "Keyboard (WASD)",
-                    );
-                    ui.selectable_value(
-                        &mut settings.tilt_input_mode,
-                        TiltInputMode::Mouse,
-                        "Mouse",
-                    );
-                    ui.selectable_value(
-                        &mut settings.tilt_input_mode,
-                        TiltInputMode::Auto,
-                        "Auto-detect",
-                    );
-                });
-            ui.checkbox(&mut settings.tilt_invert_x, "Invert tilt X");
-            ui.checkbox(&mut settings.tilt_invert_y, "Invert tilt Y");
-            ui.checkbox(
-                &mut settings.stick_tilt_bypass_lerp,
-                "Use direct left-stick tilt (bypass lerp while stick is active)",
+    ui.separator();
+    ui.heading("MBC7 Tilt");
+    egui::ComboBox::from_label("Left stick behavior")
+        .selected_text(match settings.left_stick_mode {
+            LeftStickMode::Auto => "Auto (Tilt on MBC7, D-pad otherwise)",
+            LeftStickMode::Tilt => "Always Tilt",
+            LeftStickMode::Dpad => "Always D-pad",
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut settings.left_stick_mode,
+                LeftStickMode::Auto,
+                "Auto (Tilt on MBC7, D-pad otherwise)",
             );
-            ui.add(
-                egui::Slider::new(&mut settings.tilt_sensitivity, 0.1..=3.0)
-                    .text("Tilt sensitivity"),
+            ui.selectable_value(
+                &mut settings.left_stick_mode,
+                LeftStickMode::Tilt,
+                "Always Tilt",
             );
-            ui.add(egui::Slider::new(&mut settings.tilt_lerp, 0.0..=1.0).text("Tilt smoothing"));
-            ui.add(egui::Slider::new(&mut settings.tilt_deadzone, 0.0..=0.5).text("Tilt deadzone"));
-            if ui.button("Reset tilt keys to WASD").clicked() {
-                settings.tilt_key_bindings.set_wasd_defaults();
-            }
+            ui.selectable_value(
+                &mut settings.left_stick_mode,
+                LeftStickMode::Dpad,
+                "Always D-pad",
+            );
+        });
+    egui::ComboBox::from_label("Tilt input source")
+        .selected_text(match settings.tilt_input_mode {
+            TiltInputMode::Keyboard => "Keyboard (WASD)",
+            TiltInputMode::Mouse => "Mouse",
+            TiltInputMode::Auto => "Auto-detect",
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut settings.tilt_input_mode,
+                TiltInputMode::Keyboard,
+                "Keyboard (WASD)",
+            );
+            ui.selectable_value(
+                &mut settings.tilt_input_mode,
+                TiltInputMode::Mouse,
+                "Mouse",
+            );
+            ui.selectable_value(
+                &mut settings.tilt_input_mode,
+                TiltInputMode::Auto,
+                "Auto-detect",
+            );
+        });
+    ui.checkbox(&mut settings.tilt_invert_x, "Invert tilt X");
+    ui.checkbox(&mut settings.tilt_invert_y, "Invert tilt Y");
+    ui.checkbox(
+        &mut settings.stick_tilt_bypass_lerp,
+        "Direct left-stick tilt (bypass lerp)",
+    );
+    ui.add(
+        egui::Slider::new(&mut settings.tilt_sensitivity, 0.1..=3.0)
+            .text("Tilt sensitivity"),
+    );
+    ui.add(egui::Slider::new(&mut settings.tilt_lerp, 0.0..=1.0).text("Tilt smoothing"));
+    ui.add(egui::Slider::new(&mut settings.tilt_deadzone, 0.0..=0.5).text("Tilt deadzone"));
+
+    ui.separator();
+    ui.heading("Tilt Key Bindings");
+    if ui.button("Reset tilt keys to WASD").clicked() {
+        settings.tilt_key_bindings.set_wasd_defaults();
+    }
+    egui::Grid::new("tilt_bindings")
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
             for action in [
                 TiltBindingAction::Up,
                 TiltBindingAction::Down,
                 TiltBindingAction::Left,
                 TiltBindingAction::Right,
             ] {
-                ui.horizontal(|ui| {
-                    ui.label(tilt_binding_label(action));
-                    let key_name = format!("{:?}", settings.tilt_key_bindings.get(action));
-                    let capture_label =
-                        if state.rebinding_action == Some(InputBindingAction::Tilt(action)) {
-                            format!("Press key... ({key_name})")
-                        } else {
-                            key_name
-                        };
-                    if ui.button(capture_label).clicked() {
-                        state.rebinding_action = Some(InputBindingAction::Tilt(action));
-                    }
-                });
-            }
-
-            ui.separator();
-            ui.heading("Audio");
-            ui.add(
-                egui::Slider::new(&mut settings.master_volume, 0.0..=1.0)
-                    .text("Master volume")
-                    .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
-            );
-            ui.checkbox(
-                &mut settings.mute_audio_during_fast_forward,
-                "Mute audio while fast-forward is held",
-            );
-
-            ui.separator();
-            ui.heading("UI");
-            ui.checkbox(&mut settings.show_fps, "Show FPS in debug panel");
-
-            ui.separator();
-            if ui.button("Reset to defaults").clicked() {
-                *settings = Settings::default();
-                state.rebinding_action = None;
+                ui.label(tilt_binding_label(action));
+                let key_name = format!("{:?}", settings.tilt_key_bindings.get(action));
+                let capture_label =
+                    if state.rebinding_action == Some(InputBindingAction::Tilt(action)) {
+                        format!("Press key... ({key_name})")
+                    } else {
+                        key_name
+                    };
+                if ui.button(capture_label).clicked() {
+                    state.rebinding_action = Some(InputBindingAction::Tilt(action));
+                }
+                ui.end_row();
             }
         });
+}
+
+fn draw_settings_audio(ui: &mut egui::Ui, settings: &mut Settings) {
+    ui.heading("Volume");
+    ui.add(
+        egui::Slider::new(&mut settings.master_volume, 0.0..=1.0)
+            .text("Master volume")
+            .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+    );
+    ui.checkbox(
+        &mut settings.mute_audio_during_fast_forward,
+        "Mute audio while fast-forward is held",
+    );
+}
+
+fn draw_settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
+    ui.heading("Display");
+    ui.checkbox(&mut settings.show_fps, "Show FPS in debug panel");
+    ui.checkbox(
+        &mut settings.enable_memory_editing,
+        "Enable memory editing",
+    )
+    .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
 }
 
 fn joypad_binding_label(action: BindingAction) -> &'static str {
@@ -574,8 +868,12 @@ pub(super) fn draw_debug_ui_content(
             ui.separator();
 
             ui.heading("Recent Opcodes");
-            for entry in &info.recent_ops {
-                ui.monospace(entry);
+            for &(pc, op, is_cb) in &info.recent_ops {
+                if is_cb {
+                    ui.monospace(format!("{:04X}: CB {:02X}", pc, op));
+                } else {
+                    ui.monospace(format!("{:04X}: {:02X}", pc, op));
+                }
             }
 
             ui.separator();
@@ -670,7 +968,17 @@ pub(super) fn draw_debug_ui_content(
                 ui.monospace("(none)");
             } else {
                 for wp in &info.watchpoints {
-                    ui.monospace(wp);
+                    ui.monospace(format!("{:04X} ({:?})", wp.address, wp.watch_type));
+                }
+            }
+
+            let suspended = info.cpu_state == "Suspended";
+            if suspended {
+                ui.separator();
+                let button = egui::Button::new("▶ Continue (F5)")
+                    .fill(egui::Color32::from_rgb(40, 100, 40));
+                if ui.add(button).clicked() {
+                    actions.continue_requested = true;
                 }
             }
 
@@ -678,8 +986,10 @@ pub(super) fn draw_debug_ui_content(
                 if ui.button("Step").clicked() {
                     actions.step_requested = true;
                 }
-                if ui.button("Continue").clicked() {
-                    actions.continue_requested = true;
+                if !suspended {
+                    if ui.button("Continue").clicked() {
+                        actions.continue_requested = true;
+                    }
                 }
             });
 
@@ -687,6 +997,9 @@ pub(super) fn draw_debug_ui_content(
                 ui.monospace(format!("Hit breakpoint @ {:04X}", bp));
             }
             if let Some(hit) = &info.hit_watchpoint {
-                ui.monospace(format!("Watch hit: {}", hit));
+                ui.monospace(format!(
+                    "Watch hit: {:?} @ {:04X}: {:02X} -> {:02X}",
+                    hit.watch_type, hit.address, hit.old_value, hit.new_value
+                ));
             }
 }

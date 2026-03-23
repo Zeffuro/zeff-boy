@@ -172,8 +172,18 @@ pub(crate) fn slot_path(rom_hash: [u8; 32], slot: u8) -> Result<PathBuf> {
     Ok(path)
 }
 
+pub(crate) fn auto_save_path(rom_hash: [u8; 32]) -> PathBuf {
+    let mut path = save_dir_path();
+    path.push(format!(
+        "{}_auto.{}",
+        rom_hash_hex(rom_hash),
+        SAVE_STATE_EXTENSION
+    ));
+    path
+}
+
 pub(crate) fn write_to_file(path: &Path, state: &SaveStateRef<'_>) -> Result<()> {
-    let bytes = encode_state(state)?;
+    let bytes = encode_state_bytes(state)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("failed to create save-state directory")?;
     }
@@ -229,7 +239,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
     tmp
 }
 
-fn encode_state(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
+pub(crate) fn encode_state_bytes(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
     let mut writer = StateWriter::new();
     writer.write_bytes(&SAVE_STATE_MAGIC);
     writer.write_u32(SAVE_STATE_FORMAT_VERSION);
@@ -390,7 +400,7 @@ pub(crate) fn validate_compatibility(state: &SaveState, expected_rom_hash: [u8; 
 mod tests {
     use super::{
         SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, decode_state,
-        encode_state,
+        encode_state_bytes,
     };
     use crate::hardware::bus::Bus;
     use crate::hardware::cpu::CPU;
@@ -480,7 +490,7 @@ mod tests {
             last_opcode_pc: 0x0100,
         };
 
-        let bytes = encode_state(&state).expect("encode should succeed");
+        let bytes = encode_state_bytes(&state).expect("encode should succeed");
 
         assert!(bytes.len() >= 8);
         assert_eq!(&bytes[bytes.len() - 4..], b"BESS");
@@ -512,7 +522,7 @@ mod tests {
             last_opcode_pc: 0x0200,
         };
 
-        let bytes = encode_state(&state).expect("encode should succeed");
+        let bytes = encode_state_bytes(&state).expect("encode should succeed");
         let restored = decode_state(&bytes).expect("decode should succeed with BESS trailing data");
 
         assert_eq!(restored.rom_hash, [0xCD; 32]);

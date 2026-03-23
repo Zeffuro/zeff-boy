@@ -84,6 +84,15 @@ pub(super) fn draw_tilemap_viewer_content(
             ui.label("(CGB attr data unavailable)");
         }
     });
+
+    let show_viewport_id = ui.make_persistent_id("tilemap_viewer_show_viewport");
+    let mut show_viewport = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(show_viewport_id))
+        .unwrap_or(true);
+    ui.checkbox(&mut show_viewport, "Show screen viewport");
+    ui.ctx()
+        .data_mut(|d| d.insert_persisted(show_viewport_id, show_viewport));
     ui.ctx()
         .data_mut(|d| d.insert_persisted(attr_overlay_id, show_attr_overlay));
     ui.ctx()
@@ -141,8 +150,50 @@ pub(super) fn draw_tilemap_viewer_content(
     );
 
     let display_size = egui::vec2((width as f32) * 1.5, (height as f32) * 1.5);
+    ui.horizontal(|ui| {
+        super::export::export_png_button(
+            ui,
+            "tilemap.png",
+            &window_state.tilemap_image,
+        );
+    });
     egui::ScrollArea::both().show(ui, |ui| {
         let response = ui.image((texture.id(), display_size));
+
+        if show_viewport {
+            let scale_x = response.rect.width() / width as f32;
+            let scale_y = response.rect.height() / height as f32;
+            let origin = response.rect.min;
+            let painter = ui.painter_at(response.rect);
+
+            if !use_window_map {
+                let scx = ppu.scx as f32;
+                let scy = ppu.scy as f32;
+                draw_wrapped_viewport_rect(
+                    &painter, origin, scale_x, scale_y,
+                    scx, scy, 160.0, 144.0, 256.0, 256.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200),
+                );
+            } else {
+                let wx = (ppu.wx as f32 - 7.0).max(0.0);
+                let wy = ppu.wy as f32;
+                let view_w = (160.0 - wx).max(0.0).min(160.0);
+                let view_h = (144.0 - wy).max(0.0).min(144.0);
+                if view_w > 0.0 && view_h > 0.0 {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(origin.x, origin.y),
+                        egui::vec2(view_w * scale_x, view_h * scale_y),
+                    );
+                    painter.rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(255, 165, 0, 200)),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+        }
+
         if cgb_attr_available {
             if let Some(pointer_pos) = response.hover_pos() {
                 let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
@@ -181,6 +232,58 @@ pub(super) fn draw_tilemap_viewer_content(
             }
         }
     });
+}
+
+fn draw_wrapped_viewport_rect(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    scale_x: f32,
+    scale_y: f32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    map_w: f32,
+    map_h: f32,
+    color: egui::Color32,
+) {
+    let stroke = egui::Stroke::new(2.0, color);
+    let x2 = x + w;
+    let y2 = y + h;
+    let wraps_x = x2 > map_w;
+    let wraps_y = y2 > map_h;
+
+    let mut rects = Vec::with_capacity(4);
+    if !wraps_x && !wraps_y {
+        rects.push((x, y, w, h));
+    } else if wraps_x && !wraps_y {
+        let w1 = map_w - x;
+        let w2 = x2 - map_w;
+        rects.push((x, y, w1, h));
+        rects.push((0.0, y, w2, h));
+    } else if !wraps_x && wraps_y {
+        let h1 = map_h - y;
+        let h2 = y2 - map_h;
+        rects.push((x, y, w, h1));
+        rects.push((x, 0.0, w, h2));
+    } else {
+        let w1 = map_w - x;
+        let w2 = x2 - map_w;
+        let h1 = map_h - y;
+        let h2 = y2 - map_h;
+        rects.push((x, y, w1, h1));
+        rects.push((0.0, y, w2, h1));
+        rects.push((x, 0.0, w1, h2));
+        rects.push((0.0, 0.0, w2, h2));
+    }
+
+    for (rx, ry, rw, rh) in rects {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(origin.x + rx * scale_x, origin.y + ry * scale_y),
+            egui::vec2(rw * scale_x, rh * scale_y),
+        );
+        painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Outside);
+    }
 }
 
 fn render_tilemap_into_image(

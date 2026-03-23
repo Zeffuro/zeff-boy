@@ -14,9 +14,40 @@ pub(crate) struct UiFrameData {
     pub(crate) memory_page: Option<Vec<(u16, u8)>>,
 }
 
+pub(crate) fn compute_static_rom_info(emu: &Emulator) -> RomInfoViewData {
+    let header = emu.rom_info();
+    let rom_bytes = emu.bus.cartridge.rom_bytes();
+    let manufacturer = header
+        .manufacturer_code
+        .as_deref()
+        .unwrap_or("N/A")
+        .to_string();
+    RomInfoViewData {
+        title: header.title.clone(),
+        manufacturer,
+        publisher: header.publisher().to_string(),
+        cartridge_type: format!("{:?}", header.cartridge_type),
+        rom_size: format!("{:?}", header.rom_size),
+        ram_size: format!("{:?}", header.ram_size),
+        cgb_flag: header.cgb_flag,
+        sgb_flag: header.sgb_flag,
+        is_cgb_compatible: header.is_cgb_compatible,
+        is_cgb_exclusive: header.is_cgb_exclusive,
+        is_sgb_supported: header.is_sgb_supported,
+        header_checksum_valid: header.verify_header_checksum(rom_bytes),
+        global_checksum_valid: header.verify_global_checksum(rom_bytes),
+        hardware_mode: emu.hardware_mode,
+        cartridge_state: emu.cartridge_state(),
+    }
+}
+
 pub(crate) fn collect_emu_snapshot(
     emu: &Emulator,
     req: &SnapshotRequest,
+    cached_rom_info: &Option<RomInfoViewData>,
+    reusable_vram: Option<Vec<u8>>,
+    reusable_oam: Option<Vec<u8>>,
+    reusable_memory_page: Option<Vec<(u16, u8)>>,
 ) -> UiFrameData {
     let debug_info = if req.want_debug_info {
         Some(emu.snapshot())
@@ -33,17 +64,25 @@ pub(crate) fn collect_emu_snapshot(
         let bg_palette_ram = emu.bus.io.ppu.bg_palette_ram;
         let obj_palette_ram = emu.bus.io.ppu.obj_palette_ram;
         let vram = if req.any_vram_viewer_open {
-            emu.vram().to_vec()
+            let src = emu.vram();
+            let mut buf = reusable_vram.unwrap_or_default();
+            buf.resize(src.len(), 0);
+            buf.copy_from_slice(src);
+            buf
         } else {
-            Vec::new()
+            reusable_vram.map(|mut v| { v.clear(); v }).unwrap_or_default()
         };
 
         Some(DebugViewerData {
             vram,
             oam: if req.show_oam_viewer {
-                emu.oam().to_vec()
+                let src = emu.oam();
+                let mut buf = reusable_oam.unwrap_or_default();
+                buf.resize(src.len(), 0);
+                buf.copy_from_slice(src);
+                buf
             } else {
-                Vec::new()
+                reusable_oam.map(|mut v| { v.clear(); v }).unwrap_or_default()
             },
             apu_regs: if req.show_apu_viewer {
                 emu.bus.io.apu.regs_snapshot()
@@ -90,50 +129,46 @@ pub(crate) fn collect_emu_snapshot(
     };
 
     let disassembly_view = if req.show_disassembler {
-        let mut breakpoints: Vec<u16> = emu.debug.breakpoints.iter().copied().collect();
-        breakpoints.sort_unstable();
-        Some(DisassemblyView {
-            pc: emu.cpu.pc,
-            lines: disassemble_around(|addr| emu.bus.read_byte(addr), emu.cpu.pc, 12, 26),
-            breakpoints,
-        })
+        let pc_changed = req.last_disasm_pc.map_or(true, |last_pc| last_pc != emu.cpu.pc);
+        if pc_changed {
+            let mut breakpoints: Vec<u16> = emu.debug.breakpoints.iter().copied().collect();
+            breakpoints.sort_unstable();
+            Some(DisassemblyView {
+                pc: emu.cpu.pc,
+                lines: disassemble_around(|addr| emu.bus.read_byte(addr), emu.cpu.pc, 12, 26),
+                breakpoints,
+            })
+        } else {
+            None
+        }
     } else {
         None
     };
 
     let rom_info_view = if req.show_rom_info {
-        let header = emu.rom_info();
-        let rom_bytes = emu.bus.cartridge.rom_bytes();
-        let manufacturer = header
-            .manufacturer_code
-            .as_deref()
-            .unwrap_or("N/A")
-            .to_string();
-        Some(RomInfoViewData {
-            title: header.title.clone(),
-            manufacturer,
-            publisher: header.publisher().to_string(),
-            cartridge_type: format!("{:?}", header.cartridge_type),
-            rom_size: format!("{:?}", header.rom_size),
-            ram_size: format!("{:?}", header.ram_size),
-            cgb_flag: header.cgb_flag,
-            sgb_flag: header.sgb_flag,
-            is_cgb_compatible: header.is_cgb_compatible,
-            is_cgb_exclusive: header.is_cgb_exclusive,
-            is_sgb_supported: header.is_sgb_supported,
-            header_checksum_valid: header.verify_header_checksum(rom_bytes),
-            global_checksum_valid: header.verify_global_checksum(rom_bytes),
-            hardware_mode: emu.hardware_mode,
-            cartridge_state: emu.cartridge_state(),
+        cached_rom_info.as_ref().map(|cached| {
+            let mut info = cached.clone();
+            // Only update the dynamic fields
+            info.hardware_mode = emu.hardware_mode;
+            info.cartridge_state = emu.cartridge_state();
+            info
         })
     } else {
         None
     };
 
     let memory_page = if req.show_memory_viewer {
-        Some(emu.read_memory_range(req.memory_view_start, 256))
+        let mut buf = reusable_memory_page.unwrap_or_else(|| Vec::with_capacity(256));
+        buf.clear();
+        let start = req.memory_view_start;
+        for i in 0..256u16 {
+            let addr = start.wrapping_add(i);
+            buf.push((addr, emu.bus.read_byte(addr)));
+        }
+        Some(buf)
     } else {
-        None
+        // Keep the buffer alive for reuse even when not needed
+        reusable_memory_page.map(|mut v| { v.clear(); v })
     };
 
     UiFrameData {

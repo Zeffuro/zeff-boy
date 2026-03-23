@@ -10,7 +10,7 @@ use winit::{
 
 use crate::{
     audio::AudioOutput,
-    debug::{DebugUiActions, DebugWindowState, FpsTracker, create_default_dock_state},
+    debug::{DebugUiActions, DebugWindowState, FpsTracker, ToastManager, create_default_dock_state, create_dock_from_saved_tabs},
     emu_thread::EmuThread,
     emulator::Emulator,
     graphics::Graphics,
@@ -50,7 +50,11 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         window_id: None,
         fps_tracker: FpsTracker::new(),
         debug_windows: DebugWindowState::new(),
-        debug_dock: create_default_dock_state(),
+        debug_dock: if settings.open_debug_tabs.is_empty() {
+            create_default_dock_state()
+        } else {
+            create_dock_from_saved_tabs(&settings.open_debug_tabs)
+        },
         exit_requested: false,
         settings,
         last_frame_time: Instant::now(),
@@ -71,6 +75,10 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         debug_continue_requested: false,
         latest_frame: None,
         recycled_framebuffer: None,
+        recycled_audio_buffer: None,
+        recycled_vram_buffer: None,
+        recycled_oam_buffer: None,
+        recycled_memory_page: None,
         frames_in_flight: 0,
         cached_ui_data: None,
         cached_is_mbc7,
@@ -79,6 +87,11 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         tile_viewer_was_open: false,
         tilemap_viewer_was_open: false,
         shutdown_performed: false,
+        toast_manager: ToastManager::new(),
+        audio_recorder: None,
+        replay_recorder: None,
+        replay_player: None,
+        rewind_held: false,
     };
 
     event_loop.run_app(&mut app)?;
@@ -116,6 +129,10 @@ struct App {
     latest_frame: Option<Vec<u8>>,
 
     recycled_framebuffer: Option<Vec<u8>>,
+    recycled_audio_buffer: Option<Vec<f32>>,
+    recycled_vram_buffer: Option<Vec<u8>>,
+    recycled_oam_buffer: Option<Vec<u8>>,
+    recycled_memory_page: Option<Vec<(u16, u8)>>,
     frames_in_flight: usize,
     cached_ui_data: Option<ui::UiFrameData>,
     cached_is_mbc7: bool,
@@ -125,6 +142,11 @@ struct App {
     tile_viewer_was_open: bool,
     tilemap_viewer_was_open: bool,
     shutdown_performed: bool,
+    toast_manager: ToastManager,
+    audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
+    replay_recorder: Option<crate::replay::ReplayRecorder>,
+    replay_player: Option<crate::replay::ReplayPlayer>,
+    rewind_held: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,10 +168,10 @@ const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33); // ~30Hz
 impl App {
 
     fn speed_mode(&self) -> SpeedMode {
-        if self.fast_forward_held {
-            SpeedMode::FastForward
-        } else if self.uncapped_speed {
+        if self.uncapped_speed {
             SpeedMode::Uncapped
+        } else if self.fast_forward_held {
+            SpeedMode::FastForward
         } else {
             SpeedMode::Normal
         }
@@ -162,7 +184,7 @@ impl App {
             SpeedMode::FastForward => "Fast",
         }
     }
-    
+
     fn effective_frame_duration(&self) -> Duration {
         match self.speed_mode() {
             SpeedMode::FastForward => {
@@ -274,19 +296,39 @@ impl App {
             );
         }
 
+        if let Some(recorder) = &mut self.audio_recorder {
+            recorder.write_samples(&result.audio_samples);
+        }
+        self.recycled_audio_buffer = Some(result.audio_samples);
+
         let mut ui_data = result.ui_data;
-        
+
         if let Some(ref mut cached) = self.cached_ui_data {
-            if ui_data.viewer_data.is_none() {
+            if ui_data.viewer_data.is_some() {
+                if let Some(old_viewer) = cached.viewer_data.take() {
+                    if !old_viewer.vram.is_empty() {
+                        self.recycled_vram_buffer = Some(old_viewer.vram);
+                    }
+                    if !old_viewer.oam.is_empty() {
+                        self.recycled_oam_buffer = Some(old_viewer.oam);
+                    }
+                }
+            } else {
                 ui_data.viewer_data = cached.viewer_data.take();
             }
-            if ui_data.disassembly_view.is_none() {
+            if let Some(ref disasm) = ui_data.disassembly_view {
+                self.debug_windows.last_disasm_pc = Some(disasm.pc);
+            } else {
                 ui_data.disassembly_view = cached.disassembly_view.take();
             }
             if ui_data.rom_info_view.is_none() {
                 ui_data.rom_info_view = cached.rom_info_view.take();
             }
-            if ui_data.memory_page.is_none() {
+            if ui_data.memory_page.is_some() {
+                if let Some(old_page) = cached.memory_page.take() {
+                    self.recycled_memory_page = Some(old_page);
+                }
+            } else {
                 ui_data.memory_page = cached.memory_page.take();
             }
         }
@@ -298,6 +340,7 @@ impl App {
                 0.0
             };
             info.speed_mode_label = self.speed_mode_label();
+            info.frames_in_flight = self.frames_in_flight;
             info.tilt_is_mbc7 = self.cached_is_mbc7;
             info.tilt_stick_controls_tilt =
                 self.left_stick_controls_tilt(self.cached_is_mbc7);
@@ -339,7 +382,19 @@ impl App {
 
         self.drain_emu_responses();
 
-        if self.frames_in_flight < MAX_IN_FLIGHT {
+        if self.rewind_held && self.settings.rewind_enabled {
+            if let Some(thread) = &self.emu_thread {
+                thread.send(crate::emu_thread::EmuCommand::Rewind);
+            }
+            if let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.recv_resp()) {
+                match resp {
+                    crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
+                        self.latest_frame = Some(framebuffer);
+                    }
+                    _ => {}
+                }
+            }
+        } else if self.frames_in_flight < MAX_IN_FLIGHT {
             let now = Instant::now();
             let frames_to_step = self.compute_frames_to_step(now);
 
@@ -364,11 +419,35 @@ impl App {
                         }
                     };
 
+                    let (buttons_pressed, dpad_pressed) =
+                        if let Some(player) = &mut self.replay_player {
+                            if let Some((buttons, dpad)) = player.next_frame() {
+                                (buttons, dpad)
+                            } else {
+                                // Replay finished
+                                self.toast_manager.info("Replay finished");
+                                self.replay_player = None;
+                                (
+                                    self.host_input.buttons_pressed(),
+                                    self.host_input.dpad_pressed(),
+                                )
+                            }
+                        } else {
+                            (
+                                self.host_input.buttons_pressed(),
+                                self.host_input.dpad_pressed(),
+                            )
+                        };
+
+                    if let Some(recorder) = &mut self.replay_recorder {
+                        recorder.record_frame(buttons_pressed, dpad_pressed);
+                    }
+
                     let input = crate::emu_thread::FrameInput {
                         frames: frames_to_step,
                         host_tilt: tilt_data.smoothed,
-                        buttons_pressed: self.host_input.buttons_pressed(),
-                        dpad_pressed: self.host_input.dpad_pressed(),
+                        buttons_pressed,
+                        dpad_pressed,
                         debug_step: std::mem::take(&mut self.debug_step_requested),
                         debug_continue: std::mem::take(&mut self.debug_continue_requested),
                         apu_capture_enabled: self.debug_windows.show_apu_viewer
@@ -400,8 +479,17 @@ impl App {
                             show_memory_viewer: self.debug_windows.show_memory_viewer
                                 && want_viewer_update,
                             memory_view_start: self.debug_windows.memory_view_start,
+                            last_disasm_pc: self.debug_windows.last_disasm_pc,
                         },
                         reusable_framebuffer: self.recycled_framebuffer.take(),
+                        reusable_audio_buffer: self.recycled_audio_buffer.take(),
+                        reusable_vram_buffer: self.recycled_vram_buffer.take(),
+                        reusable_oam_buffer: self.recycled_oam_buffer.take(),
+                        reusable_memory_page: self.recycled_memory_page.take(),
+                        active_cheats: crate::cheats::collect_active_cheats(
+                            &self.debug_windows.cheats,
+                        ),
+                        rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
                     };
                     thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
                     self.frames_in_flight += 1;
@@ -412,7 +500,7 @@ impl App {
                 }
             }
         }
-        
+
         let should_render = match self.speed_mode() {
             SpeedMode::Normal => true,
             SpeedMode::FastForward | SpeedMode::Uncapped => {
@@ -440,6 +528,7 @@ impl App {
         }
 
         crate::debug::sync_show_flags(&mut self.debug_windows, &self.debug_dock);
+        self.debug_windows.enable_memory_editing = self.settings.enable_memory_editing;
 
 
         let ui_frame_data = self.cached_ui_data.take();

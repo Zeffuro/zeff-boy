@@ -15,6 +15,9 @@ impl App {
     pub(super) fn sync_speed_setting(&mut self) {
         if self.uncapped_speed != self.settings.uncapped_speed {
             self.uncapped_speed = self.settings.uncapped_speed;
+            if let Some(thread) = &self.emu_thread {
+                thread.send(crate::emu_thread::EmuCommand::SetUncapped(self.uncapped_speed));
+            }
         }
     }
 
@@ -32,7 +35,7 @@ impl App {
         match self.speed_mode() {
             SpeedMode::Uncapped => {
                 self.last_frame_time = now;
-                self.settings.uncapped_frames_per_tick
+                1
             }
             SpeedMode::Normal | SpeedMode::FastForward => {
                 let effective_duration = self.effective_frame_duration();
@@ -74,7 +77,22 @@ impl App {
             return false;
         };
 
-        let previous_settings = self.settings.clone();
+
+        let settings_before = if self.show_settings_window {
+            Some(self.settings.clone())
+        } else {
+            None
+        };
+
+        let speed_label = ui_frame_data
+            .and_then(|d| d.debug_info.as_ref())
+            .map(|info| info.speed_mode_label);
+
+        let is_recording = self.audio_recorder.is_some();
+        let is_recording_replay = self.replay_recorder.is_some();
+        let is_playing_replay = self.replay_player.is_some();
+        let is_rewinding = self.rewind_held && self.settings.rewind_enabled;
+
         match gfx.render(
             ui_frame_data.and_then(|d| d.debug_info.as_ref()),
             ui_frame_data.and_then(|d| d.viewer_data.as_ref()),
@@ -88,6 +106,12 @@ impl App {
             &mut self.settings,
             &mut self.show_settings_window,
             &mut self.debug_dock,
+            &mut self.toast_manager,
+            speed_label,
+            is_recording,
+            is_recording_replay,
+            is_playing_replay,
+            is_rewinding,
         ) {
             Ok(result) => {
                 if result.open_file_requested {
@@ -105,7 +129,30 @@ impl App {
                 if let Some(slot) = result.load_state_slot {
                     self.load_state_slot(slot);
                 }
-                // Queue debug actions for next StepFrames (no mutex lock)
+                if let Some(path) = result.load_recent_rom {
+                    self.load_rom(&path);
+                }
+                if result.toggle_fullscreen {
+                    self.toggle_fullscreen();
+                }
+                if result.start_audio_recording {
+                    self.start_audio_recording();
+                }
+                if result.stop_audio_recording {
+                    self.stop_audio_recording();
+                }
+                if result.start_replay_recording {
+                    self.start_replay_recording();
+                }
+                if result.stop_replay_recording {
+                    self.stop_replay_recording();
+                }
+                if result.load_replay {
+                    self.load_and_play_replay();
+                }
+                if result.take_screenshot {
+                    self.take_screenshot();
+                }
                 crate::ui::apply_debug_actions(
                     &result.debug_actions,
                     &mut self.debug_step_requested,
@@ -114,6 +161,11 @@ impl App {
                 self.merge_debug_actions(result.debug_actions);
                 if !self.show_settings_window {
                     self.debug_windows.rebinding_action = None;
+                    self.debug_windows.rebinding_speedup = false;
+                    self.debug_windows.rebinding_rewind = false;
+                }
+                if result.toolbar_settings_changed {
+                    self.settings.save();
                 }
             }
             Err(graphics::FrameError::Outdated) => {
@@ -128,8 +180,10 @@ impl App {
             Err(graphics::FrameError::OutOfMemory) => self.exit_requested = true,
         }
 
-        if self.settings != previous_settings {
-            self.settings.save();
+        if let Some(prev) = settings_before {
+            if self.settings != prev {
+                self.settings.save();
+            }
         }
 
         true

@@ -71,7 +71,44 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
-    ui.monospace("Address   +0 +1 +2 +3 +4 +5 +6 +7 +8 +9 +A +B +C +D +E +F   ASCII");
+
+    let mono = egui::FontId::new(13.0, egui::FontFamily::Monospace);
+    let normal_color = ui.visuals().text_color();
+    let addr_color = egui::Color32::from_rgb(140, 140, 170);
+    let flash_color = egui::Color32::from_rgb(255, 100, 80);
+    let dim_color = egui::Color32::from_rgb(90, 90, 90);
+
+    let mut header_job = egui::text::LayoutJob::default();
+    header_job.append(
+        "Addr   ",
+        0.0,
+        egui::TextFormat {
+            font_id: mono.clone(),
+            color: addr_color,
+            ..Default::default()
+        },
+    );
+    for i in 0..BYTES_PER_ROW {
+        header_job.append(
+            &format!("+{:X} ", i),
+            0.0,
+            egui::TextFormat {
+                font_id: mono.clone(),
+                color: addr_color,
+                ..Default::default()
+            },
+        );
+    }
+    header_job.append(
+        "  ASCII",
+        0.0,
+        egui::TextFormat {
+            font_id: mono.clone(),
+            color: addr_color,
+            ..Default::default()
+        },
+    );
+    ui.label(header_job);
 
     for row in 0..ROWS_VISIBLE {
         let row_start = row * BYTES_PER_ROW;
@@ -80,53 +117,76 @@ pub(super) fn draw_memory_viewer_content(
         }
         let row_addr = memory_page[row_start].0;
 
-        ui.horizontal(|ui| {
-            ui.monospace(format!("{:04X}: ", row_addr));
-            for col in 0..BYTES_PER_ROW {
-                let idx = row_start + col;
-                if idx >= memory_page.len() {
-                    ui.monospace("--");
-                    continue;
-                }
-                let (addr, value) = memory_page[idx];
+        let mut job = egui::text::LayoutJob::default();
+
+        job.append(
+            &format!("{:04X}:  ", row_addr),
+            0.0,
+            egui::TextFormat {
+                font_id: mono.clone(),
+                color: addr_color,
+                ..Default::default()
+            },
+        );
+
+        for col in 0..BYTES_PER_ROW {
+            let idx = row_start + col;
+            if idx >= memory_page.len() {
+                job.append(
+                    "-- ",
+                    0.0,
+                    egui::TextFormat {
+                        font_id: mono.clone(),
+                        color: dim_color,
+                        ..Default::default()
+                    },
+                );
+            } else {
+                let (_, value) = memory_page[idx];
                 let flash = state.memory_flash_ticks.get(idx).copied().unwrap_or(0);
-
-                #[cfg(debug_assertions)]
-                {
-                    let mut button = egui::Button::new(format!("{:02X}", value));
-                    if flash > 0 {
-                        button = button.fill(egui::Color32::from_rgb(140, 60, 30));
-                    }
-                    if ui.add(button).clicked() {
-                        state.memory_edit_addr = Some(addr);
-                        state.memory_edit_value = format!("{:02X}", value);
-                    }
-                }
-
-                #[cfg(not(debug_assertions))]
-                {
-                    if flash > 0 {
-                        ui.colored_label(
-                            egui::Color32::LIGHT_RED,
-                            format!("{:02X}", value),
-                        );
-                    } else {
-                        ui.monospace(format!("{:02X}", value));
-                    }
-                }
+                let color = if flash > 0 { flash_color } else { normal_color };
+                job.append(
+                    &format!("{:02X} ", value),
+                    0.0,
+                    egui::TextFormat {
+                        font_id: mono.clone(),
+                        color,
+                        ..Default::default()
+                    },
+                );
             }
+        }
 
-            let ascii: String = memory_page
-                [row_start..(row_start + BYTES_PER_ROW).min(memory_page.len())]
-                .iter()
-                .map(|(_, b)| printable_ascii(*b))
-                .collect();
-            ui.monospace(format!("  {}", ascii));
-        });
+        job.append(
+            "  ",
+            0.0,
+            egui::TextFormat {
+                font_id: mono.clone(),
+                color: normal_color,
+                ..Default::default()
+            },
+        );
+        for col in 0..BYTES_PER_ROW {
+            let idx = row_start + col;
+            if idx < memory_page.len() {
+                let ch = printable_ascii(memory_page[idx].1);
+                let color = if ch == '.' { dim_color } else { normal_color };
+                job.append(
+                    &ch.to_string(),
+                    0.0,
+                    egui::TextFormat {
+                        font_id: mono.clone(),
+                        color,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        ui.label(job);
     }
 
-    #[cfg(debug_assertions)]
-    {
+    if state.enable_memory_editing {
         ui.separator();
         if let Some(addr) = state.memory_edit_addr {
             ui.horizontal(|ui| {
@@ -146,13 +206,29 @@ pub(super) fn draw_memory_viewer_content(
                     state.memory_edit_addr = None;
                 }
             });
-        } else {
-            ui.label("Click a byte to edit (debug builds only).");
         }
+        ui.horizontal(|ui| {
+            ui.label("Edit addr:");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut state.memory_edit_addr_input)
+                    .desired_width(60.0)
+                    .char_limit(4)
+                    .hint_text("hex addr"),
+            );
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if let Some(addr) = parse_u16_hex(&state.memory_edit_addr_input) {
+                    state.memory_edit_addr = Some(addr);
+                    let val = memory_page
+                        .iter()
+                        .find(|(a, _)| *a == addr)
+                        .map(|(_, v)| *v)
+                        .unwrap_or(0);
+                    state.memory_edit_value = format!("{:02X}", val);
+                }
+            }
+        });
     }
 
-    #[cfg(not(debug_assertions))]
-    ui.label("Editing is disabled in release builds.");
 
     writes
 }
@@ -163,9 +239,12 @@ fn sync_flash_state(state: &mut DebugWindowState, memory_page: &[(u16, u8)]) {
         state.memory_flash_ticks = vec![0; PAGE_SIZE];
     }
 
-    if state.memory_prev_start == Some(state.memory_view_start)
-        && state.memory_prev_bytes.len() == current.len()
-    {
+    let page_addr = memory_page.first().map(|(a, _)| *a);
+    let same_page = page_addr == Some(state.memory_view_start)
+        && state.memory_prev_start == page_addr
+        && state.memory_prev_bytes.len() == current.len();
+
+    if same_page {
         for (i, value) in current.iter().enumerate() {
             if *value != state.memory_prev_bytes[i] {
                 state.memory_flash_ticks[i] = 12;
@@ -179,7 +258,7 @@ fn sync_flash_state(state: &mut DebugWindowState, memory_page: &[(u16, u8)]) {
         }
     }
 
-    state.memory_prev_start = Some(state.memory_view_start);
+    state.memory_prev_start = page_addr;
     state.memory_prev_bytes = current;
 }
 

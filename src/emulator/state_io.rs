@@ -109,7 +109,10 @@ impl Emulator {
     pub(crate) fn load_state_from_path(&mut self, path: &Path) -> AnyResult<()> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("failed to read save state: {}: {e}", path.display()))?;
+        self.load_state_from_bytes(bytes)
+    }
 
+    pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<()> {
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {
             let state = crate::save_state::decode_on_thread(bytes)?;
             validate_compatibility(&state, self.rom_hash)?;
@@ -177,6 +180,6 @@ impl Emulator {
             return Ok(());
         }
 
-        bail!("unrecognized save state format: {}", path.display())
+        bail!("unrecognized save state format")
     }
 }

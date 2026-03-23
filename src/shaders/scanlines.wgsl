@@ -26,6 +26,12 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VSOut {
 
 @fragment
 fn fs_main(v: VSOut) -> @location(0) vec4<f32> {
-    return textureSample(t_screen, s_screen, v.uv);
+    let texSize = vec2<f32>(160.0, 144.0);
+    let color = textureSample(t_screen, s_screen, v.uv);
+
+    let pixelY = v.uv.y * texSize.y;
+    let scanline = 0.85 + 0.15 * sin(pixelY * 3.14159265);
+
+    return vec4<f32>(color.rgb * scanline, 1.0);
 }
 

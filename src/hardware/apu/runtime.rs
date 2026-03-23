@@ -35,6 +35,12 @@ impl Apu {
         drained
     }
 
+    pub(crate) fn drain_samples_into(&mut self, target: &mut Vec<f32>) {
+        target.clear();
+        target.extend_from_slice(&self.sample_buffer);
+        self.sample_buffer.clear();
+    }
+
     pub(crate) fn read(&self, addr: u16) -> u8 {
         match addr {
             NR10..=NR52 => {
