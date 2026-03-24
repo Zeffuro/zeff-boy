@@ -324,12 +324,12 @@ fn try_parse_gameshark(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
 
         let code_type_byte = u8::from_str_radix(&cleaned[0..2], 16).ok()?;
         let value = CheatValue::from_gameshark_value(&cleaned[2..4])?;
-        let addr_hi = u8::from_str_radix(&cleaned[4..6], 16).ok()?;
-        let addr_lo = u8::from_str_radix(&cleaned[6..8], 16).ok()?;
-        let address = (u16::from(addr_hi) << 8) | u16::from(addr_lo);
+        let addr_low  = u8::from_str_radix(&cleaned[4..6], 16).ok()?;
+        let addr_high = u8::from_str_radix(&cleaned[6..8], 16).ok()?;
+        let address = (u16::from(addr_high) << 8) | u16::from(addr_low);
 
         let patch = match code_type_byte {
-            0x01 | 0x80 | 0x90 | 0x91 => CheatPatch::RamWrite { address, value },
+            0x01 | 0x80 | 0x90 | 0x91 | 0x96 | 0x95 => CheatPatch::RamWrite { address, value },
             _ => {
                 log::warn!(
                     "Unsupported GameShark opcode {:02X}, treating as RAM write",
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn parse_gameshark() {
-        let (patches, ty) = parse_cheat("01FF C0DE").unwrap();
+        let (patches, ty) = parse_cheat("01FF DEC0").unwrap();
         assert_eq!(ty, CheatType::GameShark);
         assert_eq!(patches.len(), 1);
         match patches[0] {
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(patches.len(), 1);
         match patches[0] {
             CheatPatch::RamWrite { address, value } => {
-                assert_eq!(address, 0xA5C6);
+                assert_eq!(address, 0xC6A5);
                 assert_eq!(
                     value,
                     CheatValue::UserParameterized {
