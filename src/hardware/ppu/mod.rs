@@ -71,6 +71,7 @@ pub(crate) struct PPU {
     pub(crate) debug_enable_window: bool,
     pub(crate) debug_enable_sprites: bool,
     pub(crate) color_correction: crate::settings::ColorCorrection,
+    pub(crate) color_correction_matrix: [f32; 9],
 }
 
 impl PPU {
@@ -116,6 +117,11 @@ impl PPU {
             debug_enable_window: true,
             debug_enable_sprites: true,
             color_correction: crate::settings::ColorCorrection::None,
+            color_correction_matrix: [
+                1.0, 0.0, 0.0, // R
+                0.0, 1.0, 0.0, // G
+                0.0, 0.0, 1.0, // B
+            ],
         }
     }
 }

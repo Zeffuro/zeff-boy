@@ -411,6 +411,95 @@ fn draw_settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
         );
 
     ui.separator();
+    ui.heading("Shader");
+    use crate::settings::ShaderPreset;
+    egui::ComboBox::from_label("Shader preset")
+        .selected_text(match settings.shader_preset {
+            ShaderPreset::None => "None",
+            ShaderPreset::Scanlines => "Scanlines",
+            ShaderPreset::LCDGrid => "LCD Grid",
+            ShaderPreset::CRT => "CRT",
+            ShaderPreset::HQ2xLike => "HQ2x-like",
+            ShaderPreset::GbcPalette => "GBC Palette",
+            ShaderPreset::Custom => "Custom (file)",
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut settings.shader_preset, ShaderPreset::None, "None");
+            ui.selectable_value(
+                &mut settings.shader_preset,
+                ShaderPreset::Scanlines,
+                "Scanlines",
+            );
+            ui.selectable_value(
+                &mut settings.shader_preset,
+                ShaderPreset::LCDGrid,
+                "LCD Grid",
+            );
+            ui.selectable_value(&mut settings.shader_preset, ShaderPreset::CRT, "CRT");
+            ui.selectable_value(
+                &mut settings.shader_preset,
+                ShaderPreset::HQ2xLike,
+                "HQ2x-like",
+            );
+            ui.selectable_value(
+                &mut settings.shader_preset,
+                ShaderPreset::GbcPalette,
+                "GBC Palette",
+            );
+            ui.selectable_value(
+                &mut settings.shader_preset,
+                ShaderPreset::Custom,
+                "Custom (file)",
+            );
+        });
+
+    let p = &mut settings.shader_params;
+    match settings.shader_preset {
+        ShaderPreset::Scanlines => {
+            ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
+        }
+        ShaderPreset::LCDGrid => {
+            ui.add(egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0).text("Grid"));
+        }
+        ShaderPreset::CRT => {
+            ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Scanlines"));
+            ui.add(egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0).text("Curvature"));
+        }
+        ShaderPreset::HQ2xLike => {
+            ui.add(
+                egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
+                    .text("Edge Strength"),
+            );
+        }
+        ShaderPreset::GbcPalette => {
+            ui.add(egui::Slider::new(&mut p.palette_mix, 0.0..=1.0).text("Palette Mix"));
+            ui.add(egui::Slider::new(&mut p.palette_warmth, 0.0..=1.0).text("Warmth"));
+        }
+        ShaderPreset::Custom => {
+            ui.label("Custom WGSL fragment path:");
+            if settings.custom_shader_path.is_empty() {
+                ui.monospace("(not set)");
+            } else {
+                ui.monospace(&settings.custom_shader_path);
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Load .wgsl...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("WGSL", &["wgsl"])
+                        .pick_file()
+                    {
+                        settings.custom_shader_path = path.to_string_lossy().to_string();
+                    }
+                }
+                if ui.button("Clear").clicked() {
+                    settings.custom_shader_path.clear();
+                }
+            });
+        }
+        ShaderPreset::None => {}
+    }
+
+    ui.separator();
     ui.heading("Color Correction");
     use crate::settings::ColorCorrection;
     egui::ComboBox::from_label("Color correction")
@@ -426,12 +515,68 @@ fn draw_settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
                 ColorCorrection::GbcLcd,
                 ColorCorrection::GbcLcd.label(),
             );
+            ui.selectable_value(
+                &mut settings.color_correction,
+                ColorCorrection::Custom,
+                ColorCorrection::Custom.label(),
+            );
         });
+    if settings.color_correction == ColorCorrection::Custom {
+        ui.separator();
+        ui.label("Custom 3x3 matrix (input RGB -> output RGB)");
+
+        let m = &mut settings.color_correction_matrix;
+        egui::Grid::new("color_correction_matrix")
+            .spacing([6.0, 4.0])
+            .show(ui, |ui| {
+                ui.label("R'");
+                ui.add(egui::DragValue::new(&mut m[0]).speed(0.01).range(-2.0..=2.0));
+                ui.add(egui::DragValue::new(&mut m[1]).speed(0.01).range(-2.0..=2.0));
+                ui.add(egui::DragValue::new(&mut m[2]).speed(0.01).range(-2.0..=2.0));
+                ui.end_row();
+
+                ui.label("G'");
+                ui.add(egui::DragValue::new(&mut m[3]).speed(0.01).range(-2.0..=2.0));
+                ui.add(egui::DragValue::new(&mut m[4]).speed(0.01).range(-2.0..=2.0));
+                ui.add(egui::DragValue::new(&mut m[5]).speed(0.01).range(-2.0..=2.0));
+                ui.end_row();
+
+                ui.label("B'");
+                ui.add(egui::DragValue::new(&mut m[6]).speed(0.01).range(-2.0..=2.0));
+                ui.add(egui::DragValue::new(&mut m[7]).speed(0.01).range(-2.0..=2.0));
+                ui.add(egui::DragValue::new(&mut m[8]).speed(0.01).range(-2.0..=2.0));
+                ui.end_row();
+            });
+
+        ui.horizontal(|ui| {
+            if ui.button("Identity").clicked() {
+                settings.color_correction_matrix = [
+                    1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0,
+                ];
+            }
+            if ui.button("Load GBC matrix").clicked() {
+                settings.color_correction_matrix = [
+                    26.0 / 32.0,
+                    4.0 / 32.0,
+                    2.0 / 32.0,
+                    0.0,
+                    24.0 / 32.0,
+                    8.0 / 32.0,
+                    6.0 / 32.0,
+                    4.0 / 32.0,
+                    22.0 / 32.0,
+                ];
+            }
+        });
+    }
     ui.label(
         egui::RichText::new(
             "None: raw RGB555 colors expanded to 8-bit per channel.\n\
              GBC LCD: simulates the color response of the Game Boy Color LCD panel,\n\
-             which shifts colors toward a warmer, slightly washed-out appearance.",
+             which shifts colors toward a warmer, slightly washed-out appearance.\n\
+             Custom matrix: apply your own 3x3 RGB transform.",
         )
         .weak()
         .small(),

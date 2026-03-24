@@ -51,6 +51,7 @@ pub(crate) struct FrameInput {
     pub(crate) rewind_enabled: bool,
     pub(crate) rewind_seconds: usize,
     pub(crate) color_correction: crate::settings::ColorCorrection,
+    pub(crate) color_correction_matrix: [f32; 9],
 }
 
 pub(crate) struct FrameResult {
@@ -161,6 +162,7 @@ impl EmuThread {
                             Self::apply_debug_actions(&mut emu, &input.debug_actions);
 
                             emu.bus.io.ppu.color_correction = input.color_correction;
+                            emu.bus.io.ppu.color_correction_matrix = input.color_correction_matrix;
 
                             if emu
                                 .bus

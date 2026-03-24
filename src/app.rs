@@ -390,6 +390,8 @@ impl App {
                     &viewer_data.obj_palette_ram,
                     viewer_data.ppu.bgp,
                     viewer_data.cgb_mode,
+                    viewer_data.color_correction,
+                    viewer_data.color_correction_matrix,
                 );
             }
             if self.debug_windows.show_tilemap_viewer {
@@ -398,6 +400,8 @@ impl App {
                     &viewer_data.bg_palette_ram,
                     viewer_data.ppu,
                     viewer_data.cgb_mode,
+                    viewer_data.color_correction,
+                    viewer_data.color_correction_matrix,
                 );
             }
         }
@@ -617,6 +621,7 @@ impl App {
                             rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
                             rewind_seconds: self.settings.rewind_seconds,
                             color_correction: self.settings.color_correction,
+                            color_correction_matrix: self.settings.color_correction_matrix,
                         };
                         thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
                         self.frames_in_flight += 1;

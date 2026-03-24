@@ -1,4 +1,5 @@
 use crate::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba};
+use crate::settings::ColorCorrection;
 
 fn draw_palette_row(ui: &mut egui::Ui, label: &str, value: u8) {
     ui.label(format!("{} ({:02X})", label, value));
@@ -28,6 +29,8 @@ fn draw_cgb_palette_section(
     title: &str,
     row_prefix: &str,
     palette_ram: &[u8; 64],
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
 ) {
     ui.separator();
     ui.label(title);
@@ -35,7 +38,13 @@ fn draw_cgb_palette_section(
         ui.horizontal(|ui| {
             ui.label(format!("{}{}", row_prefix, palette));
             for color_id in 0u8..4 {
-                let rgba = cgb_palette_rgba(palette_ram, palette, color_id, crate::settings::ColorCorrection::None);
+                let rgba = cgb_palette_rgba(
+                    palette_ram,
+                    palette,
+                    color_id,
+                    color_correction,
+                    color_correction_matrix,
+                );
                 let color =
                     egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
                 egui::Frame::NONE.fill(color).show(ui, |ui| {
@@ -54,6 +63,8 @@ pub(super) fn draw_palette_viewer_content(
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
     obj_palette_ram: &[u8; 64],
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
 ) {
     draw_palette_row(ui, "BGP", bgp);
     ui.separator();
@@ -73,7 +84,21 @@ pub(super) fn draw_palette_viewer_content(
     });
 
     if cgb_mode {
-        draw_cgb_palette_section(ui, "CGB BG palettes:", "BG", bg_palette_ram);
-        draw_cgb_palette_section(ui, "CGB OBJ palettes:", "OB", obj_palette_ram);
+        draw_cgb_palette_section(
+            ui,
+            "CGB BG palettes:",
+            "BG",
+            bg_palette_ram,
+            color_correction,
+            color_correction_matrix,
+        );
+        draw_cgb_palette_section(
+            ui,
+            "CGB OBJ palettes:",
+            "OB",
+            obj_palette_ram,
+            color_correction,
+            color_correction_matrix,
+        );
     }
 }

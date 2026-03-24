@@ -73,6 +73,8 @@ pub(crate) fn collect_emu_snapshot(
         );
         let bg_palette_ram = emu.bus.io.ppu.bg_palette_ram;
         let obj_palette_ram = emu.bus.io.ppu.obj_palette_ram;
+        let color_correction = emu.bus.io.ppu.color_correction;
+        let color_correction_matrix = emu.bus.io.ppu.color_correction_matrix;
         let vram = if req.any_vram_viewer_open {
             let src = emu.vram();
             let mut buf = reusable_vram.unwrap_or_default();
@@ -143,6 +145,8 @@ pub(crate) fn collect_emu_snapshot(
             cgb_mode,
             bg_palette_ram,
             obj_palette_ram,
+            color_correction,
+            color_correction_matrix,
         })
     } else {
         None

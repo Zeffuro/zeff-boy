@@ -1,5 +1,6 @@
 use crate::debug::TileViewerState;
 use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel};
+use crate::settings::ColorCorrection;
 
 pub(super) fn draw_tile_viewer_content(
     ui: &mut egui::Ui,
@@ -8,6 +9,8 @@ pub(super) fn draw_tile_viewer_content(
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
     obj_palette_ram: &[u8; 64],
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
     window_state: &mut TileViewerState,
 ) {
     let bank_select_id = ui.make_persistent_id("tile_viewer_vram_bank");
@@ -104,6 +107,8 @@ pub(super) fn draw_tile_viewer_content(
             cgb_palette_index,
             bg_palette_ram,
             obj_palette_ram,
+            color_correction,
+            color_correction_matrix,
             bank_base,
         );
         window_state.vram_dirty = false;
@@ -136,6 +141,8 @@ fn render_tile_viewer_into_image(
     cgb_palette_index: u8,
     bg_palette_ram: &[u8; 64],
     obj_palette_ram: &[u8; 64],
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
     bank_base: usize,
 ) {
     for tile in 0..384usize {
@@ -152,7 +159,13 @@ fn render_tile_viewer_into_image(
                     } else {
                         bg_palette_ram
                     };
-                    cgb_palette_rgba(palette_ram, cgb_palette_index, color_id, crate::settings::ColorCorrection::None)
+                    cgb_palette_rgba(
+                        palette_ram,
+                        cgb_palette_index,
+                        color_id,
+                        color_correction,
+                        color_correction_matrix,
+                    )
                 } else {
                     apply_palette(bgp, color_id)
                 };

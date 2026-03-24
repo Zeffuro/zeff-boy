@@ -1,5 +1,6 @@
 use crate::debug::{PpuSnapshot, TilemapViewerState};
 use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel, tile_data_address};
+use crate::settings::ColorCorrection;
 
 #[derive(Clone, Copy)]
 struct TileAttrInfo {
@@ -26,6 +27,8 @@ pub(super) fn draw_tilemap_viewer_content(
     ppu: PpuSnapshot,
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
     window_state: &mut TilemapViewerState,
 ) {
     let width = 256usize;
@@ -131,6 +134,8 @@ pub(super) fn draw_tilemap_viewer_content(
             cgb_attr_available,
             render_cgb_colors,
             show_attr_overlay,
+            color_correction,
+            color_correction_matrix,
         );
         window_state.vram_dirty = false;
     }
@@ -148,7 +153,7 @@ pub(super) fn draw_tilemap_viewer_content(
     ui.horizontal(|ui| {
         super::export::export_png_button(ui, "tilemap.png", &window_state.image);
     });
-    egui::ScrollArea::both().show(ui, |ui| {
+    egui::ScrollArea::both().show(ui, |ui,| {
         let response = ui.image((texture.id(), display_size));
 
         if show_viewport {
@@ -288,6 +293,8 @@ fn render_tilemap_into_image(
     cgb_attr_available: bool,
     render_cgb_colors: bool,
     show_attr_overlay: bool,
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
 ) {
     let width = image.size[0];
     let height = image.size[1];
@@ -324,7 +331,13 @@ fn render_tilemap_into_image(
             };
             let color_id = decode_tile_pixel(vram, banked_tile_addr, source_line, source_pixel);
             let rgba = if render_cgb_colors {
-                cgb_palette_rgba(bg_palette_ram, attr.palette, color_id, crate::settings::ColorCorrection::None)
+                cgb_palette_rgba(
+                    bg_palette_ram,
+                    attr.palette,
+                    color_id,
+                    color_correction,
+                    color_correction_matrix,
+                )
             } else {
                 apply_palette(ppu.bgp, color_id)
             };

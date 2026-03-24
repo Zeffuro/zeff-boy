@@ -179,6 +179,8 @@ pub(crate) struct TilemapViewerState {
     pub(crate) last_use_window_map: Option<bool>,
     pub(crate) last_show_attr_overlay: Option<bool>,
     pub(crate) last_render_cgb_colors: Option<bool>,
+    pub(crate) last_color_correction: crate::settings::ColorCorrection,
+    pub(crate) last_color_correction_matrix: [f32; 9],
 }
 
 impl TilemapViewerState {
@@ -195,6 +197,12 @@ impl TilemapViewerState {
             last_use_window_map: None,
             last_show_attr_overlay: None,
             last_render_cgb_colors: None,
+            last_color_correction: crate::settings::ColorCorrection::None,
+            last_color_correction_matrix: [
+                1.0, 0.0, 0.0,
+                0.0, 1.0, 0.0,
+                0.0, 0.0, 1.0,
+            ],
         }
     }
 
@@ -208,6 +216,8 @@ impl TilemapViewerState {
         bg_palette_ram: &[u8; 64],
         ppu: PpuSnapshot,
         cgb_mode: bool,
+        color_correction: crate::settings::ColorCorrection,
+        color_correction_matrix: [f32; 9],
     ) {
         let vram_sig = fold_bytes(vram);
         let bg_palette_sig = fold_bytes(bg_palette_ram);
@@ -215,7 +225,9 @@ impl TilemapViewerState {
             || self.last_bg_palette_signature != bg_palette_sig
             || self.last_lcdc != ppu.lcdc
             || self.last_bgp != ppu.bgp
-            || self.last_cgb_mode != cgb_mode;
+            || self.last_cgb_mode != cgb_mode
+            || self.last_color_correction != color_correction
+            || self.last_color_correction_matrix != color_correction_matrix;
 
         self.vram_dirty |= changed;
         self.last_vram_signature = vram_sig;
@@ -223,6 +235,8 @@ impl TilemapViewerState {
         self.last_lcdc = ppu.lcdc;
         self.last_bgp = ppu.bgp;
         self.last_cgb_mode = cgb_mode;
+        self.last_color_correction = color_correction;
+        self.last_color_correction_matrix = color_correction_matrix;
     }
 }
 
@@ -239,6 +253,8 @@ pub(crate) struct TileViewerState {
     pub(crate) last_use_cgb_colors: Option<bool>,
     pub(crate) last_use_obj_palette: Option<bool>,
     pub(crate) last_cgb_palette_index: Option<u8>,
+    pub(crate) last_color_correction: crate::settings::ColorCorrection,
+    pub(crate) last_color_correction_matrix: [f32; 9],
 }
 
 impl TileViewerState {
@@ -256,6 +272,12 @@ impl TileViewerState {
             last_use_cgb_colors: None,
             last_use_obj_palette: None,
             last_cgb_palette_index: None,
+            last_color_correction: crate::settings::ColorCorrection::None,
+            last_color_correction_matrix: [
+                1.0, 0.0, 0.0,
+                0.0, 1.0, 0.0,
+                0.0, 0.0, 1.0,
+            ],
         }
     }
 
@@ -270,6 +292,8 @@ impl TileViewerState {
         obj_palette_ram: &[u8; 64],
         bgp: u8,
         cgb_mode: bool,
+        color_correction: crate::settings::ColorCorrection,
+        color_correction_matrix: [f32; 9],
     ) {
         let vram_sig = fold_bytes(vram);
         let bg_palette_sig = fold_bytes(bg_palette_ram);
@@ -278,7 +302,9 @@ impl TileViewerState {
             || self.last_bg_palette_signature != bg_palette_sig
             || self.last_obj_palette_signature != obj_palette_sig
             || self.last_bgp != bgp
-            || self.last_cgb_mode != cgb_mode;
+            || self.last_cgb_mode != cgb_mode
+            || self.last_color_correction != color_correction
+            || self.last_color_correction_matrix != color_correction_matrix;
 
         self.vram_dirty |= changed;
         self.last_vram_signature = vram_sig;
@@ -286,6 +312,8 @@ impl TileViewerState {
         self.last_obj_palette_signature = obj_palette_sig;
         self.last_bgp = bgp;
         self.last_cgb_mode = cgb_mode;
+        self.last_color_correction = color_correction;
+        self.last_color_correction_matrix = color_correction_matrix;
     }
 }
 
@@ -470,6 +498,8 @@ pub(crate) struct DebugViewerData {
     pub(crate) cgb_mode: bool,
     pub(crate) bg_palette_ram: [u8; 64],
     pub(crate) obj_palette_ram: [u8; 64],
+    pub(crate) color_correction: crate::settings::ColorCorrection,
+    pub(crate) color_correction_matrix: [f32; 9],
 }
 
 type OpcodeEntry = (u16, u8, bool);

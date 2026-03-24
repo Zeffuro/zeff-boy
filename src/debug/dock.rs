@@ -327,6 +327,8 @@ impl TabViewer for DebugTabViewer<'_> {
                         data.cgb_mode,
                         &data.bg_palette_ram,
                         &data.obj_palette_ram,
+                        data.color_correction,
+                        data.color_correction_matrix,
                         &mut self.window_state.tiles,
                     );
                 }
@@ -339,6 +341,8 @@ impl TabViewer for DebugTabViewer<'_> {
                         data.ppu,
                         data.cgb_mode,
                         &data.bg_palette_ram,
+                        data.color_correction,
+                        data.color_correction_matrix,
                         &mut self.window_state.tilemap,
                     );
                 }
@@ -358,6 +362,8 @@ impl TabViewer for DebugTabViewer<'_> {
                         data.cgb_mode,
                         &data.bg_palette_ram,
                         &data.obj_palette_ram,
+                        data.color_correction,
+                        data.color_correction_matrix,
                     );
                 }
             }

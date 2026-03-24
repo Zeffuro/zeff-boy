@@ -186,7 +186,7 @@ impl Graphics {
 
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
         self.framebuffer
-            .set_shader(&self.gpu.device, ctx.settings.shader_preset);
+            .set_shader(&self.gpu.device, ctx.settings);
         self.framebuffer
             .update_params(&self.gpu.queue, &ctx.settings.shader_params);
 

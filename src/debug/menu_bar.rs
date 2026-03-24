@@ -234,6 +234,9 @@ pub(crate) fn draw_menu_bar(
                         (ShaderPreset::Scanlines, "Scanlines"),
                         (ShaderPreset::LCDGrid, "LCD Grid"),
                         (ShaderPreset::CRT, "CRT"),
+                        (ShaderPreset::HQ2xLike, "HQ2x-like"),
+                        (ShaderPreset::GbcPalette, "GBC Palette"),
+                        (ShaderPreset::Custom, "Custom (file)"),
                     ];
                     for (preset, label) in presets {
                         if ui
@@ -270,6 +273,43 @@ pub(crate) fn draw_menu_bar(
                                     egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0)
                                         .text("Curvature"),
                                 );
+                            }
+                            ShaderPreset::HQ2xLike => {
+                                ui.add(
+                                    egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
+                                        .text("Edge Strength"),
+                                );
+                            }
+                            ShaderPreset::GbcPalette => {
+                                ui.add(
+                                    egui::Slider::new(&mut p.palette_mix, 0.0..=1.0)
+                                        .text("Palette Mix"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut p.palette_warmth, 0.0..=1.0)
+                                        .text("Warmth"),
+                                );
+                            }
+                            ShaderPreset::Custom => {
+                                ui.label("Custom WGSL fragment path:");
+                                ui.monospace(if settings.custom_shader_path.is_empty() {
+                                    "(not set)".to_string()
+                                } else {
+                                    settings.custom_shader_path.clone()
+                                });
+                                if ui.button("Load .wgsl...").clicked() {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("WGSL", &["wgsl"])
+                                        .pick_file()
+                                    {
+                                        settings.custom_shader_path = path.to_string_lossy().to_string();
+                                        toolbar_settings_changed = true;
+                                    }
+                                }
+                                if ui.button("Clear custom shader").clicked() {
+                                    settings.custom_shader_path.clear();
+                                    toolbar_settings_changed = true;
+                                }
                             }
                             ShaderPreset::None => {}
                         }

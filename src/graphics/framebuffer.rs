@@ -15,13 +15,14 @@ pub(crate) struct FramebufferRenderer {
     params_buffer: wgpu::Buffer,
     format: wgpu::TextureFormat,
     current_preset: ShaderPreset,
+    current_custom_shader_path: String,
     output_texture: wgpu::Texture,
     output_view: wgpu::TextureView,
     offscreen_width: u32,
     offscreen_height: u32,
 }
 
-fn shader_source(preset: ShaderPreset) -> &'static str {
+fn shader_source_builtin(preset: ShaderPreset) -> &'static str {
     match preset {
         ShaderPreset::None => concat!(
             include_str!("../shaders/common_vertex.wgsl"),
@@ -39,6 +40,18 @@ fn shader_source(preset: ShaderPreset) -> &'static str {
             include_str!("../shaders/common_vertex.wgsl"),
             include_str!("../shaders/lcd_grid.wgsl")
         ),
+        ShaderPreset::HQ2xLike => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/hq2x_like.wgsl")
+        ),
+        ShaderPreset::GbcPalette => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/gbc_palette.wgsl")
+        ),
+        ShaderPreset::Custom => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/screen.wgsl")
+        ),
     }
 }
 
@@ -46,11 +59,11 @@ fn create_pipeline(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-    preset: ShaderPreset,
+    source: &str,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("screen shader"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source(preset))),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -170,7 +183,7 @@ impl FramebufferRenderer {
         });
 
         let preset = ShaderPreset::None;
-        let screen_pipeline = create_pipeline(device, &screen_bgl, format, preset);
+        let screen_pipeline = create_pipeline(device, &screen_bgl, format, shader_source_builtin(preset));
 
         let output_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shader output texture"),
@@ -197,6 +210,7 @@ impl FramebufferRenderer {
             params_buffer,
             format,
             current_preset: preset,
+            current_custom_shader_path: String::new(),
             output_texture,
             output_view,
             offscreen_width: DEFAULT_OFFSCREEN_WIDTH,
@@ -204,12 +218,46 @@ impl FramebufferRenderer {
         })
     }
 
-    pub(crate) fn set_shader(&mut self, device: &wgpu::Device, preset: ShaderPreset) {
-        if self.current_preset == preset {
+    pub(crate) fn set_shader(&mut self, device: &wgpu::Device, settings: &crate::settings::Settings) {
+        let preset = settings.shader_preset;
+        let custom_path_changed = self.current_custom_shader_path != settings.custom_shader_path;
+        if self.current_preset == preset
+            && (!matches!(preset, ShaderPreset::Custom) || !custom_path_changed)
+        {
             return;
         }
-        self.screen_pipeline = create_pipeline(device, &self.screen_bgl, self.format, preset);
+
+        let mut dynamic_source: Option<String> = None;
+        let source = if matches!(preset, ShaderPreset::Custom) {
+            if settings.custom_shader_path.trim().is_empty() {
+                shader_source_builtin(ShaderPreset::None)
+            } else {
+                match std::fs::read_to_string(&settings.custom_shader_path) {
+                    Ok(fragment) => {
+                        dynamic_source = Some(format!(
+                            "{}\n{}",
+                            include_str!("../shaders/common_vertex.wgsl"),
+                            fragment
+                        ));
+                        dynamic_source.as_deref().unwrap_or(shader_source_builtin(ShaderPreset::None))
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to load custom shader '{}': {}",
+                            settings.custom_shader_path,
+                            err
+                        );
+                        shader_source_builtin(ShaderPreset::None)
+                    }
+                }
+            }
+        } else {
+            shader_source_builtin(preset)
+        };
+
+        self.screen_pipeline = create_pipeline(device, &self.screen_bgl, self.format, source);
         self.current_preset = preset;
+        self.current_custom_shader_path = settings.custom_shader_path.clone();
     }
 
     pub(crate) fn update_params(
@@ -221,8 +269,11 @@ impl FramebufferRenderer {
         buf[0..4].copy_from_slice(&params.scanline_intensity.to_le_bytes());
         buf[4..8].copy_from_slice(&params.crt_curvature.to_le_bytes());
         buf[8..12].copy_from_slice(&params.grid_intensity.to_le_bytes());
-        buf[12..16].copy_from_slice(&160.0_f32.to_le_bytes());
-        buf[16..20].copy_from_slice(&144.0_f32.to_le_bytes());
+        buf[12..16].copy_from_slice(&params.upscale_edge_strength.to_le_bytes());
+        buf[16..20].copy_from_slice(&params.palette_mix.to_le_bytes());
+        buf[20..24].copy_from_slice(&params.palette_warmth.to_le_bytes());
+        buf[24..28].copy_from_slice(&160.0_f32.to_le_bytes());
+        buf[28..32].copy_from_slice(&144.0_f32.to_le_bytes());
         queue.write_buffer(&self.params_buffer, 0, &buf);
     }
 

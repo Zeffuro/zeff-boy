@@ -5,6 +5,9 @@ struct ShaderParams {
     scanline_intensity: f32,
     curvature: f32,
     grid_intensity: f32,
+    upscale_edge_strength: f32,
+    palette_mix: f32,
+    palette_warmth: f32,
     tex_width: f32,
     tex_height: f32,
 };

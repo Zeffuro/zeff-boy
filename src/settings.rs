@@ -79,6 +79,9 @@ pub(crate) enum ShaderPreset {
     CRT,
     Scanlines,
     LCDGrid,
+    HQ2xLike,
+    GbcPalette,
+    Custom,
 }
 
 impl Default for ShaderPreset {
@@ -92,6 +95,7 @@ impl Default for ShaderPreset {
 pub(crate) enum ColorCorrection {
     None,
     GbcLcd,
+    Custom,
 }
 
 impl Default for ColorCorrection {
@@ -105,8 +109,17 @@ impl ColorCorrection {
         match self {
             Self::None => "None (raw RGB)",
             Self::GbcLcd => "GBC LCD panel",
+            Self::Custom => "Custom matrix",
         }
     }
+}
+
+fn default_color_correction_matrix() -> [f32; 9] {
+    [
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    ]
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -117,6 +130,12 @@ pub(crate) struct ShaderParams {
     pub(crate) crt_curvature: f32,
     #[serde(default = "default_grid_intensity")]
     pub(crate) grid_intensity: f32,
+    #[serde(default = "default_upscale_edge_strength")]
+    pub(crate) upscale_edge_strength: f32,
+    #[serde(default = "default_palette_mix")]
+    pub(crate) palette_mix: f32,
+    #[serde(default = "default_palette_warmth")]
+    pub(crate) palette_warmth: f32,
 }
 
 fn default_scanline_intensity() -> f32 {
@@ -128,6 +147,15 @@ fn default_crt_curvature() -> f32 {
 fn default_grid_intensity() -> f32 {
     0.3
 }
+fn default_upscale_edge_strength() -> f32 {
+    0.65
+}
+fn default_palette_mix() -> f32 {
+    1.0
+}
+fn default_palette_warmth() -> f32 {
+    0.15
+}
 
 impl Default for ShaderParams {
     fn default() -> Self {
@@ -135,16 +163,22 @@ impl Default for ShaderParams {
             scanline_intensity: default_scanline_intensity(),
             crt_curvature: default_crt_curvature(),
             grid_intensity: default_grid_intensity(),
+            upscale_edge_strength: default_upscale_edge_strength(),
+            palette_mix: default_palette_mix(),
+            palette_warmth: default_palette_warmth(),
         }
     }
 }
 
 impl ShaderParams {
-    pub(crate) fn to_gpu_bytes(&self) -> [u8; 16] {
-        let mut buf = [0u8; 16];
+    pub(crate) fn to_gpu_bytes(&self) -> [u8; 32] {
+        let mut buf = [0u8; 32];
         buf[0..4].copy_from_slice(&self.scanline_intensity.to_le_bytes());
         buf[4..8].copy_from_slice(&self.crt_curvature.to_le_bytes());
         buf[8..12].copy_from_slice(&self.grid_intensity.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.upscale_edge_strength.to_le_bytes());
+        buf[16..20].copy_from_slice(&self.palette_mix.to_le_bytes());
+        buf[20..24].copy_from_slice(&self.palette_warmth.to_le_bytes());
         buf
     }
 }
@@ -761,7 +795,11 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) shader_params: ShaderParams,
     #[serde(default)]
+    pub(crate) custom_shader_path: String,
+    #[serde(default)]
     pub(crate) color_correction: ColorCorrection,
+    #[serde(default = "default_color_correction_matrix")]
+    pub(crate) color_correction_matrix: [f32; 9],
     #[serde(default)]
     pub(crate) autohide_menu_bar: bool,
     #[serde(default)]
@@ -811,7 +849,9 @@ impl Default for Settings {
             rewind_seconds: default_rewind_seconds(),
             shader_preset: ShaderPreset::None,
             shader_params: ShaderParams::default(),
+            custom_shader_path: String::new(),
             color_correction: ColorCorrection::None,
+            color_correction_matrix: default_color_correction_matrix(),
             autohide_menu_bar: false,
             shortcut_bindings: ShortcutBindings::default(),
             gamepad_bindings: GamepadBindings::default(),
@@ -935,6 +975,7 @@ mod tests {
         s.rewind_seconds = 30;
         s.rewind_enabled = false;
         s.shader_preset = ShaderPreset::CRT;
+        s.custom_shader_path = "C:/shaders/custom.wgsl".to_string();
         s.autohide_menu_bar = true;
         s.frame_skip = true;
 
@@ -1048,6 +1089,9 @@ mod tests {
             scanline_intensity: 0.5,
             crt_curvature: 0.8,
             grid_intensity: 0.1,
+            upscale_edge_strength: 0.75,
+            palette_mix: 0.9,
+            palette_warmth: 0.2,
         };
         let json = serde_json::to_string(&params).unwrap();
         let restored: ShaderParams = serde_json::from_str(&json).unwrap();
@@ -1060,8 +1104,12 @@ mod tests {
         let bytes = params.to_gpu_bytes();
         let scanline = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let curvature = f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let edge = f32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        let mix = f32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
         assert!((scanline - params.scanline_intensity).abs() < f32::EPSILON);
         assert!((curvature - params.crt_curvature).abs() < f32::EPSILON);
+        assert!((edge - params.upscale_edge_strength).abs() < f32::EPSILON);
+        assert!((mix - params.palette_mix).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1084,5 +1132,21 @@ mod tests {
         let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
         assert_eq!(s.color_correction, ColorCorrection::None);
+        assert_eq!(s.color_correction_matrix, default_color_correction_matrix());
+    }
+
+    #[test]
+    fn custom_color_correction_matrix_roundtrip() {
+        let mut s = Settings::default();
+        s.color_correction = ColorCorrection::Custom;
+        s.color_correction_matrix = [
+            1.0, 0.2, 0.0, // R
+            0.1, 0.9, 0.0, // G
+            0.0, 0.3, 0.8, // B
+        ];
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.color_correction, ColorCorrection::Custom);
+        assert_eq!(restored.color_correction_matrix, s.color_correction_matrix);
     }
 }

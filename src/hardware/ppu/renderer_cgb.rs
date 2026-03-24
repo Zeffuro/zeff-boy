@@ -93,6 +93,7 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             Some(&bg_color_ids),
             Some(&bg_priority_flags),
             ppu.color_correction,
+            ppu.color_correction_matrix,
         );
     }
 }
