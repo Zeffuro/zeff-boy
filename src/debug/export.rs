@@ -3,10 +3,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-pub(crate) fn export_color_image_as_png(
-    path: &Path,
-    image: &ColorImage,
-) -> anyhow::Result<()> {
+pub(crate) fn export_color_image_as_png(path: &Path, image: &ColorImage) -> anyhow::Result<()> {
     let [w, h] = image.size;
     let file = File::create(path)?;
     let buf = BufWriter::new(file);
@@ -17,21 +14,13 @@ pub(crate) fn export_color_image_as_png(
 
     let mut writer = encoder.write_header()?;
 
-    let rgba_bytes: Vec<u8> = image
-        .pixels
-        .iter()
-        .flat_map(|c| c.to_array())
-        .collect();
+    let rgba_bytes: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
 
     writer.write_image_data(&rgba_bytes)?;
     Ok(())
 }
 
-pub(crate) fn export_png_button(
-    ui: &mut egui::Ui,
-    default_name: &str,
-    image: &ColorImage,
-) -> bool {
+pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &ColorImage) -> bool {
     if ui.button("Export PNG").clicked() {
         if let Some(path) = rfd::FileDialog::new()
             .set_title("Export as PNG")
@@ -52,4 +41,3 @@ pub(crate) fn export_png_button(
     }
     false
 }
-

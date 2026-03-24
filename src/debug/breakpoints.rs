@@ -246,4 +246,3 @@ mod tests {
         assert!(dc.hit_watchpoint.is_none());
     }
 }
-

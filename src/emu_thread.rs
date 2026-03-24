@@ -39,6 +39,7 @@ pub(crate) struct FrameInput {
     pub(crate) debug_continue: bool,
     pub(crate) apu_capture_enabled: bool,
     pub(crate) skip_audio: bool,
+    pub(crate) midi_capture_active: bool,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) snapshot: SnapshotRequest,
     pub(crate) reusable_framebuffer: Option<Vec<u8>>,
@@ -49,6 +50,7 @@ pub(crate) struct FrameInput {
     pub(crate) cheats: Vec<crate::cheats::CheatPatch>,
     pub(crate) rewind_enabled: bool,
     pub(crate) rewind_seconds: usize,
+    pub(crate) color_correction: crate::settings::ColorCorrection,
 }
 
 pub(crate) struct FrameResult {
@@ -58,6 +60,7 @@ pub(crate) struct FrameResult {
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) rewind_fill: f32,
+    pub(crate) apu_snapshot: Option<crate::hardware::apu::ApuChannelSnapshot>,
 }
 
 pub(crate) enum EmuCommand {
@@ -94,10 +97,7 @@ pub(crate) enum EmuCommand {
 pub(crate) enum EmuResponse {
     SaveStateOk(String),
     SaveStateFailed(String),
-    LoadStateOk {
-        path: String,
-        framebuffer: Vec<u8>,
-    },
+    LoadStateOk { path: String, framebuffer: Vec<u8> },
     LoadStateFailed(String),
     StateCaptured(Vec<u8>),
     StateCaptureFailed(String),
@@ -146,251 +146,188 @@ impl EmuThread {
                 };
 
                 if let Some(command) = command {
-                match command {
-                    EmuCommand::SetUncapped(on) => {
-                        uncapped_mode = on;
-                        emu.bus.io.apu.sample_generation_enabled = !on;
-                    }
-
-                    EmuCommand::StepFrames(input) => {
-                        last_cheats.clear();
-                        last_cheats.extend_from_slice(&input.cheats);
-
-                        Self::install_rom_patches(&mut emu, &input.cheats);
-
-                        Self::apply_debug_actions(&mut emu, &input.debug_actions);
-
-                        if emu
-                            .bus
-                            .io
-                            .joypad
-                            .apply_pressed_masks(input.buttons_pressed, input.dpad_pressed)
-                        {
-                            emu.bus.if_reg |= 0x10;
+                    match command {
+                        EmuCommand::SetUncapped(on) => {
+                            uncapped_mode = on;
+                            emu.bus.io.apu.sample_generation_enabled = !on;
                         }
-                        emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
-                        emu.bus.io.apu.debug_capture_enabled = input.apu_capture_enabled;
-                        if !uncapped_mode {
-                            emu.bus.io.apu.sample_generation_enabled = !input.skip_audio;
-                        }
-                        emu.opcode_log.enabled = input.snapshot.want_debug_info;
 
-                        if matches!(emu.cpu.running, CPUState::Suspended) {
-                            if input.debug_continue {
-                                emu.debug.clear_hits();
-                                emu.debug.break_on_next = false;
-                                emu.cpu.running = CPUState::Running;
-                            } else if input.debug_step {
-                                emu.debug.clear_hits();
-                                emu.debug.break_on_next = true;
-                                emu.cpu.running = CPUState::Running;
+                        EmuCommand::StepFrames(input) => {
+                            last_cheats.clear();
+                            last_cheats.extend_from_slice(&input.cheats);
+
+                            Self::install_rom_patches(&mut emu, &input.cheats);
+
+                            Self::apply_debug_actions(&mut emu, &input.debug_actions);
+
+                            emu.bus.io.ppu.color_correction = input.color_correction;
+
+                            if emu
+                                .bus
+                                .io
+                                .joypad
+                                .apply_pressed_masks(input.buttons_pressed, input.dpad_pressed)
+                            {
+                                emu.bus.if_reg |= 0x10;
                             }
-                        }
+                            emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+                            emu.bus.io.apu.debug_capture_enabled = input.apu_capture_enabled;
+                            if !uncapped_mode {
+                                emu.bus.io.apu.sample_generation_enabled = !input.skip_audio;
+                            }
+                            emu.opcode_log.enabled = input.snapshot.want_debug_info;
 
-                        if input.frames > 0 && !matches!(emu.cpu.running, CPUState::Suspended) {
-                            for _ in 0..input.frames {
-                                emu.step_frame();
-                                // Apply RAM cheat patches after each frame
-                                Self::apply_ram_cheats(&mut emu, &input.cheats);
-                                if matches!(emu.cpu.running, CPUState::Suspended) {
-                                    break;
+                            if matches!(emu.cpu.running, CPUState::Suspended) {
+                                if input.debug_continue {
+                                    emu.debug.clear_hits();
+                                    emu.debug.break_on_next = false;
+                                    emu.cpu.running = CPUState::Running;
+                                } else if input.debug_step {
+                                    emu.debug.clear_hits();
+                                    emu.debug.break_on_next = true;
+                                    emu.cpu.running = CPUState::Running;
                                 }
                             }
-                        }
 
-                        if input.rewind_seconds != rewind_seconds {
-                            rewind_seconds = input.rewind_seconds;
-                            rewind_buffer = crate::rewind::RewindBuffer::new(rewind_seconds, 4);
-                        }
-
-                        if input.rewind_enabled && rewind_buffer.tick() {
-                            if let Ok(bytes) = crate::save_state::encode_state_bytes(
-                                &crate::save_state::SaveStateRef {
-                                    version: crate::save_state::SAVE_STATE_VERSION,
-                                    rom_hash: emu.rom_hash,
-                                    cpu: &emu.cpu,
-                                    bus: emu.bus.as_ref(),
-                                    hardware_mode_preference: emu.hardware_mode_preference,
-                                    hardware_mode: emu.hardware_mode,
-                                    cycle_count: emu.cycle_count,
-                                    last_opcode: emu.last_opcode,
-                                    last_opcode_pc: emu.last_opcode_pc,
-                                },
-                            ) {
-                                rewind_buffer.push(&bytes, emu.framebuffer());
-                            }
-                        }
-
-                        let ui_data = {
-                            if cached_rom_info.is_none() && input.snapshot.show_rom_info {
-                                cached_rom_info = Some(ui::compute_static_rom_info(&emu));
-                            }
-                            ui::collect_emu_snapshot(
-                                &emu,
-                                &input.snapshot,
-                                &cached_rom_info,
-                                input.reusable_vram_buffer,
-                                input.reusable_oam_buffer,
-                                input.reusable_memory_page,
-                            )
-                        };
-
-                        let src = emu.framebuffer();
-                        let mut frame = input.reusable_framebuffer.unwrap_or_default();
-                        frame.resize(src.len(), 0);
-                        frame.copy_from_slice(src);
-
-                        let rumble = emu.bus.cartridge.rumble_active();
-                        let audio_samples = if let Some(mut buf) = input.reusable_audio_buffer {
-                            emu.bus.io.apu.drain_samples_into(&mut buf);
-                            buf
-                        } else {
-                            emu.bus.io.apu.drain_samples()
-                        };
-                        let is_mbc7 = emu.is_mbc7_cartridge();
-
-                        let result = FrameResult {
-                            frame,
-                            rumble,
-                            audio_samples,
-                            ui_data,
-                            is_mbc7,
-                            rewind_fill: rewind_buffer.fill_ratio(),
-                        };
-
-                        match frame_tx.try_send(result) {
-                            Ok(()) => {}
-                            Err(TrySendError::Full(result)) => {
-                                let _ = drain_rx.try_recv(); // drop stale frame
-                                if frame_tx.try_send(result).is_err() {
-                                    break 'main; // disconnected
+                            if input.frames > 0 && !matches!(emu.cpu.running, CPUState::Suspended) {
+                                for _ in 0..input.frames {
+                                    emu.step_frame();
+                                    // Apply RAM cheat patches after each frame
+                                    Self::apply_ram_cheats(&mut emu, &input.cheats);
+                                    if matches!(emu.cpu.running, CPUState::Suspended) {
+                                        break;
+                                    }
                                 }
                             }
-                            Err(TrySendError::Disconnected(_)) => break 'main,
+
+                            if input.rewind_seconds != rewind_seconds {
+                                rewind_seconds = input.rewind_seconds;
+                                rewind_buffer = crate::rewind::RewindBuffer::new(rewind_seconds, 4);
+                            }
+
+                            if input.rewind_enabled && rewind_buffer.tick() {
+                                if let Ok(bytes) = crate::save_state::encode_state_bytes(
+                                    &crate::save_state::SaveStateRef {
+                                        version: crate::save_state::SAVE_STATE_VERSION,
+                                        rom_hash: emu.rom_hash,
+                                        cpu: &emu.cpu,
+                                        bus: emu.bus.as_ref(),
+                                        hardware_mode_preference: emu.hardware_mode_preference,
+                                        hardware_mode: emu.hardware_mode,
+                                        cycle_count: emu.cycle_count,
+                                        last_opcode: emu.last_opcode,
+                                        last_opcode_pc: emu.last_opcode_pc,
+                                    },
+                                ) {
+                                    rewind_buffer.push(&bytes, emu.framebuffer());
+                                }
+                            }
+
+                            let ui_data = {
+                                if cached_rom_info.is_none() && input.snapshot.show_rom_info {
+                                    cached_rom_info = Some(ui::compute_static_rom_info(&emu));
+                                }
+                                ui::collect_emu_snapshot(
+                                    &emu,
+                                    &input.snapshot,
+                                    &cached_rom_info,
+                                    input.reusable_vram_buffer,
+                                    input.reusable_oam_buffer,
+                                    input.reusable_memory_page,
+                                )
+                            };
+
+                            let src = emu.framebuffer();
+                            let mut frame = input.reusable_framebuffer.unwrap_or_default();
+                            frame.resize(src.len(), 0);
+                            frame.copy_from_slice(src);
+
+                            let rumble = emu.bus.cartridge.rumble_active();
+                            let audio_samples = if let Some(mut buf) = input.reusable_audio_buffer {
+                                emu.bus.io.apu.drain_samples_into(&mut buf);
+                                buf
+                            } else {
+                                emu.bus.io.apu.drain_samples()
+                            };
+                            let is_mbc7 = emu.is_mbc7_cartridge();
+
+                            let apu_snapshot = if input.midi_capture_active {
+                                Some(emu.bus.io.apu.channel_snapshot())
+                            } else {
+                                None
+                            };
+
+                            let result = FrameResult {
+                                frame,
+                                rumble,
+                                audio_samples,
+                                ui_data,
+                                is_mbc7,
+                                rewind_fill: rewind_buffer.fill_ratio(),
+                                apu_snapshot,
+                            };
+
+                            match frame_tx.try_send(result) {
+                                Ok(()) => {}
+                                Err(TrySendError::Full(result)) => {
+                                    let _ = drain_rx.try_recv(); // drop stale frame
+                                    if frame_tx.try_send(result).is_err() {
+                                        break 'main; // disconnected
+                                    }
+                                }
+                                Err(TrySendError::Disconnected(_)) => break 'main,
+                            }
                         }
-                    }
 
-                    EmuCommand::SaveStateSlot(slot) => {
-                        let resp = match emu.save_state(slot) {
-                            Ok(path) => EmuResponse::SaveStateOk(path),
-                            Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
-
-                    EmuCommand::LoadStateSlot {
-                        slot,
-                        buttons_pressed,
-                        dpad_pressed,
-                    } => {
-                        let resp = match emu.load_state(slot) {
-                            Ok(path) => {
-                                emu.bus
-                                    .io
-                                    .joypad
-                                    .apply_pressed_masks(buttons_pressed, dpad_pressed);
-                                let fb = emu.framebuffer().to_vec();
-                                EmuResponse::LoadStateOk {
-                                    path,
-                                    framebuffer: fb,
-                                }
+                        EmuCommand::SaveStateSlot(slot) => {
+                            let resp = match emu.save_state(slot) {
+                                Ok(path) => EmuResponse::SaveStateOk(path),
+                                Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
+                            };
+                            if !send_resp(resp) {
+                                break 'main;
                             }
-                            Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
+                        }
 
-                    EmuCommand::SaveStateToPath(path) => {
-                        let resp = match emu.save_state_to_path(&path) {
-                            Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
-                            Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
-
-                    EmuCommand::LoadStateFromPath {
-                        path,
-                        buttons_pressed,
-                        dpad_pressed,
-                    } => {
-                        let resp = match emu.load_state_from_path(&path) {
-                            Ok(()) => {
-                                emu.bus
-                                    .io
-                                    .joypad
-                                    .apply_pressed_masks(buttons_pressed, dpad_pressed);
-                                let fb = emu.framebuffer().to_vec();
-                                EmuResponse::LoadStateOk {
-                                    path: path.display().to_string(),
-                                    framebuffer: fb,
+                        EmuCommand::LoadStateSlot {
+                            slot,
+                            buttons_pressed,
+                            dpad_pressed,
+                        } => {
+                            let resp = match emu.load_state(slot) {
+                                Ok(path) => {
+                                    emu.bus
+                                        .io
+                                        .joypad
+                                        .apply_pressed_masks(buttons_pressed, dpad_pressed);
+                                    let fb = emu.framebuffer().to_vec();
+                                    EmuResponse::LoadStateOk {
+                                        path,
+                                        framebuffer: fb,
+                                    }
                                 }
+                                Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
+                            };
+                            if !send_resp(resp) {
+                                break 'main;
                             }
-                            Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
+                        }
 
-                    EmuCommand::SetSampleRate(rate) => {
-                        emu.bus.io.apu.set_sample_rate(rate);
-                    }
-
-
-                    EmuCommand::CaptureStateBytes => {
-                        let state = crate::save_state::SaveStateRef {
-                            version: crate::save_state::SAVE_STATE_VERSION,
-                            rom_hash: emu.rom_hash,
-                            cpu: &emu.cpu,
-                            bus: emu.bus.as_ref(),
-                            hardware_mode_preference: emu.hardware_mode_preference,
-                            hardware_mode: emu.hardware_mode,
-                            cycle_count: emu.cycle_count,
-                            last_opcode: emu.last_opcode,
-                            last_opcode_pc: emu.last_opcode_pc,
-                        };
-                        let resp = match crate::save_state::encode_state_bytes(&state) {
-                            Ok(bytes) => EmuResponse::StateCaptured(bytes),
-                            Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
-
-                    EmuCommand::LoadStateBytes {
-                        state_bytes,
-                        buttons_pressed,
-                        dpad_pressed,
-                    } => {
-                        let resp = match emu.load_state_from_bytes(state_bytes) {
-                            Ok(()) => {
-                                emu.bus
-                                    .io
-                                    .joypad
-                                    .apply_pressed_masks(buttons_pressed, dpad_pressed);
-                                let fb = emu.framebuffer().to_vec();
-                                EmuResponse::LoadStateOk {
-                                    path: "(replay)".to_string(),
-                                    framebuffer: fb,
-                                }
+                        EmuCommand::SaveStateToPath(path) => {
+                            let resp = match emu.save_state_to_path(&path) {
+                                Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                                Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
+                            };
+                            if !send_resp(resp) {
+                                break 'main;
                             }
-                            Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
+                        }
 
-                    EmuCommand::AutoSaveState => {
-                        let path = crate::save_state::auto_save_path(emu.rom_hash);
-                        let resp = match emu.save_state_to_path(&path) {
-                            Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
-                            Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
-                        };
-                        if !send_resp(resp) { break 'main; }
-                    }
-
-                    EmuCommand::AutoLoadState {
-                        buttons_pressed,
-                        dpad_pressed,
-                    } => {
-                        let path = crate::save_state::auto_save_path(emu.rom_hash);
-                        if path.exists() {
+                        EmuCommand::LoadStateFromPath {
+                            path,
+                            buttons_pressed,
+                            dpad_pressed,
+                        } => {
                             let resp = match emu.load_state_from_path(&path) {
                                 Ok(()) => {
                                     emu.bus
@@ -405,50 +342,147 @@ impl EmuThread {
                                 }
                                 Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
                             };
-                            if !send_resp(resp) { break 'main; }
-                        } else {
-                            if !send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string())) { break 'main; }
+                            if !send_resp(resp) {
+                                break 'main;
+                            }
                         }
-                    }
 
-                    EmuCommand::Rewind => {
-                        if let Some(rewind_frame) = rewind_buffer.pop() {
-                            match emu.load_state_from_bytes(rewind_frame.state_bytes) {
+                        EmuCommand::SetSampleRate(rate) => {
+                            emu.bus.io.apu.set_sample_rate(rate);
+                        }
+
+                        EmuCommand::CaptureStateBytes => {
+                            let state = crate::save_state::SaveStateRef {
+                                version: crate::save_state::SAVE_STATE_VERSION,
+                                rom_hash: emu.rom_hash,
+                                cpu: &emu.cpu,
+                                bus: emu.bus.as_ref(),
+                                hardware_mode_preference: emu.hardware_mode_preference,
+                                hardware_mode: emu.hardware_mode,
+                                cycle_count: emu.cycle_count,
+                                last_opcode: emu.last_opcode,
+                                last_opcode_pc: emu.last_opcode_pc,
+                            };
+                            let resp = match crate::save_state::encode_state_bytes(&state) {
+                                Ok(bytes) => EmuResponse::StateCaptured(bytes),
+                                Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
+                            };
+                            if !send_resp(resp) {
+                                break 'main;
+                            }
+                        }
+
+                        EmuCommand::LoadStateBytes {
+                            state_bytes,
+                            buttons_pressed,
+                            dpad_pressed,
+                        } => {
+                            let resp = match emu.load_state_from_bytes(state_bytes) {
                                 Ok(()) => {
-                                    let fb = if rewind_frame.framebuffer.is_empty() {
-                                        emu.framebuffer().to_vec()
-                                    } else {
-                                        rewind_frame.framebuffer
-                                    };
-                                    if !send_resp(EmuResponse::LoadStateOk {
-                                        path: "(rewind)".to_string(),
+                                    emu.bus
+                                        .io
+                                        .joypad
+                                        .apply_pressed_masks(buttons_pressed, dpad_pressed);
+                                    let fb = emu.framebuffer().to_vec();
+                                    EmuResponse::LoadStateOk {
+                                        path: "(replay)".to_string(),
                                         framebuffer: fb,
-                                    }) { break 'main; }
+                                    }
                                 }
-                                Err(err) => {
-                                    log::warn!("Rewind restore failed: {}", err);
-                                    if !send_resp(EmuResponse::LoadStateFailed(
-                                        "rewind restore failed".to_string(),
-                                    )) { break 'main; }
+                                Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
+                            };
+                            if !send_resp(resp) {
+                                break 'main;
+                            }
+                        }
+
+                        EmuCommand::AutoSaveState => {
+                            let path = crate::save_state::auto_save_path(emu.rom_hash);
+                            let resp = match emu.save_state_to_path(&path) {
+                                Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                                Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
+                            };
+                            if !send_resp(resp) {
+                                break 'main;
+                            }
+                        }
+
+                        EmuCommand::AutoLoadState {
+                            buttons_pressed,
+                            dpad_pressed,
+                        } => {
+                            let path = crate::save_state::auto_save_path(emu.rom_hash);
+                            if path.exists() {
+                                let resp = match emu.load_state_from_path(&path) {
+                                    Ok(()) => {
+                                        emu.bus
+                                            .io
+                                            .joypad
+                                            .apply_pressed_masks(buttons_pressed, dpad_pressed);
+                                        let fb = emu.framebuffer().to_vec();
+                                        EmuResponse::LoadStateOk {
+                                            path: path.display().to_string(),
+                                            framebuffer: fb,
+                                        }
+                                    }
+                                    Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
+                                };
+                                if !send_resp(resp) {
+                                    break 'main;
+                                }
+                            } else {
+                                if !send_resp(EmuResponse::LoadStateFailed(
+                                    "no auto-save".to_string(),
+                                )) {
+                                    break 'main;
                                 }
                             }
-                        } else {
-                            if !send_resp(EmuResponse::LoadStateFailed(
-                                "no rewind data".to_string(),
-                            )) { break 'main; }
+                        }
+
+                        EmuCommand::Rewind => {
+                            if let Some(rewind_frame) = rewind_buffer.pop() {
+                                match emu.load_state_from_bytes(rewind_frame.state_bytes) {
+                                    Ok(()) => {
+                                        let fb = if rewind_frame.framebuffer.is_empty() {
+                                            emu.framebuffer().to_vec()
+                                        } else {
+                                            rewind_frame.framebuffer
+                                        };
+                                        if !send_resp(EmuResponse::LoadStateOk {
+                                            path: "(rewind)".to_string(),
+                                            framebuffer: fb,
+                                        }) {
+                                            break 'main;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Rewind restore failed: {}", err);
+                                        if !send_resp(EmuResponse::LoadStateFailed(
+                                            "rewind restore failed".to_string(),
+                                        )) {
+                                            break 'main;
+                                        }
+                                    }
+                                }
+                            } else {
+                                if !send_resp(EmuResponse::LoadStateFailed(
+                                    "no rewind data".to_string(),
+                                )) {
+                                    break 'main;
+                                }
+                            }
+                        }
+
+                        EmuCommand::Shutdown => {
+                            let sram_path = emu.flush_battery_sram().unwrap_or_else(|err| {
+                                log::error!("Failed to flush SRAM on shutdown: {}", err);
+                                None
+                            });
+                            let _ = resp_tx.send(EmuResponse::SramFlushed(sram_path));
+                            let _ = resp_tx.send(EmuResponse::ShutdownComplete);
+                            break 'main;
                         }
                     }
-
-                    EmuCommand::Shutdown => {
-                        let sram_path = emu.flush_battery_sram().unwrap_or_else(|err| {
-                            log::error!("Failed to flush SRAM on shutdown: {}", err);
-                            None
-                        });
-                        let _ = resp_tx.send(EmuResponse::SramFlushed(sram_path));
-                        let _ = resp_tx.send(EmuResponse::ShutdownComplete);
-                        break 'main;
-                    }
-                }
                 } else {
                     // Self-pacing: uncapped mode, no pending command
                     if matches!(emu.cpu.running, CPUState::Suspended) {
@@ -487,6 +521,7 @@ impl EmuThread {
                         },
                         is_mbc7: emu.is_mbc7_cartridge(),
                         rewind_fill: rewind_buffer.fill_ratio(),
+                        apu_snapshot: None,
                     };
 
                     match frame_tx.try_send(result) {
@@ -564,12 +599,18 @@ impl EmuThread {
             match *patch {
                 CheatPatch::RamWrite { address, value } => {
                     let current = emu.bus.read_byte_raw(address);
-                    emu.bus.write_byte(address, value.resolve_with_current(current));
+                    emu.bus
+                        .write_byte(address, value.resolve_with_current(current));
                 }
-                CheatPatch::RamWriteIfEquals { address, value, compare } => {
+                CheatPatch::RamWriteIfEquals {
+                    address,
+                    value,
+                    compare,
+                } => {
                     let current = emu.bus.read_byte_raw(address);
                     if compare.matches(current) {
-                        emu.bus.write_byte(address, value.resolve_with_current(current));
+                        emu.bus
+                            .write_byte(address, value.resolve_with_current(current));
                     }
                 }
                 _ => {}
@@ -588,7 +629,6 @@ impl EmuThread {
     pub(crate) fn recv(&self) -> Option<EmuResponse> {
         self.resp_rx.recv().ok()
     }
-
 
     pub(crate) fn shutdown(&mut self) {
         let _ = self.cmd_tx.send(EmuCommand::Shutdown);

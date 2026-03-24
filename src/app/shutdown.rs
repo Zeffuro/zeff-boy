@@ -34,10 +34,11 @@ impl App {
 
         self.settings.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);
         self.settings.save();
-        
+
         if let Some(ref title) = self.debug_windows.cheat.rom_title {
             crate::cheats::save_game_cheats(
-                title,
+                Some(title),
+                self.debug_windows.cheat.rom_crc32,
                 &self.debug_windows.cheat.user_codes,
                 &self.debug_windows.cheat.libretro_codes,
             );

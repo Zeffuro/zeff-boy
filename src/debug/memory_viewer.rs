@@ -6,7 +6,6 @@ const ROWS_VISIBLE: usize = 16;
 const BYTES_PER_ROW: usize = 16;
 const MAX_START: u16 = 0xFF00;
 
-
 pub(super) fn draw_memory_viewer_content(
     ui: &mut egui::Ui,
     state: &mut MemoryViewerState,
@@ -20,8 +19,7 @@ pub(super) fn draw_memory_viewer_content(
         ui.label("Address:");
         let response = ui.text_edit_singleline(&mut state.jump_input);
         let input_has_focus = response.has_focus();
-        let pressed_enter =
-            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.button("Go").clicked() || pressed_enter {
             if let Some(addr) = parse_u16_hex(&state.jump_input) {
                 state.view_start = addr & 0xFFF0;
@@ -39,15 +37,13 @@ pub(super) fn draw_memory_viewer_content(
             state.view_start = state.view_start.saturating_sub(0x10);
         }
         if ui.button("+0x10").clicked() {
-            state.view_start =
-                state.view_start.saturating_add(0x10).min(MAX_START);
+            state.view_start = state.view_start.saturating_add(0x10).min(MAX_START);
         }
         if ui.button("-0x100").clicked() {
             state.view_start = state.view_start.saturating_sub(0x100);
         }
         if ui.button("+0x100").clicked() {
-            state.view_start =
-                state.view_start.saturating_add(0x100).min(MAX_START);
+            state.view_start = state.view_start.saturating_add(0x100).min(MAX_START);
         }
     });
 
@@ -56,8 +52,7 @@ pub(super) fn draw_memory_viewer_content(
         if scroll >= 1.0 {
             state.view_start = state.view_start.saturating_sub(0x10);
         } else if scroll <= -1.0 {
-            state.view_start =
-                state.view_start.saturating_add(0x10).min(MAX_START);
+            state.view_start = state.view_start.saturating_add(0x10).min(MAX_START);
         }
     }
 
@@ -101,23 +96,11 @@ pub(super) fn draw_memory_viewer_content(
     };
 
     let mut header_job = egui::text::LayoutJob::default();
-    header_job.append(
-        "Addr   ",
-        0.0,
-        fmt_addr.clone(),
-    );
+    header_job.append("Addr   ", 0.0, fmt_addr.clone());
     for i in 0..BYTES_PER_ROW {
-        header_job.append(
-            &format!("+{:X} ", i),
-            0.0,
-            fmt_addr.clone(),
-        );
+        header_job.append(&format!("+{:X} ", i), 0.0, fmt_addr.clone());
     }
-    header_job.append(
-        "  ASCII",
-        0.0,
-        fmt_addr.clone(),
-    );
+    header_job.append("  ASCII", 0.0, fmt_addr.clone());
     ui.label(header_job);
 
     for row in 0..ROWS_VISIBLE {
@@ -129,37 +112,21 @@ pub(super) fn draw_memory_viewer_content(
 
         let mut job = egui::text::LayoutJob::default();
 
-        job.append(
-            &format!("{:04X}:  ", row_addr),
-            0.0,
-            fmt_addr.clone(),
-        );
+        job.append(&format!("{:04X}:  ", row_addr), 0.0, fmt_addr.clone());
 
         for col in 0..BYTES_PER_ROW {
             let idx = row_start + col;
             if idx >= memory_page.len() {
-                job.append(
-                    "-- ",
-                    0.0,
-                    fmt_dim.clone(),
-                );
+                job.append("-- ", 0.0, fmt_dim.clone());
             } else {
                 let (_, value) = memory_page[idx];
                 let flash = state.flash_ticks.get(idx).copied().unwrap_or(0);
                 let fmt = if flash > 0 { &fmt_flash } else { &fmt_normal };
-                job.append(
-                    &format!("{:02X} ", value),
-                    0.0,
-                    fmt.clone(),
-                );
+                job.append(&format!("{:02X} ", value), 0.0, fmt.clone());
             }
         }
 
-        job.append(
-            "  ",
-            0.0,
-            fmt_normal.clone(),
-        );
+        job.append("  ", 0.0, fmt_normal.clone());
         for col in 0..BYTES_PER_ROW {
             let idx = row_start + col;
             if idx < memory_page.len() {
@@ -172,11 +139,7 @@ pub(super) fn draw_memory_viewer_content(
                 } else {
                     &fmt_normal
                 };
-                job.append(
-                    &ch,
-                    0.0,
-                    fmt.clone(),
-                );
+                job.append(&ch, 0.0, fmt.clone());
             }
         }
 
@@ -226,7 +189,6 @@ pub(super) fn draw_memory_viewer_content(
         });
     }
 
-
     ui.separator();
     ui.collapsing("🔍 Search Memory", |ui| {
         ui.horizontal(|ui| {
@@ -266,8 +228,7 @@ pub(super) fn draw_memory_viewer_content(
                     .desired_width(150.0)
                     .hint_text(hint),
             );
-            let enter_pressed =
-                resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui.button("Search").clicked() || enter_pressed {
                 state.search_pending = true;
             }
@@ -304,8 +265,7 @@ pub(super) fn draw_memory_viewer_content(
                             .clicked()
                         {
                             state.view_start = result.address & 0xFFF0;
-                            state.jump_input =
-                                format!("{:04X}", state.view_start);
+                            state.jump_input = format!("{:04X}", state.view_start);
                         }
                     }
                 });
@@ -370,7 +330,14 @@ fn load_tbl_file(path: &std::path::Path) -> Result<HashMap<u8, String>, String> 
             let hex_part = hex_part.trim();
             let char_part = char_part.to_string();
             if let Ok(byte) = u8::from_str_radix(hex_part, 16) {
-                map.insert(byte, if char_part.is_empty() { ".".to_string() } else { char_part });
+                map.insert(
+                    byte,
+                    if char_part.is_empty() {
+                        ".".to_string()
+                    } else {
+                        char_part
+                    },
+                );
             }
         }
     }
@@ -443,11 +410,7 @@ pub(crate) fn parse_search_query(query: &str, mode: MemorySearchMode) -> Option<
             let bytes: Vec<u8> = query
                 .split_whitespace()
                 .filter_map(|s| {
-                    u8::from_str_radix(
-                        s.trim_start_matches("0x").trim_start_matches("0X"),
-                        16,
-                    )
-                    .ok()
+                    u8::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
                 })
                 .collect();
             if bytes.is_empty() { None } else { Some(bytes) }

@@ -20,7 +20,6 @@ fn decode_tile_attr(attr: u8) -> TileAttrInfo {
     }
 }
 
-
 pub(super) fn draw_tilemap_viewer_content(
     ui: &mut egui::Ui,
     vram: &[u8],
@@ -116,8 +115,7 @@ pub(super) fn draw_tilemap_viewer_content(
     }
 
     if window_state.image.size != [width, height] {
-        window_state.image =
-            egui::ColorImage::filled([width, height], egui::Color32::BLACK);
+        window_state.image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
         window_state.vram_dirty = true;
     }
 
@@ -144,18 +142,11 @@ pub(super) fn draw_tilemap_viewer_content(
             egui::TextureOptions::NEAREST,
         )
     });
-    texture.set(
-        window_state.image.clone(),
-        egui::TextureOptions::NEAREST,
-    );
+    texture.set(window_state.image.clone(), egui::TextureOptions::NEAREST);
 
     let display_size = egui::vec2((width as f32) * 1.5, (height as f32) * 1.5);
     ui.horizontal(|ui| {
-        super::export::export_png_button(
-            ui,
-            "tilemap.png",
-            &window_state.image,
-        );
+        super::export::export_png_button(ui, "tilemap.png", &window_state.image);
     });
     egui::ScrollArea::both().show(ui, |ui| {
         let response = ui.image((texture.id(), display_size));
@@ -333,7 +324,7 @@ fn render_tilemap_into_image(
             };
             let color_id = decode_tile_pixel(vram, banked_tile_addr, source_line, source_pixel);
             let rgba = if render_cgb_colors {
-                cgb_palette_rgba(bg_palette_ram, attr.palette, color_id)
+                cgb_palette_rgba(bg_palette_ram, attr.palette, color_id, crate::settings::ColorCorrection::None)
             } else {
                 apply_palette(ppu.bgp, color_id)
             };

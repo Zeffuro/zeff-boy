@@ -3,6 +3,7 @@
 use anyhow::{Result, anyhow, bail};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::StateWriter;
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::CPU;
 use crate::hardware::rom_header::RomHeader;
@@ -10,7 +11,6 @@ use crate::hardware::types::CPUState;
 use crate::hardware::types::IMEState;
 use crate::hardware::types::constants::{HRAM_SIZE, OAM_SIZE};
 use crate::hardware::types::hardware_mode::HardwareMode;
-use super::StateWriter;
 
 const BESS_MAGIC: &[u8; 4] = b"BESS";
 const BESS_MAJOR: u16 = 1;
@@ -27,7 +27,6 @@ const BLOCK_END: [u8; 4] = *b"END ";
 const CORE_BLOCK_LEN: u32 = 0xD0;
 const INFO_BLOCK_LEN: u32 = 0x12;
 const RTC_BLOCK_LEN: u32 = 0x30;
-
 
 pub(crate) fn has_bess_footer(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[bytes.len() - 4..] == BESS_MAGIC
@@ -127,7 +126,6 @@ pub(crate) fn append_bess(
 
     write_block_header(writer, &BLOCK_END, 0);
 
-
     writer.write_u32(first_block_offset);
     writer.write_bytes(BESS_MAGIC);
 
@@ -140,11 +138,7 @@ pub(crate) struct BessImport {
     pub(crate) hardware_mode: HardwareMode,
 }
 
-pub(crate) fn import_bess(
-    bytes: &[u8],
-    rom: &[u8],
-    header: &RomHeader,
-) -> Result<BessImport> {
+pub(crate) fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessImport> {
     if !has_bess_footer(bytes) {
         bail!("file does not contain BESS footer");
     }
@@ -544,5 +538,3 @@ fn now_unix_seconds() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-
-

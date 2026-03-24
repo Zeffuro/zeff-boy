@@ -35,7 +35,7 @@ fn draw_cgb_palette_section(
         ui.horizontal(|ui| {
             ui.label(format!("{}{}", row_prefix, palette));
             for color_id in 0u8..4 {
-                let rgba = cgb_palette_rgba(palette_ram, palette, color_id);
+                let rgba = cgb_palette_rgba(palette_ram, palette, color_id, crate::settings::ColorCorrection::None);
                 let color =
                     egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
                 egui::Frame::NONE.fill(color).show(ui, |ui| {
@@ -45,7 +45,6 @@ fn draw_cgb_palette_section(
         });
     }
 }
-
 
 pub(super) fn draw_palette_viewer_content(
     ui: &mut egui::Ui,
@@ -65,8 +64,7 @@ pub(super) fn draw_palette_viewer_content(
     ui.label("Base DMG shades:");
     ui.horizontal(|ui| {
         for rgba in PALETTE_COLORS {
-            let color =
-                egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+            let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
             egui::Frame::NONE.fill(color).show(ui, |ui| {
                 ui.add_space(24.0);
                 ui.add_sized([24.0, 16.0], egui::Label::new(""));

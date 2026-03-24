@@ -66,7 +66,6 @@ fn draw_waveform(ui: &mut egui::Ui, id: &str, samples: &[f32; 512], height: f32)
     );
 }
 
-
 pub(super) fn draw_apu_viewer_content(
     ui: &mut egui::Ui,
     data: &DebugViewerData,

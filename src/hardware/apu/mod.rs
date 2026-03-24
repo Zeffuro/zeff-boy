@@ -11,6 +11,21 @@ const APU_INITIAL_SAMPLE_CAPACITY: usize = 2048;
 const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
 const DEBUG_CAPTURE_DECIMATION_T_CYCLES: u64 = 64;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ApuChannelSnapshot {
+    pub(crate) ch1_enabled: bool,
+    pub(crate) ch1_frequency: u16,
+    pub(crate) ch1_volume: u8,
+    pub(crate) ch2_enabled: bool,
+    pub(crate) ch2_frequency: u16,
+    pub(crate) ch2_volume: u8,
+    pub(crate) ch3_enabled: bool,
+    pub(crate) ch3_frequency: u16,
+    pub(crate) ch3_output_level: u8,
+    pub(crate) ch4_enabled: bool,
+    pub(crate) ch4_volume: u8,
+}
+
 #[derive(Clone, Copy, Default)]
 struct ChannelState {
     enabled: bool,

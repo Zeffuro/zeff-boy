@@ -96,6 +96,8 @@ pub(crate) struct RenderContext<'a> {
 
 pub(crate) struct RenderResult {
     pub(crate) open_file_requested: bool,
+    pub(crate) reset_game_requested: bool,
+    pub(crate) stop_game_requested: bool,
     pub(crate) save_state_file_requested: bool,
     pub(crate) load_state_file_requested: bool,
     pub(crate) save_state_slot: Option<u8>,
@@ -177,13 +179,16 @@ impl Graphics {
             .upload_framebuffer(&self.gpu.queue, framebuffer);
     }
 
+    pub(crate) fn clear_framebuffer(&self) {
+        let black = vec![0u8; 160 * 144 * 4];
+        self.framebuffer.upload_framebuffer(&self.gpu.queue, &black);
+    }
 
-    pub(crate) fn render(
-        &mut self,
-        ctx: RenderContext<'_>,
-    ) -> Result<RenderResult, FrameError> {
-        self.framebuffer.set_shader(&self.gpu.device, ctx.settings.shader_preset);
-        self.framebuffer.update_params(&self.gpu.queue, &ctx.settings.shader_params);
+    pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
+        self.framebuffer
+            .set_shader(&self.gpu.device, ctx.settings.shader_preset);
+        self.framebuffer
+            .update_params(&self.gpu.queue, &ctx.settings.shader_params);
 
         let frame = self
             .gpu
@@ -212,7 +217,18 @@ impl Graphics {
         };
 
         let menu_actions = if show_menu {
-            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, ctx.dock_state, ctx.settings, ctx.debug_windows, ctx.speed_mode_label, ctx.is_recording_audio, ctx.is_recording_replay, ctx.is_playing_replay, ctx.is_paused)
+            crate::debug::draw_menu_bar(
+                self.egui.context(),
+                self.aspect_ratio_mode,
+                ctx.dock_state,
+                ctx.settings,
+                ctx.debug_windows,
+                ctx.speed_mode_label,
+                ctx.is_recording_audio,
+                ctx.is_recording_replay,
+                ctx.is_playing_replay,
+                ctx.is_paused,
+            )
         } else {
             crate::debug::MenuActions::default(ctx.settings.autohide_menu_bar)
         };
@@ -283,7 +299,9 @@ impl Graphics {
                 game_view_pixel_size: None,
             };
             egui_dock::DockArea::new(ctx.dock_state)
-                .style(egui_dock::Style::from_egui(self.egui.context().style().as_ref()))
+                .style(egui_dock::Style::from_egui(
+                    self.egui.context().style().as_ref(),
+                ))
                 .show(self.egui.context(), &mut tab_viewer);
             debug_actions = tab_viewer.actions;
 
@@ -339,15 +357,15 @@ impl Graphics {
 
         // Offscreen shader pass — renders framebuffer through shaders into
         // the output texture used as the egui game-view image.
-        let has_game_view_in_dock = ctx.debug_info.is_some()
-            && crate::debug::has_game_view_tab(ctx.dock_state);
+        let has_game_view_in_dock =
+            ctx.debug_info.is_some() && crate::debug::has_game_view_tab(ctx.dock_state);
         if has_game_view_in_dock {
             self.framebuffer.render_to_offscreen(&mut encoder);
         }
 
         // Emulator Framebuffer (only when not rendered inside a dock tab)
-        let render_framebuffer_directly = ctx.debug_info.is_some()
-            && !crate::debug::has_game_view_tab(ctx.dock_state);
+        let render_framebuffer_directly =
+            ctx.debug_info.is_some() && !crate::debug::has_game_view_tab(ctx.dock_state);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("screen pass"),
@@ -385,8 +403,7 @@ impl Graphics {
         }
 
         // EGUI: prepare
-        let (paint_jobs, screen_desc) =
-            self.egui.prepare(&self.gpu, &mut encoder, &full_output);
+        let (paint_jobs, screen_desc) = self.egui.prepare(&self.gpu, &mut encoder, &full_output);
 
         // EGUI: render
         {
@@ -418,6 +435,8 @@ impl Graphics {
 
         Ok(RenderResult {
             open_file_requested: menu_actions.open_file_requested,
+            reset_game_requested: menu_actions.reset_game_requested,
+            stop_game_requested: menu_actions.stop_game_requested,
             save_state_file_requested: menu_actions.save_state_file_requested,
             load_state_file_requested: menu_actions.load_state_file_requested,
             save_state_slot: menu_actions.save_state_slot,

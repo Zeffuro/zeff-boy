@@ -15,8 +15,8 @@ impl RewindSnapshot {
 
     fn decompress(&self) -> Option<RewindFrame> {
         let state_bytes = lz4_flex::decompress_size_prepended(&self.compressed_state).ok()?;
-        let framebuffer = lz4_flex::decompress_size_prepended(&self.compressed_framebuffer)
-            .unwrap_or_default();
+        let framebuffer =
+            lz4_flex::decompress_size_prepended(&self.compressed_framebuffer).unwrap_or_default();
         Some(RewindFrame {
             state_bytes,
             framebuffer,
@@ -159,7 +159,7 @@ mod tests {
         assert!(!buf.tick()); // 1
         assert!(!buf.tick()); // 2
         assert!(!buf.tick()); // 3
-        assert!(buf.tick());  // 4 -> fires
+        assert!(buf.tick()); // 4 -> fires
         assert!(!buf.tick()); // 1 again
     }
 

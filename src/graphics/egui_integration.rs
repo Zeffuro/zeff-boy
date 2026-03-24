@@ -43,11 +43,8 @@ impl EguiRenderer {
             None,
         );
 
-        let renderer = egui_wgpu::Renderer::new(
-            device,
-            format,
-            egui_wgpu::RendererOptions::default(),
-        );
+        let renderer =
+            egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
 
         Ok(Self {
             ctx,

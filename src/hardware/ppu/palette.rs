@@ -1,4 +1,5 @@
 use crate::hardware::ppu::PPU;
+use crate::settings::ColorCorrection;
 
 pub(crate) const PALETTE_COLORS: [[u8; 4]; 4] = [
     [224, 248, 208, 255],
@@ -24,21 +25,41 @@ fn rgb555_to_rgba(low: u8, high: u8) -> [u8; 4] {
     [r, g, b, 255]
 }
 
-pub(crate) fn cgb_palette_rgba(palette_ram: &[u8; 64], palette_index: u8, color_id: u8) -> [u8; 4] {
+pub(crate) fn correct_color(rgba: [u8; 4], correction: ColorCorrection) -> [u8; 4] {
+    match correction {
+        ColorCorrection::None => rgba,
+        ColorCorrection::GbcLcd => {
+            let r = rgba[0] as u16;
+            let g = rgba[1] as u16;
+            let b = rgba[2] as u16;
+            let r_out = ((r * 26 + g * 4 + b * 2) / 32).min(255) as u8;
+            let g_out = ((g * 24 + b * 8) / 32).min(255) as u8;
+            let b_out = ((r * 6 + g * 4 + b * 22) / 32).min(255) as u8;
+            [r_out, g_out, b_out, rgba[3]]
+        }
+    }
+}
+
+pub(crate) fn cgb_palette_rgba(
+    palette_ram: &[u8; 64],
+    palette_index: u8,
+    color_id: u8,
+    correction: ColorCorrection,
+) -> [u8; 4] {
     let palette_base = ((palette_index & 0x07) as usize) * 8;
     let color_base = palette_base + ((color_id & 0x03) as usize) * 2;
     let low = palette_ram[color_base];
     let high = palette_ram[color_base + 1];
-    rgb555_to_rgba(low, high)
+    correct_color(rgb555_to_rgba(low, high), correction)
 }
 
 impl PPU {
     pub(crate) fn cgb_bg_rgba(&self, palette_index: u8, color_id: u8) -> [u8; 4] {
-        cgb_palette_rgba(&self.bg_palette_ram, palette_index, color_id)
+        cgb_palette_rgba(&self.bg_palette_ram, palette_index, color_id, self.color_correction)
     }
 
     pub(crate) fn cgb_obj_rgba(&self, palette_index: u8, color_id: u8) -> [u8; 4] {
-        cgb_palette_rgba(&self.obj_palette_ram, palette_index, color_id)
+        cgb_palette_rgba(&self.obj_palette_ram, palette_index, color_id, self.color_correction)
     }
 
     pub(crate) fn read_bcps(&self) -> u8 {
@@ -167,5 +188,40 @@ mod tests {
 
         assert_eq!(ppu.bg_palette_ram[1], 0x12);
         assert_eq!(ppu.bcps & 0x3F, 0x02);
+    }
+
+    #[test]
+    fn correct_color_none_is_identity() {
+        let rgba = [128, 64, 200, 255];
+        assert_eq!(correct_color(rgba, ColorCorrection::None), rgba);
+    }
+
+    #[test]
+    fn correct_color_gbc_lcd_shifts_colors() {
+        let rgba = correct_color([255, 0, 0, 255], ColorCorrection::GbcLcd);
+        assert_eq!(rgba[0], 207);
+        assert_eq!(rgba[1], 0);
+        assert_eq!(rgba[2], 47);
+        assert_eq!(rgba[3], 255);
+    }
+
+    #[test]
+    fn correct_color_gbc_lcd_preserves_alpha() {
+        let rgba = correct_color([100, 100, 100, 128], ColorCorrection::GbcLcd);
+        assert_eq!(rgba[3], 128);
+    }
+
+    #[test]
+    fn cgb_bg_rgba_with_color_correction() {
+        let mut ppu = PPU::new();
+        ppu.bg_palette_ram[0] = 0x1F;
+        ppu.bg_palette_ram[1] = 0x00;
+        ppu.color_correction = ColorCorrection::None;
+        let raw = ppu.cgb_bg_rgba(0, 0);
+        assert_eq!(raw, [255, 0, 0, 255]);
+        ppu.color_correction = ColorCorrection::GbcLcd;
+        let corrected = ppu.cgb_bg_rgba(0, 0);
+        assert_ne!(corrected, raw);
+        assert_eq!(corrected[0], 207);
     }
 }

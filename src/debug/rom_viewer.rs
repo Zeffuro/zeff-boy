@@ -32,8 +32,7 @@ pub(super) fn draw_rom_viewer_content(
         ui.label("Offset:");
         let response = ui.text_edit_singleline(&mut state.jump_input);
         let input_has_focus = response.has_focus();
-        let pressed_enter =
-            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.button("Go").clicked() || pressed_enter {
             if let Some(addr) = parse_u32_hex(&state.jump_input) {
                 state.view_start = (addr & !0xF).min(max_start);
@@ -190,8 +189,7 @@ pub(super) fn draw_rom_viewer_content(
                     .desired_width(150.0)
                     .hint_text(hint),
             );
-            let enter_pressed =
-                resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui.button("Search").clicked() || enter_pressed {
                 state.search_pending = true;
             }
@@ -293,7 +291,14 @@ fn load_tbl_file(path: &std::path::Path) -> Result<HashMap<u8, String>, String> 
             let hex_part = hex_part.trim();
             let char_part = char_part.to_string();
             if let Ok(byte) = u8::from_str_radix(hex_part, 16) {
-                map.insert(byte, if char_part.is_empty() { ".".to_string() } else { char_part });
+                map.insert(
+                    byte,
+                    if char_part.is_empty() {
+                        ".".to_string()
+                    } else {
+                        char_part
+                    },
+                );
             }
         }
     }
@@ -318,4 +323,3 @@ fn printable_ascii(byte: u8) -> char {
         '.'
     }
 }
-

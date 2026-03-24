@@ -1,7 +1,6 @@
 use crate::debug::TileViewerState;
 use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel};
 
-
 pub(super) fn draw_tile_viewer_content(
     ui: &mut egui::Ui,
     vram: &[u8],
@@ -90,8 +89,7 @@ pub(super) fn draw_tile_viewer_content(
     }
 
     if window_state.image.size != [width, height] {
-        window_state.image =
-            egui::ColorImage::filled([width, height], egui::Color32::BLACK);
+        window_state.image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
         window_state.vram_dirty = true;
     }
 
@@ -118,18 +116,11 @@ pub(super) fn draw_tile_viewer_content(
             egui::TextureOptions::NEAREST,
         )
     });
-    texture.set(
-        window_state.image.clone(),
-        egui::TextureOptions::NEAREST,
-    );
+    texture.set(window_state.image.clone(), egui::TextureOptions::NEAREST);
 
     let display_size = egui::vec2((width as f32) * 2.0, (height as f32) * 2.0);
     ui.horizontal(|ui| {
-        super::export::export_png_button(
-            ui,
-            "tiles.png",
-            &window_state.image,
-        );
+        super::export::export_png_button(ui, "tiles.png", &window_state.image);
     });
     egui::ScrollArea::both().show(ui, |ui| {
         ui.image((texture.id(), display_size));
@@ -161,7 +152,7 @@ fn render_tile_viewer_into_image(
                     } else {
                         bg_palette_ram
                     };
-                    cgb_palette_rgba(palette_ram, cgb_palette_index, color_id)
+                    cgb_palette_rgba(palette_ram, cgb_palette_index, color_id, crate::settings::ColorCorrection::None)
                 } else {
                     apply_palette(bgp, color_id)
                 };

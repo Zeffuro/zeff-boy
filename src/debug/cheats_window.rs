@@ -1,19 +1,15 @@
-use crate::cheats::{CheatCode, CheatPatch, parse_cheat, parse_cht_file, export_cht_file};
+use crate::cheats::{CheatCode, CheatPatch, export_cht_file, parse_cheat, parse_cht_file};
 use crate::debug::CheatState;
 use crate::debug::libretro_cheats;
 
-pub(super) fn draw_cheats_content(
-    ui: &mut egui::Ui,
-    state: &mut CheatState,
-) {
+pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.heading("Cheat Codes");
     ui.label("GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)");
-    
+
     ui.horizontal(|ui| {
         ui.label("Code:");
         let response = ui.text_edit_singleline(&mut state.input);
-        let enter_pressed = response.lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
         let add_clicked = ui.button("Add").clicked();
 
@@ -25,7 +21,8 @@ pub(super) fn draw_cheats_content(
                     } else {
                         state.name_input.trim().to_string()
                     };
-                    let parameter_value = patches.iter().copied().find_map(|p| p.default_user_value());
+                    let parameter_value =
+                        patches.iter().copied().find_map(|p| p.default_user_value());
                     state.user_codes.push(CheatCode {
                         name,
                         code_text: state.input.trim().to_string(),
@@ -58,7 +55,11 @@ pub(super) fn draw_cheats_content(
 
     // --- Import / Export (user cheats only) ---
     ui.horizontal(|ui| {
-        if ui.button("📂 Import .cht").on_hover_text("Import cheats from a .cht file into user cheats").clicked() {
+        if ui
+            .button("📂 Import .cht")
+            .on_hover_text("Import cheats from a .cht file into user cheats")
+            .clicked()
+        {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("Cheat files", &["cht", "txt"])
                 .pick_file()
@@ -78,7 +79,11 @@ pub(super) fn draw_cheats_content(
             }
         }
         if !state.user_codes.is_empty() {
-            if ui.button("💾 Export .cht").on_hover_text("Export user cheats to a .cht file").clicked() {
+            if ui
+                .button("💾 Export .cht")
+                .on_hover_text("Export user cheats to a .cht file")
+                .clicked()
+            {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Cheat files", &["cht"])
                     .set_file_name("cheats.cht")
@@ -87,7 +92,11 @@ pub(super) fn draw_cheats_content(
                     let content = export_cht_file(&state.user_codes);
                     match std::fs::write(&path, content) {
                         Ok(()) => {
-                            log::info!("Exported {} cheats to {}", state.user_codes.len(), path.display());
+                            log::info!(
+                                "Exported {} cheats to {}",
+                                state.user_codes.len(),
+                                path.display()
+                            );
                         }
                         Err(e) => {
                             state.parse_error = Some(format!("Failed to write file: {e}"));
@@ -154,10 +163,7 @@ fn draw_cheat_section(
             let summary = patches_summary(&cheat.patches);
             let label = format!(
                 "{} [{}] {} ({})",
-                cheat.name,
-                cheat.code_text,
-                summary,
-                type_label,
+                cheat.name, cheat.code_text, summary, type_label,
             );
             ui.label(label);
             if let Some(param) = cheat.parameter_value.as_mut() {
@@ -166,7 +172,11 @@ fn draw_cheat_section(
                 ui.label(format!("0x{param:02X}"));
             }
             if let Some(ref mut target) = copy_target {
-                if ui.small_button("📋").on_hover_text("Copy to User Cheats").clicked() {
+                if ui
+                    .small_button("📋")
+                    .on_hover_text("Copy to User Cheats")
+                    .clicked()
+                {
                     **target = Some(cheat.clone());
                 }
             }
@@ -198,8 +208,8 @@ fn draw_cheat_section(
 }
 
 fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
-    let header = egui::CollapsingHeader::new("🌐 libretro Cheat Database")
-        .default_open(state.libretro_show);
+    let header =
+        egui::CollapsingHeader::new("🌐 libretro Cheat Database").default_open(state.libretro_show);
     let response = header.show(ui, |ui| {
         ui.label(
             egui::RichText::new("Search and download cheats from the libretro-database.")
@@ -207,14 +217,27 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                 .color(egui::Color32::GRAY),
         );
 
-        let platform_label = if state.rom_is_gbc { "Game Boy Color" } else { "Game Boy" };
+        let platform_label = if state.rom_is_gbc {
+            "Game Boy Color"
+        } else {
+            "Game Boy"
+        };
         ui.label(format!("Platform: {platform_label}"));
+        if let Some(crc32) = state.rom_crc32 {
+            ui.label(format!("ROM CRC32: {crc32:08X}"));
+        }
+        if let Some(ref title) = state.rom_metadata_title {
+            ui.label(format!("Matched metadata: {title}"));
+        }
+        if let Some(ref rom_name) = state.rom_metadata_rom_name {
+            ui.label(format!("Metadata ROM name: {rom_name}"));
+        }
 
         ui.horizontal(|ui| {
             ui.label("Search:");
             let search_response = ui.text_edit_singleline(&mut state.libretro_search);
-            let enter_pressed = search_response.lost_focus()
-                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter_pressed =
+                search_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
             if ui.button("🔍 Search").clicked() || enter_pressed {
                 do_libretro_search(state);
@@ -233,14 +256,70 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                 state.libretro_results.clear();
             }
             ui.separator();
-            if ui.small_button("🌐 Browse online")
+            if ui
+                .small_button("🌐 Browse online")
                 .on_hover_text("Open the libretro cheat database in your browser")
                 .clicked()
             {
                 let url = libretro_cheats::browse_url(state.rom_is_gbc);
                 let _ = open::that(url);
             }
+            if ui
+                .small_button("⬇ Refresh metadata")
+                .on_hover_text(
+                    "Download/compile local GB+GBC metadata cache from libretro dat files",
+                )
+                .clicked()
+            {
+                match crate::libretro_metadata::refresh_cache_from_libretro() {
+                    Ok(stats) => {
+                        if let (Some(crc32), Some(rom_title)) =
+                            (state.rom_crc32, state.rom_title.as_deref())
+                        {
+                            let refreshed_meta =
+                                crate::libretro_metadata::lookup_cached(crc32, state.rom_is_gbc);
+                            state.rom_metadata_title =
+                                refreshed_meta.as_ref().map(|m| m.title.clone());
+                            state.rom_metadata_rom_name =
+                                refreshed_meta.as_ref().map(|m| m.rom_name.clone());
+                            state.libretro_search_hints =
+                                crate::libretro_metadata::build_cheat_search_hints(
+                                    rom_title,
+                                    refreshed_meta.as_ref(),
+                                );
+                        }
+                        state.libretro_status = Some(format!(
+                            "Metadata refreshed: {} total (GB {}, GBC {})",
+                            stats.total_entries, stats.gb_entries, stats.gbc_entries
+                        ));
+                    }
+                    Err(e) => {
+                        state.libretro_status = Some(format!("Failed to refresh metadata: {e}"));
+                    }
+                }
+            }
+            if ui
+                .small_button("✨ Use best guess")
+                .on_hover_text("Apply best metadata-derived search hint")
+                .clicked()
+            {
+                if let Some(best) = state.libretro_search_hints.first() {
+                    state.libretro_search = best.clone();
+                    do_libretro_search(state);
+                }
+            }
         });
+
+        if !state.libretro_search_hints.is_empty() {
+            let preview = state
+                .libretro_search_hints
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" | ");
+            ui.label(format!("Search hints: {preview}"));
+        }
 
         if let Some(ref status) = state.libretro_status {
             let color = if status.starts_with("Error") || status.starts_with("Failed") {
@@ -262,7 +341,11 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                     let mut download_file = None;
                     for name in &results {
                         ui.horizontal(|ui| {
-                            if ui.small_button("⬇").on_hover_text("Download and import").clicked() {
+                            if ui
+                                .small_button("⬇")
+                                .on_hover_text("Download and import")
+                                .clicked()
+                            {
                                 download_file = Some(name.clone());
                             }
                             ui.label(name);
@@ -281,10 +364,10 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                     .small()
                     .color(egui::Color32::GRAY),
             );
-            if ui.link(
-                egui::RichText::new("libretro-database")
-                    .small(),
-            ).clicked() {
+            if ui
+                .link(egui::RichText::new("libretro-database").small())
+                .clicked()
+            {
                 let _ = open::that("https://github.com/libretro/libretro-database");
             }
             ui.label(
@@ -299,10 +382,10 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                     .small()
                     .color(egui::Color32::from_rgb(180, 180, 100)),
             );
-            if ui.link(
-                egui::RichText::new("contributing to libretro-database")
-                    .small(),
-            ).clicked() {
+            if ui
+                .link(egui::RichText::new("contributing to libretro-database").small())
+                .clicked()
+            {
                 let _ = open::that("https://github.com/libretro/libretro-database/tree/master/cht");
             }
             ui.label(
@@ -319,6 +402,12 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
 fn do_libretro_search(state: &mut CheatState) {
     let cache_dir = libretro_cheats::libretro_cache_dir();
 
+    if state.libretro_search.trim().is_empty() {
+        if let Some(best_hint) = state.libretro_search_hints.first() {
+            state.libretro_search = best_hint.clone();
+        }
+    }
+
     if state.libretro_file_list.is_none() {
         state.libretro_status = Some("Fetching file list from GitHub...".to_string());
         match libretro_cheats::fetch_cheat_list(state.rom_is_gbc, &cache_dir) {
@@ -334,8 +423,12 @@ fn do_libretro_search(state: &mut CheatState) {
     }
 
     if let Some(ref file_list) = state.libretro_file_list {
-        let results =
-            libretro_cheats::search_filenames(&state.libretro_search, file_list, 50);
+        let results = libretro_cheats::search_filenames_with_hints(
+            &state.libretro_search,
+            file_list,
+            50,
+            &state.libretro_search_hints,
+        );
         let count = results.len();
         state.libretro_results = results;
         state.libretro_status = Some(format!("{count} match(es) found"));
@@ -370,10 +463,22 @@ fn patches_summary(patches: &[CheatPatch]) -> String {
             CheatPatch::RomWrite { address, value } => {
                 format!("ROM {address:04X}={}", value.display())
             }
-            CheatPatch::RomWriteIfEquals { address, value, compare } => {
-                format!("ROM {address:04X}={}?{}", value.display(), compare.display())
+            CheatPatch::RomWriteIfEquals {
+                address,
+                value,
+                compare,
+            } => {
+                format!(
+                    "ROM {address:04X}={}?{}",
+                    value.display(),
+                    compare.display()
+                )
             }
-            CheatPatch::RamWriteIfEquals { address, value, compare } => {
+            CheatPatch::RamWriteIfEquals {
+                address,
+                value,
+                compare,
+            } => {
                 format!("{address:04X}={}?{}", value.display(), compare.display())
             }
         })

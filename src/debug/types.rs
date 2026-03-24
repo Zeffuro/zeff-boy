@@ -296,7 +296,11 @@ pub(crate) struct CheatState {
     pub(crate) name_input: String,
     pub(crate) parse_error: Option<String>,
     pub(crate) rom_title: Option<String>,
+    pub(crate) rom_crc32: Option<u32>,
+    pub(crate) rom_metadata_title: Option<String>,
+    pub(crate) rom_metadata_rom_name: Option<String>,
     pub(crate) rom_is_gbc: bool,
+    pub(crate) libretro_search_hints: Vec<String>,
     pub(crate) libretro_search: String,
     pub(crate) libretro_results: Vec<String>,
     pub(crate) libretro_status: Option<String>,
@@ -313,7 +317,11 @@ impl CheatState {
             name_input: String::new(),
             parse_error: None,
             rom_title: None,
+            rom_crc32: None,
+            rom_metadata_title: None,
+            rom_metadata_rom_name: None,
             rom_is_gbc: false,
+            libretro_search_hints: Vec::new(),
             libretro_search: String::new(),
             libretro_results: Vec::new(),
             libretro_status: None,
@@ -442,6 +450,9 @@ pub(crate) struct RomInfoViewData {
     pub(crate) is_sgb_supported: bool,
     pub(crate) header_checksum_valid: bool,
     pub(crate) global_checksum_valid: bool,
+    pub(crate) rom_crc32: u32,
+    pub(crate) libretro_title: Option<String>,
+    pub(crate) libretro_rom_name: Option<String>,
     pub(crate) hardware_mode: HardwareMode,
     pub(crate) cartridge_state: CartridgeDebugInfo,
 }
@@ -490,11 +501,6 @@ impl OpcodeLog {
     }
 
     pub(crate) fn recent(&self, n: usize) -> Vec<(u16, u8, bool)> {
-        self.entries
-            .iter()
-            .rev()
-            .take(n)
-            .copied()
-            .collect()
+        self.entries.iter().rev().take(n).copied().collect()
     }
 }

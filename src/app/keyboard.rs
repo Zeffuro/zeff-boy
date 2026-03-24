@@ -50,7 +50,9 @@ impl App {
 
         if let Some(shortcut_action) = self.debug_windows.rebinding_shortcut {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
-                self.settings.shortcut_bindings.set(shortcut_action, key_code);
+                self.settings
+                    .shortcut_bindings
+                    .set(shortcut_action, key_code);
                 self.debug_windows.rebinding_shortcut = None;
             }
             return true;
@@ -89,7 +91,9 @@ impl App {
                 self.settings.uncapped_speed = self.uncapped_speed;
                 self.settings.save();
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(self.uncapped_speed));
+                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(
+                        self.uncapped_speed,
+                    ));
                 }
             }
             return true;

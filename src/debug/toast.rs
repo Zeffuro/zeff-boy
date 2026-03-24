@@ -73,7 +73,7 @@ impl ToastManager {
     pub(crate) fn error(&mut self, msg: impl Into<String>) {
         self.push(msg.into(), ToastKind::Error);
     }
-    
+
     pub(crate) fn set_persistent(
         &mut self,
         id: &'static str,
@@ -88,7 +88,11 @@ impl ToastManager {
                     id,
                     label: label.to_owned(),
                     color,
-                    started: if with_timer { Some(Instant::now()) } else { None },
+                    started: if with_timer {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    },
                 });
             }
         } else {
@@ -188,4 +192,3 @@ impl ToastManager {
         ctx.request_repaint();
     }
 }
-

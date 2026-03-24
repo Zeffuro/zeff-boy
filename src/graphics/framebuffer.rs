@@ -23,10 +23,22 @@ pub(crate) struct FramebufferRenderer {
 
 fn shader_source(preset: ShaderPreset) -> &'static str {
     match preset {
-        ShaderPreset::None => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/screen.wgsl")),
-        ShaderPreset::CRT => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/crt.wgsl")),
-        ShaderPreset::Scanlines => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/scanlines.wgsl")),
-        ShaderPreset::LCDGrid => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/lcd_grid.wgsl")),
+        ShaderPreset::None => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/screen.wgsl")
+        ),
+        ShaderPreset::CRT => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/crt.wgsl")
+        ),
+        ShaderPreset::Scanlines => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/scanlines.wgsl")
+        ),
+        ShaderPreset::LCDGrid => concat!(
+            include_str!("../shaders/common_vertex.wgsl"),
+            include_str!("../shaders/lcd_grid.wgsl")
+        ),
     }
 }
 
@@ -200,8 +212,11 @@ impl FramebufferRenderer {
         self.current_preset = preset;
     }
 
-
-    pub(crate) fn update_params(&self, queue: &wgpu::Queue, params: &crate::settings::ShaderParams) {
+    pub(crate) fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        params: &crate::settings::ShaderParams,
+    ) {
         let mut buf = [0u8; 32];
         buf[0..4].copy_from_slice(&params.scanline_intensity.to_le_bytes());
         buf[4..8].copy_from_slice(&params.crt_curvature.to_le_bytes());
@@ -262,7 +277,9 @@ impl FramebufferRenderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        self.output_view = self.output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.output_view = self
+            .output_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
     }
 
     pub(crate) fn render_to_offscreen(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -281,7 +298,14 @@ impl FramebufferRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_viewport(0.0, 0.0, self.offscreen_width as f32, self.offscreen_height as f32, 0.0, 1.0);
+        pass.set_viewport(
+            0.0,
+            0.0,
+            self.offscreen_width as f32,
+            self.offscreen_height as f32,
+            0.0,
+            1.0,
+        );
         pass.set_pipeline(&self.screen_pipeline);
         pass.set_bind_group(0, &self.screen_bind_group, &[]);
         pass.draw(0..3, 0..1);

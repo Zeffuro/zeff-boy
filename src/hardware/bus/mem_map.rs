@@ -1,8 +1,8 @@
 use super::Bus;
 use super::io_bus;
+use crate::cheats::CheatPatch;
 use crate::hardware::types::constants::*;
 use log::warn;
-use crate::cheats::CheatPatch;
 
 impl Bus {
     pub(crate) fn read_byte_raw(&self, addr: u16) -> u8 {
@@ -49,7 +49,11 @@ impl Bus {
                         CheatPatch::RomWrite { address, value } if address == addr => {
                             return value.resolve_with_current(raw);
                         }
-                        CheatPatch::RomWriteIfEquals { address, value, compare } if address == addr => {
+                        CheatPatch::RomWriteIfEquals {
+                            address,
+                            value,
+                            compare,
+                        } if address == addr => {
                             if compare.matches(raw) {
                                 return value.resolve_with_current(raw);
                             }

@@ -13,6 +13,8 @@ use crate::hardware::types::hardware_mode::HardwareModePreference;
 pub(crate) enum AudioRecordingFormat {
     Wav16,
     WavFloat,
+    OggVorbis,
+    Midi,
 }
 
 impl AudioRecordingFormat {
@@ -20,11 +22,21 @@ impl AudioRecordingFormat {
         match self {
             Self::Wav16 => "WAV 16-bit PCM",
             Self::WavFloat => "WAV 32-bit Float",
+            Self::OggVorbis => "OGG Vorbis",
+            Self::Midi => "MIDI (APU channels)",
         }
     }
 
     pub(crate) fn extension(self) -> &'static str {
-        "wav"
+        match self {
+            Self::Wav16 | Self::WavFloat => "wav",
+            Self::OggVorbis => "ogg",
+            Self::Midi => "mid",
+        }
+    }
+
+    pub(crate) fn is_midi(self) -> bool {
+        matches!(self, Self::Midi)
     }
 }
 
@@ -75,6 +87,28 @@ impl Default for ShaderPreset {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ColorCorrection {
+    None,
+    GbcLcd,
+}
+
+impl Default for ColorCorrection {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl ColorCorrection {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "None (raw RGB)",
+            Self::GbcLcd => "GBC LCD panel",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ShaderParams {
     #[serde(default = "default_scanline_intensity")]
@@ -85,9 +119,15 @@ pub(crate) struct ShaderParams {
     pub(crate) grid_intensity: f32,
 }
 
-fn default_scanline_intensity() -> f32 { 0.18 }
-fn default_crt_curvature() -> f32 { 0.3 }
-fn default_grid_intensity() -> f32 { 0.3 }
+fn default_scanline_intensity() -> f32 {
+    0.18
+}
+fn default_crt_curvature() -> f32 {
+    0.3
+}
+fn default_grid_intensity() -> f32 {
+    0.3
+}
 
 impl Default for ShaderParams {
     fn default() -> Self {
@@ -619,14 +659,30 @@ impl Default for GamepadBindings {
 impl GamepadBindings {
     pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::hardware::joypad::JoypadKey> {
         use crate::hardware::joypad::JoypadKey;
-        if name == self.a { return Some(JoypadKey::A); }
-        if name == self.b { return Some(JoypadKey::B); }
-        if name == self.start { return Some(JoypadKey::Start); }
-        if name == self.select { return Some(JoypadKey::Select); }
-        if name == self.up { return Some(JoypadKey::Up); }
-        if name == self.down { return Some(JoypadKey::Down); }
-        if name == self.left { return Some(JoypadKey::Left); }
-        if name == self.right { return Some(JoypadKey::Right); }
+        if name == self.a {
+            return Some(JoypadKey::A);
+        }
+        if name == self.b {
+            return Some(JoypadKey::B);
+        }
+        if name == self.start {
+            return Some(JoypadKey::Start);
+        }
+        if name == self.select {
+            return Some(JoypadKey::Select);
+        }
+        if name == self.up {
+            return Some(JoypadKey::Up);
+        }
+        if name == self.down {
+            return Some(JoypadKey::Down);
+        }
+        if name == self.left {
+            return Some(JoypadKey::Left);
+        }
+        if name == self.right {
+            return Some(JoypadKey::Right);
+        }
         None
     }
 
@@ -705,6 +761,8 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) shader_params: ShaderParams,
     #[serde(default)]
+    pub(crate) color_correction: ColorCorrection,
+    #[serde(default)]
     pub(crate) autohide_menu_bar: bool,
     #[serde(default)]
     pub(crate) shortcut_bindings: ShortcutBindings,
@@ -713,8 +771,12 @@ pub(crate) struct Settings {
     pub(crate) open_debug_tabs: Vec<String>,
 }
 
-fn default_rewind_speed() -> usize { 3 }
-fn default_rewind_seconds() -> usize { 10 }
+fn default_rewind_speed() -> usize {
+    3
+}
+fn default_rewind_seconds() -> usize {
+    10
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -745,10 +807,11 @@ impl Default for Settings {
             speedup_key: "Backquote".to_string(),
             rewind_enabled: true,
             rewind_key: "KeyR".to_string(),
-            rewind_speed: default_rewind_speed(),  // 3 = normal
+            rewind_speed: default_rewind_speed(), // 3 = normal
             rewind_seconds: default_rewind_seconds(),
             shader_preset: ShaderPreset::None,
             shader_params: ShaderParams::default(),
+            color_correction: ColorCorrection::None,
             autohide_menu_bar: false,
             shortcut_bindings: ShortcutBindings::default(),
             gamepad_bindings: GamepadBindings::default(),
@@ -1005,5 +1068,21 @@ mod tests {
     fn rewind_capture_interval_is_4() {
         let s = Settings::default();
         assert_eq!(s.rewind_capture_interval(), 4);
+    }
+
+    #[test]
+    fn color_correction_serde_roundtrip() {
+        let mut s = Settings::default();
+        s.color_correction = ColorCorrection::GbcLcd;
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.color_correction, ColorCorrection::GbcLcd);
+    }
+
+    #[test]
+    fn color_correction_defaults_to_none_when_missing() {
+        let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.color_correction, ColorCorrection::None);
     }
 }

@@ -6,7 +6,6 @@
 /// [N bytes]  save state data
 /// [remaining] frames: each 2 bytes (buttons_pressed: u8, dpad_pressed: u8)
 /// ```
-
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -140,4 +139,3 @@ impl ReplayPlayer {
         self.cursor >= self.frames.len()
     }
 }
-

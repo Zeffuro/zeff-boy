@@ -27,7 +27,7 @@ impl Timer {
             overflow_pending: false,
         }
     }
-    
+
     pub(crate) fn apply_bess_div(&mut self, div: u8) {
         self.div = div;
         self.sys_counter = (div as u16) << 8;

@@ -14,7 +14,9 @@ use super::rom_viewer::draw_rom_viewer_content;
 use super::tile_viewer::draw_tile_viewer_content;
 use super::tilemap_viewer::draw_tilemap_viewer_content;
 use super::ui::draw_debug_ui_content;
-use super::{DebugInfo, DebugUiActions, DebugViewerData, DebugWindowState, DisassemblyView, RomInfoViewData};
+use super::{
+    DebugInfo, DebugUiActions, DebugViewerData, DebugWindowState, DisassemblyView, RomInfoViewData,
+};
 use crate::graphics::AspectRatioMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,15 +58,26 @@ const TAB_META: &[(DebugTab, &str, &str)] = &[
 
 impl DebugTab {
     fn title(self) -> &'static str {
-        TAB_META.iter().find(|(t, _, _)| *t == self).map(|(_, title, _)| *title).unwrap_or("?")
+        TAB_META
+            .iter()
+            .find(|(t, _, _)| *t == self)
+            .map(|(_, title, _)| *title)
+            .unwrap_or("?")
     }
 
     pub(crate) fn persist_name(self) -> &'static str {
-        TAB_META.iter().find(|(t, _, _)| *t == self).map(|(_, _, name)| *name).unwrap_or("?")
+        TAB_META
+            .iter()
+            .find(|(t, _, _)| *t == self)
+            .map(|(_, _, name)| *name)
+            .unwrap_or("?")
     }
 
     pub(crate) fn from_persist_name(name: &str) -> Option<Self> {
-        TAB_META.iter().find(|(_, _, n)| *n == name).map(|(tab, _, _)| *tab)
+        TAB_META
+            .iter()
+            .find(|(_, _, n)| *n == name)
+            .map(|(tab, _, _)| *tab)
     }
 }
 
@@ -83,22 +96,28 @@ pub(crate) fn create_ide_dock_state() -> DockState<DebugTab> {
     let [_center, _left] = tree.split_left(
         egui_dock::NodeIndex::root(),
         0.25,
-        vec![DebugTab::CpuDebug, DebugTab::Performance, DebugTab::ApuViewer, DebugTab::InputViewer],
+        vec![
+            DebugTab::CpuDebug,
+            DebugTab::Performance,
+            DebugTab::ApuViewer,
+            DebugTab::InputViewer,
+        ],
     );
 
     // Right panel: Disassembler + Memory + ROM Viewer
     let [_center2, right] = tree.split_right(
         egui_dock::NodeIndex::root(),
         0.65,
-        vec![DebugTab::Disassembler, DebugTab::MemoryViewer, DebugTab::RomViewer],
+        vec![
+            DebugTab::Disassembler,
+            DebugTab::MemoryViewer,
+            DebugTab::RomViewer,
+        ],
     );
 
     // Bottom-right: Breakpoints + Cheats
-    let [_right_top, _right_bottom] = tree.split_below(
-        right,
-        0.65,
-        vec![DebugTab::Breakpoints, DebugTab::Cheats],
-    );
+    let [_right_top, _right_bottom] =
+        tree.split_below(right, 0.65, vec![DebugTab::Breakpoints, DebugTab::Cheats]);
 
     // Below game view: Graphics viewers grouped together
     let [_center3, _bottom] = tree.split_below(
@@ -125,7 +144,11 @@ pub(crate) fn create_dock_from_saved_tabs(tab_names: &[String]) -> DockState<Deb
     }
 
     let has_game_view = tabs.contains(&DebugTab::GameView);
-    let non_game_tabs: Vec<DebugTab> = tabs.iter().copied().filter(|t| *t != DebugTab::GameView).collect();
+    let non_game_tabs: Vec<DebugTab> = tabs
+        .iter()
+        .copied()
+        .filter(|t| *t != DebugTab::GameView)
+        .collect();
 
     if has_game_view {
         let mut dock = DockState::new(vec![DebugTab::GameView]);
@@ -149,13 +172,15 @@ pub(crate) fn save_open_tabs(dock: &DockState<DebugTab>) -> Vec<String> {
 }
 
 pub(crate) fn has_game_view_tab(dock: &DockState<DebugTab>) -> bool {
-    dock.iter_all_tabs().any(|(_, tab)| *tab == DebugTab::GameView)
+    dock.iter_all_tabs()
+        .any(|(_, tab)| *tab == DebugTab::GameView)
 }
 
 /// Re-add the GameView tab if it was lost (safety net).
 pub(crate) fn ensure_game_view_tab(dock: &mut DockState<DebugTab>) {
     if !has_game_view_tab(dock) {
-        dock.main_surface_mut().push_to_focused_leaf(DebugTab::GameView);
+        dock.main_surface_mut()
+            .push_to_focused_leaf(DebugTab::GameView);
     }
 }
 
@@ -167,10 +192,7 @@ pub(crate) fn toggle_dock_tab(dock: &mut DockState<DebugTab>, tab: DebugTab) {
     }
 }
 
-pub(crate) fn sync_show_flags(
-    debug_windows: &mut DebugWindowState,
-    dock: &DockState<DebugTab>,
-) {
+pub(crate) fn sync_show_flags(debug_windows: &mut DebugWindowState, dock: &DockState<DebugTab>) {
     let open: std::collections::HashSet<DebugTab> =
         dock.iter_all_tabs().map(|(_, tab)| *tab).collect();
     debug_windows.show_cpu_debug = open.contains(&DebugTab::CpuDebug);
@@ -240,15 +262,15 @@ impl TabViewer for DebugTabViewer<'_> {
                     ));
 
                     let rect = ui.available_rect_before_wrap();
-                    ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 30));
+                    ui.painter()
+                        .rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 30));
 
                     let offset_x = rect.min.x + (available.x - w) / 2.0;
                     let offset_y = rect.min.y + (available.y - h) / 2.0;
-                    let image_rect = egui::Rect::from_min_size(
-                        egui::pos2(offset_x, offset_y),
-                        egui::vec2(w, h),
-                    );
-                    let image = egui::Image::new(egui::load::SizedTexture::new(tex_id, egui::vec2(w, h)));
+                    let image_rect =
+                        egui::Rect::from_min_size(egui::pos2(offset_x, offset_y), egui::vec2(w, h));
+                    let image =
+                        egui::Image::new(egui::load::SizedTexture::new(tex_id, egui::vec2(w, h)));
                     ui.put(image_rect, image);
                 } else {
                     ui.centered_and_justified(|ui| {
@@ -281,7 +303,9 @@ impl TabViewer for DebugTabViewer<'_> {
             DebugTab::Disassembler => {
                 if let Some(view) = self.disassembly_view {
                     let disasm_actions = draw_disassembler_content(ui, view);
-                    self.actions.toggle_breakpoints.extend(disasm_actions.toggle_breakpoints);
+                    self.actions
+                        .toggle_breakpoints
+                        .extend(disasm_actions.toggle_breakpoints);
                     self.actions.step_requested |= disasm_actions.step_requested;
                     self.actions.continue_requested |= disasm_actions.continue_requested;
                     self.actions.backstep_requested |= disasm_actions.backstep_requested;
@@ -289,7 +313,8 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::MemoryViewer => {
                 if let Some(page) = self.memory_page {
-                    let writes = draw_memory_viewer_content(ui, &mut self.window_state.memory, page);
+                    let writes =
+                        draw_memory_viewer_content(ui, &mut self.window_state.memory, page);
                     self.actions.memory_writes.extend(writes);
                 }
             }
@@ -338,11 +363,7 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::Performance => {
                 if let Some(info) = self.debug_info {
-                    draw_performance_content(
-                        ui,
-                        info,
-                        &mut self.window_state.perf_history,
-                    );
+                    draw_performance_content(ui, info, &mut self.window_state.perf_history);
                 }
             }
             DebugTab::Breakpoints => {
@@ -360,7 +381,12 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::RomViewer => {
                 if let Some(page) = self.rom_page {
-                    draw_rom_viewer_content(ui, &mut self.window_state.rom_viewer, page, self.rom_size);
+                    draw_rom_viewer_content(
+                        ui,
+                        &mut self.window_state.rom_viewer,
+                        page,
+                        self.rom_size,
+                    );
                 }
             }
         }

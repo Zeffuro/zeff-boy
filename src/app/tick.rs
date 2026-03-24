@@ -16,7 +16,9 @@ impl App {
         if self.uncapped_speed != self.settings.uncapped_speed {
             self.uncapped_speed = self.settings.uncapped_speed;
             if let Some(thread) = &self.emu_thread {
-                thread.send(crate::emu_thread::EmuCommand::SetUncapped(self.uncapped_speed));
+                thread.send(crate::emu_thread::EmuCommand::SetUncapped(
+                    self.uncapped_speed,
+                ));
             }
         }
     }
@@ -78,14 +80,10 @@ impl App {
         }
     }
 
-    pub(super) fn render_frame(
-        &mut self,
-        ui_frame_data: Option<&crate::ui::UiFrameData>,
-    ) -> bool {
+    pub(super) fn render_frame(&mut self, ui_frame_data: Option<&crate::ui::UiFrameData>) -> bool {
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
-
 
         let settings_was_open = self.show_settings_window;
 
@@ -99,9 +97,8 @@ impl App {
         let is_rewinding = self.rewind_held && self.settings.rewind_enabled;
         let autohide_menu_bar = self.settings.autohide_menu_bar;
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
-        let rewind_seconds_back = self.rewind_pops as f32
-            * self.settings.rewind_capture_interval() as f32
-            / 60.0;
+        let rewind_seconds_back =
+            self.rewind_pops as f32 * self.settings.rewind_capture_interval() as f32 / 60.0;
 
         match gfx.render(graphics::RenderContext {
             debug_info: ui_frame_data.and_then(|d| d.debug_info.as_ref()),
@@ -129,6 +126,12 @@ impl App {
             Ok(result) => {
                 if result.open_file_requested {
                     self.open_file_dialog();
+                }
+                if result.reset_game_requested {
+                    self.reset_game();
+                }
+                if result.stop_game_requested {
+                    self.stop_game();
                 }
                 if result.save_state_file_requested {
                     self.save_state_file_dialog();
@@ -226,8 +229,12 @@ impl App {
         if actions.add_watchpoint.is_some() {
             pending.add_watchpoint = actions.add_watchpoint;
         }
-        pending.remove_breakpoints.extend(actions.remove_breakpoints);
-        pending.toggle_breakpoints.extend(actions.toggle_breakpoints);
+        pending
+            .remove_breakpoints
+            .extend(actions.remove_breakpoints);
+        pending
+            .toggle_breakpoints
+            .extend(actions.toggle_breakpoints);
         pending.memory_writes.extend(actions.memory_writes);
         if actions.apu_channel_mutes.is_some() {
             pending.apu_channel_mutes = actions.apu_channel_mutes;

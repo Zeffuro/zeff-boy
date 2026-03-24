@@ -61,7 +61,11 @@ impl GamepadHandler {
             })
             .unwrap_or((0.0, 0.0));
 
-        GamepadPoll { events, left_stick, raw_pressed }
+        GamepadPoll {
+            events,
+            left_stick,
+            raw_pressed,
+        }
     }
 
     pub(crate) fn set_rumble(&mut self, active: bool) {

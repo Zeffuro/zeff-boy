@@ -2,7 +2,9 @@ use super::Bus;
 use super::io_bus;
 use crate::hardware::cartridge::Cartridge;
 use crate::hardware::io::IO;
-use crate::hardware::types::constants::{HRAM_SIZE, IO_SIZE, IO_START, OAM_SIZE, VRAM_SIZE, WRAM_SIZE};
+use crate::hardware::types::constants::{
+    HRAM_SIZE, IO_SIZE, IO_START, OAM_SIZE, VRAM_SIZE, WRAM_SIZE,
+};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
 use anyhow::Result;

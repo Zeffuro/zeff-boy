@@ -9,14 +9,8 @@ pub(crate) enum CheatType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CheatValue {
     Constant(u8),
-    PreserveWithCurrent {
-        mask: u8,
-        base: u8,
-    },
-    UserParameterized {
-        mask: u8,
-        base: u8,
-    },
+    PreserveWithCurrent { mask: u8, base: u8 },
+    UserParameterized { mask: u8, base: u8 },
 }
 
 impl CheatValue {
@@ -81,9 +75,7 @@ impl CheatValue {
 
     pub(crate) fn resolve_user_parameter(self, user_value: u8) -> Self {
         match self {
-            Self::UserParameterized { mask, base } => {
-                Self::Constant((user_value & mask) | base)
-            }
+            Self::UserParameterized { mask, base } => Self::Constant((user_value & mask) | base),
             _ => self,
         }
     }
@@ -91,24 +83,25 @@ impl CheatValue {
     pub(crate) fn resolve_with_current(self, current: u8) -> u8 {
         match self {
             Self::Constant(value) => value,
-            Self::PreserveWithCurrent { mask, base }
-            | Self::UserParameterized { mask, base } => (current & mask) | base,
+            Self::PreserveWithCurrent { mask, base } | Self::UserParameterized { mask, base } => {
+                (current & mask) | base
+            }
         }
     }
 
     pub(crate) fn matches(self, observed: u8) -> bool {
         match self {
             Self::Constant(value) => observed == value,
-            Self::PreserveWithCurrent { mask, base }
-            | Self::UserParameterized { mask, base } => (observed & !mask) == base,
+            Self::PreserveWithCurrent { mask, base } | Self::UserParameterized { mask, base } => {
+                (observed & !mask) == base
+            }
         }
     }
 
     pub(crate) fn display(self) -> String {
         match self {
             Self::Constant(value) => format!("{value:02X}"),
-            Self::PreserveWithCurrent { mask, base }
-            | Self::UserParameterized { mask, base } => {
+            Self::PreserveWithCurrent { mask, base } | Self::UserParameterized { mask, base } => {
                 let hi = if (mask & 0xF0) == 0xF0 {
                     '?'
                 } else {
@@ -128,7 +121,9 @@ impl CheatValue {
 impl CheatPatch {
     pub(crate) fn has_user_parameter(self) -> bool {
         match self {
-            Self::RamWrite { value, .. } | Self::RomWrite { value, .. } => value.has_user_parameter(),
+            Self::RamWrite { value, .. } | Self::RomWrite { value, .. } => {
+                value.has_user_parameter()
+            }
             Self::RomWriteIfEquals { value, compare, .. }
             | Self::RamWriteIfEquals { value, compare, .. } => {
                 value.has_user_parameter() || compare.has_user_parameter()
@@ -138,11 +133,13 @@ impl CheatPatch {
 
     pub(crate) fn default_user_value(self) -> Option<u8> {
         match self {
-            Self::RamWrite { value, .. } | Self::RomWrite { value, .. } => value.default_user_value(),
-            Self::RomWriteIfEquals { value, compare, .. }
-            | Self::RamWriteIfEquals { value, compare, .. } => {
-                value.default_user_value().or_else(|| compare.default_user_value())
+            Self::RamWrite { value, .. } | Self::RomWrite { value, .. } => {
+                value.default_user_value()
             }
+            Self::RomWriteIfEquals { value, compare, .. }
+            | Self::RamWriteIfEquals { value, compare, .. } => value
+                .default_user_value()
+                .or_else(|| compare.default_user_value()),
         }
     }
 
@@ -305,7 +302,13 @@ fn try_parse_raw(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     let addr = u16::from_str_radix(addr_str, 16).ok()?;
     let value = CheatValue::constant(u8::from_str_radix(val_str, 16).ok()?);
 
-    Some((vec![CheatPatch::RamWrite { address: addr, value }], CheatType::Raw))
+    Some((
+        vec![CheatPatch::RamWrite {
+            address: addr,
+            value,
+        }],
+        CheatType::Raw,
+    ))
 }
 
 fn try_parse_gameshark(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
@@ -332,7 +335,7 @@ fn try_parse_gameshark_single(input: &str) -> Option<(Vec<CheatPatch>, CheatType
 
     let code_type_byte = u8::from_str_radix(&cleaned[0..2], 16).ok()?;
     let value = CheatValue::from_gameshark_value(&cleaned[2..4])?;
-    let addr_low  = u8::from_str_radix(&cleaned[4..6], 16).ok()?;
+    let addr_low = u8::from_str_radix(&cleaned[4..6], 16).ok()?;
     let addr_high = u8::from_str_radix(&cleaned[6..8], 16).ok()?;
     let address = (u16::from(addr_high) << 8) | u16::from(addr_low);
 
@@ -428,7 +431,8 @@ pub(crate) fn parse_cht_file(content: &str) -> Vec<CheatCode> {
 
             match parse_cheat(&code_text) {
                 Ok((patches, code_type)) => {
-                    let parameter_value = patches.iter().copied().find_map(|p| p.default_user_value());
+                    let parameter_value =
+                        patches.iter().copied().find_map(|p| p.default_user_value());
                     cheats.push(CheatCode {
                         name,
                         code_text,
@@ -439,7 +443,12 @@ pub(crate) fn parse_cht_file(content: &str) -> Vec<CheatCode> {
                     });
                 }
                 Err(e) => {
-                    log::warn!("Failed to parse cheat '{}': {} (code: {})", name, e, code_text);
+                    log::warn!(
+                        "Failed to parse cheat '{}': {} (code: {})",
+                        name,
+                        e,
+                        code_text
+                    );
                 }
             }
         }
@@ -455,10 +464,7 @@ pub(crate) fn export_cht_file(cheats: &[CheatCode]) -> String {
     for (i, cheat) in cheats.iter().enumerate() {
         out.push_str(&format!("cheat{}_desc = \"{}\"\n", i, cheat.name));
         out.push_str(&format!("cheat{}_code = \"{}\"\n", i, cheat.code_text));
-        out.push_str(&format!(
-            "cheat{}_enable = {}\n\n",
-            i, cheat.enabled
-        ));
+        out.push_str(&format!("cheat{}_enable = {}\n\n", i, cheat.enabled));
     }
 
     out
@@ -502,14 +508,15 @@ pub(crate) fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &
             match result {
                 Some((patches, ty)) => {
                     if let Some(prev) = detected_type {
-                        if prev != ty {
-                        }
+                        if prev != ty {}
                     }
                     detected_type = Some(ty);
                     all_patches.extend(patches);
                 }
                 None => {
-                    return Err("Unrecognized format in multi-code. Use GameShark (01VVAAAA), Game Genie (XXX-YYY), XPloder ($XXXXXXXX), or raw (AAAA:VV)");
+                    return Err(
+                        "Unrecognized format in multi-code. Use GameShark (01VVAAAA), Game Genie (XXX-YYY), XPloder ($XXXXXXXX), or raw (AAAA:VV)",
+                    );
                 }
             }
         }
@@ -521,10 +528,15 @@ pub(crate) fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &
         }
     }
 
-    Err("Unrecognized format. Use GameShark (01VVAAAA, supports ??/?0/0? values), Game Genie (XXX-YYY), XPloder ($XXXXXXXX), or raw (AAAA:VV)")
+    Err(
+        "Unrecognized format. Use GameShark (01VVAAAA, supports ??/?0/0? values), Game Genie (XXX-YYY), XPloder ($XXXXXXXX), or raw (AAAA:VV)",
+    )
 }
 
-pub(crate) fn collect_enabled_patches(user: &[CheatCode], libretro: &[CheatCode]) -> Vec<CheatPatch> {
+pub(crate) fn collect_enabled_patches(
+    user: &[CheatCode],
+    libretro: &[CheatCode],
+) -> Vec<CheatPatch> {
     user.iter()
         .chain(libretro.iter())
         .filter(|c| c.enabled)
@@ -554,43 +566,80 @@ fn sanitize_rom_title(title: &str) -> String {
         .collect()
 }
 
-fn cheats_dir(rom_title: &str) -> std::path::PathBuf {
+fn legacy_cheats_dir(rom_title: &str) -> std::path::PathBuf {
     crate::settings::Settings::settings_dir()
         .join("cheats")
         .join(sanitize_rom_title(rom_title))
 }
 
-pub(crate) fn save_game_cheats(rom_title: &str, user: &[CheatCode], libretro: &[CheatCode]) {
-    let dir = cheats_dir(rom_title);
-    let _ = std::fs::create_dir_all(&dir);
-
-    let user_path = dir.join("user.cht");
-    if user.is_empty() {
-        let _ = std::fs::remove_file(&user_path);
-    } else {
-        let _ = std::fs::write(&user_path, export_cht_file(user));
+fn storage_key(rom_title: Option<&str>, rom_crc32: Option<u32>) -> Option<String> {
+    if let Some(crc) = rom_crc32 {
+        return Some(format!("{crc:08X}"));
     }
 
-    let libretro_path = dir.join("libretro.cht");
-    if libretro.is_empty() {
-        let _ = std::fs::remove_file(&libretro_path);
-    } else {
-        let _ = std::fs::write(&libretro_path, export_cht_file(libretro));
-    }
+    rom_title
+        .map(sanitize_rom_title)
+        .filter(|title| !title.trim().is_empty())
 }
 
-pub(crate) fn load_game_cheats(rom_title: &str) -> (Vec<CheatCode>, Vec<CheatCode>) {
-    let dir = cheats_dir(rom_title);
+fn user_cheat_path(key: &str) -> std::path::PathBuf {
+    crate::settings::Settings::settings_dir()
+        .join("cheats")
+        .join(format!("{key}.cht"))
+}
 
-    let user = std::fs::read_to_string(dir.join("user.cht"))
+fn libretro_cheat_path(key: &str) -> std::path::PathBuf {
+    crate::settings::Settings::settings_dir()
+        .join("cheats")
+        .join("libretro")
+        .join(format!("{key}.cht"))
+}
+
+fn read_cheat_file(path: &std::path::Path) -> Vec<CheatCode> {
+    std::fs::read_to_string(path)
         .map(|c| parse_cht_file(&c))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    let libretro = std::fs::read_to_string(dir.join("libretro.cht"))
-        .map(|c| parse_cht_file(&c))
-        .unwrap_or_default();
+fn write_or_remove(path: &std::path::Path, cheats: &[CheatCode]) {
+    if cheats.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
 
-    (user, libretro)
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, export_cht_file(cheats));
+}
+
+pub(crate) fn save_game_cheats(
+    rom_title: Option<&str>,
+    rom_crc32: Option<u32>,
+    user: &[CheatCode],
+    libretro: &[CheatCode],
+) {
+    let Some(key) = storage_key(rom_title, rom_crc32) else {
+        return;
+    };
+
+    write_or_remove(&user_cheat_path(&key), user);
+    write_or_remove(&libretro_cheat_path(&key), libretro);
+}
+
+pub(crate) fn load_game_cheats(
+    rom_title: Option<&str>,
+    rom_crc32: Option<u32>,
+) -> (Vec<CheatCode>, Vec<CheatCode>) {
+    if let Some(key) = storage_key(rom_title, rom_crc32) {
+        let user = read_cheat_file(&user_cheat_path(&key));
+        let libretro = read_cheat_file(&libretro_cheat_path(&key));
+        if !user.is_empty() || !libretro.is_empty() {
+            return (user, libretro);
+        }
+    }
+
+    (Vec::new(), Vec::new())
 }
 
 #[cfg(test)]
@@ -855,13 +904,22 @@ mod tests {
 
     #[test]
     fn cheat_value_parameterized_display() {
-        let full = CheatValue::UserParameterized { mask: 0xFF, base: 0x00 };
+        let full = CheatValue::UserParameterized {
+            mask: 0xFF,
+            base: 0x00,
+        };
         assert_eq!(full.display(), "??");
 
-        let hi = CheatValue::UserParameterized { mask: 0xF0, base: 0x0A };
+        let hi = CheatValue::UserParameterized {
+            mask: 0xF0,
+            base: 0x0A,
+        };
         assert_eq!(hi.display(), "?A");
 
-        let lo = CheatValue::UserParameterized { mask: 0x0F, base: 0xA0 };
+        let lo = CheatValue::UserParameterized {
+            mask: 0x0F,
+            base: 0xA0,
+        };
         assert_eq!(lo.display(), "A?");
     }
 
@@ -1018,19 +1076,17 @@ mod tests {
 
     #[test]
     fn export_cht_file_roundtrip() {
-        let original = vec![
-            CheatCode {
-                name: "Test Cheat".to_string(),
-                code_text: "01FFC0DE".to_string(),
-                enabled: true,
-                parameter_value: None,
-                code_type: CheatType::GameShark,
-                patches: vec![CheatPatch::RamWrite {
-                    address: 0xC0DE,
-                    value: CheatValue::Constant(0xFF),
-                }],
-            },
-        ];
+        let original = vec![CheatCode {
+            name: "Test Cheat".to_string(),
+            code_text: "01FFC0DE".to_string(),
+            enabled: true,
+            parameter_value: None,
+            code_type: CheatType::GameShark,
+            patches: vec![CheatPatch::RamWrite {
+                address: 0xC0DE,
+                value: CheatValue::Constant(0xFF),
+            }],
+        }];
         let exported = export_cht_file(&original);
         let reimported = parse_cht_file(&exported);
         assert_eq!(reimported.len(), 1);

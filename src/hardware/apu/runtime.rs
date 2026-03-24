@@ -40,6 +40,24 @@ impl Apu {
         target.extend_from_slice(&self.sample_buffer);
         self.sample_buffer.clear();
     }
+    
+    pub(crate) fn channel_snapshot(&self) -> super::ApuChannelSnapshot {
+        use crate::hardware::types::constants::{NR10, NR32};
+
+        super::ApuChannelSnapshot {
+            ch1_enabled: self.channels[0].enabled,
+            ch1_frequency: self.ch1_frequency(),
+            ch1_volume: self.channels[0].envelope_volume,
+            ch2_enabled: self.channels[1].enabled,
+            ch2_frequency: self.ch2_frequency(),
+            ch2_volume: self.channels[1].envelope_volume,
+            ch3_enabled: self.channels[2].enabled,
+            ch3_frequency: self.ch3_frequency(),
+            ch3_output_level: (self.regs[(NR32 - NR10) as usize] >> 5) & 0x03,
+            ch4_enabled: self.channels[3].enabled,
+            ch4_volume: self.channels[3].envelope_volume,
+        }
+    }
 
     pub(crate) fn read(&self, addr: u16) -> u8 {
         match addr {

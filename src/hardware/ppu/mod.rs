@@ -70,6 +70,7 @@ pub(crate) struct PPU {
     pub(crate) debug_enable_bg: bool,
     pub(crate) debug_enable_window: bool,
     pub(crate) debug_enable_sprites: bool,
+    pub(crate) color_correction: crate::settings::ColorCorrection,
 }
 
 impl PPU {
@@ -114,6 +115,7 @@ impl PPU {
             debug_enable_bg: true,
             debug_enable_window: true,
             debug_enable_sprites: true,
+            color_correction: crate::settings::ColorCorrection::None,
         }
     }
 }

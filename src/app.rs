@@ -10,7 +10,10 @@ use winit::{
 
 use crate::{
     audio::AudioOutput,
-    debug::{DebugUiActions, DebugWindowState, FpsTracker, ToastManager, create_default_dock_state, create_dock_from_saved_tabs},
+    debug::{
+        DebugUiActions, DebugWindowState, FpsTracker, ToastManager, create_default_dock_state,
+        create_dock_from_saved_tabs,
+    },
     emu_thread::EmuThread,
     emulator::Emulator,
     graphics::Graphics,
@@ -180,7 +183,6 @@ const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33); // ~30Hz
 
 impl App {
-
     fn speed_mode(&self) -> SpeedMode {
         if self.uncapped_speed {
             SpeedMode::Uncapped
@@ -316,6 +318,9 @@ impl App {
 
         if let Some(recorder) = &mut self.audio_recorder {
             recorder.write_samples(&result.audio_samples);
+            if let Some(snapshot) = result.apu_snapshot {
+                recorder.write_apu_snapshot(snapshot);
+            }
         }
         self.recycled_audio_buffer = Some(result.audio_samples);
 
@@ -360,8 +365,7 @@ impl App {
             info.speed_mode_label = self.speed_mode_label();
             info.frames_in_flight = self.frames_in_flight;
             info.tilt_is_mbc7 = self.cached_is_mbc7;
-            info.tilt_stick_controls_tilt =
-                self.left_stick_controls_tilt(self.cached_is_mbc7);
+            info.tilt_stick_controls_tilt = self.left_stick_controls_tilt(self.cached_is_mbc7);
             info.tilt_left_stick = self.left_stick;
             info.tilt_keyboard = self.host_input.tilt_vector();
             info.tilt_mouse = self.mouse_tilt_vector();
@@ -529,9 +533,15 @@ impl App {
                                 && want_viewer_update,
                             skip_audio: match self.speed_mode() {
                                 SpeedMode::Uncapped => true,
-                                SpeedMode::FastForward => self.settings.mute_audio_during_fast_forward,
+                                SpeedMode::FastForward => {
+                                    self.settings.mute_audio_during_fast_forward
+                                }
                                 SpeedMode::Normal => false,
                             },
+                            midi_capture_active: self
+                                .audio_recorder
+                                .as_ref()
+                                .map_or(false, |r| r.is_midi()),
                             debug_actions: std::mem::replace(
                                 &mut self.pending_debug_actions,
                                 DebugUiActions::none(),
@@ -564,9 +574,14 @@ impl App {
                                         &self.debug_windows.memory.search_query,
                                         self.debug_windows.memory.search_mode,
                                     )
-                                    .map(|pattern| crate::emu_thread::MemorySearchRequest {
-                                        pattern,
-                                        max_results: self.debug_windows.memory.search_max_results,
+                                    .map(|pattern| {
+                                        crate::emu_thread::MemorySearchRequest {
+                                            pattern,
+                                            max_results: self
+                                                .debug_windows
+                                                .memory
+                                                .search_max_results,
+                                        }
                                     })
                                 } else {
                                     None
@@ -577,9 +592,14 @@ impl App {
                                         &self.debug_windows.rom_viewer.search_query,
                                         self.debug_windows.rom_viewer.search_mode,
                                     )
-                                    .map(|pattern| crate::emu_thread::MemorySearchRequest {
-                                        pattern,
-                                        max_results: self.debug_windows.rom_viewer.search_max_results,
+                                    .map(|pattern| {
+                                        crate::emu_thread::MemorySearchRequest {
+                                            pattern,
+                                            max_results: self
+                                                .debug_windows
+                                                .rom_viewer
+                                                .search_max_results,
+                                        }
                                     })
                                 } else {
                                     None
@@ -596,6 +616,7 @@ impl App {
                             ),
                             rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
                             rewind_seconds: self.settings.rewind_seconds,
+                            color_correction: self.settings.color_correction,
                         };
                         thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
                         self.frames_in_flight += 1;
@@ -637,7 +658,6 @@ impl App {
 
         crate::debug::sync_show_flags(&mut self.debug_windows, &self.debug_dock);
         self.debug_windows.memory.enable_editing = self.settings.enable_memory_editing;
-
 
         let ui_frame_data = self.cached_ui_data.take();
         let rendered = self.render_frame(ui_frame_data.as_ref());

@@ -146,6 +146,7 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             None,
             Some(&bg_color_ids),
             None,
+            ppu.color_correction,
         );
     }
 

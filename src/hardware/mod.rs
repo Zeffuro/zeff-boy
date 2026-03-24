@@ -1,4 +1,4 @@
-mod apu;
+pub(crate) mod apu;
 pub(crate) mod bus;
 pub(crate) mod cartridge;
 pub(crate) mod cpu;

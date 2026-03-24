@@ -1,6 +1,5 @@
 use crate::debug::RomInfoViewData;
 
-
 pub(super) fn draw_rom_info_content(ui: &mut egui::Ui, info: &RomInfoViewData) {
     ui.heading("Header");
     ui.monospace(format!("Title: {}", info.title));
@@ -30,6 +29,19 @@ pub(super) fn draw_rom_info_content(ui: &mut egui::Ui, info: &RomInfoViewData) {
         pass_fail(info.header_checksum_valid),
         pass_fail(info.global_checksum_valid),
     ));
+    ui.monospace(format!("CRC32: {:08X}", info.rom_crc32));
+
+    ui.separator();
+    ui.heading("libretro Metadata");
+    match (&info.libretro_title, &info.libretro_rom_name) {
+        (Some(title), Some(rom_name)) => {
+            ui.monospace(format!("Title: {title}"));
+            ui.monospace(format!("ROM File: {rom_name}"));
+        }
+        _ => {
+            ui.monospace("No local metadata match. Refresh libretro metadata in Cheats window.");
+        }
+    }
 
     ui.separator();
     ui.heading("Cartridge State");

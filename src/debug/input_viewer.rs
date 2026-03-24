@@ -55,4 +55,3 @@ pub(super) fn draw_input_viewer_content(ui: &mut egui::Ui, info: &DebugInfo) {
             .text("Smoothed Y (-1..1)"),
     );
 }
-

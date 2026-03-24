@@ -223,7 +223,6 @@ impl HuC3 {
         writer.write_u8(self.rtc_read_value);
     }
 
-
     pub(super) fn bess_mbc_writes(&self) -> Vec<(u16, u8)> {
         vec![
             (0x0000, if self.ram_enable { 0x0A } else { 0x00 }),

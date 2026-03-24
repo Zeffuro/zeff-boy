@@ -41,7 +41,10 @@ pub(super) fn draw_performance_content(
 
     ui.monospace(format!("FPS:        {:.1}", info.fps));
     ui.monospace(format!("Frame time: {:.2} ms", frame_time_ms));
-    ui.monospace(format!("Target:     {:.2} ms ({:.1} Hz)", target_ms, target_fps));
+    ui.monospace(format!(
+        "Target:     {:.2} ms ({:.1} Hz)",
+        target_ms, target_fps
+    ));
     let deviation = frame_time_ms - target_ms;
     let dev_str = if deviation.abs() < 0.01 {
         "±0.00 ms".to_string()
@@ -74,7 +77,11 @@ pub(super) fn draw_performance_content(
         painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 30));
 
         let samples = &history.fps_samples;
-        let min_fps = samples.iter().copied().fold(f64::INFINITY, f64::min).max(0.0);
+        let min_fps = samples
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0);
         let max_fps = samples.iter().copied().fold(0.0_f64, f64::max);
         let range = (max_fps - min_fps).max(1.0);
 
@@ -104,7 +111,10 @@ pub(super) fn draw_performance_content(
             let y = rect.bottom() - t * rect.height();
             painter.line_segment(
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 200, 60, 120)),
+                egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 200, 60, 120),
+                ),
             );
         }
 
@@ -124,4 +134,3 @@ pub(super) fn draw_performance_content(
         });
     }
 }
-

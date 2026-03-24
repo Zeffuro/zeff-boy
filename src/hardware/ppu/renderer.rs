@@ -52,6 +52,7 @@ pub(super) fn render_sprites(
     cgb_obj_palette_ram: Option<&[u8; 64]>,
     bg_color_ids: Option<&[u8; SCREEN_W]>,
     cgb_bg_priority_flags: Option<&[bool; SCREEN_W]>,
+    color_correction: crate::settings::ColorCorrection,
 ) {
     if lcdc & 0x02 == 0 {
         return;
@@ -155,7 +156,7 @@ pub(super) fn render_sprites(
 
             let rgba = if cgb_mode {
                 let obj_palette_ram = cgb_obj_palette_ram.expect("cgb obj palette ram provided");
-                cgb_palette_rgba(obj_palette_ram, sprite.cgb_obj_palette_index(), color_id)
+                cgb_palette_rgba(obj_palette_ram, sprite.cgb_obj_palette_index(), color_id, color_correction)
             } else {
                 apply_palette(dmg_palette, color_id)
             };

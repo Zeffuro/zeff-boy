@@ -29,7 +29,11 @@ pub(super) fn draw_disassembler_content(
             actions.step_requested = true;
         }
         ui.separator();
-        if ui.button("⏮ Step Back").on_hover_text("Rewind one snapshot (~4 frames) and pause").clicked() {
+        if ui
+            .button("⏮ Step Back")
+            .on_hover_text("Rewind one snapshot (~4 frames) and pause")
+            .clicked()
+        {
             actions.backstep_requested = true;
         }
     });
@@ -94,9 +98,7 @@ pub(super) fn draw_disassembler_content(
             job.append(&format!("{:<11} ", bytes), 0.0, fmt_code.clone());
             job.append(&line.mnemonic, 0.0, fmt_code);
 
-            let label = ui.add(
-                egui::Label::new(job).sense(egui::Sense::click()),
-            );
+            let label = ui.add(egui::Label::new(job).sense(egui::Sense::click()));
             if label.clicked() {
                 actions.toggle_breakpoints.push(line.address);
                 if has_breakpoint {

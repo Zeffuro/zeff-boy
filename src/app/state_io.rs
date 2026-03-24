@@ -6,6 +6,121 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 impl App {
+    fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
+        self.stop_emu_thread();
+
+        self.frames_in_flight = 0;
+        self.cached_ui_data = None;
+        self.recycled_framebuffer = None;
+        self.recycled_audio_buffer = None;
+        self.recycled_vram_buffer = None;
+        self.recycled_oam_buffer = None;
+        self.recycled_memory_page = None;
+        self.debug_windows.last_disasm_pc = None;
+
+        match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
+            Ok(mut emu) => {
+                if let Some(audio) = &self.audio {
+                    emu.bus.io.apu.set_sample_rate(audio.sample_rate());
+                }
+                let buttons = self.host_input.buttons_pressed();
+                let dpad = self.host_input.dpad_pressed();
+                emu.bus.io.joypad.apply_pressed_masks(buttons, dpad);
+
+                let rom_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("ROM")
+                    .to_string();
+                log::info!("Loaded ROM: {}", path.display());
+
+                self.cached_is_mbc7 = emu.is_mbc7_cartridge();
+                self.cached_rom_path = Some(emu.rom_path().to_path_buf());
+
+                let rom_header_title = emu.header.title.clone();
+                let is_gbc = emu.header.is_cgb_compatible || emu.header.is_cgb_exclusive;
+                let rom_crc32 = crc32fast::hash(emu.bus.cartridge.rom_bytes());
+                let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
+                let search_hints = crate::libretro_metadata::build_cheat_search_hints(
+                    &rom_header_title,
+                    libretro_meta.as_ref(),
+                );
+
+                if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
+                    crate::cheats::save_game_cheats(
+                        Some(old_title),
+                        self.debug_windows.cheat.rom_crc32,
+                        &self.debug_windows.cheat.user_codes,
+                        &self.debug_windows.cheat.libretro_codes,
+                    );
+                }
+
+                self.debug_windows.cheat.rom_title = Some(rom_header_title.clone());
+                self.debug_windows.cheat.rom_crc32 = Some(rom_crc32);
+                self.debug_windows.cheat.rom_metadata_title =
+                    libretro_meta.as_ref().map(|m| m.title.clone());
+                self.debug_windows.cheat.rom_metadata_rom_name =
+                    libretro_meta.as_ref().map(|m| m.rom_name.clone());
+                self.debug_windows.cheat.rom_is_gbc = is_gbc;
+                self.debug_windows.cheat.libretro_search_hints = search_hints;
+                self.debug_windows.cheat.libretro_search = self
+                    .debug_windows
+                    .cheat
+                    .libretro_search_hints
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| rom_header_title.clone());
+                self.debug_windows.cheat.libretro_results.clear();
+                self.debug_windows.cheat.libretro_file_list = None;
+                self.debug_windows.cheat.libretro_status = None;
+
+                let (user, libretro) =
+                    crate::cheats::load_game_cheats(Some(&rom_header_title), Some(rom_crc32));
+                self.debug_windows.cheat.user_codes = user;
+                self.debug_windows.cheat.libretro_codes = libretro;
+
+                self.emu_thread = Some(EmuThread::spawn(emu));
+                self.fps_tracker = FpsTracker::new();
+                self.last_frame_time = Instant::now();
+
+                if self.uncapped_speed {
+                    if let Some(thread) = &self.emu_thread {
+                        thread.send(EmuCommand::SetUncapped(true));
+                    }
+                }
+
+                self.settings.add_recent_rom(path);
+                self.settings.save();
+                self.toast_manager.info(format!("Loaded {rom_name}"));
+
+                if auto_load_state && self.settings.auto_save_state {
+                    if let Some(thread) = &self.emu_thread {
+                        thread.send(EmuCommand::AutoLoadState {
+                            buttons_pressed: self.host_input.buttons_pressed(),
+                            dpad_pressed: self.host_input.dpad_pressed(),
+                        });
+                    }
+                    match self.recv_cold_response() {
+                        Some(EmuResponse::LoadStateOk {
+                            path: p,
+                            framebuffer,
+                        }) => {
+                            self.latest_frame = Some(framebuffer);
+                            log::info!("Auto-loaded state from {}", p);
+                            self.toast_manager.success("Resumed from auto-save");
+                        }
+                        Some(EmuResponse::LoadStateFailed(_)) => {}
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to load ROM '{}': {}", path.display(), e);
+                self.toast_manager.error(format!("Failed to load ROM: {e}"));
+            }
+        }
+    }
+
     pub(super) fn save_state_slot(&mut self, slot: u8) {
         if self.emu_thread.is_none() {
             return;
@@ -52,7 +167,39 @@ impl App {
     }
 
     pub(super) fn load_rom(&mut self, path: &Path) {
+        self.load_rom_with_options(path, true);
+    }
+
+    pub(super) fn reset_game(&mut self) {
+        let Some(path) = self.cached_rom_path.clone() else {
+            self.toast_manager.info("No ROM loaded");
+            return;
+        };
+
+        self.load_rom_with_options(&path, false);
+        self.toast_manager.success("Game reset");
+    }
+
+    pub(super) fn stop_game(&mut self) {
+        if self.cached_rom_path.is_none() && self.emu_thread.is_none() {
+            self.toast_manager.info("No ROM loaded");
+            return;
+        }
+
+        if let Some(ref title) = self.debug_windows.cheat.rom_title {
+            crate::cheats::save_game_cheats(
+                Some(title),
+                self.debug_windows.cheat.rom_crc32,
+                &self.debug_windows.cheat.user_codes,
+                &self.debug_windows.cheat.libretro_codes,
+            );
+        }
+
         self.stop_emu_thread();
+
+        if let Some(gfx) = self.gfx.as_ref() {
+            gfx.clear_framebuffer();
+        }
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
@@ -61,87 +208,36 @@ impl App {
         self.recycled_vram_buffer = None;
         self.recycled_oam_buffer = None;
         self.recycled_memory_page = None;
-        self.debug_windows.last_disasm_pc = None;
+        self.latest_frame = None;
+        self.last_displayed_frame = None;
+        self.cached_rom_path = None;
+        self.cached_is_mbc7 = false;
+        self.paused = false;
+        self.rewind_held = false;
+        self.rewind_fill = 0.0;
+        self.rewind_throttle = 0;
+        self.rewind_pops = 0;
 
-        match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
-            Ok(mut emu) => {
-                if let Some(audio) = &self.audio {
-                    emu.bus.io.apu.set_sample_rate(audio.sample_rate());
-                }
-                let buttons = self.host_input.buttons_pressed();
-                let dpad = self.host_input.dpad_pressed();
-                emu.bus.io.joypad.apply_pressed_masks(buttons, dpad);
+        self.debug_windows.cheat.rom_title = None;
+        self.debug_windows.cheat.rom_crc32 = None;
+        self.debug_windows.cheat.rom_metadata_title = None;
+        self.debug_windows.cheat.rom_metadata_rom_name = None;
+        self.debug_windows.cheat.libretro_search_hints.clear();
+        self.debug_windows.cheat.libretro_search.clear();
+        self.debug_windows.cheat.libretro_results.clear();
+        self.debug_windows.cheat.libretro_file_list = None;
+        self.debug_windows.cheat.libretro_status = None;
+        self.debug_windows.cheat.user_codes.clear();
+        self.debug_windows.cheat.libretro_codes.clear();
 
-                let rom_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("ROM")
-                    .to_string();
-                log::info!("Loaded ROM: {}", path.display());
-                
-                self.cached_is_mbc7 = emu.is_mbc7_cartridge();
-                self.cached_rom_path = Some(emu.rom_path().to_path_buf());
-
-                let rom_header_title = emu.header.title.clone();
-                let is_gbc = emu.header.is_cgb_compatible || emu.header.is_cgb_exclusive;
-
-                if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
-                    crate::cheats::save_game_cheats(
-                        old_title,
-                        &self.debug_windows.cheat.user_codes,
-                        &self.debug_windows.cheat.libretro_codes,
-                    );
-                }
-
-                self.debug_windows.cheat.rom_title = Some(rom_header_title.clone());
-                self.debug_windows.cheat.rom_is_gbc = is_gbc;
-                self.debug_windows.cheat.libretro_search = rom_header_title.clone();
-                self.debug_windows.cheat.libretro_results.clear();
-                self.debug_windows.cheat.libretro_file_list = None;
-                self.debug_windows.cheat.libretro_status = None;
-
-                let (user, libretro) = crate::cheats::load_game_cheats(&rom_header_title);
-                self.debug_windows.cheat.user_codes = user;
-                self.debug_windows.cheat.libretro_codes = libretro;
-
-                self.emu_thread = Some(EmuThread::spawn(emu));
-                self.fps_tracker = FpsTracker::new();
-                self.last_frame_time = Instant::now();
-
-                if self.uncapped_speed {
-                    if let Some(thread) = &self.emu_thread {
-                        thread.send(EmuCommand::SetUncapped(true));
-                    }
-                }
-
-                self.settings.add_recent_rom(path);
-                self.settings.save();
-                self.toast_manager.info(format!("Loaded {rom_name}"));
-
-                if self.settings.auto_save_state {
-                    if let Some(thread) = &self.emu_thread {
-                        thread.send(EmuCommand::AutoLoadState {
-                            buttons_pressed: self.host_input.buttons_pressed(),
-                            dpad_pressed: self.host_input.dpad_pressed(),
-                        });
-                    }
-                    match self.recv_cold_response() {
-                        Some(EmuResponse::LoadStateOk { path: p, framebuffer }) => {
-                            self.latest_frame = Some(framebuffer);
-                            log::info!("Auto-loaded state from {}", p);
-                            self.toast_manager.success("Resumed from auto-save");
-                        }
-                        Some(EmuResponse::LoadStateFailed(_)) => {
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to load ROM '{}': {}", path.display(), e);
-                self.toast_manager.error(format!("Failed to load ROM: {e}"));
-            }
-        }
+        self.toast_manager.set_persistent(
+            "paused",
+            false,
+            "⏸ Paused",
+            egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+            false,
+        );
+        self.toast_manager.success("Stopped emulation");
     }
 
     pub(super) fn open_file_dialog(&mut self) {
@@ -248,7 +344,10 @@ impl App {
             });
         }
         match self.recv_cold_response() {
-            Some(EmuResponse::LoadStateOk { path: p, framebuffer }) => {
+            Some(EmuResponse::LoadStateOk {
+                path: p,
+                framebuffer,
+            }) => {
                 self.latest_frame = Some(framebuffer);
                 log::info!("Loaded state from {}", p);
                 self.toast_manager.success("State loaded from file");
@@ -296,16 +395,14 @@ impl App {
 
         match crate::debug::export::export_color_image_as_png(&path, &image) {
             Ok(()) => {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("file");
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
                 log::info!("Screenshot saved to {}", path.display());
                 self.toast_manager.success(format!("Saved {name}"));
             }
             Err(err) => {
                 log::error!("Failed to save screenshot: {}", err);
-                self.toast_manager.error(format!("Screenshot failed: {err}"));
+                self.toast_manager
+                    .error(format!("Screenshot failed: {err}"));
             }
         }
     }
@@ -356,10 +453,7 @@ impl App {
         if let Some(recorder) = self.audio_recorder.take() {
             match recorder.finish() {
                 Ok(path) => {
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("file");
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
                     log::info!("Audio saved to {}", path.display());
                     self.toast_manager.success(format!("Saved {name}"));
                 }
@@ -407,7 +501,8 @@ impl App {
             }
             Some(crate::emu_thread::EmuResponse::StateCaptureFailed(err)) => {
                 log::error!("Failed to capture state for replay: {}", err);
-                self.toast_manager.error(format!("Replay start failed: {err}"));
+                self.toast_manager
+                    .error(format!("Replay start failed: {err}"));
             }
             _ => {}
         }
@@ -418,17 +513,19 @@ impl App {
             let frame_count = recorder.frame_count();
             match recorder.finish() {
                 Ok(path) => {
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("file");
-                    log::info!("Replay saved to {} ({} frames)", path.display(), frame_count);
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                    log::info!(
+                        "Replay saved to {} ({} frames)",
+                        path.display(),
+                        frame_count
+                    );
                     self.toast_manager
                         .success(format!("Saved {name} ({frame_count} frames)"));
                 }
                 Err(err) => {
                     log::error!("Failed to save replay: {}", err);
-                    self.toast_manager.error(format!("Replay save failed: {err}"));
+                    self.toast_manager
+                        .error(format!("Replay save failed: {err}"));
                 }
             }
         }

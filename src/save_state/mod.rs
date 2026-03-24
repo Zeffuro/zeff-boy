@@ -78,7 +78,6 @@ impl<'a> StateReader<'a> {
         self.offset >= self.bytes.len()
     }
 
-
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self
             .offset
@@ -399,8 +398,8 @@ pub(crate) fn validate_compatibility(state: &SaveState, expected_rom_hash: [u8; 
 #[cfg(test)]
 mod tests {
     use super::{
-        SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, decode_state,
-        encode_state_bytes,
+        SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef,
+        decode_state, encode_state_bytes,
     };
     use crate::hardware::bus::Bus;
     use crate::hardware::cpu::CPU;
@@ -531,4 +530,3 @@ mod tests {
         assert_eq!(restored.last_opcode_pc, 0x0200);
     }
 }
-

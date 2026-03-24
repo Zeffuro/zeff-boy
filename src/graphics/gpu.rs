@@ -38,12 +38,14 @@ impl GpuContext {
             .ok_or_else(|| anyhow!("surface not supported by adapter"))?;
 
         let capabilities = surface.get_capabilities(&adapter);
-        
+
         if let Some(&fmt) = capabilities.formats.iter().find(|f| !f.is_srgb()) {
             config.format = fmt;
         }
-        
-        config.present_mode = if capabilities.present_modes.contains(&wgpu::PresentMode::AutoVsync)
+
+        config.present_mode = if capabilities
+            .present_modes
+            .contains(&wgpu::PresentMode::AutoVsync)
         {
             wgpu::PresentMode::AutoVsync
         } else {

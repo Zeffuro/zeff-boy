@@ -33,7 +33,8 @@ open = "5"
 png = "0.18.1"
 crc32fast = "1.5.0"
 arrayvec = "0.7.6"
-ureq = "2"
+ureq = "3.3.0"
+vorbis-encoder = "0.1"
 
 [profile.dev]
 opt-level = 1

@@ -21,6 +21,9 @@ pub(crate) struct UiFrameData {
 pub(crate) fn compute_static_rom_info(emu: &Emulator) -> RomInfoViewData {
     let header = emu.rom_info();
     let rom_bytes = emu.bus.cartridge.rom_bytes();
+    let rom_crc32 = crc32fast::hash(rom_bytes);
+    let is_gbc = header.is_cgb_compatible || header.is_cgb_exclusive;
+    let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
     let manufacturer = header
         .manufacturer_code
         .as_deref()
@@ -40,6 +43,9 @@ pub(crate) fn compute_static_rom_info(emu: &Emulator) -> RomInfoViewData {
         is_sgb_supported: header.is_sgb_supported,
         header_checksum_valid: header.verify_header_checksum(rom_bytes),
         global_checksum_valid: header.verify_global_checksum(rom_bytes),
+        rom_crc32,
+        libretro_title: libretro_meta.as_ref().map(|m| m.title.clone()),
+        libretro_rom_name: libretro_meta.as_ref().map(|m| m.rom_name.clone()),
         hardware_mode: emu.hardware_mode,
         cartridge_state: emu.cartridge_state(),
     }
@@ -74,7 +80,12 @@ pub(crate) fn collect_emu_snapshot(
             buf.copy_from_slice(src);
             buf
         } else {
-            reusable_vram.map(|mut v| { v.clear(); v }).unwrap_or_default()
+            reusable_vram
+                .map(|mut v| {
+                    v.clear();
+                    v
+                })
+                .unwrap_or_default()
         };
 
         Some(DebugViewerData {
@@ -86,7 +97,12 @@ pub(crate) fn collect_emu_snapshot(
                 buf.copy_from_slice(src);
                 buf
             } else {
-                reusable_oam.map(|mut v| { v.clear(); v }).unwrap_or_default()
+                reusable_oam
+                    .map(|mut v| {
+                        v.clear();
+                        v
+                    })
+                    .unwrap_or_default()
             },
             apu_regs: if req.show_apu_viewer {
                 emu.bus.io.apu.regs_snapshot()
@@ -133,7 +149,9 @@ pub(crate) fn collect_emu_snapshot(
     };
 
     let disassembly_view = if req.show_disassembler {
-        let pc_changed = req.last_disasm_pc.map_or(true, |last_pc| last_pc != emu.cpu.pc);
+        let pc_changed = req
+            .last_disasm_pc
+            .map_or(true, |last_pc| last_pc != emu.cpu.pc);
         if pc_changed {
             let mut breakpoints: Vec<u16> = emu.debug.breakpoints.iter().copied().collect();
             breakpoints.sort_unstable();
@@ -155,6 +173,14 @@ pub(crate) fn collect_emu_snapshot(
             // Only update the dynamic fields
             info.hardware_mode = emu.hardware_mode;
             info.cartridge_state = emu.cartridge_state();
+            if info.libretro_title.is_none() {
+                let is_gbc = info.is_cgb_compatible || info.is_cgb_exclusive;
+                if let Some(meta) = crate::libretro_metadata::lookup_cached(info.rom_crc32, is_gbc)
+                {
+                    info.libretro_title = Some(meta.title);
+                    info.libretro_rom_name = Some(meta.rom_name);
+                }
+            }
             info
         })
     } else {
@@ -172,7 +198,10 @@ pub(crate) fn collect_emu_snapshot(
         Some(buf)
     } else {
         // Keep the buffer alive for reuse even when not needed
-        reusable_memory_page.map(|mut v| { v.clear(); v })
+        reusable_memory_page.map(|mut v| {
+            v.clear();
+            v
+        })
     };
 
     let memory_search_results = if let Some(ref search) = req.memory_search {
@@ -194,7 +223,8 @@ pub(crate) fn collect_emu_snapshot(
                 if matched {
                     let matched_bytes: Vec<u8> = (0..pattern_len)
                         .map(|offset| {
-                            emu.bus.read_byte((start_addr as u16).wrapping_add(offset as u16))
+                            emu.bus
+                                .read_byte((start_addr as u16).wrapping_add(offset as u16))
                         })
                         .collect();
                     results.push(MemorySearchResult {
@@ -230,7 +260,9 @@ pub(crate) fn collect_emu_snapshot(
         let mut results = Vec::new();
         if !search.pattern.is_empty() {
             let pattern_len = search.pattern.len();
-            let end = rom_bytes.len().saturating_sub(pattern_len.saturating_sub(1));
+            let end = rom_bytes
+                .len()
+                .saturating_sub(pattern_len.saturating_sub(1));
             for start_offset in 0..end {
                 if results.len() >= search.max_results {
                     break;

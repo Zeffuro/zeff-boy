@@ -9,6 +9,7 @@ mod emulator;
 mod graphics;
 mod hardware;
 mod input;
+mod libretro_metadata;
 mod replay;
 mod rewind;
 mod rom_loader;
@@ -51,5 +52,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
- 
- 

@@ -19,7 +19,10 @@ pub(crate) fn draw_settings_window(
 
             ui.horizontal(|ui| {
                 for (i, &label) in TABS.iter().enumerate() {
-                    if ui.selectable_label(state.settings_tab == i, label).clicked() {
+                    if ui
+                        .selectable_label(state.settings_tab == i, label)
+                        .clicked()
+                    {
                         state.settings_tab = i;
                     }
                 }
@@ -129,10 +132,7 @@ fn draw_settings_controls(
 ) {
     ui.heading("System Shortcuts");
     if state.rebinding_shortcut.is_some() {
-        ui.label(
-            egui::RichText::new("Press a key to rebind...")
-                .color(egui::Color32::YELLOW),
-        );
+        ui.label(egui::RichText::new("Press a key to rebind...").color(egui::Color32::YELLOW));
     }
     egui::Grid::new("system_shortcuts")
         .spacing([8.0, 4.0])
@@ -226,10 +226,7 @@ fn draw_settings_controls(
     ui.separator();
     ui.heading("Gamepad Bindings");
     if state.rebinding_gamepad.is_some() {
-        ui.label(
-            egui::RichText::new("Press a gamepad button...")
-                .color(egui::Color32::YELLOW),
-        );
+        ui.label(egui::RichText::new("Press a gamepad button...").color(egui::Color32::YELLOW));
     }
     egui::Grid::new("gamepad_bindings")
         .spacing([8.0, 4.0])
@@ -303,11 +300,7 @@ fn draw_settings_controls(
                 TiltInputMode::Keyboard,
                 "Keyboard (WASD)",
             );
-            ui.selectable_value(
-                &mut settings.tilt_input_mode,
-                TiltInputMode::Mouse,
-                "Mouse",
-            );
+            ui.selectable_value(&mut settings.tilt_input_mode, TiltInputMode::Mouse, "Mouse");
             ui.selectable_value(
                 &mut settings.tilt_input_mode,
                 TiltInputMode::Auto,
@@ -320,10 +313,7 @@ fn draw_settings_controls(
         &mut settings.stick_tilt_bypass_lerp,
         "Direct left-stick tilt (bypass lerp)",
     );
-    ui.add(
-        egui::Slider::new(&mut settings.tilt_sensitivity, 0.1..=3.0)
-            .text("Tilt sensitivity"),
-    );
+    ui.add(egui::Slider::new(&mut settings.tilt_sensitivity, 0.1..=3.0).text("Tilt sensitivity"));
     ui.add(egui::Slider::new(&mut settings.tilt_lerp, 0.0..=1.0).text("Tilt smoothing"));
     ui.add(egui::Slider::new(&mut settings.tilt_deadzone, 0.0..=0.5).text("Tilt deadzone"));
 
@@ -386,11 +376,23 @@ fn draw_settings_audio(ui: &mut egui::Ui, settings: &mut Settings) {
                 AudioRecordingFormat::WavFloat,
                 AudioRecordingFormat::WavFloat.label(),
             );
+            ui.selectable_value(
+                &mut settings.audio_recording_format,
+                AudioRecordingFormat::OggVorbis,
+                AudioRecordingFormat::OggVorbis.label(),
+            );
+            ui.selectable_value(
+                &mut settings.audio_recording_format,
+                AudioRecordingFormat::Midi,
+                AudioRecordingFormat::Midi.label(),
+            );
         });
     ui.label(
         egui::RichText::new(
             "16-bit PCM: smaller files, standard compatibility.\n\
-             32-bit Float: lossless sample precision, ideal for editing."
+             32-bit Float: lossless sample precision, ideal for editing.\n\
+             OGG Vorbis: compressed lossy format, much smaller files.\n\
+             MIDI: records APU channel notes/volumes as a Standard MIDI File.",
         )
         .weak()
         .small(),
@@ -400,16 +402,40 @@ fn draw_settings_audio(ui: &mut egui::Ui, settings: &mut Settings) {
 fn draw_settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.heading("Display");
     ui.checkbox(&mut settings.show_fps, "Show FPS in debug panel");
-    ui.checkbox(
-        &mut settings.enable_memory_editing,
-        "Enable memory editing",
-    )
-    .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
+    ui.checkbox(&mut settings.enable_memory_editing, "Enable memory editing")
+        .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
     ui.checkbox(&mut settings.autohide_menu_bar, "Autohide menu bar")
         .on_hover_text(
             "Hide the menu bar when the cursor moves away from the top edge. \
              Hover near the top to reveal it.",
         );
+
+    ui.separator();
+    ui.heading("Color Correction");
+    use crate::settings::ColorCorrection;
+    egui::ComboBox::from_label("Color correction")
+        .selected_text(settings.color_correction.label())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut settings.color_correction,
+                ColorCorrection::None,
+                ColorCorrection::None.label(),
+            );
+            ui.selectable_value(
+                &mut settings.color_correction,
+                ColorCorrection::GbcLcd,
+                ColorCorrection::GbcLcd.label(),
+            );
+        });
+    ui.label(
+        egui::RichText::new(
+            "None: raw RGB555 colors expanded to 8-bit per channel.\n\
+             GBC LCD: simulates the color response of the Game Boy Color LCD panel,\n\
+             which shifts colors toward a warmer, slightly washed-out appearance.",
+        )
+        .weak()
+        .small(),
+    );
 }
 
 fn joypad_binding_label(action: BindingAction) -> &'static str {
@@ -433,4 +459,3 @@ fn tilt_binding_label(action: TiltBindingAction) -> &'static str {
         TiltBindingAction::Right => "Tilt Right",
     }
 }
-

@@ -1,7 +1,7 @@
+use crate::debug::BreakpointState;
+use crate::debug::DebugInfo;
 use crate::debug::breakpoints::WatchType;
 use crate::debug::ui::DebugUiActions;
-use crate::debug::DebugInfo;
-use crate::debug::BreakpointState;
 
 pub(super) fn draw_breakpoints_content(
     ui: &mut egui::Ui,
@@ -156,8 +156,8 @@ pub(super) fn draw_breakpoints_content(
     let suspended = info.cpu_state == "Suspended";
     if suspended {
         ui.separator();
-        let button = egui::Button::new("▶ Continue (F5)")
-            .fill(egui::Color32::from_rgb(40, 100, 40));
+        let button =
+            egui::Button::new("▶ Continue (F5)").fill(egui::Color32::from_rgb(40, 100, 40));
         if ui.add(button).clicked() {
             actions.continue_requested = true;
         }
@@ -177,5 +177,3 @@ fn parse_hex_u16(input: &str) -> Option<u16> {
         .ok()
         .or_else(|| trimmed.parse::<u16>().ok())
 }
-
-

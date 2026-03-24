@@ -299,7 +299,6 @@ fn read_u16(bus_read: &impl Fn(u16) -> u8, addr: u16) -> u16 {
     (hi << 8) | lo
 }
 
-
 fn fmt_signed(value: i8) -> Mnemonic {
     if value < 0 {
         mn!("-${:02X}", value.unsigned_abs())

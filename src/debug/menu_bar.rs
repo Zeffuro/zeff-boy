@@ -1,12 +1,14 @@
+use crate::debug::DebugWindowState;
 use crate::debug::dock::{DebugTab, toggle_dock_tab};
 use crate::graphics::AspectRatioMode;
-use crate::debug::DebugWindowState;
 use crate::settings::Settings;
 use egui_dock::DockState;
 use std::path::PathBuf;
 
 pub(crate) struct MenuActions {
     pub(crate) open_file_requested: bool,
+    pub(crate) reset_game_requested: bool,
+    pub(crate) stop_game_requested: bool,
     pub(crate) open_settings_requested: bool,
     pub(crate) save_state_file_requested: bool,
     pub(crate) load_state_file_requested: bool,
@@ -32,6 +34,8 @@ impl MenuActions {
     pub(crate) fn default(_autohide: bool) -> Self {
         Self {
             open_file_requested: false,
+            reset_game_requested: false,
+            stop_game_requested: false,
             open_settings_requested: false,
             save_state_file_requested: false,
             load_state_file_requested: false,
@@ -68,6 +72,8 @@ pub(crate) fn draw_menu_bar(
     is_paused: bool,
 ) -> MenuActions {
     let mut open_file_requested = false;
+    let mut reset_game_requested = false;
+    let mut stop_game_requested = false;
     let mut open_settings_requested = false;
     let mut save_state_file_requested = false;
     let mut load_state_file_requested = false;
@@ -111,6 +117,14 @@ pub(crate) fn draw_menu_bar(
                             }
                         }
                     });
+                }
+                if ui.button("Stop").clicked() {
+                    stop_game_requested = true;
+                    ui.close();
+                }
+                if ui.button("Reset Game").clicked() {
+                    reset_game_requested = true;
+                    ui.close();
                 }
                 if ui.button("Settings").clicked() {
                     open_settings_requested = true;
@@ -222,7 +236,10 @@ pub(crate) fn draw_menu_bar(
                         (ShaderPreset::CRT, "CRT"),
                     ];
                     for (preset, label) in presets {
-                        if ui.selectable_label(settings.shader_preset == preset, label).clicked() {
+                        if ui
+                            .selectable_label(settings.shader_preset == preset, label)
+                            .clicked()
+                        {
                             settings.shader_preset = preset;
                             toolbar_settings_changed = true;
                             ui.close();
@@ -233,14 +250,26 @@ pub(crate) fn draw_menu_bar(
                         let p = &mut settings.shader_params;
                         match settings.shader_preset {
                             ShaderPreset::Scanlines => {
-                                ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
+                                ui.add(
+                                    egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
+                                        .text("Intensity"),
+                                );
                             }
                             ShaderPreset::LCDGrid => {
-                                ui.add(egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0).text("Grid"));
+                                ui.add(
+                                    egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0)
+                                        .text("Grid"),
+                                );
                             }
                             ShaderPreset::CRT => {
-                                ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Scanlines"));
-                                ui.add(egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0).text("Curvature"));
+                                ui.add(
+                                    egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
+                                        .text("Scanlines"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0)
+                                        .text("Curvature"),
+                                );
                             }
                             ShaderPreset::None => {}
                         }
@@ -343,15 +372,27 @@ pub(crate) fn draw_menu_bar(
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let pause_icon = if is_paused { "▶" } else { "⏸" };
-                let pause_tooltip = if is_paused { "Resume (F9)" } else { "Pause (F9)" };
-                if ui.small_button(pause_icon).on_hover_text(pause_tooltip).clicked() {
+                let pause_tooltip = if is_paused {
+                    "Resume (F9)"
+                } else {
+                    "Pause (F9)"
+                };
+                if ui
+                    .small_button(pause_icon)
+                    .on_hover_text(pause_tooltip)
+                    .clicked()
+                {
                     toggle_pause = true;
                 }
 
                 ui.separator();
 
                 let mult = settings.fast_forward_multiplier;
-                if ui.small_button("+").on_hover_text("Increase speed multiplier").clicked() {
+                if ui
+                    .small_button("+")
+                    .on_hover_text("Increase speed multiplier")
+                    .clicked()
+                {
                     speed_change = 1;
                 }
                 ui.label(
@@ -359,7 +400,11 @@ pub(crate) fn draw_menu_bar(
                         .small()
                         .color(egui::Color32::LIGHT_GRAY),
                 );
-                if ui.small_button("−").on_hover_text("Decrease speed multiplier").clicked() {
+                if ui
+                    .small_button("−")
+                    .on_hover_text("Decrease speed multiplier")
+                    .clicked()
+                {
                     speed_change = -1;
                 }
 
@@ -378,8 +423,7 @@ pub(crate) fn draw_menu_bar(
                 let icon = if muted { "🔇" } else { "🔊" };
                 if ui.small_button(icon).clicked() {
                     if muted {
-                        settings.master_volume =
-                            settings.pre_mute_volume.take().unwrap_or(1.0);
+                        settings.master_volume = settings.pre_mute_volume.take().unwrap_or(1.0);
                     } else {
                         settings.pre_mute_volume = Some(settings.master_volume);
                         settings.master_volume = 0.0;
@@ -403,6 +447,8 @@ pub(crate) fn draw_menu_bar(
 
     MenuActions {
         open_file_requested,
+        reset_game_requested,
+        stop_game_requested,
         open_settings_requested,
         save_state_file_requested,
         load_state_file_requested,
@@ -428,4 +474,3 @@ pub(crate) fn draw_menu_bar(
         )),
     }
 }
-
