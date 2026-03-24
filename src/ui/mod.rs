@@ -1,6 +1,6 @@
 use crate::debug::{
-    DebugInfo, DebugUiActions, DebugViewerData, DisassemblyView, RomInfoViewData,
-    disassemble_around,
+    DebugInfo, DebugUiActions, DebugViewerData, DisassemblyView, MemorySearchResult,
+    RomInfoViewData, disassemble_around,
 };
 use crate::emu_thread::SnapshotRequest;
 use crate::emulator::Emulator;
@@ -12,6 +12,7 @@ pub(crate) struct UiFrameData {
     pub(crate) disassembly_view: Option<DisassemblyView>,
     pub(crate) rom_info_view: Option<RomInfoViewData>,
     pub(crate) memory_page: Option<Vec<(u16, u8)>>,
+    pub(crate) memory_search_results: Option<Vec<MemorySearchResult>>,
 }
 
 pub(crate) fn compute_static_rom_info(emu: &Emulator) -> RomInfoViewData {
@@ -171,12 +172,47 @@ pub(crate) fn collect_emu_snapshot(
         reusable_memory_page.map(|mut v| { v.clear(); v })
     };
 
+    let memory_search_results = if let Some(ref search) = req.memory_search {
+        let mut results = Vec::new();
+        if !search.pattern.is_empty() {
+            let pattern_len = search.pattern.len();
+            for start_addr in 0u32..=0xFFFFu32 {
+                if results.len() >= search.max_results {
+                    break;
+                }
+                let mut matched = true;
+                for (offset, &expected) in search.pattern.iter().enumerate() {
+                    let addr = (start_addr as u16).wrapping_add(offset as u16);
+                    if emu.bus.read_byte(addr) != expected {
+                        matched = false;
+                        break;
+                    }
+                }
+                if matched {
+                    let matched_bytes: Vec<u8> = (0..pattern_len)
+                        .map(|offset| {
+                            emu.bus.read_byte((start_addr as u16).wrapping_add(offset as u16))
+                        })
+                        .collect();
+                    results.push(MemorySearchResult {
+                        address: start_addr as u16,
+                        matched_bytes,
+                    });
+                }
+            }
+        }
+        Some(results)
+    } else {
+        None
+    };
+
     UiFrameData {
         debug_info,
         viewer_data,
         disassembly_view,
         rom_info_view,
         memory_page,
+        memory_search_results,
     }
 }
 

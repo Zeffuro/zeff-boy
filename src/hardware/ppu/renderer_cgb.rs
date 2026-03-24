@@ -14,9 +14,10 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     let mut bg_priority_flags = [false; SCREEN_W];
 
     for x in 0..SCREEN_W {
-        let (map_base, map_x, map_y) = {
+        let (map_base, map_x, map_y, is_window) = {
             let win_x = ppu.wx as i32 - 7;
-            if ppu.window_visible_on_current_line()
+            if ppu.debug_enable_window
+                && ppu.window_visible_on_current_line()
                 && win_x < SCREEN_W as i32
                 && (x as i32) >= win_x
             {
@@ -24,15 +25,25 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
                     win_tile_map_base,
                     (x as i32 - win_x) as usize,
                     ppu.window_line_counter as usize,
+                    true,
                 )
             } else {
                 (
                     bg_tile_map_base,
                     (x + ppu.scx as usize) & 0xFF,
                     (ly + ppu.scy as usize) & 0xFF,
+                    false,
                 )
             }
         };
+
+        if !ppu.debug_enable_bg && !is_window {
+            let offset = (ly * SCREEN_W + x) * 4;
+            ppu.framebuffer[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+            bg_color_ids[x] = 0;
+            bg_priority_flags[x] = false;
+            continue;
+        }
 
         let tile_row = map_y / 8;
         let tile_col = map_x / 8;
@@ -68,17 +79,19 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
     ppu.increment_window_line_counter_after_scanline();
 
-    render_sprites(
-        true,
-        ppu.lcdc,
-        ppu.obp0,
-        ppu.obp1,
-        vram,
-        oam,
-        ly,
-        &mut ppu.framebuffer,
-        Some(&ppu.obj_palette_ram),
-        Some(&bg_color_ids),
-        Some(&bg_priority_flags),
-    );
+    if ppu.debug_enable_sprites {
+        render_sprites(
+            true,
+            ppu.lcdc,
+            ppu.obp0,
+            ppu.obp1,
+            vram,
+            oam,
+            ly,
+            &mut ppu.framebuffer,
+            Some(&ppu.obj_palette_ram),
+            Some(&bg_color_ids),
+            Some(&bg_priority_flags),
+        );
+    }
 }

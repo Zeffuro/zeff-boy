@@ -41,6 +41,7 @@ pub(crate) struct Bus {
     pub(crate) trace_cpu_accesses: bool,
     cpu_read_trace: Vec<(u16, u8)>,
     cpu_write_trace: Vec<(u16, u8, u8)>,
+    pub(crate) game_genie_patches: Vec<crate::cheats::CheatPatch>,
 }
 
 impl Bus {}

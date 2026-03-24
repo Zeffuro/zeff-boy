@@ -104,13 +104,25 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     let mut bg_color_ids = [0u8; SCREEN_W];
 
     for x in 0..SCREEN_W {
-        let color_id = if let Some(window_color) =
-            render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, x)
-        {
-            window_color
+        let color_id = if ppu.debug_enable_window {
+            if let Some(window_color) =
+                render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, x)
+            {
+                Some(window_color)
+            } else {
+                None
+            }
         } else {
-            render_bg_line(ppu, vram, tile_data_unsigned, bg_tile_map_base, ly, x)
+            None
         };
+
+        let color_id = color_id.unwrap_or_else(|| {
+            if ppu.debug_enable_bg {
+                render_bg_line(ppu, vram, tile_data_unsigned, bg_tile_map_base, ly, x)
+            } else {
+                0
+            }
+        });
 
         bg_color_ids[x] = color_id;
 
@@ -121,19 +133,21 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
     ppu.increment_window_line_counter_after_scanline();
 
-    render_sprites(
-        false,
-        ppu.lcdc,
-        ppu.obp0,
-        ppu.obp1,
-        vram,
-        oam,
-        ly,
-        &mut ppu.framebuffer,
-        None,
-        Some(&bg_color_ids),
-        None,
-    );
+    if ppu.debug_enable_sprites {
+        render_sprites(
+            false,
+            ppu.lcdc,
+            ppu.obp0,
+            ppu.obp1,
+            vram,
+            oam,
+            ly,
+            &mut ppu.framebuffer,
+            None,
+            Some(&bg_color_ids),
+            None,
+        );
+    }
 
     if ppu.sgb_enabled {
         for x in 0..SCREEN_W {

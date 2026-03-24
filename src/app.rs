@@ -92,6 +92,7 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         replay_recorder: None,
         replay_player: None,
         rewind_held: false,
+        rewind_fill: 0.0,
     };
 
     event_loop.run_app(&mut app)?;
@@ -147,6 +148,7 @@ struct App {
     replay_recorder: Option<crate::replay::ReplayRecorder>,
     replay_player: Option<crate::replay::ReplayPlayer>,
     rewind_held: bool,
+    rewind_fill: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -281,6 +283,7 @@ impl App {
             self.recycled_framebuffer = Some(old);
         }
         self.cached_is_mbc7 = result.is_mbc7;
+        self.rewind_fill = result.rewind_fill;
 
         if let Some(gamepad) = &mut self.gamepad {
             gamepad.set_rumble(result.rumble);
@@ -351,9 +354,13 @@ impl App {
             info.tilt_smoothed = self.smoothed_tilt;
         }
 
+        if let Some(results) = ui_data.memory_search_results.take() {
+            self.debug_windows.memory.search_results = results;
+        }
+
         if let Some(ref viewer_data) = ui_data.viewer_data {
             if self.debug_windows.show_tile_viewer {
-                self.debug_windows.update_tile_viewer_dirty_inputs(
+                self.debug_windows.tiles.update_dirty_inputs(
                     &viewer_data.vram,
                     &viewer_data.bg_palette_ram,
                     &viewer_data.obj_palette_ram,
@@ -362,7 +369,7 @@ impl App {
                 );
             }
             if self.debug_windows.show_tilemap_viewer {
-                self.debug_windows.update_tilemap_dirty_inputs(
+                self.debug_windows.tilemap.update_dirty_inputs(
                     &viewer_data.vram,
                     &viewer_data.bg_palette_ram,
                     viewer_data.ppu,
@@ -386,10 +393,13 @@ impl App {
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::Rewind);
             }
-            if let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.recv_resp()) {
+            if let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.recv()) {
                 match resp {
                     crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
                         self.latest_frame = Some(framebuffer);
+                    }
+                    crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
+                        log::debug!("Rewind: {}", msg);
                     }
                     _ => {}
                 }
@@ -478,16 +488,29 @@ impl App {
                                 && want_viewer_update,
                             show_memory_viewer: self.debug_windows.show_memory_viewer
                                 && want_viewer_update,
-                            memory_view_start: self.debug_windows.memory_view_start,
+                            memory_view_start: self.debug_windows.memory.view_start,
                             last_disasm_pc: self.debug_windows.last_disasm_pc,
+                            memory_search: if self.debug_windows.memory.search_pending {
+                                self.debug_windows.memory.search_pending = false;
+                                crate::debug::memory_viewer::parse_search_query(
+                                    &self.debug_windows.memory.search_query,
+                                    self.debug_windows.memory.search_mode,
+                                )
+                                .map(|pattern| crate::emu_thread::MemorySearchRequest {
+                                    pattern,
+                                    max_results: self.debug_windows.memory.search_max_results,
+                                })
+                            } else {
+                                None
+                            },
                         },
                         reusable_framebuffer: self.recycled_framebuffer.take(),
                         reusable_audio_buffer: self.recycled_audio_buffer.take(),
                         reusable_vram_buffer: self.recycled_vram_buffer.take(),
                         reusable_oam_buffer: self.recycled_oam_buffer.take(),
                         reusable_memory_page: self.recycled_memory_page.take(),
-                        active_cheats: crate::cheats::collect_active_cheats(
-                            &self.debug_windows.cheats,
+                        cheats: crate::cheats::collect_enabled_patches(
+                            &self.debug_windows.cheat.codes,
                         ),
                         rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
                     };
@@ -528,7 +551,7 @@ impl App {
         }
 
         crate::debug::sync_show_flags(&mut self.debug_windows, &self.debug_dock);
-        self.debug_windows.enable_memory_editing = self.settings.enable_memory_editing;
+        self.debug_windows.memory.enable_editing = self.settings.enable_memory_editing;
 
 
         let ui_frame_data = self.cached_ui_data.take();

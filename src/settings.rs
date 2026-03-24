@@ -8,6 +8,32 @@ use winit::keyboard::KeyCode;
 
 use crate::hardware::types::hardware_mode::HardwareModePreference;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AudioRecordingFormat {
+    Wav16,
+    WavFloat,
+}
+
+impl AudioRecordingFormat {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Wav16 => "WAV 16-bit PCM",
+            Self::WavFloat => "WAV 32-bit Float",
+        }
+    }
+
+    pub(crate) fn extension(self) -> &'static str {
+        "wav"
+    }
+}
+
+impl Default for AudioRecordingFormat {
+    fn default() -> Self {
+        Self::Wav16
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BindingAction {
     Up,
@@ -46,6 +72,40 @@ pub(crate) enum ShaderPreset {
 impl Default for ShaderPreset {
     fn default() -> Self {
         Self::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ShaderParams {
+    #[serde(default = "default_scanline_intensity")]
+    pub(crate) scanline_intensity: f32,
+    #[serde(default = "default_crt_curvature")]
+    pub(crate) crt_curvature: f32,
+    #[serde(default = "default_grid_intensity")]
+    pub(crate) grid_intensity: f32,
+}
+
+fn default_scanline_intensity() -> f32 { 0.18 }
+fn default_crt_curvature() -> f32 { 0.3 }
+fn default_grid_intensity() -> f32 { 0.3 }
+
+impl Default for ShaderParams {
+    fn default() -> Self {
+        Self {
+            scanline_intensity: default_scanline_intensity(),
+            crt_curvature: default_crt_curvature(),
+            grid_intensity: default_grid_intensity(),
+        }
+    }
+}
+
+impl ShaderParams {
+    pub(crate) fn to_gpu_bytes(&self) -> [u8; 16] {
+        let mut buf = [0u8; 16];
+        buf[0..4].copy_from_slice(&self.scanline_intensity.to_le_bytes());
+        buf[4..8].copy_from_slice(&self.crt_curvature.to_le_bytes());
+        buf[8..12].copy_from_slice(&self.grid_intensity.to_le_bytes());
+        buf
     }
 }
 
@@ -315,97 +375,86 @@ fn keycode_to_string(code: KeyCode) -> String {
     format!("{code:?}")
 }
 
+static KEYCODE_MAP: phf::Map<&'static str, KeyCode> = phf::phf_map! {
+    "ArrowUp" => KeyCode::ArrowUp,
+    "ArrowDown" => KeyCode::ArrowDown,
+    "ArrowLeft" => KeyCode::ArrowLeft,
+    "ArrowRight" => KeyCode::ArrowRight,
+    "Enter" => KeyCode::Enter,
+    "ShiftLeft" => KeyCode::ShiftLeft,
+    "ShiftRight" => KeyCode::ShiftRight,
+    "ControlLeft" => KeyCode::ControlLeft,
+    "ControlRight" => KeyCode::ControlRight,
+    "AltLeft" => KeyCode::AltLeft,
+    "AltRight" => KeyCode::AltRight,
+    "Space" => KeyCode::Space,
+    "Backspace" => KeyCode::Backspace,
+    "Escape" => KeyCode::Escape,
+    "Tab" => KeyCode::Tab,
+    "CapsLock" => KeyCode::CapsLock,
+    "Minus" => KeyCode::Minus,
+    "Equal" => KeyCode::Equal,
+    "BracketLeft" => KeyCode::BracketLeft,
+    "BracketRight" => KeyCode::BracketRight,
+    "Backslash" => KeyCode::Backslash,
+    "Semicolon" => KeyCode::Semicolon,
+    "Quote" => KeyCode::Quote,
+    "Comma" => KeyCode::Comma,
+    "Period" => KeyCode::Period,
+    "Slash" => KeyCode::Slash,
+    "Backquote" => KeyCode::Backquote,
+    "KeyA" => KeyCode::KeyA,
+    "KeyB" => KeyCode::KeyB,
+    "KeyC" => KeyCode::KeyC,
+    "KeyD" => KeyCode::KeyD,
+    "KeyE" => KeyCode::KeyE,
+    "KeyF" => KeyCode::KeyF,
+    "KeyG" => KeyCode::KeyG,
+    "KeyH" => KeyCode::KeyH,
+    "KeyI" => KeyCode::KeyI,
+    "KeyJ" => KeyCode::KeyJ,
+    "KeyK" => KeyCode::KeyK,
+    "KeyL" => KeyCode::KeyL,
+    "KeyM" => KeyCode::KeyM,
+    "KeyN" => KeyCode::KeyN,
+    "KeyO" => KeyCode::KeyO,
+    "KeyP" => KeyCode::KeyP,
+    "KeyQ" => KeyCode::KeyQ,
+    "KeyR" => KeyCode::KeyR,
+    "KeyS" => KeyCode::KeyS,
+    "KeyT" => KeyCode::KeyT,
+    "KeyU" => KeyCode::KeyU,
+    "KeyV" => KeyCode::KeyV,
+    "KeyW" => KeyCode::KeyW,
+    "KeyX" => KeyCode::KeyX,
+    "KeyY" => KeyCode::KeyY,
+    "KeyZ" => KeyCode::KeyZ,
+    "Digit0" => KeyCode::Digit0,
+    "Digit1" => KeyCode::Digit1,
+    "Digit2" => KeyCode::Digit2,
+    "Digit3" => KeyCode::Digit3,
+    "Digit4" => KeyCode::Digit4,
+    "Digit5" => KeyCode::Digit5,
+    "Digit6" => KeyCode::Digit6,
+    "Digit7" => KeyCode::Digit7,
+    "Digit8" => KeyCode::Digit8,
+    "Digit9" => KeyCode::Digit9,
+    "F1" => KeyCode::F1,
+    "F2" => KeyCode::F2,
+    "F3" => KeyCode::F3,
+    "F4" => KeyCode::F4,
+    "F5" => KeyCode::F5,
+    "F6" => KeyCode::F6,
+    "F7" => KeyCode::F7,
+    "F8" => KeyCode::F8,
+    "F9" => KeyCode::F9,
+    "F10" => KeyCode::F10,
+    "F11" => KeyCode::F11,
+    "F12" => KeyCode::F12,
+};
+
 fn keycode_from_string(name: &str) -> Option<KeyCode> {
-    match name {
-        "ArrowUp" => Some(KeyCode::ArrowUp),
-        "ArrowDown" => Some(KeyCode::ArrowDown),
-        "ArrowLeft" => Some(KeyCode::ArrowLeft),
-        "ArrowRight" => Some(KeyCode::ArrowRight),
-        "Enter" => Some(KeyCode::Enter),
-        "ShiftLeft" => Some(KeyCode::ShiftLeft),
-        "ShiftRight" => Some(KeyCode::ShiftRight),
-        "ControlLeft" => Some(KeyCode::ControlLeft),
-        "ControlRight" => Some(KeyCode::ControlRight),
-        "AltLeft" => Some(KeyCode::AltLeft),
-        "AltRight" => Some(KeyCode::AltRight),
-        "Space" => Some(KeyCode::Space),
-        "Backspace" => Some(KeyCode::Backspace),
-        "Escape" => Some(KeyCode::Escape),
-        "Tab" => Some(KeyCode::Tab),
-        "CapsLock" => Some(KeyCode::CapsLock),
-        "Minus" => Some(KeyCode::Minus),
-        "Equal" => Some(KeyCode::Equal),
-        "BracketLeft" => Some(KeyCode::BracketLeft),
-        "BracketRight" => Some(KeyCode::BracketRight),
-        "Backslash" => Some(KeyCode::Backslash),
-        "Semicolon" => Some(KeyCode::Semicolon),
-        "Quote" => Some(KeyCode::Quote),
-        "Comma" => Some(KeyCode::Comma),
-        "Period" => Some(KeyCode::Period),
-        "Slash" => Some(KeyCode::Slash),
-        "Backquote" => Some(KeyCode::Backquote),
-        _ if name.len() == 4 && name.starts_with("Key") => {
-            match name.chars().nth(3).unwrap_or_default() {
-                'A' => Some(KeyCode::KeyA),
-                'B' => Some(KeyCode::KeyB),
-                'C' => Some(KeyCode::KeyC),
-                'D' => Some(KeyCode::KeyD),
-                'E' => Some(KeyCode::KeyE),
-                'F' => Some(KeyCode::KeyF),
-                'G' => Some(KeyCode::KeyG),
-                'H' => Some(KeyCode::KeyH),
-                'I' => Some(KeyCode::KeyI),
-                'J' => Some(KeyCode::KeyJ),
-                'K' => Some(KeyCode::KeyK),
-                'L' => Some(KeyCode::KeyL),
-                'M' => Some(KeyCode::KeyM),
-                'N' => Some(KeyCode::KeyN),
-                'O' => Some(KeyCode::KeyO),
-                'P' => Some(KeyCode::KeyP),
-                'Q' => Some(KeyCode::KeyQ),
-                'R' => Some(KeyCode::KeyR),
-                'S' => Some(KeyCode::KeyS),
-                'T' => Some(KeyCode::KeyT),
-                'U' => Some(KeyCode::KeyU),
-                'V' => Some(KeyCode::KeyV),
-                'W' => Some(KeyCode::KeyW),
-                'X' => Some(KeyCode::KeyX),
-                'Y' => Some(KeyCode::KeyY),
-                'Z' => Some(KeyCode::KeyZ),
-                _ => None,
-            }
-        }
-        _ if name.len() == 6 && name.starts_with("Digit") => {
-            match name.chars().nth(5).unwrap_or_default() {
-                '0' => Some(KeyCode::Digit0),
-                '1' => Some(KeyCode::Digit1),
-                '2' => Some(KeyCode::Digit2),
-                '3' => Some(KeyCode::Digit3),
-                '4' => Some(KeyCode::Digit4),
-                '5' => Some(KeyCode::Digit5),
-                '6' => Some(KeyCode::Digit6),
-                '7' => Some(KeyCode::Digit7),
-                '8' => Some(KeyCode::Digit8),
-                '9' => Some(KeyCode::Digit9),
-                _ => None,
-            }
-        }
-        _ => match name {
-            "F1" => Some(KeyCode::F1),
-            "F2" => Some(KeyCode::F2),
-            "F3" => Some(KeyCode::F3),
-            "F4" => Some(KeyCode::F4),
-            "F5" => Some(KeyCode::F5),
-            "F6" => Some(KeyCode::F6),
-            "F7" => Some(KeyCode::F7),
-            "F8" => Some(KeyCode::F8),
-            "F9" => Some(KeyCode::F9),
-            "F10" => Some(KeyCode::F10),
-            "F11" => Some(KeyCode::F11),
-            "F12" => Some(KeyCode::F12),
-            _ => None,
-        },
-    }
+    KEYCODE_MAP.get(name).copied()
 }
 
 const MAX_RECENT_ROMS: usize = 10;
@@ -438,6 +487,8 @@ pub(crate) struct Settings {
     #[serde(skip)]
     pub(crate) pre_mute_volume: Option<f32>,
     pub(crate) mute_audio_during_fast_forward: bool,
+    #[serde(default)]
+    pub(crate) audio_recording_format: AudioRecordingFormat,
     pub(crate) frame_skip: bool,
     pub(crate) enable_memory_editing: bool,
     pub(crate) auto_save_state: bool,
@@ -446,6 +497,10 @@ pub(crate) struct Settings {
     pub(crate) rewind_enabled: bool,
     pub(crate) rewind_key: String,
     pub(crate) shader_preset: ShaderPreset,
+    #[serde(default)]
+    pub(crate) shader_params: ShaderParams,
+    #[serde(default)]
+    pub(crate) autohide_menu_bar: bool,
     pub(crate) open_debug_tabs: Vec<String>,
 }
 
@@ -470,6 +525,7 @@ impl Default for Settings {
             master_volume: 1.0,
             pre_mute_volume: None,
             mute_audio_during_fast_forward: false,
+            audio_recording_format: AudioRecordingFormat::default(),
             frame_skip: false,
             enable_memory_editing: false,
             auto_save_state: false,
@@ -478,6 +534,8 @@ impl Default for Settings {
             rewind_enabled: true,
             rewind_key: "KeyR".to_string(),
             shader_preset: ShaderPreset::None,
+            shader_params: ShaderParams::default(),
+            autohide_menu_bar: false,
             open_debug_tabs: vec!["CpuDebug".to_string()],
         }
     }

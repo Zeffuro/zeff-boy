@@ -78,6 +78,7 @@ impl Bus {
             trace_cpu_accesses: false,
             cpu_read_trace: Vec::with_capacity(8),
             cpu_write_trace: Vec::with_capacity(4),
+            game_genie_patches: Vec::new(),
         };
 
         reader.read_exact(&mut bus.vram)?;

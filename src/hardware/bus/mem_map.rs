@@ -2,10 +2,10 @@ use super::Bus;
 use super::io_bus;
 use crate::hardware::types::constants::*;
 use log::warn;
+use crate::cheats::CheatPatch;
 
 impl Bus {
-    #[allow(unreachable_patterns)]
-    pub(crate) fn read_byte(&self, addr: u16) -> u8 {
+    pub(crate) fn read_byte_raw(&self, addr: u16) -> u8 {
         match addr {
             ROM_BANK_0_START..=ROM_BANK_N_END => self.cartridge.read_rom(addr),
             VRAM_START..=VRAM_END => {
@@ -21,10 +21,7 @@ impl Bus {
                 let local = (addr - WRAM_N_START) as usize;
                 self.wram[self.active_wram_bank() * WRAM_SIZE + local]
             }
-            ECHO_RAM_START..=ECHO_RAM_END => {
-                let mirror_addr = addr - ECHO_RAM_OFFSET;
-                self.read_byte(mirror_addr)
-            }
+            ECHO_RAM_START..=ECHO_RAM_END => self.read_byte_raw(addr - ECHO_RAM_OFFSET),
             OAM_START..=OAM_END => {
                 if !self.io.ppu.cpu_oam_accessible() {
                     return 0xFF;
@@ -39,6 +36,30 @@ impl Bus {
             HRAM_START..=HRAM_END => self.hram[(addr - HRAM_START) as usize],
             IE_ADDR => self.ie,
             _ => 0xFF,
+        }
+    }
+
+    #[allow(unreachable_patterns)]
+    pub(crate) fn read_byte(&self, addr: u16) -> u8 {
+        match addr {
+            ROM_BANK_0_START..=ROM_BANK_N_END => {
+                let raw = self.read_byte_raw(addr);
+                for patch in &self.game_genie_patches {
+                    match *patch {
+                        CheatPatch::RomWrite { address, value } if address == addr => {
+                            return value.resolve_with_current(raw);
+                        }
+                        CheatPatch::RomWriteIfEquals { address, value, compare } if address == addr => {
+                            if compare.matches(raw) {
+                                return value.resolve_with_current(raw);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                raw
+            }
+            _ => self.read_byte_raw(addr),
         }
     }
 

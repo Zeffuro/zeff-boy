@@ -5,10 +5,10 @@ use std::time::Instant;
 impl App {
     pub(super) fn update_debug_cache_edges(&mut self) {
         if self.debug_windows.show_tile_viewer && !self.tile_viewer_was_open {
-            self.debug_windows.invalidate_tile_viewer_cache();
+            self.debug_windows.tiles.invalidate_cache();
         }
         if self.debug_windows.show_tilemap_viewer && !self.tilemap_viewer_was_open {
-            self.debug_windows.invalidate_tilemap_cache();
+            self.debug_windows.tilemap.invalidate_cache();
         }
     }
 
@@ -78,11 +78,7 @@ impl App {
         };
 
 
-        let settings_before = if self.show_settings_window {
-            Some(self.settings.clone())
-        } else {
-            None
-        };
+        let settings_was_open = self.show_settings_window;
 
         let speed_label = ui_frame_data
             .and_then(|d| d.debug_info.as_ref())
@@ -92,27 +88,29 @@ impl App {
         let is_recording_replay = self.replay_recorder.is_some();
         let is_playing_replay = self.replay_player.is_some();
         let is_rewinding = self.rewind_held && self.settings.rewind_enabled;
+        let autohide_menu_bar = self.settings.autohide_menu_bar;
+        let cursor_y = self.cursor_pos.map(|(_, y)| y);
 
-        match gfx.render(
-            ui_frame_data.and_then(|d| d.debug_info.as_ref()),
-            ui_frame_data.and_then(|d| d.viewer_data.as_ref()),
-            ui_frame_data
-                .and_then(|d| d.rom_info_view.as_ref()),
-            ui_frame_data
-                .and_then(|d| d.disassembly_view.as_ref()),
-            ui_frame_data
-                .and_then(|d| d.memory_page.as_deref()),
-            &mut self.debug_windows,
-            &mut self.settings,
-            &mut self.show_settings_window,
-            &mut self.debug_dock,
-            &mut self.toast_manager,
-            speed_label,
-            is_recording,
+        match gfx.render(graphics::RenderContext {
+            debug_info: ui_frame_data.and_then(|d| d.debug_info.as_ref()),
+            viewer_data: ui_frame_data.and_then(|d| d.viewer_data.as_ref()),
+            rom_info_view: ui_frame_data.and_then(|d| d.rom_info_view.as_ref()),
+            disassembly_view: ui_frame_data.and_then(|d| d.disassembly_view.as_ref()),
+            memory_page: ui_frame_data.and_then(|d| d.memory_page.as_deref()),
+            debug_windows: &mut self.debug_windows,
+            settings: &mut self.settings,
+            show_settings_window: &mut self.show_settings_window,
+            dock_state: &mut self.debug_dock,
+            toast_manager: &mut self.toast_manager,
+            speed_mode_label: speed_label,
+            is_recording_audio: is_recording,
             is_recording_replay,
             is_playing_replay,
             is_rewinding,
-        ) {
+            rewind_fill: self.rewind_fill,
+            autohide_menu_bar,
+            cursor_y,
+        }) {
             Ok(result) => {
                 if result.open_file_requested {
                     self.open_file_dialog();
@@ -159,6 +157,9 @@ impl App {
                     &mut self.debug_continue_requested,
                 );
                 self.merge_debug_actions(result.debug_actions);
+                if let Some(toggles) = result.layer_toggles {
+                    self.pending_debug_actions.layer_toggles = Some(toggles);
+                }
                 if !self.show_settings_window {
                     self.debug_windows.rebinding_action = None;
                     self.debug_windows.rebinding_speedup = false;
@@ -168,11 +169,7 @@ impl App {
                     self.settings.save();
                 }
             }
-            Err(graphics::FrameError::Outdated) => {
-                let size = gfx.size();
-                gfx.resize(size.width, size.height);
-            }
-            Err(graphics::FrameError::Lost) => {
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 let size = gfx.size();
                 gfx.resize(size.width, size.height);
             }
@@ -180,10 +177,8 @@ impl App {
             Err(graphics::FrameError::OutOfMemory) => self.exit_requested = true,
         }
 
-        if let Some(prev) = settings_before {
-            if self.settings != prev {
-                self.settings.save();
-            }
+        if settings_was_open && !self.show_settings_window {
+            self.settings.save();
         }
 
         true

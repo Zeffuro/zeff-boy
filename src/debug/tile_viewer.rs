@@ -1,4 +1,4 @@
-use crate::debug::DebugWindowState;
+use crate::debug::TileViewerState;
 use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel};
 
 
@@ -9,7 +9,7 @@ pub(super) fn draw_tile_viewer_content(
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
     obj_palette_ram: &[u8; 64],
-    window_state: &mut DebugWindowState,
+    window_state: &mut TileViewerState,
 ) {
     let bank_select_id = ui.make_persistent_id("tile_viewer_vram_bank");
     let mut vram_bank = ui
@@ -77,28 +77,28 @@ pub(super) fn draw_tile_viewer_content(
     let width = 16 * 8;
     let height = 24 * 8;
 
-    let options_changed = window_state.tile_viewer_last_vram_bank != Some(vram_bank)
-        || window_state.tile_viewer_last_use_cgb_colors != Some(use_cgb_colors)
-        || window_state.tile_viewer_last_use_obj_palette != Some(use_obj_palette)
-        || window_state.tile_viewer_last_cgb_palette_index != Some(cgb_palette_index);
+    let options_changed = window_state.last_vram_bank != Some(vram_bank)
+        || window_state.last_use_cgb_colors != Some(use_cgb_colors)
+        || window_state.last_use_obj_palette != Some(use_obj_palette)
+        || window_state.last_cgb_palette_index != Some(cgb_palette_index);
     if options_changed {
-        window_state.tile_viewer_vram_dirty = true;
-        window_state.tile_viewer_last_vram_bank = Some(vram_bank);
-        window_state.tile_viewer_last_use_cgb_colors = Some(use_cgb_colors);
-        window_state.tile_viewer_last_use_obj_palette = Some(use_obj_palette);
-        window_state.tile_viewer_last_cgb_palette_index = Some(cgb_palette_index);
+        window_state.vram_dirty = true;
+        window_state.last_vram_bank = Some(vram_bank);
+        window_state.last_use_cgb_colors = Some(use_cgb_colors);
+        window_state.last_use_obj_palette = Some(use_obj_palette);
+        window_state.last_cgb_palette_index = Some(cgb_palette_index);
     }
 
-    if window_state.tile_viewer_image.size != [width, height] {
-        window_state.tile_viewer_image =
+    if window_state.image.size != [width, height] {
+        window_state.image =
             egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-        window_state.tile_viewer_vram_dirty = true;
+        window_state.vram_dirty = true;
     }
 
     let bank_base = vram_bank * 0x2000;
-    if window_state.tile_viewer_vram_dirty {
+    if window_state.vram_dirty {
         render_tile_viewer_into_image(
-            &mut window_state.tile_viewer_image,
+            &mut window_state.image,
             vram,
             bgp,
             use_cgb_colors,
@@ -108,18 +108,18 @@ pub(super) fn draw_tile_viewer_content(
             obj_palette_ram,
             bank_base,
         );
-        window_state.tile_viewer_vram_dirty = false;
+        window_state.vram_dirty = false;
     }
 
-    let texture = window_state.tile_viewer_texture.get_or_insert_with(|| {
+    let texture = window_state.texture.get_or_insert_with(|| {
         ui.ctx().load_texture(
             "tile_viewer",
-            window_state.tile_viewer_image.clone(),
+            window_state.image.clone(),
             egui::TextureOptions::NEAREST,
         )
     });
     texture.set(
-        window_state.tile_viewer_image.clone(),
+        window_state.image.clone(),
         egui::TextureOptions::NEAREST,
     );
 
@@ -128,7 +128,7 @@ pub(super) fn draw_tile_viewer_content(
         super::export::export_png_button(
             ui,
             "tiles.png",
-            &window_state.tile_viewer_image,
+            &window_state.image,
         );
     });
     egui::ScrollArea::both().show(ui, |ui| {

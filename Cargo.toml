@@ -28,9 +28,11 @@ sha2 = "0.10.9"
 rtrb = "0.3.3"
 egui_dock = "0.18"
 crossbeam-channel = "0.5"
-lz4_flex = "0.11"
+lz4_flex = "0.13.0"
 open = "5"
-png = "0.17"
+png = "0.18.1"
+crc32fast = "1.5.0"
+arrayvec = "0.7.6"
 
 [profile.dev]
 opt-level = 1
@@ -38,3 +40,9 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

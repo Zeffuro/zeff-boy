@@ -1,8 +1,20 @@
+use std::fmt::Write;
+
+type Mnemonic = arrayvec::ArrayString<32>;
+
+macro_rules! mn {
+    ($($arg:tt)*) => {{
+        let mut s = Mnemonic::new();
+        let _ = write!(s, $($arg)*);
+        s
+    }};
+}
+
 #[derive(Clone)]
 pub(crate) struct DisassembledLine {
     pub(crate) address: u16,
     pub(crate) bytes: Vec<u8>,
-    pub(crate) mnemonic: String,
+    pub(crate) mnemonic: Mnemonic,
 }
 
 #[derive(Clone)]
@@ -104,154 +116,152 @@ fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledL
     let r8_target = addr.wrapping_add(2).wrapping_add_signed(r8 as i16);
 
     let mnemonic = match opcode {
-        0x00 => "NOP".to_string(),
-        0x01 => format!("LD BC,${:04X}", d16),
-        0x02 => "LD (BC),A".to_string(),
-        0x03 => "INC BC".to_string(),
-        0x04 => "INC B".to_string(),
-        0x05 => "DEC B".to_string(),
-        0x06 => format!("LD B,${:02X}", d8),
-        0x07 => "RLCA".to_string(),
-        0x08 => format!("LD (${:04X}),SP", d16),
-        0x09 => "ADD HL,BC".to_string(),
-        0x0A => "LD A,(BC)".to_string(),
-        0x0B => "DEC BC".to_string(),
-        0x0C => "INC C".to_string(),
-        0x0D => "DEC C".to_string(),
-        0x0E => format!("LD C,${:02X}", d8),
-        0x0F => "RRCA".to_string(),
-        0x10 => "STOP".to_string(),
-        0x11 => format!("LD DE,${:04X}", d16),
-        0x12 => "LD (DE),A".to_string(),
-        0x13 => "INC DE".to_string(),
-        0x14 => "INC D".to_string(),
-        0x15 => "DEC D".to_string(),
-        0x16 => format!("LD D,${:02X}", d8),
-        0x17 => "RLA".to_string(),
-        0x18 => format!("JR {}", fmt_rel(r8, r8_target)),
-        0x19 => "ADD HL,DE".to_string(),
-        0x1A => "LD A,(DE)".to_string(),
-        0x1B => "DEC DE".to_string(),
-        0x1C => "INC E".to_string(),
-        0x1D => "DEC E".to_string(),
-        0x1E => format!("LD E,${:02X}", d8),
-        0x1F => "RRA".to_string(),
-        0x20 => format!("JR NZ,{}", fmt_rel(r8, r8_target)),
-        0x21 => format!("LD HL,${:04X}", d16),
-        0x22 => "LD (HL+),A".to_string(),
-        0x23 => "INC HL".to_string(),
-        0x24 => "INC H".to_string(),
-        0x25 => "DEC H".to_string(),
-        0x26 => format!("LD H,${:02X}", d8),
-        0x27 => "DAA".to_string(),
-        0x28 => format!("JR Z,{}", fmt_rel(r8, r8_target)),
-        0x29 => "ADD HL,HL".to_string(),
-        0x2A => "LD A,(HL+)".to_string(),
-        0x2B => "DEC HL".to_string(),
-        0x2C => "INC L".to_string(),
-        0x2D => "DEC L".to_string(),
-        0x2E => format!("LD L,${:02X}", d8),
-        0x2F => "CPL".to_string(),
-        0x30 => format!("JR NC,{}", fmt_rel(r8, r8_target)),
-        0x31 => format!("LD SP,${:04X}", d16),
-        0x32 => "LD (HL-),A".to_string(),
-        0x33 => "INC SP".to_string(),
-        0x34 => "INC (HL)".to_string(),
-        0x35 => "DEC (HL)".to_string(),
-        0x36 => format!("LD (HL),${:02X}", d8),
-        0x37 => "SCF".to_string(),
-        0x38 => format!("JR C,{}", fmt_rel(r8, r8_target)),
-        0x39 => "ADD HL,SP".to_string(),
-        0x3A => "LD A,(HL-)".to_string(),
-        0x3B => "DEC SP".to_string(),
-        0x3C => "INC A".to_string(),
-        0x3D => "DEC A".to_string(),
-        0x3E => format!("LD A,${:02X}", d8),
-        0x3F => "CCF".to_string(),
+        0x00 => mn!("NOP"),
+        0x01 => mn!("LD BC,${:04X}", d16),
+        0x02 => mn!("LD (BC),A"),
+        0x03 => mn!("INC BC"),
+        0x04 => mn!("INC B"),
+        0x05 => mn!("DEC B"),
+        0x06 => mn!("LD B,${:02X}", d8),
+        0x07 => mn!("RLCA"),
+        0x08 => mn!("LD (${:04X}),SP", d16),
+        0x09 => mn!("ADD HL,BC"),
+        0x0A => mn!("LD A,(BC)"),
+        0x0B => mn!("DEC BC"),
+        0x0C => mn!("INC C"),
+        0x0D => mn!("DEC C"),
+        0x0E => mn!("LD C,${:02X}", d8),
+        0x0F => mn!("RRCA"),
+        0x10 => mn!("STOP"),
+        0x11 => mn!("LD DE,${:04X}", d16),
+        0x12 => mn!("LD (DE),A"),
+        0x13 => mn!("INC DE"),
+        0x14 => mn!("INC D"),
+        0x15 => mn!("DEC D"),
+        0x16 => mn!("LD D,${:02X}", d8),
+        0x17 => mn!("RLA"),
+        0x18 => mn!("JR {}", fmt_rel(r8, r8_target)),
+        0x19 => mn!("ADD HL,DE"),
+        0x1A => mn!("LD A,(DE)"),
+        0x1B => mn!("DEC DE"),
+        0x1C => mn!("INC E"),
+        0x1D => mn!("DEC E"),
+        0x1E => mn!("LD E,${:02X}", d8),
+        0x1F => mn!("RRA"),
+        0x20 => mn!("JR NZ,{}", fmt_rel(r8, r8_target)),
+        0x21 => mn!("LD HL,${:04X}", d16),
+        0x22 => mn!("LD (HL+),A"),
+        0x23 => mn!("INC HL"),
+        0x24 => mn!("INC H"),
+        0x25 => mn!("DEC H"),
+        0x26 => mn!("LD H,${:02X}", d8),
+        0x27 => mn!("DAA"),
+        0x28 => mn!("JR Z,{}", fmt_rel(r8, r8_target)),
+        0x29 => mn!("ADD HL,HL"),
+        0x2A => mn!("LD A,(HL+)"),
+        0x2B => mn!("DEC HL"),
+        0x2C => mn!("INC L"),
+        0x2D => mn!("DEC L"),
+        0x2E => mn!("LD L,${:02X}", d8),
+        0x2F => mn!("CPL"),
+        0x30 => mn!("JR NC,{}", fmt_rel(r8, r8_target)),
+        0x31 => mn!("LD SP,${:04X}", d16),
+        0x32 => mn!("LD (HL-),A"),
+        0x33 => mn!("INC SP"),
+        0x34 => mn!("INC (HL)"),
+        0x35 => mn!("DEC (HL)"),
+        0x36 => mn!("LD (HL),${:02X}", d8),
+        0x37 => mn!("SCF"),
+        0x38 => mn!("JR C,{}", fmt_rel(r8, r8_target)),
+        0x39 => mn!("ADD HL,SP"),
+        0x3A => mn!("LD A,(HL-)"),
+        0x3B => mn!("DEC SP"),
+        0x3C => mn!("INC A"),
+        0x3D => mn!("DEC A"),
+        0x3E => mn!("LD A,${:02X}", d8),
+        0x3F => mn!("CCF"),
         0x40..=0x7F => {
             if opcode == 0x76 {
-                "HALT".to_string()
+                mn!("HALT")
             } else {
                 let dst = REG8[((opcode >> 3) & 0x07) as usize];
                 let src = REG8[(opcode & 0x07) as usize];
-                format!("LD {},{}", dst, src)
+                mn!("LD {},{}", dst, src)
             }
         }
         0x80..=0xBF => {
             let op = ALU_OPS[((opcode >> 3) & 0x07) as usize];
             let src = REG8[(opcode & 0x07) as usize];
             if opcode < 0x90 {
-                format!("{}{}", op, format!(",{}", src))
-            } else if opcode < 0xA0 {
-                format!("{} {}", op, src)
+                mn!("{},{}", op, src)
             } else {
-                format!("{} {}", op, src)
+                mn!("{} {}", op, src)
             }
         }
-        0xC0 => "RET NZ".to_string(),
-        0xC1 => "POP BC".to_string(),
-        0xC2 => format!("JP NZ,${:04X}", d16),
-        0xC3 => format!("JP ${:04X}", d16),
-        0xC4 => format!("CALL NZ,${:04X}", d16),
-        0xC5 => "PUSH BC".to_string(),
-        0xC6 => format!("ADD A,${:02X}", d8),
-        0xC7 => "RST $00".to_string(),
-        0xC8 => "RET Z".to_string(),
-        0xC9 => "RET".to_string(),
-        0xCA => format!("JP Z,${:04X}", d16),
+        0xC0 => mn!("RET NZ"),
+        0xC1 => mn!("POP BC"),
+        0xC2 => mn!("JP NZ,${:04X}", d16),
+        0xC3 => mn!("JP ${:04X}", d16),
+        0xC4 => mn!("CALL NZ,${:04X}", d16),
+        0xC5 => mn!("PUSH BC"),
+        0xC6 => mn!("ADD A,${:02X}", d8),
+        0xC7 => mn!("RST $00"),
+        0xC8 => mn!("RET Z"),
+        0xC9 => mn!("RET"),
+        0xCA => mn!("JP Z,${:04X}", d16),
         0xCB => unreachable!(),
-        0xCC => format!("CALL Z,${:04X}", d16),
-        0xCD => format!("CALL ${:04X}", d16),
-        0xCE => format!("ADC A,${:02X}", d8),
-        0xCF => "RST $08".to_string(),
-        0xD0 => "RET NC".to_string(),
-        0xD1 => "POP DE".to_string(),
-        0xD2 => format!("JP NC,${:04X}", d16),
-        0xD3 => "DB $D3".to_string(),
-        0xD4 => format!("CALL NC,${:04X}", d16),
-        0xD5 => "PUSH DE".to_string(),
-        0xD6 => format!("SUB ${:02X}", d8),
-        0xD7 => "RST $10".to_string(),
-        0xD8 => "RET C".to_string(),
-        0xD9 => "RETI".to_string(),
-        0xDA => format!("JP C,${:04X}", d16),
-        0xDB => "DB $DB".to_string(),
-        0xDC => format!("CALL C,${:04X}", d16),
-        0xDD => "DB $DD".to_string(),
-        0xDE => format!("SBC A,${:02X}", d8),
-        0xDF => "RST $18".to_string(),
-        0xE0 => format!("LDH ($FF{:02X}),A", d8),
-        0xE1 => "POP HL".to_string(),
-        0xE2 => "LD (C),A".to_string(),
-        0xE3 => "DB $E3".to_string(),
-        0xE4 => "DB $E4".to_string(),
-        0xE5 => "PUSH HL".to_string(),
-        0xE6 => format!("AND ${:02X}", d8),
-        0xE7 => "RST $20".to_string(),
-        0xE8 => format!("ADD SP,{}", fmt_rel(r8, r8_target)),
-        0xE9 => "JP HL".to_string(),
-        0xEA => format!("LD (${:04X}),A", d16),
-        0xEB => "DB $EB".to_string(),
-        0xEC => "DB $EC".to_string(),
-        0xED => "DB $ED".to_string(),
-        0xEE => format!("XOR ${:02X}", d8),
-        0xEF => "RST $28".to_string(),
-        0xF0 => format!("LDH A,($FF{:02X})", d8),
-        0xF1 => "POP AF".to_string(),
-        0xF2 => "LD A,(C)".to_string(),
-        0xF3 => "DI".to_string(),
-        0xF4 => "DB $F4".to_string(),
-        0xF5 => "PUSH AF".to_string(),
-        0xF6 => format!("OR ${:02X}", d8),
-        0xF7 => "RST $30".to_string(),
-        0xF8 => format!("LD HL,SP+{}", fmt_signed(r8)),
-        0xF9 => "LD SP,HL".to_string(),
-        0xFA => format!("LD A,(${:04X})", d16),
-        0xFB => "EI".to_string(),
-        0xFC => "DB $FC".to_string(),
-        0xFD => "DB $FD".to_string(),
-        0xFE => format!("CP ${:02X}", d8),
-        0xFF => "RST $38".to_string(),
+        0xCC => mn!("CALL Z,${:04X}", d16),
+        0xCD => mn!("CALL ${:04X}", d16),
+        0xCE => mn!("ADC A,${:02X}", d8),
+        0xCF => mn!("RST $08"),
+        0xD0 => mn!("RET NC"),
+        0xD1 => mn!("POP DE"),
+        0xD2 => mn!("JP NC,${:04X}", d16),
+        0xD3 => mn!("DB $D3"),
+        0xD4 => mn!("CALL NC,${:04X}", d16),
+        0xD5 => mn!("PUSH DE"),
+        0xD6 => mn!("SUB ${:02X}", d8),
+        0xD7 => mn!("RST $10"),
+        0xD8 => mn!("RET C"),
+        0xD9 => mn!("RETI"),
+        0xDA => mn!("JP C,${:04X}", d16),
+        0xDB => mn!("DB $DB"),
+        0xDC => mn!("CALL C,${:04X}", d16),
+        0xDD => mn!("DB $DD"),
+        0xDE => mn!("SBC A,${:02X}", d8),
+        0xDF => mn!("RST $18"),
+        0xE0 => mn!("LDH ($FF{:02X}),A", d8),
+        0xE1 => mn!("POP HL"),
+        0xE2 => mn!("LD (C),A"),
+        0xE3 => mn!("DB $E3"),
+        0xE4 => mn!("DB $E4"),
+        0xE5 => mn!("PUSH HL"),
+        0xE6 => mn!("AND ${:02X}", d8),
+        0xE7 => mn!("RST $20"),
+        0xE8 => mn!("ADD SP,{}", fmt_rel(r8, r8_target)),
+        0xE9 => mn!("JP HL"),
+        0xEA => mn!("LD (${:04X}),A", d16),
+        0xEB => mn!("DB $EB"),
+        0xEC => mn!("DB $EC"),
+        0xED => mn!("DB $ED"),
+        0xEE => mn!("XOR ${:02X}", d8),
+        0xEF => mn!("RST $28"),
+        0xF0 => mn!("LDH A,($FF{:02X})", d8),
+        0xF1 => mn!("POP AF"),
+        0xF2 => mn!("LD A,(C)"),
+        0xF3 => mn!("DI"),
+        0xF4 => mn!("DB $F4"),
+        0xF5 => mn!("PUSH AF"),
+        0xF6 => mn!("OR ${:02X}", d8),
+        0xF7 => mn!("RST $30"),
+        0xF8 => mn!("LD HL,SP{}", fmt_signed(r8)),
+        0xF9 => mn!("LD SP,HL"),
+        0xFA => mn!("LD A,(${:04X})", d16),
+        0xFB => mn!("EI"),
+        0xFC => mn!("DB $FC"),
+        0xFD => mn!("DB $FD"),
+        0xFE => mn!("CP ${:02X}", d8),
+        0xFF => mn!("RST $38"),
     };
 
     DisassembledLine {
@@ -261,24 +271,24 @@ fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledL
     }
 }
 
-fn cb_mnemonic(opcode: u8) -> String {
+fn cb_mnemonic(opcode: u8) -> Mnemonic {
     let register = REG8[(opcode & 0x07) as usize];
     match opcode {
         0x00..=0x3F => {
             let op = ROT_OPS[(opcode / 8) as usize];
-            format!("{} {}", op, register)
+            mn!("{} {}", op, register)
         }
         0x40..=0x7F => {
             let bit = (opcode - 0x40) / 8;
-            format!("BIT {},{}", bit, register)
+            mn!("BIT {},{}", bit, register)
         }
         0x80..=0xBF => {
             let bit = (opcode - 0x80) / 8;
-            format!("RES {},{}", bit, register)
+            mn!("RES {},{}", bit, register)
         }
         _ => {
             let bit = (opcode - 0xC0) / 8;
-            format!("SET {},{}", bit, register)
+            mn!("SET {},{}", bit, register)
         }
     }
 }
@@ -289,14 +299,15 @@ fn read_u16(bus_read: &impl Fn(u16) -> u8, addr: u16) -> u16 {
     (hi << 8) | lo
 }
 
-fn fmt_signed(value: i8) -> String {
+
+fn fmt_signed(value: i8) -> Mnemonic {
     if value < 0 {
-        format!("-${:02X}", value.unsigned_abs())
+        mn!("-${:02X}", value.unsigned_abs())
     } else {
-        format!("+${:02X}", value as u8)
+        mn!("+${:02X}", value as u8)
     }
 }
 
-fn fmt_rel(offset: i8, target: u16) -> String {
-    format!("{} (${:04X})", fmt_signed(offset), target)
+fn fmt_rel(offset: i8, target: u16) -> Mnemonic {
+    mn!("{} (${:04X})", fmt_signed(offset), target)
 }

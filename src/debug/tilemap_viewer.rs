@@ -1,4 +1,4 @@
-use crate::debug::{DebugWindowState, PpuSnapshot};
+use crate::debug::{PpuSnapshot, TilemapViewerState};
 use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel, tile_data_address};
 
 #[derive(Clone, Copy)]
@@ -27,7 +27,7 @@ pub(super) fn draw_tilemap_viewer_content(
     ppu: PpuSnapshot,
     cgb_mode: bool,
     bg_palette_ram: &[u8; 64],
-    window_state: &mut DebugWindowState,
+    window_state: &mut TilemapViewerState,
 ) {
     let width = 256usize;
     let height = 256usize;
@@ -105,25 +105,25 @@ pub(super) fn draw_tilemap_viewer_content(
     };
     let tile_data_unsigned = ppu.lcdc & 0x10 != 0;
 
-    let options_changed = window_state.tilemap_last_use_window_map != Some(use_window_map)
-        || window_state.tilemap_last_show_attr_overlay != Some(show_attr_overlay)
-        || window_state.tilemap_last_render_cgb_colors != Some(render_cgb_colors);
+    let options_changed = window_state.last_use_window_map != Some(use_window_map)
+        || window_state.last_show_attr_overlay != Some(show_attr_overlay)
+        || window_state.last_render_cgb_colors != Some(render_cgb_colors);
     if options_changed {
-        window_state.tilemap_vram_dirty = true;
-        window_state.tilemap_last_use_window_map = Some(use_window_map);
-        window_state.tilemap_last_show_attr_overlay = Some(show_attr_overlay);
-        window_state.tilemap_last_render_cgb_colors = Some(render_cgb_colors);
+        window_state.vram_dirty = true;
+        window_state.last_use_window_map = Some(use_window_map);
+        window_state.last_show_attr_overlay = Some(show_attr_overlay);
+        window_state.last_render_cgb_colors = Some(render_cgb_colors);
     }
 
-    if window_state.tilemap_image.size != [width, height] {
-        window_state.tilemap_image =
+    if window_state.image.size != [width, height] {
+        window_state.image =
             egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-        window_state.tilemap_vram_dirty = true;
+        window_state.vram_dirty = true;
     }
 
-    if window_state.tilemap_vram_dirty {
+    if window_state.vram_dirty {
         render_tilemap_into_image(
-            &mut window_state.tilemap_image,
+            &mut window_state.image,
             vram,
             ppu,
             cgb_mode,
@@ -134,18 +134,18 @@ pub(super) fn draw_tilemap_viewer_content(
             render_cgb_colors,
             show_attr_overlay,
         );
-        window_state.tilemap_vram_dirty = false;
+        window_state.vram_dirty = false;
     }
 
-    let texture = window_state.tilemap_texture.get_or_insert_with(|| {
+    let texture = window_state.texture.get_or_insert_with(|| {
         ui.ctx().load_texture(
             "tilemap_viewer",
-            window_state.tilemap_image.clone(),
+            window_state.image.clone(),
             egui::TextureOptions::NEAREST,
         )
     });
     texture.set(
-        window_state.tilemap_image.clone(),
+        window_state.image.clone(),
         egui::TextureOptions::NEAREST,
     );
 
@@ -154,7 +154,7 @@ pub(super) fn draw_tilemap_viewer_content(
         super::export::export_png_button(
             ui,
             "tilemap.png",
-            &window_state.tilemap_image,
+            &window_state.image,
         );
     });
     egui::ScrollArea::both().show(ui, |ui| {

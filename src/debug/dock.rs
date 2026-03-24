@@ -30,57 +30,32 @@ pub(crate) enum DebugTab {
     Cheats,
 }
 
+const TAB_META: &[(DebugTab, &str, &str)] = &[
+    (DebugTab::CpuDebug, "CPU / Debug", "CpuDebug"),
+    (DebugTab::ApuViewer, "APU / Sound", "ApuViewer"),
+    (DebugTab::RomInfo, "ROM Info", "RomInfo"),
+    (DebugTab::Disassembler, "Disassembler", "Disassembler"),
+    (DebugTab::MemoryViewer, "Memory Viewer", "MemoryViewer"),
+    (DebugTab::TileViewer, "Tile Data", "TileViewer"),
+    (DebugTab::TilemapViewer, "Tile Map", "TilemapViewer"),
+    (DebugTab::OamViewer, "OAM / Sprites", "OamViewer"),
+    (DebugTab::PaletteViewer, "Palettes", "PaletteViewer"),
+    (DebugTab::Performance, "Performance", "Performance"),
+    (DebugTab::Breakpoints, "Breakpoints", "Breakpoints"),
+    (DebugTab::Cheats, "Cheats", "Cheats"),
+];
+
 impl DebugTab {
     fn title(self) -> &'static str {
-        match self {
-            Self::CpuDebug => "CPU / Debug",
-            Self::ApuViewer => "APU / Sound",
-            Self::RomInfo => "ROM Info",
-            Self::Disassembler => "Disassembler",
-            Self::MemoryViewer => "Memory Viewer",
-            Self::TileViewer => "Tile Data",
-            Self::TilemapViewer => "Tile Map",
-            Self::OamViewer => "OAM / Sprites",
-            Self::PaletteViewer => "Palettes",
-            Self::Performance => "Performance",
-            Self::Breakpoints => "Breakpoints",
-            Self::Cheats => "Cheats",
-        }
+        TAB_META.iter().find(|(t, _, _)| *t == self).map(|(_, title, _)| *title).unwrap_or("?")
     }
 
     pub(crate) fn persist_name(self) -> &'static str {
-        match self {
-            Self::CpuDebug => "CpuDebug",
-            Self::ApuViewer => "ApuViewer",
-            Self::RomInfo => "RomInfo",
-            Self::Disassembler => "Disassembler",
-            Self::MemoryViewer => "MemoryViewer",
-            Self::TileViewer => "TileViewer",
-            Self::TilemapViewer => "TilemapViewer",
-            Self::OamViewer => "OamViewer",
-            Self::PaletteViewer => "PaletteViewer",
-            Self::Performance => "Performance",
-            Self::Breakpoints => "Breakpoints",
-            Self::Cheats => "Cheats",
-        }
+        TAB_META.iter().find(|(t, _, _)| *t == self).map(|(_, _, name)| *name).unwrap_or("?")
     }
 
     pub(crate) fn from_persist_name(name: &str) -> Option<Self> {
-        match name {
-            "CpuDebug" => Some(Self::CpuDebug),
-            "ApuViewer" => Some(Self::ApuViewer),
-            "RomInfo" => Some(Self::RomInfo),
-            "Disassembler" => Some(Self::Disassembler),
-            "MemoryViewer" => Some(Self::MemoryViewer),
-            "TileViewer" => Some(Self::TileViewer),
-            "TilemapViewer" => Some(Self::TilemapViewer),
-            "OamViewer" => Some(Self::OamViewer),
-            "PaletteViewer" => Some(Self::PaletteViewer),
-            "Performance" => Some(Self::Performance),
-            "Breakpoints" => Some(Self::Breakpoints),
-            "Cheats" => Some(Self::Cheats),
-            _ => None,
-        }
+        TAB_META.iter().find(|(_, _, n)| *n == name).map(|(tab, _, _)| *tab)
     }
 }
 
@@ -123,18 +98,20 @@ pub(crate) fn sync_show_flags(
     debug_windows: &mut DebugWindowState,
     dock: &DockState<DebugTab>,
 ) {
-    debug_windows.show_cpu_debug = dock.find_tab(&DebugTab::CpuDebug).is_some();
-    debug_windows.show_apu_viewer = dock.find_tab(&DebugTab::ApuViewer).is_some();
-    debug_windows.show_rom_info = dock.find_tab(&DebugTab::RomInfo).is_some();
-    debug_windows.show_disassembler = dock.find_tab(&DebugTab::Disassembler).is_some();
-    debug_windows.show_memory_viewer = dock.find_tab(&DebugTab::MemoryViewer).is_some();
-    debug_windows.show_tile_viewer = dock.find_tab(&DebugTab::TileViewer).is_some();
-    debug_windows.show_tilemap_viewer = dock.find_tab(&DebugTab::TilemapViewer).is_some();
-    debug_windows.show_oam_viewer = dock.find_tab(&DebugTab::OamViewer).is_some();
-    debug_windows.show_palette_viewer = dock.find_tab(&DebugTab::PaletteViewer).is_some();
-    debug_windows.show_performance = dock.find_tab(&DebugTab::Performance).is_some();
-    debug_windows.show_breakpoints_window = dock.find_tab(&DebugTab::Breakpoints).is_some();
-    debug_windows.show_cheats = dock.find_tab(&DebugTab::Cheats).is_some();
+    let open: std::collections::HashSet<DebugTab> =
+        dock.iter_all_tabs().map(|(_, tab)| *tab).collect();
+    debug_windows.show_cpu_debug = open.contains(&DebugTab::CpuDebug);
+    debug_windows.show_apu_viewer = open.contains(&DebugTab::ApuViewer);
+    debug_windows.show_rom_info = open.contains(&DebugTab::RomInfo);
+    debug_windows.show_disassembler = open.contains(&DebugTab::Disassembler);
+    debug_windows.show_memory_viewer = open.contains(&DebugTab::MemoryViewer);
+    debug_windows.show_tile_viewer = open.contains(&DebugTab::TileViewer);
+    debug_windows.show_tilemap_viewer = open.contains(&DebugTab::TilemapViewer);
+    debug_windows.show_oam_viewer = open.contains(&DebugTab::OamViewer);
+    debug_windows.show_palette_viewer = open.contains(&DebugTab::PaletteViewer);
+    debug_windows.show_performance = open.contains(&DebugTab::Performance);
+    debug_windows.show_breakpoints_window = open.contains(&DebugTab::Breakpoints);
+    debug_windows.show_cheats = open.contains(&DebugTab::Cheats);
 }
 
 pub(crate) struct DebugTabViewer<'a> {
@@ -181,7 +158,7 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::MemoryViewer => {
                 if let Some(page) = self.memory_page {
-                    let writes = draw_memory_viewer_content(ui, self.window_state, page);
+                    let writes = draw_memory_viewer_content(ui, &mut self.window_state.memory, page);
                     self.actions.memory_writes.extend(writes);
                 }
             }
@@ -194,7 +171,7 @@ impl TabViewer for DebugTabViewer<'_> {
                         data.cgb_mode,
                         &data.bg_palette_ram,
                         &data.obj_palette_ram,
-                        self.window_state,
+                        &mut self.window_state.tiles,
                     );
                 }
             }
@@ -206,7 +183,7 @@ impl TabViewer for DebugTabViewer<'_> {
                         data.ppu,
                         data.cgb_mode,
                         &data.bg_palette_ram,
-                        self.window_state,
+                        &mut self.window_state.tilemap,
                     );
                 }
             }
@@ -242,13 +219,13 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_breakpoints_content(
                         ui,
                         info,
-                        self.window_state,
+                        &mut self.window_state.bp,
                         &mut self.actions,
                     );
                 }
             }
             DebugTab::Cheats => {
-                draw_cheats_content(ui, self.window_state);
+                draw_cheats_content(ui, &mut self.window_state.cheat);
             }
         }
     }

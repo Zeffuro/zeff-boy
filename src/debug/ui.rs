@@ -19,6 +19,7 @@ pub(crate) struct DebugUiActions {
     pub(crate) apu_channel_mutes: Option<[bool; 4]>,
     pub(crate) step_requested: bool,
     pub(crate) continue_requested: bool,
+    pub(crate) layer_toggles: Option<(bool, bool, bool)>,
 }
 
 impl DebugUiActions {
@@ -32,6 +33,7 @@ impl DebugUiActions {
             apu_channel_mutes: None,
             step_requested: false,
             continue_requested: false,
+            layer_toggles: None,
         }
     }
 
@@ -42,6 +44,7 @@ impl DebugUiActions {
             || !self.toggle_breakpoints.is_empty()
             || !self.memory_writes.is_empty()
             || self.apu_channel_mutes.is_some()
+            || self.layer_toggles.is_some()
     }
 }
 
@@ -63,6 +66,32 @@ pub(crate) struct MenuActions {
     pub(crate) load_replay: bool,
     pub(crate) take_screenshot: bool,
     pub(crate) menu_bar_height_points: f32,
+    pub(crate) layer_toggles: Option<(bool, bool, bool)>,
+}
+
+impl MenuActions {
+    pub(crate) fn default(_autohide: bool) -> Self {
+        Self {
+            open_file_requested: false,
+            open_settings_requested: false,
+            save_state_file_requested: false,
+            load_state_file_requested: false,
+            save_state_slot: None,
+            load_state_slot: None,
+            aspect_ratio_mode: None,
+            load_recent_rom: None,
+            toolbar_settings_changed: false,
+            toggle_fullscreen: false,
+            start_audio_recording: false,
+            stop_audio_recording: false,
+            start_replay_recording: false,
+            stop_replay_recording: false,
+            load_replay: false,
+            take_screenshot: false,
+            menu_bar_height_points: 0.0,
+            layer_toggles: None,
+        }
+    }
 }
 
 pub(crate) fn draw_menu_bar(
@@ -70,6 +99,7 @@ pub(crate) fn draw_menu_bar(
     current_mode: AspectRatioMode,
     dock_state: &mut DockState<DebugTab>,
     settings: &mut Settings,
+    debug_windows: &mut DebugWindowState,
     speed_mode_label: Option<&str>,
     is_recording_audio: bool,
     is_recording_replay: bool,
@@ -180,7 +210,7 @@ pub(crate) fn draw_menu_bar(
                     }
                 }
                 ui.separator();
-                if ui.button("📷 Screenshot...").clicked() {
+                if ui.button("Screenshot...").clicked() {
                     take_screenshot = true;
                     ui.close();
                 }
@@ -216,6 +246,8 @@ pub(crate) fn draw_menu_bar(
                     toggle_fullscreen = true;
                     ui.close();
                 }
+                ui.checkbox(&mut settings.autohide_menu_bar, "Autohide menu bar")
+                    .on_hover_text("Hide the menu bar when the cursor is away from the top edge");
                 ui.separator();
                 ui.menu_button("Shader", |ui| {
                     use crate::settings::ShaderPreset;
@@ -230,6 +262,23 @@ pub(crate) fn draw_menu_bar(
                             settings.shader_preset = preset;
                             toolbar_settings_changed = true;
                             ui.close();
+                        }
+                    }
+                    if settings.shader_preset != ShaderPreset::None {
+                        ui.separator();
+                        let p = &mut settings.shader_params;
+                        match settings.shader_preset {
+                            ShaderPreset::Scanlines => {
+                                ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
+                            }
+                            ShaderPreset::LCDGrid => {
+                                ui.add(egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0).text("Grid"));
+                            }
+                            ShaderPreset::CRT => {
+                                ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Scanlines"));
+                                ui.add(egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0).text("Curvature"));
+                            }
+                            ShaderPreset::None => {}
                         }
                     }
                 });
@@ -285,6 +334,11 @@ pub(crate) fn draw_menu_bar(
                     toggle_dock_tab(dock_state, DebugTab::Cheats);
                     ui.close();
                 }
+                ui.separator();
+                ui.label("PPU Layers");
+                ui.checkbox(&mut debug_windows.layer_enable_bg, "Background");
+                ui.checkbox(&mut debug_windows.layer_enable_window, "Window");
+                ui.checkbox(&mut debug_windows.layer_enable_sprites, "Sprites");
                 ui.separator();
                 if ui.button("Reset Layout").clicked() {
                     *dock_state = crate::debug::create_default_dock_state();
@@ -360,6 +414,11 @@ pub(crate) fn draw_menu_bar(
         load_replay,
         take_screenshot,
         menu_bar_height_points: ctx.available_rect().min.y.max(0.0),
+        layer_toggles: Some((
+            debug_windows.layer_enable_bg,
+            debug_windows.layer_enable_window,
+            debug_windows.layer_enable_sprites,
+        )),
     }
 }
 
@@ -659,6 +718,33 @@ fn draw_settings_audio(ui: &mut egui::Ui, settings: &mut Settings) {
         &mut settings.mute_audio_during_fast_forward,
         "Mute audio while fast-forward is held",
     );
+
+    ui.separator();
+    ui.heading("Recording");
+
+    use crate::settings::AudioRecordingFormat;
+    egui::ComboBox::from_label("Recording format")
+        .selected_text(settings.audio_recording_format.label())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut settings.audio_recording_format,
+                AudioRecordingFormat::Wav16,
+                AudioRecordingFormat::Wav16.label(),
+            );
+            ui.selectable_value(
+                &mut settings.audio_recording_format,
+                AudioRecordingFormat::WavFloat,
+                AudioRecordingFormat::WavFloat.label(),
+            );
+        });
+    ui.label(
+        egui::RichText::new(
+            "16-bit PCM: smaller files, standard compatibility.\n\
+             32-bit Float: lossless sample precision, ideal for editing."
+        )
+        .weak()
+        .small(),
+    );
 }
 
 fn draw_settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
@@ -669,6 +755,11 @@ fn draw_settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
         "Enable memory editing",
     )
     .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
+    ui.checkbox(&mut settings.autohide_menu_bar, "Autohide menu bar")
+        .on_hover_text(
+            "Hide the menu bar when the cursor moves away from the top edge. \
+             Hover near the top to reveal it.",
+        );
 }
 
 fn joypad_binding_label(action: BindingAction) -> &'static str {
@@ -880,9 +971,9 @@ pub(super) fn draw_debug_ui_content(
             ui.heading("Breakpoints");
             ui.horizontal(|ui| {
                 ui.label("Addr:");
-                ui.text_edit_singleline(&mut window_state.breakpoint_input);
+                ui.text_edit_singleline(&mut window_state.bp.input);
                 if ui.button("Add BP").clicked() {
-                    let trimmed = window_state.breakpoint_input.trim();
+                    let trimmed = window_state.bp.input.trim();
                     let parsed = if let Some(hex) = trimmed
                         .strip_prefix("0x")
                         .or_else(|| trimmed.strip_prefix("0X"))
@@ -895,7 +986,7 @@ pub(super) fn draw_debug_ui_content(
                     };
                     if let Some(addr) = parsed {
                         actions.add_breakpoint = Some(addr);
-                        window_state.breakpoint_input.clear();
+                        window_state.bp.input.clear();
                     }
                 }
             });
@@ -921,32 +1012,32 @@ pub(super) fn draw_debug_ui_content(
             ui.heading("Watchpoints");
             ui.horizontal(|ui| {
                 ui.label("Addr:");
-                ui.text_edit_singleline(&mut window_state.watchpoint_input);
+                ui.text_edit_singleline(&mut window_state.bp.watchpoint_input);
                 egui::ComboBox::from_id_salt("watch_type")
-                    .selected_text(match window_state.watchpoint_type {
+                    .selected_text(match window_state.bp.watchpoint_type {
                         WatchType::Read => "Read",
                         WatchType::Write => "Write",
                         WatchType::ReadWrite => "Read/Write",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
-                            &mut window_state.watchpoint_type,
+                            &mut window_state.bp.watchpoint_type,
                             WatchType::Read,
                             "Read",
                         );
                         ui.selectable_value(
-                            &mut window_state.watchpoint_type,
+                            &mut window_state.bp.watchpoint_type,
                             WatchType::Write,
                             "Write",
                         );
                         ui.selectable_value(
-                            &mut window_state.watchpoint_type,
+                            &mut window_state.bp.watchpoint_type,
                             WatchType::ReadWrite,
                             "Read/Write",
                         );
                     });
                 if ui.button("Add WP").clicked() {
-                    let trimmed = window_state.watchpoint_input.trim();
+                    let trimmed = window_state.bp.watchpoint_input.trim();
                     let parsed = if let Some(hex) = trimmed
                         .strip_prefix("0x")
                         .or_else(|| trimmed.strip_prefix("0X"))
@@ -958,8 +1049,8 @@ pub(super) fn draw_debug_ui_content(
                             .or_else(|| trimmed.parse().ok())
                     };
                     if let Some(addr) = parsed {
-                        actions.add_watchpoint = Some((addr, window_state.watchpoint_type));
-                        window_state.watchpoint_input.clear();
+                        actions.add_watchpoint = Some((addr, window_state.bp.watchpoint_type));
+                        window_state.bp.watchpoint_input.clear();
                     }
                 }
             });
@@ -1003,3 +1094,4 @@ pub(super) fn draw_debug_ui_content(
                 ));
             }
 }
+

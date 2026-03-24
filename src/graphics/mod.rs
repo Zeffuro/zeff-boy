@@ -70,6 +70,27 @@ pub(crate) enum FrameError {
     OutOfMemory,
 }
 
+pub(crate) struct RenderContext<'a> {
+    pub(crate) debug_info: Option<&'a crate::debug::DebugInfo>,
+    pub(crate) viewer_data: Option<&'a crate::debug::DebugViewerData>,
+    pub(crate) rom_info_view: Option<&'a crate::debug::RomInfoViewData>,
+    pub(crate) disassembly_view: Option<&'a crate::debug::DisassemblyView>,
+    pub(crate) memory_page: Option<&'a [(u16, u8)]>,
+    pub(crate) debug_windows: &'a mut crate::debug::DebugWindowState,
+    pub(crate) settings: &'a mut crate::settings::Settings,
+    pub(crate) show_settings_window: &'a mut bool,
+    pub(crate) dock_state: &'a mut egui_dock::DockState<crate::debug::DebugTab>,
+    pub(crate) toast_manager: &'a mut crate::debug::ToastManager,
+    pub(crate) speed_mode_label: Option<&'a str>,
+    pub(crate) is_recording_audio: bool,
+    pub(crate) is_recording_replay: bool,
+    pub(crate) is_playing_replay: bool,
+    pub(crate) is_rewinding: bool,
+    pub(crate) rewind_fill: f32,
+    pub(crate) autohide_menu_bar: bool,
+    pub(crate) cursor_y: Option<f32>,
+}
+
 pub(crate) struct RenderResult {
     pub(crate) open_file_requested: bool,
     pub(crate) save_state_file_requested: bool,
@@ -86,6 +107,7 @@ pub(crate) struct RenderResult {
     pub(crate) load_replay: bool,
     pub(crate) take_screenshot: bool,
     pub(crate) debug_actions: crate::debug::DebugUiActions,
+    pub(crate) layer_toggles: Option<(bool, bool, bool)>,
 }
 
 pub(crate) struct Graphics {
@@ -148,23 +170,10 @@ impl Graphics {
 
     pub(crate) fn render(
         &mut self,
-        debug_info: Option<&crate::debug::DebugInfo>,
-        viewer_data: Option<&crate::debug::DebugViewerData>,
-        rom_info_view: Option<&crate::debug::RomInfoViewData>,
-        disassembly_view: Option<&crate::debug::DisassemblyView>,
-        memory_page: Option<&[(u16, u8)]>,
-        debug_windows: &mut crate::debug::DebugWindowState,
-        settings: &mut crate::settings::Settings,
-        show_settings_window: &mut bool,
-        dock_state: &mut egui_dock::DockState<crate::debug::DebugTab>,
-        toast_manager: &mut crate::debug::ToastManager,
-        speed_mode_label: Option<&str>,
-        is_recording_audio: bool,
-        is_recording_replay: bool,
-        is_playing_replay: bool,
-        is_rewinding: bool,
+        ctx: RenderContext<'_>,
     ) -> Result<RenderResult, FrameError> {
-        self.framebuffer.set_shader(&self.gpu.device, settings.shader_preset);
+        self.framebuffer.set_shader(&self.gpu.device, ctx.settings.shader_preset);
+        self.framebuffer.update_params(&self.gpu.queue, &ctx.settings.shader_params);
 
         let frame = self
             .gpu
@@ -183,35 +192,47 @@ impl Graphics {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.egui.begin_frame(&self.window);
-        let menu_actions =
-            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, dock_state, settings, speed_mode_label, is_recording_audio, is_recording_replay, is_playing_replay);
+
+        let show_menu = if ctx.autohide_menu_bar {
+            let pointer_near_top = ctx.cursor_y.is_some_and(|y| y < 8.0);
+            let any_menu_open = egui::Popup::is_any_open(self.egui.context());
+            pointer_near_top || any_menu_open
+        } else {
+            true
+        };
+
+        let menu_actions = if show_menu {
+            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, ctx.dock_state, ctx.settings, ctx.debug_windows, ctx.speed_mode_label, ctx.is_recording_audio, ctx.is_recording_replay, ctx.is_playing_replay)
+        } else {
+            crate::debug::MenuActions::default(ctx.settings.autohide_menu_bar)
+        };
         if let Some(mode) = menu_actions.aspect_ratio_mode {
             self.aspect_ratio_mode = mode;
         }
         if menu_actions.open_settings_requested {
-            *show_settings_window = true;
+            *ctx.show_settings_window = true;
         }
-        if *show_settings_window {
+        if *ctx.show_settings_window {
             crate::debug::draw_settings_window(
                 self.egui.context(),
-                settings,
-                debug_windows,
-                show_settings_window,
+                ctx.settings,
+                ctx.debug_windows,
+                ctx.show_settings_window,
             );
         }
 
         let debug_actions;
-        if debug_info.is_some() {
+        if ctx.debug_info.is_some() {
             let mut tab_viewer = crate::debug::DebugTabViewer {
-                debug_info,
-                viewer_data,
-                rom_info_view,
-                disassembly_view,
-                memory_page,
-                window_state: debug_windows,
+                debug_info: ctx.debug_info,
+                viewer_data: ctx.viewer_data,
+                rom_info_view: ctx.rom_info_view,
+                disassembly_view: ctx.disassembly_view,
+                memory_page: ctx.memory_page,
+                window_state: ctx.debug_windows,
                 actions: crate::debug::DebugUiActions::none(),
             };
-            egui_dock::DockArea::new(dock_state)
+            egui_dock::DockArea::new(ctx.dock_state)
                 .style(egui_dock::Style::from_egui(self.egui.context().style().as_ref()))
                 .show(self.egui.context(), &mut tab_viewer);
             debug_actions = tab_viewer.actions;
@@ -224,9 +245,9 @@ impl Graphics {
             });
         }
 
-        toast_manager.draw(self.egui.context());
+        ctx.toast_manager.draw(self.egui.context());
 
-        if is_rewinding {
+        if ctx.is_rewinding {
             egui::Area::new(egui::Id::new("rewind_overlay"))
                 .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -10.0))
                 .order(egui::Order::Foreground)
@@ -237,9 +258,14 @@ impl Graphics {
                         .corner_radius(4.0)
                         .show(ui, |ui| {
                             ui.label(
-                                egui::RichText::new("⏪ Rewinding…")
+                                egui::RichText::new("Rewinding…")
                                     .color(egui::Color32::WHITE)
                                     .size(15.0),
+                            );
+                            ui.add(
+                                egui::ProgressBar::new(ctx.rewind_fill)
+                                    .desired_width(140.0)
+                                    .text(format!("{:.0}%", ctx.rewind_fill * 100.0)),
                             );
                         });
                 });
@@ -279,7 +305,7 @@ impl Graphics {
                 occlusion_query_set: None,
             });
 
-            if debug_info.is_some() {
+            if ctx.debug_info.is_some() {
                 if let Some((x, y, w, h)) = calculate_viewport(
                     self.aspect_ratio_mode,
                     self.gpu.config.width,
@@ -341,6 +367,7 @@ impl Graphics {
             load_replay: menu_actions.load_replay,
             take_screenshot: menu_actions.take_screenshot,
             debug_actions,
+            layer_toggles: menu_actions.layer_toggles,
         })
     }
 }

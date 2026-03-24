@@ -1,4 +1,3 @@
-use crate::graphics::gpu::texture_sampler_bind_group_layout;
 use crate::settings::ShaderPreset;
 use anyhow::Result;
 
@@ -7,16 +6,17 @@ pub(crate) struct FramebufferRenderer {
     screen_bind_group: wgpu::BindGroup,
     screen_pipeline: wgpu::RenderPipeline,
     screen_bgl: wgpu::BindGroupLayout,
+    params_buffer: wgpu::Buffer,
     format: wgpu::TextureFormat,
     current_preset: ShaderPreset,
 }
 
 fn shader_source(preset: ShaderPreset) -> &'static str {
     match preset {
-        ShaderPreset::None => include_str!("../shaders/screen.wgsl"),
-        ShaderPreset::CRT => include_str!("../shaders/crt.wgsl"),
-        ShaderPreset::Scanlines => include_str!("../shaders/scanlines.wgsl"),
-        ShaderPreset::LCDGrid => include_str!("../shaders/lcd_grid.wgsl"),
+        ShaderPreset::None => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/screen.wgsl")),
+        ShaderPreset::CRT => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/crt.wgsl")),
+        ShaderPreset::Scanlines => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/scanlines.wgsl")),
+        ShaderPreset::LCDGrid => concat!(include_str!("../shaders/common_vertex.wgsl"), include_str!("../shaders/lcd_grid.wgsl")),
     }
 }
 
@@ -89,7 +89,44 @@ impl FramebufferRenderer {
             ..Default::default()
         });
 
-        let screen_bgl = texture_sampler_bind_group_layout(device, "screen bgl");
+        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shader params buffer"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let screen_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("screen bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("screen bind group"),
@@ -103,6 +140,10 @@ impl FramebufferRenderer {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&screen_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -114,6 +155,7 @@ impl FramebufferRenderer {
             screen_bind_group,
             screen_pipeline,
             screen_bgl,
+            params_buffer,
             format,
             current_preset: preset,
         })
@@ -127,6 +169,10 @@ impl FramebufferRenderer {
         self.current_preset = preset;
     }
 
+
+    pub(crate) fn update_params(&self, queue: &wgpu::Queue, params: &crate::settings::ShaderParams) {
+        queue.write_buffer(&self.params_buffer, 0, &params.to_gpu_bytes());
+    }
 
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {
         queue.write_texture(

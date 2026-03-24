@@ -1,27 +1,27 @@
 use crate::debug::breakpoints::WatchType;
 use crate::debug::ui::DebugUiActions;
 use crate::debug::DebugInfo;
-use crate::debug::DebugWindowState;
+use crate::debug::BreakpointState;
 
 pub(super) fn draw_breakpoints_content(
     ui: &mut egui::Ui,
     info: &DebugInfo,
-    state: &mut DebugWindowState,
+    state: &mut BreakpointState,
     actions: &mut DebugUiActions,
 ) {
     ui.heading("Breakpoints");
     ui.horizontal(|ui| {
         ui.label("Address:");
         let resp = ui.add(
-            egui::TextEdit::singleline(&mut state.breakpoint_input)
+            egui::TextEdit::singleline(&mut state.input)
                 .desired_width(80.0)
                 .hint_text("hex addr"),
         );
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.button("Add").clicked() || enter {
-            if let Some(addr) = parse_hex_u16(&state.breakpoint_input) {
+            if let Some(addr) = parse_hex_u16(&state.input) {
                 actions.add_breakpoint = Some(addr);
-                state.breakpoint_input.clear();
+                state.input.clear();
             }
         }
     });
@@ -177,4 +177,5 @@ fn parse_hex_u16(input: &str) -> Option<u16> {
         .ok()
         .or_else(|| trimmed.parse::<u16>().ok())
 }
+
 

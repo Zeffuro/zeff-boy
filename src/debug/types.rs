@@ -4,7 +4,20 @@ use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::settings::InputBindingAction;
 use egui::{Color32, ColorImage, TextureHandle};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemorySearchMode {
+    ByteValue,
+    ByteSequence,
+    AsciiString,
+}
+
+#[derive(Clone)]
+pub(crate) struct MemorySearchResult {
+    pub(crate) address: u16,
+    pub(crate) matched_bytes: Vec<u8>,
+}
 
 pub(crate) struct WatchpointInfo {
     pub(crate) address: u16,
@@ -76,6 +89,204 @@ pub(crate) struct PpuSnapshot {
     pub(crate) obp1: u8,
 }
 
+pub(crate) struct MemoryViewerState {
+    pub(crate) view_start: u16,
+    pub(crate) jump_input: String,
+    pub(crate) prev_start: Option<u16>,
+    pub(crate) prev_bytes: Vec<u8>,
+    pub(crate) flash_ticks: Vec<u8>,
+    pub(crate) edit_addr: Option<u16>,
+    pub(crate) edit_addr_input: String,
+    pub(crate) edit_value: String,
+    pub(crate) enable_editing: bool,
+    pub(crate) search_query: String,
+    pub(crate) search_mode: MemorySearchMode,
+    pub(crate) search_results: Vec<MemorySearchResult>,
+    pub(crate) search_max_results: usize,
+    pub(crate) search_pending: bool,
+    pub(crate) tbl_map: HashMap<u8, String>,
+    pub(crate) tbl_path: Option<String>,
+}
+
+impl MemoryViewerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            view_start: 0,
+            jump_input: String::from("0000"),
+            prev_start: None,
+            prev_bytes: Vec::new(),
+            flash_ticks: vec![0; 256],
+            edit_addr: None,
+            edit_addr_input: String::new(),
+            edit_value: String::new(),
+            enable_editing: false,
+            search_query: String::new(),
+            search_mode: MemorySearchMode::ByteValue,
+            search_results: Vec::new(),
+            search_max_results: 256,
+            search_pending: false,
+            tbl_map: HashMap::new(),
+            tbl_path: None,
+        }
+    }
+}
+
+pub(crate) struct TilemapViewerState {
+    pub(crate) image: ColorImage,
+    pub(crate) texture: Option<TextureHandle>,
+    pub(crate) vram_dirty: bool,
+    pub(crate) last_vram_signature: u64,
+    pub(crate) last_bg_palette_signature: u64,
+    pub(crate) last_lcdc: u8,
+    pub(crate) last_bgp: u8,
+    pub(crate) last_cgb_mode: bool,
+    pub(crate) last_use_window_map: Option<bool>,
+    pub(crate) last_show_attr_overlay: Option<bool>,
+    pub(crate) last_render_cgb_colors: Option<bool>,
+}
+
+impl TilemapViewerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            image: ColorImage::filled([256, 256], Color32::BLACK),
+            texture: None,
+            vram_dirty: true,
+            last_vram_signature: 0,
+            last_bg_palette_signature: 0,
+            last_lcdc: 0,
+            last_bgp: 0,
+            last_cgb_mode: false,
+            last_use_window_map: None,
+            last_show_attr_overlay: None,
+            last_render_cgb_colors: None,
+        }
+    }
+
+    pub(crate) fn invalidate_cache(&mut self) {
+        self.vram_dirty = true;
+    }
+
+    pub(crate) fn update_dirty_inputs(
+        &mut self,
+        vram: &[u8],
+        bg_palette_ram: &[u8; 64],
+        ppu: PpuSnapshot,
+        cgb_mode: bool,
+    ) {
+        let vram_sig = fold_bytes(vram);
+        let bg_palette_sig = fold_bytes(bg_palette_ram);
+        let changed = self.last_vram_signature != vram_sig
+            || self.last_bg_palette_signature != bg_palette_sig
+            || self.last_lcdc != ppu.lcdc
+            || self.last_bgp != ppu.bgp
+            || self.last_cgb_mode != cgb_mode;
+
+        self.vram_dirty |= changed;
+        self.last_vram_signature = vram_sig;
+        self.last_bg_palette_signature = bg_palette_sig;
+        self.last_lcdc = ppu.lcdc;
+        self.last_bgp = ppu.bgp;
+        self.last_cgb_mode = cgb_mode;
+    }
+}
+
+pub(crate) struct TileViewerState {
+    pub(crate) image: ColorImage,
+    pub(crate) texture: Option<TextureHandle>,
+    pub(crate) vram_dirty: bool,
+    pub(crate) last_vram_signature: u64,
+    pub(crate) last_bg_palette_signature: u64,
+    pub(crate) last_obj_palette_signature: u64,
+    pub(crate) last_bgp: u8,
+    pub(crate) last_cgb_mode: bool,
+    pub(crate) last_vram_bank: Option<usize>,
+    pub(crate) last_use_cgb_colors: Option<bool>,
+    pub(crate) last_use_obj_palette: Option<bool>,
+    pub(crate) last_cgb_palette_index: Option<u8>,
+}
+
+impl TileViewerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            image: ColorImage::filled([128, 192], Color32::BLACK),
+            texture: None,
+            vram_dirty: true,
+            last_vram_signature: 0,
+            last_bg_palette_signature: 0,
+            last_obj_palette_signature: 0,
+            last_bgp: 0,
+            last_cgb_mode: false,
+            last_vram_bank: None,
+            last_use_cgb_colors: None,
+            last_use_obj_palette: None,
+            last_cgb_palette_index: None,
+        }
+    }
+
+    pub(crate) fn invalidate_cache(&mut self) {
+        self.vram_dirty = true;
+    }
+
+    pub(crate) fn update_dirty_inputs(
+        &mut self,
+        vram: &[u8],
+        bg_palette_ram: &[u8; 64],
+        obj_palette_ram: &[u8; 64],
+        bgp: u8,
+        cgb_mode: bool,
+    ) {
+        let vram_sig = fold_bytes(vram);
+        let bg_palette_sig = fold_bytes(bg_palette_ram);
+        let obj_palette_sig = fold_bytes(obj_palette_ram);
+        let changed = self.last_vram_signature != vram_sig
+            || self.last_bg_palette_signature != bg_palette_sig
+            || self.last_obj_palette_signature != obj_palette_sig
+            || self.last_bgp != bgp
+            || self.last_cgb_mode != cgb_mode;
+
+        self.vram_dirty |= changed;
+        self.last_vram_signature = vram_sig;
+        self.last_bg_palette_signature = bg_palette_sig;
+        self.last_obj_palette_signature = obj_palette_sig;
+        self.last_bgp = bgp;
+        self.last_cgb_mode = cgb_mode;
+    }
+}
+
+pub(crate) struct CheatState {
+    pub(crate) codes: Vec<CheatCode>,
+    pub(crate) input: String,
+    pub(crate) name_input: String,
+    pub(crate) parse_error: Option<String>,
+}
+
+impl CheatState {
+    pub(crate) fn new() -> Self {
+        Self {
+            codes: Vec::new(),
+            input: String::new(),
+            name_input: String::new(),
+            parse_error: None,
+        }
+    }
+}
+
+pub(crate) struct BreakpointState {
+    pub(crate) input: String,
+    pub(crate) watchpoint_input: String,
+    pub(crate) watchpoint_type: WatchType,
+}
+
+impl BreakpointState {
+    pub(crate) fn new() -> Self {
+        Self {
+            input: String::new(),
+            watchpoint_input: String::new(),
+            watchpoint_type: WatchType::Write,
+        }
+    }
+}
+
 pub(crate) struct DebugWindowState {
     pub(crate) show_cpu_debug: bool,
     pub(crate) show_apu_viewer: bool,
@@ -86,54 +297,23 @@ pub(crate) struct DebugWindowState {
     pub(crate) show_tilemap_viewer: bool,
     pub(crate) show_oam_viewer: bool,
     pub(crate) show_palette_viewer: bool,
-    pub(crate) memory_view_start: u16,
-    pub(crate) memory_jump_input: String,
-    pub(crate) memory_prev_start: Option<u16>,
-    pub(crate) memory_prev_bytes: Vec<u8>,
-    pub(crate) memory_flash_ticks: Vec<u8>,
-    pub(crate) memory_edit_addr: Option<u16>,
-    pub(crate) memory_edit_addr_input: String,
-    pub(crate) memory_edit_value: String,
-    pub(crate) enable_memory_editing: bool,
-    pub(crate) breakpoint_input: String,
-    pub(crate) watchpoint_input: String,
-    pub(crate) watchpoint_type: WatchType,
+    pub(crate) memory: MemoryViewerState,
+    pub(crate) bp: BreakpointState,
     pub(crate) rebinding_action: Option<InputBindingAction>,
     pub(crate) rebinding_speedup: bool,
     pub(crate) rebinding_rewind: bool,
     pub(crate) last_disasm_pc: Option<u16>,
-    pub(crate) tilemap_image: ColorImage,
-    pub(crate) tilemap_texture: Option<TextureHandle>,
-    pub(crate) tilemap_vram_dirty: bool,
-    pub(crate) tilemap_last_vram_signature: u64,
-    pub(crate) tilemap_last_bg_palette_signature: u64,
-    pub(crate) tilemap_last_lcdc: u8,
-    pub(crate) tilemap_last_bgp: u8,
-    pub(crate) tilemap_last_cgb_mode: bool,
-    pub(crate) tilemap_last_use_window_map: Option<bool>,
-    pub(crate) tilemap_last_show_attr_overlay: Option<bool>,
-    pub(crate) tilemap_last_render_cgb_colors: Option<bool>,
-    pub(crate) tile_viewer_image: ColorImage,
-    pub(crate) tile_viewer_texture: Option<TextureHandle>,
-    pub(crate) tile_viewer_vram_dirty: bool,
-    pub(crate) tile_viewer_last_vram_signature: u64,
-    pub(crate) tile_viewer_last_bg_palette_signature: u64,
-    pub(crate) tile_viewer_last_obj_palette_signature: u64,
-    pub(crate) tile_viewer_last_bgp: u8,
-    pub(crate) tile_viewer_last_cgb_mode: bool,
-    pub(crate) tile_viewer_last_vram_bank: Option<usize>,
-    pub(crate) tile_viewer_last_use_cgb_colors: Option<bool>,
-    pub(crate) tile_viewer_last_use_obj_palette: Option<bool>,
-    pub(crate) tile_viewer_last_cgb_palette_index: Option<u8>,
+    pub(crate) tilemap: TilemapViewerState,
+    pub(crate) tiles: TileViewerState,
     pub(crate) show_performance: bool,
     pub(crate) show_breakpoints_window: bool,
     pub(crate) show_cheats: bool,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
     pub(crate) settings_tab: usize,
-    pub(crate) cheats: Vec<CheatCode>,
-    pub(crate) cheat_input: String,
-    pub(crate) cheat_name_input: String,
-    pub(crate) cheat_parse_error: Option<String>,
+    pub(crate) cheat: CheatState,
+    pub(crate) layer_enable_bg: bool,
+    pub(crate) layer_enable_window: bool,
+    pub(crate) layer_enable_sprites: bool,
 }
 
 impl DebugWindowState {
@@ -148,54 +328,23 @@ impl DebugWindowState {
             show_tilemap_viewer: false,
             show_oam_viewer: false,
             show_palette_viewer: false,
-            memory_view_start: 0,
-            memory_jump_input: String::from("0000"),
-            memory_prev_start: None,
-            memory_prev_bytes: Vec::new(),
-            memory_flash_ticks: vec![0; 256],
-            memory_edit_addr: None,
-            memory_edit_addr_input: String::new(),
-            memory_edit_value: String::new(),
-            enable_memory_editing: false,
-            breakpoint_input: String::new(),
-            watchpoint_input: String::new(),
-            watchpoint_type: WatchType::Write,
+            memory: MemoryViewerState::new(),
+            bp: BreakpointState::new(),
             rebinding_action: None,
             rebinding_speedup: false,
             rebinding_rewind: false,
             last_disasm_pc: None,
-            tilemap_image: ColorImage::filled([256, 256], Color32::BLACK),
-            tilemap_texture: None,
-            tilemap_vram_dirty: true,
-            tilemap_last_vram_signature: 0,
-            tilemap_last_bg_palette_signature: 0,
-            tilemap_last_lcdc: 0,
-            tilemap_last_bgp: 0,
-            tilemap_last_cgb_mode: false,
-            tilemap_last_use_window_map: None,
-            tilemap_last_show_attr_overlay: None,
-            tilemap_last_render_cgb_colors: None,
-            tile_viewer_image: ColorImage::filled([128, 192], Color32::BLACK),
-            tile_viewer_texture: None,
-            tile_viewer_vram_dirty: true,
-            tile_viewer_last_vram_signature: 0,
-            tile_viewer_last_bg_palette_signature: 0,
-            tile_viewer_last_obj_palette_signature: 0,
-            tile_viewer_last_bgp: 0,
-            tile_viewer_last_cgb_mode: false,
-            tile_viewer_last_vram_bank: None,
-            tile_viewer_last_use_cgb_colors: None,
-            tile_viewer_last_use_obj_palette: None,
-            tile_viewer_last_cgb_palette_index: None,
+            tilemap: TilemapViewerState::new(),
+            tiles: TileViewerState::new(),
             show_performance: false,
             show_breakpoints_window: false,
             show_cheats: false,
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),
             settings_tab: 0,
-            cheats: Vec::new(),
-            cheat_input: String::new(),
-            cheat_name_input: String::new(),
-            cheat_parse_error: None,
+            cheat: CheatState::new(),
+            layer_enable_bg: true,
+            layer_enable_window: true,
+            layer_enable_sprites: true,
         }
     }
 
@@ -210,72 +359,10 @@ impl DebugWindowState {
     pub(crate) fn any_vram_viewer_open(&self) -> bool {
         self.show_tile_viewer || self.show_tilemap_viewer
     }
-
-    pub(crate) fn invalidate_tilemap_cache(&mut self) {
-        self.tilemap_vram_dirty = true;
-    }
-
-    pub(crate) fn update_tilemap_dirty_inputs(
-        &mut self,
-        vram: &[u8],
-        bg_palette_ram: &[u8; 64],
-        ppu: PpuSnapshot,
-        cgb_mode: bool,
-    ) {
-        let vram_sig = fold_bytes(vram);
-        let bg_palette_sig = fold_bytes(bg_palette_ram);
-        let changed = self.tilemap_last_vram_signature != vram_sig
-            || self.tilemap_last_bg_palette_signature != bg_palette_sig
-            || self.tilemap_last_lcdc != ppu.lcdc
-            || self.tilemap_last_bgp != ppu.bgp
-            || self.tilemap_last_cgb_mode != cgb_mode;
-
-        self.tilemap_vram_dirty |= changed;
-        self.tilemap_last_vram_signature = vram_sig;
-        self.tilemap_last_bg_palette_signature = bg_palette_sig;
-        self.tilemap_last_lcdc = ppu.lcdc;
-        self.tilemap_last_bgp = ppu.bgp;
-        self.tilemap_last_cgb_mode = cgb_mode;
-    }
-
-    pub(crate) fn invalidate_tile_viewer_cache(&mut self) {
-        self.tile_viewer_vram_dirty = true;
-    }
-
-    pub(crate) fn update_tile_viewer_dirty_inputs(
-        &mut self,
-        vram: &[u8],
-        bg_palette_ram: &[u8; 64],
-        obj_palette_ram: &[u8; 64],
-        bgp: u8,
-        cgb_mode: bool,
-    ) {
-        let vram_sig = fold_bytes(vram);
-        let bg_palette_sig = fold_bytes(bg_palette_ram);
-        let obj_palette_sig = fold_bytes(obj_palette_ram);
-        let changed = self.tile_viewer_last_vram_signature != vram_sig
-            || self.tile_viewer_last_bg_palette_signature != bg_palette_sig
-            || self.tile_viewer_last_obj_palette_signature != obj_palette_sig
-            || self.tile_viewer_last_bgp != bgp
-            || self.tile_viewer_last_cgb_mode != cgb_mode;
-
-        self.tile_viewer_vram_dirty |= changed;
-        self.tile_viewer_last_vram_signature = vram_sig;
-        self.tile_viewer_last_bg_palette_signature = bg_palette_sig;
-        self.tile_viewer_last_obj_palette_signature = obj_palette_sig;
-        self.tile_viewer_last_bgp = bgp;
-        self.tile_viewer_last_cgb_mode = cgb_mode;
-    }
 }
 
 fn fold_bytes(bytes: &[u8]) -> u64 {
-    // Small, deterministic rolling hash for cheap dirty detection.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0001_0000_01b3);
-    }
-    hash
+    crc32fast::hash(bytes) as u64
 }
 
 #[derive(Clone)]

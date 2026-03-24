@@ -11,9 +11,8 @@ impl RewindSnapshot {
         }
     }
 
-    fn decompress(&self) -> Vec<u8> {
-        lz4_flex::decompress_size_prepended(&self.compressed)
-            .unwrap_or_default()
+    fn decompress(&self) -> Option<Vec<u8>> {
+        lz4_flex::decompress_size_prepended(&self.compressed).ok()
     }
 }
 
@@ -53,11 +52,22 @@ impl RewindBuffer {
     }
 
     pub(crate) fn pop(&mut self) -> Option<Vec<u8>> {
-        self.snapshots.pop_back().map(|s| s.decompress())
+        self.snapshots.pop_back().and_then(|s| s.decompress())
     }
 
     pub(crate) fn len(&self) -> usize {
         self.snapshots.len()
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub(crate) fn fill_ratio(&self) -> f32 {
+        if self.capacity == 0 {
+            return 0.0;
+        }
+        self.snapshots.len() as f32 / self.capacity as f32
     }
 
     pub(crate) fn is_empty(&self) -> bool {

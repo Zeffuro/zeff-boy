@@ -19,6 +19,12 @@ pub(crate) struct SnapshotRequest {
     pub(crate) show_memory_viewer: bool,
     pub(crate) memory_view_start: u16,
     pub(crate) last_disasm_pc: Option<u16>,
+    pub(crate) memory_search: Option<MemorySearchRequest>,
+}
+
+pub(crate) struct MemorySearchRequest {
+    pub(crate) pattern: Vec<u8>,
+    pub(crate) max_results: usize,
 }
 
 pub(crate) struct FrameInput {
@@ -37,7 +43,7 @@ pub(crate) struct FrameInput {
     pub(crate) reusable_vram_buffer: Option<Vec<u8>>,
     pub(crate) reusable_oam_buffer: Option<Vec<u8>>,
     pub(crate) reusable_memory_page: Option<Vec<(u16, u8)>>,
-    pub(crate) active_cheats: Vec<(u16, u8)>,
+    pub(crate) cheats: Vec<crate::cheats::CheatPatch>,
     pub(crate) rewind_enabled: bool,
 }
 
@@ -47,6 +53,7 @@ pub(crate) struct FrameResult {
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
+    pub(crate) rewind_fill: f32,
 }
 
 pub(crate) enum EmuCommand {
@@ -113,9 +120,11 @@ impl EmuThread {
             let mut cached_rom_info: Option<crate::debug::RomInfoViewData> = None;
             let mut uncapped_mode = false;
             let mut uncapped_fb: Option<Vec<u8>> = None;
-            let mut last_cheats: Vec<(u16, u8)> = Vec::new();
+            let mut last_cheats: Vec<crate::cheats::CheatPatch> = Vec::new();
 
             let mut rewind_buffer = crate::rewind::RewindBuffer::new(10, 4);
+
+            let send_resp = |resp: EmuResponse| -> bool { resp_tx.send(resp).is_ok() };
 
             'main: loop {
                 let command = if uncapped_mode {
@@ -140,7 +149,9 @@ impl EmuThread {
 
                     EmuCommand::StepFrames(input) => {
                         last_cheats.clear();
-                        last_cheats.extend_from_slice(&input.active_cheats);
+                        last_cheats.extend_from_slice(&input.cheats);
+
+                        Self::install_rom_patches(&mut emu, &input.cheats);
 
                         Self::apply_debug_actions(&mut emu, &input.debug_actions);
 
@@ -174,10 +185,8 @@ impl EmuThread {
                         if input.frames > 0 && !matches!(emu.cpu.running, CPUState::Suspended) {
                             for _ in 0..input.frames {
                                 emu.step_frame();
-                                // Apply cheat codes after each frame
-                                for &(addr, value) in &input.active_cheats {
-                                    emu.bus.write_byte(addr, value);
-                                }
+                                // Apply RAM cheat patches after each frame
+                                Self::apply_ram_cheats(&mut emu, &input.cheats);
                                 if matches!(emu.cpu.running, CPUState::Suspended) {
                                     break;
                                 }
@@ -237,6 +246,7 @@ impl EmuThread {
                             audio_samples,
                             ui_data,
                             is_mbc7,
+                            rewind_fill: rewind_buffer.fill_ratio(),
                         };
 
                         match frame_tx.try_send(result) {
@@ -256,9 +266,7 @@ impl EmuThread {
                             Ok(path) => EmuResponse::SaveStateOk(path),
                             Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::LoadStateSlot {
@@ -280,9 +288,7 @@ impl EmuThread {
                             }
                             Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::SaveStateToPath(path) => {
@@ -290,9 +296,7 @@ impl EmuThread {
                             Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
                             Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::LoadStateFromPath {
@@ -314,9 +318,7 @@ impl EmuThread {
                             }
                             Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::SetSampleRate(rate) => {
@@ -340,9 +342,7 @@ impl EmuThread {
                             Ok(bytes) => EmuResponse::StateCaptured(bytes),
                             Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::LoadStateBytes {
@@ -364,9 +364,7 @@ impl EmuThread {
                             }
                             Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::AutoSaveState => {
@@ -375,9 +373,7 @@ impl EmuThread {
                             Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
                             Err(err) => EmuResponse::SaveStateFailed(err.to_string()),
                         };
-                        if resp_tx.send(resp).is_err() {
-                            break 'main;
-                        }
+                        if !send_resp(resp) { break 'main; }
                     }
 
                     EmuCommand::AutoLoadState {
@@ -400,14 +396,9 @@ impl EmuThread {
                                 }
                                 Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
                             };
-                            if resp_tx.send(resp).is_err() {
-                                break 'main;
-                            }
+                            if !send_resp(resp) { break 'main; }
                         } else {
-                            // No auto-save exists — silently continue
-                            if resp_tx.send(EmuResponse::LoadStateFailed("no auto-save".to_string())).is_err() {
-                                break 'main;
-                            }
+                            if !send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string())) { break 'main; }
                         }
                     }
 
@@ -416,28 +407,22 @@ impl EmuThread {
                             match emu.load_state_from_bytes(state_bytes) {
                                 Ok(()) => {
                                     let fb = emu.framebuffer().to_vec();
-                                    if resp_tx.send(EmuResponse::LoadStateOk {
+                                    if !send_resp(EmuResponse::LoadStateOk {
                                         path: "(rewind)".to_string(),
                                         framebuffer: fb,
-                                    }).is_err() {
-                                        break 'main;
-                                    }
+                                    }) { break 'main; }
                                 }
                                 Err(err) => {
                                     log::warn!("Rewind restore failed: {}", err);
-                                    if resp_tx.send(EmuResponse::LoadStateFailed(
+                                    if !send_resp(EmuResponse::LoadStateFailed(
                                         "rewind restore failed".to_string(),
-                                    )).is_err() {
-                                        break 'main;
-                                    }
+                                    )) { break 'main; }
                                 }
                             }
                         } else {
-                            if resp_tx.send(EmuResponse::LoadStateFailed(
+                            if !send_resp(EmuResponse::LoadStateFailed(
                                 "no rewind data".to_string(),
-                            )).is_err() {
-                                break 'main;
-                            }
+                            )) { break 'main; }
                         }
                     }
 
@@ -464,9 +449,7 @@ impl EmuThread {
                     const UNCAPPED_BATCH: usize = 60;
                     for _ in 0..UNCAPPED_BATCH {
                         emu.step_frame();
-                        for &(addr, value) in &last_cheats {
-                            emu.bus.write_byte(addr, value);
-                        }
+                        Self::apply_ram_cheats(&mut emu, &last_cheats);
                         if matches!(emu.cpu.running, CPUState::Suspended) {
                             break;
                         }
@@ -487,8 +470,10 @@ impl EmuThread {
                             disassembly_view: None,
                             rom_info_view: None,
                             memory_page: None,
+                            memory_search_results: None,
                         },
                         is_mbc7: emu.is_mbc7_cartridge(),
+                        rewind_fill: rewind_buffer.fill_ratio(),
                     };
 
                     match frame_tx.try_send(result) {
@@ -540,6 +525,43 @@ impl EmuThread {
         for (addr, value) in &actions.memory_writes {
             emu.bus.write_byte(*addr, *value);
         }
+        if let Some((bg, win, sprites)) = actions.layer_toggles {
+            emu.bus.io.ppu.debug_enable_bg = bg;
+            emu.bus.io.ppu.debug_enable_window = win;
+            emu.bus.io.ppu.debug_enable_sprites = sprites;
+        }
+    }
+
+    fn install_rom_patches(emu: &mut Emulator, cheats: &[crate::cheats::CheatPatch]) {
+        use crate::cheats::CheatPatch;
+        emu.bus.game_genie_patches.clear();
+        for patch in cheats {
+            match *patch {
+                CheatPatch::RomWrite { .. } | CheatPatch::RomWriteIfEquals { .. } => {
+                    emu.bus.game_genie_patches.push(*patch);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn apply_ram_cheats(emu: &mut Emulator, cheats: &[crate::cheats::CheatPatch]) {
+        use crate::cheats::CheatPatch;
+        for patch in cheats {
+            match *patch {
+                CheatPatch::RamWrite { address, value } => {
+                    let current = emu.bus.read_byte_raw(address);
+                    emu.bus.write_byte(address, value.resolve_with_current(current));
+                }
+                CheatPatch::RamWriteIfEquals { address, value, compare } => {
+                    let current = emu.bus.read_byte_raw(address);
+                    if compare.matches(current) {
+                        emu.bus.write_byte(address, value.resolve_with_current(current));
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     pub(crate) fn send(&self, cmd: EmuCommand) {
@@ -554,9 +576,6 @@ impl EmuThread {
         self.resp_rx.recv().ok()
     }
 
-    pub(crate) fn recv_resp(&self) -> Option<EmuResponse> {
-        self.resp_rx.try_recv().ok()
-    }
 
     pub(crate) fn shutdown(&mut self) {
         let _ = self.cmd_tx.send(EmuCommand::Shutdown);

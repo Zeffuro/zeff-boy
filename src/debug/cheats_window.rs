@@ -1,43 +1,44 @@
-use crate::cheats::{CheatCode, parse_cheat};
-use crate::debug::DebugWindowState;
+use crate::cheats::{CheatCode, CheatPatch, parse_cheat};
+use crate::debug::CheatState;
 
 pub(super) fn draw_cheats_content(
     ui: &mut egui::Ui,
-    state: &mut DebugWindowState,
+    state: &mut CheatState,
 ) {
     ui.heading("Cheat Codes");
-    ui.label("GameShark (01VVAAAA) or raw (AAAA:VV)");
+    ui.label("GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)");
 
     ui.horizontal(|ui| {
         ui.label("Code:");
-        let response = ui.text_edit_singleline(&mut state.cheat_input);
+        let response = ui.text_edit_singleline(&mut state.input);
         let enter_pressed = response.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
         let add_clicked = ui.button("Add").clicked();
 
-        if (add_clicked || enter_pressed) && !state.cheat_input.trim().is_empty() {
-            match parse_cheat(&state.cheat_input) {
-                Ok((address, value, code_type)) => {
-                    let name = if state.cheat_name_input.trim().is_empty() {
-                        format!("{:04X}={:02X}", address, value)
+        if (add_clicked || enter_pressed) && !state.input.trim().is_empty() {
+            match parse_cheat(&state.input) {
+                Ok((patches, code_type)) => {
+                    let name = if state.name_input.trim().is_empty() {
+                        patches_summary(&patches)
                     } else {
-                        state.cheat_name_input.trim().to_string()
+                        state.name_input.trim().to_string()
                     };
-                    state.cheats.push(CheatCode {
+                    let parameter_value = patches.iter().copied().find_map(|p| p.default_user_value());
+                    state.codes.push(CheatCode {
                         name,
-                        code_text: state.cheat_input.trim().to_string(),
-                        address,
-                        value,
+                        code_text: state.input.trim().to_string(),
                         enabled: true,
+                        parameter_value,
                         code_type,
+                        patches,
                     });
-                    state.cheat_input.clear();
-                    state.cheat_name_input.clear();
-                    state.cheat_parse_error = None;
+                    state.input.clear();
+                    state.name_input.clear();
+                    state.parse_error = None;
                 }
                 Err(msg) => {
-                    state.cheat_parse_error = Some(msg.to_string());
+                    state.parse_error = Some(msg.to_string());
                 }
             }
         }
@@ -45,46 +46,53 @@ pub(super) fn draw_cheats_content(
 
     ui.horizontal(|ui| {
         ui.label("Name:");
-        ui.text_edit_singleline(&mut state.cheat_name_input);
+        ui.text_edit_singleline(&mut state.name_input);
     });
 
-    if let Some(ref err) = state.cheat_parse_error {
+    if let Some(ref err) = state.parse_error {
         ui.colored_label(egui::Color32::RED, err);
     }
 
     ui.separator();
 
-    if state.cheats.is_empty() {
+    if state.codes.is_empty() {
         ui.label("No cheats added.");
         return;
     }
 
-    let active_count = state.cheats.iter().filter(|c| c.enabled).count();
+    let active_count = state.codes.iter().filter(|c| c.enabled).count();
     ui.label(format!(
         "{} cheat(s), {} active",
-        state.cheats.len(),
+        state.codes.len(),
         active_count
     ));
 
     ui.separator();
 
     let mut remove_idx = None;
-    for (i, cheat) in state.cheats.iter_mut().enumerate() {
+    for (i, cheat) in state.codes.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             ui.checkbox(&mut cheat.enabled, "");
             let type_label = match cheat.code_type {
                 crate::cheats::CheatType::GameShark => "GS",
+                crate::cheats::CheatType::GameGenie => "GG",
+                crate::cheats::CheatType::XPloder => "XP",
                 crate::cheats::CheatType::Raw => "Raw",
             };
+            let summary = patches_summary(&cheat.patches);
             let label = format!(
-                "{} [{}] {:04X}={:02X} ({})",
+                "{} [{}] {} ({})",
                 cheat.name,
                 cheat.code_text,
-                cheat.address,
-                cheat.value,
+                summary,
                 type_label,
             );
             ui.label(label);
+            if let Some(param) = cheat.parameter_value.as_mut() {
+                ui.label("Value:");
+                ui.add(egui::DragValue::new(param).range(0..=255));
+                ui.label(format!("0x{param:02X}"));
+            }
             if ui.small_button("🗑").on_hover_text("Remove").clicked() {
                 remove_idx = Some(i);
             }
@@ -92,24 +100,44 @@ pub(super) fn draw_cheats_content(
     }
 
     if let Some(idx) = remove_idx {
-        state.cheats.remove(idx);
+        state.codes.remove(idx);
     }
 
     ui.separator();
     ui.horizontal(|ui| {
         if ui.button("Enable All").clicked() {
-            for cheat in &mut state.cheats {
+            for cheat in &mut state.codes {
                 cheat.enabled = true;
             }
         }
         if ui.button("Disable All").clicked() {
-            for cheat in &mut state.cheats {
+            for cheat in &mut state.codes {
                 cheat.enabled = false;
             }
         }
         if ui.button("Clear All").clicked() {
-            state.cheats.clear();
+            state.codes.clear();
         }
     });
 }
 
+fn patches_summary(patches: &[CheatPatch]) -> String {
+    patches
+        .iter()
+        .map(|p| match *p {
+            CheatPatch::RamWrite { address, value } => {
+                format!("{address:04X}={}", value.display())
+            }
+            CheatPatch::RomWrite { address, value } => {
+                format!("ROM {address:04X}={}", value.display())
+            }
+            CheatPatch::RomWriteIfEquals { address, value, compare } => {
+                format!("ROM {address:04X}={}?{}", value.display(), compare.display())
+            }
+            CheatPatch::RamWriteIfEquals { address, value, compare } => {
+                format!("{address:04X}={}?{}", value.display(), compare.display())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}

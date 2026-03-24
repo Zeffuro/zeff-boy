@@ -67,6 +67,9 @@ pub(crate) struct PPU {
     pub(crate) cgb_mode: bool,
     pub(crate) rendered_current_line: bool,
     prev_stat_line: bool,
+    pub(crate) debug_enable_bg: bool,
+    pub(crate) debug_enable_window: bool,
+    pub(crate) debug_enable_sprites: bool,
 }
 
 impl PPU {
@@ -108,6 +111,9 @@ impl PPU {
             cgb_mode: false,
             rendered_current_line: false,
             prev_stat_line: false,
+            debug_enable_bg: true,
+            debug_enable_window: true,
+            debug_enable_sprites: true,
         }
     }
 }
