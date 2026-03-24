@@ -76,6 +76,8 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) rom_info_view: Option<&'a crate::debug::RomInfoViewData>,
     pub(crate) disassembly_view: Option<&'a crate::debug::DisassemblyView>,
     pub(crate) memory_page: Option<&'a [(u16, u8)]>,
+    pub(crate) rom_page: Option<&'a [(u32, u8)]>,
+    pub(crate) rom_size: u32,
     pub(crate) debug_windows: &'a mut crate::debug::DebugWindowState,
     pub(crate) settings: &'a mut crate::settings::Settings,
     pub(crate) show_settings_window: &'a mut bool,
@@ -86,7 +88,8 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) is_recording_replay: bool,
     pub(crate) is_playing_replay: bool,
     pub(crate) is_rewinding: bool,
-    pub(crate) rewind_fill: f32,
+    pub(crate) rewind_seconds_back: f32,
+    pub(crate) is_paused: bool,
     pub(crate) autohide_menu_bar: bool,
     pub(crate) cursor_y: Option<f32>,
 }
@@ -100,6 +103,8 @@ pub(crate) struct RenderResult {
     pub(crate) load_recent_rom: Option<std::path::PathBuf>,
     pub(crate) toolbar_settings_changed: bool,
     pub(crate) toggle_fullscreen: bool,
+    pub(crate) toggle_pause: bool,
+    pub(crate) speed_change: i32,
     pub(crate) start_audio_recording: bool,
     pub(crate) stop_audio_recording: bool,
     pub(crate) start_replay_recording: bool,
@@ -108,6 +113,7 @@ pub(crate) struct RenderResult {
     pub(crate) take_screenshot: bool,
     pub(crate) debug_actions: crate::debug::DebugUiActions,
     pub(crate) layer_toggles: Option<(bool, bool, bool)>,
+    pub(crate) egui_wants_keyboard: bool,
 }
 
 pub(crate) struct Graphics {
@@ -117,6 +123,8 @@ pub(crate) struct Graphics {
     framebuffer: FramebufferRenderer,
     size: PhysicalSize<u32>,
     aspect_ratio_mode: AspectRatioMode,
+    game_egui_texture_id: Option<egui::TextureId>,
+    game_view_pixel_size: Option<(u32, u32)>,
 }
 
 impl Graphics {
@@ -139,6 +147,8 @@ impl Graphics {
             framebuffer,
             size,
             aspect_ratio_mode: AspectRatioMode::IntegerScale,
+            game_egui_texture_id: None,
+            game_view_pixel_size: None,
         })
     }
 
@@ -202,7 +212,7 @@ impl Graphics {
         };
 
         let menu_actions = if show_menu {
-            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, ctx.dock_state, ctx.settings, ctx.debug_windows, ctx.speed_mode_label, ctx.is_recording_audio, ctx.is_recording_replay, ctx.is_playing_replay)
+            crate::debug::draw_menu_bar(self.egui.context(), self.aspect_ratio_mode, ctx.dock_state, ctx.settings, ctx.debug_windows, ctx.speed_mode_label, ctx.is_recording_audio, ctx.is_recording_replay, ctx.is_playing_replay, ctx.is_paused)
         } else {
             crate::debug::MenuActions::default(ctx.settings.autohide_menu_bar)
         };
@@ -223,19 +233,64 @@ impl Graphics {
 
         let debug_actions;
         if ctx.debug_info.is_some() {
+            let has_game_view = crate::debug::has_game_view_tab(ctx.dock_state);
+
+            // Resize offscreen texture to match previous frame's GameView panel size
+            if has_game_view {
+                if let Some((w, h)) = self.game_view_pixel_size {
+                    self.framebuffer.resize_offscreen(&self.gpu.device, w, h);
+                }
+            }
+
+            let game_texture_id = if has_game_view {
+                let tex_view = self.framebuffer.output_view();
+                match self.game_egui_texture_id {
+                    Some(id) => {
+                        self.egui.update_native_texture(
+                            &self.gpu.device,
+                            id,
+                            tex_view,
+                            wgpu::FilterMode::Nearest,
+                        );
+                        Some(id)
+                    }
+                    None => {
+                        let id = self.egui.register_native_texture(
+                            &self.gpu.device,
+                            tex_view,
+                            wgpu::FilterMode::Nearest,
+                        );
+                        self.game_egui_texture_id = Some(id);
+                        Some(id)
+                    }
+                }
+            } else {
+                None
+            };
+
             let mut tab_viewer = crate::debug::DebugTabViewer {
                 debug_info: ctx.debug_info,
                 viewer_data: ctx.viewer_data,
                 rom_info_view: ctx.rom_info_view,
                 disassembly_view: ctx.disassembly_view,
                 memory_page: ctx.memory_page,
+                rom_page: ctx.rom_page,
+                rom_size: ctx.rom_size,
                 window_state: ctx.debug_windows,
                 actions: crate::debug::DebugUiActions::none(),
+                game_texture_id,
+                aspect_ratio_mode: self.aspect_ratio_mode,
+                game_view_pixel_size: None,
             };
             egui_dock::DockArea::new(ctx.dock_state)
                 .style(egui_dock::Style::from_egui(self.egui.context().style().as_ref()))
                 .show(self.egui.context(), &mut tab_viewer);
             debug_actions = tab_viewer.actions;
+
+            // Store the GameView pixel size for next frame's offscreen resize
+            if let Some(size) = tab_viewer.game_view_pixel_size {
+                self.game_view_pixel_size = Some(size);
+            }
         } else {
             debug_actions = crate::debug::DebugUiActions::none();
             egui::CentralPanel::default().show(self.egui.context(), |ui| {
@@ -245,6 +300,7 @@ impl Graphics {
             });
         }
 
+        ctx.toast_manager.set_recording(ctx.is_recording_audio);
         ctx.toast_manager.draw(self.egui.context());
 
         if ctx.is_rewinding {
@@ -257,20 +313,19 @@ impl Graphics {
                         .inner_margin(egui::Margin::symmetric(12, 6))
                         .corner_radius(4.0)
                         .show(ui, |ui| {
+                            let secs = ctx.rewind_seconds_back;
                             ui.label(
-                                egui::RichText::new("Rewinding…")
+                                egui::RichText::new(format!("⏪ {secs:.1}s back"))
                                     .color(egui::Color32::WHITE)
                                     .size(15.0),
                             );
-                            ui.add(
-                                egui::ProgressBar::new(ctx.rewind_fill)
-                                    .desired_width(140.0)
-                                    .text(format!("{:.0}%", ctx.rewind_fill * 100.0)),
-                            );
                         });
                 });
+            // Keep repainting while rewinding so the counter updates in realtime
+            self.egui.context().request_repaint();
         }
 
+        let egui_wants_keyboard = self.egui.context().wants_keyboard_input();
         let full_output = self.egui.end_frame(&self.window);
         let menu_bar_height =
             menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
@@ -282,7 +337,17 @@ impl Graphics {
                 label: Some("main encoder"),
             });
 
-        // Emulator Framebuffer
+        // Offscreen shader pass — renders framebuffer through shaders into
+        // the output texture used as the egui game-view image.
+        let has_game_view_in_dock = ctx.debug_info.is_some()
+            && crate::debug::has_game_view_tab(ctx.dock_state);
+        if has_game_view_in_dock {
+            self.framebuffer.render_to_offscreen(&mut encoder);
+        }
+
+        // Emulator Framebuffer (only when not rendered inside a dock tab)
+        let render_framebuffer_directly = ctx.debug_info.is_some()
+            && !crate::debug::has_game_view_tab(ctx.dock_state);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("screen pass"),
@@ -305,7 +370,7 @@ impl Graphics {
                 occlusion_query_set: None,
             });
 
-            if ctx.debug_info.is_some() {
+            if render_framebuffer_directly {
                 if let Some((x, y, w, h)) = calculate_viewport(
                     self.aspect_ratio_mode,
                     self.gpu.config.width,
@@ -360,6 +425,8 @@ impl Graphics {
             load_recent_rom: menu_actions.load_recent_rom,
             toolbar_settings_changed: menu_actions.toolbar_settings_changed,
             toggle_fullscreen: menu_actions.toggle_fullscreen,
+            toggle_pause: menu_actions.toggle_pause,
+            speed_change: menu_actions.speed_change,
             start_audio_recording: menu_actions.start_audio_recording,
             stop_audio_recording: menu_actions.stop_audio_recording,
             start_replay_recording: menu_actions.start_replay_recording,
@@ -368,6 +435,7 @@ impl Graphics {
             take_screenshot: menu_actions.take_screenshot,
             debug_actions,
             layer_toggles: menu_actions.layer_toggles,
+            egui_wants_keyboard,
         })
     }
 }

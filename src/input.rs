@@ -1,6 +1,7 @@
-use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs, ff};
+use gilrs::{Axis, Event, EventType, GamepadId, Gilrs, ff};
 
 use crate::hardware::joypad::JoypadKey;
+use crate::settings::GamepadBindings;
 
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
@@ -12,6 +13,7 @@ pub(crate) struct GamepadHandler {
 pub(crate) struct GamepadPoll {
     pub(crate) events: Vec<(JoypadKey, bool)>,
     pub(crate) left_stick: (f32, f32),
+    pub(crate) raw_pressed: Vec<String>,
 }
 
 impl GamepadHandler {
@@ -24,18 +26,20 @@ impl GamepadHandler {
         })
     }
 
-    pub(crate) fn poll(&mut self) -> GamepadPoll {
+    pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
         let mut events = Vec::new();
+        let mut raw_pressed = Vec::new();
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
             self.active_gamepad = Some(id);
             match event {
                 EventType::ButtonPressed(button, _) => {
-                    if let Some(key) = Self::map_button(button) {
+                    raw_pressed.push(format!("{button:?}"));
+                    if let Some(key) = bindings.map_button_name(&format!("{button:?}")) {
                         events.push((key, true));
                     }
                 }
                 EventType::ButtonReleased(button, _) => {
-                    if let Some(key) = Self::map_button(button) {
+                    if let Some(key) = bindings.map_button_name(&format!("{button:?}")) {
                         events.push((key, false));
                     }
                 }
@@ -57,7 +61,7 @@ impl GamepadHandler {
             })
             .unwrap_or((0.0, 0.0));
 
-        GamepadPoll { events, left_stick }
+        GamepadPoll { events, left_stick, raw_pressed }
     }
 
     pub(crate) fn set_rumble(&mut self, active: bool) {
@@ -95,20 +99,6 @@ impl GamepadHandler {
                 let _ = effect.stop();
             }
             self.rumble_playing = false;
-        }
-    }
-
-    fn map_button(button: Button) -> Option<JoypadKey> {
-        match button {
-            Button::South => Some(JoypadKey::A),
-            Button::East => Some(JoypadKey::B),
-            Button::Start => Some(JoypadKey::Start),
-            Button::Select => Some(JoypadKey::Select),
-            Button::DPadUp => Some(JoypadKey::Up),
-            Button::DPadDown => Some(JoypadKey::Down),
-            Button::DPadLeft => Some(JoypadKey::Left),
-            Button::DPadRight => Some(JoypadKey::Right),
-            _ => None,
         }
     }
 }

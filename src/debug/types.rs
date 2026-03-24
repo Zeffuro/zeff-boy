@@ -2,7 +2,7 @@ use crate::cheats::CheatCode;
 use crate::debug::breakpoints::{WatchHit, WatchType};
 use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use crate::settings::InputBindingAction;
+use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
 use egui::{Color32, ColorImage, TextureHandle};
 use std::collections::{HashMap, VecDeque};
 
@@ -131,6 +131,42 @@ impl MemoryViewerState {
     }
 }
 
+pub(crate) struct RomViewerState {
+    pub(crate) view_start: u32,
+    pub(crate) jump_input: String,
+    pub(crate) rom_size: u32,
+    pub(crate) tbl_map: HashMap<u8, String>,
+    pub(crate) tbl_path: Option<String>,
+    pub(crate) search_query: String,
+    pub(crate) search_mode: MemorySearchMode,
+    pub(crate) search_results: Vec<RomSearchResult>,
+    pub(crate) search_max_results: usize,
+    pub(crate) search_pending: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct RomSearchResult {
+    pub(crate) offset: u32,
+    pub(crate) matched_bytes: Vec<u8>,
+}
+
+impl RomViewerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            view_start: 0,
+            jump_input: String::from("000000"),
+            rom_size: 0,
+            tbl_map: HashMap::new(),
+            tbl_path: None,
+            search_query: String::new(),
+            search_mode: MemorySearchMode::ByteValue,
+            search_results: Vec::new(),
+            search_max_results: 256,
+            search_pending: false,
+        }
+    }
+}
+
 pub(crate) struct TilemapViewerState {
     pub(crate) image: ColorImage,
     pub(crate) texture: Option<TextureHandle>,
@@ -254,19 +290,35 @@ impl TileViewerState {
 }
 
 pub(crate) struct CheatState {
-    pub(crate) codes: Vec<CheatCode>,
+    pub(crate) user_codes: Vec<CheatCode>,
+    pub(crate) libretro_codes: Vec<CheatCode>,
     pub(crate) input: String,
     pub(crate) name_input: String,
     pub(crate) parse_error: Option<String>,
+    pub(crate) rom_title: Option<String>,
+    pub(crate) rom_is_gbc: bool,
+    pub(crate) libretro_search: String,
+    pub(crate) libretro_results: Vec<String>,
+    pub(crate) libretro_status: Option<String>,
+    pub(crate) libretro_file_list: Option<Vec<String>>,
+    pub(crate) libretro_show: bool,
 }
 
 impl CheatState {
     pub(crate) fn new() -> Self {
         Self {
-            codes: Vec::new(),
+            user_codes: Vec::new(),
+            libretro_codes: Vec::new(),
             input: String::new(),
             name_input: String::new(),
             parse_error: None,
+            rom_title: None,
+            rom_is_gbc: false,
+            libretro_search: String::new(),
+            libretro_results: Vec::new(),
+            libretro_status: None,
+            libretro_file_list: None,
+            libretro_show: false,
         }
     }
 }
@@ -289,6 +341,7 @@ impl BreakpointState {
 
 pub(crate) struct DebugWindowState {
     pub(crate) show_cpu_debug: bool,
+    pub(crate) show_input_viewer: bool,
     pub(crate) show_apu_viewer: bool,
     pub(crate) show_rom_info: bool,
     pub(crate) show_disassembler: bool,
@@ -300,6 +353,8 @@ pub(crate) struct DebugWindowState {
     pub(crate) memory: MemoryViewerState,
     pub(crate) bp: BreakpointState,
     pub(crate) rebinding_action: Option<InputBindingAction>,
+    pub(crate) rebinding_shortcut: Option<ShortcutAction>,
+    pub(crate) rebinding_gamepad: Option<BindingAction>,
     pub(crate) rebinding_speedup: bool,
     pub(crate) rebinding_rewind: bool,
     pub(crate) last_disasm_pc: Option<u16>,
@@ -308,6 +363,8 @@ pub(crate) struct DebugWindowState {
     pub(crate) show_performance: bool,
     pub(crate) show_breakpoints_window: bool,
     pub(crate) show_cheats: bool,
+    pub(crate) show_rom_viewer: bool,
+    pub(crate) rom_viewer: RomViewerState,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
     pub(crate) settings_tab: usize,
     pub(crate) cheat: CheatState,
@@ -320,6 +377,7 @@ impl DebugWindowState {
     pub(crate) fn new() -> Self {
         Self {
             show_cpu_debug: true,
+            show_input_viewer: false,
             show_apu_viewer: false,
             show_rom_info: false,
             show_disassembler: false,
@@ -331,6 +389,8 @@ impl DebugWindowState {
             memory: MemoryViewerState::new(),
             bp: BreakpointState::new(),
             rebinding_action: None,
+            rebinding_shortcut: None,
+            rebinding_gamepad: None,
             rebinding_speedup: false,
             rebinding_rewind: false,
             last_disasm_pc: None,
@@ -339,6 +399,8 @@ impl DebugWindowState {
             show_performance: false,
             show_breakpoints_window: false,
             show_cheats: false,
+            show_rom_viewer: false,
+            rom_viewer: RomViewerState::new(),
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),
             settings_tab: 0,
             cheat: CheatState::new(),

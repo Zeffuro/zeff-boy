@@ -1,5 +1,5 @@
 use super::App;
-use crate::settings::InputBindingAction;
+use crate::settings::{InputBindingAction, ShortcutAction};
 use winit::{
     event::{ElementState, KeyEvent},
     keyboard::{KeyCode, PhysicalKey},
@@ -23,6 +23,10 @@ impl App {
             return;
         }
 
+        if self.egui_wants_keyboard {
+            return;
+        }
+
         self.handle_joypad_key(key_event, key_code);
         self.handle_tilt_key(key_event, key_code);
     }
@@ -40,6 +44,14 @@ impl App {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
                 self.settings.rewind_key = format!("{key_code:?}");
                 self.debug_windows.rebinding_rewind = false;
+            }
+            return true;
+        }
+
+        if let Some(shortcut_action) = self.debug_windows.rebinding_shortcut {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.settings.shortcut_bindings.set(shortcut_action, key_code);
+                self.debug_windows.rebinding_shortcut = None;
             }
             return true;
         }
@@ -69,21 +81,64 @@ impl App {
             return true;
         }
 
-        match key_code {
-            KeyCode::F11 => {
-                if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    self.uncapped_speed = !self.uncapped_speed;
-                    self.settings.uncapped_speed = self.uncapped_speed;
-                    self.settings.save();
-                    if let Some(thread) = &self.emu_thread {
-                        thread.send(crate::emu_thread::EmuCommand::SetUncapped(self.uncapped_speed));
-                    }
+        let bindings = &self.settings.shortcut_bindings;
+
+        if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.uncapped_speed = !self.uncapped_speed;
+                self.settings.uncapped_speed = self.uncapped_speed;
+                self.settings.save();
+                if let Some(thread) = &self.emu_thread {
+                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(self.uncapped_speed));
                 }
-                true
             }
-            KeyCode::F1 | KeyCode::F2 | KeyCode::F3 | KeyCode::F4 => {
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::Pause) {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.paused = !self.paused;
+                self.toast_manager.set_persistent(
+                    "paused",
+                    self.paused,
+                    "⏸ Paused",
+                    egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+                    false,
+                );
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::DebugContinue) {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.debug_continue_requested = true;
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::DebugStep) {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.debug_step_requested = true;
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::Fullscreen) {
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                self.toggle_fullscreen();
+            }
+            return true;
+        }
+
+        for action in [
+            ShortcutAction::SaveSlot1,
+            ShortcutAction::SaveSlot2,
+            ShortcutAction::SaveSlot3,
+            ShortcutAction::SaveSlot4,
+        ] {
+            if key_code == bindings.get(action) {
                 if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    if let Some(slot) = Self::keycode_to_state_slot(key_code) {
+                    if let Some(slot) = action.save_slot() {
                         if self.shift_held {
                             self.load_state_slot(slot);
                         } else {
@@ -91,35 +146,19 @@ impl App {
                         }
                     }
                 }
-                true
+                return true;
             }
-            KeyCode::F5 => {
-                if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    self.debug_continue_requested = true;
-                }
-                true
-            }
-            KeyCode::F10 => {
-                if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    self.debug_step_requested = true;
-                }
-                true
-            }
-            KeyCode::F12 => {
-                if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    self.toggle_fullscreen();
-                }
-                true
-            }
-            _ if key_code == self.settings.rewind_key_code() => {
-                match key_event.state {
-                    ElementState::Pressed => self.rewind_held = true,
-                    ElementState::Released => self.rewind_held = false,
-                }
-                true
-            }
-            _ => false,
         }
+
+        if key_code == self.settings.rewind_key_code() {
+            match key_event.state {
+                ElementState::Pressed => self.rewind_held = true,
+                ElementState::Released => self.rewind_held = false,
+            }
+            return true;
+        }
+
+        false
     }
 
     fn handle_joypad_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {

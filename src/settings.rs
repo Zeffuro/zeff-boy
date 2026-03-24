@@ -457,6 +457,207 @@ fn keycode_from_string(name: &str) -> Option<KeyCode> {
     KEYCODE_MAP.get(name).copied()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShortcutAction {
+    Fullscreen,
+    UncappedSpeed,
+    DebugContinue,
+    DebugStep,
+    Pause,
+    SaveSlot1,
+    SaveSlot2,
+    SaveSlot3,
+    SaveSlot4,
+}
+
+impl ShortcutAction {
+    pub(crate) const ALL: &'static [ShortcutAction] = &[
+        Self::Pause,
+        Self::Fullscreen,
+        Self::UncappedSpeed,
+        Self::DebugContinue,
+        Self::DebugStep,
+        Self::SaveSlot1,
+        Self::SaveSlot2,
+        Self::SaveSlot3,
+        Self::SaveSlot4,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Fullscreen => "Fullscreen",
+            Self::UncappedSpeed => "Toggle uncapped",
+            Self::DebugContinue => "Continue (debug)",
+            Self::DebugStep => "Step (debug)",
+            Self::Pause => "Pause / Resume",
+            Self::SaveSlot1 => "Save slot 1 / Shift=Load",
+            Self::SaveSlot2 => "Save slot 2 / Shift=Load",
+            Self::SaveSlot3 => "Save slot 3 / Shift=Load",
+            Self::SaveSlot4 => "Save slot 4 / Shift=Load",
+        }
+    }
+
+    fn default_keycode(self) -> KeyCode {
+        match self {
+            Self::Fullscreen => KeyCode::F12,
+            Self::UncappedSpeed => KeyCode::F11,
+            Self::DebugContinue => KeyCode::F5,
+            Self::DebugStep => KeyCode::F10,
+            Self::Pause => KeyCode::F9,
+            Self::SaveSlot1 => KeyCode::F1,
+            Self::SaveSlot2 => KeyCode::F2,
+            Self::SaveSlot3 => KeyCode::F3,
+            Self::SaveSlot4 => KeyCode::F4,
+        }
+    }
+
+    pub(crate) fn save_slot(self) -> Option<u8> {
+        match self {
+            Self::SaveSlot1 => Some(1),
+            Self::SaveSlot2 => Some(2),
+            Self::SaveSlot3 => Some(3),
+            Self::SaveSlot4 => Some(4),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct ShortcutBindings {
+    pub(crate) fullscreen: String,
+    pub(crate) uncapped_speed: String,
+    pub(crate) debug_continue: String,
+    pub(crate) debug_step: String,
+    pub(crate) pause: String,
+    pub(crate) save_slot_1: String,
+    pub(crate) save_slot_2: String,
+    pub(crate) save_slot_3: String,
+    pub(crate) save_slot_4: String,
+}
+
+impl Default for ShortcutBindings {
+    fn default() -> Self {
+        Self {
+            fullscreen: "F12".to_string(),
+            uncapped_speed: "F11".to_string(),
+            debug_continue: "F5".to_string(),
+            debug_step: "F10".to_string(),
+            pause: "F9".to_string(),
+            save_slot_1: "F1".to_string(),
+            save_slot_2: "F2".to_string(),
+            save_slot_3: "F3".to_string(),
+            save_slot_4: "F4".to_string(),
+        }
+    }
+}
+
+impl ShortcutBindings {
+    pub(crate) fn get(&self, action: ShortcutAction) -> KeyCode {
+        let s = self.key_str(action);
+        keycode_from_string(s).unwrap_or(action.default_keycode())
+    }
+
+    pub(crate) fn set(&mut self, action: ShortcutAction, key: KeyCode) {
+        let s = keycode_to_string(key);
+        match action {
+            ShortcutAction::Fullscreen => self.fullscreen = s,
+            ShortcutAction::UncappedSpeed => self.uncapped_speed = s,
+            ShortcutAction::DebugContinue => self.debug_continue = s,
+            ShortcutAction::DebugStep => self.debug_step = s,
+            ShortcutAction::Pause => self.pause = s,
+            ShortcutAction::SaveSlot1 => self.save_slot_1 = s,
+            ShortcutAction::SaveSlot2 => self.save_slot_2 = s,
+            ShortcutAction::SaveSlot3 => self.save_slot_3 = s,
+            ShortcutAction::SaveSlot4 => self.save_slot_4 = s,
+        }
+    }
+
+    pub(crate) fn key_str(&self, action: ShortcutAction) -> &str {
+        match action {
+            ShortcutAction::Fullscreen => &self.fullscreen,
+            ShortcutAction::UncappedSpeed => &self.uncapped_speed,
+            ShortcutAction::DebugContinue => &self.debug_continue,
+            ShortcutAction::DebugStep => &self.debug_step,
+            ShortcutAction::Pause => &self.pause,
+            ShortcutAction::SaveSlot1 => &self.save_slot_1,
+            ShortcutAction::SaveSlot2 => &self.save_slot_2,
+            ShortcutAction::SaveSlot3 => &self.save_slot_3,
+            ShortcutAction::SaveSlot4 => &self.save_slot_4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct GamepadBindings {
+    pub(crate) a: String,
+    pub(crate) b: String,
+    pub(crate) start: String,
+    pub(crate) select: String,
+    pub(crate) up: String,
+    pub(crate) down: String,
+    pub(crate) left: String,
+    pub(crate) right: String,
+}
+
+impl Default for GamepadBindings {
+    fn default() -> Self {
+        Self {
+            a: "South".to_string(),
+            b: "East".to_string(),
+            start: "Start".to_string(),
+            select: "Select".to_string(),
+            up: "DPadUp".to_string(),
+            down: "DPadDown".to_string(),
+            left: "DPadLeft".to_string(),
+            right: "DPadRight".to_string(),
+        }
+    }
+}
+
+impl GamepadBindings {
+    pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::hardware::joypad::JoypadKey> {
+        use crate::hardware::joypad::JoypadKey;
+        if name == self.a { return Some(JoypadKey::A); }
+        if name == self.b { return Some(JoypadKey::B); }
+        if name == self.start { return Some(JoypadKey::Start); }
+        if name == self.select { return Some(JoypadKey::Select); }
+        if name == self.up { return Some(JoypadKey::Up); }
+        if name == self.down { return Some(JoypadKey::Down); }
+        if name == self.left { return Some(JoypadKey::Left); }
+        if name == self.right { return Some(JoypadKey::Right); }
+        None
+    }
+
+    pub(crate) fn get(&self, action: BindingAction) -> &str {
+        match action {
+            BindingAction::A => &self.a,
+            BindingAction::B => &self.b,
+            BindingAction::Start => &self.start,
+            BindingAction::Select => &self.select,
+            BindingAction::Up => &self.up,
+            BindingAction::Down => &self.down,
+            BindingAction::Left => &self.left,
+            BindingAction::Right => &self.right,
+        }
+    }
+
+    pub(crate) fn set(&mut self, action: BindingAction, button_name: &str) {
+        let s = button_name.to_string();
+        match action {
+            BindingAction::A => self.a = s,
+            BindingAction::B => self.b = s,
+            BindingAction::Start => self.start = s,
+            BindingAction::Select => self.select = s,
+            BindingAction::Up => self.up = s,
+            BindingAction::Down => self.down = s,
+            BindingAction::Left => self.left = s,
+            BindingAction::Right => self.right = s,
+        }
+    }
+}
+
 const MAX_RECENT_ROMS: usize = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -496,13 +697,24 @@ pub(crate) struct Settings {
     pub(crate) speedup_key: String,
     pub(crate) rewind_enabled: bool,
     pub(crate) rewind_key: String,
+    #[serde(default = "default_rewind_speed")]
+    pub(crate) rewind_speed: usize,
+    #[serde(default = "default_rewind_seconds")]
+    pub(crate) rewind_seconds: usize,
     pub(crate) shader_preset: ShaderPreset,
     #[serde(default)]
     pub(crate) shader_params: ShaderParams,
     #[serde(default)]
     pub(crate) autohide_menu_bar: bool,
+    #[serde(default)]
+    pub(crate) shortcut_bindings: ShortcutBindings,
+    #[serde(default)]
+    pub(crate) gamepad_bindings: GamepadBindings,
     pub(crate) open_debug_tabs: Vec<String>,
 }
+
+fn default_rewind_speed() -> usize { 3 }
+fn default_rewind_seconds() -> usize { 10 }
 
 impl Default for Settings {
     fn default() -> Self {
@@ -533,10 +745,14 @@ impl Default for Settings {
             speedup_key: "Backquote".to_string(),
             rewind_enabled: true,
             rewind_key: "KeyR".to_string(),
+            rewind_speed: default_rewind_speed(),  // 3 = normal
+            rewind_seconds: default_rewind_seconds(),
             shader_preset: ShaderPreset::None,
             shader_params: ShaderParams::default(),
             autohide_menu_bar: false,
-            open_debug_tabs: vec!["CpuDebug".to_string()],
+            shortcut_bindings: ShortcutBindings::default(),
+            gamepad_bindings: GamepadBindings::default(),
+            open_debug_tabs: Vec::new(),
         }
     }
 }
@@ -550,6 +766,10 @@ impl Settings {
         keycode_from_string(&self.rewind_key).unwrap_or(KeyCode::KeyR)
     }
 
+    pub(crate) fn rewind_capture_interval(&self) -> usize {
+        4
+    }
+
     pub(crate) fn add_recent_rom(&mut self, path: &Path) {
         let path_str = path.to_string_lossy().to_string();
         let name = path
@@ -558,10 +778,8 @@ impl Settings {
             .unwrap_or("Unknown")
             .to_string();
 
-        // Remove existing entry for the same path
         self.recent_roms.retain(|r| r.path != path_str);
 
-        // Insert at front
         self.recent_roms.insert(
             0,
             RecentRomEntry {
@@ -570,7 +788,6 @@ impl Settings {
             },
         );
 
-        // Cap size
         self.recent_roms.truncate(MAX_RECENT_ROMS);
     }
 
@@ -631,5 +848,162 @@ impl Settings {
 
     pub(crate) fn save(&self) {
         self.save_to_path(&Self::active_path());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_default_roundtrip() {
+        let defaults = Settings::default();
+        let json = serde_json::to_string_pretty(&defaults).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(defaults, restored);
+    }
+
+    #[test]
+    fn settings_with_modified_values_roundtrip() {
+        let mut s = Settings::default();
+        s.fast_forward_multiplier = 8;
+        s.master_volume = 0.5;
+        s.rewind_speed = 5;
+        s.rewind_seconds = 30;
+        s.rewind_enabled = false;
+        s.shader_preset = ShaderPreset::CRT;
+        s.autohide_menu_bar = true;
+        s.frame_skip = true;
+
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, restored);
+    }
+
+    #[test]
+    fn settings_backward_compat_missing_fields_use_defaults() {
+        // Simulate a minimal old settings file missing newer fields
+        let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.rewind_speed, default_rewind_speed());
+        assert_eq!(s.rewind_seconds, default_rewind_seconds());
+        assert_eq!(s.shader_preset, ShaderPreset::None);
+        assert!(!s.autohide_menu_bar);
+    }
+
+    #[test]
+    fn key_bindings_serde_roundtrip() {
+        let mut bindings = KeyBindings::default();
+        bindings.a = KeyCode::KeyQ;
+        bindings.b = KeyCode::KeyE;
+
+        let json = serde_json::to_string(&bindings).unwrap();
+        let restored: KeyBindings = serde_json::from_str(&json).unwrap();
+        assert_eq!(bindings, restored);
+    }
+
+    #[test]
+    fn key_bindings_deserialize_unknown_falls_back_to_defaults() {
+        let json = r#"{"up":"ArrowUp","down":"ArrowDown","left":"UNKNOWN_KEY","right":"ArrowRight","a":"KeyZ","b":"KeyX","start":"Enter","select":"ShiftRight"}"#;
+        let bindings: KeyBindings = serde_json::from_str(json).unwrap();
+        assert_eq!(bindings.left, KeyCode::ArrowLeft);
+        assert_eq!(bindings.up, KeyCode::ArrowUp);
+    }
+
+    #[test]
+    fn shortcut_bindings_get_returns_default_for_unknown_string() {
+        let mut bindings = ShortcutBindings::default();
+        bindings.fullscreen = "NONSENSE".to_string();
+        // Should fall back to default keycode
+        assert_eq!(bindings.get(ShortcutAction::Fullscreen), KeyCode::F12);
+    }
+
+    #[test]
+    fn shortcut_bindings_set_and_get() {
+        let mut bindings = ShortcutBindings::default();
+        bindings.set(ShortcutAction::Pause, KeyCode::KeyP);
+        assert_eq!(bindings.get(ShortcutAction::Pause), KeyCode::KeyP);
+    }
+
+    #[test]
+    fn gamepad_bindings_roundtrip() {
+        let mut gb = GamepadBindings::default();
+        gb.set(BindingAction::A, "West");
+        let json = serde_json::to_string(&gb).unwrap();
+        let restored: GamepadBindings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.get(BindingAction::A), "West");
+        assert_eq!(restored.get(BindingAction::B), "East"); // default preserved
+    }
+
+    #[test]
+    fn tilt_key_bindings_serde_roundtrip() {
+        let mut bindings = TiltKeyBindings::default();
+        bindings.up = KeyCode::KeyI;
+        let json = serde_json::to_string(&bindings).unwrap();
+        let restored: TiltKeyBindings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.up, KeyCode::KeyI);
+        assert_eq!(restored.down, KeyCode::KeyS); // default preserved
+    }
+
+    #[test]
+    fn recent_roms_add_and_dedup() {
+        let mut s = Settings::default();
+        s.add_recent_rom(std::path::Path::new("game1.gb"));
+        s.add_recent_rom(std::path::Path::new("game2.gb"));
+        s.add_recent_rom(std::path::Path::new("game1.gb"));
+        assert_eq!(s.recent_roms.len(), 2);
+        assert_eq!(s.recent_roms[0].name, "game1.gb");
+        assert_eq!(s.recent_roms[1].name, "game2.gb");
+    }
+
+    #[test]
+    fn recent_roms_truncates_at_max() {
+        let mut s = Settings::default();
+        for i in 0..15 {
+            s.add_recent_rom(std::path::Path::new(&format!("game{i}.gb")));
+        }
+        assert_eq!(s.recent_roms.len(), MAX_RECENT_ROMS);
+    }
+
+    #[test]
+    fn default_rewind_speed_is_3() {
+        assert_eq!(Settings::default().rewind_speed, 3);
+    }
+
+    #[test]
+    fn pre_mute_volume_is_skipped_in_serde() {
+        let mut s = Settings::default();
+        s.pre_mute_volume = Some(0.75);
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.pre_mute_volume, None);
+    }
+
+    #[test]
+    fn shader_params_roundtrip() {
+        let params = ShaderParams {
+            scanline_intensity: 0.5,
+            crt_curvature: 0.8,
+            grid_intensity: 0.1,
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let restored: ShaderParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(params, restored);
+    }
+
+    #[test]
+    fn shader_params_to_gpu_bytes() {
+        let params = ShaderParams::default();
+        let bytes = params.to_gpu_bytes();
+        let scanline = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let curvature = f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        assert!((scanline - params.scanline_intensity).abs() < f32::EPSILON);
+        assert!((curvature - params.crt_curvature).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn rewind_capture_interval_is_4() {
+        let s = Settings::default();
+        assert_eq!(s.rewind_capture_interval(), 4);
     }
 }

@@ -18,8 +18,11 @@ pub(crate) struct SnapshotRequest {
     pub(crate) show_rom_info: bool,
     pub(crate) show_memory_viewer: bool,
     pub(crate) memory_view_start: u16,
+    pub(crate) show_rom_viewer: bool,
+    pub(crate) rom_view_start: u32,
     pub(crate) last_disasm_pc: Option<u16>,
     pub(crate) memory_search: Option<MemorySearchRequest>,
+    pub(crate) rom_search: Option<MemorySearchRequest>,
 }
 
 pub(crate) struct MemorySearchRequest {
@@ -45,6 +48,7 @@ pub(crate) struct FrameInput {
     pub(crate) reusable_memory_page: Option<Vec<(u16, u8)>>,
     pub(crate) cheats: Vec<crate::cheats::CheatPatch>,
     pub(crate) rewind_enabled: bool,
+    pub(crate) rewind_seconds: usize,
 }
 
 pub(crate) struct FrameResult {
@@ -123,6 +127,7 @@ impl EmuThread {
             let mut last_cheats: Vec<crate::cheats::CheatPatch> = Vec::new();
 
             let mut rewind_buffer = crate::rewind::RewindBuffer::new(10, 4);
+            let mut rewind_seconds = 10usize;
 
             let send_resp = |resp: EmuResponse| -> bool { resp_tx.send(resp).is_ok() };
 
@@ -193,7 +198,11 @@ impl EmuThread {
                             }
                         }
 
-                        // Auto-capture rewind snapshot periodically
+                        if input.rewind_seconds != rewind_seconds {
+                            rewind_seconds = input.rewind_seconds;
+                            rewind_buffer = crate::rewind::RewindBuffer::new(rewind_seconds, 4);
+                        }
+
                         if input.rewind_enabled && rewind_buffer.tick() {
                             if let Ok(bytes) = crate::save_state::encode_state_bytes(
                                 &crate::save_state::SaveStateRef {
@@ -208,7 +217,7 @@ impl EmuThread {
                                     last_opcode_pc: emu.last_opcode_pc,
                                 },
                             ) {
-                                rewind_buffer.push(&bytes);
+                                rewind_buffer.push(&bytes, emu.framebuffer());
                             }
                         }
 
@@ -403,10 +412,14 @@ impl EmuThread {
                     }
 
                     EmuCommand::Rewind => {
-                        if let Some(state_bytes) = rewind_buffer.pop() {
-                            match emu.load_state_from_bytes(state_bytes) {
+                        if let Some(rewind_frame) = rewind_buffer.pop() {
+                            match emu.load_state_from_bytes(rewind_frame.state_bytes) {
                                 Ok(()) => {
-                                    let fb = emu.framebuffer().to_vec();
+                                    let fb = if rewind_frame.framebuffer.is_empty() {
+                                        emu.framebuffer().to_vec()
+                                    } else {
+                                        rewind_frame.framebuffer
+                                    };
                                     if !send_resp(EmuResponse::LoadStateOk {
                                         path: "(rewind)".to_string(),
                                         framebuffer: fb,
@@ -427,13 +440,10 @@ impl EmuThread {
                     }
 
                     EmuCommand::Shutdown => {
-                        let sram_path = match emu.flush_battery_sram() {
-                            Ok(path) => path,
-                            Err(err) => {
-                                log::error!("Failed to flush SRAM on shutdown: {}", err);
-                                None
-                            }
-                        };
+                        let sram_path = emu.flush_battery_sram().unwrap_or_else(|err| {
+                            log::error!("Failed to flush SRAM on shutdown: {}", err);
+                            None
+                        });
                         let _ = resp_tx.send(EmuResponse::SramFlushed(sram_path));
                         let _ = resp_tx.send(EmuResponse::ShutdownComplete);
                         break 'main;
@@ -464,13 +474,16 @@ impl EmuThread {
                         frame,
                         rumble: emu.bus.cartridge.rumble_active(),
                         audio_samples: Vec::new(),
-                        ui_data: crate::ui::UiFrameData {
+                        ui_data: ui::UiFrameData {
                             debug_info: None,
                             viewer_data: None,
                             disassembly_view: None,
                             rom_info_view: None,
                             memory_page: None,
                             memory_search_results: None,
+                            rom_page: None,
+                            rom_size: 0,
+                            rom_search_results: None,
                         },
                         is_mbc7: emu.is_mbc7_cartridge(),
                         rewind_fill: rewind_buffer.fill_ratio(),

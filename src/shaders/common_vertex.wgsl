@@ -5,7 +5,8 @@ struct ShaderParams {
     scanline_intensity: f32,
     curvature: f32,
     grid_intensity: f32,
-    _pad: f32,
+    tex_width: f32,
+    tex_height: f32,
 };
 @group(0) @binding(2) var<uniform> params: ShaderParams;
 

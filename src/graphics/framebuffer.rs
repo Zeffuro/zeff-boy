@@ -1,14 +1,24 @@
 use crate::settings::ShaderPreset;
 use anyhow::Result;
 
+const MIN_OFFSCREEN_WIDTH: u32 = 160;
+const MIN_OFFSCREEN_HEIGHT: u32 = 144;
+const DEFAULT_OFFSCREEN_WIDTH: u32 = 160 * 4;
+const DEFAULT_OFFSCREEN_HEIGHT: u32 = 144 * 4;
+
 pub(crate) struct FramebufferRenderer {
     screen_texture: wgpu::Texture,
+    screen_view: wgpu::TextureView,
     screen_bind_group: wgpu::BindGroup,
     screen_pipeline: wgpu::RenderPipeline,
     screen_bgl: wgpu::BindGroupLayout,
     params_buffer: wgpu::Buffer,
     format: wgpu::TextureFormat,
     current_preset: ShaderPreset,
+    output_texture: wgpu::Texture,
+    output_view: wgpu::TextureView,
+    offscreen_width: u32,
+    offscreen_height: u32,
 }
 
 fn shader_source(preset: ShaderPreset) -> &'static str {
@@ -91,7 +101,7 @@ impl FramebufferRenderer {
 
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shader params buffer"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -150,14 +160,35 @@ impl FramebufferRenderer {
         let preset = ShaderPreset::None;
         let screen_pipeline = create_pipeline(device, &screen_bgl, format, preset);
 
+        let output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shader output texture"),
+            size: wgpu::Extent3d {
+                width: DEFAULT_OFFSCREEN_WIDTH,
+                height: DEFAULT_OFFSCREEN_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         Ok(Self {
             screen_texture,
+            screen_view,
             screen_bind_group,
             screen_pipeline,
             screen_bgl,
             params_buffer,
             format,
             current_preset: preset,
+            output_texture,
+            output_view,
+            offscreen_width: DEFAULT_OFFSCREEN_WIDTH,
+            offscreen_height: DEFAULT_OFFSCREEN_HEIGHT,
         })
     }
 
@@ -171,7 +202,13 @@ impl FramebufferRenderer {
 
 
     pub(crate) fn update_params(&self, queue: &wgpu::Queue, params: &crate::settings::ShaderParams) {
-        queue.write_buffer(&self.params_buffer, 0, &params.to_gpu_bytes());
+        let mut buf = [0u8; 32];
+        buf[0..4].copy_from_slice(&params.scanline_intensity.to_le_bytes());
+        buf[4..8].copy_from_slice(&params.crt_curvature.to_le_bytes());
+        buf[8..12].copy_from_slice(&params.grid_intensity.to_le_bytes());
+        buf[12..16].copy_from_slice(&160.0_f32.to_le_bytes());
+        buf[16..20].copy_from_slice(&144.0_f32.to_le_bytes());
+        queue.write_buffer(&self.params_buffer, 0, &buf);
     }
 
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {
@@ -201,5 +238,60 @@ impl FramebufferRenderer {
         pass.set_pipeline(&self.screen_pipeline);
         pass.set_bind_group(0, &self.screen_bind_group, &[]);
         pass.draw(0..3, 0..1);
+    }
+
+    pub(crate) fn resize_offscreen(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        let w = width.max(MIN_OFFSCREEN_WIDTH);
+        let h = height.max(MIN_OFFSCREEN_HEIGHT);
+        if self.offscreen_width == w && self.offscreen_height == h {
+            return;
+        }
+        self.offscreen_width = w;
+        self.offscreen_height = h;
+        self.output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shader output texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.output_view = self.output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    }
+
+    pub(crate) fn render_to_offscreen(&self, encoder: &mut wgpu::CommandEncoder) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("shader offscreen pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.output_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_viewport(0.0, 0.0, self.offscreen_width as f32, self.offscreen_height as f32, 0.0, 1.0);
+        pass.set_pipeline(&self.screen_pipeline);
+        pass.set_bind_group(0, &self.screen_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    pub(crate) fn output_view(&self) -> &wgpu::TextureView {
+        &self.output_view
+    }
+
+    pub(crate) fn texture_view(&self) -> &wgpu::TextureView {
+        &self.screen_view
     }
 }

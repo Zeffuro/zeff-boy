@@ -23,10 +23,19 @@ impl App {
 
     pub(super) fn poll_gamepad(&mut self) {
         if let Some(gamepad) = &mut self.gamepad {
-            let poll = gamepad.poll();
-            for (key, pressed) in poll.events {
-                self.host_input.set_gamepad(key, pressed);
+            let poll = gamepad.poll(&self.settings.gamepad_bindings);
+
+            if let Some(action) = self.debug_windows.rebinding_gamepad {
+                if let Some(button_name) = poll.raw_pressed.first() {
+                    self.settings.gamepad_bindings.set(action, button_name);
+                    self.debug_windows.rebinding_gamepad = None;
+                }
+            } else {
+                for (key, pressed) in poll.events {
+                    self.host_input.set_gamepad(key, pressed);
+                }
             }
+
             self.left_stick = poll.left_stick;
         }
     }
@@ -90,6 +99,9 @@ impl App {
         let is_rewinding = self.rewind_held && self.settings.rewind_enabled;
         let autohide_menu_bar = self.settings.autohide_menu_bar;
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
+        let rewind_seconds_back = self.rewind_pops as f32
+            * self.settings.rewind_capture_interval() as f32
+            / 60.0;
 
         match gfx.render(graphics::RenderContext {
             debug_info: ui_frame_data.and_then(|d| d.debug_info.as_ref()),
@@ -97,6 +109,8 @@ impl App {
             rom_info_view: ui_frame_data.and_then(|d| d.rom_info_view.as_ref()),
             disassembly_view: ui_frame_data.and_then(|d| d.disassembly_view.as_ref()),
             memory_page: ui_frame_data.and_then(|d| d.memory_page.as_deref()),
+            rom_page: ui_frame_data.and_then(|d| d.rom_page.as_deref()),
+            rom_size: ui_frame_data.map_or(0, |d| d.rom_size),
             debug_windows: &mut self.debug_windows,
             settings: &mut self.settings,
             show_settings_window: &mut self.show_settings_window,
@@ -107,7 +121,8 @@ impl App {
             is_recording_replay,
             is_playing_replay,
             is_rewinding,
-            rewind_fill: self.rewind_fill,
+            rewind_seconds_back,
+            is_paused: self.paused,
             autohide_menu_bar,
             cursor_y,
         }) {
@@ -133,6 +148,21 @@ impl App {
                 if result.toggle_fullscreen {
                     self.toggle_fullscreen();
                 }
+                if result.toggle_pause {
+                    self.paused = !self.paused;
+                    self.toast_manager.set_persistent(
+                        "paused",
+                        self.paused,
+                        "⏸ Paused",
+                        egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+                        false,
+                    );
+                }
+                if result.speed_change != 0 {
+                    let mult = self.settings.fast_forward_multiplier as i32 + result.speed_change;
+                    self.settings.fast_forward_multiplier = mult.clamp(1, 16) as usize;
+                    self.settings.save();
+                }
                 if result.start_audio_recording {
                     self.start_audio_recording();
                 }
@@ -155,6 +185,7 @@ impl App {
                     &result.debug_actions,
                     &mut self.debug_step_requested,
                     &mut self.debug_continue_requested,
+                    &mut self.backstep_requested,
                 );
                 self.merge_debug_actions(result.debug_actions);
                 if let Some(toggles) = result.layer_toggles {
@@ -162,12 +193,15 @@ impl App {
                 }
                 if !self.show_settings_window {
                     self.debug_windows.rebinding_action = None;
+                    self.debug_windows.rebinding_shortcut = None;
+                    self.debug_windows.rebinding_gamepad = None;
                     self.debug_windows.rebinding_speedup = false;
                     self.debug_windows.rebinding_rewind = false;
                 }
                 if result.toolbar_settings_changed {
                     self.settings.save();
                 }
+                self.egui_wants_keyboard = result.egui_wants_keyboard;
             }
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 let size = gfx.size();

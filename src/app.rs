@@ -73,7 +73,9 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         show_settings_window: false,
         debug_step_requested: false,
         debug_continue_requested: false,
+        backstep_requested: false,
         latest_frame: None,
+        last_displayed_frame: None,
         recycled_framebuffer: None,
         recycled_audio_buffer: None,
         recycled_vram_buffer: None,
@@ -91,8 +93,12 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         audio_recorder: None,
         replay_recorder: None,
         replay_player: None,
+        paused: false,
         rewind_held: false,
         rewind_fill: 0.0,
+        rewind_throttle: 0,
+        rewind_pops: 0,
+        egui_wants_keyboard: false,
     };
 
     event_loop.run_app(&mut app)?;
@@ -127,7 +133,9 @@ struct App {
     show_settings_window: bool,
     debug_step_requested: bool,
     debug_continue_requested: bool,
+    backstep_requested: bool,
     latest_frame: Option<Vec<u8>>,
+    last_displayed_frame: Option<Vec<u8>>,
 
     recycled_framebuffer: Option<Vec<u8>>,
     recycled_audio_buffer: Option<Vec<f32>>,
@@ -147,8 +155,12 @@ struct App {
     audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
     replay_recorder: Option<crate::replay::ReplayRecorder>,
     replay_player: Option<crate::replay::ReplayPlayer>,
+    paused: bool,
     rewind_held: bool,
     rewind_fill: f32,
+    rewind_throttle: usize,
+    rewind_pops: usize,
+    egui_wants_keyboard: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,6 +192,9 @@ impl App {
     }
 
     fn speed_mode_label(&self) -> &'static str {
+        if self.paused {
+            return "Paused";
+        }
         match self.speed_mode() {
             SpeedMode::Normal => "Normal",
             SpeedMode::Uncapped => "Uncapped (Benchmark)",
@@ -358,6 +373,11 @@ impl App {
             self.debug_windows.memory.search_results = results;
         }
 
+        if let Some(results) = ui_data.rom_search_results.take() {
+            self.debug_windows.rom_viewer.search_results = results;
+        }
+        self.debug_windows.rom_viewer.rom_size = ui_data.rom_size;
+
         if let Some(ref viewer_data) = ui_data.viewer_data {
             if self.debug_windows.show_tile_viewer {
                 self.debug_windows.tiles.update_dirty_inputs(
@@ -389,7 +409,8 @@ impl App {
 
         self.drain_emu_responses();
 
-        if self.rewind_held && self.settings.rewind_enabled {
+        // Handle backstep: pop one rewind snapshot and pause
+        if std::mem::take(&mut self.backstep_requested) && self.settings.rewind_enabled {
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::Rewind);
             }
@@ -397,129 +418,192 @@ impl App {
                 match resp {
                     crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
                         self.latest_frame = Some(framebuffer);
+                        self.paused = true;
+                        self.last_frame_time = Instant::now();
+                        self.toast_manager.set_persistent(
+                            "paused",
+                            true,
+                            "⏸ Paused",
+                            egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+                            false,
+                        );
+                        self.toast_manager.info("⏮ Stepped back");
                     }
                     crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
-                        log::debug!("Rewind: {}", msg);
+                        self.toast_manager.info(&format!("Can't step back: {msg}"));
                     }
                     _ => {}
                 }
             }
-        } else if self.frames_in_flight < MAX_IN_FLIGHT {
-            let now = Instant::now();
-            let frames_to_step = self.compute_frames_to_step(now);
+        }
 
-            let has_pending = self.debug_step_requested
-                || self.debug_continue_requested
-                || self.pending_debug_actions.has_pending();
-
-            if frames_to_step > 0 || has_pending {
+        if self.rewind_held && self.settings.rewind_enabled {
+            self.rewind_throttle += 1;
+            let pop_interval = self.settings.rewind_speed.max(1);
+            if self.rewind_throttle >= pop_interval {
+                self.rewind_throttle = 0;
                 if let Some(thread) = &self.emu_thread {
-                    let want_viewer_update = match self.speed_mode() {
-                        SpeedMode::Normal => true,
-                        SpeedMode::FastForward | SpeedMode::Uncapped => {
-                            let now = Instant::now();
-                            if now.duration_since(self.last_viewer_update)
-                                >= VIEWER_UPDATE_INTERVAL
-                            {
-                                self.last_viewer_update = now;
-                                true
-                            } else {
-                                false
-                            }
+                    thread.send(crate::emu_thread::EmuCommand::Rewind);
+                }
+                if let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.recv()) {
+                    match resp {
+                        crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
+                            self.latest_frame = Some(framebuffer);
+                            self.rewind_pops += 1;
                         }
-                    };
+                        crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
+                            log::debug!("Rewind: {}", msg);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        } else {
+            if self.rewind_throttle > 0 {
+                self.last_frame_time = Instant::now();
+                self.rewind_throttle = 0;
+            }
+            self.rewind_pops = 0;
+            if self.frames_in_flight < MAX_IN_FLIGHT {
+                let now = Instant::now();
+                let frames_to_step = if self.paused {
+                    self.last_frame_time = now;
+                    0
+                } else {
+                    self.compute_frames_to_step(now)
+                };
 
-                    let (buttons_pressed, dpad_pressed) =
-                        if let Some(player) = &mut self.replay_player {
-                            if let Some((buttons, dpad)) = player.next_frame() {
-                                (buttons, dpad)
+                let has_pending = self.debug_step_requested
+                    || self.debug_continue_requested
+                    || self.pending_debug_actions.has_pending();
+
+                if frames_to_step > 0 || has_pending {
+                    if let Some(thread) = &self.emu_thread {
+                        let want_viewer_update = match self.speed_mode() {
+                            SpeedMode::Normal => true,
+                            SpeedMode::FastForward | SpeedMode::Uncapped => {
+                                let now = Instant::now();
+                                if now.duration_since(self.last_viewer_update)
+                                    >= VIEWER_UPDATE_INTERVAL
+                                {
+                                    self.last_viewer_update = now;
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        };
+
+                        let (buttons_pressed, dpad_pressed) =
+                            if let Some(player) = &mut self.replay_player {
+                                if let Some((buttons, dpad)) = player.next_frame() {
+                                    (buttons, dpad)
+                                } else {
+                                    // Replay finished
+                                    self.toast_manager.info("Replay finished");
+                                    self.replay_player = None;
+                                    (
+                                        self.host_input.buttons_pressed(),
+                                        self.host_input.dpad_pressed(),
+                                    )
+                                }
                             } else {
-                                // Replay finished
-                                self.toast_manager.info("Replay finished");
-                                self.replay_player = None;
                                 (
                                     self.host_input.buttons_pressed(),
                                     self.host_input.dpad_pressed(),
                                 )
-                            }
-                        } else {
-                            (
-                                self.host_input.buttons_pressed(),
-                                self.host_input.dpad_pressed(),
-                            )
-                        };
+                            };
 
-                    if let Some(recorder) = &mut self.replay_recorder {
-                        recorder.record_frame(buttons_pressed, dpad_pressed);
+                        if let Some(recorder) = &mut self.replay_recorder {
+                            recorder.record_frame(buttons_pressed, dpad_pressed);
+                        }
+
+                        let input = crate::emu_thread::FrameInput {
+                            frames: frames_to_step,
+                            host_tilt: tilt_data.smoothed,
+                            buttons_pressed,
+                            dpad_pressed,
+                            debug_step: std::mem::take(&mut self.debug_step_requested),
+                            debug_continue: std::mem::take(&mut self.debug_continue_requested),
+                            apu_capture_enabled: self.debug_windows.show_apu_viewer
+                                && want_viewer_update,
+                            skip_audio: match self.speed_mode() {
+                                SpeedMode::Uncapped => true,
+                                SpeedMode::FastForward => self.settings.mute_audio_during_fast_forward,
+                                SpeedMode::Normal => false,
+                            },
+                            debug_actions: std::mem::replace(
+                                &mut self.pending_debug_actions,
+                                DebugUiActions::none(),
+                            ),
+                            snapshot: crate::emu_thread::SnapshotRequest {
+                                want_debug_info: self.debug_windows.show_cpu_debug
+                                    || self.settings.show_fps,
+                                any_viewer_open: self.debug_windows.any_viewer_open()
+                                    && want_viewer_update,
+                                any_vram_viewer_open: self.debug_windows.any_vram_viewer_open()
+                                    && want_viewer_update,
+                                show_oam_viewer: self.debug_windows.show_oam_viewer
+                                    && want_viewer_update,
+                                show_apu_viewer: self.debug_windows.show_apu_viewer
+                                    && want_viewer_update,
+                                show_disassembler: self.debug_windows.show_disassembler
+                                    && want_viewer_update,
+                                show_rom_info: self.debug_windows.show_rom_info
+                                    && want_viewer_update,
+                                show_memory_viewer: self.debug_windows.show_memory_viewer
+                                    && want_viewer_update,
+                                memory_view_start: self.debug_windows.memory.view_start,
+                                show_rom_viewer: self.debug_windows.show_rom_viewer
+                                    && want_viewer_update,
+                                rom_view_start: self.debug_windows.rom_viewer.view_start,
+                                last_disasm_pc: self.debug_windows.last_disasm_pc,
+                                memory_search: if self.debug_windows.memory.search_pending {
+                                    self.debug_windows.memory.search_pending = false;
+                                    crate::debug::memory_viewer::parse_search_query(
+                                        &self.debug_windows.memory.search_query,
+                                        self.debug_windows.memory.search_mode,
+                                    )
+                                    .map(|pattern| crate::emu_thread::MemorySearchRequest {
+                                        pattern,
+                                        max_results: self.debug_windows.memory.search_max_results,
+                                    })
+                                } else {
+                                    None
+                                },
+                                rom_search: if self.debug_windows.rom_viewer.search_pending {
+                                    self.debug_windows.rom_viewer.search_pending = false;
+                                    crate::debug::memory_viewer::parse_search_query(
+                                        &self.debug_windows.rom_viewer.search_query,
+                                        self.debug_windows.rom_viewer.search_mode,
+                                    )
+                                    .map(|pattern| crate::emu_thread::MemorySearchRequest {
+                                        pattern,
+                                        max_results: self.debug_windows.rom_viewer.search_max_results,
+                                    })
+                                } else {
+                                    None
+                                },
+                            },
+                            reusable_framebuffer: self.recycled_framebuffer.take(),
+                            reusable_audio_buffer: self.recycled_audio_buffer.take(),
+                            reusable_vram_buffer: self.recycled_vram_buffer.take(),
+                            reusable_oam_buffer: self.recycled_oam_buffer.take(),
+                            reusable_memory_page: self.recycled_memory_page.take(),
+                            cheats: crate::cheats::collect_enabled_patches(
+                                &self.debug_windows.cheat.user_codes,
+                                &self.debug_windows.cheat.libretro_codes,
+                            ),
+                            rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
+                            rewind_seconds: self.settings.rewind_seconds,
+                        };
+                        thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
+                        self.frames_in_flight += 1;
                     }
 
-                    let input = crate::emu_thread::FrameInput {
-                        frames: frames_to_step,
-                        host_tilt: tilt_data.smoothed,
-                        buttons_pressed,
-                        dpad_pressed,
-                        debug_step: std::mem::take(&mut self.debug_step_requested),
-                        debug_continue: std::mem::take(&mut self.debug_continue_requested),
-                        apu_capture_enabled: self.debug_windows.show_apu_viewer
-                            && want_viewer_update,
-                        skip_audio: match self.speed_mode() {
-                            SpeedMode::Uncapped => true,
-                            SpeedMode::FastForward => self.settings.mute_audio_during_fast_forward,
-                            SpeedMode::Normal => false,
-                        },
-                        debug_actions: std::mem::replace(
-                            &mut self.pending_debug_actions,
-                            DebugUiActions::none(),
-                        ),
-                        snapshot: crate::emu_thread::SnapshotRequest {
-                            want_debug_info: self.debug_windows.show_cpu_debug
-                                || self.settings.show_fps,
-                            any_viewer_open: self.debug_windows.any_viewer_open()
-                                && want_viewer_update,
-                            any_vram_viewer_open: self.debug_windows.any_vram_viewer_open()
-                                && want_viewer_update,
-                            show_oam_viewer: self.debug_windows.show_oam_viewer
-                                && want_viewer_update,
-                            show_apu_viewer: self.debug_windows.show_apu_viewer
-                                && want_viewer_update,
-                            show_disassembler: self.debug_windows.show_disassembler
-                                && want_viewer_update,
-                            show_rom_info: self.debug_windows.show_rom_info
-                                && want_viewer_update,
-                            show_memory_viewer: self.debug_windows.show_memory_viewer
-                                && want_viewer_update,
-                            memory_view_start: self.debug_windows.memory.view_start,
-                            last_disasm_pc: self.debug_windows.last_disasm_pc,
-                            memory_search: if self.debug_windows.memory.search_pending {
-                                self.debug_windows.memory.search_pending = false;
-                                crate::debug::memory_viewer::parse_search_query(
-                                    &self.debug_windows.memory.search_query,
-                                    self.debug_windows.memory.search_mode,
-                                )
-                                .map(|pattern| crate::emu_thread::MemorySearchRequest {
-                                    pattern,
-                                    max_results: self.debug_windows.memory.search_max_results,
-                                })
-                            } else {
-                                None
-                            },
-                        },
-                        reusable_framebuffer: self.recycled_framebuffer.take(),
-                        reusable_audio_buffer: self.recycled_audio_buffer.take(),
-                        reusable_vram_buffer: self.recycled_vram_buffer.take(),
-                        reusable_oam_buffer: self.recycled_oam_buffer.take(),
-                        reusable_memory_page: self.recycled_memory_page.take(),
-                        cheats: crate::cheats::collect_enabled_patches(
-                            &self.debug_windows.cheat.codes,
-                        ),
-                        rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
-                    };
-                    thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
-                    self.frames_in_flight += 1;
-                }
-
-                if frames_to_step > 0 {
-                    self.fps_tracker.tick();
+                    if frames_to_step > 0 {
+                        self.fps_tracker.tick();
+                    }
                 }
             }
         }
@@ -547,6 +631,7 @@ impl App {
             if let Some(gfx) = self.gfx.as_mut() {
                 gfx.upload_framebuffer(&frame);
             }
+            self.last_displayed_frame = Some(frame.clone());
             self.recycled_framebuffer = Some(frame);
         }
 

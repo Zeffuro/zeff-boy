@@ -1,6 +1,6 @@
 use crate::debug::{
     DebugInfo, DebugUiActions, DebugViewerData, DisassemblyView, MemorySearchResult,
-    RomInfoViewData, disassemble_around,
+    RomInfoViewData, RomSearchResult, disassemble_around,
 };
 use crate::emu_thread::SnapshotRequest;
 use crate::emulator::Emulator;
@@ -13,6 +13,9 @@ pub(crate) struct UiFrameData {
     pub(crate) rom_info_view: Option<RomInfoViewData>,
     pub(crate) memory_page: Option<Vec<(u16, u8)>>,
     pub(crate) memory_search_results: Option<Vec<MemorySearchResult>>,
+    pub(crate) rom_page: Option<Vec<(u32, u8)>>,
+    pub(crate) rom_size: u32,
+    pub(crate) rom_search_results: Option<Vec<RomSearchResult>>,
 }
 
 pub(crate) fn compute_static_rom_info(emu: &Emulator) -> RomInfoViewData {
@@ -206,6 +209,45 @@ pub(crate) fn collect_emu_snapshot(
         None
     };
 
+    let rom_bytes = emu.bus.cartridge.rom_bytes();
+    let rom_size = rom_bytes.len() as u32;
+
+    let rom_page = if req.show_rom_viewer {
+        let start = req.rom_view_start as usize;
+        let mut buf = Vec::with_capacity(256);
+        for i in 0..256usize {
+            let offset = start + i;
+            if offset < rom_bytes.len() {
+                buf.push((offset as u32, rom_bytes[offset]));
+            }
+        }
+        Some(buf)
+    } else {
+        None
+    };
+
+    let rom_search_results = if let Some(ref search) = req.rom_search {
+        let mut results = Vec::new();
+        if !search.pattern.is_empty() {
+            let pattern_len = search.pattern.len();
+            let end = rom_bytes.len().saturating_sub(pattern_len.saturating_sub(1));
+            for start_offset in 0..end {
+                if results.len() >= search.max_results {
+                    break;
+                }
+                if rom_bytes[start_offset..start_offset + pattern_len] == search.pattern[..] {
+                    results.push(RomSearchResult {
+                        offset: start_offset as u32,
+                        matched_bytes: rom_bytes[start_offset..start_offset + pattern_len].to_vec(),
+                    });
+                }
+            }
+        }
+        Some(results)
+    } else {
+        None
+    };
+
     UiFrameData {
         debug_info,
         viewer_data,
@@ -213,6 +255,9 @@ pub(crate) fn collect_emu_snapshot(
         rom_info_view,
         memory_page,
         memory_search_results,
+        rom_page,
+        rom_size,
+        rom_search_results,
     }
 }
 
@@ -220,11 +265,15 @@ pub(crate) fn apply_debug_actions(
     actions: &DebugUiActions,
     debug_step_requested: &mut bool,
     debug_continue_requested: &mut bool,
+    backstep_requested: &mut bool,
 ) {
     if actions.step_requested {
         *debug_step_requested = true;
     }
     if actions.continue_requested {
         *debug_continue_requested = true;
+    }
+    if actions.backstep_requested {
+        *backstep_requested = true;
     }
 }

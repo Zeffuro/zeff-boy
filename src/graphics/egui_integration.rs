@@ -124,4 +124,24 @@ impl EguiRenderer {
             self.renderer.free_texture(id);
         }
     }
+
+    pub(crate) fn register_native_texture(
+        &mut self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+        filter: wgpu::FilterMode,
+    ) -> egui::TextureId {
+        self.renderer.register_native_texture(device, view, filter)
+    }
+
+    pub(crate) fn update_native_texture(
+        &mut self,
+        device: &wgpu::Device,
+        id: egui::TextureId,
+        view: &wgpu::TextureView,
+        filter: wgpu::FilterMode,
+    ) {
+        self.renderer
+            .update_egui_texture_from_wgpu_texture(device, view, filter, id);
+    }
 }

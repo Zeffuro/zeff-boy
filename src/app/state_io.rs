@@ -78,10 +78,31 @@ impl App {
                     .unwrap_or("ROM")
                     .to_string();
                 log::info!("Loaded ROM: {}", path.display());
-
-                // Cache metadata
+                
                 self.cached_is_mbc7 = emu.is_mbc7_cartridge();
                 self.cached_rom_path = Some(emu.rom_path().to_path_buf());
+
+                let rom_header_title = emu.header.title.clone();
+                let is_gbc = emu.header.is_cgb_compatible || emu.header.is_cgb_exclusive;
+
+                if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
+                    crate::cheats::save_game_cheats(
+                        old_title,
+                        &self.debug_windows.cheat.user_codes,
+                        &self.debug_windows.cheat.libretro_codes,
+                    );
+                }
+
+                self.debug_windows.cheat.rom_title = Some(rom_header_title.clone());
+                self.debug_windows.cheat.rom_is_gbc = is_gbc;
+                self.debug_windows.cheat.libretro_search = rom_header_title.clone();
+                self.debug_windows.cheat.libretro_results.clear();
+                self.debug_windows.cheat.libretro_file_list = None;
+                self.debug_windows.cheat.libretro_status = None;
+
+                let (user, libretro) = crate::cheats::load_game_cheats(&rom_header_title);
+                self.debug_windows.cheat.user_codes = user;
+                self.debug_windows.cheat.libretro_codes = libretro;
 
                 self.emu_thread = Some(EmuThread::spawn(emu));
                 self.fps_tracker = FpsTracker::new();
@@ -244,8 +265,7 @@ impl App {
         self.load_rom(&path);
     }
     pub(super) fn take_screenshot(&mut self) {
-        // Get the latest framebuffer as 160x144 RGBA
-        let fb = match &self.latest_frame {
+        let fb = match &self.last_displayed_frame {
             Some(fb) if fb.len() == 160 * 144 * 4 => fb,
             _ => {
                 self.toast_manager.error("No framebuffer available");
