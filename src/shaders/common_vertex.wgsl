@@ -10,8 +10,23 @@ struct ShaderParams {
     palette_warmth: f32,
     tex_width: f32,
     tex_height: f32,
+    color_mode: u32,
+    _pad0: u32,
+    color_matrix_r: vec4<f32>,
+    color_matrix_g: vec4<f32>,
+    color_matrix_b: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> params: ShaderParams;
+
+fn apply_color_correction(c: vec4<f32>) -> vec4<f32> {
+    if (params.color_mode == 0u) {
+        return c;
+    }
+    let r = dot(params.color_matrix_r.xyz, c.rgb);
+    let g = dot(params.color_matrix_g.xyz, c.rgb);
+    let b = dot(params.color_matrix_b.xyz, c.rgb);
+    return vec4<f32>(clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0)), c.a);
+}
 
 struct VSOut {
     @builtin(position) pos: vec4<f32>,

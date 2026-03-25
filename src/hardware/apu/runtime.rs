@@ -127,8 +127,8 @@ impl Apu {
                 self.maybe_write_envelope(addr, value);
                 self.maybe_apply_dac_gate(addr);
 
-                if value & 0x80 != 0 {
-                    if let Some((channel_index, channel_mask)) = trigger_channel(addr) {
+                if value & 0x80 != 0
+                    && let Some((channel_index, channel_mask)) = trigger_channel(addr) {
                         self.channels[channel_index].enabled =
                             self.channel_dac_enabled(channel_index);
                         self.reset_channel_runtime(channel_index);
@@ -155,7 +155,6 @@ impl Apu {
                         self.nr52 |= channel_mask;
                         self.update_nr52_status();
                     }
-                }
             }
             WAVE_RAM_START..=WAVE_RAM_END => {
                 self.wave_ram[(addr - WAVE_RAM_START) as usize] = value;
@@ -327,15 +326,14 @@ impl Apu {
             _ => None,
         };
 
-        if let Some(channel_index) = channel_index {
-            if !self.channel_dac_enabled(channel_index) {
+        if let Some(channel_index) = channel_index
+            && !self.channel_dac_enabled(channel_index) {
                 self.channels[channel_index].enabled = false;
                 if channel_index == 0 {
                     self.channels[0].sweep_enabled = false;
                 }
                 self.update_nr52_status();
             }
-        }
     }
 
     fn maybe_write_length(&mut self, addr: u16, value: u8) {

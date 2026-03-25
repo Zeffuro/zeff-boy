@@ -74,12 +74,11 @@ impl CPU {
             } else {
                 self.tick_internal_timed(bus, 4);
             }
-        } else if self.ime == IMEState::Enabled && pending != 0 {
-            if self.handle_interrupts(bus) {
+        } else if self.ime == IMEState::Enabled && pending != 0
+            && self.handle_interrupts(bus) {
                 self.commit_step_cycles();
                 return;
             }
-        }
 
         let ime_was_pending_enable = matches!(self.ime, IMEState::PendingEnable);
         let opcode = self.fetch8_timed(bus);

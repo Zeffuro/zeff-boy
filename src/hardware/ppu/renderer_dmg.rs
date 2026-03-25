@@ -1,4 +1,4 @@
-use super::render_sprites;
+use super::{SpriteRenderContext, render_sprites};
 use crate::hardware::ppu::palette::apply_palette;
 use crate::hardware::ppu::{PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
 
@@ -103,15 +103,9 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
     let mut bg_color_ids = [0u8; SCREEN_W];
 
-    for x in 0..SCREEN_W {
+    for (x, bg_color_id) in bg_color_ids.iter_mut().enumerate() {
         let color_id = if ppu.debug_enable_window {
-            if let Some(window_color) =
-                render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, x)
-            {
-                Some(window_color)
-            } else {
-                None
-            }
+            render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, x)
         } else {
             None
         };
@@ -124,7 +118,7 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             }
         });
 
-        bg_color_ids[x] = color_id;
+        *bg_color_id = color_id;
 
         let rgba = apply_palette(ppu.bgp, color_id);
         let offset = (ly * SCREEN_W + x) * 4;
@@ -134,21 +128,21 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     ppu.increment_window_line_counter_after_scanline();
 
     if ppu.debug_enable_sprites {
-        render_sprites(
-            false,
-            ppu.lcdc,
-            ppu.obp0,
-            ppu.obp1,
+        render_sprites(SpriteRenderContext {
+            cgb_mode: false,
+            lcdc: ppu.lcdc,
+            obp0: ppu.obp0,
+            obp1: ppu.obp1,
             vram,
             oam,
             ly,
-            &mut ppu.framebuffer,
-            None,
-            Some(&bg_color_ids),
-            None,
-            ppu.color_correction,
-            ppu.color_correction_matrix,
-        );
+            framebuffer: &mut ppu.framebuffer,
+            cgb_obj_palette_ram: None,
+            bg_color_ids: Some(&bg_color_ids),
+            cgb_bg_priority_flags: None,
+            color_correction: ppu.color_correction,
+            color_correction_matrix: ppu.color_correction_matrix,
+        });
     }
 
     if ppu.sgb_enabled {

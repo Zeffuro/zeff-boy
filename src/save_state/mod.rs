@@ -343,10 +343,10 @@ fn decode_mode_preference(tag: u8) -> Result<HardwareModePreference> {
 }
 
 fn validate_slot(slot: u8) -> Result<()> {
-    if (1..=4).contains(&slot) {
+    if slot <= 9 {
         Ok(())
     } else {
-        bail!("invalid save-state slot {}; expected 1..=4", slot);
+        bail!("invalid save-state slot {}; expected 0..=9", slot);
     }
 }
 

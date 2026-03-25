@@ -161,10 +161,7 @@ impl Cartridge {
     }
 
     pub(crate) fn step(&mut self, t_cycles: u64) {
-        match self {
-            Cartridge::Mbc3(c) => c.step(t_cycles),
-            _ => {}
-        }
+        if let Cartridge::Mbc3(c) = self { c.step(t_cycles) }
     }
 
     pub(crate) fn rumble_active(&self) -> bool {

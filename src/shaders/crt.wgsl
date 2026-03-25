@@ -21,5 +21,5 @@ fn fs_main(v: VSOut) -> @location(0) vec4<f32> {
     // Slight green phosphor tint
     var tinted = warped_color.rgb;
     tinted.g = tinted.g * 1.05;
-    return vec4<f32>(tinted * scanline * vignette, 1.0);
+    return apply_color_correction(vec4<f32>(tinted * scanline * vignette, 1.0));
 }

@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WatchType {
     Read,
@@ -23,7 +21,8 @@ pub(crate) struct WatchHit {
 }
 
 pub(crate) struct DebugController {
-    pub(crate) breakpoints: HashSet<u16>,
+    breakpoints: Box<[bool; 65536]>,
+    breakpoint_count: usize,
     pub(crate) watchpoints: Vec<Watchpoint>,
     pub(crate) break_on_next: bool,
     pub(crate) hit_breakpoint: Option<u16>,
@@ -35,7 +34,8 @@ pub(crate) struct DebugController {
 impl DebugController {
     pub(crate) fn new() -> Self {
         Self {
-            breakpoints: HashSet::new(),
+            breakpoints: Box::new([false; 65536]),
+            breakpoint_count: 0,
             watchpoints: Vec::new(),
             break_on_next: false,
             hit_breakpoint: None,
@@ -45,21 +45,44 @@ impl DebugController {
         }
     }
 
+    pub(crate) fn has_breakpoint(&self, addr: u16) -> bool {
+        self.breakpoints[addr as usize]
+    }
+
+    pub(crate) fn iter_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
+        self.breakpoints
+            .iter()
+            .enumerate()
+            .filter(|entry| *entry.1)
+            .map(|entry| entry.0 as u16)
+    }
+
     pub(crate) fn add_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.insert(addr);
+        if !self.breakpoints[addr as usize] {
+            self.breakpoints[addr as usize] = true;
+            self.breakpoint_count += 1;
+        }
         self.breakpoints_active = true;
     }
 
     pub(crate) fn remove_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.remove(&addr);
-        self.breakpoints_active = !self.breakpoints.is_empty();
+        if self.breakpoints[addr as usize] {
+            self.breakpoints[addr as usize] = false;
+            self.breakpoint_count -= 1;
+        }
+        self.breakpoints_active = self.breakpoint_count > 0;
     }
 
     pub(crate) fn toggle_breakpoint(&mut self, addr: u16) {
-        if !self.breakpoints.remove(&addr) {
-            self.breakpoints.insert(addr);
+        let slot = &mut self.breakpoints[addr as usize];
+        if *slot {
+            *slot = false;
+            self.breakpoint_count -= 1;
+        } else {
+            *slot = true;
+            self.breakpoint_count += 1;
         }
-        self.breakpoints_active = !self.breakpoints.is_empty();
+        self.breakpoints_active = self.breakpoint_count > 0;
     }
 
     pub(crate) fn add_watchpoint(&mut self, addr: u16, watch_type: WatchType) {
@@ -84,7 +107,7 @@ impl DebugController {
             return false;
         }
 
-        if self.breakpoints.contains(&pc) {
+        if self.breakpoints[pc as usize] {
             self.hit_breakpoint = Some(pc);
             self.break_on_next = false;
             return true;
@@ -164,18 +187,18 @@ mod tests {
     fn add_and_remove_breakpoint() {
         let mut dc = DebugController::new();
         dc.add_breakpoint(0x0100);
-        assert!(dc.breakpoints.contains(&0x0100));
+        assert!(dc.has_breakpoint(0x0100));
         dc.remove_breakpoint(0x0100);
-        assert!(!dc.breakpoints.contains(&0x0100));
+        assert!(!dc.has_breakpoint(0x0100));
     }
 
     #[test]
     fn toggle_breakpoint_adds_and_removes() {
         let mut dc = DebugController::new();
         dc.toggle_breakpoint(0x0150);
-        assert!(dc.breakpoints.contains(&0x0150));
+        assert!(dc.has_breakpoint(0x0150));
         dc.toggle_breakpoint(0x0150);
-        assert!(!dc.breakpoints.contains(&0x0150));
+        assert!(!dc.has_breakpoint(0x0150));
     }
 
     #[test]

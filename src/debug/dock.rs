@@ -38,6 +38,59 @@ pub(crate) enum DebugTab {
     RomViewer,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TabDataRequirements {
+    pub(crate) needs_debug_info: bool,
+    pub(crate) needs_viewer_data: bool,
+    pub(crate) needs_vram: bool,
+    pub(crate) needs_oam: bool,
+    pub(crate) needs_apu: bool,
+    pub(crate) needs_disassembly: bool,
+    pub(crate) needs_rom_info: bool,
+    pub(crate) needs_memory_page: bool,
+    pub(crate) needs_rom_page: bool,
+}
+
+impl DebugTab {
+    pub(crate) fn requirements(self) -> TabDataRequirements {
+        match self {
+            DebugTab::GameView => TabDataRequirements::default(),
+            DebugTab::CpuDebug => TabDataRequirements { needs_debug_info: true, ..Default::default() },
+            DebugTab::InputViewer => TabDataRequirements { needs_debug_info: true, ..Default::default() },
+            DebugTab::Performance => TabDataRequirements { needs_debug_info: true, ..Default::default() },
+            DebugTab::Breakpoints => TabDataRequirements { needs_debug_info: true, ..Default::default() },
+            DebugTab::ApuViewer => TabDataRequirements { needs_viewer_data: true, needs_apu: true, ..Default::default() },
+            DebugTab::TileViewer => TabDataRequirements { needs_viewer_data: true, needs_vram: true, ..Default::default() },
+            DebugTab::TilemapViewer => TabDataRequirements { needs_viewer_data: true, needs_vram: true, ..Default::default() },
+            DebugTab::OamViewer => TabDataRequirements { needs_viewer_data: true, needs_oam: true, ..Default::default() },
+            DebugTab::PaletteViewer => TabDataRequirements { needs_viewer_data: true, ..Default::default() },
+            DebugTab::RomInfo => TabDataRequirements { needs_rom_info: true, ..Default::default() },
+            DebugTab::Disassembler => TabDataRequirements { needs_disassembly: true, ..Default::default() },
+            DebugTab::MemoryViewer => TabDataRequirements { needs_memory_page: true, ..Default::default() },
+            DebugTab::Cheats => TabDataRequirements::default(),
+            DebugTab::RomViewer => TabDataRequirements { needs_rom_page: true, ..Default::default() },
+        }
+    }
+}
+
+/// Compute union of all open tabs' data requirements.
+pub(crate) fn compute_tab_requirements(dock: &DockState<DebugTab>) -> TabDataRequirements {
+    let mut reqs = TabDataRequirements::default();
+    for (_, tab) in dock.iter_all_tabs() {
+        let r = tab.requirements();
+        reqs.needs_debug_info |= r.needs_debug_info;
+        reqs.needs_viewer_data |= r.needs_viewer_data;
+        reqs.needs_vram |= r.needs_vram;
+        reqs.needs_oam |= r.needs_oam;
+        reqs.needs_apu |= r.needs_apu;
+        reqs.needs_disassembly |= r.needs_disassembly;
+        reqs.needs_rom_info |= r.needs_rom_info;
+        reqs.needs_memory_page |= r.needs_memory_page;
+        reqs.needs_rom_page |= r.needs_rom_page;
+    }
+    reqs
+}
+
 const TAB_META: &[(DebugTab, &str, &str)] = &[
     (DebugTab::GameView, "Game", "GameView"),
     (DebugTab::CpuDebug, "CPU / Debug", "CpuDebug"),
@@ -289,11 +342,10 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::ApuViewer => {
-                if let Some(data) = self.viewer_data {
-                    if let Some(mutes) = draw_apu_viewer_content(ui, data) {
+                if let Some(data) = self.viewer_data
+                    && let Some(mutes) = draw_apu_viewer_content(ui, data) {
                         self.actions.apu_channel_mutes = Some(mutes);
                     }
-                }
             }
             DebugTab::RomInfo => {
                 if let Some(info) = self.rom_info_view {

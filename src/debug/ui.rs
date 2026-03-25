@@ -168,12 +168,26 @@ pub(super) fn draw_debug_ui_content(
     ui.separator();
 
     ui.heading("Recent Opcodes");
-    for &(pc, op, is_cb) in &info.recent_ops {
+    let mut i = 0;
+    let ops = &info.recent_ops;
+    while i < ops.len() {
+        let (pc, op, is_cb) = ops[i];
+        let mut count = 1usize;
+        while i + count < ops.len() && ops[i + count] == (pc, op, is_cb) {
+            count += 1;
+        }
         if is_cb {
-            ui.monospace(format!("{:04X}: CB {:02X}", pc, op));
+            if count > 1 {
+                ui.monospace(format!("{:04X}: CB {:02X} (x{})", pc, op, count));
+            } else {
+                ui.monospace(format!("{:04X}: CB {:02X}", pc, op));
+            }
+        } else if count > 1 {
+            ui.monospace(format!("{:04X}: {:02X} (x{})", pc, op, count));
         } else {
             ui.monospace(format!("{:04X}: {:02X}", pc, op));
         }
+        i += count;
     }
 
     let suspended = info.cpu_state == "Suspended";
@@ -190,11 +204,10 @@ pub(super) fn draw_debug_ui_content(
         if ui.button("Step").clicked() {
             actions.step_requested = true;
         }
-        if !suspended {
-            if ui.button("Continue").clicked() {
+        if !suspended
+            && ui.button("Continue").clicked() {
                 actions.continue_requested = true;
             }
-        }
     });
 
     if let Some(bp) = info.hit_breakpoint {

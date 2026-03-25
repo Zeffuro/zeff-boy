@@ -41,7 +41,7 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
     let uncapped_speed = settings.uncapped_speed;
 
     // Cache metadata before handing emulator to emu thread
-    let cached_is_mbc7 = emulator.as_ref().map_or(false, |e| e.is_mbc7_cartridge());
+    let cached_is_mbc7 = emulator.as_ref().is_some_and(|e| e.is_mbc7_cartridge());
     let cached_rom_path = emulator.as_ref().map(|e| e.rom_path().to_path_buf());
 
     let mut app = App {
@@ -60,12 +60,18 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         },
         exit_requested: false,
         settings,
-        last_frame_time: Instant::now(),
-        last_render_time: Instant::now(),
-        last_viewer_update: Instant::now(),
-        uncapped_speed,
+        timing: TimingState {
+            last_frame_time: Instant::now(),
+            last_render_time: Instant::now(),
+            last_viewer_update: Instant::now(),
+            uncapped_speed: uncapped_speed,
+        },
         fast_forward_held: false,
+        turbo_held: false,
+        turbo_counter: 0,
         shift_held: false,
+        ctrl_held: false,
+        alt_held: false,
         host_input: HostInputState::new(),
         cursor_pos: None,
         window_size: (160.0, 144.0),
@@ -77,35 +83,82 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         debug_step_requested: false,
         debug_continue_requested: false,
         backstep_requested: false,
+        frame_advance_requested: false,
+        active_save_slot: 1,
         latest_frame: None,
         last_displayed_frame: None,
-        recycled_framebuffer: None,
-        recycled_audio_buffer: None,
-        recycled_vram_buffer: None,
-        recycled_oam_buffer: None,
-        recycled_memory_page: None,
+        recycled: RecycledBuffers {
+            framebuffer: None,
+            audio: None,
+            vram: None,
+            oam: None,
+            memory_page: None,
+        },
         frames_in_flight: 0,
         cached_ui_data: None,
         cached_is_mbc7,
         cached_rom_path,
+        cached_rom_hash: None,
         pending_debug_actions: DebugUiActions::none(),
         tile_viewer_was_open: false,
         tilemap_viewer_was_open: false,
         shutdown_performed: false,
         toast_manager: ToastManager::new(),
-        audio_recorder: None,
-        replay_recorder: None,
-        replay_player: None,
+        recording: RecordingState {
+            audio_recorder: None,
+            replay_recorder: None,
+            replay_player: None,
+        },
         paused: false,
-        rewind_held: false,
-        rewind_fill: 0.0,
-        rewind_throttle: 0,
-        rewind_pops: 0,
+        rewind: RewindState {
+            held: false,
+            fill: 0.0,
+            throttle: 0,
+            pops: 0,
+        },
         egui_wants_keyboard: false,
     };
 
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+struct RecycledBuffers {
+    framebuffer: Option<Vec<u8>>,
+    audio: Option<Vec<f32>>,
+    vram: Option<Vec<u8>>,
+    oam: Option<Vec<u8>>,
+    memory_page: Option<Vec<(u16, u8)>>,
+}
+
+impl RecycledBuffers {
+    fn clear(&mut self) {
+        self.framebuffer = None;
+        self.audio = None;
+        self.vram = None;
+        self.oam = None;
+        self.memory_page = None;
+    }
+}
+
+struct RewindState {
+    held: bool,
+    fill: f32,
+    throttle: usize,
+    pops: usize,
+}
+
+struct RecordingState {
+    audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
+    replay_recorder: Option<crate::replay::ReplayRecorder>,
+    replay_player: Option<crate::replay::ReplayPlayer>,
+}
+
+struct TimingState {
+    last_frame_time: Instant,
+    last_render_time: Instant,
+    last_viewer_update: Instant,
+    uncapped_speed: bool,
 }
 
 struct App {
@@ -120,12 +173,13 @@ struct App {
     debug_dock: egui_dock::DockState<crate::debug::DebugTab>,
     exit_requested: bool,
     settings: Settings,
-    last_frame_time: Instant,
-    last_render_time: Instant,
-    last_viewer_update: Instant,
-    uncapped_speed: bool,
+    timing: TimingState,
     fast_forward_held: bool,
+    turbo_held: bool,
+    turbo_counter: u8,
     shift_held: bool,
+    ctrl_held: bool,
+    alt_held: bool,
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
     window_size: (f32, f32),
@@ -137,32 +191,24 @@ struct App {
     debug_step_requested: bool,
     debug_continue_requested: bool,
     backstep_requested: bool,
+    frame_advance_requested: bool,
+    active_save_slot: u8,
     latest_frame: Option<Vec<u8>>,
     last_displayed_frame: Option<Vec<u8>>,
-
-    recycled_framebuffer: Option<Vec<u8>>,
-    recycled_audio_buffer: Option<Vec<f32>>,
-    recycled_vram_buffer: Option<Vec<u8>>,
-    recycled_oam_buffer: Option<Vec<u8>>,
-    recycled_memory_page: Option<Vec<(u16, u8)>>,
+    recycled: RecycledBuffers,
     frames_in_flight: usize,
     cached_ui_data: Option<ui::UiFrameData>,
     cached_is_mbc7: bool,
     cached_rom_path: Option<PathBuf>,
-
+    cached_rom_hash: Option<[u8; 32]>,
     pending_debug_actions: DebugUiActions,
     tile_viewer_was_open: bool,
     tilemap_viewer_was_open: bool,
     shutdown_performed: bool,
     toast_manager: ToastManager,
-    audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
-    replay_recorder: Option<crate::replay::ReplayRecorder>,
-    replay_player: Option<crate::replay::ReplayPlayer>,
+    recording: RecordingState,
     paused: bool,
-    rewind_held: bool,
-    rewind_fill: f32,
-    rewind_throttle: usize,
-    rewind_pops: usize,
+    rewind: RewindState,
     egui_wants_keyboard: bool,
 }
 
@@ -184,7 +230,7 @@ const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33); // ~30Hz
 
 impl App {
     fn speed_mode(&self) -> SpeedMode {
-        if self.uncapped_speed {
+        if self.timing.uncapped_speed {
             SpeedMode::Uncapped
         } else if self.fast_forward_held {
             SpeedMode::FastForward
@@ -207,8 +253,8 @@ impl App {
     fn effective_frame_duration(&self) -> Duration {
         match self.speed_mode() {
             SpeedMode::FastForward => {
-                let mult = self.settings.fast_forward_multiplier.max(1) as u32;
-                GB_FRAME_DURATION / mult
+                let multi = self.settings.fast_forward_multiplier.max(1) as u32;
+                GB_FRAME_DURATION / multi
             }
             _ => GB_FRAME_DURATION,
         }
@@ -297,10 +343,10 @@ impl App {
     fn process_frame_result(&mut self, result: crate::emu_thread::FrameResult) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
         if let Some(old) = self.latest_frame.replace(result.frame) {
-            self.recycled_framebuffer = Some(old);
+            self.recycled.framebuffer = Some(old);
         }
         self.cached_is_mbc7 = result.is_mbc7;
-        self.rewind_fill = result.rewind_fill;
+        self.rewind.fill = result.rewind_fill;
 
         if let Some(gamepad) = &mut self.gamepad {
             gamepad.set_rumble(result.rumble);
@@ -316,13 +362,13 @@ impl App {
             );
         }
 
-        if let Some(recorder) = &mut self.audio_recorder {
+        if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
             if let Some(snapshot) = result.apu_snapshot {
                 recorder.write_apu_snapshot(snapshot);
             }
         }
-        self.recycled_audio_buffer = Some(result.audio_samples);
+        self.recycled.audio = Some(result.audio_samples);
 
         let mut ui_data = result.ui_data;
 
@@ -330,10 +376,10 @@ impl App {
             if ui_data.viewer_data.is_some() {
                 if let Some(old_viewer) = cached.viewer_data.take() {
                     if !old_viewer.vram.is_empty() {
-                        self.recycled_vram_buffer = Some(old_viewer.vram);
+                        self.recycled.vram = Some(old_viewer.vram);
                     }
                     if !old_viewer.oam.is_empty() {
-                        self.recycled_oam_buffer = Some(old_viewer.oam);
+                        self.recycled.oam = Some(old_viewer.oam);
                     }
                 }
             } else {
@@ -349,7 +395,7 @@ impl App {
             }
             if ui_data.memory_page.is_some() {
                 if let Some(old_page) = cached.memory_page.take() {
-                    self.recycled_memory_page = Some(old_page);
+                    self.recycled.memory_page = Some(old_page);
                 }
             } else {
                 ui_data.memory_page = cached.memory_page.take();
@@ -427,7 +473,7 @@ impl App {
                     crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
                         self.latest_frame = Some(framebuffer);
                         self.paused = true;
-                        self.last_frame_time = Instant::now();
+                        self.timing.last_frame_time = Instant::now();
                         self.toast_manager.set_persistent(
                             "paused",
                             true,
@@ -438,18 +484,18 @@ impl App {
                         self.toast_manager.info("⏮ Stepped back");
                     }
                     crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
-                        self.toast_manager.info(&format!("Can't step back: {msg}"));
+                        self.toast_manager.info(format!("Can't step back: {msg}"));
                     }
                     _ => {}
                 }
             }
         }
 
-        if self.rewind_held && self.settings.rewind_enabled {
-            self.rewind_throttle += 1;
+        if self.rewind.held && self.settings.rewind_enabled {
+            self.rewind.throttle += 1;
             let pop_interval = self.settings.rewind_speed.max(1);
-            if self.rewind_throttle >= pop_interval {
-                self.rewind_throttle = 0;
+            if self.rewind.throttle >= pop_interval {
+                self.rewind.throttle = 0;
                 if let Some(thread) = &self.emu_thread {
                     thread.send(crate::emu_thread::EmuCommand::Rewind);
                 }
@@ -457,7 +503,7 @@ impl App {
                     match resp {
                         crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
                             self.latest_frame = Some(framebuffer);
-                            self.rewind_pops += 1;
+                            self.rewind.pops += 1;
                         }
                         crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
                             log::debug!("Rewind: {}", msg);
@@ -467,17 +513,21 @@ impl App {
                 }
             }
         } else {
-            if self.rewind_throttle > 0 {
-                self.last_frame_time = Instant::now();
-                self.rewind_throttle = 0;
+            if self.rewind.throttle > 0 {
+                self.timing.last_frame_time = Instant::now();
+                self.rewind.throttle = 0;
             }
-            self.rewind_pops = 0;
+            self.rewind.pops = 0;
             if self.frames_in_flight < MAX_IN_FLIGHT {
                 let now = Instant::now();
-                let frames_to_step = if self.paused {
-                    self.last_frame_time = now;
-                    0
-                } else {
+                    let frames_to_step = if self.paused {
+                        self.timing.last_frame_time = now;
+                        if std::mem::take(&mut self.frame_advance_requested) {
+                            1
+                        } else {
+                            0
+                        }
+                    } else {
                     self.compute_frames_to_step(now)
                 };
 
@@ -491,10 +541,10 @@ impl App {
                             SpeedMode::Normal => true,
                             SpeedMode::FastForward | SpeedMode::Uncapped => {
                                 let now = Instant::now();
-                                if now.duration_since(self.last_viewer_update)
+                                if now.duration_since(self.timing.last_viewer_update)
                                     >= VIEWER_UPDATE_INTERVAL
                                 {
-                                    self.last_viewer_update = now;
+                                    self.timing.last_viewer_update = now;
                                     true
                                 } else {
                                     false
@@ -502,14 +552,13 @@ impl App {
                             }
                         };
 
-                        let (buttons_pressed, dpad_pressed) =
-                            if let Some(player) = &mut self.replay_player {
+                        let (mut buttons_pressed, dpad_pressed) =
+                            if let Some(player) = &mut self.recording.replay_player {
                                 if let Some((buttons, dpad)) = player.next_frame() {
                                     (buttons, dpad)
                                 } else {
-                                    // Replay finished
                                     self.toast_manager.info("Replay finished");
-                                    self.replay_player = None;
+                                    self.recording.replay_player = None;
                                     (
                                         self.host_input.buttons_pressed(),
                                         self.host_input.dpad_pressed(),
@@ -522,10 +571,20 @@ impl App {
                                 )
                             };
 
-                        if let Some(recorder) = &mut self.replay_recorder {
+                        if self.turbo_held {
+                            self.turbo_counter = self.turbo_counter.wrapping_add(1);
+                            if self.turbo_counter % 2 == 1 {
+                                buttons_pressed = 0;
+                            }
+                        } else {
+                            self.turbo_counter = 0;
+                        }
+
+                        if let Some(recorder) = &mut self.recording.replay_recorder {
                             recorder.record_frame(buttons_pressed, dpad_pressed);
                         }
 
+                        let reqs = crate::debug::compute_tab_requirements(&self.debug_dock);
                         let input = crate::emu_thread::FrameInput {
                             frames: frames_to_step,
                             host_tilt: tilt_data.smoothed,
@@ -533,7 +592,7 @@ impl App {
                             dpad_pressed,
                             debug_step: std::mem::take(&mut self.debug_step_requested),
                             debug_continue: std::mem::take(&mut self.debug_continue_requested),
-                            apu_capture_enabled: self.debug_windows.show_apu_viewer
+                            apu_capture_enabled: reqs.needs_apu
                                 && want_viewer_update,
                             skip_audio: match self.speed_mode() {
                                 SpeedMode::Uncapped => true,
@@ -543,32 +602,32 @@ impl App {
                                 SpeedMode::Normal => false,
                             },
                             midi_capture_active: self
-                                .audio_recorder
+                                .recording.audio_recorder
                                 .as_ref()
-                                .map_or(false, |r| r.is_midi()),
+                                .is_some_and(|r| r.is_midi()),
                             debug_actions: std::mem::replace(
                                 &mut self.pending_debug_actions,
                                 DebugUiActions::none(),
                             ),
                             snapshot: crate::emu_thread::SnapshotRequest {
-                                want_debug_info: self.debug_windows.show_cpu_debug
-                                    || self.settings.show_fps,
-                                any_viewer_open: self.debug_windows.any_viewer_open()
+                                want_debug_info: (reqs.needs_debug_info
+                                    || self.settings.show_fps),
+                                any_viewer_open: reqs.needs_viewer_data
                                     && want_viewer_update,
-                                any_vram_viewer_open: self.debug_windows.any_vram_viewer_open()
+                                any_vram_viewer_open: reqs.needs_vram
                                     && want_viewer_update,
-                                show_oam_viewer: self.debug_windows.show_oam_viewer
+                                show_oam_viewer: reqs.needs_oam
                                     && want_viewer_update,
-                                show_apu_viewer: self.debug_windows.show_apu_viewer
+                                show_apu_viewer: reqs.needs_apu
                                     && want_viewer_update,
-                                show_disassembler: self.debug_windows.show_disassembler
+                                show_disassembler: reqs.needs_disassembly
                                     && want_viewer_update,
-                                show_rom_info: self.debug_windows.show_rom_info
+                                show_rom_info: reqs.needs_rom_info
                                     && want_viewer_update,
-                                show_memory_viewer: self.debug_windows.show_memory_viewer
+                                show_memory_viewer: reqs.needs_memory_page
                                     && want_viewer_update,
                                 memory_view_start: self.debug_windows.memory.view_start,
-                                show_rom_viewer: self.debug_windows.show_rom_viewer
+                                show_rom_viewer: reqs.needs_rom_page
                                     && want_viewer_update,
                                 rom_view_start: self.debug_windows.rom_viewer.view_start,
                                 last_disasm_pc: self.debug_windows.last_disasm_pc,
@@ -609,16 +668,18 @@ impl App {
                                     None
                                 },
                             },
-                            reusable_framebuffer: self.recycled_framebuffer.take(),
-                            reusable_audio_buffer: self.recycled_audio_buffer.take(),
-                            reusable_vram_buffer: self.recycled_vram_buffer.take(),
-                            reusable_oam_buffer: self.recycled_oam_buffer.take(),
-                            reusable_memory_page: self.recycled_memory_page.take(),
+                            buffers: crate::emu_thread::ReusableBuffers {
+                                framebuffer: self.recycled.framebuffer.take(),
+                                audio: self.recycled.audio.take(),
+                                vram: self.recycled.vram.take(),
+                                oam: self.recycled.oam.take(),
+                                memory_page: self.recycled.memory_page.take(),
+                            },
                             cheats: crate::cheats::collect_enabled_patches(
                                 &self.debug_windows.cheat.user_codes,
                                 &self.debug_windows.cheat.libretro_codes,
                             ),
-                            rewind_enabled: self.settings.rewind_enabled && !self.rewind_held,
+                            rewind_enabled: self.settings.rewind_enabled && !self.rewind.held,
                             rewind_seconds: self.settings.rewind_seconds,
                             color_correction: self.settings.color_correction,
                             color_correction_matrix: self.settings.color_correction_matrix,
@@ -638,8 +699,8 @@ impl App {
             SpeedMode::Normal => true,
             SpeedMode::FastForward | SpeedMode::Uncapped => {
                 let now = Instant::now();
-                if now.duration_since(self.last_render_time) >= UI_RENDER_INTERVAL {
-                    self.last_render_time = now;
+                if now.duration_since(self.timing.last_render_time) >= UI_RENDER_INTERVAL {
+                    self.timing.last_render_time = now;
                     true
                 } else {
                     false
@@ -658,7 +719,7 @@ impl App {
                 gfx.upload_framebuffer(&frame);
             }
             self.last_displayed_frame = Some(frame.clone());
-            self.recycled_framebuffer = Some(frame);
+            self.recycled.framebuffer = Some(frame);
         }
 
         crate::debug::sync_show_flags(&mut self.debug_windows, &self.debug_dock);

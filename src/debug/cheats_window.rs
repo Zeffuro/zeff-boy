@@ -59,8 +59,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
             .button("📂 Import .cht")
             .on_hover_text("Import cheats from a .cht file into user cheats")
             .clicked()
-        {
-            if let Some(path) = rfd::FileDialog::new()
+            && let Some(path) = rfd::FileDialog::new()
                 .add_filter("Cheat files", &["cht", "txt"])
                 .pick_file()
             {
@@ -77,14 +76,12 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
                     }
                 }
             }
-        }
-        if !state.user_codes.is_empty() {
-            if ui
+        if !state.user_codes.is_empty()
+            && ui
                 .button("💾 Export .cht")
                 .on_hover_text("Export user cheats to a .cht file")
                 .clicked()
-            {
-                if let Some(path) = rfd::FileDialog::new()
+                && let Some(path) = rfd::FileDialog::new()
                     .add_filter("Cheat files", &["cht"])
                     .set_file_name("cheats.cht")
                     .save_file()
@@ -103,8 +100,6 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
                         }
                     }
                 }
-            }
-        }
     });
 
     ui.separator();
@@ -171,15 +166,14 @@ fn draw_cheat_section(
                 ui.add(egui::DragValue::new(param).range(0..=255));
                 ui.label(format!("0x{param:02X}"));
             }
-            if let Some(ref mut target) = copy_target {
-                if ui
+            if let Some(ref mut target) = copy_target
+                && ui
                     .small_button("📋")
                     .on_hover_text("Copy to User Cheats")
                     .clicked()
                 {
                     **target = Some(cheat.clone());
                 }
-            }
             if ui.small_button("🗑").on_hover_text("Remove").clicked() {
                 remove_idx = Some(i);
             }
@@ -302,12 +296,10 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                 .small_button("✨ Use best guess")
                 .on_hover_text("Apply best metadata-derived search hint")
                 .clicked()
-            {
-                if let Some(best) = state.libretro_search_hints.first() {
+                && let Some(best) = state.libretro_search_hints.first() {
                     state.libretro_search = best.clone();
                     do_libretro_search(state);
                 }
-            }
         });
 
         if !state.libretro_search_hints.is_empty() {
@@ -402,11 +394,10 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
 fn do_libretro_search(state: &mut CheatState) {
     let cache_dir = libretro_cheats::libretro_cache_dir();
 
-    if state.libretro_search.trim().is_empty() {
-        if let Some(best_hint) = state.libretro_search_hints.first() {
+    if state.libretro_search.trim().is_empty()
+        && let Some(best_hint) = state.libretro_search_hints.first() {
             state.libretro_search = best_hint.clone();
         }
-    }
 
     if state.libretro_file_list.is_none() {
         state.libretro_status = Some("Fetching file list from GitHub...".to_string());

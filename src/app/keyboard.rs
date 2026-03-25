@@ -14,6 +14,12 @@ impl App {
         if matches!(key_code, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
             self.shift_held = key_event.state == ElementState::Pressed;
         }
+        if matches!(key_code, KeyCode::ControlLeft | KeyCode::ControlRight) {
+            self.ctrl_held = key_event.state == ElementState::Pressed;
+        }
+        if matches!(key_code, KeyCode::AltLeft | KeyCode::AltRight) {
+            self.alt_held = key_event.state == ElementState::Pressed;
+        }
 
         if self.handle_rebinding_key(key_event, key_code) {
             return;
@@ -74,7 +80,24 @@ impl App {
     }
 
     fn handle_shortcut_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
-        if key_code == self.settings.speedup_key_code() {
+        let pressed = key_event.state == ElementState::Pressed && !key_event.repeat;
+
+        if self.ctrl_held && key_code == KeyCode::KeyR {
+            if pressed {
+                self.reset_game();
+            }
+            return true;
+        }
+
+        if self.alt_held && key_code == KeyCode::Enter {
+            if pressed {
+                self.toggle_fullscreen();
+            }
+            return true;
+        }
+
+        let speedup_code = self.settings.speedup_key_code();
+        if key_code == speedup_code || key_code == KeyCode::Backquote {
             match key_event.state {
                 ElementState::Pressed if !key_event.repeat => self.fast_forward_held = true,
                 ElementState::Released => self.fast_forward_held = false,
@@ -83,24 +106,55 @@ impl App {
             return true;
         }
 
-        let bindings = &self.settings.shortcut_bindings;
-
-        if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
-            if key_event.state == ElementState::Pressed && !key_event.repeat {
-                self.uncapped_speed = !self.uncapped_speed;
-                self.settings.uncapped_speed = self.uncapped_speed;
-                self.settings.save();
-                if let Some(thread) = &self.emu_thread {
-                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(
-                        self.uncapped_speed,
-                    ));
-                }
+        // Turbo modifier (rapid-fire): Left Shift
+        if key_code == KeyCode::ShiftLeft {
+            match key_event.state {
+                ElementState::Pressed if !key_event.repeat => self.turbo_held = true,
+                ElementState::Released => self.turbo_held = false,
+                _ => {}
             }
             return true;
         }
 
-        if key_code == bindings.get(ShortcutAction::Pause) {
-            if key_event.state == ElementState::Pressed && !key_event.repeat {
+        if key_code == self.settings.rewind_key_code() {
+            match key_event.state {
+                ElementState::Pressed => self.rewind.held = true,
+                ElementState::Released => self.rewind.held = false,
+            }
+            return true;
+        }
+
+        let digit_slot = match key_code {
+            KeyCode::Digit0 => Some(0u8),
+            KeyCode::Digit1 => Some(1),
+            KeyCode::Digit2 => Some(2),
+            KeyCode::Digit3 => Some(3),
+            KeyCode::Digit4 => Some(4),
+            KeyCode::Digit5 => Some(5),
+            KeyCode::Digit6 => Some(6),
+            KeyCode::Digit7 => Some(7),
+            KeyCode::Digit8 => Some(8),
+            KeyCode::Digit9 => Some(9),
+            _ => None,
+        };
+        if let Some(slot) = digit_slot {
+            if pressed && !self.egui_wants_keyboard {
+                self.active_save_slot = slot;
+                self.toast_manager
+                    .info(format!("Save slot {slot} selected"));
+            }
+            // Don't consume — let digits pass through if egui wants them
+            if self.egui_wants_keyboard {
+                return false;
+            }
+            return pressed;
+        }
+
+        // --- Bound shortcut actions ---
+        let bindings = &self.settings.shortcut_bindings;
+
+        if key_code == bindings.get(ShortcutAction::Pause) || key_code == KeyCode::Pause {
+            if pressed {
                 self.paused = !self.paused;
                 self.toast_manager.set_persistent(
                     "paused",
@@ -113,51 +167,107 @@ impl App {
             return true;
         }
 
+        if key_code == bindings.get(ShortcutAction::Fullscreen) {
+            if pressed {
+                self.toggle_fullscreen();
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
+            if pressed {
+                self.timing.uncapped_speed = !self.timing.uncapped_speed;
+                self.settings.uncapped_speed = self.timing.uncapped_speed;
+                self.settings.save();
+                if let Some(thread) = &self.emu_thread {
+                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(
+                        self.timing.uncapped_speed,
+                    ));
+                }
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::MuteToggle) {
+            if pressed {
+                if self.settings.master_volume > 0.0 {
+                    self.settings.pre_mute_volume = Some(self.settings.master_volume);
+                    self.settings.master_volume = 0.0;
+                    self.toast_manager.info("🔇 Muted");
+                } else {
+                    self.settings.master_volume =
+                        self.settings.pre_mute_volume.unwrap_or(1.0);
+                    self.settings.pre_mute_volume = None;
+                    self.toast_manager.info("🔊 Unmuted");
+                }
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::Screenshot) {
+            if pressed {
+                self.take_screenshot();
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::ResetGame) {
+            if pressed {
+                self.reset_game();
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::FrameAdvance) {
+            if pressed && self.paused {
+                self.frame_advance_requested = true;
+                self.toast_manager.info("▶ Frame +1");
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::QuickSave) {
+            if pressed {
+                self.save_state_slot(self.active_save_slot);
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::QuickLoad) {
+            if pressed {
+                self.load_state_slot(self.active_save_slot);
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::SlotNext) {
+            if pressed {
+                self.active_save_slot = (self.active_save_slot + 1) % 10;
+                self.toast_manager
+                    .info(format!("Save slot {}", self.active_save_slot));
+            }
+            return true;
+        }
+
+        if key_code == bindings.get(ShortcutAction::SlotPrev) {
+            if pressed {
+                self.active_save_slot = (self.active_save_slot + 9) % 10;
+                self.toast_manager
+                    .info(format!("Save slot {}", self.active_save_slot));
+            }
+            return true;
+        }
+
         if key_code == bindings.get(ShortcutAction::DebugContinue) {
-            if key_event.state == ElementState::Pressed && !key_event.repeat {
+            if pressed {
                 self.debug_continue_requested = true;
             }
             return true;
         }
 
         if key_code == bindings.get(ShortcutAction::DebugStep) {
-            if key_event.state == ElementState::Pressed && !key_event.repeat {
+            if pressed {
                 self.debug_step_requested = true;
-            }
-            return true;
-        }
-
-        if key_code == bindings.get(ShortcutAction::Fullscreen) {
-            if key_event.state == ElementState::Pressed && !key_event.repeat {
-                self.toggle_fullscreen();
-            }
-            return true;
-        }
-
-        for action in [
-            ShortcutAction::SaveSlot1,
-            ShortcutAction::SaveSlot2,
-            ShortcutAction::SaveSlot3,
-            ShortcutAction::SaveSlot4,
-        ] {
-            if key_code == bindings.get(action) {
-                if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    if let Some(slot) = action.save_slot() {
-                        if self.shift_held {
-                            self.load_state_slot(slot);
-                        } else {
-                            self.save_state_slot(slot);
-                        }
-                    }
-                }
-                return true;
-            }
-        }
-
-        if key_code == self.settings.rewind_key_code() {
-            match key_event.state {
-                ElementState::Pressed => self.rewind_held = true,
-                ElementState::Released => self.rewind_held = false,
             }
             return true;
         }

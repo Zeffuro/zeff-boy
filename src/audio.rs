@@ -74,10 +74,21 @@ impl AudioOutput {
             return;
         }
 
-        for &sample in samples {
-            if self.producer.push(sample * gain).is_err() {
-                break;
+        let available = self.producer.slots().min(samples.len());
+        if available == 0 {
+            return;
+        }
+
+        if let Ok(mut chunk) = self.producer.write_chunk_uninit(available) {
+            let (first, second) = chunk.as_mut_slices();
+            let first_len = first.len();
+            for (dst, &src) in first.iter_mut().zip(samples.iter()) {
+                dst.write(src * gain);
             }
+            for (dst, &src) in second.iter_mut().zip(samples[first_len..].iter()) {
+                dst.write(src * gain);
+            }
+            unsafe { chunk.commit_all(); }
         }
     }
 
@@ -149,19 +160,47 @@ impl AudioOutput {
 
 fn fill_output_f32(data: &mut [f32], channels: u16, consumer: &mut rtrb::Consumer<f32>) {
     if channels < 2 {
-        for sample in data.iter_mut() {
-            *sample = consumer.pop().unwrap_or(0.0);
+        let available = consumer.slots().min(data.len());
+        if let Ok(chunk) = consumer.read_chunk(available) {
+            let (first, second) = chunk.as_slices();
+            data[..first.len()].copy_from_slice(first);
+            data[first.len()..first.len() + second.len()].copy_from_slice(second);
+            chunk.commit_all();
+            for sample in &mut data[available..] {
+                *sample = 0.0;
+            }
+        } else {
+            data.fill(0.0);
         }
         return;
     }
 
-    for frame in data.chunks_mut(channels as usize) {
-        let left = consumer.pop().unwrap_or(0.0);
-        let right = consumer.pop().unwrap_or(left);
-        frame[0] = left;
-        frame[1] = right;
-        for channel in frame.iter_mut().skip(2) {
-            *channel = (left + right) * 0.5;
+    let stereo_samples_needed = data.len() / channels as usize * 2;
+    let available = consumer.slots().min(stereo_samples_needed);
+    let even_available = available & !1;
+
+    if even_available > 0 {
+        if let Ok(chunk) = consumer.read_chunk(even_available) {
+            let (first, second) = chunk.as_slices();
+            let mut src_iter = first.iter().chain(second.iter());
+            let frames_from_chunk = even_available / 2;
+            for frame in data.chunks_mut(channels as usize).take(frames_from_chunk) {
+                let left = *src_iter.next().unwrap_or(&0.0);
+                let right = *src_iter.next().unwrap_or(&left);
+                frame[0] = left;
+                frame[1] = right;
+                for channel in frame.iter_mut().skip(2) {
+                    *channel = (left + right) * 0.5;
+                }
+            }
+            chunk.commit_all();
+            for frame in data.chunks_mut(channels as usize).skip(frames_from_chunk) {
+                frame.fill(0.0);
+            }
+        } else {
+            data.fill(0.0);
         }
+    } else {
+        data.fill(0.0);
     }
 }

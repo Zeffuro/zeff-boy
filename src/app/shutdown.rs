@@ -17,8 +17,8 @@ impl App {
         self.stop_audio_recording();
         self.stop_replay_recording();
 
-        if self.settings.auto_save_state {
-            if let Some(thread) = &self.emu_thread {
+        if self.settings.auto_save_state
+            && let Some(thread) = &self.emu_thread {
                 thread.send(EmuCommand::AutoSaveState);
                 match self.recv_cold_response_shutdown() {
                     Some(EmuResponse::SaveStateOk(path)) => {
@@ -30,7 +30,6 @@ impl App {
                     _ => {}
                 }
             }
-        }
 
         self.settings.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);
         self.settings.save();

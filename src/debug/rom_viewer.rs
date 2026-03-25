@@ -33,12 +33,11 @@ pub(super) fn draw_rom_viewer_content(
         let response = ui.text_edit_singleline(&mut state.jump_input);
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if ui.button("Go").clicked() || pressed_enter {
-            if let Some(addr) = parse_u32_hex(&state.jump_input) {
+        if (ui.button("Go").clicked() || pressed_enter)
+            && let Some(addr) = parse_u32_hex(&state.jump_input) {
                 state.view_start = (addr & !0xF).min(max_start);
                 state.jump_input = format!("{:06X}", state.view_start);
             }
-        }
 
         if !input_has_focus {
             state.jump_input = format!("{:06X}", state.view_start);
@@ -246,8 +245,8 @@ pub(super) fn draw_rom_viewer_content(
         } else {
             ui.label("No TBL file loaded (using ASCII)");
         }
-        if ui.button("Load TBL File...").clicked() {
-            if let Some(path) = rfd::FileDialog::new()
+        if ui.button("Load TBL File...").clicked()
+            && let Some(path) = rfd::FileDialog::new()
                 .add_filter("TBL files", &["tbl", "txt"])
                 .pick_file()
             {
@@ -266,7 +265,6 @@ pub(super) fn draw_rom_viewer_content(
                     }
                 }
             }
-        }
     });
 }
 

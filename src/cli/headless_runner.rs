@@ -190,8 +190,8 @@ pub(crate) fn run_headless(
         println!("{}", format_headless_serial(&serial_text));
     }
 
-    if let Some(expected) = &opts.expect_serial {
-        if !serial_text.contains(expected) {
+    if let Some(expected) = &opts.expect_serial
+        && !serial_text.contains(expected) {
             flush_battery(&emulator);
             return Err(format!(
                 "expected serial output containing {:?}, got {:?}",
@@ -199,7 +199,6 @@ pub(crate) fn run_headless(
             )
             .into());
         }
-    }
 
     flush_battery(&emulator);
 

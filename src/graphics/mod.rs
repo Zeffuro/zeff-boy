@@ -43,10 +43,10 @@ fn calculate_viewport(
             let scale_x = ww / game_width as f32;
             let scale_y = available_h / game_height as f32;
             let scale = scale_x.min(scale_y);
-            let w = game_width as f32 * scale;
-            let h = game_height as f32 * scale;
-            let x = (ww - w) / 2.0;
-            let y = top_offset + (available_h - h) / 2.0;
+            let w = (game_width as f32 * scale).floor();
+            let h = (game_height as f32 * scale).floor();
+            let x = ((ww - w) / 2.0).floor();
+            let y = top_offset + ((available_h - h) / 2.0).floor();
             Some((x, y, w, h))
         }
         AspectRatioMode::IntegerScale => {
@@ -92,6 +92,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) is_paused: bool,
     pub(crate) autohide_menu_bar: bool,
     pub(crate) cursor_y: Option<f32>,
+    pub(crate) slot_labels: [String; 10],
 }
 
 pub(crate) struct RenderResult {
@@ -180,15 +181,15 @@ impl Graphics {
     }
 
     pub(crate) fn clear_framebuffer(&self) {
-        let black = vec![0u8; 160 * 144 * 4];
-        self.framebuffer.upload_framebuffer(&self.gpu.queue, &black);
+        static BLACK: [u8; 160 * 144 * 4] = [0u8; 160 * 144 * 4];
+        self.framebuffer.upload_framebuffer(&self.gpu.queue, &BLACK);
     }
 
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
         self.framebuffer
             .set_shader(&self.gpu.device, ctx.settings);
         self.framebuffer
-            .update_params(&self.gpu.queue, &ctx.settings.shader_params);
+            .update_params(&self.gpu.queue, ctx.settings);
 
         let frame = self
             .gpu
@@ -207,6 +208,12 @@ impl Graphics {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.egui.begin_frame(&self.window);
+
+        let base_ppp = self.window.scale_factor() as f32;
+        let target_ppp = base_ppp * ctx.settings.ui_scale.clamp(0.5, 3.0);
+        if (self.egui.context().pixels_per_point() - target_ppp).abs() > 0.01 {
+            self.egui.context().set_pixels_per_point(target_ppp);
+        }
 
         let show_menu = if ctx.autohide_menu_bar {
             let pointer_near_top = ctx.cursor_y.is_some_and(|y| y < 8.0);
@@ -228,6 +235,7 @@ impl Graphics {
                 ctx.is_recording_replay,
                 ctx.is_playing_replay,
                 ctx.is_paused,
+                &ctx.slot_labels,
             )
         } else {
             crate::debug::MenuActions::default(ctx.settings.autohide_menu_bar)
@@ -251,12 +259,13 @@ impl Graphics {
         if ctx.debug_info.is_some() {
             let has_game_view = crate::debug::has_game_view_tab(ctx.dock_state);
 
-            // Resize offscreen texture to match previous frame's GameView panel size
-            if has_game_view {
-                if let Some((w, h)) = self.game_view_pixel_size {
-                    self.framebuffer.resize_offscreen(&self.gpu.device, w, h);
+            if has_game_view
+                && let Some((w, h)) = self.game_view_pixel_size {
+                    let scale = ctx.settings.offscreen_scale.max(1);
+                    let ow = w.max(160 * scale);
+                    let oh = h.max(144 * scale);
+                    self.framebuffer.resize_offscreen(&self.gpu.device, ow, oh);
                 }
-            }
 
             let game_texture_id = if has_game_view {
                 let tex_view = self.framebuffer.output_view();
@@ -366,6 +375,10 @@ impl Graphics {
         // Emulator Framebuffer (only when not rendered inside a dock tab)
         let render_framebuffer_directly =
             ctx.debug_info.is_some() && !crate::debug::has_game_view_tab(ctx.dock_state);
+
+        if render_framebuffer_directly && self.framebuffer.needs_two_pass() {
+            self.framebuffer.render_upscale_pass(&mut encoder);
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("screen pass"),
@@ -388,8 +401,8 @@ impl Graphics {
                 occlusion_query_set: None,
             });
 
-            if render_framebuffer_directly {
-                if let Some((x, y, w, h)) = calculate_viewport(
+            if render_framebuffer_directly
+                && let Some((x, y, w, h)) = calculate_viewport(
                     self.aspect_ratio_mode,
                     self.gpu.config.width,
                     self.gpu.config.height,
@@ -399,7 +412,6 @@ impl Graphics {
                 ) {
                     self.framebuffer.draw(&mut pass, x, y, w, h);
                 }
-            }
         }
 
         // EGUI: prepare

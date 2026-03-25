@@ -32,7 +32,7 @@ impl HuC1 {
         match addr {
             0x0000..=0x3FFF => self.rom.get(addr as usize).copied().unwrap_or(0xFF),
             0x4000..=0x7FFF => {
-                let mut physical = (self.rom_bank as usize) << 14;
+                let mut physical = self.rom_bank << 14;
                 if !self.banking_mode {
                     physical |= self.rom_high_address << 19;
                 }

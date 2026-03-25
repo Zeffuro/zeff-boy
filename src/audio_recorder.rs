@@ -180,7 +180,7 @@ fn finish_ogg(
     buffer: &[f32],
 ) -> std::io::Result<PathBuf> {
     if buffer.is_empty() {
-        std::fs::write(&path, &[])?;
+        std::fs::write(&path, [])?;
         return Ok(path);
     }
 
@@ -190,7 +190,7 @@ fn finish_ogg(
         .collect();
 
     let mut encoder = vorbis_encoder::Encoder::new(channels as u32, sample_rate as u64, 0.6)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Vorbis init error: {e}")))?;
+        .map_err(|e| std::io::Error::other(format!("Vorbis init error: {e}")))?;
 
     const CHUNK_SIZE: usize = 48000 * 2;
     let mut ogg_data = Vec::new();
@@ -198,12 +198,12 @@ fn finish_ogg(
     for chunk in samples_i16.chunks(CHUNK_SIZE) {
         let chunk_vec = chunk.to_vec();
         let encoded = encoder.encode(&chunk_vec)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Vorbis encode error: {e}")))?;
+            .map_err(|e| std::io::Error::other(format!("Vorbis encode error: {e}")))?;
         ogg_data.extend_from_slice(&encoded);
     }
 
     let final_data = encoder.flush()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Vorbis flush error: {e}")))?;
+        .map_err(|e| std::io::Error::other(format!("Vorbis flush error: {e}")))?;
     ogg_data.extend_from_slice(&final_data);
 
     std::fs::write(&path, &ogg_data)?;
@@ -244,7 +244,7 @@ fn wave_level_to_velocity(level: u8) -> u8 {
 
 fn finish_midi(path: PathBuf, snapshots: &[ApuChannelSnapshot]) -> std::io::Result<PathBuf> {
     if snapshots.is_empty() {
-        std::fs::write(&path, &[])?;
+        std::fs::write(&path, [])?;
         return Ok(path);
     }
 

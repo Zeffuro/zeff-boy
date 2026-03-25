@@ -77,8 +77,8 @@ impl PPU {
             &self.bg_palette_ram,
             palette_index,
             color_id,
-            self.color_correction,
-            self.color_correction_matrix,
+            ColorCorrection::None,
+            [0.0; 9],
         )
     }
 
@@ -87,8 +87,8 @@ impl PPU {
             &self.obj_palette_ram,
             palette_index,
             color_id,
-            self.color_correction,
-            self.color_correction_matrix,
+            ColorCorrection::None,
+            [0.0; 9],
         )
     }
 
@@ -281,16 +281,16 @@ mod tests {
     }
 
     #[test]
-    fn cgb_bg_rgba_with_color_correction() {
+    fn cgb_bg_rgba_always_returns_raw_rgb() {
         let mut ppu = PPU::new();
         ppu.bg_palette_ram[0] = 0x1F;
         ppu.bg_palette_ram[1] = 0x00;
+
         ppu.color_correction = ColorCorrection::None;
         let raw = ppu.cgb_bg_rgba(0, 0);
         assert_eq!(raw, [255, 0, 0, 255]);
         ppu.color_correction = ColorCorrection::GbcLcd;
-        let corrected = ppu.cgb_bg_rgba(0, 0);
-        assert_ne!(corrected, raw);
-        assert_eq!(corrected[0], 207);
+        let still_raw = ppu.cgb_bg_rgba(0, 0);
+        assert_eq!(still_raw, raw);
     }
 }

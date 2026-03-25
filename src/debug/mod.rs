@@ -26,7 +26,8 @@ mod ui;
 pub(crate) use breakpoints::DebugController;
 pub(crate) use disassembler::{DisassemblyView, disassemble_around};
 pub(crate) use dock::{
-    DebugTab, DebugTabViewer, create_default_dock_state, create_dock_from_saved_tabs,
+    DebugTab, DebugTabViewer, TabDataRequirements, compute_tab_requirements,
+    create_default_dock_state, create_dock_from_saved_tabs,
     create_ide_dock_state, ensure_game_view_tab, has_game_view_tab, save_open_tabs,
     sync_show_flags,
 };

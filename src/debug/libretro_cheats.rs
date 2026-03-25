@@ -20,19 +20,14 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> Result<Vec<Str
         "libretro_gb_index.json"
     });
 
-    if let Ok(meta) = std::fs::metadata(&cache_file) {
-        if let Ok(modified) = meta.modified() {
-            if modified.elapsed().unwrap_or_default().as_secs() < 86400 {
-                if let Ok(content) = std::fs::read_to_string(&cache_file) {
-                    if let Ok(names) = parse_file_list_from_json(&content) {
-                        if !names.is_empty() {
+    if let Ok(meta) = std::fs::metadata(&cache_file)
+        && let Ok(modified) = meta.modified()
+            && modified.elapsed().unwrap_or_default().as_secs() < 86400
+                && let Ok(content) = std::fs::read_to_string(&cache_file)
+                    && let Ok(names) = parse_file_list_from_json(&content)
+                        && !names.is_empty() {
                             return Ok(names);
                         }
-                    }
-                }
-            }
-        }
-    }
 
     let dir = platform_dir(is_gbc);
     let url = format!("{}{}", GITHUB_CONTENTS_URL, urlencoded(dir));
@@ -260,16 +255,14 @@ fn parse_file_list_from_json(json_body: &str) -> Result<Vec<String>, String> {
             }
         }
     }
-    if names.is_empty() && json_body.len() > 100 {
-        if json_body.contains("\"message\"") {
-            if let Some(msg_start) = json_body.find(r#""message":"#) {
+    if names.is_empty() && json_body.len() > 100
+        && json_body.contains("\"message\"")
+            && let Some(msg_start) = json_body.find(r#""message":"#) {
                 let rest = &json_body[msg_start + 11..];
                 if let Some(end) = rest.find('"') {
                     return Err(format!("GitHub API: {}", &rest[..end]));
                 }
             }
-        }
-    }
     Ok(names)
 }
 

@@ -13,11 +13,11 @@ impl App {
     }
 
     pub(super) fn sync_speed_setting(&mut self) {
-        if self.uncapped_speed != self.settings.uncapped_speed {
-            self.uncapped_speed = self.settings.uncapped_speed;
+        if self.timing.uncapped_speed != self.settings.uncapped_speed {
+            self.timing.uncapped_speed = self.settings.uncapped_speed;
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::SetUncapped(
-                    self.uncapped_speed,
+                    self.timing.uncapped_speed,
                 ));
             }
         }
@@ -32,9 +32,39 @@ impl App {
                     self.settings.gamepad_bindings.set(action, button_name);
                     self.debug_windows.rebinding_gamepad = None;
                 }
+            } else if let Some(action) = self.debug_windows.rebinding_gamepad_action {
+                if let Some(button_name) = poll.raw_pressed.first() {
+                    self.settings.gamepad_bindings.set_action(action, button_name);
+                    self.debug_windows.rebinding_gamepad_action = None;
+                }
             } else {
                 for (key, pressed) in poll.events {
                     self.host_input.set_gamepad(key, pressed);
+                }
+                for (action, pressed) in poll.action_events {
+                    match action {
+                        crate::settings::GamepadAction::SpeedUp => {
+                            self.fast_forward_held = pressed;
+                        }
+                        crate::settings::GamepadAction::Rewind => {
+                            self.rewind.held = pressed;
+                        }
+                        crate::settings::GamepadAction::Pause => {
+                            if pressed {
+                                self.paused = !self.paused;
+                                self.toast_manager.set_persistent(
+                                    "paused",
+                                    self.paused,
+                                    "⏸ Paused",
+                                    egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+                                    false,
+                                );
+                            }
+                        }
+                        crate::settings::GamepadAction::Turbo => {
+                            self.turbo_held = pressed;
+                        }
+                    }
                 }
             }
 
@@ -45,19 +75,19 @@ impl App {
     pub(super) fn compute_frames_to_step(&mut self, now: Instant) -> usize {
         match self.speed_mode() {
             SpeedMode::Uncapped => {
-                self.last_frame_time = now;
+                self.timing.last_frame_time = now;
                 1
             }
             SpeedMode::Normal | SpeedMode::FastForward => {
                 let effective_duration = self.effective_frame_duration();
 
                 let mut frames = 0usize;
-                while self.last_frame_time + effective_duration <= now {
+                while self.timing.last_frame_time + effective_duration <= now {
                     frames += 1;
-                    self.last_frame_time += effective_duration;
+                    self.timing.last_frame_time += effective_duration;
                     if frames >= MAX_FRAMES_PER_TICK {
                         if self.settings.frame_skip {
-                            self.last_frame_time = now;
+                            self.timing.last_frame_time = now;
                         }
                         break;
                     }
@@ -91,14 +121,15 @@ impl App {
             .and_then(|d| d.debug_info.as_ref())
             .map(|info| info.speed_mode_label);
 
-        let is_recording = self.audio_recorder.is_some();
-        let is_recording_replay = self.replay_recorder.is_some();
-        let is_playing_replay = self.replay_player.is_some();
-        let is_rewinding = self.rewind_held && self.settings.rewind_enabled;
+        let is_recording = self.recording.audio_recorder.is_some();
+        let is_recording_replay = self.recording.replay_recorder.is_some();
+        let is_playing_replay = self.recording.replay_player.is_some();
+        let is_rewinding = self.rewind.held && self.settings.rewind_enabled;
         let autohide_menu_bar = self.settings.autohide_menu_bar;
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back =
-            self.rewind_pops as f32 * self.settings.rewind_capture_interval() as f32 / 60.0;
+            self.rewind.pops as f32 * self.settings.rewind_capture_interval() as f32 / 60.0;
+        let slot_labels = super::state_io::build_slot_labels(self.cached_rom_hash);
 
         match gfx.render(graphics::RenderContext {
             debug_info: ui_frame_data.and_then(|d| d.debug_info.as_ref()),
@@ -122,6 +153,7 @@ impl App {
             is_paused: self.paused,
             autohide_menu_bar,
             cursor_y,
+            slot_labels,
         }) {
             Ok(result) => {
                 if result.open_file_requested {
@@ -198,6 +230,7 @@ impl App {
                     self.debug_windows.rebinding_action = None;
                     self.debug_windows.rebinding_shortcut = None;
                     self.debug_windows.rebinding_gamepad = None;
+                    self.debug_windows.rebinding_gamepad_action = None;
                     self.debug_windows.rebinding_speedup = false;
                     self.debug_windows.rebinding_rewind = false;
                 }

@@ -4,7 +4,7 @@ use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
 use egui::{Color32, ColorImage, TextureHandle};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MemorySearchMode {
@@ -391,6 +391,7 @@ pub(crate) struct DebugWindowState {
     pub(crate) rebinding_action: Option<InputBindingAction>,
     pub(crate) rebinding_shortcut: Option<ShortcutAction>,
     pub(crate) rebinding_gamepad: Option<BindingAction>,
+    pub(crate) rebinding_gamepad_action: Option<crate::settings::GamepadAction>,
     pub(crate) rebinding_speedup: bool,
     pub(crate) rebinding_rewind: bool,
     pub(crate) last_disasm_pc: Option<u16>,
@@ -427,6 +428,7 @@ impl DebugWindowState {
             rebinding_action: None,
             rebinding_shortcut: None,
             rebinding_gamepad: None,
+            rebinding_gamepad_action: None,
             rebinding_speedup: false,
             rebinding_rewind: false,
             last_disasm_pc: None,
@@ -504,17 +506,22 @@ pub(crate) struct DebugViewerData {
 
 type OpcodeEntry = (u16, u8, bool);
 
+const OPCODE_LOG_CAPACITY: usize = 32;
+const OPCODE_LOG_MASK: usize = OPCODE_LOG_CAPACITY - 1;
+
 pub(crate) struct OpcodeLog {
-    entries: VecDeque<OpcodeEntry>,
-    capacity: usize,
+    entries: [OpcodeEntry; OPCODE_LOG_CAPACITY],
+    cursor: usize,
+    count: usize,
     pub(crate) enabled: bool,
 }
 
 impl OpcodeLog {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub(crate) fn new(_capacity: usize) -> Self {
         Self {
-            entries: VecDeque::with_capacity(capacity),
-            capacity,
+            entries: [(0, 0, false); OPCODE_LOG_CAPACITY],
+            cursor: 0,
+            count: 0,
             enabled: true,
         }
     }
@@ -524,13 +531,20 @@ impl OpcodeLog {
         if !self.enabled {
             return;
         }
-        if self.entries.len() >= self.capacity {
-            self.entries.pop_front();
+        self.entries[self.cursor] = (pc, opcode, is_cb);
+        self.cursor = (self.cursor + 1) & OPCODE_LOG_MASK;
+        if self.count < OPCODE_LOG_CAPACITY {
+            self.count += 1;
         }
-        self.entries.push_back((pc, opcode, is_cb));
     }
 
     pub(crate) fn recent(&self, n: usize) -> Vec<(u16, u8, bool)> {
-        self.entries.iter().rev().take(n).copied().collect()
+        let take = n.min(self.count);
+        let mut result = Vec::with_capacity(take);
+        for i in 0..take {
+            let idx = (self.cursor.wrapping_sub(1 + i)) & OPCODE_LOG_MASK;
+            result.push(self.entries[idx]);
+        }
+        result
     }
 }

@@ -399,9 +399,9 @@ pub(crate) fn parse_cht_file(content: &str) -> Vec<CheatCode> {
             continue;
         }
 
-        if let Some(rest) = line.strip_prefix("cheat") {
-            if let Some(idx_end) = rest.find('_') {
-                if let Ok(idx) = rest[..idx_end].parse::<usize>() {
+        if let Some(rest) = line.strip_prefix("cheat")
+            && let Some(idx_end) = rest.find('_')
+                && let Ok(idx) = rest[..idx_end].parse::<usize>() {
                     let field = &rest[idx_end + 1..];
                     if let Some(value) = field.strip_prefix("desc = ") {
                         let value = value.trim().trim_matches('"').to_string();
@@ -414,8 +414,6 @@ pub(crate) fn parse_cht_file(content: &str) -> Vec<CheatCode> {
                         entries.entry(idx).or_insert((None, None, false)).2 = enabled;
                     }
                 }
-            }
-        }
     }
 
     let mut indices: Vec<usize> = entries.keys().copied().collect();
@@ -507,9 +505,8 @@ pub(crate) fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &
 
             match result {
                 Some((patches, ty)) => {
-                    if let Some(prev) = detected_type {
-                        if prev != ty {}
-                    }
+                    if let Some(prev) = detected_type
+                        && prev != ty {}
                     detected_type = Some(ty);
                     all_patches.extend(patches);
                 }
@@ -521,11 +518,10 @@ pub(crate) fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &
             }
         }
 
-        if let Some(ty) = detected_type {
-            if !all_patches.is_empty() {
+        if let Some(ty) = detected_type
+            && !all_patches.is_empty() {
                 return Ok((all_patches, ty));
             }
-        }
     }
 
     Err(

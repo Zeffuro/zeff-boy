@@ -110,6 +110,16 @@ impl ToastManager {
         );
     }
 
+    pub(crate) fn set_replay_recording(&mut self, active: bool) {
+        self.set_persistent(
+            "replay_recording",
+            active,
+            "⏺ Recording Replay",
+            egui::Color32::from_rgba_unmultiplied(130, 80, 30, 220),
+            true,
+        );
+    }
+
     fn push(&mut self, message: String, kind: ToastKind) {
         self.toasts.push(Toast {
             message,
@@ -132,17 +142,19 @@ impl ToastManager {
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-10.0, -10.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
+                ui.set_min_width(160.0);
+
                 for pt in &self.persistent {
                     let text = pt.display_text(now);
                     egui::Frame::new()
                         .fill(pt.color)
-                        .inner_margin(egui::Margin::symmetric(12, 6))
+                        .inner_margin(egui::Margin::symmetric(16, 8))
                         .corner_radius(4.0)
                         .show(ui, |ui| {
                             ui.label(
                                 egui::RichText::new(text)
                                     .color(egui::Color32::WHITE)
-                                    .size(14.0),
+                                    .size(15.0),
                             );
                         });
                     ui.add_space(4.0);
@@ -174,7 +186,7 @@ impl ToastManager {
 
                     egui::Frame::new()
                         .fill(bg)
-                        .inner_margin(egui::Margin::symmetric(12, 6))
+                        .inner_margin(egui::Margin::symmetric(16, 8))
                         .corner_radius(4.0)
                         .show(ui, |ui| {
                             ui.label(
@@ -182,7 +194,7 @@ impl ToastManager {
                                     .color(egui::Color32::from_rgba_unmultiplied(
                                         255, 255, 255, text_alpha,
                                     ))
-                                    .size(14.0),
+                                    .size(15.0),
                             );
                         });
                     ui.add_space(4.0);

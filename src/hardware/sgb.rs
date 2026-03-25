@@ -52,9 +52,7 @@ impl SgbState {
             _ => None,
         };
 
-        let Some(bit) = bit else {
-            return None;
-        };
+        let bit = bit?;
 
         self.current_byte |= bit << self.bit_count;
         self.bit_count += 1;

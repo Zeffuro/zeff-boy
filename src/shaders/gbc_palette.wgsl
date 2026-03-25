@@ -16,6 +16,6 @@ fn fs_main(v: VSOut) -> @location(0) vec4<f32> {
         mixed.b - params.palette_warmth * 0.05
     );
 
-    return vec4<f32>(clamp(warm, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    return apply_color_correction(vec4<f32>(clamp(warm, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0));
 }
 

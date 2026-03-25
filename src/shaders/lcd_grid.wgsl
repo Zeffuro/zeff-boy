@@ -14,5 +14,5 @@ fn fs_main(v: VSOut) -> @location(0) vec4<f32> {
     if gridY < borderSize || gridY > (1.0 - borderSize) {
         gridFade = 1.0 - params.grid_intensity;
     }
-    return vec4<f32>(color.rgb * gridFade, 1.0);
+    return apply_color_correction(vec4<f32>(color.rgb * gridFade, 1.0));
 }

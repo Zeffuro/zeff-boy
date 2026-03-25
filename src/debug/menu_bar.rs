@@ -70,6 +70,7 @@ pub(crate) fn draw_menu_bar(
     is_recording_replay: bool,
     is_playing_replay: bool,
     is_paused: bool,
+    slot_labels: &[String; 10],
 ) -> MenuActions {
     let mut open_file_requested = false;
     let mut reset_game_requested = false;
@@ -132,8 +133,8 @@ pub(crate) fn draw_menu_bar(
                 }
                 ui.separator();
                 ui.menu_button("Save State", |ui| {
-                    for slot in 1..=4u8 {
-                        if ui.button(format!("Slot {slot}")).clicked() {
+                    for slot in 0..=9u8 {
+                        if ui.button(&slot_labels[slot as usize]).clicked() {
                             save_state_slot = Some(slot);
                             ui.close();
                         }
@@ -145,8 +146,8 @@ pub(crate) fn draw_menu_bar(
                     }
                 });
                 ui.menu_button("Load State", |ui| {
-                    for slot in 1..=4u8 {
-                        if ui.button(format!("Slot {slot}")).clicked() {
+                    for slot in 0..=9u8 {
+                        if ui.button(&slot_labels[slot as usize]).clicked() {
                             load_state_slot = Some(slot);
                             ui.close();
                         }
@@ -164,7 +165,7 @@ pub(crate) fn draw_menu_bar(
                         ui.close();
                     }
                 } else {
-                    if ui.button("🎙 Record Audio...").clicked() {
+                    if ui.button("?? Record Audio...").clicked() {
                         start_audio_recording = true;
                         ui.close();
                     }
@@ -228,43 +229,83 @@ pub(crate) fn draw_menu_bar(
                     .on_hover_text("Hide the menu bar when the cursor is away from the top edge");
                 ui.separator();
                 ui.menu_button("Shader", |ui| {
-                    use crate::settings::ShaderPreset;
-                    let presets = [
-                        (ShaderPreset::None, "None"),
-                        (ShaderPreset::Scanlines, "Scanlines"),
-                        (ShaderPreset::LCDGrid, "LCD Grid"),
-                        (ShaderPreset::CRT, "CRT"),
-                        (ShaderPreset::HQ2xLike, "HQ2x-like"),
-                        (ShaderPreset::GbcPalette, "GBC Palette"),
-                        (ShaderPreset::Custom, "Custom (file)"),
+                    use crate::settings::{ScalingMode, EffectPreset};
+                    ui.label("Scaling");
+                    let scaling_modes = [
+                        (ScalingMode::PixelPerfect, "Pixel Perfect"),
+                        (ScalingMode::Bilinear, "Bilinear"),
+                        (ScalingMode::HQ2xLike, "HQ2x-like"),
+                        (ScalingMode::XBR2x, "xBR 2x"),
+                        (ScalingMode::Eagle2x, "Eagle 2x"),
                     ];
-                    for (preset, label) in presets {
+                    for (mode, label) in scaling_modes {
                         if ui
-                            .selectable_label(settings.shader_preset == preset, label)
+                            .selectable_label(settings.scaling_mode == mode, label)
                             .clicked()
                         {
-                            settings.shader_preset = preset;
+                            settings.scaling_mode = mode;
                             toolbar_settings_changed = true;
                             ui.close();
                         }
                     }
-                    if settings.shader_preset != ShaderPreset::None {
+                    ui.separator();
+                    ui.label("Effect");
+                    let effects = [
+                        (EffectPreset::None, "None"),
+                        (EffectPreset::Scanlines, "Scanlines"),
+                        (EffectPreset::LCDGrid, "LCD Grid"),
+                        (EffectPreset::CRT, "CRT"),
+                        (EffectPreset::GbcPalette, "GBC Palette"),
+                        (EffectPreset::Custom, "Custom (file)"),
+                    ];
+                    for (effect, label) in effects {
+                        if ui
+                            .selectable_label(settings.effect_preset == effect, label)
+                            .clicked()
+                        {
+                            settings.effect_preset = effect;
+                            toolbar_settings_changed = true;
+                            ui.close();
+                        }
+                    }
+                    if settings.effect_preset != EffectPreset::None || settings.scaling_mode.is_upscaler() {
                         ui.separator();
                         let p = &mut settings.shader_params;
-                        match settings.shader_preset {
-                            ShaderPreset::Scanlines => {
+                        match settings.scaling_mode {
+                            ScalingMode::HQ2xLike => {
+                                ui.add(
+                                    egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
+                                        .text("Edge Strength"),
+                                );
+                            }
+                            ScalingMode::XBR2x => {
+                                ui.add(
+                                    egui::Slider::new(&mut p.upscale_edge_strength, 0.1..=2.0)
+                                        .text("Edge Strength"),
+                                );
+                            }
+                            ScalingMode::Eagle2x => {
+                                ui.add(
+                                    egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=1.0)
+                                        .text("Edge Strength"),
+                                );
+                            }
+                            _ => {}
+                        }
+                        match settings.effect_preset {
+                            EffectPreset::Scanlines => {
                                 ui.add(
                                     egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
                                         .text("Intensity"),
                                 );
                             }
-                            ShaderPreset::LCDGrid => {
+                            EffectPreset::LCDGrid => {
                                 ui.add(
                                     egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0)
                                         .text("Grid"),
                                 );
                             }
-                            ShaderPreset::CRT => {
+                            EffectPreset::CRT => {
                                 ui.add(
                                     egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
                                         .text("Scanlines"),
@@ -274,13 +315,7 @@ pub(crate) fn draw_menu_bar(
                                         .text("Curvature"),
                                 );
                             }
-                            ShaderPreset::HQ2xLike => {
-                                ui.add(
-                                    egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
-                                        .text("Edge Strength"),
-                                );
-                            }
-                            ShaderPreset::GbcPalette => {
+                            EffectPreset::GbcPalette => {
                                 ui.add(
                                     egui::Slider::new(&mut p.palette_mix, 0.0..=1.0)
                                         .text("Palette Mix"),
@@ -290,28 +325,27 @@ pub(crate) fn draw_menu_bar(
                                         .text("Warmth"),
                                 );
                             }
-                            ShaderPreset::Custom => {
+                            EffectPreset::Custom => {
                                 ui.label("Custom WGSL fragment path:");
                                 ui.monospace(if settings.custom_shader_path.is_empty() {
                                     "(not set)".to_string()
                                 } else {
                                     settings.custom_shader_path.clone()
                                 });
-                                if ui.button("Load .wgsl...").clicked() {
-                                    if let Some(path) = rfd::FileDialog::new()
+                                if ui.button("Load .wgsl...").clicked()
+                                    && let Some(path) = rfd::FileDialog::new()
                                         .add_filter("WGSL", &["wgsl"])
                                         .pick_file()
                                     {
                                         settings.custom_shader_path = path.to_string_lossy().to_string();
                                         toolbar_settings_changed = true;
                                     }
-                                }
                                 if ui.button("Clear custom shader").clicked() {
                                     settings.custom_shader_path.clear();
                                     toolbar_settings_changed = true;
                                 }
                             }
-                            ShaderPreset::None => {}
+                            EffectPreset::None => {}
                         }
                     }
                 });

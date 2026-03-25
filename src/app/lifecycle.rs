@@ -10,11 +10,10 @@ impl App {
         }
         if let Some(emu) = self.initial_emulator.take() {
             self.emu_thread = Some(EmuThread::spawn(emu));
-            if self.uncapped_speed {
-                if let Some(thread) = &self.emu_thread {
+            if self.timing.uncapped_speed
+                && let Some(thread) = &self.emu_thread {
                     thread.send(crate::emu_thread::EmuCommand::SetUncapped(true));
                 }
-            }
         }
     }
 
@@ -45,6 +44,17 @@ impl App {
         let size = gfx.window().inner_size();
         self.window_size = (size.width as f32, size.height as f32);
         self.window_id = Some(gfx.window().id());
+
+        if self.settings.ui_scale_needs_auto {
+            let monitor_height = gfx
+                .window()
+                .current_monitor()
+                .map(|m| m.size().height)
+                .unwrap_or(1080);
+            let scale_factor = gfx.window().scale_factor();
+            self.settings.auto_detect_ui_scale(monitor_height, scale_factor);
+        }
+
         self.gfx = Some(gfx);
     }
 
@@ -69,7 +79,7 @@ impl App {
             SpeedMode::Normal => {
                 let effective = self.effective_frame_duration();
                 let now = std::time::Instant::now();
-                let next_frame_time = self.last_frame_time + effective;
+                let next_frame_time = self.timing.last_frame_time + effective;
                 if now >= next_frame_time {
                     event_loop.set_control_flow(ControlFlow::Poll);
                     gfx.window().request_redraw();

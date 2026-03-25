@@ -154,10 +154,9 @@ pub(crate) fn collect_emu_snapshot(
 
     let disassembly_view = if req.show_disassembler {
         let pc_changed = req
-            .last_disasm_pc
-            .map_or(true, |last_pc| last_pc != emu.cpu.pc);
+            .last_disasm_pc != Some(emu.cpu.pc);
         if pc_changed {
-            let mut breakpoints: Vec<u16> = emu.debug.breakpoints.iter().copied().collect();
+            let mut breakpoints: Vec<u16> = emu.debug.iter_breakpoints().collect();
             breakpoints.sort_unstable();
             Some(DisassemblyView {
                 pc: emu.cpu.pc,
@@ -174,7 +173,6 @@ pub(crate) fn collect_emu_snapshot(
     let rom_info_view = if req.show_rom_info {
         cached_rom_info.as_ref().map(|cached| {
             let mut info = cached.clone();
-            // Only update the dynamic fields
             info.hardware_mode = emu.hardware_mode;
             info.cartridge_state = emu.cartridge_state();
             if info.libretro_title.is_none() {
@@ -211,29 +209,19 @@ pub(crate) fn collect_emu_snapshot(
     let memory_search_results = if let Some(ref search) = req.memory_search {
         let mut results = Vec::new();
         if !search.pattern.is_empty() {
+            let mut flat = vec![0u8; 0x10000];
+            for addr in 0u32..=0xFFFFu32 {
+                flat[addr as usize] = emu.bus.read_byte_raw(addr as u16);
+            }
             let pattern_len = search.pattern.len();
-            for start_addr in 0u32..=0xFFFFu32 {
+            for start_addr in 0..=(0x10000usize - pattern_len) {
                 if results.len() >= search.max_results {
                     break;
                 }
-                let mut matched = true;
-                for (offset, &expected) in search.pattern.iter().enumerate() {
-                    let addr = (start_addr as u16).wrapping_add(offset as u16);
-                    if emu.bus.read_byte(addr) != expected {
-                        matched = false;
-                        break;
-                    }
-                }
-                if matched {
-                    let matched_bytes: Vec<u8> = (0..pattern_len)
-                        .map(|offset| {
-                            emu.bus
-                                .read_byte((start_addr as u16).wrapping_add(offset as u16))
-                        })
-                        .collect();
+                if flat[start_addr..start_addr + pattern_len] == search.pattern[..] {
                     results.push(MemorySearchResult {
                         address: start_addr as u16,
-                        matched_bytes,
+                        matched_bytes: flat[start_addr..start_addr + pattern_len].to_vec(),
                     });
                 }
             }

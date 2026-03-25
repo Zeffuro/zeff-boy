@@ -30,6 +30,14 @@ pub(crate) struct MemorySearchRequest {
     pub(crate) max_results: usize,
 }
 
+pub(crate) struct ReusableBuffers {
+    pub(crate) framebuffer: Option<Vec<u8>>,
+    pub(crate) audio: Option<Vec<f32>>,
+    pub(crate) vram: Option<Vec<u8>>,
+    pub(crate) oam: Option<Vec<u8>>,
+    pub(crate) memory_page: Option<Vec<(u16, u8)>>,
+}
+
 pub(crate) struct FrameInput {
     pub(crate) frames: usize,
     pub(crate) host_tilt: (f32, f32),
@@ -42,11 +50,7 @@ pub(crate) struct FrameInput {
     pub(crate) midi_capture_active: bool,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) snapshot: SnapshotRequest,
-    pub(crate) reusable_framebuffer: Option<Vec<u8>>,
-    pub(crate) reusable_audio_buffer: Option<Vec<f32>>,
-    pub(crate) reusable_vram_buffer: Option<Vec<u8>>,
-    pub(crate) reusable_oam_buffer: Option<Vec<u8>>,
-    pub(crate) reusable_memory_page: Option<Vec<(u16, u8)>>,
+    pub(crate) buffers: ReusableBuffers,
     pub(crate) cheats: Vec<crate::cheats::CheatPatch>,
     pub(crate) rewind_enabled: bool,
     pub(crate) rewind_seconds: usize,
@@ -207,23 +211,11 @@ impl EmuThread {
                                 rewind_buffer = crate::rewind::RewindBuffer::new(rewind_seconds, 4);
                             }
 
-                            if input.rewind_enabled && rewind_buffer.tick() {
-                                if let Ok(bytes) = crate::save_state::encode_state_bytes(
-                                    &crate::save_state::SaveStateRef {
-                                        version: crate::save_state::SAVE_STATE_VERSION,
-                                        rom_hash: emu.rom_hash,
-                                        cpu: &emu.cpu,
-                                        bus: emu.bus.as_ref(),
-                                        hardware_mode_preference: emu.hardware_mode_preference,
-                                        hardware_mode: emu.hardware_mode,
-                                        cycle_count: emu.cycle_count,
-                                        last_opcode: emu.last_opcode,
-                                        last_opcode_pc: emu.last_opcode_pc,
-                                    },
-                                ) {
-                                    rewind_buffer.push(&bytes, emu.framebuffer());
-                                }
-                            }
+                            Self::capture_rewind_snapshot(
+                                &emu,
+                                &mut rewind_buffer,
+                                input.rewind_enabled,
+                            );
 
                             let ui_data = {
                                 if cached_rom_info.is_none() && input.snapshot.show_rom_info {
@@ -233,19 +225,19 @@ impl EmuThread {
                                     &emu,
                                     &input.snapshot,
                                     &cached_rom_info,
-                                    input.reusable_vram_buffer,
-                                    input.reusable_oam_buffer,
-                                    input.reusable_memory_page,
+                                    input.buffers.vram,
+                                    input.buffers.oam,
+                                    input.buffers.memory_page,
                                 )
                             };
 
                             let src = emu.framebuffer();
-                            let mut frame = input.reusable_framebuffer.unwrap_or_default();
+                            let mut frame = input.buffers.framebuffer.unwrap_or_default();
                             frame.resize(src.len(), 0);
                             frame.copy_from_slice(src);
 
                             let rumble = emu.bus.cartridge.rumble_active();
-                            let audio_samples = if let Some(mut buf) = input.reusable_audio_buffer {
+                            let audio_samples = if let Some(mut buf) = input.buffers.audio {
                                 emu.bus.io.apu.drain_samples_into(&mut buf);
                                 buf
                             } else {
@@ -354,18 +346,7 @@ impl EmuThread {
                         }
 
                         EmuCommand::CaptureStateBytes => {
-                            let state = crate::save_state::SaveStateRef {
-                                version: crate::save_state::SAVE_STATE_VERSION,
-                                rom_hash: emu.rom_hash,
-                                cpu: &emu.cpu,
-                                bus: emu.bus.as_ref(),
-                                hardware_mode_preference: emu.hardware_mode_preference,
-                                hardware_mode: emu.hardware_mode,
-                                cycle_count: emu.cycle_count,
-                                last_opcode: emu.last_opcode,
-                                last_opcode_pc: emu.last_opcode_pc,
-                            };
-                            let resp = match crate::save_state::encode_state_bytes(&state) {
+                            let resp = match Self::encode_current_state(&emu) {
                                 Ok(bytes) => EmuResponse::StateCaptured(bytes),
                                 Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
                             };
@@ -553,6 +534,32 @@ impl EmuThread {
             frame_rx,
             resp_rx,
             join: Some(join),
+        }
+    }
+
+    fn encode_current_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
+        crate::save_state::encode_state_bytes(&crate::save_state::SaveStateRef {
+            version: crate::save_state::SAVE_STATE_VERSION,
+            rom_hash: emu.rom_hash,
+            cpu: &emu.cpu,
+            bus: emu.bus.as_ref(),
+            hardware_mode_preference: emu.hardware_mode_preference,
+            hardware_mode: emu.hardware_mode,
+            cycle_count: emu.cycle_count,
+            last_opcode: emu.last_opcode,
+            last_opcode_pc: emu.last_opcode_pc,
+        })
+    }
+
+    fn capture_rewind_snapshot(
+        emu: &Emulator,
+        rewind_buffer: &mut crate::rewind::RewindBuffer,
+        enabled: bool,
+    ) {
+        if enabled && rewind_buffer.tick() {
+            if let Ok(bytes) = Self::encode_current_state(emu) {
+                rewind_buffer.push(&bytes, emu.framebuffer());
+            }
         }
     }
 

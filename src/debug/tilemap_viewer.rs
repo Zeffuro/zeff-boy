@@ -153,7 +153,7 @@ pub(super) fn draw_tilemap_viewer_content(
     ui.horizontal(|ui| {
         super::export::export_png_button(ui, "tilemap.png", &window_state.image);
     });
-    egui::ScrollArea::both().show(ui, |ui,| {
+    egui::ScrollArea::both().show(ui, |ui| {
         let response = ui.image((texture.id(), display_size));
 
         if show_viewport {
@@ -173,8 +173,8 @@ pub(super) fn draw_tilemap_viewer_content(
             } else {
                 let wx = (ppu.wx as f32 - 7.0).max(0.0);
                 let wy = ppu.wy as f32;
-                let view_w = (160.0 - wx).max(0.0).min(160.0);
-                let view_h = (144.0 - wy).max(0.0).min(144.0);
+                let view_w = (160.0 - wx).clamp(0.0, 160.0);
+                let view_h = (144.0 - wy).clamp(0.0, 144.0);
                 if view_w > 0.0 && view_h > 0.0 {
                     let rect = egui::Rect::from_min_size(
                         egui::pos2(origin.x, origin.y),
@@ -190,8 +190,8 @@ pub(super) fn draw_tilemap_viewer_content(
             }
         }
 
-        if cgb_attr_available {
-            if let Some(pointer_pos) = response.hover_pos() {
+        if cgb_attr_available
+            && let Some(pointer_pos) = response.hover_pos() {
                 let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
                     / response.rect.width())
                     .floor();
@@ -226,7 +226,6 @@ pub(super) fn draw_tilemap_viewer_content(
                     }
                 }
             }
-        }
     });
 }
 

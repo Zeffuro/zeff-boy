@@ -5,17 +5,48 @@ use crate::emulator::Emulator;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+pub(super) fn build_slot_labels(rom_hash: Option<[u8; 32]>) -> [String; 10] {
+    std::array::from_fn(|i| {
+        let slot = i as u8;
+        let Some(hash) = rom_hash else {
+            return format!("Slot {slot}  (empty)");
+        };
+        let Ok(path) = crate::save_state::slot_path(hash, slot) else {
+            return format!("Slot {slot}  (empty)");
+        };
+        match std::fs::metadata(&path) {
+            Ok(meta) => {
+                if let Ok(modified) = meta.modified() {
+                    let dt: chrono::DateTime<chrono::Local> = modified.into();
+                    let stamp = dt.format("%Y-%m-%d %H:%M");
+                    format!("Slot {slot}  ({stamp})")
+                } else {
+                    format!("Slot {slot}")
+                }
+            }
+            Err(_) => format!("Slot {slot}  (empty)"),
+        }
+    })
+}
+
 impl App {
+    fn pause_for_dialog(&mut self) -> bool {
+        let was_paused = self.paused;
+        self.paused = true;
+        was_paused
+    }
+
+    fn resume_after_dialog(&mut self, was_paused: bool) {
+        self.paused = was_paused;
+        self.timing.last_frame_time = Instant::now();
+    }
+
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
         self.stop_emu_thread();
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
-        self.recycled_framebuffer = None;
-        self.recycled_audio_buffer = None;
-        self.recycled_vram_buffer = None;
-        self.recycled_oam_buffer = None;
-        self.recycled_memory_page = None;
+        self.recycled.clear();
         self.debug_windows.last_disasm_pc = None;
 
         match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
@@ -36,6 +67,7 @@ impl App {
 
                 self.cached_is_mbc7 = emu.is_mbc7_cartridge();
                 self.cached_rom_path = Some(emu.rom_path().to_path_buf());
+                self.cached_rom_hash = Some(emu.rom_hash);
 
                 let rom_header_title = emu.header.title.clone();
                 let is_gbc = emu.header.is_cgb_compatible || emu.header.is_cgb_exclusive;
@@ -81,13 +113,12 @@ impl App {
 
                 self.emu_thread = Some(EmuThread::spawn(emu));
                 self.fps_tracker = FpsTracker::new();
-                self.last_frame_time = Instant::now();
+                self.timing.last_frame_time = Instant::now();
 
-                if self.uncapped_speed {
-                    if let Some(thread) = &self.emu_thread {
+                if self.timing.uncapped_speed
+                    && let Some(thread) = &self.emu_thread {
                         thread.send(EmuCommand::SetUncapped(true));
                     }
-                }
 
                 self.settings.add_recent_rom(path);
                 self.settings.save();
@@ -160,7 +191,8 @@ impl App {
             }
             Some(EmuResponse::LoadStateFailed(err)) => {
                 log::error!("Failed to load state from slot {}: {}", slot, err);
-                self.toast_manager.error(format!("Load failed: {err}"));
+                self.toast_manager
+                    .error(format!("No save found in Slot {slot}"));
             }
             _ => {}
         }
@@ -203,20 +235,17 @@ impl App {
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
-        self.recycled_framebuffer = None;
-        self.recycled_audio_buffer = None;
-        self.recycled_vram_buffer = None;
-        self.recycled_oam_buffer = None;
-        self.recycled_memory_page = None;
+        self.recycled.clear();
         self.latest_frame = None;
         self.last_displayed_frame = None;
         self.cached_rom_path = None;
+        self.cached_rom_hash = None;
         self.cached_is_mbc7 = false;
         self.paused = false;
-        self.rewind_held = false;
-        self.rewind_fill = 0.0;
-        self.rewind_throttle = 0;
-        self.rewind_pops = 0;
+        self.rewind.held = false;
+        self.rewind.fill = 0.0;
+        self.rewind.throttle = 0;
+        self.rewind.pops = 0;
 
         self.debug_windows.cheat.rom_title = None;
         self.debug_windows.cheat.rom_crc32 = None;
@@ -241,12 +270,14 @@ impl App {
     }
 
     pub(super) fn open_file_dialog(&mut self) {
+        let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
             .add_filter("Game Boy ROMs", &["gb", "gbc"])
             .add_filter("All files", &["*"])
             .set_title("Open ROM")
             .pick_file();
 
+        self.resume_after_dialog(was_paused);
         if let Some(path) = file {
             self.load_rom(&path);
         }
@@ -276,11 +307,10 @@ impl App {
             return dir.clone();
         }
 
-        if let Some(rom_path) = &self.cached_rom_path {
-            if let Some(parent) = rom_path.parent() {
+        if let Some(rom_path) = &self.cached_rom_path
+            && let Some(parent) = rom_path.parent() {
                 return parent.to_path_buf();
             }
-        }
 
         Self::default_save_state_dir()
     }
@@ -290,13 +320,15 @@ impl App {
             return;
         }
 
+        let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
             .set_title("Save State As")
             .set_directory(self.state_dialog_dir())
             .add_filter("Zeff Boy Save State", &["state"])
-            .set_file_name(&self.default_state_file_name())
+            .set_file_name(self.default_state_file_name())
             .save_file();
 
+        self.resume_after_dialog(was_paused);
         let Some(path) = file else {
             return;
         };
@@ -324,12 +356,14 @@ impl App {
             return;
         }
 
+        let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
             .set_title("Load State")
             .set_directory(self.state_dialog_dir())
             .add_filter("Zeff Boy Save State", &["state"])
             .pick_file();
 
+        self.resume_after_dialog(was_paused);
         let Some(path) = file else {
             return;
         };
@@ -372,32 +406,31 @@ impl App {
             }
         };
 
-        let default_name = self
+        let game_name = self
             .cached_rom_path
             .as_ref()
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
-            .map(|stem| format!("{stem}.png"))
-            .unwrap_or_else(|| "screenshot.png".to_string());
+            .unwrap_or("screenshot");
 
-        let file = rfd::FileDialog::new()
-            .set_title("Save Screenshot")
-            .set_directory(self.state_dialog_dir())
-            .add_filter("PNG Image", &["png"])
-            .set_file_name(&default_name)
-            .save_file();
+        let now = chrono::Local::now();
+        let timestamp = now.format("%Y-%m-%d_%H-%M-%S");
+        let filename = format!("{game_name}_{timestamp}.png");
 
-        let Some(path) = file else {
+        let dir = Self::screenshots_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast_manager
+                .error(format!("Can't create screenshots dir: {e}"));
             return;
-        };
+        }
+        let path = dir.join(&filename);
 
         let image = egui::ColorImage::from_rgba_unmultiplied([160, 144], fb);
 
         match crate::debug::export::export_color_image_as_png(&path, &image) {
             Ok(()) => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
                 log::info!("Screenshot saved to {}", path.display());
-                self.toast_manager.success(format!("Saved {name}"));
+                self.toast_manager.success(format!("📸 {filename}"));
             }
             Err(err) => {
                 log::error!("Failed to save screenshot: {}", err);
@@ -405,6 +438,15 @@ impl App {
                     .error(format!("Screenshot failed: {err}"));
             }
         }
+    }
+
+    fn screenshots_dir() -> PathBuf {
+        if let Some(config_dir) = dirs::config_dir() {
+            return config_dir.join("zeff-boy").join("screenshots");
+        }
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("screenshots")
     }
 
     pub(super) fn start_audio_recording(&mut self) {
@@ -425,6 +467,7 @@ impl App {
             .map(|stem| format!("{stem}.{ext}"))
             .unwrap_or_else(|| format!("recording.{ext}"));
 
+        let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
             .set_title("Save Audio Recording")
             .set_directory(self.state_dialog_dir())
@@ -432,6 +475,7 @@ impl App {
             .set_file_name(&default_name)
             .save_file();
 
+        self.resume_after_dialog(was_paused);
         let Some(path) = file else {
             return;
         };
@@ -440,7 +484,7 @@ impl App {
             Ok(recorder) => {
                 log::info!("Started audio recording to {}", path.display());
                 self.toast_manager.info("Recording audio...");
-                self.audio_recorder = Some(recorder);
+                self.recording.audio_recorder = Some(recorder);
             }
             Err(err) => {
                 log::error!("Failed to start recording: {}", err);
@@ -450,7 +494,7 @@ impl App {
     }
 
     pub(super) fn stop_audio_recording(&mut self) {
-        if let Some(recorder) = self.audio_recorder.take() {
+        if let Some(recorder) = self.recording.audio_recorder.take() {
             match recorder.finish() {
                 Ok(path) => {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
@@ -478,6 +522,7 @@ impl App {
             .map(|stem| format!("{stem}.zrpl"))
             .unwrap_or_else(|| "replay.zrpl".to_string());
 
+        let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
             .set_title("Save Replay")
             .set_directory(self.state_dialog_dir())
@@ -485,6 +530,7 @@ impl App {
             .set_file_name(&default_name)
             .save_file();
 
+        self.resume_after_dialog(was_paused);
         let Some(path) = file else {
             return;
         };
@@ -494,12 +540,12 @@ impl App {
             thread.send(crate::emu_thread::EmuCommand::CaptureStateBytes);
         }
         match self.recv_cold_response() {
-            Some(crate::emu_thread::EmuResponse::StateCaptured(state_bytes)) => {
+            Some(EmuResponse::StateCaptured(state_bytes)) => {
                 let recorder = crate::replay::ReplayRecorder::new(path, state_bytes);
-                self.replay_recorder = Some(recorder);
-                self.toast_manager.info("Recording replay...");
+                self.recording.replay_recorder = Some(recorder);
+                self.toast_manager.set_replay_recording(true);
             }
-            Some(crate::emu_thread::EmuResponse::StateCaptureFailed(err)) => {
+            Some(EmuResponse::StateCaptureFailed(err)) => {
                 log::error!("Failed to capture state for replay: {}", err);
                 self.toast_manager
                     .error(format!("Replay start failed: {err}"));
@@ -509,7 +555,8 @@ impl App {
     }
 
     pub(super) fn stop_replay_recording(&mut self) {
-        if let Some(recorder) = self.replay_recorder.take() {
+        if let Some(recorder) = self.recording.replay_recorder.take() {
+            self.toast_manager.set_replay_recording(false);
             let frame_count = recorder.frame_count();
             match recorder.finish() {
                 Ok(path) => {
@@ -549,23 +596,22 @@ impl App {
         match crate::replay::ReplayPlayer::load(&path) {
             Ok(player) => {
                 let total = player.total_frames();
-                // Load the save state from the replay
                 let state_bytes = player.save_state().to_vec();
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(crate::emu_thread::EmuCommand::LoadStateBytes {
+                    thread.send(EmuCommand::LoadStateBytes {
                         state_bytes,
                         buttons_pressed: 0,
                         dpad_pressed: 0,
                     });
                 }
                 match self.recv_cold_response() {
-                    Some(crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. }) => {
+                    Some(EmuResponse::LoadStateOk { framebuffer, .. }) => {
                         self.latest_frame = Some(framebuffer);
-                        self.replay_player = Some(player);
+                        self.recording.replay_player = Some(player);
                         self.toast_manager
                             .info(format!("Playing replay ({total} frames)"));
                     }
-                    Some(crate::emu_thread::EmuResponse::LoadStateFailed(err)) => {
+                    Some(EmuResponse::LoadStateFailed(err)) => {
                         log::error!("Failed to load replay state: {}", err);
                         self.toast_manager
                             .error(format!("Replay load failed: {err}"));

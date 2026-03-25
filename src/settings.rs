@@ -10,7 +10,9 @@ use crate::hardware::types::hardware_mode::HardwareModePreference;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub(crate) enum AudioRecordingFormat {
+    #[default]
     Wav16,
     WavFloat,
     OggVorbis,
@@ -40,11 +42,6 @@ impl AudioRecordingFormat {
     }
 }
 
-impl Default for AudioRecordingFormat {
-    fn default() -> Self {
-        Self::Wav16
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BindingAction {
@@ -56,6 +53,14 @@ pub(crate) enum BindingAction {
     B,
     Start,
     Select,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GamepadAction {
+    SpeedUp,
+    Rewind,
+    Pause,
+    Turbo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,35 +79,108 @@ pub(crate) enum InputBindingAction {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ShaderPreset {
-    None,
-    CRT,
-    Scanlines,
-    LCDGrid,
+#[derive(Default)]
+pub(crate) enum ScalingMode {
+    #[default]
+    PixelPerfect,
     HQ2xLike,
-    GbcPalette,
-    Custom,
+    XBR2x,
+    Eagle2x,
+    Bilinear,
 }
 
-impl Default for ShaderPreset {
-    fn default() -> Self {
-        Self::None
+impl ScalingMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::PixelPerfect => "Pixel Perfect",
+            Self::HQ2xLike => "HQ2x-like",
+            Self::XBR2x => "xBR 2x",
+            Self::Eagle2x => "Eagle 2x",
+            Self::Bilinear => "Bilinear",
+        }
+    }
+
+    pub(crate) fn is_upscaler(self) -> bool {
+        matches!(self, Self::HQ2xLike | Self::XBR2x | Self::Eagle2x)
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub(crate) enum EffectPreset {
+    #[default]
+    None,
+    CRT,
+    Scanlines,
+    LCDGrid,
+    GbcPalette,
+    Custom,
+}
+
+impl EffectPreset {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::CRT => "CRT",
+            Self::Scanlines => "Scanlines",
+            Self::LCDGrid => "LCD Grid",
+            Self::GbcPalette => "GBC Palette",
+            Self::Custom => "Custom (file)",
+        }
+    }
+}
+
+/// Legacy enum kept for backward-compatible deserialization of old settings.
+/// Maps to the new ScalingMode + EffectPreset pair.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub(crate) enum ShaderPreset {
+    #[default]
+    None,
+    CRT,
+    Scanlines,
+    LCDGrid,
+    HQ2xLike,
+    XBR2x,
+    Eagle2x,
+    GbcPalette,
+    Custom,
+}
+
+impl ShaderPreset {
+    /// Convert legacy preset to the new scaling + effect pair.
+    pub(crate) fn to_scaling_and_effect(self) -> (ScalingMode, EffectPreset) {
+        match self {
+            Self::None => (ScalingMode::PixelPerfect, EffectPreset::None),
+            Self::CRT => (ScalingMode::PixelPerfect, EffectPreset::CRT),
+            Self::Scanlines => (ScalingMode::PixelPerfect, EffectPreset::Scanlines),
+            Self::LCDGrid => (ScalingMode::PixelPerfect, EffectPreset::LCDGrid),
+            Self::HQ2xLike => (ScalingMode::HQ2xLike, EffectPreset::None),
+            Self::XBR2x => (ScalingMode::XBR2x, EffectPreset::None),
+            Self::Eagle2x => (ScalingMode::Eagle2x, EffectPreset::None),
+            Self::GbcPalette => (ScalingMode::PixelPerfect, EffectPreset::GbcPalette),
+            Self::Custom => (ScalingMode::PixelPerfect, EffectPreset::Custom),
+        }
+    }
+}
+
+fn default_offscreen_scale() -> u32 {
+    4
+}
+
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub(crate) enum ColorCorrection {
+    #[default]
     None,
     GbcLcd,
     Custom,
 }
 
-impl Default for ColorCorrection {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 impl ColorCorrection {
     pub(crate) fn label(self) -> &'static str {
@@ -171,6 +249,7 @@ impl Default for ShaderParams {
 }
 
 impl ShaderParams {
+    #[cfg(test)]
     pub(crate) fn to_gpu_bytes(&self) -> [u8; 32] {
         let mut buf = [0u8; 32];
         buf[0..4].copy_from_slice(&self.scanline_intensity.to_le_bytes());
@@ -183,33 +262,82 @@ impl ShaderParams {
     }
 }
 
+pub(crate) fn gbc_lcd_matrix() -> [f32; 9] {
+    [
+        26.0 / 32.0,  4.0 / 32.0, 2.0 / 32.0,
+         0.0,         24.0 / 32.0, 8.0 / 32.0,
+         6.0 / 32.0,  4.0 / 32.0, 22.0 / 32.0,
+    ]
+}
+
+pub(crate) fn build_gpu_params(
+    params: &ShaderParams,
+    color_correction: ColorCorrection,
+    color_correction_matrix: [f32; 9],
+) -> [u8; 96] {
+    let mut buf = [0u8; 96];
+    buf[0..4].copy_from_slice(&params.scanline_intensity.to_le_bytes());
+    buf[4..8].copy_from_slice(&params.crt_curvature.to_le_bytes());
+    buf[8..12].copy_from_slice(&params.grid_intensity.to_le_bytes());
+    buf[12..16].copy_from_slice(&params.upscale_edge_strength.to_le_bytes());
+    buf[16..20].copy_from_slice(&params.palette_mix.to_le_bytes());
+    buf[20..24].copy_from_slice(&params.palette_warmth.to_le_bytes());
+    buf[24..28].copy_from_slice(&160.0_f32.to_le_bytes());
+    buf[28..32].copy_from_slice(&144.0_f32.to_le_bytes());
+
+    let mode: u32 = match color_correction {
+        ColorCorrection::None => 0,
+        ColorCorrection::GbcLcd => 1,
+        ColorCorrection::Custom => 2,
+    };
+    buf[32..36].copy_from_slice(&mode.to_le_bytes());
+    buf[36..40].copy_from_slice(&0u32.to_le_bytes());
+
+    let matrix = match color_correction {
+        ColorCorrection::None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        ColorCorrection::GbcLcd => gbc_lcd_matrix(),
+        ColorCorrection::Custom => color_correction_matrix,
+    };
+
+    buf[48..52].copy_from_slice(&matrix[0].to_le_bytes());
+    buf[52..56].copy_from_slice(&matrix[1].to_le_bytes());
+    buf[56..60].copy_from_slice(&matrix[2].to_le_bytes());
+    buf[60..64].copy_from_slice(&0.0_f32.to_le_bytes());
+
+    buf[64..68].copy_from_slice(&matrix[3].to_le_bytes());
+    buf[68..72].copy_from_slice(&matrix[4].to_le_bytes());
+    buf[72..76].copy_from_slice(&matrix[5].to_le_bytes());
+    buf[76..80].copy_from_slice(&0.0_f32.to_le_bytes());
+
+    buf[80..84].copy_from_slice(&matrix[6].to_le_bytes());
+    buf[84..88].copy_from_slice(&matrix[7].to_le_bytes());
+    buf[88..92].copy_from_slice(&matrix[8].to_le_bytes());
+    buf[92..96].copy_from_slice(&0.0_f32.to_le_bytes());
+
+    buf
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub(crate) enum LeftStickMode {
     Dpad,
     Tilt,
+    #[default]
     Auto,
 }
 
-impl Default for LeftStickMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub(crate) enum TiltInputMode {
+    #[default]
     Keyboard,
     Mouse,
     Auto,
 }
 
-impl Default for TiltInputMode {
-    fn default() -> Self {
-        Self::Keyboard
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeyBindings {
@@ -230,8 +358,8 @@ impl Default for KeyBindings {
             down: KeyCode::ArrowDown,
             left: KeyCode::ArrowLeft,
             right: KeyCode::ArrowRight,
-            a: KeyCode::KeyZ,
-            b: KeyCode::KeyX,
+            a: KeyCode::KeyX,
+            b: KeyCode::KeyZ,
             start: KeyCode::Enter,
             select: KeyCode::ShiftRight,
         }
@@ -525,6 +653,7 @@ static KEYCODE_MAP: phf::Map<&'static str, KeyCode> = phf::phf_map! {
     "F10" => KeyCode::F10,
     "F11" => KeyCode::F11,
     "F12" => KeyCode::F12,
+    "Pause" => KeyCode::Pause,
 };
 
 fn keycode_from_string(name: &str) -> Option<KeyCode> {
@@ -533,15 +662,19 @@ fn keycode_from_string(name: &str) -> Option<KeyCode> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShortcutAction {
+    Pause,
     Fullscreen,
     UncappedSpeed,
+    MuteToggle,
+    Screenshot,
+    ResetGame,
+    FrameAdvance,
+    QuickSave,
+    QuickLoad,
+    SlotNext,
+    SlotPrev,
     DebugContinue,
     DebugStep,
-    Pause,
-    SaveSlot1,
-    SaveSlot2,
-    SaveSlot3,
-    SaveSlot4,
 }
 
 impl ShortcutAction {
@@ -549,49 +682,51 @@ impl ShortcutAction {
         Self::Pause,
         Self::Fullscreen,
         Self::UncappedSpeed,
+        Self::MuteToggle,
+        Self::Screenshot,
+        Self::ResetGame,
+        Self::FrameAdvance,
+        Self::QuickSave,
+        Self::QuickLoad,
+        Self::SlotNext,
+        Self::SlotPrev,
         Self::DebugContinue,
         Self::DebugStep,
-        Self::SaveSlot1,
-        Self::SaveSlot2,
-        Self::SaveSlot3,
-        Self::SaveSlot4,
     ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::Pause => "Pause / Resume",
             Self::Fullscreen => "Fullscreen",
             Self::UncappedSpeed => "Toggle uncapped",
-            Self::DebugContinue => "Continue (debug)",
+            Self::MuteToggle => "Mute toggle",
+            Self::Screenshot => "Screenshot",
+            Self::ResetGame => "Reset game",
+            Self::FrameAdvance => "Frame advance",
+            Self::QuickSave => "Quick save",
+            Self::QuickLoad => "Quick load",
+            Self::SlotNext => "Next save slot",
+            Self::SlotPrev => "Prev save slot",
+            Self::DebugContinue => "Run (debug)",
             Self::DebugStep => "Step (debug)",
-            Self::Pause => "Pause / Resume",
-            Self::SaveSlot1 => "Save slot 1 / Shift=Load",
-            Self::SaveSlot2 => "Save slot 2 / Shift=Load",
-            Self::SaveSlot3 => "Save slot 3 / Shift=Load",
-            Self::SaveSlot4 => "Save slot 4 / Shift=Load",
         }
     }
 
     fn default_keycode(self) -> KeyCode {
         match self {
-            Self::Fullscreen => KeyCode::F12,
-            Self::UncappedSpeed => KeyCode::F11,
-            Self::DebugContinue => KeyCode::F5,
-            Self::DebugStep => KeyCode::F10,
-            Self::Pause => KeyCode::F9,
-            Self::SaveSlot1 => KeyCode::F1,
-            Self::SaveSlot2 => KeyCode::F2,
-            Self::SaveSlot3 => KeyCode::F3,
-            Self::SaveSlot4 => KeyCode::F4,
-        }
-    }
-
-    pub(crate) fn save_slot(self) -> Option<u8> {
-        match self {
-            Self::SaveSlot1 => Some(1),
-            Self::SaveSlot2 => Some(2),
-            Self::SaveSlot3 => Some(3),
-            Self::SaveSlot4 => Some(4),
-            _ => None,
+            Self::Pause => KeyCode::KeyP,
+            Self::Fullscreen => KeyCode::F11,
+            Self::UncappedSpeed => KeyCode::F10,
+            Self::MuteToggle => KeyCode::KeyM,
+            Self::Screenshot => KeyCode::F12,
+            Self::ResetGame => KeyCode::F6,
+            Self::FrameAdvance => KeyCode::KeyN,
+            Self::QuickSave => KeyCode::F5,
+            Self::QuickLoad => KeyCode::F8,
+            Self::SlotNext => KeyCode::BracketRight,
+            Self::SlotPrev => KeyCode::BracketLeft,
+            Self::DebugContinue => KeyCode::F9,
+            Self::DebugStep => KeyCode::F7,
         }
     }
 }
@@ -599,29 +734,37 @@ impl ShortcutAction {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub(crate) struct ShortcutBindings {
+    pub(crate) pause: String,
     pub(crate) fullscreen: String,
     pub(crate) uncapped_speed: String,
+    pub(crate) mute_toggle: String,
+    pub(crate) screenshot: String,
+    pub(crate) reset_game: String,
+    pub(crate) frame_advance: String,
+    pub(crate) quick_save: String,
+    pub(crate) quick_load: String,
+    pub(crate) slot_next: String,
+    pub(crate) slot_prev: String,
     pub(crate) debug_continue: String,
     pub(crate) debug_step: String,
-    pub(crate) pause: String,
-    pub(crate) save_slot_1: String,
-    pub(crate) save_slot_2: String,
-    pub(crate) save_slot_3: String,
-    pub(crate) save_slot_4: String,
 }
 
 impl Default for ShortcutBindings {
     fn default() -> Self {
         Self {
-            fullscreen: "F12".to_string(),
-            uncapped_speed: "F11".to_string(),
-            debug_continue: "F5".to_string(),
-            debug_step: "F10".to_string(),
-            pause: "F9".to_string(),
-            save_slot_1: "F1".to_string(),
-            save_slot_2: "F2".to_string(),
-            save_slot_3: "F3".to_string(),
-            save_slot_4: "F4".to_string(),
+            pause: "KeyP".to_string(),
+            fullscreen: "F11".to_string(),
+            uncapped_speed: "F10".to_string(),
+            mute_toggle: "KeyM".to_string(),
+            screenshot: "F12".to_string(),
+            reset_game: "F6".to_string(),
+            frame_advance: "KeyN".to_string(),
+            quick_save: "F5".to_string(),
+            quick_load: "F8".to_string(),
+            slot_next: "BracketRight".to_string(),
+            slot_prev: "BracketLeft".to_string(),
+            debug_continue: "F9".to_string(),
+            debug_step: "F7".to_string(),
         }
     }
 }
@@ -635,29 +778,37 @@ impl ShortcutBindings {
     pub(crate) fn set(&mut self, action: ShortcutAction, key: KeyCode) {
         let s = keycode_to_string(key);
         match action {
+            ShortcutAction::Pause => self.pause = s,
             ShortcutAction::Fullscreen => self.fullscreen = s,
             ShortcutAction::UncappedSpeed => self.uncapped_speed = s,
+            ShortcutAction::MuteToggle => self.mute_toggle = s,
+            ShortcutAction::Screenshot => self.screenshot = s,
+            ShortcutAction::ResetGame => self.reset_game = s,
+            ShortcutAction::FrameAdvance => self.frame_advance = s,
+            ShortcutAction::QuickSave => self.quick_save = s,
+            ShortcutAction::QuickLoad => self.quick_load = s,
+            ShortcutAction::SlotNext => self.slot_next = s,
+            ShortcutAction::SlotPrev => self.slot_prev = s,
             ShortcutAction::DebugContinue => self.debug_continue = s,
             ShortcutAction::DebugStep => self.debug_step = s,
-            ShortcutAction::Pause => self.pause = s,
-            ShortcutAction::SaveSlot1 => self.save_slot_1 = s,
-            ShortcutAction::SaveSlot2 => self.save_slot_2 = s,
-            ShortcutAction::SaveSlot3 => self.save_slot_3 = s,
-            ShortcutAction::SaveSlot4 => self.save_slot_4 = s,
         }
     }
 
     pub(crate) fn key_str(&self, action: ShortcutAction) -> &str {
         match action {
+            ShortcutAction::Pause => &self.pause,
             ShortcutAction::Fullscreen => &self.fullscreen,
             ShortcutAction::UncappedSpeed => &self.uncapped_speed,
+            ShortcutAction::MuteToggle => &self.mute_toggle,
+            ShortcutAction::Screenshot => &self.screenshot,
+            ShortcutAction::ResetGame => &self.reset_game,
+            ShortcutAction::FrameAdvance => &self.frame_advance,
+            ShortcutAction::QuickSave => &self.quick_save,
+            ShortcutAction::QuickLoad => &self.quick_load,
+            ShortcutAction::SlotNext => &self.slot_next,
+            ShortcutAction::SlotPrev => &self.slot_prev,
             ShortcutAction::DebugContinue => &self.debug_continue,
             ShortcutAction::DebugStep => &self.debug_step,
-            ShortcutAction::Pause => &self.pause,
-            ShortcutAction::SaveSlot1 => &self.save_slot_1,
-            ShortcutAction::SaveSlot2 => &self.save_slot_2,
-            ShortcutAction::SaveSlot3 => &self.save_slot_3,
-            ShortcutAction::SaveSlot4 => &self.save_slot_4,
         }
     }
 }
@@ -673,6 +824,14 @@ pub(crate) struct GamepadBindings {
     pub(crate) down: String,
     pub(crate) left: String,
     pub(crate) right: String,
+    #[serde(default)]
+    pub(crate) speedup: String,
+    #[serde(default)]
+    pub(crate) rewind: String,
+    #[serde(default)]
+    pub(crate) pause: String,
+    #[serde(default)]
+    pub(crate) turbo: String,
 }
 
 impl Default for GamepadBindings {
@@ -686,6 +845,10 @@ impl Default for GamepadBindings {
             down: "DPadDown".to_string(),
             left: "DPadLeft".to_string(),
             right: "DPadRight".to_string(),
+            speedup: String::new(),
+            rewind: String::new(),
+            pause: String::new(),
+            turbo: String::new(),
         }
     }
 }
@@ -720,6 +883,22 @@ impl GamepadBindings {
         None
     }
 
+    pub(crate) fn map_action_button_name(&self, name: &str) -> Option<GamepadAction> {
+        if !self.speedup.is_empty() && name == self.speedup {
+            return Some(GamepadAction::SpeedUp);
+        }
+        if !self.rewind.is_empty() && name == self.rewind {
+            return Some(GamepadAction::Rewind);
+        }
+        if !self.pause.is_empty() && name == self.pause {
+            return Some(GamepadAction::Pause);
+        }
+        if !self.turbo.is_empty() && name == self.turbo {
+            return Some(GamepadAction::Turbo);
+        }
+        None
+    }
+
     pub(crate) fn get(&self, action: BindingAction) -> &str {
         match action {
             BindingAction::A => &self.a,
@@ -744,6 +923,25 @@ impl GamepadBindings {
             BindingAction::Down => self.down = s,
             BindingAction::Left => self.left = s,
             BindingAction::Right => self.right = s,
+        }
+    }
+
+    pub(crate) fn get_action(&self, action: GamepadAction) -> &str {
+        match action {
+            GamepadAction::SpeedUp => &self.speedup,
+            GamepadAction::Rewind => &self.rewind,
+            GamepadAction::Pause => &self.pause,
+            GamepadAction::Turbo => &self.turbo,
+        }
+    }
+
+    pub(crate) fn set_action(&mut self, action: GamepadAction, button_name: &str) {
+        let s = button_name.to_string();
+        match action {
+            GamepadAction::SpeedUp => self.speedup = s,
+            GamepadAction::Rewind => self.rewind = s,
+            GamepadAction::Pause => self.pause = s,
+            GamepadAction::Turbo => self.turbo = s,
         }
     }
 }
@@ -793,6 +991,12 @@ pub(crate) struct Settings {
     pub(crate) rewind_seconds: usize,
     pub(crate) shader_preset: ShaderPreset,
     #[serde(default)]
+    pub(crate) scaling_mode: ScalingMode,
+    #[serde(default)]
+    pub(crate) effect_preset: EffectPreset,
+    #[serde(default = "default_offscreen_scale")]
+    pub(crate) offscreen_scale: u32,
+    #[serde(default)]
     pub(crate) shader_params: ShaderParams,
     #[serde(default)]
     pub(crate) custom_shader_path: String,
@@ -802,6 +1006,10 @@ pub(crate) struct Settings {
     pub(crate) color_correction_matrix: [f32; 9],
     #[serde(default)]
     pub(crate) autohide_menu_bar: bool,
+    #[serde(default = "default_ui_scale")]
+    pub(crate) ui_scale: f32,
+    #[serde(skip)]
+    pub(crate) ui_scale_needs_auto: bool,
     #[serde(default)]
     pub(crate) shortcut_bindings: ShortcutBindings,
     #[serde(default)]
@@ -814,6 +1022,9 @@ fn default_rewind_speed() -> usize {
 }
 fn default_rewind_seconds() -> usize {
     10
+}
+fn default_ui_scale() -> f32 {
+    1.0
 }
 
 impl Default for Settings {
@@ -842,17 +1053,22 @@ impl Default for Settings {
             enable_memory_editing: false,
             auto_save_state: false,
             recent_roms: Vec::new(),
-            speedup_key: "Backquote".to_string(),
+            speedup_key: "Space".to_string(),
             rewind_enabled: true,
             rewind_key: "KeyR".to_string(),
             rewind_speed: default_rewind_speed(), // 3 = normal
             rewind_seconds: default_rewind_seconds(),
             shader_preset: ShaderPreset::None,
+            scaling_mode: ScalingMode::PixelPerfect,
+            effect_preset: EffectPreset::None,
+            offscreen_scale: default_offscreen_scale(),
             shader_params: ShaderParams::default(),
             custom_shader_path: String::new(),
             color_correction: ColorCorrection::None,
             color_correction_matrix: default_color_correction_matrix(),
             autohide_menu_bar: false,
+            ui_scale: default_ui_scale(),
+            ui_scale_needs_auto: false,
             shortcut_bindings: ShortcutBindings::default(),
             gamepad_bindings: GamepadBindings::default(),
             open_debug_tabs: Vec::new(),
@@ -931,22 +1147,61 @@ impl Settings {
     }
 
     pub(crate) fn load_or_default() -> Self {
-        if let Some(config_path) = Self::config_path() {
+        let mut settings = if let Some(config_path) = Self::config_path() {
             if let Some(settings) = Self::load_from_path(&config_path) {
-                return settings;
+                settings
+            } else {
+                let legacy_path = Self::legacy_path();
+                if let Some(settings) = Self::load_from_path(&legacy_path) {
+                    settings.save_to_path(&config_path);
+                    settings
+                } else {
+                    let mut s = Self::default();
+                    s.ui_scale_needs_auto = true;
+                    s
+                }
             }
+        } else {
+            Self::load_from_path(&Self::legacy_path()).unwrap_or_else(|| {
+                let mut s = Self::default();
+                s.ui_scale_needs_auto = true;
+                s
+            })
+        };
 
-            let legacy_path = Self::legacy_path();
-            if let Some(settings) = Self::load_from_path(&legacy_path) {
-                // One-time migration from the historical CWD-based path.
-                settings.save_to_path(&config_path);
-                return settings;
-            }
+        settings.migrate_shader_preset();
+        settings
+    }
 
-            return Self::default();
+    /// Choose a suitable UI scale based on the monitor resolution and OS scale factor.
+    /// Called once at first launch after the window is created.
+    pub(crate) fn auto_detect_ui_scale(&mut self, monitor_height: u32, os_scale_factor: f64) {
+        if !self.ui_scale_needs_auto {
+            return;
+        }
+        self.ui_scale_needs_auto = false;
+
+        if os_scale_factor > 1.1 {
+            self.ui_scale = 1.0;
+            return;
         }
 
-        Self::load_from_path(&Self::legacy_path()).unwrap_or_else(Self::default)
+        self.ui_scale = match monitor_height {
+            0..=900 => 1.0,
+            901..=1600 => 1.0,
+            _ => 1.25,
+        };
+    }
+
+    fn migrate_shader_preset(&mut self) {
+        if self.shader_preset != ShaderPreset::None
+            && self.scaling_mode == ScalingMode::PixelPerfect
+            && self.effect_preset == EffectPreset::None
+        {
+            let (scaling, effect) = self.shader_preset.to_scaling_and_effect();
+            self.scaling_mode = scaling;
+            self.effect_preset = effect;
+        }
     }
 
     pub(crate) fn save(&self) {
@@ -986,7 +1241,6 @@ mod tests {
 
     #[test]
     fn settings_backward_compat_missing_fields_use_defaults() {
-        // Simulate a minimal old settings file missing newer fields
         let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
         assert_eq!(s.rewind_speed, default_rewind_speed());
@@ -1018,8 +1272,8 @@ mod tests {
     fn shortcut_bindings_get_returns_default_for_unknown_string() {
         let mut bindings = ShortcutBindings::default();
         bindings.fullscreen = "NONSENSE".to_string();
-        // Should fall back to default keycode
-        assert_eq!(bindings.get(ShortcutAction::Fullscreen), KeyCode::F12);
+
+        assert_eq!(bindings.get(ShortcutAction::Fullscreen), KeyCode::F11);
     }
 
     #[test]
@@ -1036,7 +1290,7 @@ mod tests {
         let json = serde_json::to_string(&gb).unwrap();
         let restored: GamepadBindings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.get(BindingAction::A), "West");
-        assert_eq!(restored.get(BindingAction::B), "East"); // default preserved
+        assert_eq!(restored.get(BindingAction::B), "East");
     }
 
     #[test]
@@ -1046,15 +1300,15 @@ mod tests {
         let json = serde_json::to_string(&bindings).unwrap();
         let restored: TiltKeyBindings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.up, KeyCode::KeyI);
-        assert_eq!(restored.down, KeyCode::KeyS); // default preserved
+        assert_eq!(restored.down, KeyCode::KeyS);
     }
 
     #[test]
     fn recent_roms_add_and_dedup() {
         let mut s = Settings::default();
-        s.add_recent_rom(std::path::Path::new("game1.gb"));
-        s.add_recent_rom(std::path::Path::new("game2.gb"));
-        s.add_recent_rom(std::path::Path::new("game1.gb"));
+        s.add_recent_rom(Path::new("game1.gb"));
+        s.add_recent_rom(Path::new("game2.gb"));
+        s.add_recent_rom(Path::new("game1.gb"));
         assert_eq!(s.recent_roms.len(), 2);
         assert_eq!(s.recent_roms[0].name, "game1.gb");
         assert_eq!(s.recent_roms[1].name, "game2.gb");
@@ -1064,7 +1318,7 @@ mod tests {
     fn recent_roms_truncates_at_max() {
         let mut s = Settings::default();
         for i in 0..15 {
-            s.add_recent_rom(std::path::Path::new(&format!("game{i}.gb")));
+            s.add_recent_rom(Path::new(&format!("game{i}.gb")));
         }
         assert_eq!(s.recent_roms.len(), MAX_RECENT_ROMS);
     }
@@ -1113,6 +1367,26 @@ mod tests {
     }
 
     #[test]
+    fn build_gpu_params_includes_color_correction() {
+        let params = ShaderParams::default();
+        let buf = build_gpu_params(&params, ColorCorrection::GbcLcd, default_color_correction_matrix());
+        let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
+        assert_eq!(mode, 1);
+        let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
+        assert!((r00 - 26.0 / 32.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn build_gpu_params_none_mode_is_identity() {
+        let params = ShaderParams::default();
+        let buf = build_gpu_params(&params, ColorCorrection::None, default_color_correction_matrix());
+        let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
+        assert_eq!(mode, 0);
+        let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
+        assert!((r00 - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn rewind_capture_interval_is_4() {
         let s = Settings::default();
         assert_eq!(s.rewind_capture_interval(), 4);
@@ -1140,9 +1414,9 @@ mod tests {
         let mut s = Settings::default();
         s.color_correction = ColorCorrection::Custom;
         s.color_correction_matrix = [
-            1.0, 0.2, 0.0, // R
-            0.1, 0.9, 0.0, // G
-            0.0, 0.3, 0.8, // B
+            1.0, 0.2, 0.0,
+            0.1, 0.9, 0.0,
+            0.0, 0.3, 0.8,
         ];
         let json = serde_json::to_string(&s).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();

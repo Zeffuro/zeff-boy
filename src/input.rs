@@ -1,7 +1,7 @@
 use gilrs::{Axis, Event, EventType, GamepadId, Gilrs, ff};
 
 use crate::hardware::joypad::JoypadKey;
-use crate::settings::GamepadBindings;
+use crate::settings::{GamepadAction, GamepadBindings};
 
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
@@ -12,6 +12,7 @@ pub(crate) struct GamepadHandler {
 
 pub(crate) struct GamepadPoll {
     pub(crate) events: Vec<(JoypadKey, bool)>,
+    pub(crate) action_events: Vec<(GamepadAction, bool)>,
     pub(crate) left_stick: (f32, f32),
     pub(crate) raw_pressed: Vec<String>,
 }
@@ -28,19 +29,28 @@ impl GamepadHandler {
 
     pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
         let mut events = Vec::new();
+        let mut action_events = Vec::new();
         let mut raw_pressed = Vec::new();
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
             self.active_gamepad = Some(id);
             match event {
                 EventType::ButtonPressed(button, _) => {
-                    raw_pressed.push(format!("{button:?}"));
-                    if let Some(key) = bindings.map_button_name(&format!("{button:?}")) {
+                    let name = format!("{button:?}");
+                    raw_pressed.push(name.clone());
+                    if let Some(key) = bindings.map_button_name(&name) {
                         events.push((key, true));
+                    }
+                    if let Some(action) = bindings.map_action_button_name(&name) {
+                        action_events.push((action, true));
                     }
                 }
                 EventType::ButtonReleased(button, _) => {
-                    if let Some(key) = bindings.map_button_name(&format!("{button:?}")) {
+                    let name = format!("{button:?}");
+                    if let Some(key) = bindings.map_button_name(&name) {
                         events.push((key, false));
+                    }
+                    if let Some(action) = bindings.map_action_button_name(&name) {
+                        action_events.push((action, false));
                     }
                 }
                 EventType::Disconnected => {
@@ -63,6 +73,7 @@ impl GamepadHandler {
 
         GamepadPoll {
             events,
+            action_events,
             left_stick,
             raw_pressed,
         }

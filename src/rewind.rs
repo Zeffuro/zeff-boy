@@ -1,24 +1,31 @@
 use std::collections::VecDeque;
 
 struct RewindSnapshot {
-    compressed_state: Vec<u8>,
-    compressed_framebuffer: Vec<u8>,
+    compressed: Vec<u8>,
+    state_len: u32,
 }
 
 impl RewindSnapshot {
-    fn compress(state_bytes: &[u8], framebuffer: &[u8]) -> Self {
+    fn compress(state_bytes: &[u8], framebuffer: &[u8], scratch: &mut Vec<u8>) -> Self {
+        scratch.clear();
+        scratch.reserve(state_bytes.len() + framebuffer.len());
+        scratch.extend_from_slice(state_bytes);
+        scratch.extend_from_slice(framebuffer);
         Self {
-            compressed_state: lz4_flex::compress_prepend_size(state_bytes),
-            compressed_framebuffer: lz4_flex::compress_prepend_size(framebuffer),
+            compressed: lz4_flex::compress_prepend_size(scratch),
+            state_len: state_bytes.len() as u32,
         }
     }
 
     fn decompress(&self) -> Option<RewindFrame> {
-        let state_bytes = lz4_flex::decompress_size_prepended(&self.compressed_state).ok()?;
-        let framebuffer =
-            lz4_flex::decompress_size_prepended(&self.compressed_framebuffer).unwrap_or_default();
+        let mut combined = lz4_flex::decompress_size_prepended(&self.compressed).ok()?;
+        let split = self.state_len as usize;
+        if split > combined.len() {
+            return None;
+        }
+        let framebuffer = combined.split_off(split);
         Some(RewindFrame {
-            state_bytes,
+            state_bytes: combined,
             framebuffer,
         })
     }
@@ -34,6 +41,7 @@ pub(crate) struct RewindBuffer {
     capacity: usize,
     capture_interval: usize,
     frame_counter: usize,
+    scratch: Vec<u8>,
 }
 
 impl RewindBuffer {
@@ -44,6 +52,7 @@ impl RewindBuffer {
             capacity,
             capture_interval: capture_interval.max(1),
             frame_counter: 0,
+            scratch: Vec::new(),
         }
     }
 
@@ -62,7 +71,7 @@ impl RewindBuffer {
             self.snapshots.pop_front();
         }
         self.snapshots
-            .push_back(RewindSnapshot::compress(state_bytes, framebuffer));
+            .push_back(RewindSnapshot::compress(state_bytes, framebuffer, &mut self.scratch));
     }
 
     pub(crate) fn pop(&mut self) -> Option<RewindFrame> {

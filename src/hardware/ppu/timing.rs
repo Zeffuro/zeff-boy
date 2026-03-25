@@ -25,7 +25,7 @@ impl PPU {
         if self.lcdc & 0x80 == 0 {
             self.cycles = 0;
             self.ly = 0;
-            self.stat = (self.stat & !0x03) | 0;
+            self.stat &= !0x03;
             self.window_line_counter = 0;
             self.window_was_active_this_frame = false;
             self.prev_stat_line = false;

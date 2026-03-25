@@ -23,14 +23,33 @@ impl EguiRenderer {
     ) -> Result<Self> {
         let ctx = egui::Context::default();
         let mut style = (*ctx.style()).clone();
+        
         style.text_styles.insert(
             egui::TextStyle::Body,
-            egui::FontId::new(13.0, egui::FontFamily::Monospace),
+            egui::FontId::new(14.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::new(14.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Small,
+            egui::FontId::new(11.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(18.0, egui::FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Monospace,
             egui::FontId::new(13.0, egui::FontFamily::Monospace),
         );
+
+        // Slightly more generous spacing for a comfortable emulator UI.
+        style.spacing.item_spacing = egui::vec2(8.0, 4.0);
+        style.spacing.button_padding = egui::vec2(6.0, 2.0);
+        style.spacing.interact_size = egui::vec2(40.0, 20.0);
+
         ctx.set_visuals(egui::Visuals::dark());
         ctx.set_style(style);
 

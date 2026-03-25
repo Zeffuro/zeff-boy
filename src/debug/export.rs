@@ -21,8 +21,8 @@ pub(crate) fn export_color_image_as_png(path: &Path, image: &ColorImage) -> anyh
 }
 
 pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &ColorImage) -> bool {
-    if ui.button("Export PNG").clicked() {
-        if let Some(path) = rfd::FileDialog::new()
+    if ui.button("Export PNG").clicked()
+        && let Some(path) = rfd::FileDialog::new()
             .set_title("Export as PNG")
             .add_filter("PNG Image", &["png"])
             .set_file_name(default_name)
@@ -38,6 +38,5 @@ pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &C
                 }
             }
         }
-    }
     false
 }
