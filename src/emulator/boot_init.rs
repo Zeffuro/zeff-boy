@@ -70,13 +70,13 @@ impl Emulator {
         self.cpu.sp = 0xFFFE;
 
         let (a, f, b, c, d, e, h, l) = Self::post_boot_registers_for_mode(self.hardware_mode);
-        self.cpu.a = a;
-        self.cpu.f = f;
-        self.cpu.b = b;
-        self.cpu.c = c;
-        self.cpu.d = d;
-        self.cpu.e = e;
-        self.cpu.h = h;
-        self.cpu.l = l;
+        self.cpu.regs.a = a;
+        self.cpu.regs.f = f;
+        self.cpu.regs.b = b;
+        self.cpu.regs.c = c;
+        self.cpu.regs.d = d;
+        self.cpu.regs.e = e;
+        self.cpu.regs.h = h;
+        self.cpu.regs.l = l;
     }
 }

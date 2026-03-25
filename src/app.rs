@@ -39,6 +39,7 @@ use tilt::{AutoTiltSource, TiltFrameData};
 pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.uncapped_speed;
+    let vsync_mode = settings.vsync_mode;
 
     // Cache metadata before handing emulator to emu thread
     let cached_is_mbc7 = emulator.as_ref().is_some_and(|e| e.is_mbc7_cartridge());
@@ -65,6 +66,7 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
             last_render_time: Instant::now(),
             last_viewer_update: Instant::now(),
             uncapped_speed,
+            last_vsync_mode: vsync_mode,
         },
         fast_forward_held: false,
         turbo_held: false,
@@ -158,6 +160,7 @@ struct TimingState {
     last_render_time: Instant,
     last_viewer_update: Instant,
     uncapped_speed: bool,
+    last_vsync_mode: crate::settings::VsyncMode,
 }
 
 #[derive(Default)]

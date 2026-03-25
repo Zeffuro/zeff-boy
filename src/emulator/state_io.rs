@@ -132,7 +132,7 @@ impl Emulator {
             restored_bus.cartridge.restore_rom_bytes(rom_bytes);
             Self::apply_bus_fixups(
                 &mut restored_bus,
-                self.bus.io.apu.sample_rate,
+                self.bus.apu_sample_rate(),
                 self.header.cartridge_type.is_mbc5_with_rumble(),
             );
 
@@ -155,7 +155,7 @@ impl Emulator {
             let mut restored_bus = import.bus;
             Self::apply_bus_fixups(
                 &mut restored_bus,
-                self.bus.io.apu.sample_rate,
+                self.bus.apu_sample_rate(),
                 self.header.cartridge_type.is_mbc5_with_rumble(),
             );
 
@@ -173,13 +173,11 @@ impl Emulator {
         bail!("unrecognized save state format")
     }
 
-    /// Apply common fixups to a restored `Bus` (rumble, timer/serial mode, sample rate, SGB).
     fn apply_bus_fixups(bus: &mut Bus, current_sample_rate: u32, is_rumble: bool) {
         bus.cartridge.set_rumble_flag(is_rumble);
-        bus.io.timer.mode = bus.hardware_mode;
-        bus.io.serial.mode = bus.hardware_mode;
-        bus.io.apu.set_sample_rate(current_sample_rate);
-        bus.io.ppu.set_sgb_mode(matches!(
+        bus.sync_timer_serial_mode();
+        bus.set_apu_sample_rate(current_sample_rate);
+        bus.set_ppu_sgb_mode(matches!(
             bus.hardware_mode,
             HardwareMode::SGB1 | HardwareMode::SGB2
         ));

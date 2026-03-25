@@ -52,11 +52,11 @@ impl App {
         match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
             Ok(mut emu) => {
                 if let Some(audio) = &self.audio {
-                    emu.bus.io.apu.set_sample_rate(audio.sample_rate());
+                    emu.bus.set_apu_sample_rate(audio.sample_rate());
                 }
                 let buttons = self.host_input.buttons_pressed();
                 let dpad = self.host_input.dpad_pressed();
-                emu.bus.io.joypad.apply_pressed_masks(buttons, dpad);
+                emu.bus.apply_joypad_pressed_masks(buttons, dpad);
 
                 let rom_name = path
                     .file_name()

@@ -1,25 +1,31 @@
 use super::{DOTS_PER_LINE, DRAW_DOTS, LCDC_LCD_ENABLE, LCDC_WINDOW_ENABLE, OAM_DOTS, PPU, SCREEN_H, renderer};
 
 impl PPU {
-    pub(crate) fn window_enable_condition(&self) -> bool {
+    pub(super) fn window_enable_condition(&self) -> bool {
         self.lcdc & LCDC_WINDOW_ENABLE != 0
     }
 
-    pub(crate) fn window_visible_on_current_line(&self) -> bool {
+    pub(super) fn window_visible_on_current_line(&self) -> bool {
         self.ly < SCREEN_H as u8
             && self.window_enable_condition()
             && self.window_y_triggered
             && self.wx <= 166
     }
 
-    pub(crate) fn increment_window_line_counter_after_scanline(&mut self) {
+    pub(super) fn increment_window_line_counter_after_scanline(&mut self) {
         if self.window_visible_on_current_line() {
             self.window_line_counter = self.window_line_counter.saturating_add(1);
             self.window_was_active_this_frame = true;
         }
     }
 
-    pub(crate) fn step(&mut self, cycles: u64, vram: &[u8], oam: &[u8], cgb_mode: bool) -> u8 {
+    pub(in crate::hardware) fn step(
+        &mut self,
+        cycles: u64,
+        vram: &[u8],
+        oam: &[u8],
+        cgb_mode: bool,
+    ) -> u8 {
         self.cgb_mode = cgb_mode;
 
         if self.lcdc & LCDC_LCD_ENABLE == 0 {
@@ -101,23 +107,23 @@ impl PPU {
         interrupts
     }
 
-    pub(crate) fn mode(&self) -> u8 {
+    pub(in crate::hardware) fn mode(&self) -> u8 {
         self.stat & 0x03
     }
 
-    pub(crate) fn lcd_enabled(&self) -> bool {
+    pub(super) fn lcd_enabled(&self) -> bool {
         self.lcdc & LCDC_LCD_ENABLE != 0
     }
 
-    pub(crate) fn cpu_vram_accessible(&self) -> bool {
+    pub(in crate::hardware) fn cpu_vram_accessible(&self) -> bool {
         !self.lcd_enabled() || self.mode() != 3
     }
 
-    pub(crate) fn cpu_oam_accessible(&self) -> bool {
+    pub(in crate::hardware) fn cpu_oam_accessible(&self) -> bool {
         !self.lcd_enabled() || (self.mode() != 2 && self.mode() != 3)
     }
 
-    pub(crate) fn cpu_palette_accessible(&self) -> bool {
+    pub(in crate::hardware::ppu) fn cpu_palette_accessible(&self) -> bool {
         !self.lcd_enabled() || self.mode() != 3
     }
 

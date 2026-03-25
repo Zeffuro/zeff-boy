@@ -2,14 +2,14 @@ use std::io::{self, Write};
 use std::fmt;
 
 use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
+use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 
-pub(crate) struct Serial {
-    pub(crate) sb: u8,
-    pub(crate) sc: u8,
-    pub(crate) cycles: u64,
-    pub(crate) mode: HardwareMode,
+pub(super) struct Serial {
+    sb: u8,
+    sc: u8,
+    cycles: u64,
+    mode: HardwareMode,
     output_log: Vec<u8>,
 }
 
@@ -26,7 +26,7 @@ impl fmt::Debug for Serial {
 }
 
 impl Serial {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             sb: 0,
             sc: 0,
@@ -47,11 +47,35 @@ impl Serial {
         }
     }
 
-    pub(crate) fn output_bytes(&self) -> &[u8] {
+    pub(super) fn output_bytes(&self) -> &[u8] {
         &self.output_log
     }
 
-    pub(crate) fn step(&mut self, cycles: u64) -> bool {
+    pub(super) fn sb(&self) -> u8 {
+        self.sb
+    }
+
+    pub(super) fn sc(&self) -> u8 {
+        self.sc
+    }
+
+    pub(super) fn write_sb(&mut self, value: u8) {
+        self.sb = value;
+    }
+
+    pub(super) fn write_sc(&mut self, value: u8) {
+        self.sc = value;
+    }
+
+    pub(super) fn set_mode(&mut self, mode: HardwareMode) {
+        self.mode = mode;
+    }
+
+    pub(super) fn reset_cycles(&mut self) {
+        self.cycles = 0;
+    }
+
+    pub(super) fn step(&mut self, cycles: u64) -> bool {
         if self.sc & 0x81 != 0x81 {
             return false;
         }
@@ -73,33 +97,24 @@ impl Serial {
         false
     }
 
-    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
         writer.write_u8(self.sb);
         writer.write_u8(self.sc);
         writer.write_u64(self.cycles);
-        writer.write_u8(encode_hardware_mode(self.mode));
+        writer.write_hardware_mode(self.mode);
     }
 
-    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
         Ok(Self {
             sb: reader.read_u8()?,
             sc: reader.read_u8()?,
             cycles: reader.read_u64()?,
-            mode: decode_hardware_mode(reader.read_u8()?)?,
+            mode: reader.read_hardware_mode()?,
             output_log: Vec::new(),
         })
     }
 }
 
-fn encode_hardware_mode(mode: HardwareMode) -> u8 {
-    match mode {
-        HardwareMode::DMG => 0,
-        HardwareMode::SGB1 => 1,
-        HardwareMode::SGB2 => 2,
-        HardwareMode::CGBNormal => 3,
-        HardwareMode::CGBDouble => 4,
-    }
-}
 
 #[cfg(test)]
 mod tests {

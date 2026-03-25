@@ -1,7 +1,7 @@
 use phf::phf_map;
 
 // Source: https://gbdev.io/pandocs/The_Cartridge_Header.html#014B--old-licensee-code
-pub(crate) static OLD_LICENSEE_MAP: phf::Map<u8, &'static str> = phf_map! {
+static OLD_LICENSEE_MAP: phf::Map<u8, &'static str> = phf_map! {
     0x00u8 => "None",
     0x01u8 => "Nintendo",
     0x08u8 => "Capcom",

@@ -5,7 +5,7 @@ use crate::hardware::types::{CPUState, IMEState};
 
 impl Emulator {
     pub(crate) fn framebuffer(&self) -> &[u8] {
-        &self.bus.io.ppu.framebuffer
+        self.bus.ppu_framebuffer()
     }
 
     pub(crate) fn vram(&self) -> &[u8] {
@@ -30,17 +30,17 @@ impl Emulator {
 
     pub(crate) fn ppu_registers(&self) -> PpuSnapshot {
         PpuSnapshot {
-            lcdc: self.bus.io.ppu.lcdc,
-            stat: self.bus.io.ppu.stat,
-            scy: self.bus.io.ppu.scy,
-            scx: self.bus.io.ppu.scx,
-            ly: self.bus.io.ppu.ly,
-            lyc: self.bus.io.ppu.lyc,
-            wy: self.bus.io.ppu.wy,
-            wx: self.bus.io.ppu.wx,
-            bgp: self.bus.io.ppu.bgp,
-            obp0: self.bus.io.ppu.obp0,
-            obp1: self.bus.io.ppu.obp1,
+            lcdc: self.bus.ppu_lcdc(),
+            stat: self.bus.ppu_stat(),
+            scy: self.bus.ppu_scy(),
+            scx: self.bus.ppu_scx(),
+            ly: self.bus.ppu_ly(),
+            lyc: self.bus.ppu_lyc(),
+            wy: self.bus.ppu_wy(),
+            wx: self.bus.ppu_wx(),
+            bgp: self.bus.ppu_bgp(),
+            obp0: self.bus.ppu_obp0(),
+            obp1: self.bus.ppu_obp1(),
         }
     }
 
@@ -74,14 +74,14 @@ impl Emulator {
         DebugInfo {
             pc: self.cpu.pc,
             sp: self.cpu.sp,
-            a: self.cpu.a,
-            f: self.cpu.f,
-            b: self.cpu.b,
-            c: self.cpu.c,
-            d: self.cpu.d,
-            e: self.cpu.e,
-            h: self.cpu.h,
-            l: self.cpu.l,
+            a: self.cpu.regs.a,
+            f: self.cpu.regs.f,
+            b: self.cpu.regs.b,
+            c: self.cpu.regs.c,
+            d: self.cpu.regs.d,
+            e: self.cpu.regs.e,
+            h: self.cpu.regs.h,
+            l: self.cpu.regs.l,
             cycles: self.cpu.cycles,
             ime,
             cpu_state,
@@ -93,10 +93,10 @@ impl Emulator {
             ppu: self.ppu_registers(),
             hardware_mode: self.hardware_mode,
             hardware_mode_preference: self.hardware_mode_preference,
-            div: self.bus.io.timer.div,
-            tima: self.bus.io.timer.tima,
-            tma: self.bus.io.timer.tma,
-            tac: self.bus.io.timer.tac,
+            div: self.bus.timer_div(),
+            tima: self.bus.timer_tima(),
+            tma: self.bus.timer_tma(),
+            tac: self.bus.timer_tac(),
             if_reg: self.bus.if_reg,
             ie: self.bus.ie,
             mem_around_pc,
@@ -129,8 +129,6 @@ impl Emulator {
 
     #[allow(dead_code)]
     pub(crate) fn debug_state_summary(&self) -> String {
-        let ppu = &self.bus.io.ppu;
-        let timer = &self.bus.io.timer;
         let cart = self.bus.cartridge.debug_info();
         format!(
             "=== Emulator State ===\n\
@@ -164,35 +162,35 @@ impl Emulator {
             cycles = self.cycle_count,
             pc = self.cpu.pc,
             sp = self.cpu.sp,
-            a = self.cpu.a,
-            f = self.cpu.f,
-            b = self.cpu.b,
-            c = self.cpu.c,
-            d = self.cpu.d,
-            e = self.cpu.e,
-            h = self.cpu.h,
-            l = self.cpu.l,
+            a = self.cpu.regs.a,
+            f = self.cpu.regs.f,
+            b = self.cpu.regs.b,
+            c = self.cpu.regs.c,
+            d = self.cpu.regs.d,
+            e = self.cpu.regs.e,
+            h = self.cpu.regs.h,
+            l = self.cpu.regs.l,
             ime = self.cpu.ime,
             state = self.cpu.running,
             hb = self.cpu.halt_bug_active,
             lop = self.last_opcode,
             lopc = self.last_opcode_pc,
-            lcdc = ppu.lcdc,
-            stat = ppu.stat,
-            ly = ppu.ly,
-            lyc = ppu.lyc,
-            scx = ppu.scx,
-            scy = ppu.scy,
-            wx = ppu.wx,
-            wy = ppu.wy,
-            bgp = ppu.bgp,
-            obp0 = ppu.obp0,
-            obp1 = ppu.obp1,
-            ppuc = ppu.cycles,
-            div = timer.div,
-            tima = timer.tima,
-            tma = timer.tma,
-            tac = timer.tac,
+            lcdc = self.bus.ppu_lcdc(),
+            stat = self.bus.ppu_stat(),
+            ly = self.bus.ppu_ly(),
+            lyc = self.bus.ppu_lyc(),
+            scx = self.bus.ppu_scx(),
+            scy = self.bus.ppu_scy(),
+            wx = self.bus.ppu_wx(),
+            wy = self.bus.ppu_wy(),
+            bgp = self.bus.ppu_bgp(),
+            obp0 = self.bus.ppu_obp0(),
+            obp1 = self.bus.ppu_obp1(),
+            ppuc = self.bus.ppu_cycles(),
+            div = self.bus.timer_div(),
+            tima = self.bus.timer_tima(),
+            tma = self.bus.timer_tma(),
+            tac = self.bus.timer_tac(),
             ie = self.bus.ie,
             if_reg = self.bus.if_reg,
             mapper = cart.mapper,

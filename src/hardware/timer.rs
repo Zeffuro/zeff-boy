@@ -1,16 +1,16 @@
 use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::hardware::types::timer_clock::TimerClock;
-use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
+use crate::hardware::types::TimerClock;
+use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 use std::fmt;
 
-pub(crate) struct Timer {
-    pub(crate) div: u8,
-    pub(crate) tima: u8,
-    pub(crate) tma: u8,
-    pub(crate) tac: u8,
+pub(super) struct Timer {
+    div: u8,
+    tima: u8,
+    tma: u8,
+    tac: u8,
     sys_counter: u16,
-    pub(crate) mode: HardwareMode,
+    mode: HardwareMode,
     prev_bit: bool,
     overflow_pending: bool,
 }
@@ -29,7 +29,7 @@ impl fmt::Debug for Timer {
 }
 
 impl Timer {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             div: 0xAD,
             tima: 0,
@@ -42,11 +42,32 @@ impl Timer {
         }
     }
 
-    pub(crate) fn apply_bess_div(&mut self, div: u8) {
+    pub(super) fn apply_bess_div(&mut self, div: u8) {
         self.div = div;
         self.sys_counter = (div as u16) << 8;
         self.prev_bit = false;
         self.overflow_pending = false;
+    }
+
+    pub(super) fn div(&self) -> u8 {
+        self.div
+    }
+
+    pub(super) fn tima(&self) -> u8 {
+        self.tima
+    }
+
+    pub(super) fn tma(&self) -> u8 {
+        self.tma
+    }
+
+    pub(super) fn tac(&self) -> u8 {
+        self.tac
+    }
+
+
+    pub(super) fn set_mode(&mut self, mode: HardwareMode) {
+        self.mode = mode;
     }
 
     fn timer_bit_mask(&self) -> u16 {
@@ -61,7 +82,7 @@ impl Timer {
         enabled && bit_high
     }
 
-    pub(crate) fn reset_div(&mut self) {
+    pub(super) fn reset_div(&mut self) {
         let old_bit = self.timer_tick_bit();
         self.sys_counter = 0;
         self.div = 0;
@@ -72,12 +93,16 @@ impl Timer {
         self.prev_bit = new_bit;
     }
 
-    pub(crate) fn write_tima(&mut self, value: u8) {
+    pub(super) fn write_tima(&mut self, value: u8) {
         self.tima = value;
         self.overflow_pending = false;
     }
 
-    pub(crate) fn write_tac(&mut self, value: u8) {
+    pub(super) fn write_tma(&mut self, value: u8) {
+        self.tma = value;
+    }
+
+    pub(super) fn write_tac(&mut self, value: u8) {
         let old_bit = self.timer_tick_bit();
         self.tac = value;
         let new_bit = self.timer_tick_bit();
@@ -85,6 +110,18 @@ impl Timer {
             self.increment_tima();
         }
         self.prev_bit = new_bit;
+    }
+
+    pub(super) fn set_tima_raw(&mut self, value: u8) {
+        self.tima = value;
+    }
+
+    pub(super) fn set_tma_raw(&mut self, value: u8) {
+        self.tma = value;
+    }
+
+    pub(super) fn set_tac_raw(&mut self, value: u8) {
+        self.tac = value;
     }
 
     fn increment_tima(&mut self) {
@@ -97,7 +134,7 @@ impl Timer {
         }
     }
 
-    pub(crate) fn step(&mut self, cycles: u64) -> bool {
+    pub(super) fn step(&mut self, cycles: u64) -> bool {
         let mut interrupt = false;
 
         for _ in 0..cycles {
@@ -119,37 +156,27 @@ impl Timer {
         interrupt
     }
 
-    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
         writer.write_u8(self.div);
         writer.write_u8(self.tima);
         writer.write_u8(self.tma);
         writer.write_u8(self.tac);
         writer.write_u16(self.sys_counter);
-        writer.write_u8(encode_hardware_mode(self.mode));
+        writer.write_hardware_mode(self.mode);
         writer.write_bool(self.prev_bit);
         writer.write_bool(self.overflow_pending);
     }
 
-    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
         Ok(Self {
             div: reader.read_u8()?,
             tima: reader.read_u8()?,
             tma: reader.read_u8()?,
             tac: reader.read_u8()?,
             sys_counter: reader.read_u16()?,
-            mode: decode_hardware_mode(reader.read_u8()?)?,
+            mode: reader.read_hardware_mode()?,
             prev_bit: reader.read_bool()?,
             overflow_pending: reader.read_bool()?,
         })
-    }
-}
-
-fn encode_hardware_mode(mode: HardwareMode) -> u8 {
-    match mode {
-        HardwareMode::DMG => 0,
-        HardwareMode::SGB1 => 1,
-        HardwareMode::SGB2 => 2,
-        HardwareMode::CGBNormal => 3,
-        HardwareMode::CGBDouble => 4,
     }
 }

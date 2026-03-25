@@ -46,8 +46,7 @@ impl Bus {
             game_genie_patches: Vec::new(),
         }))
         .map(|mut bus| {
-            bus.io.timer.mode = bus.hardware_mode;
-            bus.io.serial.mode = bus.hardware_mode;
+            bus.sync_timer_serial_mode();
             bus.io.ppu.set_sgb_mode(matches!(
                 bus.hardware_mode,
                 HardwareMode::SGB1 | HardwareMode::SGB2
@@ -95,8 +94,7 @@ impl Bus {
             mode => mode,
         };
 
-        self.io.timer.mode = self.hardware_mode;
-        self.io.serial.mode = self.hardware_mode;
+        self.sync_timer_serial_mode();
         self.key1 = match self.hardware_mode {
             HardwareMode::CGBDouble => 0xFE,
             _ => 0x7E,

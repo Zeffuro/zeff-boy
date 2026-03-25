@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum SgbEvent {
+pub(super) enum SgbEvent {
     Pal01([u16; 4], [u16; 4]),
     Pal23([u16; 4], [u16; 4]),
     PalSet(u8),
@@ -11,7 +11,7 @@ pub(crate) enum SgbEvent {
     MltReq,
 }
 
-pub(crate) struct SgbState {
+pub(super) struct SgbState {
     collecting: bool,
     bit_count: u8,
     current_byte: u8,
@@ -30,7 +30,7 @@ impl fmt::Debug for SgbState {
 }
 
 impl SgbState {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             collecting: false,
             bit_count: 0,
@@ -40,7 +40,7 @@ impl SgbState {
         }
     }
 
-    pub(crate) fn on_joyp_write(&mut self, value: u8) -> Option<SgbEvent> {
+    pub(super) fn on_joyp_write(&mut self, value: u8) -> Option<SgbEvent> {
         let p14_low = (value & 0x10) == 0;
         let p15_low = (value & 0x20) == 0;
 
@@ -140,7 +140,7 @@ impl SgbState {
         }
     }
 
-    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
         writer.write_bool(self.collecting);
         writer.write_u8(self.bit_count);
         writer.write_u8(self.current_byte);
@@ -148,7 +148,7 @@ impl SgbState {
         writer.write_u64(self.packet_pos as u64);
     }
 
-    pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
         let collecting = reader.read_bool()?;
         let bit_count = reader.read_u8()?;
         let current_byte = reader.read_u8()?;

@@ -10,6 +10,24 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             "Hide the menu bar when the cursor moves away from the top edge. \
              Hover near the top to reveal it.",
         );
+
+    use crate::settings::VsyncMode;
+    egui::ComboBox::from_label("VSync")
+        .selected_text(settings.vsync_mode.label())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut settings.vsync_mode, VsyncMode::On, VsyncMode::On.label());
+            ui.selectable_value(
+                &mut settings.vsync_mode,
+                VsyncMode::Adaptive,
+                VsyncMode::Adaptive.label(),
+            );
+            ui.selectable_value(
+                &mut settings.vsync_mode,
+                VsyncMode::Off,
+                VsyncMode::Off.label(),
+            );
+        });
+
     ui.horizontal(|ui| {
         const SCALES: &[(f32, &str)] = &[
             (0.75, "75%"),

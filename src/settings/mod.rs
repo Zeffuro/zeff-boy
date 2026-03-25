@@ -73,6 +73,8 @@ pub(crate) struct Settings {
     #[serde(default = "default_color_correction_matrix")]
     pub(crate) color_correction_matrix: [f32; 9],
     #[serde(default)]
+    pub(crate) vsync_mode: VsyncMode,
+    #[serde(default)]
     pub(crate) autohide_menu_bar: bool,
     #[serde(default = "default_ui_scale")]
     pub(crate) ui_scale: f32,
@@ -134,6 +136,7 @@ impl Default for Settings {
             custom_shader_path: String::new(),
             color_correction: ColorCorrection::None,
             color_correction_matrix: default_color_correction_matrix(),
+            vsync_mode: VsyncMode::default(),
             autohide_menu_bar: false,
             ui_scale: default_ui_scale(),
             ui_scale_needs_auto: false,
@@ -488,6 +491,27 @@ mod tests {
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.color_correction, ColorCorrection::Custom);
         assert_eq!(restored.color_correction_matrix, s.color_correction_matrix);
+    }
+
+    #[test]
+    fn vsync_mode_serde_roundtrip() {
+        let mut s = Settings::default();
+        s.vsync_mode = VsyncMode::Off;
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.vsync_mode, VsyncMode::Off);
+
+        s.vsync_mode = VsyncMode::Adaptive;
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.vsync_mode, VsyncMode::Adaptive);
+    }
+
+    #[test]
+    fn vsync_mode_defaults_to_on_when_missing() {
+        let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.vsync_mode, VsyncMode::On);
     }
 }
 

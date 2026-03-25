@@ -2,15 +2,23 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use winit::window::Window;
 
+use crate::settings::VsyncMode;
+
 pub(crate) struct GpuContext {
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    present_modes: Vec<wgpu::PresentMode>,
 }
 
 impl GpuContext {
-    pub(crate) async fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self> {
+    pub(crate) async fn new(
+        window: Arc<Window>,
+        width: u32,
+        height: u32,
+        vsync: VsyncMode,
+    ) -> Result<Self> {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window)?;
 
@@ -43,14 +51,8 @@ impl GpuContext {
             config.format = fmt;
         }
 
-        config.present_mode = if capabilities
-            .present_modes
-            .contains(&wgpu::PresentMode::AutoVsync)
-        {
-            wgpu::PresentMode::AutoVsync
-        } else {
-            wgpu::PresentMode::Fifo
-        };
+        let present_modes = capabilities.present_modes.clone();
+        config.present_mode = vsync.to_present_mode(&present_modes);
         surface.configure(&device, &config);
 
         Ok(Self {
@@ -58,7 +60,16 @@ impl GpuContext {
             device,
             queue,
             config,
+            present_modes,
         })
+    }
+
+    pub(crate) fn set_present_mode(&mut self, vsync: VsyncMode) {
+        let mode = vsync.to_present_mode(&self.present_modes);
+        if self.config.present_mode != mode {
+            self.config.present_mode = mode;
+            self.surface.configure(&self.device, &self.config);
+        }
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {

@@ -59,6 +59,10 @@ impl StateWriter {
         self.write_u32(len as u32);
     }
 
+    pub(crate) fn write_hardware_mode(&mut self, mode: HardwareMode) {
+        self.write_u8(encode_hardware_mode(mode));
+    }
+
     pub(crate) fn position(&self) -> usize {
         self.bytes.len()
     }
@@ -132,6 +136,10 @@ impl<'a> StateReader<'a> {
             bail!("save-state vector length {len} exceeds maximum {max_len}")
         }
         Ok(self.take(len)?.to_vec())
+    }
+
+    pub(crate) fn read_hardware_mode(&mut self) -> Result<HardwareMode> {
+        decode_hardware_mode(self.read_u8()?)
     }
 }
 
@@ -253,7 +261,7 @@ pub(crate) fn encode_state_bytes(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
     writer.write_bytes(&state.rom_hash);
     state.cpu.write_state(&mut writer);
     writer.write_u8(encode_mode_preference(state.hardware_mode_preference));
-    writer.write_u8(encode_hardware_mode(state.hardware_mode));
+    writer.write_hardware_mode(state.hardware_mode);
     writer.write_u64(state.cycle_count);
     writer.write_u8(state.last_opcode);
     writer.write_u16(state.last_opcode_pc);
@@ -287,7 +295,7 @@ fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     reader.read_exact(&mut rom_hash)?;
     let cpu = CPU::read_state(&mut reader)?;
     let hardware_mode_preference = decode_mode_preference(reader.read_u8()?)?;
-    let hardware_mode = decode_hardware_mode(reader.read_u8()?)?;
+    let hardware_mode = reader.read_hardware_mode()?;
     let cycle_count = reader.read_u64()?;
     let last_opcode = reader.read_u8()?;
     let last_opcode_pc = reader.read_u16()?;
@@ -310,7 +318,7 @@ fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     })
 }
 
-fn encode_hardware_mode(mode: HardwareMode) -> u8 {
+pub(crate) fn encode_hardware_mode(mode: HardwareMode) -> u8 {
     match mode {
         HardwareMode::DMG => 0,
         HardwareMode::SGB1 => 1,
@@ -474,7 +482,7 @@ mod tests {
         assert_eq!(restored.hardware_mode, state.hardware_mode);
         assert_eq!(restored.bus.vram, bus.vram);
         assert_eq!(restored.bus.wram, bus.wram);
-        assert!(restored.bus.io.ppu.framebuffer.iter().all(|&b| b == 0));
+        assert!(restored.bus.ppu_framebuffer().iter().all(|&b| b == 0));
     }
 
     #[test]

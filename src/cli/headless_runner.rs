@@ -45,8 +45,8 @@ pub(crate) fn run_headless(
                         format_headless_breakpoint(
                             emulator.cpu.pc,
                             emulator.cpu.cycles,
-                            emulator.cpu.a,
-                            emulator.cpu.f,
+                            emulator.cpu.regs.a,
+                            emulator.cpu.regs.f,
                             emulator.cpu.sp,
                         )
                     );
@@ -87,10 +87,10 @@ pub(crate) fn run_headless(
                             _ => {}
                         }
                     }
-                    let zf = (emulator.cpu.f >> 7) & 1;
-                    let nf = (emulator.cpu.f >> 6) & 1;
-                    let hf = (emulator.cpu.f >> 5) & 1;
-                    let cf = (emulator.cpu.f >> 4) & 1;
+                    let zf = (emulator.cpu.regs.f >> 7) & 1;
+                    let nf = (emulator.cpu.regs.f >> 6) & 1;
+                    let hf = (emulator.cpu.regs.f >> 5) & 1;
+                    let cf = (emulator.cpu.regs.f >> 4) & 1;
 
                     let op_line = format_op_line(
                         traced,
@@ -103,11 +103,11 @@ pub(crate) fn run_headless(
                         if_reg,
                         ie,
                         pending,
-                        emulator.bus.io.timer.div,
-                        emulator.bus.io.timer.tima,
-                        emulator.bus.io.timer.tac,
-                        emulator.cpu.a,
-                        emulator.cpu.f,
+                        emulator.bus.timer_div(),
+                        emulator.bus.timer_tima(),
+                        emulator.bus.timer_tac(),
+                        emulator.cpu.regs.a,
+                        emulator.cpu.regs.f,
                         zf,
                         nf,
                         hf,
@@ -128,11 +128,11 @@ pub(crate) fn run_headless(
                         if_reg,
                         ie,
                         pending,
-                        emulator.bus.io.timer.div,
-                        emulator.bus.io.timer.tima,
-                        emulator.bus.io.timer.tac,
-                        emulator.cpu.a,
-                        emulator.cpu.f,
+                        emulator.bus.timer_div(),
+                        emulator.bus.timer_tima(),
+                        emulator.bus.timer_tac(),
+                        emulator.cpu.regs.a,
+                        emulator.cpu.regs.f,
                         zf,
                         nf,
                         hf,
@@ -157,8 +157,8 @@ pub(crate) fn run_headless(
                     format_headless_breakpoint(
                         emulator.cpu.pc,
                         emulator.cpu.cycles,
-                        emulator.cpu.a,
-                        emulator.cpu.f,
+                        emulator.cpu.regs.a,
+                        emulator.cpu.regs.f,
                         emulator.cpu.sp,
                     )
                 );
@@ -175,7 +175,7 @@ pub(crate) fn run_headless(
         }
     }
 
-    let serial_bytes = emulator.bus.io.serial.output_bytes();
+    let serial_bytes = emulator.bus.serial_output_bytes();
     let serial_text = String::from_utf8_lossy(serial_bytes);
     println!(
         "{}",

@@ -272,6 +272,51 @@ pub(crate) fn build_gpu_params(
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+pub(crate) enum VsyncMode {
+    Off,
+    #[default]
+    On,
+    Adaptive,
+}
+
+impl VsyncMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off (tearing allowed)",
+            Self::On => "On (VSync)",
+            Self::Adaptive => "Adaptive",
+        }
+    }
+
+    pub(crate) fn to_present_mode(
+        self,
+        capabilities: &[wgpu::PresentMode],
+    ) -> wgpu::PresentMode {
+        match self {
+            Self::Off => {
+                if capabilities.contains(&wgpu::PresentMode::Immediate) {
+                    wgpu::PresentMode::Immediate
+                } else if capabilities.contains(&wgpu::PresentMode::Mailbox) {
+                    wgpu::PresentMode::Mailbox
+                } else {
+                    wgpu::PresentMode::Fifo
+                }
+            }
+            Self::On => wgpu::PresentMode::Fifo,
+            Self::Adaptive => {
+                if capabilities.contains(&wgpu::PresentMode::AutoVsync) {
+                    wgpu::PresentMode::AutoVsync
+                } else {
+                    wgpu::PresentMode::Fifo
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub(crate) enum LeftStickMode {
     Dpad,
     Tilt,
@@ -287,5 +332,62 @@ pub(crate) enum TiltInputMode {
     Keyboard,
     Mouse,
     Auto,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vsync_on_always_fifo() {
+        let caps = vec![
+            wgpu::PresentMode::Fifo,
+            wgpu::PresentMode::Immediate,
+            wgpu::PresentMode::Mailbox,
+        ];
+        assert_eq!(VsyncMode::On.to_present_mode(&caps), wgpu::PresentMode::Fifo);
+    }
+
+    #[test]
+    fn vsync_off_prefers_immediate() {
+        let caps = vec![
+            wgpu::PresentMode::Fifo,
+            wgpu::PresentMode::Immediate,
+            wgpu::PresentMode::Mailbox,
+        ];
+        assert_eq!(VsyncMode::Off.to_present_mode(&caps), wgpu::PresentMode::Immediate);
+    }
+
+    #[test]
+    fn vsync_off_falls_back_to_mailbox() {
+        let caps = vec![wgpu::PresentMode::Fifo, wgpu::PresentMode::Mailbox];
+        assert_eq!(VsyncMode::Off.to_present_mode(&caps), wgpu::PresentMode::Mailbox);
+    }
+
+    #[test]
+    fn vsync_off_falls_back_to_fifo() {
+        let caps = vec![wgpu::PresentMode::Fifo];
+        assert_eq!(VsyncMode::Off.to_present_mode(&caps), wgpu::PresentMode::Fifo);
+    }
+
+    #[test]
+    fn vsync_adaptive_prefers_auto_vsync() {
+        let caps = vec![
+            wgpu::PresentMode::Fifo,
+            wgpu::PresentMode::AutoVsync,
+        ];
+        assert_eq!(VsyncMode::Adaptive.to_present_mode(&caps), wgpu::PresentMode::AutoVsync);
+    }
+
+    #[test]
+    fn vsync_adaptive_falls_back_to_fifo() {
+        let caps = vec![wgpu::PresentMode::Fifo, wgpu::PresentMode::Immediate];
+        assert_eq!(VsyncMode::Adaptive.to_present_mode(&caps), wgpu::PresentMode::Fifo);
+    }
+
+    #[test]
+    fn vsync_default_is_on() {
+        assert_eq!(VsyncMode::default(), VsyncMode::On);
+    }
 }
 

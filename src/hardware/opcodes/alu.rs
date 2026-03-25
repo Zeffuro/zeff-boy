@@ -10,12 +10,12 @@ pub(crate) fn inc_bc(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x04: INC B
 pub(crate) fn inc_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.b = cpu.inc(cpu.b);
+    cpu.regs.b = cpu.inc(cpu.regs.b);
 }
 
 // 0x05: DEC B
 pub(crate) fn dec_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.b = cpu.dec(cpu.b);
+    cpu.regs.b = cpu.dec(cpu.regs.b);
 }
 
 // 0x09: ADD HL, BC
@@ -39,12 +39,12 @@ pub(crate) fn dec_bc(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x0C: INC C
 pub(crate) fn inc_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.c = cpu.inc(cpu.c);
+    cpu.regs.c = cpu.inc(cpu.regs.c);
 }
 
 // 0x0D: DEC C
 pub(crate) fn dec_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.c = cpu.dec(cpu.c);
+    cpu.regs.c = cpu.dec(cpu.regs.c);
 }
 
 // 0x13: INC DE
@@ -56,12 +56,12 @@ pub(crate) fn inc_de(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x14: INC D
 pub(crate) fn inc_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.d = cpu.inc(cpu.d);
+    cpu.regs.d = cpu.inc(cpu.regs.d);
 }
 
 // 0x15: DEC D
 pub(crate) fn dec_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.d = cpu.dec(cpu.d);
+    cpu.regs.d = cpu.dec(cpu.regs.d);
 }
 
 // 0x19: ADD HL, DE
@@ -85,12 +85,12 @@ pub(crate) fn dec_de(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x1C: INC E
 pub(crate) fn inc_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.e = cpu.inc(cpu.e);
+    cpu.regs.e = cpu.inc(cpu.regs.e);
 }
 
 // 0x1D: DEC E
 pub(crate) fn dec_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.e = cpu.dec(cpu.e);
+    cpu.regs.e = cpu.dec(cpu.regs.e);
 }
 
 // 0x23: INC HL
@@ -102,17 +102,17 @@ pub(crate) fn inc_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x24: INC H
 pub(crate) fn inc_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.h = cpu.inc(cpu.h);
+    cpu.regs.h = cpu.inc(cpu.regs.h);
 }
 
 // 0x25: DEC H
 pub(crate) fn dec_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.h = cpu.dec(cpu.h);
+    cpu.regs.h = cpu.dec(cpu.regs.h);
 }
 
 // 0x27: DAA
 pub(crate) fn daa(cpu: &mut CPU, _bus: &mut Bus) {
-    let mut a = cpu.a;
+    let mut a = cpu.regs.a;
     let mut adjust = if cpu.get_c() { 0x60 } else { 0x00 };
 
     if cpu.get_h() {
@@ -134,7 +134,7 @@ pub(crate) fn daa(cpu: &mut CPU, _bus: &mut Bus) {
     cpu.set_c(adjust >= 0x60);
     cpu.set_h(false);
     cpu.set_z(a == 0);
-    cpu.a = a;
+    cpu.regs.a = a;
 }
 
 // 0x29: ADD HL, HL
@@ -157,17 +157,17 @@ pub(crate) fn dec_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x2C: INC L
 pub(crate) fn inc_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.l = cpu.inc(cpu.l);
+    cpu.regs.l = cpu.inc(cpu.regs.l);
 }
 
 // 0x2D: DEC L
 pub(crate) fn dec_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.l = cpu.dec(cpu.l);
+    cpu.regs.l = cpu.dec(cpu.regs.l);
 }
 
 // 0x2F: CPL - Complement A
 pub(crate) fn cpl(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.a = !cpu.a;
+    cpu.regs.a = !cpu.regs.a;
     cpu.set_n(true);
     cpu.set_h(true);
 }
@@ -223,12 +223,12 @@ pub(crate) fn dec_sp(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x3C: INC A
 pub(crate) fn inc_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.a = cpu.inc(cpu.a);
+    cpu.regs.a = cpu.inc(cpu.regs.a);
 }
 
 // 0x3D: DEC A
 pub(crate) fn dec_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.a = cpu.dec(cpu.a);
+    cpu.regs.a = cpu.dec(cpu.regs.a);
 }
 
 // 0x3F: CCF - Complement Carry Flag
@@ -240,32 +240,32 @@ pub(crate) fn ccf(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x80: ADD B
 pub(crate) fn add_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.b);
+    cpu.add(cpu.regs.b);
 }
 
 // 0x81: ADD C
 pub(crate) fn add_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.c);
+    cpu.add(cpu.regs.c);
 }
 
 // 0x82: ADD D
 pub(crate) fn add_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.d);
+    cpu.add(cpu.regs.d);
 }
 
 // 0x83: ADD E
 pub(crate) fn add_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.e);
+    cpu.add(cpu.regs.e);
 }
 
 // 0x84: ADD H
 pub(crate) fn add_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.h);
+    cpu.add(cpu.regs.h);
 }
 
 // 0x85: ADD L
 pub(crate) fn add_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.l);
+    cpu.add(cpu.regs.l);
 }
 
 // 0x86: ADD (HL)
@@ -276,37 +276,37 @@ pub(crate) fn add_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x87: ADD A
 pub(crate) fn add_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.add(cpu.a);
+    cpu.add(cpu.regs.a);
 }
 
 // 0x88: ADC A, B
 pub(crate) fn adc_a_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.adc(cpu.b);
+    cpu.adc(cpu.regs.b);
 }
 
 // 0x89: ADC A, C
 pub(crate) fn adc_a_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.adc(cpu.c);
+    cpu.adc(cpu.regs.c);
 }
 
 // 0x8A: ADC A, D
 pub(crate) fn adc_a_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.adc(cpu.d);
+    cpu.adc(cpu.regs.d);
 }
 
 // 0x8B: ADC A, E
 pub(crate) fn adc_a_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.adc(cpu.e);
+    cpu.adc(cpu.regs.e);
 }
 
 // 0x8C: ADC A, H
 pub(crate) fn adc_a_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.adc(cpu.h);
+    cpu.adc(cpu.regs.h);
 }
 
 // 0x8D: ADC A, L
 pub(crate) fn adc_a_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.adc(cpu.l);
+    cpu.adc(cpu.regs.l);
 }
 
 // 0x8E: ADC A, (HL)
@@ -317,38 +317,38 @@ pub(crate) fn adc_a_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x8F: ADC A, A
 pub(crate) fn adc_a_a(cpu: &mut CPU, _bus: &mut Bus) {
-    let a = cpu.a;
+    let a = cpu.regs.a;
     cpu.adc(a);
 }
 
 // 0x90: SUB B
 pub(crate) fn sub_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.b);
+    cpu.sub(cpu.regs.b);
 }
 
 // 0x91: SUB C
 pub(crate) fn sub_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.c);
+    cpu.sub(cpu.regs.c);
 }
 
 // 0x92: SUB D
 pub(crate) fn sub_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.d);
+    cpu.sub(cpu.regs.d);
 }
 
 // 0x93: SUB E
 pub(crate) fn sub_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.e);
+    cpu.sub(cpu.regs.e);
 }
 
 // 0x94: SUB H
 pub(crate) fn sub_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.h);
+    cpu.sub(cpu.regs.h);
 }
 
 // 0x95: SUB L
 pub(crate) fn sub_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.l);
+    cpu.sub(cpu.regs.l);
 }
 
 // 0x96: SUB (HL)
@@ -359,37 +359,37 @@ pub(crate) fn sub_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x97: SUB A
 pub(crate) fn sub_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sub(cpu.a);
+    cpu.sub(cpu.regs.a);
 }
 
 // 0x98: SBC A, B
 pub(crate) fn sbc_a_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.b);
+    cpu.sbc(cpu.regs.b);
 }
 
 // 0x99: SBC A, C
 pub(crate) fn sbc_a_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.c);
+    cpu.sbc(cpu.regs.c);
 }
 
 // 0x9A: SBC A, D
 pub(crate) fn sbc_a_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.d);
+    cpu.sbc(cpu.regs.d);
 }
 
 // 0x9B: SBC A, E
 pub(crate) fn sbc_a_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.e);
+    cpu.sbc(cpu.regs.e);
 }
 
 // 0x9C: SBC A, H
 pub(crate) fn sbc_a_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.h);
+    cpu.sbc(cpu.regs.h);
 }
 
 // 0x9D: SBC A, L
 pub(crate) fn sbc_a_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.l);
+    cpu.sbc(cpu.regs.l);
 }
 
 // 0x9E: SBC A, (HL)
@@ -400,37 +400,37 @@ pub(crate) fn sbc_a_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x9F: SBC A, A
 pub(crate) fn sbc_a_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.sbc(cpu.a);
+    cpu.sbc(cpu.regs.a);
 }
 
 // 0xA0: AND B
 pub(crate) fn and_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.b);
+    cpu.logical_and(cpu.regs.b);
 }
 
 // 0xA1: AND C
 pub(crate) fn and_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.c);
+    cpu.logical_and(cpu.regs.c);
 }
 
 // 0xA2: AND D
 pub(crate) fn and_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.d);
+    cpu.logical_and(cpu.regs.d);
 }
 
 // 0xA3: AND E
 pub(crate) fn and_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.e);
+    cpu.logical_and(cpu.regs.e);
 }
 
 // 0xA4: AND H
 pub(crate) fn and_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.h);
+    cpu.logical_and(cpu.regs.h);
 }
 
 // 0xA5: AND L
 pub(crate) fn and_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.l);
+    cpu.logical_and(cpu.regs.l);
 }
 
 // 0xA6: AND (HL)
@@ -441,37 +441,37 @@ pub(crate) fn and_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xA7: AND A
 pub(crate) fn and_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_and(cpu.a);
+    cpu.logical_and(cpu.regs.a);
 }
 
 // 0xA8: XOR B
 pub(crate) fn xor_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.b);
+    cpu.logical_xor(cpu.regs.b);
 }
 
 // 0xA9: XOR C
 pub(crate) fn xor_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.c);
+    cpu.logical_xor(cpu.regs.c);
 }
 
 // 0xAA: XOR D
 pub(crate) fn xor_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.d);
+    cpu.logical_xor(cpu.regs.d);
 }
 
 // 0xAB: XOR E
 pub(crate) fn xor_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.e);
+    cpu.logical_xor(cpu.regs.e);
 }
 
 // 0xAC: XOR H
 pub(crate) fn xor_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.h);
+    cpu.logical_xor(cpu.regs.h);
 }
 
 // 0xAD: XOR L
 pub(crate) fn xor_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.l);
+    cpu.logical_xor(cpu.regs.l);
 }
 
 // 0xAE: XOR (HL)
@@ -482,37 +482,37 @@ pub(crate) fn xor_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xAF: XOR A
 pub(crate) fn xor_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_xor(cpu.a);
+    cpu.logical_xor(cpu.regs.a);
 }
 
 // 0xB0: OR B
 pub(crate) fn or_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.b);
+    cpu.logical_or(cpu.regs.b);
 }
 
 // 0xB1: OR C
 pub(crate) fn or_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.c);
+    cpu.logical_or(cpu.regs.c);
 }
 
 // 0xB2: OR D
 pub(crate) fn or_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.d);
+    cpu.logical_or(cpu.regs.d);
 }
 
 // 0xB3: OR E
 pub(crate) fn or_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.e);
+    cpu.logical_or(cpu.regs.e);
 }
 
 // 0xB4: OR H
 pub(crate) fn or_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.h);
+    cpu.logical_or(cpu.regs.h);
 }
 
 // 0xB5: OR L
 pub(crate) fn or_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.l);
+    cpu.logical_or(cpu.regs.l);
 }
 
 // 0xB6: OR (HL)
@@ -523,37 +523,37 @@ pub(crate) fn or_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xB7: OR A
 pub(crate) fn or_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.logical_or(cpu.a);
+    cpu.logical_or(cpu.regs.a);
 }
 
 // 0xB8: CP B
 pub(crate) fn cp_b(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.b);
+    cpu.compare(cpu.regs.b);
 }
 
 // 0xB9: CP C
 pub(crate) fn cp_c(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.c);
+    cpu.compare(cpu.regs.c);
 }
 
 // 0xBA: CP D
 pub(crate) fn cp_d(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.d);
+    cpu.compare(cpu.regs.d);
 }
 
 // 0xBB: CP E
 pub(crate) fn cp_e(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.e);
+    cpu.compare(cpu.regs.e);
 }
 
 // 0xBC: CP H
 pub(crate) fn cp_h(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.h);
+    cpu.compare(cpu.regs.h);
 }
 
 // 0xBD: CP L
 pub(crate) fn cp_l(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.l);
+    cpu.compare(cpu.regs.l);
 }
 
 // 0xBE: CP (HL)
@@ -564,7 +564,7 @@ pub(crate) fn cp_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xBF: CP A
 pub(crate) fn cp_a(cpu: &mut CPU, _bus: &mut Bus) {
-    cpu.compare(cpu.a);
+    cpu.compare(cpu.regs.a);
 }
 
 // 0xC6: ADC A, (d8)

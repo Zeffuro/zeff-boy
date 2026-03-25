@@ -39,8 +39,8 @@ impl App {
             ));
         }
 
-        let gfx =
-            pollster::block_on(Graphics::new(event_loop)).expect("failed to initialize graphics");
+        let gfx = pollster::block_on(Graphics::new(event_loop, self.settings.vsync_mode))
+            .expect("failed to initialize graphics");
         let size = gfx.window().inner_size();
         self.window_size = (size.width as f32, size.height as f32);
         self.window_id = Some(gfx.window().id());

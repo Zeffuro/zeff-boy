@@ -1,7 +1,7 @@
-pub(crate) mod alu;
-pub(crate) mod bitwise;
+mod alu;
+mod bitwise;
 mod cb;
-pub(crate) mod cycles;
-pub(crate) mod dispatch;
-pub(crate) mod flow;
-pub(crate) mod load;
+pub(super) mod cycles;
+pub(super) mod dispatch;
+mod flow;
+mod load;

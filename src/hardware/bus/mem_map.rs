@@ -38,8 +38,8 @@ impl Bus {
                 self.oam[(addr - OAM_START) as usize]
             }
             NOT_USABLE_START..=NOT_USABLE_END => 0xFF,
-            SERIAL_SB => self.io.serial.sb,
-            SERIAL_SC => self.io.serial.sc,
+            SERIAL_SB => self.io.serial.sb(),
+            SERIAL_SC => self.io.serial.sc(),
             INTERRUPT_IF => self.if_reg,
             IO_START..=IO_END => self.read_io(addr),
             HRAM_START..=HRAM_END => self.hram[(addr - HRAM_START) as usize],

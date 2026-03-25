@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::StateWriter;
 use crate::hardware::bus::Bus;
-use crate::hardware::cpu::CPU;
+use crate::hardware::cpu::{CPU, Registers};
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::CPUState;
 use crate::hardware::types::IMEState;
@@ -65,9 +65,9 @@ pub(crate) fn append_bess(
 
     let (bg_pal_offset, bg_pal_size, obj_pal_offset, obj_pal_size) = if is_cgb {
         let bg = writer.position() as u32;
-        writer.write_bytes(&bus.io.ppu.bg_palette_ram);
+        writer.write_bytes(bus.ppu_bg_palette_ram());
         let obj = writer.position() as u32;
-        writer.write_bytes(&bus.io.ppu.obj_palette_ram);
+        writer.write_bytes(bus.ppu_obj_palette_ram());
         (bg, 0x40u32, obj, 0x40u32)
     } else {
         (0u32, 0u32, 0u32, 0u32)
@@ -235,14 +235,16 @@ pub(crate) fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Resul
     let cpu = CPU {
         pc,
         sp,
-        a: (af >> 8) as u8,
-        f: (af & 0xF0) as u8,
-        b: (bc >> 8) as u8,
-        c: (bc & 0xFF) as u8,
-        d: (de >> 8) as u8,
-        e: (de & 0xFF) as u8,
-        h: (hl >> 8) as u8,
-        l: (hl & 0xFF) as u8,
+        regs: Registers {
+            a: (af >> 8) as u8,
+            f: (af & 0xF0) as u8,
+            b: (bc >> 8) as u8,
+            c: (bc & 0xFF) as u8,
+            d: (de >> 8) as u8,
+            e: (de & 0xFF) as u8,
+            h: (hl >> 8) as u8,
+            l: (hl & 0xFF) as u8,
+        },
         ime: if ime_val != 0 {
             IMEState::Enabled
         } else {
@@ -276,18 +278,8 @@ pub(crate) fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Resul
         HardwareMode::CGBNormal | HardwareMode::CGBDouble
     );
     if is_cgb {
-        copy_buffer(
-            bytes,
-            bg_pal_offset,
-            bg_pal_size,
-            &mut bus.io.ppu.bg_palette_ram,
-        );
-        copy_buffer(
-            bytes,
-            obj_pal_offset,
-            obj_pal_size,
-            &mut bus.io.ppu.obj_palette_ram,
-        );
+        copy_buffer(bytes, bg_pal_offset, bg_pal_size, bus.ppu_bg_palette_ram_mut());
+        copy_buffer(bytes, obj_pal_offset, obj_pal_size, bus.ppu_obj_palette_ram_mut());
     }
 
     if let Some(mbc) = mbc_data {
@@ -352,10 +344,10 @@ fn write_core_body(
     writer.write_bytes(&mode_to_bess_model(hardware_mode));
 
     writer.write_u16(cpu.pc);
-    writer.write_u16(((cpu.a as u16) << 8) | cpu.f as u16); // AF
-    writer.write_u16(((cpu.b as u16) << 8) | cpu.c as u16); // BC
-    writer.write_u16(((cpu.d as u16) << 8) | cpu.e as u16); // DE
-    writer.write_u16(((cpu.h as u16) << 8) | cpu.l as u16); // HL
+    writer.write_u16(((cpu.regs.a as u16) << 8) | cpu.regs.f as u16); // AF
+    writer.write_u16(((cpu.regs.b as u16) << 8) | cpu.regs.c as u16); // BC
+    writer.write_u16(((cpu.regs.d as u16) << 8) | cpu.regs.e as u16); // DE
+    writer.write_u16(((cpu.regs.h as u16) << 8) | cpu.regs.l as u16); // HL
     writer.write_u16(cpu.sp);
 
     writer.write_u8(match cpu.ime {
@@ -376,7 +368,7 @@ fn write_core_body(
     let mut io_snapshot = bus.collect_io_register_snapshot();
 
     if is_cgb {
-        io_snapshot[0x4C] = if bus.io.ppu.cgb_mode { 0x80 } else { 0x04 }; // KEY0
+        io_snapshot[0x4C] = if bus.ppu_cgb_mode() { 0x80 } else { 0x04 }; // KEY0
     }
     io_snapshot[0x50] = 0x01;
     writer.write_bytes(&io_snapshot);
@@ -402,39 +394,17 @@ fn apply_bess_io_registers(bus: &mut Bus, io: &[u8], mode: HardwareMode) {
 
     bus.io_bank.copy_from_slice(&io[..0x80]);
 
-    bus.io.joypad.write(io[0x00]);
+    bus.write_joypad_p1(io[0x00]);
 
-    bus.io.serial.sb = io[0x01];
-    bus.io.serial.sc = io[0x02] & !0x80;
-    bus.io.serial.mode = mode;
-    bus.io.serial.cycles = 0;
-
-    bus.io.timer.apply_bess_div(io[0x04]);
-    bus.io.timer.tima = io[0x05];
-    bus.io.timer.tma = io[0x06];
-    bus.io.timer.tac = io[0x07];
-    bus.io.timer.mode = mode;
+    bus.apply_bess_timer_serial_registers(io, mode);
 
     bus.if_reg = io[0x0F] & 0x1F;
 
-    bus.io.apu.apply_bess_io(io);
+    bus.apply_bess_apu_io(io);
 
-    bus.io.ppu.lcdc = io[0x40];
-    bus.io.ppu.stat = io[0x41];
-    bus.io.ppu.scy = io[0x42];
-    bus.io.ppu.scx = io[0x43];
-    bus.io.ppu.ly = io[0x44];
-    bus.io.ppu.lyc = io[0x45];
-
-    bus.io.ppu.bgp = io[0x47];
-    bus.io.ppu.obp0 = io[0x48];
-    bus.io.ppu.obp1 = io[0x49];
-    bus.io.ppu.wy = io[0x4A];
-    bus.io.ppu.wx = io[0x4B];
+    bus.apply_bess_ppu_registers(io, is_cgb);
 
     if is_cgb {
-        bus.io.ppu.cgb_mode = io[0x4C] & 0x04 == 0;
-
         bus.key1 = io[0x4D];
 
         bus.vram_bank = io[0x4F] & 0x01;
@@ -445,8 +415,6 @@ fn apply_bess_io_registers(bus: &mut Bus, io: &[u8], mode: HardwareMode) {
         bus.hdma4 = io[0x54];
         bus.hdma5 = io[0x55];
 
-        bus.io.ppu.bcps = io[0x68];
-        bus.io.ppu.ocps = io[0x6A];
 
         let svbk = io[0x70] & 0x07;
         bus.wram_bank = if svbk == 0 { 1 } else { svbk };

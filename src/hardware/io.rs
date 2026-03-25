@@ -9,12 +9,12 @@ use anyhow::Result;
 use std::fmt;
 
 pub(crate) struct IO {
-    pub(crate) joypad: Joypad,
-    pub(crate) serial: Serial,
-    pub(crate) timer: Timer,
-    pub(crate) ppu: PPU,
-    pub(crate) apu: Apu,
-    pub(crate) sgb: SgbState,
+    pub(super) joypad: Joypad,
+    pub(super) serial: Serial,
+    pub(super) timer: Timer,
+    pub(super) ppu: PPU,
+    pub(super) apu: Apu,
+    pub(super) sgb: SgbState,
 }
 
 impl fmt::Debug for IO {

@@ -156,7 +156,7 @@ impl EmuThread {
                     match command {
                         EmuCommand::SetUncapped(on) => {
                             uncapped_mode = on;
-                            emu.bus.io.apu.sample_generation_enabled = !on;
+                            emu.bus.set_apu_sample_generation_enabled(!on);
                         }
 
                         EmuCommand::UpdateCheats(cheats) => {
@@ -236,7 +236,7 @@ impl EmuThread {
                         }
 
                         EmuCommand::SetSampleRate(rate) => {
-                            emu.bus.io.apu.set_sample_rate(rate);
+                            emu.bus.set_apu_sample_rate(rate);
                         }
 
                         EmuCommand::CaptureStateBytes => {
@@ -340,21 +340,21 @@ impl EmuThread {
     ) -> FrameResult {
         Self::apply_debug_actions(emu, &input.debug_actions);
 
-        emu.bus.io.ppu.color_correction = input.color_correction;
-        emu.bus.io.ppu.color_correction_matrix = input.color_correction_matrix;
+        emu.bus.set_ppu_color_correction(input.color_correction);
+        emu.bus
+            .set_ppu_color_correction_matrix(input.color_correction_matrix);
 
         if emu
             .bus
-            .io
-            .joypad
-            .apply_pressed_masks(input.buttons_pressed, input.dpad_pressed)
+            .apply_joypad_pressed_masks(input.buttons_pressed, input.dpad_pressed)
         {
             emu.bus.if_reg |= 0x10;
         }
         emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
-        emu.bus.io.apu.debug_capture_enabled = input.apu_capture_enabled;
+        emu.bus
+            .set_apu_debug_capture_enabled(input.apu_capture_enabled);
         if !uncapped_mode {
-            emu.bus.io.apu.sample_generation_enabled = !input.skip_audio;
+            emu.bus.set_apu_sample_generation_enabled(!input.skip_audio);
         }
         emu.opcode_log.enabled = input.snapshot.want_debug_info;
 
@@ -421,9 +421,7 @@ impl EmuThread {
         match result {
             Ok(()) => {
                 emu.bus
-                    .io
-                    .joypad
-                    .apply_pressed_masks(buttons_pressed, dpad_pressed);
+                    .apply_joypad_pressed_masks(buttons_pressed, dpad_pressed);
                 let fb = emu.framebuffer().to_vec();
                 EmuResponse::LoadStateOk {
                     path: path_label,
@@ -498,15 +496,15 @@ impl EmuThread {
 
         let rumble = emu.bus.cartridge.rumble_active();
         let audio_samples = if let Some(mut buf) = reusable_audio {
-            emu.bus.io.apu.drain_samples_into(&mut buf);
+            emu.bus.apu_drain_samples_into(&mut buf);
             buf
         } else {
-            emu.bus.io.apu.drain_samples()
+            emu.bus.apu_drain_samples()
         };
         let is_mbc7 = emu.is_mbc7_cartridge();
 
         let apu_snapshot = if midi_capture_active {
-            Some(emu.bus.io.apu.channel_snapshot())
+            Some(emu.bus.apu_channel_snapshot())
         } else {
             None
         };
@@ -634,15 +632,13 @@ impl EmuThread {
             emu.debug.toggle_breakpoint(*addr);
         }
         if let Some(mutes) = actions.apu_channel_mutes {
-            emu.bus.io.apu.set_channel_mutes(mutes);
+            emu.bus.set_apu_channel_mutes(mutes);
         }
         for (addr, value) in &actions.memory_writes {
             emu.bus.write_byte(*addr, *value);
         }
         if let Some((bg, win, sprites)) = actions.layer_toggles {
-            emu.bus.io.ppu.debug_flags.bg = bg;
-            emu.bus.io.ppu.debug_flags.window = win;
-            emu.bus.io.ppu.debug_flags.sprites = sprites;
+            emu.bus.set_ppu_debug_flags(bg, win, sprites);
         }
     }
 

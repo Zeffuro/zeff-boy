@@ -1,6 +1,8 @@
 use crate::hardware::types::CartridgeType;
 use crate::hardware::types::RamSize;
 use crate::hardware::types::RomSize;
+use crate::hardware::types::new_licensee_name;
+use crate::hardware::types::old_licensee_name;
 use crate::hardware::types::header_offsets as header_constants;
 use anyhow::{Result, anyhow};
 
@@ -237,12 +239,12 @@ impl RomHeader {
     pub(crate) fn publisher(&self) -> &'static str {
         if self.use_new_licensee_code {
             if let Some(ref code) = self.new_licensee_code {
-                crate::hardware::types::new_licensee::new_licensee_name(code)
+                new_licensee_name(code)
             } else {
                 "Unknown"
             }
         } else {
-            crate::hardware::types::old_licensee::old_licensee_name(self.old_licensee_code)
+            old_licensee_name(self.old_licensee_code)
         }
     }
 }

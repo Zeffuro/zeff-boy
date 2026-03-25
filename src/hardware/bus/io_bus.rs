@@ -5,14 +5,14 @@ use crate::hardware::types::hardware_mode::HardwareMode;
 
 pub(super) fn read_io(bus: &Bus, addr: u16) -> u8 {
     match addr {
-        JOYP_P1 => bus.io.joypad.read(),
-        SERIAL_SB => bus.io.serial.sb,
-        SERIAL_SC => bus.io.serial.sc,
+        JOYP_P1 => bus.joypad_p1(),
+        SERIAL_SB => bus.io.serial.sb(),
+        SERIAL_SC => bus.io.serial.sc(),
 
-        TIMER_DIV => bus.io.timer.div,
-        TIMER_TIMA => bus.io.timer.tima,
-        TIMER_TMA => bus.io.timer.tma,
-        TIMER_TAC => bus.io.timer.tac,
+        TIMER_DIV => bus.io.timer.div(),
+        TIMER_TIMA => bus.io.timer.tima(),
+        TIMER_TMA => bus.io.timer.tma(),
+        TIMER_TAC => bus.io.timer.tac(),
 
         INTERRUPT_IF => bus.if_reg | 0xE0,
 
@@ -130,18 +130,18 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
 
     match addr {
         JOYP_P1 => {
-            bus.io.joypad.write(value);
+            bus.write_joypad_p1(value);
             if matches!(bus.hardware_mode, HardwareMode::SGB1 | HardwareMode::SGB2)
                 && let Some(event) = bus.io.sgb.on_joyp_write(value) {
                     apply_sgb_event(bus, event);
                 }
         }
-        SERIAL_SB => bus.io.serial.sb = value,
-        SERIAL_SC => bus.io.serial.sc = value,
+        SERIAL_SB => bus.io.serial.write_sb(value),
+        SERIAL_SC => bus.io.serial.write_sc(value),
 
         TIMER_DIV => bus.io.timer.reset_div(),
         TIMER_TIMA => bus.io.timer.write_tima(value),
-        TIMER_TMA => bus.io.timer.tma = value,
+        TIMER_TMA => bus.io.timer.write_tma(value),
         TIMER_TAC => bus.io.timer.write_tac(value),
 
         INTERRUPT_IF => bus.if_reg = value & 0x1F,

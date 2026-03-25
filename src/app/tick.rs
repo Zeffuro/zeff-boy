@@ -287,6 +287,13 @@ impl App {
             self.settings.save();
         }
 
+        if self.settings.vsync_mode != self.timing.last_vsync_mode {
+            self.timing.last_vsync_mode = self.settings.vsync_mode;
+            if let Some(gfx) = self.gfx.as_mut() {
+                gfx.set_vsync(self.settings.vsync_mode);
+            }
+        }
+
         true
     }
 

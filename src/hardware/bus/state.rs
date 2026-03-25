@@ -5,8 +5,7 @@ use crate::hardware::io::IO;
 use crate::hardware::types::constants::{
     HRAM_SIZE, IO_SIZE, IO_START, OAM_SIZE, VRAM_SIZE, WRAM_SIZE,
 };
-use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
+use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 
 impl Bus {
@@ -20,7 +19,7 @@ impl Bus {
     }
 
     pub(crate) fn write_state(&self, writer: &mut StateWriter) {
-        writer.write_u8(encode_hardware_mode(self.hardware_mode));
+        writer.write_hardware_mode(self.hardware_mode);
         self.cartridge.write_state(writer);
         writer.write_bytes(&self.vram);
         writer.write_bytes(&self.wram);
@@ -48,7 +47,7 @@ impl Bus {
     }
 
     pub(crate) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
-        let hardware_mode = decode_hardware_mode(reader.read_u8()?)?;
+        let hardware_mode = reader.read_hardware_mode()?;
         let cartridge = Cartridge::read_state(reader)?;
 
         let mut bus = Self {
@@ -111,15 +110,5 @@ impl Bus {
         bus.cpu_read_trace.clear();
         bus.cpu_write_trace.clear();
         Ok(bus)
-    }
-}
-
-fn encode_hardware_mode(mode: HardwareMode) -> u8 {
-    match mode {
-        HardwareMode::DMG => 0,
-        HardwareMode::SGB1 => 1,
-        HardwareMode::SGB2 => 2,
-        HardwareMode::CGBNormal => 3,
-        HardwareMode::CGBDouble => 4,
     }
 }

@@ -17,17 +17,13 @@ pub(crate) fn stop(cpu: &mut CPU, bus: &mut Bus) {
         let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
         let apu_delay = if is_double_speed { delay / 2 } else { delay };
 
-        bus.io.apu.step(apu_delay);
+        bus.step_apu(apu_delay);
 
-        let cgb_mode = matches!(
-            bus.hardware_mode,
-            HardwareMode::CGBNormal | HardwareMode::CGBDouble
-        );
-        let prev_mode = bus.io.ppu.mode();
+        let prev_mode = bus.ppu_mode();
 
-        let int = bus.io.ppu.step(apu_delay, &bus.vram, &bus.oam, cgb_mode);
+        let int = bus.step_ppu(apu_delay);
         bus.if_reg |= int;
-        bus.maybe_step_hblank_hdma(prev_mode, bus.io.ppu.mode());
+        bus.maybe_step_hblank_hdma(prev_mode, bus.ppu_mode());
 
         let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
         cpu.timed_cycles_accounted += if is_double_speed { delay * 2 } else { delay };
@@ -326,7 +322,6 @@ mod tests {
         stop(&mut cpu, &mut bus);
 
         assert_eq!(bus.hardware_mode, HardwareMode::CGBDouble);
-        assert_eq!(bus.io.timer.mode, HardwareMode::CGBDouble);
         assert_eq!(bus.key1, 0xFE);
         assert!(matches!(cpu.running, CPUState::Running));
     }

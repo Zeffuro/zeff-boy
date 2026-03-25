@@ -71,10 +71,10 @@ pub(crate) fn collect_emu_snapshot(
             emu.hardware_mode,
             HardwareMode::CGBNormal | HardwareMode::CGBDouble
         );
-        let bg_palette_ram = emu.bus.io.ppu.bg_palette_ram;
-        let obj_palette_ram = emu.bus.io.ppu.obj_palette_ram;
-        let color_correction = emu.bus.io.ppu.color_correction;
-        let color_correction_matrix = emu.bus.io.ppu.color_correction_matrix;
+        let bg_palette_ram = emu.bus.ppu_bg_palette_ram_snapshot();
+        let obj_palette_ram = emu.bus.ppu_obj_palette_ram_snapshot();
+        let color_correction = emu.bus.ppu_color_correction();
+        let color_correction_matrix = emu.bus.ppu_color_correction_matrix();
         let vram = if req.any_vram_viewer_open {
             let src = emu.vram();
             let mut buf = reusable_vram.unwrap_or_default();
@@ -107,37 +107,37 @@ pub(crate) fn collect_emu_snapshot(
                     .unwrap_or_default()
             },
             apu_regs: if req.show_apu_viewer {
-                emu.bus.io.apu.regs_snapshot()
+                emu.bus.apu_regs_snapshot()
             } else {
                 [0; 0x17]
             },
             apu_wave_ram: if req.show_apu_viewer {
-                emu.bus.io.apu.wave_ram_snapshot()
+                emu.bus.apu_wave_ram_snapshot()
             } else {
                 [0; 0x10]
             },
             apu_nr52: if req.show_apu_viewer {
-                emu.bus.io.apu.nr52_raw()
+                emu.bus.apu_nr52_raw()
             } else {
                 0
             },
             apu_channel_samples: if req.show_apu_viewer {
                 [
-                    emu.bus.io.apu.channel_debug_samples_ordered(0),
-                    emu.bus.io.apu.channel_debug_samples_ordered(1),
-                    emu.bus.io.apu.channel_debug_samples_ordered(2),
-                    emu.bus.io.apu.channel_debug_samples_ordered(3),
+                    emu.bus.apu_channel_debug_samples_ordered(0),
+                    emu.bus.apu_channel_debug_samples_ordered(1),
+                    emu.bus.apu_channel_debug_samples_ordered(2),
+                    emu.bus.apu_channel_debug_samples_ordered(3),
                 ]
             } else {
                 [[0.0; 512]; 4]
             },
             apu_master_samples: if req.show_apu_viewer {
-                emu.bus.io.apu.master_debug_samples_ordered()
+                emu.bus.apu_master_debug_samples_ordered()
             } else {
                 [0.0; 512]
             },
             apu_channel_muted: if req.show_apu_viewer {
-                emu.bus.io.apu.channel_mutes()
+                emu.bus.apu_channel_mutes()
             } else {
                 [false; 4]
             },
