@@ -3,8 +3,8 @@ use crate::debug::{
     RomInfoViewData, RomSearchResult, disassemble_around,
 };
 use crate::emu_thread::SnapshotRequest;
-use crate::emulator::Emulator;
-use crate::hardware::types::hardware_mode::HardwareMode;
+use zeff_gb_core::emulator::Emulator;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareMode;
 
 pub(crate) struct UiFrameData {
     pub(crate) debug_info: Option<DebugInfo>,
@@ -73,8 +73,8 @@ pub(crate) fn collect_emu_snapshot(
         );
         let bg_palette_ram = emu.bus.ppu_bg_palette_ram_snapshot();
         let obj_palette_ram = emu.bus.ppu_obj_palette_ram_snapshot();
-        let color_correction = emu.bus.ppu_color_correction();
-        let color_correction_matrix = emu.bus.ppu_color_correction_matrix();
+        let color_correction = req.color_correction;
+        let color_correction_matrix = req.color_correction_matrix;
         let vram = if req.any_vram_viewer_open {
             let src = emu.vram();
             let mut buf = reusable_vram.unwrap_or_default();
@@ -153,8 +153,7 @@ pub(crate) fn collect_emu_snapshot(
     };
 
     let disassembly_view = if req.show_disassembler {
-        let pc_changed = req
-            .last_disasm_pc != Some(emu.cpu.pc);
+        let pc_changed = req.last_disasm_pc != Some(emu.cpu.pc);
         if pc_changed {
             let mut breakpoints: Vec<u16> = emu.debug.iter_breakpoints().collect();
             breakpoints.sort_unstable();

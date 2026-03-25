@@ -1,5 +1,5 @@
 use crate::debug::TileViewerState;
-use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel};
+use zeff_gb_core::hardware::ppu::{apply_palette, cgb_palette_rgba, correct_color, decode_tile_pixel};
 use crate::settings::ColorCorrection;
 
 pub(super) fn draw_tile_viewer_content(
@@ -159,10 +159,8 @@ fn render_tile_viewer_into_image(
                     } else {
                         bg_palette_ram
                     };
-                    cgb_palette_rgba(
-                        palette_ram,
-                        cgb_palette_index,
-                        color_id,
+                    correct_color(
+                        cgb_palette_rgba(palette_ram, cgb_palette_index, color_id),
                         color_correction,
                         color_correction_matrix,
                     )

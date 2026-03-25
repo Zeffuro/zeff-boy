@@ -15,12 +15,12 @@ use crate::{
         create_dock_from_saved_tabs,
     },
     emu_thread::EmuThread,
-    emulator::Emulator,
     graphics::Graphics,
     input::GamepadHandler,
     settings::{LeftStickMode, Settings},
     ui,
 };
+use zeff_gb_core::emulator::Emulator;
 
 mod bindings;
 mod host_sync;
@@ -42,8 +42,8 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
     let vsync_mode = settings.vsync_mode;
 
     // Cache metadata before handing emulator to emu thread
-    let cached_is_mbc7 = emulator.as_ref().is_some_and(|e| e.is_mbc7_cartridge());
-    let cached_rom_path = emulator.as_ref().map(|e| e.rom_path().to_path_buf());
+    let cached_is_mbc7 = emulator.as_ref().is_some_and(|e: &Emulator| e.is_mbc7_cartridge());
+    let cached_rom_path = emulator.as_ref().map(|e: &Emulator| e.rom_path().to_path_buf());
 
     let mut app = App {
         emu_thread: None,
@@ -151,8 +151,8 @@ struct RewindState {
 
 struct RecordingState {
     audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
-    replay_recorder: Option<crate::replay::ReplayRecorder>,
-    replay_player: Option<crate::replay::ReplayPlayer>,
+    replay_recorder: Option<zeff_gb_core::replay::ReplayRecorder>,
+    replay_player: Option<zeff_gb_core::replay::ReplayPlayer>,
 }
 
 struct TimingState {
@@ -504,7 +504,10 @@ impl App {
         if self.rewind.held && self.settings.rewind_enabled {
             self.rewind.throttle += 1;
             let pop_interval = self.settings.rewind_speed.max(1);
-            if self.rewind.throttle >= pop_interval && !self.rewind.pending && !self.rewind.backstep_pending {
+            if self.rewind.throttle >= pop_interval
+                && !self.rewind.pending
+                && !self.rewind.backstep_pending
+            {
                 self.rewind.throttle = 0;
                 if let Some(thread) = &self.emu_thread {
                     thread.send(crate::emu_thread::EmuCommand::Rewind);
@@ -519,19 +522,19 @@ impl App {
             self.rewind.pops = 0;
             if self.frames_in_flight < MAX_IN_FLIGHT {
                 let now = Instant::now();
-                    let frames_to_step = if self.paused {
-                        self.timing.last_frame_time = now;
-                        if std::mem::take(&mut self.debug_requests.frame_advance) {
-                            1
-                        } else {
-                            0
-                        }
+                let frames_to_step = if self.paused {
+                    self.timing.last_frame_time = now;
+                    if std::mem::take(&mut self.debug_requests.frame_advance) {
+                        1
                     } else {
+                        0
+                    }
+                } else {
                     self.compute_frames_to_step(now)
                 };
 
-                let has_pending = self.debug_requests.has_pending()
-                    || self.pending_debug_actions.has_pending();
+                let has_pending =
+                    self.debug_requests.has_pending() || self.pending_debug_actions.has_pending();
 
                 if frames_to_step > 0 || has_pending {
                     if let Some(thread) = &self.emu_thread {
@@ -590,8 +593,7 @@ impl App {
                             dpad_pressed,
                             debug_step: std::mem::take(&mut self.debug_requests.step),
                             debug_continue: std::mem::take(&mut self.debug_requests.continue_),
-                            apu_capture_enabled: reqs.needs_apu
-                                && want_viewer_update,
+                            apu_capture_enabled: reqs.needs_apu && want_viewer_update,
                             skip_audio: match self.speed_mode() {
                                 SpeedMode::Uncapped => true,
                                 SpeedMode::FastForward => {
@@ -600,7 +602,8 @@ impl App {
                                 SpeedMode::Normal => false,
                             },
                             midi_capture_active: self
-                                .recording.audio_recorder
+                                .recording
+                                .audio_recorder
                                 .as_ref()
                                 .is_some_and(|r| r.is_midi()),
                             debug_actions: std::mem::replace(
@@ -608,25 +611,16 @@ impl App {
                                 DebugUiActions::none(),
                             ),
                             snapshot: crate::emu_thread::SnapshotRequest {
-                                want_debug_info: (reqs.needs_debug_info
-                                    || self.settings.show_fps),
-                                any_viewer_open: reqs.needs_viewer_data
-                                    && want_viewer_update,
-                                any_vram_viewer_open: reqs.needs_vram
-                                    && want_viewer_update,
-                                show_oam_viewer: reqs.needs_oam
-                                    && want_viewer_update,
-                                show_apu_viewer: reqs.needs_apu
-                                    && want_viewer_update,
-                                show_disassembler: reqs.needs_disassembly
-                                    && want_viewer_update,
-                                show_rom_info: reqs.needs_rom_info
-                                    && want_viewer_update,
-                                show_memory_viewer: reqs.needs_memory_page
-                                    && want_viewer_update,
+                                want_debug_info: (reqs.needs_debug_info || self.settings.show_fps),
+                                any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
+                                any_vram_viewer_open: reqs.needs_vram && want_viewer_update,
+                                show_oam_viewer: reqs.needs_oam && want_viewer_update,
+                                show_apu_viewer: reqs.needs_apu && want_viewer_update,
+                                show_disassembler: reqs.needs_disassembly && want_viewer_update,
+                                show_rom_info: reqs.needs_rom_info && want_viewer_update,
+                                show_memory_viewer: reqs.needs_memory_page && want_viewer_update,
                                 memory_view_start: self.debug_windows.memory.view_start,
-                                show_rom_viewer: reqs.needs_rom_page
-                                    && want_viewer_update,
+                                show_rom_viewer: reqs.needs_rom_page && want_viewer_update,
                                 rom_view_start: self.debug_windows.rom_viewer.view_start,
                                 last_disasm_pc: self.debug_windows.last_disasm_pc,
                                 memory_search: if self.debug_windows.memory.search_pending {
@@ -665,6 +659,8 @@ impl App {
                                 } else {
                                     None
                                 },
+                                color_correction: self.settings.color_correction,
+                                color_correction_matrix: self.settings.color_correction_matrix,
                             },
                             buffers: crate::emu_thread::ReusableBuffers {
                                 framebuffer: self.recycled.framebuffer.take(),
@@ -675,8 +671,6 @@ impl App {
                             },
                             rewind_enabled: self.settings.rewind_enabled && !self.rewind.held,
                             rewind_seconds: self.settings.rewind_seconds,
-                            color_correction: self.settings.color_correction,
-                            color_correction_matrix: self.settings.color_correction_matrix,
                         };
                         if self.debug_windows.cheat.cheats_dirty {
                             self.debug_windows.cheat.cheats_dirty = false;

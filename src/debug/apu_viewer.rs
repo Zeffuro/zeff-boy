@@ -1,5 +1,5 @@
 use crate::debug::DebugViewerData;
-use crate::hardware::types::constants::*;
+use zeff_gb_core::hardware::types::constants::*;
 
 fn reg_index(addr: u16) -> usize {
     (addr - NR10) as usize

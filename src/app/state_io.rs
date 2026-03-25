@@ -1,7 +1,7 @@
 use super::App;
 use crate::debug::FpsTracker;
 use crate::emu_thread::{EmuCommand, EmuResponse, EmuThread};
-use crate::emulator::Emulator;
+use zeff_gb_core::emulator::Emulator;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -11,7 +11,7 @@ pub(super) fn build_slot_labels(rom_hash: Option<[u8; 32]>) -> [String; 10] {
         let Some(hash) = rom_hash else {
             return format!("Slot {slot}  (empty)");
         };
-        let Ok(path) = crate::save_state::slot_path(hash, slot) else {
+        let Ok(path) = zeff_gb_core::save_state::slot_path(hash, slot) else {
             return format!("Slot {slot}  (empty)");
         };
         match std::fs::metadata(&path) {
@@ -544,7 +544,7 @@ impl App {
         }
         match self.recv_cold_response() {
             Some(EmuResponse::StateCaptured(state_bytes)) => {
-                let recorder = crate::replay::ReplayRecorder::new(path, state_bytes);
+                let recorder = zeff_gb_core::replay::ReplayRecorder::new(path, state_bytes);
                 self.recording.replay_recorder = Some(recorder);
                 self.toast_manager.set_replay_recording(true);
             }
@@ -596,7 +596,7 @@ impl App {
             return;
         };
 
-        match crate::replay::ReplayPlayer::load(&path) {
+        match zeff_gb_core::replay::ReplayPlayer::load(&path) {
             Ok(player) => {
                 let total = player.total_frames();
                 let state_bytes = player.save_state().to_vec();

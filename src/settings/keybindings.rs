@@ -467,8 +467,8 @@ impl Default for GamepadBindings {
 }
 
 impl GamepadBindings {
-    pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::hardware::joypad::JoypadKey> {
-        use crate::hardware::joypad::JoypadKey;
+    pub(crate) fn map_button_name(&self, name: &str) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
+        use zeff_gb_core::hardware::joypad::JoypadKey;
         if name == self.a {
             return Some(JoypadKey::A);
         }

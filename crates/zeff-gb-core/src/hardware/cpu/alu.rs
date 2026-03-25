@@ -1,0 +1,86 @@
+use super::CPU;
+
+impl CPU {
+    pub fn inc(&mut self, value: u8) -> u8 {
+        let result = value.wrapping_add(1);
+        self.set_flags(result == 0, false, (value & 0x0F) + 1 > 0x0F, self.get_c());
+        result
+    }
+
+    pub fn dec(&mut self, value: u8) -> u8 {
+        let result = value.wrapping_sub(1);
+        self.set_flags(result == 0, true, (value & 0x0F) == 0, self.get_c());
+        result
+    }
+
+    pub fn adc(&mut self, value: u8) {
+        let a = self.regs.a as u16;
+        let val = value as u16;
+        let carry = self.get_c() as u16;
+        let result = a + val + carry;
+
+        self.regs.a = result as u8;
+        self.set_flags(
+            self.regs.a == 0,
+            false,
+            (a ^ val ^ result) & 0x10 != 0,
+            result > 0xFF,
+        );
+    }
+
+    pub fn sbc(&mut self, value: u8) {
+        let a = self.regs.a;
+        let carry = self.get_c() as u8;
+        let result = a.wrapping_sub(value).wrapping_sub(carry);
+
+        self.set_flags(
+            result == 0,
+            true,
+            (a & 0x0F) < (value & 0x0F) + carry,
+            (a as u16) < (value as u16) + (carry as u16),
+        );
+        self.regs.a = result;
+    }
+
+    pub fn add(&mut self, value: u8) {
+        let a = self.regs.a;
+        let result = a.wrapping_add(value);
+
+        self.regs.a = result;
+        self.set_flags(
+            self.regs.a == 0,
+            false,
+            (a & 0x0F) + (value & 0x0F) > 0x0F,
+            (a as u16) + (value as u16) > 0xFF,
+        );
+    }
+
+    pub fn sub(&mut self, value: u8) {
+        let a = self.regs.a;
+        let result = a.wrapping_sub(value);
+
+        self.regs.a = result;
+        self.set_flags(result == 0, true, (a & 0x0F) < (value & 0x0F), a < value);
+    }
+
+    pub fn compare(&mut self, value: u8) {
+        let temp_a = self.regs.a;
+        self.sub(value);
+        self.regs.a = temp_a;
+    }
+
+    pub fn logical_or(&mut self, value: u8) {
+        self.regs.a |= value;
+        self.set_flags(self.regs.a == 0, false, false, false);
+    }
+
+    pub fn logical_and(&mut self, value: u8) {
+        self.regs.a &= value;
+        self.set_flags(self.regs.a == 0, false, true, false);
+    }
+
+    pub fn logical_xor(&mut self, value: u8) {
+        self.regs.a ^= value;
+        self.set_flags(self.regs.a == 0, false, false, false);
+    }
+}

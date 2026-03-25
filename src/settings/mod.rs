@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 const MAX_RECENT_ROMS: usize = 10;
 

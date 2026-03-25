@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::hardware::apu::ApuChannelSnapshot;
+use zeff_gb_core::hardware::apu::ApuChannelSnapshot;
 use crate::settings::AudioRecordingFormat;
 
 pub(crate) struct AudioRecorder {

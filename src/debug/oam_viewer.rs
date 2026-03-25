@@ -1,4 +1,4 @@
-use crate::hardware::ppu::SpriteEntry;
+use zeff_gb_core::hardware::ppu::SpriteEntry;
 
 pub(super) fn draw_oam_viewer_content(ui: &mut egui::Ui, oam: &[u8]) {
     egui::Grid::new("oam_grid").striped(true).show(ui, |ui| {

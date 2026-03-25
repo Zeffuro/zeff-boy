@@ -1,5 +1,5 @@
-use crate::hardware::types::IMEState;
-use crate::hardware::types::hardware_mode::HardwareMode;
+use zeff_gb_core::hardware::types::IMEState;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareMode;
 
 use super::types::HeadlessOptions;
 

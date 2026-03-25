@@ -1,6 +1,6 @@
 use crate::debug::BreakpointState;
 use crate::debug::DebugInfo;
-use crate::debug::breakpoints::WatchType;
+use crate::debug::WatchType;
 use crate::debug::ui::DebugUiActions;
 
 pub(super) fn draw_breakpoints_content(

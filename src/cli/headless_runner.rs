@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use std::path::Path;
 
-use crate::emulator::Emulator;
-use crate::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_gb_core::emulator::Emulator;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::output::{
     format_headless_breakpoint, format_headless_serial, format_headless_summary, format_op_line,
@@ -38,7 +38,7 @@ pub(crate) fn run_headless(
                 let (pc, op, cb_prefix, step_cycles) = emulator.step_instruction();
                 if matches!(
                     emulator.cpu.running,
-                    crate::hardware::types::CPUState::Suspended
+                    zeff_gb_core::hardware::types::CPUState::Suspended
                 ) {
                     println!(
                         "{}",
@@ -150,7 +150,7 @@ pub(crate) fn run_headless(
             emulator.step_frame();
             if matches!(
                 emulator.cpu.running,
-                crate::hardware::types::CPUState::Suspended
+                zeff_gb_core::hardware::types::CPUState::Suspended
             ) {
                 println!(
                     "{}",

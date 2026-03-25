@@ -1,4 +1,4 @@
-use crate::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use crate::settings::Settings;
 
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {

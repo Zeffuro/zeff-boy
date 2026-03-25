@@ -4,8 +4,8 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{self as chan, Receiver, Sender, TrySendError};
 
 use crate::debug::DebugUiActions;
-use crate::emulator::Emulator;
-use crate::hardware::types::CPUState;
+use zeff_gb_core::emulator::Emulator;
+use zeff_gb_core::hardware::types::CPUState;
 use crate::ui;
 
 pub(crate) struct SnapshotRequest {
@@ -23,6 +23,8 @@ pub(crate) struct SnapshotRequest {
     pub(crate) last_disasm_pc: Option<u16>,
     pub(crate) memory_search: Option<MemorySearchRequest>,
     pub(crate) rom_search: Option<MemorySearchRequest>,
+    pub(crate) color_correction: crate::settings::ColorCorrection,
+    pub(crate) color_correction_matrix: [f32; 9],
 }
 
 pub(crate) struct MemorySearchRequest {
@@ -53,8 +55,6 @@ pub(crate) struct FrameInput {
     pub(crate) buffers: ReusableBuffers,
     pub(crate) rewind_enabled: bool,
     pub(crate) rewind_seconds: usize,
-    pub(crate) color_correction: crate::settings::ColorCorrection,
-    pub(crate) color_correction_matrix: [f32; 9],
 }
 
 pub(crate) struct FrameResult {
@@ -64,7 +64,7 @@ pub(crate) struct FrameResult {
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) rewind_fill: f32,
-    pub(crate) apu_snapshot: Option<crate::hardware::apu::ApuChannelSnapshot>,
+    pub(crate) apu_snapshot: Option<zeff_gb_core::hardware::apu::ApuChannelSnapshot>,
 }
 
 pub(crate) enum EmuCommand {
@@ -133,7 +133,7 @@ impl EmuThread {
             let mut uncapped_fb: Option<Vec<u8>> = None;
             let mut last_cheats: Vec<crate::cheats::CheatPatch> = Vec::new();
 
-            let mut rewind_buffer = crate::rewind::RewindBuffer::new(10, 4);
+            let mut rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(10, 4);
             let mut rewind_seconds = 10usize;
 
             let send_resp = |resp: EmuResponse| -> bool { resp_tx.send(resp).is_ok() };
@@ -181,7 +181,7 @@ impl EmuThread {
                         }
 
                         EmuCommand::SaveStateSlot(slot) => {
-                            match crate::save_state::slot_path(emu.rom_hash, slot) {
+                            match zeff_gb_core::save_state::slot_path(emu.rom_hash, slot) {
                                 Ok(path) => {
                                     if !Self::save_state_async(&emu, path, &resp_tx, &send_resp) {
                                         break 'main;
@@ -228,7 +228,11 @@ impl EmuThread {
                             let label = path.display().to_string();
                             let result = emu.load_state_from_path(&path);
                             let resp = Self::respond_load_state(
-                                &mut emu, result, label, buttons_pressed, dpad_pressed,
+                                &mut emu,
+                                result,
+                                label,
+                                buttons_pressed,
+                                dpad_pressed,
                             );
                             if !send_resp(resp) {
                                 break 'main;
@@ -256,7 +260,11 @@ impl EmuThread {
                         } => {
                             let result = emu.load_state_from_bytes(state_bytes);
                             let resp = Self::respond_load_state(
-                                &mut emu, result, "(replay)".to_string(), buttons_pressed, dpad_pressed,
+                                &mut emu,
+                                result,
+                                "(replay)".to_string(),
+                                buttons_pressed,
+                                dpad_pressed,
                             );
                             if !send_resp(resp) {
                                 break 'main;
@@ -264,7 +272,7 @@ impl EmuThread {
                         }
 
                         EmuCommand::AutoSaveState => {
-                            let path = crate::save_state::auto_save_path(emu.rom_hash);
+                            let path = zeff_gb_core::save_state::auto_save_path(emu.rom_hash);
                             if !Self::save_state_async(&emu, path, &resp_tx, &send_resp) {
                                 break 'main;
                             }
@@ -274,12 +282,16 @@ impl EmuThread {
                             buttons_pressed,
                             dpad_pressed,
                         } => {
-                            let path = crate::save_state::auto_save_path(emu.rom_hash);
+                            let path = zeff_gb_core::save_state::auto_save_path(emu.rom_hash);
                             if path.exists() {
                                 let label = path.display().to_string();
                                 let result = emu.load_state_from_path(&path);
                                 let resp = Self::respond_load_state(
-                                    &mut emu, result, label, buttons_pressed, dpad_pressed,
+                                    &mut emu,
+                                    result,
+                                    label,
+                                    buttons_pressed,
+                                    dpad_pressed,
                                 );
                                 if !send_resp(resp) {
                                     break 'main;
@@ -334,15 +346,11 @@ impl EmuThread {
         input: FrameInput,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_mode: bool,
-        rewind_buffer: &mut crate::rewind::RewindBuffer,
+        rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
         cached_rom_info: &mut Option<crate::debug::RomInfoViewData>,
     ) -> FrameResult {
         Self::apply_debug_actions(emu, &input.debug_actions);
-
-        emu.bus.set_ppu_color_correction(input.color_correction);
-        emu.bus
-            .set_ppu_color_correction_matrix(input.color_correction_matrix);
 
         if emu
             .bus
@@ -382,7 +390,7 @@ impl EmuThread {
 
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = crate::rewind::RewindBuffer::new(*rewind_seconds, 4);
+            *rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(*rewind_seconds, 4);
         }
 
         Self::capture_rewind_snapshot(emu, rewind_buffer, input.rewind_enabled);
@@ -442,13 +450,10 @@ impl EmuThread {
             Ok(bytes) => {
                 let tx = resp_tx.clone();
                 std::thread::spawn(move || {
-                    let resp =
-                        match crate::save_state::write_state_bytes_to_file(&path, &bytes) {
-                            Ok(()) => {
-                                EmuResponse::SaveStateOk(path.display().to_string())
-                            }
-                            Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
-                        };
+                    let resp = match zeff_gb_core::save_state::write_state_bytes_to_file(&path, &bytes) {
+                        Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                        Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                    };
                     let _ = tx.send(resp);
                 });
                 true
@@ -459,7 +464,7 @@ impl EmuThread {
 
     fn handle_rewind(
         emu: &mut Emulator,
-        rewind_buffer: &mut crate::rewind::RewindBuffer,
+        rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
     ) -> EmuResponse {
         if let Some(rewind_frame) = rewind_buffer.pop() {
             match emu.load_state_from_bytes(rewind_frame.state_bytes) {
@@ -539,7 +544,7 @@ impl EmuThread {
         emu: &mut Emulator,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_fb: &mut Option<Vec<u8>>,
-        rewind_buffer: &crate::rewind::RewindBuffer,
+        rewind_buffer: &zeff_gb_core::rewind::RewindBuffer,
         frame_tx: &Sender<FrameResult>,
         drain_rx: &Receiver<FrameResult>,
     ) {
@@ -608,7 +613,7 @@ impl EmuThread {
 
     fn capture_rewind_snapshot(
         emu: &Emulator,
-        rewind_buffer: &mut crate::rewind::RewindBuffer,
+        rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
         enabled: bool,
     ) {
         if enabled && rewind_buffer.tick() {

@@ -1,5 +1,5 @@
 use crate::debug::DebugInfo;
-use crate::debug::breakpoints::WatchType;
+use crate::debug::WatchType;
 
 pub(crate) use super::menu_bar::{MenuActions, draw_menu_bar};
 pub(crate) use super::settings_window::draw_settings_window;

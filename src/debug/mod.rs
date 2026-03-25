@@ -1,5 +1,4 @@
 mod apu_viewer;
-mod breakpoints;
 mod breakpoints_window;
 mod cheats_window;
 mod disasm_window;
@@ -23,7 +22,11 @@ pub(crate) mod toast;
 pub(crate) mod types;
 mod ui;
 
-pub(crate) use breakpoints::DebugController;
+#[allow(unused_imports)]
+pub(crate) use zeff_gb_core::debug::{
+    DebugController, DebugInfo, OpcodeLog, PpuSnapshot, RomInfoViewData, WatchHit, WatchType,
+    WatchpointInfo, Watchpoint,
+};
 pub(crate) use disassembler::{DisassemblyView, disassemble_around};
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, compute_tab_requirements,
@@ -34,8 +37,7 @@ pub(crate) use dock::{
 pub(crate) use fps::FpsTracker;
 pub(crate) use toast::ToastManager;
 pub(crate) use types::{
-    BreakpointState, CheatState, DebugInfo, DebugViewerData, DebugWindowState, MemorySearchResult,
-    OpcodeLog, PpuSnapshot, RomInfoViewData, RomSearchResult, TileViewerState, TilemapViewerState,
-    WatchpointInfo,
+    BreakpointState, CheatState, DebugViewerData, DebugWindowState, MemorySearchResult,
+    RomSearchResult, TileViewerState, TilemapViewerState,
 };
 pub(crate) use ui::{DebugUiActions, MenuActions, draw_menu_bar, draw_settings_window};

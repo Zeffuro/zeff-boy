@@ -10,9 +10,11 @@ pub(crate) struct FramebufferRenderer {
     screen_texture: wgpu::Texture,
     screen_view: wgpu::TextureView,
     screen_bind_group: wgpu::BindGroup,
+    screen_bind_group_no_cc: wgpu::BindGroup,
     screen_pipeline: wgpu::RenderPipeline,
     screen_bgl: wgpu::BindGroupLayout,
     params_buffer: wgpu::Buffer,
+    params_buffer_no_cc: wgpu::Buffer,
     nearest_sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
     current_filter: wgpu::FilterMode,
@@ -233,6 +235,12 @@ impl FramebufferRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let params_buffer_no_cc = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shader params buffer no color correction"),
+            size: 96,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let screen_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("screen bgl"),
@@ -274,10 +282,23 @@ impl FramebufferRenderer {
             &params_buffer,
             "screen bind group",
         );
+        let screen_bind_group_no_cc = create_texture_bind_group(
+            device,
+            &screen_bgl,
+            &screen_view,
+            &nearest_sampler,
+            &params_buffer_no_cc,
+            "screen bind group no color correction",
+        );
 
         let scaling = ScalingMode::PixelPerfect;
         let effect = EffectPreset::None;
-        let screen_pipeline = create_pipeline(device, &screen_bgl, format, combined_shader_source(scaling, effect));
+        let screen_pipeline = create_pipeline(
+            device,
+            &screen_bgl,
+            format,
+            combined_shader_source(scaling, effect),
+        );
 
         let output_texture = create_offscreen_texture(
             device,
@@ -320,9 +341,11 @@ impl FramebufferRenderer {
             screen_texture,
             screen_view,
             screen_bind_group,
+            screen_bind_group_no_cc,
             screen_pipeline,
             screen_bgl,
             params_buffer,
+            params_buffer_no_cc,
             nearest_sampler,
             linear_sampler,
             current_filter: wgpu::FilterMode::Nearest,
@@ -343,7 +366,11 @@ impl FramebufferRenderer {
         })
     }
 
-    pub(crate) fn set_shader(&mut self, device: &wgpu::Device, settings: &crate::settings::Settings) {
+    pub(crate) fn set_shader(
+        &mut self,
+        device: &wgpu::Device,
+        settings: &crate::settings::Settings,
+    ) {
         let scaling = settings.scaling_mode;
         let effect = settings.effect_preset;
         let custom_path_changed = self.current_custom_shader_path != settings.custom_shader_path;
@@ -380,8 +407,12 @@ impl FramebufferRenderer {
                                 || self.current_effect != effect
                                 || custom_path_changed
                             {
-                                self.screen_pipeline =
-                                    create_pipeline(device, &self.screen_bgl, self.format, upscaler_source);
+                                self.screen_pipeline = create_pipeline(
+                                    device,
+                                    &self.screen_bgl,
+                                    self.format,
+                                    upscaler_source,
+                                );
                                 self.effect_pipeline = Some(create_pipeline(
                                     device,
                                     &self.screen_bgl,
@@ -460,7 +491,8 @@ impl FramebufferRenderer {
                 || self.current_effect != effect
                 || (matches!(effect, EffectPreset::Custom) && custom_path_changed)
             {
-                self.screen_pipeline = create_pipeline(device, &self.screen_bgl, self.format, source);
+                self.screen_pipeline =
+                    create_pipeline(device, &self.screen_bgl, self.format, source);
             }
             self.effect_pipeline = None;
             self.two_pass = false;
@@ -488,20 +520,30 @@ impl FramebufferRenderer {
             &self.params_buffer,
             "screen bind group",
         );
+        self.screen_bind_group_no_cc = create_texture_bind_group(
+            device,
+            &self.screen_bgl,
+            &self.screen_view,
+            sampler,
+            &self.params_buffer_no_cc,
+            "screen bind group no color correction",
+        );
         self.current_filter = desired_filter;
     }
 
-    pub(crate) fn update_params(
-        &self,
-        queue: &wgpu::Queue,
-        settings: &crate::settings::Settings,
-    ) {
+    pub(crate) fn update_params(&self, queue: &wgpu::Queue, settings: &crate::settings::Settings) {
         let buf = crate::settings::build_gpu_params(
             &settings.shader_params,
             settings.color_correction,
             settings.color_correction_matrix,
         );
+        let buf_no_cc = crate::settings::build_gpu_params(
+            &settings.shader_params,
+            crate::settings::ColorCorrection::None,
+            settings.color_correction_matrix,
+        );
         queue.write_buffer(&self.params_buffer, 0, &buf);
+        queue.write_buffer(&self.params_buffer_no_cc, 0, &buf_no_cc);
     }
 
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {
@@ -540,7 +582,12 @@ impl FramebufferRenderer {
         pass.draw(0..3, 0..1);
     }
 
-    pub(crate) fn resize_offscreen(&mut self, device: &wgpu::Device, width: u32, height: u32) -> bool {
+    pub(crate) fn resize_offscreen(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> bool {
         let w = width.max(MIN_OFFSCREEN_WIDTH);
         let h = height.max(MIN_OFFSCREEN_HEIGHT);
         if self.offscreen_width == w && self.offscreen_height == h {
@@ -549,7 +596,8 @@ impl FramebufferRenderer {
         self.offscreen_width = w;
         self.offscreen_height = h;
 
-        self.output_texture = create_offscreen_texture(device, self.format, w, h, "shader output texture");
+        self.output_texture =
+            create_offscreen_texture(device, self.format, w, h, "shader output texture");
         self.output_view = self
             .output_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -611,7 +659,7 @@ impl FramebufferRenderer {
                     1.0,
                 );
                 pass.set_pipeline(&self.screen_pipeline);
-                pass.set_bind_group(0, &self.screen_bind_group, &[]);
+                pass.set_bind_group(0, &self.screen_bind_group_no_cc, &[]);
                 pass.draw(0..3, 0..1);
             }
             // Pass 2: Effect — intermediate_texture → output_texture
@@ -701,7 +749,7 @@ impl FramebufferRenderer {
             1.0,
         );
         pass.set_pipeline(&self.screen_pipeline);
-        pass.set_bind_group(0, &self.screen_bind_group, &[]);
+        pass.set_bind_group(0, &self.screen_bind_group_no_cc, &[]);
         pass.draw(0..3, 0..1);
     }
 

@@ -1,6 +1,6 @@
 use gilrs::{Axis, Event, EventType, GamepadId, Gilrs, ff};
 
-use crate::hardware::joypad::JoypadKey;
+use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::{GamepadAction, GamepadBindings};
 
 pub(crate) struct GamepadHandler {

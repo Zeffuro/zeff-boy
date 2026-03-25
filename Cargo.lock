@@ -4272,6 +4272,23 @@ dependencies = [
  "vorbis-encoder",
  "wgpu",
  "winit",
+ "zeff-gb-core",
+]
+
+[[package]]
+name = "zeff-gb-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "chrono",
+ "crc32fast",
+ "dirs",
+ "log",
+ "lz4_flex",
+ "phf",
+ "serde",
+ "sha2",
 ]
 
 [[package]]

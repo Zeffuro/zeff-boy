@@ -1,7 +1,5 @@
 use crate::cheats::CheatCode;
-use crate::debug::breakpoints::{WatchHit, WatchType};
-use crate::hardware::cartridge::CartridgeDebugInfo;
-use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
+use zeff_gb_core::debug::{WatchType, PpuSnapshot};
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
 use egui::{Color32, ColorImage, TextureHandle};
 use std::collections::HashMap;
@@ -17,77 +15,6 @@ pub(crate) enum MemorySearchMode {
 pub(crate) struct MemorySearchResult {
     pub(crate) address: u16,
     pub(crate) matched_bytes: Vec<u8>,
-}
-
-pub(crate) struct WatchpointInfo {
-    pub(crate) address: u16,
-    pub(crate) watch_type: WatchType,
-}
-
-pub(crate) struct DebugInfo {
-    pub(crate) pc: u16,
-    pub(crate) sp: u16,
-    pub(crate) a: u8,
-    pub(crate) f: u8,
-    pub(crate) b: u8,
-    pub(crate) c: u8,
-    pub(crate) d: u8,
-    pub(crate) e: u8,
-    pub(crate) h: u8,
-    pub(crate) l: u8,
-
-    pub(crate) cycles: u64,
-    pub(crate) ime: &'static str,
-    pub(crate) cpu_state: &'static str,
-    pub(crate) last_opcode: u8,
-    pub(crate) last_opcode_pc: u16,
-
-    pub(crate) fps: f64,
-    pub(crate) speed_mode_label: &'static str,
-    pub(crate) frames_in_flight: usize,
-    pub(crate) ppu: PpuSnapshot,
-    pub(crate) hardware_mode: HardwareMode,
-    pub(crate) hardware_mode_preference: HardwareModePreference,
-
-    pub(crate) div: u8,
-    pub(crate) tima: u8,
-    pub(crate) tma: u8,
-    pub(crate) tac: u8,
-
-    pub(crate) if_reg: u8,
-    pub(crate) ie: u8,
-
-    pub(crate) mem_around_pc: [(u16, u8); 32],
-
-    pub(crate) recent_ops: Vec<(u16, u8, bool)>,
-    pub(crate) breakpoints: Vec<u16>,
-    pub(crate) watchpoints: Vec<WatchpointInfo>,
-    pub(crate) hit_breakpoint: Option<u16>,
-    pub(crate) hit_watchpoint: Option<WatchHit>,
-
-    pub(crate) tilt_is_mbc7: bool,
-    pub(crate) tilt_stick_controls_tilt: bool,
-    pub(crate) tilt_left_stick: (f32, f32),
-    pub(crate) tilt_keyboard: (f32, f32),
-    pub(crate) tilt_mouse: (f32, f32),
-    pub(crate) tilt_target: (f32, f32),
-    pub(crate) tilt_smoothed: (f32, f32),
-}
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-pub(crate) struct PpuSnapshot {
-    pub(crate) lcdc: u8,
-    pub(crate) stat: u8,
-    pub(crate) scy: u8,
-    pub(crate) scx: u8,
-    pub(crate) ly: u8,
-    pub(crate) lyc: u8,
-    pub(crate) wy: u8,
-    pub(crate) wx: u8,
-    pub(crate) bgp: u8,
-    pub(crate) obp0: u8,
-    pub(crate) obp1: u8,
 }
 
 pub(crate) struct MemoryViewerState {
@@ -456,28 +383,6 @@ fn fold_bytes(bytes: &[u8]) -> u64 {
     crc32fast::hash(bytes) as u64
 }
 
-#[derive(Clone)]
-pub(crate) struct RomInfoViewData {
-    pub(crate) title: String,
-    pub(crate) manufacturer: String,
-    pub(crate) publisher: String,
-    pub(crate) cartridge_type: String,
-    pub(crate) rom_size: String,
-    pub(crate) ram_size: String,
-    pub(crate) cgb_flag: u8,
-    pub(crate) sgb_flag: u8,
-    pub(crate) is_cgb_compatible: bool,
-    pub(crate) is_cgb_exclusive: bool,
-    pub(crate) is_sgb_supported: bool,
-    pub(crate) header_checksum_valid: bool,
-    pub(crate) global_checksum_valid: bool,
-    pub(crate) rom_crc32: u32,
-    pub(crate) libretro_title: Option<String>,
-    pub(crate) libretro_rom_name: Option<String>,
-    pub(crate) hardware_mode: HardwareMode,
-    pub(crate) cartridge_state: CartridgeDebugInfo,
-}
-
 pub(crate) struct DebugViewerData {
     pub(crate) vram: Vec<u8>,
     pub(crate) oam: Vec<u8>,
@@ -495,56 +400,3 @@ pub(crate) struct DebugViewerData {
     pub(crate) color_correction_matrix: [f32; 9],
 }
 
-type OpcodeEntry = (u16, u8, bool);
-
-const OPCODE_LOG_CAPACITY: usize = 32;
-const OPCODE_LOG_MASK: usize = OPCODE_LOG_CAPACITY - 1;
-
-pub(crate) struct OpcodeLog {
-    entries: [OpcodeEntry; OPCODE_LOG_CAPACITY],
-    cursor: usize,
-    count: usize,
-    pub(crate) enabled: bool,
-}
-
-impl std::fmt::Debug for OpcodeLog {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpcodeLog")
-            .field("count", &self.count)
-            .field("enabled", &self.enabled)
-            .finish_non_exhaustive()
-    }
-}
-
-impl OpcodeLog {
-    pub(crate) fn new(_capacity: usize) -> Self {
-        Self {
-            entries: [(0, 0, false); OPCODE_LOG_CAPACITY],
-            cursor: 0,
-            count: 0,
-            enabled: true,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn push(&mut self, pc: u16, opcode: u8, is_cb: bool) {
-        if !self.enabled {
-            return;
-        }
-        self.entries[self.cursor] = (pc, opcode, is_cb);
-        self.cursor = (self.cursor + 1) & OPCODE_LOG_MASK;
-        if self.count < OPCODE_LOG_CAPACITY {
-            self.count += 1;
-        }
-    }
-
-    pub(crate) fn recent(&self, n: usize) -> Vec<(u16, u8, bool)> {
-        let take = n.min(self.count);
-        let mut result = Vec::with_capacity(take);
-        for i in 0..take {
-            let idx = (self.cursor.wrapping_sub(1 + i)) & OPCODE_LOG_MASK;
-            result.push(self.entries[idx]);
-        }
-        result
-    }
-}

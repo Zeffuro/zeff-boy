@@ -1,4 +1,4 @@
-use crate::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba};
+use zeff_gb_core::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba, correct_color};
 use crate::settings::ColorCorrection;
 
 fn draw_palette_row(ui: &mut egui::Ui, label: &str, value: u8) {
@@ -38,10 +38,8 @@ fn draw_cgb_palette_section(
         ui.horizontal(|ui| {
             ui.label(format!("{}{}", row_prefix, palette));
             for color_id in 0u8..4 {
-                let rgba = cgb_palette_rgba(
-                    palette_ram,
-                    palette,
-                    color_id,
+                let rgba = correct_color(
+                    cgb_palette_rgba(palette_ram, palette, color_id),
                     color_correction,
                     color_correction_matrix,
                 );

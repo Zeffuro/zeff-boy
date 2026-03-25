@@ -1,5 +1,8 @@
 use crate::debug::{PpuSnapshot, TilemapViewerState};
-use crate::hardware::ppu::{LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, apply_palette, cgb_palette_rgba, decode_tile_pixel, tile_data_address};
+use zeff_gb_core::hardware::ppu::{
+    LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, apply_palette, cgb_palette_rgba,
+    correct_color, decode_tile_pixel, tile_data_address,
+};
 use crate::settings::ColorCorrection;
 
 #[derive(Clone, Copy)]
@@ -33,8 +36,16 @@ pub(super) fn draw_tilemap_viewer_content(
 ) {
     let width = 256usize;
     let height = 256usize;
-    let bg_tile_map_base = if ppu.lcdc & LCDC_BG_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
-    let win_tile_map_base = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
+    let bg_tile_map_base = if ppu.lcdc & LCDC_BG_TILEMAP != 0 {
+        0x1C00
+    } else {
+        0x1800
+    };
+    let win_tile_map_base = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 {
+        0x1C00
+    } else {
+        0x1800
+    };
 
     let map_select_id = ui.make_persistent_id("tilemap_viewer_source");
     let mut use_window_map = ui
@@ -330,10 +341,8 @@ fn render_tilemap_into_image(
             };
             let color_id = decode_tile_pixel(vram, banked_tile_addr, source_line, source_pixel);
             let rgba = if render_cgb_colors {
-                cgb_palette_rgba(
-                    bg_palette_ram,
-                    attr.palette,
-                    color_id,
+                correct_color(
+                    cgb_palette_rgba(bg_palette_ram, attr.palette, color_id),
                     color_correction,
                     color_correction_matrix,
                 )

@@ -1,4 +1,4 @@
-use crate::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::types::{CliArgs, HeadlessOptions};
 

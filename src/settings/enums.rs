@@ -124,33 +124,8 @@ pub(crate) fn default_offscreen_scale() -> u32 {
     4
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub(crate) enum ColorCorrection {
-    #[default]
-    None,
-    GbcLcd,
-    Custom,
-}
-
-impl ColorCorrection {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::None => "None (raw RGB)",
-            Self::GbcLcd => "GBC LCD panel",
-            Self::Custom => "Custom matrix",
-        }
-    }
-}
-
-pub(crate) fn default_color_correction_matrix() -> [f32; 9] {
-    [
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        0.0, 0.0, 1.0,
-    ]
-}
+pub(crate) use zeff_gb_core::color_correction::ColorCorrection;
+pub(crate) use zeff_gb_core::color_correction::default_color_correction_matrix;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ShaderParams {
@@ -214,13 +189,7 @@ impl ShaderParams {
     }
 }
 
-pub(crate) fn gbc_lcd_matrix() -> [f32; 9] {
-    [
-        26.0 / 32.0,  4.0 / 32.0, 2.0 / 32.0,
-         0.0,         24.0 / 32.0, 8.0 / 32.0,
-         6.0 / 32.0,  4.0 / 32.0, 22.0 / 32.0,
-    ]
-}
+pub(crate) use zeff_gb_core::color_correction::gbc_lcd_matrix;
 
 pub(crate) fn build_gpu_params(
     params: &ShaderParams,

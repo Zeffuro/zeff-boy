@@ -1,4 +1,4 @@
-use crate::hardware::joypad::JoypadKey;
+use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::TiltBindingAction;
 
 #[derive(Default)]

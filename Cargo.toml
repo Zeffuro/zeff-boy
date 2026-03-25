@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/zeff-gb-core"]
+
 [package]
 name = "zeff-boy"
 version = "0.1.0"
@@ -8,6 +11,7 @@ description = "A Game Boy and Game Boy Color emulator written in Rust."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
+zeff-gb-core = { path = "crates/zeff-gb-core" }
 anyhow = "1.0.102"
 cpal = "0.17.3"
 env_logger = "0.11.9"
