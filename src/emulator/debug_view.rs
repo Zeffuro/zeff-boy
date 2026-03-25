@@ -126,4 +126,79 @@ impl Emulator {
             tilt_smoothed: (0.0, 0.0),
         }
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn debug_state_summary(&self) -> String {
+        let ppu = &self.bus.io.ppu;
+        let timer = &self.bus.io.timer;
+        let cart = self.bus.cartridge.debug_info();
+        format!(
+            "=== Emulator State ===\n\
+             ROM: {title}\n\
+             Mode: {mode:?} (pref: {pref:?})\n\
+             Cycles: {cycles}\n\
+             \n\
+             --- CPU ---\n\
+             PC={pc:#06X}  SP={sp:#06X}\n\
+             AF={a:02X}{f:02X}  BC={b:02X}{c:02X}  DE={d:02X}{e:02X}  HL={h:02X}{l:02X}\n\
+             IME={ime:?}  State={state:?}  HaltBug={hb}\n\
+             Last op: {lop:#04X} @ {lopc:#06X}\n\
+             \n\
+             --- PPU ---\n\
+             LCDC={lcdc:#04X}  STAT={stat:#04X}  LY={ly}  LYC={lyc}\n\
+             SCX={scx}  SCY={scy}  WX={wx}  WY={wy}\n\
+             BGP={bgp:#04X}  OBP0={obp0:#04X}  OBP1={obp1:#04X}\n\
+             PPU cycles: {ppuc}\n\
+             \n\
+             --- Timer ---\n\
+             DIV={div:#04X}  TIMA={tima:#04X}  TMA={tma:#04X}  TAC={tac:#04X}\n\
+             \n\
+             --- Interrupts ---\n\
+             IE={ie:#04X}  IF={if_reg:#04X}\n\
+             \n\
+             --- Cartridge ---\n\
+             Mapper: {mapper}  ROM bank: {rbank}  RAM bank: {abank}  RAM enabled: {ram_en}",
+            title = self.header.title,
+            mode = self.hardware_mode,
+            pref = self.hardware_mode_preference,
+            cycles = self.cycle_count,
+            pc = self.cpu.pc,
+            sp = self.cpu.sp,
+            a = self.cpu.a,
+            f = self.cpu.f,
+            b = self.cpu.b,
+            c = self.cpu.c,
+            d = self.cpu.d,
+            e = self.cpu.e,
+            h = self.cpu.h,
+            l = self.cpu.l,
+            ime = self.cpu.ime,
+            state = self.cpu.running,
+            hb = self.cpu.halt_bug_active,
+            lop = self.last_opcode,
+            lopc = self.last_opcode_pc,
+            lcdc = ppu.lcdc,
+            stat = ppu.stat,
+            ly = ppu.ly,
+            lyc = ppu.lyc,
+            scx = ppu.scx,
+            scy = ppu.scy,
+            wx = ppu.wx,
+            wy = ppu.wy,
+            bgp = ppu.bgp,
+            obp0 = ppu.obp0,
+            obp1 = ppu.obp1,
+            ppuc = ppu.cycles,
+            div = timer.div,
+            tima = timer.tima,
+            tma = timer.tma,
+            tac = timer.tac,
+            ie = self.bus.ie,
+            if_reg = self.bus.if_reg,
+            mapper = cart.mapper,
+            rbank = cart.active_rom_bank,
+            abank = cart.active_ram_bank,
+            ram_en = cart.ram_enabled,
+        )
+    }
 }

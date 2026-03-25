@@ -6,6 +6,8 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.heading("Cheat Codes");
     ui.label("GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)");
 
+    let mut changed = false;
+
     ui.horizontal(|ui| {
         ui.label("Code:");
         let response = ui.text_edit_singleline(&mut state.input);
@@ -34,6 +36,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
                     state.input.clear();
                     state.name_input.clear();
                     state.parse_error = None;
+                    changed = true;
                 }
                 Err(msg) => {
                     state.parse_error = Some(msg.to_string());
@@ -69,6 +72,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
                         let count = imported.len();
                         state.user_codes.extend(imported);
                         state.parse_error = None;
+                        changed = true;
                         log::info!("Imported {} cheats from {}", count, path.display());
                     }
                     Err(e) => {
@@ -105,7 +109,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.separator();
 
     // --- User Cheats Section ---
-    draw_cheat_section(ui, "👤 User Cheats", &mut state.user_codes, None);
+    changed |= draw_cheat_section(ui, "👤 User Cheats", &mut state.user_codes, None);
 
     ui.separator();
 
@@ -116,7 +120,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
 
     // --- Libretro Cheats List ---
     let mut copy_to_user: Option<CheatCode> = None;
-    draw_cheat_section(
+    changed |= draw_cheat_section(
         ui,
         "🌐 Libretro Cheats",
         &mut state.libretro_codes,
@@ -124,6 +128,11 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     );
     if let Some(cheat) = copy_to_user {
         state.user_codes.push(cheat);
+        changed = true;
+    }
+
+    if changed {
+        state.cheats_dirty = true;
     }
 }
 
@@ -132,11 +141,13 @@ fn draw_cheat_section(
     label: &str,
     codes: &mut Vec<CheatCode>,
     mut copy_target: Option<&mut Option<CheatCode>>,
-) {
+) -> bool {
     if codes.is_empty() {
         ui.label(format!("{label}: none"));
-        return;
+        return false;
     }
+
+    let mut changed = false;
 
     let active_count = codes.iter().filter(|c| c.enabled).count();
     ui.label(format!(
@@ -148,7 +159,9 @@ fn draw_cheat_section(
     let mut remove_idx = None;
     for (i, cheat) in codes.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            ui.checkbox(&mut cheat.enabled, "");
+            if ui.checkbox(&mut cheat.enabled, "").changed() {
+                changed = true;
+            }
             let type_label = match cheat.code_type {
                 crate::cheats::CheatType::GameShark => "GS",
                 crate::cheats::CheatType::GameGenie => "GG",
@@ -163,7 +176,9 @@ fn draw_cheat_section(
             ui.label(label);
             if let Some(param) = cheat.parameter_value.as_mut() {
                 ui.label("Value:");
-                ui.add(egui::DragValue::new(param).range(0..=255));
+                if ui.add(egui::DragValue::new(param).range(0..=255)).changed() {
+                    changed = true;
+                }
                 ui.label(format!("0x{param:02X}"));
             }
             if let Some(ref mut target) = copy_target
@@ -182,6 +197,7 @@ fn draw_cheat_section(
 
     if let Some(idx) = remove_idx {
         codes.remove(idx);
+        changed = true;
     }
 
     ui.horizontal(|ui| {
@@ -189,16 +205,21 @@ fn draw_cheat_section(
             for cheat in codes.iter_mut() {
                 cheat.enabled = true;
             }
+            changed = true;
         }
         if ui.button("Disable All").clicked() {
             for cheat in codes.iter_mut() {
                 cheat.enabled = false;
             }
+            changed = true;
         }
         if ui.button("Clear All").clicked() {
             codes.clear();
+            changed = true;
         }
     });
+
+    changed
 }
 
 fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
@@ -434,6 +455,7 @@ fn do_libretro_download(state: &mut CheatState, filename: &str) {
             let imported = parse_cht_file(&content);
             let count = imported.len();
             state.libretro_codes.extend(imported);
+            state.cheats_dirty = true;
             state.libretro_status = Some(format!("Imported {count} cheat(s) from {filename}"));
             log::info!("Imported {} cheats from libretro: {}", count, filename);
         }

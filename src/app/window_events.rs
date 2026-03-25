@@ -44,7 +44,9 @@ impl App {
     }
 
     fn gfx_handles_event(&mut self, event: &WindowEvent) -> bool {
-        let gfx = self.gfx.as_mut().expect("graphics initialized");
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
         gfx.handle_event(event)
     }
 
@@ -55,8 +57,9 @@ impl App {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                let gfx = self.gfx.as_mut().expect("graphics initialized");
-                gfx.resize(size.width, size.height)
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.resize(size.width, size.height);
+                }
             }
             WindowEvent::DroppedFile(path) => self.handle_dropped_file(path),
             WindowEvent::RedrawRequested => self.tick(),

@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::fmt;
 
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
@@ -10,6 +11,18 @@ pub(crate) struct Serial {
     pub(crate) cycles: u64,
     pub(crate) mode: HardwareMode,
     output_log: Vec<u8>,
+}
+
+impl fmt::Debug for Serial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Serial")
+            .field("sb", &format_args!("{:#04X}", self.sb))
+            .field("sc", &format_args!("{:#04X}", self.sc))
+            .field("cycles", &self.cycles)
+            .field("mode", &self.mode)
+            .field("output_log_len", &self.output_log.len())
+            .finish()
+    }
 }
 
 impl Serial {

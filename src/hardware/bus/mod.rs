@@ -2,6 +2,7 @@ use crate::hardware::cartridge::Cartridge;
 use crate::hardware::io::IO;
 use crate::hardware::types::constants::*;
 use crate::hardware::types::hardware_mode::HardwareMode;
+use std::fmt;
 
 mod dma;
 mod io_bus;
@@ -15,8 +16,8 @@ pub(crate) use trace::CpuAccessTraceEvent;
 pub(crate) struct Bus {
     pub(crate) cartridge: Cartridge,
     pub(crate) hardware_mode: HardwareMode,
-    pub(crate) vram: [u8; VRAM_SIZE * 2], // CGB has 2x8KB VRAM banks
-    pub(crate) wram: [u8; WRAM_SIZE * 8], // CGB has 8x4KB WRAM banks
+    pub(crate) vram: [u8; VRAM_SIZE * 2],
+    pub(crate) wram: [u8; WRAM_SIZE * 8],
     pub(crate) vram_bank: u8,
     pub(crate) wram_bank: u8,
     pub(crate) key1: u8,
@@ -32,16 +33,34 @@ pub(crate) struct Bus {
     oam_dma_source_base: u16,
     oam_dma_index: u16,
     oam_dma_t_cycle_accum: u64,
-    pub(crate) oam: [u8; OAM_SIZE],    // 0xFE00..0xFE9F
-    pub(crate) io_bank: [u8; IO_SIZE], // 0xFF00..0xFF7F
-    pub(crate) hram: [u8; HRAM_SIZE],  // 0xFF80..0xFFFE
-    pub(crate) ie: u8,                 // 0xFFFF
-    pub(crate) if_reg: u8,             // 0xFF0F
+    pub(crate) oam: [u8; OAM_SIZE],
+    pub(crate) io_bank: [u8; IO_SIZE],
+    pub(crate) hram: [u8; HRAM_SIZE],
+    pub(crate) ie: u8,
+    pub(crate) if_reg: u8,
     pub(crate) io: IO,
     pub(crate) trace_cpu_accesses: bool,
     cpu_read_trace: Vec<(u16, u8)>,
     cpu_write_trace: Vec<(u16, u8, u8)>,
     pub(crate) game_genie_patches: Vec<crate::cheats::CheatPatch>,
+}
+
+impl fmt::Debug for Bus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bus")
+            .field("hardware_mode", &self.hardware_mode)
+            .field("vram_bank", &self.vram_bank)
+            .field("wram_bank", &self.wram_bank)
+            .field("key1", &format_args!("{:#04X}", self.key1))
+            .field("ie", &format_args!("{:#04X}", self.ie))
+            .field("if_reg", &format_args!("{:#04X}", self.if_reg))
+            .field("oam_dma_active", &self.oam_dma_active)
+            .field("hdma_active", &self.hdma_active)
+            .field("hdma_hblank", &self.hdma_hblank)
+            .field("game_genie_patches", &self.game_genie_patches.len())
+            .field("io", &self.io)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Bus {}

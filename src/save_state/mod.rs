@@ -181,8 +181,13 @@ pub(crate) fn auto_save_path(rom_hash: [u8; 32]) -> PathBuf {
     path
 }
 
+#[allow(dead_code)]
 pub(crate) fn write_to_file(path: &Path, state: &SaveStateRef<'_>) -> Result<()> {
     let bytes = encode_state_bytes(state)?;
+    write_state_bytes_to_file(path, &bytes)
+}
+
+pub(crate) fn write_state_bytes_to_file(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("failed to create save-state directory")?;
     }
@@ -191,7 +196,7 @@ pub(crate) fn write_to_file(path: &Path, state: &SaveStateRef<'_>) -> Result<()>
     {
         let mut file = File::create(&tmp_path)
             .with_context(|| format!("failed to create temp save state: {}", tmp_path.display()))?;
-        file.write_all(&bytes)
+        file.write_all(bytes)
             .with_context(|| format!("failed to write temp save state: {}", tmp_path.display()))?;
         file.sync_all()
             .with_context(|| format!("failed to flush temp save state: {}", tmp_path.display()))?;
@@ -217,7 +222,8 @@ pub(crate) fn decode_on_thread(bytes: Vec<u8>) -> Result<SaveState> {
         .map_err(|_| anyhow!("save-state decode thread panicked"))?
 }
 
-pub(crate) fn read_from_file(path: &Path) -> Result<SaveState> {
+#[cfg(test)]
+fn read_from_file(path: &Path) -> Result<SaveState> {
     let bytes =
         fs::read(path).with_context(|| format!("failed to read save state: {}", path.display()))?;
 

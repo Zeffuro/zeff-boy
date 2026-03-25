@@ -82,6 +82,7 @@ impl PPU {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cgb_obj_rgba(&self, palette_index: u8, color_id: u8) -> [u8; 4] {
         cgb_palette_rgba(
             &self.obj_palette_ram,

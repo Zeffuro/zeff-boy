@@ -4,12 +4,15 @@ use cpal::{SampleFormat, StreamConfig};
 const NORMAL_QUEUE_MS: usize = 200;
 const FAST_FORWARD_QUEUE_MS: usize = 40;
 
-const RING_BUFFER_CAPACITY: usize = 48_000 * 2 * NORMAL_QUEUE_MS / 1000;
+fn ring_buffer_capacity(sample_rate: u32) -> usize {
+    sample_rate as usize * 2 * NORMAL_QUEUE_MS / 1000
+}
 
 pub(crate) struct AudioOutput {
     _stream: cpal::Stream,
     producer: rtrb::Producer<f32>,
     sample_rate: u32,
+    capacity: usize,
 }
 
 impl AudioOutput {
@@ -22,7 +25,8 @@ impl AudioOutput {
         let channels = config.channels();
         let stream_config: StreamConfig = config.clone().into();
 
-        let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_CAPACITY);
+        let capacity = ring_buffer_capacity(sample_rate);
+        let (producer, consumer) = rtrb::RingBuffer::new(capacity);
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
@@ -42,6 +46,7 @@ impl AudioOutput {
             _stream: stream,
             producer,
             sample_rate,
+            capacity,
         })
     }
 
@@ -67,10 +72,10 @@ impl AudioOutput {
         } else {
             NORMAL_QUEUE_MS
         };
-        let max_samples = (self.sample_rate as usize * queue_ms / 1000).max(2);
+        let max_queued = (self.sample_rate as usize * 2 * queue_ms / 1000).max(2);
 
-        let occupied = RING_BUFFER_CAPACITY - self.producer.slots();
-        if occupied > max_samples {
+        let occupied = self.capacity - self.producer.slots();
+        if occupied > max_queued {
             return;
         }
 

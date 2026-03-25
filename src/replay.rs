@@ -127,6 +127,7 @@ impl ReplayPlayer {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn remaining(&self) -> usize {
         self.frames.len().saturating_sub(self.cursor)
     }
@@ -135,6 +136,7 @@ impl ReplayPlayer {
         self.frames.len()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_finished(&self) -> bool {
         self.cursor >= self.frames.len()
     }

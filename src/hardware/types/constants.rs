@@ -1,8 +1,6 @@
 pub(crate) use super::apu_constants::*;
 
 pub(crate) const ROM_BANK_0_START: u16 = 0x0000;
-pub(crate) const ROM_BANK_0_END: u16 = 0x3FFF;
-pub(crate) const ROM_BANK_N_START: u16 = 0x4000;
 pub(crate) const ROM_BANK_N_END: u16 = 0x7FFF;
 pub(crate) const VRAM_START: u16 = 0x8000;
 pub(crate) const VRAM_END: u16 = 0x9FFF;
@@ -26,9 +24,7 @@ pub(crate) const IE_ADDR: u16 = 0xFFFF;
 
 pub(crate) const ECHO_RAM_OFFSET: u16 = 0x2000;
 
-pub(crate) const ROM_BANK_SIZE: usize = 0x4000;
 pub(crate) const VRAM_SIZE: usize = 0x2000;
-pub(crate) const ERAM_SIZE: usize = 0x2000;
 pub(crate) const WRAM_SIZE: usize = 0x1000;
 pub(crate) const OAM_SIZE: usize = 0xA0;
 pub(crate) const IO_SIZE: usize = 0x80;
@@ -70,7 +66,6 @@ pub(crate) const CGB_OCPD: u16 = 0xFF6B;
 
 pub(crate) const CGB_SVBK: u16 = 0xFF70;
 
-pub(crate) const INTERRUPT_IE: u16 = 0xFFFF;
 
 pub(crate) const INT_VBLANK: u16 = 0x0040;
 pub(crate) const INT_STAT: u16 = 0x0048;

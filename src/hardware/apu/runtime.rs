@@ -179,6 +179,7 @@ impl Apu {
         self.nr52
     }
 
+    #[allow(dead_code)]
     pub(crate) fn channel_debug_samples(
         &self,
         channel: usize,

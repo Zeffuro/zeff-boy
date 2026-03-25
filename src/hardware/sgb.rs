@@ -1,7 +1,8 @@
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
+use std::fmt;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum SgbEvent {
     Pal01([u16; 4], [u16; 4]),
     Pal23([u16; 4], [u16; 4]),
@@ -16,6 +17,16 @@ pub(crate) struct SgbState {
     current_byte: u8,
     packet: [u8; 16],
     packet_pos: usize,
+}
+
+impl fmt::Debug for SgbState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SgbState")
+            .field("collecting", &self.collecting)
+            .field("bit_count", &self.bit_count)
+            .field("packet_pos", &self.packet_pos)
+            .finish()
+    }
 }
 
 impl SgbState {

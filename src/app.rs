@@ -64,14 +64,12 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
             last_frame_time: Instant::now(),
             last_render_time: Instant::now(),
             last_viewer_update: Instant::now(),
-            uncapped_speed: uncapped_speed,
+            uncapped_speed,
         },
         fast_forward_held: false,
         turbo_held: false,
         turbo_counter: 0,
-        shift_held: false,
-        ctrl_held: false,
-        alt_held: false,
+        modifiers: ModifierKeys::default(),
         host_input: HostInputState::new(),
         cursor_pos: None,
         window_size: (160.0, 144.0),
@@ -80,10 +78,7 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
         auto_tilt_source: AutoTiltSource::Keyboard,
         last_state_dir: None,
         show_settings_window: false,
-        debug_step_requested: false,
-        debug_continue_requested: false,
-        backstep_requested: false,
-        frame_advance_requested: false,
+        debug_requests: DebugRequests::new(),
         active_save_slot: 1,
         latest_frame: None,
         last_displayed_frame: None,
@@ -115,6 +110,8 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
             fill: 0.0,
             throttle: 0,
             pops: 0,
+            pending: false,
+            backstep_pending: false,
         },
         egui_wants_keyboard: false,
     };
@@ -146,6 +143,8 @@ struct RewindState {
     fill: f32,
     throttle: usize,
     pops: usize,
+    pending: bool,
+    backstep_pending: bool,
 }
 
 struct RecordingState {
@@ -159,6 +158,35 @@ struct TimingState {
     last_render_time: Instant,
     last_viewer_update: Instant,
     uncapped_speed: bool,
+}
+
+#[derive(Default)]
+struct ModifierKeys {
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+}
+
+struct DebugRequests {
+    step: bool,
+    continue_: bool,
+    backstep: bool,
+    frame_advance: bool,
+}
+
+impl DebugRequests {
+    fn new() -> Self {
+        Self {
+            step: false,
+            continue_: false,
+            backstep: false,
+            frame_advance: false,
+        }
+    }
+
+    fn has_pending(&self) -> bool {
+        self.step || self.continue_ || self.backstep || self.frame_advance
+    }
 }
 
 struct App {
@@ -177,9 +205,7 @@ struct App {
     fast_forward_held: bool,
     turbo_held: bool,
     turbo_counter: u8,
-    shift_held: bool,
-    ctrl_held: bool,
-    alt_held: bool,
+    modifiers: ModifierKeys,
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
     window_size: (f32, f32),
@@ -188,10 +214,7 @@ struct App {
     auto_tilt_source: AutoTiltSource,
     last_state_dir: Option<PathBuf>,
     show_settings_window: bool,
-    debug_step_requested: bool,
-    debug_continue_requested: bool,
-    backstep_requested: bool,
-    frame_advance_requested: bool,
+    debug_requests: DebugRequests,
     active_save_slot: u8,
     latest_frame: Option<Vec<u8>>,
     last_displayed_frame: Option<Vec<u8>>,
@@ -464,52 +487,25 @@ impl App {
         self.drain_emu_responses();
 
         // Handle backstep: pop one rewind snapshot and pause
-        if std::mem::take(&mut self.backstep_requested) && self.settings.rewind_enabled {
+        if std::mem::take(&mut self.debug_requests.backstep)
+            && self.settings.rewind_enabled
+            && !self.rewind.pending
+            && !self.rewind.backstep_pending
+        {
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::Rewind);
-            }
-            if let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.recv()) {
-                match resp {
-                    crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
-                        self.latest_frame = Some(framebuffer);
-                        self.paused = true;
-                        self.timing.last_frame_time = Instant::now();
-                        self.toast_manager.set_persistent(
-                            "paused",
-                            true,
-                            "⏸ Paused",
-                            egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
-                            false,
-                        );
-                        self.toast_manager.info("⏮ Stepped back");
-                    }
-                    crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
-                        self.toast_manager.info(format!("Can't step back: {msg}"));
-                    }
-                    _ => {}
-                }
+                self.rewind.backstep_pending = true;
             }
         }
 
         if self.rewind.held && self.settings.rewind_enabled {
             self.rewind.throttle += 1;
             let pop_interval = self.settings.rewind_speed.max(1);
-            if self.rewind.throttle >= pop_interval {
+            if self.rewind.throttle >= pop_interval && !self.rewind.pending && !self.rewind.backstep_pending {
                 self.rewind.throttle = 0;
                 if let Some(thread) = &self.emu_thread {
                     thread.send(crate::emu_thread::EmuCommand::Rewind);
-                }
-                if let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.recv()) {
-                    match resp {
-                        crate::emu_thread::EmuResponse::LoadStateOk { framebuffer, .. } => {
-                            self.latest_frame = Some(framebuffer);
-                            self.rewind.pops += 1;
-                        }
-                        crate::emu_thread::EmuResponse::LoadStateFailed(msg) => {
-                            log::debug!("Rewind: {}", msg);
-                        }
-                        _ => {}
-                    }
+                    self.rewind.pending = true;
                 }
             }
         } else {
@@ -522,7 +518,7 @@ impl App {
                 let now = Instant::now();
                     let frames_to_step = if self.paused {
                         self.timing.last_frame_time = now;
-                        if std::mem::take(&mut self.frame_advance_requested) {
+                        if std::mem::take(&mut self.debug_requests.frame_advance) {
                             1
                         } else {
                             0
@@ -531,8 +527,7 @@ impl App {
                     self.compute_frames_to_step(now)
                 };
 
-                let has_pending = self.debug_step_requested
-                    || self.debug_continue_requested
+                let has_pending = self.debug_requests.has_pending()
                     || self.pending_debug_actions.has_pending();
 
                 if frames_to_step > 0 || has_pending {
@@ -590,8 +585,8 @@ impl App {
                             host_tilt: tilt_data.smoothed,
                             buttons_pressed,
                             dpad_pressed,
-                            debug_step: std::mem::take(&mut self.debug_step_requested),
-                            debug_continue: std::mem::take(&mut self.debug_continue_requested),
+                            debug_step: std::mem::take(&mut self.debug_requests.step),
+                            debug_continue: std::mem::take(&mut self.debug_requests.continue_),
                             apu_capture_enabled: reqs.needs_apu
                                 && want_viewer_update,
                             skip_audio: match self.speed_mode() {
@@ -675,15 +670,20 @@ impl App {
                                 oam: self.recycled.oam.take(),
                                 memory_page: self.recycled.memory_page.take(),
                             },
-                            cheats: crate::cheats::collect_enabled_patches(
-                                &self.debug_windows.cheat.user_codes,
-                                &self.debug_windows.cheat.libretro_codes,
-                            ),
                             rewind_enabled: self.settings.rewind_enabled && !self.rewind.held,
                             rewind_seconds: self.settings.rewind_seconds,
                             color_correction: self.settings.color_correction,
                             color_correction_matrix: self.settings.color_correction_matrix,
                         };
+                        if self.debug_windows.cheat.cheats_dirty {
+                            self.debug_windows.cheat.cheats_dirty = false;
+                            thread.send(crate::emu_thread::EmuCommand::UpdateCheats(
+                                crate::cheats::collect_enabled_patches(
+                                    &self.debug_windows.cheat.user_codes,
+                                    &self.debug_windows.cheat.libretro_codes,
+                                ),
+                            ));
+                        }
                         thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
                         self.frames_in_flight += 1;
                     }

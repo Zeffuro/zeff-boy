@@ -108,6 +108,42 @@ impl App {
                 None => break,
             }
         }
+
+        if self.rewind.pending || self.rewind.backstep_pending {
+            while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
+                match resp {
+                    crate::emu_thread::EmuResponse::RewindOk { framebuffer } => {
+                        self.latest_frame = Some(framebuffer);
+                        if self.rewind.backstep_pending {
+                            self.rewind.backstep_pending = false;
+                            self.paused = true;
+                            self.timing.last_frame_time = std::time::Instant::now();
+                            self.toast_manager.set_persistent(
+                                "paused",
+                                true,
+                                "⏸ Paused",
+                                egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+                                false,
+                            );
+                            self.toast_manager.info("⏮ Stepped back");
+                        } else {
+                            self.rewind.pending = false;
+                            self.rewind.pops += 1;
+                        }
+                    }
+                    crate::emu_thread::EmuResponse::RewindFailed(msg) => {
+                        if self.rewind.backstep_pending {
+                            self.rewind.backstep_pending = false;
+                            self.toast_manager.info(format!("Can't step back: {msg}"));
+                        } else {
+                            self.rewind.pending = false;
+                            log::debug!("Rewind: {}", msg);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     pub(super) fn render_frame(&mut self, ui_frame_data: Option<&crate::ui::UiFrameData>) -> bool {
@@ -218,9 +254,9 @@ impl App {
                 }
                 crate::ui::apply_debug_actions(
                     &result.debug_actions,
-                    &mut self.debug_step_requested,
-                    &mut self.debug_continue_requested,
-                    &mut self.backstep_requested,
+                    &mut self.debug_requests.step,
+                    &mut self.debug_requests.continue_,
+                    &mut self.debug_requests.backstep,
                 );
                 self.merge_debug_actions(result.debug_actions);
                 if let Some(toggles) = result.layer_toggles {

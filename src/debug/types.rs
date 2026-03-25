@@ -75,6 +75,7 @@ pub(crate) struct DebugInfo {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub(crate) struct PpuSnapshot {
     pub(crate) lcdc: u8,
     pub(crate) stat: u8,
@@ -334,6 +335,7 @@ pub(crate) struct CheatState {
     pub(crate) libretro_status: Option<String>,
     pub(crate) libretro_file_list: Option<Vec<String>>,
     pub(crate) libretro_show: bool,
+    pub(crate) cheats_dirty: bool,
 }
 
 impl CheatState {
@@ -355,6 +357,7 @@ impl CheatState {
             libretro_status: None,
             libretro_file_list: None,
             libretro_show: false,
+            cheats_dirty: true,
         }
     }
 }
@@ -447,18 +450,6 @@ impl DebugWindowState {
             layer_enable_sprites: true,
         }
     }
-
-    pub(crate) fn any_viewer_open(&self) -> bool {
-        self.show_apu_viewer
-            || self.show_tile_viewer
-            || self.show_tilemap_viewer
-            || self.show_oam_viewer
-            || self.show_palette_viewer
-    }
-
-    pub(crate) fn any_vram_viewer_open(&self) -> bool {
-        self.show_tile_viewer || self.show_tilemap_viewer
-    }
 }
 
 fn fold_bytes(bytes: &[u8]) -> u64 {
@@ -514,6 +505,15 @@ pub(crate) struct OpcodeLog {
     cursor: usize,
     count: usize,
     pub(crate) enabled: bool,
+}
+
+impl std::fmt::Debug for OpcodeLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpcodeLog")
+            .field("count", &self.count)
+            .field("enabled", &self.enabled)
+            .finish_non_exhaustive()
+    }
 }
 
 impl OpcodeLog {

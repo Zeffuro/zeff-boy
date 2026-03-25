@@ -259,27 +259,31 @@ impl Graphics {
         if ctx.debug_info.is_some() {
             let has_game_view = crate::debug::has_game_view_tab(ctx.dock_state);
 
+            let mut offscreen_resized = false;
             if has_game_view
                 && let Some((w, h)) = self.game_view_pixel_size {
                     let scale = ctx.settings.offscreen_scale.max(1);
                     let ow = w.max(160 * scale);
                     let oh = h.max(144 * scale);
-                    self.framebuffer.resize_offscreen(&self.gpu.device, ow, oh);
+                    offscreen_resized = self.framebuffer.resize_offscreen(&self.gpu.device, ow, oh);
                 }
 
             let game_texture_id = if has_game_view {
-                let tex_view = self.framebuffer.output_view();
                 match self.game_egui_texture_id {
                     Some(id) => {
-                        self.egui.update_native_texture(
-                            &self.gpu.device,
-                            id,
-                            tex_view,
-                            wgpu::FilterMode::Nearest,
-                        );
+                        if offscreen_resized {
+                            let tex_view = self.framebuffer.output_view();
+                            self.egui.update_native_texture(
+                                &self.gpu.device,
+                                id,
+                                tex_view,
+                                wgpu::FilterMode::Nearest,
+                            );
+                        }
                         Some(id)
                     }
                     None => {
+                        let tex_view = self.framebuffer.output_view();
                         let id = self.egui.register_native_texture(
                             &self.gpu.device,
                             tex_view,

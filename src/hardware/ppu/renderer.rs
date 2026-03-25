@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use crate::hardware::ppu::palette::{apply_palette, cgb_palette_rgba};
-use crate::hardware::ppu::{SCREEN_W, SpriteEntry};
+use crate::hardware::ppu::{LCDC_BG_ENABLE, LCDC_OBJ_ENABLE, LCDC_OBJ_SIZE, SCREEN_W, SpriteEntry};
 
 #[path = "renderer_cgb.rs"]
 mod cgb;
@@ -35,7 +35,7 @@ fn cgb_sprite_hidden_by_bg(
     bg_color_id: u8,
     bg_to_oam_priority: bool,
 ) -> bool {
-    if lcdc & 0x01 == 0 {
+    if lcdc & LCDC_BG_ENABLE == 0 {
         return false;
     }
     bg_color_id != 0 && (sprite_bg_priority || bg_to_oam_priority)
@@ -58,11 +58,11 @@ pub(super) struct SpriteRenderContext<'a> {
 }
 
 pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
-    if ctx.lcdc & 0x02 == 0 {
+    if ctx.lcdc & LCDC_OBJ_ENABLE == 0 {
         return;
     }
 
-    let tall_sprites = ctx.lcdc & 0x04 != 0;
+    let tall_sprites = ctx.lcdc & LCDC_OBJ_SIZE != 0;
     let sprite_height: u8 = if tall_sprites { 16 } else { 8 };
 
     let mut sprites_on_line: ArrayVec<SpriteEntry, 10> = ArrayVec::new();

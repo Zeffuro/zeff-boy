@@ -1,8 +1,8 @@
-use super::{DOTS_PER_LINE, DRAW_DOTS, OAM_DOTS, PPU, SCREEN_H, renderer};
+use super::{DOTS_PER_LINE, DRAW_DOTS, LCDC_LCD_ENABLE, LCDC_WINDOW_ENABLE, OAM_DOTS, PPU, SCREEN_H, renderer};
 
 impl PPU {
     pub(crate) fn window_enable_condition(&self) -> bool {
-        self.lcdc & 0x20 != 0
+        self.lcdc & LCDC_WINDOW_ENABLE != 0
     }
 
     pub(crate) fn window_visible_on_current_line(&self) -> bool {
@@ -22,7 +22,7 @@ impl PPU {
     pub(crate) fn step(&mut self, cycles: u64, vram: &[u8], oam: &[u8], cgb_mode: bool) -> u8 {
         self.cgb_mode = cgb_mode;
 
-        if self.lcdc & 0x80 == 0 {
+        if self.lcdc & LCDC_LCD_ENABLE == 0 {
             self.cycles = 0;
             self.ly = 0;
             self.stat &= !0x03;
@@ -106,7 +106,7 @@ impl PPU {
     }
 
     pub(crate) fn lcd_enabled(&self) -> bool {
-        self.lcdc & 0x80 != 0
+        self.lcdc & LCDC_LCD_ENABLE != 0
     }
 
     pub(crate) fn cpu_vram_accessible(&self) -> bool {

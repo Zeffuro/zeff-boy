@@ -78,14 +78,17 @@ impl RewindBuffer {
         self.snapshots.pop_back().and_then(|s| s.decompress())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn peek(&self) -> Option<RewindFrame> {
         self.snapshots.back().and_then(|s| s.decompress())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.snapshots.len()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn capacity(&self) -> usize {
         self.capacity
     }
@@ -97,10 +100,12 @@ impl RewindBuffer {
         self.snapshots.len() as f32 / self.capacity as f32
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_empty(&self) -> bool {
         self.snapshots.is_empty()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear(&mut self) {
         self.snapshots.clear();
         self.frame_counter = 0;

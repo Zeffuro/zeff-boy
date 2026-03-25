@@ -18,12 +18,12 @@ impl FpsTracker {
         self.timestamps.push_back(now);
 
         while self.timestamps.len() > 1 {
-            if now
-                .duration_since(*self.timestamps.front().unwrap())
-                .as_secs_f64()
-                > 1.0
-            {
-                self.timestamps.pop_front();
+            if let Some(&front) = self.timestamps.front() {
+                if now.duration_since(front).as_secs_f64() > 1.0 {
+                    self.timestamps.pop_front();
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -31,11 +31,10 @@ impl FpsTracker {
     }
 
     pub(crate) fn fps(&self) -> f64 {
-        if self.timestamps.len() < 2 {
+        let (Some(&first), Some(&last)) = (self.timestamps.front(), self.timestamps.back())
+        else {
             return 0.0;
-        }
-        let first = *self.timestamps.front().unwrap();
-        let last = *self.timestamps.back().unwrap();
+        };
         let elapsed = last.duration_since(first).as_secs_f64();
         if elapsed < 0.001 {
             return 0.0;

@@ -34,6 +34,7 @@ impl RamSize {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn banks(&self) -> usize {
         match self {
             RamSize::None | RamSize::Unused => 0,

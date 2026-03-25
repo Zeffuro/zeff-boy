@@ -1,6 +1,6 @@
 use super::{SpriteRenderContext, render_sprites};
 use crate::hardware::ppu::palette::apply_palette;
-use crate::hardware::ppu::{PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
+use crate::hardware::ppu::{LCDC_BG_ENABLE, LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
 
 fn render_bg_pixel(
     vram: &[u8],
@@ -40,10 +40,11 @@ fn render_window_line(
     tile_data_unsigned: bool,
     win_tile_map_base: usize,
     x: usize,
+    window_visible: bool,
 ) -> Option<u8> {
     let win_x = ppu.wx as i32 - 7;
 
-    if !ppu.window_visible_on_current_line() || win_x >= SCREEN_W as i32 || (x as i32) < win_x {
+    if !window_visible || win_x >= SCREEN_W as i32 || (x as i32) < win_x {
         return None;
     }
 
@@ -66,7 +67,7 @@ fn render_bg_line(
     ly: usize,
     x: usize,
 ) -> u8 {
-    if ppu.lcdc & 0x01 == 0 {
+    if ppu.lcdc & LCDC_BG_ENABLE == 0 {
         return 0;
     }
     let bg_y = (ly + ppu.scy as usize) & 0xFF;
@@ -96,22 +97,23 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         }
     }
 
-    let bg_tile_map_base: usize = if ppu.lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
+    let bg_tile_map_base: usize = if ppu.lcdc & LCDC_BG_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
 
-    let tile_data_unsigned = ppu.lcdc & 0x10 != 0;
-    let win_tile_map_base: usize = if ppu.lcdc & 0x40 != 0 { 0x1C00 } else { 0x1800 };
+    let tile_data_unsigned = ppu.lcdc & LCDC_TILE_DATA != 0;
+    let win_tile_map_base: usize = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
 
     let mut bg_color_ids = [0u8; SCREEN_W];
+    let window_visible = ppu.window_visible_on_current_line();
 
     for (x, bg_color_id) in bg_color_ids.iter_mut().enumerate() {
-        let color_id = if ppu.debug_enable_window {
-            render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, x)
+        let color_id = if ppu.debug_flags.window {
+            render_window_line(ppu, vram, tile_data_unsigned, win_tile_map_base, x, window_visible)
         } else {
             None
         };
 
         let color_id = color_id.unwrap_or_else(|| {
-            if ppu.debug_enable_bg {
+            if ppu.debug_flags.bg {
                 render_bg_line(ppu, vram, tile_data_unsigned, bg_tile_map_base, ly, x)
             } else {
                 0
@@ -127,7 +129,7 @@ pub(crate) fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
     ppu.increment_window_line_counter_after_scanline();
 
-    if ppu.debug_enable_sprites {
+    if ppu.debug_flags.sprites {
         render_sprites(SpriteRenderContext {
             cgb_mode: false,
             lcdc: ppu.lcdc,

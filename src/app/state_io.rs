@@ -110,6 +110,7 @@ impl App {
                     crate::cheats::load_game_cheats(Some(&rom_header_title), Some(rom_crc32));
                 self.debug_windows.cheat.user_codes = user;
                 self.debug_windows.cheat.libretro_codes = libretro;
+                self.debug_windows.cheat.cheats_dirty = true;
 
                 self.emu_thread = Some(EmuThread::spawn(emu));
                 self.fps_tracker = FpsTracker::new();
@@ -246,6 +247,8 @@ impl App {
         self.rewind.fill = 0.0;
         self.rewind.throttle = 0;
         self.rewind.pops = 0;
+        self.rewind.pending = false;
+        self.rewind.backstep_pending = false;
 
         self.debug_windows.cheat.rom_title = None;
         self.debug_windows.cheat.rom_crc32 = None;

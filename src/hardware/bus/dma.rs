@@ -1,4 +1,5 @@
 use super::Bus;
+use crate::hardware::ppu::LCDC_LCD_ENABLE;
 use crate::hardware::types::constants::{VRAM_END, VRAM_START};
 use crate::hardware::types::hardware_mode::HardwareMode;
 
@@ -111,7 +112,7 @@ impl Bus {
             return;
         }
 
-        if self.io.ppu.lcdc & 0x80 == 0 || self.io.ppu.ly >= 144 {
+        if self.io.ppu.lcdc & LCDC_LCD_ENABLE == 0 || self.io.ppu.ly >= 144 {
             return;
         }
 

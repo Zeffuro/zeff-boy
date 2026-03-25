@@ -31,6 +31,18 @@ pub(crate) struct DebugController {
     watchpoints_active: bool,
 }
 
+impl std::fmt::Debug for DebugController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DebugController")
+            .field("breakpoint_count", &self.breakpoint_count)
+            .field("watchpoints", &self.watchpoints)
+            .field("break_on_next", &self.break_on_next)
+            .field("hit_breakpoint", &self.hit_breakpoint)
+            .field("hit_watchpoint", &self.hit_watchpoint)
+            .finish_non_exhaustive()
+    }
+}
+
 impl DebugController {
     pub(crate) fn new() -> Self {
         Self {
@@ -45,6 +57,7 @@ impl DebugController {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn has_breakpoint(&self, addr: u16) -> bool {
         self.breakpoints[addr as usize]
     }

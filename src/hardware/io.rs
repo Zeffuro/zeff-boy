@@ -6,6 +6,7 @@ use crate::hardware::sgb::SgbState;
 use crate::hardware::timer::Timer;
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
+use std::fmt;
 
 pub(crate) struct IO {
     pub(crate) joypad: Joypad,
@@ -14,6 +15,19 @@ pub(crate) struct IO {
     pub(crate) ppu: PPU,
     pub(crate) apu: Apu,
     pub(crate) sgb: SgbState,
+}
+
+impl fmt::Debug for IO {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IO")
+            .field("joypad", &self.joypad)
+            .field("serial", &self.serial)
+            .field("timer", &self.timer)
+            .field("ppu", &self.ppu)
+            .field("apu", &self.apu)
+            .field("sgb", &self.sgb)
+            .finish()
+    }
 }
 
 impl IO {

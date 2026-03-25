@@ -1,5 +1,5 @@
 use super::{SpriteRenderContext, decode_cgb_tile_attributes, render_sprites};
-use crate::hardware::ppu::{PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
+use crate::hardware::ppu::{LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
 
 pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     let ly = ppu.ly as usize;
@@ -7,17 +7,18 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         return;
     }
 
-    let bg_tile_map_base: usize = if ppu.lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
-    let win_tile_map_base: usize = if ppu.lcdc & 0x40 != 0 { 0x1C00 } else { 0x1800 };
-    let tile_data_unsigned = ppu.lcdc & 0x10 != 0;
+    let bg_tile_map_base: usize = if ppu.lcdc & LCDC_BG_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
+    let win_tile_map_base: usize = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
+    let tile_data_unsigned = ppu.lcdc & LCDC_TILE_DATA != 0;
     let mut bg_color_ids = [0u8; SCREEN_W];
     let mut bg_priority_flags = [false; SCREEN_W];
+    let window_visible = ppu.window_visible_on_current_line();
 
     for x in 0..SCREEN_W {
         let (map_base, map_x, map_y, is_window) = {
             let win_x = ppu.wx as i32 - 7;
-            if ppu.debug_enable_window
-                && ppu.window_visible_on_current_line()
+            if ppu.debug_flags.window
+                && window_visible
                 && win_x < SCREEN_W as i32
                 && (x as i32) >= win_x
             {
@@ -37,7 +38,7 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             }
         };
 
-        if !ppu.debug_enable_bg && !is_window {
+        if !ppu.debug_flags.bg && !is_window {
             let offset = (ly * SCREEN_W + x) * 4;
             ppu.framebuffer[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
             bg_color_ids[x] = 0;
@@ -79,7 +80,7 @@ pub(crate) fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
     ppu.increment_window_line_counter_after_scanline();
 
-    if ppu.debug_enable_sprites {
+    if ppu.debug_flags.sprites {
         render_sprites(SpriteRenderContext {
             cgb_mode: true,
             lcdc: ppu.lcdc,

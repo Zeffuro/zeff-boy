@@ -5,6 +5,7 @@ use crate::hardware::types::constants::*;
 use log::warn;
 
 impl Bus {
+    #[allow(unreachable_patterns)]
     pub(crate) fn read_byte_raw(&self, addr: u16) -> u8 {
         match addr {
             ROM_BANK_0_START..=ROM_BANK_N_END => self.cartridge.read_rom(addr),
@@ -21,7 +22,15 @@ impl Bus {
                 let local = (addr - WRAM_N_START) as usize;
                 self.wram[self.active_wram_bank() * WRAM_SIZE + local]
             }
-            ECHO_RAM_START..=ECHO_RAM_END => self.read_byte_raw(addr - ECHO_RAM_OFFSET),
+            ECHO_RAM_START..=ECHO_RAM_END => {
+                let mirror = addr - ECHO_RAM_OFFSET;
+                if mirror < WRAM_N_START {
+                    self.wram[(mirror - WRAM_0_START) as usize]
+                } else {
+                    let local = (mirror - WRAM_N_START) as usize;
+                    self.wram[self.active_wram_bank() * WRAM_SIZE + local]
+                }
+            }
             OAM_START..=OAM_END => {
                 if !self.io.ppu.cpu_oam_accessible() {
                     return 0xFF;
@@ -44,6 +53,9 @@ impl Bus {
         match addr {
             ROM_BANK_0_START..=ROM_BANK_N_END => {
                 let raw = self.read_byte_raw(addr);
+                if self.game_genie_patches.is_empty() {
+                    return raw;
+                }
                 for patch in &self.game_genie_patches {
                     match *patch {
                         CheatPatch::RomWrite { address, value } if address == addr => {
@@ -98,8 +110,14 @@ impl Bus {
                 0
             }
             ECHO_RAM_START..=ECHO_RAM_END => {
-                let mirror_addr = addr - ECHO_RAM_OFFSET;
-                self.write_byte(mirror_addr, value)
+                let mirror = addr - ECHO_RAM_OFFSET;
+                if mirror < WRAM_N_START {
+                    self.wram[(mirror - WRAM_0_START) as usize] = value;
+                } else {
+                    let local = (mirror - WRAM_N_START) as usize;
+                    self.wram[self.active_wram_bank() * WRAM_SIZE + local] = value;
+                }
+                0
             }
             OAM_START..=OAM_END => {
                 if !self.io.ppu.cpu_oam_accessible() {

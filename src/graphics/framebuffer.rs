@@ -428,19 +428,19 @@ impl FramebufferRenderer {
             self.two_pass = true;
         } else {
             // Single pass
-            let mut dynamic_source: Option<String> = None;
+            let dynamic_source: String;
             let source = if matches!(effect, EffectPreset::Custom) && !scaling.is_upscaler() {
                 if settings.custom_shader_path.trim().is_empty() {
                     combined_shader_source(scaling, EffectPreset::None)
                 } else {
                     match std::fs::read_to_string(&settings.custom_shader_path) {
                         Ok(fragment) => {
-                            dynamic_source = Some(format!(
+                            dynamic_source = format!(
                                 "{}\n{}",
                                 include_str!("../shaders/common_vertex.wgsl"),
                                 fragment
-                            ));
-                            dynamic_source.as_deref().unwrap_or(combined_shader_source(scaling, EffectPreset::None))
+                            );
+                            &dynamic_source
                         }
                         Err(err) => {
                             log::warn!(
@@ -540,11 +540,11 @@ impl FramebufferRenderer {
         pass.draw(0..3, 0..1);
     }
 
-    pub(crate) fn resize_offscreen(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub(crate) fn resize_offscreen(&mut self, device: &wgpu::Device, width: u32, height: u32) -> bool {
         let w = width.max(MIN_OFFSCREEN_WIDTH);
         let h = height.max(MIN_OFFSCREEN_HEIGHT);
         if self.offscreen_width == w && self.offscreen_height == h {
-            return;
+            return false;
         }
         self.offscreen_width = w;
         self.offscreen_height = h;
@@ -561,6 +561,7 @@ impl FramebufferRenderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.rebuild_aux_bind_groups(device);
+        true
     }
 
     fn rebuild_aux_bind_groups(&mut self, device: &wgpu::Device) {
@@ -712,6 +713,7 @@ impl FramebufferRenderer {
         &self.output_view
     }
 
+    #[allow(dead_code)]
     pub(crate) fn texture_view(&self) -> &wgpu::TextureView {
         &self.screen_view
     }

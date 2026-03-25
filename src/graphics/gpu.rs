@@ -72,6 +72,7 @@ impl GpuContext {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn texture_sampler_bind_group_layout(
     device: &wgpu::Device,
     label: &str,

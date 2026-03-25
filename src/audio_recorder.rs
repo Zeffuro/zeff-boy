@@ -20,9 +20,10 @@ enum RecorderInner {
         is_float: bool,
     },
     Ogg {
-        sample_rate: u32,
-        channels: u16,
+        writer: BufWriter<File>,
+        encoder: vorbis_encoder::Encoder,
         buffer: Vec<f32>,
+        chunk_threshold: usize,
     },
     Midi {
         snapshots: Vec<ApuChannelSnapshot>,
@@ -49,11 +50,19 @@ impl AudioRecorder {
                     is_float: matches!(format, AudioRecordingFormat::WavFloat),
                 }
             }
-            AudioRecordingFormat::OggVorbis => RecorderInner::Ogg {
-                sample_rate,
-                channels: 2,
-                buffer: Vec::with_capacity(sample_rate as usize * 2 * 60),
-            },
+            AudioRecordingFormat::OggVorbis => {
+                let file = File::create(path)?;
+                let writer = BufWriter::new(file);
+                let encoder = vorbis_encoder::Encoder::new(2, sample_rate as u64, 0.6)
+                    .map_err(|e| std::io::Error::other(format!("Vorbis init error: {e}")))?;
+                let chunk_threshold = sample_rate as usize * 2;
+                RecorderInner::Ogg {
+                    writer,
+                    encoder,
+                    buffer: Vec::with_capacity(chunk_threshold),
+                    chunk_threshold,
+                }
+            }
             AudioRecordingFormat::Midi => RecorderInner::Midi {
                 snapshots: Vec::with_capacity(3600),
             },
@@ -87,8 +96,22 @@ impl AudioRecorder {
                     }
                 }
             }
-            RecorderInner::Ogg { buffer, .. } => {
+            RecorderInner::Ogg {
+                writer,
+                encoder,
+                buffer,
+                chunk_threshold,
+            } => {
                 buffer.extend_from_slice(samples);
+                while buffer.len() >= *chunk_threshold {
+                    let chunk: Vec<i16> = buffer
+                        .drain(..*chunk_threshold)
+                        .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                        .collect();
+                    if let Ok(encoded) = encoder.encode(&chunk) {
+                        let _ = writer.write_all(&encoded);
+                    }
+                }
             }
             RecorderInner::Midi { .. } => {
             }
@@ -115,10 +138,11 @@ impl AudioRecorder {
                 is_float,
             } => finish_wav(self.path, writer, sample_rate, channels, samples_written, is_float),
             RecorderInner::Ogg {
-                sample_rate,
-                channels,
+                writer,
+                encoder,
                 buffer,
-            } => finish_ogg(self.path, sample_rate, channels, &buffer),
+                ..
+            } => finish_ogg(self.path, writer, encoder, &buffer),
             RecorderInner::Midi { snapshots } => finish_midi(self.path, &snapshots),
         }
     }
@@ -175,38 +199,27 @@ fn finish_wav(
 
 fn finish_ogg(
     path: PathBuf,
-    sample_rate: u32,
-    channels: u16,
-    buffer: &[f32],
+    mut writer: BufWriter<File>,
+    mut encoder: vorbis_encoder::Encoder,
+    remaining: &[f32],
 ) -> std::io::Result<PathBuf> {
-    if buffer.is_empty() {
-        std::fs::write(&path, [])?;
-        return Ok(path);
-    }
-
-    let samples_i16: Vec<i16> = buffer
-        .iter()
-        .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-        .collect();
-
-    let mut encoder = vorbis_encoder::Encoder::new(channels as u32, sample_rate as u64, 0.6)
-        .map_err(|e| std::io::Error::other(format!("Vorbis init error: {e}")))?;
-
-    const CHUNK_SIZE: usize = 48000 * 2;
-    let mut ogg_data = Vec::new();
-
-    for chunk in samples_i16.chunks(CHUNK_SIZE) {
-        let chunk_vec = chunk.to_vec();
-        let encoded = encoder.encode(&chunk_vec)
+    if !remaining.is_empty() {
+        let samples_i16: Vec<i16> = remaining
+            .iter()
+            .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+            .collect();
+        let encoded = encoder
+            .encode(&samples_i16)
             .map_err(|e| std::io::Error::other(format!("Vorbis encode error: {e}")))?;
-        ogg_data.extend_from_slice(&encoded);
+        writer.write_all(&encoded)?;
     }
 
-    let final_data = encoder.flush()
+    let final_data = encoder
+        .flush()
         .map_err(|e| std::io::Error::other(format!("Vorbis flush error: {e}")))?;
-    ogg_data.extend_from_slice(&final_data);
+    writer.write_all(&final_data)?;
+    writer.flush()?;
 
-    std::fs::write(&path, &ogg_data)?;
     Ok(path)
 }
 

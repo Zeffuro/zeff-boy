@@ -12,13 +12,13 @@ impl App {
         };
 
         if matches!(key_code, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
-            self.shift_held = key_event.state == ElementState::Pressed;
+            self.modifiers.shift = key_event.state == ElementState::Pressed;
         }
         if matches!(key_code, KeyCode::ControlLeft | KeyCode::ControlRight) {
-            self.ctrl_held = key_event.state == ElementState::Pressed;
+            self.modifiers.ctrl = key_event.state == ElementState::Pressed;
         }
         if matches!(key_code, KeyCode::AltLeft | KeyCode::AltRight) {
-            self.alt_held = key_event.state == ElementState::Pressed;
+            self.modifiers.alt = key_event.state == ElementState::Pressed;
         }
 
         if self.handle_rebinding_key(key_event, key_code) {
@@ -82,14 +82,14 @@ impl App {
     fn handle_shortcut_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
         let pressed = key_event.state == ElementState::Pressed && !key_event.repeat;
 
-        if self.ctrl_held && key_code == KeyCode::KeyR {
+        if self.modifiers.ctrl && key_code == KeyCode::KeyR {
             if pressed {
                 self.reset_game();
             }
             return true;
         }
 
-        if self.alt_held && key_code == KeyCode::Enter {
+        if self.modifiers.alt && key_code == KeyCode::Enter {
             if pressed {
                 self.toggle_fullscreen();
             }
@@ -220,7 +220,7 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::FrameAdvance) {
             if pressed && self.paused {
-                self.frame_advance_requested = true;
+                self.debug_requests.frame_advance = true;
                 self.toast_manager.info("▶ Frame +1");
             }
             return true;
@@ -260,14 +260,14 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::DebugContinue) {
             if pressed {
-                self.debug_continue_requested = true;
+                self.debug_requests.continue_ = true;
             }
             return true;
         }
 
         if key_code == bindings.get(ShortcutAction::DebugStep) {
             if pressed {
-                self.debug_step_requested = true;
+                self.debug_requests.step = true;
             }
             return true;
         }

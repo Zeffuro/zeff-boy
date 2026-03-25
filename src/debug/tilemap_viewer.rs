@@ -1,5 +1,5 @@
 use crate::debug::{PpuSnapshot, TilemapViewerState};
-use crate::hardware::ppu::{apply_palette, cgb_palette_rgba, decode_tile_pixel, tile_data_address};
+use crate::hardware::ppu::{LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, apply_palette, cgb_palette_rgba, decode_tile_pixel, tile_data_address};
 use crate::settings::ColorCorrection;
 
 #[derive(Clone, Copy)]
@@ -33,8 +33,8 @@ pub(super) fn draw_tilemap_viewer_content(
 ) {
     let width = 256usize;
     let height = 256usize;
-    let bg_tile_map_base = if ppu.lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
-    let win_tile_map_base = if ppu.lcdc & 0x40 != 0 { 0x1C00 } else { 0x1800 };
+    let bg_tile_map_base = if ppu.lcdc & LCDC_BG_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
+    let win_tile_map_base = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 { 0x1C00 } else { 0x1800 };
 
     let map_select_id = ui.make_persistent_id("tilemap_viewer_source");
     let mut use_window_map = ui
@@ -105,7 +105,7 @@ pub(super) fn draw_tilemap_viewer_content(
     } else {
         bg_tile_map_base
     };
-    let tile_data_unsigned = ppu.lcdc & 0x10 != 0;
+    let tile_data_unsigned = ppu.lcdc & LCDC_TILE_DATA != 0;
 
     let options_changed = window_state.last_use_window_map != Some(use_window_map)
         || window_state.last_show_attr_overlay != Some(show_attr_overlay)

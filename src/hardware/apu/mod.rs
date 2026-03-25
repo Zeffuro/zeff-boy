@@ -6,6 +6,8 @@ mod state;
 mod tests;
 mod wave;
 
+use std::fmt;
+
 const APU_T_CYCLES_PER_SECOND: f64 = 4_194_304.0;
 const APU_INITIAL_SAMPLE_CAPACITY: usize = 2048;
 const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
@@ -134,3 +136,18 @@ impl Apu {
         }
     }
 }
+
+impl fmt::Debug for Apu {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Apu")
+            .field("nr52", &format_args!("{:#04X}", self.nr52))
+            .field("sample_rate", &self.sample_rate)
+            .field("sample_generation_enabled", &self.sample_generation_enabled)
+            .field("debug_capture_enabled", &self.debug_capture_enabled)
+            .field("frame_seq_step", &self.frame_seq_step)
+            .field("channel_muted", &self.channel_muted)
+            .field("sample_buffer_len", &self.sample_buffer.len())
+            .finish_non_exhaustive()
+    }
+}
+

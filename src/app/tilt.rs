@@ -7,6 +7,7 @@ pub(super) enum AutoTiltSource {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub(super) struct TiltFrameData {
     pub(super) is_mbc7: bool,
     pub(super) stick_controls_tilt: bool,

@@ -2,6 +2,7 @@ use crate::debug::{DebugController, OpcodeLog};
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::hardware::{bus::Bus, cpu::CPU};
+use std::fmt;
 use std::path::PathBuf;
 
 mod boot_init;
@@ -30,3 +31,21 @@ pub(crate) struct Emulator {
     pub(crate) rom_hash: [u8; 32],
     rom_path: PathBuf,
 }
+
+impl fmt::Debug for Emulator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Emulator")
+            .field("cpu", &self.cpu)
+            .field("bus", &self.bus)
+            .field("hardware_mode", &self.hardware_mode)
+            .field("hardware_mode_preference", &self.hardware_mode_preference)
+            .field("cycle_count", &self.cycle_count)
+            .field("last_opcode", &format_args!("{:#04X}", self.last_opcode))
+            .field("last_opcode_pc", &format_args!("{:#06X}", self.last_opcode_pc))
+            .field("opcode_log", &self.opcode_log)
+            .field("debug", &self.debug)
+            .field("title", &self.header.title)
+            .finish_non_exhaustive()
+    }
+}
+

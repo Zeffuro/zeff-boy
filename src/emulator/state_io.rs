@@ -1,5 +1,6 @@
 use super::Emulator;
 use crate::debug::{DebugController, OpcodeLog};
+use crate::hardware::bus::Bus;
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::rom_loader;
 use crate::save_state::{
@@ -78,14 +79,8 @@ impl Emulator {
         &self.rom_path
     }
 
-    pub(crate) fn save_state(&self, slot: u8) -> AnyResult<String> {
-        let path = slot_path(self.rom_hash, slot)?;
-        self.save_state_to_path(&path)?;
-        Ok(path.display().to_string())
-    }
-
-    pub(crate) fn save_state_to_path(&self, path: &Path) -> AnyResult<()> {
-        let state = SaveStateRef {
+    pub(crate) fn as_save_state_ref(&self) -> SaveStateRef<'_> {
+        SaveStateRef {
             version: SAVE_STATE_VERSION,
             rom_hash: self.rom_hash,
             cpu: &self.cpu,
@@ -95,8 +90,23 @@ impl Emulator {
             cycle_count: self.cycle_count,
             last_opcode: self.last_opcode,
             last_opcode_pc: self.last_opcode_pc,
-        };
-        write_to_file(path, &state)?;
+        }
+    }
+
+    pub(crate) fn encode_state_bytes(&self) -> AnyResult<Vec<u8>> {
+        crate::save_state::encode_state_bytes(&self.as_save_state_ref())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn save_state(&self, slot: u8) -> AnyResult<String> {
+        let path = slot_path(self.rom_hash, slot)?;
+        self.save_state_to_path(&path)?;
+        Ok(path.display().to_string())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn save_state_to_path(&self, path: &Path) -> AnyResult<()> {
+        write_to_file(path, &self.as_save_state_ref())?;
         Ok(())
     }
 
@@ -117,20 +127,14 @@ impl Emulator {
             let state = crate::save_state::decode_on_thread(bytes)?;
             validate_compatibility(&state, self.rom_hash)?;
 
-            let current_sample_rate = self.bus.io.apu.sample_rate;
             let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
             let mut restored_bus = state.bus;
             restored_bus.cartridge.restore_rom_bytes(rom_bytes);
-            restored_bus
-                .cartridge
-                .set_rumble_flag(self.header.cartridge_type.is_mbc5_with_rumble());
-            restored_bus.io.timer.mode = restored_bus.hardware_mode;
-            restored_bus.io.serial.mode = restored_bus.hardware_mode;
-            restored_bus.io.apu.set_sample_rate(current_sample_rate);
-            restored_bus.io.ppu.set_sgb_mode(matches!(
-                restored_bus.hardware_mode,
-                HardwareMode::SGB1 | HardwareMode::SGB2
-            ));
+            Self::apply_bus_fixups(
+                &mut restored_bus,
+                self.bus.io.apu.sample_rate,
+                self.header.cartridge_type.is_mbc5_with_rumble(),
+            );
 
             self.cpu = state.cpu;
             *self.bus = restored_bus;
@@ -140,11 +144,7 @@ impl Emulator {
             self.last_opcode = state.last_opcode;
             self.last_opcode_pc = state.last_opcode_pc;
 
-            self.opcode_log = OpcodeLog::new(32);
-            self.debug = DebugController::new();
-            self.bus.trace_cpu_accesses = false;
-            self.bus.begin_cpu_access_trace();
-
+            self.reset_debug_state();
             return Ok(());
         }
 
@@ -152,18 +152,12 @@ impl Emulator {
             let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
             let import = import_bess(&bytes, &rom_bytes, &self.header)?;
 
-            let current_sample_rate = self.bus.io.apu.sample_rate;
             let mut restored_bus = import.bus;
-            restored_bus
-                .cartridge
-                .set_rumble_flag(self.header.cartridge_type.is_mbc5_with_rumble());
-            restored_bus.io.timer.mode = import.hardware_mode;
-            restored_bus.io.serial.mode = import.hardware_mode;
-            restored_bus.io.apu.set_sample_rate(current_sample_rate);
-            restored_bus.io.ppu.set_sgb_mode(matches!(
-                import.hardware_mode,
-                HardwareMode::SGB1 | HardwareMode::SGB2
-            ));
+            Self::apply_bus_fixups(
+                &mut restored_bus,
+                self.bus.io.apu.sample_rate,
+                self.header.cartridge_type.is_mbc5_with_rumble(),
+            );
 
             self.cpu = import.cpu;
             self.bus = restored_bus;
@@ -172,14 +166,30 @@ impl Emulator {
             self.last_opcode = 0;
             self.last_opcode_pc = self.cpu.pc;
 
-            self.opcode_log = OpcodeLog::new(32);
-            self.debug = DebugController::new();
-            self.bus.trace_cpu_accesses = false;
-            self.bus.begin_cpu_access_trace();
-
+            self.reset_debug_state();
             return Ok(());
         }
 
         bail!("unrecognized save state format")
+    }
+
+    /// Apply common fixups to a restored `Bus` (rumble, timer/serial mode, sample rate, SGB).
+    fn apply_bus_fixups(bus: &mut Bus, current_sample_rate: u32, is_rumble: bool) {
+        bus.cartridge.set_rumble_flag(is_rumble);
+        bus.io.timer.mode = bus.hardware_mode;
+        bus.io.serial.mode = bus.hardware_mode;
+        bus.io.apu.set_sample_rate(current_sample_rate);
+        bus.io.ppu.set_sgb_mode(matches!(
+            bus.hardware_mode,
+            HardwareMode::SGB1 | HardwareMode::SGB2
+        ));
+    }
+
+    /// Reset debug/opcode state after loading a save state.
+    fn reset_debug_state(&mut self) {
+        self.opcode_log = OpcodeLog::new(32);
+        self.debug = DebugController::new();
+        self.bus.trace_cpu_accesses = false;
+        self.bus.begin_cpu_access_trace();
     }
 }

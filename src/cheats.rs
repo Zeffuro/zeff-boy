@@ -7,6 +7,7 @@ pub(crate) enum CheatType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum CheatValue {
     Constant(u8),
     PreserveWithCurrent { mask: u8, base: u8 },
@@ -46,6 +47,7 @@ impl CheatValue {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_mask_base_preserve(mask: u8, base: u8) -> Self {
         if mask == 0 {
             Self::Constant(base)
@@ -54,6 +56,7 @@ impl CheatValue {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_mask_base_user(mask: u8, base: u8) -> Self {
         if mask == 0 {
             Self::Constant(base)
@@ -560,12 +563,6 @@ fn sanitize_rom_title(title: &str) -> String {
             _ => c,
         })
         .collect()
-}
-
-fn legacy_cheats_dir(rom_title: &str) -> std::path::PathBuf {
-    crate::settings::Settings::settings_dir()
-        .join("cheats")
-        .join(sanitize_rom_title(rom_title))
 }
 
 fn storage_key(rom_title: Option<&str>, rom_crc32: Option<u32>) -> Option<String> {

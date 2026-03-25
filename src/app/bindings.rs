@@ -4,15 +4,6 @@ use crate::settings::TiltBindingAction;
 use winit::keyboard::KeyCode;
 
 impl App {
-    pub(super) fn keycode_to_state_slot(key: KeyCode) -> Option<u8> {
-        match key {
-            KeyCode::F1 => Some(1),
-            KeyCode::F2 => Some(2),
-            KeyCode::F3 => Some(3),
-            KeyCode::F4 => Some(4),
-            _ => None,
-        }
-    }
 
     pub(super) fn map_key(&self, key: KeyCode) -> Option<JoypadKey> {
         let keys = &self.settings.key_bindings;

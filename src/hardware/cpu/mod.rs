@@ -12,6 +12,7 @@ use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::{Result, bail};
 
+#[derive(Debug)]
 pub(crate) struct CPU {
     pub(crate) pc: u16,
     pub(crate) sp: u16,
@@ -107,35 +108,22 @@ impl CPU {
             return false;
         }
 
-        for bit in 0..5 {
-            if triggered & (1 << bit) != 0 {
-                let irq_mask = 1 << bit;
-                bus.if_reg &= !irq_mask;
-                self.ime = IMEState::Disabled;
+        const INT_VECTORS: [u16; 5] = [INT_VBLANK, INT_STAT, INT_TIMER, INT_SERIAL, INT_JOYPAD];
 
-                self.tick_internal_timed(bus, 8);
-                self.push16_timed(bus, self.pc);
-                self.tick_internal_timed(bus, 4);
-                self.pc = match bit {
-                    0 => INT_VBLANK,
-                    1 => INT_STAT,
-                    2 => INT_TIMER,
-                    3 => INT_SERIAL,
-                    4 => INT_JOYPAD,
-                    _ => unreachable!(),
-                };
-
-                return true;
-            }
+        let bit = (triggered & 0x1F).trailing_zeros() as usize;
+        if bit >= 5 {
+            return false;
         }
 
-        false
-    }
+        bus.if_reg &= !(1 << bit);
+        self.ime = IMEState::Disabled;
 
-    pub(crate) fn fetch8(&mut self, bus: &mut Bus) -> u8 {
-        let val = bus.cpu_read_byte(self.pc);
-        self.advance_pc_after_fetch();
-        val
+        self.tick_internal_timed(bus, 8);
+        self.push16_timed(bus, self.pc);
+        self.tick_internal_timed(bus, 4);
+        self.pc = INT_VECTORS[bit];
+
+        true
     }
 
     pub(crate) fn fetch8_timed(&mut self, bus: &mut Bus) -> u8 {
@@ -144,11 +132,6 @@ impl CPU {
         val
     }
 
-    pub(crate) fn fetch16(&mut self, bus: &mut Bus) -> u16 {
-        let low = self.fetch8(bus) as u16;
-        let high = self.fetch8(bus) as u16;
-        low | (high << 8)
-    }
 
     pub(crate) fn fetch16_timed(&mut self, bus: &mut Bus) -> u16 {
         let low = self.fetch8_timed(bus) as u16;
@@ -156,13 +139,6 @@ impl CPU {
         low | (high << 8)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn push16(&mut self, bus: &mut Bus, value: u16) {
-        self.sp = self.sp.wrapping_sub(1);
-        bus.cpu_write_byte(self.sp, (value >> 8) as u8);
-        self.sp = self.sp.wrapping_sub(1);
-        bus.cpu_write_byte(self.sp, (value & 0xFF) as u8);
-    }
 
     pub(crate) fn push16_timed(&mut self, bus: &mut Bus, value: u16) {
         self.sp = self.sp.wrapping_sub(1);
@@ -171,14 +147,6 @@ impl CPU {
         self.bus_write_timed(bus, self.sp, (value & 0xFF) as u8);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn pop16(&mut self, bus: &mut Bus) -> u16 {
-        let low = bus.cpu_read_byte(self.sp) as u16;
-        self.sp = self.sp.wrapping_add(1);
-        let high = bus.cpu_read_byte(self.sp) as u16;
-        self.sp = self.sp.wrapping_add(1);
-        (high << 8) | low
-    }
 
     pub(crate) fn pop16_timed(&mut self, bus: &mut Bus) -> u16 {
         let low = self.bus_read_timed(bus, self.sp) as u16;
@@ -496,5 +464,354 @@ mod tests {
 
         assert_eq!(delta, 4 + 32);
         assert!(!bus.hdma_active);
+    }
+
+    #[test]
+    fn af_round_trips_with_lower_nibble_cleared() {
+        let mut cpu = CPU::new();
+        cpu.set_af(0x12F0);
+        assert_eq!(cpu.a, 0x12);
+        assert_eq!(cpu.f, 0xF0);
+        assert_eq!(cpu.get_af(), 0x12F0);
+
+        cpu.set_af(0xABCD);
+        assert_eq!(cpu.f, 0xC0);
+        assert_eq!(cpu.get_af(), 0xABC0);
+    }
+
+    #[test]
+    fn bc_de_hl_round_trip() {
+        let mut cpu = CPU::new();
+        cpu.set_bc(0x1234);
+        assert_eq!(cpu.b, 0x12);
+        assert_eq!(cpu.c, 0x34);
+        assert_eq!(cpu.get_bc(), 0x1234);
+
+        cpu.set_de(0x5678);
+        assert_eq!(cpu.d, 0x56);
+        assert_eq!(cpu.e, 0x78);
+        assert_eq!(cpu.get_de(), 0x5678);
+
+        cpu.set_hl(0x9ABC);
+        assert_eq!(cpu.h, 0x9A);
+        assert_eq!(cpu.l, 0xBC);
+        assert_eq!(cpu.get_hl(), 0x9ABC);
+    }
+
+    #[test]
+    fn flag_getters_and_setters() {
+        let mut cpu = CPU::new();
+        cpu.f = 0x00;
+        assert!(!cpu.get_z());
+        assert!(!cpu.get_n());
+        assert!(!cpu.get_h());
+        assert!(!cpu.get_c());
+
+        cpu.set_z(true);
+        assert!(cpu.get_z());
+        assert_eq!(cpu.f & 0x80, 0x80);
+
+        cpu.set_n(true);
+        assert!(cpu.get_n());
+
+        cpu.set_h(true);
+        assert!(cpu.get_h());
+
+        cpu.set_c(true);
+        assert!(cpu.get_c());
+        assert_eq!(cpu.f, 0xF0);
+
+        cpu.set_z(false);
+        assert!(!cpu.get_z());
+        assert_eq!(cpu.f, 0x70);
+    }
+
+
+    #[test]
+    fn add_zero_plus_zero_sets_zero_flag() {
+        let mut cpu = CPU::new();
+        cpu.a = 0;
+        cpu.add(0);
+        assert_eq!(cpu.a, 0);
+        assert!(cpu.get_z());
+        assert!(!cpu.get_n());
+        assert!(!cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn add_half_carry() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x0F;
+        cpu.add(0x01);
+        assert_eq!(cpu.a, 0x10);
+        assert!(!cpu.get_z());
+        assert!(cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn add_full_carry_and_wrap() {
+        let mut cpu = CPU::new();
+        cpu.a = 0xFF;
+        cpu.add(0x01);
+        assert_eq!(cpu.a, 0x00);
+        assert!(cpu.get_z());
+        assert!(cpu.get_h());
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn sub_equal_values_gives_zero() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x42;
+        cpu.sub(0x42);
+        assert_eq!(cpu.a, 0);
+        assert!(cpu.get_z());
+        assert!(cpu.get_n());
+        assert!(!cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn sub_half_borrow() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x10;
+        cpu.sub(0x01);
+        assert_eq!(cpu.a, 0x0F);
+        assert!(cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn sub_full_borrow_wraps() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x00;
+        cpu.sub(0x01);
+        assert_eq!(cpu.a, 0xFF);
+        assert!(cpu.get_c());
+        assert!(cpu.get_n());
+    }
+
+    #[test]
+    fn adc_with_carry_set() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x0E;
+        cpu.set_c(true);
+        cpu.adc(0x01);
+        assert_eq!(cpu.a, 0x10);
+        assert!(cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn adc_wraps_with_carry() {
+        let mut cpu = CPU::new();
+        cpu.a = 0xFF;
+        cpu.set_c(true);
+        cpu.adc(0x00);
+        assert_eq!(cpu.a, 0x00);
+        assert!(cpu.get_z());
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn sbc_with_carry_set() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x10;
+        cpu.set_c(true);
+        cpu.sbc(0x0F);
+        assert_eq!(cpu.a, 0x00);
+        assert!(cpu.get_z());
+        assert!(cpu.get_n());
+    }
+
+    #[test]
+    fn sbc_borrow_propagation() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x00;
+        cpu.set_c(true);
+        cpu.sbc(0x00);
+        assert_eq!(cpu.a, 0xFF);
+        assert!(cpu.get_c());
+        assert!(cpu.get_h());
+    }
+
+    #[test]
+    fn inc_wraps_and_sets_zero() {
+        let mut cpu = CPU::new();
+        cpu.set_c(true);
+        let r = cpu.inc(0xFF);
+        assert_eq!(r, 0x00);
+        assert!(cpu.get_z());
+        assert!(!cpu.get_n());
+        assert!(cpu.get_h());
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn dec_wraps_and_sets_half_carry() {
+        let mut cpu = CPU::new();
+        let r = cpu.dec(0x00);
+        assert_eq!(r, 0xFF);
+        assert!(!cpu.get_z());
+        assert!(cpu.get_n());
+        assert!(cpu.get_h());
+    }
+
+    #[test]
+    fn inc_half_carry_boundary() {
+        let mut cpu = CPU::new();
+        let r = cpu.inc(0x0F);
+        assert_eq!(r, 0x10);
+        assert!(cpu.get_h());
+    }
+
+    #[test]
+    fn logical_and_sets_half_carry() {
+        let mut cpu = CPU::new();
+        cpu.a = 0xFF;
+        cpu.logical_and(0x0F);
+        assert_eq!(cpu.a, 0x0F);
+        assert!(!cpu.get_z());
+        assert!(cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn logical_or_zero_result() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x00;
+        cpu.logical_or(0x00);
+        assert_eq!(cpu.a, 0x00);
+        assert!(cpu.get_z());
+        assert!(!cpu.get_h());
+    }
+
+    #[test]
+    fn logical_xor_self_gives_zero() {
+        let mut cpu = CPU::new();
+        cpu.a = 0xAB;
+        cpu.logical_xor(0xAB);
+        assert_eq!(cpu.a, 0x00);
+        assert!(cpu.get_z());
+    }
+
+    #[test]
+    fn compare_sets_flags_without_modifying_a() {
+        let mut cpu = CPU::new();
+        cpu.a = 0x42;
+        cpu.compare(0x42);
+        assert_eq!(cpu.a, 0x42);
+        assert!(cpu.get_z());
+        assert!(cpu.get_n());
+    }
+
+    #[test]
+    fn rlc_rotates_and_sets_carry() {
+        let mut cpu = CPU::new();
+        let r = cpu.rlc(0x80);
+        assert_eq!(r, 0x01);
+        assert!(cpu.get_c());
+        assert!(!cpu.get_z());
+    }
+
+    #[test]
+    fn rlc_zero() {
+        let mut cpu = CPU::new();
+        let r = cpu.rlc(0x00);
+        assert_eq!(r, 0x00);
+        assert!(cpu.get_z());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn rrc_rotates_and_sets_carry() {
+        let mut cpu = CPU::new();
+        let r = cpu.rrc(0x01);
+        assert_eq!(r, 0x80);
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn rl_through_carry() {
+        let mut cpu = CPU::new();
+        cpu.set_c(true);
+        let r = cpu.rl(0x80);
+        assert_eq!(r, 0x01);
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn rr_through_carry() {
+        let mut cpu = CPU::new();
+        cpu.set_c(true);
+        let r = cpu.rr(0x01);
+        assert_eq!(r, 0x80);
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn sla_shifts_left_and_clears_bit0() {
+        let mut cpu = CPU::new();
+        let r = cpu.sla(0x80);
+        assert_eq!(r, 0x00);
+        assert!(cpu.get_z());
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn srl_shifts_right_and_clears_bit7() {
+        let mut cpu = CPU::new();
+        let r = cpu.srl(0x01);
+        assert_eq!(r, 0x00);
+        assert!(cpu.get_z());
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn sra_preserves_sign_bit() {
+        let mut cpu = CPU::new();
+        let r = cpu.sra(0x80);
+        assert_eq!(r, 0xC0);
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn swap_nibbles() {
+        let mut cpu = CPU::new();
+        let r = cpu.swap(0xF0);
+        assert_eq!(r, 0x0F);
+        assert!(!cpu.get_z());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn swap_zero() {
+        let mut cpu = CPU::new();
+        let r = cpu.swap(0x00);
+        assert_eq!(r, 0x00);
+        assert!(cpu.get_z());
+    }
+
+    #[test]
+    fn bit_test_set_and_clear() {
+        let mut cpu = CPU::new();
+        cpu.bit(0, 0x01);
+        assert!(!cpu.get_z());
+        assert!(cpu.get_h());
+
+        cpu.bit(7, 0x01);
+        assert!(cpu.get_z());
+    }
+
+    #[test]
+    fn set_and_res_bits() {
+        let mut cpu = CPU::new();
+        let r = cpu.set(3, 0x00);
+        assert_eq!(r, 0x08);
+
+        let r = cpu.res(3, 0xFF);
+        assert_eq!(r, 0xF7);
     }
 }

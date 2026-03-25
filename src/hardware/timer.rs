@@ -2,6 +2,7 @@ use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::timer_clock::TimerClock;
 use crate::save_state::{StateReader, StateWriter, decode_hardware_mode};
 use anyhow::Result;
+use std::fmt;
 
 pub(crate) struct Timer {
     pub(crate) div: u8,
@@ -12,6 +13,19 @@ pub(crate) struct Timer {
     pub(crate) mode: HardwareMode,
     prev_bit: bool,
     overflow_pending: bool,
+}
+
+impl fmt::Debug for Timer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Timer")
+            .field("div", &format_args!("{:#04X}", self.div))
+            .field("tima", &format_args!("{:#04X}", self.tima))
+            .field("tma", &format_args!("{:#04X}", self.tma))
+            .field("tac", &format_args!("{:#04X}", self.tac))
+            .field("sys_counter", &self.sys_counter)
+            .field("mode", &self.mode)
+            .finish()
+    }
 }
 
 impl Timer {
