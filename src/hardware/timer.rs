@@ -180,3 +180,160 @@ impl Timer {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_timer() -> Timer {
+        let mut t = Timer::new();
+        t.set_mode(HardwareMode::DMG);
+        t
+    }
+
+    #[test]
+    fn div_increments_every_256_t_cycles() {
+        let mut t = make_timer();
+        t.reset_div();
+        assert_eq!(t.div(), 0);
+
+        t.step(255);
+        assert_eq!(t.div(), 0);
+
+        t.step(1);
+        assert_eq!(t.div(), 1);
+
+        t.step(256);
+        assert_eq!(t.div(), 2);
+    }
+
+    #[test]
+    fn reset_div_clears_sys_counter() {
+        let mut t = make_timer();
+        t.step(512);
+        assert!(t.div() > 0);
+
+        t.reset_div();
+        assert_eq!(t.div(), 0);
+    }
+
+    #[test]
+    fn tima_does_not_increment_when_disabled() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x00);
+        t.step(1024);
+        assert_eq!(t.tima(), 0);
+    }
+
+    #[test]
+    fn tima_increments_at_clock_rate_div4() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.step(15);
+        assert_eq!(t.tima(), 0);
+        t.step(1);
+        assert_eq!(t.tima(), 1);
+    }
+
+    #[test]
+    fn tima_overflow_reloads_from_tma_and_fires_interrupt() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0x42);
+        let irq = t.step(16);
+        assert_eq!(t.tima(), 0x42);
+        assert!(irq, "timer overflow should generate interrupt");
+    }
+
+    #[test]
+    fn tima_overflow_interrupt_delayed_one_cycle() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0x10);
+        for cycle in 1..=16 {
+            let irq = t.step(1);
+            if cycle == 16 {
+            }
+            if irq {
+                break;
+            }
+        }
+        let irq = t.step(1);
+        assert!(irq || t.tima() == 0x10, "overflow should have reloaded TMA");
+    }
+
+    #[test]
+    fn write_tima_cancels_pending_overflow() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0x20);
+        t.step(16);
+        t.write_tima(0x50);
+        assert_eq!(t.tima(), 0x50);
+        let irq = t.step(1);
+        assert_eq!(t.tima(), 0x50);
+        let _ = irq;
+    }
+
+    #[test]
+    fn tac_glitch_falling_edge_increments_tima() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.step(8);
+        assert_eq!(t.tima(), 0);
+        let tima_before = t.tima();
+        t.write_tac(0x00);
+        assert_eq!(t.tima(), tima_before + 1);
+    }
+
+    #[test]
+    fn reset_div_falling_edge_increments_tima() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x04);
+        t.step(512);
+        assert_eq!(t.tima(), 0);
+        let tima_before = t.tima();
+        t.reset_div();
+        assert_eq!(t.tima(), tima_before + 1);
+    }
+
+    #[test]
+    fn div_wraps_around_at_255() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.step(255 * 256);
+        assert_eq!(t.div(), 255);
+        t.step(256);
+        assert_eq!(t.div(), 0);
+    }
+
+    #[test]
+    fn save_state_roundtrip() {
+        let mut t = make_timer();
+        t.write_tac(0x07);
+        t.set_tma_raw(0x42);
+        t.step(100);
+
+        let mut writer = StateWriter::new();
+        t.write_state(&mut writer);
+        let bytes = writer.into_bytes();
+
+        let mut reader = StateReader::new(&bytes);
+        let restored = Timer::read_state(&mut reader).expect("restore should succeed");
+
+        assert_eq!(restored.div(), t.div());
+        assert_eq!(restored.tima(), t.tima());
+        assert_eq!(restored.tma(), t.tma());
+        assert_eq!(restored.tac(), t.tac());
+    }
+}

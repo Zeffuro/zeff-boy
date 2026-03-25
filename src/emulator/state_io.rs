@@ -84,7 +84,7 @@ impl Emulator {
             version: SAVE_STATE_VERSION,
             rom_hash: self.rom_hash,
             cpu: &self.cpu,
-            bus: self.bus.as_ref(),
+            bus: &self.bus,
             hardware_mode_preference: self.hardware_mode_preference,
             hardware_mode: self.hardware_mode,
             cycle_count: self.cycle_count,
@@ -137,7 +137,7 @@ impl Emulator {
             );
 
             self.cpu = state.cpu;
-            *self.bus = restored_bus;
+            self.bus = restored_bus;
             self.hardware_mode_preference = state.hardware_mode_preference;
             self.hardware_mode = state.hardware_mode;
             self.cycle_count = state.cycle_count;

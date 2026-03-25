@@ -11,10 +11,10 @@ impl Bus {
         rom: Vec<u8>,
         header: &RomHeader,
         hardware_mode: HardwareMode,
-    ) -> Result<Box<Self>> {
+    ) -> Result<Self> {
         let cartridge = Cartridge::new(rom, header);
 
-        Ok(Box::new(Self {
+        let mut bus = Self {
             cartridge,
             hardware_mode,
             vram: [0; VRAM_SIZE * 2],
@@ -44,19 +44,19 @@ impl Bus {
             cpu_read_trace: Vec::with_capacity(8),
             cpu_write_trace: Vec::with_capacity(4),
             game_genie_patches: Vec::new(),
-        }))
-        .map(|mut bus| {
-            bus.sync_timer_serial_mode();
-            bus.io.ppu.set_sgb_mode(matches!(
-                bus.hardware_mode,
-                HardwareMode::SGB1 | HardwareMode::SGB2
-            ));
-            bus.key1 = match bus.hardware_mode {
-                HardwareMode::CGBDouble => 0xFE,
-                _ => 0x7E,
-            };
-            bus
-        })
+        };
+
+        bus.sync_timer_serial_mode();
+        bus.io.ppu.set_sgb_mode(matches!(
+            bus.hardware_mode,
+            HardwareMode::SGB1 | HardwareMode::SGB2
+        ));
+        bus.key1 = match bus.hardware_mode {
+            HardwareMode::CGBDouble => 0xFE,
+            _ => 0x7E,
+        };
+
+        Ok(bus)
     }
 
     pub(super) fn is_cgb_mode(&self) -> bool {

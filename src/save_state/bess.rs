@@ -134,7 +134,7 @@ pub(crate) fn append_bess(
 
 pub(crate) struct BessImport {
     pub(crate) cpu: CPU,
-    pub(crate) bus: Box<Bus>,
+    pub(crate) bus: Bus,
     pub(crate) hardware_mode: HardwareMode,
 }
 
@@ -261,7 +261,7 @@ pub(crate) fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Resul
         halt_bug_active: false,
     };
 
-    let mut bus = *Bus::new(rom.to_vec(), header, hardware_mode)?;
+    let mut bus = Bus::new(rom.to_vec(), header, hardware_mode)?;
 
     copy_buffer(bytes, vram_offset, vram_size, &mut bus.vram);
     copy_buffer(bytes, ram_offset, ram_size, &mut bus.wram);
@@ -309,7 +309,7 @@ pub(crate) fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Resul
 
     Ok(BessImport {
         cpu,
-        bus: Box::new(bus),
+        bus,
         hardware_mode,
     })
 }

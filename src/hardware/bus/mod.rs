@@ -296,7 +296,7 @@ impl Bus {
     pub(crate) fn timer_tac(&self) -> u8 {
         self.io.timer.tac()
     }
-    
+
     pub(in crate::hardware) fn step_timer(&mut self, t_cycles: u64) {
         if self.io.timer.step(t_cycles) {
             self.if_reg |= 0x04;
@@ -344,7 +344,7 @@ mod tests {
     use crate::cheats::CheatPatch;
     use crate::cheats::CheatValue;
 
-    fn make_test_bus() -> Box<Bus> {
+    fn make_test_bus() -> Bus {
         let mut rom = vec![0u8; 0x8000];
         for (i, byte) in rom.iter_mut().take(0x100).enumerate() {
             *byte = i as u8;
@@ -353,7 +353,7 @@ mod tests {
         Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize")
     }
 
-    fn make_cgb_test_bus() -> Box<Bus> {
+    fn make_cgb_test_bus() -> Bus {
         let mut rom = vec![0u8; 0x8000];
         for (i, byte) in rom.iter_mut().take(0x100).enumerate() {
             *byte = i as u8;

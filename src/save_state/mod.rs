@@ -451,7 +451,7 @@ mod tests {
     fn full_save_state_round_trip_handles_large_arrays() {
         let rom = vec![0u8; 0x8000];
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
-        let bus = *Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+        let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
 
         let cpu = CPU::new();
         let state = SaveStateRef {
@@ -489,7 +489,7 @@ mod tests {
     fn encoded_state_has_bess_footer() {
         let rom = vec![0u8; 0x8000];
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
-        let bus = *Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+        let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
         let cpu = CPU::new();
         let state = SaveStateRef {
             version: SAVE_STATE_VERSION,
@@ -521,7 +521,7 @@ mod tests {
     fn bess_footer_does_not_break_native_decode() {
         let rom = vec![0u8; 0x8000];
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
-        let bus = *Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+        let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
         let cpu = CPU::new();
         let state = SaveStateRef {
             version: SAVE_STATE_VERSION,

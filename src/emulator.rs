@@ -19,7 +19,7 @@ const CGB_POST_BOOT_REGISTERS: RegisterSeed = (0x11, 0x80, 0x00, 0x00, 0xFF, 0x5
 
 pub(crate) struct Emulator {
     pub(crate) cpu: CPU,
-    pub(crate) bus: Box<Bus>,
+    pub(crate) bus: Bus,
     pub(crate) header: RomHeader,
     pub(crate) hardware_mode_preference: HardwareModePreference,
     pub(crate) hardware_mode: HardwareMode,

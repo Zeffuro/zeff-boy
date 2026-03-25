@@ -295,7 +295,7 @@ mod tests {
     use super::*;
     use crate::hardware::rom_header::RomHeader;
 
-    fn make_test_bus(mode: HardwareMode) -> Box<Bus> {
+    fn make_test_bus(mode: HardwareMode) -> Bus {
         let mut rom = vec![0u8; 0x8000];
         rom[0x0058] = 0xC3;
         rom[0x0059] = 0xC3;
@@ -1061,5 +1061,215 @@ mod tests {
         assert!(!cpu.get_n());
         assert!(cpu.get_h());
         assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn step_cb_rlc_b_rotates_register() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.b = 0x85;
+        bus.write_byte(0xC000, 0xCB);
+        bus.write_byte(0xC001, 0x00);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.b, 0x0B);
+        assert!(cpu.get_c());
+        assert!(!cpu.get_z());
+    }
+
+    #[test]
+    fn step_cb_bit_7_a_tests_bit_without_modifying() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0x80;
+        bus.write_byte(0xC000, 0xCB);
+        bus.write_byte(0xC001, 0x7F);
+
+        cpu.step(&mut bus);
+        assert!(!cpu.get_z());
+        assert!(cpu.get_h());
+        assert_eq!(cpu.regs.a, 0x80);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0x7F;
+        cpu.step(&mut bus);
+        assert!(cpu.get_z());
+    }
+
+    #[test]
+    fn step_cb_swap_a_swaps_nibbles() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0xAB;
+        bus.write_byte(0xC000, 0xCB);
+        bus.write_byte(0xC001, 0x37);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.a, 0xBA);
+        assert!(!cpu.get_z());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn step_cb_set_and_res_bit_in_register() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.b = 0x00;
+        bus.write_byte(0xC000, 0xCB);
+        bus.write_byte(0xC001, 0xF8);
+        bus.write_byte(0xC002, 0xCB);
+        bus.write_byte(0xC003, 0x88);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.b, 0x80);
+
+        cpu.regs.b = 0xFF;
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.b, 0xFD);
+    }
+
+    #[test]
+    fn step_cb_srl_a_shifts_right_logically() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0x81;
+        bus.write_byte(0xC000, 0xCB);
+        bus.write_byte(0xC001, 0x3F);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.a, 0x40);
+        assert!(cpu.get_c());
+        assert!(!cpu.get_z());
+    }
+
+    #[test]
+    fn step_ldi_a_hl_loads_and_increments_hl() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.set_hl(0xC100);
+        bus.write_byte(0xC100, 0x55);
+        bus.write_byte(0xC000, 0x2A);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.a, 0x55);
+        assert_eq!(cpu.get_hl(), 0xC101);
+    }
+
+    #[test]
+    fn step_ldd_a_hl_loads_and_decrements_hl() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.set_hl(0xC100);
+        bus.write_byte(0xC100, 0x77);
+        bus.write_byte(0xC000, 0x3A);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.a, 0x77);
+        assert_eq!(cpu.get_hl(), 0xC0FF);
+    }
+
+    #[test]
+    fn step_ld_hl_plus_a_stores_and_increments_hl() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0xAA;
+        cpu.set_hl(0xC100);
+        bus.write_byte(0xC000, 0x22);
+
+        cpu.step(&mut bus);
+        assert_eq!(bus.read_byte(0xC100), 0xAA);
+        assert_eq!(cpu.get_hl(), 0xC101);
+    }
+
+    #[test]
+    fn step_add_hl_bc_16bit_addition() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.set_hl(0x8A23);
+        cpu.set_bc(0x0605);
+        bus.write_byte(0xC000, 0x09);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.get_hl(), 0x9028);
+        assert!(!cpu.get_n());
+        assert!(cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn step_add_hl_hl_doubles_value() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.set_hl(0x8000);
+        bus.write_byte(0xC000, 0x29);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.get_hl(), 0x0000);
+        assert!(cpu.get_c());
+    }
+
+    #[test]
+    fn step_jp_nn_jumps_to_immediate_address() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        bus.write_byte(0xC000, 0xC3);
+        bus.write_byte(0xC001, 0x50);
+        bus.write_byte(0xC002, 0xC0);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.pc, 0xC050);
+    }
+
+    #[test]
+    fn step_xor_a_zeroes_a_and_sets_z() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0xFF;
+        bus.write_byte(0xC000, 0xAF);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.get_z());
+        assert!(!cpu.get_n());
+        assert!(!cpu.get_h());
+        assert!(!cpu.get_c());
+    }
+
+    #[test]
+    fn step_ld_sp_hl_copies_hl_to_sp() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.set_hl(0xDEAD);
+        bus.write_byte(0xC000, 0xF9);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.sp, 0xDEAD);
+    }
+
+    #[test]
+    fn step_cp_d8_sets_flags_without_modifying_a() {
+        let mut cpu = CPU::new();
+        let mut bus = make_test_bus(HardwareMode::DMG);
+        cpu.pc = 0xC000;
+        cpu.regs.a = 0x42;
+        bus.write_byte(0xC000, 0xFE);
+        bus.write_byte(0xC001, 0x42);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.a, 0x42);
+        assert!(cpu.get_z());
+        assert!(cpu.get_n());
     }
 }

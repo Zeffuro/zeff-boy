@@ -307,7 +307,7 @@ pub(crate) fn rst_38(cpu: &mut CPU, bus: &mut Bus) {
 mod tests {
     use super::*;
 
-    fn make_test_bus(mode: HardwareMode) -> Box<Bus> {
+    fn make_test_bus(mode: HardwareMode) -> Bus {
         let rom = vec![0u8; 0x8000];
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
         Bus::new(rom, &header, mode).expect("test bus should initialize")
