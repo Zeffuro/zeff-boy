@@ -50,7 +50,7 @@ impl PPU {
             self.lcd_was_enabled = true;
             self.blank_first_frame_after_lcd_on = true;
 
-            self.cycles = 0;
+            self.cycles = 4;
             self.ly = 0;
             self.stat = (self.stat & !0x03) | 2;
             self.window_line_counter = 0;

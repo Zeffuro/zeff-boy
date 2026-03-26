@@ -198,15 +198,15 @@ impl CPU {
 
     #[inline]
     pub fn inc_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
-        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
         self.tick_internal_timed(bus, 4);
+        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
         value.wrapping_add(1)
     }
 
     #[inline]
     pub fn dec_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
-        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
         self.tick_internal_timed(bus, 4);
+        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
         value.wrapping_sub(1)
     }
 

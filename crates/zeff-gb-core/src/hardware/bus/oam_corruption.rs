@@ -57,23 +57,29 @@ impl Bus {
                         self.oam[prev_offset + off + 1],
                     ]);
                     if row >= 2 {
-                        let pp_offset = (row - 2) * 8;
+                        let pp = (row - 2) * 8;
                         row_n2[i] = u16::from_le_bytes([
-                            self.oam[pp_offset + off],
-                            self.oam[pp_offset + off + 1],
+                            self.oam[pp + off],
+                            self.oam[pp + off + 1],
                         ]);
                     }
                 }
 
-                for i in 0..4 {
-                    let glitched = ((row_n[i] ^ row_n2[i]) & row_n1[i]) ^ row_n2[i];
-                    let bytes_n = row_n[i].to_le_bytes();
-                    self.oam[prev_offset + i * 2] = bytes_n[0];
-                    self.oam[prev_offset + i * 2 + 1] = bytes_n[1];
-                    let bytes_g = glitched.to_le_bytes();
-                    self.oam[row_offset + i * 2] = bytes_g[0];
-                    self.oam[row_offset + i * 2 + 1] = bytes_g[1];
+                let glitched = ((row_n[0] ^ row_n2[0]) & row_n1[0]) ^ row_n2[0];
+
+                let bytes = row_n[0].to_le_bytes();
+                self.oam[prev_offset] = bytes[0];
+                self.oam[prev_offset + 1] = bytes[1];
+
+                for i in 0..3 {
+                    let bytes = row_n1[i].to_le_bytes();
+                    self.oam[row_offset + i * 2] = bytes[0];
+                    self.oam[row_offset + i * 2 + 1] = bytes[1];
                 }
+
+                let bytes = glitched.to_le_bytes();
+                self.oam[row_offset] = bytes[0];
+                self.oam[row_offset + 1] = bytes[1];
             }
             OamCorruptionType::Double => {
                 let mut row_n = [0u16; 4];

@@ -72,7 +72,6 @@ pub fn ld_hl_d16(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_hl_plus_a(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.bus_write_timed(bus, addr, cpu.regs.a);
-    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
     cpu.set_hl(addr.wrapping_add(1));
 }
 
@@ -103,7 +102,6 @@ pub fn ld_sp_d16(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_hl_minus_a(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.bus_write_timed(bus, addr, cpu.regs.a);
-    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
     cpu.set_hl(addr.wrapping_sub(1));
 }
 
