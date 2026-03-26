@@ -4,6 +4,7 @@ mod audio_recorder;
 mod cheats;
 mod cli;
 mod debug;
+mod emu_backend;
 mod emu_thread;
 mod graphics;
 mod input;
@@ -11,7 +12,7 @@ mod libretro_metadata;
 mod settings;
 mod ui;
 
-use zeff_gb_core::emulator::Emulator;
+use crate::emu_backend::{ActiveSystem, EmuBackend};
 use crate::settings::Settings;
 use env_logger::Env;
 use std::path::Path;
@@ -38,15 +39,36 @@ fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"));
     }
 
-    let emulator = args
+    let backend = args
         .rom_path
-        .map(|path_arg| {
-            Emulator::from_rom_with_mode(Path::new(&path_arg), settings.hardware_mode_preference)
-                .map_err(|e| anyhow::anyhow!("{e}"))
+        .map(|path_arg| -> anyhow::Result<EmuBackend> {
+            let path = Path::new(&path_arg);
+            let system = ActiveSystem::from_path(path).unwrap_or(ActiveSystem::GameBoy);
+            match system {
+                ActiveSystem::GameBoy => {
+                    let emu = zeff_gb_core::emulator::Emulator::from_rom_with_mode(
+                        path,
+                        settings.hardware_mode_preference,
+                    )
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    Ok(EmuBackend::from_gb(emu))
+                }
+                ActiveSystem::Nes => {
+                    let rom_data = std::fs::read(path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}"))?;
+                    let emu = zeff_nes_core::emulator::Emulator::new(
+                        &rom_data,
+                        path.to_path_buf(),
+                        48000.0,
+                    )
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    Ok(EmuBackend::from_nes(emu))
+                }
+            }
         })
         .transpose()?;
 
-    app::run(emulator, settings)?;
+    app::run(backend, settings)?;
 
     Ok(())
 }

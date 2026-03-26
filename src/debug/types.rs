@@ -1,8 +1,18 @@
 use crate::cheats::CheatCode;
-use zeff_gb_core::debug::{WatchType, PpuSnapshot};
+use crate::debug::common::WatchType;
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
 use egui::{Color32, ColorImage, TextureHandle};
 use std::collections::HashMap;
+
+pub(crate) struct PerfInfo {
+    pub(crate) fps: f64,
+    pub(crate) speed_mode_label: String,
+    pub(crate) frames_in_flight: usize,
+    pub(crate) cycles: u64,
+    pub(crate) platform_name: &'static str,
+    pub(crate) hardware_label: String,
+    pub(crate) hardware_pref_label: String,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MemorySearchMode {
@@ -142,7 +152,7 @@ impl TilemapViewerState {
         &mut self,
         vram: &[u8],
         bg_palette_ram: &[u8; 64],
-        ppu: PpuSnapshot,
+        ppu: zeff_gb_core::debug::PpuSnapshot,
         cgb_mode: bool,
         color_correction: crate::settings::ColorCorrection,
         color_correction_matrix: [f32; 9],
@@ -382,21 +392,3 @@ impl DebugWindowState {
 fn fold_bytes(bytes: &[u8]) -> u64 {
     crc32fast::hash(bytes) as u64
 }
-
-pub(crate) struct DebugViewerData {
-    pub(crate) vram: Vec<u8>,
-    pub(crate) oam: Vec<u8>,
-    pub(crate) apu_regs: [u8; 0x17],
-    pub(crate) apu_wave_ram: [u8; 0x10],
-    pub(crate) apu_nr52: u8,
-    pub(crate) apu_channel_samples: [[f32; 512]; 4],
-    pub(crate) apu_master_samples: [f32; 512],
-    pub(crate) apu_channel_muted: [bool; 4],
-    pub(crate) ppu: PpuSnapshot,
-    pub(crate) cgb_mode: bool,
-    pub(crate) bg_palette_ram: [u8; 64],
-    pub(crate) obj_palette_ram: [u8; 64],
-    pub(crate) color_correction: crate::settings::ColorCorrection,
-    pub(crate) color_correction_matrix: [f32; 9],
-}
-

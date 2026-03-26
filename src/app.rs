@@ -14,13 +14,13 @@ use crate::{
         DebugUiActions, DebugWindowState, FpsTracker, ToastManager, create_default_dock_state,
         create_dock_from_saved_tabs,
     },
+    emu_backend::{ActiveSystem, EmuBackend},
     emu_thread::EmuThread,
     graphics::Graphics,
     input::GamepadHandler,
     settings::{LeftStickMode, Settings},
     ui,
 };
-use zeff_gb_core::emulator::Emulator;
 
 mod bindings;
 mod host_sync;
@@ -36,18 +36,19 @@ mod window_events;
 use input::HostInputState;
 use tilt::{AutoTiltSource, TiltFrameData};
 
-pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> {
+pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.uncapped_speed;
     let vsync_mode = settings.vsync_mode;
 
     // Cache metadata before handing emulator to emu thread
-    let cached_is_mbc7 = emulator.as_ref().is_some_and(|e: &Emulator| e.is_mbc7_cartridge());
-    let cached_rom_path = emulator.as_ref().map(|e: &Emulator| e.rom_path().to_path_buf());
+    let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
+    let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
+    let active_system = backend.as_ref().map(|b| b.system()).unwrap_or(ActiveSystem::GameBoy);
 
     let mut app = App {
         emu_thread: None,
-        initial_emulator: emulator,
+        initial_backend: backend,
         audio: None,
         gamepad: GamepadHandler::new(),
         gfx: None,
@@ -116,6 +117,7 @@ pub(crate) fn run(emulator: Option<Emulator>, settings: Settings) -> Result<()> 
             backstep_pending: false,
         },
         egui_wants_keyboard: false,
+        active_system,
     };
 
     event_loop.run_app(&mut app)?;
@@ -193,7 +195,7 @@ impl DebugRequests {
 }
 
 struct App {
-    initial_emulator: Option<Emulator>,
+    initial_backend: Option<EmuBackend>,
     emu_thread: Option<EmuThread>,
     audio: Option<AudioOutput>,
     gamepad: Option<GamepadHandler>,
@@ -236,6 +238,7 @@ struct App {
     paused: bool,
     rewind: RewindState,
     egui_wants_keyboard: bool,
+    active_system: ActiveSystem,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -253,6 +256,9 @@ const MAX_FRAMES_PER_TICK: usize = 10;
 const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 
 const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33); // ~30Hz
+
+/// NES runs at ~60.0988 fps → 16_639_267 ns per frame
+const NES_FRAME_DURATION: Duration = Duration::from_nanos(16_639_267);
 
 impl App {
     fn speed_mode(&self) -> SpeedMode {
@@ -277,12 +283,16 @@ impl App {
     }
 
     fn effective_frame_duration(&self) -> Duration {
+        let base = match self.active_system {
+            ActiveSystem::GameBoy => GB_FRAME_DURATION,
+            ActiveSystem::Nes => NES_FRAME_DURATION,
+        };
         match self.speed_mode() {
             SpeedMode::FastForward => {
                 let multi = self.settings.fast_forward_multiplier.max(1) as u32;
-                GB_FRAME_DURATION / multi
+                base / multi
             }
-            _ => GB_FRAME_DURATION,
+            _ => base,
         }
     }
 
@@ -399,25 +409,26 @@ impl App {
         let mut ui_data = result.ui_data;
 
         if let Some(ref mut cached) = self.cached_ui_data {
-            if ui_data.viewer_data.is_some() {
-                if let Some(old_viewer) = cached.viewer_data.take() {
-                    if !old_viewer.vram.is_empty() {
-                        self.recycled.vram = Some(old_viewer.vram);
-                    }
-                    if !old_viewer.oam.is_empty() {
-                        self.recycled.oam = Some(old_viewer.oam);
+            if ui_data.graphics_data.is_some() {
+                if let Some(old_gfx) = cached.graphics_data.take() {
+                    let crate::debug::ConsoleGraphicsData::Gb(gb) = old_gfx;
+                    if !gb.vram.is_empty() {
+                        self.recycled.vram = Some(gb.vram);
                     }
                 }
             } else {
-                ui_data.viewer_data = cached.viewer_data.take();
+                ui_data.graphics_data = cached.graphics_data.take();
+            }
+            if ui_data.oam_debug.is_none() {
+                ui_data.oam_debug = cached.oam_debug.take();
             }
             if let Some(ref disasm) = ui_data.disassembly_view {
                 self.debug_windows.last_disasm_pc = Some(disasm.pc);
             } else {
                 ui_data.disassembly_view = cached.disassembly_view.take();
             }
-            if ui_data.rom_info_view.is_none() {
-                ui_data.rom_info_view = cached.rom_info_view.take();
+            if ui_data.rom_debug.is_none() {
+                ui_data.rom_debug = cached.rom_debug.take();
             }
             if ui_data.memory_page.is_some() {
                 if let Some(old_page) = cached.memory_page.take() {
@@ -428,21 +439,14 @@ impl App {
             }
         }
 
-        if let Some(ref mut info) = ui_data.debug_info {
-            info.fps = if self.settings.show_fps {
+        if let Some(ref mut perf) = ui_data.perf_info {
+            perf.fps = if self.settings.show_fps {
                 self.fps_tracker.fps()
             } else {
                 0.0
             };
-            info.speed_mode_label = self.speed_mode_label();
-            info.frames_in_flight = self.frames_in_flight;
-            info.tilt_is_mbc7 = self.cached_is_mbc7;
-            info.tilt_stick_controls_tilt = self.left_stick_controls_tilt(self.cached_is_mbc7);
-            info.tilt_left_stick = self.left_stick;
-            info.tilt_keyboard = self.host_input.tilt_vector();
-            info.tilt_mouse = self.mouse_tilt_vector();
-            info.tilt_target = self.smoothed_tilt;
-            info.tilt_smoothed = self.smoothed_tilt;
+            perf.speed_mode_label = self.speed_mode_label().to_string();
+            perf.frames_in_flight = self.frames_in_flight;
         }
 
         if let Some(results) = ui_data.memory_search_results.take() {
@@ -454,26 +458,26 @@ impl App {
         }
         self.debug_windows.rom_viewer.rom_size = ui_data.rom_size;
 
-        if let Some(ref viewer_data) = ui_data.viewer_data {
+        if let Some(crate::debug::ConsoleGraphicsData::Gb(ref gb_data)) = ui_data.graphics_data {
             if self.debug_windows.show_tile_viewer {
                 self.debug_windows.tiles.update_dirty_inputs(
-                    &viewer_data.vram,
-                    &viewer_data.bg_palette_ram,
-                    &viewer_data.obj_palette_ram,
-                    viewer_data.ppu.bgp,
-                    viewer_data.cgb_mode,
-                    viewer_data.color_correction,
-                    viewer_data.color_correction_matrix,
+                    &gb_data.vram,
+                    &gb_data.bg_palette_ram,
+                    &gb_data.obj_palette_ram,
+                    gb_data.ppu.bgp,
+                    gb_data.cgb_mode,
+                    gb_data.color_correction,
+                    gb_data.color_correction_matrix,
                 );
             }
             if self.debug_windows.show_tilemap_viewer {
                 self.debug_windows.tilemap.update_dirty_inputs(
-                    &viewer_data.vram,
-                    &viewer_data.bg_palette_ram,
-                    viewer_data.ppu,
-                    viewer_data.cgb_mode,
-                    viewer_data.color_correction,
-                    viewer_data.color_correction_matrix,
+                    &gb_data.vram,
+                    &gb_data.bg_palette_ram,
+                    gb_data.ppu,
+                    gb_data.cgb_mode,
+                    gb_data.color_correction,
+                    gb_data.color_correction_matrix,
                 );
             }
         }
@@ -612,6 +616,7 @@ impl App {
                             ),
                             snapshot: crate::emu_thread::SnapshotRequest {
                                 want_debug_info: (reqs.needs_debug_info || self.settings.show_fps),
+                                want_perf_info: reqs.needs_perf_info || self.settings.show_fps,
                                 any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
                                 any_vram_viewer_open: reqs.needs_vram && want_viewer_update,
                                 show_oam_viewer: reqs.needs_oam && want_viewer_update,

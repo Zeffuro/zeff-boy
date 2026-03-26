@@ -71,9 +71,14 @@ pub(crate) enum FrameError {
 }
 
 pub(crate) struct RenderContext<'a> {
-    pub(crate) debug_info: Option<&'a crate::debug::DebugInfo>,
-    pub(crate) viewer_data: Option<&'a crate::debug::DebugViewerData>,
-    pub(crate) rom_info_view: Option<&'a crate::debug::RomInfoViewData>,
+    pub(crate) cpu_debug: Option<&'a crate::debug::CpuDebugSnapshot>,
+    pub(crate) perf_info: Option<&'a crate::debug::PerfInfo>,
+    pub(crate) apu_debug: Option<&'a crate::debug::ApuDebugInfo>,
+    pub(crate) oam_debug: Option<&'a crate::debug::OamDebugInfo>,
+    pub(crate) palette_debug: Option<&'a crate::debug::PaletteDebugInfo>,
+    pub(crate) rom_debug: Option<&'a crate::debug::RomDebugInfo>,
+    pub(crate) input_debug: Option<&'a crate::debug::InputDebugInfo>,
+    pub(crate) graphics_data: Option<&'a crate::debug::ConsoleGraphicsData>,
     pub(crate) disassembly_view: Option<&'a crate::debug::DisassemblyView>,
     pub(crate) memory_page: Option<&'a [(u16, u8)]>,
     pub(crate) rom_page: Option<&'a [(u32, u8)]>,
@@ -187,8 +192,18 @@ impl Graphics {
     }
 
     pub(crate) fn clear_framebuffer(&self) {
-        static BLACK: [u8; 160 * 144 * 4] = [0u8; 160 * 144 * 4];
-        self.framebuffer.upload_framebuffer(&self.gpu.queue, &BLACK);
+        let (w, h) = self.framebuffer.native_size();
+        let len = (w * h * 4) as usize;
+        let black = vec![0u8; len];
+        self.framebuffer.upload_framebuffer(&self.gpu.queue, &black);
+    }
+
+    pub(crate) fn set_native_size(&mut self, width: u32, height: u32) {
+        self.framebuffer.set_native_size(&self.gpu.device, width, height);
+    }
+
+    pub(crate) fn native_size(&self) -> (u32, u32) {
+        self.framebuffer.native_size()
     }
 
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
@@ -262,15 +277,20 @@ impl Graphics {
         }
 
         let debug_actions;
-        if ctx.debug_info.is_some() {
+        let has_any_emu_data = ctx.cpu_debug.is_some()
+            || ctx.perf_info.is_some()
+            || ctx.memory_page.is_some()
+            || ctx.rom_page.is_some();
+        if has_any_emu_data {
             let has_game_view = crate::debug::has_game_view_tab(ctx.dock_state);
 
             let mut offscreen_resized = false;
             if has_game_view
                 && let Some((w, h)) = self.game_view_pixel_size {
                     let scale = ctx.settings.offscreen_scale.max(1);
-                    let ow = w.max(160 * scale);
-                    let oh = h.max(144 * scale);
+                    let (nw, nh) = self.framebuffer.native_size();
+                    let ow = w.max(nw * scale);
+                    let oh = h.max(nh * scale);
                     offscreen_resized = self.framebuffer.resize_offscreen(&self.gpu.device, ow, oh);
                 }
 
@@ -304,9 +324,14 @@ impl Graphics {
             };
 
             let mut tab_viewer = crate::debug::DebugTabViewer {
-                debug_info: ctx.debug_info,
-                viewer_data: ctx.viewer_data,
-                rom_info_view: ctx.rom_info_view,
+                cpu_debug: ctx.cpu_debug,
+                perf_info: ctx.perf_info,
+                apu_debug: ctx.apu_debug,
+                oam_debug: ctx.oam_debug,
+                palette_debug: ctx.palette_debug,
+                rom_debug: ctx.rom_debug,
+                input_debug: ctx.input_debug,
+                graphics_data: ctx.graphics_data,
                 disassembly_view: ctx.disassembly_view,
                 memory_page: ctx.memory_page,
                 rom_page: ctx.rom_page,
@@ -377,14 +402,16 @@ impl Graphics {
         // Offscreen shader pass — renders framebuffer through shaders into
         // the output texture used as the egui game-view image.
         let has_game_view_in_dock =
-            ctx.debug_info.is_some() && crate::debug::has_game_view_tab(ctx.dock_state);
+            (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
+            && crate::debug::has_game_view_tab(ctx.dock_state);
         if has_game_view_in_dock {
             self.framebuffer.render_to_offscreen(&mut encoder);
         }
 
         // Emulator Framebuffer (only when not rendered inside a dock tab)
         let render_framebuffer_directly =
-            ctx.debug_info.is_some() && !crate::debug::has_game_view_tab(ctx.dock_state);
+            (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
+            && !crate::debug::has_game_view_tab(ctx.dock_state);
 
         if render_framebuffer_directly && self.framebuffer.needs_two_pass() {
             self.framebuffer.render_upscale_pass(&mut encoder);
@@ -412,14 +439,17 @@ impl Graphics {
             });
 
             if render_framebuffer_directly
-                && let Some((x, y, w, h)) = calculate_viewport(
-                    self.aspect_ratio_mode,
-                    self.gpu.config.width,
-                    self.gpu.config.height,
-                    160,
-                    144,
-                    menu_bar_height,
-                ) {
+                && let Some((x, y, w, h)) = {
+                    let (gw, gh) = self.framebuffer.native_size();
+                    calculate_viewport(
+                        self.aspect_ratio_mode,
+                        self.gpu.config.width,
+                        self.gpu.config.height,
+                        gw,
+                        gh,
+                        menu_bar_height,
+                    )
+                } {
                     self.framebuffer.draw(&mut pass, x, y, w, h);
                 }
         }

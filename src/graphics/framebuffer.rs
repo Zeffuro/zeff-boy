@@ -32,6 +32,8 @@ pub(crate) struct FramebufferRenderer {
     intermediate_bind_group: wgpu::BindGroup,
     output_bind_group: wgpu::BindGroup,
     two_pass: bool,
+    native_width: u32,
+    native_height: u32,
 }
 
 fn scaling_shader_source(mode: ScalingMode) -> &'static str {
@@ -363,6 +365,8 @@ impl FramebufferRenderer {
             intermediate_bind_group,
             output_bind_group,
             two_pass: false,
+            native_width: 160,
+            native_height: 144,
         })
     }
 
@@ -532,18 +536,73 @@ impl FramebufferRenderer {
     }
 
     pub(crate) fn update_params(&self, queue: &wgpu::Queue, settings: &crate::settings::Settings) {
+        let nw = self.native_width as f32;
+        let nh = self.native_height as f32;
         let buf = crate::settings::build_gpu_params(
             &settings.shader_params,
             settings.color_correction,
             settings.color_correction_matrix,
+            nw,
+            nh,
         );
         let buf_no_cc = crate::settings::build_gpu_params(
             &settings.shader_params,
             crate::settings::ColorCorrection::None,
             settings.color_correction_matrix,
+            nw,
+            nh,
         );
         queue.write_buffer(&self.params_buffer, 0, &buf);
         queue.write_buffer(&self.params_buffer_no_cc, 0, &buf_no_cc);
+    }
+
+    pub(crate) fn native_size(&self) -> (u32, u32) {
+        (self.native_width, self.native_height)
+    }
+
+    pub(crate) fn set_native_size(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if self.native_width == width && self.native_height == height {
+            return;
+        }
+        self.native_width = width;
+        self.native_height = height;
+
+        self.screen_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("screen texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.screen_view = self.screen_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let sampler = match self.current_filter {
+            wgpu::FilterMode::Linear => &self.linear_sampler,
+            wgpu::FilterMode::Nearest => &self.nearest_sampler,
+        };
+        self.screen_bind_group = create_texture_bind_group(
+            device,
+            &self.screen_bgl,
+            &self.screen_view,
+            sampler,
+            &self.params_buffer,
+            "screen bind group",
+        );
+        self.screen_bind_group_no_cc = create_texture_bind_group(
+            device,
+            &self.screen_bgl,
+            &self.screen_view,
+            sampler,
+            &self.params_buffer_no_cc,
+            "screen bind group no color correction",
+        );
     }
 
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {
@@ -557,12 +616,12 @@ impl FramebufferRenderer {
             framebuffer,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * 160),
-                rows_per_image: Some(144),
+                bytes_per_row: Some(4 * self.native_width),
+                rows_per_image: Some(self.native_height),
             },
             wgpu::Extent3d {
-                width: 160,
-                height: 144,
+                width: self.native_width,
+                height: self.native_height,
                 depth_or_array_layers: 1,
             },
         );

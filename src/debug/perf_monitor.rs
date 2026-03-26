@@ -1,4 +1,4 @@
-use crate::debug::DebugInfo;
+use crate::debug::types::PerfInfo;
 
 const HISTORY_LEN: usize = 120;
 
@@ -23,7 +23,7 @@ impl PerfHistory {
 
 pub(super) fn draw_performance_content(
     ui: &mut egui::Ui,
-    info: &DebugInfo,
+    info: &PerfInfo,
     history: &mut PerfHistory,
 ) {
     if info.fps > 0.0 {
@@ -55,15 +55,16 @@ pub(super) fn draw_performance_content(
 
     ui.separator();
     ui.heading("Pipeline");
-    ui.monospace(format!("Speed:           {}", info.speed_mode_label));
+    ui.monospace(format!("Speed:            {}", info.speed_mode_label));
     ui.monospace(format!("Frames in flight: {}", info.frames_in_flight));
-    ui.monospace(format!("Total cycles:    {}", info.cycles));
+    ui.monospace(format!("Total cycles:     {}", info.cycles));
 
     ui.separator();
     ui.heading("Hardware");
+    ui.monospace(format!("Platform: {}", info.platform_name));
     ui.monospace(format!(
-        "HW mode: {:?} (pref: {:?})",
-        info.hardware_mode, info.hardware_mode_preference
+        "Mode: {} (pref: {})",
+        info.hardware_label, info.hardware_pref_label
     ));
 
     if history.fps_samples.len() >= 2 {

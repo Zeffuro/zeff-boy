@@ -13,10 +13,15 @@ use super::rom_info::draw_rom_info_content;
 use super::rom_viewer::draw_rom_viewer_content;
 use super::tile_viewer::draw_tile_viewer_content;
 use super::tilemap_viewer::draw_tilemap_viewer_content;
-use super::ui::draw_debug_ui_content;
+use super::ui::draw_cpu_debug_content;
 use super::{
-    DebugInfo, DebugUiActions, DebugViewerData, DebugWindowState, DisassemblyView, RomInfoViewData,
+    DebugUiActions, DebugWindowState, DisassemblyView,
 };
+use super::common::{
+    ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, InputDebugInfo,
+    OamDebugInfo, PaletteDebugInfo, RomDebugInfo,
+};
+use super::types::PerfInfo;
 use crate::graphics::AspectRatioMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +46,7 @@ pub(crate) enum DebugTab {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct TabDataRequirements {
     pub(crate) needs_debug_info: bool,
+    pub(crate) needs_perf_info: bool,
     pub(crate) needs_viewer_data: bool,
     pub(crate) needs_vram: bool,
     pub(crate) needs_oam: bool,
@@ -57,7 +63,7 @@ impl DebugTab {
             DebugTab::GameView => TabDataRequirements::default(),
             DebugTab::CpuDebug => TabDataRequirements { needs_debug_info: true, ..Default::default() },
             DebugTab::InputViewer => TabDataRequirements { needs_debug_info: true, ..Default::default() },
-            DebugTab::Performance => TabDataRequirements { needs_debug_info: true, ..Default::default() },
+            DebugTab::Performance => TabDataRequirements { needs_perf_info: true, ..Default::default() },
             DebugTab::Breakpoints => TabDataRequirements { needs_debug_info: true, ..Default::default() },
             DebugTab::ApuViewer => TabDataRequirements { needs_viewer_data: true, needs_apu: true, ..Default::default() },
             DebugTab::TileViewer => TabDataRequirements { needs_viewer_data: true, needs_vram: true, ..Default::default() },
@@ -79,6 +85,7 @@ pub(crate) fn compute_tab_requirements(dock: &DockState<DebugTab>) -> TabDataReq
     for (_, tab) in dock.iter_all_tabs() {
         let r = tab.requirements();
         reqs.needs_debug_info |= r.needs_debug_info;
+        reqs.needs_perf_info |= r.needs_perf_info;
         reqs.needs_viewer_data |= r.needs_viewer_data;
         reqs.needs_vram |= r.needs_vram;
         reqs.needs_oam |= r.needs_oam;
@@ -229,7 +236,6 @@ pub(crate) fn has_game_view_tab(dock: &DockState<DebugTab>) -> bool {
         .any(|(_, tab)| *tab == DebugTab::GameView)
 }
 
-/// Re-add the GameView tab if it was lost (safety net).
 pub(crate) fn ensure_game_view_tab(dock: &mut DockState<DebugTab>) {
     if !has_game_view_tab(dock) {
         dock.main_surface_mut()
@@ -265,9 +271,14 @@ pub(crate) fn sync_show_flags(debug_windows: &mut DebugWindowState, dock: &DockS
 }
 
 pub(crate) struct DebugTabViewer<'a> {
-    pub(crate) debug_info: Option<&'a DebugInfo>,
-    pub(crate) viewer_data: Option<&'a DebugViewerData>,
-    pub(crate) rom_info_view: Option<&'a RomInfoViewData>,
+    pub(crate) cpu_debug: Option<&'a CpuDebugSnapshot>,
+    pub(crate) perf_info: Option<&'a PerfInfo>,
+    pub(crate) apu_debug: Option<&'a ApuDebugInfo>,
+    pub(crate) oam_debug: Option<&'a OamDebugInfo>,
+    pub(crate) palette_debug: Option<&'a PaletteDebugInfo>,
+    pub(crate) rom_debug: Option<&'a RomDebugInfo>,
+    pub(crate) input_debug: Option<&'a InputDebugInfo>,
+    pub(crate) graphics_data: Option<&'a ConsoleGraphicsData>,
     pub(crate) disassembly_view: Option<&'a DisassemblyView>,
     pub(crate) memory_page: Option<&'a [(u16, u8)]>,
     pub(crate) rom_page: Option<&'a [(u32, u8)]>,
@@ -332,23 +343,23 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::CpuDebug => {
-                if let Some(info) = self.debug_info {
-                    draw_debug_ui_content(ui, info, &mut self.actions);
+                if let Some(info) = self.cpu_debug {
+                    draw_cpu_debug_content(ui, info, &mut self.actions);
                 }
             }
             DebugTab::InputViewer => {
-                if let Some(info) = self.debug_info {
+                if let Some(info) = self.input_debug {
                     draw_input_viewer_content(ui, info);
                 }
             }
             DebugTab::ApuViewer => {
-                if let Some(data) = self.viewer_data
+                if let Some(data) = self.apu_debug
                     && let Some(mutes) = draw_apu_viewer_content(ui, data) {
                         self.actions.apu_channel_mutes = Some(mutes);
                     }
             }
             DebugTab::RomInfo => {
-                if let Some(info) = self.rom_info_view {
+                if let Some(info) = self.rom_debug {
                     draw_rom_info_content(ui, info);
                 }
             }
@@ -371,7 +382,7 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::TileViewer => {
-                if let Some(data) = self.viewer_data {
+                if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
                     draw_tile_viewer_content(
                         ui,
                         &data.vram,
@@ -386,7 +397,7 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::TilemapViewer => {
-                if let Some(data) = self.viewer_data {
+                if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
                     draw_tilemap_viewer_content(
                         ui,
                         &data.vram,
@@ -400,32 +411,22 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::OamViewer => {
-                if let Some(data) = self.viewer_data {
-                    draw_oam_viewer_content(ui, &data.oam);
+                if let Some(info) = self.oam_debug {
+                    draw_oam_viewer_content(ui, info);
                 }
             }
             DebugTab::PaletteViewer => {
-                if let Some(data) = self.viewer_data {
-                    draw_palette_viewer_content(
-                        ui,
-                        data.ppu.bgp,
-                        data.ppu.obp0,
-                        data.ppu.obp1,
-                        data.cgb_mode,
-                        &data.bg_palette_ram,
-                        &data.obj_palette_ram,
-                        data.color_correction,
-                        data.color_correction_matrix,
-                    );
+                if let Some(info) = self.palette_debug {
+                    draw_palette_viewer_content(ui, info);
                 }
             }
             DebugTab::Performance => {
-                if let Some(info) = self.debug_info {
+                if let Some(info) = self.perf_info {
                     draw_performance_content(ui, info, &mut self.window_state.perf_history);
                 }
             }
             DebugTab::Breakpoints => {
-                if let Some(info) = self.debug_info {
+                if let Some(info) = self.cpu_debug {
                     draw_breakpoints_content(
                         ui,
                         info,

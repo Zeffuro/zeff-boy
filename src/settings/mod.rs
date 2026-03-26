@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn build_gpu_params_includes_color_correction() {
         let params = ShaderParams::default();
-        let buf = build_gpu_params(&params, ColorCorrection::GbcLcd, default_color_correction_matrix());
+        let buf = build_gpu_params(&params, ColorCorrection::GbcLcd, default_color_correction_matrix(), 160.0, 144.0);
         let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
         assert_eq!(mode, 1);
         let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn build_gpu_params_none_mode_is_identity() {
         let params = ShaderParams::default();
-        let buf = build_gpu_params(&params, ColorCorrection::None, default_color_correction_matrix());
+        let buf = build_gpu_params(&params, ColorCorrection::None, default_color_correction_matrix(), 160.0, 144.0);
         let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
         assert_eq!(mode, 0);
         let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);

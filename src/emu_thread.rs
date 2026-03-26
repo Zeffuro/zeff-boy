@@ -4,12 +4,12 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{self as chan, Receiver, Sender, TrySendError};
 
 use crate::debug::DebugUiActions;
-use zeff_gb_core::emulator::Emulator;
-use zeff_gb_core::hardware::types::CPUState;
+use crate::emu_backend::EmuBackend;
 use crate::ui;
 
 pub(crate) struct SnapshotRequest {
     pub(crate) want_debug_info: bool,
+    pub(crate) want_perf_info: bool,
     pub(crate) any_viewer_open: bool,
     pub(crate) any_vram_viewer_open: bool,
     pub(crate) show_oam_viewer: bool,
@@ -120,7 +120,7 @@ pub(crate) struct EmuThread {
 }
 
 impl EmuThread {
-    pub(crate) fn spawn(mut emu: Emulator) -> Self {
+    pub(crate) fn spawn(mut backend: EmuBackend) -> Self {
         let (cmd_tx, cmd_rx) = chan::unbounded();
         let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(1);
         let (resp_tx, resp_rx) = chan::unbounded();
@@ -128,7 +128,6 @@ impl EmuThread {
         let drain_rx = frame_rx.clone();
 
         let join = thread::spawn(move || {
-            let mut cached_rom_info: Option<crate::debug::RomInfoViewData> = None;
             let mut uncapped_mode = false;
             let mut uncapped_fb: Option<Vec<u8>> = None;
             let mut last_cheats: Vec<crate::cheats::CheatPatch> = Vec::new();
@@ -156,23 +155,22 @@ impl EmuThread {
                     match command {
                         EmuCommand::SetUncapped(on) => {
                             uncapped_mode = on;
-                            emu.bus.set_apu_sample_generation_enabled(!on);
+                            backend.set_apu_sample_generation_enabled(!on);
                         }
 
                         EmuCommand::UpdateCheats(cheats) => {
                             last_cheats = cheats;
-                            Self::install_rom_patches(&mut emu, &last_cheats);
+                            Self::install_rom_patches(&mut backend, &last_cheats);
                         }
 
                         EmuCommand::StepFrames(input) => {
                             let result = Self::handle_step_frames(
-                                &mut emu,
+                                &mut backend,
                                 input,
                                 &last_cheats,
                                 uncapped_mode,
                                 &mut rewind_buffer,
                                 &mut rewind_seconds,
-                                &mut cached_rom_info,
                             );
 
                             if !Self::send_frame(&frame_tx, &drain_rx, result) {
@@ -181,16 +179,22 @@ impl EmuThread {
                         }
 
                         EmuCommand::SaveStateSlot(slot) => {
-                            match zeff_gb_core::save_state::slot_path(emu.rom_hash, slot) {
-                                Ok(path) => {
-                                    if !Self::save_state_async(&emu, path, &resp_tx, &send_resp) {
-                                        break 'main;
+                            if let Some(hash) = backend.rom_hash() {
+                                match zeff_gb_core::save_state::slot_path(hash, slot) {
+                                    Ok(path) => {
+                                        if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
+                                            break 'main;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if !send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
+                                            break 'main;
+                                        }
                                     }
                                 }
-                                Err(e) => {
-                                    if !send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
-                                        break 'main;
-                                    }
+                            } else {
+                                if !send_resp(EmuResponse::SaveStateFailed("Save states not supported for this system".to_string())) {
+                                    break 'main;
                                 }
                             }
                         }
@@ -200,10 +204,10 @@ impl EmuThread {
                             buttons_pressed,
                             dpad_pressed,
                         } => {
-                            let result = emu.load_state(slot);
+                            let result = backend.load_state(slot);
                             let path_label = result.as_ref().ok().cloned().unwrap_or_default();
                             let resp = Self::respond_load_state(
-                                &mut emu,
+                                &mut backend,
                                 result.map(|_| ()),
                                 path_label,
                                 buttons_pressed,
@@ -215,7 +219,7 @@ impl EmuThread {
                         }
 
                         EmuCommand::SaveStateToPath(path) => {
-                            if !Self::save_state_async(&emu, path, &resp_tx, &send_resp) {
+                            if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
                                 break 'main;
                             }
                         }
@@ -226,9 +230,9 @@ impl EmuThread {
                             dpad_pressed,
                         } => {
                             let label = path.display().to_string();
-                            let result = emu.load_state_from_path(&path);
+                            let result = backend.load_state_from_path(&path);
                             let resp = Self::respond_load_state(
-                                &mut emu,
+                                &mut backend,
                                 result,
                                 label,
                                 buttons_pressed,
@@ -240,11 +244,11 @@ impl EmuThread {
                         }
 
                         EmuCommand::SetSampleRate(rate) => {
-                            emu.bus.set_apu_sample_rate(rate);
+                            backend.set_sample_rate(rate);
                         }
 
                         EmuCommand::CaptureStateBytes => {
-                            let resp = match Self::encode_current_state(&emu) {
+                            let resp = match Self::encode_current_state(&backend) {
                                 Ok(bytes) => EmuResponse::StateCaptured(bytes),
                                 Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
                             };
@@ -258,9 +262,9 @@ impl EmuThread {
                             buttons_pressed,
                             dpad_pressed,
                         } => {
-                            let result = emu.load_state_from_bytes(state_bytes);
+                            let result = backend.load_state_from_bytes(state_bytes);
                             let resp = Self::respond_load_state(
-                                &mut emu,
+                                &mut backend,
                                 result,
                                 "(replay)".to_string(),
                                 buttons_pressed,
@@ -272,8 +276,12 @@ impl EmuThread {
                         }
 
                         EmuCommand::AutoSaveState => {
-                            let path = zeff_gb_core::save_state::auto_save_path(emu.rom_hash);
-                            if !Self::save_state_async(&emu, path, &resp_tx, &send_resp) {
+                            if let Some(hash) = backend.rom_hash() {
+                                let path = zeff_gb_core::save_state::auto_save_path(hash);
+                                if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
+                                    break 'main;
+                                }
+                            } else if !send_resp(EmuResponse::SaveStateFailed("Save states not supported for this system".to_string())) {
                                 break 'main;
                             }
                         }
@@ -282,18 +290,24 @@ impl EmuThread {
                             buttons_pressed,
                             dpad_pressed,
                         } => {
-                            let path = zeff_gb_core::save_state::auto_save_path(emu.rom_hash);
-                            if path.exists() {
-                                let label = path.display().to_string();
-                                let result = emu.load_state_from_path(&path);
-                                let resp = Self::respond_load_state(
-                                    &mut emu,
-                                    result,
-                                    label,
-                                    buttons_pressed,
-                                    dpad_pressed,
-                                );
-                                if !send_resp(resp) {
+                            if let Some(hash) = backend.rom_hash() {
+                                let path = zeff_gb_core::save_state::auto_save_path(hash);
+                                if path.exists() {
+                                    let label = path.display().to_string();
+                                    let result = backend.load_state_from_path(&path);
+                                    let resp = Self::respond_load_state(
+                                        &mut backend,
+                                        result,
+                                        label,
+                                        buttons_pressed,
+                                        dpad_pressed,
+                                    );
+                                    if !send_resp(resp) {
+                                        break 'main;
+                                    }
+                                } else if !send_resp(EmuResponse::LoadStateFailed(
+                                    "no auto-save".to_string(),
+                                )) {
                                     break 'main;
                                 }
                             } else if !send_resp(EmuResponse::LoadStateFailed(
@@ -304,14 +318,14 @@ impl EmuThread {
                         }
 
                         EmuCommand::Rewind => {
-                            let resp = Self::handle_rewind(&mut emu, &mut rewind_buffer);
+                            let resp = Self::handle_rewind(&mut backend, &mut rewind_buffer);
                             if !send_resp(resp) {
                                 break 'main;
                             }
                         }
 
                         EmuCommand::Shutdown => {
-                            let sram_path = emu.flush_battery_sram().unwrap_or_else(|err| {
+                            let sram_path = backend.flush_battery_sram().unwrap_or_else(|err| {
                                 log::error!("Failed to flush SRAM on shutdown: {}", err);
                                 None
                             });
@@ -322,7 +336,7 @@ impl EmuThread {
                     }
                 } else {
                     Self::run_uncapped_batch(
-                        &mut emu,
+                        &mut backend,
                         &last_cheats,
                         &mut uncapped_fb,
                         &rewind_buffer,
@@ -342,47 +356,50 @@ impl EmuThread {
     }
 
     fn handle_step_frames(
-        emu: &mut Emulator,
+        backend: &mut EmuBackend,
         input: FrameInput,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_mode: bool,
         rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
-        cached_rom_info: &mut Option<crate::debug::RomInfoViewData>,
     ) -> FrameResult {
-        Self::apply_debug_actions(emu, &input.debug_actions);
-
-        if emu
-            .bus
-            .apply_joypad_pressed_masks(input.buttons_pressed, input.dpad_pressed)
-        {
-            emu.bus.if_reg |= 0x10;
+        // GB-specific debug actions
+        if let Some(emu) = backend.gb_mut() {
+            Self::apply_debug_actions(emu, &input.debug_actions);
         }
-        emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
-        emu.bus
-            .set_apu_debug_capture_enabled(input.apu_capture_enabled);
-        if !uncapped_mode {
-            emu.bus.set_apu_sample_generation_enabled(!input.skip_audio);
-        }
-        emu.opcode_log.enabled = input.snapshot.want_debug_info;
 
-        if matches!(emu.cpu.running, CPUState::Suspended) {
-            if input.debug_continue {
-                emu.debug.clear_hits();
-                emu.debug.break_on_next = false;
-                emu.cpu.running = CPUState::Running;
-            } else if input.debug_step {
-                emu.debug.clear_hits();
-                emu.debug.break_on_next = true;
-                emu.cpu.running = CPUState::Running;
+        // Set input
+        backend.set_input(input.buttons_pressed, input.dpad_pressed);
+
+        // GB-specific features
+        if let Some(emu) = backend.gb_mut() {
+            emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+            emu.bus.set_apu_debug_capture_enabled(input.apu_capture_enabled);
+            if !uncapped_mode {
+                emu.bus.set_apu_sample_generation_enabled(!input.skip_audio);
+            }
+            emu.opcode_log.enabled = input.snapshot.want_debug_info;
+
+            if matches!(emu.cpu.running, zeff_gb_core::hardware::types::CPUState::Suspended) {
+                if input.debug_continue {
+                    emu.debug.clear_hits();
+                    emu.debug.break_on_next = false;
+                    emu.cpu.running = zeff_gb_core::hardware::types::CPUState::Running;
+                } else if input.debug_step {
+                    emu.debug.clear_hits();
+                    emu.debug.break_on_next = true;
+                    emu.cpu.running = zeff_gb_core::hardware::types::CPUState::Running;
+                }
             }
         }
 
-        if input.frames > 0 && !matches!(emu.cpu.running, CPUState::Suspended) {
+        if input.frames > 0 && backend.is_running() {
             for _ in 0..input.frames {
-                emu.step_frame();
-                Self::apply_ram_cheats(emu, cheats);
-                if matches!(emu.cpu.running, CPUState::Suspended) {
+                backend.step_frame();
+                if let Some(emu) = backend.gb_mut() {
+                    Self::apply_ram_cheats(emu, cheats);
+                }
+                if backend.is_suspended() {
                     break;
                 }
             }
@@ -393,24 +410,73 @@ impl EmuThread {
             *rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(*rewind_seconds, 4);
         }
 
-        Self::capture_rewind_snapshot(emu, rewind_buffer, input.rewind_enabled);
+        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
-        let ui_data = {
-            if cached_rom_info.is_none() && input.snapshot.show_rom_info {
-                *cached_rom_info = Some(ui::compute_static_rom_info(emu));
+        let ui_data = match backend {
+            EmuBackend::Gb(emu) => {
+                ui::collect_emu_snapshot(
+                    emu,
+                    &input.snapshot,
+                    input.buffers.vram,
+                    input.buffers.oam,
+                    input.buffers.memory_page,
+                )
             }
-            ui::collect_emu_snapshot(
-                emu,
-                &input.snapshot,
-                cached_rom_info,
-                input.buffers.vram,
-                input.buffers.oam,
-                input.buffers.memory_page,
-            )
+            EmuBackend::Nes(emu) => {
+                let mut data = ui::empty_frame_data();
+
+                if input.snapshot.want_perf_info {
+                    data.perf_info = Some(crate::debug::PerfInfo {
+                        fps: 0.0,
+                        speed_mode_label: "1×".to_string(),
+                        frames_in_flight: 0,
+                        cycles: emu.cpu.cycles,
+                        platform_name: "NES",
+                        hardware_label: format!("Mapper {}", emu.bus.cartridge.header().mapper_id),
+                        hardware_pref_label: format!("{:?}", emu.bus.cartridge.header().timing),
+                    });
+                }
+
+                if input.snapshot.want_debug_info {
+                    data.cpu_debug = Some(ui::nes_cpu_snapshot(emu));
+                }
+
+                if input.snapshot.show_rom_info {
+                    data.rom_debug = Some(ui::nes_rom_info(emu));
+                }
+
+                if input.snapshot.show_memory_viewer {
+                    let start = input.snapshot.memory_view_start;
+                    let mut page = Vec::with_capacity(256);
+                    for i in 0..256u16 {
+                        let addr = start.wrapping_add(i);
+                        page.push((addr, emu.bus.cpu_read(addr)));
+                    }
+                    data.memory_page = Some(page);
+                }
+
+                if input.snapshot.show_rom_viewer {
+                    let rom_header = emu.bus.cartridge.header();
+                    let prg_size = rom_header.prg_rom_size;
+                    data.rom_size = prg_size as u32;
+                    let start = input.snapshot.rom_view_start as usize;
+                    let mut page = Vec::with_capacity(256);
+                    for i in 0..256usize {
+                        let offset = start + i;
+                        if offset < prg_size {
+                            let addr = 0x8000u16.wrapping_add(offset as u16);
+                            page.push((offset as u32, emu.bus.cpu_read(addr)));
+                        }
+                    }
+                    data.rom_page = Some(page);
+                }
+
+                data
+            }
         };
 
         Self::build_frame_result(
-            emu,
+            backend,
             input.buffers.framebuffer,
             input.buffers.audio,
             ui_data,
@@ -420,7 +486,7 @@ impl EmuThread {
     }
 
     fn respond_load_state(
-        emu: &mut Emulator,
+        backend: &mut EmuBackend,
         result: anyhow::Result<()>,
         path_label: String,
         buttons_pressed: u8,
@@ -428,9 +494,8 @@ impl EmuThread {
     ) -> EmuResponse {
         match result {
             Ok(()) => {
-                emu.bus
-                    .apply_joypad_pressed_masks(buttons_pressed, dpad_pressed);
-                let fb = emu.framebuffer().to_vec();
+                backend.set_input(buttons_pressed, dpad_pressed);
+                let fb = backend.framebuffer().to_vec();
                 EmuResponse::LoadStateOk {
                     path: path_label,
                     framebuffer: fb,
@@ -441,12 +506,12 @@ impl EmuThread {
     }
 
     fn save_state_async(
-        emu: &Emulator,
+        backend: &EmuBackend,
         path: PathBuf,
         resp_tx: &Sender<EmuResponse>,
         send_resp: &impl Fn(EmuResponse) -> bool,
     ) -> bool {
-        match Self::encode_current_state(emu) {
+        match Self::encode_current_state(backend) {
             Ok(bytes) => {
                 let tx = resp_tx.clone();
                 std::thread::spawn(move || {
@@ -463,14 +528,14 @@ impl EmuThread {
     }
 
     fn handle_rewind(
-        emu: &mut Emulator,
+        backend: &mut EmuBackend,
         rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
     ) -> EmuResponse {
         if let Some(rewind_frame) = rewind_buffer.pop() {
-            match emu.load_state_from_bytes(rewind_frame.state_bytes) {
+            match backend.load_state_from_bytes(rewind_frame.state_bytes) {
                 Ok(()) => {
                     let fb = if rewind_frame.framebuffer.is_empty() {
-                        emu.framebuffer().to_vec()
+                        backend.framebuffer().to_vec()
                     } else {
                         rewind_frame.framebuffer
                     };
@@ -487,29 +552,29 @@ impl EmuThread {
     }
 
     fn build_frame_result(
-        emu: &mut Emulator,
+        backend: &mut EmuBackend,
         reusable_fb: Option<Vec<u8>>,
         reusable_audio: Option<Vec<f32>>,
         ui_data: ui::UiFrameData,
         midi_capture_active: bool,
         rewind_fill: f32,
     ) -> FrameResult {
-        let src = emu.framebuffer();
+        let src = backend.framebuffer();
         let mut frame = reusable_fb.unwrap_or_default();
         frame.resize(src.len(), 0);
         frame.copy_from_slice(src);
 
-        let rumble = emu.bus.cartridge.rumble_active();
+        let rumble = backend.rumble_active();
         let audio_samples = if let Some(mut buf) = reusable_audio {
-            emu.bus.apu_drain_samples_into(&mut buf);
+            backend.drain_audio_samples_into(&mut buf);
             buf
         } else {
-            emu.bus.apu_drain_samples()
+            backend.drain_audio_samples()
         };
-        let is_mbc7 = emu.is_mbc7_cartridge();
+        let is_mbc7 = backend.is_mbc7();
 
         let apu_snapshot = if midi_capture_active {
-            Some(emu.bus.apu_channel_snapshot())
+            backend.apu_channel_snapshot()
         } else {
             None
         };
@@ -541,48 +606,40 @@ impl EmuThread {
     }
 
     fn run_uncapped_batch(
-        emu: &mut Emulator,
+        backend: &mut EmuBackend,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_fb: &mut Option<Vec<u8>>,
         rewind_buffer: &zeff_gb_core::rewind::RewindBuffer,
         frame_tx: &Sender<FrameResult>,
         drain_rx: &Receiver<FrameResult>,
     ) {
-        if matches!(emu.cpu.running, CPUState::Suspended) {
+        if backend.is_suspended() {
             std::thread::yield_now();
             return;
         }
 
         const UNCAPPED_BATCH: usize = 60;
         for _ in 0..UNCAPPED_BATCH {
-            emu.step_frame();
-            Self::apply_ram_cheats(emu, cheats);
-            if matches!(emu.cpu.running, CPUState::Suspended) {
+            backend.step_frame();
+            if let Some(emu) = backend.gb_mut() {
+                Self::apply_ram_cheats(emu, cheats);
+            }
+            if backend.is_suspended() {
                 break;
             }
         }
 
-        let src = emu.framebuffer();
+        let src = backend.framebuffer();
         let mut frame = uncapped_fb.take().unwrap_or_default();
         frame.resize(src.len(), 0);
         frame.copy_from_slice(src);
 
         let result = FrameResult {
             frame,
-            rumble: emu.bus.cartridge.rumble_active(),
+            rumble: backend.rumble_active(),
             audio_samples: Vec::new(),
-            ui_data: ui::UiFrameData {
-                debug_info: None,
-                viewer_data: None,
-                disassembly_view: None,
-                rom_info_view: None,
-                memory_page: None,
-                memory_search_results: None,
-                rom_page: None,
-                rom_size: 0,
-                rom_search_results: None,
-            },
-            is_mbc7: emu.is_mbc7_cartridge(),
+            ui_data: ui::empty_frame_data(),
+            is_mbc7: backend.is_mbc7(),
             rewind_fill: rewind_buffer.fill_ratio(),
             apu_snapshot: None,
         };
@@ -607,28 +664,33 @@ impl EmuThread {
         std::thread::yield_now();
     }
 
-    fn encode_current_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
-        emu.encode_state_bytes()
+    fn encode_current_state(backend: &EmuBackend) -> anyhow::Result<Vec<u8>> {
+        backend.encode_state_bytes()
     }
 
     fn capture_rewind_snapshot(
-        emu: &Emulator,
+        backend: &EmuBackend,
         rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
         enabled: bool,
     ) {
         if enabled && rewind_buffer.tick() {
-            if let Ok(bytes) = Self::encode_current_state(emu) {
-                rewind_buffer.push(&bytes, emu.framebuffer());
+            if let Ok(bytes) = Self::encode_current_state(backend) {
+                rewind_buffer.push(&bytes, backend.framebuffer());
             }
         }
     }
 
-    fn apply_debug_actions(emu: &mut Emulator, actions: &DebugUiActions) {
+    fn apply_debug_actions(emu: &mut zeff_gb_core::emulator::Emulator, actions: &DebugUiActions) {
         if let Some(addr) = actions.add_breakpoint {
             emu.debug.add_breakpoint(addr);
         }
         if let Some((addr, watch_type)) = actions.add_watchpoint {
-            emu.debug.add_watchpoint(addr, watch_type);
+            let core_wt = match watch_type {
+                crate::debug::WatchType::Read => zeff_gb_core::debug::WatchType::Read,
+                crate::debug::WatchType::Write => zeff_gb_core::debug::WatchType::Write,
+                crate::debug::WatchType::ReadWrite => zeff_gb_core::debug::WatchType::ReadWrite,
+            };
+            emu.debug.add_watchpoint(addr, core_wt);
         }
         for addr in &actions.remove_breakpoints {
             emu.debug.remove_breakpoint(*addr);
@@ -636,8 +698,10 @@ impl EmuThread {
         for addr in &actions.toggle_breakpoints {
             emu.debug.toggle_breakpoint(*addr);
         }
-        if let Some(mutes) = actions.apu_channel_mutes {
-            emu.bus.set_apu_channel_mutes(mutes);
+        if let Some(mutes) = &actions.apu_channel_mutes {
+            if mutes.len() == 4 {
+                emu.bus.set_apu_channel_mutes([mutes[0], mutes[1], mutes[2], mutes[3]]);
+            }
         }
         for (addr, value) in &actions.memory_writes {
             emu.bus.write_byte(*addr, *value);
@@ -647,20 +711,22 @@ impl EmuThread {
         }
     }
 
-    fn install_rom_patches(emu: &mut Emulator, cheats: &[crate::cheats::CheatPatch]) {
-        use crate::cheats::CheatPatch;
-        emu.bus.game_genie_patches.clear();
-        for patch in cheats {
-            match *patch {
-                CheatPatch::RomWrite { .. } | CheatPatch::RomWriteIfEquals { .. } => {
-                    emu.bus.game_genie_patches.push(*patch);
+    fn install_rom_patches(backend: &mut EmuBackend, cheats: &[crate::cheats::CheatPatch]) {
+        if let Some(emu) = backend.gb_mut() {
+            use crate::cheats::CheatPatch;
+            emu.bus.game_genie_patches.clear();
+            for patch in cheats {
+                match *patch {
+                    CheatPatch::RomWrite { .. } | CheatPatch::RomWriteIfEquals { .. } => {
+                        emu.bus.game_genie_patches.push(*patch);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
 
-    fn apply_ram_cheats(emu: &mut Emulator, cheats: &[crate::cheats::CheatPatch]) {
+    fn apply_ram_cheats(emu: &mut zeff_gb_core::emulator::Emulator, cheats: &[crate::cheats::CheatPatch]) {
         use crate::cheats::CheatPatch;
         for patch in cheats {
             match *patch {

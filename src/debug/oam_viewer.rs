@@ -1,33 +1,16 @@
-use zeff_gb_core::hardware::ppu::SpriteEntry;
+use crate::debug::common::OamDebugInfo;
 
-pub(super) fn draw_oam_viewer_content(ui: &mut egui::Ui, oam: &[u8]) {
+pub(super) fn draw_oam_viewer_content(ui: &mut egui::Ui, info: &OamDebugInfo) {
     egui::Grid::new("oam_grid").striped(true).show(ui, |ui| {
-        ui.strong("#");
-        ui.strong("X");
-        ui.strong("Y");
-        ui.strong("Tile");
-        ui.strong("Flags");
-        ui.strong("FlipX");
-        ui.strong("FlipY");
-        ui.strong("Prio");
-        ui.strong("Pal");
-        ui.strong("CGB Pal");
-        ui.strong("VRAM");
+        for header in &info.headers {
+            ui.strong(header);
+        }
         ui.end_row();
 
-        for i in 0..40usize {
-            let sprite = SpriteEntry::from_oam(oam, i);
-            ui.monospace(format!("{:02}", i));
-            ui.monospace(format!("{:4}", sprite.x));
-            ui.monospace(format!("{:4}", sprite.y));
-            ui.monospace(format!("{:02X}", sprite.tile));
-            ui.monospace(format!("{:02X}", sprite.flags));
-            ui.monospace(if sprite.flip_x() { "Y" } else { "N" });
-            ui.monospace(if sprite.flip_y() { "Y" } else { "N" });
-            ui.monospace(if sprite.bg_priority() { "BG" } else { "FG" });
-            ui.monospace(format!("{}", sprite.palette_number()));
-            ui.monospace(format!("{}", sprite.cgb_obj_palette_index()));
-            ui.monospace(format!("{}", sprite.cgb_vram_bank()));
+        for row in &info.rows {
+            for cell in row {
+                ui.monospace(cell);
+            }
             ui.end_row();
         }
     });

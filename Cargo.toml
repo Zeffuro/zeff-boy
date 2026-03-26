@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/zeff-gb-core"]
+members = ["crates/zeff-gb-core", "crates/zeff-nes-core"]
 
 [package]
 name = "zeff-boy"
@@ -12,6 +12,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 zeff-gb-core = { path = "crates/zeff-gb-core" }
+zeff-nes-core = { path = "crates/zeff-nes-core" }
 anyhow = "1.0.102"
 cpal = "0.17.3"
 env_logger = "0.11.9"

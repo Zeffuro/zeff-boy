@@ -8,8 +8,8 @@ impl App {
         if self.emu_thread.is_some() {
             return;
         }
-        if let Some(emu) = self.initial_emulator.take() {
-            self.emu_thread = Some(EmuThread::spawn(emu));
+        if let Some(backend) = self.initial_backend.take() {
+            self.emu_thread = Some(EmuThread::spawn(backend));
             if self.timing.uncapped_speed
                 && let Some(thread) = &self.emu_thread {
                     thread.send(crate::emu_thread::EmuCommand::SetUncapped(true));

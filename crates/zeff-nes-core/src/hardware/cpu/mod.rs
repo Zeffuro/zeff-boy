@@ -1,0 +1,141 @@
+mod addressing;
+mod alu;
+pub mod registers;
+
+pub use registers::Registers;
+
+use crate::hardware::bus::Bus;
+use crate::hardware::constants::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CpuState {
+    Running,
+    Halted,
+    Suspended,
+}
+
+#[derive(Debug)]
+pub struct Cpu {
+    pub pc: u16,
+    pub sp: u8,
+    pub regs: Registers,
+    pub state: CpuState,
+    pub cycles: u64,
+    pub last_step_cycles: u64,
+    pub nmi_pending: bool,
+    pub irq_line: bool,
+    pub last_opcode: u8,
+    pub last_opcode_pc: u16,
+}
+
+impl Cpu {
+    pub fn new() -> Self {
+        Self {
+            pc: 0,
+            sp: 0xFD,
+            regs: Registers::power_on(),
+            state: CpuState::Running,
+            cycles: 7,
+            last_step_cycles: 0,
+            nmi_pending: false,
+            irq_line: false,
+            last_opcode: 0,
+            last_opcode_pc: 0,
+        }
+    }
+
+    pub fn reset(&mut self, bus: &mut Bus) {
+        let lo = bus.cpu_read(RESET_VECTOR_LO) as u16;
+        let hi = bus.cpu_read(RESET_VECTOR_HI) as u16;
+        self.pc = (hi << 8) | lo;
+        self.sp = self.sp.wrapping_sub(3);
+        self.regs.set_flag(registers::INTERRUPT_FLAG, true);
+        self.cycles = 7;
+    }
+
+    pub fn step(&mut self, bus: &mut Bus) -> u64 {
+        if self.state != CpuState::Running {
+            self.last_step_cycles = 1;
+            self.cycles += 1;
+            return 1;
+        }
+
+        if self.nmi_pending {
+            self.nmi_pending = false;
+            let cycles = self.service_nmi(bus);
+            self.last_step_cycles = cycles;
+            self.cycles += cycles;
+            return cycles;
+        }
+
+        if self.irq_line && !self.regs.get_flag(registers::INTERRUPT_FLAG) {
+            let cycles = self.service_irq(bus);
+            self.last_step_cycles = cycles;
+            self.cycles += cycles;
+            return cycles;
+        }
+
+        self.last_opcode_pc = self.pc;
+        let opcode = self.fetch8(bus);
+        self.last_opcode = opcode;
+        let base_cycles = crate::hardware::opcodes::cycles::CYCLE_TABLE[opcode as usize] as u64;
+        crate::hardware::opcodes::dispatch::execute_opcode(self, bus, opcode);
+        let cycles = if base_cycles == 0 { 2 } else { base_cycles };
+        self.last_step_cycles = cycles;
+        self.cycles += cycles;
+        cycles
+    }
+
+    pub(crate) fn fetch8(&mut self, bus: &mut Bus) -> u8 {
+        let v = bus.cpu_read(self.pc);
+        self.pc = self.pc.wrapping_add(1);
+        v
+    }
+
+    pub(crate) fn fetch16(&mut self, bus: &mut Bus) -> u16 {
+        let lo = self.fetch8(bus) as u16;
+        let hi = self.fetch8(bus) as u16;
+        (hi << 8) | lo
+    }
+
+    pub(crate) fn push8(&mut self, bus: &mut Bus, val: u8) {
+        bus.cpu_write(STACK_BASE | self.sp as u16, val);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    pub(crate) fn pop8(&mut self, bus: &mut Bus) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        bus.cpu_read(STACK_BASE | self.sp as u16)
+    }
+
+    pub(crate) fn push16(&mut self, bus: &mut Bus, val: u16) {
+        self.push8(bus, (val >> 8) as u8);
+        self.push8(bus, val as u8);
+    }
+
+    pub(crate) fn pop16(&mut self, bus: &mut Bus) -> u16 {
+        let lo = self.pop8(bus) as u16;
+        let hi = self.pop8(bus) as u16;
+        (hi << 8) | lo
+    }
+
+    fn service_nmi(&mut self, bus: &mut Bus) -> u64 {
+        self.push16(bus, self.pc);
+        self.push8(bus, self.regs.status_for_push(false));
+        self.regs.set_flag(registers::INTERRUPT_FLAG, true);
+        let lo = bus.cpu_read(NMI_VECTOR_LO) as u16;
+        let hi = bus.cpu_read(NMI_VECTOR_HI) as u16;
+        self.pc = (hi << 8) | lo;
+        7
+    }
+
+    fn service_irq(&mut self, bus: &mut Bus) -> u64 {
+        self.push16(bus, self.pc);
+        self.push8(bus, self.regs.status_for_push(false));
+        self.regs.set_flag(registers::INTERRUPT_FLAG, true);
+        let lo = bus.cpu_read(IRQ_VECTOR_LO) as u16;
+        let hi = bus.cpu_read(IRQ_VECTOR_HI) as u16;
+        self.pc = (hi << 8) | lo;
+        7
+    }
+}

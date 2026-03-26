@@ -1,0 +1,102 @@
+use crate::hardware::cpu::registers::*;
+
+#[derive(Clone)]
+pub struct NesDebugSnapshot {
+    pub pc: u16,
+    pub sp: u8,
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub p: u8,
+    pub cycles: u64,
+    pub cpu_state: &'static str,
+    pub last_opcode: u8,
+    pub last_opcode_pc: u16,
+    pub nmi_pending: bool,
+    pub irq_line: bool,
+
+    pub ppu_scanline: u16,
+    pub ppu_dot: u16,
+    pub ppu_ctrl: u8,
+    pub ppu_mask: u8,
+    pub ppu_status: u8,
+    pub ppu_v: u16,
+    pub ppu_t: u16,
+    pub ppu_fine_x: u8,
+    pub ppu_in_vblank: bool,
+    pub ppu_frame_count: u64,
+
+    pub mem_around_pc: [(u16, u8); 32],
+
+    pub flag_n: bool,
+    pub flag_v: bool,
+    pub flag_d: bool,
+    pub flag_i: bool,
+    pub flag_z: bool,
+    pub flag_c: bool,
+}
+
+impl NesDebugSnapshot {
+    pub fn capture(emu: &crate::emulator::Emulator) -> Self {
+        let cpu = &emu.cpu;
+        let ppu = &emu.bus.ppu;
+
+        let cpu_state = match cpu.state {
+            crate::hardware::cpu::CpuState::Running => "Running",
+            crate::hardware::cpu::CpuState::Halted => "Halted",
+            crate::hardware::cpu::CpuState::Suspended => "Suspended",
+        };
+
+        let mut mem = [(0u16, 0u8); 32];
+        for (i, entry) in mem.iter_mut().enumerate() {
+            let addr = cpu.pc.wrapping_add(i as u16);
+
+            entry.0 = addr;
+            entry.1 = peek_byte(&emu.bus, addr);
+        }
+
+        Self {
+            pc: cpu.pc,
+            sp: cpu.sp,
+            a: cpu.regs.a,
+            x: cpu.regs.x,
+            y: cpu.regs.y,
+            p: cpu.regs.p,
+            cycles: cpu.cycles,
+            cpu_state,
+            last_opcode: cpu.last_opcode,
+            last_opcode_pc: cpu.last_opcode_pc,
+            nmi_pending: cpu.nmi_pending,
+            irq_line: cpu.irq_line,
+
+            ppu_scanline: ppu.scanline,
+            ppu_dot: ppu.dot,
+            ppu_ctrl: ppu.regs.ctrl,
+            ppu_mask: ppu.regs.mask,
+            ppu_status: ppu.regs.status,
+            ppu_v: ppu.v,
+            ppu_t: ppu.t,
+            ppu_fine_x: ppu.fine_x,
+            ppu_in_vblank: ppu.in_vblank,
+            ppu_frame_count: ppu.frame_count,
+
+            mem_around_pc: mem,
+
+            flag_n: cpu.regs.get_flag(NEGATIVE_FLAG),
+            flag_v: cpu.regs.get_flag(OVERFLOW_FLAG),
+            flag_d: cpu.regs.get_flag(DECIMAL_FLAG),
+            flag_i: cpu.regs.get_flag(INTERRUPT_FLAG),
+            flag_z: cpu.regs.get_flag(ZERO_FLAG),
+            flag_c: cpu.regs.get_flag(CARRY_FLAG),
+        }
+    }
+}
+
+fn peek_byte(bus: &crate::hardware::bus::Bus, addr: u16) -> u8 {
+    match addr {
+        0x0000..=0x1FFF => bus.ram[(addr & 0x07FF) as usize],
+        0x4020..=0xFFFF => bus.cartridge.cpu_read(addr),
+        _ => 0,
+    }
+}
+

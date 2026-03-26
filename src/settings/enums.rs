@@ -195,6 +195,8 @@ pub(crate) fn build_gpu_params(
     params: &ShaderParams,
     color_correction: ColorCorrection,
     color_correction_matrix: [f32; 9],
+    native_width: f32,
+    native_height: f32,
 ) -> [u8; 96] {
     let mut buf = [0u8; 96];
     buf[0..4].copy_from_slice(&params.scanline_intensity.to_le_bytes());
@@ -203,8 +205,8 @@ pub(crate) fn build_gpu_params(
     buf[12..16].copy_from_slice(&params.upscale_edge_strength.to_le_bytes());
     buf[16..20].copy_from_slice(&params.palette_mix.to_le_bytes());
     buf[20..24].copy_from_slice(&params.palette_warmth.to_le_bytes());
-    buf[24..28].copy_from_slice(&160.0_f32.to_le_bytes());
-    buf[28..32].copy_from_slice(&144.0_f32.to_le_bytes());
+    buf[24..28].copy_from_slice(&native_width.to_le_bytes());
+    buf[28..32].copy_from_slice(&native_height.to_le_bytes());
 
     let mode: u32 = match color_correction {
         ColorCorrection::None => 0,

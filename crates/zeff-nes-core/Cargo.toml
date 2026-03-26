@@ -1,0 +1,14 @@
+[package]
+name = "zeff-nes-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "NES (Nintendo Entertainment System) emulation core library."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+anyhow = "1.0.102"
+log = "0.4.29"
+serde = { version = "1.0.228", features = ["derive"] }
+

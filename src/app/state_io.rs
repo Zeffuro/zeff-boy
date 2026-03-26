@@ -1,5 +1,6 @@
 use super::App;
 use crate::debug::FpsTracker;
+use crate::emu_backend::{ActiveSystem, EmuBackend};
 use crate::emu_thread::{EmuCommand, EmuResponse, EmuThread};
 use zeff_gb_core::emulator::Emulator;
 use std::path::{Path, PathBuf};
@@ -49,15 +50,43 @@ impl App {
         self.recycled.clear();
         self.debug_windows.last_disasm_pc = None;
 
-        match Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference) {
-            Ok(mut emu) => {
-                if let Some(audio) = &self.audio {
-                    emu.bus.set_apu_sample_rate(audio.sample_rate());
-                }
-                let buttons = self.host_input.buttons_pressed();
-                let dpad = self.host_input.dpad_pressed();
-                emu.bus.apply_joypad_pressed_masks(buttons, dpad);
+        let system = ActiveSystem::from_path(path).unwrap_or(ActiveSystem::GameBoy);
 
+        let backend_result: anyhow::Result<EmuBackend> = match system {
+            ActiveSystem::GameBoy => {
+                Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference)
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .map(|mut emu| {
+                        if let Some(audio) = &self.audio {
+                            emu.bus.set_apu_sample_rate(audio.sample_rate());
+                        }
+                        let buttons = self.host_input.buttons_pressed();
+                        let dpad = self.host_input.dpad_pressed();
+                        emu.bus.apply_joypad_pressed_masks(buttons, dpad);
+                        EmuBackend::from_gb(emu)
+                    })
+            }
+            ActiveSystem::Nes => {
+                let rom_data = std::fs::read(path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}"));
+                match rom_data {
+                    Ok(data) => {
+                        let sample_rate = self.audio.as_ref()
+                            .map(|a| a.sample_rate() as f64)
+                            .unwrap_or(48000.0);
+                        zeff_nes_core::emulator::Emulator::new(
+                            &data,
+                            path.to_path_buf(),
+                            sample_rate,
+                        ).map(EmuBackend::from_nes)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        };
+
+        match backend_result {
+            Ok(backend) => {
                 let rom_name = path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -65,54 +94,77 @@ impl App {
                     .to_string();
                 log::info!("Loaded ROM: {}", path.display());
 
-                self.cached_is_mbc7 = emu.is_mbc7_cartridge();
-                self.cached_rom_path = Some(emu.rom_path().to_path_buf());
-                self.cached_rom_hash = Some(emu.rom_hash);
+                self.cached_is_mbc7 = backend.is_mbc7();
+                self.cached_rom_path = Some(backend.rom_path().to_path_buf());
+                self.cached_rom_hash = backend.rom_hash();
+                self.active_system = system;
 
-                let rom_header_title = emu.header.title.clone();
-                let is_gbc = emu.header.is_cgb_compatible || emu.header.is_cgb_exclusive;
-                let rom_crc32 = crc32fast::hash(emu.bus.cartridge.rom_bytes());
-                let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
-                let search_hints = crate::libretro_metadata::build_cheat_search_hints(
-                    &rom_header_title,
-                    libretro_meta.as_ref(),
-                );
-
-                if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
-                    crate::cheats::save_game_cheats(
-                        Some(old_title),
-                        self.debug_windows.cheat.rom_crc32,
-                        &self.debug_windows.cheat.user_codes,
-                        &self.debug_windows.cheat.libretro_codes,
-                    );
+                // Update framebuffer texture size when system changes
+                let (native_w, native_h) = system.screen_size();
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.set_native_size(native_w, native_h);
                 }
 
-                self.debug_windows.cheat.rom_title = Some(rom_header_title.clone());
-                self.debug_windows.cheat.rom_crc32 = Some(rom_crc32);
-                self.debug_windows.cheat.rom_metadata_title =
-                    libretro_meta.as_ref().map(|m| m.title.clone());
-                self.debug_windows.cheat.rom_metadata_rom_name =
-                    libretro_meta.as_ref().map(|m| m.rom_name.clone());
-                self.debug_windows.cheat.rom_is_gbc = is_gbc;
-                self.debug_windows.cheat.libretro_search_hints = search_hints;
-                self.debug_windows.cheat.libretro_search = self
-                    .debug_windows
-                    .cheat
-                    .libretro_search_hints
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| rom_header_title.clone());
-                self.debug_windows.cheat.libretro_results.clear();
-                self.debug_windows.cheat.libretro_file_list = None;
-                self.debug_windows.cheat.libretro_status = None;
+                // GB-specific setup (cheats, libretro, header info)
+                if let Some(gb_emu) = backend.gb() {
+                    let rom_header_title = gb_emu.header.title.clone();
+                    let is_gbc = gb_emu.header.is_cgb_compatible || gb_emu.header.is_cgb_exclusive;
+                    let rom_crc32 = crc32fast::hash(gb_emu.bus.cartridge.rom_bytes());
+                    let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
+                    let search_hints = crate::libretro_metadata::build_cheat_search_hints(
+                        &rom_header_title,
+                        libretro_meta.as_ref(),
+                    );
 
-                let (user, libretro) =
-                    crate::cheats::load_game_cheats(Some(&rom_header_title), Some(rom_crc32));
-                self.debug_windows.cheat.user_codes = user;
-                self.debug_windows.cheat.libretro_codes = libretro;
-                self.debug_windows.cheat.cheats_dirty = true;
+                    if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
+                        crate::cheats::save_game_cheats(
+                            Some(old_title),
+                            self.debug_windows.cheat.rom_crc32,
+                            &self.debug_windows.cheat.user_codes,
+                            &self.debug_windows.cheat.libretro_codes,
+                        );
+                    }
 
-                self.emu_thread = Some(EmuThread::spawn(emu));
+                    self.debug_windows.cheat.rom_title = Some(rom_header_title.clone());
+                    self.debug_windows.cheat.rom_crc32 = Some(rom_crc32);
+                    self.debug_windows.cheat.rom_metadata_title =
+                        libretro_meta.as_ref().map(|m| m.title.clone());
+                    self.debug_windows.cheat.rom_metadata_rom_name =
+                        libretro_meta.as_ref().map(|m| m.rom_name.clone());
+                    self.debug_windows.cheat.rom_is_gbc = is_gbc;
+                    self.debug_windows.cheat.libretro_search_hints = search_hints;
+                    self.debug_windows.cheat.libretro_search = self
+                        .debug_windows
+                        .cheat
+                        .libretro_search_hints
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| rom_header_title.clone());
+                    self.debug_windows.cheat.libretro_results.clear();
+                    self.debug_windows.cheat.libretro_file_list = None;
+                    self.debug_windows.cheat.libretro_status = None;
+
+                    let (user, libretro) =
+                        crate::cheats::load_game_cheats(Some(&rom_header_title), Some(rom_crc32));
+                    self.debug_windows.cheat.user_codes = user;
+                    self.debug_windows.cheat.libretro_codes = libretro;
+                    self.debug_windows.cheat.cheats_dirty = true;
+                } else {
+                    // NES: clear GB-specific cheat state
+                    self.debug_windows.cheat.rom_title = None;
+                    self.debug_windows.cheat.rom_crc32 = None;
+                    self.debug_windows.cheat.rom_metadata_title = None;
+                    self.debug_windows.cheat.rom_metadata_rom_name = None;
+                    self.debug_windows.cheat.libretro_search_hints.clear();
+                    self.debug_windows.cheat.libretro_search.clear();
+                    self.debug_windows.cheat.libretro_results.clear();
+                    self.debug_windows.cheat.libretro_file_list = None;
+                    self.debug_windows.cheat.libretro_status = None;
+                    self.debug_windows.cheat.user_codes.clear();
+                    self.debug_windows.cheat.libretro_codes.clear();
+                }
+
+                self.emu_thread = Some(EmuThread::spawn(backend));
                 self.fps_tracker = FpsTracker::new();
                 self.timing.last_frame_time = Instant::now();
 
@@ -125,7 +177,7 @@ impl App {
                 self.settings.save();
                 self.toast_manager.info(format!("Loaded {rom_name}"));
 
-                if auto_load_state && self.settings.auto_save_state {
+                if auto_load_state && self.settings.auto_save_state && system == ActiveSystem::GameBoy {
                     if let Some(thread) = &self.emu_thread {
                         thread.send(EmuCommand::AutoLoadState {
                             buttons_pressed: self.host_input.buttons_pressed(),
@@ -275,7 +327,9 @@ impl App {
     pub(super) fn open_file_dialog(&mut self) {
         let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
+            .add_filter("ROMs", &["gb", "gbc", "nes"])
             .add_filter("Game Boy ROMs", &["gb", "gbc"])
+            .add_filter("NES ROMs", &["nes"])
             .add_filter("All files", &["*"])
             .set_title("Open ROM")
             .pick_file();
@@ -401,8 +455,10 @@ impl App {
         self.load_rom(&path);
     }
     pub(super) fn take_screenshot(&mut self) {
+        let (native_w, native_h) = self.active_system.screen_size();
+        let expected_len = (native_w * native_h * 4) as usize;
         let fb = match &self.last_displayed_frame {
-            Some(fb) if fb.len() == 160 * 144 * 4 => fb,
+            Some(fb) if fb.len() == expected_len => fb,
             _ => {
                 self.toast_manager.error("No framebuffer available");
                 return;
@@ -428,7 +484,7 @@ impl App {
         }
         let path = dir.join(&filename);
 
-        let image = egui::ColorImage::from_rgba_unmultiplied([160, 144], fb);
+        let image = egui::ColorImage::from_rgba_unmultiplied([native_w as usize, native_h as usize], fb);
 
         match crate::debug::export::export_color_image_as_png(&path, &image) {
             Ok(()) => {

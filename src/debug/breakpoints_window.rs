@@ -1,11 +1,10 @@
 use crate::debug::BreakpointState;
-use crate::debug::DebugInfo;
-use crate::debug::WatchType;
+use crate::debug::common::{CpuDebugSnapshot, WatchType};
 use crate::debug::ui::DebugUiActions;
 
 pub(super) fn draw_breakpoints_content(
     ui: &mut egui::Ui,
-    info: &DebugInfo,
+    info: &CpuDebugSnapshot,
     state: &mut BreakpointState,
     actions: &mut DebugUiActions,
 ) {

@@ -4271,6 +4271,7 @@ dependencies = [
  "wgpu",
  "winit",
  "zeff-gb-core",
+ "zeff-nes-core",
 ]
 
 [[package]]
@@ -4287,6 +4288,15 @@ dependencies = [
  "phf",
  "serde",
  "sha2",
+]
+
+[[package]]
+name = "zeff-nes-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "serde",
 ]
 
 [[package]]

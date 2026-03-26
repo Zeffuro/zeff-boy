@@ -154,8 +154,8 @@ impl App {
         let settings_was_open = self.show_settings_window;
 
         let speed_label = ui_frame_data
-            .and_then(|d| d.debug_info.as_ref())
-            .map(|info| info.speed_mode_label);
+            .and_then(|d| d.perf_info.as_ref())
+            .map(|info| info.speed_mode_label.as_str());
 
         let is_recording = self.recording.audio_recorder.is_some();
         let is_recording_replay = self.recording.replay_recorder.is_some();
@@ -168,9 +168,14 @@ impl App {
         let slot_labels = super::state_io::build_slot_labels(self.cached_rom_hash);
 
         match gfx.render(graphics::RenderContext {
-            debug_info: ui_frame_data.and_then(|d| d.debug_info.as_ref()),
-            viewer_data: ui_frame_data.and_then(|d| d.viewer_data.as_ref()),
-            rom_info_view: ui_frame_data.and_then(|d| d.rom_info_view.as_ref()),
+            cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
+            perf_info: ui_frame_data.and_then(|d| d.perf_info.as_ref()),
+            apu_debug: ui_frame_data.and_then(|d| d.apu_debug.as_ref()),
+            oam_debug: ui_frame_data.and_then(|d| d.oam_debug.as_ref()),
+            palette_debug: ui_frame_data.and_then(|d| d.palette_debug.as_ref()),
+            rom_debug: ui_frame_data.and_then(|d| d.rom_debug.as_ref()),
+            input_debug: ui_frame_data.and_then(|d| d.input_debug.as_ref()),
+            graphics_data: ui_frame_data.and_then(|d| d.graphics_data.as_ref()),
             disassembly_view: ui_frame_data.and_then(|d| d.disassembly_view.as_ref()),
             memory_page: ui_frame_data.and_then(|d| d.memory_page.as_deref()),
             rom_page: ui_frame_data.and_then(|d| d.rom_page.as_deref()),

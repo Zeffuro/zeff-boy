@@ -1,3 +1,4 @@
+use crate::debug::common::PaletteDebugInfo;
 use zeff_gb_core::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba, correct_color};
 use crate::settings::ColorCorrection;
 
@@ -55,48 +56,30 @@ fn draw_cgb_palette_section(
 
 pub(super) fn draw_palette_viewer_content(
     ui: &mut egui::Ui,
-    bgp: u8,
-    obp0: u8,
-    obp1: u8,
-    cgb_mode: bool,
-    bg_palette_ram: &[u8; 64],
-    obj_palette_ram: &[u8; 64],
-    color_correction: ColorCorrection,
-    color_correction_matrix: [f32; 9],
+    info: &PaletteDebugInfo,
 ) {
-    draw_palette_row(ui, "BGP", bgp);
-    ui.separator();
-    draw_palette_row(ui, "OBP0", obp0);
-    ui.separator();
-    draw_palette_row(ui, "OBP1", obp1);
-    ui.separator();
-    ui.label("Base DMG shades:");
-    ui.horizontal(|ui| {
-        for rgba in PALETTE_COLORS {
-            let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
-            egui::Frame::NONE.fill(color).show(ui, |ui| {
-                ui.add_space(24.0);
-                ui.add_sized([24.0, 16.0], egui::Label::new(""));
+    for group in &info.groups {
+        ui.label(&group.title);
+        for row in &group.rows {
+            ui.horizontal(|ui| {
+                ui.label(&row.label);
+                for rgba in &row.colors {
+                    let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+                    let luminance = (rgba[0] as u16 + rgba[1] as u16 + rgba[2] as u16) / 3;
+                    let text_color = if luminance < 128 {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::BLACK
+                    };
+                    egui::Frame::NONE.fill(color).show(ui, |ui| {
+                        ui.add_sized(
+                            [28.0, 20.0],
+                            egui::Label::new(egui::RichText::new("").color(text_color)),
+                        );
+                    });
+                }
             });
         }
-    });
-
-    if cgb_mode {
-        draw_cgb_palette_section(
-            ui,
-            "CGB BG palettes:",
-            "BG",
-            bg_palette_ram,
-            color_correction,
-            color_correction_matrix,
-        );
-        draw_cgb_palette_section(
-            ui,
-            "CGB OBJ palettes:",
-            "OB",
-            obj_palette_ram,
-            color_correction,
-            color_correction_matrix,
-        );
+        ui.separator();
     }
 }

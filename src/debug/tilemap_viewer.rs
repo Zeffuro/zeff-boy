@@ -1,4 +1,5 @@
-use crate::debug::{PpuSnapshot, TilemapViewerState};
+use crate::debug::TilemapViewerState;
+use zeff_gb_core::debug::PpuSnapshot;
 use zeff_gb_core::hardware::ppu::{
     LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, apply_palette, cgb_palette_rgba,
     correct_color, decode_tile_pixel, tile_data_address,
@@ -184,8 +185,8 @@ pub(super) fn draw_tilemap_viewer_content(
             } else {
                 let wx = (ppu.wx as f32 - 7.0).max(0.0);
                 let wy = ppu.wy as f32;
-                let view_w = (160.0 - wx).clamp(0.0, 160.0);
-                let view_h = (144.0 - wy).clamp(0.0, 144.0);
+                let view_w = (160.0_f32 - wx).clamp(0.0, 160.0);
+                let view_h = (144.0_f32 - wy).clamp(0.0, 144.0);
                 if view_w > 0.0 && view_h > 0.0 {
                     let rect = egui::Rect::from_min_size(
                         egui::pos2(origin.x, origin.y),
