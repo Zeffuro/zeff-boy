@@ -1,6 +1,7 @@
 pub(crate) use zeff_gb_core::cheats::*;
 
 use crate::settings::Settings;
+use crate::emu_backend::ActiveSystem;
 
 fn sanitize_rom_title(title: &str) -> String {
     title
@@ -21,15 +22,17 @@ fn storage_key(rom_title: Option<&str>, rom_crc32: Option<u32>) -> Option<String
         .filter(|title| !title.trim().is_empty())
 }
 
-fn user_cheat_path(key: &str) -> std::path::PathBuf {
+fn user_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
     Settings::settings_dir()
         .join("cheats")
+        .join(system.storage_subdir())
         .join(format!("{key}.cht"))
 }
 
-fn libretro_cheat_path(key: &str) -> std::path::PathBuf {
+fn libretro_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
     Settings::settings_dir()
         .join("cheats")
+        .join(system.storage_subdir())
         .join("libretro")
         .join(format!("{key}.cht"))
 }
@@ -52,6 +55,7 @@ fn write_or_remove(path: &std::path::Path, cheats: &[CheatCode]) {
 }
 
 pub(crate) fn save_game_cheats(
+    system: ActiveSystem,
     rom_title: Option<&str>,
     rom_crc32: Option<u32>,
     user: &[CheatCode],
@@ -60,17 +64,18 @@ pub(crate) fn save_game_cheats(
     let Some(key) = storage_key(rom_title, rom_crc32) else {
         return;
     };
-    write_or_remove(&user_cheat_path(&key), user);
-    write_or_remove(&libretro_cheat_path(&key), libretro);
+    write_or_remove(&user_cheat_path(system, &key), user);
+    write_or_remove(&libretro_cheat_path(system, &key), libretro);
 }
 
 pub(crate) fn load_game_cheats(
+    system: ActiveSystem,
     rom_title: Option<&str>,
     rom_crc32: Option<u32>,
 ) -> (Vec<CheatCode>, Vec<CheatCode>) {
     if let Some(key) = storage_key(rom_title, rom_crc32) {
-        let user = read_cheat_file(&user_cheat_path(&key));
-        let libretro = read_cheat_file(&libretro_cheat_path(&key));
+        let user = read_cheat_file(&user_cheat_path(system, &key));
+        let libretro = read_cheat_file(&libretro_cheat_path(system, &key));
         if !user.is_empty() || !libretro.is_empty() {
             return (user, libretro);
         }

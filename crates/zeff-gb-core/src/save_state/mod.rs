@@ -15,6 +15,7 @@ use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference
 pub const SAVE_STATE_VERSION: u32 = 1;
 pub const SAVE_STATE_FORMAT_VERSION: u32 = 2;
 const SAVE_STATE_EXTENSION: &str = "state";
+const SAVE_SYSTEM_SUBDIR: &str = "gbc";
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -364,7 +365,7 @@ fn validate_slot(slot: u8) -> Result<()> {
     }
 }
 
-fn save_dir_path() -> PathBuf {
+fn save_root_path() -> PathBuf {
     if let Some(config_dir) = dirs::config_dir() {
         return config_dir.join("zeff-boy").join("saves");
     }
@@ -373,6 +374,11 @@ fn save_dir_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("saves")
 }
+
+fn save_dir_path() -> PathBuf {
+    save_root_path().join(SAVE_SYSTEM_SUBDIR)
+}
+
 
 fn rom_hash_hex(hash: [u8; 32]) -> String {
     let mut out = String::with_capacity(64);

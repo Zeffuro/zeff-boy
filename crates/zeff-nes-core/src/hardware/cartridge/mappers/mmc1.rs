@@ -172,5 +172,33 @@ impl Mapper for Mmc1 {
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
-}
 
+    fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bytes(&self.prg_ram);
+        w.write_u8(self.shift_register);
+        w.write_u8(self.shift_count);
+        w.write_u8(self.control);
+        w.write_u8(self.chr_bank_0);
+        w.write_u8(self.chr_bank_1);
+        w.write_u8(self.prg_bank);
+        w.write_u8(crate::save_state::encode_mirroring(self.mirroring));
+        w.write_vec(&self.chr);
+    }
+
+    fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        r.read_exact(&mut self.prg_ram)?;
+        self.shift_register = r.read_u8()?;
+        self.shift_count = r.read_u8()?;
+        self.control = r.read_u8()?;
+        self.chr_bank_0 = r.read_u8()?;
+        self.chr_bank_1 = r.read_u8()?;
+        self.prg_bank = r.read_u8()?;
+        self.mirroring = crate::save_state::decode_mirroring(r.read_u8()?)?;
+        let chr = r.read_vec(512 * 1024)?;
+        if chr.len() != self.chr.len() {
+            anyhow::bail!("MMC1 CHR size mismatch: expected {}, got {}", self.chr.len(), chr.len());
+        }
+        self.chr = chr;
+        Ok(())
+    }
+}

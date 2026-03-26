@@ -2,8 +2,15 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use zeff_gb_core::hardware::apu::ApuChannelSnapshot;
+use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
+use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
 use crate::settings::AudioRecordingFormat;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MidiApuSnapshot {
+    Gb(GbApuChannelSnapshot),
+    Nes(NesApuChannelSnapshot),
+}
 
 pub(crate) struct AudioRecorder {
     inner: RecorderInner,
@@ -26,7 +33,7 @@ enum RecorderInner {
         chunk_threshold: usize,
     },
     Midi {
-        snapshots: Vec<ApuChannelSnapshot>,
+        snapshots: Vec<MidiApuSnapshot>,
     },
 }
 
@@ -118,7 +125,7 @@ impl AudioRecorder {
         }
     }
 
-    pub(crate) fn write_apu_snapshot(&mut self, snapshot: ApuChannelSnapshot) {
+    pub(crate) fn write_apu_snapshot(&mut self, snapshot: MidiApuSnapshot) {
         if let RecorderInner::Midi { snapshots } = &mut self.inner {
             snapshots.push(snapshot);
         }
@@ -255,18 +262,45 @@ fn wave_level_to_velocity(level: u8) -> u8 {
     }
 }
 
-fn finish_midi(path: PathBuf, snapshots: &[ApuChannelSnapshot]) -> std::io::Result<PathBuf> {
+fn finish_midi(path: PathBuf, snapshots: &[MidiApuSnapshot]) -> std::io::Result<PathBuf> {
     if snapshots.is_empty() {
         std::fs::write(&path, [])?;
         return Ok(path);
     }
 
     const TICKS_PER_FRAME: u16 = 1;
-    const TEMPO_US_PER_BEAT: u32 = 16742;
+    const GB_TEMPO_US_PER_BEAT: u32 = 16742;
+    const NES_TEMPO_US_PER_BEAT: u32 = 16639;
 
-    let track_data: Vec<Vec<u8>> = (0..4)
-        .map(|ch| build_midi_track(snapshots, ch, TEMPO_US_PER_BEAT))
-        .collect();
+    let is_nes = matches!(snapshots[0], MidiApuSnapshot::Nes(_));
+    let track_data: Vec<Vec<u8>>;
+    let tempo_us: u32;
+
+    if is_nes {
+        let nes_snapshots: Vec<NesApuChannelSnapshot> = snapshots
+            .iter()
+            .filter_map(|s| match s {
+                MidiApuSnapshot::Nes(snap) => Some(*snap),
+                MidiApuSnapshot::Gb(_) => None,
+            })
+            .collect();
+        tempo_us = NES_TEMPO_US_PER_BEAT;
+        track_data = (0..4)
+            .map(|ch| build_midi_track_nes(&nes_snapshots, ch))
+            .collect();
+    } else {
+        let gb_snapshots: Vec<GbApuChannelSnapshot> = snapshots
+            .iter()
+            .filter_map(|s| match s {
+                MidiApuSnapshot::Gb(snap) => Some(*snap),
+                MidiApuSnapshot::Nes(_) => None,
+            })
+            .collect();
+        tempo_us = GB_TEMPO_US_PER_BEAT;
+        track_data = (0..4)
+            .map(|ch| build_midi_track_gb(&gb_snapshots, ch))
+            .collect();
+    }
 
     let mut smf = Vec::with_capacity(snapshots.len() * 16);
 
@@ -276,7 +310,7 @@ fn finish_midi(path: PathBuf, snapshots: &[ApuChannelSnapshot]) -> std::io::Resu
     smf.extend_from_slice(&5u16.to_be_bytes());
     smf.extend_from_slice(&TICKS_PER_FRAME.to_be_bytes());
 
-    let tempo_track = build_tempo_track(TEMPO_US_PER_BEAT);
+    let tempo_track = build_tempo_track(tempo_us);
     smf.extend_from_slice(b"MTrk");
     smf.extend_from_slice(&(tempo_track.len() as u32).to_be_bytes());
     smf.extend_from_slice(&tempo_track);
@@ -327,7 +361,15 @@ fn drum_note_for_noise(volume: u8) -> u8 {
     }
 }
 
-fn build_midi_track(snapshots: &[ApuChannelSnapshot], channel: usize, _tempo: u32) -> Vec<u8> {
+fn nes_pulse_freq_to_hz(timer_period: u16) -> f64 {
+    zeff_nes_core::hardware::constants::APU_CPU_CLOCK_NTSC / (16.0 * (timer_period as f64 + 1.0))
+}
+
+fn nes_triangle_freq_to_hz(timer_period: u16) -> f64 {
+    zeff_nes_core::hardware::constants::APU_CPU_CLOCK_NTSC / (32.0 * (timer_period as f64 + 1.0))
+}
+
+fn build_midi_track_gb(snapshots: &[GbApuChannelSnapshot], channel: usize) -> Vec<u8> {
     let mut data = Vec::new();
 
     let midi_ch: u8 = match channel {
@@ -454,6 +496,132 @@ fn build_midi_track(snapshots: &[ApuChannelSnapshot], channel: usize, _tempo: u3
     data
 }
 
+fn build_midi_track_nes(snapshots: &[NesApuChannelSnapshot], channel: usize) -> Vec<u8> {
+    let mut data = Vec::new();
+
+    let midi_ch: u8 = match channel {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 9,
+        _ => 0,
+    };
+
+    let name = match channel {
+        0 => "NES Pulse 1",
+        1 => "NES Pulse 2",
+        2 => "NES Triangle",
+        3 => "NES Noise",
+        _ => "Unknown",
+    };
+
+    write_vlq(&mut data, 0);
+    data.push(0xFF);
+    data.push(0x03);
+    write_vlq(&mut data, name.len() as u32);
+    data.extend_from_slice(name.as_bytes());
+
+    if let Some(program) = midi_program_for_channel(channel) {
+        write_vlq(&mut data, 0);
+        data.push(0xC0 | midi_ch);
+        data.push(program);
+    }
+
+    let mut current_note: Option<u8> = None;
+    let mut current_velocity: u8 = 0;
+    let mut pending_delta: u32 = 0;
+
+    for snap in snapshots {
+        let (enabled, timer_period, vol_raw) = match channel {
+            0 => (snap.pulse1_enabled, snap.pulse1_timer_period, snap.pulse1_volume),
+            1 => (snap.pulse2_enabled, snap.pulse2_timer_period, snap.pulse2_volume),
+            2 => (
+                snap.triangle_enabled,
+                snap.triangle_timer_period,
+                snap.triangle_volume,
+            ),
+            3 => (snap.noise_enabled, 0, snap.noise_volume),
+            _ => (false, 0, 0),
+        };
+
+        let velocity = volume_to_velocity(vol_raw);
+        let note = if channel == 3 {
+            drum_note_for_noise(vol_raw)
+        } else {
+            let hz = if channel == 2 {
+                nes_triangle_freq_to_hz(timer_period)
+            } else {
+                nes_pulse_freq_to_hz(timer_period)
+            };
+            hz_to_midi_note(hz)
+        };
+
+        let should_sound = enabled && velocity > 0;
+
+        if should_sound {
+            if let Some(prev_note) = current_note {
+                if prev_note != note {
+                    write_vlq(&mut data, pending_delta);
+                    data.push(0x80 | midi_ch);
+                    data.push(prev_note);
+                    data.push(0);
+
+                    pending_delta = 0;
+
+                    write_vlq(&mut data, 0);
+                    data.push(0x90 | midi_ch);
+                    data.push(note);
+                    data.push(velocity);
+
+                    current_note = Some(note);
+                    current_velocity = velocity;
+                } else if velocity != current_velocity && channel != 3 {
+                    write_vlq(&mut data, pending_delta);
+                    data.push(0xA0 | midi_ch);
+                    data.push(note);
+                    data.push(velocity);
+
+                    pending_delta = 0;
+                    current_velocity = velocity;
+                }
+            } else {
+                write_vlq(&mut data, pending_delta);
+                data.push(0x90 | midi_ch);
+                data.push(note);
+                data.push(velocity);
+
+                pending_delta = 0;
+                current_note = Some(note);
+                current_velocity = velocity;
+            }
+        } else if let Some(prev_note) = current_note.take() {
+            write_vlq(&mut data, pending_delta);
+            data.push(0x80 | midi_ch);
+            data.push(prev_note);
+            data.push(0);
+
+            pending_delta = 0;
+            current_velocity = 0;
+        }
+
+        pending_delta = pending_delta.saturating_add(1);
+    }
+
+    if let Some(prev_note) = current_note {
+        write_vlq(&mut data, pending_delta);
+        data.push(0x80 | midi_ch);
+        data.push(prev_note);
+        data.push(0);
+    }
+
+    write_vlq(&mut data, 0);
+    data.push(0xFF);
+    data.push(0x2F);
+    data.push(0x00);
+
+    data
+}
+
 fn write_vlq(buf: &mut Vec<u8>, mut value: u32) {
     if value == 0 {
         buf.push(0);
@@ -479,8 +647,8 @@ fn write_vlq(buf: &mut Vec<u8>, mut value: u32) {
 mod tests {
     use super::*;
 
-    fn snapshot(ch1_enabled: bool, ch1_frequency: u16, ch1_volume: u8) -> ApuChannelSnapshot {
-        ApuChannelSnapshot {
+    fn gb_snapshot(ch1_enabled: bool, ch1_frequency: u16, ch1_volume: u8) -> GbApuChannelSnapshot {
+        GbApuChannelSnapshot {
             ch1_enabled,
             ch1_frequency,
             ch1_volume,
@@ -492,6 +660,22 @@ mod tests {
             ch3_output_level: 0,
             ch4_enabled: false,
             ch4_volume: 0,
+        }
+    }
+
+    fn nes_snapshot(pulse1_enabled: bool, pulse1_timer_period: u16, pulse1_volume: u8) -> NesApuChannelSnapshot {
+        NesApuChannelSnapshot {
+            pulse1_enabled,
+            pulse1_timer_period,
+            pulse1_volume,
+            pulse2_enabled: false,
+            pulse2_timer_period: 0,
+            pulse2_volume: 0,
+            triangle_enabled: false,
+            triangle_timer_period: 0,
+            triangle_volume: 0,
+            noise_enabled: false,
+            noise_volume: 0,
         }
     }
 
@@ -563,6 +747,12 @@ mod tests {
     }
 
     #[test]
+    fn nes_pulse_freq_to_hz_middle_range() {
+        let hz = nes_pulse_freq_to_hz(253);
+        assert!((hz - 440.0).abs() < 1.0);
+    }
+
+    #[test]
     fn hz_to_midi_note_a4() {
         assert_eq!(hz_to_midi_note(440.0), 69);
     }
@@ -619,32 +809,8 @@ mod tests {
     #[test]
     fn finish_midi_produces_valid_smf_header() {
         let snapshots = vec![
-            ApuChannelSnapshot {
-                ch1_enabled: true,
-                ch1_frequency: 1750,
-                ch1_volume: 15,
-                ch2_enabled: false,
-                ch2_frequency: 0,
-                ch2_volume: 0,
-                ch3_enabled: false,
-                ch3_frequency: 0,
-                ch3_output_level: 0,
-                ch4_enabled: false,
-                ch4_volume: 0,
-            },
-            ApuChannelSnapshot {
-                ch1_enabled: true,
-                ch1_frequency: 1800,
-                ch1_volume: 12,
-                ch2_enabled: false,
-                ch2_frequency: 0,
-                ch2_volume: 0,
-                ch3_enabled: false,
-                ch3_frequency: 0,
-                ch3_output_level: 0,
-                ch4_enabled: false,
-                ch4_volume: 0,
-            },
+            MidiApuSnapshot::Gb(gb_snapshot(true, 1750, 15)),
+            MidiApuSnapshot::Gb(gb_snapshot(true, 1800, 12)),
         ];
 
         let dir = std::env::temp_dir();
@@ -663,11 +829,11 @@ mod tests {
     #[test]
     fn midi_note_change_on_adjacent_snapshots_advances_time() {
         let snapshots = vec![
-            snapshot(true, 1750, 15),
-            snapshot(true, 1800, 15),
+            gb_snapshot(true, 1750, 15),
+            gb_snapshot(true, 1800, 15),
         ];
 
-        let track = build_midi_track(&snapshots, 0, 0);
+        let track = build_midi_track_gb(&snapshots, 0);
         let events = ch0_note_events(&track);
         assert!(events.len() >= 4);
 
@@ -682,11 +848,11 @@ mod tests {
     #[test]
     fn midi_note_off_on_adjacent_snapshot_advances_time() {
         let snapshots = vec![
-            snapshot(true, 1750, 15),
-            snapshot(false, 1750, 15),
+            gb_snapshot(true, 1750, 15),
+            gb_snapshot(false, 1750, 15),
         ];
 
-        let track = build_midi_track(&snapshots, 0, 0);
+        let track = build_midi_track_gb(&snapshots, 0);
         let events = ch0_note_events(&track);
         assert!(events.len() >= 2);
 
@@ -697,15 +863,31 @@ mod tests {
     #[test]
     fn midi_new_note_after_one_silent_snapshot_uses_delta_one() {
         let snapshots = vec![
-            snapshot(false, 1750, 15),
-            snapshot(true, 1750, 15),
+            gb_snapshot(false, 1750, 15),
+            gb_snapshot(true, 1750, 15),
         ];
 
-        let track = build_midi_track(&snapshots, 0, 0);
+        let track = build_midi_track_gb(&snapshots, 0);
         let events = ch0_note_events(&track);
         assert!(!events.is_empty());
 
         assert_eq!(events[0].0, 1);
         assert_eq!(events[0].1, 0x90);
+    }
+
+    #[test]
+    fn nes_midi_note_change_on_adjacent_snapshots_advances_time() {
+        let snapshots = vec![nes_snapshot(true, 253, 15), nes_snapshot(true, 225, 15)];
+
+        let track = build_midi_track_nes(&snapshots, 0);
+        let events = ch0_note_events(&track);
+        assert!(events.len() >= 4);
+
+        assert_eq!(events[0].0, 0);
+        assert_eq!(events[0].1, 0x90);
+        assert_eq!(events[1].0, 1);
+        assert_eq!(events[1].1, 0x80);
+        assert_eq!(events[2].0, 0);
+        assert_eq!(events[2].1, 0x90);
     }
 }

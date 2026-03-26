@@ -69,6 +69,19 @@ impl Controller {
             Button::Right => 0x80,
         }
     }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_u8(self.buttons);
+        w.write_u8(self.shift_register);
+        w.write_bool(self.strobe);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.buttons = r.read_u8()?;
+        self.shift_register = r.read_u8()?;
+        self.strobe = r.read_bool()?;
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Controller {
@@ -79,4 +92,3 @@ impl fmt::Debug for Controller {
             .finish()
     }
 }
-

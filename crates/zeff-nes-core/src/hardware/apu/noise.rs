@@ -1,15 +1,14 @@
 use super::pulse::LENGTH_TABLE;
 
-/// NES APU Noise channel.
 pub struct Noise {
     pub enabled: bool,
     pub length_counter: u8,
 
-    length_halt: bool, // also envelope loop
+    length_halt: bool,
     constant_volume: bool,
     envelope_volume: u8,
 
-    mode: bool, // short-mode (bit 7 of $400E)
+    mode: bool,
     timer_period: u16,
     timer_counter: u16,
 
@@ -116,5 +115,47 @@ impl Noise {
             self.envelope_decay
         }
     }
-}
 
+    pub fn midi_active(&self) -> bool {
+        self.enabled && self.length_counter > 0
+    }
+
+    pub fn midi_volume(&self) -> u8 {
+        if self.constant_volume {
+            self.envelope_volume
+        } else {
+            self.envelope_decay
+        }
+    }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bool(self.enabled);
+        w.write_u8(self.length_counter);
+        w.write_bool(self.length_halt);
+        w.write_bool(self.constant_volume);
+        w.write_u8(self.envelope_volume);
+        w.write_bool(self.mode);
+        w.write_u16(self.timer_period);
+        w.write_u16(self.timer_counter);
+        w.write_u16(self.shift_register);
+        w.write_bool(self.envelope_start);
+        w.write_u8(self.envelope_divider);
+        w.write_u8(self.envelope_decay);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.enabled = r.read_bool()?;
+        self.length_counter = r.read_u8()?;
+        self.length_halt = r.read_bool()?;
+        self.constant_volume = r.read_bool()?;
+        self.envelope_volume = r.read_u8()?;
+        self.mode = r.read_bool()?;
+        self.timer_period = r.read_u16()?;
+        self.timer_counter = r.read_u16()?;
+        self.shift_register = r.read_u16()?;
+        self.envelope_start = r.read_bool()?;
+        self.envelope_divider = r.read_u8()?;
+        self.envelope_decay = r.read_u8()?;
+        Ok(())
+    }
+}

@@ -167,6 +167,25 @@ impl Pulse {
         }
     }
 
+    pub fn midi_active(&self) -> bool {
+        self.enabled
+            && self.length_counter > 0
+            && self.timer_period >= 8
+            && self.sweep_target_period() <= 0x7FF
+    }
+
+    pub fn midi_volume(&self) -> u8 {
+        if self.constant_volume {
+            self.envelope_volume
+        } else {
+            self.envelope_decay
+        }
+    }
+
+    pub fn timer_period(&self) -> u16 {
+        self.timer_period
+    }
+
     fn sweep_target_period(&self) -> u16 {
         let shift = self.timer_period >> self.sweep_shift;
         if self.sweep_negate {
@@ -179,9 +198,52 @@ impl Pulse {
             self.timer_period.wrapping_add(shift)
         }
     }
-}
 
-// ── Length counter look-up table ────────────────────────────────────
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bool(self.is_pulse1);
+        w.write_bool(self.enabled);
+        w.write_u8(self.length_counter);
+        w.write_u8(self.duty);
+        w.write_bool(self.length_halt);
+        w.write_bool(self.constant_volume);
+        w.write_u8(self.envelope_volume);
+        w.write_bool(self.sweep_enabled);
+        w.write_u8(self.sweep_period);
+        w.write_bool(self.sweep_negate);
+        w.write_u8(self.sweep_shift);
+        w.write_bool(self.sweep_reload);
+        w.write_u8(self.sweep_divider);
+        w.write_u16(self.timer_period);
+        w.write_u16(self.timer_counter);
+        w.write_u8(self.sequence_pos);
+        w.write_bool(self.envelope_start);
+        w.write_u8(self.envelope_divider);
+        w.write_u8(self.envelope_decay);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.is_pulse1 = r.read_bool()?;
+        self.enabled = r.read_bool()?;
+        self.length_counter = r.read_u8()?;
+        self.duty = r.read_u8()?;
+        self.length_halt = r.read_bool()?;
+        self.constant_volume = r.read_bool()?;
+        self.envelope_volume = r.read_u8()?;
+        self.sweep_enabled = r.read_bool()?;
+        self.sweep_period = r.read_u8()?;
+        self.sweep_negate = r.read_bool()?;
+        self.sweep_shift = r.read_u8()?;
+        self.sweep_reload = r.read_bool()?;
+        self.sweep_divider = r.read_u8()?;
+        self.timer_period = r.read_u16()?;
+        self.timer_counter = r.read_u16()?;
+        self.sequence_pos = r.read_u8()?;
+        self.envelope_start = r.read_bool()?;
+        self.envelope_divider = r.read_u8()?;
+        self.envelope_decay = r.read_u8()?;
+        Ok(())
+    }
+}
 
 #[rustfmt::skip]
 pub(crate) static LENGTH_TABLE: [u8; 32] = [

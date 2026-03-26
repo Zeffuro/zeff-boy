@@ -1,6 +1,5 @@
 use super::pulse::LENGTH_TABLE;
 
-/// NES APU Triangle channel.
 pub struct Triangle {
     pub enabled: bool,
     pub length_counter: u8,
@@ -8,7 +7,7 @@ pub struct Triangle {
     linear_counter: u8,
     linear_counter_reload: u8,
     linear_counter_reload_flag: bool,
-    control_flag: bool, // also length counter halt
+    control_flag: bool,
 
     timer_period: u16,
     timer_counter: u16,
@@ -98,5 +97,41 @@ impl Triangle {
         }
         TRIANGLE_SEQUENCE[self.sequence_pos as usize]
     }
-}
 
+    pub fn midi_active(&self) -> bool {
+        self.enabled && self.length_counter > 0 && self.linear_counter > 0
+    }
+
+    pub fn midi_volume(&self) -> u8 {
+        15
+    }
+
+    pub fn timer_period(&self) -> u16 {
+        self.timer_period
+    }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bool(self.enabled);
+        w.write_u8(self.length_counter);
+        w.write_u8(self.linear_counter);
+        w.write_u8(self.linear_counter_reload);
+        w.write_bool(self.linear_counter_reload_flag);
+        w.write_bool(self.control_flag);
+        w.write_u16(self.timer_period);
+        w.write_u16(self.timer_counter);
+        w.write_u8(self.sequence_pos);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.enabled = r.read_bool()?;
+        self.length_counter = r.read_u8()?;
+        self.linear_counter = r.read_u8()?;
+        self.linear_counter_reload = r.read_u8()?;
+        self.linear_counter_reload_flag = r.read_bool()?;
+        self.control_flag = r.read_bool()?;
+        self.timer_period = r.read_u16()?;
+        self.timer_counter = r.read_u16()?;
+        self.sequence_pos = r.read_u8()?;
+        Ok(())
+    }
+}

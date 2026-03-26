@@ -138,4 +138,46 @@ impl Cpu {
         self.pc = (hi << 8) | lo;
         7
     }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_u16(self.pc);
+        w.write_u8(self.sp);
+        w.write_u8(self.regs.a);
+        w.write_u8(self.regs.x);
+        w.write_u8(self.regs.y);
+        w.write_u8(self.regs.p);
+        w.write_u8(match self.state {
+            CpuState::Running => 0,
+            CpuState::Halted => 1,
+            CpuState::Suspended => 2,
+        });
+        w.write_u64(self.cycles);
+        w.write_u64(self.last_step_cycles);
+        w.write_bool(self.nmi_pending);
+        w.write_bool(self.irq_line);
+        w.write_u8(self.last_opcode);
+        w.write_u16(self.last_opcode_pc);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.pc = r.read_u16()?;
+        self.sp = r.read_u8()?;
+        self.regs.a = r.read_u8()?;
+        self.regs.x = r.read_u8()?;
+        self.regs.y = r.read_u8()?;
+        self.regs.p = r.read_u8()?;
+        self.state = match r.read_u8()? {
+            0 => CpuState::Running,
+            1 => CpuState::Halted,
+            2 => CpuState::Suspended,
+            other => anyhow::bail!("invalid CPU state tag: {other}"),
+        };
+        self.cycles = r.read_u64()?;
+        self.last_step_cycles = r.read_u64()?;
+        self.nmi_pending = r.read_bool()?;
+        self.irq_line = r.read_bool()?;
+        self.last_opcode = r.read_u8()?;
+        self.last_opcode_pc = r.read_u16()?;
+        Ok(())
+    }
 }

@@ -36,6 +36,7 @@ impl App {
 
         if let Some(ref title) = self.debug_windows.cheat.rom_title {
             crate::cheats::save_game_cheats(
+                self.active_system,
                 Some(title),
                 self.debug_windows.cheat.rom_crc32,
                 &self.debug_windows.cheat.user_codes,

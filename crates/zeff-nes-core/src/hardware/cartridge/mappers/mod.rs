@@ -1,9 +1,17 @@
 mod cnrom;
+mod fme7;
+mod mapper16;
 mod mmc1;
+mod mmc3;
+mod mmc5;
 mod nrom;
 mod uxrom;
 
+pub use mapper16::BandaiFcg16;
 pub use cnrom::Cnrom;
+pub use fme7::Fme7;
 pub use mmc1::Mmc1;
+pub use mmc3::Mmc3;
+pub use mmc5::Mmc5;
 pub use nrom::Nrom;
 pub use uxrom::Uxrom;

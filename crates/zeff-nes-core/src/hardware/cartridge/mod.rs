@@ -1,6 +1,7 @@
 pub mod mappers;
 
 use anyhow::{Result, bail};
+use core::fmt;
 
 const INES_MAGIC: &[u8; 4] = b"NES\x1A";
 
@@ -9,6 +10,238 @@ const HEADER_SIZE: usize = 16;
 const PRG_ROM_BANK_SIZE: usize = 16_384;
 const CHR_ROM_BANK_SIZE: usize = 8_192;
 const TRAINER_SIZE: usize = 512;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NesMapper {
+    Nrom,
+    SxRom,
+    UxRom,
+    CnRom,
+    TxRom,
+    ExRom,
+    AxRom,
+    PxRom,
+    FxRom,
+    ColorDreams,
+    CpRom,
+    Contra100In1Function16,
+    BandaiEprom24C02,
+    JalecoSs8806,
+    Namco163,
+    Vrc4A,
+    Vrc2A,
+    Vrc2B,
+    Vrc6A,
+    Vrc4B,
+    Vrc6B,
+    BnRom,
+    Rambo1,
+    GxRom,
+    AfterBurner,
+    Fme7,
+    CamericaCodemasters,
+    Vrc3,
+    PirateMmc3ChrRomChrRam2K,
+    Vrc1,
+    Namco109Variant,
+    Nina03Or06,
+    Vrc7,
+    JalecoJf13,
+    SenjouNoOokami,
+    NesEvent,
+    Nina03Or06Multicart,
+    TxsRom,
+    TqRom,
+    BandaiEprom24C01,
+    Subor166,
+    Subor167,
+    CrazyClimber,
+    CnRomWithProtectionDiodes,
+    PirateMmc3ChrRomChrRam4K,
+    DxRom,
+    Namco175And340,
+    Action52,
+    CamericaCodemastersQuattro,
+    Other(u16),
+}
+
+impl NesMapper {
+    pub const fn id(self) -> u16 {
+        match self {
+            Self::Nrom => 0,
+            Self::SxRom => 1,
+            Self::UxRom => 2,
+            Self::CnRom => 3,
+            Self::TxRom => 4,
+            Self::ExRom => 5,
+            Self::AxRom => 7,
+            Self::PxRom => 9,
+            Self::FxRom => 10,
+            Self::ColorDreams => 11,
+            Self::CpRom => 13,
+            Self::Contra100In1Function16 => 15,
+            Self::BandaiEprom24C02 => 16,
+            Self::JalecoSs8806 => 18,
+            Self::Namco163 => 19,
+            Self::Vrc4A => 21,
+            Self::Vrc2A => 22,
+            Self::Vrc2B => 23,
+            Self::Vrc6A => 24,
+            Self::Vrc4B => 25,
+            Self::Vrc6B => 26,
+            Self::BnRom => 34,
+            Self::Rambo1 => 64,
+            Self::GxRom => 66,
+            Self::AfterBurner => 68,
+            Self::Fme7 => 69,
+            Self::CamericaCodemasters => 71,
+            Self::Vrc3 => 73,
+            Self::PirateMmc3ChrRomChrRam2K => 74,
+            Self::Vrc1 => 75,
+            Self::Namco109Variant => 76,
+            Self::Nina03Or06 => 79,
+            Self::Vrc7 => 85,
+            Self::JalecoJf13 => 86,
+            Self::SenjouNoOokami => 94,
+            Self::NesEvent => 105,
+            Self::Nina03Or06Multicart => 113,
+            Self::TxsRom => 118,
+            Self::TqRom => 119,
+            Self::BandaiEprom24C01 => 159,
+            Self::Subor166 => 166,
+            Self::Subor167 => 167,
+            Self::CrazyClimber => 180,
+            Self::CnRomWithProtectionDiodes => 185,
+            Self::PirateMmc3ChrRomChrRam4K => 192,
+            Self::DxRom => 206,
+            Self::Namco175And340 => 210,
+            Self::Action52 => 228,
+            Self::CamericaCodemastersQuattro => 232,
+            Self::Other(id) => id,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Nrom => "NROM",
+            Self::SxRom => "SxROM / MMC1",
+            Self::UxRom => "UxROM",
+            Self::CnRom => "CNROM",
+            Self::TxRom => "TxROM / MMC3 / MMC6",
+            Self::ExRom => "ExROM / MMC5",
+            Self::AxRom => "AxROM",
+            Self::PxRom => "PxROM / MMC2",
+            Self::FxRom => "FxROM / MMC4",
+            Self::ColorDreams => "Color Dreams",
+            Self::CpRom => "CPROM",
+            Self::Contra100In1Function16 => "100-in-1 Contra Function 16",
+            Self::BandaiEprom24C02 => "Bandai EPROM (24C02)",
+            Self::JalecoSs8806 => "Jaleco SS8806",
+            Self::Namco163 => "Namco 163",
+            Self::Vrc4A => "VRC4a / VRC4c",
+            Self::Vrc2A => "VRC2a",
+            Self::Vrc2B => "VRC2b / VRC4e",
+            Self::Vrc6A => "VRC6a",
+            Self::Vrc4B => "VRC4b / VRC4d",
+            Self::Vrc6B => "VRC6b",
+            Self::BnRom => "BNROM / NINA-001",
+            Self::Rambo1 => "RAMBO-1",
+            Self::GxRom => "GxROM / MxROM",
+            Self::AfterBurner => "After Burner",
+            Self::Fme7 => "FME-7 / Sunsoft 5B",
+            Self::CamericaCodemasters => "Camerica / Codemasters",
+            Self::Vrc3 => "VRC3",
+            Self::PirateMmc3ChrRomChrRam2K => "Pirate MMC3 derivative (2 KiB CHR RAM)",
+            Self::Vrc1 => "VRC1",
+            Self::Namco109Variant => "Namco 109 variant",
+            Self::Nina03Or06 => "NINA-03 / NINA-06",
+            Self::Vrc7 => "VRC7",
+            Self::JalecoJf13 => "JALECO-JF-13",
+            Self::SenjouNoOokami => "Senjou no Ookami",
+            Self::NesEvent => "NES-EVENT",
+            Self::Nina03Or06Multicart => "NINA-03 / NINA-06??",
+            Self::TxsRom => "TxSROM",
+            Self::TqRom => "TQROM",
+            Self::BandaiEprom24C01 => "Bandai EPROM (24C01)",
+            Self::Subor166 => "SUBOR",
+            Self::Subor167 => "SUBOR",
+            Self::CrazyClimber => "Crazy Climber",
+            Self::CnRomWithProtectionDiodes => "CNROM with protection diodes",
+            Self::PirateMmc3ChrRomChrRam4K => "Pirate MMC3 derivative (4 KiB CHR RAM)",
+            Self::DxRom => "DxROM / Namco 118 / MIMIC-1",
+            Self::Namco175And340 => "Namco 175 and 340",
+            Self::Action52 => "Action 52",
+            Self::CamericaCodemastersQuattro => "Camerica / Codemasters Quattro",
+            Self::Other(_) => "Other",
+        }
+    }
+}
+
+impl From<u16> for NesMapper {
+    fn from(value: u16) -> Self {
+        match value {
+            0 => Self::Nrom,
+            1 => Self::SxRom,
+            2 => Self::UxRom,
+            3 => Self::CnRom,
+            4 => Self::TxRom,
+            5 => Self::ExRom,
+            7 => Self::AxRom,
+            9 => Self::PxRom,
+            10 => Self::FxRom,
+            11 => Self::ColorDreams,
+            13 => Self::CpRom,
+            15 => Self::Contra100In1Function16,
+            16 => Self::BandaiEprom24C02,
+            18 => Self::JalecoSs8806,
+            19 => Self::Namco163,
+            21 => Self::Vrc4A,
+            22 => Self::Vrc2A,
+            23 => Self::Vrc2B,
+            24 => Self::Vrc6A,
+            25 => Self::Vrc4B,
+            26 => Self::Vrc6B,
+            34 => Self::BnRom,
+            64 => Self::Rambo1,
+            66 => Self::GxRom,
+            68 => Self::AfterBurner,
+            69 => Self::Fme7,
+            71 => Self::CamericaCodemasters,
+            73 => Self::Vrc3,
+            74 => Self::PirateMmc3ChrRomChrRam2K,
+            75 => Self::Vrc1,
+            76 => Self::Namco109Variant,
+            79 => Self::Nina03Or06,
+            85 => Self::Vrc7,
+            86 => Self::JalecoJf13,
+            94 => Self::SenjouNoOokami,
+            105 => Self::NesEvent,
+            113 => Self::Nina03Or06Multicart,
+            118 => Self::TxsRom,
+            119 => Self::TqRom,
+            159 => Self::BandaiEprom24C01,
+            166 => Self::Subor166,
+            167 => Self::Subor167,
+            180 => Self::CrazyClimber,
+            185 => Self::CnRomWithProtectionDiodes,
+            192 => Self::PirateMmc3ChrRomChrRam4K,
+            206 => Self::DxRom,
+            210 => Self::Namco175And340,
+            228 => Self::Action52,
+            232 => Self::CamericaCodemastersQuattro,
+            other => Self::Other(other),
+        }
+    }
+}
+
+impl fmt::Display for NesMapper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NesMapper::Other(id) => write!(f, "Other ({id})"),
+            _ => write!(f, "{} ({})", self.name(), self.id()),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Mirroring {
@@ -103,6 +336,14 @@ impl RomHeader {
         } else {
             RomFormat::INes
         };
+        let has_ines_junk_tail =
+            format == RomFormat::INes && raw[12..16].iter().any(|&byte| byte != 0);
+
+        if has_ines_junk_tail {
+            log::warn!(
+                "iNES header tail bytes are non-zero; ignoring bytes 7-15 legacy extensions"
+            );
+        }
 
         let mirroring = if flags6 & 0x08 != 0 {
             Mirroring::FourScreen
@@ -115,21 +356,25 @@ impl RomHeader {
         let has_battery = flags6 & 0x02 != 0;
         let has_trainer = flags6 & 0x04 != 0;
 
-        let console_type = match flags7 & 0x03 {
-            0 => ConsoleType::Nes,
-            1 => ConsoleType::VsSystem,
-            2 => ConsoleType::Playchoice10,
-            _ => {
-                if format == RomFormat::Nes2 {
-                    ConsoleType::Extended(byte13 & 0x0F)
-                } else {
-                    ConsoleType::Nes
+        let console_type = if has_ines_junk_tail {
+            ConsoleType::Nes
+        } else {
+            match flags7 & 0x03 {
+                0 => ConsoleType::Nes,
+                1 => ConsoleType::VsSystem,
+                2 => ConsoleType::Playchoice10,
+                _ => {
+                    if format == RomFormat::Nes2 {
+                        ConsoleType::Extended(byte13 & 0x0F)
+                    } else {
+                        ConsoleType::Nes
+                    }
                 }
             }
         };
 
         let mapper_lo = flags6 >> 4;
-        let mapper_mid = flags7 & 0xF0;
+        let mapper_mid = if has_ines_junk_tail { 0 } else { flags7 & 0xF0 };
         let (mapper_id, submapper_id) = if format == RomFormat::Nes2 {
             let mapper_hi = (byte8 as u16 & 0x0F) << 8;
             let mapper = mapper_hi | (mapper_mid as u16) | (mapper_lo as u16);
@@ -160,7 +405,11 @@ impl RomHeader {
                     Self::shift_count_to_size(byte11 >> 4),
                 )
             } else {
-                let prg_ram = if byte8 == 0 { 8192 } else { byte8 as usize * 8192 };
+                let prg_ram = if has_ines_junk_tail || byte8 == 0 {
+                    8192
+                } else {
+                    byte8 as usize * 8192
+                };
                 (prg_ram, 0, 0, 0)
             };
 
@@ -172,6 +421,8 @@ impl RomHeader {
                 3 => TimingMode::Dendy,
                 _ => unreachable!(),
             }
+        } else if has_ines_junk_tail {
+            TimingMode::Ntsc
         } else {
             if byte9 & 0x01 != 0 {
                 TimingMode::Pal
@@ -223,6 +474,19 @@ impl RomHeader {
     fn shift_count_to_size(shift: u8) -> usize {
         if shift == 0 { 0 } else { 64 << shift as usize }
     }
+
+    pub fn mapper_kind(&self) -> NesMapper {
+        NesMapper::from(self.mapper_id)
+    }
+
+    pub fn mapper_label(&self) -> String {
+        let mapper = self.mapper_kind();
+        if self.submapper_id == 0 {
+            mapper.to_string()
+        } else {
+            format!("{} (sub {})", mapper, self.submapper_id)
+        }
+    }
 }
 
 impl RomHeader {
@@ -235,7 +499,7 @@ impl RomHeader {
         } else {
             log::info!("CHR ROM: 0 (uses CHR-RAM)");
         }
-        log::info!("Mapper: {} (sub {})", self.mapper_id, self.submapper_id);
+        log::info!("Mapper: {}", self.mapper_label());
         log::info!("Mirroring: {:?}", self.mirroring);
         log::info!("Battery: {}", self.has_battery);
         log::info!("Trainer: {}", self.has_trainer);
@@ -290,7 +554,29 @@ impl Cartridge {
             1 => Box::new(mappers::Mmc1::new(prg_rom, chr_rom, header.mirroring)),
             2 => Box::new(mappers::Uxrom::new(prg_rom, chr_rom, header.mirroring)),
             3 => Box::new(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring)),
-            _ => bail!("Unsupported mapper: {}", header.mapper_id),
+            4 => Box::new(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring)),
+            5 => Box::new(mappers::Mmc5::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.prg_ram_size + header.prg_nvram_size,
+                header.has_battery || header.prg_nvram_size > 0,
+            )),
+            16 => Box::new(mappers::BandaiFcg16::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.submapper_id,
+                header.has_battery || header.prg_nvram_size >= 256,
+            )),
+            69 => Box::new(mappers::Fme7::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.prg_ram_size + header.prg_nvram_size,
+                header.has_battery,
+            )),
+            _ => bail!("Unsupported mapper: {}", header.mapper_label()),
         };
 
         Ok(Self { header, mapper })
@@ -319,6 +605,34 @@ impl Cartridge {
     pub fn chr_write(&mut self, addr: u16, val: u8) {
         self.mapper.chr_write(addr, val);
     }
+
+    pub fn irq_pending(&self) -> bool {
+        self.mapper.irq_pending()
+    }
+
+    pub fn notify_scanline(&mut self) {
+        self.mapper.notify_scanline();
+    }
+
+    pub fn clock_cpu(&mut self) {
+        self.mapper.clock_cpu();
+    }
+
+    pub fn dump_battery_data(&self) -> Option<Vec<u8>> {
+        self.mapper.dump_battery_data()
+    }
+
+    pub fn load_battery_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.mapper.load_battery_data(bytes)
+    }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.mapper.write_state(w);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.mapper.read_state(r)
+    }
 }
 
 pub trait Mapper: Send {
@@ -327,6 +641,24 @@ pub trait Mapper: Send {
     fn chr_read(&self, addr: u16) -> u8;
     fn chr_write(&mut self, addr: u16, val: u8);
     fn mirroring(&self) -> Mirroring;
+    fn write_state(&self, w: &mut crate::save_state::StateWriter);
+    fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()>;
+
+    fn irq_pending(&self) -> bool {
+        false
+    }
+
+    fn notify_scanline(&mut self) {}
+
+    fn clock_cpu(&mut self) {}
+
+    fn dump_battery_data(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn load_battery_data(&mut self, _bytes: &[u8]) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -499,6 +831,26 @@ mod tests {
         assert_eq!(RomHeader::shift_count_to_size(1), 128);
         assert_eq!(RomHeader::shift_count_to_size(7), 8192);
         assert_eq!(RomHeader::shift_count_to_size(10), 65536);
+    }
+
+    #[test]
+    fn mapper_name_mapping_known_and_unknown() {
+        assert_eq!(NesMapper::from(0).name(), "NROM");
+        assert_eq!(NesMapper::from(4).name(), "TxROM / MMC3 / MMC6");
+        assert_eq!(NesMapper::from(999), NesMapper::Other(999));
+        assert_eq!(NesMapper::from(999).to_string(), "Other (999)");
+    }
+
+    #[test]
+    fn ines_diskdude_style_junk_ignores_legacy_extension_bytes() {
+        let h = make_header(0x10, 0x20, 0x51, 0x44, [0x69, 0x73, 0x6B, 0x44, 0x75, 0x64, 0x65, 0x21]);
+        let hdr = RomHeader::parse(&h).unwrap();
+
+        assert_eq!(hdr.format, RomFormat::INes);
+        assert_eq!(hdr.mapper_id, 5);
+        assert_eq!(hdr.prg_ram_size, 8192);
+        assert_eq!(hdr.timing, TimingMode::Ntsc);
+        assert_eq!(hdr.console_type, ConsoleType::Nes);
     }
 }
 

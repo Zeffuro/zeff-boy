@@ -1,15 +1,5 @@
 use crate::debug::common::ApuDebugInfo;
 
-fn duty_from_nrx1(value: u8) -> &'static str {
-    match (value >> 6) & 0x03 {
-        0 => "12.5%",
-        1 => "25%",
-        2 => "50%",
-        3 => "75%",
-        _ => "?",
-    }
-}
-
 fn draw_channel_header(ui: &mut egui::Ui, title: &str, enabled: bool) {
     ui.horizontal(|ui| {
         ui.strong(title);
@@ -17,7 +7,37 @@ fn draw_channel_header(ui: &mut egui::Ui, title: &str, enabled: bool) {
     });
 }
 
-fn draw_waveform(ui: &mut egui::Ui, id: &str, samples: &[f32], height: f32) {
+fn draw_compact_mute_solo_row(
+    ui: &mut egui::Ui,
+    muted: &mut [bool],
+    idx: usize,
+    mutes_changed: &mut bool,
+) {
+    let icon_size = egui::vec2(18.0, 18.0);
+    let mute_button = egui::Button::new("M").small().selected(muted[idx]);
+    if ui
+        .add_sized(icon_size, mute_button)
+        .on_hover_text("Mute channel")
+        .clicked()
+    {
+        muted[idx] = !muted[idx];
+        *mutes_changed = true;
+    }
+
+    if ui
+        .add_sized(icon_size, egui::Button::new("S").small())
+        .on_hover_text("Solo channel")
+        .clicked()
+    {
+        for m in muted.iter_mut() {
+            *m = true;
+        }
+        muted[idx] = false;
+        *mutes_changed = true;
+    }
+}
+
+fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
     let desired_size = egui::vec2(ui.available_width().max(260.0), height);
     let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
@@ -38,6 +58,13 @@ fn draw_waveform(ui: &mut egui::Ui, id: &str, samples: &[f32], height: f32) {
     );
 
     if samples.len() < 2 {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "No samples yet",
+            egui::TextStyle::Small.resolve(ui.style()),
+            egui::Color32::from_gray(140),
+        );
         return;
     }
 
@@ -54,27 +81,19 @@ fn draw_waveform(ui: &mut egui::Ui, id: &str, samples: &[f32], height: f32) {
         points,
         egui::Stroke::new(1.25, egui::Color32::from_rgb(90, 220, 140)),
     ));
-    ui.label(
-        egui::RichText::new(id)
-            .small()
-            .color(egui::Color32::from_gray(150)),
-    );
 }
 
 pub(super) fn draw_apu_viewer_content(
     ui: &mut egui::Ui,
     data: &ApuDebugInfo,
 ) -> Option<Vec<bool>> {
+    ui.spacing_mut().item_spacing.y = 2.0;
+
     let mut muted: Vec<bool> = data.channels.iter().map(|ch| ch.muted).collect();
     let mut mutes_changed = false;
 
-    ui.heading("Master");
-    for line in &data.master_lines {
-        ui.monospace(line);
-    }
-
-    // Unmute All button
     ui.horizontal(|ui| {
+        ui.heading("Master");
         if ui.small_button("Unmute All").clicked() {
             for m in muted.iter_mut() {
                 *m = false;
@@ -82,32 +101,28 @@ pub(super) fn draw_apu_viewer_content(
             mutes_changed = true;
         }
     });
-
-    draw_waveform(ui, "Master mix", &data.master_waveform, 84.0);
+    for line in &data.master_lines {
+        ui.monospace(line);
+    }
+    draw_waveform(ui, &data.master_waveform, 30.0);
 
     for (idx, channel) in data.channels.iter().enumerate() {
         ui.separator();
         ui.horizontal(|ui| {
-            ui.strong(&channel.name);
-            ui.monospace(if channel.enabled { "ON" } else { "OFF" });
-        });
-        ui.horizontal(|ui| {
-            mutes_changed |= ui.checkbox(&mut muted[idx], "Mute").changed();
-            if ui.small_button("Solo").clicked() {
-                for m in muted.iter_mut() {
-                    *m = true;
-                }
-                muted[idx] = false;
-                mutes_changed = true;
+            draw_channel_header(ui, &channel.name, channel.enabled);
+            if !channel.detail_line.is_empty() {
+                ui.label(egui::RichText::new(&channel.detail_line).small());
             }
         });
-        for line in &channel.register_lines {
-            ui.monospace(line);
+
+        if !channel.register_lines.is_empty() {
+            ui.label(egui::RichText::new(channel.register_lines.join("  ")).small());
         }
-        if !channel.detail_line.is_empty() {
-            ui.monospace(&channel.detail_line);
-        }
-        draw_waveform(ui, &channel.name, &channel.waveform, 64.0);
+
+        ui.horizontal(|ui| {
+            draw_compact_mute_solo_row(ui, &mut muted, idx, &mut mutes_changed);
+            draw_waveform(ui, &channel.waveform, 26.0);
+        });
     }
 
     for section in &data.extra_sections {

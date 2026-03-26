@@ -6,15 +6,20 @@ use zeff_gb_core::emulator::Emulator;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub(super) fn build_slot_labels(rom_hash: Option<[u8; 32]>) -> [String; 10] {
+pub(super) fn build_slot_labels(rom_hash: Option<[u8; 32]>, system: ActiveSystem) -> [String; 10] {
     std::array::from_fn(|i| {
         let slot = i as u8;
         let Some(hash) = rom_hash else {
             return format!("Slot {slot}  (empty)");
         };
-        let Ok(path) = zeff_gb_core::save_state::slot_path(hash, slot) else {
+        let path_result = match system {
+            ActiveSystem::Nes => zeff_nes_core::save_state::slot_path(hash, slot),
+            ActiveSystem::GameBoy => zeff_gb_core::save_state::slot_path(hash, slot),
+        };
+        let Ok(path) = path_result else {
             return format!("Slot {slot}  (empty)");
         };
+
         match std::fs::metadata(&path) {
             Ok(meta) => {
                 if let Ok(modified) = meta.modified() {
@@ -118,6 +123,7 @@ impl App {
 
                     if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
                         crate::cheats::save_game_cheats(
+                            system,
                             Some(old_title),
                             self.debug_windows.cheat.rom_crc32,
                             &self.debug_windows.cheat.user_codes,
@@ -144,8 +150,11 @@ impl App {
                     self.debug_windows.cheat.libretro_file_list = None;
                     self.debug_windows.cheat.libretro_status = None;
 
-                    let (user, libretro) =
-                        crate::cheats::load_game_cheats(Some(&rom_header_title), Some(rom_crc32));
+                    let (user, libretro) = crate::cheats::load_game_cheats(
+                        system,
+                        Some(&rom_header_title),
+                        Some(rom_crc32),
+                    );
                     self.debug_windows.cheat.user_codes = user;
                     self.debug_windows.cheat.libretro_codes = libretro;
                     self.debug_windows.cheat.cheats_dirty = true;
@@ -177,7 +186,7 @@ impl App {
                 self.settings.save();
                 self.toast_manager.info(format!("Loaded {rom_name}"));
 
-                if auto_load_state && self.settings.auto_save_state && system == ActiveSystem::GameBoy {
+                if auto_load_state && self.settings.auto_save_state {
                     if let Some(thread) = &self.emu_thread {
                         thread.send(EmuCommand::AutoLoadState {
                             buttons_pressed: self.host_input.buttons_pressed(),
@@ -273,6 +282,7 @@ impl App {
 
         if let Some(ref title) = self.debug_windows.cheat.rom_title {
             crate::cheats::save_game_cheats(
+                self.active_system,
                 Some(title),
                 self.debug_windows.cheat.rom_crc32,
                 &self.debug_windows.cheat.user_codes,
@@ -340,14 +350,18 @@ impl App {
         }
     }
 
-    fn default_save_state_dir() -> PathBuf {
+    fn default_save_state_dir(system: ActiveSystem) -> PathBuf {
         if let Some(config_dir) = dirs::config_dir() {
-            return config_dir.join("zeff-boy").join("saves");
+            return config_dir
+                .join("zeff-boy")
+                .join("saves")
+                .join(system.storage_subdir());
         }
 
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("saves")
+            .join(system.storage_subdir())
     }
 
     fn default_state_file_name(&self) -> String {
@@ -369,7 +383,7 @@ impl App {
                 return parent.to_path_buf();
             }
 
-        Self::default_save_state_dir()
+        Self::default_save_state_dir(self.active_system)
     }
 
     pub(super) fn save_state_file_dialog(&mut self) {

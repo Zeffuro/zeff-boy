@@ -3,6 +3,9 @@ use std::path::Path;
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
+mod gb;
+mod nes;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ActiveSystem {
     GameBoy,
@@ -10,6 +13,13 @@ pub(crate) enum ActiveSystem {
 }
 
 impl ActiveSystem {
+    pub(crate) fn storage_subdir(self) -> &'static str {
+        match self {
+            Self::GameBoy => "gbc",
+            Self::Nes => "nes",
+        }
+    }
+
     pub(crate) fn screen_size(self) -> (u32, u32) {
         match self {
             Self::GameBoy => (160, 144),
@@ -89,45 +99,36 @@ impl EmuBackend {
 
     pub(crate) fn drain_audio_samples(&mut self) -> Vec<f32> {
         match self {
-            Self::Gb(e) => e.bus.apu_drain_samples(),
-            Self::Nes(e) => {
-                let mono = e.drain_audio_samples();
-                let mut stereo = Vec::with_capacity(mono.len() * 2);
-                for &s in &mono {
-                    stereo.push(s);
-                    stereo.push(s);
-                }
-                stereo
-            }
+            Self::Gb(e) => gb::drain_audio_samples(e),
+            Self::Nes(e) => nes::drain_audio_samples(e),
         }
     }
 
     pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         match self {
-            Self::Gb(e) => e.bus.apu_drain_samples_into(buf),
-            Self::Nes(e) => {
-                let mono = e.drain_audio_samples();
-                buf.clear();
-                buf.reserve(mono.len() * 2);
-                for &s in &mono {
-                    buf.push(s);
-                    buf.push(s);
-                }
-            }
+            Self::Gb(e) => gb::drain_audio_samples_into(e, buf),
+            Self::Nes(e) => nes::drain_audio_samples_into(e, buf),
         }
     }
 
     pub(crate) fn set_sample_rate(&mut self, rate: u32) {
         match self {
-            Self::Gb(e) => e.bus.set_apu_sample_rate(rate),
-            Self::Nes(e) => e.bus.apu.output_sample_rate = rate as f64,
+            Self::Gb(e) => gb::set_sample_rate(e, rate),
+            Self::Nes(e) => nes::set_sample_rate(e, rate),
         }
     }
 
     pub(crate) fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
         match self {
-            Self::Gb(e) => e.bus.set_apu_sample_generation_enabled(enabled),
-            Self::Nes(_) => { /* NES APU always generates samples */ }
+            Self::Gb(e) => gb::set_apu_sample_generation_enabled(e, enabled),
+            Self::Nes(e) => nes::set_apu_sample_generation_enabled(e, enabled),
+        }
+    }
+
+    pub(crate) fn set_apu_channel_mutes(&mut self, mutes: [bool; 4]) {
+        match self {
+            Self::Gb(e) => gb::set_apu_channel_mutes(e, mutes),
+            Self::Nes(e) => nes::set_apu_channel_mutes(e, mutes),
         }
     }
 
@@ -140,23 +141,8 @@ impl EmuBackend {
 
     pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         match self {
-            Self::Gb(e) => {
-                if e.bus.apply_joypad_pressed_masks(buttons_pressed, dpad_pressed) {
-                    e.bus.if_reg |= 0x10;
-                }
-            }
-            Self::Nes(e) => {
-                let mut nes_byte = 0u8;
-                if buttons_pressed & 0x01 != 0 { nes_byte |= 0x01; } // A
-                if buttons_pressed & 0x02 != 0 { nes_byte |= 0x02; } // B
-                if buttons_pressed & 0x04 != 0 { nes_byte |= 0x04; } // Select
-                if buttons_pressed & 0x08 != 0 { nes_byte |= 0x08; } // Start
-                if dpad_pressed & 0x04 != 0 { nes_byte |= 0x10; }    // Up
-                if dpad_pressed & 0x08 != 0 { nes_byte |= 0x20; }    // Down
-                if dpad_pressed & 0x02 != 0 { nes_byte |= 0x40; }    // Left
-                if dpad_pressed & 0x01 != 0 { nes_byte |= 0x80; }    // Right
-                e.bus.controller1.set_buttons(nes_byte);
-            }
+            Self::Gb(e) => gb::set_input(e, buttons_pressed, dpad_pressed),
+            Self::Nes(e) => nes::set_input(e, buttons_pressed, dpad_pressed),
         }
     }
 
@@ -173,64 +159,79 @@ impl EmuBackend {
 
     pub(crate) fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
         match self {
-            Self::Gb(e) => e.flush_battery_sram(),
-            Self::Nes(_) => Ok(None),
+            Self::Gb(e) => gb::flush_battery_sram(e),
+            Self::Nes(e) => nes::flush_battery_sram(e),
         }
     }
 
     pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         match self {
-            Self::Gb(e) => e.encode_state_bytes(),
-            Self::Nes(_) => Err(anyhow::anyhow!("NES save states not yet supported")),
+            Self::Gb(e) => gb::encode_state_bytes(e),
+            Self::Nes(e) => nes::encode_state_bytes(e),
         }
     }
 
     pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
         match self {
-            Self::Gb(e) => e.load_state_from_bytes(bytes),
-            Self::Nes(_) => Err(anyhow::anyhow!("NES save states not yet supported")),
+            Self::Gb(e) => gb::load_state_from_bytes(e, bytes),
+            Self::Nes(e) => nes::load_state_from_bytes(e, bytes),
         }
     }
 
+    pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<std::path::PathBuf> {
+        match self {
+            Self::Gb(e) => gb::slot_path(e, slot),
+            Self::Nes(e) => nes::slot_path(e, slot),
+        }
+    }
+
+    pub(crate) fn auto_save_path(&self) -> Option<std::path::PathBuf> {
+        match self {
+            Self::Gb(e) => gb::auto_save_path(e),
+            Self::Nes(e) => nes::auto_save_path(e),
+        }
+    }
+
+
     pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
         match self {
-            Self::Gb(e) => e.load_state(slot),
-            Self::Nes(_) => Err(anyhow::anyhow!("NES save states not yet supported")),
+            Self::Gb(e) => gb::load_state(e, slot),
+            Self::Nes(e) => nes::load_state(e, slot),
         }
     }
 
     pub(crate) fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
         match self {
-            Self::Gb(e) => e.load_state_from_path(path),
-            Self::Nes(_) => Err(anyhow::anyhow!("NES save states not yet supported")),
+            Self::Gb(e) => gb::load_state_from_path(e, path),
+            Self::Nes(e) => nes::load_state_from_path(e, path),
         }
     }
 
     pub(crate) fn rom_hash(&self) -> Option<[u8; 32]> {
         match self {
             Self::Gb(e) => Some(e.rom_hash),
-            Self::Nes(_) => None,
+            Self::Nes(e) => Some(e.rom_hash),
         }
     }
 
     pub(crate) fn rumble_active(&self) -> bool {
         match self {
-            Self::Gb(e) => e.bus.cartridge.rumble_active(),
-            Self::Nes(_) => false,
+            Self::Gb(e) => gb::rumble_active(e),
+            Self::Nes(e) => nes::rumble_active(e),
         }
     }
 
     pub(crate) fn is_mbc7(&self) -> bool {
         match self {
-            Self::Gb(e) => e.is_mbc7_cartridge(),
-            Self::Nes(_) => false,
+            Self::Gb(e) => gb::is_mbc7(e),
+            Self::Nes(e) => nes::is_mbc7(e),
         }
     }
 
-    pub(crate) fn apu_channel_snapshot(&self) -> Option<zeff_gb_core::hardware::apu::ApuChannelSnapshot> {
+    pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {
         match self {
-            Self::Gb(e) => Some(e.bus.apu_channel_snapshot()),
-            Self::Nes(_) => None,
+            Self::Gb(e) => gb::apu_channel_snapshot(e),
+            Self::Nes(e) => nes::apu_channel_snapshot(e),
         }
     }
 }

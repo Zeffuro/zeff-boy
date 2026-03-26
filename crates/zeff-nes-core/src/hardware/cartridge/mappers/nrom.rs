@@ -53,6 +53,23 @@ impl Mapper for Nrom {
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
+
+    fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bytes(&self.prg_ram);
+        w.write_vec(&self.chr);
+    }
+
+    fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        r.read_exact(&mut self.prg_ram)?;
+        let chr = r.read_vec(512 * 1024)?;
+        if chr.len() != self.chr.len() {
+            anyhow::bail!(
+                "NROM CHR size mismatch: expected {}, got {}",
+                self.chr.len(),
+                chr.len()
+            );
+        }
+        self.chr = chr;
+        Ok(())
+    }
 }
-
-

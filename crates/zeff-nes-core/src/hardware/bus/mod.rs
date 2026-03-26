@@ -218,6 +218,10 @@ impl Bus {
         let pre_render = scanline == PRE_RENDER_SCANLINE;
         let render_line = visible_line || pre_render;
 
+        if rendering && render_line && dot == 260 {
+            self.cartridge.notify_scanline();
+        }
+
         if rendering && visible_line && dot == 0 {
             self.evaluate_sprites_for_scanline(scanline);
         }
@@ -385,6 +389,27 @@ impl Bus {
         self.ppu.sprite_count = count;
     }
 
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bytes(&self.ram);
+        self.ppu.write_state(w);
+        self.apu.write_state(w);
+        self.cartridge.write_state(w);
+        self.controller1.write_state(w);
+        self.controller2.write_state(w);
+        w.write_u64(self.ppu_cycles);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        r.read_exact(&mut self.ram)?;
+        self.ppu.read_state(r)?;
+        self.apu.read_state(r)?;
+        self.cartridge.read_state(r)?;
+        self.controller1.read_state(r)?;
+        self.controller2.read_state(r)?;
+        self.ppu_cycles = r.read_u64()?;
+        Ok(())
+    }
+
     pub fn tick_peripherals(&mut self, cpu_cycles: u64) -> bool {
         let ppu_dots = cpu_cycles * 3;
         let mirroring = self.cartridge.mirroring();
@@ -398,6 +423,7 @@ impl Bus {
         }
         for _ in 0..cpu_cycles {
             self.apu.tick();
+            self.cartridge.clock_cpu();
         }
         nmi_raised
     }

@@ -3,11 +3,28 @@ mod noise;
 mod pulse;
 mod triangle;
 
+use std::collections::VecDeque;
 use std::fmt;
 
 use crate::hardware::constants::*;
 
 const INITIAL_SAMPLE_CAPACITY: usize = 2048;
+const DEBUG_SAMPLE_CAPACITY: usize = 1024;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ApuChannelSnapshot {
+    pub pulse1_enabled: bool,
+    pub pulse1_timer_period: u16,
+    pub pulse1_volume: u8,
+    pub pulse2_enabled: bool,
+    pub pulse2_timer_period: u16,
+    pub pulse2_volume: u8,
+    pub triangle_enabled: bool,
+    pub triangle_timer_period: u16,
+    pub triangle_volume: u8,
+    pub noise_enabled: bool,
+    pub noise_volume: u8,
+}
 
 pub struct Apu {
     pub pulse1: pulse::Pulse,
@@ -24,6 +41,12 @@ pub struct Apu {
     pub sample_buffer: Vec<f32>,
     pub output_sample_rate: f64,
     sample_accumulator: f64,
+    channel_mutes: [bool; 4],
+    master_debug_samples: VecDeque<f32>,
+    pulse1_debug_samples: VecDeque<f32>,
+    pulse2_debug_samples: VecDeque<f32>,
+    triangle_debug_samples: VecDeque<f32>,
+    noise_debug_samples: VecDeque<f32>,
 }
 
 impl Apu {
@@ -41,6 +64,12 @@ impl Apu {
             sample_buffer: Vec::with_capacity(INITIAL_SAMPLE_CAPACITY),
             output_sample_rate,
             sample_accumulator: 0.0,
+            channel_mutes: [false; 4],
+            master_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
+            pulse1_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
+            pulse2_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
+            triangle_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
+            noise_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
         }
     }
 
@@ -147,25 +176,117 @@ impl Apu {
     }
 
     fn generate_sample(&mut self) {
-        let _p1 = self.pulse1.output() as f32;
-        let _p2 = self.pulse2.output() as f32;
-        let _tri = self.triangle.output() as f32;
-        let _noi = self.noise.output() as f32;
+        let p1_raw = self.pulse1.output() as f32;
+        let p2_raw = self.pulse2.output() as f32;
+        let tri_raw = self.triangle.output() as f32;
+        let noi_raw = self.noise.output() as f32;
         let _dmc = self.dmc.output() as f32;
 
-        let pulse_out = MIX_PULSE * (_p1 + _p2);
-        let tnd_out = MIX_TND_TRI * _tri + MIX_TND_NOISE * _noi + MIX_TND_DMC * _dmc;
+        let p1 = if self.channel_mutes[0] { 0.0 } else { p1_raw };
+        let p2 = if self.channel_mutes[1] { 0.0 } else { p2_raw };
+        let tri = if self.channel_mutes[2] { 0.0 } else { tri_raw };
+        let noi = if self.channel_mutes[3] { 0.0 } else { noi_raw };
+
+        let pulse_out = MIX_PULSE * (p1 + p2);
+        let tnd_out = MIX_TND_TRI * tri + MIX_TND_NOISE * noi + MIX_TND_DMC * _dmc;
         let sample = pulse_out + tnd_out;
 
         self.sample_accumulator += self.output_sample_rate;
         if self.sample_accumulator >= APU_CPU_CLOCK_NTSC {
             self.sample_accumulator -= APU_CPU_CLOCK_NTSC;
             self.sample_buffer.push(sample);
+
+            Self::push_debug_sample(&mut self.master_debug_samples, sample.clamp(-1.0, 1.0));
+            Self::push_debug_sample(&mut self.pulse1_debug_samples, (p1_raw / 15.0).clamp(-1.0, 1.0));
+            Self::push_debug_sample(&mut self.pulse2_debug_samples, (p2_raw / 15.0).clamp(-1.0, 1.0));
+            Self::push_debug_sample(&mut self.triangle_debug_samples, ((tri_raw - 7.5) / 7.5).clamp(-1.0, 1.0));
+            Self::push_debug_sample(&mut self.noise_debug_samples, (noi_raw / 15.0).clamp(-1.0, 1.0));
         }
+    }
+
+    fn push_debug_sample(samples: &mut VecDeque<f32>, sample: f32) {
+        if samples.len() >= DEBUG_SAMPLE_CAPACITY {
+            let _ = samples.pop_front();
+        }
+        samples.push_back(sample);
     }
 
     pub fn drain_samples(&mut self) -> Vec<f32> {
         std::mem::replace(&mut self.sample_buffer, Vec::with_capacity(INITIAL_SAMPLE_CAPACITY))
+    }
+
+    pub fn channel_snapshot(&self) -> ApuChannelSnapshot {
+        ApuChannelSnapshot {
+            pulse1_enabled: self.pulse1.midi_active(),
+            pulse1_timer_period: self.pulse1.timer_period(),
+            pulse1_volume: self.pulse1.midi_volume(),
+            pulse2_enabled: self.pulse2.midi_active(),
+            pulse2_timer_period: self.pulse2.timer_period(),
+            pulse2_volume: self.pulse2.midi_volume(),
+            triangle_enabled: self.triangle.midi_active(),
+            triangle_timer_period: self.triangle.timer_period(),
+            triangle_volume: self.triangle.midi_volume(),
+            noise_enabled: self.noise.midi_active(),
+            noise_volume: self.noise.midi_volume(),
+        }
+    }
+
+    pub fn set_channel_mutes(&mut self, mutes: [bool; 4]) {
+        self.channel_mutes = mutes;
+    }
+
+    pub fn channel_mutes(&self) -> [bool; 4] {
+        self.channel_mutes
+    }
+
+    pub fn master_debug_samples_ordered(&self) -> Vec<f32> {
+        self.master_debug_samples.iter().copied().collect()
+    }
+
+    pub fn channel_debug_samples_ordered(&self, channel: usize) -> Vec<f32> {
+        match channel {
+            0 => self.pulse1_debug_samples.iter().copied().collect(),
+            1 => self.pulse2_debug_samples.iter().copied().collect(),
+            2 => self.triangle_debug_samples.iter().copied().collect(),
+            3 => self.noise_debug_samples.iter().copied().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.pulse1.write_state(w);
+        self.pulse2.write_state(w);
+        self.triangle.write_state(w);
+        self.noise.write_state(w);
+        self.dmc.write_state(w);
+        w.write_bool(self.five_step_mode);
+        w.write_bool(self.irq_inhibit);
+        w.write_bool(self.frame_irq);
+        w.write_u64(self.frame_cycle);
+        w.write_f64(self.output_sample_rate);
+        w.write_f64(self.sample_accumulator);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.pulse1.read_state(r)?;
+        self.pulse2.read_state(r)?;
+        self.triangle.read_state(r)?;
+        self.noise.read_state(r)?;
+        self.dmc.read_state(r)?;
+        self.five_step_mode = r.read_bool()?;
+        self.irq_inhibit = r.read_bool()?;
+        self.frame_irq = r.read_bool()?;
+        self.frame_cycle = r.read_u64()?;
+        self.output_sample_rate = r.read_f64()?;
+        self.sample_accumulator = r.read_f64()?;
+
+        self.sample_buffer.clear();
+        self.master_debug_samples.clear();
+        self.pulse1_debug_samples.clear();
+        self.pulse2_debug_samples.clear();
+        self.triangle_debug_samples.clear();
+        self.noise_debug_samples.clear();
+        Ok(())
     }
 }
 

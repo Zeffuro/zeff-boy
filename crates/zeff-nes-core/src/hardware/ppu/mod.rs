@@ -219,6 +219,96 @@ impl Ppu {
             }
         }
     }
+
+    pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_u8(self.regs.ctrl);
+        w.write_u8(self.regs.mask);
+        w.write_u8(self.regs.status);
+
+        w.write_u16(self.scanline);
+        w.write_u16(self.dot);
+        w.write_bool(self.nmi_output);
+        w.write_bool(self.in_vblank);
+        w.write_bool(self.odd_frame);
+
+        w.write_bytes(&self.nametable_ram);
+        w.write_bytes(&self.palette_ram);
+
+        w.write_bytes(&self.oam);
+        w.write_bytes(&self.secondary_oam);
+        w.write_u8(self.oam_addr);
+
+        w.write_u16(self.v);
+        w.write_u16(self.t);
+        w.write_u8(self.fine_x);
+        w.write_bool(self.w);
+
+        w.write_u8(self.read_buffer);
+        w.write_u64(self.frame_count);
+
+        w.write_u16(self.bg_shift_pattern_lo);
+        w.write_u16(self.bg_shift_pattern_hi);
+        w.write_u16(self.bg_shift_attrib_lo);
+        w.write_u16(self.bg_shift_attrib_hi);
+        w.write_u8(self.bg_next_tile_id);
+        w.write_u8(self.bg_next_tile_attrib);
+        w.write_u8(self.bg_next_tile_lo);
+        w.write_u8(self.bg_next_tile_hi);
+
+        w.write_u8(self.sprite_count);
+        w.write_bytes(&self.sprite_patterns_lo);
+        w.write_bytes(&self.sprite_patterns_hi);
+        w.write_bytes(&self.sprite_attribs);
+        w.write_bytes(&self.sprite_x_counters);
+        w.write_bool(self.sprite_zero_rendering);
+    }
+
+    pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        self.regs.ctrl = r.read_u8()?;
+        self.regs.mask = r.read_u8()?;
+        self.regs.status = r.read_u8()?;
+
+        self.scanline = r.read_u16()?;
+        self.dot = r.read_u16()?;
+        self.nmi_output = r.read_bool()?;
+        self.in_vblank = r.read_bool()?;
+        self.odd_frame = r.read_bool()?;
+
+        r.read_exact(&mut self.nametable_ram)?;
+        r.read_exact(&mut self.palette_ram)?;
+
+        r.read_exact(&mut self.oam)?;
+        r.read_exact(&mut self.secondary_oam)?;
+        self.oam_addr = r.read_u8()?;
+
+        self.v = r.read_u16()?;
+        self.t = r.read_u16()?;
+        self.fine_x = r.read_u8()?;
+        self.w = r.read_bool()?;
+
+        self.read_buffer = r.read_u8()?;
+        self.frame_count = r.read_u64()?;
+
+        self.bg_shift_pattern_lo = r.read_u16()?;
+        self.bg_shift_pattern_hi = r.read_u16()?;
+        self.bg_shift_attrib_lo = r.read_u16()?;
+        self.bg_shift_attrib_hi = r.read_u16()?;
+        self.bg_next_tile_id = r.read_u8()?;
+        self.bg_next_tile_attrib = r.read_u8()?;
+        self.bg_next_tile_lo = r.read_u8()?;
+        self.bg_next_tile_hi = r.read_u8()?;
+
+        self.sprite_count = r.read_u8()?;
+        r.read_exact(&mut self.sprite_patterns_lo)?;
+        r.read_exact(&mut self.sprite_patterns_hi)?;
+        r.read_exact(&mut self.sprite_attribs)?;
+        r.read_exact(&mut self.sprite_x_counters)?;
+        self.sprite_zero_rendering = r.read_bool()?;
+
+        self.frame_ready = false;
+
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Ppu {

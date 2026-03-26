@@ -64,7 +64,7 @@ pub(crate) struct FrameResult {
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) rewind_fill: f32,
-    pub(crate) apu_snapshot: Option<zeff_gb_core::hardware::apu::ApuChannelSnapshot>,
+    pub(crate) apu_snapshot: Option<crate::audio_recorder::MidiApuSnapshot>,
 }
 
 pub(crate) enum EmuCommand {
@@ -179,22 +179,16 @@ impl EmuThread {
                         }
 
                         EmuCommand::SaveStateSlot(slot) => {
-                            if let Some(hash) = backend.rom_hash() {
-                                match zeff_gb_core::save_state::slot_path(hash, slot) {
-                                    Ok(path) => {
-                                        if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
-                                            break 'main;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        if !send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
-                                            break 'main;
-                                        }
+                            match backend.slot_path(slot) {
+                                Ok(path) => {
+                                    if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
+                                        break 'main;
                                     }
                                 }
-                            } else {
-                                if !send_resp(EmuResponse::SaveStateFailed("Save states not supported for this system".to_string())) {
-                                    break 'main;
+                                Err(e) => {
+                                    if !send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
+                                        break 'main;
+                                    }
                                 }
                             }
                         }
@@ -276,12 +270,11 @@ impl EmuThread {
                         }
 
                         EmuCommand::AutoSaveState => {
-                            if let Some(hash) = backend.rom_hash() {
-                                let path = zeff_gb_core::save_state::auto_save_path(hash);
+                            if let Some(path) = backend.auto_save_path() {
                                 if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
                                     break 'main;
                                 }
-                            } else if !send_resp(EmuResponse::SaveStateFailed("Save states not supported for this system".to_string())) {
+                            } else if !send_resp(EmuResponse::SaveStateFailed("Auto-save not supported for this system".to_string())) {
                                 break 'main;
                             }
                         }
@@ -290,8 +283,7 @@ impl EmuThread {
                             buttons_pressed,
                             dpad_pressed,
                         } => {
-                            if let Some(hash) = backend.rom_hash() {
-                                let path = zeff_gb_core::save_state::auto_save_path(hash);
+                            if let Some(path) = backend.auto_save_path() {
                                 if path.exists() {
                                     let label = path.display().to_string();
                                     let result = backend.load_state_from_path(&path);
@@ -371,6 +363,12 @@ impl EmuThread {
         // Set input
         backend.set_input(input.buttons_pressed, input.dpad_pressed);
 
+        if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
+            if mutes.len() == 4 {
+                backend.set_apu_channel_mutes([mutes[0], mutes[1], mutes[2], mutes[3]]);
+            }
+        }
+
         // GB-specific features
         if let Some(emu) = backend.gb_mut() {
             emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
@@ -432,13 +430,24 @@ impl EmuThread {
                         frames_in_flight: 0,
                         cycles: emu.cpu.cycles,
                         platform_name: "NES",
-                        hardware_label: format!("Mapper {}", emu.bus.cartridge.header().mapper_id),
+                        hardware_label: emu.bus.cartridge.header().mapper_label(),
                         hardware_pref_label: format!("{:?}", emu.bus.cartridge.header().timing),
                     });
                 }
 
                 if input.snapshot.want_debug_info {
                     data.cpu_debug = Some(ui::nes_cpu_snapshot(emu));
+                }
+
+                if input.snapshot.show_apu_viewer {
+                    data.apu_debug = ui::nes_apu_snapshot(emu, true);
+                }
+
+                if input.snapshot.show_disassembler {
+                    let pc_changed = input.snapshot.last_disasm_pc != Some(emu.cpu.pc);
+                    if pc_changed {
+                        data.disassembly_view = Some(ui::nes_disassembly_view(emu));
+                    }
                 }
 
                 if input.snapshot.show_rom_info {
@@ -697,11 +706,6 @@ impl EmuThread {
         }
         for addr in &actions.toggle_breakpoints {
             emu.debug.toggle_breakpoint(*addr);
-        }
-        if let Some(mutes) = &actions.apu_channel_mutes {
-            if mutes.len() == 4 {
-                emu.bus.set_apu_channel_mutes([mutes[0], mutes[1], mutes[2], mutes[3]]);
-            }
         }
         for (addr, value) in &actions.memory_writes {
             emu.bus.write_byte(*addr, *value);

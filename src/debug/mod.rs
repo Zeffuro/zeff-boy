@@ -28,7 +28,7 @@ pub(crate) use common::{
     InputDebugInfo, OamDebugInfo, PaletteDebugInfo,
     RomDebugInfo, WatchType,
 };
-pub(crate) use disassembler::{DisassemblyView, disassemble_around};
+pub(crate) use disassembler::{DisassemblyView, disassemble_around, nes_disassemble_around};
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, compute_tab_requirements,
     create_default_dock_state, create_dock_from_saved_tabs,

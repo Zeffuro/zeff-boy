@@ -165,7 +165,7 @@ impl App {
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back =
             self.rewind.pops as f32 * self.settings.rewind_capture_interval() as f32 / 60.0;
-        let slot_labels = super::state_io::build_slot_labels(self.cached_rom_hash);
+        let slot_labels = super::state_io::build_slot_labels(self.cached_rom_hash, self.active_system);
 
         match gfx.render(graphics::RenderContext {
             cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),

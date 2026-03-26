@@ -13,7 +13,7 @@ impl Emulator {
 
         let cycles = self.cpu.step(&mut self.bus);
         
-        self.cpu.irq_line = self.bus.apu.irq_pending();
+        self.cpu.irq_line = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
 
         let nmi = self.bus.tick_peripherals(cycles);
 
