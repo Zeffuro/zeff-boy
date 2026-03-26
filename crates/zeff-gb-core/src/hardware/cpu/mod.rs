@@ -147,19 +147,19 @@ impl CPU {
     }
 
     pub fn push16_timed_oam(&mut self, bus: &mut Bus, value: u16) {
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Write);
         self.sp = self.sp.wrapping_sub(1);
         self.bus_write_timed(bus, self.sp, (value >> 8) as u8);
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Write);
         self.sp = self.sp.wrapping_sub(1);
         self.bus_write_timed(bus, self.sp, (value & 0xFF) as u8);
     }
 
     pub fn pop16_timed_oam(&mut self, bus: &mut Bus) -> u16 {
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Read);
         let low = self.bus_read_timed(bus, self.sp) as u16;
         self.sp = self.sp.wrapping_add(1);
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Read);
         let high = self.bus_read_timed(bus, self.sp) as u16;
         self.sp = self.sp.wrapping_add(1);
         (high << 8) | low
@@ -199,14 +199,14 @@ impl CPU {
     #[inline]
     pub fn inc_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
         self.tick_internal_timed(bus, 4);
-        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
+        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Write);
         value.wrapping_add(1)
     }
 
     #[inline]
     pub fn dec_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
         self.tick_internal_timed(bus, 4);
-        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
+        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Write);
         value.wrapping_sub(1)
     }
 

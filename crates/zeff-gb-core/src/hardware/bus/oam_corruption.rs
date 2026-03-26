@@ -1,6 +1,45 @@
+// Thank you SameBoy for a lot of reference code on how to solve this
 use super::Bus;
 use crate::hardware::types::constants::*;
 use crate::hardware::types::hardware_mode::HardwareMode;
+
+#[inline]
+fn glitch_write(a: u16, b: u16, c: u16) -> u16 {
+    ((a ^ c) & (b ^ c)) ^ c
+}
+
+#[inline]
+fn glitch_read(a: u16, b: u16, c: u16) -> u16 {
+    b | (a & c)
+}
+
+#[inline]
+fn glitch_read_secondary(a: u16, b: u16, c: u16, d: u16) -> u16 {
+    (b & (a | c | d)) | (a & c & d)
+}
+
+#[inline]
+fn glitch_tertiary_1(a: u16, b: u16, c: u16, d: u16, e: u16) -> u16 {
+    c | (a & b & d & e)
+}
+
+#[inline]
+fn glitch_tertiary_2(a: u16, b: u16, c: u16, d: u16, e: u16) -> u16 {
+    (c & (a | b | d | e)) | (a & b & d & e)
+}
+
+#[inline]
+fn glitch_tertiary_3(a: u16, b: u16, c: u16, d: u16, e: u16) -> u16 {
+    (c & (a | b | d | e)) | (b & d & e)
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn glitch_quaternary_dmg(
+    _a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16,
+) -> u16 {
+    (e & (h | g | (!d & f) | c | b)) | (c & g & h)
+}
 
 impl Bus {
     #[inline]
@@ -23,95 +62,100 @@ impl Bus {
         }
 
         let dots = self.io.ppu.cycles;
-        if dots >= 80 {
+        if dots == 0 || dots >= 80 {
             return;
         }
 
-        let current_row = (dots / 4) as usize;
-        if current_row == 0 || current_row >= 20 {
+        let accessed_oam_row = (dots as usize) * 2;
+
+        if accessed_oam_row < 8 || accessed_oam_row >= 0xA0 {
             return;
         }
 
-        self.corrupt_oam_row(current_row, corruption_type);
+        self.apply_oam_corruption(accessed_oam_row, corruption_type);
     }
 
     #[inline]
-    fn corrupt_oam_row(&mut self, row: usize, corruption_type: OamCorruptionType) {
-        let row_offset = row * 8;
-        let prev_offset = (row - 1) * 8;
+    fn oam_read_word(&self, offset: usize) -> u16 {
+        u16::from_le_bytes([self.oam[offset], self.oam[offset + 1]])
+    }
 
+    #[inline]
+    fn oam_write_word(&mut self, offset: usize, val: u16) {
+        [self.oam[offset], self.oam[offset + 1]] = val.to_le_bytes();
+    }
+
+    fn apply_oam_corruption(&mut self, row: usize, corruption_type: OamCorruptionType) {
         match corruption_type {
-            OamCorruptionType::Single => {
-                let mut row_n = [0u16; 4];
-                let mut row_n1 = [0u16; 4];
-                let mut row_n2 = [0u16; 4];
+            OamCorruptionType::Write => {
+                let a = self.oam_read_word(row);
+                let b = self.oam_read_word(row - 8);
+                let c = self.oam_read_word(row - 4);
 
-                for i in 0..4 {
-                    let off = i * 2;
-                    row_n[i] = u16::from_le_bytes([
-                        self.oam[row_offset + off],
-                        self.oam[row_offset + off + 1],
-                    ]);
-                    row_n1[i] = u16::from_le_bytes([
-                        self.oam[prev_offset + off],
-                        self.oam[prev_offset + off + 1],
-                    ]);
-                    if row >= 2 {
-                        let pp = (row - 2) * 8;
-                        row_n2[i] = u16::from_le_bytes([
-                            self.oam[pp + off],
-                            self.oam[pp + off + 1],
-                        ]);
-                    }
-                }
-
-                let glitched = ((row_n[0] ^ row_n2[0]) & row_n1[0]) ^ row_n2[0];
-
-                let bytes = row_n[0].to_le_bytes();
-                self.oam[prev_offset] = bytes[0];
-                self.oam[prev_offset + 1] = bytes[1];
-
-                for i in 0..3 {
-                    let bytes = row_n1[i].to_le_bytes();
-                    self.oam[row_offset + i * 2] = bytes[0];
-                    self.oam[row_offset + i * 2 + 1] = bytes[1];
-                }
-
-                let bytes = glitched.to_le_bytes();
-                self.oam[row_offset] = bytes[0];
-                self.oam[row_offset + 1] = bytes[1];
+                self.oam_write_word(row, glitch_write(a, b, c));
+                self.oam.copy_within(row - 6..row, row + 2);
             }
-            OamCorruptionType::Double => {
-                let mut row_n = [0u16; 4];
-                let mut row_n1 = [0u16; 4];
-                let mut row_n2 = [0u16; 4];
 
-                for i in 0..4 {
-                    let off = i * 2;
-                    row_n[i] = u16::from_le_bytes([
-                        self.oam[row_offset + off],
-                        self.oam[row_offset + off + 1],
-                    ]);
-                    row_n1[i] = u16::from_le_bytes([
-                        self.oam[prev_offset + off],
-                        self.oam[prev_offset + off + 1],
-                    ]);
-                    if row >= 2 {
-                        let pp_offset = (row - 2) * 8;
-                        row_n2[i] = u16::from_le_bytes([
-                            self.oam[pp_offset + off],
-                            self.oam[pp_offset + off + 1],
-                        ]);
+            OamCorruptionType::Read => {
+                let row_alignment = row & 0x18;
+
+                if row_alignment == 0x10 {
+                    if row < 0x98 {
+                        let a = self.oam_read_word(row - 16);
+                        let b = self.oam_read_word(row - 8);
+                        let c = self.oam_read_word(row);
+                        let d = self.oam_read_word(row - 4);
+
+                        self.oam_write_word(row - 8, glitch_read_secondary(a, b, c, d));
+                        self.oam.copy_within(row - 8..row, row - 16);
                     }
+                } else if row_alignment == 0x00 {
+                    if row < 0x98 {
+                        if row == 0x40 {
+                            let a = self.oam_read_word(0);
+                            let b = self.oam_read_word(row);
+                            let c = self.oam_read_word(row - 4);
+                            let d = self.oam_read_word(row - 6);
+                            let e = self.oam_read_word(row - 8);
+                            let f = self.oam_read_word(row - 14);
+                            let g = self.oam_read_word(row - 16);
+                            let h = self.oam_read_word(row - 32);
+
+                            self.oam_write_word(row - 8, glitch_quaternary_dmg(a, b, c, d, e, f, g, h));
+                            self.oam.copy_within(row - 8..row, row - 16);
+                            self.oam.copy_within(row - 8..row, row - 32);
+                        } else {
+                            let a = self.oam_read_word(row);
+                            let b = self.oam_read_word(row - 4);
+                            let c = self.oam_read_word(row - 8);
+                            let d = self.oam_read_word(row - 16);
+                            let e = self.oam_read_word(row - 32);
+
+                            let glitched = match row {
+                                0x20 => glitch_tertiary_2(a, b, c, d, e),
+                                0x60 => glitch_tertiary_3(a, b, c, d, e),
+                                _    => glitch_tertiary_1(a, b, c, d, e),
+                            };
+
+                            self.oam_write_word(row - 8, glitched);
+                            self.oam.copy_within(row - 8..row, row - 16);
+                            self.oam.copy_within(row - 8..row, row - 32);
+                        }
+                    }
+                } else {
+                    let a = self.oam_read_word(row);
+                    let b = self.oam_read_word(row - 8);
+                    let c = self.oam_read_word(row - 4);
+                    let glitched = glitch_read(a, b, c);
+
+                    self.oam_write_word(row, glitched);
+                    self.oam_write_word(row - 8, glitched);
                 }
 
-                for i in 0..4 {
-                    let merged = ((row_n[i] ^ row_n2[i]) & row_n1[i]) ^ row_n2[i];
-                    let bytes = merged.to_le_bytes();
-                    self.oam[row_offset + i * 2] = bytes[0];
-                    self.oam[row_offset + i * 2 + 1] = bytes[1];
-                    self.oam[prev_offset + i * 2] = bytes[0];
-                    self.oam[prev_offset + i * 2 + 1] = bytes[1];
+                self.oam.copy_within(row - 8..row, row);
+
+                if row == 0x80 {
+                    self.oam.copy_within(0x80..0x88, 0);
                 }
             }
         }
@@ -120,6 +164,6 @@ impl Bus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OamCorruptionType {
-    Single,
-    Double,
+    Write,
+    Read,
 }

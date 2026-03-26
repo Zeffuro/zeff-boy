@@ -84,7 +84,7 @@ pub fn ld_h_d8(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_a_hl_plus(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.regs.a = cpu.bus_read_timed(bus, addr);
-    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
+    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Read);
     cpu.set_hl(addr.wrapping_add(1));
 }
 
@@ -115,7 +115,7 @@ pub fn ld_hl_d8(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_a_hl_minus(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.regs.a = cpu.bus_read_timed(bus, addr);
-    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
+    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Read);
     cpu.set_hl(addr.wrapping_sub(1));
 }
 
