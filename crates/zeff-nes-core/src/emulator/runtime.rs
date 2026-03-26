@@ -12,16 +12,21 @@ impl Emulator {
         let opcode = self.bus.cpu_read(pc_before);
 
         let cycles = self.cpu.step(&mut self.bus);
-        
-        self.cpu.irq_line = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
 
-        let nmi = self.bus.tick_peripherals(cycles);
+        let dma_cycles = self.bus.dma_stall_cycles;
+        self.bus.dma_stall_cycles = 0;
+        let total_cycles = cycles + dma_cycles;
+        self.cpu.cycles += dma_cycles;
+
+        let nmi = self.bus.tick_peripherals(total_cycles);
+
+        self.cpu.irq_line = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
 
         if nmi {
             self.cpu.nmi_pending = true;
         }
 
-        (pc_before, opcode, cycles)
+        (pc_before, opcode, total_cycles)
     }
 
     pub fn step_frame(&mut self) {

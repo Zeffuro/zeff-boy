@@ -1,4 +1,5 @@
-use crate::hardware::cartridge::{Mapper, Mirroring};
+use crate::hardware::cartridge::{ChrFetchKind, Mapper, Mirroring};
+use std::cell::Cell;
 
 pub struct Mmc5 {
     prg_rom: Vec<u8>,
@@ -19,15 +20,23 @@ pub struct Mmc5 {
     prg_ram_write_protect_2: u8,
 
     nametable_mode: u8,
+    fill_tile: u8,
+    fill_attr: u8,
 
+    prg_ram_bank: u8,
     prg_banks: [u8; 4],
     chr_banks: [u16; 12],
 
+    multiplicand: u8,
+    multiplier: u8,
+
     irq_line_compare: u8,
     irq_enabled: bool,
-    irq_pending: bool,
+    irq_pending: Cell<bool>,
     in_frame: bool,
     current_scanline: u16,
+
+    exram_tile_byte: Cell<u8>,
 }
 
 impl Mmc5 {
@@ -59,13 +68,19 @@ impl Mmc5 {
             prg_ram_write_protect_1: 0,
             prg_ram_write_protect_2: 0,
             nametable_mode: 0,
+            fill_tile: 0,
+            fill_attr: 0,
+            prg_ram_bank: 0,
             prg_banks: [0, 0, 0, 0xFF],
             chr_banks: [0; 12],
+            multiplicand: 0,
+            multiplier: 0,
             irq_line_compare: 0,
             irq_enabled: false,
-            irq_pending: false,
+            irq_pending: Cell::new(false),
             in_frame: true,
             current_scanline: 0,
+            exram_tile_byte: Cell::new(0),
         };
 
         this.reset_chr_defaults();
@@ -142,29 +157,33 @@ impl Mmc5 {
             }
             1 => {
                 if addr < 0xC000 {
+                    let reg = self.prg_banks[1];
+                    let rom_bit = reg & 0x80;
+                    let bank16 = ((reg & 0x7E) >> 1) as usize;
                     let slot = ((addr as usize - 0x8000) >> 13) & 0x01;
-                    let bank16 = (self.prg_banks[1] as usize & 0x7E) >> 1;
-                    let bank = (bank16 * 2 + slot) as u8;
-                    self.read_prg_8k_bank(addr, 0x80 | bank)
+                    let bank = ((bank16 * 2 + slot) as u8) & 0x7F;
+                    self.read_prg_8k_bank(addr, rom_bit | bank)
                 } else {
+                    // 16 KiB ROM from $5117
+                    let bank16 = ((self.prg_banks[3] & 0x7E) >> 1) as usize;
                     let slot = ((addr as usize - 0xC000) >> 13) & 0x01;
-                    let bank16 = (self.prg_banks[3] as usize & 0x7E) >> 1;
                     let bank = (bank16 * 2 + slot) as u8;
                     self.read_prg_8k_bank(addr, 0x80 | bank)
                 }
             }
             2 => match addr {
                 0x8000..=0xBFFF => {
+                    let reg = self.prg_banks[1];
+                    let rom_bit = reg & 0x80;
+                    let bank16 = ((reg & 0x7E) >> 1) as usize;
                     let slot = ((addr as usize - 0x8000) >> 13) & 0x01;
-                    let bank16 = (self.prg_banks[1] as usize & 0x7E) >> 1;
-                    let bank = (bank16 * 2 + slot) as u8;
-                    self.read_prg_8k_bank(addr, 0x80 | bank)
+                    let bank = ((bank16 * 2 + slot) as u8) & 0x7F;
+                    self.read_prg_8k_bank(addr, rom_bit | bank)
                 }
                 0xC000..=0xDFFF => self.read_prg_8k_bank(addr, self.prg_banks[2]),
                 0xE000..=0xFFFF => self.read_prg_8k_bank(addr, self.prg_banks[3] | 0x80),
                 _ => 0,
             },
-            // 8 KiB mode, selected by $5114..$5117.
             _ => match addr {
                 0x8000..=0x9FFF => self.read_prg_8k_bank(addr, self.prg_banks[0]),
                 0xA000..=0xBFFF => self.read_prg_8k_bank(addr, self.prg_banks[1]),
@@ -178,74 +197,83 @@ impl Mmc5 {
     fn map_prg_write(&mut self, addr: u16, val: u8) {
         match self.prg_mode & 0x03 {
             0 => {
-                let bank32 = (self.prg_banks[3] as usize & 0x7C) >> 2;
-                let slot = ((addr as usize - 0x8000) >> 13) & 0x03;
-                let bank = (bank32 * 4 + slot) as u8;
-                self.write_prg_8k_bank(addr, bank, val);
             }
             1 => {
                 if addr < 0xC000 {
+                    let reg = self.prg_banks[1];
+                    let rom_bit = reg & 0x80;
+                    let bank16 = ((reg & 0x7E) >> 1) as usize;
                     let slot = ((addr as usize - 0x8000) >> 13) & 0x01;
-                    let bank16 = (self.prg_banks[1] as usize & 0x7E) >> 1;
-                    let bank = (bank16 * 2 + slot) as u8;
-                    self.write_prg_8k_bank(addr, bank, val);
-                } else {
-                    let slot = ((addr as usize - 0xC000) >> 13) & 0x01;
-                    let bank16 = (self.prg_banks[3] as usize & 0x7E) >> 1;
-                    let bank = (bank16 * 2 + slot) as u8;
-                    self.write_prg_8k_bank(addr, bank, val);
+                    let bank = ((bank16 * 2 + slot) as u8) & 0x7F;
+                    self.write_prg_8k_bank(addr, rom_bit | bank, val);
                 }
             }
             2 => match addr {
                 0x8000..=0xBFFF => {
+                    let reg = self.prg_banks[1];
+                    let rom_bit = reg & 0x80;
+                    let bank16 = ((reg & 0x7E) >> 1) as usize;
                     let slot = ((addr as usize - 0x8000) >> 13) & 0x01;
-                    let bank16 = (self.prg_banks[1] as usize & 0x7E) >> 1;
-                    let bank = (bank16 * 2 + slot) as u8;
-                    self.write_prg_8k_bank(addr, bank, val);
+                    let bank = ((bank16 * 2 + slot) as u8) & 0x7F;
+                    self.write_prg_8k_bank(addr, rom_bit | bank, val);
                 }
                 0xC000..=0xDFFF => self.write_prg_8k_bank(addr, self.prg_banks[2], val),
-                0xE000..=0xFFFF => self.write_prg_8k_bank(addr, self.prg_banks[3], val),
+                0xE000..=0xFFFF => { /* ROM — ignore */ }
                 _ => {}
             },
             _ => match addr {
                 0x8000..=0x9FFF => self.write_prg_8k_bank(addr, self.prg_banks[0], val),
                 0xA000..=0xBFFF => self.write_prg_8k_bank(addr, self.prg_banks[1], val),
                 0xC000..=0xDFFF => self.write_prg_8k_bank(addr, self.prg_banks[2], val),
-                0xE000..=0xFFFF => self.write_prg_8k_bank(addr, self.prg_banks[3], val),
+                0xE000..=0xFFFF => { /* ROM — ignore */ }
                 _ => {}
             },
         }
     }
 
-    fn chr_bank_index(&self, addr: u16) -> usize {
+    fn chr_bank_index(&self, addr: u16, kind: ChrFetchKind) -> usize {
+        if self.exram_mode == 1 && matches!(kind, ChrFetchKind::Background) {
+            let exram_byte = self.exram_tile_byte.get();
+            let bank_4k = ((self.upper_chr_bank_bits as usize) << 6)
+                | (exram_byte as usize & 0x3F);
+            let sub = ((addr as usize) >> 10) & 0x03;
+            return bank_4k * 4 + sub;
+        }
+
         let addr = addr as usize;
+        let (r1, r3, r5, r7, slot_mask) = match kind {
+            ChrFetchKind::Sprite => (1usize, 3usize, 5usize, 7usize, 0x07usize),
+            ChrFetchKind::Background => (8usize, 9usize, 10usize, 11usize, 0x03usize),
+        };
+
         match self.chr_mode & 0x03 {
             0 => {
-                let base = (self.chr_banks[7] as usize) & !0x07;
+                let base = (self.chr_banks[r7] as usize) & !0x07;
                 base + (addr >> 10)
             }
             1 => {
                 let slot = (addr >> 12) & 0x01;
                 let base = if slot == 0 {
-                    (self.chr_banks[3] as usize) & !0x03
+                    (self.chr_banks[r3] as usize) & !0x03
                 } else {
-                    (self.chr_banks[7] as usize) & !0x03
+                    (self.chr_banks[r7] as usize) & !0x03
                 };
                 base + ((addr >> 10) & 0x03)
             }
             2 => {
                 let slot = (addr >> 11) & 0x03;
                 let base = match slot {
-                    0 => (self.chr_banks[1] as usize) & !0x01,
-                    1 => (self.chr_banks[3] as usize) & !0x01,
-                    2 => (self.chr_banks[5] as usize) & !0x01,
-                    _ => (self.chr_banks[7] as usize) & !0x01,
+                    0 => (self.chr_banks[r1] as usize) & !0x01,
+                    1 => (self.chr_banks[r3] as usize) & !0x01,
+                    2 => (self.chr_banks[r5] as usize) & !0x01,
+                    _ => (self.chr_banks[r7] as usize) & !0x01,
                 };
                 base + ((addr >> 10) & 0x01)
             }
             _ => {
-                let slot = (addr >> 10) & 0x07;
-                self.chr_banks[slot] as usize
+                let slot = (addr >> 10) & slot_mask;
+                let base = if matches!(kind, ChrFetchKind::Sprite) { 0 } else { 8 };
+                self.chr_banks[base + slot] as usize
             }
         }
     }
@@ -277,6 +305,22 @@ impl Mmc5 {
         };
     }
 
+    fn fill_attr_byte(&self) -> u8 {
+        let attr = self.fill_attr & 0x03;
+        attr | (attr << 2) | (attr << 4) | (attr << 6)
+    }
+
+    fn decode_nametable_addr(addr: u16) -> (usize, usize) {
+        let vaddr = ((addr - 0x2000) & 0x0FFF) as usize;
+        let table = vaddr >> 10;
+        let offset = vaddr & 0x03FF;
+        (table, offset)
+    }
+
+    fn nametable_source(&self, table: usize) -> u8 {
+        (self.nametable_mode >> (table * 2)) & 0x03
+    }
+
     fn write_register(&mut self, addr: u16, val: u8) {
         match addr {
             0x5100 => self.prg_mode = val & 0x03,
@@ -285,7 +329,9 @@ impl Mmc5 {
             0x5103 => self.prg_ram_write_protect_2 = val & 0x03,
             0x5104 => self.exram_mode = val & 0x03,
             0x5105 => self.apply_nametable_mode(val),
-            0x5113 => self.prg_banks[0] = val & 0x7F,
+            0x5106 => self.fill_tile = val,
+            0x5107 => self.fill_attr = val & 0x03,
+            0x5113 => self.prg_ram_bank = val & 0x07,
             0x5114 => self.prg_banks[0] = val,
             0x5115 => self.prg_banks[1] = val,
             0x5116 => self.prg_banks[2] = val,
@@ -300,8 +346,10 @@ impl Mmc5 {
             0x5203 => self.irq_line_compare = val,
             0x5204 => {
                 self.irq_enabled = val & 0x80 != 0;
-                self.irq_pending = false;
+                // Reading $5204 acknowledges; writing does NOT clear pending.
             }
+            0x5205 => self.multiplicand = val,
+            0x5206 => self.multiplier = val,
             _ => {}
         }
     }
@@ -310,23 +358,38 @@ impl Mmc5 {
 impl Mapper for Mmc5 {
     fn cpu_read(&self, addr: u16) -> u8 {
         match addr {
-            0x5C00..=0x5FFF => self.ex_ram[(addr - 0x5C00) as usize],
+            0x5C00..=0x5FFF => {
+                if self.exram_mode >= 2 {
+                    self.ex_ram[(addr - 0x5C00) as usize]
+                } else {
+                    0
+                }
+            }
             0x5204 => {
                 let mut status = 0u8;
-                if self.irq_pending {
+                if self.irq_pending.get() {
                     status |= 0x80;
                 }
                 if self.in_frame {
                     status |= 0x40;
                 }
+
+                self.irq_pending.set(false);
                 status
             }
-            0x5205 | 0x5206 => 0,
+            0x5205 => {
+                let product = self.multiplicand as u16 * self.multiplier as u16;
+                product as u8
+            }
+            0x5206 => {
+                let product = self.multiplicand as u16 * self.multiplier as u16;
+                (product >> 8) as u8
+            }
             0x6000..=0x7FFF => {
                 if self.prg_ram.is_empty() {
                     0
                 } else {
-                    let bank = (self.prg_banks[0] as usize) % self.prg_ram_bank_count_8k();
+                    let bank = (self.prg_ram_bank as usize) % self.prg_ram_bank_count_8k();
                     let offset = (addr as usize) & 0x1FFF;
                     self.prg_ram[bank * 0x2000 + offset]
                 }
@@ -338,7 +401,7 @@ impl Mapper for Mmc5 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x5100..=0x5130 | 0x5203..=0x5204 => self.write_register(addr, val),
+            0x5100..=0x5130 | 0x5203..=0x5206 => self.write_register(addr, val),
             0x5C00..=0x5FFF => {
                 if self.exram_mode != 3 {
                     self.ex_ram[(addr - 0x5C00) as usize] = val;
@@ -346,7 +409,7 @@ impl Mapper for Mmc5 {
             }
             0x6000..=0x7FFF => {
                 if !self.prg_ram.is_empty() && self.prg_ram_writable() {
-                    let bank = (self.prg_banks[0] as usize) % self.prg_ram_bank_count_8k();
+                    let bank = (self.prg_ram_bank as usize) % self.prg_ram_bank_count_8k();
                     let offset = (addr as usize) & 0x1FFF;
                     self.prg_ram[bank * 0x2000 + offset] = val;
                 }
@@ -357,11 +420,15 @@ impl Mapper for Mmc5 {
     }
 
     fn chr_read(&self, addr: u16) -> u8 {
+        self.chr_read_kind(addr, ChrFetchKind::Background)
+    }
+
+    fn chr_read_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
         if self.chr.is_empty() {
             return 0;
         }
 
-        let bank = self.chr_bank_index(addr) % self.chr_bank_count_1k();
+        let bank = self.chr_bank_index(addr, kind) % self.chr_bank_count_1k();
         let offset = (addr as usize) & 0x03FF;
         self.chr[(bank * 0x0400 + offset) % self.chr.len()]
     }
@@ -371,10 +438,68 @@ impl Mapper for Mmc5 {
             return;
         }
 
-        let bank = self.chr_bank_index(addr) % self.chr_bank_count_1k();
+        let bank = self.chr_bank_index(addr, ChrFetchKind::Background) % self.chr_bank_count_1k();
         let offset = (addr as usize) & 0x03FF;
         let idx = (bank * 0x0400 + offset) % self.chr.len();
         self.chr[idx] = val;
+    }
+
+    fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+        if !(0x2000..=0x3EFF).contains(&addr) {
+            return None;
+        }
+
+        let (table, offset) = Self::decode_nametable_addr(addr);
+
+        if self.exram_mode == 1 {
+            if offset < 0x3C0 {
+                self.exram_tile_byte.set(self.ex_ram[offset]);
+            } else {
+                let byte = self.exram_tile_byte.get();
+                let attr = (byte >> 6) & 0x03;
+                return Some(attr | (attr << 2) | (attr << 4) | (attr << 6));
+            }
+        }
+
+        let source = self.nametable_source(table);
+        let value = match source {
+            0 => ciram[offset],
+            1 => ciram[0x400 + offset],
+            2 => {
+                if self.exram_mode <= 1 {
+                    self.ex_ram[offset]
+                } else {
+                    0
+                }
+            }
+            _ => {
+                if offset < 0x03C0 {
+                    self.fill_tile
+                } else {
+                    self.fill_attr_byte()
+                }
+            }
+        };
+        Some(value)
+    }
+
+    fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+        if !(0x2000..=0x3EFF).contains(&addr) {
+            return false;
+        }
+
+        let (table, offset) = Self::decode_nametable_addr(addr);
+        match self.nametable_source(table) {
+            0 => ciram[offset] = val,
+            1 => ciram[0x400 + offset] = val,
+            2 => {
+                if self.exram_mode <= 1 {
+                    self.ex_ram[offset] = val;
+                }
+            }
+            _ => {}
+        }
+        true
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -382,23 +507,24 @@ impl Mapper for Mmc5 {
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq_pending.get()
     }
 
     fn notify_scanline(&mut self) {
-        if self.current_scanline >= 261 {
+        if self.current_scanline >= 240 {
             self.current_scanline = 0;
-        } else {
-            self.current_scanline += 1;
+            self.in_frame = true;
+            return;
         }
 
+        self.current_scanline += 1;
         self.in_frame = self.current_scanline < 240;
 
         if self.in_frame
             && self.irq_enabled
             && self.current_scanline as u8 == self.irq_line_compare
         {
-            self.irq_pending = true;
+            self.irq_pending.set(true);
         }
     }
 
@@ -435,15 +561,22 @@ impl Mapper for Mmc5 {
         w.write_u8(self.prg_ram_write_protect_1);
         w.write_u8(self.prg_ram_write_protect_2);
         w.write_u8(self.nametable_mode);
+        w.write_u8(self.fill_tile);
+        w.write_u8(self.fill_attr);
 
         w.write_bytes(&self.prg_banks);
         for bank in &self.chr_banks {
             w.write_u16(*bank);
         }
 
+        w.write_u8(self.prg_ram_bank);
+        w.write_u8(self.multiplicand);
+        w.write_u8(self.multiplier);
+        w.write_u8(self.exram_tile_byte.get());
+
         w.write_u8(self.irq_line_compare);
         w.write_bool(self.irq_enabled);
-        w.write_bool(self.irq_pending);
+        w.write_bool(self.irq_pending.get());
         w.write_bool(self.in_frame);
         w.write_u16(self.current_scanline);
 
@@ -465,15 +598,22 @@ impl Mapper for Mmc5 {
         self.prg_ram_write_protect_1 = r.read_u8()?;
         self.prg_ram_write_protect_2 = r.read_u8()?;
         self.nametable_mode = r.read_u8()?;
+        self.fill_tile = r.read_u8()?;
+        self.fill_attr = r.read_u8()?;
 
         r.read_exact(&mut self.prg_banks)?;
         for bank in &mut self.chr_banks {
             *bank = r.read_u16()?;
         }
 
+        self.prg_ram_bank = r.read_u8()?;
+        self.multiplicand = r.read_u8()?;
+        self.multiplier = r.read_u8()?;
+        self.exram_tile_byte.set(r.read_u8()?);
+
         self.irq_line_compare = r.read_u8()?;
         self.irq_enabled = r.read_bool()?;
-        self.irq_pending = r.read_bool()?;
+        self.irq_pending.set(r.read_bool()?);
         self.in_frame = r.read_bool()?;
         self.current_scanline = r.read_u16()?;
 
@@ -542,6 +682,236 @@ mod tests {
         }
 
         assert!(mapper.irq_pending());
+    }
+
+    #[test]
+    fn mmc5_separates_bg_and_sprite_chr_banks() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let mut chr = vec![0u8; 16 * 0x0400];
+        chr[2 * 0x0400] = 0x22;
+        chr[9 * 0x0400] = 0x99;
+
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        mapper.cpu_write(0x5101, 3);
+        mapper.cpu_write(0x5120, 2);
+        mapper.cpu_write(0x5128, 9);
+
+        assert_eq!(mapper.chr_read_kind(0x0000, ChrFetchKind::Sprite), 0x22);
+        assert_eq!(mapper.chr_read_kind(0x0000, ChrFetchKind::Background), 0x99);
+    }
+
+    #[test]
+    fn mmc5_status_read_acknowledges_irq_pending() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.cpu_write(0x5203, 1);
+        mapper.cpu_write(0x5204, 0x80);
+        mapper.notify_scanline();
+
+        assert!(mapper.irq_pending());
+        let status = mapper.cpu_read(0x5204);
+        assert_ne!(status & 0x80, 0);
+        assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn mmc5_scanline_counter_resets_on_prerender_notification() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.current_scanline = 240;
+        mapper.notify_scanline();
+
+        assert_eq!(mapper.current_scanline, 0);
+        assert!(mapper.in_frame);
+    }
+
+    #[test]
+    fn mmc5_nametable_modes_support_exram_and_fill() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let mut ciram = [0u8; 0x800];
+
+        mapper.cpu_write(0x5105, 0b11_10_01_00);
+        mapper.cpu_write(0x5104, 0);
+        mapper.cpu_write(0x5106, 0xAB);
+        mapper.cpu_write(0x5107, 0x02);
+
+        ciram[0x000] = 0x10;
+        ciram[0x400] = 0x20;
+        mapper.ex_ram[0x000] = 0x30;
+
+        assert_eq!(mapper.ppu_nametable_read(0x2000, &ciram), Some(0x10));
+        assert_eq!(mapper.ppu_nametable_read(0x2400, &ciram), Some(0x20));
+        assert_eq!(mapper.ppu_nametable_read(0x2800, &ciram), Some(0x30));
+        assert_eq!(mapper.ppu_nametable_read(0x2C00, &ciram), Some(0xAB));
+        assert_eq!(mapper.ppu_nametable_read(0x2FC0, &ciram), Some(0xAA));
+
+        assert!(mapper.ppu_nametable_write(0x2000, 0x11, &mut ciram));
+        assert!(mapper.ppu_nametable_write(0x2400, 0x22, &mut ciram));
+        assert!(mapper.ppu_nametable_write(0x2800, 0x33, &mut ciram));
+        assert!(mapper.ppu_nametable_write(0x2C00, 0x44, &mut ciram));
+
+        assert_eq!(ciram[0x000], 0x11);
+        assert_eq!(ciram[0x400], 0x22);
+        assert_eq!(mapper.ex_ram[0x000], 0x33);
+    }
+
+    #[test]
+    fn mmc5_hardware_multiplier() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.cpu_write(0x5205, 20);
+        mapper.cpu_write(0x5206, 13);
+
+        assert_eq!(mapper.cpu_read(0x5205), 0x04);
+        assert_eq!(mapper.cpu_read(0x5206), 0x01);
+
+        mapper.cpu_write(0x5205, 0xFF);
+        mapper.cpu_write(0x5206, 0xFF);
+        assert_eq!(mapper.cpu_read(0x5205), 0x01);
+        assert_eq!(mapper.cpu_read(0x5206), 0xFE);
+    }
+
+    #[test]
+    fn mmc5_exram_cpu_read_returns_zero_in_mode_0_and_1() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.ex_ram[0] = 0xAB;
+
+        mapper.cpu_write(0x5104, 0);
+        assert_eq!(mapper.cpu_read(0x5C00), 0);
+
+        mapper.cpu_write(0x5104, 1);
+        assert_eq!(mapper.cpu_read(0x5C00), 0);
+
+        mapper.cpu_write(0x5104, 2);
+        assert_eq!(mapper.cpu_read(0x5C00), 0xAB);
+
+        mapper.cpu_write(0x5104, 3);
+        assert_eq!(mapper.cpu_read(0x5C00), 0xAB);
+    }
+
+    #[test]
+    fn mmc5_exram_mode3_blocks_writes() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.cpu_write(0x5104, 2);
+        mapper.cpu_write(0x5C00, 0x42);
+        assert_eq!(mapper.ex_ram[0], 0x42);
+
+        mapper.cpu_write(0x5104, 3);
+        mapper.cpu_write(0x5C00, 0xFF);
+        assert_eq!(mapper.ex_ram[0], 0x42);
+    }
+
+    #[test]
+    fn mmc5_writing_5204_does_not_clear_irq_pending() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.cpu_write(0x5203, 1);
+        mapper.cpu_write(0x5204, 0x80);
+        mapper.notify_scanline();
+        assert!(mapper.irq_pending());
+
+        mapper.cpu_write(0x5204, 0x80);
+        assert!(mapper.irq_pending());
+
+        let _ = mapper.cpu_read(0x5204);
+        assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn mmc5_prg_ram_bank_register_5113() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let prg_ram_size = 4 * 0x2000;
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, prg_ram_size, false);
+
+        mapper.cpu_write(0x5102, 0x02);
+        mapper.cpu_write(0x5103, 0x01);
+
+        mapper.cpu_write(0x5113, 0);
+        mapper.cpu_write(0x6000, 0xAA);
+
+        mapper.cpu_write(0x5113, 2);
+        mapper.cpu_write(0x6000, 0xBB);
+
+        mapper.cpu_write(0x5113, 0);
+        assert_eq!(mapper.cpu_read(0x6000), 0xAA);
+
+        mapper.cpu_write(0x5113, 2);
+        assert_eq!(mapper.cpu_read(0x6000), 0xBB);
+    }
+
+    #[test]
+    fn mmc5_exram_mode1_extended_attribute() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let ciram = [0u8; 0x800];
+
+        mapper.cpu_write(0x5104, 1);
+        mapper.cpu_write(0x5105, 0x00);
+
+        mapper.ex_ram[0] = 0xC5;
+
+        let _tile = mapper.ppu_nametable_read(0x2000, &ciram);
+
+        let attr = mapper.ppu_nametable_read(0x23C0, &ciram);
+        assert_eq!(attr, Some(0xFF));
+
+        mapper.ex_ram[1] = 0x45;
+        let _tile = mapper.ppu_nametable_read(0x2001, &ciram);
+        let attr = mapper.ppu_nametable_read(0x23C0, &ciram);
+        assert_eq!(attr, Some(0x55));
+    }
+
+    #[test]
+    fn mmc5_exram_mode1_chr_bank_override() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let mut chr = vec![0u8; 64 * 0x0400];
+        chr[20 * 0x0400] = 0xDE;
+
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.cpu_write(0x5104, 1);
+        mapper.cpu_write(0x5130, 0);
+
+        mapper.exram_tile_byte.set(0x05);
+
+        let val = mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
+        assert_eq!(val, 0xDE);
+
+        let val_sprite = mapper.chr_read_kind(0x0000, ChrFetchKind::Sprite);
+        assert_ne!(val_sprite, 0xDE);
+    }
+
+    #[test]
+    fn mmc5_compare_zero_does_not_fire_on_prerender() {
+        let prg = vec![0u8; 4 * 0x2000];
+        let chr = vec![0u8; 0x2000];
+        let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+        mapper.cpu_write(0x5203, 0);
+        mapper.cpu_write(0x5204, 0x80);
+
+        mapper.current_scanline = 240;
+        mapper.notify_scanline();
+
+        assert!(!mapper.irq_pending());
     }
 }
 

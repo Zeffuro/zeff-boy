@@ -1,5 +1,5 @@
 use crate::hardware::apu::Apu;
-use crate::hardware::cartridge::{Cartridge, Mirroring};
+use crate::hardware::cartridge::{Cartridge, ChrFetchKind, Mirroring};
 use crate::hardware::constants::*;
 use crate::hardware::controller::Controller;
 use crate::hardware::ppu::{Ppu, NES_PALETTE, PRE_RENDER_SCANLINE};
@@ -14,6 +14,8 @@ pub struct Bus {
     pub controller2: Controller,
 
     pub ppu_cycles: u64,
+
+    pub dma_stall_cycles: u64,
 }
 
 impl Bus {
@@ -26,6 +28,7 @@ impl Bus {
             controller1: Controller::new(),
             controller2: Controller::new(),
             ppu_cycles: 0,
+            dma_stall_cycles: 0,
         }
     }
 
@@ -61,7 +64,10 @@ impl Bus {
                     self.ppu.oam[self.ppu.oam_addr as usize] = byte;
                     self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(1);
                 }
-                // TODO: more precise cycle-level DMA timing.
+                // OAM DMA stalls the CPU for 513 cycles (1 idle + 256 read/write
+                // pairs), or 514 if the write lands on an odd CPU cycle.
+                // We use 513 as a good approximation.
+                self.dma_stall_cycles = 513;
             }
 
             CONTROLLER1 => {
@@ -151,12 +157,20 @@ impl Bus {
     }
 
     pub fn ppu_bus_read(&self, addr: u16) -> u8 {
+        self.ppu_bus_read_with_kind(addr, ChrFetchKind::Background)
+    }
+
+    fn ppu_bus_read_with_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => self.cartridge.chr_read(addr),
+            0x0000..=0x1FFF => self.cartridge.chr_read_with_kind(addr, kind),
             0x2000..=0x3EFF => {
-                let mirrored = self.mirror_nametable_addr(addr);
-                self.ppu.nametable_ram[mirrored]
+                if let Some(val) = self.cartridge.ppu_nametable_read(addr, &self.ppu.nametable_ram) {
+                    val
+                } else {
+                    let mirrored = self.mirror_nametable_addr(addr);
+                    self.ppu.nametable_ram[mirrored]
+                }
             }
             0x3F00..=0x3FFF => {
                 let idx = Self::palette_index(addr);
@@ -171,8 +185,13 @@ impl Bus {
         match addr {
             0x0000..=0x1FFF => self.cartridge.chr_write(addr, val),
             0x2000..=0x3EFF => {
-                let mirrored = self.mirror_nametable_addr(addr);
-                self.ppu.nametable_ram[mirrored] = val;
+                if !self
+                    .cartridge
+                    .ppu_nametable_write(addr, val, &mut self.ppu.nametable_ram)
+                {
+                    let mirrored = self.mirror_nametable_addr(addr);
+                    self.ppu.nametable_ram[mirrored] = val;
+                }
             }
             0x3F00..=0x3FFF => {
                 let idx = Self::palette_index(addr);
@@ -369,8 +388,8 @@ impl Bus {
             };
             let hi_addr = lo_addr + 8;
 
-            let mut lo = self.ppu_bus_read(lo_addr);
-            let mut hi = self.ppu_bus_read(hi_addr);
+            let mut lo = self.ppu_bus_read_with_kind(lo_addr, ChrFetchKind::Sprite);
+            let mut hi = self.ppu_bus_read_with_kind(hi_addr, ChrFetchKind::Sprite);
 
             if flip_h {
                 lo = lo.reverse_bits();

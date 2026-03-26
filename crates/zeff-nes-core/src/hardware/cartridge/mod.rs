@@ -253,6 +253,12 @@ pub enum Mirroring {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChrFetchKind {
+    Background,
+    Sprite,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RomFormat {
     INes,
     Nes2,
@@ -602,8 +608,20 @@ impl Cartridge {
         self.mapper.chr_read(addr)
     }
 
+    pub fn chr_read_with_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
+        self.mapper.chr_read_kind(addr, kind)
+    }
+
     pub fn chr_write(&mut self, addr: u16, val: u8) {
         self.mapper.chr_write(addr, val);
+    }
+
+    pub fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+        self.mapper.ppu_nametable_read(addr, ciram)
+    }
+
+    pub fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+        self.mapper.ppu_nametable_write(addr, val, ciram)
     }
 
     pub fn irq_pending(&self) -> bool {
@@ -639,7 +657,16 @@ pub trait Mapper: Send {
     fn cpu_read(&self, addr: u16) -> u8;
     fn cpu_write(&mut self, addr: u16, val: u8);
     fn chr_read(&self, addr: u16) -> u8;
+    fn chr_read_kind(&self, addr: u16, _kind: ChrFetchKind) -> u8 {
+        self.chr_read(addr)
+    }
     fn chr_write(&mut self, addr: u16, val: u8);
+    fn ppu_nametable_read(&self, _addr: u16, _ciram: &[u8; 0x800]) -> Option<u8> {
+        None
+    }
+    fn ppu_nametable_write(&mut self, _addr: u16, _val: u8, _ciram: &mut [u8; 0x800]) -> bool {
+        false
+    }
     fn mirroring(&self) -> Mirroring;
     fn write_state(&self, w: &mut crate::save_state::StateWriter);
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()>;
