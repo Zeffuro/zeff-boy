@@ -3,8 +3,7 @@ use crate::hardware::cpu::CPU;
 
 // 0x03: INC BC
 pub fn inc_bc(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.get_bc().wrapping_add(1);
+    let value = cpu.inc_rp_timed(bus, cpu.get_bc());
     cpu.set_bc(value);
 }
 
@@ -32,8 +31,7 @@ pub fn add_hl_bc(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x0B: DEC BC
 pub fn dec_bc(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.get_bc().wrapping_sub(1);
+    let value = cpu.dec_rp_timed(bus, cpu.get_bc());
     cpu.set_bc(value);
 }
 
@@ -49,8 +47,7 @@ pub fn dec_c(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x13: INC DE
 pub fn inc_de(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.get_de().wrapping_add(1);
+    let value = cpu.inc_rp_timed(bus, cpu.get_de());
     cpu.set_de(value);
 }
 
@@ -78,8 +75,7 @@ pub fn add_hl_de(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x1B: DEC DE
 pub fn dec_de(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.get_de().wrapping_sub(1);
+    let value = cpu.dec_rp_timed(bus, cpu.get_de());
     cpu.set_de(value);
 }
 
@@ -95,8 +91,7 @@ pub fn dec_e(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x23: INC HL
 pub fn inc_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.get_hl().wrapping_add(1);
+    let value = cpu.inc_rp_timed(bus, cpu.get_hl());
     cpu.set_hl(value);
 }
 
@@ -150,8 +145,7 @@ pub fn add_hl_hl(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x2B: DEC HL
 pub fn dec_hl(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.get_hl().wrapping_sub(1);
+    let value = cpu.dec_rp_timed(bus, cpu.get_hl());
     cpu.set_hl(value);
 }
 
@@ -174,9 +168,7 @@ pub fn cpl(cpu: &mut CPU, _bus: &mut Bus) {
 
 // 0x33: INC SP
 pub fn inc_sp(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.sp.wrapping_add(1);
-    cpu.sp = value;
+    cpu.sp = cpu.inc_rp_timed(bus, cpu.sp);
 }
 
 // 0x34: INC (HL)
@@ -216,9 +208,7 @@ pub fn add_hl_sp(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0x3B: DEC SP
 pub fn dec_sp(cpu: &mut CPU, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
-    let value = cpu.sp.wrapping_sub(1);
-    cpu.sp = value;
+    cpu.sp = cpu.dec_rp_timed(bus, cpu.sp);
 }
 
 // 0x3C: INC A

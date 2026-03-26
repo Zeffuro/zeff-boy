@@ -8,9 +8,11 @@ mod dma;
 mod io_bus;
 mod lifecycle;
 mod mem_map;
+mod oam_corruption;
 mod state;
 mod trace;
 
+pub use oam_corruption::OamCorruptionType;
 pub use trace::CpuAccessTraceEvent;
 
 pub struct Bus {

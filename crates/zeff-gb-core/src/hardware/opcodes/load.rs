@@ -1,4 +1,4 @@
-use crate::hardware::bus::Bus;
+use crate::hardware::bus::{Bus, OamCorruptionType};
 use crate::hardware::cpu::CPU;
 use crate::hardware::types::constants as memory_constants;
 
@@ -72,6 +72,7 @@ pub fn ld_hl_d16(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_hl_plus_a(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.bus_write_timed(bus, addr, cpu.regs.a);
+    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
     cpu.set_hl(addr.wrapping_add(1));
 }
 
@@ -84,6 +85,7 @@ pub fn ld_h_d8(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_a_hl_plus(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.regs.a = cpu.bus_read_timed(bus, addr);
+    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
     cpu.set_hl(addr.wrapping_add(1));
 }
 
@@ -101,6 +103,7 @@ pub fn ld_sp_d16(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_hl_minus_a(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.bus_write_timed(bus, addr, cpu.regs.a);
+    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
     cpu.set_hl(addr.wrapping_sub(1));
 }
 
@@ -114,6 +117,7 @@ pub fn ld_hl_d8(cpu: &mut CPU, bus: &mut Bus) {
 pub fn ld_a_hl_minus(cpu: &mut CPU, bus: &mut Bus) {
     let addr = cpu.get_hl();
     cpu.regs.a = cpu.bus_read_timed(bus, addr);
+    bus.maybe_trigger_oam_corruption(addr, OamCorruptionType::Single);
     cpu.set_hl(addr.wrapping_sub(1));
 }
 
@@ -441,26 +445,26 @@ pub fn ld_a_a(_cpu: &mut CPU, _: &mut Bus) {
 
 // 0xC1 - POP BC
 pub fn pop_bc(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.pop16_timed(bus);
+    let value = cpu.pop16_timed_oam(bus);
     cpu.set_bc(value);
 }
 
 // 0xC5 - PUSH BC
 pub fn push_bc(cpu: &mut CPU, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.get_bc());
+    cpu.push16_timed_oam(bus, cpu.get_bc());
 }
 
 // 0xD1 - POP DE
 pub fn pop_de(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.pop16_timed(bus);
+    let value = cpu.pop16_timed_oam(bus);
     cpu.set_de(value);
 }
 
 // 0xD5 - PUSH DE
 pub fn push_de(cpu: &mut CPU, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.get_de());
+    cpu.push16_timed_oam(bus, cpu.get_de());
 }
 
 // 0xE0 - LDH (a8), A
@@ -472,7 +476,7 @@ pub fn ldh_a8_a(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xE1 - POP HL
 pub fn pop_hl(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.pop16_timed(bus);
+    let value = cpu.pop16_timed_oam(bus);
     cpu.set_hl(value);
 }
 
@@ -485,7 +489,7 @@ pub fn ld_c_addr_a(cpu: &mut CPU, bus: &mut Bus) {
 // 0xE5 - PUSH HL
 pub fn push_hl(cpu: &mut CPU, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.get_hl());
+    cpu.push16_timed_oam(bus, cpu.get_hl());
 }
 
 // 0xEA - LD (a16), A
@@ -503,7 +507,7 @@ pub fn ldh_a_a8(cpu: &mut CPU, bus: &mut Bus) {
 
 // 0xF1 - POP AF
 pub fn pop_af(cpu: &mut CPU, bus: &mut Bus) {
-    let value = cpu.pop16_timed(bus);
+    let value = cpu.pop16_timed_oam(bus);
     cpu.set_af(value);
 }
 
@@ -516,7 +520,7 @@ pub fn ld_a_c_addr(cpu: &mut CPU, bus: &mut Bus) {
 // 0xF5 - PUSH AF
 pub fn push_af(cpu: &mut CPU, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.get_af());
+    cpu.push16_timed_oam(bus, cpu.get_af());
 }
 
 // 0xF8 - LD HL, SP+r8

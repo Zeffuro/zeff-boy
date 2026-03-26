@@ -141,7 +141,7 @@ impl PPU {
         self.stat & 0x03
     }
 
-    pub(super) fn lcd_enabled(&self) -> bool {
+    pub(in crate::hardware) fn lcd_enabled(&self) -> bool {
         self.lcdc & LCDC_LCD_ENABLE != 0
     }
 

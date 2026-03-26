@@ -4,7 +4,7 @@ mod registers;
 
 pub use registers::Registers;
 
-use crate::hardware::bus::Bus;
+use crate::hardware::bus::{Bus, OamCorruptionType};
 use crate::hardware::opcodes::cycles::CYCLE_TABLE;
 use crate::hardware::opcodes::dispatch::execute_opcode;
 use crate::hardware::types::CPUState;
@@ -146,6 +146,25 @@ impl CPU {
         (high << 8) | low
     }
 
+    pub fn push16_timed_oam(&mut self, bus: &mut Bus, value: u16) {
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus_write_timed(bus, self.sp, (value >> 8) as u8);
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus_write_timed(bus, self.sp, (value & 0xFF) as u8);
+    }
+
+    pub fn pop16_timed_oam(&mut self, bus: &mut Bus) -> u16 {
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        let low = self.bus_read_timed(bus, self.sp) as u16;
+        self.sp = self.sp.wrapping_add(1);
+        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Double);
+        let high = self.bus_read_timed(bus, self.sp) as u16;
+        self.sp = self.sp.wrapping_add(1);
+        (high << 8) | low
+    }
+
     pub fn jump(&mut self, addr: u16) {
         self.pc = addr;
     }
@@ -175,6 +194,20 @@ impl CPU {
 
     pub fn trigger_halt_bug(&mut self) {
         self.halt_bug_active = true;
+    }
+
+    #[inline]
+    pub fn inc_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
+        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
+        self.tick_internal_timed(bus, 4);
+        value.wrapping_add(1)
+    }
+
+    #[inline]
+    pub fn dec_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
+        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Single);
+        self.tick_internal_timed(bus, 4);
+        value.wrapping_sub(1)
     }
 
     pub fn write_state(&self, writer: &mut StateWriter) {
