@@ -1,3 +1,5 @@
+mod action52;
+mod axrom;
 mod cnrom;
 mod fme7;
 mod mapper16;
@@ -6,7 +8,10 @@ mod mmc3;
 mod mmc5;
 mod nrom;
 mod uxrom;
+mod vrc4;
 
+pub use action52::Action52;
+pub use axrom::Axrom;
 pub use mapper16::BandaiFcg16;
 pub use cnrom::Cnrom;
 pub use fme7::Fme7;
@@ -15,3 +20,4 @@ pub use mmc3::Mmc3;
 pub use mmc5::Mmc5;
 pub use nrom::Nrom;
 pub use uxrom::Uxrom;
+pub use vrc4::Vrc4;

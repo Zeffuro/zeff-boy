@@ -568,6 +568,7 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery || header.prg_nvram_size > 0,
             )),
+            7 => Box::new(mappers::Axrom::new(prg_rom, chr_rom, header.mirroring)),
             16 => Box::new(mappers::BandaiFcg16::new(
                 prg_rom,
                 chr_rom,
@@ -575,6 +576,14 @@ impl Cartridge {
                 header.submapper_id,
                 header.has_battery || header.prg_nvram_size >= 256,
             )),
+            21 => {
+                let (a0, a1) = match header.submapper_id {
+                    1 => (0x02, 0x04),
+                    2 => (0x40, 0x80),
+                    _ => (0x02 | 0x40, 0x04 | 0x80),
+                };
+                Box::new(mappers::Vrc4::new(prg_rom, chr_rom, header.mirroring, a0, a1))
+            }
             69 => Box::new(mappers::Fme7::new(
                 prg_rom,
                 chr_rom,
@@ -582,6 +591,7 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery,
             )),
+            228 => Box::new(mappers::Action52::new(prg_rom, chr_rom, header.mirroring)),
             _ => bail!("Unsupported mapper: {}", header.mapper_label()),
         };
 
