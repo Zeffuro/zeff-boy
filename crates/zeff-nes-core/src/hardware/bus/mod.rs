@@ -237,8 +237,13 @@ impl Bus {
         let pre_render = scanline == PRE_RENDER_SCANLINE;
         let render_line = visible_line || pre_render;
 
-        if rendering && render_line && dot == 260 {
-            self.cartridge.notify_scanline();
+        if rendering && render_line {
+            let bg_hi  = self.ppu.regs.bg_pattern_addr() != 0;
+            let spr_hi = self.ppu.regs.sprite_pattern_addr() != 0;
+            let notify_dot = if bg_hi && !spr_hi { 324 } else { 260 };
+            if dot == notify_dot {
+                self.cartridge.notify_scanline();
+            }
         }
 
         if rendering && visible_line && dot == 0 {

@@ -117,13 +117,11 @@ impl Apu {
         status
     }
     pub fn tick(&mut self) {
+        self.pulse1.tick();
+        self.pulse2.tick();
         self.triangle.tick();
-
-        if self.frame_cycle % 2 == 0 {
-            self.pulse1.tick();
-            self.pulse2.tick();
-            self.noise.tick();
-        }
+        self.noise.tick();
+        self.dmc.tick();
 
         self.step_frame_counter();
         self.generate_sample();

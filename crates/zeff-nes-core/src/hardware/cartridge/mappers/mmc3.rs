@@ -205,16 +205,23 @@ impl Mapper for Mmc3 {
     }
 
     fn notify_scanline(&mut self) {
+        let old = self.irq_counter;
+
         if self.irq_counter == 0 || self.irq_reload {
             self.irq_counter = self.irq_latch;
-            self.irq_reload = false;
         } else {
-            self.irq_counter = self.irq_counter.saturating_sub(1);
+            self.irq_counter -= 1;
         }
 
-        if self.irq_counter == 0 && self.irq_enabled {
+
+        if self.irq_counter == 0
+            && self.irq_enabled
+            && (old != 0 || self.irq_reload)
+        {
             self.irq_pending = true;
         }
+
+        self.irq_reload = false;
     }
 
     fn write_state(&self, w: &mut crate::save_state::StateWriter) {
