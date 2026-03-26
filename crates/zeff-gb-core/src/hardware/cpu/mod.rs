@@ -42,6 +42,7 @@ impl CPU {
         }
     }
 
+    #[inline]
     pub fn step(&mut self, bus: &mut Bus) {
         self.timed_cycles_accounted = 0;
         let pending = bus.if_reg & bus.ie & 0x1F;
@@ -114,6 +115,7 @@ impl CPU {
         true
     }
 
+    #[inline]
     pub fn fetch8_timed(&mut self, bus: &mut Bus) -> u8 {
         let val = self.bus_read_timed(bus, self.pc);
         self.advance_pc_after_fetch();
@@ -152,11 +154,13 @@ impl CPU {
         self.pc = self.pc.wrapping_add_signed(offset as i16);
     }
 
+    #[inline]
     pub fn bus_read_timed(&mut self, bus: &mut Bus, addr: u16) -> u8 {
         self.tick_peripherals(bus, 4);
         bus.cpu_read_byte(addr)
     }
 
+    #[inline]
     pub fn bus_write_timed(&mut self, bus: &mut Bus, addr: u16, value: u8) {
         self.tick_peripherals(bus, 4);
         let extra_t_cycles = bus.cpu_write_byte(addr, value);
@@ -215,6 +219,7 @@ impl CPU {
         })
     }
 
+    #[inline]
     fn tick_peripherals(&mut self, bus: &mut Bus, t_cycles: u64) {
         self.timed_cycles_accounted = self.timed_cycles_accounted.wrapping_add(t_cycles);
 

@@ -98,6 +98,10 @@ impl Bus {
         self.io.apu.sample_generation_enabled = enabled;
     }
 
+    pub fn set_apu_enabled(&mut self, enabled: bool) {
+        self.io.apu.apu_enabled = enabled;
+    }
+
     pub fn apu_drain_samples_into(&mut self, target: &mut Vec<f32>) {
         self.io.apu.drain_samples_into(target);
     }
@@ -256,6 +260,7 @@ impl Bus {
         }
     }
 
+    #[inline]
     pub(in crate::hardware) fn step_ppu(&mut self, system_t_cycles: u64) -> u8 {
         let cgb_mode = matches!(
             self.hardware_mode,
@@ -282,18 +287,21 @@ impl Bus {
         self.io.timer.tac()
     }
 
+    #[inline]
     pub(in crate::hardware) fn step_timer(&mut self, t_cycles: u64) {
         if self.io.timer.step(t_cycles) {
             self.if_reg |= 0x04;
         }
     }
 
+    #[inline]
     pub(in crate::hardware) fn step_serial(&mut self, t_cycles: u64) {
         if self.io.serial.step(t_cycles) {
             self.if_reg |= 0x08;
         }
     }
 
+    #[inline]
     pub(in crate::hardware) fn step_apu(&mut self, system_t_cycles: u64) {
         self.io.apu.step(system_t_cycles);
     }

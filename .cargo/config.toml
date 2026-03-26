@@ -1,0 +1,5 @@
+[alias]
+prof = "build --profile profiling"
+rp = "run --profile profiling"
+tw = "test --workspace"
+

@@ -10,6 +10,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) trace_opcode_filter: Vec<u8>,
     pub(crate) trace_watch_interrupts: bool,
     pub(crate) break_at: Option<u16>,
+    pub(crate) no_apu: bool,
 }
 
 impl Default for HeadlessOptions {
@@ -24,6 +25,7 @@ impl Default for HeadlessOptions {
             trace_opcode_filter: Vec::new(),
             trace_watch_interrupts: false,
             break_at: None,
+            no_apu: false,
         }
     }
 }

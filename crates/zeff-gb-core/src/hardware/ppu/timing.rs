@@ -19,6 +19,7 @@ impl PPU {
         }
     }
 
+    #[inline]
     pub(in crate::hardware) fn step(
         &mut self,
         cycles: u64,

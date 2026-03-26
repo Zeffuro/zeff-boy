@@ -2,7 +2,11 @@ use super::Apu;
 use crate::hardware::types::constants::*;
 
 impl Apu {
+    #[inline]
     pub fn step(&mut self, t_cycles: u64) {
+        if !self.apu_enabled {
+            return;
+        }
         if !self.powered() {
             return;
         }

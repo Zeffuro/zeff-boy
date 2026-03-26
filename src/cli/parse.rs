@@ -135,6 +135,10 @@ pub(crate) fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
                 headless.break_at = Some(parse_u16_arg(value, "--break-at")?);
                 i += 2;
             }
+            "--no-apu" => {
+                headless.no_apu = true;
+                i += 1;
+            }
             other => {
                 if rom_path.is_none() {
                     rom_path = Some(other.to_string());

@@ -2,9 +2,10 @@ use super::Bus;
 use super::io_bus;
 use crate::cheats::CheatPatch;
 use crate::hardware::types::constants::*;
-use log::warn;
+use log::{trace, warn};
 
 impl Bus {
+    #[inline]
     #[allow(unreachable_patterns)]
     pub fn read_byte_raw(&self, addr: u16) -> u8 {
         match addr {
@@ -48,6 +49,7 @@ impl Bus {
         }
     }
 
+    #[inline]
     #[allow(unreachable_patterns)]
     pub fn read_byte(&self, addr: u16) -> u8 {
         match addr {
@@ -79,6 +81,7 @@ impl Bus {
         }
     }
 
+    #[inline]
     #[allow(unreachable_patterns)]
     pub fn write_byte(&mut self, addr: u16, value: u8) -> u64 {
         match addr {
@@ -127,7 +130,7 @@ impl Bus {
                 0
             }
             NOT_USABLE_START..=NOT_USABLE_END => {
-                warn!("Attempted illegal write to ROM at address {:04X}", addr);
+                trace!("Ignored write to forbidden zone at {:04X}", addr);
                 0
             }
             IO_START..=IO_END => self.write_io(addr, value),

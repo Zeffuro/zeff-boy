@@ -17,6 +17,11 @@ pub(crate) fn run_headless(
     opts: &HeadlessOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut emulator = Emulator::from_rom_with_mode(path, mode_preference)?;
+    if opts.no_apu {
+        emulator.bus.set_apu_enabled(false);
+        emulator.bus.set_apu_sample_generation_enabled(false);
+        log::info!("APU disabled for profiling");
+    }
     let flush_battery = |emulator: &Emulator| match emulator.flush_battery_sram() {
         Ok(Some(saved)) => log::info!("Saved battery RAM to {}", saved),
         Ok(None) => {}
