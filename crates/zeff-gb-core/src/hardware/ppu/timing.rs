@@ -29,14 +29,35 @@ impl PPU {
     ) -> u8 {
         self.cgb_mode = cgb_mode;
 
-        if self.lcdc & LCDC_LCD_ENABLE == 0 {
+        let lcd_enabled = self.lcdc & LCDC_LCD_ENABLE != 0;
+
+        if !lcd_enabled {
+            self.lcd_was_enabled = false;
+            self.blank_first_frame_after_lcd_on = false;
+
             self.cycles = 0;
             self.ly = 0;
             self.stat &= !0x03;
             self.window_line_counter = 0;
             self.window_was_active_this_frame = false;
+            self.window_y_triggered = false;
+            self.rendered_current_line = false;
             self.prev_stat_line = false;
             return 0;
+        }
+
+        if !self.lcd_was_enabled {
+            self.lcd_was_enabled = true;
+            self.blank_first_frame_after_lcd_on = true;
+
+            self.cycles = 0;
+            self.ly = 0;
+            self.stat = (self.stat & !0x03) | 2;
+            self.window_line_counter = 0;
+            self.window_was_active_this_frame = false;
+            self.window_y_triggered = false;
+            self.rendered_current_line = false;
+            self.prev_stat_line = false;
         }
 
         if self.ly == self.wy {
@@ -47,8 +68,11 @@ impl PPU {
         let mut interrupts = 0u8;
 
         self.cycles += cycles;
+
+        let should_render_output = !self.blank_first_frame_after_lcd_on;
+
         if !self.rendered_current_line && self.cycles >= OAM_DOTS + DRAW_DOTS {
-            if self.ly < 144 {
+            if self.ly < 144 && should_render_output {
                 if cgb_mode {
                     renderer::render_scanline_cgb(self, vram, oam);
                 } else {
@@ -61,7 +85,7 @@ impl PPU {
         while self.cycles >= DOTS_PER_LINE {
             self.cycles -= DOTS_PER_LINE;
 
-            if !self.rendered_current_line && self.ly < 144 {
+            if !self.rendered_current_line && self.ly < 144 && should_render_output {
                 if cgb_mode {
                     renderer::render_scanline_cgb(self, vram, oam);
                 } else {
@@ -75,11 +99,16 @@ impl PPU {
             if self.ly == 144 {
                 interrupts |= 0x01;
             }
+
             if self.ly >= 154 {
                 self.ly = 0;
                 self.window_line_counter = 0;
                 self.window_was_active_this_frame = false;
                 self.window_y_triggered = false;
+
+                if self.blank_first_frame_after_lcd_on {
+                    self.blank_first_frame_after_lcd_on = false;
+                }
             }
 
             if self.ly == self.wy {
@@ -89,9 +118,9 @@ impl PPU {
 
         let current_mode = if self.ly >= 144 {
             1 // VBlank
-        } else if self.cycles <= OAM_DOTS {
+        } else if self.cycles < OAM_DOTS {
             2 // OAM scan
-        } else if self.cycles <= OAM_DOTS + DRAW_DOTS {
+        } else if self.cycles < OAM_DOTS + DRAW_DOTS {
             3 // Drawing
         } else {
             0 // HBlank

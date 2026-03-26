@@ -94,6 +94,8 @@ pub struct PPU {
     pub window_y_triggered: bool,
     pub cgb_mode: bool,
     pub rendered_current_line: bool,
+    pub lcd_was_enabled: bool,
+    pub blank_first_frame_after_lcd_on: bool,
     prev_stat_line: bool,
     pub debug_flags: PpuDebugFlags,
 }
@@ -137,6 +139,8 @@ impl PPU {
             cgb_mode: false,
             rendered_current_line: false,
             prev_stat_line: false,
+            lcd_was_enabled: false,
+            blank_first_frame_after_lcd_on: false,
             debug_flags: PpuDebugFlags::default(),
         }
     }
