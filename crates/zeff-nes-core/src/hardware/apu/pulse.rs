@@ -1,21 +1,14 @@
-/// NES APU Pulse (square) wave channel.
-///
-/// There are two pulse channels; they are identical except that pulse 1
-/// uses ones'-complement for sweep negation and pulse 2 uses twos'-complement.
 pub struct Pulse {
-    /// True for pulse 1, false for pulse 2 (affects sweep negation).
     is_pulse1: bool,
 
     pub enabled: bool,
     pub length_counter: u8,
 
-    // Duty / envelope register ($4000 / $4004)
     duty: u8,
-    length_halt: bool,       // also envelope loop
+    length_halt: bool,
     constant_volume: bool,
     envelope_volume: u8,
 
-    // Sweep register ($4001 / $4005)
     sweep_enabled: bool,
     sweep_period: u8,
     sweep_negate: bool,
@@ -23,24 +16,21 @@ pub struct Pulse {
     sweep_reload: bool,
     sweep_divider: u8,
 
-    // Timer ($4002–$4003 / $4006–$4007)
     timer_period: u16,
     timer_counter: u16,
 
-    // Sequencer
     sequence_pos: u8,
 
-    // Envelope
     envelope_start: bool,
     envelope_divider: u8,
     envelope_decay: u8,
 }
 
 static DUTY_TABLE: [[u8; 8]; 4] = [
-    [0, 1, 0, 0, 0, 0, 0, 0], // 12.5%
-    [0, 1, 1, 0, 0, 0, 0, 0], // 25%
-    [0, 1, 1, 1, 1, 0, 0, 0], // 50%
-    [1, 0, 0, 1, 1, 1, 1, 1], // 75% (negated 25%)
+    [0, 1, 0, 0, 0, 0, 0, 0],
+    [0, 1, 1, 0, 0, 0, 0, 0],
+    [0, 1, 1, 1, 1, 0, 0, 0],
+    [1, 0, 0, 1, 1, 1, 1, 1],
 ];
 
 impl Pulse {
@@ -190,9 +180,9 @@ impl Pulse {
         let shift = self.timer_period >> self.sweep_shift;
         if self.sweep_negate {
             if self.is_pulse1 {
-                self.timer_period.wrapping_sub(shift).wrapping_sub(1)
+                self.timer_period.saturating_sub(shift).saturating_sub(1)
             } else {
-                self.timer_period.wrapping_sub(shift)
+                self.timer_period.saturating_sub(shift)
             }
         } else {
             self.timer_period.wrapping_add(shift)

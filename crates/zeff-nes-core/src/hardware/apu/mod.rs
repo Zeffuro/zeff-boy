@@ -73,7 +73,7 @@ impl Apu {
         }
     }
 
-    pub fn write_register(&mut self, addr: u16, val: u8) {
+    pub fn write_register(&mut self, addr: u16, val: u8, odd_cycle: bool) {
         match addr {
             0x4000..=0x4003 => self.pulse1.write(addr - 0x4000, val),
             0x4004..=0x4007 => self.pulse2.write(addr - 0x4004, val),
@@ -89,12 +89,15 @@ impl Apu {
                 self.frame_irq = false;
             }
             0x4017 => {
+                let _old_mode = self.five_step_mode;
                 self.five_step_mode = val & 0x80 != 0;
                 self.irq_inhibit = val & 0x40 != 0;
                 if self.irq_inhibit {
                     self.frame_irq = false;
                 }
-                self.frame_cycle = 0;
+
+                self.frame_cycle = if self.five_step_mode || !odd_cycle { 0 } else { 1 };
+
                 if self.five_step_mode {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
@@ -117,11 +120,14 @@ impl Apu {
         status
     }
     pub fn tick(&mut self) {
-        self.pulse1.tick();
-        self.pulse2.tick();
         self.triangle.tick();
-        self.noise.tick();
         self.dmc.tick();
+
+        if self.frame_cycle % 2 == 0 {
+            self.pulse1.tick();
+            self.pulse2.tick();
+            self.noise.tick();
+        }
 
         self.step_frame_counter();
         self.generate_sample();
@@ -133,24 +139,36 @@ impl Apu {
     }
 
     fn step_frame_counter(&mut self) {
-        if self.five_step_mode {
+        if !self.five_step_mode {
             match self.frame_cycle {
-                FRAME_QUARTER_1 => self.clock_quarter_frame(),
-                FRAME_QUARTER_2 => { self.clock_quarter_frame(); self.clock_half_frame(); }
-                FRAME_QUARTER_3 => self.clock_quarter_frame(),
-                FRAME_5STEP_END => { self.clock_quarter_frame(); self.clock_half_frame(); self.frame_cycle = 0; }
+                FRAME_STEP_1 | FRAME_STEP_3 => self.clock_quarter_frame(),
+                FRAME_STEP_2 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                }
+                FRAME_STEP_4 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                    if !self.irq_inhibit {
+                        self.frame_irq = true;
+                    }
+                    self.frame_cycle = 0;
+                    return;
+                }
                 _ => {}
             }
         } else {
             match self.frame_cycle {
-                FRAME_QUARTER_1 => self.clock_quarter_frame(),
-                FRAME_QUARTER_2 => { self.clock_quarter_frame(); self.clock_half_frame(); }
-                FRAME_QUARTER_3 => self.clock_quarter_frame(),
-                FRAME_4STEP_END => {
+                FRAME_STEP_1 | FRAME_STEP_3 => self.clock_quarter_frame(),
+                FRAME_STEP_2 => {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
-                    if !self.irq_inhibit { self.frame_irq = true; }
+                }
+                FRAME_STEP_5 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
                     self.frame_cycle = 0;
+                    return;
                 }
                 _ => {}
             }

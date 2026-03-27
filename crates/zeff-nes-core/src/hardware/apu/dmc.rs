@@ -94,6 +94,33 @@ impl Dmc {
         }
     }
 
+    pub fn needs_dma(&self) -> bool {
+        self.sample_buffer.is_none() && self.bytes_remaining > 0
+    }
+
+    pub fn dma_address(&self) -> u16 {
+        self.current_address
+    }
+
+    /// Called by Bus after performing the DMA read to fill the sample buffer.
+    pub fn fill_sample_buffer(&mut self, byte: u8) {
+        self.sample_buffer = Some(byte);
+        self.current_address = if self.current_address == 0xFFFF {
+            0x8000
+        } else {
+            self.current_address.wrapping_add(1)
+        };
+        self.bytes_remaining -= 1;
+        if self.bytes_remaining == 0 {
+            if self.loop_flag {
+                self.current_address = self.sample_address;
+                self.bytes_remaining = self.sample_length;
+            } else if self.irq_enabled {
+                self.irq_flag = true;
+            }
+        }
+    }
+
     fn tick_output_unit(&mut self) {
         if !self.silence_flag {
             if self.shift_register & 1 != 0 {
@@ -109,6 +136,7 @@ impl Dmc {
         self.bits_remaining = self.bits_remaining.saturating_sub(1);
         if self.bits_remaining == 0 {
             self.bits_remaining = 8;
+
             if let Some(buf) = self.sample_buffer.take() {
                 self.silence_flag = false;
                 self.shift_register = buf;

@@ -16,6 +16,8 @@ pub struct Bus {
     pub ppu_cycles: u64,
 
     pub dma_stall_cycles: u64,
+
+    pub cpu_odd_cycle: bool,
 }
 
 impl Bus {
@@ -29,6 +31,7 @@ impl Bus {
             controller2: Controller::new(),
             ppu_cycles: 0,
             dma_stall_cycles: 0,
+            cpu_odd_cycle: false,
         }
     }
 
@@ -64,9 +67,7 @@ impl Bus {
                     self.ppu.oam[self.ppu.oam_addr as usize] = byte;
                     self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(1);
                 }
-                // OAM DMA stalls the CPU for 513 cycles (1 idle + 256 read/write
-                // pairs), or 514 if the write lands on an odd CPU cycle.
-                // We use 513 as a good approximation.
+
                 self.dma_stall_cycles = 513;
             }
 
@@ -76,7 +77,7 @@ impl Bus {
             }
 
             0x4000..=0x4013 | APU_STATUS | CONTROLLER2 => {
-                self.apu.write_register(addr, val);
+                self.apu.write_register(addr, val, self.cpu_odd_cycle);
             }
 
             0x4018..=0x401F => { /* test mode registers — ignored */ }
@@ -434,6 +435,15 @@ impl Bus {
         Ok(())
     }
 
+    /// Read a byte for DMC DMA without PPU/APU side effects.
+    fn dmc_dma_read(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
+            0x4020..=0xFFFF => self.cartridge.cpu_read(addr),
+            _ => 0,
+        }
+    }
+
     pub fn tick_peripherals(&mut self, cpu_cycles: u64) -> bool {
         let ppu_dots = cpu_cycles * 3;
         let mirroring = self.cartridge.mirroring();
@@ -447,6 +457,17 @@ impl Bus {
         }
         for _ in 0..cpu_cycles {
             self.apu.tick();
+
+            // DMC DMA: when the sample buffer is empty and bytes remain, fetch a byte
+            if self.apu.dmc.needs_dma() {
+                let addr = self.apu.dmc.dma_address();
+                let byte = self.dmc_dma_read(addr);
+                self.apu.dmc.fill_sample_buffer(byte);
+                // Real hardware stalls the CPU 1-4 cycles for DMC DMA;
+                // for now we approximate with a flat 4-cycle stall.
+                self.dma_stall_cycles += 4;
+            }
+
             self.cartridge.clock_cpu();
         }
         nmi_raised

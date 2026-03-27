@@ -11,6 +11,8 @@ impl Emulator {
         let pc_before = self.cpu.pc;
         let opcode = self.bus.cpu_read(pc_before);
 
+        self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
+
         let cycles = self.cpu.step(&mut self.bus);
 
         let dma_cycles = self.bus.dma_stall_cycles;

@@ -59,11 +59,11 @@ pub const STATUS_SPRITE_ZERO_HIT: u8 = 0x40;
 pub const STATUS_VBLANK: u8 = 0x80;
 
 pub const APU_CPU_CLOCK_NTSC: f64 = 1_789_773.0;
-pub const FRAME_QUARTER_1: u64 = 3729;
-pub const FRAME_QUARTER_2: u64 = 7457;
-pub const FRAME_QUARTER_3: u64 = 11186;
-pub const FRAME_4STEP_END: u64 = 14915;
-pub const FRAME_5STEP_END: u64 = 18641;
+pub const FRAME_STEP_1: u64 = 7457;
+pub const FRAME_STEP_2: u64 = 14913;
+pub const FRAME_STEP_3: u64 = 22371;
+pub const FRAME_STEP_4: u64 = 29829;
+pub const FRAME_STEP_5: u64 = 37281;
 
 pub const MIX_PULSE: f32 = 0.00752;
 pub const MIX_TND_TRI: f32 = 0.00851;
