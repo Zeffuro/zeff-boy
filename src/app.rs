@@ -36,6 +36,8 @@ mod window_events;
 use input::HostInputState;
 use tilt::{AutoTiltSource, TiltFrameData};
 
+pub(crate) use state_io::extract_rom_from_zip;
+
 pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.uncapped_speed;

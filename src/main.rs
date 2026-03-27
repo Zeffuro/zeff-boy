@@ -44,8 +44,27 @@ fn main() -> anyhow::Result<()> {
         .rom_path
         .map(|path_arg| -> anyhow::Result<EmuBackend> {
             let path = Path::new(&path_arg);
-            let system = ActiveSystem::from_path(path).ok_or_else(|| {
-                let ext = path
+
+            let is_zip = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+
+            let (rom_path, preloaded_data) = if is_zip {
+                let (virtual_path, data) = app::extract_rom_from_zip(path)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                log::info!(
+                    "Extracted ROM '{}' ({} bytes) from ZIP",
+                    virtual_path.file_name().unwrap_or_default().to_string_lossy(),
+                    data.len()
+                );
+                (virtual_path, Some(data))
+            } else {
+                (path.to_path_buf(), None)
+            };
+
+            let system = ActiveSystem::from_path(&rom_path).ok_or_else(|| {
+                let ext = rom_path
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("(none)");
@@ -56,34 +75,40 @@ fn main() -> anyhow::Result<()> {
             })?;
             match system {
                 ActiveSystem::GameBoy => {
-                    let rom_data = std::fs::read(path)
-                        .map_err(|e| anyhow::anyhow!("Failed to read GB ROM: {e}"))?;
+                    let rom_data = match preloaded_data.clone() {
+                        Some(data) => data,
+                        None => std::fs::read(path)
+                            .map_err(|e| anyhow::anyhow!("Failed to read GB ROM: {e}"))?,
+                    };
                     let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
                         &rom_data,
                         settings.hardware_mode_preference,
                     )
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    if let Some(sram_path) = emu_backend::gb::try_load_battery_sram(&mut emu, path)
+                    if let Some(sram_path) = emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path)
                         .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
                     {
                         log::info!("Loaded battery save from {}", sram_path);
                     }
-                    Ok(EmuBackend::from_gb(emu, path.to_path_buf()))
+                    Ok(EmuBackend::from_gb(emu, rom_path))
                 }
                 ActiveSystem::Nes => {
-                    let rom_data = std::fs::read(path)
-                        .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}"))?;
+                    let rom_data = match preloaded_data {
+                        Some(data) => data,
+                        None => std::fs::read(path)
+                            .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}"))?,
+                    };
                     let mut emu = zeff_nes_core::emulator::Emulator::new(
                         &rom_data,
                         48000.0,
                     )
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    if let Some(sram_path) = emu_backend::nes::try_load_battery_sram(&mut emu, path)
+                    if let Some(sram_path) = emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path)
                         .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
                     {
                         log::info!("Loaded battery save from {}", sram_path);
                     }
-                    Ok(EmuBackend::from_nes(emu, path.to_path_buf()))
+                    Ok(EmuBackend::from_nes(emu, rom_path))
                 }
             }
         })

@@ -53,8 +53,8 @@ impl Bus {
         let mut bus = Self {
             cartridge,
             hardware_mode,
-            vram: [0; VRAM_SIZE * 2],
-            wram: [0; WRAM_SIZE * 8],
+            vram: vec![0u8; VRAM_SIZE * 2].into_boxed_slice(),
+            wram: vec![0u8; WRAM_SIZE * 8].into_boxed_slice(),
             vram_bank: 0,
             wram_bank: 1,
             key1: 0x7E,

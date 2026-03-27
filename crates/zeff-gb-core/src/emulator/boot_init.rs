@@ -32,7 +32,7 @@ impl Emulator {
                 "ForceCgb requested for DMG-only ROM; falling back to DMG mode for compatibility"
             );
         }
-        let bus = Bus::new(rom.to_vec(), &header, hardware_mode)?;
+        let bus = Box::new(Bus::new(rom.to_vec(), &header, hardware_mode)?);
 
         let emulator = Self {
             cpu: crate::hardware::cpu::Cpu::new(),

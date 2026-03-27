@@ -80,7 +80,7 @@ impl Emulator {
             );
 
             self.cpu = state.cpu;
-            self.bus = restored_bus;
+            *self.bus = restored_bus;
             self.hardware_mode_preference = state.hardware_mode_preference;
             self.hardware_mode = state.hardware_mode;
             self.cycle_count = state.cycle_count;
@@ -103,7 +103,7 @@ impl Emulator {
             );
 
             self.cpu = import.cpu;
-            self.bus = restored_bus;
+            *self.bus = restored_bus;
             self.hardware_mode = import.hardware_mode;
             self.cycle_count = 0;
             self.last_opcode = 0;

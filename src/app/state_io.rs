@@ -6,6 +6,49 @@ use zeff_gb_core::emulator::Emulator;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+const ROM_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "nes"];
+
+pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> Result<(PathBuf, Vec<u8>), String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("Failed to open ZIP: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read ZIP archive: {e}"))?;
+
+    let rom_entries: Vec<(usize, String)> = (0..archive.len())
+        .filter_map(|i| {
+            let entry = archive.by_index(i).ok()?;
+            let name = entry.name().to_string();
+            let ext = Path::new(&name)
+                .extension()?
+                .to_str()?
+                .to_ascii_lowercase();
+            if ROM_EXTENSIONS.contains(&ext.as_str()) {
+                Some((i, name))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    match rom_entries.len() {
+        0 => Err("No ROM files found in ZIP archive".to_string()),
+        1 => {
+            let (idx, name) = &rom_entries[0];
+            let mut entry = archive.by_index(*idx)
+                .map_err(|e| format!("Failed to read '{name}' from ZIP: {e}"))?;
+            let mut data = Vec::with_capacity(entry.size() as usize);
+            std::io::Read::read_to_end(&mut entry, &mut data)
+                .map_err(|e| format!("Failed to decompress '{name}': {e}"))?;
+            let virtual_path = zip_path.join(name);
+            Ok((virtual_path, data))
+        }
+        n => Err(format!(
+            "ZIP contains {n} ROM files; expected exactly 1. Found: {}",
+            rom_entries.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 pub(super) fn build_slot_labels(rom_hash: Option<[u8; 32]>, system: ActiveSystem) -> [String; 10] {
     std::array::from_fn(|i| {
         let slot = i as u8;
@@ -55,10 +98,35 @@ impl App {
         self.recycled.clear();
         self.debug_windows.last_disasm_pc = None;
 
-        let system = match ActiveSystem::from_path(path) {
+        let is_zip = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+
+        let (rom_path, preloaded_data) = if is_zip {
+            match extract_rom_from_zip(path) {
+                Ok((virtual_path, data)) => {
+                    log::info!(
+                        "Extracted ROM '{}' ({} bytes) from ZIP",
+                        virtual_path.file_name().unwrap_or_default().to_string_lossy(),
+                        data.len()
+                    );
+                    (virtual_path, Some(data))
+                }
+                Err(msg) => {
+                    log::warn!("{}", msg);
+                    self.toast_manager.error(msg);
+                    return;
+                }
+            }
+        } else {
+            (path.to_path_buf(), None)
+        };
+
+        let system = match ActiveSystem::from_path(&rom_path) {
             Some(s) => s,
             None => {
-                let ext = path
+                let ext = rom_path
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("(none)");
@@ -75,14 +143,17 @@ impl App {
 
         let backend_result: anyhow::Result<EmuBackend> = match system {
             ActiveSystem::GameBoy => {
-                let rom_data = match std::fs::read(path) {
-                    Ok(data) => data,
-                    Err(e) => {
-                        let msg = format!("Failed to read GB ROM: {e}");
-                        log::warn!("{}", msg);
-                        self.toast_manager.error(msg);
-                        return;
-                    }
+                let rom_data = match preloaded_data.clone() {
+                    Some(data) => data,
+                    None => match std::fs::read(path) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            let msg = format!("Failed to read GB ROM: {e}");
+                            log::warn!("{}", msg);
+                            self.toast_manager.error(msg);
+                            return;
+                        }
+                    },
                 };
                 Emulator::from_rom_data(&rom_data, self.settings.hardware_mode_preference)
                     .map_err(|e| anyhow::anyhow!("{e}"))
@@ -93,17 +164,20 @@ impl App {
                         let buttons = self.host_input.buttons_pressed();
                         let dpad = self.host_input.dpad_pressed();
                         emu.set_input(buttons, dpad);
-                        if let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emu, path)
+                        if let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path)
                             .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
                         {
                             log::info!("Loaded battery save from {}", sram_path);
                         }
-                        EmuBackend::from_gb(emu, path.to_path_buf())
+                        EmuBackend::from_gb(emu, rom_path.clone())
                     })
             }
             ActiveSystem::Nes => {
-                let rom_data = std::fs::read(path)
-                    .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}"));
+                let rom_data = match preloaded_data {
+                    Some(data) => Ok(data),
+                    None => std::fs::read(path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}")),
+                };
                 match rom_data {
                     Ok(data) => {
                         let sample_rate = self.audio.as_ref()
@@ -113,12 +187,12 @@ impl App {
                             &data,
                             sample_rate,
                         ).map(|mut emu| {
-                            if let Some(sram_path) = crate::emu_backend::nes::try_load_battery_sram(&mut emu, path)
+                            if let Some(sram_path) = crate::emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path)
                                 .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
                             {
                                 log::info!("Loaded battery save from {}", sram_path);
                             }
-                            EmuBackend::from_nes(emu, path.to_path_buf())
+                            EmuBackend::from_nes(emu, rom_path.clone())
                         })
                     }
                     Err(e) => Err(e),
@@ -195,7 +269,6 @@ impl App {
                     self.debug_windows.cheat.libretro_codes = libretro;
                     self.debug_windows.cheat.cheats_dirty = true;
                 } else {
-                    // NES: clear GB-specific cheat state
                     self.debug_windows.cheat.rom_title = None;
                     self.debug_windows.cheat.rom_crc32 = None;
                     self.debug_windows.cheat.rom_metadata_title = None;
@@ -373,9 +446,10 @@ impl App {
     pub(super) fn open_file_dialog(&mut self) {
         let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
-            .add_filter("ROMs", &["gb", "gbc", "nes"])
+            .add_filter("ROMs", &["gb", "gbc", "nes", "zip"])
             .add_filter("Game Boy ROMs", &["gb", "gbc"])
             .add_filter("NES ROMs", &["nes"])
+            .add_filter("ZIP Archives", &["zip"])
             .add_filter("All files", &["*"])
             .set_title("Open ROM")
             .pick_file();

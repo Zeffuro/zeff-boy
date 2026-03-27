@@ -18,8 +18,8 @@ pub use trace::CpuAccessTraceEvent;
 pub struct Bus {
     pub cartridge: Cartridge,
     pub hardware_mode: HardwareMode,
-    pub vram: [u8; VRAM_SIZE * 2],
-    pub wram: [u8; WRAM_SIZE * 8],
+    pub vram: Box<[u8]>,
+    pub wram: Box<[u8]>,
     pub vram_bank: u8,
     pub wram_bank: u8,
     pub key1: u8,

@@ -40,6 +40,7 @@ chrono = "0.4"
 arrayvec = "0.7.6"
 ureq = "3.3.0"
 vorbis-encoder = "0.1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.dev]
 opt-level = 1
