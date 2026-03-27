@@ -86,7 +86,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         last_state_dir: None,
         show_settings_window: false,
         debug_requests: DebugRequests::new(),
-        active_save_slot: 1,
+        active_save_slot: 0,
         latest_frame: None,
         last_displayed_frame: None,
         recycled: RecycledBuffers {

@@ -33,8 +33,10 @@ pub struct Mmc5 {
     irq_line_compare: u8,
     irq_enabled: bool,
     irq_pending: Cell<bool>,
-    in_frame: bool,
-    current_scanline: u16,
+    in_frame: Cell<bool>,
+    current_scanline: Cell<u16>,
+
+    consecutive_nt_reads: Cell<u8>,
 
     exram_tile_byte: Cell<u8>,
 }
@@ -78,8 +80,10 @@ impl Mmc5 {
             irq_line_compare: 0,
             irq_enabled: false,
             irq_pending: Cell::new(false),
-            in_frame: true,
-            current_scanline: 0,
+            in_frame: Cell::new(true),
+            current_scanline: Cell::new(0),
+
+            consecutive_nt_reads: Cell::new(0),
             exram_tile_byte: Cell::new(0),
         };
 
@@ -164,7 +168,6 @@ impl Mmc5 {
                     let bank = ((bank16 * 2 + slot) as u8) & 0x7F;
                     self.read_prg_8k_bank(addr, rom_bit | bank)
                 } else {
-                    // 16 KiB ROM from $5117
                     let bank16 = ((self.prg_banks[3] & 0x7E) >> 1) as usize;
                     let slot = ((addr as usize - 0xC000) >> 13) & 0x01;
                     let bank = (bank16 * 2 + slot) as u8;
@@ -346,7 +349,6 @@ impl Mmc5 {
             0x5203 => self.irq_line_compare = val,
             0x5204 => {
                 self.irq_enabled = val & 0x80 != 0;
-                // Reading $5204 acknowledges; writing does NOT clear pending.
             }
             0x5205 => self.multiplicand = val,
             0x5206 => self.multiplier = val,
@@ -370,7 +372,7 @@ impl Mapper for Mmc5 {
                 if self.irq_pending.get() {
                     status |= 0x80;
                 }
-                if self.in_frame {
+                if self.in_frame.get() {
                     status |= 0x40;
                 }
 
@@ -424,6 +426,8 @@ impl Mapper for Mmc5 {
     }
 
     fn chr_read_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
+        self.consecutive_nt_reads.set(0);
+
         if self.chr.is_empty() {
             return 0;
         }
@@ -447,6 +451,26 @@ impl Mapper for Mmc5 {
     fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
         if !(0x2000..=0x3EFF).contains(&addr) {
             return None;
+        }
+
+        let count = self.consecutive_nt_reads.get().saturating_add(1);
+        self.consecutive_nt_reads.set(count);
+        if count == 3 {
+            let sl = self.current_scanline.get();
+            if sl >= 240 {
+                self.current_scanline.set(0);
+                self.in_frame.set(true);
+            } else {
+                let new_sl = sl + 1;
+                self.current_scanline.set(new_sl);
+                self.in_frame.set(new_sl < 240);
+                if new_sl < 240
+                    && self.irq_enabled
+                    && new_sl as u8 == self.irq_line_compare
+                {
+                    self.irq_pending.set(true);
+                }
+            }
         }
 
         let (table, offset) = Self::decode_nametable_addr(addr);
@@ -511,21 +535,7 @@ impl Mapper for Mmc5 {
     }
 
     fn notify_scanline(&mut self) {
-        if self.current_scanline >= 240 {
-            self.current_scanline = 0;
-            self.in_frame = true;
-            return;
-        }
-
-        self.current_scanline += 1;
-        self.in_frame = self.current_scanline < 240;
-
-        if self.in_frame
-            && self.irq_enabled
-            && self.current_scanline as u8 == self.irq_line_compare
-        {
-            self.irq_pending.set(true);
-        }
+        // This is intentionally a no-op.
     }
 
     fn dump_battery_data(&self) -> Option<Vec<u8>> {
@@ -577,8 +587,8 @@ impl Mapper for Mmc5 {
         w.write_u8(self.irq_line_compare);
         w.write_bool(self.irq_enabled);
         w.write_bool(self.irq_pending.get());
-        w.write_bool(self.in_frame);
-        w.write_u16(self.current_scanline);
+        w.write_bool(self.in_frame.get());
+        w.write_u16(self.current_scanline.get());
 
         w.write_bool(self.has_battery);
         w.write_vec(&self.prg_ram);
@@ -614,8 +624,8 @@ impl Mapper for Mmc5 {
         self.irq_line_compare = r.read_u8()?;
         self.irq_enabled = r.read_bool()?;
         self.irq_pending.set(r.read_bool()?);
-        self.in_frame = r.read_bool()?;
-        self.current_scanline = r.read_u16()?;
+        self.in_frame.set(r.read_bool()?);
+        self.current_scanline.set(r.read_u16()?);
 
         self.has_battery = r.read_bool()?;
 
@@ -673,12 +683,19 @@ mod tests {
         let prg = vec![0u8; 4 * 0x2000];
         let chr = vec![0u8; 0x2000];
         let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let ciram = [0u8; 0x800];
 
         mapper.cpu_write(0x5203, 5);
         mapper.cpu_write(0x5204, 0x80);
 
+        // Simulate 6 scanline boundaries via nametable-read detection.
+        // Each "scanline" requires: a CHR read to reset the counter,
+        // then 3 consecutive nametable reads to trigger the tick.
         for _ in 0..6 {
-            mapper.notify_scanline();
+            mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
+            mapper.ppu_nametable_read(0x2000, &ciram);
+            mapper.ppu_nametable_read(0x2000, &ciram);
+            mapper.ppu_nametable_read(0x2000, &ciram);
         }
 
         assert!(mapper.irq_pending());
@@ -705,10 +722,15 @@ mod tests {
         let prg = vec![0u8; 4 * 0x2000];
         let chr = vec![0u8; 0x2000];
         let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let ciram = [0u8; 0x800];
 
         mapper.cpu_write(0x5203, 1);
         mapper.cpu_write(0x5204, 0x80);
-        mapper.notify_scanline();
+
+        mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
 
         assert!(mapper.irq_pending());
         let status = mapper.cpu_read(0x5204);
@@ -721,12 +743,18 @@ mod tests {
         let prg = vec![0u8; 4 * 0x2000];
         let chr = vec![0u8; 0x2000];
         let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let ciram = [0u8; 0x800];
 
-        mapper.current_scanline = 240;
-        mapper.notify_scanline();
+        mapper.current_scanline.set(240);
 
-        assert_eq!(mapper.current_scanline, 0);
-        assert!(mapper.in_frame);
+        // Simulate a scanline boundary via nametable reads — should reset to 0
+        mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+
+        assert_eq!(mapper.current_scanline.get(), 0);
+        assert!(mapper.in_frame.get());
     }
 
     #[test]
@@ -820,10 +848,15 @@ mod tests {
         let prg = vec![0u8; 4 * 0x2000];
         let chr = vec![0u8; 0x2000];
         let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let ciram = [0u8; 0x800];
 
         mapper.cpu_write(0x5203, 1);
         mapper.cpu_write(0x5204, 0x80);
-        mapper.notify_scanline();
+
+        mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
         assert!(mapper.irq_pending());
 
         mapper.cpu_write(0x5204, 0x80);
@@ -904,12 +937,16 @@ mod tests {
         let prg = vec![0u8; 4 * 0x2000];
         let chr = vec![0u8; 0x2000];
         let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+        let ciram = [0u8; 0x800];
 
         mapper.cpu_write(0x5203, 0);
         mapper.cpu_write(0x5204, 0x80);
-
-        mapper.current_scanline = 240;
-        mapper.notify_scanline();
+        
+        mapper.current_scanline.set(240);
+        mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
+        mapper.ppu_nametable_read(0x2000, &ciram);
 
         assert!(!mapper.irq_pending());
     }

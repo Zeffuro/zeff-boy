@@ -351,7 +351,7 @@ impl NesDebugSnapshot {
 
             mem_around_pc: mem,
 
-            recent_ops: emu.opcode_log.recent(16),
+            recent_ops: emu.opcode_log.recent(32),
 
             flag_n: cpu.regs.get_flag(NEGATIVE_FLAG),
             flag_v: cpu.regs.get_flag(OVERFLOW_FLAG),

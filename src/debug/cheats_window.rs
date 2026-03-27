@@ -1,10 +1,15 @@
-use crate::cheats::{CheatCode, CheatPatch, export_cht_file, parse_cheat, parse_cht_file};
+use crate::cheats::{CheatCode, CheatPatch, export_cht_file, parse_cheat_for_system, parse_cht_file};
 use crate::debug::CheatState;
 use crate::debug::libretro_cheats;
+use crate::emu_backend::ActiveSystem;
 
 pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.heading("Cheat Codes");
-    ui.label("GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)");
+    let help_text = match state.active_system {
+        ActiveSystem::Nes => "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)",
+        ActiveSystem::GameBoy => "GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)",
+    };
+    ui.label(help_text);
 
     let mut changed = false;
 
@@ -16,7 +21,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
         let add_clicked = ui.button("Add").clicked();
 
         if (add_clicked || enter_pressed) && !state.input.trim().is_empty() {
-            match parse_cheat(&state.input) {
+            match parse_cheat_for_system(&state.input, state.active_system) {
                 Ok((patches, code_type)) => {
                     let name = if state.name_input.trim().is_empty() {
                         patches_summary(&patches)
@@ -232,10 +237,10 @@ fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                 .color(egui::Color32::GRAY),
         );
 
-        let platform_label = if state.rom_is_gbc {
-            "Game Boy Color"
-        } else {
-            "Game Boy"
+        let platform_label = match state.active_system {
+            ActiveSystem::Nes => "NES",
+            ActiveSystem::GameBoy if state.rom_is_gbc => "Game Boy Color",
+            ActiveSystem::GameBoy => "Game Boy",
         };
         ui.label(format!("Platform: {platform_label}"));
         if let Some(crc32) = state.rom_crc32 {

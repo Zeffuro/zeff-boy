@@ -118,6 +118,9 @@ fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
         };
         recent_op_lines.push(line);
         i += count;
+        if recent_op_lines.len() >= 16 {
+            break;
+        }
     }
 
     CpuDebugSnapshot {

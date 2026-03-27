@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use zeff_gb_core::emulator::Emulator as GbEmulator;
-use zeff_nes_core::emulator::Emulator as NesEmulator;
+use crate::emu_core_trait::EmulatorCore;
+
+pub(crate) use self::gb::GbBackend;
+pub(crate) use self::nes::NesBackend;
 
 pub(crate) mod gb;
 pub(crate) mod nes;
@@ -41,13 +43,46 @@ impl ActiveSystem {
     }
 }
 
+/// Central dispatch enum. All common operations are delegated to the
+/// [`EmulatorCore`] trait via [`core()`](Self::core) / [`core_mut()`](Self::core_mut).
+///
+/// System-specific access (debug UI, cheats, tilt) goes through
+/// [`gb()`](Self::gb) / [`gb_mut()`](Self::gb_mut) / [`nes_mut()`](Self::nes_mut).
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum EmuBackend {
-    Gb(GbEmulator, PathBuf),
-    Nes(NesEmulator, PathBuf),
+    Gb(GbBackend),
+    Nes(NesBackend),
 }
 
 impl EmuBackend {
+    pub(crate) fn from_gb(
+        emu: zeff_gb_core::emulator::Emulator,
+        rom_path: PathBuf,
+    ) -> Self {
+        Self::Gb(GbBackend::new(emu, rom_path))
+    }
+
+    pub(crate) fn from_nes(
+        emu: zeff_nes_core::emulator::Emulator,
+        rom_path: PathBuf,
+    ) -> Self {
+        Self::Nes(NesBackend::new(emu, rom_path))
+    }
+
+    pub(crate) fn core(&self) -> &dyn EmulatorCore {
+        match self {
+            Self::Gb(b) => b,
+            Self::Nes(b) => b,
+        }
+    }
+
+    pub(crate) fn core_mut(&mut self) -> &mut dyn EmulatorCore {
+        match self {
+            Self::Gb(b) => b,
+            Self::Nes(b) => b,
+        }
+    }
+
     pub(crate) fn system(&self) -> ActiveSystem {
         match self {
             Self::Gb(..) => ActiveSystem::GameBoy,
@@ -55,197 +90,131 @@ impl EmuBackend {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn screen_size(&self) -> (u32, u32) {
-        self.system().screen_size()
-    }
 
-    pub(crate) fn from_gb(emu: GbEmulator, rom_path: PathBuf) -> Self {
-        Self::Gb(emu, rom_path)
-    }
-
-    pub(crate) fn from_nes(emu: NesEmulator, rom_path: PathBuf) -> Self {
-        Self::Nes(emu, rom_path)
-    }
-
-    pub(crate) fn gb(&self) -> Option<&GbEmulator> {
+    pub(crate) fn gb(&self) -> Option<&GbBackend> {
         match self {
-            Self::Gb(e, _) => Some(e),
+            Self::Gb(b) => Some(b),
             _ => None,
         }
     }
 
-    pub(crate) fn gb_mut(&mut self) -> Option<&mut GbEmulator> {
+    pub(crate) fn gb_mut(&mut self) -> Option<&mut GbBackend> {
         match self {
-            Self::Gb(e, _) => Some(e),
+            Self::Gb(b) => Some(b),
             _ => None,
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn nes_mut(&mut self) -> Option<&mut NesEmulator> {
+    pub(crate) fn nes_mut(&mut self) -> Option<&mut NesBackend> {
         match self {
-            Self::Nes(e, _) => Some(e),
+            Self::Nes(b) => Some(b),
             _ => None,
         }
     }
 
-    pub(crate) fn step_frame(&mut self) {
+    pub(crate) fn nes(&self) -> Option<&NesBackend> {
         match self {
-            Self::Gb(e, _) => e.step_frame(),
-            Self::Nes(e, _) => e.step_frame(),
-        }
-    }
-
-    pub(crate) fn framebuffer(&self) -> &[u8] {
-        match self {
-            Self::Gb(e, _) => e.framebuffer(),
-            Self::Nes(e, _) => e.framebuffer(),
-        }
-    }
-
-    pub(crate) fn drain_audio_samples(&mut self) -> Vec<f32> {
-        match self {
-            Self::Gb(e, _) => gb::drain_audio_samples(e),
-            Self::Nes(e, _) => nes::drain_audio_samples(e),
-        }
-    }
-
-    pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
-        match self {
-            Self::Gb(e, _) => gb::drain_audio_samples_into(e, buf),
-            Self::Nes(e, _) => nes::drain_audio_samples_into(e, buf),
-        }
-    }
-
-    pub(crate) fn set_sample_rate(&mut self, rate: u32) {
-        match self {
-            Self::Gb(e, _) => gb::set_sample_rate(e, rate),
-            Self::Nes(e, _) => nes::set_sample_rate(e, rate),
-        }
-    }
-
-    pub(crate) fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
-        match self {
-            Self::Gb(e, _) => gb::set_apu_sample_generation_enabled(e, enabled),
-            Self::Nes(e, _) => nes::set_apu_sample_generation_enabled(e, enabled),
-        }
-    }
-
-    pub(crate) fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
-        match self {
-            Self::Gb(e, _) => gb::set_apu_channel_mutes(e, mutes),
-            Self::Nes(e, _) => nes::set_apu_channel_mutes(e, mutes),
-        }
-    }
-
-    pub(crate) fn rom_path(&self) -> &Path {
-        match self {
-            Self::Gb(_, p) => p,
-            Self::Nes(_, p) => p,
-        }
-    }
-
-    pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        match self {
-            Self::Gb(e, _) => gb::set_input(e, buttons_pressed, dpad_pressed),
-            Self::Nes(e, _) => nes::set_input(e, buttons_pressed, dpad_pressed),
-        }
-    }
-
-    pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        match self {
-            Self::Gb(..) => {}
-            Self::Nes(e, _) => nes::set_input_p2(e, buttons_pressed, dpad_pressed),
-        }
-    }
-
-    pub(crate) fn is_suspended(&self) -> bool {
-        match self {
-            Self::Gb(e, _) => e.is_cpu_suspended(),
-            Self::Nes(e, _) => e.is_cpu_suspended(),
-        }
-    }
-
-    pub(crate) fn is_running(&self) -> bool {
-        !self.is_suspended()
-    }
-
-    pub(crate) fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        match self {
-            Self::Gb(e, p) => gb::flush_battery_sram(e, p),
-            Self::Nes(e, p) => nes::flush_battery_sram(e, p),
-        }
-    }
-
-    pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        match self {
-            Self::Gb(e, _) => gb::encode_state_bytes(e),
-            Self::Nes(e, _) => nes::encode_state_bytes(e),
-        }
-    }
-
-    pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        match self {
-            Self::Gb(e, _) => gb::load_state_from_bytes(e, bytes),
-            Self::Nes(e, _) => nes::load_state_from_bytes(e, bytes),
-        }
-    }
-
-    pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<std::path::PathBuf> {
-        match self {
-            Self::Gb(e, _) => gb::slot_path(e, slot),
-            Self::Nes(e, _) => nes::slot_path(e, slot),
-        }
-    }
-
-    pub(crate) fn auto_save_path(&self) -> Option<std::path::PathBuf> {
-        match self {
-            Self::Gb(e, _) => gb::auto_save_path(e),
-            Self::Nes(e, _) => nes::auto_save_path(e),
-        }
-    }
-
-    pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
-        match self {
-            Self::Gb(e, _) => gb::load_state(e, slot),
-            Self::Nes(e, _) => nes::load_state(e, slot),
-        }
-    }
-
-    pub(crate) fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
-        match self {
-            Self::Gb(e, _) => gb::load_state_from_path(e, path),
-            Self::Nes(e, _) => nes::load_state_from_path(e, path),
-        }
-    }
-
-    pub(crate) fn rom_hash(&self) -> Option<[u8; 32]> {
-        match self {
-            Self::Gb(e, _) => Some(e.rom_hash()),
-            Self::Nes(e, _) => Some(e.rom_hash()),
-        }
-    }
-
-    pub(crate) fn rumble_active(&self) -> bool {
-        match self {
-            Self::Gb(e, _) => gb::rumble_active(e),
-            Self::Nes(..) => false,
-        }
-    }
-
-    pub(crate) fn is_mbc7(&self) -> bool {
-        match self {
-            Self::Gb(e, _) => gb::is_mbc7(e),
-            Self::Nes(..) => false,
-        }
-    }
-
-    pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {
-        match self {
-            Self::Gb(e, _) => gb::apu_channel_snapshot(e),
-            Self::Nes(e, _) => nes::apu_channel_snapshot(e),
+            Self::Nes(b) => Some(b),
+            _ => None,
         }
     }
 }
 
+impl EmuBackend {
+    pub(crate) fn step_frame(&mut self) {
+        self.core_mut().step_frame();
+    }
+
+    pub(crate) fn framebuffer(&self) -> &[u8] {
+        self.core().framebuffer()
+    }
+
+    pub(crate) fn drain_audio_samples(&mut self) -> Vec<f32> {
+        self.core_mut().drain_audio_samples()
+    }
+
+    pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.core_mut().drain_audio_samples_into(buf);
+    }
+
+    pub(crate) fn set_sample_rate(&mut self, rate: u32) {
+        self.core_mut().set_sample_rate(rate);
+    }
+
+    pub(crate) fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        self.core_mut().set_apu_sample_generation_enabled(enabled);
+    }
+
+    pub(crate) fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
+        self.core_mut().set_apu_channel_mutes(mutes);
+    }
+
+    pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.core_mut().set_input(buttons_pressed, dpad_pressed);
+    }
+
+    pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.core_mut().set_input_p2(buttons_pressed, dpad_pressed);
+    }
+
+    pub(crate) fn is_suspended(&self) -> bool {
+        self.core().is_suspended()
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        self.core().is_running()
+    }
+
+    pub(crate) fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        self.core_mut().flush_battery_sram()
+    }
+
+    pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        self.core().encode_state_bytes()
+    }
+
+    pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.core_mut().load_state_from_bytes(bytes)
+    }
+
+    pub(crate) fn rom_path(&self) -> &Path {
+        self.core().rom_path()
+    }
+
+    pub(crate) fn rom_hash(&self) -> Option<[u8; 32]> {
+        Some(self.core().rom_hash())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn screen_size(&self) -> (u32, u32) {
+        self.core().screen_size()
+    }
+
+    pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<PathBuf> {
+        self.core().slot_path(slot)
+    }
+
+    pub(crate) fn auto_save_path(&self) -> Option<PathBuf> {
+        self.core().auto_save_path()
+    }
+
+    pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
+        self.core_mut().load_state(slot)
+    }
+
+    pub(crate) fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
+        self.core_mut().load_state_from_path(path)
+    }
+
+    pub(crate) fn rumble_active(&self) -> bool {
+        self.core().rumble_active()
+    }
+
+    pub(crate) fn is_mbc7(&self) -> bool {
+        self.core().is_mbc7()
+    }
+
+    pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {
+        self.core().apu_channel_snapshot()
+    }
+}

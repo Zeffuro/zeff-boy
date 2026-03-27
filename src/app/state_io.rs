@@ -221,10 +221,11 @@ impl App {
                 }
 
                 // GB-specific setup (cheats, libretro, header info)
-                if let Some(gb_emu) = backend.gb() {
-                    let rom_header_title = gb_emu.header().title.clone();
-                    let is_gbc = gb_emu.header().is_cgb_compatible || gb_emu.header().is_cgb_exclusive;
-                    let rom_crc32 = crc32fast::hash(gb_emu.cartridge_rom_bytes());
+                self.debug_windows.cheat.active_system = system;
+                if let Some(gb) = backend.gb() {
+                    let rom_header_title = gb.emu.header().title.clone();
+                    let is_gbc = gb.emu.header().is_cgb_compatible || gb.emu.header().is_cgb_exclusive;
+                    let rom_crc32 = crc32fast::hash(gb.emu.cartridge_rom_bytes());
                     let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
                     let search_hints = crate::libretro_metadata::build_cheat_search_hints(
                         &rom_header_title,
@@ -264,6 +265,44 @@ impl App {
                         system,
                         Some(&rom_header_title),
                         Some(rom_crc32),
+                    );
+                    self.debug_windows.cheat.user_codes = user;
+                    self.debug_windows.cheat.libretro_codes = libretro;
+                    self.debug_windows.cheat.cheats_dirty = true;
+                } else if system == ActiveSystem::Nes {
+                    let rom_title = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("NES ROM")
+                        .to_string();
+
+                    if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
+                        crate::cheats::save_game_cheats(
+                            self.debug_windows.cheat.active_system,
+                            Some(old_title),
+                            self.debug_windows.cheat.rom_crc32,
+                            &self.debug_windows.cheat.user_codes,
+                            &self.debug_windows.cheat.libretro_codes,
+                        );
+                    }
+
+                    let rom_crc32 = backend.nes().map(|nes| nes.emu.rom_crc32());
+
+                    self.debug_windows.cheat.rom_title = Some(rom_title.clone());
+                    self.debug_windows.cheat.rom_crc32 = rom_crc32;
+                    self.debug_windows.cheat.rom_metadata_title = None;
+                    self.debug_windows.cheat.rom_metadata_rom_name = None;
+                    self.debug_windows.cheat.rom_is_gbc = false;
+                    self.debug_windows.cheat.libretro_search_hints.clear();
+                    self.debug_windows.cheat.libretro_search.clear();
+                    self.debug_windows.cheat.libretro_results.clear();
+                    self.debug_windows.cheat.libretro_file_list = None;
+                    self.debug_windows.cheat.libretro_status = None;
+
+                    let (user, libretro) = crate::cheats::load_game_cheats(
+                        system,
+                        Some(&rom_title),
+                        rom_crc32,
                     );
                     self.debug_windows.cheat.user_codes = user;
                     self.debug_windows.cheat.libretro_codes = libretro;

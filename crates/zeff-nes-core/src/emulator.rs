@@ -12,6 +12,7 @@ pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
     pub(crate) rom_hash: [u8; 32],
+    pub(crate) rom_crc32: u32,
     pub(crate) opcode_log: crate::debug::OpcodeLog,
     pub(crate) debug: crate::debug::DebugController,
 }
@@ -22,11 +23,13 @@ impl Emulator {
         let bus = Bus::new(cartridge, sample_rate);
 
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
+        let rom_crc32 = crc32fast::hash(rom_data);
 
         let mut emu = Self {
             cpu: Cpu::new(),
             bus,
             rom_hash,
+            rom_crc32,
             opcode_log: crate::debug::OpcodeLog::new(),
             debug: crate::debug::DebugController::new(),
         };
@@ -88,6 +91,10 @@ impl Emulator {
 
     pub fn rom_hash(&self) -> [u8; 32] {
         self.rom_hash
+    }
+
+    pub fn rom_crc32(&self) -> u32 {
+        self.rom_crc32
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {

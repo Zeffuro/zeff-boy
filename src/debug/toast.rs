@@ -160,7 +160,7 @@ impl ToastManager {
                     ui.add_space(4.0);
                 }
 
-                for toast in self.toasts.iter().rev() {
+                for toast in &self.toasts {
                     let elapsed = now.duration_since(toast.created).as_secs_f32();
                     let alpha = if elapsed > FADE_START {
                         ((TOAST_DURATION_SECS - elapsed) / 0.5).clamp(0.0, 1.0)

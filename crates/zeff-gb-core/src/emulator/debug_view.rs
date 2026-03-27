@@ -100,7 +100,7 @@ impl Emulator {
             if_reg: self.bus.if_reg,
             ie: self.bus.ie,
             mem_around_pc,
-            recent_ops: self.opcode_log.recent(16),
+            recent_ops: self.opcode_log.recent(32),
             breakpoints: {
                 let mut points: Vec<u16> = self.debug.iter_breakpoints().collect();
                 points.sort_unstable();

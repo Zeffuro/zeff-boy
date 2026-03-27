@@ -4379,6 +4379,7 @@ name = "zeff-nes-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crc32fast",
  "log",
  "lz4_flex",
  "serde",

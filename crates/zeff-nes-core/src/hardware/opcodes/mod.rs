@@ -2,7 +2,9 @@ mod alu;
 mod bitwise;
 pub(super) mod cycles;
 pub(super) mod dispatch;
-mod flow;
+pub(super) mod flow;
 mod load;
 mod unofficial;
 
+#[cfg(test)]
+mod tests;

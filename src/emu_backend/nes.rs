@@ -1,47 +1,19 @@
 use std::path::{Path, PathBuf};
 
+use zeff_nes_core::emulator::Emulator as NesEmulator;
+
 use crate::audio_recorder::MidiApuSnapshot;
+use crate::emu_core_trait::EmulatorCore;
 
-pub(super) fn drain_audio_samples(emu: &mut zeff_nes_core::emulator::Emulator) -> Vec<f32> {
-    let mono = emu.drain_audio_samples();
-    let mut stereo = Vec::with_capacity(mono.len() * 2);
-    for &sample in &mono {
-        stereo.push(sample);
-        stereo.push(sample);
+pub(crate) struct NesBackend {
+    pub(crate) emu: NesEmulator,
+    rom_path: PathBuf,
+}
+
+impl NesBackend {
+    pub(crate) fn new(emu: NesEmulator, rom_path: PathBuf) -> Self {
+        Self { emu, rom_path }
     }
-    stereo
-}
-
-pub(super) fn drain_audio_samples_into(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    buf: &mut Vec<f32>,
-) {
-    emu.drain_audio_into_stereo(buf);
-}
-
-pub(super) fn set_sample_rate(emu: &mut zeff_nes_core::emulator::Emulator, rate: u32) {
-    emu.set_sample_rate(rate);
-}
-
-pub(super) fn set_apu_sample_generation_enabled(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    enabled: bool,
-) {
-    emu.set_apu_sample_generation_enabled(enabled);
-}
-
-pub(super) fn set_apu_channel_mutes(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    mutes: &[bool],
-) {
-    let arr = [
-        mutes.first().copied().unwrap_or(false),
-        mutes.get(1).copied().unwrap_or(false),
-        mutes.get(2).copied().unwrap_or(false),
-        mutes.get(3).copied().unwrap_or(false),
-        mutes.get(4).copied().unwrap_or(false),
-    ];
-    emu.set_apu_channel_mutes(arr);
 }
 
 fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
@@ -73,80 +45,104 @@ fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
     nes_byte
 }
 
-pub(super) fn set_input(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    buttons_pressed: u8,
-    dpad_pressed: u8,
-) {
-    emu.set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
-}
+impl EmulatorCore for NesBackend {
+    fn step_frame(&mut self) {
+        self.emu.step_frame();
+    }
 
-pub(super) fn set_input_p2(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    buttons_pressed: u8,
-    dpad_pressed: u8,
-) {
-    emu.set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
-}
+    fn framebuffer(&self) -> &[u8] {
+        self.emu.framebuffer()
+    }
 
-pub(super) fn flush_battery_sram(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    rom_path: &Path,
-) -> anyhow::Result<Option<String>> {
-    let Some(bytes) = emu.dump_battery_sram() else {
-        return Ok(None);
-    };
-    let save_path = sram_path_for_rom(rom_path);
-    crate::save_paths::write_sram_file(&save_path, &bytes)?;
-    Ok(Some(save_path.display().to_string()))
-}
+    fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.emu.drain_audio_into_stereo(buf);
+    }
 
-pub(super) fn encode_state_bytes(
-    emu: &zeff_nes_core::emulator::Emulator,
-) -> anyhow::Result<Vec<u8>> {
-    emu.encode_state()
-}
+    fn drain_audio_samples(&mut self) -> Vec<f32> {
+        let mono = self.emu.drain_audio_samples();
+        let mut stereo = Vec::with_capacity(mono.len() * 2);
+        for &sample in &mono {
+            stereo.push(sample);
+            stereo.push(sample);
+        }
+        stereo
+    }
 
-pub(super) fn load_state_from_bytes(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    bytes: Vec<u8>,
-) -> anyhow::Result<()> {
-    emu.load_state_from_bytes(bytes)
-}
+    fn set_sample_rate(&mut self, rate: u32) {
+        self.emu.set_sample_rate(rate);
+    }
 
-pub(super) fn slot_path(
-    emu: &zeff_nes_core::emulator::Emulator,
-    slot: u8,
-) -> anyhow::Result<PathBuf> {
-    crate::save_paths::slot_path("nes", "nstate", emu.rom_hash(), slot)
-}
+    fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        self.emu.set_apu_sample_generation_enabled(enabled);
+    }
 
-pub(super) fn auto_save_path(emu: &zeff_nes_core::emulator::Emulator) -> Option<PathBuf> {
-    Some(crate::save_paths::auto_save_path("nes", "nstate", emu.rom_hash()))
-}
+    fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
+        let arr = [
+            mutes.first().copied().unwrap_or(false),
+            mutes.get(1).copied().unwrap_or(false),
+            mutes.get(2).copied().unwrap_or(false),
+            mutes.get(3).copied().unwrap_or(false),
+            mutes.get(4).copied().unwrap_or(false),
+        ];
+        self.emu.set_apu_channel_mutes(arr);
+    }
 
-pub(super) fn load_state(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    slot: u8,
-) -> anyhow::Result<String> {
-    let path = crate::save_paths::slot_path("nes", "nstate", emu.rom_hash(), slot)?;
-    let bytes = std::fs::read(&path)
-        .map_err(|e| anyhow::anyhow!("failed to read NES save state: {}: {e}", path.display()))?;
-    emu.load_state_from_bytes(bytes)?;
-    Ok(path.display().to_string())
-}
+    fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.emu.set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+    }
 
-pub(super) fn load_state_from_path(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    path: &Path,
-) -> anyhow::Result<()> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("failed to read NES save state: {}: {e}", path.display()))?;
-    emu.load_state_from_bytes(bytes)
+    fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.emu.set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+    }
+
+    fn is_suspended(&self) -> bool {
+        self.emu.is_cpu_suspended()
+    }
+
+    fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        let Some(bytes) = self.emu.dump_battery_sram() else {
+            return Ok(None);
+        };
+        let save_path = sram_path_for_rom(&self.rom_path);
+        crate::save_paths::write_sram_file(&save_path, &bytes)?;
+        Ok(Some(save_path.display().to_string()))
+    }
+
+    fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        self.emu.encode_state()
+    }
+
+    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.emu.load_state_from_bytes(bytes)
+    }
+
+    fn rom_path(&self) -> &Path {
+        &self.rom_path
+    }
+
+    fn rom_hash(&self) -> [u8; 32] {
+        self.emu.rom_hash()
+    }
+
+    fn screen_size(&self) -> (u32, u32) {
+        (256, 240)
+    }
+
+    fn storage_subdir(&self) -> &'static str {
+        "nes"
+    }
+
+    fn state_extension(&self) -> &'static str {
+        "nstate"
+    }
+
+    fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
+        Some(MidiApuSnapshot::Nes(self.emu.apu_channel_snapshot()))
+    }
 }
 
 pub(crate) fn try_load_battery_sram(
-    emu: &mut zeff_nes_core::emulator::Emulator,
+    emu: &mut NesEmulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
     if !emu.has_battery() {
@@ -165,10 +161,3 @@ pub(crate) fn try_load_battery_sram(
 fn sram_path_for_rom(rom_path: &Path) -> PathBuf {
     rom_path.with_extension("sav")
 }
-
-pub(super) fn apu_channel_snapshot(
-    emu: &zeff_nes_core::emulator::Emulator,
-) -> Option<MidiApuSnapshot> {
-    Some(MidiApuSnapshot::Nes(emu.apu_channel_snapshot()))
-}
-

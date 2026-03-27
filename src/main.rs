@@ -5,6 +5,7 @@ mod cheats;
 mod cli;
 mod debug;
 mod emu_backend;
+mod emu_core_trait;
 mod emu_thread;
 mod graphics;
 mod input;

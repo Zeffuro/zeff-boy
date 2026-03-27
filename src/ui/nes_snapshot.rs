@@ -65,6 +65,9 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         };
         recent_op_lines.push(line);
         i += count;
+        if recent_op_lines.len() >= 16 {
+            break;
+        }
     }
 
     let breakpoints: Vec<u16> = emu.iter_breakpoints().collect();

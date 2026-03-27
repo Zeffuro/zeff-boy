@@ -9,6 +9,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 anyhow = "1.0.102"
+crc32fast = "1.4"
 log = "0.4.29"
 lz4_flex = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"] }
