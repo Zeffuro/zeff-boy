@@ -65,10 +65,6 @@ pub const FRAME_STEP_3: u64 = 22371;
 pub const FRAME_STEP_4: u64 = 29829;
 pub const FRAME_STEP_5: u64 = 37281;
 
-pub const MIX_PULSE: f32 = 0.00752;
-pub const MIX_TND_TRI: f32 = 0.00851;
-pub const MIX_TND_NOISE: f32 = 0.00494;
-pub const MIX_TND_DMC: f32 = 0.00335;
 
 pub const CPU_CYCLES_PER_FRAME: u64 = 29781;
 pub const NES_FRAME_DURATION_NS: u64 = 16_639_267;

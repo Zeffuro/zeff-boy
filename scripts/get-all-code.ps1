@@ -1,5 +1,5 @@
 $allCode = ""
-Get-ChildItem -Path "F:\Coding\zeff-boy\src" -Recurse -Filter *.rs |
+Get-ChildItem -Path "F:\Coding\zeff-boy\crates" -Recurse -Filter *.rs |
 Sort-Object FullName | 
 ForEach-Object {
     $allCode += "`n// ===== $($_.FullName) =====`n"

@@ -1,15 +1,8 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 
-#[allow(dead_code)]
-pub(crate) enum Operand {
-    Address(u16),
-    Accumulator,
-    Implied,
-}
-
 impl Cpu {
-    pub(crate) fn addr_immediate(&mut self, _bus: &mut Bus) -> u16 {
+    pub(crate) fn addr_immediate(&mut self, _bus: &Bus) -> u16 {
         let addr = self.pc;
         self.pc = self.pc.wrapping_add(1);
         addr

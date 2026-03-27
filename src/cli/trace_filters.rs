@@ -1,13 +1,13 @@
-use zeff_gb_core::hardware::types::IMEState;
+use zeff_gb_core::hardware::types::ImeState;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareMode;
 
 use super::types::HeadlessOptions;
 
-pub(super) fn ime_short(ime: &IMEState) -> &'static str {
+pub(super) fn ime_short(ime: &ImeState) -> &'static str {
     match ime {
-        IMEState::Enabled => "E",
-        IMEState::Disabled => "D",
-        IMEState::PendingEnable => "P",
+        ImeState::Enabled => "E",
+        ImeState::Disabled => "D",
+        ImeState::PendingEnable => "P",
     }
 }
 
@@ -48,7 +48,7 @@ pub(super) fn should_trace_op(
     pc: u16,
     op: u8,
     total_t: u64,
-    ime: &IMEState,
+    ime: &ImeState,
     if_reg: u8,
     ie: u8,
 ) -> bool {
@@ -69,7 +69,7 @@ pub(super) fn should_trace_op(
         let pending = (if_reg & ie) & 0x1F;
         return is_interrupt_watch_opcode(op)
             || pending != 0
-            || matches!(*ime, IMEState::PendingEnable);
+            || matches!(*ime, ImeState::PendingEnable);
     }
 
     true

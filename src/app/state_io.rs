@@ -55,7 +55,23 @@ impl App {
         self.recycled.clear();
         self.debug_windows.last_disasm_pc = None;
 
-        let system = ActiveSystem::from_path(path).unwrap_or(ActiveSystem::GameBoy);
+        let system = match ActiveSystem::from_path(path) {
+            Some(s) => s,
+            None => {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)");
+                let msg = format!(
+                    "Unsupported file type '.{}'. Supported: {}",
+                    ext,
+                    ActiveSystem::supported_extensions()
+                );
+                log::warn!("{}", msg);
+                self.toast_manager.error(msg);
+                return;
+            }
+        };
 
         let backend_result: anyhow::Result<EmuBackend> = match system {
             ActiveSystem::GameBoy => {

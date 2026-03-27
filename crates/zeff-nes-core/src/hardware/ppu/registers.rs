@@ -6,6 +6,12 @@ pub struct PpuRegisters {
     pub status: u8,
 }
 
+impl Default for PpuRegisters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PpuRegisters {
     pub fn new() -> Self {
         Self {

@@ -151,15 +151,16 @@ pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
                     continue;
                 }
             } else if bg_priority
-                && ctx.bg_color_ids.expect("dmg bg color ids provided")[screen_x_usize] != 0
+                && let Some(ids) = ctx.bg_color_ids
+                && ids[screen_x_usize] != 0
             {
                 continue;
             }
 
             let rgba = if ctx.cgb_mode {
-                let obj_palette_ram = ctx
-                    .cgb_obj_palette_ram
-                    .expect("cgb obj palette ram provided");
+                let Some(obj_palette_ram) = ctx.cgb_obj_palette_ram else {
+                    continue;
+                };
                 cgb_palette_rgba(obj_palette_ram, sprite.cgb_obj_palette_index(), color_id)
             } else {
                 apply_palette(dmg_palette, color_id)

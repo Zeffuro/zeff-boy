@@ -1,6 +1,11 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 
+#[inline(always)]
+fn page_cross_penalty(crossed: bool) -> u8 {
+    crossed as u8
+}
+
 // 0x29: AND #imm
 pub fn and_imm(cpu: &mut Cpu, bus: &mut Bus) {
     let a = cpu.addr_immediate(bus);
@@ -29,18 +34,20 @@ pub fn and_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0x3D: AND abs,X
-pub fn and_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_absolute_x(bus);
+// 0x3D: AND abs,X — +1 on page cross
+pub fn and_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_absolute_x(bus);
     cpu.regs.a &= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
-// 0x39: AND abs,Y
-pub fn and_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_absolute_y(bus);
+// 0x39: AND abs,Y — +1 on page cross
+pub fn and_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_absolute_y(bus);
     cpu.regs.a &= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
 // 0x21: AND (ind,X)
@@ -50,11 +57,12 @@ pub fn and_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0x31: AND (ind),Y
-pub fn and_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_indirect_y(bus);
+// 0x31: AND (ind),Y — +1 on page cross
+pub fn and_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_indirect_y(bus);
     cpu.regs.a &= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
 // 0x09: ORA #imm
@@ -85,18 +93,20 @@ pub fn ora_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0x1D: ORA abs,X
-pub fn ora_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_absolute_x(bus);
+// 0x1D: ORA abs,X — +1 on page cross
+pub fn ora_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_absolute_x(bus);
     cpu.regs.a |= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
-// 0x19: ORA abs,Y
-pub fn ora_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_absolute_y(bus);
+// 0x19: ORA abs,Y — +1 on page cross
+pub fn ora_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_absolute_y(bus);
     cpu.regs.a |= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
 // 0x01: ORA (ind,X)
@@ -106,11 +116,12 @@ pub fn ora_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0x11: ORA (ind),Y
-pub fn ora_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_indirect_y(bus);
+// 0x11: ORA (ind),Y — +1 on page cross
+pub fn ora_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_indirect_y(bus);
     cpu.regs.a |= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
 // 0x49: EOR #imm
@@ -141,18 +152,20 @@ pub fn eor_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0x5D: EOR abs,X
-pub fn eor_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_absolute_x(bus);
+// 0x5D: EOR abs,X — +1 on page cross
+pub fn eor_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_absolute_x(bus);
     cpu.regs.a ^= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
-// 0x59: EOR abs,Y
-pub fn eor_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_absolute_y(bus);
+// 0x59: EOR abs,Y — +1 on page cross
+pub fn eor_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_absolute_y(bus);
     cpu.regs.a ^= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
 // 0x41: EOR (ind,X)
@@ -162,11 +175,12 @@ pub fn eor_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0x51: EOR (ind),Y
-pub fn eor_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (a, _) = cpu.addr_indirect_y(bus);
+// 0x51: EOR (ind),Y — +1 on page cross
+pub fn eor_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (a, crossed) = cpu.addr_indirect_y(bus);
     cpu.regs.a ^= bus.cpu_read(a);
     cpu.regs.set_zn(cpu.regs.a);
+    page_cross_penalty(crossed)
 }
 
 // 0x24: BIT zp

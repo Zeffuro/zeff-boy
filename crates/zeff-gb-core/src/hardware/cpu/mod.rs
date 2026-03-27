@@ -7,34 +7,40 @@ pub use registers::Registers;
 use crate::hardware::bus::{Bus, OamCorruptionType};
 use crate::hardware::opcodes::cycles::CYCLE_TABLE;
 use crate::hardware::opcodes::dispatch::execute_opcode;
-use crate::hardware::types::CPUState;
-use crate::hardware::types::IMEState;
+use crate::hardware::types::CpuState;
+use crate::hardware::types::ImeState;
 use crate::hardware::types::constants::*;
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::{Result, bail};
 
 #[derive(Debug)]
-pub struct CPU {
+pub struct Cpu {
     pub pc: u16,
     pub sp: u16,
     pub regs: Registers,
-    pub ime: IMEState,
-    pub running: CPUState,
+    pub ime: ImeState,
+    pub running: CpuState,
     pub cycles: u64,
     pub last_step_cycles: u64,
     pub timed_cycles_accounted: u64,
     pub halt_bug_active: bool,
 }
 
-impl CPU {
+impl Default for Cpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Cpu {
     pub fn new() -> Self {
         Self {
             pc: 0x100,
             sp: 0xFFFE,
             regs: Registers::default(),
-            ime: IMEState::Disabled,
-            running: CPUState::Running,
+            ime: ImeState::Disabled,
+            running: CpuState::Running,
             cycles: 0,
             last_step_cycles: 0,
             timed_cycles_accounted: 0,
@@ -47,15 +53,15 @@ impl CPU {
         self.timed_cycles_accounted = 0;
         let pending = bus.if_reg & bus.ie & 0x1F;
 
-        if self.running == CPUState::Halted {
+        if self.running == CpuState::Halted {
             if pending == 0 {
                 self.tick_internal_timed(bus, 4);
                 self.commit_step_cycles();
                 return;
             }
 
-            self.running = CPUState::Running;
-            if self.ime == IMEState::Enabled {
+            self.running = CpuState::Running;
+            if self.ime == ImeState::Enabled {
                 self.tick_internal_timed(bus, 4);
                 if self.handle_interrupts(bus) {
                     self.commit_step_cycles();
@@ -64,13 +70,13 @@ impl CPU {
             } else {
                 self.tick_internal_timed(bus, 4);
             }
-        } else if self.ime == IMEState::Enabled && pending != 0
+        } else if self.ime == ImeState::Enabled && pending != 0
             && self.handle_interrupts(bus) {
                 self.commit_step_cycles();
                 return;
             }
 
-        let ime_was_pending_enable = matches!(self.ime, IMEState::PendingEnable);
+        let ime_was_pending_enable = matches!(self.ime, ImeState::PendingEnable);
         let opcode = self.fetch8_timed(bus);
         execute_opcode(self, bus, opcode);
 
@@ -81,8 +87,8 @@ impl CPU {
 
         self.commit_step_cycles();
 
-        if ime_was_pending_enable && matches!(self.ime, IMEState::PendingEnable) {
-            self.ime = IMEState::Enabled;
+        if ime_was_pending_enable && matches!(self.ime, ImeState::PendingEnable) {
+            self.ime = ImeState::Enabled;
         }
     }
 
@@ -93,7 +99,7 @@ impl CPU {
 
     pub fn handle_interrupts(&mut self, bus: &mut Bus) -> bool {
         let triggered = bus.if_reg & bus.ie;
-        if triggered == 0 || self.ime != IMEState::Enabled {
+        if triggered == 0 || self.ime != ImeState::Enabled {
             return false;
         }
 
@@ -105,7 +111,7 @@ impl CPU {
         }
 
         bus.if_reg &= !(1 << bit);
-        self.ime = IMEState::Disabled;
+        self.ime = ImeState::Disabled;
 
         self.tick_internal_timed(bus, 8);
         self.push16_timed(bus, self.pc);
@@ -288,42 +294,42 @@ impl CPU {
     }
 }
 
-fn encode_ime_state(state: IMEState) -> u8 {
+fn encode_ime_state(state: ImeState) -> u8 {
     match state {
-        IMEState::Enabled => 0,
-        IMEState::Disabled => 1,
-        IMEState::PendingEnable => 2,
+        ImeState::Enabled => 0,
+        ImeState::Disabled => 1,
+        ImeState::PendingEnable => 2,
     }
 }
 
-fn decode_ime_state(tag: u8) -> Result<IMEState> {
+fn decode_ime_state(tag: u8) -> Result<ImeState> {
     match tag {
-        0 => Ok(IMEState::Enabled),
-        1 => Ok(IMEState::Disabled),
-        2 => Ok(IMEState::PendingEnable),
+        0 => Ok(ImeState::Enabled),
+        1 => Ok(ImeState::Disabled),
+        2 => Ok(ImeState::PendingEnable),
         _ => bail!("invalid IME state tag in save-state file: {tag}"),
     }
 }
 
-fn encode_cpu_state(state: CPUState) -> u8 {
+fn encode_cpu_state(state: CpuState) -> u8 {
     match state {
-        CPUState::Running => 0,
-        CPUState::Halted => 1,
-        CPUState::Stopped => 2,
-        CPUState::InterruptHandling => 3,
-        CPUState::Reset => 4,
-        CPUState::Suspended => 5,
+        CpuState::Running => 0,
+        CpuState::Halted => 1,
+        CpuState::Stopped => 2,
+        CpuState::InterruptHandling => 3,
+        CpuState::Reset => 4,
+        CpuState::Suspended => 5,
     }
 }
 
-fn decode_cpu_state(tag: u8) -> Result<CPUState> {
+fn decode_cpu_state(tag: u8) -> Result<CpuState> {
     match tag {
-        0 => Ok(CPUState::Running),
-        1 => Ok(CPUState::Halted),
-        2 => Ok(CPUState::Stopped),
-        3 => Ok(CPUState::InterruptHandling),
-        4 => Ok(CPUState::Reset),
-        5 => Ok(CPUState::Suspended),
+        0 => Ok(CpuState::Running),
+        1 => Ok(CpuState::Halted),
+        2 => Ok(CpuState::Stopped),
+        3 => Ok(CpuState::InterruptHandling),
+        4 => Ok(CpuState::Reset),
+        5 => Ok(CpuState::Suspended),
         _ => bail!("invalid CPU state tag in save-state file: {tag}"),
     }
 }
@@ -344,7 +350,7 @@ mod tests {
 
     #[test]
     fn halt_bug_skips_next_pc_increment_once() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0x00);
@@ -362,12 +368,12 @@ mod tests {
 
     #[test]
     fn halted_with_ime_enabled_dispatches_interrupt_in_24_t_cycles() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC123;
         cpu.sp = 0xFFFE;
-        cpu.running = CPUState::Halted;
-        cpu.ime = IMEState::Enabled;
+        cpu.running = CpuState::Halted;
+        cpu.ime = ImeState::Enabled;
         bus.ie = 0x01;
         bus.if_reg = 0x01;
 
@@ -381,12 +387,12 @@ mod tests {
 
     #[test]
     fn running_with_ime_enabled_dispatches_interrupt_in_20_t_cycles() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC123;
         cpu.sp = 0xFFFE;
-        cpu.running = CPUState::Running;
-        cpu.ime = IMEState::Enabled;
+        cpu.running = CpuState::Running;
+        cpu.ime = ImeState::Enabled;
         bus.ie = 0x01;
         bus.if_reg = 0x01;
 
@@ -400,11 +406,11 @@ mod tests {
 
     #[test]
     fn halted_with_ime_disabled_wakes_without_dispatch_and_executes_next_opcode() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
-        cpu.running = CPUState::Halted;
-        cpu.ime = IMEState::Disabled;
+        cpu.running = CpuState::Halted;
+        cpu.ime = ImeState::Disabled;
         bus.ie = 0x01;
         bus.if_reg = 0x01;
         bus.write_byte(0xC000, 0x00);
@@ -413,17 +419,17 @@ mod tests {
 
         assert_eq!(cpu.last_step_cycles, 8);
         assert_eq!(cpu.pc, 0xC001);
-        assert!(matches!(cpu.running, CPUState::Running));
+        assert!(matches!(cpu.running, CpuState::Running));
         assert_eq!(bus.if_reg & 0x01, 0x01);
     }
 
     #[test]
     fn halted_with_ime_pending_enable_wakes_without_dispatch_and_enables_ime_after_instruction() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
-        cpu.running = CPUState::Halted;
-        cpu.ime = IMEState::PendingEnable;
+        cpu.running = CpuState::Halted;
+        cpu.ime = ImeState::PendingEnable;
         bus.ie = 0x01;
         bus.if_reg = 0x01;
         bus.write_byte(0xC000, 0x00);
@@ -432,18 +438,18 @@ mod tests {
 
         assert_eq!(cpu.last_step_cycles, 8);
         assert_eq!(cpu.pc, 0xC001);
-        assert!(matches!(cpu.running, CPUState::Running));
-        assert!(matches!(cpu.ime, IMEState::Enabled));
+        assert!(matches!(cpu.running, CpuState::Running));
+        assert!(matches!(cpu.ime, ImeState::Enabled));
         assert_eq!(bus.if_reg & 0x01, 0x01);
     }
 
     #[test]
     fn serial_interrupt_dispatch_plus_handler_is_13_m_cycles_in_dmg() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xFFFE;
-        cpu.ime = IMEState::Enabled;
+        cpu.ime = ImeState::Enabled;
         bus.ie = 0x08;
         bus.if_reg = 0x08;
 
@@ -461,7 +467,7 @@ mod tests {
 
     #[test]
     fn gdma_write_consumes_block_cycles_in_cgb_normal() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::CGBNormal);
 
         for i in 0..0x10u16 {
@@ -483,7 +489,7 @@ mod tests {
 
     #[test]
     fn af_round_trips_with_lower_nibble_cleared() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.set_af(0x12F0);
         assert_eq!(cpu.regs.a, 0x12);
         assert_eq!(cpu.regs.f, 0xF0);
@@ -496,7 +502,7 @@ mod tests {
 
     #[test]
     fn bc_de_hl_round_trip() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.set_bc(0x1234);
         assert_eq!(cpu.regs.b, 0x12);
         assert_eq!(cpu.regs.c, 0x34);
@@ -515,7 +521,7 @@ mod tests {
 
     #[test]
     fn flag_getters_and_setters() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.f = 0x00;
         assert!(!cpu.get_z());
         assert!(!cpu.get_n());
@@ -543,7 +549,7 @@ mod tests {
 
     #[test]
     fn add_zero_plus_zero_sets_zero_flag() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0;
         cpu.add(0);
         assert_eq!(cpu.regs.a, 0);
@@ -555,7 +561,7 @@ mod tests {
 
     #[test]
     fn add_half_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x0F;
         cpu.add(0x01);
         assert_eq!(cpu.regs.a, 0x10);
@@ -566,7 +572,7 @@ mod tests {
 
     #[test]
     fn add_full_carry_and_wrap() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0xFF;
         cpu.add(0x01);
         assert_eq!(cpu.regs.a, 0x00);
@@ -577,7 +583,7 @@ mod tests {
 
     #[test]
     fn sub_equal_values_gives_zero() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x42;
         cpu.sub(0x42);
         assert_eq!(cpu.regs.a, 0);
@@ -589,7 +595,7 @@ mod tests {
 
     #[test]
     fn sub_half_borrow() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x10;
         cpu.sub(0x01);
         assert_eq!(cpu.regs.a, 0x0F);
@@ -599,7 +605,7 @@ mod tests {
 
     #[test]
     fn sub_full_borrow_wraps() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x00;
         cpu.sub(0x01);
         assert_eq!(cpu.regs.a, 0xFF);
@@ -609,7 +615,7 @@ mod tests {
 
     #[test]
     fn adc_with_carry_set() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x0E;
         cpu.set_c(true);
         cpu.adc(0x01);
@@ -620,7 +626,7 @@ mod tests {
 
     #[test]
     fn adc_wraps_with_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0xFF;
         cpu.set_c(true);
         cpu.adc(0x00);
@@ -631,7 +637,7 @@ mod tests {
 
     #[test]
     fn sbc_with_carry_set() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x10;
         cpu.set_c(true);
         cpu.sbc(0x0F);
@@ -642,7 +648,7 @@ mod tests {
 
     #[test]
     fn sbc_borrow_propagation() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x00;
         cpu.set_c(true);
         cpu.sbc(0x00);
@@ -653,7 +659,7 @@ mod tests {
 
     #[test]
     fn inc_wraps_and_sets_zero() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.set_c(true);
         let r = cpu.inc(0xFF);
         assert_eq!(r, 0x00);
@@ -665,7 +671,7 @@ mod tests {
 
     #[test]
     fn dec_wraps_and_sets_half_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.dec(0x00);
         assert_eq!(r, 0xFF);
         assert!(!cpu.get_z());
@@ -675,7 +681,7 @@ mod tests {
 
     #[test]
     fn inc_half_carry_boundary() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.inc(0x0F);
         assert_eq!(r, 0x10);
         assert!(cpu.get_h());
@@ -683,7 +689,7 @@ mod tests {
 
     #[test]
     fn logical_and_sets_half_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0xFF;
         cpu.logical_and(0x0F);
         assert_eq!(cpu.regs.a, 0x0F);
@@ -694,7 +700,7 @@ mod tests {
 
     #[test]
     fn logical_or_zero_result() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x00;
         cpu.logical_or(0x00);
         assert_eq!(cpu.regs.a, 0x00);
@@ -704,7 +710,7 @@ mod tests {
 
     #[test]
     fn logical_xor_self_gives_zero() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0xAB;
         cpu.logical_xor(0xAB);
         assert_eq!(cpu.regs.a, 0x00);
@@ -713,7 +719,7 @@ mod tests {
 
     #[test]
     fn compare_sets_flags_without_modifying_a() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.regs.a = 0x42;
         cpu.compare(0x42);
         assert_eq!(cpu.regs.a, 0x42);
@@ -723,7 +729,7 @@ mod tests {
 
     #[test]
     fn rlc_rotates_and_sets_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.rlc(0x80);
         assert_eq!(r, 0x01);
         assert!(cpu.get_c());
@@ -732,7 +738,7 @@ mod tests {
 
     #[test]
     fn rlc_zero() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.rlc(0x00);
         assert_eq!(r, 0x00);
         assert!(cpu.get_z());
@@ -741,7 +747,7 @@ mod tests {
 
     #[test]
     fn rrc_rotates_and_sets_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.rrc(0x01);
         assert_eq!(r, 0x80);
         assert!(cpu.get_c());
@@ -749,7 +755,7 @@ mod tests {
 
     #[test]
     fn rl_through_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.set_c(true);
         let r = cpu.rl(0x80);
         assert_eq!(r, 0x01);
@@ -758,7 +764,7 @@ mod tests {
 
     #[test]
     fn rr_through_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.set_c(true);
         let r = cpu.rr(0x01);
         assert_eq!(r, 0x80);
@@ -767,7 +773,7 @@ mod tests {
 
     #[test]
     fn sla_shifts_left_and_clears_bit0() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.sla(0x80);
         assert_eq!(r, 0x00);
         assert!(cpu.get_z());
@@ -776,7 +782,7 @@ mod tests {
 
     #[test]
     fn srl_shifts_right_and_clears_bit7() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.srl(0x01);
         assert_eq!(r, 0x00);
         assert!(cpu.get_z());
@@ -785,7 +791,7 @@ mod tests {
 
     #[test]
     fn sra_preserves_sign_bit() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.sra(0x80);
         assert_eq!(r, 0xC0);
         assert!(!cpu.get_c());
@@ -793,7 +799,7 @@ mod tests {
 
     #[test]
     fn swap_nibbles() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.swap(0xF0);
         assert_eq!(r, 0x0F);
         assert!(!cpu.get_z());
@@ -802,7 +808,7 @@ mod tests {
 
     #[test]
     fn swap_zero() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.swap(0x00);
         assert_eq!(r, 0x00);
         assert!(cpu.get_z());
@@ -810,7 +816,7 @@ mod tests {
 
     #[test]
     fn bit_test_set_and_clear() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         cpu.bit(0, 0x01);
         assert!(!cpu.get_z());
         assert!(cpu.get_h());
@@ -821,7 +827,7 @@ mod tests {
 
     #[test]
     fn set_and_res_bits() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let r = cpu.set(3, 0x00);
         assert_eq!(r, 0x08);
 
@@ -831,7 +837,7 @@ mod tests {
 
     #[test]
     fn step_ld_b_d8_then_ld_a_b() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0x06);
@@ -849,7 +855,7 @@ mod tests {
 
     #[test]
     fn step_call_and_ret_round_trip() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xFFFE;
@@ -869,7 +875,7 @@ mod tests {
 
     #[test]
     fn step_push_pop_preserves_register_pair() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xFFFE;
@@ -887,7 +893,7 @@ mod tests {
 
     #[test]
     fn step_jr_nz_takes_branch_when_z_clear() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0x3E);
@@ -905,7 +911,7 @@ mod tests {
 
     #[test]
     fn step_jr_nz_falls_through_when_z_set() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0xAF);
@@ -921,7 +927,7 @@ mod tests {
 
     #[test]
     fn step_inc_dec_memory_via_hl() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC100, 0x00);
@@ -947,7 +953,7 @@ mod tests {
 
     #[test]
     fn step_daa_corrects_bcd_addition() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0x3E);
@@ -966,35 +972,35 @@ mod tests {
 
     #[test]
     fn step_ei_enables_ime_after_next_instruction() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
-        cpu.ime = IMEState::Disabled;
+        cpu.ime = ImeState::Disabled;
         bus.write_byte(0xC000, 0xFB);
         bus.write_byte(0xC001, 0x00);
 
         cpu.step(&mut bus);
-        assert!(matches!(cpu.ime, IMEState::PendingEnable));
+        assert!(matches!(cpu.ime, ImeState::PendingEnable));
 
         cpu.step(&mut bus);
-        assert!(matches!(cpu.ime, IMEState::Enabled));
+        assert!(matches!(cpu.ime, ImeState::Enabled));
     }
 
     #[test]
     fn step_di_disables_ime_immediately() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
-        cpu.ime = IMEState::Enabled;
+        cpu.ime = ImeState::Enabled;
         bus.write_byte(0xC000, 0xF3);
 
         cpu.step(&mut bus);
-        assert!(matches!(cpu.ime, IMEState::Disabled));
+        assert!(matches!(cpu.ime, ImeState::Disabled));
     }
 
     #[test]
     fn step_ld_hl_sp_r8_positive_offset() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xFFF0;
@@ -1009,7 +1015,7 @@ mod tests {
 
     #[test]
     fn step_ld_hl_sp_r8_negative_offset() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xFFF0;
@@ -1022,7 +1028,7 @@ mod tests {
 
     #[test]
     fn step_cpl_complements_a() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0x3E);
@@ -1038,7 +1044,7 @@ mod tests {
 
     #[test]
     fn step_scf_ccf_toggle_carry() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.set_c(false);
@@ -1054,7 +1060,7 @@ mod tests {
 
     #[test]
     fn step_ld_a16_sp_stores_sp_in_memory() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xABCD;
@@ -1069,7 +1075,7 @@ mod tests {
 
     #[test]
     fn step_rst_pushes_pc_and_jumps() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0xFFFE;
@@ -1086,7 +1092,7 @@ mod tests {
 
     #[test]
     fn step_add_sp_r8_flags() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.sp = 0x00FF;
@@ -1103,7 +1109,7 @@ mod tests {
 
     #[test]
     fn step_cb_rlc_b_rotates_register() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.b = 0x85;
@@ -1118,7 +1124,7 @@ mod tests {
 
     #[test]
     fn step_cb_bit_7_a_tests_bit_without_modifying() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.a = 0x80;
@@ -1137,7 +1143,7 @@ mod tests {
 
     #[test]
     fn step_cb_swap_a_swaps_nibbles() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.a = 0xAB;
@@ -1152,7 +1158,7 @@ mod tests {
 
     #[test]
     fn step_cb_set_and_res_bit_in_register() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.b = 0x00;
@@ -1171,7 +1177,7 @@ mod tests {
 
     #[test]
     fn step_cb_srl_a_shifts_right_logically() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.a = 0x81;
@@ -1186,7 +1192,7 @@ mod tests {
 
     #[test]
     fn step_ldi_a_hl_loads_and_increments_hl() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.set_hl(0xC100);
@@ -1200,7 +1206,7 @@ mod tests {
 
     #[test]
     fn step_ldd_a_hl_loads_and_decrements_hl() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.set_hl(0xC100);
@@ -1214,7 +1220,7 @@ mod tests {
 
     #[test]
     fn step_ld_hl_plus_a_stores_and_increments_hl() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.a = 0xAA;
@@ -1228,7 +1234,7 @@ mod tests {
 
     #[test]
     fn step_add_hl_bc_16bit_addition() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.set_hl(0x8A23);
@@ -1244,7 +1250,7 @@ mod tests {
 
     #[test]
     fn step_add_hl_hl_doubles_value() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.set_hl(0x8000);
@@ -1257,7 +1263,7 @@ mod tests {
 
     #[test]
     fn step_jp_nn_jumps_to_immediate_address() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         bus.write_byte(0xC000, 0xC3);
@@ -1270,7 +1276,7 @@ mod tests {
 
     #[test]
     fn step_xor_a_zeroes_a_and_sets_z() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.a = 0xFF;
@@ -1286,7 +1292,7 @@ mod tests {
 
     #[test]
     fn step_ld_sp_hl_copies_hl_to_sp() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.set_hl(0xDEAD);
@@ -1298,7 +1304,7 @@ mod tests {
 
     #[test]
     fn step_cp_d8_sets_flags_without_modifying_a() {
-        let mut cpu = CPU::new();
+        let mut cpu = Cpu::new();
         let mut bus = make_test_bus(HardwareMode::DMG);
         cpu.pc = 0xC000;
         cpu.regs.a = 0x42;

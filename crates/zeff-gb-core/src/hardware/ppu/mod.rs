@@ -100,6 +100,12 @@ pub struct PPU {
     pub debug_flags: PpuDebugFlags,
 }
 
+impl Default for PPU {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PPU {
     pub fn new() -> Self {
         let default_bg_palette = default_cgb_palette_ram();

@@ -105,6 +105,7 @@ pub(super) fn compute_target_tilt(
     (x, y)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn update_smoothed_tilt(
     current: &mut (f32, f32),
     target: (f32, f32),

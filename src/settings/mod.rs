@@ -227,16 +227,12 @@ impl Settings {
                     settings.save_to_path(&config_path);
                     settings
                 } else {
-                    let mut s = Self::default();
-                    s.ui_scale_needs_auto = true;
-                    s
+                    Settings { ui_scale_needs_auto: true, ..Default::default() }
                 }
             }
         } else {
             Self::load_from_path(&Self::legacy_path()).unwrap_or_else(|| {
-                let mut s = Self::default();
-                s.ui_scale_needs_auto = true;
-                s
+                Settings { ui_scale_needs_auto: true, ..Default::default() }
             })
         };
 

@@ -215,7 +215,7 @@ impl Pulse {
         self.is_pulse1 = r.read_bool()?;
         self.enabled = r.read_bool()?;
         self.length_counter = r.read_u8()?;
-        self.duty = r.read_u8()?;
+        self.duty = r.read_u8()? & 3;
         self.length_halt = r.read_bool()?;
         self.constant_volume = r.read_bool()?;
         self.envelope_volume = r.read_u8()?;
@@ -227,7 +227,7 @@ impl Pulse {
         self.sweep_divider = r.read_u8()?;
         self.timer_period = r.read_u16()?;
         self.timer_counter = r.read_u16()?;
-        self.sequence_pos = r.read_u8()?;
+        self.sequence_pos = r.read_u8()? & 7;
         self.envelope_start = r.read_bool()?;
         self.envelope_divider = r.read_u8()?;
         self.envelope_decay = r.read_u8()?;

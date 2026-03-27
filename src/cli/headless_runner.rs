@@ -43,7 +43,7 @@ pub(crate) fn run_headless(
                 let (pc, op, cb_prefix, step_cycles) = emulator.step_instruction();
                 if matches!(
                     emulator.cpu.running,
-                    zeff_gb_core::hardware::types::CPUState::Suspended
+                    zeff_gb_core::hardware::types::CpuState::Suspended
                 ) {
                     println!(
                         "{}",
@@ -155,7 +155,7 @@ pub(crate) fn run_headless(
             emulator.step_frame();
             if matches!(
                 emulator.cpu.running,
-                zeff_gb_core::hardware::types::CPUState::Suspended
+                zeff_gb_core::hardware::types::CpuState::Suspended
             ) {
                 println!(
                     "{}",

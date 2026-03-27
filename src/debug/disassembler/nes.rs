@@ -292,6 +292,97 @@ fn opcode_info(op: u8) -> Option<(&'static str, NesAddrMode)> {
         0xF9 => ("SBC", AbsY),
         0xFD => ("SBC", AbsX),
         0xFE => ("INC", AbsX),
+
+        // LAX: LDA + LDX
+        0xA7 => ("*LAX", Zp),
+        0xB7 => ("*LAX", ZpY),
+        0xAF => ("*LAX", Abs),
+        0xBF => ("*LAX", AbsY),
+        0xA3 => ("*LAX", IndX),
+        0xB3 => ("*LAX", IndY),
+
+        // SAX: store A & X
+        0x87 => ("*SAX", Zp),
+        0x97 => ("*SAX", ZpY),
+        0x8F => ("*SAX", Abs),
+        0x83 => ("*SAX", IndX),
+
+        // DCP: DEC + CMP
+        0xC7 => ("*DCP", Zp),
+        0xD7 => ("*DCP", ZpX),
+        0xCF => ("*DCP", Abs),
+        0xDF => ("*DCP", AbsX),
+        0xDB => ("*DCP", AbsY),
+        0xC3 => ("*DCP", IndX),
+        0xD3 => ("*DCP", IndY),
+
+        // ISB/ISC: INC + SBC
+        0xE7 => ("*ISB", Zp),
+        0xF7 => ("*ISB", ZpX),
+        0xEF => ("*ISB", Abs),
+        0xFF => ("*ISB", AbsX),
+        0xFB => ("*ISB", AbsY),
+        0xE3 => ("*ISB", IndX),
+        0xF3 => ("*ISB", IndY),
+
+        // SLO: ASL + ORA
+        0x07 => ("*SLO", Zp),
+        0x17 => ("*SLO", ZpX),
+        0x0F => ("*SLO", Abs),
+        0x1F => ("*SLO", AbsX),
+        0x1B => ("*SLO", AbsY),
+        0x03 => ("*SLO", IndX),
+        0x13 => ("*SLO", IndY),
+
+        // RLA: ROL + AND
+        0x27 => ("*RLA", Zp),
+        0x37 => ("*RLA", ZpX),
+        0x2F => ("*RLA", Abs),
+        0x3F => ("*RLA", AbsX),
+        0x3B => ("*RLA", AbsY),
+        0x23 => ("*RLA", IndX),
+        0x33 => ("*RLA", IndY),
+
+        // SRE: LSR + EOR
+        0x47 => ("*SRE", Zp),
+        0x57 => ("*SRE", ZpX),
+        0x4F => ("*SRE", Abs),
+        0x5F => ("*SRE", AbsX),
+        0x5B => ("*SRE", AbsY),
+        0x43 => ("*SRE", IndX),
+        0x53 => ("*SRE", IndY),
+
+        // RRA: ROR + ADC
+        0x67 => ("*RRA", Zp),
+        0x77 => ("*RRA", ZpX),
+        0x6F => ("*RRA", Abs),
+        0x7F => ("*RRA", AbsX),
+        0x7B => ("*RRA", AbsY),
+        0x63 => ("*RRA", IndX),
+        0x73 => ("*RRA", IndY),
+
+        // Immediate-mode combined ops
+        0x0B | 0x2B => ("*ANC", Imm),
+        0x4B => ("*ALR", Imm),
+        0x6B => ("*ARR", Imm),
+        0xCB => ("*AXS", Imm),
+        0xEB => ("*SBC", Imm),
+
+        // NOP variants (1-byte implied)
+        0x1A | 0x3A | 0x5A | 0x7A | 0xDA | 0xFA => ("*NOP", Imp),
+        // NOP variants (2-byte zero page)
+        0x04 | 0x44 | 0x64 => ("*NOP", Zp),
+        // NOP variants (2-byte zero page, X)
+        0x14 | 0x34 | 0x54 | 0x74 | 0xD4 | 0xF4 => ("*NOP", ZpX),
+        // NOP variants (3-byte absolute)
+        0x0C => ("*NOP", Abs),
+        // NOP variants (3-byte absolute, X)
+        0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => ("*NOP", AbsX),
+
+        // KIL/JAM: halt CPU
+        0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 |
+        0x92 | 0xB2 | 0xD2 | 0xF2 => ("*KIL", Imp),
+
         _ => return None,
     })
 }

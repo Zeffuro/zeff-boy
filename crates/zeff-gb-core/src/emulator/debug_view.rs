@@ -1,7 +1,7 @@
 use super::Emulator;
 use crate::debug::{DebugInfo, PpuSnapshot, WatchpointInfo};
 use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::hardware::types::{CPUState, IMEState};
+use crate::hardware::types::{CpuState, ImeState};
 
 impl Emulator {
     pub fn framebuffer(&self) -> &[u8] {
@@ -46,17 +46,17 @@ impl Emulator {
 
     pub fn snapshot(&self) -> DebugInfo {
         let ime = match self.cpu.ime {
-            IMEState::Enabled => "Enabled",
-            IMEState::Disabled => "Disabled",
-            IMEState::PendingEnable => "Pending",
+            ImeState::Enabled => "Enabled",
+            ImeState::Disabled => "Disabled",
+            ImeState::PendingEnable => "Pending",
         };
         let cpu_state = match self.cpu.running {
-            CPUState::Running => "Running",
-            CPUState::Halted => "Halted",
-            CPUState::Stopped => "Stopped",
-            CPUState::InterruptHandling => "IntHandle",
-            CPUState::Reset => "Reset",
-            CPUState::Suspended => "Suspended",
+            CpuState::Running => "Running",
+            CpuState::Halted => "Halted",
+            CpuState::Stopped => "Stopped",
+            CpuState::InterruptHandling => "IntHandle",
+            CpuState::Reset => "Reset",
+            CpuState::Suspended => "Suspended",
         };
 
         let start = self.cpu.pc;
@@ -136,7 +136,7 @@ impl Emulator {
              Mode: {mode:?} (pref: {pref:?})\n\
              Cycles: {cycles}\n\
              \n\
-             --- CPU ---\n\
+             --- Cpu ---\n\
              PC={pc:#06X}  SP={sp:#06X}\n\
              AF={a:02X}{f:02X}  BC={b:02X}{c:02X}  DE={d:02X}{e:02X}  HL={h:02X}{l:02X}\n\
              IME={ime:?}  State={state:?}  HaltBug={hb}\n\

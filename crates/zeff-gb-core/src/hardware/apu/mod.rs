@@ -108,6 +108,12 @@ pub struct Apu {
     channel_muted: [bool; 4],
 }
 
+impl Default for Apu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Apu {
     pub fn new() -> Self {
         Self {

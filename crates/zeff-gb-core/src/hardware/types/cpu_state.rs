@@ -1,12 +1,12 @@
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum IMEState {
+pub enum ImeState {
     Enabled,
     Disabled,
     PendingEnable,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum CPUState {
+pub enum CpuState {
     Running,
     Halted,
     Stopped,

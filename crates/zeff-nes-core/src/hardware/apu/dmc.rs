@@ -84,7 +84,6 @@ impl Dmc {
         }
     }
 
-    /// TODO: hook this up to bus DMA reads for proper sample fetching.
     pub fn tick(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
@@ -102,7 +101,6 @@ impl Dmc {
         self.current_address
     }
 
-    /// Called by Bus after performing the DMA read to fill the sample buffer.
     pub fn fill_sample_buffer(&mut self, byte: u8) {
         self.sample_buffer = Some(byte);
         self.current_address = if self.current_address == 0xFFFF {
@@ -175,7 +173,7 @@ impl Dmc {
         self.irq_enabled = r.read_bool()?;
         self.irq_flag = r.read_bool()?;
         self.loop_flag = r.read_bool()?;
-        self.rate_index = r.read_u8()?;
+        self.rate_index = r.read_u8()? & 0x0F;
         self.timer_period = r.read_u16()?;
         self.timer_counter = r.read_u16()?;
         self.output_level = r.read_u8()?;

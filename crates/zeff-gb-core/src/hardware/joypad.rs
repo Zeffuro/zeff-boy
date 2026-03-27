@@ -33,6 +33,12 @@ impl fmt::Debug for Joypad {
     }
 }
 
+impl Default for Joypad {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Joypad {
     pub fn new() -> Self {
         Self {

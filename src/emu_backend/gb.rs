@@ -24,8 +24,14 @@ pub(super) fn set_apu_sample_generation_enabled(
     emu.bus.set_apu_sample_generation_enabled(enabled);
 }
 
-pub(super) fn set_apu_channel_mutes(emu: &mut zeff_gb_core::emulator::Emulator, mutes: [bool; 4]) {
-    emu.bus.set_apu_channel_mutes(mutes);
+pub(super) fn set_apu_channel_mutes(emu: &mut zeff_gb_core::emulator::Emulator, mutes: &[bool]) {
+    let arr = [
+        mutes.first().copied().unwrap_or(false),
+        mutes.get(1).copied().unwrap_or(false),
+        mutes.get(2).copied().unwrap_or(false),
+        mutes.get(3).copied().unwrap_or(false),
+    ];
+    emu.bus.set_apu_channel_mutes(arr);
 }
 
 pub(super) fn set_input(

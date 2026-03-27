@@ -53,6 +53,7 @@ fn build_debug_info(
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Cartridge {
     RomOnly(RomOnly),
     Mbc1(Mbc1),

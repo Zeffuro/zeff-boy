@@ -38,7 +38,7 @@ impl Emulator {
         let bus = Bus::new(rom, &header, hardware_mode)?;
 
         let mut emulator = Self {
-            cpu: crate::hardware::cpu::CPU::new(),
+            cpu: crate::hardware::cpu::Cpu::new(),
             bus,
             header,
             hardware_mode_preference: mode_preference,

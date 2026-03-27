@@ -30,13 +30,18 @@ impl ActiveSystem {
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
-            "gb" | "gbc" => Some(Self::GameBoy),
+            "gb" | "gbc" | "sgb" => Some(Self::GameBoy),
             "nes" => Some(Self::Nes),
             _ => None,
         }
     }
+
+    pub(crate) fn supported_extensions() -> &'static str {
+        ".gb, .gbc, .sgb, .nes"
+    }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum EmuBackend {
     Gb(GbEmulator),
     Nes(NesEmulator),
@@ -50,6 +55,7 @@ impl EmuBackend {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn screen_size(&self) -> (u32, u32) {
         self.system().screen_size()
     }
@@ -76,6 +82,7 @@ impl EmuBackend {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn nes_mut(&mut self) -> Option<&mut NesEmulator> {
         match self {
             Self::Nes(e) => Some(e),
@@ -125,7 +132,7 @@ impl EmuBackend {
         }
     }
 
-    pub(crate) fn set_apu_channel_mutes(&mut self, mutes: [bool; 4]) {
+    pub(crate) fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
         match self {
             Self::Gb(e) => gb::set_apu_channel_mutes(e, mutes),
             Self::Nes(e) => nes::set_apu_channel_mutes(e, mutes),
@@ -135,7 +142,7 @@ impl EmuBackend {
     pub(crate) fn rom_path(&self) -> &Path {
         match self {
             Self::Gb(e) => e.rom_path(),
-            Self::Nes(e) => &e.rom_path,
+            Self::Nes(e) => e.rom_path(),
         }
     }
 
@@ -146,9 +153,16 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        match self {
+            Self::Gb(_) => {}
+            Self::Nes(e) => nes::set_input_p2(e, buttons_pressed, dpad_pressed),
+        }
+    }
+
     pub(crate) fn is_suspended(&self) -> bool {
         match self {
-            Self::Gb(e) => matches!(e.cpu.running, zeff_gb_core::hardware::types::CPUState::Suspended),
+            Self::Gb(e) => matches!(e.cpu.running, zeff_gb_core::hardware::types::CpuState::Suspended),
             Self::Nes(e) => matches!(e.cpu.state, zeff_nes_core::hardware::cpu::CpuState::Suspended),
         }
     }
@@ -217,14 +231,14 @@ impl EmuBackend {
     pub(crate) fn rumble_active(&self) -> bool {
         match self {
             Self::Gb(e) => gb::rumble_active(e),
-            Self::Nes(e) => nes::rumble_active(e),
+            Self::Nes(_) => false,
         }
     }
 
     pub(crate) fn is_mbc7(&self) -> bool {
         match self {
             Self::Gb(e) => gb::is_mbc7(e),
-            Self::Nes(e) => nes::is_mbc7(e),
+            Self::Nes(_) => false, // GB-specific: NES has no MBC7
         }
     }
 

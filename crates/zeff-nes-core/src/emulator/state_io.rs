@@ -1,6 +1,8 @@
 use super::Emulator;
 use anyhow::Result;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 impl Emulator {
     pub fn flush_battery_sram(&self) -> Result<Option<String>> {
@@ -48,8 +50,31 @@ fn write_save_file(path: &Path, bytes: &[u8]) -> Result<()> {
             anyhow::anyhow!("failed to create NES save directory {}: {e}", parent.display())
         })?;
     }
-    std::fs::write(path, bytes)
-        .map_err(|e| anyhow::anyhow!("failed to write NES save {}: {e}", path.display()))?;
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = path.with_extension(format!("sav.tmp.{suffix}"));
+
+    let mut file = std::fs::File::create(&tmp_path).map_err(|e| {
+        anyhow::anyhow!("failed to create temp NES save {}: {e}", tmp_path.display())
+    })?;
+    file.write_all(bytes).map_err(|e| {
+        anyhow::anyhow!("failed to write temp NES save {}: {e}", tmp_path.display())
+    })?;
+    file.sync_all().map_err(|e| {
+        anyhow::anyhow!("failed to flush temp NES save {}: {e}", tmp_path.display())
+    })?;
+    drop(file);
+
+    // On Windows, rename fails if destination exists
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        anyhow::anyhow!("failed to finalize NES save {}: {e}", path.display())
+    })?;
     Ok(())
 }
 

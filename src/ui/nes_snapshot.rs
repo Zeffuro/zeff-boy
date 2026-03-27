@@ -1,4 +1,4 @@
-use crate::debug::common::{ApuChannelDebug, DebugSection, RomInfoSection};
+use crate::debug::common::{ApuChannelDebug, DebugSection, RomInfoSection, WatchHitDisplay, WatchpointDisplay};
 use crate::debug::{ApuDebugInfo, CpuDebugSnapshot, DisassemblyView, RomDebugInfo, nes_disassemble_around};
 
 pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDebugSnapshot {
@@ -49,6 +49,48 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         },
     ];
 
+    let mut recent_op_lines = Vec::new();
+    let ops = &snap.recent_ops;
+    let mut i = 0;
+    while i < ops.len() {
+        let (pc, op) = ops[i];
+        let mut count = 1usize;
+        while i + count < ops.len() && ops[i + count] == (pc, op) {
+            count += 1;
+        }
+        let line = if count > 1 {
+            format!("{:04X}: {:02X} (x{})", pc, op, count)
+        } else {
+            format!("{:04X}: {:02X}", pc, op)
+        };
+        recent_op_lines.push(line);
+        i += count;
+    }
+
+    let breakpoints: Vec<u16> = emu.debug.iter_breakpoints().collect();
+    let watchpoints: Vec<WatchpointDisplay> = emu.debug.watchpoints
+        .iter()
+        .map(|w| WatchpointDisplay {
+            address: w.address,
+            watch_type: match w.watch_type {
+                zeff_nes_core::debug::WatchType::Read => crate::debug::WatchType::Read,
+                zeff_nes_core::debug::WatchType::Write => crate::debug::WatchType::Write,
+                zeff_nes_core::debug::WatchType::ReadWrite => crate::debug::WatchType::ReadWrite,
+            },
+        })
+        .collect();
+    let hit_breakpoint = emu.debug.hit_breakpoint;
+    let hit_watchpoint = emu.debug.hit_watchpoint.as_ref().map(|h| WatchHitDisplay {
+        address: h.address,
+        old_value: h.old_value,
+        new_value: h.new_value,
+        watch_type: match h.watch_type {
+            zeff_nes_core::debug::WatchType::Read => crate::debug::WatchType::Read,
+            zeff_nes_core::debug::WatchType::Write => crate::debug::WatchType::Write,
+            zeff_nes_core::debug::WatchType::ReadWrite => crate::debug::WatchType::ReadWrite,
+        },
+    });
+
     CpuDebugSnapshot {
         register_lines,
         flags,
@@ -59,11 +101,11 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         last_opcode_line: format!("@ {:04X} = {:02X}", snap.last_opcode_pc, snap.last_opcode),
         sections,
         mem_around_pc: snap.mem_around_pc.to_vec(),
-        recent_op_lines: Vec::new(),
-        breakpoints: Vec::new(),
-        watchpoints: Vec::new(),
-        hit_breakpoint: None,
-        hit_watchpoint: None,
+        recent_op_lines,
+        breakpoints,
+        watchpoints,
+        hit_breakpoint,
+        hit_watchpoint,
     }
 }
 

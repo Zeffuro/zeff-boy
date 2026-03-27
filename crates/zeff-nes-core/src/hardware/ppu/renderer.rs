@@ -24,6 +24,7 @@ pub static NES_PALETTE: [(u8, u8, u8); 64] = [
 ];
 
 impl Ppu {
+    #[inline]
     pub fn compose_pixel(&mut self) -> u8 {
         let x = self.dot.wrapping_sub(1) as u8;
 

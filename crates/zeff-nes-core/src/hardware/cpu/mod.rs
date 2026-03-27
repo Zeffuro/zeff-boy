@@ -28,6 +28,12 @@ pub struct Cpu {
     pub last_opcode_pc: u16,
 }
 
+impl Default for Cpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cpu {
     pub fn new() -> Self {
         Self {
@@ -79,8 +85,8 @@ impl Cpu {
         let opcode = self.fetch8(bus);
         self.last_opcode = opcode;
         let base_cycles = crate::hardware::opcodes::cycles::CYCLE_TABLE[opcode as usize] as u64;
-        crate::hardware::opcodes::dispatch::execute_opcode(self, bus, opcode);
-        let cycles = if base_cycles == 0 { 2 } else { base_cycles };
+        let extra = crate::hardware::opcodes::dispatch::execute_opcode(self, bus, opcode) as u64;
+        let cycles = base_cycles + extra;
         self.last_step_cycles = cycles;
         self.cycles += cycles;
         cycles

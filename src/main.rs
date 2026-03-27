@@ -43,7 +43,16 @@ fn main() -> anyhow::Result<()> {
         .rom_path
         .map(|path_arg| -> anyhow::Result<EmuBackend> {
             let path = Path::new(&path_arg);
-            let system = ActiveSystem::from_path(path).unwrap_or(ActiveSystem::GameBoy);
+            let system = ActiveSystem::from_path(path).ok_or_else(|| {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)");
+                anyhow::anyhow!(
+                    "Unsupported file type '.{ext}'. Supported extensions: {}",
+                    ActiveSystem::supported_extensions()
+                )
+            })?;
             match system {
                 ActiveSystem::GameBoy => {
                     let emu = zeff_gb_core::emulator::Emulator::from_rom_with_mode(

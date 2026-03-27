@@ -92,9 +92,6 @@ impl Triangle {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_counter == 0 || self.linear_counter == 0 {
-            return 0;
-        }
         TRIANGLE_SEQUENCE[self.sequence_pos as usize]
     }
 
@@ -131,7 +128,7 @@ impl Triangle {
         self.control_flag = r.read_bool()?;
         self.timer_period = r.read_u16()?;
         self.timer_counter = r.read_u16()?;
-        self.sequence_pos = r.read_u8()?;
+        self.sequence_pos = r.read_u8()? & 31;
         Ok(())
     }
 }

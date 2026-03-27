@@ -12,8 +12,8 @@ mod old_licensee;
 mod timer_clock;
 
 pub use cartridge_type::CartridgeType;
-pub use cpu_state::CPUState;
-pub use cpu_state::IMEState;
+pub use cpu_state::CpuState;
+pub use cpu_state::ImeState;
 pub use ram_size::RamSize;
 pub use rom_size::RomSize;
 pub use timer_clock::TimerClock;

@@ -47,6 +47,9 @@ impl Mapper for Uxrom {
     }
 
     fn chr_read(&self, addr: u16) -> u8 {
+        if self.chr.is_empty() {
+            return 0;
+        }
         self.chr[addr as usize % self.chr.len()]
     }
 

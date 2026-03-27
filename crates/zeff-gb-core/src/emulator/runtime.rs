@@ -1,6 +1,6 @@
 use super::{CYCLES_PER_FRAME_DOUBLE, CYCLES_PER_FRAME_NORMAL, Emulator};
 use crate::hardware::bus::CpuAccessTraceEvent;
-use crate::hardware::types::CPUState;
+use crate::hardware::types::CpuState;
 use crate::hardware::types::hardware_mode::HardwareMode;
 
 impl Emulator {
@@ -13,7 +13,7 @@ impl Emulator {
     }
 
     pub fn step_instruction(&mut self) -> (u16, u8, bool, u64) {
-        if matches!(self.cpu.running, CPUState::Suspended) {
+        if matches!(self.cpu.running, CpuState::Suspended) {
             return (self.cpu.pc, self.bus.read_byte(self.cpu.pc), false, 0);
         }
 
@@ -47,12 +47,12 @@ impl Emulator {
             };
 
             if hit_watchpoint {
-                self.cpu.running = CPUState::Suspended;
+                self.cpu.running = CpuState::Suspended;
             }
         }
 
         if self.debug.should_break(pc_before) {
-            self.cpu.running = CPUState::Suspended;
+            self.cpu.running = CpuState::Suspended;
         }
 
         let (op, cb_prefix) = if opcode_at_pc == 0xCB {
@@ -67,7 +67,7 @@ impl Emulator {
 
         debug_assert_eq!(
             self.cpu.timed_cycles_accounted, self.cpu.last_step_cycles,
-            "peripheral timing is expected to be fully CPU-driven (pc={:#06X}, opcode={:#04X}, cb_prefix={})",
+            "peripheral timing is expected to be fully Cpu-driven (pc={:#06X}, opcode={:#04X}, cb_prefix={})",
             pc_before, opcode_at_pc, cb_prefix
         );
 
@@ -75,14 +75,14 @@ impl Emulator {
     }
 
     pub fn step_frame(&mut self) {
-        if matches!(self.cpu.running, CPUState::Suspended) {
+        if matches!(self.cpu.running, CpuState::Suspended) {
             return;
         }
 
         let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
         let target = self.cpu.cycles.wrapping_add(frame_cycles);
 
-        while self.cpu.cycles < target && !matches!(self.cpu.running, CPUState::Suspended) {
+        while self.cpu.cycles < target && !matches!(self.cpu.running, CpuState::Suspended) {
             let _ = self.step_instruction();
         }
     }

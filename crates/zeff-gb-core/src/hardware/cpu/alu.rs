@@ -1,6 +1,6 @@
-use super::CPU;
+use super::Cpu;
 
-impl CPU {
+impl Cpu {
     pub fn inc(&mut self, value: u8) -> u8 {
         let result = value.wrapping_add(1);
         self.set_flags(result == 0, false, (value & 0x0F) + 1 > 0x0F, self.get_c());

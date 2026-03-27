@@ -25,6 +25,7 @@ fn decode_tile_attr(attr: u8) -> TileAttrInfo {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_tilemap_viewer_content(
     ui: &mut egui::Ui,
     vram: &[u8],
@@ -241,6 +242,7 @@ pub(super) fn draw_tilemap_viewer_content(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_wrapped_viewport_rect(
     painter: &egui::Painter,
     origin: egui::Pos2,
@@ -293,6 +295,7 @@ fn draw_wrapped_viewport_rect(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tilemap_into_image(
     image: &mut egui::ColorImage,
     vram: &[u8],

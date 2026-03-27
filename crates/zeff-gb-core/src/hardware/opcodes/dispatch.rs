@@ -1,7 +1,7 @@
 use crate::hardware::bus::Bus;
-use crate::hardware::cpu::CPU;
+use crate::hardware::cpu::Cpu;
 
-pub fn unimplemented_handler(cpu: &mut CPU, opcode: u8) {
+pub fn unimplemented_handler(cpu: &mut Cpu, opcode: u8) {
     log::warn!(
         "Unimplemented opcode {:02X} at PC={:04X}",
         opcode,
@@ -9,7 +9,7 @@ pub fn unimplemented_handler(cpu: &mut CPU, opcode: u8) {
     );
 }
 
-pub fn execute_opcode(cpu: &mut CPU, bus: &mut Bus, opcode: u8) {
+pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) {
     match opcode {
         0x00 => crate::hardware::opcodes::flow::nop(cpu, bus),
         0x01 => crate::hardware::opcodes::load::ld_bc_d16(cpu, bus),

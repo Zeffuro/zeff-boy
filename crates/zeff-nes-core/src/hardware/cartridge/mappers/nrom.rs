@@ -31,15 +31,15 @@ impl Mapper for Nrom {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
-        match addr {
-            0x6000..=0x7FFF => {
-                self.prg_ram[(addr - 0x6000) as usize] = val;
-            }
-            _ => {}
+        if let 0x6000..=0x7FFF = addr {
+            self.prg_ram[(addr - 0x6000) as usize] = val;
         }
     }
 
     fn chr_read(&self, addr: u16) -> u8 {
+        if self.chr.is_empty() {
+            return 0;
+        }
         self.chr[addr as usize % self.chr.len()]
     }
 

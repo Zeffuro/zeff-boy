@@ -12,7 +12,7 @@ pub(super) struct Timer {
     sys_counter: u16,
     mode: HardwareMode,
     prev_bit: bool,
-    overflow_pending: bool,
+    overflow_delay: u8,
 }
 
 impl fmt::Debug for Timer {
@@ -38,7 +38,7 @@ impl Timer {
             sys_counter: 0,
             mode: HardwareMode::DMG,
             prev_bit: false,
-            overflow_pending: false,
+            overflow_delay: 0,
         }
     }
 
@@ -46,7 +46,7 @@ impl Timer {
         self.div = div;
         self.sys_counter = (div as u16) << 8;
         self.prev_bit = false;
-        self.overflow_pending = false;
+        self.overflow_delay = 0;
     }
 
     pub(super) fn div(&self) -> u8 {
@@ -94,8 +94,8 @@ impl Timer {
     }
 
     pub(super) fn write_tima(&mut self, value: u8) {
+        self.overflow_delay = 0;
         self.tima = value;
-        self.overflow_pending = false;
     }
 
     pub(super) fn write_tma(&mut self, value: u8) {
@@ -127,8 +127,8 @@ impl Timer {
     fn increment_tima(&mut self) {
         let (new_tima, overflow) = self.tima.overflowing_add(1);
         if overflow {
-            self.tima = self.tma;
-            self.overflow_pending = true;
+            self.tima = 0;
+            self.overflow_delay = 4;
         } else {
             self.tima = new_tima;
         }
@@ -136,21 +136,26 @@ impl Timer {
 
     pub(super) fn step(&mut self, cycles: u64) -> bool {
         let mut interrupt = false;
+        let mask = self.timer_bit_mask();
+        let enabled = self.tac & 0x04 != 0;
 
         for _ in 0..cycles {
+            if self.overflow_delay > 0 {
+                self.overflow_delay -= 1;
+                if self.overflow_delay == 0 {
+                    self.tima = self.tma;
+                    interrupt = true;
+                }
+            }
+
             self.sys_counter = self.sys_counter.wrapping_add(1);
             self.div = (self.sys_counter >> 8) as u8;
 
-            let new_bit = self.timer_tick_bit();
+            let new_bit = enabled && (self.sys_counter & mask != 0);
             if self.prev_bit && !new_bit {
                 self.increment_tima();
             }
             self.prev_bit = new_bit;
-
-            if self.overflow_pending {
-                self.overflow_pending = false;
-                interrupt = true;
-            }
         }
 
         interrupt
@@ -164,7 +169,7 @@ impl Timer {
         writer.write_u16(self.sys_counter);
         writer.write_hardware_mode(self.mode);
         writer.write_bool(self.prev_bit);
-        writer.write_bool(self.overflow_pending);
+        writer.write_u8(self.overflow_delay);
     }
 
     pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
@@ -176,7 +181,7 @@ impl Timer {
             sys_counter: reader.read_u16()?,
             mode: reader.read_hardware_mode()?,
             prev_bit: reader.read_bool()?,
-            overflow_pending: reader.read_bool()?,
+            overflow_delay: reader.read_u8()?,
         })
     }
 }
@@ -244,28 +249,33 @@ mod tests {
         t.write_tac(0x05);
         t.set_tima_raw(0xFF);
         t.set_tma_raw(0x42);
-        let irq = t.step(16);
+        let irq = t.step(20);
         assert_eq!(t.tima(), 0x42);
-        assert!(irq, "timer overflow should generate interrupt");
+        assert!(irq, "timer overflow should generate interrupt after 4-cycle delay");
     }
 
     #[test]
-    fn tima_overflow_interrupt_delayed_one_cycle() {
+    fn tima_overflow_reads_zero_during_delay() {
         let mut t = make_timer();
         t.reset_div();
         t.write_tac(0x05);
         t.set_tima_raw(0xFF);
         t.set_tma_raw(0x10);
-        for cycle in 1..=16 {
-            let irq = t.step(1);
-            if cycle == 16 {
-            }
-            if irq {
-                break;
-            }
+        for _ in 0..15 {
+            assert!(!t.step(1));
         }
+        assert_eq!(t.tima(), 0xFF);
+        assert!(!t.step(1));
+        assert_eq!(t.tima(), 0x00, "TIMA should read 0 during overflow delay");
+        assert!(!t.step(1));
+        assert_eq!(t.tima(), 0x00);
+        assert!(!t.step(1));
+        assert_eq!(t.tima(), 0x00);
+        assert!(!t.step(1));
+        assert_eq!(t.tima(), 0x00);
         let irq = t.step(1);
-        assert!(irq || t.tima() == 0x10, "overflow should have reloaded TMA");
+        assert!(irq, "interrupt should fire after 4-cycle delay");
+        assert_eq!(t.tima(), 0x10, "TIMA should be reloaded from TMA");
     }
 
     #[test]
@@ -275,12 +285,13 @@ mod tests {
         t.write_tac(0x05);
         t.set_tima_raw(0xFF);
         t.set_tma_raw(0x20);
-        t.step(16);
-        t.write_tima(0x50);
+        t.step(16); // Trigger overflow — TIMA=0, delay=4
+        assert_eq!(t.tima(), 0x00, "TIMA should be 0 during delay");
+        t.write_tima(0x50); // Cancel the pending reload
         assert_eq!(t.tima(), 0x50);
         let irq = t.step(1);
-        assert_eq!(t.tima(), 0x50);
-        let _ = irq;
+        assert!(!irq, "interrupt should be cancelled by TIMA write");
+        assert_ne!(t.tima(), 0x20, "TMA reload should be cancelled");
     }
 
     #[test]
@@ -335,5 +346,72 @@ mod tests {
         assert_eq!(restored.tima(), t.tima());
         assert_eq!(restored.tma(), t.tma());
         assert_eq!(restored.tac(), t.tac());
+    }
+    
+    #[test]
+    fn tac_write_during_pending_overflow_does_not_cancel() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0x30);
+        t.step(16);
+        assert_eq!(t.tima(), 0x00, "TIMA should be 0 during overflow delay");
+        t.write_tac(0x07);
+        let irq = t.step(4);
+        assert!(irq, "overflow interrupt should still fire after TAC write");
+        assert_eq!(t.tima(), 0x30, "TMA reload should still happen after TAC write");
+    }
+
+    #[test]
+    fn div_reset_during_pending_overflow_does_not_cancel() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0x25);
+        t.step(16);
+        assert_eq!(t.tima(), 0x00, "TIMA should be 0 during overflow delay");
+        t.reset_div();
+        let irq = t.step(4);
+        assert!(irq, "overflow interrupt should still fire after DIV reset");
+        assert_eq!(t.tima(), 0x25, "TMA reload should happen after DIV reset");
+    }
+    
+    #[test]
+    fn overflow_with_tma_fe_cascades_on_second_tick() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0xFE);
+        t.step(16);
+        assert_eq!(t.tima(), 0x00, "TIMA should read 0 during delay");
+        
+        let irq1 = t.step(4);
+        assert!(irq1, "first overflow interrupt");
+        assert_eq!(t.tima(), 0xFE, "TIMA should reload to TMA (0xFE)");
+        t.step(12);
+        assert_eq!(t.tima(), 0xFF, "TIMA should be 0xFF after one increment");
+        
+        let irq2 = t.step(20);
+        assert!(irq2, "second overflow interrupt should fire");
+        assert_eq!(t.tima(), 0xFE, "TIMA should reload to TMA (0xFE) again");
+    }
+
+    #[test]
+    fn tma_write_during_overflow_delay_uses_new_value() {
+        let mut t = make_timer();
+        t.reset_div();
+        t.write_tac(0x05);
+        t.set_tima_raw(0xFF);
+        t.set_tma_raw(0x10);
+        t.step(16);
+        assert_eq!(t.tima(), 0x00, "TIMA should be 0 during delay");
+        t.write_tma(0x42);
+        
+        let irq = t.step(4);
+        assert!(irq, "interrupt should fire");
+        assert_eq!(t.tima(), 0x42, "TIMA should reload from new TMA value");
     }
 }

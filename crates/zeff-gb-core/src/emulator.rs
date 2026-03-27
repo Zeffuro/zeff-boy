@@ -1,7 +1,7 @@
 use crate::debug::{DebugController, OpcodeLog};
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use crate::hardware::{bus::Bus, cpu::CPU};
+use crate::hardware::{bus::Bus, cpu::Cpu};
 use std::fmt;
 use std::path::PathBuf;
 
@@ -18,7 +18,7 @@ const DMG_POST_BOOT_REGISTERS: RegisterSeed = (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD
 const CGB_POST_BOOT_REGISTERS: RegisterSeed = (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D);
 
 pub struct Emulator {
-    pub cpu: CPU,
+    pub cpu: Cpu,
     pub bus: Bus,
     pub header: RomHeader,
     pub hardware_mode_preference: HardwareModePreference,

@@ -59,6 +59,7 @@ impl MenuActions {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_menu_bar(
     ctx: &egui::Context,
     current_mode: AspectRatioMode,

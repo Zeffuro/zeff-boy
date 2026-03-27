@@ -13,8 +13,10 @@ pub use crate::hardware::constants::CPU_CYCLES_PER_FRAME;
 pub struct Emulator {
     pub cpu: Cpu,
     pub bus: Bus,
-    pub rom_path: PathBuf,
+    pub(crate) rom_path: PathBuf,
     pub rom_hash: [u8; 32],
+    pub opcode_log: crate::debug::OpcodeLog,
+    pub debug: crate::debug::DebugController,
 }
 
 impl Emulator {
@@ -29,6 +31,8 @@ impl Emulator {
             bus,
             rom_path,
             rom_hash,
+            opcode_log: crate::debug::OpcodeLog::new(),
+            debug: crate::debug::DebugController::new(),
         };
         emu.reset();
         if let Some(path) = emu.try_load_battery_sram()? {
@@ -40,10 +44,16 @@ impl Emulator {
     pub fn reset(&mut self) {
         self.cpu = Cpu::new();
         self.cpu.reset(&mut self.bus);
+        self.opcode_log.clear();
+        self.debug.clear_hits();
     }
 
     pub fn framebuffer(&self) -> &[u8] {
-        &self.bus.ppu.framebuffer
+        &self.bus.ppu.framebuffer[..]
+    }
+
+    pub fn rom_path(&self) -> &std::path::Path {
+        &self.rom_path
     }
 
     pub fn frame_ready(&self) -> bool {
@@ -63,7 +73,9 @@ impl Emulator {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
-        crate::save_state::decode_state(self, data)
+        crate::save_state::decode_state(self, data)?;
+        self.opcode_log.clear();
+        Ok(())
     }
 
     pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
@@ -95,6 +107,8 @@ impl fmt::Debug for Emulator {
         f.debug_struct("NES Emulator")
             .field("cpu", &self.cpu)
             .field("bus", &self.bus)
+            .field("opcode_log", &self.opcode_log)
+            .field("debug", &self.debug)
             .finish_non_exhaustive()
     }
 }

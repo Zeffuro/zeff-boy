@@ -16,13 +16,7 @@ pub(super) fn drain_audio_samples_into(
     emu: &mut zeff_nes_core::emulator::Emulator,
     buf: &mut Vec<f32>,
 ) {
-    let mono = emu.drain_audio_samples();
-    buf.clear();
-    buf.reserve(mono.len() * 2);
-    for &sample in &mono {
-        buf.push(sample);
-        buf.push(sample);
-    }
+    emu.bus.apu.drain_samples_into_stereo(buf);
 }
 
 pub(super) fn set_sample_rate(emu: &mut zeff_nes_core::emulator::Emulator, rate: u32) {
@@ -30,24 +24,27 @@ pub(super) fn set_sample_rate(emu: &mut zeff_nes_core::emulator::Emulator, rate:
 }
 
 pub(super) fn set_apu_sample_generation_enabled(
-    _emu: &mut zeff_nes_core::emulator::Emulator,
-    _enabled: bool,
+    emu: &mut zeff_nes_core::emulator::Emulator,
+    enabled: bool,
 ) {
-    // NES APU always generates samples.
+    emu.bus.apu.set_sample_generation_enabled(enabled);
 }
 
 pub(super) fn set_apu_channel_mutes(
     emu: &mut zeff_nes_core::emulator::Emulator,
-    mutes: [bool; 4],
+    mutes: &[bool],
 ) {
-    emu.bus.apu.set_channel_mutes(mutes);
+    let arr = [
+        mutes.first().copied().unwrap_or(false),
+        mutes.get(1).copied().unwrap_or(false),
+        mutes.get(2).copied().unwrap_or(false),
+        mutes.get(3).copied().unwrap_or(false),
+        mutes.get(4).copied().unwrap_or(false),
+    ];
+    emu.bus.apu.set_channel_mutes(arr);
 }
 
-pub(super) fn set_input(
-    emu: &mut zeff_nes_core::emulator::Emulator,
-    buttons_pressed: u8,
-    dpad_pressed: u8,
-) {
+fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
     let mut nes_byte = 0u8;
     if buttons_pressed & 0x01 != 0 {
         nes_byte |= 0x01;
@@ -73,7 +70,23 @@ pub(super) fn set_input(
     if dpad_pressed & 0x01 != 0 {
         nes_byte |= 0x80;
     }
-    emu.bus.controller1.set_buttons(nes_byte);
+    nes_byte
+}
+
+pub(super) fn set_input(
+    emu: &mut zeff_nes_core::emulator::Emulator,
+    buttons_pressed: u8,
+    dpad_pressed: u8,
+) {
+    emu.bus.controller1.set_buttons(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+}
+
+pub(super) fn set_input_p2(
+    emu: &mut zeff_nes_core::emulator::Emulator,
+    buttons_pressed: u8,
+    dpad_pressed: u8,
+) {
+    emu.bus.controller2.set_buttons(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
 }
 
 pub(super) fn flush_battery_sram(
@@ -118,14 +131,6 @@ pub(super) fn load_state_from_path(
     path: &Path,
 ) -> anyhow::Result<()> {
     emu.load_state_from_path(path)
-}
-
-pub(super) fn rumble_active(_emu: &zeff_nes_core::emulator::Emulator) -> bool {
-    false
-}
-
-pub(super) fn is_mbc7(_emu: &zeff_nes_core::emulator::Emulator) -> bool {
-    false
 }
 
 pub(super) fn apu_channel_snapshot(

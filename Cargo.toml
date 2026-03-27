@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
-description = "A Game Boy and Game Boy Color emulator written in Rust."
+description = "A Game Boy, Game Boy Color, and NES emulator written in Rust."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]

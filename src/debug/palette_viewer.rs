@@ -1,7 +1,8 @@
 use crate::debug::common::PaletteDebugInfo;
-use zeff_gb_core::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba, correct_color};
+use zeff_gb_core::hardware::ppu::{apply_palette, cgb_palette_rgba, correct_color};
 use crate::settings::ColorCorrection;
 
+#[allow(dead_code)]
 fn draw_palette_row(ui: &mut egui::Ui, label: &str, value: u8) {
     ui.label(format!("{} ({:02X})", label, value));
     ui.horizontal(|ui| {
@@ -25,6 +26,7 @@ fn draw_palette_row(ui: &mut egui::Ui, label: &str, value: u8) {
     });
 }
 
+#[allow(dead_code)]
 fn draw_cgb_palette_section(
     ui: &mut egui::Ui,
     title: &str,

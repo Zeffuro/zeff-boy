@@ -311,14 +311,14 @@ impl RomHeader {
     pub fn parse(raw: &[u8]) -> Result<Self> {
         if raw.len() < HEADER_SIZE {
             bail!(
-                "ROM too small for header: need {} bytes, got {}",
+                "File too small for iNES header: need at least {} bytes, got {}. The file may be corrupt or not a valid NES ROM",
                 HEADER_SIZE,
                 raw.len()
             );
         }
         if &raw[0..4] != INES_MAGIC {
             bail!(
-                "Not a valid iNES ROM (bad magic: {:02X} {:02X} {:02X} {:02X})",
+                "Not a valid iNES/NES 2.0 ROM (expected magic bytes 'NES\\x1A', got {:02X} {:02X} {:02X} {:02X}). The file may be corrupt or not a NES ROM",
                 raw[0],
                 raw[1],
                 raw[2],
@@ -523,15 +523,119 @@ impl RomHeader {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
+pub enum MapperImpl {
+    Nrom(mappers::Nrom),
+    Mmc1(mappers::Mmc1),
+    Uxrom(mappers::Uxrom),
+    Cnrom(mappers::Cnrom),
+    Mmc3(mappers::Mmc3),
+    Mmc5(mappers::Mmc5),
+    Axrom(mappers::Axrom),
+    BandaiFcg16(mappers::BandaiFcg16),
+    Vrc4(mappers::Vrc4),
+    Fme7(mappers::Fme7),
+    Action52(mappers::Action52),
+}
+
+macro_rules! dispatch_mapper {
+    ($self:expr, $method:ident $(, $arg:expr)*) => {
+        match $self {
+            MapperImpl::Nrom(m) => m.$method($($arg),*),
+            MapperImpl::Mmc1(m) => m.$method($($arg),*),
+            MapperImpl::Uxrom(m) => m.$method($($arg),*),
+            MapperImpl::Cnrom(m) => m.$method($($arg),*),
+            MapperImpl::Mmc3(m) => m.$method($($arg),*),
+            MapperImpl::Mmc5(m) => m.$method($($arg),*),
+            MapperImpl::Axrom(m) => m.$method($($arg),*),
+            MapperImpl::BandaiFcg16(m) => m.$method($($arg),*),
+            MapperImpl::Vrc4(m) => m.$method($($arg),*),
+            MapperImpl::Fme7(m) => m.$method($($arg),*),
+            MapperImpl::Action52(m) => m.$method($($arg),*),
+        }
+    };
+}
+
+impl MapperImpl {
+    #[inline]
+    fn cpu_read(&self, addr: u16) -> u8 {
+        dispatch_mapper!(self, cpu_read, addr)
+    }
+
+    #[inline]
+    fn cpu_write(&mut self, addr: u16, val: u8) {
+        dispatch_mapper!(self, cpu_write, addr, val)
+    }
+
+    #[inline]
+    fn chr_read(&self, addr: u16) -> u8 {
+        dispatch_mapper!(self, chr_read, addr)
+    }
+
+    #[inline]
+    fn chr_read_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
+        dispatch_mapper!(self, chr_read_kind, addr, kind)
+    }
+
+    #[inline]
+    fn chr_write(&mut self, addr: u16, val: u8) {
+        dispatch_mapper!(self, chr_write, addr, val)
+    }
+
+    fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+        dispatch_mapper!(self, ppu_nametable_read, addr, ciram)
+    }
+
+    fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+        dispatch_mapper!(self, ppu_nametable_write, addr, val, ciram)
+    }
+
+    fn mirroring(&self) -> Mirroring {
+        dispatch_mapper!(self, mirroring)
+    }
+
+    fn write_state(&self, w: &mut crate::save_state::StateWriter) {
+        dispatch_mapper!(self, write_state, w)
+    }
+
+    fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        dispatch_mapper!(self, read_state, r)
+    }
+
+    fn irq_pending(&self) -> bool {
+        dispatch_mapper!(self, irq_pending)
+    }
+
+    fn notify_scanline(&mut self) {
+        dispatch_mapper!(self, notify_scanline)
+    }
+
+    fn clock_cpu(&mut self) {
+        dispatch_mapper!(self, clock_cpu)
+    }
+
+    fn dump_battery_data(&self) -> Option<Vec<u8>> {
+        dispatch_mapper!(self, dump_battery_data)
+    }
+
+    fn load_battery_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        dispatch_mapper!(self, load_battery_data, bytes)
+    }
+}
+
 pub struct Cartridge {
     header: RomHeader,
-    mapper: Box<dyn Mapper>,
+    mapper: MapperImpl,
 }
 
 impl Cartridge {
     pub fn load(rom_data: &[u8]) -> Result<Self> {
         let header = RomHeader::parse(rom_data)?;
         header.display_info();
+
+        if header.prg_rom_size == 0 {
+            bail!("ROM declares 0 bytes of PRG ROM, which is invalid — every NES ROM needs at least one PRG bank");
+        }
 
         let trainer_offset = if header.has_trainer { TRAINER_SIZE } else { 0 };
         let prg_start = HEADER_SIZE + trainer_offset;
@@ -542,7 +646,7 @@ impl Cartridge {
         let expected_min = chr_start + chr_size;
         if rom_data.len() < expected_min {
             bail!(
-                "ROM file too small: expected at least {} bytes, got {}",
+                "ROM file truncated: header declares {} bytes of PRG+CHR data but file only has {} bytes total",
                 expected_min,
                 rom_data.len()
             );
@@ -555,44 +659,45 @@ impl Cartridge {
             vec![0; CHR_ROM_BANK_SIZE]
         };
 
-        let mapper: Box<dyn Mapper> = match header.mapper_id {
-            0 => Box::new(mappers::Nrom::new(prg_rom, chr_rom, header.mirroring)),
-            1 => Box::new(mappers::Mmc1::new(prg_rom, chr_rom, header.mirroring)),
-            2 => Box::new(mappers::Uxrom::new(prg_rom, chr_rom, header.mirroring)),
-            3 => Box::new(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring)),
-            4 => Box::new(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring)),
-            5 => Box::new(mappers::Mmc5::new(
+        let mapper_kind = header.mapper_kind();
+        let mapper = match mapper_kind {
+            NesMapper::Nrom => MapperImpl::Nrom(mappers::Nrom::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::SxRom => MapperImpl::Mmc1(mappers::Mmc1::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::UxRom => MapperImpl::Uxrom(mappers::Uxrom::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::CnRom => MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::TxRom => MapperImpl::Mmc3(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::ExRom => MapperImpl::Mmc5(mappers::Mmc5::new(
                 prg_rom,
                 chr_rom,
                 header.mirroring,
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery || header.prg_nvram_size > 0,
             )),
-            7 => Box::new(mappers::Axrom::new(prg_rom, chr_rom, header.mirroring)),
-            16 => Box::new(mappers::BandaiFcg16::new(
+            NesMapper::AxRom => MapperImpl::Axrom(mappers::Axrom::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::BandaiEprom24C02 => MapperImpl::BandaiFcg16(mappers::BandaiFcg16::new(
                 prg_rom,
                 chr_rom,
                 header.mirroring,
                 header.submapper_id,
                 header.has_battery || header.prg_nvram_size >= 256,
             )),
-            21 => {
+            NesMapper::Vrc4A => {
                 let (a0, a1) = match header.submapper_id {
                     1 => (0x02, 0x04),
                     2 => (0x40, 0x80),
                     _ => (0x02 | 0x40, 0x04 | 0x80),
                 };
-                Box::new(mappers::Vrc4::new(prg_rom, chr_rom, header.mirroring, a0, a1))
+                MapperImpl::Vrc4(mappers::Vrc4::new(prg_rom, chr_rom, header.mirroring, a0, a1))
             }
-            69 => Box::new(mappers::Fme7::new(
+            NesMapper::Fme7 => MapperImpl::Fme7(mappers::Fme7::new(
                 prg_rom,
                 chr_rom,
                 header.mirroring,
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery,
             )),
-            228 => Box::new(mappers::Action52::new(prg_rom, chr_rom, header.mirroring)),
-            _ => bail!("Unsupported mapper: {}", header.mapper_label()),
+            NesMapper::Action52 => MapperImpl::Action52(mappers::Action52::new(prg_rom, chr_rom, header.mirroring)),
+            _ => bail!("Unsupported mapper: {}. This mapper is not yet implemented", header.mapper_label()),
         };
 
         Ok(Self { header, mapper })
@@ -606,18 +711,27 @@ impl Cartridge {
         self.mapper.mirroring()
     }
 
+    #[inline]
     pub fn cpu_read(&self, addr: u16) -> u8 {
         self.mapper.cpu_read(addr)
     }
 
+    #[inline]
+    pub fn cpu_peek(&self, addr: u16) -> u8 {
+        self.mapper.cpu_read(addr)
+    }
+
+    #[inline]
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
         self.mapper.cpu_write(addr, val);
     }
 
+    #[inline]
     pub fn chr_read(&self, addr: u16) -> u8 {
         self.mapper.chr_read(addr)
     }
 
+    #[inline]
     pub fn chr_read_with_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
         self.mapper.chr_read_kind(addr, kind)
     }
@@ -663,7 +777,7 @@ impl Cartridge {
     }
 }
 
-pub trait Mapper: Send {
+pub(crate) trait Mapper: Send {
     fn cpu_read(&self, addr: u16) -> u8;
     fn cpu_write(&mut self, addr: u16, val: u8);
     fn chr_read(&self, addr: u16) -> u8;

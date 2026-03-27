@@ -223,6 +223,7 @@ impl TileViewerState {
         self.vram_dirty = true;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_dirty_inputs(
         &mut self,
         vram: &[u8],

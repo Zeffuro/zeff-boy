@@ -1,6 +1,6 @@
-use super::CPU;
+use super::Cpu;
 
-impl CPU {
+impl Cpu {
     pub fn rlc(&mut self, value: u8) -> u8 {
         let result = value.rotate_left(1);
         self.set_flags(result == 0, false, false, result & 1 != 0);

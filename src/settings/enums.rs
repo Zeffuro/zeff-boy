@@ -65,6 +65,7 @@ impl ScalingMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum EffectPreset {
     #[default]
     None,
@@ -91,6 +92,7 @@ impl EffectPreset {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum ShaderPreset {
     #[default]
     None,

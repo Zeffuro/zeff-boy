@@ -5,10 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::StateWriter;
 use crate::hardware::bus::Bus;
-use crate::hardware::cpu::{CPU, Registers};
+use crate::hardware::cpu::{Cpu, Registers};
 use crate::hardware::rom_header::RomHeader;
-use crate::hardware::types::CPUState;
-use crate::hardware::types::IMEState;
+use crate::hardware::types::CpuState;
+use crate::hardware::types::ImeState;
 use crate::hardware::types::constants::{HRAM_SIZE, OAM_SIZE};
 use crate::hardware::types::hardware_mode::HardwareMode;
 
@@ -34,7 +34,7 @@ pub fn has_bess_footer(bytes: &[u8]) -> bool {
 
 pub fn append_bess(
     writer: &mut StateWriter,
-    cpu: &CPU,
+    cpu: &Cpu,
     bus: &Bus,
     hardware_mode: HardwareMode,
 ) -> Result<()> {
@@ -133,7 +133,7 @@ pub fn append_bess(
 }
 
 pub struct BessImport {
-    pub cpu: CPU,
+    pub cpu: Cpu,
     pub bus: Bus,
     pub hardware_mode: HardwareMode,
 }
@@ -232,7 +232,7 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
     let obj_pal_size = read_u32_le(&core[0xC8..]) as usize;
     let obj_pal_offset = read_u32_le(&core[0xCC..]) as usize;
 
-    let cpu = CPU {
+    let cpu = Cpu {
         pc,
         sp,
         regs: Registers {
@@ -246,14 +246,14 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
             l: (hl & 0xFF) as u8,
         },
         ime: if ime_val != 0 {
-            IMEState::Enabled
+            ImeState::Enabled
         } else {
-            IMEState::Disabled
+            ImeState::Disabled
         },
         running: match exec_state {
-            1 => CPUState::Halted,
-            2 => CPUState::Stopped,
-            _ => CPUState::Running,
+            1 => CpuState::Halted,
+            2 => CpuState::Stopped,
+            _ => CpuState::Running,
         },
         cycles: 0,
         last_step_cycles: 0,
@@ -317,7 +317,7 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
 #[allow(clippy::too_many_arguments)]
 fn write_core_body(
     writer: &mut StateWriter,
-    cpu: &CPU,
+    cpu: &Cpu,
     bus: &Bus,
     hardware_mode: HardwareMode,
     ram_offset: u32,
@@ -351,16 +351,16 @@ fn write_core_body(
     writer.write_u16(cpu.sp);
 
     writer.write_u8(match cpu.ime {
-        IMEState::Enabled | IMEState::PendingEnable => 1,
-        IMEState::Disabled => 0,
+        ImeState::Enabled | ImeState::PendingEnable => 1,
+        ImeState::Disabled => 0,
     });
 
     writer.write_u8(bus.ie);
 
     writer.write_u8(match cpu.running {
-        CPUState::Running | CPUState::InterruptHandling => 0,
-        CPUState::Halted => 1,
-        CPUState::Stopped | CPUState::Reset | CPUState::Suspended => 2,
+        CpuState::Running | CpuState::InterruptHandling => 0,
+        CpuState::Halted => 1,
+        CpuState::Stopped | CpuState::Reset | CpuState::Suspended => 2,
     });
 
     writer.write_u8(0);

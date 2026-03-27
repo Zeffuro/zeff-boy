@@ -23,7 +23,9 @@ impl App {
         }
 
         if self.audio.is_none() {
-            self.audio = AudioOutput::new();
+            self.audio = AudioOutput::new()
+                .map_err(|e| log::warn!("Audio init failed: {e}"))
+                .ok();
             if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
                 thread.send(crate::emu_thread::EmuCommand::SetSampleRate(
                     audio.sample_rate(),

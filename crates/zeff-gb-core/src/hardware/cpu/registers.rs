@@ -1,4 +1,4 @@
-use super::CPU;
+use super::Cpu;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Registers {
@@ -27,7 +27,7 @@ impl Default for Registers {
     }
 }
 
-impl CPU {
+impl Cpu {
     pub fn set_flags(&mut self, z: bool, n: bool, h: bool, c: bool) {
         self.set_z(z);
         self.set_n(n);

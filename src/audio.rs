@@ -16,10 +16,12 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub(crate) fn new() -> Option<Self> {
+    pub(crate) fn new() -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host.default_output_device()?;
-        let config = device.default_output_config().ok()?;
+        let device = host.default_output_device()
+            .ok_or("no audio output device found")?;
+        let config = device.default_output_config()
+            .map_err(|e| format!("failed to get default audio output config: {e}"))?;
 
         let sample_rate = config.sample_rate();
         let channels = config.channels();
@@ -30,19 +32,22 @@ impl AudioOutput {
 
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
-                Self::build_stream_f32(&device, &stream_config, channels, consumer)?
+                Self::build_stream_f32(&device, &stream_config, channels, consumer)
+                    .ok_or("failed to build F32 audio stream")?
             }
             SampleFormat::I16 => {
-                Self::build_stream_i16(&device, &stream_config, channels, consumer)?
+                Self::build_stream_i16(&device, &stream_config, channels, consumer)
+                    .ok_or("failed to build I16 audio stream")?
             }
             SampleFormat::U16 => {
-                Self::build_stream_u16(&device, &stream_config, channels, consumer)?
+                Self::build_stream_u16(&device, &stream_config, channels, consumer)
+                    .ok_or("failed to build U16 audio stream")?
             }
-            _ => return None,
+            other => return Err(format!("unsupported audio sample format: {other:?}")),
         };
 
-        stream.play().ok()?;
-        Some(Self {
+        stream.play().map_err(|e| format!("failed to start audio playback: {e}"))?;
+        Ok(Self {
             _stream: stream,
             producer,
             sample_rate,

@@ -3,6 +3,39 @@ pub(crate) use zeff_gb_core::cheats::*;
 use crate::settings::Settings;
 use crate::emu_backend::ActiveSystem;
 
+#[allow(dead_code)]
+pub(crate) fn try_parse_nes_game_genie(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
+    let patch = zeff_nes_core::cheats::decode_nes_game_genie(input)?;
+    let cheat_patch = match patch.compare {
+        Some(cmp) => CheatPatch::RomWriteIfEquals {
+            address: patch.address,
+            value: CheatValue::constant(patch.value),
+            compare: CheatValue::constant(cmp),
+        },
+        None => CheatPatch::RomWrite {
+            address: patch.address,
+            value: CheatValue::constant(patch.value),
+        },
+    };
+    Some((vec![cheat_patch], CheatType::GameGenie))
+}
+
+#[allow(dead_code)]
+pub(crate) fn parse_cheat_for_system(
+    input: &str,
+    system: ActiveSystem,
+) -> Result<(Vec<CheatPatch>, CheatType), &'static str> {
+    if let Ok(result) = parse_cheat(input) {
+        return Ok(result);
+    }
+    if system == ActiveSystem::Nes
+        && let Some(result) = try_parse_nes_game_genie(input)
+    {
+        return Ok(result);
+    }
+    Err("Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV)")
+}
+
 fn sanitize_rom_title(title: &str) -> String {
     title
         .chars()

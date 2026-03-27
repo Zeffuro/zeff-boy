@@ -1,3 +1,4 @@
+#[allow(clippy::too_many_arguments)]
 pub(super) fn format_op_line(
     traced: u64,
     pc: u16,
@@ -47,6 +48,7 @@ pub(super) fn format_op_line(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn format_op_tail_line(
     pc: u16,
     op: u8,

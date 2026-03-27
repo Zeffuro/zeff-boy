@@ -1,9 +1,15 @@
+use crate::cheats::NesCheatState;
 use crate::hardware::apu::Apu;
 use crate::hardware::cartridge::{Cartridge, ChrFetchKind, Mirroring};
 use crate::hardware::constants::*;
 use crate::hardware::controller::Controller;
 use crate::hardware::ppu::{Ppu, NES_PALETTE, PRE_RENDER_SCANLINE};
 use std::fmt;
+
+pub enum DebugTraceEvent {
+    Read { addr: u16, value: u8 },
+    Write { addr: u16, old_value: u8, new_value: u8 },
+}
 
 pub struct Bus {
     pub ram: [u8; RAM_SIZE],
@@ -18,6 +24,11 @@ pub struct Bus {
     pub dma_stall_cycles: u64,
 
     pub cpu_odd_cycle: bool,
+    pub cpu_open_bus: u8,
+    pub game_genie: NesCheatState,
+
+    pub debug_trace_enabled: bool,
+    pub debug_trace_events: Vec<DebugTraceEvent>,
 }
 
 impl Bus {
@@ -32,25 +43,58 @@ impl Bus {
             ppu_cycles: 0,
             dma_stall_cycles: 0,
             cpu_odd_cycle: false,
+            cpu_open_bus: 0,
+            game_genie: NesCheatState::new(),
+            debug_trace_enabled: false,
+            debug_trace_events: Vec::new(),
         }
     }
 
-    #[allow(unreachable_patterns)]
+    #[inline]
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
-        match addr {
+        let val = match addr {
             0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
             0x2000..=0x3FFF => self.ppu_read_register(addr & PPU_REG_MIRROR_MASK),
+            0x4000..=0x4013 => self.cpu_open_bus,
+            OAM_DMA => self.cpu_open_bus,
             APU_STATUS => self.apu.read_status(),
             CONTROLLER1 => self.controller1.read(),
             CONTROLLER2 => self.controller2.read(),
-            0x4000..=0x4014 | 0x4018..=0x401F => 0,
-            0x4020..=0xFFFF => self.cartridge.cpu_read(addr),
-            _ => 0
+            0x4018..=0x401F => self.cpu_open_bus,
+            0x4020..=0x7FFF => self.cartridge.cpu_read(addr),
+            0x8000..=0xFFFF => {
+                let rom_val = self.cartridge.cpu_read(addr);
+                self.game_genie.intercept(addr, rom_val).unwrap_or(rom_val)
+            }
+        };
+        self.cpu_open_bus = val;
+        if self.debug_trace_enabled {
+            self.debug_trace_events.push(DebugTraceEvent::Read { addr, value: val });
+        }
+        val
+    }
+
+    #[inline]
+    pub fn cpu_peek(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
+            0x2000..=0x3FFF => self.ppu.peek_register(addr & PPU_REG_MIRROR_MASK),
+            0x4000..=0x4013 => 0,
+            OAM_DMA => 0,
+            APU_STATUS => self.apu.peek_status(),
+            CONTROLLER1 => 0,
+            CONTROLLER2 => 0,
+            0x4018..=0x401F => 0,
+            0x4020..=0xFFFF => self.cartridge.cpu_peek(addr),
         }
     }
 
-    #[allow(unreachable_patterns)]
+    #[inline]
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
+        if self.debug_trace_enabled {
+            let old = self.cpu_peek(addr);
+            self.debug_trace_events.push(DebugTraceEvent::Write { addr, old_value: old, new_value: val });
+        }
         match addr {
             0x0000..=0x1FFF => {
                 self.ram[(addr & RAM_MIRROR_MASK) as usize] = val;
@@ -58,6 +102,10 @@ impl Bus {
 
             0x2000..=0x3FFF => {
                 self.ppu_write_register(addr & PPU_REG_MIRROR_MASK, val);
+            }
+
+            0x4000..=0x4013 | APU_STATUS | CONTROLLER2 => {
+                self.apu.write_register(addr, val, self.cpu_odd_cycle);
             }
 
             OAM_DMA => {
@@ -68,7 +116,7 @@ impl Bus {
                     self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(1);
                 }
 
-                self.dma_stall_cycles = 513;
+                self.dma_stall_cycles = if self.cpu_odd_cycle { 514 } else { 513 };
             }
 
             CONTROLLER1 => {
@@ -76,23 +124,18 @@ impl Bus {
                 self.controller2.write(val);
             }
 
-            0x4000..=0x4013 | APU_STATUS | CONTROLLER2 => {
-                self.apu.write_register(addr, val, self.cpu_odd_cycle);
-            }
-
             0x4018..=0x401F => { /* test mode registers — ignored */ }
 
             0x4020..=0xFFFF => {
                 self.cartridge.cpu_write(addr, val);
             }
-            _ => {}
         }
     }
 
     fn ppu_read_register(&mut self, addr: u16) -> u8 {
-        match addr {
+        let result = match addr {
             0x2002 => {
-                let status = self.ppu.regs.status;
+                let status = (self.ppu.regs.status & 0xE0) | (self.ppu.io_latch & 0x1F);
                 self.ppu.regs.clear_vblank();
                 self.ppu.w = false;
                 status
@@ -112,11 +155,14 @@ impl Bus {
                 self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
                 data
             }
-            _ => 0,
-        }
+            _ => self.ppu.io_latch,
+        };
+        self.ppu.io_latch = result;
+        result
     }
 
     fn ppu_write_register(&mut self, addr: u16, val: u8) {
+        self.ppu.io_latch = val;
         match addr {
             0x2000 => {
                 self.ppu.regs.ctrl = val;
@@ -157,10 +203,12 @@ impl Bus {
         }
     }
 
+    #[inline]
     pub fn ppu_bus_read(&self, addr: u16) -> u8 {
         self.ppu_bus_read_with_kind(addr, ChrFetchKind::Background)
     }
 
+    #[inline]
     fn ppu_bus_read_with_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
@@ -224,7 +272,7 @@ impl Bus {
 
     fn palette_index(addr: u16) -> usize {
         let mut idx = (addr & 0x1F) as usize;
-        if idx >= 16 && idx % 4 == 0 {
+        if idx >= 16 && idx.is_multiple_of(4) {
             idx -= 16;
         }
         idx
@@ -254,7 +302,7 @@ impl Bus {
             self.evaluate_sprites_for_scanline(0);
         }
 
-        if visible_line && dot >= 1 && dot <= 256 {
+        if visible_line && (1..=256).contains(&dot) {
             if rendering {
                 let pal_idx = self.ppu.compose_pixel() as usize;
                 Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx);
@@ -266,7 +314,7 @@ impl Bus {
 
         if rendering && render_line {
             let in_bg_range =
-                (dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336);
+                (1..=256).contains(&dot) || (321..=336).contains(&dot);
 
             if in_bg_range {
                 self.ppu.update_shifters();
@@ -320,14 +368,33 @@ impl Bus {
                 self.ppu.copy_horizontal_bits();
             }
 
-            if pre_render && dot >= 280 && dot <= 304 {
+            if pre_render && (280..=304).contains(&dot) {
                 self.ppu.copy_vertical_bits();
             }
         }
     }
 
+    #[inline]
     fn write_pixel(ppu: &mut Ppu, dot: u16, scanline: u16, pal_idx: usize) {
-        let (r, g, b) = NES_PALETTE[pal_idx];
+        let effective_idx = if ppu.regs.greyscale() {
+            pal_idx & 0x30
+        } else {
+            pal_idx
+        };
+        let (mut r, mut g, mut b) = NES_PALETTE[effective_idx];
+
+        let emph_r = ppu.regs.emphasize_red();
+        let emph_g = ppu.regs.emphasize_green();
+        let emph_b = ppu.regs.emphasize_blue();
+        if emph_r || emph_g || emph_b {
+            const ATTEN_NUM: u16 = 192;
+            const ATTEN_DEN: u16 = 235;
+            if !emph_r { r = (r as u16 * ATTEN_NUM / ATTEN_DEN) as u8; }
+            if !emph_g { g = (g as u16 * ATTEN_NUM / ATTEN_DEN) as u8; }
+            if !emph_b { b = (b as u16 * ATTEN_NUM / ATTEN_DEN) as u8; }
+        }
+
+
         let x = (dot - 1) as usize;
         let y = scanline as usize;
         let offset = (y * 256 + x) * 4;
@@ -337,6 +404,7 @@ impl Bus {
         ppu.framebuffer[offset + 3] = 0xFF;
     }
 
+    #[inline]
     fn evaluate_sprites_for_scanline(&mut self, target: u16) {
         let sprite_height: u16 =
             if self.ppu.regs.tall_sprites() { 16 } else { 8 };
@@ -348,16 +416,25 @@ impl Bus {
         self.ppu.sprite_patterns_hi = [0; 8];
         self.ppu.sprite_attribs = [0; 8];
         self.ppu.sprite_x_counters = [0xFF; 8];
+        self.ppu.overflow_bug_m = 0;
 
         let mut count: u8 = 0;
 
         for i in 0..64usize {
             let base = i * 4;
-            let oam_y = self.ppu.oam[base] as u16;
+
+            let oam_y = if count >= 8 {
+                self.ppu.oam[(base + self.ppu.overflow_bug_m as usize) & 0xFF] as u16
+            } else {
+                self.ppu.oam[base] as u16
+            };
 
             let effective_y = oam_y.wrapping_add(1);
             let diff = target.wrapping_sub(effective_y);
             if diff >= sprite_height {
+                if count >= 8 {
+                    self.ppu.overflow_bug_m = self.ppu.overflow_bug_m.wrapping_add(1) & 0x03;
+                }
                 continue;
             }
 
@@ -422,6 +499,7 @@ impl Bus {
         self.controller1.write_state(w);
         self.controller2.write_state(w);
         w.write_u64(self.ppu_cycles);
+        w.write_u8(self.cpu_open_bus);
     }
 
     pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -432,10 +510,10 @@ impl Bus {
         self.controller1.read_state(r)?;
         self.controller2.read_state(r)?;
         self.ppu_cycles = r.read_u64()?;
+        self.cpu_open_bus = r.read_u8()?;
         Ok(())
     }
 
-    /// Read a byte for DMC DMA without PPU/APU side effects.
     fn dmc_dma_read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
@@ -446,11 +524,10 @@ impl Bus {
 
     pub fn tick_peripherals(&mut self, cpu_cycles: u64) -> bool {
         let ppu_dots = cpu_cycles * 3;
-        let mirroring = self.cartridge.mirroring();
         let mut nmi_raised = false;
         for _ in 0..ppu_dots {
             self.ppu_render_dot();
-            if self.ppu.tick(mirroring) {
+            if self.ppu.tick() {
                 nmi_raised = true;
             }
             self.ppu_cycles += 1;
@@ -458,14 +535,13 @@ impl Bus {
         for _ in 0..cpu_cycles {
             self.apu.tick();
 
-            // DMC DMA: when the sample buffer is empty and bytes remain, fetch a byte
             if self.apu.dmc.needs_dma() {
                 let addr = self.apu.dmc.dma_address();
                 let byte = self.dmc_dma_read(addr);
                 self.apu.dmc.fill_sample_buffer(byte);
-                // Real hardware stalls the CPU 1-4 cycles for DMC DMA;
-                // for now we approximate with a flat 4-cycle stall.
-                self.dma_stall_cycles += 4;
+                let base = if self.cpu_odd_cycle { 4 } else { 3 };
+                let conflict = if self.dma_stall_cycles > 0 { 1 } else { 0 };
+                self.dma_stall_cycles += base + conflict;
             }
 
             self.cartridge.clock_cpu();

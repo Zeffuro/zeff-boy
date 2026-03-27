@@ -41,7 +41,9 @@ pub struct Apu {
     pub sample_buffer: Vec<f32>,
     pub output_sample_rate: f64,
     sample_accumulator: f64,
-    channel_mutes: [bool; 4],
+    sample_generation_enabled: bool,
+    debug_collection_enabled: bool,
+    channel_mutes: [bool; 5],
     master_debug_samples: VecDeque<f32>,
     pulse1_debug_samples: VecDeque<f32>,
     pulse2_debug_samples: VecDeque<f32>,
@@ -64,7 +66,9 @@ impl Apu {
             sample_buffer: Vec::with_capacity(INITIAL_SAMPLE_CAPACITY),
             output_sample_rate,
             sample_accumulator: 0.0,
-            channel_mutes: [false; 4],
+            sample_generation_enabled: true,
+            debug_collection_enabled: true,
+            channel_mutes: [false; 5],
             master_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
             pulse1_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
             pulse2_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
@@ -119,11 +123,23 @@ impl Apu {
         self.frame_irq = false;
         status
     }
+
+    pub fn peek_status(&self) -> u8 {
+        let mut status = 0u8;
+        if self.pulse1.length_counter > 0 { status |= 0x01; }
+        if self.pulse2.length_counter > 0 { status |= 0x02; }
+        if self.triangle.length_counter > 0 { status |= 0x04; }
+        if self.noise.length_counter > 0 { status |= 0x08; }
+        if self.dmc.bytes_remaining > 0 { status |= 0x10; }
+        if self.frame_irq { status |= 0x40; }
+        if self.dmc.irq_flag { status |= 0x80; }
+        status
+    }
     pub fn tick(&mut self) {
         self.triangle.tick();
         self.dmc.tick();
 
-        if self.frame_cycle % 2 == 0 {
+        if self.frame_cycle.is_multiple_of(2) {
             self.pulse1.tick();
             self.pulse2.tick();
             self.noise.tick();
@@ -153,7 +169,6 @@ impl Apu {
                         self.frame_irq = true;
                     }
                     self.frame_cycle = 0;
-                    return;
                 }
                 _ => {}
             }
@@ -168,7 +183,6 @@ impl Apu {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
                     self.frame_cycle = 0;
-                    return;
                 }
                 _ => {}
             }
@@ -192,19 +206,35 @@ impl Apu {
     }
 
     fn generate_sample(&mut self) {
+        if !self.sample_generation_enabled {
+            return;
+        }
         let p1_raw = self.pulse1.output() as f32;
         let p2_raw = self.pulse2.output() as f32;
         let tri_raw = self.triangle.output() as f32;
         let noi_raw = self.noise.output() as f32;
-        let _dmc = self.dmc.output() as f32;
+        let dmc_raw = self.dmc.output() as f32;
 
         let p1 = if self.channel_mutes[0] { 0.0 } else { p1_raw };
         let p2 = if self.channel_mutes[1] { 0.0 } else { p2_raw };
         let tri = if self.channel_mutes[2] { 0.0 } else { tri_raw };
         let noi = if self.channel_mutes[3] { 0.0 } else { noi_raw };
+        let dmc = if self.channel_mutes[4] { 0.0 } else { dmc_raw };
 
-        let pulse_out = MIX_PULSE * (p1 + p2);
-        let tnd_out = MIX_TND_TRI * tri + MIX_TND_NOISE * noi + MIX_TND_DMC * _dmc;
+        let pulse_sum = p1 + p2;
+        let pulse_out = if pulse_sum > 0.0 {
+            95.88 / (8128.0 / pulse_sum + 100.0)
+        } else {
+            0.0
+        };
+
+        let tnd_sum = tri / 8227.0 + noi / 12241.0 + dmc / 22638.0;
+        let tnd_out = if tnd_sum > 0.0 {
+            159.79 / (1.0 / tnd_sum + 100.0)
+        } else {
+            0.0
+        };
+
         let sample = pulse_out + tnd_out;
 
         self.sample_accumulator += self.output_sample_rate;
@@ -212,11 +242,13 @@ impl Apu {
             self.sample_accumulator -= APU_CPU_CLOCK_NTSC;
             self.sample_buffer.push(sample);
 
-            Self::push_debug_sample(&mut self.master_debug_samples, sample.clamp(-1.0, 1.0));
-            Self::push_debug_sample(&mut self.pulse1_debug_samples, (p1_raw / 15.0).clamp(-1.0, 1.0));
-            Self::push_debug_sample(&mut self.pulse2_debug_samples, (p2_raw / 15.0).clamp(-1.0, 1.0));
-            Self::push_debug_sample(&mut self.triangle_debug_samples, ((tri_raw - 7.5) / 7.5).clamp(-1.0, 1.0));
-            Self::push_debug_sample(&mut self.noise_debug_samples, (noi_raw / 15.0).clamp(-1.0, 1.0));
+            if self.debug_collection_enabled {
+                Self::push_debug_sample(&mut self.master_debug_samples, sample.clamp(-1.0, 1.0));
+                Self::push_debug_sample(&mut self.pulse1_debug_samples, (p1_raw / 15.0).clamp(-1.0, 1.0));
+                Self::push_debug_sample(&mut self.pulse2_debug_samples, (p2_raw / 15.0).clamp(-1.0, 1.0));
+                Self::push_debug_sample(&mut self.triangle_debug_samples, ((tri_raw - 7.5) / 7.5).clamp(-1.0, 1.0));
+                Self::push_debug_sample(&mut self.noise_debug_samples, (noi_raw / 15.0).clamp(-1.0, 1.0));
+            }
         }
     }
 
@@ -229,6 +261,16 @@ impl Apu {
 
     pub fn drain_samples(&mut self) -> Vec<f32> {
         std::mem::replace(&mut self.sample_buffer, Vec::with_capacity(INITIAL_SAMPLE_CAPACITY))
+    }
+
+    pub fn drain_samples_into_stereo(&mut self, buf: &mut Vec<f32>) {
+        buf.clear();
+        buf.reserve(self.sample_buffer.len() * 2);
+        for &sample in &self.sample_buffer {
+            buf.push(sample);
+            buf.push(sample);
+        }
+        self.sample_buffer.clear();
     }
 
     pub fn channel_snapshot(&self) -> ApuChannelSnapshot {
@@ -247,11 +289,23 @@ impl Apu {
         }
     }
 
-    pub fn set_channel_mutes(&mut self, mutes: [bool; 4]) {
+    pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
+        self.sample_generation_enabled = enabled;
+    }
+
+    pub fn set_debug_collection_enabled(&mut self, enabled: bool) {
+        self.debug_collection_enabled = enabled;
+    }
+
+    pub fn debug_collection_enabled(&self) -> bool {
+        self.debug_collection_enabled
+    }
+
+    pub fn set_channel_mutes(&mut self, mutes: [bool; 5]) {
         self.channel_mutes = mutes;
     }
 
-    pub fn channel_mutes(&self) -> [bool; 4] {
+    pub fn channel_mutes(&self) -> [bool; 5] {
         self.channel_mutes
     }
 

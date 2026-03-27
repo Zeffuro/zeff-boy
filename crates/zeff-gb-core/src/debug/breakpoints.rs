@@ -43,6 +43,12 @@ impl std::fmt::Debug for DebugController {
     }
 }
 
+impl Default for DebugController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DebugController {
     pub fn new() -> Self {
         Self {

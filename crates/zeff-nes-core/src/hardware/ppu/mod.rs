@@ -8,6 +8,7 @@ use std::fmt;
 
 pub const SCREEN_W: usize = 256;
 pub const SCREEN_H: usize = 240;
+pub const FRAMEBUFFER_SIZE: usize = SCREEN_W * SCREEN_H * 4;
 
 pub const SCANLINES_PER_FRAME: u16 = 262;
 pub const DOTS_PER_SCANLINE: u16 = 341;
@@ -22,9 +23,6 @@ const COARSE_Y_MASK: u16 = 0x03E0;
 const SCROLL_HORIZONTAL_MASK: u16 = 0x041F;
 const SCROLL_VERTICAL_MASK: u16 = 0x7BE0;
 
-fn default_framebuffer() -> Box<[u8]> {
-    vec![0u8; SCREEN_W * SCREEN_H * 4].into_boxed_slice()
-}
 
 pub struct Ppu {
     pub regs: PpuRegisters,
@@ -48,7 +46,9 @@ pub struct Ppu {
     pub w: bool,
 
     pub read_buffer: u8,
-    pub framebuffer: Box<[u8]>,
+
+    pub io_latch: u8,
+    pub framebuffer: Box<[u8; FRAMEBUFFER_SIZE]>,
     pub frame_ready: bool,
     pub frame_count: u64,
 
@@ -67,6 +67,14 @@ pub struct Ppu {
     pub sprite_attribs: [u8; 8],
     pub sprite_x_counters: [u8; 8],
     pub sprite_zero_rendering: bool,
+
+    pub overflow_bug_m: u8,
+}
+
+impl Default for Ppu {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Ppu {
@@ -88,7 +96,8 @@ impl Ppu {
             fine_x: 0,
             w: false,
             read_buffer: 0,
-            framebuffer: default_framebuffer(),
+            io_latch: 0,
+            framebuffer: Box::new([0u8; FRAMEBUFFER_SIZE]),
             frame_ready: false,
             frame_count: 0,
             bg_shift_pattern_lo: 0,
@@ -105,10 +114,27 @@ impl Ppu {
             sprite_attribs: [0; 8],
             sprite_x_counters: [0xFF; 8],
             sprite_zero_rendering: false,
+            overflow_bug_m: 0,
         }
     }
 
-    pub fn tick(&mut self, _cart_mirroring: super::cartridge::Mirroring) -> bool {
+    pub fn peek_register(&self, addr: u16) -> u8 {
+        match addr {
+            0x2002 => (self.regs.status & 0xE0) | (self.io_latch & 0x1F),
+            0x2004 => self.oam[self.oam_addr as usize],
+            0x2007 => {
+                let ppu_addr = self.v & 0x3FFF;
+                if ppu_addr >= 0x3F00 {
+                    self.palette_ram[(ppu_addr as usize - 0x3F00) & 0x1F]
+                } else {
+                    self.read_buffer
+                }
+            }
+            _ => self.io_latch,
+        }
+    }
+
+    pub fn tick(&mut self) -> bool {
         let mut raise_nmi = false;
 
         if self.scanline == VBLANK_SCANLINE && self.dot == 1 {
@@ -244,6 +270,7 @@ impl Ppu {
         w.write_bool(self.w);
 
         w.write_u8(self.read_buffer);
+        w.write_u8(self.io_latch);
         w.write_u64(self.frame_count);
 
         w.write_u16(self.bg_shift_pattern_lo);
@@ -287,6 +314,7 @@ impl Ppu {
         self.w = r.read_bool()?;
 
         self.read_buffer = r.read_u8()?;
+        self.io_latch = r.read_u8()?;
         self.frame_count = r.read_u64()?;
 
         self.bg_shift_pattern_lo = r.read_u16()?;

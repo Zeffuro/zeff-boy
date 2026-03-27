@@ -32,6 +32,7 @@ pub(crate) struct CpuDebugSnapshot {
     pub(crate) status_text: String,
     pub(crate) cpu_state: String,
 
+    #[allow(dead_code)]
     pub(crate) pc: u16,
     pub(crate) cycles: u64,
 

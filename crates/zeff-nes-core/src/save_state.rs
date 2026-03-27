@@ -1,10 +1,18 @@
 use anyhow::{Result, anyhow, bail};
 
 pub const NES_SAVE_STATE_MAGIC: [u8; 8] = *b"ZBNSTATE";
-pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 1;
+pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 2;
+
+const FORMAT_VERSION_V1_UNCOMPRESSED: u32 = 1;
 
 pub struct StateWriter {
     bytes: Vec<u8>,
+}
+
+impl Default for StateWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StateWriter {
@@ -156,39 +164,62 @@ pub fn decode_mirroring(tag: u8) -> Result<crate::hardware::cartridge::Mirroring
 // ─── Top-level encode / decode ─────────────────────────────────────
 
 pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
-    let mut w = StateWriter::new();
-    w.write_bytes(&NES_SAVE_STATE_MAGIC);
-    w.write_u32(NES_SAVE_STATE_FORMAT_VERSION);
-    w.write_bytes(&emu.rom_hash);
+    // Write the raw state payload (CPU + Bus)
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    let raw_bytes = payload.into_bytes();
 
-    // CPU
-    emu.cpu.write_state(&mut w);
-    // Bus (PPU, APU, Cartridge, RAM, Controllers)
-    emu.bus.write_state(&mut w);
+    // Compress payload with lz4
+    let compressed = lz4_flex::compress_prepend_size(&raw_bytes);
 
-    Ok(w.into_bytes())
+    // Assemble final: magic + version + compressed_payload
+    let mut out = Vec::with_capacity(12 + compressed.len());
+    out.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    out.extend_from_slice(&NES_SAVE_STATE_FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&compressed);
+    Ok(out)
 }
 
 pub fn decode_state(
     emu: &mut crate::emulator::Emulator,
     bytes: &[u8],
 ) -> Result<()> {
-    let mut r = StateReader::new(bytes);
-
-    let mut magic = [0u8; 8];
-    r.read_exact(&mut magic)?;
+    // Read and validate the outer header (magic + version)
+    if bytes.len() < 12 {
+        bail!("save-state data is too short for header");
+    }
+    let magic = &bytes[0..8];
     if magic != NES_SAVE_STATE_MAGIC {
         bail!("not a valid NES save-state (bad magic)");
     }
+    let format_version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
 
-    let format_version = r.read_u32()?;
-    if format_version != NES_SAVE_STATE_FORMAT_VERSION {
-        bail!(
-            "unsupported NES save-state format version {} (expected {})",
-            format_version,
-            NES_SAVE_STATE_FORMAT_VERSION
-        );
-    }
+    // Get the payload bytes (either raw or lz4-decompressed)
+    let payload: Vec<u8>;
+    let payload_ref: &[u8] = match format_version {
+        FORMAT_VERSION_V1_UNCOMPRESSED => {
+            // V1: raw bytes after magic(8) + version(4)
+            &bytes[12..]
+        }
+        NES_SAVE_STATE_FORMAT_VERSION => {
+            // V2: lz4-compressed payload after magic(8) + version(4)
+            payload = lz4_flex::decompress_size_prepended(&bytes[12..])
+                .map_err(|e| anyhow!("failed to decompress save-state: {e}"))?;
+            &payload
+        }
+        other => {
+            bail!(
+                "unsupported NES save-state format version {} (expected {} or {})",
+                other,
+                FORMAT_VERSION_V1_UNCOMPRESSED,
+                NES_SAVE_STATE_FORMAT_VERSION
+            );
+        }
+    };
+
+    let mut r = StateReader::new(payload_ref);
 
     let mut rom_hash = [0u8; 32];
     r.read_exact(&mut rom_hash)?;
@@ -268,3 +299,187 @@ pub fn write_state_bytes_to_file(path: &std::path::Path, bytes: &[u8]) -> Result
         .map_err(|e| anyhow!("failed to write save-state file {}: {e}", path.display()))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_test_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[5] = 1;
+        let prg = 16;
+        rom[prg]     = 0xA9;
+        rom[prg + 1] = 0x42;
+        rom[prg + 2] = 0x85;
+        rom[prg + 3] = 0x00;
+        rom[prg + 4] = 0xEA;
+        rom[prg + 5] = 0xEA;
+        rom[prg + 0x3FFC] = 0x00;
+        rom[prg + 0x3FFD] = 0x80;
+        rom
+    }
+
+    fn make_emulator() -> crate::emulator::Emulator {
+        let rom = build_test_rom();
+        crate::emulator::Emulator::new(&rom, std::path::PathBuf::from("test.nes"), 44_100.0)
+            .expect("test ROM should load")
+    }
+
+    #[test]
+    fn save_state_roundtrip_preserves_cpu_state() {
+        let mut emu = make_emulator();
+
+        for _ in 0..4 {
+            emu.step_instruction();
+        }
+
+        let pc_before = emu.cpu.pc;
+        let sp_before = emu.cpu.sp;
+        let a_before = emu.cpu.regs.a;
+        let x_before = emu.cpu.regs.x;
+        let y_before = emu.cpu.regs.y;
+        let p_before = emu.cpu.regs.p;
+        let cycles_before = emu.cpu.cycles;
+
+        let state_bytes = encode_state(&emu).expect("encode should succeed");
+
+        emu.reset();
+        assert_ne!(emu.cpu.cycles, cycles_before);
+
+        decode_state(&mut emu, &state_bytes).expect("decode should succeed");
+
+        assert_eq!(emu.cpu.pc, pc_before);
+        assert_eq!(emu.cpu.sp, sp_before);
+        assert_eq!(emu.cpu.regs.a, a_before);
+        assert_eq!(emu.cpu.regs.x, x_before);
+        assert_eq!(emu.cpu.regs.y, y_before);
+        assert_eq!(emu.cpu.regs.p, p_before);
+        assert_eq!(emu.cpu.cycles, cycles_before);
+    }
+
+    #[test]
+    fn save_state_roundtrip_preserves_bus_state() {
+        let mut emu = make_emulator();
+
+        for _ in 0..4 {
+            emu.step_instruction();
+        }
+
+        let ram_00_before = emu.bus.ram[0];
+        assert_eq!(ram_00_before, 0x42);
+
+        let ppu_cycles_before = emu.bus.ppu_cycles;
+        let open_bus_before = emu.bus.cpu_open_bus;
+
+        let state_bytes = encode_state(&emu).expect("encode should succeed");
+
+        emu.bus.ram[0] = 0x00;
+        emu.bus.ppu_cycles = 0;
+
+        decode_state(&mut emu, &state_bytes).expect("decode should succeed");
+
+        assert_eq!(emu.bus.ram[0], 0x42);
+        assert_eq!(emu.bus.ppu_cycles, ppu_cycles_before);
+        assert_eq!(emu.bus.cpu_open_bus, open_bus_before);
+    }
+
+    #[test]
+    fn save_state_rom_hash_mismatch_rejected() {
+        let mut emu = make_emulator();
+        let state_bytes = encode_state(&emu).expect("encode should succeed");
+
+        emu.rom_hash[0] ^= 0xFF;
+
+        let result = decode_state(&mut emu, &state_bytes);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("ROM hash"),
+            "error should mention ROM hash mismatch, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn save_state_truncated_data_rejected() {
+        let emu = make_emulator();
+        let state_bytes = encode_state(&emu).expect("encode should succeed");
+
+        let mut truncated = state_bytes[..12].to_vec();
+        truncated.extend_from_slice(&[0; 4]);
+
+        let mut emu2 = make_emulator();
+        let result = decode_state(&mut emu2, &truncated);
+        assert!(result.is_err(), "truncated state should fail to decode");
+    }
+
+    #[test]
+    fn save_state_bad_magic_rejected() {
+        let emu = make_emulator();
+        let mut state_bytes = encode_state(&emu).expect("encode should succeed");
+
+        state_bytes[0] = b'X';
+
+        let mut emu2 = make_emulator();
+        let result = decode_state(&mut emu2, &state_bytes);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("bad magic"),
+            "should reject bad magic"
+        );
+    }
+
+    #[test]
+    fn save_state_unsupported_version_rejected() {
+        let emu = make_emulator();
+        let mut state_bytes = encode_state(&emu).expect("encode should succeed");
+
+        state_bytes[8..12].copy_from_slice(&99u32.to_le_bytes());
+
+        let mut emu2 = make_emulator();
+        let result = decode_state(&mut emu2, &state_bytes);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("unsupported"),
+            "should reject unsupported version"
+        );
+    }
+
+    #[test]
+    fn save_state_too_short_rejected() {
+        let mut emu = make_emulator();
+        let result = decode_state(&mut emu, &[0; 4]);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("too short"),
+            "should reject data shorter than header"
+        );
+    }
+
+    #[test]
+    fn save_state_v1_backward_compat() {
+        let mut emu = make_emulator();
+        for _ in 0..4 {
+            emu.step_instruction();
+        }
+        let pc_before = emu.cpu.pc;
+
+        let mut payload = StateWriter::new();
+        payload.write_bytes(&emu.rom_hash);
+        emu.cpu.write_state(&mut payload);
+        emu.bus.write_state(&mut payload);
+        let raw_bytes = payload.into_bytes();
+
+        let mut v1_state = Vec::with_capacity(12 + raw_bytes.len());
+        v1_state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+        v1_state.extend_from_slice(&1u32.to_le_bytes()); // version 1
+        v1_state.extend_from_slice(&raw_bytes);
+
+        // Reset and restore from V1
+        emu.reset();
+        decode_state(&mut emu, &v1_state).expect("V1 decode should succeed");
+        assert_eq!(emu.cpu.pc, pc_before);
+    }
+}
+

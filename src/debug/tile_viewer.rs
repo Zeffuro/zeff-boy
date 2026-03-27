@@ -2,6 +2,7 @@ use crate::debug::TileViewerState;
 use zeff_gb_core::hardware::ppu::{apply_palette, cgb_palette_rgba, correct_color, decode_tile_pixel};
 use crate::settings::ColorCorrection;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_tile_viewer_content(
     ui: &mut egui::Ui,
     vram: &[u8],
@@ -132,6 +133,7 @@ pub(super) fn draw_tile_viewer_content(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tile_viewer_into_image(
     image: &mut egui::ColorImage,
     vram: &[u8],

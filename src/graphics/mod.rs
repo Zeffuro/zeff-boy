@@ -202,6 +202,7 @@ impl Graphics {
         self.framebuffer.set_native_size(&self.gpu.device, width, height);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn native_size(&self) -> (u32, u32) {
         self.framebuffer.native_size()
     }

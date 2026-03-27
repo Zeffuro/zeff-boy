@@ -45,6 +45,8 @@ pub(crate) struct FrameInput {
     pub(crate) host_tilt: (f32, f32),
     pub(crate) buttons_pressed: u8,
     pub(crate) dpad_pressed: u8,
+    pub(crate) buttons_pressed_p2: u8,
+    pub(crate) dpad_pressed_p2: u8,
     pub(crate) debug_step: bool,
     pub(crate) debug_continue: bool,
     pub(crate) apu_capture_enabled: bool,
@@ -67,6 +69,7 @@ pub(crate) struct FrameResult {
     pub(crate) apu_snapshot: Option<crate::audio_recorder::MidiApuSnapshot>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum EmuCommand {
     StepFrames(FrameInput),
     SaveStateSlot(u8),
@@ -360,13 +363,17 @@ impl EmuThread {
             Self::apply_debug_actions(emu, &input.debug_actions);
         }
 
+        // NES-specific debug actions
+        if let Some(emu) = backend.nes_mut() {
+            Self::apply_nes_debug_actions(emu, &input.debug_actions);
+        }
+
         // Set input
         backend.set_input(input.buttons_pressed, input.dpad_pressed);
+        backend.set_input_p2(input.buttons_pressed_p2, input.dpad_pressed_p2);
 
         if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
-            if mutes.len() == 4 {
-                backend.set_apu_channel_mutes([mutes[0], mutes[1], mutes[2], mutes[3]]);
-            }
+            backend.set_apu_channel_mutes(mutes);
         }
 
         // GB-specific features
@@ -378,16 +385,31 @@ impl EmuThread {
             }
             emu.opcode_log.enabled = input.snapshot.want_debug_info;
 
-            if matches!(emu.cpu.running, zeff_gb_core::hardware::types::CPUState::Suspended) {
+            if matches!(emu.cpu.running, zeff_gb_core::hardware::types::CpuState::Suspended) {
                 if input.debug_continue {
                     emu.debug.clear_hits();
                     emu.debug.break_on_next = false;
-                    emu.cpu.running = zeff_gb_core::hardware::types::CPUState::Running;
+                    emu.cpu.running = zeff_gb_core::hardware::types::CpuState::Running;
                 } else if input.debug_step {
                     emu.debug.clear_hits();
                     emu.debug.break_on_next = true;
-                    emu.cpu.running = zeff_gb_core::hardware::types::CPUState::Running;
+                    emu.cpu.running = zeff_gb_core::hardware::types::CpuState::Running;
                 }
+            }
+        }
+
+        // NES-specific: debug continue/step
+        if let Some(emu) = backend.nes_mut()
+            && emu.cpu.state == zeff_nes_core::hardware::cpu::CpuState::Suspended
+        {
+            if input.debug_continue {
+                emu.debug.clear_hits();
+                emu.debug.break_on_next = false;
+                emu.cpu.state = zeff_nes_core::hardware::cpu::CpuState::Running;
+            } else if input.debug_step {
+                emu.debug.clear_hits();
+                emu.debug.break_on_next = true;
+                emu.cpu.state = zeff_nes_core::hardware::cpu::CpuState::Running;
             }
         }
 
@@ -396,6 +418,9 @@ impl EmuThread {
                 backend.step_frame();
                 if let Some(emu) = backend.gb_mut() {
                     Self::apply_ram_cheats(emu, cheats);
+                }
+                if let Some(emu) = backend.nes_mut() {
+                    Self::apply_nes_ram_cheats(emu, cheats);
                 }
                 if backend.is_suspended() {
                     break;
@@ -422,6 +447,9 @@ impl EmuThread {
             }
             EmuBackend::Nes(emu) => {
                 let mut data = ui::empty_frame_data();
+
+                emu.bus.apu.set_debug_collection_enabled(input.snapshot.show_apu_viewer);
+                emu.opcode_log.enabled = input.snapshot.want_debug_info;
 
                 if input.snapshot.want_perf_info {
                     data.perf_info = Some(crate::debug::PerfInfo {
@@ -608,7 +636,7 @@ impl EmuThread {
             Ok(()) => true,
             Err(TrySendError::Full(result)) => {
                 let _ = drain_rx.try_recv();
-                !frame_tx.try_send(result).is_err()
+                frame_tx.try_send(result).is_ok()
             }
             Err(TrySendError::Disconnected(_)) => false,
         }
@@ -632,6 +660,9 @@ impl EmuThread {
             backend.step_frame();
             if let Some(emu) = backend.gb_mut() {
                 Self::apply_ram_cheats(emu, cheats);
+            }
+            if let Some(emu) = backend.nes_mut() {
+                Self::apply_nes_ram_cheats(emu, cheats);
             }
             if backend.is_suspended() {
                 break;
@@ -682,11 +713,10 @@ impl EmuThread {
         rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
         enabled: bool,
     ) {
-        if enabled && rewind_buffer.tick() {
-            if let Ok(bytes) = Self::encode_current_state(backend) {
+        if enabled && rewind_buffer.tick()
+            && let Ok(bytes) = Self::encode_current_state(backend) {
                 rewind_buffer.push(&bytes, backend.framebuffer());
             }
-        }
     }
 
     fn apply_debug_actions(emu: &mut zeff_gb_core::emulator::Emulator, actions: &DebugUiActions) {
@@ -715,6 +745,29 @@ impl EmuThread {
         }
     }
 
+    fn apply_nes_debug_actions(emu: &mut zeff_nes_core::emulator::Emulator, actions: &DebugUiActions) {
+        if let Some(addr) = actions.add_breakpoint {
+            emu.debug.add_breakpoint(addr);
+        }
+        if let Some((addr, watch_type)) = actions.add_watchpoint {
+            let core_wt = match watch_type {
+                crate::debug::WatchType::Read => zeff_nes_core::debug::WatchType::Read,
+                crate::debug::WatchType::Write => zeff_nes_core::debug::WatchType::Write,
+                crate::debug::WatchType::ReadWrite => zeff_nes_core::debug::WatchType::ReadWrite,
+            };
+            emu.debug.add_watchpoint(addr, core_wt);
+        }
+        for addr in &actions.remove_breakpoints {
+            emu.debug.remove_breakpoint(*addr);
+        }
+        for addr in &actions.toggle_breakpoints {
+            emu.debug.toggle_breakpoint(*addr);
+        }
+        for (addr, value) in &actions.memory_writes {
+            emu.bus.cpu_write(*addr, *value);
+        }
+    }
+
     fn install_rom_patches(backend: &mut EmuBackend, cheats: &[crate::cheats::CheatPatch]) {
         if let Some(emu) = backend.gb_mut() {
             use crate::cheats::CheatPatch;
@@ -723,6 +776,49 @@ impl EmuThread {
                 match *patch {
                     CheatPatch::RomWrite { .. } | CheatPatch::RomWriteIfEquals { .. } => {
                         emu.bus.game_genie_patches.push(*patch);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(emu) = backend.nes_mut() {
+            use crate::cheats::CheatPatch;
+            emu.bus.game_genie.clear();
+            for patch in cheats {
+                match *patch {
+                    CheatPatch::RomWrite { address, value } => {
+                        let v = match value {
+                            crate::cheats::CheatValue::Constant(v) => v,
+                            _ => continue,
+                        };
+                        emu.bus.game_genie.patches.push(
+                            zeff_nes_core::cheats::NesGameGeniePatch {
+                                address,
+                                value: v,
+                                compare: None,
+                            },
+                        );
+                    }
+                    CheatPatch::RomWriteIfEquals {
+                        address,
+                        value,
+                        compare,
+                    } => {
+                        let v = match value {
+                            crate::cheats::CheatValue::Constant(v) => v,
+                            _ => continue,
+                        };
+                        let c = match compare {
+                            crate::cheats::CheatValue::Constant(c) => c,
+                            _ => continue,
+                        };
+                        emu.bus.game_genie.patches.push(
+                            zeff_nes_core::cheats::NesGameGeniePatch {
+                                address,
+                                value: v,
+                                compare: Some(c),
+                            },
+                        );
                     }
                     _ => {}
                 }
@@ -748,6 +844,36 @@ impl EmuThread {
                     if compare.matches(current) {
                         emu.bus
                             .write_byte(address, value.resolve_with_current(current));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn apply_nes_ram_cheats(emu: &mut zeff_nes_core::emulator::Emulator, cheats: &[crate::cheats::CheatPatch]) {
+        use crate::cheats::CheatPatch;
+        for patch in cheats {
+            match *patch {
+                CheatPatch::RamWrite { address, value } => {
+                    let v = match value {
+                        crate::cheats::CheatValue::Constant(v) => v,
+                        _ => continue,
+                    };
+                    emu.bus.cpu_write(address, v);
+                }
+                CheatPatch::RamWriteIfEquals {
+                    address,
+                    value,
+                    compare,
+                } => {
+                    let current = emu.bus.cpu_peek(address);
+                    if compare.matches(current) {
+                        let v = match value {
+                            crate::cheats::CheatValue::Constant(v) => v,
+                            _ => continue,
+                        };
+                        emu.bus.cpu_write(address, v);
                     }
                 }
                 _ => {}

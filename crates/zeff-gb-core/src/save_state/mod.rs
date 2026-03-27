@@ -9,7 +9,7 @@ mod bess;
 pub use bess::{has_bess_footer, import_bess};
 
 use crate::hardware::bus::Bus;
-use crate::hardware::cpu::CPU;
+use crate::hardware::cpu::Cpu;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 
 pub const SAVE_STATE_VERSION: u32 = 1;
@@ -21,6 +21,12 @@ const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 pub struct StateWriter {
     bytes: Vec<u8>,
+}
+
+impl Default for StateWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StateWriter {
@@ -147,7 +153,7 @@ impl<'a> StateReader<'a> {
 pub struct SaveState {
     pub version: u32,
     pub rom_hash: [u8; 32],
-    pub cpu: CPU,
+    pub cpu: Cpu,
     pub bus: Bus,
     pub hardware_mode_preference: HardwareModePreference,
     pub hardware_mode: HardwareMode,
@@ -159,7 +165,7 @@ pub struct SaveState {
 pub struct SaveStateRef<'a> {
     pub version: u32,
     pub rom_hash: [u8; 32],
-    pub cpu: &'a CPU,
+    pub cpu: &'a Cpu,
     pub bus: &'a Bus,
     pub hardware_mode_preference: HardwareModePreference,
     pub hardware_mode: HardwareMode,
@@ -294,7 +300,7 @@ fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     let version = reader.read_u32()?;
     let mut rom_hash = [0u8; 32];
     reader.read_exact(&mut rom_hash)?;
-    let cpu = CPU::read_state(&mut reader)?;
+    let cpu = Cpu::read_state(&mut reader)?;
     let hardware_mode_preference = decode_mode_preference(reader.read_u8()?)?;
     let hardware_mode = reader.read_hardware_mode()?;
     let cycle_count = reader.read_u64()?;
@@ -422,7 +428,7 @@ mod tests {
         decode_state, encode_state_bytes,
     };
     use crate::hardware::bus::Bus;
-    use crate::hardware::cpu::CPU;
+    use crate::hardware::cpu::Cpu;
     use crate::hardware::rom_header::RomHeader;
     use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
     use std::path::PathBuf;
@@ -459,7 +465,7 @@ mod tests {
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
         let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
 
-        let cpu = CPU::new();
+        let cpu = Cpu::new();
         let state = SaveStateRef {
             version: SAVE_STATE_VERSION,
             rom_hash: [0xAB; 32],
@@ -496,7 +502,7 @@ mod tests {
         let rom = vec![0u8; 0x8000];
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
         let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
-        let cpu = CPU::new();
+        let cpu = Cpu::new();
         let state = SaveStateRef {
             version: SAVE_STATE_VERSION,
             rom_hash: [0xAB; 32],
@@ -528,7 +534,7 @@ mod tests {
         let rom = vec![0u8; 0x8000];
         let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
         let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
-        let cpu = CPU::new();
+        let cpu = Cpu::new();
         let state = SaveStateRef {
             version: SAVE_STATE_VERSION,
             rom_hash: [0xCD; 32],

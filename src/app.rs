@@ -50,7 +50,9 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         emu_thread: None,
         initial_backend: backend,
         audio: None,
-        gamepad: GamepadHandler::new(),
+        gamepad: GamepadHandler::new()
+            .map_err(|e| log::warn!("Gamepad init failed: {e}"))
+            .ok(),
         gfx: None,
         window_id: None,
         fps_tracker: FpsTracker::new(),
@@ -498,12 +500,10 @@ impl App {
             && self.settings.rewind_enabled
             && !self.rewind.pending
             && !self.rewind.backstep_pending
-        {
-            if let Some(thread) = &self.emu_thread {
+            && let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::Rewind);
                 self.rewind.backstep_pending = true;
             }
-        }
 
         if self.rewind.held && self.settings.rewind_enabled {
             self.rewind.throttle += 1;
@@ -595,6 +595,8 @@ impl App {
                             host_tilt: tilt_data.smoothed,
                             buttons_pressed,
                             dpad_pressed,
+                            buttons_pressed_p2: 0,
+                            dpad_pressed_p2: 0,
                             debug_step: std::mem::take(&mut self.debug_requests.step),
                             debug_continue: std::mem::take(&mut self.debug_requests.continue_),
                             apu_capture_enabled: reqs.needs_apu && want_viewer_update,

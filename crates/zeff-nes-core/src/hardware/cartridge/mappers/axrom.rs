@@ -46,6 +46,9 @@ impl Mapper for Axrom {
     }
 
     fn chr_read(&self, addr: u16) -> u8 {
+        if self.chr_ram.is_empty() {
+            return 0;
+        }
         self.chr_ram[addr as usize % self.chr_ram.len()]
     }
 

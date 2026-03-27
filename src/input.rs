@@ -1,4 +1,4 @@
-use gilrs::{Axis, Event, EventType, GamepadId, Gilrs, ff};
+use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs, ff};
 
 use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::{GamepadAction, GamepadBindings};
@@ -18,8 +18,9 @@ pub(crate) struct GamepadPoll {
 }
 
 impl GamepadHandler {
-    pub(crate) fn new() -> Option<Self> {
-        Gilrs::new().ok().map(|gilrs| Self {
+    pub(crate) fn new() -> Result<Self, String> {
+        let gilrs = Gilrs::new().map_err(|e| format!("failed to initialize gamepad subsystem: {e}"))?;
+        Ok(Self {
             gilrs,
             active_gamepad: None,
             rumble_effect: None,
@@ -35,21 +36,21 @@ impl GamepadHandler {
             self.active_gamepad = Some(id);
             match event {
                 EventType::ButtonPressed(button, _) => {
-                    let name = format!("{button:?}");
-                    raw_pressed.push(name.clone());
-                    if let Some(key) = bindings.map_button_name(&name) {
+                    let name = button_name(button);
+                    raw_pressed.push(name.to_owned());
+                    if let Some(key) = bindings.map_button_name(name) {
                         events.push((key, true));
                     }
-                    if let Some(action) = bindings.map_action_button_name(&name) {
+                    if let Some(action) = bindings.map_action_button_name(name) {
                         action_events.push((action, true));
                     }
                 }
                 EventType::ButtonReleased(button, _) => {
-                    let name = format!("{button:?}");
-                    if let Some(key) = bindings.map_button_name(&name) {
+                    let name = button_name(button);
+                    if let Some(key) = bindings.map_button_name(name) {
                         events.push((key, false));
                     }
-                    if let Some(action) = bindings.map_action_button_name(&name) {
+                    if let Some(action) = bindings.map_action_button_name(name) {
                         action_events.push((action, false));
                     }
                 }
@@ -123,5 +124,30 @@ impl Drop for GamepadHandler {
         if let Some(effect) = &mut self.rumble_effect {
             let _ = effect.stop();
         }
+    }
+}
+
+fn button_name(button: Button) -> &'static str {
+    match button {
+        Button::South => "South",
+        Button::East => "East",
+        Button::North => "North",
+        Button::West => "West",
+        Button::C => "C",
+        Button::Z => "Z",
+        Button::LeftTrigger => "LeftTrigger",
+        Button::LeftTrigger2 => "LeftTrigger2",
+        Button::RightTrigger => "RightTrigger",
+        Button::RightTrigger2 => "RightTrigger2",
+        Button::Select => "Select",
+        Button::Start => "Start",
+        Button::Mode => "Mode",
+        Button::LeftThumb => "LeftThumb",
+        Button::RightThumb => "RightThumb",
+        Button::DPadUp => "DPadUp",
+        Button::DPadDown => "DPadDown",
+        Button::DPadLeft => "DPadLeft",
+        Button::DPadRight => "DPadRight",
+        Button::Unknown => "Unknown",
     }
 }
