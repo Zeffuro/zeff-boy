@@ -1,10 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
-mod gb;
-mod nes;
+pub(crate) mod gb;
+pub(crate) mod nes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ActiveSystem {
@@ -43,15 +43,15 @@ impl ActiveSystem {
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum EmuBackend {
-    Gb(GbEmulator),
-    Nes(NesEmulator),
+    Gb(GbEmulator, PathBuf),
+    Nes(NesEmulator, PathBuf),
 }
 
 impl EmuBackend {
     pub(crate) fn system(&self) -> ActiveSystem {
         match self {
-            Self::Gb(_) => ActiveSystem::GameBoy,
-            Self::Nes(_) => ActiveSystem::Nes,
+            Self::Gb(..) => ActiveSystem::GameBoy,
+            Self::Nes(..) => ActiveSystem::Nes,
         }
     }
 
@@ -60,24 +60,24 @@ impl EmuBackend {
         self.system().screen_size()
     }
 
-    pub(crate) fn from_gb(emu: GbEmulator) -> Self {
-        Self::Gb(emu)
+    pub(crate) fn from_gb(emu: GbEmulator, rom_path: PathBuf) -> Self {
+        Self::Gb(emu, rom_path)
     }
 
-    pub(crate) fn from_nes(emu: NesEmulator) -> Self {
-        Self::Nes(emu)
+    pub(crate) fn from_nes(emu: NesEmulator, rom_path: PathBuf) -> Self {
+        Self::Nes(emu, rom_path)
     }
 
     pub(crate) fn gb(&self) -> Option<&GbEmulator> {
         match self {
-            Self::Gb(e) => Some(e),
+            Self::Gb(e, _) => Some(e),
             _ => None,
         }
     }
 
     pub(crate) fn gb_mut(&mut self) -> Option<&mut GbEmulator> {
         match self {
-            Self::Gb(e) => Some(e),
+            Self::Gb(e, _) => Some(e),
             _ => None,
         }
     }
@@ -85,85 +85,85 @@ impl EmuBackend {
     #[allow(dead_code)]
     pub(crate) fn nes_mut(&mut self) -> Option<&mut NesEmulator> {
         match self {
-            Self::Nes(e) => Some(e),
+            Self::Nes(e, _) => Some(e),
             _ => None,
         }
     }
 
     pub(crate) fn step_frame(&mut self) {
         match self {
-            Self::Gb(e) => e.step_frame(),
-            Self::Nes(e) => e.step_frame(),
+            Self::Gb(e, _) => e.step_frame(),
+            Self::Nes(e, _) => e.step_frame(),
         }
     }
 
     pub(crate) fn framebuffer(&self) -> &[u8] {
         match self {
-            Self::Gb(e) => e.framebuffer(),
-            Self::Nes(e) => e.framebuffer(),
+            Self::Gb(e, _) => e.framebuffer(),
+            Self::Nes(e, _) => e.framebuffer(),
         }
     }
 
     pub(crate) fn drain_audio_samples(&mut self) -> Vec<f32> {
         match self {
-            Self::Gb(e) => gb::drain_audio_samples(e),
-            Self::Nes(e) => nes::drain_audio_samples(e),
+            Self::Gb(e, _) => gb::drain_audio_samples(e),
+            Self::Nes(e, _) => nes::drain_audio_samples(e),
         }
     }
 
     pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         match self {
-            Self::Gb(e) => gb::drain_audio_samples_into(e, buf),
-            Self::Nes(e) => nes::drain_audio_samples_into(e, buf),
+            Self::Gb(e, _) => gb::drain_audio_samples_into(e, buf),
+            Self::Nes(e, _) => nes::drain_audio_samples_into(e, buf),
         }
     }
 
     pub(crate) fn set_sample_rate(&mut self, rate: u32) {
         match self {
-            Self::Gb(e) => gb::set_sample_rate(e, rate),
-            Self::Nes(e) => nes::set_sample_rate(e, rate),
+            Self::Gb(e, _) => gb::set_sample_rate(e, rate),
+            Self::Nes(e, _) => nes::set_sample_rate(e, rate),
         }
     }
 
     pub(crate) fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
         match self {
-            Self::Gb(e) => gb::set_apu_sample_generation_enabled(e, enabled),
-            Self::Nes(e) => nes::set_apu_sample_generation_enabled(e, enabled),
+            Self::Gb(e, _) => gb::set_apu_sample_generation_enabled(e, enabled),
+            Self::Nes(e, _) => nes::set_apu_sample_generation_enabled(e, enabled),
         }
     }
 
     pub(crate) fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
         match self {
-            Self::Gb(e) => gb::set_apu_channel_mutes(e, mutes),
-            Self::Nes(e) => nes::set_apu_channel_mutes(e, mutes),
+            Self::Gb(e, _) => gb::set_apu_channel_mutes(e, mutes),
+            Self::Nes(e, _) => nes::set_apu_channel_mutes(e, mutes),
         }
     }
 
     pub(crate) fn rom_path(&self) -> &Path {
         match self {
-            Self::Gb(e) => e.rom_path(),
-            Self::Nes(e) => e.rom_path(),
+            Self::Gb(_, p) => p,
+            Self::Nes(_, p) => p,
         }
     }
 
     pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         match self {
-            Self::Gb(e) => gb::set_input(e, buttons_pressed, dpad_pressed),
-            Self::Nes(e) => nes::set_input(e, buttons_pressed, dpad_pressed),
+            Self::Gb(e, _) => gb::set_input(e, buttons_pressed, dpad_pressed),
+            Self::Nes(e, _) => nes::set_input(e, buttons_pressed, dpad_pressed),
         }
     }
 
     pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         match self {
-            Self::Gb(_) => {}
-            Self::Nes(e) => nes::set_input_p2(e, buttons_pressed, dpad_pressed),
+            Self::Gb(..) => {}
+            Self::Nes(e, _) => nes::set_input_p2(e, buttons_pressed, dpad_pressed),
         }
     }
 
     pub(crate) fn is_suspended(&self) -> bool {
         match self {
-            Self::Gb(e) => matches!(e.cpu.running, zeff_gb_core::hardware::types::CpuState::Suspended),
-            Self::Nes(e) => matches!(e.cpu.state, zeff_nes_core::hardware::cpu::CpuState::Suspended),
+            Self::Gb(e, _) => e.is_cpu_suspended(),
+            Self::Nes(e, _) => e.is_cpu_suspended(),
         }
     }
 
@@ -173,79 +173,78 @@ impl EmuBackend {
 
     pub(crate) fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
         match self {
-            Self::Gb(e) => gb::flush_battery_sram(e),
-            Self::Nes(e) => nes::flush_battery_sram(e),
+            Self::Gb(e, p) => gb::flush_battery_sram(e, p),
+            Self::Nes(e, p) => nes::flush_battery_sram(e, p),
         }
     }
 
     pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         match self {
-            Self::Gb(e) => gb::encode_state_bytes(e),
-            Self::Nes(e) => nes::encode_state_bytes(e),
+            Self::Gb(e, _) => gb::encode_state_bytes(e),
+            Self::Nes(e, _) => nes::encode_state_bytes(e),
         }
     }
 
     pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
         match self {
-            Self::Gb(e) => gb::load_state_from_bytes(e, bytes),
-            Self::Nes(e) => nes::load_state_from_bytes(e, bytes),
+            Self::Gb(e, _) => gb::load_state_from_bytes(e, bytes),
+            Self::Nes(e, _) => nes::load_state_from_bytes(e, bytes),
         }
     }
 
     pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<std::path::PathBuf> {
         match self {
-            Self::Gb(e) => gb::slot_path(e, slot),
-            Self::Nes(e) => nes::slot_path(e, slot),
+            Self::Gb(e, _) => gb::slot_path(e, slot),
+            Self::Nes(e, _) => nes::slot_path(e, slot),
         }
     }
 
     pub(crate) fn auto_save_path(&self) -> Option<std::path::PathBuf> {
         match self {
-            Self::Gb(e) => gb::auto_save_path(e),
-            Self::Nes(e) => nes::auto_save_path(e),
+            Self::Gb(e, _) => gb::auto_save_path(e),
+            Self::Nes(e, _) => nes::auto_save_path(e),
         }
     }
 
-
     pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
         match self {
-            Self::Gb(e) => gb::load_state(e, slot),
-            Self::Nes(e) => nes::load_state(e, slot),
+            Self::Gb(e, _) => gb::load_state(e, slot),
+            Self::Nes(e, _) => nes::load_state(e, slot),
         }
     }
 
     pub(crate) fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
         match self {
-            Self::Gb(e) => gb::load_state_from_path(e, path),
-            Self::Nes(e) => nes::load_state_from_path(e, path),
+            Self::Gb(e, _) => gb::load_state_from_path(e, path),
+            Self::Nes(e, _) => nes::load_state_from_path(e, path),
         }
     }
 
     pub(crate) fn rom_hash(&self) -> Option<[u8; 32]> {
         match self {
-            Self::Gb(e) => Some(e.rom_hash),
-            Self::Nes(e) => Some(e.rom_hash),
+            Self::Gb(e, _) => Some(e.rom_hash()),
+            Self::Nes(e, _) => Some(e.rom_hash()),
         }
     }
 
     pub(crate) fn rumble_active(&self) -> bool {
         match self {
-            Self::Gb(e) => gb::rumble_active(e),
-            Self::Nes(_) => false,
+            Self::Gb(e, _) => gb::rumble_active(e),
+            Self::Nes(..) => false,
         }
     }
 
     pub(crate) fn is_mbc7(&self) -> bool {
         match self {
-            Self::Gb(e) => gb::is_mbc7(e),
-            Self::Nes(_) => false, // GB-specific: NES has no MBC7
+            Self::Gb(e, _) => gb::is_mbc7(e),
+            Self::Nes(..) => false,
         }
     }
 
     pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {
         match self {
-            Self::Gb(e) => gb::apu_channel_snapshot(e),
-            Self::Nes(e) => nes::apu_channel_snapshot(e),
+            Self::Gb(e, _) => gb::apu_channel_snapshot(e),
+            Self::Nes(e, _) => nes::apu_channel_snapshot(e),
         }
     }
 }

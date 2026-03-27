@@ -11,7 +11,6 @@ use crate::debug::{
 use crate::emu_thread::SnapshotRequest;
 use zeff_gb_core::emulator::Emulator;
 use zeff_gb_core::hardware::ppu::{PALETTE_COLORS, apply_palette, cgb_palette_rgba, correct_color};
-use zeff_gb_core::hardware::types::hardware_mode::HardwareMode;
 
 fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
     let register_lines = vec![
@@ -228,17 +227,17 @@ fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo> {
     }
     use zeff_gb_core::hardware::types::constants::*;
 
-    let regs = emu.bus.apu_regs_snapshot();
-    let wave_ram = emu.bus.apu_wave_ram_snapshot();
-    let nr52 = emu.bus.apu_nr52_raw();
+    let regs = emu.apu_regs_snapshot();
+    let wave_ram = emu.apu_wave_ram_snapshot();
+    let nr52 = emu.apu_nr52_raw();
     let channel_samples = [
-        emu.bus.apu_channel_debug_samples_ordered(0),
-        emu.bus.apu_channel_debug_samples_ordered(1),
-        emu.bus.apu_channel_debug_samples_ordered(2),
-        emu.bus.apu_channel_debug_samples_ordered(3),
+        emu.apu_channel_debug_samples_ordered(0),
+        emu.apu_channel_debug_samples_ordered(1),
+        emu.apu_channel_debug_samples_ordered(2),
+        emu.apu_channel_debug_samples_ordered(3),
     ];
-    let master_samples = emu.bus.apu_master_debug_samples_ordered();
-    let muted = emu.bus.apu_channel_mutes();
+    let master_samples = emu.apu_master_debug_samples_ordered();
+    let muted = emu.apu_channel_mutes();
 
     let ri = |addr: u16| (addr - NR10) as usize;
     let duty = |val: u8| match (val >> 6) & 0x03 {
@@ -434,9 +433,9 @@ fn gb_palette_snapshot(emu: &Emulator, show: bool, req: &SnapshotRequest) -> Opt
         return None;
     }
     let ppu = emu.ppu_registers();
-    let cgb_mode = matches!(emu.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble);
-    let bg_pal = emu.bus.ppu_bg_palette_ram_snapshot();
-    let obj_pal = emu.bus.ppu_obj_palette_ram_snapshot();
+    let cgb_mode = emu.is_cgb_mode();
+    let bg_pal = emu.ppu_bg_palette_ram_snapshot();
+    let obj_pal = emu.ppu_obj_palette_ram_snapshot();
 
     let mut groups = Vec::new();
 
@@ -489,7 +488,7 @@ fn gb_palette_snapshot(emu: &Emulator, show: bool, req: &SnapshotRequest) -> Opt
 
 fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
     let header = emu.rom_info();
-    let rom_bytes = emu.bus.cartridge.rom_bytes();
+    let rom_bytes = emu.cartridge_rom_bytes();
     let rom_crc32 = crc32fast::hash(rom_bytes);
     let is_gbc = header.is_cgb_compatible || header.is_cgb_exclusive;
     let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
@@ -514,7 +513,7 @@ fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
         RomInfoSection {
             heading: "Compatibility".into(),
             fields: vec![
-                ("Hardware Mode".into(), format!("{:?}", emu.hardware_mode)),
+                ("Hardware Mode".into(), format!("{:?}", emu.hardware_mode())),
                 ("CGB Flag".into(), format!("{:02X}", header.cgb_flag)),
                 ("SGB Flag".into(), format!("{:02X}", header.sgb_flag)),
                 ("CGB Compatible".into(), yes_no(header.is_cgb_compatible).into()),
@@ -591,7 +590,7 @@ pub(crate) fn collect_emu_snapshot(
 
     let graphics_data = if req.any_vram_viewer_open {
         let ppu = emu.ppu_registers();
-        let cgb_mode = matches!(emu.hardware_mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble);
+        let cgb_mode = emu.is_cgb_mode();
         let src = emu.vram();
         let mut vram_buf = reusable_vram.unwrap_or_default();
         vram_buf.resize(src.len(), 0);
@@ -600,8 +599,8 @@ pub(crate) fn collect_emu_snapshot(
             vram: vram_buf,
             ppu,
             cgb_mode,
-            bg_palette_ram: emu.bus.ppu_bg_palette_ram_snapshot(),
-            obj_palette_ram: emu.bus.ppu_obj_palette_ram_snapshot(),
+            bg_palette_ram: emu.ppu_bg_palette_ram_snapshot(),
+            obj_palette_ram: emu.ppu_obj_palette_ram_snapshot(),
             color_correction: req.color_correction,
             color_correction_matrix: req.color_correction_matrix,
         }))
@@ -610,13 +609,13 @@ pub(crate) fn collect_emu_snapshot(
     };
 
     let disassembly_view = if req.show_disassembler {
-        let pc_changed = req.last_disasm_pc != Some(emu.cpu.pc);
+        let pc_changed = req.last_disasm_pc != Some(emu.cpu_pc());
         if pc_changed {
-            let mut breakpoints: Vec<u16> = emu.debug.iter_breakpoints().collect();
+            let mut breakpoints: Vec<u16> = emu.iter_breakpoints().collect();
             breakpoints.sort_unstable();
             Some(DisassemblyView {
-                pc: emu.cpu.pc,
-                lines: disassemble_around(|addr| emu.bus.read_byte(addr), emu.cpu.pc, 12, 26),
+                pc: emu.cpu_pc(),
+                lines: disassemble_around(|addr| emu.peek_byte(addr), emu.cpu_pc(), 12, 26),
                 breakpoints,
             })
         } else {
@@ -638,7 +637,7 @@ pub(crate) fn collect_emu_snapshot(
         let start = req.memory_view_start;
         for i in 0..256u16 {
             let addr = start.wrapping_add(i);
-            buf.push((addr, emu.bus.read_byte(addr)));
+            buf.push((addr, emu.peek_byte(addr)));
         }
         Some(buf)
     } else {
@@ -653,7 +652,7 @@ pub(crate) fn collect_emu_snapshot(
         if !search.pattern.is_empty() {
             let mut flat = vec![0u8; 0x10000];
             for addr in 0u32..=0xFFFFu32 {
-                flat[addr as usize] = emu.bus.read_byte_raw(addr as u16);
+                flat[addr as usize] = emu.peek_byte_raw(addr as u16);
             }
             let pattern_len = search.pattern.len();
             for start_addr in 0..=(0x10000usize - pattern_len) {
@@ -673,7 +672,7 @@ pub(crate) fn collect_emu_snapshot(
         None
     };
 
-    let rom_bytes = emu.bus.cartridge.rom_bytes();
+    let rom_bytes = emu.cartridge_rom_bytes();
     let rom_size = rom_bytes.len() as u32;
 
     let rom_page = if req.show_rom_viewer {

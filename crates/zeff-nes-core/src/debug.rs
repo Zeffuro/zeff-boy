@@ -7,7 +7,7 @@ pub struct OpcodeLog {
     entries: [(u16, u8); OPCODE_LOG_CAPACITY],
     cursor: usize,
     count: usize,
-    pub enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl std::fmt::Debug for OpcodeLog {
@@ -60,6 +60,10 @@ impl OpcodeLog {
     pub fn clear(&mut self) {
         self.count = 0;
         self.cursor = 0;
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 }
 

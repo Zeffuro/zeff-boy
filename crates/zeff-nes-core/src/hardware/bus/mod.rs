@@ -13,22 +13,22 @@ pub enum DebugTraceEvent {
 
 pub struct Bus {
     pub ram: [u8; RAM_SIZE],
-    pub ppu: Ppu,
+    pub(crate) ppu: Ppu,
     pub apu: Apu,
     pub cartridge: Cartridge,
     pub controller1: Controller,
     pub controller2: Controller,
 
-    pub ppu_cycles: u64,
+    pub(crate) ppu_cycles: u64,
 
-    pub dma_stall_cycles: u64,
+    pub(crate) dma_stall_cycles: u64,
 
-    pub cpu_odd_cycle: bool,
-    pub cpu_open_bus: u8,
+    pub(crate) cpu_odd_cycle: bool,
+    pub(crate) cpu_open_bus: u8,
     pub game_genie: NesCheatState,
 
-    pub debug_trace_enabled: bool,
-    pub debug_trace_events: Vec<DebugTraceEvent>,
+    pub(crate) debug_trace_enabled: bool,
+    pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
 }
 
 impl Bus {

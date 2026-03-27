@@ -1,4 +1,4 @@
-use super::{DOTS_PER_LINE, DRAW_DOTS, LCDC_LCD_ENABLE, LCDC_WINDOW_ENABLE, OAM_DOTS, PPU, SCREEN_H, renderer};
+use super::{DOTS_PER_LINE, DRAW_DOTS_BASE, LCDC_LCD_ENABLE, LCDC_OBJ_ENABLE, LCDC_OBJ_SIZE, LCDC_WINDOW_ENABLE, OAM_DOTS, PPU, SCREEN_H, renderer};
 
 impl PPU {
     pub(super) fn window_enable_condition(&self) -> bool {
@@ -17,6 +17,44 @@ impl PPU {
             self.window_line_counter = self.window_line_counter.saturating_add(1);
             self.window_was_active_this_frame = true;
         }
+    }
+
+    fn compute_draw_dots_for_line(&self, oam: &[u8]) -> u64 {
+        if self.ly >= 144 {
+            return DRAW_DOTS_BASE;
+        }
+
+        let scx_penalty = (self.scx & 7) as u64;
+
+        let sprite_penalty = if self.lcdc & LCDC_OBJ_ENABLE != 0 {
+            let tall = self.lcdc & LCDC_OBJ_SIZE != 0;
+            let sprite_h: i32 = if tall { 16 } else { 8 };
+            let mut count: u64 = 0;
+            for i in 0..40usize {
+                let base = i * 4;
+                if base + 3 >= oam.len() {
+                    break;
+                }
+                let sy = oam[base] as i32 - 16;
+                if (self.ly as i32) >= sy && (self.ly as i32) < sy + sprite_h {
+                    count += 1;
+                    if count >= 10 {
+                        break;
+                    }
+                }
+            }
+            count * 6
+        } else {
+            0
+        };
+
+        let window_penalty = if self.window_visible_on_current_line() {
+            6
+        } else {
+            0
+        };
+
+        DRAW_DOTS_BASE + scx_penalty + sprite_penalty + window_penalty
     }
 
     #[inline]
@@ -43,6 +81,7 @@ impl PPU {
             self.window_y_triggered = false;
             self.rendered_current_line = false;
             self.prev_stat_line = false;
+            self.draw_dots_for_line = DRAW_DOTS_BASE;
             return 0;
         }
 
@@ -58,10 +97,15 @@ impl PPU {
             self.window_y_triggered = false;
             self.rendered_current_line = false;
             self.prev_stat_line = false;
+            self.draw_dots_for_line = DRAW_DOTS_BASE;
         }
 
         if self.ly == self.wy {
             self.window_y_triggered = true;
+        }
+
+        if self.ly < 144 && !self.rendered_current_line {
+            self.draw_dots_for_line = self.compute_draw_dots_for_line(oam);
         }
 
         let previous_mode = self.stat & 0x03;
@@ -70,8 +114,9 @@ impl PPU {
         self.cycles += cycles;
 
         let should_render_output = !self.blank_first_frame_after_lcd_on;
+        let draw_dots = self.draw_dots_for_line;
 
-        if !self.rendered_current_line && self.cycles >= OAM_DOTS + DRAW_DOTS {
+        if !self.rendered_current_line && self.cycles >= OAM_DOTS + draw_dots {
             if self.ly < 144 && should_render_output {
                 if cgb_mode {
                     renderer::render_scanline_cgb(self, vram, oam);
@@ -91,6 +136,10 @@ impl PPU {
                 } else {
                     renderer::render_scanline_dmg(self, vram, oam);
                 }
+            }
+            
+            if self.ly < 144 {
+                self.increment_window_line_counter_after_scanline();
             }
 
             self.ly += 1;
@@ -114,13 +163,18 @@ impl PPU {
             if self.ly == self.wy {
                 self.window_y_triggered = true;
             }
+
+            if self.ly < 144 {
+                self.draw_dots_for_line = self.compute_draw_dots_for_line(oam);
+            }
         }
 
+        let draw_dots = self.draw_dots_for_line;
         let current_mode = if self.ly >= 144 {
             1 // VBlank
         } else if self.cycles < OAM_DOTS {
             2 // OAM scan
-        } else if self.cycles < OAM_DOTS + DRAW_DOTS {
+        } else if self.cycles < OAM_DOTS + draw_dots {
             3 // Drawing
         } else {
             0 // HBlank

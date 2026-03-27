@@ -18,21 +18,21 @@ fn nestest_official_opcodes_pass() {
     }
 
     let rom_data = std::fs::read(&rom_path).expect("failed to read nestest.nes");
-    let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, rom_path, 48000.0)
+    let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, 48000.0)
         .expect("failed to create emulator");
 
-    emu.cpu.pc = 0xC000;
+    emu.set_cpu_pc(0xC000);
 
     for _ in 0..30_000 {
         emu.step_instruction();
 
-        if emu.cpu.pc == emu.cpu.last_opcode_pc {
+        if emu.cpu_pc() == emu.last_opcode_pc() {
             break;
         }
     }
 
-    let official_result = emu.bus.ram[0x02];
-    let unofficial_result = emu.bus.ram[0x03];
+    let official_result = emu.bus().ram[0x02];
+    let unofficial_result = emu.bus().ram[0x03];
 
     assert_eq!(
         official_result, 0x00,
@@ -62,19 +62,19 @@ fn nestest_unofficial_opcodes_pass() {
     }
 
     let rom_data = std::fs::read(&rom_path).expect("failed to read nestest.nes");
-    let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, rom_path, 48000.0)
+    let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, 48000.0)
         .expect("failed to create emulator");
 
-    emu.cpu.pc = 0xC000;
+    emu.set_cpu_pc(0xC000);
 
     for _ in 0..30_000 {
         emu.step_instruction();
-        if emu.cpu.pc == emu.cpu.last_opcode_pc {
+        if emu.cpu_pc() == emu.last_opcode_pc() {
             break;
         }
     }
 
-    let unofficial_result = emu.bus.ram[0x03];
+    let unofficial_result = emu.bus().ram[0x03];
     assert_eq!(
         unofficial_result, 0x00,
         "nestest unofficial opcode tests failed with error code: {:#04X}. \
@@ -82,4 +82,3 @@ fn nestest_unofficial_opcodes_pass() {
         unofficial_result
     );
 }
-

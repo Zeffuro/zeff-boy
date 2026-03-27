@@ -9,6 +9,7 @@ mod emu_thread;
 mod graphics;
 mod input;
 mod libretro_metadata;
+mod save_paths;
 mod settings;
 mod ui;
 
@@ -55,23 +56,34 @@ fn main() -> anyhow::Result<()> {
             })?;
             match system {
                 ActiveSystem::GameBoy => {
-                    let emu = zeff_gb_core::emulator::Emulator::from_rom_with_mode(
-                        path,
+                    let rom_data = std::fs::read(path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read GB ROM: {e}"))?;
+                    let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
+                        &rom_data,
                         settings.hardware_mode_preference,
                     )
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    Ok(EmuBackend::from_gb(emu))
+                    if let Some(sram_path) = emu_backend::gb::try_load_battery_sram(&mut emu, path)
+                        .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
+                    {
+                        log::info!("Loaded battery save from {}", sram_path);
+                    }
+                    Ok(EmuBackend::from_gb(emu, path.to_path_buf()))
                 }
                 ActiveSystem::Nes => {
                     let rom_data = std::fs::read(path)
                         .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}"))?;
-                    let emu = zeff_nes_core::emulator::Emulator::new(
+                    let mut emu = zeff_nes_core::emulator::Emulator::new(
                         &rom_data,
-                        path.to_path_buf(),
                         48000.0,
                     )
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    Ok(EmuBackend::from_nes(emu))
+                    if let Some(sram_path) = emu_backend::nes::try_load_battery_sram(&mut emu, path)
+                        .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
+                    {
+                        log::info!("Loaded battery save from {}", sram_path);
+                    }
+                    Ok(EmuBackend::from_nes(emu, path.to_path_buf()))
                 }
             }
         })

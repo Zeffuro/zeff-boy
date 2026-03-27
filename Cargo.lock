@@ -4346,7 +4346,6 @@ dependencies = [
  "arrayvec",
  "chrono",
  "crc32fast",
- "dirs",
  "log",
  "lz4_flex",
  "phf",
@@ -4359,7 +4358,6 @@ name = "zeff-nes-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs",
  "log",
  "lz4_flex",
  "serde",

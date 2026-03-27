@@ -14,8 +14,6 @@ use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference
 
 pub const SAVE_STATE_VERSION: u32 = 1;
 pub const SAVE_STATE_FORMAT_VERSION: u32 = 2;
-const SAVE_STATE_EXTENSION: &str = "state";
-const SAVE_SYSTEM_SUBDIR: &str = "gbc";
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -174,27 +172,6 @@ pub struct SaveStateRef<'a> {
     pub last_opcode_pc: u16,
 }
 
-pub fn slot_path(rom_hash: [u8; 32], slot: u8) -> Result<PathBuf> {
-    validate_slot(slot)?;
-    let mut path = save_dir_path();
-    path.push(format!(
-        "{}_slot{}.{}",
-        rom_hash_hex(rom_hash),
-        slot,
-        SAVE_STATE_EXTENSION
-    ));
-    Ok(path)
-}
-
-pub fn auto_save_path(rom_hash: [u8; 32]) -> PathBuf {
-    let mut path = save_dir_path();
-    path.push(format!(
-        "{}_auto.{}",
-        rom_hash_hex(rom_hash),
-        SAVE_STATE_EXTENSION
-    ));
-    path
-}
 
 #[allow(dead_code)]
 pub fn write_to_file(path: &Path, state: &SaveStateRef<'_>) -> Result<()> {
@@ -254,7 +231,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
     let ext = path
         .extension()
         .and_then(|v| v.to_str())
-        .unwrap_or(SAVE_STATE_EXTENSION);
+        .unwrap_or("state");
     tmp.set_extension(format!("{ext}.tmp.{suffix}"));
     tmp
 }
@@ -360,46 +337,6 @@ fn decode_mode_preference(tag: u8) -> Result<HardwareModePreference> {
         1 => Ok(HardwareModePreference::ForceDmg),
         2 => Ok(HardwareModePreference::ForceCgb),
         _ => bail!("invalid hardware mode preference tag in save-state file: {tag}"),
-    }
-}
-
-fn validate_slot(slot: u8) -> Result<()> {
-    if slot <= 9 {
-        Ok(())
-    } else {
-        bail!("invalid save-state slot {}; expected 0..=9", slot);
-    }
-}
-
-fn save_root_path() -> PathBuf {
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("zeff-boy").join("saves");
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("saves")
-}
-
-fn save_dir_path() -> PathBuf {
-    save_root_path().join(SAVE_SYSTEM_SUBDIR)
-}
-
-
-fn rom_hash_hex(hash: [u8; 32]) -> String {
-    let mut out = String::with_capacity(64);
-    for byte in hash {
-        out.push(hex_nibble(byte >> 4));
-        out.push(hex_nibble(byte & 0x0F));
-    }
-    out
-}
-
-fn hex_nibble(nibble: u8) -> char {
-    match nibble {
-        0..=9 => (b'0' + nibble) as char,
-        10..=15 => (b'a' + (nibble - 10)) as char,
-        _ => unreachable!(),
     }
 }
 

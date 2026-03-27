@@ -2,9 +2,7 @@ use super::{CGB_POST_BOOT_REGISTERS, DMG_POST_BOOT_REGISTERS, Emulator, Register
 use crate::debug::{DebugController, OpcodeLog};
 use crate::hardware::bus::Bus;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use crate::rom_loader;
 use sha2::{Digest, Sha256};
-use std::path::Path;
 
 impl Emulator {
     fn post_boot_registers_for_mode(mode: HardwareMode) -> RegisterSeed {
@@ -14,16 +12,15 @@ impl Emulator {
         }
     }
 
-    pub fn from_rom_with_mode(
-        path: &Path,
+    pub fn from_rom_data(
+        rom: &[u8],
         mode_preference: HardwareModePreference,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let rom = rom_loader::load_rom(path)?;
-        let rom_hash = Self::compute_rom_hash(&rom);
+        let rom_hash = Self::compute_rom_hash(rom);
         log::info!("ROM loaded: {} bytes", rom.len());
 
-        let header = crate::hardware::rom_header::RomHeader::from_rom(&rom)?;
-        header.display_info(&rom);
+        let header = crate::hardware::rom_header::RomHeader::from_rom(rom)?;
+        header.display_info(rom);
         let hardware_mode = mode_preference.resolve(
             header.is_cgb_compatible,
             header.is_sgb_supported,
@@ -35,9 +32,9 @@ impl Emulator {
                 "ForceCgb requested for DMG-only ROM; falling back to DMG mode for compatibility"
             );
         }
-        let bus = Bus::new(rom, &header, hardware_mode)?;
+        let bus = Bus::new(rom.to_vec(), &header, hardware_mode)?;
 
-        let mut emulator = Self {
+        let emulator = Self {
             cpu: crate::hardware::cpu::Cpu::new(),
             bus,
             header,
@@ -49,13 +46,10 @@ impl Emulator {
             last_opcode_pc: 0,
             debug: DebugController::new(),
             rom_hash,
-            rom_path: path.to_path_buf(),
         };
 
+        let mut emulator = emulator;
         emulator.apply_post_boot_state();
-        if let Some(sram_path) = emulator.try_load_battery_sram()? {
-            log::info!("Loaded battery save from {}", sram_path);
-        }
         Ok(emulator)
     }
 

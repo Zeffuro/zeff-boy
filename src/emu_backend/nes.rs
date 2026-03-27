@@ -16,18 +16,18 @@ pub(super) fn drain_audio_samples_into(
     emu: &mut zeff_nes_core::emulator::Emulator,
     buf: &mut Vec<f32>,
 ) {
-    emu.bus.apu.drain_samples_into_stereo(buf);
+    emu.drain_audio_into_stereo(buf);
 }
 
 pub(super) fn set_sample_rate(emu: &mut zeff_nes_core::emulator::Emulator, rate: u32) {
-    emu.bus.apu.output_sample_rate = rate as f64;
+    emu.set_sample_rate(rate);
 }
 
 pub(super) fn set_apu_sample_generation_enabled(
     emu: &mut zeff_nes_core::emulator::Emulator,
     enabled: bool,
 ) {
-    emu.bus.apu.set_sample_generation_enabled(enabled);
+    emu.set_apu_sample_generation_enabled(enabled);
 }
 
 pub(super) fn set_apu_channel_mutes(
@@ -41,7 +41,7 @@ pub(super) fn set_apu_channel_mutes(
         mutes.get(3).copied().unwrap_or(false),
         mutes.get(4).copied().unwrap_or(false),
     ];
-    emu.bus.apu.set_channel_mutes(arr);
+    emu.set_apu_channel_mutes(arr);
 }
 
 fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
@@ -78,7 +78,7 @@ pub(super) fn set_input(
     buttons_pressed: u8,
     dpad_pressed: u8,
 ) {
-    emu.bus.controller1.set_buttons(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+    emu.set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
 }
 
 pub(super) fn set_input_p2(
@@ -86,13 +86,19 @@ pub(super) fn set_input_p2(
     buttons_pressed: u8,
     dpad_pressed: u8,
 ) {
-    emu.bus.controller2.set_buttons(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+    emu.set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
 }
 
 pub(super) fn flush_battery_sram(
     emu: &mut zeff_nes_core::emulator::Emulator,
+    rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
-    emu.flush_battery_sram()
+    let Some(bytes) = emu.dump_battery_sram() else {
+        return Ok(None);
+    };
+    let save_path = sram_path_for_rom(rom_path);
+    crate::save_paths::write_sram_file(&save_path, &bytes)?;
+    Ok(Some(save_path.display().to_string()))
 }
 
 pub(super) fn encode_state_bytes(
@@ -112,30 +118,57 @@ pub(super) fn slot_path(
     emu: &zeff_nes_core::emulator::Emulator,
     slot: u8,
 ) -> anyhow::Result<PathBuf> {
-    zeff_nes_core::save_state::slot_path(emu.rom_hash, slot)
+    crate::save_paths::slot_path("nes", "nstate", emu.rom_hash(), slot)
 }
 
 pub(super) fn auto_save_path(emu: &zeff_nes_core::emulator::Emulator) -> Option<PathBuf> {
-    Some(zeff_nes_core::save_state::auto_save_path(emu.rom_hash))
+    Some(crate::save_paths::auto_save_path("nes", "nstate", emu.rom_hash()))
 }
 
 pub(super) fn load_state(
     emu: &mut zeff_nes_core::emulator::Emulator,
     slot: u8,
 ) -> anyhow::Result<String> {
-    emu.load_state_slot(slot)
+    let path = crate::save_paths::slot_path("nes", "nstate", emu.rom_hash(), slot)?;
+    let bytes = std::fs::read(&path)
+        .map_err(|e| anyhow::anyhow!("failed to read NES save state: {}: {e}", path.display()))?;
+    emu.load_state_from_bytes(bytes)?;
+    Ok(path.display().to_string())
 }
 
 pub(super) fn load_state_from_path(
     emu: &mut zeff_nes_core::emulator::Emulator,
     path: &Path,
 ) -> anyhow::Result<()> {
-    emu.load_state_from_path(path)
+    let bytes = std::fs::read(path)
+        .map_err(|e| anyhow::anyhow!("failed to read NES save state: {}: {e}", path.display()))?;
+    emu.load_state_from_bytes(bytes)
+}
+
+pub(crate) fn try_load_battery_sram(
+    emu: &mut zeff_nes_core::emulator::Emulator,
+    rom_path: &Path,
+) -> anyhow::Result<Option<String>> {
+    if !emu.has_battery() {
+        return Ok(None);
+    }
+    let save_path = sram_path_for_rom(rom_path);
+    if !save_path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&save_path)
+        .map_err(|e| anyhow::anyhow!("failed to read NES save {}: {e}", save_path.display()))?;
+    emu.load_battery_sram(&bytes)?;
+    Ok(Some(save_path.display().to_string()))
+}
+
+fn sram_path_for_rom(rom_path: &Path) -> PathBuf {
+    rom_path.with_extension("sav")
 }
 
 pub(super) fn apu_channel_snapshot(
     emu: &zeff_nes_core::emulator::Emulator,
 ) -> Option<MidiApuSnapshot> {
-    Some(MidiApuSnapshot::Nes(emu.bus.apu.channel_snapshot()))
+    Some(MidiApuSnapshot::Nes(emu.apu_channel_snapshot()))
 }
 

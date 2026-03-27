@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/zeff-gb-core", "crates/zeff-nes-core"]
+exclude = ["fuzz"]
 
 [package]
 name = "zeff-boy"

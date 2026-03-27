@@ -67,8 +67,8 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         i += count;
     }
 
-    let breakpoints: Vec<u16> = emu.debug.iter_breakpoints().collect();
-    let watchpoints: Vec<WatchpointDisplay> = emu.debug.watchpoints
+    let breakpoints: Vec<u16> = emu.iter_breakpoints().collect();
+    let watchpoints: Vec<WatchpointDisplay> = emu.debug_watchpoints()
         .iter()
         .map(|w| WatchpointDisplay {
             address: w.address,
@@ -79,8 +79,8 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
             },
         })
         .collect();
-    let hit_breakpoint = emu.debug.hit_breakpoint;
-    let hit_watchpoint = emu.debug.hit_watchpoint.as_ref().map(|h| WatchHitDisplay {
+    let hit_breakpoint = emu.debug_hit_breakpoint();
+    let hit_watchpoint = emu.debug_hit_watchpoint().map(|h| WatchHitDisplay {
         address: h.address,
         old_value: h.old_value,
         new_value: h.new_value,
@@ -110,7 +110,7 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
 }
 
 pub(crate) fn nes_rom_info(emu: &zeff_nes_core::emulator::Emulator) -> RomDebugInfo {
-    let header = emu.bus.cartridge.header();
+    let header = emu.cartridge_header();
     let yes_no = |v: bool| if v { "Yes" } else { "No" };
 
     let chr_label = if header.chr_rom_size > 0 {
@@ -177,7 +177,7 @@ pub(crate) fn nes_apu_snapshot(
         return None;
     }
 
-    let apu = &emu.bus.apu;
+    let apu = &emu.bus().apu;
     let muted = apu.channel_mutes();
     let master_lines = vec![
         format!(
@@ -256,10 +256,10 @@ pub(crate) fn nes_apu_snapshot(
 
 pub(crate) fn nes_disassembly_view(emu: &zeff_nes_core::emulator::Emulator) -> DisassemblyView {
     DisassemblyView {
-        pc: emu.cpu.pc,
+        pc: emu.cpu_pc(),
         lines: nes_disassemble_around(
-            |addr| nes_disasm_peek_byte(&emu.bus, addr),
-            emu.cpu.pc,
+            |addr| nes_disasm_peek_byte(emu.bus(), addr),
+            emu.cpu_pc(),
             12,
             26,
         ),

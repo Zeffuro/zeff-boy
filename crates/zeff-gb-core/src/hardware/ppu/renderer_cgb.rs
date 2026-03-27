@@ -89,7 +89,6 @@ pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         ppu.framebuffer[offset..offset + 4].copy_from_slice(&rgba);
     }
 
-    ppu.increment_window_line_counter_after_scanline();
 
     if ppu.debug_flags.sprites {
         render_sprites(SpriteRenderContext {

@@ -21,7 +21,7 @@ pub const SCREEN_H: usize = 144;
 
 const DOTS_PER_LINE: u64 = 456;
 const OAM_DOTS: u64 = 80;
-const DRAW_DOTS: u64 = 172;
+const DRAW_DOTS_BASE: u64 = 172;
 pub const LCDC_BG_ENABLE: u8 = 0x01;
 pub const LCDC_OBJ_ENABLE: u8 = 0x02;
 pub const LCDC_OBJ_SIZE: u8 = 0x04;
@@ -98,6 +98,7 @@ pub struct PPU {
     pub blank_first_frame_after_lcd_on: bool,
     prev_stat_line: bool,
     pub debug_flags: PpuDebugFlags,
+    pub draw_dots_for_line: u64,
 }
 
 impl Default for PPU {
@@ -148,6 +149,7 @@ impl PPU {
             lcd_was_enabled: false,
             blank_first_frame_after_lcd_on: false,
             debug_flags: PpuDebugFlags::default(),
+            draw_dots_for_line: DRAW_DOTS_BASE,
         }
     }
 }
@@ -221,6 +223,7 @@ mod tests {
         let oam = [0u8; 160];
 
         ppu.lcdc = LCDC_LCD_ENABLE | LCDC_WINDOW_ENABLE;
+        ppu.lcd_was_enabled = true;
         ppu.wy = 0;
         ppu.wx = 7;
 
@@ -252,6 +255,7 @@ mod tests {
         let oam = [0u8; 160];
 
         ppu.lcdc = LCDC_LCD_ENABLE | LCDC_WINDOW_ENABLE;
+        ppu.lcd_was_enabled = true;
         ppu.wy = 0;
         ppu.wx = 7;
 
@@ -291,18 +295,21 @@ mod tests {
         let oam = [0u8; 160];
 
         ppu.lcdc = LCDC_LCD_ENABLE;
+        ppu.lcd_was_enabled = true;
         ppu.ly = 0;
         ppu.cycles = 0;
 
-        ppu.step(OAM_DOTS, &vram, &oam, false);
-        assert_eq!(ppu.mode(), 2);
+        ppu.step(OAM_DOTS - 1, &vram, &oam, false);
+        assert_eq!(ppu.mode(), 2, "should still be OAM scan at dot {}", OAM_DOTS - 1);
 
-        ppu.step(DRAW_DOTS, &vram, &oam, false);
-        assert_eq!(ppu.mode(), 3);
+        ppu.step(1, &vram, &oam, false);
+        assert_eq!(ppu.mode(), 3, "should enter pixel transfer at dot {}", OAM_DOTS);
 
-        let hblank_dots = DOTS_PER_LINE - OAM_DOTS - DRAW_DOTS;
-        ppu.step(hblank_dots - 1, &vram, &oam, false);
-        assert_eq!(ppu.mode(), 0);
+        ppu.step(DRAW_DOTS_BASE - 1, &vram, &oam, false);
+        assert_eq!(ppu.mode(), 3, "should still be pixel transfer");
+
+        ppu.step(1, &vram, &oam, false);
+        assert_eq!(ppu.mode(), 0, "should enter HBlank at dot {}", OAM_DOTS + DRAW_DOTS_BASE);
     }
 
     #[test]
@@ -393,5 +400,87 @@ mod tests {
         ppu.ly = 6;
         ppu.update_stat_interrupt();
         assert_eq!(ppu.stat & 0x04, 0, "LYC coincidence flag should be cleared");
+    }
+
+    #[test]
+    fn draw_dots_increases_with_scx_fine_scroll() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let oam = [0u8; 160];
+
+        ppu.lcdc = LCDC_LCD_ENABLE;
+        ppu.scx = 5;
+
+        ppu.step(1, &vram, &oam, false);
+
+        assert_eq!(
+            ppu.draw_dots_for_line,
+            DRAW_DOTS_BASE + 5,
+            "SCX fine scroll of 5 should add 5 penalty dots"
+        );
+    }
+
+    #[test]
+    fn draw_dots_increases_with_sprites_on_line() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let mut oam = [0u8; 160];
+
+        ppu.lcdc = LCDC_LCD_ENABLE | LCDC_OBJ_ENABLE;
+        ppu.ly = 0;
+        ppu.scx = 0;
+
+        for i in 0..3 {
+            oam[i * 4] = 16;
+            oam[i * 4 + 1] = (10 + i * 20) as u8;
+        }
+
+        ppu.step(1, &vram, &oam, false);
+
+        assert_eq!(
+            ppu.draw_dots_for_line,
+            DRAW_DOTS_BASE + 3 * 6,
+            "3 sprites should add 18 penalty dots (3 * 6)"
+        );
+    }
+
+    #[test]
+    fn draw_dots_base_with_no_sprites_and_zero_scx() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let oam = [0u8; 160];
+
+        ppu.lcdc = LCDC_LCD_ENABLE;
+        ppu.scx = 0;
+
+        ppu.step(1, &vram, &oam, false);
+
+        assert_eq!(
+            ppu.draw_dots_for_line, DRAW_DOTS_BASE,
+            "No sprites and SCX=0 should give base draw dots"
+        );
+    }
+
+    #[test]
+    fn draw_dots_caps_at_10_sprites() {
+        let mut ppu = PPU::new();
+        let vram = [0u8; 0x4000];
+        let mut oam = [0u8; 160];
+
+        ppu.lcdc = LCDC_LCD_ENABLE | LCDC_OBJ_ENABLE;
+        ppu.scx = 0;
+
+        for i in 0..15 {
+            oam[i * 4] = 16;
+            oam[i * 4 + 1] = (i * 10) as u8;
+        }
+
+        ppu.step(1, &vram, &oam, false);
+
+        assert_eq!(
+            ppu.draw_dots_for_line,
+            DRAW_DOTS_BASE + 10 * 6,
+            "Sprite penalty should cap at 10 sprites (10 * 6 = 60)"
+        );
     }
 }

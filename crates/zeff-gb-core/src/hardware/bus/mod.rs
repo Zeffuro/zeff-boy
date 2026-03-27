@@ -921,4 +921,68 @@ mod tests {
         bus.if_reg = 0x00;
         assert_eq!(bus.read_byte_raw(INTERRUPT_IF), 0x00);
     }
+
+    #[test]
+    fn cgb_speed_switch_toggles_hardware_mode() {
+        let mut bus = make_cgb_test_bus();
+        assert!(matches!(bus.hardware_mode, HardwareMode::CGBNormal));
+
+        bus.key1 = (bus.key1 & 0x80) | 0x01 | 0x7E;
+        assert!(bus.maybe_switch_cgb_speed());
+        assert!(matches!(bus.hardware_mode, HardwareMode::CGBDouble));
+        
+        assert_eq!(bus.key1 & 0x80, 0x80);
+        assert_eq!(bus.key1 & 0x01, 0x00);
+
+        bus.key1 = (bus.key1 & 0x80) | 0x01 | 0x7E;
+        assert!(bus.maybe_switch_cgb_speed());
+        assert!(matches!(bus.hardware_mode, HardwareMode::CGBNormal));
+        assert_eq!(bus.key1 & 0x80, 0x00);
+    }
+
+    #[test]
+    fn cgb_speed_switch_ignored_without_prepare_bit() {
+        let mut bus = make_cgb_test_bus();
+        
+        assert!(!bus.maybe_switch_cgb_speed());
+        assert!(matches!(bus.hardware_mode, HardwareMode::CGBNormal));
+    }
+
+    #[test]
+    fn cgb_speed_switch_ignored_in_dmg_mode() {
+        let mut bus = make_test_bus();
+        bus.key1 = bus.key1 | 0x01;
+        assert!(!bus.maybe_switch_cgb_speed());
+    }
+
+    #[test]
+    fn cgb_svbk_read_returns_masked_bank() {
+        let mut bus = make_cgb_test_bus();
+        bus.wram_bank = 5;
+        let val = io_bus::read_io(&bus, CGB_SVBK);
+        assert_eq!(val & 0x07, 5);
+        assert_eq!(val & 0xF8, 0xF8);
+    }
+
+    #[test]
+    fn cgb_vbk_read_returns_masked_bank() {
+        let mut bus = make_cgb_test_bus();
+        bus.vram_bank = 1;
+        let val = io_bus::read_io(&bus, PPU_VBK);
+        assert_eq!(val, 0xFF);
+        bus.vram_bank = 0;
+        let val = io_bus::read_io(&bus, PPU_VBK);
+        assert_eq!(val, 0xFE);
+    }
+
+    #[test]
+    fn cgb_key1_write_only_affects_bit_0() {
+        let mut bus = make_cgb_test_bus();
+        let original_key1 = bus.key1;
+        io_bus::write_io(&mut bus, CGB_KEY1, 0xFF);
+        
+        assert_eq!(bus.key1 & 0x01, 0x01);
+        assert_eq!(bus.key1 & 0x7E, 0x7E);
+        assert_eq!(bus.key1 & 0x80, original_key1 & 0x80);
+    }
 }

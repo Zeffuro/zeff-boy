@@ -2,81 +2,48 @@ use super::Emulator;
 use crate::debug::{DebugController, OpcodeLog};
 use crate::hardware::bus::Bus;
 use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::rom_loader;
 use crate::save_state::{
-    SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, has_bess_footer, import_bess, slot_path,
-    validate_compatibility, write_to_file,
+    SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, has_bess_footer, import_bess,
+    validate_compatibility,
 };
 use anyhow::{Result as AnyResult, bail};
-use std::path::Path;
 
 impl Emulator {
-    pub fn flush_battery_sram(&self) -> AnyResult<Option<String>> {
+    pub fn is_battery_backed(&self) -> bool {
+        self.header.cartridge_type.is_battery_backed()
+    }
+
+    pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
         if !self.header.cartridge_type.is_battery_backed() {
-            return Ok(None);
+            return None;
         }
 
         let sram = self.bus.cartridge.dump_sram();
         if sram.is_empty() {
-            return Ok(None);
+            return None;
         }
 
-        let save_path = rom_loader::save_file_path_for_rom(&self.rom_path);
-        rom_loader::write_save_file(&save_path, &sram)?;
-        Ok(Some(save_path.display().to_string()))
+        Some(sram)
     }
 
-    pub(super) fn try_load_battery_sram(&mut self) -> AnyResult<Option<String>> {
-        if !self.header.cartridge_type.is_battery_backed() {
-            return Ok(None);
-        }
-
+    pub fn load_battery_sram(&mut self, bytes: &[u8]) -> AnyResult<()> {
         let expected_len = self.bus.cartridge.sram_len();
         let has_mbc3_rtc = self.header.cartridge_type.is_mbc3_with_rtc();
         if expected_len == 0 && !has_mbc3_rtc {
-            return Ok(None);
+            return Ok(());
         }
 
-        let save_path = rom_loader::save_file_path_for_rom(&self.rom_path);
-        if !save_path.exists() {
-            return Ok(None);
-        }
-
-        let loaded = rom_loader::load_save_file(&save_path)?;
         if has_mbc3_rtc {
-            let legacy_len = expected_len.saturating_sub(4);
-            if loaded.len() != expected_len && loaded.len() != legacy_len {
-                log::warn!(
-                    "SRAM/RTC size mismatch for {}: got {} bytes, expected {} or {} (will truncate/pad RAM, RTC footer ignored)",
-                    save_path.display(),
-                    loaded.len(),
-                    legacy_len,
-                    expected_len
-                );
-            }
-            self.bus.cartridge.load_sram(&loaded);
-            return Ok(Some(save_path.display().to_string()));
-        }
-
-        if loaded.len() != expected_len {
-            log::warn!(
-                "SRAM size mismatch for {}: got {} bytes, expected {} (will truncate/pad)",
-                save_path.display(),
-                loaded.len(),
-                expected_len
-            );
+            self.bus.cartridge.load_sram(bytes);
+            return Ok(());
         }
 
         let mut adjusted = vec![0u8; expected_len];
-        let copy_len = expected_len.min(loaded.len());
-        adjusted[..copy_len].copy_from_slice(&loaded[..copy_len]);
+        let copy_len = expected_len.min(bytes.len());
+        adjusted[..copy_len].copy_from_slice(&bytes[..copy_len]);
         self.bus.cartridge.load_sram(&adjusted);
 
-        Ok(Some(save_path.display().to_string()))
-    }
-
-    pub fn rom_path(&self) -> &Path {
-        &self.rom_path
+        Ok(())
     }
 
     pub fn as_save_state_ref(&self) -> SaveStateRef<'_> {
@@ -97,30 +64,6 @@ impl Emulator {
         crate::save_state::encode_state_bytes(&self.as_save_state_ref())
     }
 
-    #[allow(dead_code)]
-    pub fn save_state(&self, slot: u8) -> AnyResult<String> {
-        let path = slot_path(self.rom_hash, slot)?;
-        self.save_state_to_path(&path)?;
-        Ok(path.display().to_string())
-    }
-
-    #[allow(dead_code)]
-    pub fn save_state_to_path(&self, path: &Path) -> AnyResult<()> {
-        write_to_file(path, &self.as_save_state_ref())?;
-        Ok(())
-    }
-
-    pub fn load_state(&mut self, slot: u8) -> AnyResult<String> {
-        let path = slot_path(self.rom_hash, slot)?;
-        self.load_state_from_path(&path)?;
-        Ok(path.display().to_string())
-    }
-
-    pub fn load_state_from_path(&mut self, path: &Path) -> AnyResult<()> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("failed to read save state: {}: {e}", path.display()))?;
-        self.load_state_from_bytes(bytes)
-    }
 
     pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<()> {
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {

@@ -209,37 +209,38 @@ impl Apu {
         if !self.sample_generation_enabled {
             return;
         }
-        let p1_raw = self.pulse1.output() as f32;
-        let p2_raw = self.pulse2.output() as f32;
-        let tri_raw = self.triangle.output() as f32;
-        let noi_raw = self.noise.output() as f32;
-        let dmc_raw = self.dmc.output() as f32;
-
-        let p1 = if self.channel_mutes[0] { 0.0 } else { p1_raw };
-        let p2 = if self.channel_mutes[1] { 0.0 } else { p2_raw };
-        let tri = if self.channel_mutes[2] { 0.0 } else { tri_raw };
-        let noi = if self.channel_mutes[3] { 0.0 } else { noi_raw };
-        let dmc = if self.channel_mutes[4] { 0.0 } else { dmc_raw };
-
-        let pulse_sum = p1 + p2;
-        let pulse_out = if pulse_sum > 0.0 {
-            95.88 / (8128.0 / pulse_sum + 100.0)
-        } else {
-            0.0
-        };
-
-        let tnd_sum = tri / 8227.0 + noi / 12241.0 + dmc / 22638.0;
-        let tnd_out = if tnd_sum > 0.0 {
-            159.79 / (1.0 / tnd_sum + 100.0)
-        } else {
-            0.0
-        };
-
-        let sample = pulse_out + tnd_out;
 
         self.sample_accumulator += self.output_sample_rate;
         if self.sample_accumulator >= APU_CPU_CLOCK_NTSC {
             self.sample_accumulator -= APU_CPU_CLOCK_NTSC;
+            
+            let p1_raw = self.pulse1.output() as f32;
+            let p2_raw = self.pulse2.output() as f32;
+            let tri_raw = self.triangle.output() as f32;
+            let noi_raw = self.noise.output() as f32;
+            let dmc_raw = self.dmc.output() as f32;
+
+            let p1 = if self.channel_mutes[0] { 0.0 } else { p1_raw };
+            let p2 = if self.channel_mutes[1] { 0.0 } else { p2_raw };
+            let tri = if self.channel_mutes[2] { 0.0 } else { tri_raw };
+            let noi = if self.channel_mutes[3] { 0.0 } else { noi_raw };
+            let dmc = if self.channel_mutes[4] { 0.0 } else { dmc_raw };
+
+            let pulse_sum = p1 + p2;
+            let pulse_out = if pulse_sum > 0.0 {
+                95.88 / (8128.0 / pulse_sum + 100.0)
+            } else {
+                0.0
+            };
+
+            let tnd_sum = tri / 8227.0 + noi / 12241.0 + dmc / 22638.0;
+            let tnd_out = if tnd_sum > 0.0 {
+                159.79 / (1.0 / tnd_sum + 100.0)
+            } else {
+                0.0
+            };
+
+            let sample = pulse_out + tnd_out;
             self.sample_buffer.push(sample);
 
             if self.debug_collection_enabled {

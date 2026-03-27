@@ -1,0 +1,32 @@
+[package]
+name = "zeff-boy-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+zeff-nes-core = { path = "../crates/zeff-nes-core" }
+zeff-gb-core = { path = "../crates/zeff-gb-core" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_nes_cartridge_load"
+path = "fuzz_targets/fuzz_nes_cartridge_load.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_gb_rom_header"
+path = "fuzz_targets/fuzz_gb_rom_header.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_nes_save_state"
+path = "fuzz_targets/fuzz_nes_save_state.rs"
+doc = false
+

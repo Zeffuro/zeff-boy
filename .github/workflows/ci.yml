@@ -51,12 +51,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --workspace 2>&1 || true
-
-      - name: Run core crate tests (must pass)
-        run: |
-          cargo test -p zeff-gb-core --lib
-          cargo test -p zeff-nes-core
+        run: cargo test --workspace
 
   windows:
     name: Windows Build
@@ -71,8 +66,6 @@ jobs:
       - name: Build
         run: cargo build --workspace
 
-      - name: Run core tests
-        run: |
-          cargo test -p zeff-gb-core --lib
-          cargo test -p zeff-nes-core
+      - name: Run tests
+        run: cargo test --workspace
 

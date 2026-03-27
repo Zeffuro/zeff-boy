@@ -12,11 +12,11 @@ pub(super) fn build_slot_labels(rom_hash: Option<[u8; 32]>, system: ActiveSystem
         let Some(hash) = rom_hash else {
             return format!("Slot {slot}  (empty)");
         };
-        let path_result = match system {
-            ActiveSystem::Nes => zeff_nes_core::save_state::slot_path(hash, slot),
-            ActiveSystem::GameBoy => zeff_gb_core::save_state::slot_path(hash, slot),
+        let (subdir, ext) = match system {
+            ActiveSystem::Nes => ("nes", "nstate"),
+            ActiveSystem::GameBoy => ("gbc", "gbstate"),
         };
-        let Ok(path) = path_result else {
+        let Ok(path) = crate::save_paths::slot_path(subdir, ext, hash, slot) else {
             return format!("Slot {slot}  (empty)");
         };
 
@@ -75,16 +75,30 @@ impl App {
 
         let backend_result: anyhow::Result<EmuBackend> = match system {
             ActiveSystem::GameBoy => {
-                Emulator::from_rom_with_mode(path, self.settings.hardware_mode_preference)
+                let rom_data = match std::fs::read(path) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        let msg = format!("Failed to read GB ROM: {e}");
+                        log::warn!("{}", msg);
+                        self.toast_manager.error(msg);
+                        return;
+                    }
+                };
+                Emulator::from_rom_data(&rom_data, self.settings.hardware_mode_preference)
                     .map_err(|e| anyhow::anyhow!("{e}"))
                     .map(|mut emu| {
                         if let Some(audio) = &self.audio {
-                            emu.bus.set_apu_sample_rate(audio.sample_rate());
+                            emu.set_sample_rate(audio.sample_rate());
                         }
                         let buttons = self.host_input.buttons_pressed();
                         let dpad = self.host_input.dpad_pressed();
-                        emu.bus.apply_joypad_pressed_masks(buttons, dpad);
-                        EmuBackend::from_gb(emu)
+                        emu.set_input(buttons, dpad);
+                        if let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emu, path)
+                            .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
+                        {
+                            log::info!("Loaded battery save from {}", sram_path);
+                        }
+                        EmuBackend::from_gb(emu, path.to_path_buf())
                     })
             }
             ActiveSystem::Nes => {
@@ -97,9 +111,15 @@ impl App {
                             .unwrap_or(48000.0);
                         zeff_nes_core::emulator::Emulator::new(
                             &data,
-                            path.to_path_buf(),
                             sample_rate,
-                        ).map(EmuBackend::from_nes)
+                        ).map(|mut emu| {
+                            if let Some(sram_path) = crate::emu_backend::nes::try_load_battery_sram(&mut emu, path)
+                                .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
+                            {
+                                log::info!("Loaded battery save from {}", sram_path);
+                            }
+                            EmuBackend::from_nes(emu, path.to_path_buf())
+                        })
                     }
                     Err(e) => Err(e),
                 }
@@ -128,9 +148,9 @@ impl App {
 
                 // GB-specific setup (cheats, libretro, header info)
                 if let Some(gb_emu) = backend.gb() {
-                    let rom_header_title = gb_emu.header.title.clone();
-                    let is_gbc = gb_emu.header.is_cgb_compatible || gb_emu.header.is_cgb_exclusive;
-                    let rom_crc32 = crc32fast::hash(gb_emu.bus.cartridge.rom_bytes());
+                    let rom_header_title = gb_emu.header().title.clone();
+                    let is_gbc = gb_emu.header().is_cgb_compatible || gb_emu.header().is_cgb_exclusive;
+                    let rom_crc32 = crc32fast::hash(gb_emu.cartridge_rom_bytes());
                     let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
                     let search_hints = crate::libretro_metadata::build_cheat_search_hints(
                         &rom_header_title,
@@ -624,9 +644,8 @@ impl App {
             return;
         };
 
-        // Capture current state bytes from emu thread
         if let Some(thread) = &self.emu_thread {
-            thread.send(crate::emu_thread::EmuCommand::CaptureStateBytes);
+            thread.send(EmuCommand::CaptureStateBytes);
         }
         match self.recv_cold_response() {
             Some(EmuResponse::StateCaptured(state_bytes)) => {

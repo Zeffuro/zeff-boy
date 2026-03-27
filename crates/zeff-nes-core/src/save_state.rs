@@ -239,67 +239,6 @@ pub fn decode_state(
     Ok(())
 }
 
-const SAVE_STATE_EXTENSION: &str = "nstate";
-const SAVE_SYSTEM_SUBDIR: &str = "nes";
-
-fn rom_hash_hex(hash: [u8; 32]) -> String {
-    hash.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn save_root_path() -> std::path::PathBuf {
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("zeff-boy").join("saves");
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("saves")
-}
-
-fn save_dir_path() -> std::path::PathBuf {
-    save_root_path().join(SAVE_SYSTEM_SUBDIR)
-}
-
-fn validate_slot(slot: u8) -> Result<()> {
-    if slot > 9 {
-        bail!("invalid save-state slot {slot} (must be 0–9)");
-    }
-    Ok(())
-}
-
-pub fn slot_path(rom_hash: [u8; 32], slot: u8) -> Result<std::path::PathBuf> {
-    validate_slot(slot)?;
-    let mut path = save_dir_path();
-    path.push(format!(
-        "{}_slot{}.{}",
-        rom_hash_hex(rom_hash),
-        slot,
-        SAVE_STATE_EXTENSION
-    ));
-    Ok(path)
-}
-
-pub fn auto_save_path(rom_hash: [u8; 32]) -> std::path::PathBuf {
-    let mut path = save_dir_path();
-    path.push(format!(
-        "{}_auto.{}",
-        rom_hash_hex(rom_hash),
-        SAVE_STATE_EXTENSION
-    ));
-    path
-}
-
-
-pub fn write_state_bytes_to_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow!("failed to create save-state directory: {e}"))?;
-    }
-    std::fs::write(path, bytes)
-        .map_err(|e| anyhow!("failed to write save-state file {}: {e}", path.display()))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,7 +262,7 @@ mod tests {
 
     fn make_emulator() -> crate::emulator::Emulator {
         let rom = build_test_rom();
-        crate::emulator::Emulator::new(&rom, std::path::PathBuf::from("test.nes"), 44_100.0)
+        crate::emulator::Emulator::new(&rom, 44_100.0)
             .expect("test ROM should load")
     }
 

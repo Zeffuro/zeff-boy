@@ -1,26 +1,23 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Cartridge;
-use crate::hardware::cpu::Cpu;
-use sha2::{Sha256, Digest};
+use crate::hardware::cpu::{Cpu, CpuState};
+use sha2::{Digest, Sha256};
 use std::fmt;
-use std::path::PathBuf;
 
 mod runtime;
-mod state_io;
 
 pub use crate::hardware::constants::CPU_CYCLES_PER_FRAME;
 
 pub struct Emulator {
-    pub cpu: Cpu,
-    pub bus: Bus,
-    pub(crate) rom_path: PathBuf,
-    pub rom_hash: [u8; 32],
-    pub opcode_log: crate::debug::OpcodeLog,
-    pub debug: crate::debug::DebugController,
+    pub(crate) cpu: Cpu,
+    pub(crate) bus: Bus,
+    pub(crate) rom_hash: [u8; 32],
+    pub(crate) opcode_log: crate::debug::OpcodeLog,
+    pub(crate) debug: crate::debug::DebugController,
 }
 
 impl Emulator {
-    pub fn new(rom_data: &[u8], rom_path: PathBuf, sample_rate: f64) -> anyhow::Result<Self> {
+    pub fn new(rom_data: &[u8], sample_rate: f64) -> anyhow::Result<Self> {
         let cartridge = Cartridge::load(rom_data)?;
         let bus = Bus::new(cartridge, sample_rate);
 
@@ -29,15 +26,11 @@ impl Emulator {
         let mut emu = Self {
             cpu: Cpu::new(),
             bus,
-            rom_path,
             rom_hash,
             opcode_log: crate::debug::OpcodeLog::new(),
             debug: crate::debug::DebugController::new(),
         };
         emu.reset();
-        if let Some(path) = emu.try_load_battery_sram()? {
-            log::info!("Loaded battery save from {}", path);
-        }
         Ok(emu)
     }
 
@@ -52,8 +45,19 @@ impl Emulator {
         &self.bus.ppu.framebuffer[..]
     }
 
-    pub fn rom_path(&self) -> &std::path::Path {
-        &self.rom_path
+    pub fn has_battery(&self) -> bool {
+        self.bus.cartridge.header().has_battery
+    }
+
+    pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
+        if !self.bus.cartridge.header().has_battery {
+            return None;
+        }
+        self.bus.cartridge.dump_battery_data()
+    }
+
+    pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.bus.cartridge.load_battery_data(bytes)
     }
 
     pub fn frame_ready(&self) -> bool {
@@ -82,23 +86,132 @@ impl Emulator {
         self.load_state(&bytes)
     }
 
-    pub fn save_state_slot(&self, slot: u8) -> anyhow::Result<String> {
-        let path = crate::save_state::slot_path(self.rom_hash, slot)?;
-        let bytes = self.encode_state()?;
-        crate::save_state::write_state_bytes_to_file(&path, &bytes)?;
-        Ok(path.display().to_string())
+    pub fn rom_hash(&self) -> [u8; 32] {
+        self.rom_hash
     }
 
-    pub fn load_state_slot(&mut self, slot: u8) -> anyhow::Result<String> {
-        let path = crate::save_state::slot_path(self.rom_hash, slot)?;
-        self.load_state_from_path(&path)?;
-        Ok(path.display().to_string())
+    pub fn set_sample_rate(&mut self, rate: u32) {
+        self.bus.apu.output_sample_rate = rate as f64;
     }
 
-    pub fn load_state_from_path(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("failed to read NES save state: {}: {e}", path.display()))?;
-        self.load_state(&bytes)
+    pub fn drain_audio_into_stereo(&mut self, buf: &mut Vec<f32>) {
+        self.bus.apu.drain_samples_into_stereo(buf);
+    }
+
+    pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        self.bus.apu.set_sample_generation_enabled(enabled);
+    }
+
+    pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 5]) {
+        self.bus.apu.set_channel_mutes(mutes);
+    }
+
+    pub fn set_apu_debug_collection_enabled(&mut self, enabled: bool) {
+        self.bus.apu.set_debug_collection_enabled(enabled);
+    }
+
+    pub fn apu_channel_snapshot(&self) -> crate::hardware::apu::ApuChannelSnapshot {
+        self.bus.apu.channel_snapshot()
+    }
+
+    pub fn set_input_p1(&mut self, buttons: u8) {
+        self.bus.controller1.set_buttons(buttons);
+    }
+
+    pub fn set_input_p2(&mut self, buttons: u8) {
+        self.bus.controller2.set_buttons(buttons);
+    }
+
+    pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.opcode_log.set_enabled(enabled);
+    }
+
+    pub fn cpu_pc(&self) -> u16 {
+        self.cpu.pc
+    }
+
+    pub fn cpu_cycles(&self) -> u64 {
+        self.cpu.cycles
+    }
+
+    pub fn is_cpu_suspended(&self) -> bool {
+        self.cpu.state == CpuState::Suspended
+    }
+
+    pub fn debug_continue(&mut self) {
+        self.debug.clear_hits();
+        self.debug.break_on_next = false;
+        self.cpu.state = CpuState::Running;
+    }
+
+    pub fn debug_step(&mut self) {
+        self.debug.clear_hits();
+        self.debug.break_on_next = true;
+        self.cpu.state = CpuState::Running;
+    }
+
+    pub fn add_breakpoint(&mut self, addr: u16) {
+        self.debug.add_breakpoint(addr);
+    }
+
+    pub fn remove_breakpoint(&mut self, addr: u16) {
+        self.debug.remove_breakpoint(addr);
+    }
+
+    pub fn toggle_breakpoint(&mut self, addr: u16) {
+        self.debug.toggle_breakpoint(addr);
+    }
+
+    pub fn add_watchpoint(&mut self, addr: u16, watch_type: crate::debug::WatchType) {
+        self.debug.add_watchpoint(addr, watch_type);
+    }
+
+    pub fn iter_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
+        self.debug.iter_breakpoints()
+    }
+
+    pub fn debug_watchpoints(&self) -> &[crate::debug::Watchpoint] {
+        &self.debug.watchpoints
+    }
+
+    pub fn debug_hit_breakpoint(&self) -> Option<u16> {
+        self.debug.hit_breakpoint
+    }
+
+    pub fn debug_hit_watchpoint(&self) -> Option<&crate::debug::WatchHit> {
+        self.debug.hit_watchpoint.as_ref()
+    }
+
+    pub fn bus(&self) -> &Bus {
+        &self.bus
+    }
+
+    pub fn cpu_write(&mut self, addr: u16, value: u8) {
+        self.bus.cpu_write(addr, value);
+    }
+
+    pub fn cpu_peek(&self, addr: u16) -> u8 {
+        self.bus.cpu_peek(addr)
+    }
+
+    pub fn cartridge_header(&self) -> &crate::hardware::cartridge::RomHeader {
+        self.bus.cartridge.header()
+    }
+
+    pub fn clear_game_genie(&mut self) {
+        self.bus.game_genie.clear();
+    }
+
+    pub fn add_game_genie_patch(&mut self, patch: crate::cheats::NesGameGeniePatch) {
+        self.bus.game_genie.patches.push(patch);
+    }
+
+    pub fn set_cpu_pc(&mut self, pc: u16) {
+        self.cpu.pc = pc;
+    }
+
+    pub fn last_opcode_pc(&self) -> u16 {
+        self.cpu.last_opcode_pc
     }
 }
 
