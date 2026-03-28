@@ -79,13 +79,22 @@ fn read_cheat_file(path: &std::path::Path) -> Vec<CheatCode> {
 
 fn write_or_remove(path: &std::path::Path, cheats: &[CheatCode]) {
     if cheats.is_empty() {
-        let _ = std::fs::remove_file(path);
+        if let Err(e) = std::fs::remove_file(path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("failed to remove cheat file {}: {e}", path.display());
+        }
         return;
     }
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        log::error!("failed to create cheat directory {}: {e}", parent.display());
+        return;
     }
-    let _ = std::fs::write(path, export_cht_file(cheats));
+    if let Err(e) = std::fs::write(path, export_cht_file(cheats)) {
+        log::error!("failed to write cheat file {}: {e}", path.display());
+    }
 }
 
 pub(crate) fn save_game_cheats(

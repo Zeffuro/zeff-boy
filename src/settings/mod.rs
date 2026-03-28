@@ -243,12 +243,18 @@ impl Settings {
 
     fn save_to_path(&self, path: &Path) {
         let Ok(serialized) = serde_json::to_vec_pretty(self) else {
+            log::error!("failed to serialize settings");
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+        if let Some(parent) = path.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            log::error!("failed to create settings directory {}: {e}", parent.display());
+            return;
         }
-        let _ = fs::write(path, serialized);
+        if let Err(e) = fs::write(path, serialized) {
+            log::error!("failed to write settings to {}: {e}", path.display());
+        }
     }
 
     pub(crate) fn load_or_default() -> Self {
