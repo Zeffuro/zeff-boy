@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use crate::audio_recorder::MidiApuSnapshot;
 
 pub(crate) trait EmulatorCore {
@@ -37,8 +38,6 @@ pub(crate) trait EmulatorCore {
 
     fn rom_hash(&self) -> [u8; 32];
 
-    fn screen_size(&self) -> (u32, u32);
-
     fn storage_subdir(&self) -> &'static str;
 
     fn state_extension(&self) -> &'static str;
@@ -50,6 +49,10 @@ pub(crate) trait EmulatorCore {
     }
 
     fn is_mbc7(&self) -> bool {
+        false
+    }
+
+    fn is_pocket_camera(&self) -> bool {
         false
     }
 
@@ -68,14 +71,14 @@ pub(crate) trait EmulatorCore {
     fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
         let path = self.slot_path(slot)?;
         let bytes = std::fs::read(&path)
-            .map_err(|e| anyhow::anyhow!("failed to read save state: {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to read save state: {}", path.display()))?;
         self.load_state_from_bytes(bytes)?;
         Ok(path.display().to_string())
     }
 
     fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
         let bytes = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("failed to read save state: {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to read save state: {}", path.display()))?;
         self.load_state_from_bytes(bytes)
     }
 
@@ -83,4 +86,3 @@ pub(crate) trait EmulatorCore {
         !self.is_suspended()
     }
 }
-

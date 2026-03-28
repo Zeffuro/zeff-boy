@@ -43,15 +43,9 @@ impl ActiveSystem {
     }
 }
 
-/// Central dispatch enum. All common operations are delegated to the
-/// [`EmulatorCore`] trait via [`core()`](Self::core) / [`core_mut()`](Self::core_mut).
-///
-/// System-specific access (debug UI, cheats, tilt) goes through
-/// [`gb()`](Self::gb) / [`gb_mut()`](Self::gb_mut) / [`nes_mut()`](Self::nes_mut).
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum EmuBackend {
-    Gb(GbBackend),
-    Nes(NesBackend),
+    Gb(Box<GbBackend>),
+    Nes(Box<NesBackend>),
 }
 
 impl EmuBackend {
@@ -59,27 +53,27 @@ impl EmuBackend {
         emu: zeff_gb_core::emulator::Emulator,
         rom_path: PathBuf,
     ) -> Self {
-        Self::Gb(GbBackend::new(emu, rom_path))
+        Self::Gb(Box::new(GbBackend::new(emu, rom_path)))
     }
 
     pub(crate) fn from_nes(
         emu: zeff_nes_core::emulator::Emulator,
         rom_path: PathBuf,
     ) -> Self {
-        Self::Nes(NesBackend::new(emu, rom_path))
+        Self::Nes(Box::new(NesBackend::new(emu, rom_path)))
     }
 
     pub(crate) fn core(&self) -> &dyn EmulatorCore {
         match self {
-            Self::Gb(b) => b,
-            Self::Nes(b) => b,
+            Self::Gb(b) => &**b,
+            Self::Nes(b) => &**b,
         }
     }
 
     pub(crate) fn core_mut(&mut self) -> &mut dyn EmulatorCore {
         match self {
-            Self::Gb(b) => b,
-            Self::Nes(b) => b,
+            Self::Gb(b) => &mut **b,
+            Self::Nes(b) => &mut **b,
         }
     }
 
@@ -185,11 +179,6 @@ impl EmuBackend {
         Some(self.core().rom_hash())
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn screen_size(&self) -> (u32, u32) {
-        self.core().screen_size()
-    }
-
     pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<PathBuf> {
         self.core().slot_path(slot)
     }
@@ -212,6 +201,10 @@ impl EmuBackend {
 
     pub(crate) fn is_mbc7(&self) -> bool {
         self.core().is_mbc7()
+    }
+
+    pub(crate) fn is_pocket_camera(&self) -> bool {
+        self.core().is_pocket_camera()
     }
 
     pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {

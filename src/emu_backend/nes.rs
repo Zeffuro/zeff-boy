@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
 use crate::audio_recorder::MidiApuSnapshot;
@@ -124,10 +125,6 @@ impl EmulatorCore for NesBackend {
         self.emu.rom_hash()
     }
 
-    fn screen_size(&self) -> (u32, u32) {
-        (256, 240)
-    }
-
     fn storage_subdir(&self) -> &'static str {
         "nes"
     }
@@ -153,7 +150,7 @@ pub(crate) fn try_load_battery_sram(
         return Ok(None);
     }
     let bytes = std::fs::read(&save_path)
-        .map_err(|e| anyhow::anyhow!("failed to read NES save {}: {e}", save_path.display()))?;
+        .with_context(|| format!("failed to read NES save {}", save_path.display()))?;
     emu.load_battery_sram(&bytes)?;
     Ok(Some(save_path.display().to_string()))
 }

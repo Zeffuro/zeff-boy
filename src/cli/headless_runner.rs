@@ -5,8 +5,8 @@ use zeff_gb_core::emulator::Emulator;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::output::{
-    format_headless_breakpoint, format_headless_serial, format_headless_summary, format_op_line,
-    format_op_tail_line,
+    TraceContext, format_headless_breakpoint, format_headless_serial, format_headless_summary,
+    format_op_line, format_op_tail_line,
 };
 use super::trace_filters::{ime_short, mode_short, should_trace_op};
 use super::types::HeadlessOptions;
@@ -15,9 +15,10 @@ pub(crate) fn run_headless(
     path: &Path,
     mode_preference: HardwareModePreference,
     opts: &HeadlessOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let rom_data = std::fs::read(path)?;
-    let mut emulator = Emulator::from_rom_data(&rom_data, mode_preference)?;
+    let mut emulator = Emulator::from_rom_data(&rom_data, mode_preference)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     if let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emulator, path)
         .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
     {
@@ -104,54 +105,34 @@ pub(crate) fn run_headless(
                     let hf = (f >> 5) & 1;
                     let cf = (f >> 4) & 1;
 
-                    let op_line = format_op_line(
-                        traced,
+                    let ctx = TraceContext {
                         pc,
                         op,
                         cb_prefix,
                         step_cycles,
-                        emulator.cpu_cycles(),
-                        ime_short(&ime),
+                        total_t: emulator.cpu_cycles(),
+                        ime: ime_short(&ime),
                         if_reg,
                         ie,
                         pending,
-                        emulator.timer_div(),
-                        emulator.timer_tima(),
-                        emulator.timer_tac(),
-                        emulator.cpu_a(),
+                        div: emulator.timer_div(),
+                        tima: emulator.timer_tima(),
+                        tac: emulator.timer_tac(),
+                        a: emulator.cpu_a(),
                         f,
                         zf,
                         nf,
                         hf,
                         cf,
-                        mode_short(emulator.hardware_mode()),
-                        &op_extra,
-                    );
+                        mode: mode_short(emulator.hardware_mode()),
+                        op_extra: &op_extra,
+                    };
+
+                    let op_line = format_op_line(traced, &ctx);
                     println!("{}", op_line);
 
                     traced = traced.wrapping_add(1);
-                    let tail_line = format_op_tail_line(
-                        pc,
-                        op,
-                        cb_prefix,
-                        step_cycles,
-                        emulator.cpu_cycles(),
-                        ime_short(&ime),
-                        if_reg,
-                        ie,
-                        pending,
-                        emulator.timer_div(),
-                        emulator.timer_tima(),
-                        emulator.timer_tac(),
-                        emulator.cpu_a(),
-                        f,
-                        zf,
-                        nf,
-                        hf,
-                        cf,
-                        mode_short(emulator.hardware_mode()),
-                        &op_extra,
-                    );
+                    let tail_line = format_op_tail_line(&ctx);
                     if tail.len() == 64 {
                         tail.pop_front();
                     }
@@ -202,11 +183,10 @@ pub(crate) fn run_headless(
     if let Some(expected) = &opts.expect_serial
         && !serial_text.contains(expected) {
             flush_battery(&emulator);
-            return Err(format!(
+            anyhow::bail!(
                 "expected serial output containing {:?}, got {:?}",
                 expected, serial_text
-            )
-            .into());
+            );
         }
 
     flush_battery(&emulator);

@@ -220,6 +220,34 @@ impl Emulator {
     pub fn last_opcode_pc(&self) -> u16 {
         self.cpu.last_opcode_pc
     }
+
+    pub fn ppu_palette_ram(&self) -> &[u8; 32] {
+        &self.bus.ppu.palette_ram
+    }
+
+    pub fn ppu_oam(&self) -> &[u8; 256] {
+        &self.bus.ppu.oam
+    }
+
+    pub fn ppu_ctrl(&self) -> u8 {
+        self.bus.ppu.regs.ctrl
+    }
+
+    pub fn ppu_scroll_v(&self) -> u16 {
+        self.bus.ppu.v
+    }
+
+    pub fn ppu_scroll_t(&self) -> u16 {
+        self.bus.ppu.t
+    }
+
+    pub fn ppu_fine_x(&self) -> u8 {
+        self.bus.ppu.fine_x
+    }
+
+    pub fn ppu_tall_sprites(&self) -> bool {
+        self.bus.ppu.regs.tall_sprites()
+    }
 }
 
 impl fmt::Debug for Emulator {

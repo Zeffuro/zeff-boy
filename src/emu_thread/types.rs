@@ -39,6 +39,7 @@ pub(crate) struct ReusableBuffers {
 pub(crate) struct FrameInput {
     pub(crate) frames: usize,
     pub(crate) host_tilt: (f32, f32),
+    pub(crate) host_camera_frame: Option<Vec<u8>>,
     pub(crate) buttons_pressed: u8,
     pub(crate) dpad_pressed: u8,
     pub(crate) buttons_pressed_p2: u8,
@@ -61,13 +62,13 @@ pub(crate) struct FrameResult {
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
+    pub(crate) is_pocket_camera: bool,
     pub(crate) rewind_fill: f32,
     pub(crate) apu_snapshot: Option<crate::audio_recorder::MidiApuSnapshot>,
 }
 
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum EmuCommand {
-    StepFrames(FrameInput),
+    StepFrames(Box<FrameInput>),
     SaveStateSlot(u8),
     LoadStateSlot {
         slot: u8,

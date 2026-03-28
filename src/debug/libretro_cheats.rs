@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 const GITHUB_CONTENTS_URL: &str =
@@ -13,7 +14,7 @@ fn platform_dir(is_gbc: bool) -> &'static str {
     }
 }
 
-pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> Result<Vec<String>, String> {
+pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result<Vec<String>> {
     let cache_file = cache_dir.join(if is_gbc {
         "libretro_gbc_index.json"
     } else {
@@ -37,12 +38,12 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> Result<Vec<Str
         .header("Accept", "application/vnd.github.v3+json")
         .header("User-Agent", "zeff-boy-emulator")
         .call()
-        .map_err(|e| format!("GitHub API request failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("GitHub API request failed: {e}"))?;
 
     let body = response
         .into_body()
         .read_to_string()
-        .map_err(|e| format!("Failed to read response: {e}"))?;
+        .context("failed to read GitHub API response")?;
 
     let names = parse_file_list_from_json(&body)?;
 
@@ -56,7 +57,7 @@ pub(super) fn download_cht_content(
     filename: &str,
     is_gbc: bool,
     cache_dir: &Path,
-) -> Result<String, String> {
+) -> anyhow::Result<String> {
     let cht_cache_dir = cache_dir.join("libretro-cht");
     let safe_name = filename.replace(['/', '\\', ':'], "_");
     let cache_file = cht_cache_dir.join(&safe_name);
@@ -78,12 +79,12 @@ pub(super) fn download_cht_content(
     let response = ureq::get(&url)
         .header("User-Agent", "zeff-boy-emulator")
         .call()
-        .map_err(|e| format!("Download failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Download failed: {e}"))?;
 
     let content = response
         .into_body()
         .read_to_string()
-        .map_err(|e| format!("Failed to read file: {e}"))?;
+        .context("failed to read cheat file response")?;
 
     let _ = std::fs::create_dir_all(&cht_cache_dir);
     let _ = std::fs::write(&cache_file, &content);
@@ -240,7 +241,7 @@ fn urlencoded(s: &str) -> String {
     s.replace(' ', "%20")
 }
 
-fn parse_file_list_from_json(json_body: &str) -> Result<Vec<String>, String> {
+fn parse_file_list_from_json(json_body: &str) -> anyhow::Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in json_body.split(r#""name":"#).skip(1) {
         let trimmed = entry.trim_start();
@@ -260,7 +261,7 @@ fn parse_file_list_from_json(json_body: &str) -> Result<Vec<String>, String> {
             && let Some(msg_start) = json_body.find(r#""message":"#) {
                 let rest = &json_body[msg_start + 11..];
                 if let Some(end) = rest.find('"') {
-                    return Err(format!("GitHub API: {}", &rest[..end]));
+                    anyhow::bail!("GitHub API: {}", &rest[..end]);
                 }
             }
     Ok(names)

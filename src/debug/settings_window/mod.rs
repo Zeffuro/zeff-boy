@@ -1,4 +1,5 @@
 mod audio;
+mod camera;
 mod controls;
 mod display;
 mod emulation;
@@ -18,7 +19,7 @@ pub(crate) fn draw_settings_window(
         .default_height(500.0)
         .resizable(true)
         .show(ctx, |ui| {
-            const TABS: &[&str] = &["Emulation", "Controls", "Audio", "UI"];
+            const TABS: &[&str] = &["Emulation", "Controls", "Audio", "UI", "Camera"];
 
             ui.horizontal(|ui| {
                 for (i, &label) in TABS.iter().enumerate() {
@@ -40,6 +41,7 @@ pub(crate) fn draw_settings_window(
                         1 => controls::draw(ui, settings, state),
                         2 => audio::draw(ui, settings),
                         3 => display::draw(ui, settings),
+                        4 => camera::draw(ui, settings, state),
                         _ => {}
                     }
 

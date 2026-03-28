@@ -34,7 +34,6 @@ impl RomSize {
         }
     }
 
-    #[allow(dead_code)]
     pub fn size_bytes(&self) -> usize {
         match self {
             RomSize::Kb32 => 32 * 1024,
@@ -53,7 +52,6 @@ impl RomSize {
         }
     }
 
-    #[allow(dead_code)]
     pub fn banks(&self) -> usize {
         match self {
             RomSize::Kb32 => 2,

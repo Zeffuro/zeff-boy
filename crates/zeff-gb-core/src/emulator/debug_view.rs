@@ -28,6 +28,10 @@ impl Emulator {
         self.header.cartridge_type.is_mbc7()
     }
 
+    pub fn is_pocket_camera_cartridge(&self) -> bool {
+        self.header.cartridge_type.is_pocket_camera()
+    }
+
     pub fn ppu_registers(&self) -> PpuSnapshot {
         PpuSnapshot {
             lcdc: self.bus.ppu_lcdc(),
@@ -127,7 +131,6 @@ impl Emulator {
         }
     }
 
-    #[allow(dead_code)]
     pub fn debug_state_summary(&self) -> String {
         let cart = self.bus.cartridge.debug_info();
         format!(

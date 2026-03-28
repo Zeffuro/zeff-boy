@@ -80,12 +80,10 @@ impl Joypad {
         self.select_dpad = value & 0x10 == 0;
     }
 
-    #[allow(dead_code)]
     pub fn key_down(&mut self, key: JoypadKey) -> bool {
         self.set_key_state(key, true)
     }
 
-    #[allow(dead_code)]
     pub fn key_up(&mut self, key: JoypadKey) {
         let _ = self.set_key_state(key, false);
     }
@@ -102,7 +100,6 @@ impl Joypad {
         (newly_pressed_buttons | newly_pressed_dpad) != 0
     }
 
-    #[allow(dead_code)]
     fn set_key_state(&mut self, key: JoypadKey, pressed: bool) -> bool {
         let (group, bit) = match key {
             JoypadKey::Right => (&mut self.dpad, 0),

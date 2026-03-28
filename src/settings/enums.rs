@@ -65,13 +65,12 @@ impl ScalingMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum EffectPreset {
     #[default]
     None,
-    CRT,
+    Crt,
     Scanlines,
-    LCDGrid,
+    LcdGrid,
     GbcPalette,
     Custom,
 }
@@ -80,9 +79,9 @@ impl EffectPreset {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::None => "None",
-            Self::CRT => "CRT",
+            Self::Crt => "CRT",
             Self::Scanlines => "Scanlines",
-            Self::LCDGrid => "LCD Grid",
+            Self::LcdGrid => "LCD Grid",
             Self::GbcPalette => "GBC Palette",
             Self::Custom => "Custom (file)",
         }
@@ -92,13 +91,12 @@ impl EffectPreset {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum ShaderPreset {
     #[default]
     None,
-    CRT,
+    Crt,
     Scanlines,
-    LCDGrid,
+    LcdGrid,
     HQ2xLike,
     XBR2x,
     Eagle2x,
@@ -110,9 +108,9 @@ impl ShaderPreset {
     pub(crate) fn to_scaling_and_effect(self) -> (ScalingMode, EffectPreset) {
         match self {
             Self::None => (ScalingMode::PixelPerfect, EffectPreset::None),
-            Self::CRT => (ScalingMode::PixelPerfect, EffectPreset::CRT),
+            Self::Crt => (ScalingMode::PixelPerfect, EffectPreset::Crt),
             Self::Scanlines => (ScalingMode::PixelPerfect, EffectPreset::Scanlines),
-            Self::LCDGrid => (ScalingMode::PixelPerfect, EffectPreset::LCDGrid),
+            Self::LcdGrid => (ScalingMode::PixelPerfect, EffectPreset::LcdGrid),
             Self::HQ2xLike => (ScalingMode::HQ2xLike, EffectPreset::None),
             Self::XBR2x => (ScalingMode::XBR2x, EffectPreset::None),
             Self::Eagle2x => (ScalingMode::Eagle2x, EffectPreset::None),

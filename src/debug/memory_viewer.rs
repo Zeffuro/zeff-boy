@@ -1,10 +1,12 @@
+use super::common::{
+    parse_hex_u8, parse_hex_u16,
+    COLOR_ADDR, COLOR_DIM, COLOR_FLASH,
+    DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_PAGE_SIZE, HEX_ROWS_VISIBLE,
+};
 use crate::debug::types::{MemorySearchMode, MemoryViewerState};
-use std::collections::HashMap;
 
-const PAGE_SIZE: usize = 256;
-const ROWS_VISIBLE: usize = 16;
-const BYTES_PER_ROW: usize = 16;
 const MAX_START: u16 = 0xFF00;
+const FLASH_DURATION_TICKS: u8 = 12;
 
 pub(super) fn draw_memory_viewer_content(
     ui: &mut egui::Ui,
@@ -21,7 +23,7 @@ pub(super) fn draw_memory_viewer_content(
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_u16_hex(&state.jump_input) {
+            && let Some(addr) = parse_hex_u16(&state.jump_input) {
                 state.view_start = addr & 0xFFF0;
                 state.jump_input = format!("{:04X}", state.view_start);
             }
@@ -67,15 +69,12 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
-    let mono = egui::FontId::new(13.0, egui::FontFamily::Monospace);
+    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
     let normal_color = ui.visuals().text_color();
-    let addr_color = egui::Color32::from_rgb(140, 140, 170);
-    let flash_color = egui::Color32::from_rgb(255, 100, 80);
-    let dim_color = egui::Color32::from_rgb(90, 90, 90);
 
     let fmt_addr = egui::TextFormat {
         font_id: mono.clone(),
-        color: addr_color,
+        color: COLOR_ADDR,
         ..Default::default()
     };
     let fmt_normal = egui::TextFormat {
@@ -85,25 +84,25 @@ pub(super) fn draw_memory_viewer_content(
     };
     let fmt_flash = egui::TextFormat {
         font_id: mono.clone(),
-        color: flash_color,
+        color: COLOR_FLASH,
         ..Default::default()
     };
     let fmt_dim = egui::TextFormat {
         font_id: mono,
-        color: dim_color,
+        color: COLOR_DIM,
         ..Default::default()
     };
 
     let mut header_job = egui::text::LayoutJob::default();
     header_job.append("Addr   ", 0.0, fmt_addr.clone());
-    for i in 0..BYTES_PER_ROW {
+    for i in 0..HEX_BYTES_PER_ROW {
         header_job.append(&format!("+{:X} ", i), 0.0, fmt_addr.clone());
     }
     header_job.append("  ASCII", 0.0, fmt_addr.clone());
     ui.label(header_job);
 
-    for row in 0..ROWS_VISIBLE {
-        let row_start = row * BYTES_PER_ROW;
+    for row in 0..HEX_ROWS_VISIBLE {
+        let row_start = row * HEX_BYTES_PER_ROW;
         if row_start >= memory_page.len() {
             break;
         }
@@ -113,7 +112,7 @@ pub(super) fn draw_memory_viewer_content(
 
         job.append(&format!("{:04X}:  ", row_addr), 0.0, fmt_addr.clone());
 
-        for col in 0..BYTES_PER_ROW {
+        for col in 0..HEX_BYTES_PER_ROW {
             let idx = row_start + col;
             if idx >= memory_page.len() {
                 job.append("-- ", 0.0, fmt_dim.clone());
@@ -126,11 +125,11 @@ pub(super) fn draw_memory_viewer_content(
         }
 
         job.append("  ", 0.0, fmt_normal.clone());
-        for col in 0..BYTES_PER_ROW {
+        for col in 0..HEX_BYTES_PER_ROW {
             let idx = row_start + col;
             if idx < memory_page.len() {
                 let byte = memory_page[idx].1;
-                let (ch, is_mapped) = tbl_lookup(byte, &state.tbl_map);
+                let (ch, is_mapped) = super::common::tbl_lookup(byte, &state.tbl_map);
                 let fmt = if is_mapped {
                     &fmt_normal
                 } else if ch == "." {
@@ -156,7 +155,7 @@ pub(super) fn draw_memory_viewer_content(
                         .char_limit(2),
                 );
                 if ui.button("Write").clicked() {
-                    if let Some(value) = parse_u8_hex(&state.edit_value) {
+                    if let Some(value) = parse_hex_u8(&state.edit_value) {
                         writes.push((addr, value));
                     }
                     state.edit_addr = None;
@@ -175,7 +174,7 @@ pub(super) fn draw_memory_viewer_content(
                     .hint_text("hex addr"),
             );
             if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                && let Some(addr) = parse_u16_hex(&state.edit_addr_input) {
+                && let Some(addr) = parse_hex_u16(&state.edit_addr_input) {
                     state.edit_addr = Some(addr);
                     let val = memory_page
                         .iter()
@@ -286,7 +285,7 @@ pub(super) fn draw_memory_viewer_content(
                 .add_filter("TBL files", &["tbl", "txt"])
                 .pick_file()
             {
-                match load_tbl_file(&path) {
+                match super::common::load_tbl_file(&path) {
                     Ok(map) => {
                         let name = path
                             .file_name()
@@ -306,44 +305,9 @@ pub(super) fn draw_memory_viewer_content(
     writes
 }
 
-fn tbl_lookup(byte: u8, tbl_map: &HashMap<u8, String>) -> (String, bool) {
-    if let Some(mapped) = tbl_map.get(&byte) {
-        (mapped.clone(), true)
-    } else {
-        let ch = printable_ascii(byte);
-        (ch.to_string(), false)
-    }
-}
-
-fn load_tbl_file(path: &std::path::Path) -> Result<HashMap<u8, String>, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        if let Some((hex_part, char_part)) = line.split_once('=') {
-            let hex_part = hex_part.trim();
-            let char_part = char_part.to_string();
-            if let Ok(byte) = u8::from_str_radix(hex_part, 16) {
-                map.insert(
-                    byte,
-                    if char_part.is_empty() {
-                        ".".to_string()
-                    } else {
-                        char_part
-                    },
-                );
-            }
-        }
-    }
-    Ok(map)
-}
-
 fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
-    if state.flash_ticks.len() != PAGE_SIZE {
-        state.flash_ticks = vec![0; PAGE_SIZE];
+    if state.flash_ticks.len() != HEX_PAGE_SIZE {
+        state.flash_ticks = vec![0; HEX_PAGE_SIZE];
     }
 
     let page_addr = memory_page.first().map(|(a, _)| *a);
@@ -354,7 +318,7 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
     if same_page {
         for (i, (_, value)) in memory_page.iter().enumerate() {
             if *value != state.prev_bytes[i] {
-                state.flash_ticks[i] = 12;
+                state.flash_ticks[i] = FLASH_DURATION_TICKS;
             } else if state.flash_ticks[i] > 0 {
                 state.flash_ticks[i] -= 1;
             }
@@ -370,39 +334,10 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
     state.prev_bytes.extend(memory_page.iter().map(|(_, v)| *v));
 }
 
-fn parse_u16_hex(input: &str) -> Option<u16> {
-    let trimmed = input.trim();
-    let hex = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
-    u16::from_str_radix(hex, 16)
-        .ok()
-        .or_else(|| trimmed.parse::<u16>().ok())
-}
-
-fn parse_u8_hex(input: &str) -> Option<u8> {
-    let trimmed = input.trim();
-    let hex = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
-    u8::from_str_radix(hex, 16)
-        .ok()
-        .or_else(|| trimmed.parse::<u8>().ok())
-}
-
-fn printable_ascii(byte: u8) -> char {
-    if (0x20..=0x7E).contains(&byte) {
-        byte as char
-    } else {
-        '.'
-    }
-}
 
 pub(crate) fn parse_search_query(query: &str, mode: MemorySearchMode) -> Option<Vec<u8>> {
     match mode {
-        MemorySearchMode::ByteValue => parse_u8_hex(query).map(|b| vec![b]),
+        MemorySearchMode::ByteValue => parse_hex_u8(query).map(|b| vec![b]),
         MemorySearchMode::ByteSequence => {
             let bytes: Vec<u8> = query
                 .split_whitespace()

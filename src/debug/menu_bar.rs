@@ -31,7 +31,7 @@ pub(crate) struct MenuActions {
 }
 
 impl MenuActions {
-    pub(crate) fn default(_autohide: bool) -> Self {
+    pub(crate) fn default() -> Self {
         Self {
             open_file_requested: false,
             reset_game_requested: false,
@@ -59,19 +59,22 @@ impl MenuActions {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct MenuBarContext<'a> {
+    pub(crate) current_mode: AspectRatioMode,
+    pub(crate) speed_mode_label: Option<&'a str>,
+    pub(crate) is_recording_audio: bool,
+    pub(crate) is_recording_replay: bool,
+    pub(crate) is_playing_replay: bool,
+    pub(crate) is_paused: bool,
+    pub(crate) slot_labels: &'a [String; 10],
+}
+
 pub(crate) fn draw_menu_bar(
     ctx: &egui::Context,
-    current_mode: AspectRatioMode,
+    mb: &MenuBarContext<'_>,
     dock_state: &mut DockState<DebugTab>,
     settings: &mut Settings,
     debug_windows: &mut DebugWindowState,
-    speed_mode_label: Option<&str>,
-    is_recording_audio: bool,
-    is_recording_replay: bool,
-    is_playing_replay: bool,
-    is_paused: bool,
-    slot_labels: &[String; 10],
 ) -> MenuActions {
     let mut open_file_requested = false;
     let mut reset_game_requested = false;
@@ -135,7 +138,7 @@ pub(crate) fn draw_menu_bar(
                 ui.separator();
                 ui.menu_button("Save State", |ui| {
                     for slot in 0..=9u8 {
-                        if ui.button(&slot_labels[slot as usize]).clicked() {
+                        if ui.button(&mb.slot_labels[slot as usize]).clicked() {
                             save_state_slot = Some(slot);
                             ui.close();
                         }
@@ -148,7 +151,7 @@ pub(crate) fn draw_menu_bar(
                 });
                 ui.menu_button("Load State", |ui| {
                     for slot in 0..=9u8 {
-                        if ui.button(&slot_labels[slot as usize]).clicked() {
+                        if ui.button(&mb.slot_labels[slot as usize]).clicked() {
                             load_state_slot = Some(slot);
                             ui.close();
                         }
@@ -160,24 +163,24 @@ pub(crate) fn draw_menu_bar(
                     }
                 });
                 ui.separator();
-                if is_recording_audio {
+                if mb.is_recording_audio {
                     if ui.button("⏹ Stop Recording").clicked() {
                         stop_audio_recording = true;
                         ui.close();
                     }
                 } else {
-                    if ui.button("?? Record Audio...").clicked() {
+                    if ui.button("⏺ Record Audio...").clicked() {
                         start_audio_recording = true;
                         ui.close();
                     }
                 }
                 ui.separator();
-                if is_recording_replay {
+                if mb.is_recording_replay {
                     if ui.button("⏹ Stop Replay Recording").clicked() {
                         stop_replay_recording = true;
                         ui.close();
                     }
-                } else if is_playing_replay {
+                } else if mb.is_playing_replay {
                     ui.label("▶ Replay playing...");
                 } else {
                     if ui.button("⏺ Record Replay...").clicked() {
@@ -198,14 +201,14 @@ pub(crate) fn draw_menu_bar(
 
             ui.menu_button("View", |ui| {
                 if ui
-                    .selectable_label(current_mode == AspectRatioMode::Stretch, "Stretch")
+                    .selectable_label(mb.current_mode == AspectRatioMode::Stretch, "Stretch")
                     .clicked()
                 {
                     selected_mode = Some(AspectRatioMode::Stretch);
                     ui.close();
                 }
                 if ui
-                    .selectable_label(current_mode == AspectRatioMode::KeepAspect, "Keep Aspect")
+                    .selectable_label(mb.current_mode == AspectRatioMode::KeepAspect, "Keep Aspect")
                     .clicked()
                 {
                     selected_mode = Some(AspectRatioMode::KeepAspect);
@@ -213,7 +216,7 @@ pub(crate) fn draw_menu_bar(
                 }
                 if ui
                     .selectable_label(
-                        current_mode == AspectRatioMode::IntegerScale,
+                        mb.current_mode == AspectRatioMode::IntegerScale,
                         "Integer Scale",
                     )
                     .clicked()
@@ -254,8 +257,8 @@ pub(crate) fn draw_menu_bar(
                     let effects = [
                         (EffectPreset::None, "None"),
                         (EffectPreset::Scanlines, "Scanlines"),
-                        (EffectPreset::LCDGrid, "LCD Grid"),
-                        (EffectPreset::CRT, "CRT"),
+                        (EffectPreset::LcdGrid, "LCD Grid"),
+                        (EffectPreset::Crt, "CRT"),
                         (EffectPreset::GbcPalette, "GBC Palette"),
                         (EffectPreset::Custom, "Custom (file)"),
                     ];
@@ -300,13 +303,13 @@ pub(crate) fn draw_menu_bar(
                                         .text("Intensity"),
                                 );
                             }
-                            EffectPreset::LCDGrid => {
+                            EffectPreset::LcdGrid => {
                                 ui.add(
                                     egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0)
                                         .text("Grid"),
                                 );
                             }
-                            EffectPreset::CRT => {
+                            EffectPreset::Crt => {
                                 ui.add(
                                     egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
                                         .text("Scanlines"),
@@ -446,8 +449,8 @@ pub(crate) fn draw_menu_bar(
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let pause_icon = if is_paused { "▶" } else { "⏸" };
-                let pause_tooltip = if is_paused {
+                let pause_icon = if mb.is_paused { "▶" } else { "⏸" };
+                let pause_tooltip = if mb.is_paused {
                     "Resume (F9)"
                 } else {
                     "Pause (F9)"
@@ -485,7 +488,7 @@ pub(crate) fn draw_menu_bar(
 
                 ui.separator();
 
-                if let Some(label) = speed_mode_label {
+                if let Some(label) = mb.speed_mode_label {
                     ui.label(
                         egui::RichText::new(label)
                             .small()

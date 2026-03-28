@@ -90,18 +90,20 @@ pub fn append_bess(
         cpu,
         bus,
         hardware_mode,
-        wram_offset,
-        wram_size,
-        vram_offset,
-        vram_size,
-        mbc_ram_offset,
-        mbc_ram_size,
-        oam_offset,
-        hram_offset,
-        bg_pal_offset,
-        bg_pal_size,
-        obj_pal_offset,
-        obj_pal_size,
+        &BessMemoryLayout {
+            ram_offset: wram_offset,
+            ram_size: wram_size,
+            vram_offset,
+            vram_size,
+            mbc_ram_offset,
+            mbc_ram_size,
+            oam_offset,
+            hram_offset,
+            bg_pal_offset,
+            bg_pal_size,
+            obj_pal_offset,
+            obj_pal_size,
+        },
     );
 
     let mbc_writes = bus.cartridge.bess_mbc_writes();
@@ -314,12 +316,7 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn write_core_body(
-    writer: &mut StateWriter,
-    cpu: &Cpu,
-    bus: &Bus,
-    hardware_mode: HardwareMode,
+struct BessMemoryLayout {
     ram_offset: u32,
     ram_size: u32,
     vram_offset: u32,
@@ -332,6 +329,14 @@ fn write_core_body(
     bg_pal_size: u32,
     obj_pal_offset: u32,
     obj_pal_size: u32,
+}
+
+fn write_core_body(
+    writer: &mut StateWriter,
+    cpu: &Cpu,
+    bus: &Bus,
+    hardware_mode: HardwareMode,
+    mem: &BessMemoryLayout,
 ) {
     let is_cgb = matches!(
         hardware_mode,
@@ -373,20 +378,20 @@ fn write_core_body(
     io_snapshot[0x50] = 0x01;
     writer.write_bytes(&io_snapshot);
 
-    writer.write_u32(ram_size);
-    writer.write_u32(ram_offset);
-    writer.write_u32(vram_size);
-    writer.write_u32(vram_offset);
-    writer.write_u32(mbc_ram_size);
-    writer.write_u32(mbc_ram_offset);
+    writer.write_u32(mem.ram_size);
+    writer.write_u32(mem.ram_offset);
+    writer.write_u32(mem.vram_size);
+    writer.write_u32(mem.vram_offset);
+    writer.write_u32(mem.mbc_ram_size);
+    writer.write_u32(mem.mbc_ram_offset);
     writer.write_u32(OAM_SIZE as u32);
-    writer.write_u32(oam_offset);
+    writer.write_u32(mem.oam_offset);
     writer.write_u32(HRAM_SIZE as u32);
-    writer.write_u32(hram_offset);
-    writer.write_u32(bg_pal_size);
-    writer.write_u32(bg_pal_offset);
-    writer.write_u32(obj_pal_size);
-    writer.write_u32(obj_pal_offset);
+    writer.write_u32(mem.hram_offset);
+    writer.write_u32(mem.bg_pal_size);
+    writer.write_u32(mem.bg_pal_offset);
+    writer.write_u32(mem.obj_pal_size);
+    writer.write_u32(mem.obj_pal_offset);
 }
 
 fn apply_bess_io_registers(bus: &mut Bus, io: &[u8], mode: HardwareMode) {

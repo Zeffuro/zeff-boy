@@ -7,7 +7,6 @@ use crate::hardware::types::header_offsets as header_constants;
 use anyhow::{Result, anyhow};
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct RomHeader {
     pub logo: [u8; 48],
     pub title: String,

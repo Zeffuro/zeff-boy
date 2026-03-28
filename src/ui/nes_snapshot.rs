@@ -1,5 +1,10 @@
-use crate::debug::common::{ApuChannelDebug, DebugSection, RomInfoSection, WatchHitDisplay, WatchpointDisplay};
-use crate::debug::{ApuDebugInfo, CpuDebugSnapshot, DisassemblyView, RomDebugInfo, nes_disassemble_around};
+use crate::debug::common::{
+    ApuChannelDebug, DebugSection, NesGraphicsData, OamDebugInfo,
+    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RomInfoSection,
+    WatchHitDisplay, WatchpointDisplay,
+};
+use crate::debug::{ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DisassemblyView, RomDebugInfo, nes_disassemble_around};
+use zeff_nes_core::hardware::ppu::NES_PALETTE;
 
 pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDebugSnapshot {
     let snap = zeff_nes_core::debug::NesDebugSnapshot::capture(emu);
@@ -99,7 +104,6 @@ pub(crate) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         flags,
         status_text,
         cpu_state: snap.cpu_state.to_string(),
-        pc: snap.pc,
         cycles: snap.cycles,
         last_opcode_line: format!("@ {:04X} = {:02X}", snap.last_opcode_pc, snap.last_opcode),
         sections,
@@ -278,3 +282,137 @@ fn nes_disasm_peek_byte(bus: &zeff_nes_core::hardware::bus::Bus, addr: u16) -> u
     }
 }
 
+pub(crate) fn nes_graphics_snapshot(
+    emu: &zeff_nes_core::emulator::Emulator,
+) -> ConsoleGraphicsData {
+    let bus = emu.bus();
+
+    let mut chr_data = vec![0u8; 0x2000];
+    for addr in 0..0x2000u16 {
+        chr_data[addr as usize] = bus.cartridge.chr_read(addr);
+    }
+
+    let mut nametable_data = vec![0u8; 0x1000];
+    for offset in 0..0x1000u16 {
+        let addr = 0x2000 + offset;
+        nametable_data[offset as usize] = bus.ppu_bus_read(addr);
+    }
+
+    let palette_ram = *emu.ppu_palette_ram();
+
+    ConsoleGraphicsData::Nes(NesGraphicsData {
+        chr_data,
+        nametable_data,
+        palette_ram,
+        ctrl: emu.ppu_ctrl(),
+        mirroring: bus.cartridge.mirroring(),
+        scroll_t: emu.ppu_scroll_t(),
+        fine_x: emu.ppu_fine_x(),
+    })
+}
+
+pub(crate) fn nes_oam_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> OamDebugInfo {
+    let oam = emu.ppu_oam();
+    let tall_sprites = emu.ppu_tall_sprites();
+
+    let headers = vec![
+        "#".into(),
+        "X".into(),
+        "Y".into(),
+        "Tile".into(),
+        "Attr".into(),
+        "FlipH".into(),
+        "FlipV".into(),
+        "Pri".into(),
+        "Pal".into(),
+    ];
+
+    let mut rows = Vec::with_capacity(64);
+    for i in 0..64usize {
+        let base = i * 4;
+        let y = oam[base];
+        let tile = oam[base + 1];
+        let attr = oam[base + 2];
+        let x = oam[base + 3];
+
+        let flip_h = attr & 0x40 != 0;
+        let flip_v = attr & 0x80 != 0;
+        let priority = if attr & 0x20 != 0 { "Behind" } else { "Front" };
+        let palette = attr & 0x03;
+
+        let tile_str = if tall_sprites {
+            let bank = if tile & 1 != 0 { "$1000" } else { "$0000" };
+            format!("{:02X} ({})", tile, bank)
+        } else {
+            format!("{:02X}", tile)
+        };
+
+        rows.push(vec![
+            format!("{:2}", i),
+            format!("{:3}", x),
+            format!("{:3}", y),
+            tile_str,
+            format!("{:02X}", attr),
+            if flip_h { "Y" } else { "N" }.into(),
+            if flip_v { "Y" } else { "N" }.into(),
+            priority.into(),
+            format!("{}", palette),
+        ]);
+    }
+
+    OamDebugInfo { headers, rows }
+}
+
+pub(crate) fn nes_palette_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> PaletteDebugInfo {
+    let palette_ram = emu.ppu_palette_ram();
+
+    let resolve_color = |idx: usize| -> [u8; 4] {
+        let nes_idx = (palette_ram[idx] as usize) & 0x3F;
+        let (r, g, b) = NES_PALETTE[nes_idx];
+        [r, g, b, 255]
+    };
+
+    let mut groups = Vec::with_capacity(2);
+
+    let mut bg_rows = Vec::with_capacity(4);
+    for pal in 0..4usize {
+        let base = pal * 4;
+        let colors: Vec<[u8; 4]> = (0..4).map(|c| {
+            if c == 0 {
+                resolve_color(0)
+            } else {
+                resolve_color(base + c)
+            }
+        }).collect();
+        bg_rows.push(PaletteRowDebug {
+            label: format!("BG {pal}"),
+            colors,
+        });
+    }
+    groups.push(PaletteGroupDebug {
+        title: "Background Palettes".into(),
+        rows: bg_rows,
+    });
+
+    let mut obj_rows = Vec::with_capacity(4);
+    for pal in 0..4usize {
+        let base = 16 + pal * 4;
+        let colors: Vec<[u8; 4]> = (0..4).map(|c| {
+            if c == 0 {
+                resolve_color(0)
+            } else {
+                resolve_color(base + c)
+            }
+        }).collect();
+        obj_rows.push(PaletteRowDebug {
+            label: format!("OBJ {pal}"),
+            colors,
+        });
+    }
+    groups.push(PaletteGroupDebug {
+        title: "Sprite Palettes".into(),
+        rows: obj_rows,
+    });
+
+    PaletteDebugInfo { groups }
+}

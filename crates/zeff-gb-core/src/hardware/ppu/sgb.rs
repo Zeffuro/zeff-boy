@@ -19,7 +19,6 @@ impl PPU {
         self.sgb_mask_mode = mode & 0x03;
     }
 
-    #[allow(dead_code)]
     pub fn sgb_dmg_rgba(&self, dmg_palette: u8, color_id: u8) -> [u8; 4] {
         if !self.sgb_enabled {
             return apply_palette(dmg_palette, color_id);

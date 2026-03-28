@@ -11,6 +11,8 @@ mod input_viewer;
 mod libretro_cheats;
 pub(crate) mod memory_viewer;
 mod menu_bar;
+mod nes_tile_viewer;
+mod nes_tilemap_viewer;
 mod oam_viewer;
 mod palette_viewer;
 pub(crate) mod perf_monitor;
@@ -41,4 +43,4 @@ pub(crate) use types::{
     BreakpointState, CheatState, DebugWindowState, MemorySearchResult,
     PerfInfo, RomSearchResult, TileViewerState, TilemapViewerState,
 };
-pub(crate) use ui::{DebugUiActions, MenuActions, draw_menu_bar, draw_settings_window};
+pub(crate) use ui::{DebugUiActions, MenuActions, MenuBarContext, draw_menu_bar, draw_settings_window};

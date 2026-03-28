@@ -34,7 +34,6 @@ impl RamSize {
         }
     }
 
-    #[allow(dead_code)]
     pub fn banks(&self) -> usize {
         match self {
             RamSize::None | RamSize::Unused => 0,

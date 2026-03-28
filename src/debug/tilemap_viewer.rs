@@ -1,10 +1,9 @@
 use crate::debug::TilemapViewerState;
-use zeff_gb_core::debug::PpuSnapshot;
+use crate::debug::common::GbGraphicsData;
 use zeff_gb_core::hardware::ppu::{
     LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, apply_palette, cgb_palette_rgba,
     correct_color, decode_tile_pixel, tile_data_address,
 };
-use crate::settings::ColorCorrection;
 
 #[derive(Clone, Copy)]
 struct TileAttrInfo {
@@ -25,17 +24,14 @@ fn decode_tile_attr(attr: u8) -> TileAttrInfo {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_tilemap_viewer_content(
     ui: &mut egui::Ui,
-    vram: &[u8],
-    ppu: PpuSnapshot,
-    cgb_mode: bool,
-    bg_palette_ram: &[u8; 64],
-    color_correction: ColorCorrection,
-    color_correction_matrix: [f32; 9],
+    gfx: &GbGraphicsData,
     window_state: &mut TilemapViewerState,
 ) {
+    let vram = &gfx.vram;
+    let ppu = gfx.ppu;
+    let cgb_mode = gfx.cgb_mode;
     let width = 256usize;
     let height = 256usize;
     let bg_tile_map_base = if ppu.lcdc & LCDC_BG_TILEMAP != 0 {
@@ -138,17 +134,12 @@ pub(super) fn draw_tilemap_viewer_content(
     if window_state.vram_dirty {
         render_tilemap_into_image(
             &mut window_state.image,
-            vram,
-            ppu,
-            cgb_mode,
-            bg_palette_ram,
+            gfx,
             tile_map_base,
             tile_data_unsigned,
             cgb_attr_available,
             render_cgb_colors,
             show_attr_overlay,
-            color_correction,
-            color_correction_matrix,
         );
         window_state.vram_dirty = false;
     }
@@ -179,9 +170,14 @@ pub(super) fn draw_tilemap_viewer_content(
                 let scx = ppu.scx as f32;
                 let scy = ppu.scy as f32;
                 draw_wrapped_viewport_rect(
-                    &painter, origin, scale_x, scale_y,
-                    scx, scy, 160.0, 144.0, 256.0, 256.0,
-                    egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200),
+                    &painter,
+                    &ViewportOverlay {
+                        origin, scale_x, scale_y,
+                        scroll_x: scx, scroll_y: scy,
+                        viewport_w: 160.0, viewport_h: 144.0,
+                        map_w: 256.0, map_h: 256.0,
+                        color: egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200),
+                    },
                 );
             } else {
                 let wx = (ppu.wx as f32 - 7.0).max(0.0);
@@ -242,21 +238,27 @@ pub(super) fn draw_tilemap_viewer_content(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_wrapped_viewport_rect(
-    painter: &egui::Painter,
+struct ViewportOverlay {
     origin: egui::Pos2,
     scale_x: f32,
     scale_y: f32,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
+    scroll_x: f32,
+    scroll_y: f32,
+    viewport_w: f32,
+    viewport_h: f32,
     map_w: f32,
     map_h: f32,
     color: egui::Color32,
-) {
-    let stroke = egui::Stroke::new(2.0, color);
+}
+
+fn draw_wrapped_viewport_rect(painter: &egui::Painter, vp: &ViewportOverlay) {
+    let stroke = egui::Stroke::new(2.0, vp.color);
+    let x = vp.scroll_x;
+    let y = vp.scroll_y;
+    let w = vp.viewport_w;
+    let h = vp.viewport_h;
+    let map_w = vp.map_w;
+    let map_h = vp.map_h;
     let x2 = x + w;
     let y2 = y + h;
     let wraps_x = x2 > map_w;
@@ -288,28 +290,27 @@ fn draw_wrapped_viewport_rect(
 
     for (rx, ry, rw, rh) in rects {
         let rect = egui::Rect::from_min_size(
-            egui::pos2(origin.x + rx * scale_x, origin.y + ry * scale_y),
-            egui::vec2(rw * scale_x, rh * scale_y),
+            egui::pos2(vp.origin.x + rx * vp.scale_x, vp.origin.y + ry * vp.scale_y),
+            egui::vec2(rw * vp.scale_x, rh * vp.scale_y),
         );
         painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Outside);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_tilemap_into_image(
     image: &mut egui::ColorImage,
-    vram: &[u8],
-    ppu: PpuSnapshot,
-    _cgb_mode: bool,
-    bg_palette_ram: &[u8; 64],
+    gfx: &GbGraphicsData,
     tile_map_base: usize,
     tile_data_unsigned: bool,
     cgb_attr_available: bool,
     render_cgb_colors: bool,
     show_attr_overlay: bool,
-    color_correction: ColorCorrection,
-    color_correction_matrix: [f32; 9],
 ) {
+    let vram = &gfx.vram;
+    let ppu = gfx.ppu;
+    let bg_palette_ram = &gfx.bg_palette_ram;
+    let color_correction = gfx.color_correction;
+    let color_correction_matrix = gfx.color_correction_matrix;
     let width = image.size[0];
     let height = image.size[1];
     for y in 0..height {

@@ -127,8 +127,8 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             for effect in [
                 EffectPreset::None,
                 EffectPreset::Scanlines,
-                EffectPreset::LCDGrid,
-                EffectPreset::CRT,
+                EffectPreset::LcdGrid,
+                EffectPreset::Crt,
                 EffectPreset::GbcPalette,
                 EffectPreset::Custom,
             ] {
@@ -141,10 +141,10 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         EffectPreset::Scanlines => {
             ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
         }
-        EffectPreset::LCDGrid => {
+        EffectPreset::LcdGrid => {
             ui.add(egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0).text("Grid"));
         }
-        EffectPreset::CRT => {
+        EffectPreset::Crt => {
             ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Scanlines"));
             ui.add(egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0).text("Curvature"));
         }

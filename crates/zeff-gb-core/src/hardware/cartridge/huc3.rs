@@ -11,8 +11,7 @@ const FLAG_RAM_ENABLED: u8 = 0x0A;
 const FLAG_COMMAND_MODE: u8 = 0x0B;
 const FLAG_READ_MODE: u8 = 0x0C;
 const FLAG_READY: u8 = 0x0D;
-#[allow(dead_code)]
-const FLAG_IR_MODE: u8 = 0x0E;
+const _FLAG_IR_MODE: u8 = 0x0E;
 
 const RTC_CMD_READ_NIBBLE: u8 = 0x10;
 const RTC_CMD_WRITE_NIBBLE: u8 = 0x30;
@@ -181,7 +180,6 @@ impl HuC3 {
         self.rom = rom;
     }
 
-    #[allow(dead_code)]
     pub(super) fn ram_bytes(&self) -> &[u8] {
         &self.ram
     }

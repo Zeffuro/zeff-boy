@@ -3,16 +3,17 @@ use crate::debug::FpsTracker;
 use crate::emu_backend::{ActiveSystem, EmuBackend};
 use crate::emu_thread::{EmuCommand, EmuResponse, EmuThread};
 use zeff_gb_core::emulator::Emulator;
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 const ROM_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "nes"];
 
-pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> Result<(PathBuf, Vec<u8>), String> {
+pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> anyhow::Result<(PathBuf, Vec<u8>)> {
     let file = std::fs::File::open(zip_path)
-        .map_err(|e| format!("Failed to open ZIP: {e}"))?;
+        .context("Failed to open ZIP")?;
     let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read ZIP archive: {e}"))?;
+        .context("Failed to read ZIP archive")?;
 
     let rom_entries: Vec<(usize, String)> = (0..archive.len())
         .filter_map(|i| {
@@ -31,21 +32,21 @@ pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> Result<(PathBuf, Vec<u8>)
         .collect();
 
     match rom_entries.len() {
-        0 => Err("No ROM files found in ZIP archive".to_string()),
+        0 => anyhow::bail!("No ROM files found in ZIP archive"),
         1 => {
             let (idx, name) = &rom_entries[0];
             let mut entry = archive.by_index(*idx)
-                .map_err(|e| format!("Failed to read '{name}' from ZIP: {e}"))?;
+                .with_context(|| format!("Failed to read '{name}' from ZIP"))?;
             let mut data = Vec::with_capacity(entry.size() as usize);
             std::io::Read::read_to_end(&mut entry, &mut data)
-                .map_err(|e| format!("Failed to decompress '{name}': {e}"))?;
+                .with_context(|| format!("Failed to decompress '{name}'"))?;
             let virtual_path = zip_path.join(name);
             Ok((virtual_path, data))
         }
-        n => Err(format!(
+        n => anyhow::bail!(
             "ZIP contains {n} ROM files; expected exactly 1. Found: {}",
             rom_entries.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ")
-        )),
+        ),
     }
 }
 
@@ -92,6 +93,7 @@ impl App {
 
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
         self.stop_emu_thread();
+        self.stop_camera_capture();
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
@@ -113,9 +115,9 @@ impl App {
                     );
                     (virtual_path, Some(data))
                 }
-                Err(msg) => {
-                    log::warn!("{}", msg);
-                    self.toast_manager.error(msg);
+                Err(e) => {
+                    log::warn!("{}", e);
+                    self.toast_manager.error(e.to_string());
                     return;
                 }
             }
@@ -176,7 +178,7 @@ impl App {
                 let rom_data = match preloaded_data {
                     Some(data) => Ok(data),
                     None => std::fs::read(path)
-                        .map_err(|e| anyhow::anyhow!("Failed to read NES ROM: {e}")),
+                        .context("Failed to read NES ROM"),
                 };
                 match rom_data {
                     Ok(data) => {
@@ -210,6 +212,7 @@ impl App {
                 log::info!("Loaded ROM: {}", path.display());
 
                 self.cached_is_mbc7 = backend.is_mbc7();
+                self.cached_is_pocket_camera = backend.is_pocket_camera();
                 self.cached_rom_path = Some(backend.rom_path().to_path_buf());
                 self.cached_rom_hash = backend.rom_hash();
                 self.active_system = system;
@@ -439,6 +442,7 @@ impl App {
         }
 
         self.stop_emu_thread();
+        self.stop_camera_capture();
 
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.clear_framebuffer();
@@ -452,6 +456,7 @@ impl App {
         self.cached_rom_path = None;
         self.cached_rom_hash = None;
         self.cached_is_mbc7 = false;
+        self.cached_is_pocket_camera = false;
         self.paused = false;
         self.rewind.held = false;
         self.rewind.fill = 0.0;

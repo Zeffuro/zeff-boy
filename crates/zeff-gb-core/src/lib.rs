@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod cheats;
 pub mod color_correction;
 pub mod debug;

@@ -1,9 +1,11 @@
+use super::common::{
+    parse_hex_u32,
+    COLOR_ADDR, COLOR_DIM,
+    DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_PAGE_SIZE, HEX_ROWS_VISIBLE,
+};
 use crate::debug::types::{MemorySearchMode, RomViewerState};
-use std::collections::HashMap;
 
-const BYTES_PER_ROW: usize = 16;
-const ROWS_VISIBLE: usize = 16;
-const PAGE_SIZE: usize = ROWS_VISIBLE * BYTES_PER_ROW;
+const ROM_BANK_SIZE: u32 = 0x4000;
 
 pub(super) fn draw_rom_viewer_content(
     ui: &mut egui::Ui,
@@ -18,10 +20,10 @@ pub(super) fn draw_rom_viewer_content(
         return;
     }
 
-    let max_start = rom_size.saturating_sub(PAGE_SIZE as u32);
+    let max_start = rom_size.saturating_sub(HEX_PAGE_SIZE as u32);
     let max_start = max_start & !0xF;
 
-    let banks = rom_size / 0x4000;
+    let banks = rom_size / ROM_BANK_SIZE;
     ui.label(format!(
         "ROM: {} bytes ({} banks × 16 KiB)",
         rom_size, banks
@@ -34,7 +36,7 @@ pub(super) fn draw_rom_viewer_content(
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_u32_hex(&state.jump_input) {
+            && let Some(addr) = parse_hex_u32(&state.jump_input) {
                 state.view_start = (addr & !0xF).min(max_start);
                 state.jump_input = format!("{:06X}", state.view_start);
             }
@@ -58,10 +60,10 @@ pub(super) fn draw_rom_viewer_content(
             state.view_start = state.view_start.saturating_add(0x100).min(max_start);
         }
         if ui.button("-Bank").clicked() {
-            state.view_start = state.view_start.saturating_sub(0x4000);
+            state.view_start = state.view_start.saturating_sub(ROM_BANK_SIZE);
         }
         if ui.button("+Bank").clicked() {
-            state.view_start = state.view_start.saturating_add(0x4000).min(max_start);
+            state.view_start = state.view_start.saturating_add(ROM_BANK_SIZE).min(max_start);
         }
     });
 
@@ -74,19 +76,17 @@ pub(super) fn draw_rom_viewer_content(
         }
     }
 
-    let bank = state.view_start / 0x4000;
+    let bank = state.view_start / ROM_BANK_SIZE;
     ui.label(format!("Bank: {} (0x{:02X})", bank, bank));
 
     ui.separator();
 
-    let mono = egui::FontId::new(13.0, egui::FontFamily::Monospace);
+    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
     let normal_color = ui.visuals().text_color();
-    let addr_color = egui::Color32::from_rgb(140, 140, 170);
-    let dim_color = egui::Color32::from_rgb(90, 90, 90);
 
     let fmt_addr = egui::TextFormat {
         font_id: mono.clone(),
-        color: addr_color,
+        color: COLOR_ADDR,
         ..Default::default()
     };
     let fmt_normal = egui::TextFormat {
@@ -96,20 +96,20 @@ pub(super) fn draw_rom_viewer_content(
     };
     let fmt_dim = egui::TextFormat {
         font_id: mono,
-        color: dim_color,
+        color: COLOR_DIM,
         ..Default::default()
     };
 
     let mut header_job = egui::text::LayoutJob::default();
     header_job.append("Offset   ", 0.0, fmt_addr.clone());
-    for i in 0..BYTES_PER_ROW {
+    for i in 0..HEX_BYTES_PER_ROW {
         header_job.append(&format!("+{:X} ", i), 0.0, fmt_addr.clone());
     }
     header_job.append("  ASCII", 0.0, fmt_addr.clone());
     ui.label(header_job);
 
-    for row in 0..ROWS_VISIBLE {
-        let row_start = row * BYTES_PER_ROW;
+    for row in 0..HEX_ROWS_VISIBLE {
+        let row_start = row * HEX_BYTES_PER_ROW;
         if row_start >= rom_page.len() {
             break;
         }
@@ -119,7 +119,7 @@ pub(super) fn draw_rom_viewer_content(
 
         job.append(&format!("{:06X}:  ", row_offset), 0.0, fmt_addr.clone());
 
-        for col in 0..BYTES_PER_ROW {
+        for col in 0..HEX_BYTES_PER_ROW {
             let idx = row_start + col;
             if idx >= rom_page.len() {
                 job.append("-- ", 0.0, fmt_dim.clone());
@@ -130,11 +130,11 @@ pub(super) fn draw_rom_viewer_content(
         }
 
         job.append("  ", 0.0, fmt_normal.clone());
-        for col in 0..BYTES_PER_ROW {
+        for col in 0..HEX_BYTES_PER_ROW {
             let idx = row_start + col;
             if idx < rom_page.len() {
                 let byte = rom_page[idx].1;
-                let (ch, is_mapped) = tbl_lookup(byte, &state.tbl_map);
+                let (ch, is_mapped) = super::common::tbl_lookup(byte, &state.tbl_map);
                 let fmt = if is_mapped {
                     &fmt_normal
                 } else if ch == "." {
@@ -207,7 +207,7 @@ pub(super) fn draw_rom_viewer_content(
                 .max_height(200.0)
                 .show(ui, |ui| {
                     for result in &state.search_results {
-                        let bank = result.offset / 0x4000;
+                        let bank = result.offset / ROM_BANK_SIZE;
                         let label = format!(
                             "{:06X} [bank {:02X}]: {}",
                             result.offset,
@@ -250,7 +250,7 @@ pub(super) fn draw_rom_viewer_content(
                 .add_filter("TBL files", &["tbl", "txt"])
                 .pick_file()
             {
-                match load_tbl_file(&path) {
+                match super::common::load_tbl_file(&path) {
                     Ok(map) => {
                         let name = path
                             .file_name()
@@ -266,58 +266,4 @@ pub(super) fn draw_rom_viewer_content(
                 }
             }
     });
-}
-
-fn tbl_lookup(byte: u8, tbl_map: &HashMap<u8, String>) -> (String, bool) {
-    if let Some(mapped) = tbl_map.get(&byte) {
-        (mapped.clone(), true)
-    } else {
-        let ch = printable_ascii(byte);
-        (ch.to_string(), false)
-    }
-}
-
-fn load_tbl_file(path: &std::path::Path) -> Result<HashMap<u8, String>, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        if let Some((hex_part, char_part)) = line.split_once('=') {
-            let hex_part = hex_part.trim();
-            let char_part = char_part.to_string();
-            if let Ok(byte) = u8::from_str_radix(hex_part, 16) {
-                map.insert(
-                    byte,
-                    if char_part.is_empty() {
-                        ".".to_string()
-                    } else {
-                        char_part
-                    },
-                );
-            }
-        }
-    }
-    Ok(map)
-}
-
-fn parse_u32_hex(input: &str) -> Option<u32> {
-    let trimmed = input.trim();
-    let hex = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
-    u32::from_str_radix(hex, 16)
-        .ok()
-        .or_else(|| trimmed.parse::<u32>().ok())
-}
-
-fn printable_ascii(byte: u8) -> char {
-    if (0x20..=0x7E).contains(&byte) {
-        byte as char
-    } else {
-        '.'
-    }
 }

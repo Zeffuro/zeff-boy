@@ -9,7 +9,8 @@ mod nes_snapshot;
 
 pub(crate) use gb_snapshot::collect_emu_snapshot;
 pub(crate) use nes_snapshot::{
-    nes_apu_snapshot, nes_cpu_snapshot, nes_disassembly_view, nes_rom_info,
+    nes_apu_snapshot, nes_cpu_snapshot, nes_disassembly_view,
+    nes_graphics_snapshot, nes_oam_snapshot, nes_palette_snapshot, nes_rom_info,
 };
 
 pub(crate) struct UiFrameData {

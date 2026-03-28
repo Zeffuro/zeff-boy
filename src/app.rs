@@ -22,7 +22,10 @@ use crate::{
     ui,
 };
 
+pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
+
 mod bindings;
+mod camera_host;
 mod host_sync;
 mod input;
 mod keyboard;
@@ -34,7 +37,7 @@ mod tilt;
 mod window_events;
 
 use input::HostInputState;
-use tilt::{AutoTiltSource, TiltFrameData};
+use tilt::{AutoTiltSource, TiltConfig};
 
 pub(crate) use state_io::extract_rom_from_zip;
 
@@ -45,6 +48,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
 
     // Cache metadata before handing emulator to emu thread
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
+    let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
     let active_system = backend.as_ref().map(|b| b.system()).unwrap_or(ActiveSystem::GameBoy);
 
@@ -53,7 +57,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         initial_backend: backend,
         audio: None,
         gamepad: GamepadHandler::new()
-            .map_err(|e| log::warn!("Gamepad init failed: {e}"))
+            .map_err(|e| log::error!("Gamepad init failed: {e}"))
             .ok(),
         gfx: None,
         window_id: None,
@@ -83,6 +87,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         smoothed_tilt: (0.0, 0.0),
         left_stick: (0.0, 0.0),
         auto_tilt_source: AutoTiltSource::Keyboard,
+        camera_capture: None,
+        camera_capture_index: None,
         last_state_dir: None,
         show_settings_window: false,
         debug_requests: DebugRequests::new(),
@@ -99,6 +105,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         frames_in_flight: 0,
         cached_ui_data: None,
         cached_is_mbc7,
+        cached_is_pocket_camera,
         cached_rom_path,
         cached_rom_hash: None,
         pending_debug_actions: DebugUiActions::none(),
@@ -221,6 +228,8 @@ struct App {
     smoothed_tilt: (f32, f32),
     left_stick: (f32, f32),
     auto_tilt_source: AutoTiltSource,
+    camera_capture: Option<CameraCapture>,
+    camera_capture_index: Option<u32>,
     last_state_dir: Option<PathBuf>,
     show_settings_window: bool,
     debug_requests: DebugRequests,
@@ -231,6 +240,7 @@ struct App {
     frames_in_flight: usize,
     cached_ui_data: Option<ui::UiFrameData>,
     cached_is_mbc7: bool,
+    cached_is_pocket_camera: bool,
     cached_rom_path: Option<PathBuf>,
     cached_rom_hash: Option<[u8; 32]>,
     pending_debug_actions: DebugUiActions,
@@ -316,6 +326,17 @@ impl App {
         tilt::mouse_tilt_vector(self.cursor_pos, self.window_size)
     }
 
+    fn tilt_config(&self) -> TiltConfig {
+        TiltConfig {
+            sensitivity: self.settings.tilt_sensitivity,
+            invert_x: self.settings.tilt_invert_x,
+            invert_y: self.settings.tilt_invert_y,
+            deadzone: self.settings.tilt_deadzone,
+            stick_bypass_lerp: self.settings.stick_tilt_bypass_lerp,
+            lerp: self.settings.tilt_lerp,
+        }
+    }
+
     fn compute_target_tilt(
         &mut self,
         is_mbc7: bool,
@@ -324,35 +345,31 @@ impl App {
         left_stick: (f32, f32),
     ) -> (f32, f32) {
         let stick_controls_tilt = self.left_stick_controls_tilt(is_mbc7);
+        let cfg = self.tilt_config();
         tilt::compute_target_tilt(
             is_mbc7,
             self.settings.tilt_input_mode,
             &mut self.auto_tilt_source,
-            keyboard,
-            mouse,
-            left_stick,
+            &tilt::TiltInputSources { keyboard, mouse, left_stick },
             stick_controls_tilt,
-            self.settings.tilt_sensitivity,
-            self.settings.tilt_invert_x,
-            self.settings.tilt_invert_y,
+            &cfg,
         )
     }
 
     fn update_smoothed_tilt(&mut self, target: (f32, f32), is_mbc7: bool) -> (f32, f32) {
         let stick_controls_tilt = self.left_stick_controls_tilt(is_mbc7);
+        let cfg = self.tilt_config();
         tilt::update_smoothed_tilt(
             &mut self.smoothed_tilt,
             target,
             is_mbc7,
             self.left_stick,
             stick_controls_tilt,
-            self.settings.tilt_deadzone,
-            self.settings.stick_tilt_bypass_lerp,
-            self.settings.tilt_lerp,
+            &cfg,
         )
     }
 
-    fn update_host_tilt_and_stick_mode(&mut self) -> TiltFrameData {
+    fn update_host_tilt_and_stick_mode(&mut self) -> (f32, f32) {
         let is_mbc7 = self.cached_is_mbc7;
         let keyboard = self.host_input.tilt_vector();
         let mouse = self.mouse_tilt_vector();
@@ -360,17 +377,7 @@ impl App {
 
         self.sync_host_input_with_stick_mode(is_mbc7);
         let target = self.compute_target_tilt(is_mbc7, keyboard, mouse, left_stick);
-        let smoothed = self.update_smoothed_tilt(target, is_mbc7);
-
-        TiltFrameData {
-            is_mbc7,
-            stick_controls_tilt: self.left_stick_controls_tilt(is_mbc7),
-            keyboard,
-            mouse,
-            left_stick,
-            target,
-            smoothed,
-        }
+        self.update_smoothed_tilt(target, is_mbc7)
     }
 
     fn recv_cold_response(&mut self) -> Option<crate::emu_thread::EmuResponse> {
@@ -386,6 +393,7 @@ impl App {
             self.recycled.framebuffer = Some(old);
         }
         self.cached_is_mbc7 = result.is_mbc7;
+        self.cached_is_pocket_camera = result.is_pocket_camera;
         self.rewind.fill = result.rewind_fill;
 
         if let Some(gamepad) = &mut self.gamepad {
@@ -414,11 +422,10 @@ impl App {
 
         if let Some(ref mut cached) = self.cached_ui_data {
             if ui_data.graphics_data.is_some() {
-                if let Some(old_gfx) = cached.graphics_data.take() {
-                    let crate::debug::ConsoleGraphicsData::Gb(gb) = old_gfx;
-                    if !gb.vram.is_empty() {
-                        self.recycled.vram = Some(gb.vram);
-                    }
+                if let Some(crate::debug::ConsoleGraphicsData::Gb(gb)) = cached.graphics_data.take()
+                    && !gb.vram.is_empty()
+                {
+                    self.recycled.vram = Some(gb.vram);
                 }
             } else {
                 ui_data.graphics_data = cached.graphics_data.take();
@@ -462,28 +469,24 @@ impl App {
         }
         self.debug_windows.rom_viewer.rom_size = ui_data.rom_size;
 
-        if let Some(crate::debug::ConsoleGraphicsData::Gb(ref gb_data)) = ui_data.graphics_data {
-            if self.debug_windows.show_tile_viewer {
-                self.debug_windows.tiles.update_dirty_inputs(
-                    &gb_data.vram,
-                    &gb_data.bg_palette_ram,
-                    &gb_data.obj_palette_ram,
-                    gb_data.ppu.bgp,
-                    gb_data.cgb_mode,
-                    gb_data.color_correction,
-                    gb_data.color_correction_matrix,
-                );
+        match ui_data.graphics_data {
+            Some(crate::debug::ConsoleGraphicsData::Gb(ref gb_data)) => {
+                if self.debug_windows.show_tile_viewer {
+                    self.debug_windows.tiles.update_dirty_inputs(gb_data);
+                }
+                if self.debug_windows.show_tilemap_viewer {
+                    self.debug_windows.tilemap.update_dirty_inputs(gb_data);
+                }
             }
-            if self.debug_windows.show_tilemap_viewer {
-                self.debug_windows.tilemap.update_dirty_inputs(
-                    &gb_data.vram,
-                    &gb_data.bg_palette_ram,
-                    gb_data.ppu,
-                    gb_data.cgb_mode,
-                    gb_data.color_correction,
-                    gb_data.color_correction_matrix,
-                );
+            Some(crate::debug::ConsoleGraphicsData::Nes(_)) => {
+                if self.debug_windows.show_tile_viewer {
+                    self.debug_windows.tiles.invalidate_cache();
+                }
+                if self.debug_windows.show_tilemap_viewer {
+                    self.debug_windows.tilemap.invalidate_cache();
+                }
             }
+            None => {}
         }
 
         self.cached_ui_data = Some(ui_data);
@@ -493,7 +496,7 @@ impl App {
         self.sync_speed_setting();
         self.poll_gamepad();
 
-        let tilt_data = self.update_host_tilt_and_stick_mode();
+        let host_tilt = self.update_host_tilt_and_stick_mode();
 
         self.drain_emu_responses();
 
@@ -543,6 +546,7 @@ impl App {
                     self.debug_requests.has_pending() || self.pending_debug_actions.has_pending();
 
                 if frames_to_step > 0 || has_pending {
+                    let host_camera_frame = self.camera_frame();
                     if let Some(thread) = &self.emu_thread {
                         let want_viewer_update = match self.speed_mode() {
                             SpeedMode::Normal => true,
@@ -594,7 +598,8 @@ impl App {
                         let reqs = crate::debug::compute_tab_requirements(&self.debug_dock);
                         let input = crate::emu_thread::FrameInput {
                             frames: frames_to_step,
-                            host_tilt: tilt_data.smoothed,
+                            host_tilt,
+                            host_camera_frame,
                             buttons_pressed,
                             dpad_pressed,
                             buttons_pressed_p2: 0,
@@ -690,7 +695,7 @@ impl App {
                                 ),
                             ));
                         }
-                        thread.send(crate::emu_thread::EmuCommand::StepFrames(input));
+                        thread.send(crate::emu_thread::EmuCommand::StepFrames(Box::new(input)));
                         self.frames_in_flight += 1;
                     }
 

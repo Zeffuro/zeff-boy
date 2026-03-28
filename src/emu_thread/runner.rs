@@ -5,6 +5,8 @@ use crate::ui;
 
 use super::{EmuThread, FrameInput, FrameResult};
 
+const UNCAPPED_BATCH_SIZE: usize = 60;
+
 impl EmuThread {
     pub(crate) fn handle_step_frames(
         backend: &mut EmuBackend,
@@ -31,6 +33,9 @@ impl EmuThread {
 
         if let Some(gb) = backend.gb_mut() {
             gb.emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+            if let Some(ref frame) = input.host_camera_frame {
+                gb.emu.set_camera_host_frame(frame);
+            }
             gb.emu.set_apu_debug_capture_enabled(input.apu_capture_enabled);
             if !uncapped_mode {
                 gb.emu.set_apu_sample_generation_enabled(!input.skip_audio);
@@ -73,7 +78,10 @@ impl EmuThread {
 
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(*rewind_seconds, 4);
+            *rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(
+                *rewind_seconds,
+                super::REWIND_SNAPSHOTS_PER_SECOND,
+            );
         }
 
         Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
@@ -124,6 +132,18 @@ impl EmuThread {
 
                 if input.snapshot.show_rom_info {
                     data.rom_debug = Some(ui::nes_rom_info(emu));
+                }
+
+                if input.snapshot.any_vram_viewer_open {
+                    data.graphics_data = Some(ui::nes_graphics_snapshot(emu));
+                }
+
+                if input.snapshot.show_oam_viewer {
+                    data.oam_debug = Some(ui::nes_oam_snapshot(emu));
+                }
+
+                if input.snapshot.any_viewer_open {
+                    data.palette_debug = Some(ui::nes_palette_snapshot(emu));
                 }
 
                 if input.snapshot.show_memory_viewer {
@@ -187,6 +207,7 @@ impl EmuThread {
             backend.drain_audio_samples()
         };
         let is_mbc7 = backend.is_mbc7();
+        let is_pocket_camera = backend.is_pocket_camera();
 
         let apu_snapshot = if midi_capture_active {
             backend.apu_channel_snapshot()
@@ -200,6 +221,7 @@ impl EmuThread {
             audio_samples,
             ui_data,
             is_mbc7,
+            is_pocket_camera,
             rewind_fill,
             apu_snapshot,
         }
@@ -233,8 +255,7 @@ impl EmuThread {
             return;
         }
 
-        const UNCAPPED_BATCH: usize = 60;
-        for _ in 0..UNCAPPED_BATCH {
+        for _ in 0..UNCAPPED_BATCH_SIZE {
             backend.step_frame();
             if let Some(gb) = backend.gb_mut() {
                 Self::apply_ram_cheats(&mut gb.emu, cheats);
@@ -258,6 +279,7 @@ impl EmuThread {
             audio_samples: Vec::new(),
             ui_data: ui::empty_frame_data(),
             is_mbc7: backend.is_mbc7(),
+            is_pocket_camera: backend.is_pocket_camera(),
             rewind_fill: rewind_buffer.fill_ratio(),
             apu_snapshot: None,
         };

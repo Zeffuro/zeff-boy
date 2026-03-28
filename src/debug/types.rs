@@ -150,31 +150,26 @@ impl TilemapViewerState {
 
     pub(crate) fn update_dirty_inputs(
         &mut self,
-        vram: &[u8],
-        bg_palette_ram: &[u8; 64],
-        ppu: zeff_gb_core::debug::PpuSnapshot,
-        cgb_mode: bool,
-        color_correction: crate::settings::ColorCorrection,
-        color_correction_matrix: [f32; 9],
+        gfx: &crate::debug::common::GbGraphicsData,
     ) {
-        let vram_sig = fold_bytes(vram);
-        let bg_palette_sig = fold_bytes(bg_palette_ram);
+        let vram_sig = fold_bytes(&gfx.vram);
+        let bg_palette_sig = fold_bytes(&gfx.bg_palette_ram);
         let changed = self.last_vram_signature != vram_sig
             || self.last_bg_palette_signature != bg_palette_sig
-            || self.last_lcdc != ppu.lcdc
-            || self.last_bgp != ppu.bgp
-            || self.last_cgb_mode != cgb_mode
-            || self.last_color_correction != color_correction
-            || self.last_color_correction_matrix != color_correction_matrix;
+            || self.last_lcdc != gfx.ppu.lcdc
+            || self.last_bgp != gfx.ppu.bgp
+            || self.last_cgb_mode != gfx.cgb_mode
+            || self.last_color_correction != gfx.color_correction
+            || self.last_color_correction_matrix != gfx.color_correction_matrix;
 
         self.vram_dirty |= changed;
         self.last_vram_signature = vram_sig;
         self.last_bg_palette_signature = bg_palette_sig;
-        self.last_lcdc = ppu.lcdc;
-        self.last_bgp = ppu.bgp;
-        self.last_cgb_mode = cgb_mode;
-        self.last_color_correction = color_correction;
-        self.last_color_correction_matrix = color_correction_matrix;
+        self.last_lcdc = gfx.ppu.lcdc;
+        self.last_bgp = gfx.ppu.bgp;
+        self.last_cgb_mode = gfx.cgb_mode;
+        self.last_color_correction = gfx.color_correction;
+        self.last_color_correction_matrix = gfx.color_correction_matrix;
     }
 }
 
@@ -223,36 +218,29 @@ impl TileViewerState {
         self.vram_dirty = true;
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_dirty_inputs(
         &mut self,
-        vram: &[u8],
-        bg_palette_ram: &[u8; 64],
-        obj_palette_ram: &[u8; 64],
-        bgp: u8,
-        cgb_mode: bool,
-        color_correction: crate::settings::ColorCorrection,
-        color_correction_matrix: [f32; 9],
+        gfx: &crate::debug::common::GbGraphicsData,
     ) {
-        let vram_sig = fold_bytes(vram);
-        let bg_palette_sig = fold_bytes(bg_palette_ram);
-        let obj_palette_sig = fold_bytes(obj_palette_ram);
+        let vram_sig = fold_bytes(&gfx.vram);
+        let bg_palette_sig = fold_bytes(&gfx.bg_palette_ram);
+        let obj_palette_sig = fold_bytes(&gfx.obj_palette_ram);
         let changed = self.last_vram_signature != vram_sig
             || self.last_bg_palette_signature != bg_palette_sig
             || self.last_obj_palette_signature != obj_palette_sig
-            || self.last_bgp != bgp
-            || self.last_cgb_mode != cgb_mode
-            || self.last_color_correction != color_correction
-            || self.last_color_correction_matrix != color_correction_matrix;
+            || self.last_bgp != gfx.ppu.bgp
+            || self.last_cgb_mode != gfx.cgb_mode
+            || self.last_color_correction != gfx.color_correction
+            || self.last_color_correction_matrix != gfx.color_correction_matrix;
 
         self.vram_dirty |= changed;
         self.last_vram_signature = vram_sig;
         self.last_bg_palette_signature = bg_palette_sig;
         self.last_obj_palette_signature = obj_palette_sig;
-        self.last_bgp = bgp;
-        self.last_cgb_mode = cgb_mode;
-        self.last_color_correction = color_correction;
-        self.last_color_correction_matrix = color_correction_matrix;
+        self.last_bgp = gfx.ppu.bgp;
+        self.last_cgb_mode = gfx.cgb_mode;
+        self.last_color_correction = gfx.color_correction;
+        self.last_color_correction_matrix = gfx.color_correction_matrix;
     }
 }
 
@@ -347,6 +335,9 @@ pub(crate) struct DebugWindowState {
     pub(crate) rom_viewer: RomViewerState,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
     pub(crate) settings_tab: usize,
+    pub(crate) camera_devices: Vec<crate::camera::CameraDeviceInfo>,
+    pub(crate) camera_device_error: Option<String>,
+    pub(crate) camera_devices_needs_refresh: bool,
     pub(crate) cheat: CheatState,
     pub(crate) layer_enable_bg: bool,
     pub(crate) layer_enable_window: bool,
@@ -384,6 +375,9 @@ impl DebugWindowState {
             rom_viewer: RomViewerState::new(),
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),
             settings_tab: 0,
+            camera_devices: Vec::new(),
+            camera_device_error: None,
+            camera_devices_needs_refresh: true,
             cheat: CheatState::new(),
             layer_enable_bg: true,
             layer_enable_window: true,

@@ -10,6 +10,7 @@ mod mbc2;
 mod mbc3;
 mod mbc5;
 mod mbc7;
+mod pocket_camera;
 mod rom_only;
 mod rtc;
 
@@ -20,6 +21,7 @@ use mbc2::Mbc2;
 use mbc3::Mbc3;
 use mbc5::Mbc5;
 use mbc7::Mbc7;
+use pocket_camera::PocketCamera;
 use rom_only::RomOnly;
 
 const RAM_ENABLE_MAGIC: u8 = 0x0A;
@@ -63,6 +65,7 @@ pub enum Cartridge {
     Mbc7(Mbc7),
     HuC1(HuC1),
     HuC3(HuC3),
+    PocketCamera(PocketCamera),
 }
 
 impl Cartridge {
@@ -95,6 +98,9 @@ impl Cartridge {
                 header.cartridge_type.is_mbc5_with_rumble(),
             )),
             CartridgeType::Mbc7SensorRumbleRamBattery => Cartridge::Mbc7(Mbc7::new(rom)),
+            CartridgeType::PocketCamera => {
+                Cartridge::PocketCamera(PocketCamera::new(rom, header.ram_size.size_bytes()))
+            }
             CartridgeType::HuC1RamBattery => {
                 Cartridge::HuC1(HuC1::new(rom, header.ram_size.size_bytes()))
             }
@@ -119,6 +125,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.read_rom(addr),
             Cartridge::HuC1(c) => c.read_rom(addr),
             Cartridge::HuC3(c) => c.read_rom(addr),
+            Cartridge::PocketCamera(c) => c.read_rom(addr),
         }
     }
 
@@ -132,6 +139,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.write_rom(addr, value),
             Cartridge::HuC1(c) => c.write_rom(addr, value),
             Cartridge::HuC3(c) => c.write_rom(addr, value),
+            Cartridge::PocketCamera(c) => c.write_rom(addr, value),
         }
     }
 
@@ -145,6 +153,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.read_ram(addr),
             Cartridge::HuC1(c) => c.read_ram(addr),
             Cartridge::HuC3(c) => c.read_ram(addr),
+            Cartridge::PocketCamera(c) => c.read_ram(addr),
         }
     }
 
@@ -158,11 +167,16 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.write_ram(addr, value),
             Cartridge::HuC1(c) => c.write_ram(addr, value),
             Cartridge::HuC3(c) => c.write_ram(addr, value),
+            Cartridge::PocketCamera(c) => c.write_ram(addr, value),
         }
     }
 
     pub fn step(&mut self, t_cycles: u64) {
-        if let Cartridge::Mbc3(c) = self { c.step(t_cycles) }
+        match self {
+            Cartridge::Mbc3(c) => c.step(t_cycles),
+            Cartridge::PocketCamera(c) => c.step(t_cycles),
+            _ => {}
+        }
     }
 
     pub fn rumble_active(&self) -> bool {
@@ -185,6 +199,12 @@ impl Cartridge {
         }
     }
 
+    pub fn set_camera_frame(&mut self, frame: &[u8]) {
+        if let Cartridge::PocketCamera(c) = self {
+            c.set_host_frame(frame);
+        }
+    }
+
     pub fn rom_bytes(&self) -> &[u8] {
         match self {
             Cartridge::RomOnly(c) => c.rom_bytes(),
@@ -195,6 +215,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.rom_bytes(),
             Cartridge::HuC1(c) => c.rom_bytes(),
             Cartridge::HuC3(c) => c.rom_bytes(),
+            Cartridge::PocketCamera(c) => c.rom_bytes(),
         }
     }
 
@@ -208,6 +229,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.debug_info(),
             Cartridge::HuC1(c) => c.debug_info(),
             Cartridge::HuC3(c) => c.debug_info(),
+            Cartridge::PocketCamera(c) => c.debug_info(),
         }
     }
 
@@ -221,6 +243,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.restore_rom_bytes(rom),
             Cartridge::HuC1(c) => c.restore_rom_bytes(rom),
             Cartridge::HuC3(c) => c.restore_rom_bytes(rom),
+            Cartridge::PocketCamera(c) => c.restore_rom_bytes(rom),
         }
     }
 
@@ -234,6 +257,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.ram_bytes().len(),
             Cartridge::HuC1(c) => c.ram_bytes().len(),
             Cartridge::HuC3(c) => c.sram_len(),
+            Cartridge::PocketCamera(c) => c.ram_bytes().len(),
         }
     }
 
@@ -247,6 +271,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.ram_bytes().to_vec(),
             Cartridge::HuC1(c) => c.ram_bytes().to_vec(),
             Cartridge::HuC3(c) => c.dump_sram(),
+            Cartridge::PocketCamera(c) => c.ram_bytes().to_vec(),
         }
     }
 
@@ -260,6 +285,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.load_ram_bytes(bytes),
             Cartridge::HuC1(c) => c.load_ram_bytes(bytes),
             Cartridge::HuC3(c) => c.load_sram(bytes),
+            Cartridge::PocketCamera(c) => c.load_ram_bytes(bytes),
         }
     }
 
@@ -274,6 +300,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.ram_bytes(),
             Cartridge::HuC1(c) => c.ram_bytes(),
             Cartridge::HuC3(c) => c.ram_bytes(),
+            Cartridge::PocketCamera(c) => c.ram_bytes(),
         }
     }
 
@@ -288,6 +315,7 @@ impl Cartridge {
             Cartridge::Mbc7(c) => c.bess_mbc_writes(),
             Cartridge::HuC1(c) => c.bess_mbc_writes(),
             Cartridge::HuC3(c) => c.bess_mbc_writes(),
+            Cartridge::PocketCamera(c) => c.bess_mbc_writes(),
         }
     }
 
@@ -345,6 +373,10 @@ impl Cartridge {
                 writer.write_u8(7);
                 c.write_state(writer);
             }
+            Cartridge::PocketCamera(c) => {
+                writer.write_u8(8);
+                c.write_state(writer);
+            }
         }
     }
 
@@ -359,6 +391,7 @@ impl Cartridge {
             5 => Ok(Cartridge::Mbc7(Mbc7::read_state(reader)?)),
             6 => Ok(Cartridge::HuC1(HuC1::read_state(reader)?)),
             7 => Ok(Cartridge::HuC3(HuC3::read_state(reader)?)),
+            8 => Ok(Cartridge::PocketCamera(PocketCamera::read_state(reader)?)),
             _ => bail!("invalid cartridge mapper tag in save-state file: {mapper_tag}"),
         }
     }

@@ -202,11 +202,6 @@ impl Graphics {
         self.framebuffer.set_native_size(&self.gpu.device, width, height);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn native_size(&self) -> (u32, u32) {
-        self.framebuffer.native_size()
-    }
-
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
         self.framebuffer
             .set_shader(&self.gpu.device, ctx.settings);
@@ -248,19 +243,21 @@ impl Graphics {
         let menu_actions = if show_menu {
             crate::debug::draw_menu_bar(
                 self.egui.context(),
-                self.aspect_ratio_mode,
+                &crate::debug::MenuBarContext {
+                    current_mode: self.aspect_ratio_mode,
+                    speed_mode_label: ctx.speed_mode_label,
+                    is_recording_audio: ctx.is_recording_audio,
+                    is_recording_replay: ctx.is_recording_replay,
+                    is_playing_replay: ctx.is_playing_replay,
+                    is_paused: ctx.is_paused,
+                    slot_labels: &ctx.slot_labels,
+                },
                 ctx.dock_state,
                 ctx.settings,
                 ctx.debug_windows,
-                ctx.speed_mode_label,
-                ctx.is_recording_audio,
-                ctx.is_recording_replay,
-                ctx.is_playing_replay,
-                ctx.is_paused,
-                &ctx.slot_labels,
             )
         } else {
-            crate::debug::MenuActions::default(ctx.settings.autohide_menu_bar)
+            crate::debug::MenuActions::default()
         };
         if let Some(mode) = menu_actions.aspect_ratio_mode {
             self.aspect_ratio_mode = mode;

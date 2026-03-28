@@ -1,19 +1,15 @@
 use crate::debug::TileViewerState;
+use crate::debug::common::GbGraphicsData;
 use zeff_gb_core::hardware::ppu::{apply_palette, cgb_palette_rgba, correct_color, decode_tile_pixel};
-use crate::settings::ColorCorrection;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_tile_viewer_content(
     ui: &mut egui::Ui,
-    vram: &[u8],
+    gfx: &GbGraphicsData,
     bgp: u8,
-    cgb_mode: bool,
-    bg_palette_ram: &[u8; 64],
-    obj_palette_ram: &[u8; 64],
-    color_correction: ColorCorrection,
-    color_correction_matrix: [f32; 9],
     window_state: &mut TileViewerState,
 ) {
+    let vram = &gfx.vram;
+    let cgb_mode = gfx.cgb_mode;
     let bank_select_id = ui.make_persistent_id("tile_viewer_vram_bank");
     let mut vram_bank = ui
         .ctx()
@@ -101,15 +97,11 @@ pub(super) fn draw_tile_viewer_content(
     if window_state.vram_dirty {
         render_tile_viewer_into_image(
             &mut window_state.image,
-            vram,
+            gfx,
             bgp,
             use_cgb_colors,
             use_obj_palette,
             cgb_palette_index,
-            bg_palette_ram,
-            obj_palette_ram,
-            color_correction,
-            color_correction_matrix,
             bank_base,
         );
         window_state.vram_dirty = false;
@@ -133,20 +125,20 @@ pub(super) fn draw_tile_viewer_content(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_tile_viewer_into_image(
     image: &mut egui::ColorImage,
-    vram: &[u8],
+    gfx: &GbGraphicsData,
     bgp: u8,
     use_cgb_colors: bool,
     use_obj_palette: bool,
     cgb_palette_index: u8,
-    bg_palette_ram: &[u8; 64],
-    obj_palette_ram: &[u8; 64],
-    color_correction: ColorCorrection,
-    color_correction_matrix: [f32; 9],
     bank_base: usize,
 ) {
+    let vram = &gfx.vram;
+    let bg_palette_ram = &gfx.bg_palette_ram;
+    let obj_palette_ram = &gfx.obj_palette_ram;
+    let color_correction = gfx.color_correction;
+    let color_correction_matrix = gfx.color_correction_matrix;
     for tile in 0..384usize {
         let tile_x = tile % 16;
         let tile_y = tile / 16;

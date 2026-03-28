@@ -90,4 +90,8 @@ impl Emulator {
     pub fn set_mbc7_host_tilt(&mut self, x: f32, y: f32) {
         self.bus.cartridge.set_mbc7_tilt(x, y);
     }
+
+    pub fn set_camera_host_frame(&mut self, frame: &[u8]) {
+        self.bus.cartridge.set_camera_frame(frame);
+    }
 }

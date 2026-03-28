@@ -6,6 +6,8 @@ use super::cheats_window::draw_cheats_content;
 use super::disasm_window::draw_disassembler_content;
 use super::input_viewer::draw_input_viewer_content;
 use super::memory_viewer::draw_memory_viewer_content;
+use super::nes_tile_viewer::draw_nes_tile_viewer_content;
+use super::nes_tilemap_viewer::draw_nes_tilemap_viewer_content;
 use super::oam_viewer::draw_oam_viewer_content;
 use super::palette_viewer::draw_palette_viewer_content;
 use super::perf_monitor::draw_performance_content;
@@ -385,13 +387,14 @@ impl TabViewer for DebugTabViewer<'_> {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
                     draw_tile_viewer_content(
                         ui,
-                        &data.vram,
+                        data,
                         data.ppu.bgp,
-                        data.cgb_mode,
-                        &data.bg_palette_ram,
-                        &data.obj_palette_ram,
-                        data.color_correction,
-                        data.color_correction_matrix,
+                        &mut self.window_state.tiles,
+                    );
+                } else if let Some(ConsoleGraphicsData::Nes(data)) = self.graphics_data {
+                    draw_nes_tile_viewer_content(
+                        ui,
+                        data,
                         &mut self.window_state.tiles,
                     );
                 }
@@ -400,12 +403,13 @@ impl TabViewer for DebugTabViewer<'_> {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
                     draw_tilemap_viewer_content(
                         ui,
-                        &data.vram,
-                        data.ppu,
-                        data.cgb_mode,
-                        &data.bg_palette_ram,
-                        data.color_correction,
-                        data.color_correction_matrix,
+                        data,
+                        &mut self.window_state.tilemap,
+                    );
+                } else if let Some(ConsoleGraphicsData::Nes(data)) = self.graphics_data {
+                    draw_nes_tilemap_viewer_content(
+                        ui,
+                        data,
                         &mut self.window_state.tilemap,
                     );
                 }

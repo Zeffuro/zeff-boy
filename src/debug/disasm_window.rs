@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use super::common::{COLOR_ADDR, COLOR_PC_HIGHLIGHT_BG, DEBUG_MONO_FONT_SIZE};
 use crate::debug::DisassemblyView;
 
 pub(crate) struct DisassemblerActions {
@@ -41,15 +42,13 @@ pub(super) fn draw_disassembler_content(
     ui.label("Click a line to toggle breakpoint.");
     ui.separator();
 
-    let mono = egui::FontId::new(13.0, egui::FontFamily::Monospace);
+    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
     let normal_color = ui.visuals().text_color();
-    let addr_color = egui::Color32::from_rgb(140, 140, 170);
     let bp_color = egui::Color32::RED;
-    let pc_bg = egui::Color32::from_rgb(45, 65, 45);
 
     let fmt_addr = egui::TextFormat {
         font_id: mono.clone(),
-        color: addr_color,
+        color: COLOR_ADDR,
         ..Default::default()
     };
     let fmt_normal = egui::TextFormat {
@@ -93,7 +92,7 @@ pub(super) fn draw_disassembler_content(
 
             let mut fmt_code = fmt_normal.clone();
             if is_pc {
-                fmt_code.background = pc_bg;
+                fmt_code.background = COLOR_PC_HIGHLIGHT_BG;
             }
             job.append(&format!("{:<11} ", bytes), 0.0, fmt_code.clone());
             job.append(&line.mnemonic, 0.0, fmt_code);

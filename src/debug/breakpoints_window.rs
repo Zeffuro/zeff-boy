@@ -1,5 +1,8 @@
 use crate::debug::BreakpointState;
-use crate::debug::common::{CpuDebugSnapshot, WatchType};
+use crate::debug::common::{
+    CpuDebugSnapshot, WatchType, parse_hex_u16,
+    COLOR_BREAKPOINT_HIT, COLOR_WATCHPOINT_HIT, COLOR_CONTINUE_BUTTON,
+};
 use crate::debug::ui::DebugUiActions;
 
 pub(super) fn draw_breakpoints_content(
@@ -45,7 +48,7 @@ pub(super) fn draw_breakpoints_content(
                     let hit = info.hit_breakpoint == Some(addr);
                     let label = if hit {
                         egui::RichText::new(format!("{:04X} ●", addr))
-                            .color(egui::Color32::from_rgb(255, 80, 80))
+                            .color(COLOR_BREAKPOINT_HIT)
                             .monospace()
                     } else {
                         egui::RichText::new(format!("{:04X}", addr)).monospace()
@@ -120,7 +123,7 @@ pub(super) fn draw_breakpoints_content(
                         .is_some_and(|h| h.address == wp.address);
                     let label = if hit {
                         egui::RichText::new(format!("{:04X} ●", wp.address))
-                            .color(egui::Color32::from_rgb(255, 180, 60))
+                            .color(COLOR_WATCHPOINT_HIT)
                             .monospace()
                     } else {
                         egui::RichText::new(format!("{:04X}", wp.address)).monospace()
@@ -135,14 +138,14 @@ pub(super) fn draw_breakpoints_content(
     if let Some(bp) = info.hit_breakpoint {
         ui.separator();
         ui.colored_label(
-            egui::Color32::from_rgb(255, 80, 80),
+            COLOR_BREAKPOINT_HIT,
             format!("⚑ Breakpoint hit @ {:04X}", bp),
         );
     }
     if let Some(ref hit) = info.hit_watchpoint {
         ui.separator();
         ui.colored_label(
-            egui::Color32::from_rgb(255, 180, 60),
+            COLOR_WATCHPOINT_HIT,
             format!(
                 "⚑ Watchpoint {:?} @ {:04X}: {:02X} → {:02X}",
                 hit.watch_type, hit.address, hit.old_value, hit.new_value
@@ -154,7 +157,7 @@ pub(super) fn draw_breakpoints_content(
     if suspended {
         ui.separator();
         let button =
-            egui::Button::new("▶ Continue (F5)").fill(egui::Color32::from_rgb(40, 100, 40));
+            egui::Button::new("▶ Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
         if ui.add(button).clicked() {
             actions.continue_requested = true;
         }
@@ -164,13 +167,3 @@ pub(super) fn draw_breakpoints_content(
     }
 }
 
-fn parse_hex_u16(input: &str) -> Option<u16> {
-    let trimmed = input.trim();
-    let hex = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
-    u16::from_str_radix(hex, 16)
-        .ok()
-        .or_else(|| trimmed.parse::<u16>().ok())
-}

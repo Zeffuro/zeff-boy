@@ -79,8 +79,13 @@ impl CartridgeType {
                 | CartridgeType::Mbc5RumbleRamBattery
                 | CartridgeType::Mmm01RamBattery
                 | CartridgeType::Mbc7SensorRumbleRamBattery
+                | CartridgeType::PocketCamera
                 | CartridgeType::HuC1RamBattery
         )
+    }
+
+    pub fn is_pocket_camera(self) -> bool {
+        matches!(self, CartridgeType::PocketCamera)
     }
 
     pub fn is_mbc3_with_rtc(self) -> bool {

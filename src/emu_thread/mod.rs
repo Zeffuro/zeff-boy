@@ -12,6 +12,11 @@ use crate::emu_backend::EmuBackend;
 
 pub(crate) use types::*;
 
+const DEFAULT_REWIND_SECONDS: usize = 10;
+const REWIND_SNAPSHOTS_PER_SECOND: usize = 4;
+const FRAME_CHANNEL_CAPACITY: usize = 1;
+const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
+
 pub(crate) struct EmuThread {
     cmd_tx: Sender<EmuCommand>,
     frame_rx: Receiver<FrameResult>,
@@ -22,7 +27,7 @@ pub(crate) struct EmuThread {
 impl EmuThread {
     pub(crate) fn spawn(mut backend: EmuBackend) -> Self {
         let (cmd_tx, cmd_rx) = chan::unbounded();
-        let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(1);
+        let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(FRAME_CHANNEL_CAPACITY);
         let (resp_tx, resp_rx) = chan::unbounded();
 
         let drain_rx = frame_rx.clone();
@@ -31,9 +36,12 @@ impl EmuThread {
             let mut uncapped_mode = false;
             let mut uncapped_fb: Option<Vec<u8>> = None;
             let mut last_cheats: Vec<crate::cheats::CheatPatch> = Vec::new();
-
-            let mut rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(10, 4);
-            let mut rewind_seconds = 10usize;
+            
+            let mut rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(
+                DEFAULT_REWIND_SECONDS,
+                REWIND_SNAPSHOTS_PER_SECOND,
+            );
+            let mut rewind_seconds = DEFAULT_REWIND_SECONDS;
 
             let send_resp = |resp: EmuResponse| -> bool { resp_tx.send(resp).is_ok() };
 
@@ -63,7 +71,7 @@ impl EmuThread {
                             Self::install_rom_patches(&mut backend, &last_cheats);
                         }
 
-                        EmuCommand::StepFrames(input) => {
+                        EmuCommand::StepFrames(input) => { let input = *input;
                             let result = Self::handle_step_frames(
                                 &mut backend,
                                 input,
@@ -248,7 +256,9 @@ impl EmuThread {
     }
 
     pub(crate) fn send(&self, cmd: EmuCommand) {
-        let _ = self.cmd_tx.send(cmd);
+        if self.cmd_tx.send(cmd).is_err() {
+            log::warn!("Failed to send command to emu thread (channel closed)");
+        }
     }
 
     pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
@@ -264,14 +274,16 @@ impl EmuThread {
     }
 
     pub(crate) fn shutdown(&mut self) {
-        let _ = self.cmd_tx.send(EmuCommand::Shutdown);
+        if self.cmd_tx.send(EmuCommand::Shutdown).is_err() {
+            log::debug!("Shutdown command could not be sent (channel closed)");
+        }
         while self.frame_rx.try_recv().is_ok() {}
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
         loop {
             let timeout = deadline.saturating_duration_since(std::time::Instant::now());
             if timeout.is_zero() {
-                log::warn!("Emu thread shutdown timed out after 5s");
+                log::warn!("Emu thread shutdown timed out after {SHUTDOWN_TIMEOUT_SECS}s");
                 break;
             }
             match self.resp_rx.recv_timeout(timeout) {

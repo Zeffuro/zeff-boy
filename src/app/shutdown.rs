@@ -45,6 +45,7 @@ impl App {
         }
 
         self.stop_emu_thread();
+        self.stop_camera_capture();
 
         self.gfx = None;
         self.audio = None;

@@ -1,8 +1,10 @@
+use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 
 const NORMAL_QUEUE_MS: usize = 200;
 const FAST_FORWARD_QUEUE_MS: usize = 40;
+const STEREO_MIX_FACTOR: f32 = 0.5;
 
 fn ring_buffer_capacity(sample_rate: u32) -> usize {
     sample_rate as usize * 2 * NORMAL_QUEUE_MS / 1000
@@ -16,12 +18,12 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub(crate) fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device()
-            .ok_or("no audio output device found")?;
+            .context("no audio output device found")?;
         let config = device.default_output_config()
-            .map_err(|e| format!("failed to get default audio output config: {e}"))?;
+            .context("failed to get default audio output config")?;
 
         let sample_rate = config.sample_rate();
         let channels = config.channels();
@@ -33,20 +35,24 @@ impl AudioOutput {
         let stream = match config.sample_format() {
             SampleFormat::F32 => {
                 Self::build_stream_f32(&device, &stream_config, channels, consumer)
-                    .ok_or("failed to build F32 audio stream")?
+                    .context("failed to build F32 audio stream")?
             }
             SampleFormat::I16 => {
-                Self::build_stream_i16(&device, &stream_config, channels, consumer)
-                    .ok_or("failed to build I16 audio stream")?
+                Self::build_stream_converting(&device, &stream_config, channels, consumer, |s| {
+                    (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+                })
+                    .context("failed to build I16 audio stream")?
             }
             SampleFormat::U16 => {
-                Self::build_stream_u16(&device, &stream_config, channels, consumer)
-                    .ok_or("failed to build U16 audio stream")?
+                Self::build_stream_converting(&device, &stream_config, channels, consumer, |s| {
+                    ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16
+                })
+                    .context("failed to build U16 audio stream")?
             }
-            other => return Err(format!("unsupported audio sample format: {other:?}")),
+            other => anyhow::bail!("unsupported audio sample format: {other:?}"),
         };
 
-        stream.play().map_err(|e| format!("failed to start audio playback: {e}"))?;
+        stream.play().context("failed to start audio playback")?;
         Ok(Self {
             _stream: stream,
             producer,
@@ -107,64 +113,37 @@ impl AudioOutput {
         config: &StreamConfig,
         channels: u16,
         mut consumer: rtrb::Consumer<f32>,
-    ) -> Option<cpal::Stream> {
-        device
-            .build_output_stream(
-                config,
-                move |data: &mut [f32], _| {
-                    fill_output_f32(data, channels, &mut consumer);
-                },
-                |err| eprintln!("audio error: {err}"),
-                None,
-            )
-            .ok()
+    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+        device.build_output_stream(
+            config,
+            move |data: &mut [f32], _| {
+                fill_output_f32(data, channels, &mut consumer);
+            },
+            |err| log::error!("audio stream error: {err}"),
+            None,
+        )
     }
 
-    fn build_stream_i16(
+    fn build_stream_converting<S: cpal::SizedSample + Send + 'static>(
         device: &cpal::Device,
         config: &StreamConfig,
         channels: u16,
         mut consumer: rtrb::Consumer<f32>,
-    ) -> Option<cpal::Stream> {
-        let mut scratch = Vec::<f32>::new();
-        device
-            .build_output_stream(
-                config,
-                move |data: &mut [i16], _| {
-                    scratch.resize(data.len(), 0.0);
-                    fill_output_f32(&mut scratch, channels, &mut consumer);
-                    for (dst, sample) in data.iter_mut().zip(scratch.iter()) {
-                        *dst = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                    }
-                },
-                |err| eprintln!("audio error: {err}"),
-                None,
-            )
-            .ok()
-    }
-
-    fn build_stream_u16(
-        device: &cpal::Device,
-        config: &StreamConfig,
-        channels: u16,
-        mut consumer: rtrb::Consumer<f32>,
-    ) -> Option<cpal::Stream> {
-        let mut scratch = Vec::<f32>::new();
-        device
-            .build_output_stream(
-                config,
-                move |data: &mut [u16], _| {
-                    scratch.resize(data.len(), 0.0);
-                    fill_output_f32(&mut scratch, channels, &mut consumer);
-                    for (dst, sample) in data.iter_mut().zip(scratch.iter()) {
-                        let normalized = (sample.clamp(-1.0, 1.0) + 1.0) * 0.5;
-                        *dst = (normalized * u16::MAX as f32) as u16;
-                    }
-                },
-                |err| eprintln!("audio error: {err}"),
-                None,
-            )
-            .ok()
+        convert: fn(f32) -> S,
+    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+        let mut scratch = Vec::<f32>::with_capacity(4096);
+        device.build_output_stream(
+            config,
+            move |data: &mut [S], _| {
+                scratch.resize(data.len(), 0.0);
+                fill_output_f32(&mut scratch, channels, &mut consumer);
+                for (dst, &sample) in data.iter_mut().zip(scratch.iter()) {
+                    *dst = convert(sample);
+                }
+            },
+            |err| log::error!("audio stream error: {err}"),
+            None,
+        )
     }
 }
 
@@ -200,7 +179,7 @@ fn fill_output_f32(data: &mut [f32], channels: u16, consumer: &mut rtrb::Consume
                 frame[0] = left;
                 frame[1] = right;
                 for channel in frame.iter_mut().skip(2) {
-                    *channel = (left + right) * 0.5;
+                    *channel = (left + right) * STEREO_MIX_FACTOR;
                 }
             }
             chunk.commit_all();

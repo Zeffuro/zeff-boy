@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 
 use crate::audio_recorder::MidiApuSnapshot;
@@ -83,11 +84,7 @@ impl EmulatorCore for GbBackend {
     fn rom_hash(&self) -> [u8; 32] {
         self.emu.rom_hash()
     }
-
-    fn screen_size(&self) -> (u32, u32) {
-        (160, 144)
-    }
-
+    
     fn storage_subdir(&self) -> &'static str {
         "gbc"
     }
@@ -107,6 +104,10 @@ impl EmulatorCore for GbBackend {
     fn is_mbc7(&self) -> bool {
         self.emu.is_mbc7_cartridge()
     }
+
+    fn is_pocket_camera(&self) -> bool {
+        self.emu.is_pocket_camera_cartridge()
+    }
 }
 
 pub(crate) fn try_load_battery_sram(
@@ -121,7 +122,7 @@ pub(crate) fn try_load_battery_sram(
         return Ok(None);
     }
     let bytes = std::fs::read(&save_path)
-        .map_err(|e| anyhow::anyhow!("failed to read GB save {}: {e}", save_path.display()))?;
+        .with_context(|| format!("failed to read GB save {}", save_path.display()))?;
     emu.load_battery_sram(&bytes)?;
     Ok(Some(save_path.display().to_string()))
 }

@@ -63,7 +63,7 @@ fn effect_shader_source(preset: EffectPreset) -> &'static str {
             include_str!("../shaders/common_vertex.wgsl"),
             include_str!("../shaders/screen.wgsl")
         ),
-        EffectPreset::CRT => concat!(
+        EffectPreset::Crt => concat!(
             include_str!("../shaders/common_vertex.wgsl"),
             include_str!("../shaders/crt.wgsl")
         ),
@@ -71,7 +71,7 @@ fn effect_shader_source(preset: EffectPreset) -> &'static str {
             include_str!("../shaders/common_vertex.wgsl"),
             include_str!("../shaders/scanlines.wgsl")
         ),
-        EffectPreset::LCDGrid => concat!(
+        EffectPreset::LcdGrid => concat!(
             include_str!("../shaders/common_vertex.wgsl"),
             include_str!("../shaders/lcd_grid.wgsl")
         ),
@@ -818,10 +818,5 @@ impl FramebufferRenderer {
 
     pub(crate) fn output_view(&self) -> &wgpu::TextureView {
         &self.output_view
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn texture_view(&self) -> &wgpu::TextureView {
-        &self.screen_view
     }
 }

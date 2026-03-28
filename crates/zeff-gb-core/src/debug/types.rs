@@ -58,7 +58,6 @@ pub struct DebugInfo {
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 pub struct PpuSnapshot {
     pub lcdc: u8,
     pub stat: u8,

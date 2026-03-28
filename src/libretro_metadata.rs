@@ -3,6 +3,8 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
+use anyhow::Context;
+
 const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/no-intro/";
 const GB_DAT: &str = "Nintendo%20-%20Game%20Boy.dat";
@@ -41,17 +43,17 @@ fn cache_file_path() -> PathBuf {
         .join(CACHE_FILE_NAME)
 }
 
-fn download_dat(url_suffix: &str) -> Result<String, String> {
+fn download_dat(url_suffix: &str) -> anyhow::Result<String> {
     let url = format!("{RAW_BASE_URL}{url_suffix}");
     let response = ureq::get(&url)
         .header("User-Agent", "zeff-boy-emulator")
         .call()
-        .map_err(|e| format!("Download failed ({url}): {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Download failed ({url}): {e}"))?;
 
     response
         .into_body()
         .read_to_string()
-        .map_err(|e| format!("Failed to read metadata response: {e}"))
+        .context("Failed to read metadata response")
 }
 
 fn parse_quoted(line: &str, key: &str) -> Option<String> {
@@ -137,40 +139,40 @@ fn write_u32(buf: &mut Vec<u8>, v: u32) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
-fn read_u8(cur: &mut Cursor<&[u8]>) -> Result<u8, String> {
+fn read_u8(cur: &mut Cursor<&[u8]>) -> anyhow::Result<u8> {
     let mut b = [0u8; 1];
     cur.read_exact(&mut b)
-        .map_err(|e| format!("Metadata decode error (u8): {e}"))?;
+        .context("metadata decode error (u8)")?;
     Ok(b[0])
 }
 
-fn read_u16(cur: &mut Cursor<&[u8]>) -> Result<u16, String> {
+fn read_u16(cur: &mut Cursor<&[u8]>) -> anyhow::Result<u16> {
     let mut b = [0u8; 2];
     cur.read_exact(&mut b)
-        .map_err(|e| format!("Metadata decode error (u16): {e}"))?;
+        .context("metadata decode error (u16)")?;
     Ok(u16::from_le_bytes(b))
 }
 
-fn read_u32(cur: &mut Cursor<&[u8]>) -> Result<u32, String> {
+fn read_u32(cur: &mut Cursor<&[u8]>) -> anyhow::Result<u32> {
     let mut b = [0u8; 4];
     cur.read_exact(&mut b)
-        .map_err(|e| format!("Metadata decode error (u32): {e}"))?;
+        .context("metadata decode error (u32)")?;
     Ok(u32::from_le_bytes(b))
 }
 
-fn serialize_entries(entries: &[RomMetadata]) -> Result<Vec<u8>, String> {
+fn serialize_entries(entries: &[RomMetadata]) -> anyhow::Result<Vec<u8>> {
     let mut out = Vec::with_capacity(entries.len() * 48);
     out.extend_from_slice(MAGIC);
     write_u32(
         &mut out,
-        u32::try_from(entries.len()).map_err(|_| "Too many metadata entries".to_string())?,
+        u32::try_from(entries.len()).context("too many metadata entries")?,
     );
 
     for entry in entries {
         let title_bytes = entry.title.as_bytes();
         let rom_name_bytes = entry.rom_name.as_bytes();
         if title_bytes.len() > u16::MAX as usize || rom_name_bytes.len() > u16::MAX as usize {
-            return Err("Metadata string too long".to_string());
+            anyhow::bail!("metadata string too long");
         }
 
         write_u32(&mut out, entry.crc32);
@@ -184,15 +186,15 @@ fn serialize_entries(entries: &[RomMetadata]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn deserialize_entries(bytes: &[u8]) -> Result<Vec<RomMetadata>, String> {
+fn deserialize_entries(bytes: &[u8]) -> anyhow::Result<Vec<RomMetadata>> {
     if bytes.len() < MAGIC.len() + 4 || &bytes[..MAGIC.len()] != MAGIC {
-        return Err("Metadata cache format mismatch".to_string());
+        anyhow::bail!("metadata cache format mismatch");
     }
 
     let mut cur = Cursor::new(bytes);
     let mut magic = [0u8; 8];
     cur.read_exact(&mut magic)
-        .map_err(|e| format!("Metadata decode error (magic): {e}"))?;
+        .context("metadata decode error (magic)")?;
 
     let count = read_u32(&mut cur)? as usize;
     let mut entries = Vec::with_capacity(count);
@@ -204,19 +206,19 @@ fn deserialize_entries(bytes: &[u8]) -> Result<Vec<RomMetadata>, String> {
         let title_len = read_u16(&mut cur)? as usize;
         let mut title = vec![0u8; title_len];
         cur.read_exact(&mut title)
-            .map_err(|e| format!("Metadata decode error (title): {e}"))?;
+            .context("metadata decode error (title)")?;
 
         let rom_name_len = read_u16(&mut cur)? as usize;
         let mut rom_name = vec![0u8; rom_name_len];
         cur.read_exact(&mut rom_name)
-            .map_err(|e| format!("Metadata decode error (rom_name): {e}"))?;
+            .context("metadata decode error (rom_name)")?;
 
         entries.push(RomMetadata {
             crc32,
             title: String::from_utf8(title)
-                .map_err(|e| format!("Metadata decode error (title utf8): {e}"))?,
+                .context("metadata decode error (title utf8)")?,
             rom_name: String::from_utf8(rom_name)
-                .map_err(|e| format!("Metadata decode error (rom_name utf8): {e}"))?,
+                .context("metadata decode error (rom_name utf8)")?,
             is_gbc,
         });
     }
@@ -232,26 +234,27 @@ fn build_index(entries: Vec<RomMetadata>) -> MetadataIndex {
     MetadataIndex { by_crc }
 }
 
-fn load_cached_index() -> Result<MetadataIndex, String> {
+fn load_cached_index() -> anyhow::Result<MetadataIndex> {
     let path = cache_file_path();
-    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read metadata cache: {e}"))?;
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("failed to read metadata cache: {}", path.display()))?;
     let entries = deserialize_entries(&bytes)?;
     Ok(build_index(entries))
 }
 
-fn write_cache_file(path: &Path, entries: &[RomMetadata]) -> Result<(), String> {
+fn write_cache_file(path: &Path, entries: &[RomMetadata]) -> anyhow::Result<()> {
     let data = serialize_entries(entries)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create metadata cache dir: {e}"))?;
+            .context("failed to create metadata cache directory")?;
     }
     let mut file = std::fs::File::create(path)
-        .map_err(|e| format!("Failed to create metadata cache file: {e}"))?;
+        .with_context(|| format!("failed to create metadata cache file: {}", path.display()))?;
     file.write_all(&data)
-        .map_err(|e| format!("Failed to write metadata cache: {e}"))
+        .context("failed to write metadata cache")
 }
 
-pub(crate) fn refresh_cache_from_libretro() -> Result<MetadataRefreshStats, String> {
+pub(crate) fn refresh_cache_from_libretro() -> anyhow::Result<MetadataRefreshStats> {
     let gb_dat = download_dat(GB_DAT)?;
     let gbc_dat = download_dat(GBC_DAT)?;
 

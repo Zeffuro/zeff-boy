@@ -128,7 +128,6 @@ fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
         flags,
         status_text,
         cpu_state: info.cpu_state.to_string(),
-        pc: info.pc,
         cycles: info.cycles,
         last_opcode_line: format!("@ {:04X} = {:02X}", info.last_opcode_pc, info.last_opcode),
         sections,

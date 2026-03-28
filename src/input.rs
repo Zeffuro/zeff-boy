@@ -3,6 +3,8 @@ use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs, ff};
 use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::{GamepadAction, GamepadBindings};
 
+const RUMBLE_MAGNITUDE: u16 = 40_000;
+
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
     active_gamepad: Option<GamepadId>,
@@ -18,8 +20,9 @@ pub(crate) struct GamepadPoll {
 }
 
 impl GamepadHandler {
-    pub(crate) fn new() -> Result<Self, String> {
-        let gilrs = Gilrs::new().map_err(|e| format!("failed to initialize gamepad subsystem: {e}"))?;
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        let gilrs = Gilrs::new()
+            .map_err(|e| anyhow::anyhow!("failed to initialize gamepad subsystem: {e}"))?;
         Ok(Self {
             gilrs,
             active_gamepad: None,
@@ -29,9 +32,9 @@ impl GamepadHandler {
     }
 
     pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
-        let mut events = Vec::new();
-        let mut action_events = Vec::new();
-        let mut raw_pressed = Vec::new();
+        let mut events = Vec::with_capacity(4);
+        let mut action_events = Vec::with_capacity(4);
+        let mut raw_pressed = Vec::with_capacity(4);
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
             self.active_gamepad = Some(id);
             match event {
@@ -93,7 +96,7 @@ impl GamepadHandler {
             if self.rumble_effect.is_none() {
                 self.rumble_effect = ff::EffectBuilder::new()
                     .add_effect(ff::BaseEffect {
-                        kind: ff::BaseEffectType::Strong { magnitude: 40_000 },
+                        kind: ff::BaseEffectType::Strong { magnitude: RUMBLE_MAGNITUDE },
                         scheduling: ff::Replay {
                             play_for: ff::Ticks::from_ms(u32::MAX),
                             with_delay: ff::Ticks::from_ms(0),
@@ -107,12 +110,16 @@ impl GamepadHandler {
             }
 
             if let Some(effect) = &mut self.rumble_effect {
-                let _ = effect.play();
+                if let Err(e) = effect.play() {
+                    log::warn!("Failed to start rumble effect: {e}");
+                }
                 self.rumble_playing = true;
             }
         } else {
-            if let Some(effect) = &mut self.rumble_effect {
-                let _ = effect.stop();
+            if let Some(effect) = &mut self.rumble_effect
+                && let Err(e) = effect.stop()
+            {
+                log::warn!("Failed to stop rumble effect: {e}");
             }
             self.rumble_playing = false;
         }
@@ -121,8 +128,10 @@ impl GamepadHandler {
 
 impl Drop for GamepadHandler {
     fn drop(&mut self) {
-        if let Some(effect) = &mut self.rumble_effect {
-            let _ = effect.stop();
+        if let Some(effect) = &mut self.rumble_effect
+            && let Err(e) = effect.stop()
+        {
+            log::warn!("Failed to stop rumble effect on drop: {e}");
         }
     }
 }
