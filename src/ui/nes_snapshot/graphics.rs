@@ -1,6 +1,8 @@
 use crate::debug::{ConsoleGraphicsData, DisassemblyView, NesGraphicsData, nes_disassemble_around};
 
 pub(super) fn nes_disassembly_view(emu: &zeff_nes_core::emulator::Emulator) -> DisassemblyView {
+    let mut breakpoints: Vec<u16> = emu.iter_breakpoints().collect();
+    breakpoints.sort_unstable();
     DisassemblyView {
         pc: emu.cpu_pc(),
         lines: nes_disassemble_around(
@@ -9,7 +11,7 @@ pub(super) fn nes_disassembly_view(emu: &zeff_nes_core::emulator::Emulator) -> D
             12,
             26,
         ),
-        breakpoints: Vec::new(),
+        breakpoints,
     }
 }
 

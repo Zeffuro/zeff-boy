@@ -97,18 +97,21 @@ impl App {
             return true;
         }
 
-        let speedup_code = self.settings.speedup_key_code();
-        if key_code == speedup_code || key_code == KeyCode::Backquote {
-            match key_event.state {
-                ElementState::Pressed if !key_event.repeat => self.fast_forward_held = true,
-                ElementState::Released => self.fast_forward_held = false,
-                _ => {}
+        let egui_kb = self.egui_wants_keyboard;
+
+        if !egui_kb {
+            let speedup_code = self.settings.speedup_key_code();
+            if key_code == speedup_code || key_code == KeyCode::Backquote {
+                match key_event.state {
+                    ElementState::Pressed if !key_event.repeat => self.fast_forward_held = true,
+                    ElementState::Released => self.fast_forward_held = false,
+                    _ => {}
+                }
+                return true;
             }
-            return true;
         }
 
-        // Turbo modifier (rapid-fire): Left Shift
-        if key_code == KeyCode::ShiftLeft {
+        if !egui_kb && key_code == KeyCode::ShiftLeft {
             match key_event.state {
                 ElementState::Pressed if !key_event.repeat => self.turbo_held = true,
                 ElementState::Released => self.turbo_held = false,
@@ -117,12 +120,16 @@ impl App {
             return true;
         }
 
-        if key_code == self.settings.rewind.key_code() {
+        if !egui_kb && key_code == self.settings.rewind.key_code() {
             match key_event.state {
                 ElementState::Pressed => self.rewind.held = true,
                 ElementState::Released => self.rewind.held = false,
             }
             return true;
+        }
+
+        if egui_kb {
+            return false;
         }
 
         let digit_slot = match key_code {
@@ -139,19 +146,14 @@ impl App {
             _ => None,
         };
         if let Some(slot) = digit_slot {
-            if pressed && !self.egui_wants_keyboard {
+            if pressed {
                 self.active_save_slot = slot;
                 self.toast_manager
                     .info(format!("Save slot {slot} selected"));
             }
-            // Don't consume:let digits pass through if egui wants them
-            if self.egui_wants_keyboard {
-                return false;
-            }
             return pressed;
         }
 
-        // --- Bound shortcut actions ---
         let bindings = &self.settings.shortcut_bindings;
 
         if key_code == bindings.get(ShortcutAction::Pause) || key_code == KeyCode::Pause {

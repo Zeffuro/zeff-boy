@@ -23,10 +23,10 @@ pub(super) fn draw_disassembler_content(
     let mut breakpoints: HashSet<u16> = view.breakpoints.iter().copied().collect();
 
     ui.horizontal(|ui| {
-        if ui.button("▶ Continue (F5)").clicked() {
+        if ui.button("▶ Continue (F9)").clicked() {
             actions.continue_requested = true;
         }
-        if ui.button("⏭ Step (F10)").clicked() {
+        if ui.button("⏭ Step (F7)").clicked() {
             actions.step_requested = true;
         }
         ui.separator();

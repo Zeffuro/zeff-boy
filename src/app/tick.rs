@@ -276,12 +276,17 @@ impl App {
         if actions.add_watchpoint.is_some() {
             pending.add_watchpoint = actions.add_watchpoint;
         }
+        let bp_changed =
+            !actions.remove_breakpoints.is_empty() || !actions.toggle_breakpoints.is_empty();
         pending
             .remove_breakpoints
             .extend(actions.remove_breakpoints);
         pending
             .toggle_breakpoints
             .extend(actions.toggle_breakpoints);
+        if bp_changed || actions.add_breakpoint.is_some() {
+            self.debug_windows.last_disasm_pc = None;
+        }
         pending.memory_writes.extend(actions.memory_writes);
         if actions.apu_channel_mutes.is_some() {
             pending.apu_channel_mutes = actions.apu_channel_mutes;
@@ -333,6 +338,9 @@ impl App {
             }
             if ui_data.oam_debug.is_none() {
                 ui_data.oam_debug = cached.oam_debug.take();
+            }
+            if ui_data.apu_debug.is_none() {
+                ui_data.apu_debug = cached.apu_debug.take();
             }
             if let Some(ref disasm) = ui_data.disassembly_view {
                 self.debug_windows.last_disasm_pc = Some(disasm.pc);
@@ -507,7 +515,7 @@ impl App {
                             dpad_pressed_p2: 0,
                             debug_step: std::mem::take(&mut self.debug_requests.step),
                             debug_continue: std::mem::take(&mut self.debug_requests.continue_),
-                            apu_capture_enabled: reqs.needs_apu && want_viewer_update,
+                            apu_capture_enabled: reqs.needs_apu,
                             skip_audio: match self.speed_mode() {
                                 SpeedMode::Uncapped => true,
                                 SpeedMode::FastForward => {

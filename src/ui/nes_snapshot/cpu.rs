@@ -50,23 +50,21 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
 
     let mut recent_op_lines = Vec::new();
     let ops = &snap.recent_ops;
-    let mut i = 0;
-    while i < ops.len() {
-        let (pc, op) = ops[i];
-        let mut count = 1usize;
-        while i + count < ops.len() && ops[i + count] == (pc, op) {
-            count += 1;
+    let mut seen: Vec<((u16, u8), usize)> = Vec::new();
+    for &(pc, op) in ops {
+        if let Some(entry) = seen.iter_mut().find(|e| e.0 == (pc, op)) {
+            entry.1 += 1;
+        } else {
+            seen.push(((pc, op), 1));
         }
+    }
+    for ((pc, op), count) in seen.into_iter().take(16) {
         let line = if count > 1 {
             format!("{:04X}: {:02X} (x{})", pc, op, count)
         } else {
             format!("{:04X}: {:02X}", pc, op)
         };
         recent_op_lines.push(line);
-        i += count;
-        if recent_op_lines.len() >= 16 {
-            break;
-        }
     }
 
     let breakpoints: Vec<u16> = emu.iter_breakpoints().collect();

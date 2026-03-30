@@ -86,13 +86,15 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
 
     let mut recent_op_lines = Vec::new();
     let ops = &info.recent_ops;
-    let mut i = 0;
-    while i < ops.len() {
-        let (pc, op, is_cb) = ops[i];
-        let mut count = 1usize;
-        while i + count < ops.len() && ops[i + count] == (pc, op, is_cb) {
-            count += 1;
+    let mut seen: Vec<((u16, u8, bool), usize)> = Vec::new();
+    for &entry in ops {
+        if let Some(slot) = seen.iter_mut().find(|e| e.0 == entry) {
+            slot.1 += 1;
+        } else {
+            seen.push((entry, 1));
         }
+    }
+    for ((pc, op, is_cb), count) in seen.into_iter().take(16) {
         let line = if is_cb {
             if count > 1 {
                 format!("{:04X}: CB {:02X} (x{})", pc, op, count)
@@ -105,10 +107,6 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
             format!("{:04X}: {:02X}", pc, op)
         };
         recent_op_lines.push(line);
-        i += count;
-        if recent_op_lines.len() >= 16 {
-            break;
-        }
     }
 
     CpuDebugSnapshot {
