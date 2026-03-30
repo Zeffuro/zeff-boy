@@ -1,4 +1,4 @@
-use crate::debug::common::RomDebugInfo;
+use crate::debug::types::RomDebugInfo;
 
 pub(super) fn draw_rom_info_content(ui: &mut egui::Ui, info: &RomDebugInfo) {
     for section in &info.sections {

@@ -1,4 +1,4 @@
-use crate::debug::common::InputDebugInfo;
+use crate::debug::types::InputDebugInfo;
 
 pub(super) fn draw_input_viewer_content(ui: &mut egui::Ui, info: &InputDebugInfo) {
     for section in &info.sections {

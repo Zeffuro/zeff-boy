@@ -1,7 +1,7 @@
 use crate::debug::TilemapViewerState;
-use crate::debug::common::GbGraphicsData;
+use crate::debug::types::GbGraphicsData;
 use zeff_gb_core::hardware::ppu::{
-    LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, apply_palette, cgb_palette_rgba,
+    Lcdc, apply_palette, cgb_palette_rgba,
     correct_color, decode_tile_pixel, tile_data_address,
 };
 
@@ -34,12 +34,13 @@ pub(super) fn draw_tilemap_viewer_content(
     let cgb_mode = gfx.cgb_mode;
     let width = 256usize;
     let height = 256usize;
-    let bg_tile_map_base = if ppu.lcdc & LCDC_BG_TILEMAP != 0 {
+    let lcdc = Lcdc::from_bits_truncate(ppu.lcdc);
+    let bg_tile_map_base = if lcdc.contains(Lcdc::BG_TILEMAP) {
         0x1C00
     } else {
         0x1800
     };
-    let win_tile_map_base = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 {
+    let win_tile_map_base = if lcdc.contains(Lcdc::WINDOW_TILEMAP) {
         0x1C00
     } else {
         0x1800
@@ -114,7 +115,7 @@ pub(super) fn draw_tilemap_viewer_content(
     } else {
         bg_tile_map_base
     };
-    let tile_data_unsigned = ppu.lcdc & LCDC_TILE_DATA != 0;
+    let tile_data_unsigned = lcdc.contains(Lcdc::TILE_DATA);
 
     let options_changed = window_state.last_use_window_map != Some(use_window_map)
         || window_state.last_show_attr_overlay != Some(show_attr_overlay)
@@ -135,11 +136,13 @@ pub(super) fn draw_tilemap_viewer_content(
         render_tilemap_into_image(
             &mut window_state.image,
             gfx,
-            tile_map_base,
-            tile_data_unsigned,
-            cgb_attr_available,
-            render_cgb_colors,
-            show_attr_overlay,
+            &TilemapRenderOptions {
+                tile_map_base,
+                tile_data_unsigned,
+                cgb_attr_available,
+                render_cgb_colors,
+                show_attr_overlay,
+            },
         );
         window_state.vram_dirty = false;
     }
@@ -297,15 +300,24 @@ fn draw_wrapped_viewport_rect(painter: &egui::Painter, vp: &ViewportOverlay) {
     }
 }
 
-fn render_tilemap_into_image(
-    image: &mut egui::ColorImage,
-    gfx: &GbGraphicsData,
+struct TilemapRenderOptions {
     tile_map_base: usize,
     tile_data_unsigned: bool,
     cgb_attr_available: bool,
     render_cgb_colors: bool,
     show_attr_overlay: bool,
+}
+
+fn render_tilemap_into_image(
+    image: &mut egui::ColorImage,
+    gfx: &GbGraphicsData,
+    opts: &TilemapRenderOptions,
 ) {
+    let tile_map_base = opts.tile_map_base;
+    let tile_data_unsigned = opts.tile_data_unsigned;
+    let cgb_attr_available = opts.cgb_attr_available;
+    let render_cgb_colors = opts.render_cgb_colors;
+    let show_attr_overlay = opts.show_attr_overlay;
     let vram = &gfx.vram;
     let ppu = gfx.ppu;
     let bg_palette_ram = &gfx.bg_palette_ram;

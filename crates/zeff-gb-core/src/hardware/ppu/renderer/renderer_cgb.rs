@@ -1,6 +1,6 @@
 use super::{SpriteRenderContext, decode_cgb_tile_attributes, render_sprites};
 use crate::hardware::ppu::{
-    LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, PPU, SCREEN_H, SCREEN_W,
+    Lcdc, PPU, SCREEN_H, SCREEN_W,
     decode_tile_pixel, tile_data_address,
 };
 
@@ -10,17 +10,17 @@ pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         return;
     }
 
-    let bg_tile_map_base: usize = if ppu.lcdc & LCDC_BG_TILEMAP != 0 {
+    let bg_tile_map_base: usize = if ppu.lcdc.contains(Lcdc::BG_TILEMAP) {
         0x1C00
     } else {
         0x1800
     };
-    let win_tile_map_base: usize = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 {
+    let win_tile_map_base: usize = if ppu.lcdc.contains(Lcdc::WINDOW_TILEMAP) {
         0x1C00
     } else {
         0x1800
     };
-    let tile_data_unsigned = ppu.lcdc & LCDC_TILE_DATA != 0;
+    let tile_data_unsigned = ppu.lcdc.contains(Lcdc::TILE_DATA);
     let mut bg_color_ids = [0u8; SCREEN_W];
     let mut bg_priority_flags = [false; SCREEN_W];
     let window_visible = ppu.window_visible_on_current_line();

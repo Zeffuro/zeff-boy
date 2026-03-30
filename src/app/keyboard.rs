@@ -1,4 +1,5 @@
 use super::App;
+use crate::emu_thread::EmuCommand;
 use crate::settings::{InputBindingAction, ShortcutAction};
 use winit::{
     event::{ElementState, KeyEvent},
@@ -48,7 +49,7 @@ impl App {
 
         if self.debug_windows.rebinding_rewind {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
-                self.settings.rewind_key = format!("{key_code:?}");
+                self.settings.rewind.key = format!("{key_code:?}");
                 self.debug_windows.rebinding_rewind = false;
             }
             return true;
@@ -71,7 +72,7 @@ impl App {
         if key_event.state == ElementState::Pressed && !key_event.repeat {
             match action {
                 InputBindingAction::Joypad(a) => self.settings.key_bindings.set(a, key_code),
-                InputBindingAction::Tilt(a) => self.settings.tilt_key_bindings.set(a, key_code),
+                InputBindingAction::Tilt(a) => self.settings.tilt.key_bindings.set(a, key_code),
             }
             self.debug_windows.rebinding_action = None;
         }
@@ -116,7 +117,7 @@ impl App {
             return true;
         }
 
-        if key_code == self.settings.rewind_key_code() {
+        if key_code == self.settings.rewind.key_code() {
             match key_event.state {
                 ElementState::Pressed => self.rewind.held = true,
                 ElementState::Released => self.rewind.held = false,
@@ -143,7 +144,7 @@ impl App {
                 self.toast_manager
                     .info(format!("Save slot {slot} selected"));
             }
-            // Don't consume — let digits pass through if egui wants them
+            // Don't consume:let digits pass through if egui wants them
             if self.egui_wants_keyboard {
                 return false;
             }
@@ -156,13 +157,7 @@ impl App {
         if key_code == bindings.get(ShortcutAction::Pause) || key_code == KeyCode::Pause {
             if pressed {
                 self.paused = !self.paused;
-                self.toast_manager.set_persistent(
-                    "paused",
-                    self.paused,
-                    "⏸ Paused",
-                    egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
-                    false,
-                );
+                self.toast_manager.set_paused(self.paused);
             }
             return true;
         }
@@ -177,10 +172,10 @@ impl App {
         if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
             if pressed {
                 self.timing.uncapped_speed = !self.timing.uncapped_speed;
-                self.settings.uncapped_speed = self.timing.uncapped_speed;
+                self.settings.emulation.uncapped_speed = self.timing.uncapped_speed;
                 self.settings.save();
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(
+                    thread.send(EmuCommand::SetUncapped(
                         self.timing.uncapped_speed,
                     ));
                 }
@@ -190,14 +185,14 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::MuteToggle) {
             if pressed {
-                if self.settings.master_volume > 0.0 {
-                    self.settings.pre_mute_volume = Some(self.settings.master_volume);
-                    self.settings.master_volume = 0.0;
+                if self.settings.audio.volume > 0.0 {
+                    self.settings.audio.pre_mute_volume = Some(self.settings.audio.volume);
+                    self.settings.audio.volume = 0.0;
                     self.toast_manager.info("🔇 Muted");
                 } else {
-                    self.settings.master_volume =
-                        self.settings.pre_mute_volume.unwrap_or(1.0);
-                    self.settings.pre_mute_volume = None;
+                    self.settings.audio.volume =
+                        self.settings.audio.pre_mute_volume.unwrap_or(1.0);
+                    self.settings.audio.pre_mute_volume = None;
                     self.toast_manager.info("🔊 Unmuted");
                 }
             }

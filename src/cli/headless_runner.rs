@@ -17,8 +17,7 @@ pub(crate) fn run_headless(
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
     let rom_data = std::fs::read(path)?;
-    let mut emulator = Emulator::from_rom_data(&rom_data, mode_preference)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut emulator = Emulator::from_rom_data(&rom_data, mode_preference)?;
     if let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emulator, path)
         .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
     {

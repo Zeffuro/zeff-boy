@@ -1,9 +1,6 @@
-use super::common::{
-    parse_hex_u8, parse_hex_u16,
-    COLOR_ADDR, COLOR_DIM, COLOR_FLASH,
-    DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_PAGE_SIZE, HEX_ROWS_VISIBLE,
-};
-use crate::debug::types::{MemorySearchMode, MemoryViewerState};
+use super::common::{parse_hex_u8, parse_hex_u16, HEX_PAGE_SIZE};
+use super::hex_viewer;
+use crate::debug::types::MemoryViewerState;
 
 const MAX_START: u16 = 0xFF00;
 const FLASH_DURATION_TICKS: u8 = 12;
@@ -48,14 +45,8 @@ pub(super) fn draw_memory_viewer_content(
         }
     });
 
-    if ui.rect_contains_pointer(ui.max_rect()) {
-        let scroll = ui.input(|i| i.raw_scroll_delta.y);
-        if scroll >= 1.0 {
-            state.view_start = state.view_start.saturating_sub(0x10);
-        } else if scroll <= -1.0 {
-            state.view_start = state.view_start.saturating_add(0x10).min(MAX_START);
-        }
-    }
+    state.view_start =
+        hex_viewer::handle_scroll(ui, state.view_start as u32, MAX_START as u32) as u16;
 
     let slider = ui.add(
         egui::Slider::new(&mut state.view_start, 0..=MAX_START)
@@ -69,80 +60,16 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
-    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
-    let normal_color = ui.visuals().text_color();
-
-    let fmt_addr = egui::TextFormat {
-        font_id: mono.clone(),
-        color: COLOR_ADDR,
-        ..Default::default()
-    };
-    let fmt_normal = egui::TextFormat {
-        font_id: mono.clone(),
-        color: normal_color,
-        ..Default::default()
-    };
-    let fmt_flash = egui::TextFormat {
-        font_id: mono.clone(),
-        color: COLOR_FLASH,
-        ..Default::default()
-    };
-    let fmt_dim = egui::TextFormat {
-        font_id: mono,
-        color: COLOR_DIM,
-        ..Default::default()
-    };
-
-    let mut header_job = egui::text::LayoutJob::default();
-    header_job.append("Addr   ", 0.0, fmt_addr.clone());
-    for i in 0..HEX_BYTES_PER_ROW {
-        header_job.append(&format!("+{:X} ", i), 0.0, fmt_addr.clone());
-    }
-    header_job.append("  ASCII", 0.0, fmt_addr.clone());
-    ui.label(header_job);
-
-    for row in 0..HEX_ROWS_VISIBLE {
-        let row_start = row * HEX_BYTES_PER_ROW;
-        if row_start >= memory_page.len() {
-            break;
-        }
-        let row_addr = memory_page[row_start].0;
-
-        let mut job = egui::text::LayoutJob::default();
-
-        job.append(&format!("{:04X}:  ", row_addr), 0.0, fmt_addr.clone());
-
-        for col in 0..HEX_BYTES_PER_ROW {
-            let idx = row_start + col;
-            if idx >= memory_page.len() {
-                job.append("-- ", 0.0, fmt_dim.clone());
-            } else {
-                let (_, value) = memory_page[idx];
-                let flash = state.flash_ticks.get(idx).copied().unwrap_or(0);
-                let fmt = if flash > 0 { &fmt_flash } else { &fmt_normal };
-                job.append(&format!("{:02X} ", value), 0.0, fmt.clone());
-            }
-        }
-
-        job.append("  ", 0.0, fmt_normal.clone());
-        for col in 0..HEX_BYTES_PER_ROW {
-            let idx = row_start + col;
-            if idx < memory_page.len() {
-                let byte = memory_page[idx].1;
-                let (ch, is_mapped) = super::common::tbl_lookup(byte, &state.tbl_map);
-                let fmt = if is_mapped {
-                    &fmt_normal
-                } else if ch == "." {
-                    &fmt_dim
-                } else {
-                    &fmt_normal
-                };
-                job.append(&ch, 0.0, fmt.clone());
-            }
-        }
-
-        ui.label(job);
-    }
+    let fmt = hex_viewer::hex_text_formats(ui);
+    hex_viewer::draw_hex_header(ui, "Addr   ", &fmt);
+    hex_viewer::draw_hex_grid(
+        ui,
+        memory_page,
+        4,
+        &fmt,
+        Some(&state.flash_ticks),
+        &state.tbl_map,
+    );
 
     if state.enable_editing {
         ui.separator();
@@ -187,120 +114,22 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
-    ui.collapsing("🔍 Search Memory", |ui| {
-        ui.horizontal(|ui| {
-            ui.label("Mode:");
-            egui::ComboBox::from_id_salt("search_mode")
-                .selected_text(match state.search_mode {
-                    MemorySearchMode::ByteValue => "Byte (hex)",
-                    MemorySearchMode::ByteSequence => "Sequence (hex)",
-                    MemorySearchMode::AsciiString => "ASCII",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut state.search_mode,
-                        MemorySearchMode::ByteValue,
-                        "Byte (hex)",
-                    );
-                    ui.selectable_value(
-                        &mut state.search_mode,
-                        MemorySearchMode::ByteSequence,
-                        "Sequence (hex)",
-                    );
-                    ui.selectable_value(
-                        &mut state.search_mode,
-                        MemorySearchMode::AsciiString,
-                        "ASCII",
-                    );
-                });
-        });
-        ui.horizontal(|ui| {
-            let hint = match state.search_mode {
-                MemorySearchMode::ByteValue => "e.g. FF",
-                MemorySearchMode::ByteSequence => "e.g. FF 00 AB",
-                MemorySearchMode::AsciiString => "e.g. HELLO",
-            };
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut state.search_query)
-                    .desired_width(150.0)
-                    .hint_text(hint),
-            );
-            let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if ui.button("Search").clicked() || enter_pressed {
-                state.search_pending = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("Max results:");
-            ui.add(
-                egui::DragValue::new(&mut state.search_max_results)
-                    .range(1..=1024)
-                    .speed(1),
-            );
-        });
-        if !state.search_results.is_empty() {
-            ui.label(format!("{} result(s):", state.search_results.len()));
-            egui::ScrollArea::vertical()
-                .max_height(200.0)
-                .show(ui, |ui| {
-                    for result in &state.search_results {
-                        let label = format!(
-                            "{:04X}: {}",
-                            result.address,
-                            result
-                                .matched_bytes
-                                .iter()
-                                .map(|b| format!("{:02X}", b))
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        );
-                        if ui
-                            .add(
-                                egui::Label::new(egui::RichText::new(&label).monospace())
-                                    .sense(egui::Sense::click()),
-                            )
-                            .clicked()
-                        {
-                            state.view_start = result.address & 0xFFF0;
-                            state.jump_input = format!("{:04X}", state.view_start);
-                        }
-                    }
-                });
-        }
-    });
+    if let Some(jump) = hex_viewer::draw_search_section(
+        ui,
+        "🔍 Search Memory",
+        "search_mode",
+        &mut state.search_mode,
+        &mut state.search_query,
+        &mut state.search_max_results,
+        &mut state.search_pending,
+        &state.search_results,
+    ) {
+        state.view_start = (jump as u16) & 0xFFF0;
+        state.jump_input = format!("{:04X}", state.view_start);
+    }
 
     ui.separator();
-    ui.collapsing("TBL Character Map", |ui| {
-        if let Some(ref path) = state.tbl_path {
-            ui.label(format!("Loaded: {}", path));
-            if ui.button("Clear TBL").clicked() {
-                state.tbl_map.clear();
-                state.tbl_path = None;
-            }
-        } else {
-            ui.label("No TBL file loaded (using ASCII)");
-        }
-        if ui.button("Load TBL File...").clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("TBL files", &["tbl", "txt"])
-                .pick_file()
-            {
-                match super::common::load_tbl_file(&path) {
-                    Ok(map) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("?")
-                            .to_string();
-                        state.tbl_map = map;
-                        state.tbl_path = Some(name);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to load TBL file: {}", e);
-                    }
-                }
-            }
-    });
+    hex_viewer::draw_tbl_section(ui, &mut state.tbl_map, &mut state.tbl_path);
 
     writes
 }
@@ -335,21 +164,3 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
 }
 
 
-pub(crate) fn parse_search_query(query: &str, mode: MemorySearchMode) -> Option<Vec<u8>> {
-    match mode {
-        MemorySearchMode::ByteValue => parse_hex_u8(query).map(|b| vec![b]),
-        MemorySearchMode::ByteSequence => {
-            let bytes: Vec<u8> = query
-                .split_whitespace()
-                .filter_map(|s| {
-                    u8::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
-                })
-                .collect();
-            if bytes.is_empty() { None } else { Some(bytes) }
-        }
-        MemorySearchMode::AsciiString => {
-            let bytes: Vec<u8> = query.bytes().collect();
-            if bytes.is_empty() { None } else { Some(bytes) }
-        }
-    }
-}

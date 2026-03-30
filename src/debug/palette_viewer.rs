@@ -1,4 +1,4 @@
-use crate::debug::common::PaletteDebugInfo;
+use crate::debug::types::PaletteDebugInfo;
 
 pub(super) fn draw_palette_viewer_content(
     ui: &mut egui::Ui,

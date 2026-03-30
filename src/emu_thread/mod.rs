@@ -1,5 +1,6 @@
 mod cheats;
 mod debug_actions;
+mod emu_loop;
 mod runner;
 mod state;
 mod types;
@@ -10,7 +11,10 @@ use crossbeam_channel::{self as chan, Receiver, Sender};
 
 use crate::emu_backend::EmuBackend;
 
-pub(crate) use types::*;
+pub(crate) use types::{
+    EmuCommand, EmuResponse, FrameInput, FrameResult, MemorySearchRequest, ReusableBuffers,
+    SnapshotRequest,
+};
 
 const DEFAULT_REWIND_SECONDS: usize = 10;
 const REWIND_SNAPSHOTS_PER_SECOND: usize = 4;
@@ -25,7 +29,7 @@ pub(crate) struct EmuThread {
 }
 
 impl EmuThread {
-    pub(crate) fn spawn(mut backend: EmuBackend) -> Self {
+    pub(crate) fn spawn(backend: EmuBackend) -> Self {
         let (cmd_tx, cmd_rx) = chan::unbounded();
         let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(FRAME_CHANNEL_CAPACITY);
         let (resp_tx, resp_rx) = chan::unbounded();
@@ -33,218 +37,10 @@ impl EmuThread {
         let drain_rx = frame_rx.clone();
 
         let join = thread::spawn(move || {
-            let mut uncapped_mode = false;
-            let mut uncapped_fb: Option<Vec<u8>> = None;
-            let mut last_cheats: Vec<crate::cheats::CheatPatch> = Vec::new();
-            
-            let mut rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(
-                DEFAULT_REWIND_SECONDS,
-                REWIND_SNAPSHOTS_PER_SECOND,
+            let mut emu_loop = emu_loop::EmuLoop::new(
+                backend, cmd_rx, frame_tx, drain_rx, resp_tx,
             );
-            let mut rewind_seconds = DEFAULT_REWIND_SECONDS;
-
-            let send_resp = |resp: EmuResponse| -> bool { resp_tx.send(resp).is_ok() };
-
-            'main: loop {
-                let command = if uncapped_mode {
-                    match cmd_rx.try_recv() {
-                        Ok(cmd) => Some(cmd),
-                        Err(crossbeam_channel::TryRecvError::Empty) => None,
-                        Err(crossbeam_channel::TryRecvError::Disconnected) => break,
-                    }
-                } else {
-                    match cmd_rx.recv() {
-                        Ok(cmd) => Some(cmd),
-                        Err(_) => break,
-                    }
-                };
-
-                if let Some(command) = command {
-                    match command {
-                        EmuCommand::SetUncapped(on) => {
-                            uncapped_mode = on;
-                            backend.set_apu_sample_generation_enabled(!on);
-                        }
-
-                        EmuCommand::UpdateCheats(cheats) => {
-                            last_cheats = cheats;
-                            Self::install_rom_patches(&mut backend, &last_cheats);
-                        }
-
-                        EmuCommand::StepFrames(input) => { let input = *input;
-                            let result = Self::handle_step_frames(
-                                &mut backend,
-                                input,
-                                &last_cheats,
-                                uncapped_mode,
-                                &mut rewind_buffer,
-                                &mut rewind_seconds,
-                            );
-
-                            if !Self::send_frame(&frame_tx, &drain_rx, result) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::SaveStateSlot(slot) => {
-                            match backend.slot_path(slot) {
-                                Ok(path) => {
-                                    if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
-                                        break 'main;
-                                    }
-                                }
-                                Err(e) => {
-                                    if !send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
-                                        break 'main;
-                                    }
-                                }
-                            }
-                        }
-
-                        EmuCommand::LoadStateSlot {
-                            slot,
-                            buttons_pressed,
-                            dpad_pressed,
-                        } => {
-                            let result = backend.load_state(slot);
-                            let path_label = result.as_ref().ok().cloned().unwrap_or_default();
-                            let resp = Self::respond_load_state(
-                                &mut backend,
-                                result.map(|_| ()),
-                                path_label,
-                                buttons_pressed,
-                                dpad_pressed,
-                            );
-                            if !send_resp(resp) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::SaveStateToPath(path) => {
-                            if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::LoadStateFromPath {
-                            path,
-                            buttons_pressed,
-                            dpad_pressed,
-                        } => {
-                            let label = path.display().to_string();
-                            let result = backend.load_state_from_path(&path);
-                            let resp = Self::respond_load_state(
-                                &mut backend,
-                                result,
-                                label,
-                                buttons_pressed,
-                                dpad_pressed,
-                            );
-                            if !send_resp(resp) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::SetSampleRate(rate) => {
-                            backend.set_sample_rate(rate);
-                        }
-
-                        EmuCommand::CaptureStateBytes => {
-                            let resp = match Self::encode_current_state(&backend) {
-                                Ok(bytes) => EmuResponse::StateCaptured(bytes),
-                                Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
-                            };
-                            if !send_resp(resp) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::LoadStateBytes {
-                            state_bytes,
-                            buttons_pressed,
-                            dpad_pressed,
-                        } => {
-                            let result = backend.load_state_from_bytes(state_bytes);
-                            let resp = Self::respond_load_state(
-                                &mut backend,
-                                result,
-                                "(replay)".to_string(),
-                                buttons_pressed,
-                                dpad_pressed,
-                            );
-                            if !send_resp(resp) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::AutoSaveState => {
-                            if let Some(path) = backend.auto_save_path() {
-                                if !Self::save_state_async(&backend, path, &resp_tx, &send_resp) {
-                                    break 'main;
-                                }
-                            } else if !send_resp(EmuResponse::SaveStateFailed("Auto-save not supported for this system".to_string())) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::AutoLoadState {
-                            buttons_pressed,
-                            dpad_pressed,
-                        } => {
-                            if let Some(path) = backend.auto_save_path() {
-                                if path.exists() {
-                                    let label = path.display().to_string();
-                                    let result = backend.load_state_from_path(&path);
-                                    let resp = Self::respond_load_state(
-                                        &mut backend,
-                                        result,
-                                        label,
-                                        buttons_pressed,
-                                        dpad_pressed,
-                                    );
-                                    if !send_resp(resp) {
-                                        break 'main;
-                                    }
-                                } else if !send_resp(EmuResponse::LoadStateFailed(
-                                    "no auto-save".to_string(),
-                                )) {
-                                    break 'main;
-                                }
-                            } else if !send_resp(EmuResponse::LoadStateFailed(
-                                "no auto-save".to_string(),
-                            )) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::Rewind => {
-                            let resp = Self::handle_rewind(&mut backend, &mut rewind_buffer);
-                            if !send_resp(resp) {
-                                break 'main;
-                            }
-                        }
-
-                        EmuCommand::Shutdown => {
-                            let sram_path = backend.flush_battery_sram().unwrap_or_else(|err| {
-                                log::error!("Failed to flush SRAM on shutdown: {}", err);
-                                None
-                            });
-                            let _ = resp_tx.send(EmuResponse::SramFlushed(sram_path));
-                            let _ = resp_tx.send(EmuResponse::ShutdownComplete);
-                            break 'main;
-                        }
-                    }
-                } else {
-                    Self::run_uncapped_batch(
-                        &mut backend,
-                        &last_cheats,
-                        &mut uncapped_fb,
-                        &rewind_buffer,
-                        &frame_tx,
-                        &drain_rx,
-                    );
-                }
-            }
+            emu_loop.run();
         });
 
         Self {
@@ -295,8 +91,10 @@ impl EmuThread {
                 Err(_) => break,
             }
         }
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        if let Some(join) = self.join.take()
+            && join.join().is_err()
+        {
+            log::error!("emulator thread panicked during shutdown");
         }
     }
 }
@@ -306,4 +104,3 @@ impl Drop for EmuThread {
         self.shutdown();
     }
 }
-

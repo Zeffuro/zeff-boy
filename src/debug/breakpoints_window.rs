@@ -1,8 +1,9 @@
 use crate::debug::BreakpointState;
 use crate::debug::common::{
-    CpuDebugSnapshot, WatchType, parse_hex_u16,
+    WatchType, parse_hex_u16,
     COLOR_BREAKPOINT_HIT, COLOR_WATCHPOINT_HIT, COLOR_CONTINUE_BUTTON,
 };
+use crate::debug::types::CpuDebugSnapshot;
 use crate::debug::ui::DebugUiActions;
 
 pub(super) fn draw_breakpoints_content(

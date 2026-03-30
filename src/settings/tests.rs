@@ -11,15 +11,15 @@ fn settings_default_roundtrip() {
 #[test]
 fn settings_with_modified_values_roundtrip() {
     let mut s = Settings::default();
-    s.fast_forward_multiplier = 8;
-    s.master_volume = 0.5;
-    s.rewind_speed = 5;
-    s.rewind_seconds = 30;
-    s.rewind_enabled = false;
-    s.shader_preset = ShaderPreset::Crt;
-    s.custom_shader_path = "C:/shaders/custom.wgsl".to_string();
-    s.autohide_menu_bar = true;
-    s.frame_skip = true;
+    s.emulation.fast_forward_multiplier = 8;
+    s.audio.volume = 0.5;
+    s.rewind.speed = 5;
+    s.rewind.seconds = 30;
+    s.rewind.enabled = false;
+    s.video.shader_preset = ShaderPreset::Crt;
+    s.video.custom_shader_path = "C:/shaders/custom.wgsl".to_string();
+    s.ui.autohide_menu_bar = true;
+    s.emulation.frame_skip = true;
 
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
@@ -30,10 +30,10 @@ fn settings_with_modified_values_roundtrip() {
 fn settings_backward_compat_missing_fields_use_defaults() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
-    assert_eq!(s.rewind_speed, default_rewind_speed());
-    assert_eq!(s.rewind_seconds, default_rewind_seconds());
-    assert_eq!(s.shader_preset, ShaderPreset::None);
-    assert!(!s.autohide_menu_bar);
+    assert_eq!(s.rewind.speed, default_rewind_speed());
+    assert_eq!(s.rewind.seconds, default_rewind_seconds());
+    assert_eq!(s.video.shader_preset, ShaderPreset::None);
+    assert!(!s.ui.autohide_menu_bar);
 }
 
 #[test]
@@ -112,16 +112,16 @@ fn recent_roms_truncates_at_max() {
 
 #[test]
 fn default_rewind_speed_is_3() {
-    assert_eq!(Settings::default().rewind_speed, 3);
+    assert_eq!(Settings::default().rewind.speed, 3);
 }
 
 #[test]
 fn pre_mute_volume_is_skipped_in_serde() {
     let mut s = Settings::default();
-    s.pre_mute_volume = Some(0.75);
+    s.audio.pre_mute_volume = Some(0.75);
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.pre_mute_volume, None);
+    assert_eq!(restored.audio.pre_mute_volume, None);
 }
 
 #[test]
@@ -176,69 +176,69 @@ fn build_gpu_params_none_mode_is_identity() {
 #[test]
 fn rewind_capture_interval_is_4() {
     let s = Settings::default();
-    assert_eq!(s.rewind_capture_interval(), 4);
+    assert_eq!(s.rewind.capture_interval(), 4);
 }
 
 #[test]
 fn color_correction_serde_roundtrip() {
     let mut s = Settings::default();
-    s.color_correction = ColorCorrection::GbcLcd;
+    s.video.color_correction = ColorCorrection::GbcLcd;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.color_correction, ColorCorrection::GbcLcd);
+    assert_eq!(restored.video.color_correction, ColorCorrection::GbcLcd);
 }
 
 #[test]
 fn color_correction_defaults_to_none_when_missing() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
-    assert_eq!(s.color_correction, ColorCorrection::None);
-    assert_eq!(s.color_correction_matrix, default_color_correction_matrix());
+    assert_eq!(s.video.color_correction, ColorCorrection::None);
+    assert_eq!(s.video.color_correction_matrix, default_color_correction_matrix());
 }
 
 #[test]
 fn custom_color_correction_matrix_roundtrip() {
     let mut s = Settings::default();
-    s.color_correction = ColorCorrection::Custom;
-    s.color_correction_matrix = [
+    s.video.color_correction = ColorCorrection::Custom;
+    s.video.color_correction_matrix = [
         1.0, 0.2, 0.0,
         0.1, 0.9, 0.0,
         0.0, 0.3, 0.8,
     ];
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.color_correction, ColorCorrection::Custom);
-    assert_eq!(restored.color_correction_matrix, s.color_correction_matrix);
+    assert_eq!(restored.video.color_correction, ColorCorrection::Custom);
+    assert_eq!(restored.video.color_correction_matrix, s.video.color_correction_matrix);
 }
 
 #[test]
 fn vsync_mode_serde_roundtrip() {
     let mut s = Settings::default();
-    s.vsync_mode = VsyncMode::Off;
+    s.video.vsync_mode = VsyncMode::Off;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.vsync_mode, VsyncMode::Off);
+    assert_eq!(restored.video.vsync_mode, VsyncMode::Off);
 
-    s.vsync_mode = VsyncMode::Adaptive;
+    s.video.vsync_mode = VsyncMode::Adaptive;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.vsync_mode, VsyncMode::Adaptive);
+    assert_eq!(restored.video.vsync_mode, VsyncMode::Adaptive);
 }
 
 #[test]
 fn vsync_mode_defaults_to_on_when_missing() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
-    assert_eq!(s.vsync_mode, VsyncMode::On);
+    assert_eq!(s.video.vsync_mode, VsyncMode::On);
 }
 
 #[test]
 fn camera_defaults_match_tuned_profile() {
     let s = Settings::default();
-    assert_eq!(s.camera_device_index, 0);
-    assert!(!s.camera_auto_levels);
-    assert!((s.camera_brightness - 0.15).abs() < f32::EPSILON);
-    assert!((s.camera_contrast - 1.65).abs() < f32::EPSILON);
-    assert!((s.camera_gamma - 1.05).abs() < f32::EPSILON);
+    assert_eq!(s.camera.device_index, 0);
+    assert!(!s.camera.auto_levels);
+    assert!((s.camera.brightness - 0.15).abs() < f32::EPSILON);
+    assert!((s.camera.contrast - 1.65).abs() < f32::EPSILON);
+    assert!((s.camera.gamma - 1.05).abs() < f32::EPSILON);
 }
 

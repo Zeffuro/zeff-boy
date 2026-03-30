@@ -1,33 +1,8 @@
-use super::{DisassembledLine, Mnemonic};
-use std::fmt::Write;
-
-macro_rules! mn {
-    ($($arg:tt)*) => {{
-        let mut s = Mnemonic::new();
-        let _ = write!(s, $($arg)*);
-        s
-    }};
-}
+use super::{DisassembledLine, Mnemonic, fmt_signed};
 
 const REG8: [&str; 8] = ["B", "C", "D", "E", "H", "L", "(HL)", "A"];
 const ALU_OPS: [&str; 8] = ["ADD A", "ADC A", "SUB", "SBC A", "AND", "XOR", "OR", "CP"];
 const ROT_OPS: [&str; 8] = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SWAP", "SRL"];
-
-pub(crate) fn disassemble_at(
-    bus_read: impl Fn(u16) -> u8,
-    start: u16,
-    count: usize,
-) -> Vec<DisassembledLine> {
-    let mut lines = Vec::with_capacity(count);
-    let mut addr = start;
-    for _ in 0..count {
-        let line = decode_instruction(&bus_read, addr);
-        let len = line.bytes.len().max(1) as u16;
-        addr = addr.wrapping_add(len);
-        lines.push(line);
-    }
-    lines
-}
 
 pub(crate) fn disassemble_around(
     bus_read: impl Fn(u16) -> u8,
@@ -35,32 +10,8 @@ pub(crate) fn disassemble_around(
     lines_before_pc: usize,
     total_lines: usize,
 ) -> Vec<DisassembledLine> {
-    let start = choose_centered_start(&bus_read, pc, lines_before_pc);
-    disassemble_at(bus_read, start, total_lines)
-}
-
-fn choose_centered_start(bus_read: &impl Fn(u16) -> u8, pc: u16, lines_before_pc: usize) -> u16 {
-    let mut best_start = pc;
-    let mut best_steps = 0usize;
-
-    for back in 0u16..=96 {
-        let candidate = pc.wrapping_sub(back);
-        let mut addr = candidate;
-        let mut steps = 0usize;
-        while steps <= lines_before_pc {
-            if addr == pc {
-                if steps >= best_steps {
-                    best_steps = steps;
-                    best_start = candidate;
-                }
-                break;
-            }
-            addr = addr.wrapping_add(instruction_len(bus_read, addr) as u16);
-            steps += 1;
-        }
-    }
-
-    best_start
+    let start = super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
+    super::disassemble_at(|addr| decode_instruction(&bus_read, addr), start, total_lines)
 }
 
 fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
@@ -282,14 +233,6 @@ fn read_u16(bus_read: &impl Fn(u16) -> u8, addr: u16) -> u16 {
     let lo = bus_read(addr) as u16;
     let hi = bus_read(addr.wrapping_add(1)) as u16;
     (hi << 8) | lo
-}
-
-fn fmt_signed(value: i8) -> Mnemonic {
-    if value < 0 {
-        mn!("-${:02X}", value.unsigned_abs())
-    } else {
-        mn!("+${:02X}", value as u8)
-    }
 }
 
 fn fmt_rel(offset: i8, target: u16) -> Mnemonic {

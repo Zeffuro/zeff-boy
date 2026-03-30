@@ -16,7 +16,7 @@ pub(crate) struct GamepadPoll {
     pub(crate) events: Vec<(JoypadKey, bool)>,
     pub(crate) action_events: Vec<(GamepadAction, bool)>,
     pub(crate) left_stick: (f32, f32),
-    pub(crate) raw_pressed: Vec<String>,
+    pub(crate) raw_pressed: Vec<&'static str>,
 }
 
 impl GamepadHandler {
@@ -40,7 +40,7 @@ impl GamepadHandler {
             match event {
                 EventType::ButtonPressed(button, _) => {
                     let name = button_name(button);
-                    raw_pressed.push(name.to_owned());
+                    raw_pressed.push(name);
                     if let Some(key) = bindings.map_button_name(name) {
                         events.push((key, true));
                     }
@@ -71,7 +71,9 @@ impl GamepadHandler {
             .active_gamepad
             .map(|id| {
                 let gp = self.gilrs.gamepad(id);
-                (gp.value(Axis::LeftStickX), gp.value(Axis::LeftStickY))
+                let x = gp.value(Axis::LeftStickX).clamp(-1.0, 1.0);
+                let y = gp.value(Axis::LeftStickY).clamp(-1.0, 1.0);
+                (x, y)
             })
             .unwrap_or((0.0, 0.0));
 

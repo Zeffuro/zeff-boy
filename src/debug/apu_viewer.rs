@@ -1,4 +1,4 @@
-use crate::debug::common::ApuDebugInfo;
+use crate::debug::types::ApuDebugInfo;
 
 fn draw_channel_header(ui: &mut egui::Ui, title: &str, enabled: bool) {
     ui.horizontal(|ui| {

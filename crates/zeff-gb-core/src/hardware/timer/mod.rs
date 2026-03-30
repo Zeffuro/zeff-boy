@@ -1,6 +1,8 @@
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::TimerClock;
-use crate::save_state::{StateReader, StateWriter};
+use crate::save_state::{
+    StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt,
+};
 use anyhow::Result;
 use std::fmt;
 

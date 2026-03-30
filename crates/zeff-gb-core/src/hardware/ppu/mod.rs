@@ -22,14 +22,19 @@ pub const SCREEN_H: usize = 144;
 const DOTS_PER_LINE: u64 = 456;
 const OAM_DOTS: u64 = 80;
 const DRAW_DOTS_BASE: u64 = 172;
-pub const LCDC_BG_ENABLE: u8 = 0x01;
-pub const LCDC_OBJ_ENABLE: u8 = 0x02;
-pub const LCDC_OBJ_SIZE: u8 = 0x04;
-pub const LCDC_BG_TILEMAP: u8 = 0x08;
-pub const LCDC_TILE_DATA: u8 = 0x10;
-pub const LCDC_WINDOW_ENABLE: u8 = 0x20;
-pub const LCDC_WINDOW_TILEMAP: u8 = 0x40;
-pub const LCDC_LCD_ENABLE: u8 = 0x80;
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Lcdc: u8 {
+        const BG_ENABLE      = 0x01;
+        const OBJ_ENABLE     = 0x02;
+        const OBJ_SIZE       = 0x04;
+        const BG_TILEMAP     = 0x08;
+        const TILE_DATA      = 0x10;
+        const WINDOW_ENABLE  = 0x20;
+        const WINDOW_TILEMAP = 0x40;
+        const LCD_ENABLE     = 0x80;
+    }
+}
 
 fn default_framebuffer() -> Box<[u8]> {
     vec![0; SCREEN_W * SCREEN_H * 4].into_boxed_slice()
@@ -66,7 +71,7 @@ impl Default for PpuDebugFlags {
 }
 
 pub struct PPU {
-    pub lcdc: u8,
+    pub lcdc: Lcdc,
     pub stat: u8,
     pub scy: u8,
     pub scx: u8,
@@ -112,7 +117,7 @@ impl PPU {
         let default_bg_palette = default_cgb_palette_ram();
         let default_obj_palette = default_cgb_palette_ram();
         Self {
-            lcdc: 0x91,
+            lcdc: Lcdc::LCD_ENABLE | Lcdc::TILE_DATA | Lcdc::BG_ENABLE,
             stat: 0x85,
             scy: 0,
             scx: 0,
@@ -157,7 +162,7 @@ impl PPU {
 impl fmt::Debug for PPU {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PPU")
-            .field("lcdc", &format_args!("{:#04X}", self.lcdc))
+            .field("lcdc", &format_args!("{:#04X}", self.lcdc.bits()))
             .field("stat", &format_args!("{:#04X}", self.stat))
             .field("scy", &self.scy)
             .field("scx", &self.scx)

@@ -124,7 +124,7 @@ impl Bus {
                 self.controller2.write(val);
             }
 
-            0x4018..=0x401F => { /* test mode registers — ignored */ }
+            0x4018..=0x401F => { /* test mode registers:ignored */ }
 
             0x4020..=0xFFFF => {
                 self.cartridge.cpu_write(addr, val);

@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::fmt;
 
 use crate::hardware::types::hardware_mode::HardwareMode;
-use crate::save_state::{StateReader, StateWriter};
+use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 
 pub(super) struct Serial {

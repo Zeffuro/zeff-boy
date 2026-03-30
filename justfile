@@ -49,11 +49,11 @@ build-profile:
 run-profile rom:
     cargo run --profile profiling -- "{{rom}}"
 
-# Run headless for N frames (default 600) — useful for benchmarking
+# Run headless for N frames (default 600):useful for benchmarking
 run-headless rom frames="600":
     cargo run --profile profiling -- --headless --max-frames {{frames}} "{{rom}}"
 
-# Run headless with APU disabled — fastest profiling path
+# Run headless with APU disabled:fastest profiling path
 run-headless-no-apu rom frames="600":
     cargo run --profile profiling -- --headless --no-apu --max-frames {{frames}} "{{rom}}"
 

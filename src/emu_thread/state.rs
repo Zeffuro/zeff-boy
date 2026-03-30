@@ -41,7 +41,9 @@ impl EmuThread {
                         Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
                         Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
                     };
-                    let _ = tx.send(resp);
+                    if tx.send(resp).is_err() {
+                        log::warn!("save-state response dropped (receiver closed)");
+                    }
                 });
                 true
             }

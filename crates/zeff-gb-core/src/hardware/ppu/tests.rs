@@ -40,7 +40,7 @@ fn window_counter_resets_on_frame_wrap_not_vblank_start() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE | LCDC_WINDOW_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::WINDOW_ENABLE;
     ppu.lcd_was_enabled = true;
     ppu.wy = 0;
     ppu.wx = 7;
@@ -72,7 +72,7 @@ fn window_counter_freezes_when_window_disabled_between_scanlines() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE | LCDC_WINDOW_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::WINDOW_ENABLE;
     ppu.lcd_was_enabled = true;
     ppu.wy = 0;
     ppu.wx = 7;
@@ -81,7 +81,7 @@ fn window_counter_freezes_when_window_disabled_between_scanlines() {
     ppu.step(DOTS_PER_LINE, &vram, &oam, false);
     assert_eq!(ppu.window_line_counter, 2);
 
-    ppu.lcdc &= !LCDC_WINDOW_ENABLE;
+    ppu.lcdc &= !Lcdc::WINDOW_ENABLE;
     for _ in 0..4 {
         ppu.step(DOTS_PER_LINE, &vram, &oam, false);
     }
@@ -94,7 +94,7 @@ fn window_counter_requires_wx_visibility_range() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE | LCDC_WINDOW_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::WINDOW_ENABLE;
     ppu.wy = 0;
     ppu.wx = 167;
 
@@ -112,7 +112,7 @@ fn mode_sequence_during_active_scanline() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE;
     ppu.lcd_was_enabled = true;
     ppu.ly = 0;
     ppu.cycles = 0;
@@ -136,7 +136,7 @@ fn vblank_interrupt_fires_at_line_144() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE;
 
     for _ in 0..143 {
         let irq = ppu.step(DOTS_PER_LINE, &vram, &oam, false);
@@ -156,7 +156,7 @@ fn ly_wraps_to_zero_after_line_153() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE;
 
     for _ in 0..154 {
         ppu.step(DOTS_PER_LINE, &vram, &oam, false);
@@ -170,14 +170,14 @@ fn lcd_disabled_clears_mode_and_ly() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE;
     for _ in 0..50 {
         ppu.step(DOTS_PER_LINE, &vram, &oam, false);
     }
     assert!(ppu.ly > 0);
 
     // Disable LCD.
-    ppu.lcdc = 0;
+    ppu.lcdc = Lcdc::empty();
     ppu.step(4, &vram, &oam, false);
     assert_eq!(ppu.ly, 0);
     assert_eq!(ppu.mode(), 0);
@@ -189,7 +189,7 @@ fn vram_accessible_outside_mode3() {
     let _ppu = PPU::new();
 
     let mut off_ppu = PPU::new();
-    off_ppu.lcdc = 0;
+    off_ppu.lcdc = Lcdc::empty();
     assert!(off_ppu.cpu_vram_accessible());
     assert!(off_ppu.cpu_oam_accessible());
 
@@ -226,7 +226,7 @@ fn draw_dots_increases_with_scx_fine_scroll() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE;
     ppu.scx = 5;
 
     ppu.step(1, &vram, &oam, false);
@@ -244,7 +244,7 @@ fn draw_dots_increases_with_sprites_on_line() {
     let vram = [0u8; 0x4000];
     let mut oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE | LCDC_OBJ_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::OBJ_ENABLE;
     ppu.ly = 0;
     ppu.scx = 0;
 
@@ -268,7 +268,7 @@ fn draw_dots_base_with_no_sprites_and_zero_scx() {
     let vram = [0u8; 0x4000];
     let oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE;
     ppu.scx = 0;
 
     ppu.step(1, &vram, &oam, false);
@@ -285,7 +285,7 @@ fn draw_dots_caps_at_10_sprites() {
     let vram = [0u8; 0x4000];
     let mut oam = [0u8; 160];
 
-    ppu.lcdc = LCDC_LCD_ENABLE | LCDC_OBJ_ENABLE;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::OBJ_ENABLE;
     ppu.scx = 0;
 
     for i in 0..15 {

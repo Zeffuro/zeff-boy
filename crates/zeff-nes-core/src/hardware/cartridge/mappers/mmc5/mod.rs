@@ -221,14 +221,14 @@ impl Mmc5 {
                     self.write_prg_8k_bank(addr, rom_bit | bank, val);
                 }
                 0xC000..=0xDFFF => self.write_prg_8k_bank(addr, self.prg_banks[2], val),
-                0xE000..=0xFFFF => { /* ROM — ignore */ }
+                0xE000..=0xFFFF => { /* ROM:ignore */ }
                 _ => {}
             },
             _ => match addr {
                 0x8000..=0x9FFF => self.write_prg_8k_bank(addr, self.prg_banks[0], val),
                 0xA000..=0xBFFF => self.write_prg_8k_bank(addr, self.prg_banks[1], val),
                 0xC000..=0xDFFF => self.write_prg_8k_bank(addr, self.prg_banks[2], val),
-                0xE000..=0xFFFF => { /* ROM — ignore */ }
+                0xE000..=0xFFFF => { /* ROM:ignore */ }
                 _ => {}
             },
         }

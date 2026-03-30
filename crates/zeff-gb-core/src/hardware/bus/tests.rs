@@ -1,7 +1,7 @@
 use super::*;
 use crate::cheats::CheatPatch;
 use crate::cheats::CheatValue;
-use crate::hardware::ppu::LCDC_LCD_ENABLE;
+use crate::hardware::ppu::Lcdc;
 use crate::hardware::rom_header::RomHeader;
 
 fn make_test_bus() -> Bus {
@@ -89,7 +89,7 @@ fn oam_dma_restart_resets_progress_to_byte_zero() {
 fn oam_dma_source_reads_ff_from_vram_during_mode_3() {
     let mut bus = make_test_bus();
     bus.vram[0] = 0x5A;
-    bus.io.ppu.lcdc |= 0x80;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
 
     bus.write_byte(PPU_DMA, 0x80);
@@ -228,7 +228,7 @@ fn echo_ram_boundary_bank_0_to_n() {
 fn vram_read_returns_ff_during_mode_3() {
     let mut bus = make_test_bus();
     bus.vram[0] = 0x5A;
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
     assert_eq!(bus.read_byte_raw(VRAM_START), 0xFF);
 }
@@ -236,7 +236,7 @@ fn vram_read_returns_ff_during_mode_3() {
 #[test]
 fn vram_write_blocked_during_mode_3() {
     let mut bus = make_test_bus();
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
     bus.write_byte(VRAM_START, 0xAB);
     assert_eq!(bus.vram[0], 0x00);
@@ -245,7 +245,7 @@ fn vram_write_blocked_during_mode_3() {
 #[test]
 fn vram_accessible_when_lcd_off() {
     let mut bus = make_test_bus();
-    bus.io.ppu.lcdc &= !LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc &= !Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
     bus.write_byte(VRAM_START, 0xCC);
     assert_eq!(bus.read_byte_raw(VRAM_START), 0xCC);
@@ -255,7 +255,7 @@ fn vram_accessible_when_lcd_off() {
 fn oam_read_returns_ff_during_mode_2() {
     let mut bus = make_test_bus();
     bus.oam[0] = 0x42;
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x02;
     assert_eq!(bus.read_byte_raw(OAM_START), 0xFF);
 }
@@ -264,7 +264,7 @@ fn oam_read_returns_ff_during_mode_2() {
 fn oam_read_returns_ff_during_mode_3() {
     let mut bus = make_test_bus();
     bus.oam[0] = 0x42;
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
     assert_eq!(bus.read_byte_raw(OAM_START), 0xFF);
 }
@@ -272,7 +272,7 @@ fn oam_read_returns_ff_during_mode_3() {
 #[test]
 fn oam_write_blocked_during_mode_2() {
     let mut bus = make_test_bus();
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x02;
     bus.write_byte(OAM_START, 0xEE);
     assert_eq!(bus.oam[0], 0x00);
@@ -281,7 +281,7 @@ fn oam_write_blocked_during_mode_2() {
 #[test]
 fn oam_accessible_during_mode_0_and_1() {
     let mut bus = make_test_bus();
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x00;
     bus.write_byte(OAM_START, 0x11);
     assert_eq!(bus.read_byte_raw(OAM_START), 0x11);
@@ -405,7 +405,7 @@ fn hblank_hdma_setup_does_not_transfer_immediately() {
 #[test]
 fn hblank_hdma_transfers_one_block_per_mode_0_transition() {
     let mut bus = make_cgb_test_bus();
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.ly = 0;
     bus.hdma1 = 0xC0;
     bus.hdma2 = 0x00;
@@ -429,7 +429,7 @@ fn hblank_hdma_transfers_one_block_per_mode_0_transition() {
 #[test]
 fn hblank_hdma_ignores_non_mode_0_transitions() {
     let mut bus = make_cgb_test_bus();
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.ly = 0;
     bus.hdma1 = 0xC0;
     bus.hdma2 = 0x00;
@@ -447,7 +447,7 @@ fn hblank_hdma_ignores_non_mode_0_transitions() {
 #[test]
 fn hblank_hdma_skipped_during_vblank() {
     let mut bus = make_cgb_test_bus();
-    bus.io.ppu.lcdc |= LCDC_LCD_ENABLE;
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.ly = 144;
     bus.hdma1 = 0xC0;
     bus.hdma2 = 0x00;

@@ -8,10 +8,18 @@ description = "NES (Nintendo Entertainment System) emulation core library."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
+zeff-emu-common = { path = "../zeff-emu-common" }
 anyhow = "1.0.102"
+bitflags = "2"
 crc32fast = "1.4"
 log = "0.4.29"
 lz4_flex = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.11.0"
 
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "nes_benchmarks"
+harness = false

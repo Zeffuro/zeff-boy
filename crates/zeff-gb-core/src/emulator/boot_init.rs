@@ -15,7 +15,7 @@ impl Emulator {
     pub fn from_rom_data(
         rom: &[u8],
         mode_preference: HardwareModePreference,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<Self> {
         let rom_hash = Self::compute_rom_hash(rom);
         log::info!("ROM loaded: {} bytes", rom.len());
 

@@ -2,7 +2,7 @@ use super::CartridgeDebugInfo;
 use super::{
     MAX_SAVE_RAM, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram, write_banked_ram,
 };
-use crate::save_state::{StateReader, StateWriter};
+use crate::save_state::{StateReader, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 
 pub struct HuC1 {

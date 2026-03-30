@@ -3,10 +3,10 @@
 pub enum RamSize {
     None,   // $00
     Unused, // $01 (not used, historically error)
-    Kb8,    // $02 — 8 KiB (1 bank)
-    Kb32,   // $03 — 32 KiB (4 banks)
-    Kb128,  // $04 — 128 KiB (16 banks)
-    Kb64,   // $05 — 64 KiB (8 banks)
+    Kb8,    // $02:8 KiB (1 bank)
+    Kb32,   // $03:32 KiB (4 banks)
+    Kb128,  // $04:128 KiB (16 banks)
+    Kb64,   // $05:64 KiB (8 banks)
     Unknown(u8),
 }
 

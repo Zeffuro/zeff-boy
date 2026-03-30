@@ -157,7 +157,7 @@ impl Bus {
     }
 
     pub fn ppu_lcdc(&self) -> u8 {
-        self.io.ppu.lcdc
+        self.io.ppu.lcdc.bits()
     }
 
     pub fn ppu_stat(&self) -> u8 {
@@ -243,7 +243,7 @@ impl Bus {
     }
 
     pub fn apply_bess_ppu_registers(&mut self, io: &[u8], is_cgb: bool) {
-        self.io.ppu.lcdc = io[0x40];
+        self.io.ppu.lcdc = crate::hardware::ppu::Lcdc::from_bits_truncate(io[0x40]);
         self.io.ppu.stat = io[0x41];
         self.io.ppu.scy = io[0x42];
         self.io.ppu.scx = io[0x43];

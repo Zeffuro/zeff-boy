@@ -69,7 +69,7 @@ This document tracks the accuracy status of each hardware subsystem in both the 
 | Pulse channels 1 & 2 | ✅ | | Duty cycle, envelope, sweep (ch1 only) |
 | Wave channel | ✅ | | 4-bit samples, bank switching (CGB) |
 | Noise channel | ✅ | | LFSR with 7-bit/15-bit modes |
-| Channel muting (per channel) | ✅ | | `[bool; 4]` — Pulse1, Pulse2, Wave, Noise |
+| Channel muting (per channel) | ✅ | | `[bool; 4]`:Pulse1, Pulse2, Wave, Noise |
 | Sample generation gating | ✅ | | `sample_generation_enabled` skips mixing when globally muted |
 | Frame sequencer | ✅ | | Drives length counters, envelopes, sweeps |
 
@@ -91,7 +91,7 @@ This document tracks the accuracy status of each hardware subsystem in both the 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Internal clock serial | ✅ | Byte transfer with shift register |
-| External clock serial | ⚠️ | No link cable support — local-only |
+| External clock serial | ⚠️ | No link cable support:local-only |
 
 ### Joypad
 
@@ -130,7 +130,7 @@ This document tracks the accuracy status of each hardware subsystem in both the 
 |---------|--------|-------|-------|
 | All official opcodes | ✅ | 🧪 | 42 unit tests + 2 nestest integration tests |
 | All stable unofficial opcodes | ✅ | 🧪 | LAX, SAX, DCP, ISB, SLO, RLA, SRE, RRA, ANC, ALR, ARR, AXS, NOP variants, KIL/JAM |
-| Unstable unofficial opcodes | ⚠️ | | ANE, SHA, SHX, SHY, TAS, LAS — log warning only |
+| Unstable unofficial opcodes | ⚠️ | | ANE, SHA, SHX, SHY, TAS, LAS:log warning only |
 | Page-crossing cycle penalties | ✅ | 🧪 | `execute_opcode()` returns extra cycles; tested |
 | Branch taken/not-taken cycles | ✅ | 🧪 | 2/3/4 cycles for not-taken/taken/taken+page-cross |
 | BRK/NMI hijack | ✅ | 🧪 | NMI vector used when NMI pending during BRK vector fetch |
@@ -168,11 +168,11 @@ This document tracks the accuracy status of each hardware subsystem in both the 
 | Non-linear mixing | ✅ | | Hardware lookup formulas (`95.88 / (8128.0 / pulse_sum + 100.0)`, etc.) |
 | Frame sequencer | ✅ | | 4-step and 5-step modes, drives length/envelope/sweep |
 | Frame counter write ($4017) | ✅ | | Odd-cycle offset, immediate clock if 5-step mode |
-| Channel muting (per channel) | ✅ | | `[bool; 5]` — Pulse1, Pulse2, Triangle, Noise, DMC |
+| Channel muting (per channel) | ✅ | | `[bool; 5]`:Pulse1, Pulse2, Triangle, Noise, DMC |
 | Sample generation gating | ✅ | | `sample_generation_enabled` flag |
 | DMC DMA stall (parity-aware) | ✅ | | 3 cycles even / 4 cycles odd / +1 if OAM DMA conflict |
 | Debug sample collection | ✅ | | Gated by `debug_collection_enabled`, toggled by APU viewer |
-| Status register peek | ✅ | | `peek_status()` — non-mutating, doesn't clear frame_irq |
+| Status register peek | ✅ | | `peek_status()`:non-mutating, doesn't clear frame_irq |
 
 ### Bus / Memory Map
 
@@ -257,7 +257,7 @@ All mapper `chr_read()` methods guard against empty CHR with `is_empty()` check.
 - **Unstable unofficial opcodes**: ANE ($8B), SHA ($9F/$93), SHX ($9E), SHY ($9C), TAS ($9B), LAS ($BB) log a warning but produce approximate results.
 
 ### Game Boy
-- **SGB support**: Basic — border and palette commands, but full SGB feature set not verified.
+- **SGB support**: Basic:border and palette commands, but full SGB feature set not verified.
 - **Serial link cable**: Internal clock only; no external/multiplayer link support.
 
 ### Both

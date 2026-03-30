@@ -1,6 +1,6 @@
+pub(crate) use zeff_emu_common::cheats::{CheatCode, CheatPatch, CheatType, CheatValue};
 pub(crate) use zeff_gb_core::cheats::{
-    collect_enabled_patches, export_cht_file, parse_cheat, parse_cht_file, CheatCode, CheatPatch,
-    CheatType, CheatValue,
+    collect_enabled_patches, export_cht_file, parse_cheat, parse_cht_file,
 };
 
 use crate::settings::Settings;

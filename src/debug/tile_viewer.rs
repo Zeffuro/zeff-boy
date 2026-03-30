@@ -1,5 +1,5 @@
 use crate::debug::TileViewerState;
-use crate::debug::common::GbGraphicsData;
+use crate::debug::types::GbGraphicsData;
 use zeff_gb_core::hardware::ppu::{apply_palette, cgb_palette_rgba, correct_color, decode_tile_pixel};
 
 pub(super) fn draw_tile_viewer_content(

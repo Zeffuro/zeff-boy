@@ -136,8 +136,10 @@ impl CameraCapture {
 
     pub(crate) fn stop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        if let Some(join) = self.join.take()
+            && join.join().is_err()
+        {
+            log::error!("camera capture thread panicked");
         }
     }
 }
@@ -319,7 +321,9 @@ fn run_capture_loop_with_webcam(
         thread::sleep(Duration::from_millis(10));
     }
 
-    let _ = camera.stop_stream();
+    if let Err(e) = camera.stop_stream() {
+        log::warn!("failed to stop camera stream: {e}");
+    }
 }
 
 #[cfg_attr(not(feature = "camera"), allow(dead_code))]

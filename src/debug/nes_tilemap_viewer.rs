@@ -1,6 +1,6 @@
-use crate::debug::common::NesGraphicsData;
+use crate::debug::common::nes_palette_rgba;
+use crate::debug::types::NesGraphicsData;
 use crate::debug::TilemapViewerState;
-use zeff_nes_core::hardware::ppu::NES_PALETTE;
 
 pub(super) fn draw_nes_tilemap_viewer_content(
     ui: &mut egui::Ui,
@@ -191,14 +191,4 @@ fn render_nes_nametables(image: &mut egui::ColorImage, gfx: &NesGraphicsData) {
     }
 }
 
-fn nes_palette_rgba(palette_ram: &[u8; 32], palette_index: u8, color_id: u8) -> [u8; 4] {
-    let pal_addr = (palette_index as usize) * 4 + (color_id as usize);
-    let nes_color = if color_id == 0 {
-        palette_ram[0] as usize & 0x3F
-    } else {
-        palette_ram[pal_addr] as usize & 0x3F
-    };
-    let (r, g, b) = NES_PALETTE[nes_color];
-    [r, g, b, 255]
-}
 

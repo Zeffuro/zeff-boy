@@ -7,61 +7,23 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
+use crate::debug::{
+    self, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugTab, DebugTabViewer,
+    DebugUiActions, DebugWindowState, DisassemblyView, InputDebugInfo, MenuAction, OamDebugInfo,
+    PaletteDebugInfo, PerfInfo, RomDebugInfo, ToastManager,
+};
+
 mod egui_integration;
 mod framebuffer;
 mod gpu;
+mod viewport;
 
 use egui_integration::EguiRenderer;
 use framebuffer::FramebufferRenderer;
 use gpu::GpuContext;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AspectRatioMode {
-    Stretch,
-    KeepAspect,
-    IntegerScale,
-}
-
-fn calculate_viewport(
-    mode: AspectRatioMode,
-    window_width: u32,
-    window_height: u32,
-    game_width: u32,
-    game_height: u32,
-    top_offset: f32,
-) -> Option<(f32, f32, f32, f32)> {
-    let ww = window_width as f32;
-    let wh = window_height as f32;
-    let available_h = (wh - top_offset).max(0.0);
-    if ww <= 0.0 || available_h <= 0.0 {
-        return None;
-    }
-
-    match mode {
-        AspectRatioMode::Stretch => Some((0.0, top_offset, ww, available_h)),
-        AspectRatioMode::KeepAspect => {
-            let scale_x = ww / game_width as f32;
-            let scale_y = available_h / game_height as f32;
-            let scale = scale_x.min(scale_y);
-            let w = (game_width as f32 * scale).floor();
-            let h = (game_height as f32 * scale).floor();
-            let x = ((ww - w) / 2.0).floor();
-            let y = top_offset + ((available_h - h) / 2.0).floor();
-            Some((x, y, w, h))
-        }
-        AspectRatioMode::IntegerScale => {
-            let scale_x = window_width / game_width;
-            let visible_h = (available_h.floor() as u32).max(1);
-            let scale_y = visible_h / game_height;
-            let scale = scale_x.min(scale_y).max(1);
-            let w = game_width * scale;
-            let h = game_height * scale;
-            let x = (window_width.saturating_sub(w)) / 2;
-            let y = ((visible_h.saturating_sub(h)) / 2) as f32 + top_offset;
-            Some((x as f32, y, w as f32, h as f32))
-        }
-    }
-}
+pub(crate) use viewport::AspectRatioMode;
+use viewport::calculate_viewport;
 
 pub(crate) enum FrameError {
     Timeout,
@@ -71,23 +33,23 @@ pub(crate) enum FrameError {
 }
 
 pub(crate) struct RenderContext<'a> {
-    pub(crate) cpu_debug: Option<&'a crate::debug::CpuDebugSnapshot>,
-    pub(crate) perf_info: Option<&'a crate::debug::PerfInfo>,
-    pub(crate) apu_debug: Option<&'a crate::debug::ApuDebugInfo>,
-    pub(crate) oam_debug: Option<&'a crate::debug::OamDebugInfo>,
-    pub(crate) palette_debug: Option<&'a crate::debug::PaletteDebugInfo>,
-    pub(crate) rom_debug: Option<&'a crate::debug::RomDebugInfo>,
-    pub(crate) input_debug: Option<&'a crate::debug::InputDebugInfo>,
-    pub(crate) graphics_data: Option<&'a crate::debug::ConsoleGraphicsData>,
-    pub(crate) disassembly_view: Option<&'a crate::debug::DisassemblyView>,
+    pub(crate) cpu_debug: Option<&'a CpuDebugSnapshot>,
+    pub(crate) perf_info: Option<&'a PerfInfo>,
+    pub(crate) apu_debug: Option<&'a ApuDebugInfo>,
+    pub(crate) oam_debug: Option<&'a OamDebugInfo>,
+    pub(crate) palette_debug: Option<&'a PaletteDebugInfo>,
+    pub(crate) rom_debug: Option<&'a RomDebugInfo>,
+    pub(crate) input_debug: Option<&'a InputDebugInfo>,
+    pub(crate) graphics_data: Option<&'a ConsoleGraphicsData>,
+    pub(crate) disassembly_view: Option<&'a DisassemblyView>,
     pub(crate) memory_page: Option<&'a [(u16, u8)]>,
     pub(crate) rom_page: Option<&'a [(u32, u8)]>,
     pub(crate) rom_size: u32,
-    pub(crate) debug_windows: &'a mut crate::debug::DebugWindowState,
+    pub(crate) debug_windows: &'a mut DebugWindowState,
     pub(crate) settings: &'a mut crate::settings::Settings,
     pub(crate) show_settings_window: &'a mut bool,
-    pub(crate) dock_state: &'a mut egui_dock::DockState<crate::debug::DebugTab>,
-    pub(crate) toast_manager: &'a mut crate::debug::ToastManager,
+    pub(crate) dock_state: &'a mut egui_dock::DockState<DebugTab>,
+    pub(crate) toast_manager: &'a mut ToastManager,
     pub(crate) speed_mode_label: Option<&'a str>,
     pub(crate) is_recording_audio: bool,
     pub(crate) is_recording_replay: bool,
@@ -101,26 +63,8 @@ pub(crate) struct RenderContext<'a> {
 }
 
 pub(crate) struct RenderResult {
-    pub(crate) open_file_requested: bool,
-    pub(crate) reset_game_requested: bool,
-    pub(crate) stop_game_requested: bool,
-    pub(crate) save_state_file_requested: bool,
-    pub(crate) load_state_file_requested: bool,
-    pub(crate) save_state_slot: Option<u8>,
-    pub(crate) load_state_slot: Option<u8>,
-    pub(crate) load_recent_rom: Option<std::path::PathBuf>,
-    pub(crate) toolbar_settings_changed: bool,
-    pub(crate) toggle_fullscreen: bool,
-    pub(crate) toggle_pause: bool,
-    pub(crate) speed_change: i32,
-    pub(crate) start_audio_recording: bool,
-    pub(crate) stop_audio_recording: bool,
-    pub(crate) start_replay_recording: bool,
-    pub(crate) stop_replay_recording: bool,
-    pub(crate) load_replay: bool,
-    pub(crate) take_screenshot: bool,
-    pub(crate) debug_actions: crate::debug::DebugUiActions,
-    pub(crate) layer_toggles: Option<(bool, bool, bool)>,
+    pub(crate) actions: Vec<MenuAction>,
+    pub(crate) debug_actions: DebugUiActions,
     pub(crate) egui_wants_keyboard: bool,
 }
 
@@ -227,7 +171,7 @@ impl Graphics {
         self.egui.begin_frame(&self.window);
 
         let base_ppp = self.window.scale_factor() as f32;
-        let target_ppp = base_ppp * ctx.settings.ui_scale.clamp(0.5, 3.0);
+        let target_ppp = base_ppp * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);
         if (self.egui.context().pixels_per_point() - target_ppp).abs() > 0.01 {
             self.egui.context().set_pixels_per_point(target_ppp);
         }
@@ -241,9 +185,9 @@ impl Graphics {
         };
 
         let menu_actions = if show_menu {
-            crate::debug::draw_menu_bar(
+            debug::draw_menu_bar(
                 self.egui.context(),
-                &crate::debug::MenuBarContext {
+                &debug::MenuBarContext {
                     current_mode: self.aspect_ratio_mode,
                     speed_mode_label: ctx.speed_mode_label,
                     is_recording_audio: ctx.is_recording_audio,
@@ -257,16 +201,20 @@ impl Graphics {
                 ctx.debug_windows,
             )
         } else {
-            crate::debug::MenuActions::default()
+            debug::MenuBarResult::empty()
         };
-        if let Some(mode) = menu_actions.aspect_ratio_mode {
-            self.aspect_ratio_mode = mode;
+
+        let mut forwarded_actions = Vec::new();
+        for action in menu_actions.actions {
+            match action {
+                MenuAction::SetAspectRatio(mode) => self.aspect_ratio_mode = mode,
+                MenuAction::OpenSettings => *ctx.show_settings_window = true,
+                other => forwarded_actions.push(other),
+            }
         }
-        if menu_actions.open_settings_requested {
-            *ctx.show_settings_window = true;
-        }
+
         if *ctx.show_settings_window {
-            crate::debug::draw_settings_window(
+            debug::draw_settings_window(
                 self.egui.context(),
                 ctx.settings,
                 ctx.debug_windows,
@@ -280,12 +228,12 @@ impl Graphics {
             || ctx.memory_page.is_some()
             || ctx.rom_page.is_some();
         if has_any_emu_data {
-            let has_game_view = crate::debug::has_game_view_tab(ctx.dock_state);
+            let has_game_view = debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
 
             let mut offscreen_resized = false;
             if has_game_view
                 && let Some((w, h)) = self.game_view_pixel_size {
-                    let scale = ctx.settings.offscreen_scale.max(1);
+                    let scale = ctx.settings.video.offscreen_scale.max(1);
                     let (nw, nh) = self.framebuffer.native_size();
                     let ow = w.max(nw * scale);
                     let oh = h.max(nh * scale);
@@ -321,7 +269,7 @@ impl Graphics {
                 None
             };
 
-            let mut tab_viewer = crate::debug::DebugTabViewer {
+            let mut tab_viewer = DebugTabViewer {
                 cpu_debug: ctx.cpu_debug,
                 perf_info: ctx.perf_info,
                 apu_debug: ctx.apu_debug,
@@ -335,7 +283,7 @@ impl Graphics {
                 rom_page: ctx.rom_page,
                 rom_size: ctx.rom_size,
                 window_state: ctx.debug_windows,
-                actions: crate::debug::DebugUiActions::none(),
+                actions: DebugUiActions::none(),
                 game_texture_id,
                 aspect_ratio_mode: self.aspect_ratio_mode,
                 game_view_pixel_size: None,
@@ -352,7 +300,7 @@ impl Graphics {
                 self.game_view_pixel_size = Some(size);
             }
         } else {
-            debug_actions = crate::debug::DebugUiActions::none();
+            debug_actions = DebugUiActions::none();
             egui::CentralPanel::default().show(self.egui.context(), |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.heading("Drag & drop a ROM file, or use File > Open");
@@ -397,11 +345,11 @@ impl Graphics {
                 label: Some("main encoder"),
             });
 
-        // Offscreen shader pass — renders framebuffer through shaders into
+        // Offscreen shader pass:renders framebuffer through shaders into
         // the output texture used as the egui game-view image.
         let has_game_view_in_dock =
             (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
-            && crate::debug::has_game_view_tab(ctx.dock_state);
+            && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
         if has_game_view_in_dock {
             self.framebuffer.render_to_offscreen(&mut encoder);
         }
@@ -409,7 +357,7 @@ impl Graphics {
         // Emulator Framebuffer (only when not rendered inside a dock tab)
         let render_framebuffer_directly =
             (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
-            && !crate::debug::has_game_view_tab(ctx.dock_state);
+            && !debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
 
         if render_framebuffer_directly && self.framebuffer.needs_two_pass() {
             self.framebuffer.render_upscale_pass(&mut encoder);
@@ -484,26 +432,8 @@ impl Graphics {
         frame.present();
 
         Ok(RenderResult {
-            open_file_requested: menu_actions.open_file_requested,
-            reset_game_requested: menu_actions.reset_game_requested,
-            stop_game_requested: menu_actions.stop_game_requested,
-            save_state_file_requested: menu_actions.save_state_file_requested,
-            load_state_file_requested: menu_actions.load_state_file_requested,
-            save_state_slot: menu_actions.save_state_slot,
-            load_state_slot: menu_actions.load_state_slot,
-            load_recent_rom: menu_actions.load_recent_rom,
-            toolbar_settings_changed: menu_actions.toolbar_settings_changed,
-            toggle_fullscreen: menu_actions.toggle_fullscreen,
-            toggle_pause: menu_actions.toggle_pause,
-            speed_change: menu_actions.speed_change,
-            start_audio_recording: menu_actions.start_audio_recording,
-            stop_audio_recording: menu_actions.stop_audio_recording,
-            start_replay_recording: menu_actions.start_replay_recording,
-            stop_replay_recording: menu_actions.stop_replay_recording,
-            load_replay: menu_actions.load_replay,
-            take_screenshot: menu_actions.take_screenshot,
+            actions: forwarded_actions,
             debug_actions,
-            layer_toggles: menu_actions.layer_toggles,
             egui_wants_keyboard,
         })
     }

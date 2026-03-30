@@ -1,5 +1,6 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::registers::StatusFlags;
 
 #[inline(always)]
 fn page_cross_penalty(crossed: bool) -> u8 {
@@ -34,7 +35,7 @@ pub fn lda_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0xBD: LDA abs,X — +1 cycle on page cross
+// 0xBD: LDA abs,X:+1 cycle on page cross
 pub fn lda_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_x(bus);
     cpu.regs.a = bus.cpu_read(a);
@@ -42,7 +43,7 @@ pub fn lda_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     page_cross_penalty(crossed)
 }
 
-// 0xB9: LDA abs,Y — +1 cycle on page cross
+// 0xB9: LDA abs,Y:+1 cycle on page cross
 pub fn lda_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_y(bus);
     cpu.regs.a = bus.cpu_read(a);
@@ -57,7 +58,7 @@ pub fn lda_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-// 0xB1: LDA (ind),Y — +1 cycle on page cross
+// 0xB1: LDA (ind),Y:+1 cycle on page cross
 pub fn lda_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_indirect_y(bus);
     cpu.regs.a = bus.cpu_read(a);
@@ -93,7 +94,7 @@ pub fn ldx_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.x);
 }
 
-// 0xBE: LDX abs,Y — +1 cycle on page cross
+// 0xBE: LDX abs,Y:+1 cycle on page cross
 pub fn ldx_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_y(bus);
     cpu.regs.x = bus.cpu_read(a);
@@ -129,7 +130,7 @@ pub fn ldy_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(cpu.regs.y);
 }
 
-// 0xBC: LDY abs,X — +1 cycle on page cross
+// 0xBC: LDY abs,X:+1 cycle on page cross
 pub fn ldy_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_x(bus);
     cpu.regs.y = bus.cpu_read(a);
@@ -269,5 +270,5 @@ pub fn pla(cpu: &mut Cpu, bus: &mut Bus) {
 // 0x28: PLP
 pub fn plp(cpu: &mut Cpu, bus: &mut Bus) {
     let v = cpu.pop8(bus);
-    cpu.regs.p = (v & 0xEF) | 0x20;
+    cpu.regs.p = StatusFlags::from_bits_truncate((v & 0xEF) | 0x20);
 }

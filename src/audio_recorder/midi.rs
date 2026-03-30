@@ -183,7 +183,7 @@ fn build_midi_track(
         if should_sound {
             if let Some(prev_note) = current_note {
                 if prev_note != state.note {
-                    // Note changed — note-off then note-on
+                    // Note changed:note-off then note-on
                     write_vlq(&mut data, pending_delta);
                     data.push(0x80 | midi_ch);
                     data.push(prev_note);
@@ -198,7 +198,7 @@ fn build_midi_track(
                     current_note = Some(state.note);
                     current_velocity = state.velocity;
                 } else if state.velocity != current_velocity && channel != 3 {
-                    // Same note, velocity changed — aftertouch
+                    // Same note, velocity changed:aftertouch
                     write_vlq(&mut data, pending_delta);
                     data.push(0xA0 | midi_ch);
                     data.push(state.note);
@@ -217,7 +217,7 @@ fn build_midi_track(
                 current_velocity = state.velocity;
             }
         } else if let Some(prev_note) = current_note.take() {
-            // Sound stopped — note off
+            // Sound stopped:note off
             write_vlq(&mut data, pending_delta);
             data.push(0x80 | midi_ch);
             data.push(prev_note);

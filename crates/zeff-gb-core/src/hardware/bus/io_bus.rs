@@ -16,7 +16,7 @@ pub(super) fn read_io(bus: &Bus, addr: u16) -> u8 {
 
         INTERRUPT_IF => bus.if_reg | 0xE0,
 
-        PPU_LCDC => bus.io.ppu.lcdc,
+        PPU_LCDC => bus.io.ppu.lcdc.bits(),
         PPU_STAT => bus.io.ppu.stat | 0x80,
         PPU_SCY => bus.io.ppu.scy,
         PPU_SCX => bus.io.ppu.scx,
@@ -146,7 +146,7 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
 
         INTERRUPT_IF => bus.if_reg = value & 0x1F,
 
-        PPU_LCDC => bus.io.ppu.lcdc = value,
+        PPU_LCDC => bus.io.ppu.lcdc = crate::hardware::ppu::Lcdc::from_bits_truncate(value),
         PPU_STAT => bus.io.ppu.stat = (bus.io.ppu.stat & 0x07) | (value & 0xF8),
         PPU_SCY => bus.io.ppu.scy = value,
         PPU_SCX => bus.io.ppu.scx = value,

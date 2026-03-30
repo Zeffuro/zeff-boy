@@ -1,6 +1,7 @@
-use crate::debug::common::{CpuDebugSnapshot, WatchType, COLOR_CONTINUE_BUTTON};
+use crate::debug::common::{WatchType, COLOR_CONTINUE_BUTTON};
+use crate::debug::types::CpuDebugSnapshot;
 
-pub(crate) use super::menu_bar::{MenuActions, MenuBarContext, draw_menu_bar};
+pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar};
 pub(crate) use super::settings_window::draw_settings_window;
 
 pub(crate) struct DebugUiActions {

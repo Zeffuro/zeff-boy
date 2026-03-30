@@ -96,7 +96,7 @@ fn write_tima_cancels_pending_overflow() {
     t.write_tac(0x05);
     t.set_tima_raw(0xFF);
     t.set_tma_raw(0x20);
-    t.step(16); // Trigger overflow — TIMA=0, delay=4
+    t.step(16); // Trigger overflow:TIMA=0, delay=4
     assert_eq!(t.tima(), 0x00, "TIMA should be 0 during delay");
     t.write_tima(0x50); // Cancel the pending reload
     assert_eq!(t.tima(), 0x50);

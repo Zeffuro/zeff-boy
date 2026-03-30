@@ -6,10 +6,10 @@ mod cheats;
 mod cli;
 mod debug;
 mod emu_backend;
-mod emu_core_trait;
 mod emu_thread;
 mod graphics;
 mod input;
+mod libretro_common;
 mod libretro_metadata;
 mod save_paths;
 mod settings;
@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     let args = cli::parse_args()?;
 
     if let Some(mode) = args.mode_override {
-        settings.hardware_mode_preference = mode;
+        settings.emulation.hardware_mode_preference = mode;
     }
 
     if let Some(headless_opts) = args.headless {
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
             .context("--headless requires a ROM path")?;
         return cli::run_headless(
             Path::new(&rom_path_arg),
-            settings.hardware_mode_preference,
+            settings.emulation.hardware_mode_preference,
             &headless_opts,
         );
     }
@@ -92,9 +92,8 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             )?;
             let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
                 &rom_data,
-                settings.hardware_mode_preference,
-            )
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                settings.emulation.hardware_mode_preference,
+            )?;
             if let Some(sram_path) = emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path)
                 .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
             {

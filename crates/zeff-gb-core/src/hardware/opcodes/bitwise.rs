@@ -106,7 +106,7 @@ pub fn execute_cb_op(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) {
 
     match opcode >> 6 {
         0 => {
-            // 0x00-0x3F: Rotate/shift/swap — read, modify, write
+            // 0x00-0x3F: Rotate/shift/swap:read, modify, write
             if reg_idx == 6 {
                 let addr = cpu.get_hl();
                 let val = cpu.bus_read_timed(bus, addr);
@@ -119,12 +119,12 @@ pub fn execute_cb_op(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) {
             }
         }
         1 => {
-            // 0x40-0x7F: BIT — read-only test, no write-back
+            // 0x40-0x7F: BIT:read-only test, no write-back
             let val = read_reg(cpu, bus, reg_idx);
             cpu.bit(sub_op, val);
         }
         2 => {
-            // 0x80-0xBF: RES — read, clear bit, write
+            // 0x80-0xBF: RES:read, clear bit, write
             if reg_idx == 6 {
                 let addr = cpu.get_hl();
                 let val = cpu.bus_read_timed(bus, addr);
@@ -137,7 +137,7 @@ pub fn execute_cb_op(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) {
             }
         }
         3 => {
-            // 0xC0-0xFF: SET — read, set bit, write
+            // 0xC0-0xFF: SET:read, set bit, write
             if reg_idx == 6 {
                 let addr = cpu.get_hl();
                 let val = cpu.bus_read_timed(bus, addr);

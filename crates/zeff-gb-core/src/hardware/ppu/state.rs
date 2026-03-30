@@ -1,10 +1,10 @@
-use super::{PPU, default_framebuffer};
+use super::{Lcdc, PPU, default_framebuffer};
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 
 impl PPU {
     pub fn write_state(&self, writer: &mut StateWriter) {
-        writer.write_u8(self.lcdc);
+        writer.write_u8(self.lcdc.bits());
         writer.write_u8(self.stat);
         writer.write_u8(self.scy);
         writer.write_u8(self.scx);
@@ -38,7 +38,7 @@ impl PPU {
 
     pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
         let mut ppu = Self::new();
-        ppu.lcdc = reader.read_u8()?;
+        ppu.lcdc = Lcdc::from_bits_truncate(reader.read_u8()?);
         ppu.stat = reader.read_u8()?;
         ppu.scy = reader.read_u8()?;
         ppu.scx = reader.read_u8()?;

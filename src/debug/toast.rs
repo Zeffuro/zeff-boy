@@ -33,7 +33,7 @@ impl PersistentToast {
                 } else {
                     format!("{m:02}:{s:02}")
                 };
-                format!("{} — {time_str}", self.label)
+                format!("{}:{time_str}", self.label)
             }
             None => self.label.clone(),
         }
@@ -100,6 +100,16 @@ impl ToastManager {
         }
     }
 
+    pub(crate) fn set_paused(&mut self, active: bool) {
+        self.set_persistent(
+            "paused",
+            active,
+            "⏸ Paused",
+            egui::Color32::from_rgba_unmultiplied(50, 50, 90, 220),
+            false,
+        );
+    }
+
     pub(crate) fn set_recording(&mut self, active: bool) {
         self.set_persistent(
             "recording",
@@ -160,7 +170,7 @@ impl ToastManager {
                     ui.add_space(4.0);
                 }
 
-                for toast in &self.toasts {
+                for toast in self.toasts.iter().rev() {
                     let elapsed = now.duration_since(toast.created).as_secs_f32();
                     let alpha = if elapsed > FADE_START {
                         ((TOAST_DURATION_SECS - elapsed) / 0.5).clamp(0.0, 1.0)

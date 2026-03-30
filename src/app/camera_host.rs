@@ -2,11 +2,11 @@ use super::{App, CameraCapture, CameraHostSettings};
 
 fn camera_settings_from_app(app: &App) -> CameraHostSettings {
     CameraHostSettings {
-        device_index: app.settings.camera_device_index,
-        auto_levels: app.settings.camera_auto_levels,
-        gamma: app.settings.camera_gamma,
-        brightness: app.settings.camera_brightness,
-        contrast: app.settings.camera_contrast,
+        device_index: app.settings.camera.device_index,
+        auto_levels: app.settings.camera.auto_levels,
+        gamma: app.settings.camera.gamma,
+        brightness: app.settings.camera.brightness,
+        contrast: app.settings.camera.contrast,
     }
 }
 
@@ -19,15 +19,15 @@ impl App {
 
         if self.camera_capture.is_none() {
             self.camera_capture = Some(CameraCapture::start(camera_settings_from_app(self)));
-            self.camera_capture_index = Some(self.settings.camera_device_index);
+            self.camera_capture_index = Some(self.settings.camera.device_index);
             log::info!("Pocket Camera host capture started");
-        } else if self.camera_capture_index != Some(self.settings.camera_device_index) {
+        } else if self.camera_capture_index != Some(self.settings.camera.device_index) {
             self.stop_camera_capture();
             self.camera_capture = Some(CameraCapture::start(camera_settings_from_app(self)));
-            self.camera_capture_index = Some(self.settings.camera_device_index);
+            self.camera_capture_index = Some(self.settings.camera.device_index);
             log::info!(
                 "Pocket Camera host capture restarted on device index {}",
-                self.settings.camera_device_index
+                self.settings.camera.device_index
             );
         }
 

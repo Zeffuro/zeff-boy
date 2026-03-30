@@ -17,10 +17,10 @@ impl App {
         self.stop_audio_recording();
         self.stop_replay_recording();
 
-        if self.settings.auto_save_state
+        if self.settings.emulation.auto_save_state
             && let Some(thread) = &self.emu_thread {
                 thread.send(EmuCommand::AutoSaveState);
-                match self.recv_cold_response_shutdown() {
+                match self.recv_cold_response() {
                     Some(EmuResponse::SaveStateOk(path)) => {
                         log::info!("Auto-saved state to {}", path);
                     }
@@ -31,7 +31,7 @@ impl App {
                 }
             }
 
-        self.settings.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);
+        self.settings.ui.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);
         self.settings.save();
 
         if let Some(ref title) = self.debug_windows.cheat.rom_title {
@@ -53,14 +53,4 @@ impl App {
         self.latest_frame = None;
     }
 
-    fn recv_cold_response_shutdown(&mut self) -> Option<EmuResponse> {
-        loop {
-            let result = self.emu_thread.as_ref()?.try_recv_frame();
-            match result {
-                Some(frame) => self.process_frame_result(frame),
-                None => break,
-            }
-        }
-        self.emu_thread.as_ref()?.recv()
-    }
 }

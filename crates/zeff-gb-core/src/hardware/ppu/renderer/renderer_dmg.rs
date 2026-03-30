@@ -1,7 +1,7 @@
 use super::{SpriteRenderContext, render_sprites};
 use crate::hardware::ppu::palette::apply_palette;
 use crate::hardware::ppu::{
-    LCDC_BG_ENABLE, LCDC_BG_TILEMAP, LCDC_TILE_DATA, LCDC_WINDOW_TILEMAP, PPU, SCREEN_H, SCREEN_W,
+    Lcdc, PPU, SCREEN_H, SCREEN_W,
     decode_tile_pixel, tile_data_address,
 };
 
@@ -70,7 +70,7 @@ fn render_bg_line(
     ly: usize,
     x: usize,
 ) -> u8 {
-    if ppu.lcdc & LCDC_BG_ENABLE == 0 {
+    if !ppu.lcdc.contains(Lcdc::BG_ENABLE) {
         return 0;
     }
     let bg_y = (ly + ppu.scy as usize) & 0xFF;
@@ -100,14 +100,14 @@ pub fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         }
     }
 
-    let bg_tile_map_base: usize = if ppu.lcdc & LCDC_BG_TILEMAP != 0 {
+    let bg_tile_map_base: usize = if ppu.lcdc.contains(Lcdc::BG_TILEMAP) {
         0x1C00
     } else {
         0x1800
     };
 
-    let tile_data_unsigned = ppu.lcdc & LCDC_TILE_DATA != 0;
-    let win_tile_map_base: usize = if ppu.lcdc & LCDC_WINDOW_TILEMAP != 0 {
+    let tile_data_unsigned = ppu.lcdc.contains(Lcdc::TILE_DATA);
+    let win_tile_map_base: usize = if ppu.lcdc.contains(Lcdc::WINDOW_TILEMAP) {
         0x1C00
     } else {
         0x1800

@@ -1,5 +1,5 @@
 use crate::hardware::ppu::palette::{apply_palette, cgb_palette_rgba};
-use crate::hardware::ppu::{LCDC_BG_ENABLE, LCDC_OBJ_ENABLE, LCDC_OBJ_SIZE, SCREEN_W, SpriteEntry};
+use crate::hardware::ppu::{Lcdc, SCREEN_W, SpriteEntry};
 use arrayvec::ArrayVec;
 
 #[path = "renderer_cgb.rs"]
@@ -30,12 +30,12 @@ pub(super) fn decode_cgb_tile_attributes(attr: u8) -> CgbTileAttributes {
 }
 
 fn cgb_sprite_hidden_by_bg(
-    lcdc: u8,
+    lcdc: Lcdc,
     sprite_bg_priority: bool,
     bg_color_id: u8,
     bg_to_oam_priority: bool,
 ) -> bool {
-    if lcdc & LCDC_BG_ENABLE == 0 {
+    if !lcdc.contains(Lcdc::BG_ENABLE) {
         return false;
     }
     bg_color_id != 0 && (sprite_bg_priority || bg_to_oam_priority)
@@ -43,7 +43,7 @@ fn cgb_sprite_hidden_by_bg(
 
 pub(super) struct SpriteRenderContext<'a> {
     pub(super) cgb_mode: bool,
-    pub(super) lcdc: u8,
+    pub(super) lcdc: Lcdc,
     pub(super) obp0: u8,
     pub(super) obp1: u8,
     pub(super) vram: &'a [u8],
@@ -56,11 +56,11 @@ pub(super) struct SpriteRenderContext<'a> {
 }
 
 pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
-    if ctx.lcdc & LCDC_OBJ_ENABLE == 0 {
+    if !ctx.lcdc.contains(Lcdc::OBJ_ENABLE) {
         return;
     }
 
-    let tall_sprites = ctx.lcdc & LCDC_OBJ_SIZE != 0;
+    let tall_sprites = ctx.lcdc.contains(Lcdc::OBJ_SIZE);
     let sprite_height: u8 = if tall_sprites { 16 } else { 8 };
 
     let mut sprites_on_line: ArrayVec<SpriteEntry, 10> = ArrayVec::new();

@@ -34,7 +34,7 @@ pub fn adc_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.adc(v);
 }
 
-// 0x7D: ADC abs,X — +1 on page cross
+// 0x7D: ADC abs,X:+1 on page cross
 pub fn adc_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_x(bus);
     let v = bus.cpu_read(a);
@@ -42,7 +42,7 @@ pub fn adc_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     page_cross_penalty(crossed)
 }
 
-// 0x79: ADC abs,Y — +1 on page cross
+// 0x79: ADC abs,Y:+1 on page cross
 pub fn adc_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_y(bus);
     let v = bus.cpu_read(a);
@@ -57,7 +57,7 @@ pub fn adc_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.adc(v);
 }
 
-// 0x71: ADC (ind),Y — +1 on page cross
+// 0x71: ADC (ind),Y:+1 on page cross
 pub fn adc_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_indirect_y(bus);
     let v = bus.cpu_read(a);
@@ -93,7 +93,7 @@ pub fn sbc_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.sbc(v);
 }
 
-// 0xFD: SBC abs,X — +1 on page cross
+// 0xFD: SBC abs,X:+1 on page cross
 pub fn sbc_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_x(bus);
     let v = bus.cpu_read(a);
@@ -101,7 +101,7 @@ pub fn sbc_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     page_cross_penalty(crossed)
 }
 
-// 0xF9: SBC abs,Y — +1 on page cross
+// 0xF9: SBC abs,Y:+1 on page cross
 pub fn sbc_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_y(bus);
     let v = bus.cpu_read(a);
@@ -116,7 +116,7 @@ pub fn sbc_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.sbc(v);
 }
 
-// 0xF1: SBC (ind),Y — +1 on page cross
+// 0xF1: SBC (ind),Y:+1 on page cross
 pub fn sbc_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_indirect_y(bus);
     let v = bus.cpu_read(a);
@@ -152,7 +152,7 @@ pub fn cmp_abs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.compare(cpu.regs.a, v);
 }
 
-// 0xDD: CMP abs,X — +1 on page cross
+// 0xDD: CMP abs,X:+1 on page cross
 pub fn cmp_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_x(bus);
     let v = bus.cpu_read(a);
@@ -160,7 +160,7 @@ pub fn cmp_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     page_cross_penalty(crossed)
 }
 
-// 0xD9: CMP abs,Y — +1 on page cross
+// 0xD9: CMP abs,Y:+1 on page cross
 pub fn cmp_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_absolute_y(bus);
     let v = bus.cpu_read(a);
@@ -175,7 +175,7 @@ pub fn cmp_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.compare(cpu.regs.a, v);
 }
 
-// 0xD1: CMP (ind),Y — +1 on page cross
+// 0xD1: CMP (ind),Y:+1 on page cross
 pub fn cmp_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     let (a, crossed) = cpu.addr_indirect_y(bus);
     let v = bus.cpu_read(a);

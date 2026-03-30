@@ -1,12 +1,14 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 
-pub fn unimplemented_handler(cpu: &mut Cpu, opcode: u8) {
+pub fn unimplemented_handler(cpu: &mut Cpu, opcode: u8, operand_bytes: u16) {
     log::warn!(
-        "Unimplemented opcode {:02X} at PC={:04X}",
+        "Unimplemented opcode {:02X} at PC={:04X} (skipping {} operand byte(s))",
         opcode,
-        cpu.pc.wrapping_sub(1)
+        cpu.pc.wrapping_sub(1),
+        operand_bytes
     );
+    cpu.pc = cpu.pc.wrapping_add(operand_bytes);
 }
 
 pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
@@ -152,7 +154,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
         0x88 => { crate::hardware::opcodes::alu::dey(cpu, bus); 0 }
         0x89 => { crate::hardware::opcodes::flow::nop_imm(cpu, bus); 0 }
         0x8A => { crate::hardware::opcodes::load::txa(cpu, bus); 0 }
-        0x8B => { unimplemented_handler(cpu, opcode); 0 } // ANE/XAA — highly unstable
+        0x8B => { unimplemented_handler(cpu, opcode, 1); 0 } // ANE/XAA:highly unstable (immediate)
         0x8C => { crate::hardware::opcodes::load::sty_abs(cpu, bus); 0 }
         0x8D => { crate::hardware::opcodes::load::sta_abs(cpu, bus); 0 }
         0x8E => { crate::hardware::opcodes::load::stx_abs(cpu, bus); 0 }
@@ -160,7 +162,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
         0x90 => crate::hardware::opcodes::flow::bcc(cpu, bus),
         0x91 => { crate::hardware::opcodes::load::sta_ind_y(cpu, bus); 0 }
         0x92 => { unoff::kil(cpu, bus); 0 }
-        0x93 => { unimplemented_handler(cpu, opcode); 0 } // SHA (ind),Y — unstable
+        0x93 => { unimplemented_handler(cpu, opcode, 1); 0 } // SHA (ind),Y:unstable
         0x94 => { crate::hardware::opcodes::load::sty_zp_x(cpu, bus); 0 }
         0x95 => { crate::hardware::opcodes::load::sta_zp_x(cpu, bus); 0 }
         0x96 => { crate::hardware::opcodes::load::stx_zp_y(cpu, bus); 0 }
@@ -168,11 +170,11 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
         0x98 => { crate::hardware::opcodes::load::tya(cpu, bus); 0 }
         0x99 => { crate::hardware::opcodes::load::sta_abs_y(cpu, bus); 0 }
         0x9A => { crate::hardware::opcodes::load::txs(cpu, bus); 0 }
-        0x9B => { unimplemented_handler(cpu, opcode); 0 } // TAS — unstable
-        0x9C => { unimplemented_handler(cpu, opcode); 0 } // SHY — unstable
+        0x9B => { unimplemented_handler(cpu, opcode, 2); 0 } // TAS:unstable (abs,Y)
+        0x9C => { unimplemented_handler(cpu, opcode, 2); 0 } // SHY:unstable (abs,X)
         0x9D => { crate::hardware::opcodes::load::sta_abs_x(cpu, bus); 0 }
-        0x9E => { unimplemented_handler(cpu, opcode); 0 } // SHX — unstable
-        0x9F => { unimplemented_handler(cpu, opcode); 0 } // SHA abs,Y — unstable
+        0x9E => { unimplemented_handler(cpu, opcode, 2); 0 } // SHX:unstable (abs,Y)
+        0x9F => { unimplemented_handler(cpu, opcode, 2); 0 } // SHA abs,Y:unstable
         0xA0 => { crate::hardware::opcodes::load::ldy_imm(cpu, bus); 0 }
         0xA1 => { crate::hardware::opcodes::load::lda_ind_x(cpu, bus); 0 }
         0xA2 => { crate::hardware::opcodes::load::ldx_imm(cpu, bus); 0 }
@@ -184,7 +186,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
         0xA8 => { crate::hardware::opcodes::load::tay(cpu, bus); 0 }
         0xA9 => { crate::hardware::opcodes::load::lda_imm(cpu, bus); 0 }
         0xAA => { crate::hardware::opcodes::load::tax(cpu, bus); 0 }
-        0xAB => { unimplemented_handler(cpu, opcode); 0 } // LAX #imm — unstable
+        0xAB => { unimplemented_handler(cpu, opcode, 1); 0 } // LAX #imm:unstable
         0xAC => { crate::hardware::opcodes::load::ldy_abs(cpu, bus); 0 }
         0xAD => { crate::hardware::opcodes::load::lda_abs(cpu, bus); 0 }
         0xAE => { crate::hardware::opcodes::load::ldx_abs(cpu, bus); 0 }
@@ -200,7 +202,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
         0xB8 => { crate::hardware::opcodes::flow::clv(cpu, bus); 0 }
         0xB9 => crate::hardware::opcodes::load::lda_abs_y(cpu, bus),
         0xBA => { crate::hardware::opcodes::load::tsx(cpu, bus); 0 }
-        0xBB => { unimplemented_handler(cpu, opcode); 0 } // LAS — unstable
+        0xBB => { unimplemented_handler(cpu, opcode, 2); 0 } // LAS:unstable (abs,Y)
         0xBC => crate::hardware::opcodes::load::ldy_abs_x(cpu, bus),
         0xBD => crate::hardware::opcodes::load::lda_abs_x(cpu, bus),
         0xBE => crate::hardware::opcodes::load::ldx_abs_y(cpu, bus),

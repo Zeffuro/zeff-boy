@@ -8,13 +8,19 @@ description = "Game Boy and Game Boy Color emulation core library."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
+zeff-emu-common = { path = "../zeff-emu-common" }
 anyhow = "1.0.102"
+bitflags = "2"
 log = "0.4.29"
 phf = { version = "0.13.1", features = ["macros"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 lz4_flex = "0.13.0"
 arrayvec = "0.7.6"
-crc32fast = "1.5.0"
-chrono = "0.4"
 
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "gb_benchmarks"
+harness = false

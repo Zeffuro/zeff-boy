@@ -1,0 +1,132 @@
+mod debug_menu;
+mod file_menu;
+mod toolbar;
+mod view_menu;
+
+use crate::debug::DebugWindowState;
+use crate::debug::dock::DebugTab;
+use crate::graphics::AspectRatioMode;
+use crate::settings::Settings;
+use egui_dock::DockState;
+use std::path::PathBuf;
+
+#[derive(Debug)]
+pub(crate) enum MenuAction {
+    OpenFile,
+    ResetGame,
+    StopGame,
+    OpenSettings,
+    SaveStateFile,
+    LoadStateFile,
+    SaveStateSlot(u8),
+    LoadStateSlot(u8),
+    SetAspectRatio(AspectRatioMode),
+    LoadRecentRom(PathBuf),
+    ToolbarSettingsChanged,
+    ToggleFullscreen,
+    TogglePause,
+    SpeedChange(i32),
+    StartAudioRecording,
+    StopAudioRecording,
+    StartReplayRecording,
+    StopReplayRecording,
+    LoadReplay,
+    TakeScreenshot,
+    SetLayerToggles(bool, bool, bool),
+}
+
+pub(crate) struct MenuBarResult {
+    pub(crate) actions: Vec<MenuAction>,
+    pub(crate) menu_bar_height_points: f32,
+}
+
+impl MenuBarResult {
+    pub(crate) fn empty() -> Self {
+        Self {
+            actions: Vec::new(),
+            menu_bar_height_points: 0.0,
+        }
+    }
+}
+
+pub(crate) struct MenuBarContext<'a> {
+    pub(crate) current_mode: AspectRatioMode,
+    pub(crate) speed_mode_label: Option<&'a str>,
+    pub(crate) is_recording_audio: bool,
+    pub(crate) is_recording_replay: bool,
+    pub(crate) is_playing_replay: bool,
+    pub(crate) is_paused: bool,
+    pub(crate) slot_labels: &'a [String; 10],
+}
+
+pub(crate) fn draw_menu_bar(
+    ctx: &egui::Context,
+    mb: &MenuBarContext<'_>,
+    dock_state: &mut DockState<DebugTab>,
+    settings: &mut Settings,
+    debug_windows: &mut DebugWindowState,
+) -> MenuBarResult {
+    let mut actions = Vec::new();
+
+    egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                file_menu::draw(
+                    ui,
+                    &mut actions,
+                    settings,
+                    mb.slot_labels,
+                    mb.is_recording_audio,
+                    mb.is_recording_replay,
+                    mb.is_playing_replay,
+                );
+            });
+
+            ui.menu_button("View", |ui| {
+                view_menu::draw(ui, &mut actions, settings, mb.current_mode);
+            });
+
+            ui.menu_button("Debug", |ui| {
+                debug_menu::draw(ui, dock_state, debug_windows);
+            });
+
+            ui.menu_button("Help", |ui| {
+                if ui.button("GitHub Repository").clicked() {
+                    if let Err(e) = open::that("https://github.com/zeffuro/zeff-boy") {
+                        log::warn!("failed to open browser: {e}");
+                    }
+                    ui.close();
+                }
+                if ui.button("Open Settings Folder").clicked() {
+                    let dir = Settings::settings_dir();
+                    if let Err(e) = open::that(&dir) {
+                        log::warn!("failed to open folder {}: {e}", dir.display());
+                    }
+                    ui.close();
+                }
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                toolbar::draw(
+                    ui,
+                    &mut actions,
+                    settings,
+                    mb.is_paused,
+                    mb.speed_mode_label,
+                );
+            });
+        });
+    });
+
+    actions.push(MenuAction::SetLayerToggles(
+        debug_windows.layer_enable_bg,
+        debug_windows.layer_enable_window,
+        debug_windows.layer_enable_sprites,
+    ));
+
+    MenuBarResult {
+        actions,
+        menu_bar_height_points: ctx.available_rect().min.y.max(0.0),
+    }
+}
+

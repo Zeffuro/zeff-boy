@@ -8,12 +8,7 @@ impl EmuThread {
             emu.add_breakpoint(addr);
         }
         if let Some((addr, watch_type)) = actions.add_watchpoint {
-            let core_wt = match watch_type {
-                crate::debug::WatchType::Read => zeff_gb_core::debug::WatchType::Read,
-                crate::debug::WatchType::Write => zeff_gb_core::debug::WatchType::Write,
-                crate::debug::WatchType::ReadWrite => zeff_gb_core::debug::WatchType::ReadWrite,
-            };
-            emu.add_watchpoint(addr, core_wt);
+            emu.add_watchpoint(addr, watch_type);
         }
         for addr in &actions.remove_breakpoints {
             emu.remove_breakpoint(*addr);
@@ -34,12 +29,7 @@ impl EmuThread {
             emu.add_breakpoint(addr);
         }
         if let Some((addr, watch_type)) = actions.add_watchpoint {
-            let core_wt = match watch_type {
-                crate::debug::WatchType::Read => zeff_nes_core::debug::WatchType::Read,
-                crate::debug::WatchType::Write => zeff_nes_core::debug::WatchType::Write,
-                crate::debug::WatchType::ReadWrite => zeff_nes_core::debug::WatchType::ReadWrite,
-            };
-            emu.add_watchpoint(addr, core_wt);
+            emu.add_watchpoint(addr, watch_type);
         }
         for addr in &actions.remove_breakpoints {
             emu.remove_breakpoint(*addr);

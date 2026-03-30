@@ -4,7 +4,7 @@ use anyhow::Result;
 
 impl Apu {
     pub fn apply_bess_io(&mut self, io_regs: &[u8]) {
-        // NR52 (FF26) — master enable only, write first per BESS spec
+        // NR52 (FF26) - master enable only, write first per BESS spec
         self.nr52 = io_regs[0x26] & 0x80;
         // NR10–NR51 (FF10–FF25) → regs[0..22]
         self.regs[..0x17].copy_from_slice(&io_regs[0x10..0x27]);

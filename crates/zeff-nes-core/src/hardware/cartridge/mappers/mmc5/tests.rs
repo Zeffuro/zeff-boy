@@ -85,7 +85,7 @@ fn mmc5_scanline_counter_resets_on_prerender_notification() {
 
     mapper.current_scanline.set(240);
 
-    // Simulate a scanline boundary via nametable reads — should reset to 0
+    // Simulate a scanline boundary via nametable reads:should reset to 0
     mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
     mapper.ppu_nametable_read(0x2000, &ciram);
     mapper.ppu_nametable_read(0x2000, &ciram);

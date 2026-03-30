@@ -1,32 +1,18 @@
-use crate::settings::Settings;
+use crate::debug::ui_helpers::enum_combo_box;
+use crate::settings::{ScalingMode, Settings};
 
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.heading("Display");
-    ui.checkbox(&mut settings.show_fps, "Show FPS in debug panel");
-    ui.checkbox(&mut settings.enable_memory_editing, "Enable memory editing")
+    ui.checkbox(&mut settings.ui.show_fps, "Show FPS in debug panel");
+    ui.checkbox(&mut settings.ui.enable_memory_editing, "Enable memory editing")
         .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
-    ui.checkbox(&mut settings.autohide_menu_bar, "Autohide menu bar")
+    ui.checkbox(&mut settings.ui.autohide_menu_bar, "Autohide menu bar")
         .on_hover_text(
             "Hide the menu bar when the cursor moves away from the top edge. \
              Hover near the top to reveal it.",
         );
 
-    use crate::settings::VsyncMode;
-    egui::ComboBox::from_label("VSync")
-        .selected_text(settings.vsync_mode.label())
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut settings.vsync_mode, VsyncMode::On, VsyncMode::On.label());
-            ui.selectable_value(
-                &mut settings.vsync_mode,
-                VsyncMode::Adaptive,
-                VsyncMode::Adaptive.label(),
-            );
-            ui.selectable_value(
-                &mut settings.vsync_mode,
-                VsyncMode::Off,
-                VsyncMode::Off.label(),
-            );
-        });
+    enum_combo_box(ui, "VSync", &mut settings.video.vsync_mode);
 
     ui.horizontal(|ui| {
         const SCALES: &[(f32, &str)] = &[
@@ -41,14 +27,14 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         ];
         let current_label = SCALES
             .iter()
-            .find(|(v, _)| (*v - settings.ui_scale).abs() < 0.01)
+            .find(|(v, _)| (*v - settings.ui.ui_scale).abs() < 0.01)
             .map(|(_, l)| *l)
             .unwrap_or("Custom");
         egui::ComboBox::from_label("UI scale")
             .selected_text(current_label)
             .show_ui(ui, |ui| {
                 for &(value, label) in SCALES {
-                    ui.selectable_value(&mut settings.ui_scale, value, label);
+                    ui.selectable_value(&mut settings.ui.ui_scale, value, label);
                 }
             });
     })
@@ -57,24 +43,11 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
 
     ui.separator();
     ui.heading("Scaling");
-    use crate::settings::ScalingMode;
-    egui::ComboBox::from_label("Scaling mode")
-        .selected_text(settings.scaling_mode.label())
-        .show_ui(ui, |ui| {
-            for mode in [
-                ScalingMode::PixelPerfect,
-                ScalingMode::Bilinear,
-                ScalingMode::HQ2xLike,
-                ScalingMode::XBR2x,
-                ScalingMode::Eagle2x,
-            ] {
-                ui.selectable_value(&mut settings.scaling_mode, mode, mode.label());
-            }
-        });
+    enum_combo_box(ui, "Scaling mode", &mut settings.video.scaling_mode);
 
-    if settings.scaling_mode.is_upscaler() {
-        let p = &mut settings.shader_params;
-        match settings.scaling_mode {
+    if settings.video.scaling_mode.is_upscaler() {
+        let p = &mut settings.video.shader_params;
+        match settings.video.scaling_mode {
             ScalingMode::HQ2xLike => {
                 ui.add(
                     egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
@@ -100,14 +73,14 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.horizontal(|ui| {
         ui.label("Offscreen scale:");
         ui.add(
-            egui::DragValue::new(&mut settings.offscreen_scale)
+            egui::DragValue::new(&mut settings.video.offscreen_scale)
                 .range(1..=8)
                 .speed(1),
         );
         ui.label(format!(
             "({}×{})",
-            160 * settings.offscreen_scale,
-            144 * settings.offscreen_scale
+            160 * settings.video.offscreen_scale,
+            144 * settings.video.offscreen_scale
         ));
     });
     ui.label(
@@ -121,23 +94,10 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.separator();
     ui.heading("Effects");
     use crate::settings::EffectPreset;
-    egui::ComboBox::from_label("Effect")
-        .selected_text(settings.effect_preset.label())
-        .show_ui(ui, |ui| {
-            for effect in [
-                EffectPreset::None,
-                EffectPreset::Scanlines,
-                EffectPreset::LcdGrid,
-                EffectPreset::Crt,
-                EffectPreset::GbcPalette,
-                EffectPreset::Custom,
-            ] {
-                ui.selectable_value(&mut settings.effect_preset, effect, effect.label());
-            }
-        });
+    enum_combo_box(ui, "Effect", &mut settings.video.effect_preset);
 
-    let p = &mut settings.shader_params;
-    match settings.effect_preset {
+    let p = &mut settings.video.shader_params;
+    match settings.video.effect_preset {
         EffectPreset::Scanlines => {
             ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
         }
@@ -154,10 +114,10 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         }
         EffectPreset::Custom => {
             ui.label("Custom WGSL fragment path:");
-            if settings.custom_shader_path.is_empty() {
+            if settings.video.custom_shader_path.is_empty() {
                 ui.monospace("(not set)");
             } else {
-                ui.monospace(&settings.custom_shader_path);
+                ui.monospace(&settings.video.custom_shader_path);
             }
             ui.horizontal(|ui| {
                 if ui.button("Load .wgsl...").clicked()
@@ -165,10 +125,10 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
                         .add_filter("WGSL", &["wgsl"])
                         .pick_file()
                 {
-                    settings.custom_shader_path = path.to_string_lossy().to_string();
+                    settings.video.custom_shader_path = path.to_string_lossy().to_string();
                 }
                 if ui.button("Clear").clicked() {
-                    settings.custom_shader_path.clear();
+                    settings.video.custom_shader_path.clear();
                 }
             });
         }
@@ -178,30 +138,12 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.separator();
     ui.heading("Color Correction");
     use crate::settings::ColorCorrection;
-    egui::ComboBox::from_label("Color correction")
-        .selected_text(settings.color_correction.label())
-        .show_ui(ui, |ui| {
-            ui.selectable_value(
-                &mut settings.color_correction,
-                ColorCorrection::None,
-                ColorCorrection::None.label(),
-            );
-            ui.selectable_value(
-                &mut settings.color_correction,
-                ColorCorrection::GbcLcd,
-                ColorCorrection::GbcLcd.label(),
-            );
-            ui.selectable_value(
-                &mut settings.color_correction,
-                ColorCorrection::Custom,
-                ColorCorrection::Custom.label(),
-            );
-        });
-    if settings.color_correction == ColorCorrection::Custom {
+    enum_combo_box(ui, "Color correction", &mut settings.video.color_correction);
+    if settings.video.color_correction == ColorCorrection::Custom {
         ui.separator();
         ui.label("Custom 3x3 matrix (input RGB -> output RGB)");
 
-        let m = &mut settings.color_correction_matrix;
+        let m = &mut settings.video.color_correction_matrix;
         egui::Grid::new("color_correction_matrix")
             .spacing([6.0, 4.0])
             .show(ui, |ui| {
@@ -226,12 +168,12 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
 
         ui.horizontal(|ui| {
             if ui.button("Identity").clicked() {
-                settings.color_correction_matrix = [
+                settings.video.color_correction_matrix = [
                     1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
                 ];
             }
             if ui.button("Load GBC matrix").clicked() {
-                settings.color_correction_matrix = [
+                settings.video.color_correction_matrix = [
                     26.0 / 32.0,
                     4.0 / 32.0,
                     2.0 / 32.0,

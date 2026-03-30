@@ -1,5 +1,5 @@
 use super::{App, SpeedMode};
-use crate::{audio::AudioOutput, emu_thread::EmuThread, graphics::Graphics};
+use crate::{audio::AudioOutput, emu_thread::{EmuCommand, EmuThread}, graphics::Graphics};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Fullscreen;
 
@@ -12,7 +12,7 @@ impl App {
             self.emu_thread = Some(EmuThread::spawn(backend));
             if self.timing.uncapped_speed
                 && let Some(thread) = &self.emu_thread {
-                    thread.send(crate::emu_thread::EmuCommand::SetUncapped(true));
+                    thread.send(EmuCommand::SetUncapped(true));
                 }
         }
     }
@@ -27,7 +27,7 @@ impl App {
                 .map_err(|e| log::warn!("Audio init failed: {e}"))
                 .ok();
             if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
-                thread.send(crate::emu_thread::EmuCommand::SetSampleRate(
+                thread.send(EmuCommand::SetSampleRate(
                     audio.sample_rate(),
                 ));
             }
@@ -36,18 +36,18 @@ impl App {
         self.ensure_emu_thread();
 
         if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
-            thread.send(crate::emu_thread::EmuCommand::SetSampleRate(
+            thread.send(EmuCommand::SetSampleRate(
                 audio.sample_rate(),
             ));
         }
 
-        let gfx = pollster::block_on(Graphics::new(event_loop, self.settings.vsync_mode))
+        let gfx = pollster::block_on(Graphics::new(event_loop, self.settings.video.vsync_mode))
             .expect("failed to initialize graphics");
         let size = gfx.window().inner_size();
         self.window_size = (size.width as f32, size.height as f32);
         self.window_id = Some(gfx.window().id());
 
-        if self.settings.ui_scale_needs_auto {
+        if self.settings.ui.ui_scale_needs_auto {
             let monitor_height = gfx
                 .window()
                 .current_monitor()
@@ -89,11 +89,7 @@ impl App {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
                 }
             }
-            SpeedMode::FastForward => {
-                event_loop.set_control_flow(ControlFlow::Poll);
-                gfx.window().request_redraw();
-            }
-            SpeedMode::Uncapped => {
+            SpeedMode::FastForward | SpeedMode::Uncapped => {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 gfx.window().request_redraw();
             }

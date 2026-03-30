@@ -1,6 +1,6 @@
-use crate::debug::common::NesGraphicsData;
+use crate::debug::common::nes_palette_rgba;
+use crate::debug::types::NesGraphicsData;
 use crate::debug::TileViewerState;
-use zeff_nes_core::hardware::ppu::NES_PALETTE;
 
 fn decode_nes_tile_pixel(chr: &[u8], tile_addr: usize, row: usize, col: usize) -> u8 {
     let lo = chr.get(tile_addr + row).copied().unwrap_or(0);
@@ -9,17 +9,6 @@ fn decode_nes_tile_pixel(chr: &[u8], tile_addr: usize, row: usize, col: usize) -
     let p0 = (lo >> bit) & 1;
     let p1 = (hi >> bit) & 1;
     (p1 << 1) | p0
-}
-
-fn nes_palette_rgba(palette_ram: &[u8; 32], palette_index: u8, color_id: u8) -> [u8; 4] {
-    let pal_addr = (palette_index as usize) * 4 + (color_id as usize);
-    let nes_color = if color_id == 0 {
-        palette_ram[0] as usize & 0x3F
-    } else {
-        palette_ram[pal_addr] as usize & 0x3F
-    };
-    let (r, g, b) = NES_PALETTE[nes_color];
-    [r, g, b, 255]
 }
 
 pub(super) fn draw_nes_tile_viewer_content(
@@ -142,4 +131,3 @@ fn render_nes_pattern_tables(
         }
     }
 }
-

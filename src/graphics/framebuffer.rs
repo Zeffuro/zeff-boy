@@ -6,34 +6,50 @@ const MIN_OFFSCREEN_HEIGHT: u32 = 144;
 const DEFAULT_OFFSCREEN_WIDTH: u32 = 160 * 4;
 const DEFAULT_OFFSCREEN_HEIGHT: u32 = 144 * 4;
 
-pub(crate) struct FramebufferRenderer {
-    screen_texture: wgpu::Texture,
-    screen_view: wgpu::TextureView,
-    screen_bind_group: wgpu::BindGroup,
-    screen_bind_group_no_cc: wgpu::BindGroup,
-    screen_pipeline: wgpu::RenderPipeline,
-    screen_bgl: wgpu::BindGroupLayout,
+struct ScreenInput {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    bind_group_no_cc: wgpu::BindGroup,
+    native_width: u32,
+    native_height: u32,
+}
+
+struct ShaderState {
+    pipeline: wgpu::RenderPipeline,
+    bgl: wgpu::BindGroupLayout,
+    effect_pipeline: Option<wgpu::RenderPipeline>,
+    format: wgpu::TextureFormat,
+    current_scaling: ScalingMode,
+    current_effect: EffectPreset,
+    current_custom_shader_path: String,
+    two_pass: bool,
+}
+
+struct SamplerResources {
     params_buffer: wgpu::Buffer,
     params_buffer_no_cc: wgpu::Buffer,
     nearest_sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
     current_filter: wgpu::FilterMode,
-    format: wgpu::TextureFormat,
-    current_scaling: ScalingMode,
-    current_effect: EffectPreset,
-    current_custom_shader_path: String,
+}
+
+struct OffscreenTarget {
     output_texture: wgpu::Texture,
     output_view: wgpu::TextureView,
-    offscreen_width: u32,
-    offscreen_height: u32,
-    effect_pipeline: Option<wgpu::RenderPipeline>,
     intermediate_texture: wgpu::Texture,
     intermediate_view: wgpu::TextureView,
     intermediate_bind_group: wgpu::BindGroup,
     output_bind_group: wgpu::BindGroup,
-    two_pass: bool,
-    native_width: u32,
-    native_height: u32,
+    width: u32,
+    height: u32,
+}
+
+pub(crate) struct FramebufferRenderer {
+    screen: ScreenInput,
+    shader: ShaderState,
+    sampler: SamplerResources,
+    offscreen: OffscreenTarget,
 }
 
 fn scaling_shader_source(mode: ScalingMode) -> &'static str {
@@ -340,33 +356,41 @@ impl FramebufferRenderer {
         );
 
         Ok(Self {
-            screen_texture,
-            screen_view,
-            screen_bind_group,
-            screen_bind_group_no_cc,
-            screen_pipeline,
-            screen_bgl,
-            params_buffer,
-            params_buffer_no_cc,
-            nearest_sampler,
-            linear_sampler,
-            current_filter: wgpu::FilterMode::Nearest,
-            format,
-            current_scaling: scaling,
-            current_effect: effect,
-            current_custom_shader_path: String::new(),
-            output_texture,
-            output_view,
-            offscreen_width: DEFAULT_OFFSCREEN_WIDTH,
-            offscreen_height: DEFAULT_OFFSCREEN_HEIGHT,
-            effect_pipeline: None,
-            intermediate_texture,
-            intermediate_view,
-            intermediate_bind_group,
-            output_bind_group,
-            two_pass: false,
-            native_width: 160,
-            native_height: 144,
+            screen: ScreenInput {
+                texture: screen_texture,
+                view: screen_view,
+                bind_group: screen_bind_group,
+                bind_group_no_cc: screen_bind_group_no_cc,
+                native_width: 160,
+                native_height: 144,
+            },
+            shader: ShaderState {
+                pipeline: screen_pipeline,
+                bgl: screen_bgl,
+                effect_pipeline: None,
+                format,
+                current_scaling: scaling,
+                current_effect: effect,
+                current_custom_shader_path: String::new(),
+                two_pass: false,
+            },
+            sampler: SamplerResources {
+                params_buffer,
+                params_buffer_no_cc,
+                nearest_sampler,
+                linear_sampler,
+                current_filter: wgpu::FilterMode::Nearest,
+            },
+            offscreen: OffscreenTarget {
+                output_texture,
+                output_view,
+                intermediate_texture,
+                intermediate_view,
+                intermediate_bind_group,
+                output_bind_group,
+                width: DEFAULT_OFFSCREEN_WIDTH,
+                height: DEFAULT_OFFSCREEN_HEIGHT,
+            },
         })
     }
 
@@ -375,14 +399,14 @@ impl FramebufferRenderer {
         device: &wgpu::Device,
         settings: &crate::settings::Settings,
     ) {
-        let scaling = settings.scaling_mode;
-        let effect = settings.effect_preset;
-        let custom_path_changed = self.current_custom_shader_path != settings.custom_shader_path;
+        let scaling = settings.video.scaling_mode;
+        let effect = settings.video.effect_preset;
+        let custom_path_changed = self.shader.current_custom_shader_path != settings.video.custom_shader_path;
         let desired_filter = preferred_filter(scaling);
-        let filter_changed = self.current_filter != desired_filter;
+        let filter_changed = self.sampler.current_filter != desired_filter;
 
-        if self.current_scaling == scaling
-            && self.current_effect == effect
+        if self.shader.current_scaling == scaling
+            && self.shader.current_effect == effect
             && (!matches!(effect, EffectPreset::Custom) || !custom_path_changed)
             && !filter_changed
         {
@@ -392,42 +416,39 @@ impl FramebufferRenderer {
         let want_two_pass = needs_two_pass(scaling, effect);
 
         if want_two_pass {
-            // Two-pass: upscaler pipeline + effect pipeline
             let upscaler_source = scaling_shader_source(scaling);
             let effect_source = if matches!(effect, EffectPreset::Custom) {
-                // Custom + upscaler: load custom shader for effect pass
-                if settings.custom_shader_path.trim().is_empty() {
+                if settings.video.custom_shader_path.trim().is_empty() {
                     effect_shader_source(EffectPreset::None)
                 } else {
-                    match std::fs::read_to_string(&settings.custom_shader_path) {
+                    match std::fs::read_to_string(&settings.video.custom_shader_path) {
                         Ok(fragment) => {
-                            // We can't return a reference to a local, so handle below
                             let combined = format!(
                                 "{}\n{}",
                                 include_str!("../shaders/common_vertex.wgsl"),
                                 fragment
                             );
-                            if self.current_scaling != scaling
-                                || self.current_effect != effect
+                            if self.shader.current_scaling != scaling
+                                || self.shader.current_effect != effect
                                 || custom_path_changed
                             {
-                                self.screen_pipeline = create_pipeline(
+                                self.shader.pipeline = create_pipeline(
                                     device,
-                                    &self.screen_bgl,
-                                    self.format,
+                                    &self.shader.bgl,
+                                    self.shader.format,
                                     upscaler_source,
                                 );
-                                self.effect_pipeline = Some(create_pipeline(
+                                self.shader.effect_pipeline = Some(create_pipeline(
                                     device,
-                                    &self.screen_bgl,
-                                    self.format,
+                                    &self.shader.bgl,
+                                    self.shader.format,
                                     &combined,
                                 ));
                             }
-                            self.two_pass = true;
-                            self.current_scaling = scaling;
-                            self.current_effect = effect;
-                            self.current_custom_shader_path = settings.custom_shader_path.clone();
+                            self.shader.two_pass = true;
+                            self.shader.current_scaling = scaling;
+                            self.shader.current_effect = effect;
+                            self.shader.current_custom_shader_path = settings.video.custom_shader_path.clone();
                             if filter_changed {
                                 self.apply_filter_change(device, desired_filter);
                             }
@@ -436,7 +457,7 @@ impl FramebufferRenderer {
                         Err(err) => {
                             log::warn!(
                                 "Failed to load custom shader '{}': {}",
-                                settings.custom_shader_path,
+                                settings.video.custom_shader_path,
                                 err
                             );
                             effect_shader_source(EffectPreset::None)
@@ -447,28 +468,28 @@ impl FramebufferRenderer {
                 effect_shader_source(effect)
             };
 
-            if self.current_scaling != scaling
-                || self.current_effect != effect
+            if self.shader.current_scaling != scaling
+                || self.shader.current_effect != effect
                 || (matches!(effect, EffectPreset::Custom) && custom_path_changed)
             {
-                self.screen_pipeline =
-                    create_pipeline(device, &self.screen_bgl, self.format, upscaler_source);
-                self.effect_pipeline = Some(create_pipeline(
+                self.shader.pipeline =
+                    create_pipeline(device, &self.shader.bgl, self.shader.format, upscaler_source);
+                self.shader.effect_pipeline = Some(create_pipeline(
                     device,
-                    &self.screen_bgl,
-                    self.format,
+                    &self.shader.bgl,
+                    self.shader.format,
                     effect_source,
                 ));
             }
-            self.two_pass = true;
+            self.shader.two_pass = true;
         } else {
             // Single pass
             let dynamic_source: String;
             let source = if matches!(effect, EffectPreset::Custom) && !scaling.is_upscaler() {
-                if settings.custom_shader_path.trim().is_empty() {
+                if settings.video.custom_shader_path.trim().is_empty() {
                     combined_shader_source(scaling, EffectPreset::None)
                 } else {
-                    match std::fs::read_to_string(&settings.custom_shader_path) {
+                    match std::fs::read_to_string(&settings.video.custom_shader_path) {
                         Ok(fragment) => {
                             dynamic_source = format!(
                                 "{}\n{}",
@@ -480,7 +501,7 @@ impl FramebufferRenderer {
                         Err(err) => {
                             log::warn!(
                                 "Failed to load custom shader '{}': {}",
-                                settings.custom_shader_path,
+                                settings.video.custom_shader_path,
                                 err
                             );
                             combined_shader_source(scaling, EffectPreset::None)
@@ -491,83 +512,83 @@ impl FramebufferRenderer {
                 combined_shader_source(scaling, effect)
             };
 
-            if self.current_scaling != scaling
-                || self.current_effect != effect
+            if self.shader.current_scaling != scaling
+                || self.shader.current_effect != effect
                 || (matches!(effect, EffectPreset::Custom) && custom_path_changed)
             {
-                self.screen_pipeline =
-                    create_pipeline(device, &self.screen_bgl, self.format, source);
+                self.shader.pipeline =
+                    create_pipeline(device, &self.shader.bgl, self.shader.format, source);
             }
-            self.effect_pipeline = None;
-            self.two_pass = false;
+            self.shader.effect_pipeline = None;
+            self.shader.two_pass = false;
         }
 
         if filter_changed {
             self.apply_filter_change(device, desired_filter);
         }
 
-        self.current_scaling = scaling;
-        self.current_effect = effect;
-        self.current_custom_shader_path = settings.custom_shader_path.clone();
+        self.shader.current_scaling = scaling;
+        self.shader.current_effect = effect;
+        self.shader.current_custom_shader_path = settings.video.custom_shader_path.clone();
     }
 
     fn apply_filter_change(&mut self, device: &wgpu::Device, desired_filter: wgpu::FilterMode) {
         let sampler = match desired_filter {
-            wgpu::FilterMode::Linear => &self.linear_sampler,
-            wgpu::FilterMode::Nearest => &self.nearest_sampler,
+            wgpu::FilterMode::Linear => &self.sampler.linear_sampler,
+            wgpu::FilterMode::Nearest => &self.sampler.nearest_sampler,
         };
-        self.screen_bind_group = create_texture_bind_group(
+        self.screen.bind_group = create_texture_bind_group(
             device,
-            &self.screen_bgl,
-            &self.screen_view,
+            &self.shader.bgl,
+            &self.screen.view,
             sampler,
-            &self.params_buffer,
+            &self.sampler.params_buffer,
             "screen bind group",
         );
-        self.screen_bind_group_no_cc = create_texture_bind_group(
+        self.screen.bind_group_no_cc = create_texture_bind_group(
             device,
-            &self.screen_bgl,
-            &self.screen_view,
+            &self.shader.bgl,
+            &self.screen.view,
             sampler,
-            &self.params_buffer_no_cc,
+            &self.sampler.params_buffer_no_cc,
             "screen bind group no color correction",
         );
-        self.current_filter = desired_filter;
+        self.sampler.current_filter = desired_filter;
     }
 
     pub(crate) fn update_params(&self, queue: &wgpu::Queue, settings: &crate::settings::Settings) {
-        let nw = self.native_width as f32;
-        let nh = self.native_height as f32;
+        let nw = self.screen.native_width as f32;
+        let nh = self.screen.native_height as f32;
         let buf = crate::settings::build_gpu_params(
-            &settings.shader_params,
-            settings.color_correction,
-            settings.color_correction_matrix,
+            &settings.video.shader_params,
+            settings.video.color_correction,
+            settings.video.color_correction_matrix,
             nw,
             nh,
         );
         let buf_no_cc = crate::settings::build_gpu_params(
-            &settings.shader_params,
+            &settings.video.shader_params,
             crate::settings::ColorCorrection::None,
-            settings.color_correction_matrix,
+            settings.video.color_correction_matrix,
             nw,
             nh,
         );
-        queue.write_buffer(&self.params_buffer, 0, &buf);
-        queue.write_buffer(&self.params_buffer_no_cc, 0, &buf_no_cc);
+        queue.write_buffer(&self.sampler.params_buffer, 0, &buf);
+        queue.write_buffer(&self.sampler.params_buffer_no_cc, 0, &buf_no_cc);
     }
 
     pub(crate) fn native_size(&self) -> (u32, u32) {
-        (self.native_width, self.native_height)
+        (self.screen.native_width, self.screen.native_height)
     }
 
     pub(crate) fn set_native_size(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        if self.native_width == width && self.native_height == height {
+        if self.screen.native_width == width && self.screen.native_height == height {
             return;
         }
-        self.native_width = width;
-        self.native_height = height;
+        self.screen.native_width = width;
+        self.screen.native_height = height;
 
-        self.screen_texture = device.create_texture(&wgpu::TextureDescriptor {
+        self.screen.texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("screen texture"),
             size: wgpu::Extent3d {
                 width,
@@ -581,26 +602,26 @@ impl FramebufferRenderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.screen_view = self.screen_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.screen.view = self.screen.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let sampler = match self.current_filter {
-            wgpu::FilterMode::Linear => &self.linear_sampler,
-            wgpu::FilterMode::Nearest => &self.nearest_sampler,
+        let sampler = match self.sampler.current_filter {
+            wgpu::FilterMode::Linear => &self.sampler.linear_sampler,
+            wgpu::FilterMode::Nearest => &self.sampler.nearest_sampler,
         };
-        self.screen_bind_group = create_texture_bind_group(
+        self.screen.bind_group = create_texture_bind_group(
             device,
-            &self.screen_bgl,
-            &self.screen_view,
+            &self.shader.bgl,
+            &self.screen.view,
             sampler,
-            &self.params_buffer,
+            &self.sampler.params_buffer,
             "screen bind group",
         );
-        self.screen_bind_group_no_cc = create_texture_bind_group(
+        self.screen.bind_group_no_cc = create_texture_bind_group(
             device,
-            &self.screen_bgl,
-            &self.screen_view,
+            &self.shader.bgl,
+            &self.screen.view,
             sampler,
-            &self.params_buffer_no_cc,
+            &self.sampler.params_buffer_no_cc,
             "screen bind group no color correction",
         );
     }
@@ -608,7 +629,7 @@ impl FramebufferRenderer {
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.screen_texture,
+                texture: &self.screen.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -616,12 +637,12 @@ impl FramebufferRenderer {
             framebuffer,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * self.native_width),
-                rows_per_image: Some(self.native_height),
+                bytes_per_row: Some(4 * self.screen.native_width),
+                rows_per_image: Some(self.screen.native_height),
             },
             wgpu::Extent3d {
-                width: self.native_width,
-                height: self.native_height,
+                width: self.screen.native_width,
+                height: self.screen.native_height,
                 depth_or_array_layers: 1,
             },
         );
@@ -629,14 +650,12 @@ impl FramebufferRenderer {
 
     pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, x: f32, y: f32, w: f32, h: f32) {
         pass.set_viewport(x, y, w, h, 0.0, 1.0);
-        if self.two_pass {
-            // Two-pass direct rendering: upscaler already rendered to output_texture
-            // via render_upscale_pass(). Now draw output_texture with effect shader.
-            pass.set_pipeline(self.effect_pipeline.as_ref().unwrap());
-            pass.set_bind_group(0, &self.output_bind_group, &[]);
+        if self.shader.two_pass {
+            pass.set_pipeline(self.shader.effect_pipeline.as_ref().unwrap());
+            pass.set_bind_group(0, &self.offscreen.output_bind_group, &[]);
         } else {
-            pass.set_pipeline(&self.screen_pipeline);
-            pass.set_bind_group(0, &self.screen_bind_group, &[]);
+            pass.set_pipeline(&self.shader.pipeline);
+            pass.set_bind_group(0, &self.screen.bind_group, &[]);
         }
         pass.draw(0..3, 0..1);
     }
@@ -649,21 +668,23 @@ impl FramebufferRenderer {
     ) -> bool {
         let w = width.max(MIN_OFFSCREEN_WIDTH);
         let h = height.max(MIN_OFFSCREEN_HEIGHT);
-        if self.offscreen_width == w && self.offscreen_height == h {
+        if self.offscreen.width == w && self.offscreen.height == h {
             return false;
         }
-        self.offscreen_width = w;
-        self.offscreen_height = h;
+        self.offscreen.width = w;
+        self.offscreen.height = h;
 
-        self.output_texture =
-            create_offscreen_texture(device, self.format, w, h, "shader output texture");
-        self.output_view = self
+        self.offscreen.output_texture =
+            create_offscreen_texture(device, self.shader.format, w, h, "shader output texture");
+        self.offscreen.output_view = self
+            .offscreen
             .output_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.intermediate_texture =
-            create_offscreen_texture(device, self.format, w, h, "shader intermediate texture");
-        self.intermediate_view = self
+        self.offscreen.intermediate_texture =
+            create_offscreen_texture(device, self.shader.format, w, h, "shader intermediate texture");
+        self.offscreen.intermediate_view = self
+            .offscreen
             .intermediate_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -672,32 +693,32 @@ impl FramebufferRenderer {
     }
 
     fn rebuild_aux_bind_groups(&mut self, device: &wgpu::Device) {
-        self.intermediate_bind_group = create_texture_bind_group(
+        self.offscreen.intermediate_bind_group = create_texture_bind_group(
             device,
-            &self.screen_bgl,
-            &self.intermediate_view,
-            &self.nearest_sampler,
-            &self.params_buffer,
+            &self.shader.bgl,
+            &self.offscreen.intermediate_view,
+            &self.sampler.nearest_sampler,
+            &self.sampler.params_buffer,
             "intermediate bind group",
         );
-        self.output_bind_group = create_texture_bind_group(
+        self.offscreen.output_bind_group = create_texture_bind_group(
             device,
-            &self.screen_bgl,
-            &self.output_view,
-            &self.nearest_sampler,
-            &self.params_buffer,
+            &self.shader.bgl,
+            &self.offscreen.output_view,
+            &self.sampler.nearest_sampler,
+            &self.sampler.params_buffer,
             "output bind group",
         );
     }
 
     pub(crate) fn render_to_offscreen(&self, encoder: &mut wgpu::CommandEncoder) {
-        if self.two_pass {
-            // Pass 1: Upscaler — screen_texture → intermediate_texture
+        if self.shader.two_pass {
+            // Pass 1: Upscaler:screen_texture → intermediate_texture
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("shader upscaler pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.intermediate_view,
+                        view: &self.offscreen.intermediate_view,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -712,21 +733,21 @@ impl FramebufferRenderer {
                 pass.set_viewport(
                     0.0,
                     0.0,
-                    self.offscreen_width as f32,
-                    self.offscreen_height as f32,
+                    self.offscreen.width as f32,
+                    self.offscreen.height as f32,
                     0.0,
                     1.0,
                 );
-                pass.set_pipeline(&self.screen_pipeline);
-                pass.set_bind_group(0, &self.screen_bind_group_no_cc, &[]);
+                pass.set_pipeline(&self.shader.pipeline);
+                pass.set_bind_group(0, &self.screen.bind_group_no_cc, &[]);
                 pass.draw(0..3, 0..1);
             }
-            // Pass 2: Effect — intermediate_texture → output_texture
+            // Pass 2: Effect:intermediate_texture → output_texture
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("shader effect pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.output_view,
+                        view: &self.offscreen.output_view,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -741,13 +762,13 @@ impl FramebufferRenderer {
                 pass.set_viewport(
                     0.0,
                     0.0,
-                    self.offscreen_width as f32,
-                    self.offscreen_height as f32,
+                    self.offscreen.width as f32,
+                    self.offscreen.height as f32,
                     0.0,
                     1.0,
                 );
-                pass.set_pipeline(self.effect_pipeline.as_ref().unwrap());
-                pass.set_bind_group(0, &self.intermediate_bind_group, &[]);
+                pass.set_pipeline(self.shader.effect_pipeline.as_ref().unwrap());
+                pass.set_bind_group(0, &self.offscreen.intermediate_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
         } else {
@@ -755,7 +776,7 @@ impl FramebufferRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shader offscreen pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.output_view,
+                    view: &self.offscreen.output_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -770,24 +791,22 @@ impl FramebufferRenderer {
             pass.set_viewport(
                 0.0,
                 0.0,
-                self.offscreen_width as f32,
-                self.offscreen_height as f32,
+                self.offscreen.width as f32,
+                self.offscreen.height as f32,
                 0.0,
                 1.0,
             );
-            pass.set_pipeline(&self.screen_pipeline);
-            pass.set_bind_group(0, &self.screen_bind_group, &[]);
+            pass.set_pipeline(&self.shader.pipeline);
+            pass.set_bind_group(0, &self.screen.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
     }
 
-    /// Render the upscaler pass to `output_texture` for direct-rendering two-pass mode.
-    /// Called before `draw()` when `needs_two_pass()` is true.
     pub(crate) fn render_upscale_pass(&self, encoder: &mut wgpu::CommandEncoder) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shader upscale direct pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.output_view,
+                view: &self.offscreen.output_view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -802,21 +821,21 @@ impl FramebufferRenderer {
         pass.set_viewport(
             0.0,
             0.0,
-            self.offscreen_width as f32,
-            self.offscreen_height as f32,
+            self.offscreen.width as f32,
+            self.offscreen.height as f32,
             0.0,
             1.0,
         );
-        pass.set_pipeline(&self.screen_pipeline);
-        pass.set_bind_group(0, &self.screen_bind_group_no_cc, &[]);
+        pass.set_pipeline(&self.shader.pipeline);
+        pass.set_bind_group(0, &self.screen.bind_group_no_cc, &[]);
         pass.draw(0..3, 0..1);
     }
 
     pub(crate) fn needs_two_pass(&self) -> bool {
-        self.two_pass
+        self.shader.two_pass
     }
 
     pub(crate) fn output_view(&self) -> &wgpu::TextureView {
-        &self.output_view
+        &self.offscreen.output_view
     }
 }

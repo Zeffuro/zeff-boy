@@ -5,6 +5,7 @@ const GITHUB_CONTENTS_URL: &str =
     "https://api.github.com/repos/libretro/libretro-database/contents/cht/";
 const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/";
+const CACHE_TTL_SECS: u64 = 86400;
 
 fn platform_dir(is_gbc: bool) -> &'static str {
     if is_gbc {
@@ -23,7 +24,7 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result
 
     if let Ok(meta) = std::fs::metadata(&cache_file)
         && let Ok(modified) = meta.modified()
-            && modified.elapsed().unwrap_or_default().as_secs() < 86400
+            && modified.elapsed().unwrap_or_default().as_secs() < CACHE_TTL_SECS
                 && let Ok(content) = std::fs::read_to_string(&cache_file)
                     && let Ok(names) = parse_file_list_from_json(&content)
                         && !names.is_empty() {
@@ -34,21 +35,17 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result
     let url = format!("{}{}", GITHUB_CONTENTS_URL, urlencoded(dir));
     log::info!("Fetching libretro cheat index from {}", url);
 
-    let response = ureq::get(&url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", "zeff-boy-emulator")
-        .call()
-        .map_err(|e| anyhow::anyhow!("GitHub API request failed: {e}"))?;
-
-    let body = response
-        .into_body()
+    let body = crate::libretro_common::ureq_get_github_json(&url)?
         .read_to_string()
         .context("failed to read GitHub API response")?;
 
     let names = parse_file_list_from_json(&body)?;
 
-    let _ = std::fs::create_dir_all(cache_dir);
-    let _ = std::fs::write(&cache_file, &body);
+    if let Err(e) = std::fs::create_dir_all(cache_dir) {
+        log::warn!("failed to create cheat cache dir {}: {e}", cache_dir.display());
+    } else if let Err(e) = std::fs::write(&cache_file, &body) {
+        log::warn!("failed to write cheat index cache {}: {e}", cache_file.display());
+    }
 
     Ok(names)
 }
@@ -76,18 +73,15 @@ pub(super) fn download_cht_content(
     );
     log::info!("Downloading cheat file from {}", url);
 
-    let response = ureq::get(&url)
-        .header("User-Agent", "zeff-boy-emulator")
-        .call()
-        .map_err(|e| anyhow::anyhow!("Download failed: {e}"))?;
-
-    let content = response
-        .into_body()
+    let content = crate::libretro_common::ureq_get(&url)?
         .read_to_string()
         .context("failed to read cheat file response")?;
 
-    let _ = std::fs::create_dir_all(&cht_cache_dir);
-    let _ = std::fs::write(&cache_file, &content);
+    if let Err(e) = std::fs::create_dir_all(&cht_cache_dir) {
+        log::warn!("failed to create cht cache dir {}: {e}", cht_cache_dir.display());
+    } else if let Err(e) = std::fs::write(&cache_file, &content) {
+        log::warn!("failed to write cht cache {}: {e}", cache_file.display());
+    }
 
     Ok(content)
 }
@@ -111,38 +105,12 @@ pub(super) fn search_filenames(query: &str, file_list: &[String], limit: usize) 
 }
 
 fn normalized_words(input: &str) -> Vec<String> {
-    input
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .map(|v| v.to_string())
-        .collect()
+    crate::libretro_common::normalized_words(input)
 }
 
 fn title_core(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut depth_round = 0usize;
-    let mut depth_square = 0usize;
-
-    for c in input.chars() {
-        match c {
-            '(' => depth_round += 1,
-            ')' => depth_round = depth_round.saturating_sub(1),
-            '[' => depth_square += 1,
-            ']' => depth_square = depth_square.saturating_sub(1),
-            _ if depth_round == 0 && depth_square == 0 => out.push(c),
-            _ => {}
-        }
-    }
-
-    normalized_words(out.trim()).join(" ")
+    let stripped = crate::libretro_common::strip_suffix_groups(input);
+    normalized_words(&stripped).join(" ")
 }
 
 fn score_filename(candidate: &str, query_terms: &[String], hints: &[String]) -> i32 {

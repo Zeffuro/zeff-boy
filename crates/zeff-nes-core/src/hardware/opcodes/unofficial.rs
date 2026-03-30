@@ -1,6 +1,6 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
-use crate::hardware::cpu::registers::*;
+use crate::hardware::cpu::registers::StatusFlags;
 
 #[inline(always)]
 fn page_cross_penalty(crossed: bool) -> u8 {
@@ -348,7 +348,7 @@ pub fn anc(cpu: &mut Cpu, bus: &Bus) {
     let val = bus.cpu_peek(addr);
     cpu.regs.a &= val;
     cpu.regs.set_zn(cpu.regs.a);
-    cpu.regs.set_flag(CARRY_FLAG, cpu.regs.a & 0x80 != 0);
+    cpu.regs.set_flag(StatusFlags::CARRY, cpu.regs.a & 0x80 != 0);
 }
 
 // ALR: AND #imm, then LSR A.
@@ -364,13 +364,13 @@ pub fn arr(cpu: &mut Cpu, bus: &Bus) {
     let addr = cpu.addr_immediate(bus);
     let val = bus.cpu_peek(addr);
     cpu.regs.a &= val;
-    let carry_in: u8 = if cpu.regs.get_flag(CARRY_FLAG) { 0x80 } else { 0 };
+    let carry_in: u8 = if cpu.regs.get_flag(StatusFlags::CARRY) { 0x80 } else { 0 };
     cpu.regs.a = (cpu.regs.a >> 1) | carry_in;
     cpu.regs.set_zn(cpu.regs.a);
     let bit6 = (cpu.regs.a >> 6) & 1;
     let bit5 = (cpu.regs.a >> 5) & 1;
-    cpu.regs.set_flag(CARRY_FLAG, bit6 != 0);
-    cpu.regs.set_flag(OVERFLOW_FLAG, bit6 ^ bit5 != 0);
+    cpu.regs.set_flag(StatusFlags::CARRY, bit6 != 0);
+    cpu.regs.set_flag(StatusFlags::OVERFLOW, bit6 ^ bit5 != 0);
 }
 
 // AXS/SBX: X = (A & X) - #imm (no borrow). Sets flags like CMP.
@@ -380,18 +380,16 @@ pub fn axs(cpu: &mut Cpu, bus: &Bus) {
     let ax = cpu.regs.a & cpu.regs.x;
     let result = ax.wrapping_sub(val);
     cpu.regs.x = result;
-    cpu.regs.set_flag(CARRY_FLAG, ax >= val);
+    cpu.regs.set_flag(StatusFlags::CARRY, ax >= val);
     cpu.regs.set_zn(result);
 }
 
-// SBC duplicate at 0xEB — identical to official SBC #imm.
+// SBC duplicate at 0xEB:identical to official SBC #imm.
 pub fn sbc_unofficial(cpu: &mut Cpu, bus: &Bus) {
     let addr = cpu.addr_immediate(bus);
     let val = bus.cpu_peek(addr);
     cpu.sbc(val);
 }
-
-// ── NOP variants ────────────────────────────────────────────────────
 
 // 1-byte NOP (implied). Used by 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA.
 pub fn nop_implied(_cpu: &mut Cpu, _bus: &mut Bus) {}
@@ -422,11 +420,9 @@ pub fn nop_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
     page_cross_penalty(crossed)
 }
 
-// ── KIL/JAM: halt the CPU ───────────────────────────────────────────
-
 // KIL/JAM: freeze the CPU. Used by various undocumented halt opcodes.
 pub fn kil(cpu: &mut Cpu, _bus: &mut Bus) {
-    log::warn!("KIL/JAM opcode executed at PC={:04X} — CPU halted", cpu.pc.wrapping_sub(1));
+    log::warn!("KIL/JAM opcode executed at PC={:04X}:CPU halted", cpu.pc.wrapping_sub(1));
     cpu.state = crate::hardware::cpu::CpuState::Halted;
 }
 

@@ -2,7 +2,7 @@ use super::flow::brk;
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Cartridge;
 use crate::hardware::cpu::Cpu;
-use crate::hardware::cpu::registers::*;
+use crate::hardware::cpu::registers::StatusFlags;
 
 fn build_bus_with_program(program: &[u8]) -> Bus {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -48,10 +48,10 @@ fn adc_imm_basic() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x30);
-    assert!(!cpu.regs.get_flag(CARRY_FLAG));
-    assert!(!cpu.regs.get_flag(OVERFLOW_FLAG));
-    assert!(!cpu.regs.get_flag(ZERO_FLAG));
-    assert!(!cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(!cpu.regs.get_flag(StatusFlags::OVERFLOW));
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(!cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -60,8 +60,8 @@ fn adc_carry_out() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x00);
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(cpu.regs.get_flag(ZERO_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
 }
 
 #[test]
@@ -79,8 +79,8 @@ fn adc_overflow_positive() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0xA0);
-    assert!(cpu.regs.get_flag(OVERFLOW_FLAG));
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::OVERFLOW));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -90,8 +90,8 @@ fn adc_overflow_negative() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x60);
-    assert!(cpu.regs.get_flag(OVERFLOW_FLAG));
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::OVERFLOW));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn sbc_basic() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x20);
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(!cpu.regs.get_flag(OVERFLOW_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(!cpu.regs.get_flag(StatusFlags::OVERFLOW));
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn sbc_borrow() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0xEF);
-    assert!(!cpu.regs.get_flag(CARRY_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::CARRY));
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn sbc_overflow() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0xA0);
-    assert!(cpu.regs.get_flag(OVERFLOW_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::OVERFLOW));
 }
 
 #[test]
@@ -130,9 +130,9 @@ fn cmp_equal() {
     let (mut cpu, mut bus) = setup(&[0xA9, 0x42, 0xC9, 0x42]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(!cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(!cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -140,8 +140,8 @@ fn cmp_greater() {
     let (mut cpu, mut bus) = setup(&[0xA9, 0x42, 0xC9, 0x20]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(!cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
 }
 
 #[test]
@@ -149,9 +149,9 @@ fn cmp_less() {
     let (mut cpu, mut bus) = setup(&[0xA9, 0x20, 0xC9, 0x42]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(!cpu.regs.get_flag(ZERO_FLAG));
-    assert!(!cpu.regs.get_flag(CARRY_FLAG));
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(!cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn cpx_basic() {
     let (mut cpu, mut bus) = setup(&[0xA2, 0x10, 0xE0, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
 }
 
 #[test]
@@ -168,9 +168,9 @@ fn cpy_basic() {
     let (mut cpu, mut bus) = setup(&[0xA0, 0xFF, 0xC0, 0x00]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(!cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -386,8 +386,8 @@ fn dcp_zp_decrements_and_compares() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
 }
 
 #[test]
@@ -419,16 +419,16 @@ fn php_plp_preserves_flags() {
     ]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(cpu.regs.get_flag(INTERRUPT_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::INTERRUPT));
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(!cpu.regs.get_flag(CARRY_FLAG));
-    assert!(!cpu.regs.get_flag(INTERRUPT_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(!cpu.regs.get_flag(StatusFlags::INTERRUPT));
     cpu.step(&mut bus);
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(cpu.regs.get_flag(INTERRUPT_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::INTERRUPT));
 }
 
 #[test]
@@ -479,9 +479,9 @@ fn bit_test_flags() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(!cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(OVERFLOW_FLAG));
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::OVERFLOW));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -494,9 +494,9 @@ fn bit_test_zero_result() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    assert!(cpu.regs.get_flag(ZERO_FLAG));
-    assert!(cpu.regs.get_flag(OVERFLOW_FLAG));
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::OVERFLOW));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -505,7 +505,7 @@ fn asl_accumulator() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x02);
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
 }
 
 #[test]
@@ -515,8 +515,8 @@ fn ror_accumulator_with_carry() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x80);
-    assert!(cpu.regs.get_flag(CARRY_FLAG));
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -525,7 +525,7 @@ fn inx_overflow_to_zero() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.x, 0x00);
-    assert!(cpu.regs.get_flag(ZERO_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
 }
 
 #[test]
@@ -534,6 +534,6 @@ fn dey_underflow() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.y, 0xFF);
-    assert!(cpu.regs.get_flag(NEGATIVE_FLAG));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 

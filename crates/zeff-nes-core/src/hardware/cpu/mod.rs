@@ -2,7 +2,7 @@ mod addressing;
 mod alu;
 pub mod registers;
 
-pub use registers::Registers;
+pub use registers::{Registers, StatusFlags};
 
 use crate::hardware::bus::Bus;
 use crate::hardware::constants::*;
@@ -55,7 +55,7 @@ impl Cpu {
         let hi = bus.cpu_read(RESET_VECTOR_HI) as u16;
         self.pc = (hi << 8) | lo;
         self.sp = self.sp.wrapping_sub(3);
-        self.regs.set_flag(registers::INTERRUPT_FLAG, true);
+        self.regs.set_flag(StatusFlags::INTERRUPT, true);
         self.cycles = 7;
     }
 
@@ -74,7 +74,7 @@ impl Cpu {
             return cycles;
         }
 
-        if self.irq_line && !self.regs.get_flag(registers::INTERRUPT_FLAG) {
+        if self.irq_line && !self.regs.get_flag(StatusFlags::INTERRUPT) {
             let cycles = self.service_irq(bus);
             self.last_step_cycles = cycles;
             self.cycles += cycles;
@@ -128,7 +128,7 @@ impl Cpu {
     fn service_nmi(&mut self, bus: &mut Bus) -> u64 {
         self.push16(bus, self.pc);
         self.push8(bus, self.regs.status_for_push(false));
-        self.regs.set_flag(registers::INTERRUPT_FLAG, true);
+        self.regs.set_flag(StatusFlags::INTERRUPT, true);
         let lo = bus.cpu_read(NMI_VECTOR_LO) as u16;
         let hi = bus.cpu_read(NMI_VECTOR_HI) as u16;
         self.pc = (hi << 8) | lo;
@@ -138,7 +138,7 @@ impl Cpu {
     fn service_irq(&mut self, bus: &mut Bus) -> u64 {
         self.push16(bus, self.pc);
         self.push8(bus, self.regs.status_for_push(false));
-        self.regs.set_flag(registers::INTERRUPT_FLAG, true);
+        self.regs.set_flag(StatusFlags::INTERRUPT, true);
         let lo = bus.cpu_read(IRQ_VECTOR_LO) as u16;
         let hi = bus.cpu_read(IRQ_VECTOR_HI) as u16;
         self.pc = (hi << 8) | lo;
@@ -151,7 +151,7 @@ impl Cpu {
         w.write_u8(self.regs.a);
         w.write_u8(self.regs.x);
         w.write_u8(self.regs.y);
-        w.write_u8(self.regs.p);
+        w.write_u8(self.regs.p.bits());
         w.write_u8(match self.state {
             CpuState::Running => 0,
             CpuState::Halted => 1,
@@ -171,7 +171,7 @@ impl Cpu {
         self.regs.a = r.read_u8()?;
         self.regs.x = r.read_u8()?;
         self.regs.y = r.read_u8()?;
-        self.regs.p = r.read_u8()?;
+        self.regs.p = StatusFlags::from_bits_truncate(r.read_u8()?);
         self.state = match r.read_u8()? {
             0 => CpuState::Running,
             1 => CpuState::Halted,

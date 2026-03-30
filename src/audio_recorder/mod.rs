@@ -11,6 +11,8 @@ use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
 use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
 use crate::settings::AudioRecordingFormat;
 
+const MIDI_INITIAL_SNAPSHOT_CAPACITY: usize = 3600;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum MidiApuSnapshot {
     Gb(GbApuChannelSnapshot),
@@ -76,7 +78,7 @@ impl AudioRecorder {
                 }
             }
             AudioRecordingFormat::Midi => RecorderInner::Midi {
-                snapshots: Vec::with_capacity(3600),
+                snapshots: Vec::with_capacity(MIDI_INITIAL_SNAPSHOT_CAPACITY),
             },
         };
 

@@ -1,4 +1,4 @@
-use crate::debug::breakpoints::{WatchHit, WatchType};
+use zeff_emu_common::debug::{WatchHit, WatchType};
 use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 

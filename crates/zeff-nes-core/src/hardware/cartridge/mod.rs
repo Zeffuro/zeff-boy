@@ -58,7 +58,7 @@ impl Cartridge {
         header.display_info();
 
         if header.prg_rom_size == 0 {
-            bail!("ROM declares 0 bytes of PRG ROM, which is invalid — every NES ROM needs at least one PRG bank");
+            bail!("ROM declares 0 bytes of PRG ROM, which is invalid:every NES ROM needs at least one PRG bank");
         }
 
         let trainer_offset = if header.has_trainer { TRAINER_SIZE } else { 0 };

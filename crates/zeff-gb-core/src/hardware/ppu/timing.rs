@@ -1,8 +1,8 @@
-use super::{DOTS_PER_LINE, DRAW_DOTS_BASE, LCDC_LCD_ENABLE, LCDC_OBJ_ENABLE, LCDC_OBJ_SIZE, LCDC_WINDOW_ENABLE, OAM_DOTS, PPU, SCREEN_H, renderer};
+use super::{DOTS_PER_LINE, DRAW_DOTS_BASE, Lcdc, OAM_DOTS, PPU, SCREEN_H, renderer};
 
 impl PPU {
     pub(super) fn window_enable_condition(&self) -> bool {
-        self.lcdc & LCDC_WINDOW_ENABLE != 0
+        self.lcdc.contains(Lcdc::WINDOW_ENABLE)
     }
 
     pub(super) fn window_visible_on_current_line(&self) -> bool {
@@ -26,8 +26,8 @@ impl PPU {
 
         let scx_penalty = (self.scx & 7) as u64;
 
-        let sprite_penalty = if self.lcdc & LCDC_OBJ_ENABLE != 0 {
-            let tall = self.lcdc & LCDC_OBJ_SIZE != 0;
+        let sprite_penalty = if self.lcdc.contains(Lcdc::OBJ_ENABLE) {
+            let tall = self.lcdc.contains(Lcdc::OBJ_SIZE);
             let sprite_h: i32 = if tall { 16 } else { 8 };
             let mut count: u64 = 0;
             for i in 0..40usize {
@@ -67,7 +67,7 @@ impl PPU {
     ) -> u8 {
         self.cgb_mode = cgb_mode;
 
-        let lcd_enabled = self.lcdc & LCDC_LCD_ENABLE != 0;
+        let lcd_enabled = self.lcdc.contains(Lcdc::LCD_ENABLE);
 
         if !lcd_enabled {
             self.lcd_was_enabled = false;
@@ -196,7 +196,7 @@ impl PPU {
     }
 
     pub(in crate::hardware) fn lcd_enabled(&self) -> bool {
-        self.lcdc & LCDC_LCD_ENABLE != 0
+        self.lcdc.contains(Lcdc::LCD_ENABLE)
     }
 
     pub(in crate::hardware) fn cpu_vram_accessible(&self) -> bool {

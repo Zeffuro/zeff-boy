@@ -1,4 +1,4 @@
-use crate::debug::common::OamDebugInfo;
+use crate::debug::types::OamDebugInfo;
 
 pub(super) fn draw_oam_viewer_content(ui: &mut egui::Ui, info: &OamDebugInfo) {
     egui::Grid::new("oam_grid").striped(true).show(ui, |ui| {

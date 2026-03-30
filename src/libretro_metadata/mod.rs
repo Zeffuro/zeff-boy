@@ -45,13 +45,7 @@ fn cache_file_path() -> PathBuf {
 
 fn download_dat(url_suffix: &str) -> anyhow::Result<String> {
     let url = format!("{RAW_BASE_URL}{url_suffix}");
-    let response = ureq::get(&url)
-        .header("User-Agent", "zeff-boy-emulator")
-        .call()
-        .map_err(|e| anyhow::anyhow!("Download failed ({url}): {e}"))?;
-
-    response
-        .into_body()
+    crate::libretro_common::ureq_get(&url)?
         .read_to_string()
         .context("Failed to read metadata response")
 }
@@ -293,38 +287,11 @@ pub(crate) fn lookup_cached(crc32: u32, is_gbc: bool) -> Option<RomMetadata> {
 }
 
 fn normalized_words(input: &str) -> Vec<String> {
-    input
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .map(|v| v.to_string())
-        .collect()
+    crate::libretro_common::normalized_words(input)
 }
 
 fn strip_suffix_groups(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut depth_round = 0usize;
-    let mut depth_square = 0usize;
-
-    for c in input.chars() {
-        match c {
-            '(' => depth_round += 1,
-            ')' => depth_round = depth_round.saturating_sub(1),
-            '[' => depth_square += 1,
-            ']' => depth_square = depth_square.saturating_sub(1),
-            _ if depth_round == 0 && depth_square == 0 => out.push(c),
-            _ => {}
-        }
-    }
-
-    out.trim().to_string()
+    crate::libretro_common::strip_suffix_groups(input)
 }
 
 fn dedupe_keep_order(items: Vec<String>) -> Vec<String> {
