@@ -94,7 +94,7 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
 
 pub(super) fn handle_scroll(ui: &mut egui::Ui, view_start: u32, max_start: u32) -> u32 {
     if ui.rect_contains_pointer(ui.max_rect()) {
-        let scroll = ui.input(|i| i.raw_scroll_delta.y);
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll >= 1.0 {
             return view_start.saturating_sub(0x10);
         } else if scroll <= -1.0 {

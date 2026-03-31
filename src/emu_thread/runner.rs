@@ -51,13 +51,15 @@ impl EmuThread {
             }
         }
 
-        if let Some(nes) = backend.nes_mut()
-            && nes.emu.is_cpu_suspended()
-        {
-            if input.debug_continue {
-                nes.emu.debug_continue();
-            } else if input.debug_step {
-                nes.emu.debug_step();
+        if let Some(nes) = backend.nes_mut() {
+            nes.emu
+                .set_apu_debug_collection_enabled(input.apu_capture_enabled);
+            if nes.emu.is_cpu_suspended() {
+                if input.debug_continue {
+                    nes.emu.debug_continue();
+                } else if input.debug_step {
+                    nes.emu.debug_step();
+                }
             }
         }
 

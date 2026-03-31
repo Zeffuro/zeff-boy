@@ -127,6 +127,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             backstep_pending: false,
         },
         egui_wants_keyboard: false,
+        game_view_focused: true,
         active_system,
     };
 
@@ -244,6 +245,7 @@ struct App {
     paused: bool,
     rewind: RewindState,
     egui_wants_keyboard: bool,
+    game_view_focused: bool,
     active_system: ActiveSystem,
 }
 

@@ -15,13 +15,19 @@ impl App {
             return;
         }
 
-        if let WindowEvent::KeyboardInput { event, .. } = &event {
-            self.handle_keyboard_input(event);
-        }
-
         self.update_pointer_and_window_state(&event);
 
-        if self.gfx_handles_event(&event) {
+        let keyboard_event = match &event {
+            WindowEvent::KeyboardInput { event, .. } => Some(event),
+            _ => None,
+        };
+        let event_consumed_by_egui = self.gfx_handles_event(&event);
+
+        if let Some(key_event) = keyboard_event {
+            self.handle_keyboard_input(key_event, event_consumed_by_egui);
+        }
+
+        if event_consumed_by_egui {
             return;
         }
 

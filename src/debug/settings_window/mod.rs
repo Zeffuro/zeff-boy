@@ -1,8 +1,9 @@
 mod audio;
 mod camera;
 mod controls;
-mod display;
 mod emulation;
+mod ui;
+mod video;
 
 use crate::debug::DebugWindowState;
 use crate::settings::Settings;
@@ -12,14 +13,16 @@ pub(crate) fn draw_settings_window(
     settings: &mut Settings,
     state: &mut DebugWindowState,
     open: &mut bool,
+    constrain_rect: egui::Rect,
 ) {
     egui::Window::new("Settings")
         .open(open)
         .default_width(400.0)
         .default_height(500.0)
         .resizable(true)
+        .constrain_to(constrain_rect)
         .show(ctx, |ui| {
-            const TABS: &[&str] = &["Emulation", "Controls", "Audio", "UI", "Camera"];
+            const TABS: &[&str] = &["Emulation", "Controls", "Audio", "Video", "UI", "Camera"];
 
             ui.horizontal(|ui| {
                 for (i, &label) in TABS.iter().enumerate() {
@@ -40,8 +43,9 @@ pub(crate) fn draw_settings_window(
                         0 => emulation::draw(ui, settings),
                         1 => controls::draw(ui, settings, state),
                         2 => audio::draw(ui, settings),
-                        3 => display::draw(ui, settings),
-                        4 => camera::draw(ui, settings, state),
+                        3 => video::draw(ui, settings),
+                        4 => ui::draw(ui, settings),
+                        5 => camera::draw(ui, settings, state),
                         _ => {}
                     }
 

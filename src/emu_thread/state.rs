@@ -55,7 +55,14 @@ impl EmuThread {
         backend: &mut EmuBackend,
         rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
     ) -> EmuResponse {
-        if let Some(rewind_frame) = rewind_buffer.pop() {
+        let current_state = Self::encode_current_state(backend).ok();
+        while let Some(rewind_frame) = rewind_buffer.pop() {
+            if let Some(current) = current_state.as_ref()
+                && rewind_frame.state_bytes == *current
+                && !rewind_buffer.is_empty()
+            {
+                continue;
+            }
             match backend.load_state_from_bytes(rewind_frame.state_bytes) {
                 Ok(()) => {
                     let fb = if rewind_frame.framebuffer.is_empty() {
@@ -63,16 +70,16 @@ impl EmuThread {
                     } else {
                         rewind_frame.framebuffer
                     };
-                    EmuResponse::RewindOk { framebuffer: fb }
+                    return EmuResponse::RewindOk { framebuffer: fb };
                 }
                 Err(err) => {
                     log::warn!("Rewind restore failed: {}", err);
-                    EmuResponse::RewindFailed("rewind restore failed".to_string())
+                    return EmuResponse::RewindFailed("rewind restore failed".to_string());
                 }
             }
-        } else {
-            EmuResponse::RewindFailed("no rewind data".to_string())
         }
+
+        EmuResponse::RewindFailed("no rewind data".to_string())
     }
 
     pub(crate) fn encode_current_state(backend: &EmuBackend) -> anyhow::Result<Vec<u8>> {

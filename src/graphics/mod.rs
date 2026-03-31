@@ -29,7 +29,6 @@ pub(crate) enum FrameError {
     Timeout,
     Outdated,
     Lost,
-    OutOfMemory,
 }
 
 pub(crate) struct RenderContext<'a> {
@@ -66,6 +65,7 @@ pub(crate) struct RenderResult {
     pub(crate) actions: Vec<MenuAction>,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) egui_wants_keyboard: bool,
+    pub(crate) game_view_focused: bool,
 }
 
 pub(crate) struct Graphics {
@@ -80,6 +80,8 @@ pub(crate) struct Graphics {
 }
 
 use crate::settings::VsyncMode;
+
+const EMPTY_STATE_MESSAGE: &str = "Drag & drop a ROM file, or use File > Open";
 
 impl Graphics {
     pub(crate) async fn new(event_loop: &ActiveEventLoop, vsync: VsyncMode) -> Result<Self> {
@@ -126,6 +128,7 @@ impl Graphics {
         self.gpu.set_present_mode(vsync);
     }
 
+
     pub(crate) fn handle_event(&mut self, event: &WindowEvent) -> bool {
         self.egui.handle_event(&self.window, event)
     }
@@ -152,23 +155,25 @@ impl Graphics {
         self.framebuffer
             .update_params(&self.gpu.queue, ctx.settings);
 
-        let frame = self
-            .gpu
-            .surface
-            .get_current_texture()
-            .map_err(|e| match e {
-                wgpu::SurfaceError::Timeout => FrameError::Timeout,
-                wgpu::SurfaceError::Outdated => FrameError::Outdated,
-                wgpu::SurfaceError::Lost => FrameError::Lost,
-                wgpu::SurfaceError::OutOfMemory => FrameError::OutOfMemory,
-                _ => FrameError::Lost,
-            })?;
+        let frame = match self.gpu.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Err(FrameError::Timeout);
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => return Err(FrameError::Outdated),
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(FrameError::Lost);
+            }
+        };
 
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.egui.begin_frame(&self.window);
+
+        self.egui.apply_theme(ctx.settings.ui.theme_preset);
 
         let base_ppp = self.window.scale_factor() as f32;
         let target_ppp = base_ppp * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);
@@ -213,12 +218,22 @@ impl Graphics {
             }
         }
 
+        let content_rect = self.egui.context().content_rect();
+        let menu_height = menu_actions.menu_bar_height_points;
+        let content_min = content_rect.min + egui::vec2(0.0, menu_height);
+        let content_size = egui::vec2(
+            content_rect.width(),
+            (content_rect.height() - menu_height).max(0.0),
+        );
+        let content_bounds = egui::Rect::from_min_size(content_min, content_size);
+
         if *ctx.show_settings_window {
             debug::draw_settings_window(
                 self.egui.context(),
                 ctx.settings,
                 ctx.debug_windows,
                 ctx.show_settings_window,
+                content_bounds,
             );
         }
 
@@ -288,11 +303,20 @@ impl Graphics {
                 aspect_ratio_mode: self.aspect_ratio_mode,
                 game_view_pixel_size: None,
             };
-            egui_dock::DockArea::new(ctx.dock_state)
-                .style(egui_dock::Style::from_egui(
-                    self.egui.context().style().as_ref(),
-                ))
-                .show(self.egui.context(), &mut tab_viewer);
+
+            egui::Area::new(egui::Id::new("dock_area"))
+                .fixed_pos(content_min)
+                .order(egui::Order::Background)
+                .show(self.egui.context(), |ui| {
+                    ui.set_min_size(content_size);
+                    egui_dock::DockArea::new(ctx.dock_state)
+                        .window_bounds(content_bounds)
+                        .secondary_button_on_modifier(false)
+                        .style(egui_dock::Style::from_egui(
+                            self.egui.context().global_style().as_ref(),
+                        ))
+                        .show_inside(ui, &mut tab_viewer);
+                });
             debug_actions = tab_viewer.actions;
 
             // Store the GameView pixel size for next frame's offscreen resize
@@ -301,11 +325,18 @@ impl Graphics {
             }
         } else {
             debug_actions = DebugUiActions::none();
-            egui::CentralPanel::default().show(self.egui.context(), |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("Drag & drop a ROM file, or use File > Open");
-                });
-            });
+            egui::Area::new(egui::Id::new("empty_state"))
+                .fixed_pos(content_min)
+                .show(self.egui.context(), |ui| {
+                    ui.set_min_size(content_size);
+                    ui.allocate_ui_with_layout(
+                        content_size,
+                        egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                        |ui| {
+                            ui.heading(EMPTY_STATE_MESSAGE);
+                        },
+                    );
+                    });
         }
 
         ctx.toast_manager.set_recording(ctx.is_recording_audio);
@@ -333,7 +364,23 @@ impl Graphics {
             self.egui.context().request_repaint();
         }
 
-        let egui_wants_keyboard = self.egui.context().wants_keyboard_input();
+        let egui_wants_keyboard = self.egui.context().egui_wants_keyboard_input();
+
+        // Determine if the GameView tab is the active focused tab in the dock.
+        // When a non-GameView debug tab is focused, joypad/tilt input should
+        // NOT reach the game so the user can interact with debug panels.
+        let game_view_focused = if has_any_emu_data {
+            ctx.dock_state
+                .focused_leaf()
+                .and_then(|path| ctx.dock_state.leaf(path).ok())
+                .and_then(|leaf| leaf.tabs.get(leaf.active.0))
+                .map_or(true, |tab| *tab == DebugTab::GameView)
+        } else {
+            // No emu data → no dock → treat as game focused (doesn't matter,
+            // there's nothing to send joypad input to anyway).
+            true
+        };
+
         let full_output = self.egui.end_frame(&self.window);
         let menu_bar_height =
             menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
@@ -382,6 +429,7 @@ impl Graphics {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             if render_framebuffer_directly
@@ -420,6 +468,7 @@ impl Graphics {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
             self.egui
@@ -435,6 +484,7 @@ impl Graphics {
             actions: forwarded_actions,
             debug_actions,
             egui_wants_keyboard,
+            game_view_focused,
         })
     }
 }

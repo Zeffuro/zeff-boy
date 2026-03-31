@@ -9,7 +9,7 @@ mod tilt_bindings;
 pub(crate) use enums::{
     build_gpu_params, default_color_correction_matrix, default_offscreen_scale,
     AudioRecordingFormat, ColorCorrection, EffectPreset, LeftStickMode, ScalingMode, ShaderParams,
-    ShaderPreset, TiltInputMode, VsyncMode,
+    ShaderPreset, TiltInputMode, UiThemePreset, VsyncMode,
 };
 pub(crate) use binding_actions::{
     BindingAction, InputBindingAction,
@@ -236,6 +236,8 @@ pub(crate) struct UiSettings {
     #[serde(skip)]
     pub(crate) ui_scale_needs_auto: bool,
     pub(crate) open_debug_tabs: Vec<String>,
+    #[serde(default)]
+    pub(crate) theme_preset: UiThemePreset,
 }
 
 impl Default for UiSettings {
@@ -247,6 +249,7 @@ impl Default for UiSettings {
             ui_scale: default_ui_scale(),
             ui_scale_needs_auto: false,
             open_debug_tabs: Vec::new(),
+            theme_preset: UiThemePreset::default(),
         }
     }
 }

@@ -67,56 +67,68 @@ pub(crate) fn draw_menu_bar(
     debug_windows: &mut DebugWindowState,
 ) -> MenuBarResult {
     let mut actions = Vec::new();
+    let menu_bar_height_points = egui::Area::new(egui::Id::new("menu_bar"))
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.set_width(ctx.content_rect().width());
+            egui::Frame::new()
+                .fill(ui.visuals().faint_bg_color)
+                .stroke(egui::Stroke::NONE)
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    egui::MenuBar::new().ui(ui, |ui| {
+                        ui.menu_button("File", |ui| {
+                            file_menu::draw(
+                                ui,
+                                &mut actions,
+                                settings,
+                                mb.slot_labels,
+                                mb.is_recording_audio,
+                                mb.is_recording_replay,
+                                mb.is_playing_replay,
+                            );
+                        });
 
-    egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                file_menu::draw(
-                    ui,
-                    &mut actions,
-                    settings,
-                    mb.slot_labels,
-                    mb.is_recording_audio,
-                    mb.is_recording_replay,
-                    mb.is_playing_replay,
-                );
-            });
+                        ui.menu_button("View", |ui| {
+                            view_menu::draw(ui, &mut actions, settings, mb.current_mode);
+                        });
 
-            ui.menu_button("View", |ui| {
-                view_menu::draw(ui, &mut actions, settings, mb.current_mode);
-            });
+                        ui.menu_button("Debug", |ui| {
+                            debug_menu::draw(ui, dock_state, debug_windows);
+                        });
 
-            ui.menu_button("Debug", |ui| {
-                debug_menu::draw(ui, dock_state, debug_windows);
-            });
+                        ui.menu_button("Help", |ui| {
+                            if ui.button("GitHub Repository").clicked() {
+                                if let Err(e) = open::that("https://github.com/zeffuro/zeff-boy") {
+                                    log::warn!("failed to open browser: {e}");
+                                }
+                                ui.close();
+                            }
+                            if ui.button("Open Settings Folder").clicked() {
+                                let dir = Settings::settings_dir();
+                                if let Err(e) = open::that(&dir) {
+                                    log::warn!("failed to open folder {}: {e}", dir.display());
+                                }
+                                ui.close();
+                            }
+                        });
 
-            ui.menu_button("Help", |ui| {
-                if ui.button("GitHub Repository").clicked() {
-                    if let Err(e) = open::that("https://github.com/zeffuro/zeff-boy") {
-                        log::warn!("failed to open browser: {e}");
-                    }
-                    ui.close();
-                }
-                if ui.button("Open Settings Folder").clicked() {
-                    let dir = Settings::settings_dir();
-                    if let Err(e) = open::that(&dir) {
-                        log::warn!("failed to open folder {}: {e}", dir.display());
-                    }
-                    ui.close();
-                }
-            });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            toolbar::draw(
+                                ui,
+                                &mut actions,
+                                settings,
+                                mb.is_paused,
+                                mb.speed_mode_label,
+                            );
+                        });
+                    });
+                });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                toolbar::draw(
-                    ui,
-                    &mut actions,
-                    settings,
-                    mb.is_paused,
-                    mb.speed_mode_label,
-                );
-            });
-        });
-    });
+            ui.min_rect().height()
+        })
+        .inner;
 
     actions.push(MenuAction::SetLayerToggles(
         debug_windows.layer_enable_bg,
@@ -126,7 +138,7 @@ pub(crate) fn draw_menu_bar(
 
     MenuBarResult {
         actions,
-        menu_bar_height_points: ctx.available_rect().min.y.max(0.0),
+        menu_bar_height_points,
     }
 }
 

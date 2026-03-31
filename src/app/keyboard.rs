@@ -7,7 +7,11 @@ use winit::{
 };
 
 impl App {
-    pub(super) fn handle_keyboard_input(&mut self, key_event: &KeyEvent) {
+    pub(super) fn handle_keyboard_input(
+        &mut self,
+        key_event: &KeyEvent,
+        event_consumed_by_egui: bool,
+    ) {
         let PhysicalKey::Code(key_code) = key_event.physical_key else {
             return;
         };
@@ -22,6 +26,13 @@ impl App {
             self.modifiers.alt = key_event.state == ElementState::Pressed;
         }
 
+        let egui_has_kb_focus = self.egui_wants_keyboard;
+
+        if egui_has_kb_focus && event_consumed_by_egui {
+            self.handle_consumed_keyboard_release(key_event, key_code);
+            return;
+        }
+
         if self.handle_rebinding_key(key_event, key_code) {
             return;
         }
@@ -30,12 +41,43 @@ impl App {
             return;
         }
 
-        if self.egui_wants_keyboard {
+        if egui_has_kb_focus {
+            return;
+        }
+
+        if !self.game_view_focused {
             return;
         }
 
         self.handle_joypad_key(key_event, key_code);
         self.handle_tilt_key(key_event, key_code);
+    }
+
+    fn handle_consumed_keyboard_release(&mut self, key_event: &KeyEvent, key_code: KeyCode) {
+        if key_event.state != ElementState::Released {
+            return;
+        }
+
+        let speedup_code = self.settings.speedup_key_code();
+        if key_code == speedup_code || key_code == KeyCode::Backquote {
+            self.fast_forward_held = false;
+        }
+
+        if key_code == KeyCode::ShiftLeft {
+            self.turbo_held = false;
+        }
+
+        if key_code == self.settings.rewind.key_code() {
+            self.rewind.held = false;
+        }
+
+        if let Some(gb_key) = self.map_key(key_code) {
+            self.host_input.set_keyboard(gb_key, false);
+        }
+
+        if let Some(tilt_key) = self.map_tilt_key(key_code) {
+            self.host_input.set_tilt_keyboard(tilt_key, false);
+        }
     }
 
     fn handle_rebinding_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {

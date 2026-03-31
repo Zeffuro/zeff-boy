@@ -245,13 +245,13 @@ impl App {
                     self.debug_windows.rebinding_rewind = false;
                 }
                 self.egui_wants_keyboard = result.egui_wants_keyboard;
+                self.game_view_focused = result.game_view_focused;
             }
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 let size = gfx.size();
                 gfx.resize(size.width, size.height);
             }
             Err(graphics::FrameError::Timeout) => {}
-            Err(graphics::FrameError::OutOfMemory) => self.exit_requested = true,
         }
 
         if settings_was_open && !self.show_settings_window {

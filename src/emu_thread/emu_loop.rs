@@ -128,6 +128,7 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state(slot);
+                let loaded = result.is_ok();
                 let path_label = result.as_ref().ok().cloned().unwrap_or_default();
                 let resp = EmuThread::respond_load_state(
                     &mut self.backend,
@@ -136,6 +137,9 @@ impl EmuLoop {
                     buttons_pressed,
                     dpad_pressed,
                 );
+                if loaded {
+                    self.rewind_buffer.clear();
+                }
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -156,6 +160,7 @@ impl EmuLoop {
             } => {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
+                let loaded = result.is_ok();
                 let resp = EmuThread::respond_load_state(
                     &mut self.backend,
                     result,
@@ -163,6 +168,9 @@ impl EmuLoop {
                     buttons_pressed,
                     dpad_pressed,
                 );
+                if loaded {
+                    self.rewind_buffer.clear();
+                }
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -188,6 +196,7 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state_from_bytes(state_bytes);
+                let loaded = result.is_ok();
                 let resp = EmuThread::respond_load_state(
                     &mut self.backend,
                     result,
@@ -195,6 +204,9 @@ impl EmuLoop {
                     buttons_pressed,
                     dpad_pressed,
                 );
+                if loaded {
+                    self.rewind_buffer.clear();
+                }
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -249,6 +261,7 @@ impl EmuLoop {
             if path.exists() {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
+                let loaded = result.is_ok();
                 let resp = EmuThread::respond_load_state(
                     &mut self.backend,
                     result,
@@ -256,6 +269,9 @@ impl EmuLoop {
                     buttons_pressed,
                     dpad_pressed,
                 );
+                if loaded {
+                    self.rewind_buffer.clear();
+                }
                 self.send_resp(resp)
             } else {
                 self.send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string()))

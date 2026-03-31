@@ -20,7 +20,6 @@ pub(crate) fn collect_nes_snapshot(
 ) -> super::UiFrameData {
     let mut data = super::empty_frame_data();
 
-    emu.set_apu_debug_collection_enabled(snapshot.show_apu_viewer);
     emu.set_opcode_log_enabled(snapshot.want_debug_info);
 
     if snapshot.want_perf_info {

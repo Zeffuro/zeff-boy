@@ -134,8 +134,8 @@ fn create_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("screen pipeline layout"),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(bgl)],
+        immediate_size: 0,
     });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -160,8 +160,8 @@ fn create_pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
         cache: None,
-        multiview: None,
     })
 }
 
@@ -729,6 +729,7 @@ impl FramebufferRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 pass.set_viewport(
                     0.0,
@@ -758,6 +759,7 @@ impl FramebufferRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 pass.set_viewport(
                     0.0,
@@ -787,6 +789,7 @@ impl FramebufferRenderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_viewport(
                 0.0,
@@ -817,6 +820,7 @@ impl FramebufferRenderer {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_viewport(
             0.0,
