@@ -1,9 +1,9 @@
 use crate::hardware::types::CartridgeType;
 use crate::hardware::types::RamSize;
 use crate::hardware::types::RomSize;
+use crate::hardware::types::header_offsets as header_constants;
 use crate::hardware::types::new_licensee_name;
 use crate::hardware::types::old_licensee_name;
-use crate::hardware::types::header_offsets as header_constants;
 use anyhow::{Result, anyhow};
 
 #[derive(Debug)]

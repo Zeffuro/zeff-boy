@@ -32,10 +32,11 @@ pub(super) fn draw_rom_viewer_content(
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_hex_u32(&state.jump_input) {
-                state.view_start = (addr & !0xF).min(max_start);
-                state.jump_input = format!("{:06X}", state.view_start);
-            }
+            && let Some(addr) = parse_hex_u32(&state.jump_input)
+        {
+            state.view_start = (addr & !0xF).min(max_start);
+            state.jump_input = format!("{:06X}", state.view_start);
+        }
 
         if !input_has_focus {
             state.jump_input = format!("{:06X}", state.view_start);
@@ -59,7 +60,10 @@ pub(super) fn draw_rom_viewer_content(
             state.view_start = state.view_start.saturating_sub(ROM_BANK_SIZE);
         }
         if ui.button("+Bank").clicked() {
-            state.view_start = state.view_start.saturating_add(ROM_BANK_SIZE).min(max_start);
+            state.view_start = state
+                .view_start
+                .saturating_add(ROM_BANK_SIZE)
+                .min(max_start);
         }
     });
 

@@ -145,7 +145,9 @@ impl Mbc7 {
             return;
         }
 
-        if reg == REG_EEPROM { self.write_eeprom(value) }
+        if reg == REG_EEPROM {
+            self.write_eeprom(value)
+        }
     }
 
     pub fn set_host_tilt(&mut self, x: f32, y: f32) {

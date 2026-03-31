@@ -66,7 +66,6 @@ pub const CGB_OCPD: u16 = 0xFF6B;
 
 pub const CGB_SVBK: u16 = 0xFF70;
 
-
 pub const INT_VBLANK: u16 = 0x0040;
 pub const INT_STAT: u16 = 0x0048;
 pub const INT_TIMER: u16 = 0x0050;

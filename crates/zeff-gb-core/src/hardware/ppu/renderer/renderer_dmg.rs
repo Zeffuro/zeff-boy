@@ -1,9 +1,6 @@
 use super::{SpriteRenderContext, render_sprites};
-use crate::hardware::ppu::palette::apply_palette;
-use crate::hardware::ppu::{
-    Lcdc, PPU, SCREEN_H, SCREEN_W,
-    decode_tile_pixel, tile_data_address,
-};
+use crate::hardware::ppu::palette::apply_dmg_palette;
+use crate::hardware::ppu::{Lcdc, PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
 
 fn render_bg_pixel(
     vram: &[u8],
@@ -140,11 +137,10 @@ pub fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
 
         *bg_color_id = color_id;
 
-        let rgba = apply_palette(ppu.bgp, color_id);
+        let rgba = apply_dmg_palette(ppu.dmg_palette_preset, ppu.bgp, color_id);
         let offset = (ly * SCREEN_W + x) * 4;
         ppu.framebuffer[offset..offset + 4].copy_from_slice(&rgba);
     }
-
 
     if ppu.debug_flags.sprites {
         render_sprites(SpriteRenderContext {
@@ -159,6 +155,7 @@ pub fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             cgb_obj_palette_ram: None,
             bg_color_ids: Some(&bg_color_ids),
             cgb_bg_priority_flags: None,
+            dmg_palette_preset: ppu.dmg_palette_preset,
         });
     }
 

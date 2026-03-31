@@ -8,8 +8,11 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.add_space(4.0);
 
     ui.checkbox(&mut settings.ui.show_fps, "Show FPS in debug panel");
-    ui.checkbox(&mut settings.ui.enable_memory_editing, "Enable memory editing")
-        .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
+    ui.checkbox(
+        &mut settings.ui.enable_memory_editing,
+        "Enable memory editing",
+    )
+    .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
     ui.checkbox(&mut settings.ui.autohide_menu_bar, "Autohide menu bar")
         .on_hover_text(
             "Hide the menu bar when the cursor moves away from the top edge. \
@@ -43,4 +46,3 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     .response
     .on_hover_text("Scale all UI elements (menu bar, debug panels, toasts).");
 }
-

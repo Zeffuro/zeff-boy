@@ -650,4 +650,3 @@ fn cgb_key1_write_only_affects_bit_0() {
     assert_eq!(bus.key1 & 0x7E, 0x7E);
     assert_eq!(bus.key1 & 0x80, original_key1 & 0x80);
 }
-

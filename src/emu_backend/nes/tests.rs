@@ -54,4 +54,3 @@ fn nes_no_inputs() {
 fn nes_combined_a_and_right() {
     assert_eq!(map_host_to_nes_byte(0x01, 0x01), 0x81);
 }
-

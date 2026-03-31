@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use zeff_gb_core::emulator::Emulator;
 
-fn detect_and_extract_rom(
-    path: &Path,
-) -> Result<(PathBuf, Option<Vec<u8>>, ActiveSystem), String> {
+fn detect_and_extract_rom(path: &Path) -> Result<(PathBuf, Option<Vec<u8>>, ActiveSystem), String> {
     let is_zip = path
         .extension()
         .and_then(|e| e.to_str())
@@ -59,8 +57,8 @@ impl App {
                     Some(data) => data,
                     None => std::fs::read(path).context("Failed to read GB ROM")?,
                 };
-                Emulator::from_rom_data(&rom_data, self.settings.emulation.hardware_mode_preference).map(
-                    |mut emu| {
+                Emulator::from_rom_data(&rom_data, self.settings.emulation.hardware_mode_preference)
+                    .map(|mut emu| {
                         if let Some(audio) = &self.audio {
                             emu.set_sample_rate(audio.sample_rate());
                         }
@@ -77,8 +75,7 @@ impl App {
                             log::info!("Loaded battery save from {}", sram_path);
                         }
                         EmuBackend::from_gb(emu, rom_path.to_path_buf())
-                    },
-                )
+                    })
             }
             ActiveSystem::Nes => {
                 let rom_data = match preloaded_data {
@@ -111,12 +108,7 @@ impl App {
         }
     }
 
-    fn setup_cheats_for_rom(
-        &mut self,
-        system: ActiveSystem,
-        path: &Path,
-        backend: &EmuBackend,
-    ) {
+    fn setup_cheats_for_rom(&mut self, system: ActiveSystem, path: &Path, backend: &EmuBackend) {
         if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
             crate::cheats::save_game_cheats(
                 self.debug_windows.cheat.active_system,
@@ -131,8 +123,7 @@ impl App {
 
         if let Some(gb) = backend.gb() {
             let rom_header_title = gb.emu.header().title.clone();
-            let is_gbc =
-                gb.emu.header().is_cgb_compatible || gb.emu.header().is_cgb_exclusive;
+            let is_gbc = gb.emu.header().is_cgb_compatible || gb.emu.header().is_cgb_exclusive;
             let rom_crc32 = crc32fast::hash(gb.emu.cartridge_rom_bytes());
             let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
             let search_hints = crate::libretro_metadata::build_cheat_search_hints(
@@ -156,11 +147,8 @@ impl App {
                 .cloned()
                 .unwrap_or_else(|| rom_header_title.clone());
 
-            let (user, libretro) = crate::cheats::load_game_cheats(
-                system,
-                Some(&rom_header_title),
-                Some(rom_crc32),
-            );
+            let (user, libretro) =
+                crate::cheats::load_game_cheats(system, Some(&rom_header_title), Some(rom_crc32));
             self.debug_windows.cheat.user_codes = user;
             self.debug_windows.cheat.libretro_codes = libretro;
         } else if system == ActiveSystem::Nes {
@@ -179,11 +167,8 @@ impl App {
             self.debug_windows.cheat.libretro_search_hints.clear();
             self.debug_windows.cheat.libretro_search.clear();
 
-            let (user, libretro) = crate::cheats::load_game_cheats(
-                system,
-                Some(&rom_title),
-                rom_crc32,
-            );
+            let (user, libretro) =
+                crate::cheats::load_game_cheats(system, Some(&rom_title), rom_crc32);
             self.debug_windows.cheat.user_codes = user;
             self.debug_windows.cheat.libretro_codes = libretro;
         } else {
@@ -377,4 +362,3 @@ impl App {
         self.load_rom(&path);
     }
 }
-

@@ -19,4 +19,3 @@ pub(crate) enum TiltInputMode {
     Mouse,
     Auto,
 }
-

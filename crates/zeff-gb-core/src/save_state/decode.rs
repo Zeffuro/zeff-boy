@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::{
-    SAVE_STATE_DECODE_STACK_SIZE, SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC,
-    SAVE_STATE_VERSION, SaveState, StateReader, StateReaderGbExt,
+    SAVE_STATE_DECODE_STACK_SIZE, SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION,
+    SaveState, StateReader, StateReaderGbExt,
 };
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
@@ -92,4 +92,3 @@ pub fn validate_compatibility(state: &SaveState, expected_rom_hash: [u8; 32]) ->
 
     Ok(())
 }
-

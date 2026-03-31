@@ -1,4 +1,4 @@
-use super::{PALETTE_COLORS, PPU, apply_palette};
+use super::{PPU, apply_dmg_palette, dmg_palette_colors};
 
 impl PPU {
     pub fn set_sgb_mode(&mut self, enabled: bool) {
@@ -21,7 +21,7 @@ impl PPU {
 
     pub fn sgb_dmg_rgba(&self, dmg_palette: u8, color_id: u8) -> [u8; 4] {
         if !self.sgb_enabled {
-            return apply_palette(dmg_palette, color_id);
+            return apply_dmg_palette(self.dmg_palette_preset, dmg_palette, color_id);
         }
         let shade = ((dmg_palette >> (color_id * 2)) & 0x03) as usize;
         rgb555_to_rgba(self.sgb_palettes[self.sgb_active_palette as usize][shade])
@@ -31,7 +31,10 @@ impl PPU {
         if !self.sgb_enabled {
             return rgba;
         }
-        for (shade, dmg_color) in PALETTE_COLORS.iter().enumerate() {
+        for (shade, dmg_color) in dmg_palette_colors(self.dmg_palette_preset)
+            .iter()
+            .enumerate()
+        {
             if *dmg_color == rgba {
                 return rgb555_to_rgba(self.sgb_palettes[self.sgb_active_palette as usize][shade]);
             }

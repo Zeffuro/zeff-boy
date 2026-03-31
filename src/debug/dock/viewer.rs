@@ -15,12 +15,12 @@ use super::super::rom_info::draw_rom_info_content;
 use super::super::rom_viewer::draw_rom_viewer_content;
 use super::super::tile_viewer::draw_tile_viewer_content;
 use super::super::tilemap_viewer::draw_tilemap_viewer_content;
+use super::super::types::{
+    ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, InputDebugInfo, OamDebugInfo,
+    PaletteDebugInfo, PerfInfo, RomDebugInfo,
+};
 use super::super::ui::draw_cpu_debug_content;
 use super::super::{DebugUiActions, DebugWindowState, DisassemblyView};
-use super::super::types::{
-    ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, InputDebugInfo,
-    OamDebugInfo, PaletteDebugInfo, PerfInfo, RomDebugInfo,
-};
 use crate::graphics::AspectRatioMode;
 
 use super::tabs::DebugTab;
@@ -109,9 +109,10 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::ApuViewer => {
                 if let Some(data) = self.apu_debug
-                    && let Some(mutes) = draw_apu_viewer_content(ui, data) {
-                        self.actions.apu_channel_mutes = Some(mutes);
-                    }
+                    && let Some(mutes) = draw_apu_viewer_content(ui, data)
+                {
+                    self.actions.apu_channel_mutes = Some(mutes);
+                }
             }
             DebugTab::RomInfo => {
                 if let Some(info) = self.rom_debug {
@@ -138,33 +139,16 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::TileViewer => {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
-                    draw_tile_viewer_content(
-                        ui,
-                        data,
-                        data.ppu.bgp,
-                        &mut self.window_state.tiles,
-                    );
+                    draw_tile_viewer_content(ui, data, data.ppu.bgp, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.graphics_data {
-                    draw_nes_tile_viewer_content(
-                        ui,
-                        data,
-                        &mut self.window_state.tiles,
-                    );
+                    draw_nes_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
             }
             DebugTab::TilemapViewer => {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
-                    draw_tilemap_viewer_content(
-                        ui,
-                        data,
-                        &mut self.window_state.tilemap,
-                    );
+                    draw_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.graphics_data {
-                    draw_nes_tilemap_viewer_content(
-                        ui,
-                        data,
-                        &mut self.window_state.tilemap,
-                    );
+                    draw_nes_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 }
             }
             DebugTab::OamViewer => {
@@ -227,4 +211,3 @@ impl TabViewer for DebugTabViewer<'_> {
         }
     }
 }
-

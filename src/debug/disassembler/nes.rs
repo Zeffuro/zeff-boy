@@ -23,8 +23,13 @@ pub(crate) fn disassemble_around(
     lines_before_pc: usize,
     total_lines: usize,
 ) -> Vec<DisassembledLine> {
-    let start = super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
-    super::disassemble_at(|addr| decode_instruction(&bus_read, addr), start, total_lines)
+    let start =
+        super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
+    super::disassemble_at(
+        |addr| decode_instruction(&bus_read, addr),
+        start,
+        total_lines,
+    )
 }
 
 fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
@@ -339,8 +344,9 @@ fn opcode_info(op: u8) -> Option<(&'static str, NesAddrMode)> {
         0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => ("*NOP", AbsX),
 
         // KIL/JAM: halt CPU
-        0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 |
-        0x92 | 0xB2 | 0xD2 | 0xF2 => ("*KIL", Imp),
+        0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
+            ("*KIL", Imp)
+        }
 
         _ => return None,
     })

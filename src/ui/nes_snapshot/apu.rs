@@ -13,7 +13,11 @@ pub(super) fn nes_apu_snapshot(
     let master_lines = vec![
         format!(
             "Frame mode:{}  IRQ inhibit:{}  Frame IRQ:{}",
-            if apu.five_step_mode { "5-step" } else { "4-step" },
+            if apu.five_step_mode {
+                "5-step"
+            } else {
+                "4-step"
+            },
             apu.irq_inhibit,
             apu.frame_irq
         ),
@@ -84,4 +88,3 @@ pub(super) fn nes_apu_snapshot(
         extra_sections: Vec::new(),
     })
 }
-

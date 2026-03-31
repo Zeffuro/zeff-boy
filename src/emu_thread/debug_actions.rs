@@ -3,7 +3,10 @@ use crate::debug::DebugUiActions;
 use super::EmuThread;
 
 impl EmuThread {
-    pub(crate) fn apply_debug_actions(emu: &mut zeff_gb_core::emulator::Emulator, actions: &DebugUiActions) {
+    pub(crate) fn apply_debug_actions(
+        emu: &mut zeff_gb_core::emulator::Emulator,
+        actions: &DebugUiActions,
+    ) {
         if let Some(addr) = actions.add_breakpoint {
             emu.add_breakpoint(addr);
         }
@@ -24,7 +27,10 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn apply_nes_debug_actions(emu: &mut zeff_nes_core::emulator::Emulator, actions: &DebugUiActions) {
+    pub(crate) fn apply_nes_debug_actions(
+        emu: &mut zeff_nes_core::emulator::Emulator,
+        actions: &DebugUiActions,
+    ) {
         if let Some(addr) = actions.add_breakpoint {
             emu.add_breakpoint(addr);
         }
@@ -42,4 +48,3 @@ impl EmuThread {
         }
     }
 }
-

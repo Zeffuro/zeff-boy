@@ -47,4 +47,3 @@ fn threshold_triplet_falls_back_when_uninitialized() {
     let regs = [0u8; 48];
     assert_eq!(threshold_triplet(&regs, 0), (64, 128, 192));
 }
-

@@ -40,11 +40,13 @@ impl fmt::Debug for Emulator {
             .field("hardware_mode_preference", &self.hardware_mode_preference)
             .field("cycle_count", &self.cycle_count)
             .field("last_opcode", &format_args!("{:#04X}", self.last_opcode))
-            .field("last_opcode_pc", &format_args!("{:#06X}", self.last_opcode_pc))
+            .field(
+                "last_opcode_pc",
+                &format_args!("{:#06X}", self.last_opcode_pc),
+            )
             .field("opcode_log", &self.opcode_log)
             .field("debug", &self.debug)
             .field("title", &self.header.title)
             .finish_non_exhaustive()
     }
 }
-

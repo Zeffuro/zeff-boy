@@ -33,11 +33,7 @@ pub(crate) fn slot_path(
     Ok(path)
 }
 
-pub(crate) fn auto_save_path(
-    system_subdir: &str,
-    state_ext: &str,
-    rom_hash: [u8; 32],
-) -> PathBuf {
+pub(crate) fn auto_save_path(system_subdir: &str, state_ext: &str, rom_hash: [u8; 32]) -> PathBuf {
     let hash_hex = hex_hash(&rom_hash);
     let mut path = system_save_dir(system_subdir);
     path.push(format!("{hash_hex}_auto.{state_ext}"));
@@ -135,4 +131,3 @@ pub(crate) fn try_load_battery_sram(
     load_fn(&bytes)?;
     Ok(Some(save_path.display().to_string()))
 }
-

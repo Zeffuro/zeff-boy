@@ -1,4 +1,4 @@
-﻿use super::CartridgeDebugInfo;
+use super::CartridgeDebugInfo;
 use super::{
     MAX_SAVE_RAM, ROM_BANK_SIZE, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram,
     write_banked_ram,
@@ -142,7 +142,5 @@ impl Mbc1 {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
-

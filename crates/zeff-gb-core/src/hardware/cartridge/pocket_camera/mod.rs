@@ -1,4 +1,4 @@
-﻿use super::CartridgeDebugInfo;
+use super::CartridgeDebugInfo;
 use super::{
     MAX_SAVE_RAM, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram, read_banked_rom,
     read_fixed_rom, write_banked_ram,
@@ -107,7 +107,13 @@ impl PocketCamera {
     }
 
     pub fn debug_info(&self) -> CartridgeDebugInfo {
-        build_debug_info("PocketCamera", self.rom_bank, self.ram_bank, self.ram_enable, None)
+        build_debug_info(
+            "PocketCamera",
+            self.rom_bank,
+            self.ram_bank,
+            self.ram_enable,
+            None,
+        )
     }
 
     pub fn restore_rom_bytes(&mut self, rom: Vec<u8>) {
@@ -166,7 +172,5 @@ impl PocketCamera {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
-

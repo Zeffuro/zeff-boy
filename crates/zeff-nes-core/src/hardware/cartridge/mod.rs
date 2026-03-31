@@ -4,10 +4,10 @@ pub mod mappers;
 
 use anyhow::{Result, bail};
 
+use dispatch::MapperImpl;
 pub use header::{
     ChrFetchKind, ConsoleType, Mirroring, NesMapper, RomFormat, RomHeader, TimingMode,
 };
-use dispatch::MapperImpl;
 
 const HEADER_SIZE: usize = 16;
 const TRAINER_SIZE: usize = 512;
@@ -58,7 +58,9 @@ impl Cartridge {
         header.display_info();
 
         if header.prg_rom_size == 0 {
-            bail!("ROM declares 0 bytes of PRG ROM, which is invalid:every NES ROM needs at least one PRG bank");
+            bail!(
+                "ROM declares 0 bytes of PRG ROM, which is invalid:every NES ROM needs at least one PRG bank"
+            );
         }
 
         let trainer_offset = if header.has_trainer { TRAINER_SIZE } else { 0 };
@@ -85,11 +87,21 @@ impl Cartridge {
 
         let mapper_kind = header.mapper_kind();
         let mapper = match mapper_kind {
-            NesMapper::Nrom => MapperImpl::Nrom(mappers::Nrom::new(prg_rom, chr_rom, header.mirroring)),
-            NesMapper::SxRom => MapperImpl::Mmc1(mappers::Mmc1::new(prg_rom, chr_rom, header.mirroring)),
-            NesMapper::UxRom => MapperImpl::Uxrom(mappers::Uxrom::new(prg_rom, chr_rom, header.mirroring)),
-            NesMapper::CnRom => MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring)),
-            NesMapper::TxRom => MapperImpl::Mmc3(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::Nrom => {
+                MapperImpl::Nrom(mappers::Nrom::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::SxRom => {
+                MapperImpl::Mmc1(mappers::Mmc1::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::UxRom => {
+                MapperImpl::Uxrom(mappers::Uxrom::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::CnRom => {
+                MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::TxRom => {
+                MapperImpl::Mmc3(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring))
+            }
             NesMapper::ExRom => MapperImpl::Mmc5(mappers::Mmc5::new(
                 prg_rom,
                 chr_rom,
@@ -97,7 +109,9 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery || header.prg_nvram_size > 0,
             )),
-            NesMapper::AxRom => MapperImpl::Axrom(mappers::Axrom::new(prg_rom, chr_rom, header.mirroring)),
+            NesMapper::AxRom => {
+                MapperImpl::Axrom(mappers::Axrom::new(prg_rom, chr_rom, header.mirroring))
+            }
             NesMapper::BandaiEprom24C02 => MapperImpl::BandaiFcg16(mappers::BandaiFcg16::new(
                 prg_rom,
                 chr_rom,
@@ -111,7 +125,13 @@ impl Cartridge {
                     2 => (0x40, 0x80),
                     _ => (0x02 | 0x40, 0x04 | 0x80),
                 };
-                MapperImpl::Vrc4(mappers::Vrc4::new(prg_rom, chr_rom, header.mirroring, a0, a1))
+                MapperImpl::Vrc4(mappers::Vrc4::new(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    a0,
+                    a1,
+                ))
             }
             NesMapper::Fme7 => MapperImpl::Fme7(mappers::Fme7::new(
                 prg_rom,
@@ -120,8 +140,13 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery,
             )),
-            NesMapper::Action52 => MapperImpl::Action52(mappers::Action52::new(prg_rom, chr_rom, header.mirroring)),
-            _ => bail!("Unsupported mapper: {}. This mapper is not yet implemented", header.mapper_label()),
+            NesMapper::Action52 => {
+                MapperImpl::Action52(mappers::Action52::new(prg_rom, chr_rom, header.mirroring))
+            }
+            _ => bail!(
+                "Unsupported mapper: {}. This mapper is not yet implemented",
+                header.mapper_label()
+            ),
         };
 
         Ok(Self { header, mapper })

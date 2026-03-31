@@ -17,4 +17,3 @@ pub(crate) enum InputBindingAction {
     Joypad(BindingAction),
     Tilt(TiltBindingAction),
 }
-

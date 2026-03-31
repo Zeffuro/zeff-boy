@@ -141,4 +141,3 @@ pub(crate) fn draw_menu_bar(
         menu_bar_height_points,
     }
 }
-

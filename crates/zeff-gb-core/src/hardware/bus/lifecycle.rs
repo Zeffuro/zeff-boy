@@ -7,11 +7,7 @@ use crate::hardware::types::hardware_mode::HardwareMode;
 use anyhow::Result;
 
 impl Bus {
-    pub fn new(
-        rom: Vec<u8>,
-        header: &RomHeader,
-        hardware_mode: HardwareMode,
-    ) -> Result<Self> {
+    pub fn new(rom: Vec<u8>, header: &RomHeader, hardware_mode: HardwareMode) -> Result<Self> {
         let cartridge = Cartridge::new(rom, header);
 
         let mut bus = Self {

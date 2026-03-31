@@ -199,8 +199,7 @@ impl Mmc5 {
 
     fn map_prg_write(&mut self, addr: u16, val: u8) {
         match self.prg_mode & 0x03 {
-            0 => {
-            }
+            0 => {}
             1 => {
                 if addr < 0xC000 {
                     let reg = self.prg_banks[1];
@@ -237,8 +236,7 @@ impl Mmc5 {
     fn chr_bank_index(&self, addr: u16, kind: ChrFetchKind) -> usize {
         if self.exram_mode == 1 && matches!(kind, ChrFetchKind::Background) {
             let exram_byte = self.exram_tile_byte.get();
-            let bank_4k = ((self.upper_chr_bank_bits as usize) << 6)
-                | (exram_byte as usize & 0x3F);
+            let bank_4k = ((self.upper_chr_bank_bits as usize) << 6) | (exram_byte as usize & 0x3F);
             let sub = ((addr as usize) >> 10) & 0x03;
             return bank_4k * 4 + sub;
         }
@@ -275,7 +273,11 @@ impl Mmc5 {
             }
             _ => {
                 let slot = (addr >> 10) & slot_mask;
-                let base = if matches!(kind, ChrFetchKind::Sprite) { 0 } else { 8 };
+                let base = if matches!(kind, ChrFetchKind::Sprite) {
+                    0
+                } else {
+                    8
+                };
                 self.chr_banks[base + slot] as usize
             }
         }
@@ -464,10 +466,7 @@ impl Mapper for Mmc5 {
                 let new_sl = sl + 1;
                 self.current_scanline.set(new_sl);
                 self.in_frame.set(new_sl < 240);
-                if new_sl < 240
-                    && self.irq_enabled
-                    && new_sl as u8 == self.irq_line_compare
-                {
+                if new_sl < 240 && self.irq_enabled && new_sl as u8 == self.irq_line_compare {
                     self.irq_pending.set(true);
                 }
             }
@@ -651,7 +650,11 @@ impl Mapper for Mmc5 {
 
         let chr = r.read_vec(1024 * 1024)?;
         if chr.len() != self.chr.len() {
-            anyhow::bail!("MMC5 CHR size mismatch: expected {}, got {}", self.chr.len(), chr.len());
+            anyhow::bail!(
+                "MMC5 CHR size mismatch: expected {}, got {}",
+                self.chr.len(),
+                chr.len()
+            );
         }
         self.chr = chr;
 

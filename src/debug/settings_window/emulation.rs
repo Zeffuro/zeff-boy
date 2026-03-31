@@ -1,6 +1,6 @@
-use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use crate::debug::ui_helpers::{EnumLabel, enum_combo_box};
 use crate::settings::Settings;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 impl EnumLabel for HardwareModePreference {
     fn label(self) -> &'static str {
@@ -18,7 +18,11 @@ impl EnumLabel for HardwareModePreference {
 
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.heading("Hardware");
-    enum_combo_box(ui, "Hardware mode", &mut settings.emulation.hardware_mode_preference);
+    enum_combo_box(
+        ui,
+        "Hardware mode",
+        &mut settings.emulation.hardware_mode_preference,
+    );
 
     ui.separator();
     ui.heading("Speed");
@@ -30,18 +34,24 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         egui::Slider::new(&mut settings.emulation.uncapped_frames_per_tick, 1..=240)
             .text("Uncapped frames/tick"),
     );
-    ui.checkbox(&mut settings.emulation.uncapped_speed, "Start in uncapped mode");
+    ui.checkbox(
+        &mut settings.emulation.uncapped_speed,
+        "Start in uncapped mode",
+    );
     ui.checkbox(&mut settings.emulation.frame_skip, "Frame skip when behind")
         .on_hover_text(
             "When enabled, skip emulation frames to stay in real-time if the \
              host can't keep up. When disabled, the emulator catches up \
              gradually (more accurate, may drift behind).",
         );
-    ui.checkbox(&mut settings.emulation.auto_save_state, "Auto save/load state")
-        .on_hover_text(
-            "Automatically save emulator state when closing and \
+    ui.checkbox(
+        &mut settings.emulation.auto_save_state,
+        "Auto save/load state",
+    )
+    .on_hover_text(
+        "Automatically save emulator state when closing and \
              restore it when loading the same ROM.",
-        );
+    );
 
     ui.separator();
     ui.heading("Rewind");

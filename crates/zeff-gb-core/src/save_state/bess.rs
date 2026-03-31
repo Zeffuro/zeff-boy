@@ -280,8 +280,18 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
         HardwareMode::CGBNormal | HardwareMode::CGBDouble
     );
     if is_cgb {
-        copy_buffer(bytes, bg_pal_offset, bg_pal_size, bus.ppu_bg_palette_ram_mut());
-        copy_buffer(bytes, obj_pal_offset, obj_pal_size, bus.ppu_obj_palette_ram_mut());
+        copy_buffer(
+            bytes,
+            bg_pal_offset,
+            bg_pal_size,
+            bus.ppu_bg_palette_ram_mut(),
+        );
+        copy_buffer(
+            bytes,
+            obj_pal_offset,
+            obj_pal_size,
+            bus.ppu_obj_palette_ram_mut(),
+        );
     }
 
     if let Some(mbc) = mbc_data {
@@ -419,7 +429,6 @@ fn apply_bess_io_registers(bus: &mut Bus, io: &[u8], mode: HardwareMode) {
         bus.hdma3 = io[0x53];
         bus.hdma4 = io[0x54];
         bus.hdma5 = io[0x55];
-
 
         let svbk = io[0x70] & 0x07;
         bus.wram_bank = if svbk == 0 { 1 } else { svbk };

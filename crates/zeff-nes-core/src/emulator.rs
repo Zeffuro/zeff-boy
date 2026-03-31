@@ -117,6 +117,18 @@ impl Emulator {
         self.bus.apu.set_debug_collection_enabled(enabled);
     }
 
+    pub fn set_palette_mode(&mut self, mode: crate::hardware::ppu::NesPaletteMode) {
+        self.bus.set_palette_mode(mode);
+    }
+
+    pub fn palette_mode(&self) -> crate::hardware::ppu::NesPaletteMode {
+        self.bus.palette_mode()
+    }
+
+    pub fn palette_color_rgba(&self, index: u8) -> [u8; 4] {
+        self.bus.palette_color_rgba(index)
+    }
+
     pub fn apu_channel_snapshot(&self) -> crate::hardware::apu::ApuChannelSnapshot {
         self.bus.apu.channel_snapshot()
     }

@@ -21,7 +21,10 @@ pub fn decode_nes_game_genie(code: &str) -> Option<NesGameGeniePatch> {
         .filter(|c| !c.is_whitespace() && *c != '-')
         .collect();
 
-    let n: Vec<u8> = cleaned.chars().map(gg_letter_to_value).collect::<Option<_>>()?;
+    let n: Vec<u8> = cleaned
+        .chars()
+        .map(gg_letter_to_value)
+        .collect::<Option<_>>()?;
 
     let decode_address = |n: &[u8]| -> u16 {
         0x8000
@@ -36,10 +39,7 @@ pub fn decode_nes_game_genie(code: &str) -> Option<NesGameGeniePatch> {
 
     match n.len() {
         6 => {
-            let value = (n[1] & 7)
-                | (n[5] & 8)
-                | ((n[0] & 7) << 4)
-                | ((n[0] & 8) << 4);
+            let value = (n[1] & 7) | (n[5] & 8) | ((n[0] & 7) << 4) | ((n[0] & 8) << 4);
 
             let address = decode_address(&n);
 
@@ -50,15 +50,9 @@ pub fn decode_nes_game_genie(code: &str) -> Option<NesGameGeniePatch> {
             })
         }
         8 => {
-            let value = (n[1] & 7)
-                | (n[7] & 8)
-                | ((n[0] & 7) << 4)
-                | ((n[0] & 8) << 4);
+            let value = (n[1] & 7) | (n[7] & 8) | ((n[0] & 7) << 4) | ((n[0] & 8) << 4);
 
-            let compare = (n[7] & 7)
-                | (n[5] & 8)
-                | ((n[6] & 7) << 4)
-                | ((n[6] & 8) << 4);
+            let compare = (n[7] & 7) | (n[5] & 8) | ((n[6] & 7) << 4) | ((n[6] & 8) << 4);
 
             let address = decode_address(&n);
 

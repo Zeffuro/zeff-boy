@@ -1,12 +1,6 @@
 use super::*;
 
-fn make_header(
-    prg_banks: u8,
-    chr_banks: u8,
-    flags6: u8,
-    flags7: u8,
-    rest: [u8; 8],
-) -> [u8; 16] {
+fn make_header(prg_banks: u8, chr_banks: u8, flags6: u8, flags7: u8, rest: [u8; 8]) -> [u8; 16] {
     let mut h = [0u8; 16];
     h[0..4].copy_from_slice(INES_MAGIC);
     h[4] = prg_banks;
@@ -178,7 +172,13 @@ fn mapper_name_mapping_known_and_unknown() {
 
 #[test]
 fn ines_diskdude_style_junk_ignores_legacy_extension_bytes() {
-    let h = make_header(0x10, 0x20, 0x51, 0x44, [0x69, 0x73, 0x6B, 0x44, 0x75, 0x64, 0x65, 0x21]);
+    let h = make_header(
+        0x10,
+        0x20,
+        0x51,
+        0x44,
+        [0x69, 0x73, 0x6B, 0x44, 0x75, 0x64, 0x65, 0x21],
+    );
     let hdr = RomHeader::parse(&h).unwrap();
 
     assert_eq!(hdr.format, RomFormat::INes);
@@ -187,4 +187,3 @@ fn ines_diskdude_style_junk_ignores_legacy_extension_bytes() {
     assert_eq!(hdr.timing, TimingMode::Ntsc);
     assert_eq!(hdr.console_type, ConsoleType::Nes);
 }
-

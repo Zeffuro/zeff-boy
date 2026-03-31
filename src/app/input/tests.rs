@@ -155,4 +155,3 @@ fn tilt_vector_diagonal() {
     state.set_tilt_keyboard(TiltBindingAction::Up, true);
     assert_eq!(state.tilt_vector(), (1.0, 1.0));
 }
-

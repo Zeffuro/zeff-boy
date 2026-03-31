@@ -1,9 +1,23 @@
 use super::{App, SpeedMode};
-use crate::{audio::AudioOutput, emu_thread::{EmuCommand, EmuThread}, graphics::Graphics};
+use crate::{
+    audio::AudioOutput,
+    emu_thread::{EmuCommand, EmuThread},
+    graphics::Graphics,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Fullscreen;
 
 impl App {
+    pub(super) fn reset_audio_output(&mut self) {
+        let preferred = self.settings.audio.output_sample_rate;
+        self.audio = AudioOutput::new(Some(preferred))
+            .map_err(|e| log::warn!("Audio init failed: {e}"))
+            .ok();
+        if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
+            thread.send(EmuCommand::SetSampleRate(audio.sample_rate()));
+        }
+    }
+
     pub(super) fn ensure_emu_thread(&mut self) {
         if self.emu_thread.is_some() {
             return;
@@ -11,9 +25,10 @@ impl App {
         if let Some(backend) = self.initial_backend.take() {
             self.emu_thread = Some(EmuThread::spawn(backend));
             if self.timing.uncapped_speed
-                && let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::SetUncapped(true));
-                }
+                && let Some(thread) = &self.emu_thread
+            {
+                thread.send(EmuCommand::SetUncapped(true));
+            }
         }
     }
 
@@ -23,22 +38,13 @@ impl App {
         }
 
         if self.audio.is_none() {
-            self.audio = AudioOutput::new()
-                .map_err(|e| log::warn!("Audio init failed: {e}"))
-                .ok();
-            if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
-                thread.send(EmuCommand::SetSampleRate(
-                    audio.sample_rate(),
-                ));
-            }
+            self.reset_audio_output();
         }
 
         self.ensure_emu_thread();
 
         if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
-            thread.send(EmuCommand::SetSampleRate(
-                audio.sample_rate(),
-            ));
+            thread.send(EmuCommand::SetSampleRate(audio.sample_rate()));
         }
 
         let gfx = pollster::block_on(Graphics::new(event_loop, self.settings.video.vsync_mode))
@@ -54,7 +60,8 @@ impl App {
                 .map(|m| m.size().height)
                 .unwrap_or(1080);
             let scale_factor = gfx.window().scale_factor();
-            self.settings.auto_detect_ui_scale(monitor_height, scale_factor);
+            self.settings
+                .auto_detect_ui_scale(monitor_height, scale_factor);
         }
 
         self.gfx = Some(gfx);

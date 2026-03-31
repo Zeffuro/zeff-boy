@@ -70,11 +70,10 @@ impl Cpu {
             } else {
                 self.tick_internal_timed(bus, 4);
             }
-        } else if self.ime == ImeState::Enabled && pending != 0
-            && self.handle_interrupts(bus) {
-                self.commit_step_cycles();
-                return;
-            }
+        } else if self.ime == ImeState::Enabled && pending != 0 && self.handle_interrupts(bus) {
+            self.commit_step_cycles();
+            return;
+        }
 
         let ime_was_pending_enable = matches!(self.ime, ImeState::PendingEnable);
         let opcode = self.fetch8_timed(bus);
@@ -128,13 +127,11 @@ impl Cpu {
         val
     }
 
-
     pub fn fetch16_timed(&mut self, bus: &mut Bus) -> u16 {
         let low = self.fetch8_timed(bus) as u16;
         let high = self.fetch8_timed(bus) as u16;
         low | (high << 8)
     }
-
 
     pub fn push16_timed(&mut self, bus: &mut Bus, value: u16) {
         self.sp = self.sp.wrapping_sub(1);
@@ -142,7 +139,6 @@ impl Cpu {
         self.sp = self.sp.wrapping_sub(1);
         self.bus_write_timed(bus, self.sp, (value & 0xFF) as u8);
     }
-
 
     pub fn pop16_timed(&mut self, bus: &mut Bus) -> u16 {
         let low = self.bus_read_timed(bus, self.sp) as u16;

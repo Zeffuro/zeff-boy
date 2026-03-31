@@ -6,7 +6,6 @@ pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 2;
 
 const FORMAT_VERSION_V1_UNCOMPRESSED: u32 = 1;
 
-
 pub fn encode_mirroring(m: crate::hardware::cartridge::Mirroring) -> u8 {
     use crate::hardware::cartridge::Mirroring;
     match m {
@@ -51,10 +50,7 @@ pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-pub fn decode_state(
-    emu: &mut crate::emulator::Emulator,
-    bytes: &[u8],
-) -> Result<()> {
+pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result<()> {
     // Read and validate the outer header (magic + version)
     if bytes.len() < 12 {
         bail!("save-state data is too short for header");

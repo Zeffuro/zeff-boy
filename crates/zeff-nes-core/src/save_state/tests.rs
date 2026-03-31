@@ -6,7 +6,7 @@ fn build_test_rom() -> Vec<u8> {
     rom[4] = 1;
     rom[5] = 1;
     let prg = 16;
-    rom[prg]     = 0xA9;
+    rom[prg] = 0xA9;
     rom[prg + 1] = 0x42;
     rom[prg + 2] = 0x85;
     rom[prg + 3] = 0x00;
@@ -19,8 +19,7 @@ fn build_test_rom() -> Vec<u8> {
 
 fn make_emulator() -> crate::emulator::Emulator {
     let rom = build_test_rom();
-    crate::emulator::Emulator::new(&rom, 44_100.0)
-        .expect("test ROM should load")
+    crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
 }
 
 #[test]
@@ -177,4 +176,3 @@ fn save_state_v1_backward_compat() {
     decode_state(&mut emu, &v1_state).expect("V1 decode should succeed");
     assert_eq!(emu.cpu.pc, pc_before);
 }
-

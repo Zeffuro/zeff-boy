@@ -14,6 +14,7 @@ pub(crate) struct TilemapViewerState {
     pub(crate) last_render_cgb_colors: Option<bool>,
     pub(crate) last_color_correction: crate::settings::ColorCorrection,
     pub(crate) last_color_correction_matrix: [f32; 9],
+    pub(crate) last_dmg_palette_preset: crate::settings::DmgPalettePreset,
 }
 
 impl TilemapViewerState {
@@ -31,11 +32,8 @@ impl TilemapViewerState {
             last_show_attr_overlay: None,
             last_render_cgb_colors: None,
             last_color_correction: crate::settings::ColorCorrection::None,
-            last_color_correction_matrix: [
-                1.0, 0.0, 0.0,
-                0.0, 1.0, 0.0,
-                0.0, 0.0, 1.0,
-            ],
+            last_color_correction_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            last_dmg_palette_preset: crate::settings::DmgPalettePreset::default(),
         }
     }
 
@@ -43,10 +41,7 @@ impl TilemapViewerState {
         self.vram_dirty = true;
     }
 
-    pub(crate) fn update_dirty_inputs(
-        &mut self,
-        gfx: &super::data_models::GbGraphicsData,
-    ) {
+    pub(crate) fn update_dirty_inputs(&mut self, gfx: &super::data_models::GbGraphicsData) {
         let vram_sig = super::fold_bytes(&gfx.vram);
         let bg_palette_sig = super::fold_bytes(&gfx.bg_palette_ram);
         let changed = self.last_vram_signature != vram_sig
@@ -55,7 +50,8 @@ impl TilemapViewerState {
             || self.last_bgp != gfx.ppu.bgp
             || self.last_cgb_mode != gfx.cgb_mode
             || self.last_color_correction != gfx.color_correction
-            || self.last_color_correction_matrix != gfx.color_correction_matrix;
+            || self.last_color_correction_matrix != gfx.color_correction_matrix
+            || self.last_dmg_palette_preset != gfx.dmg_palette_preset;
 
         self.vram_dirty |= changed;
         self.last_vram_signature = vram_sig;
@@ -65,6 +61,7 @@ impl TilemapViewerState {
         self.last_cgb_mode = gfx.cgb_mode;
         self.last_color_correction = gfx.color_correction;
         self.last_color_correction_matrix = gfx.color_correction_matrix;
+        self.last_dmg_palette_preset = gfx.dmg_palette_preset;
     }
 }
 
@@ -83,6 +80,7 @@ pub(crate) struct TileViewerState {
     pub(crate) last_cgb_palette_index: Option<u8>,
     pub(crate) last_color_correction: crate::settings::ColorCorrection,
     pub(crate) last_color_correction_matrix: [f32; 9],
+    pub(crate) last_dmg_palette_preset: crate::settings::DmgPalettePreset,
 }
 
 impl TileViewerState {
@@ -101,11 +99,8 @@ impl TileViewerState {
             last_use_obj_palette: None,
             last_cgb_palette_index: None,
             last_color_correction: crate::settings::ColorCorrection::None,
-            last_color_correction_matrix: [
-                1.0, 0.0, 0.0,
-                0.0, 1.0, 0.0,
-                0.0, 0.0, 1.0,
-            ],
+            last_color_correction_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            last_dmg_palette_preset: crate::settings::DmgPalettePreset::default(),
         }
     }
 
@@ -113,10 +108,7 @@ impl TileViewerState {
         self.vram_dirty = true;
     }
 
-    pub(crate) fn update_dirty_inputs(
-        &mut self,
-        gfx: &super::data_models::GbGraphicsData,
-    ) {
+    pub(crate) fn update_dirty_inputs(&mut self, gfx: &super::data_models::GbGraphicsData) {
         let vram_sig = super::fold_bytes(&gfx.vram);
         let bg_palette_sig = super::fold_bytes(&gfx.bg_palette_ram);
         let obj_palette_sig = super::fold_bytes(&gfx.obj_palette_ram);
@@ -126,7 +118,8 @@ impl TileViewerState {
             || self.last_bgp != gfx.ppu.bgp
             || self.last_cgb_mode != gfx.cgb_mode
             || self.last_color_correction != gfx.color_correction
-            || self.last_color_correction_matrix != gfx.color_correction_matrix;
+            || self.last_color_correction_matrix != gfx.color_correction_matrix
+            || self.last_dmg_palette_preset != gfx.dmg_palette_preset;
 
         self.vram_dirty |= changed;
         self.last_vram_signature = vram_sig;
@@ -136,6 +129,7 @@ impl TileViewerState {
         self.last_cgb_mode = gfx.cgb_mode;
         self.last_color_correction = gfx.color_correction;
         self.last_color_correction_matrix = gfx.color_correction_matrix;
+        self.last_dmg_palette_preset = gfx.dmg_palette_preset;
     }
 }
 
@@ -148,4 +142,3 @@ pub(crate) struct PerfInfo {
     pub(crate) hardware_label: String,
     pub(crate) hardware_pref_label: String,
 }
-

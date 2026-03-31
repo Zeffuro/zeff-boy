@@ -304,4 +304,3 @@ pub fn dey(cpu: &mut Cpu, _bus: &mut Bus) {
     cpu.regs.y = cpu.regs.y.wrapping_sub(1);
     cpu.regs.set_zn(cpu.regs.y);
 }
-

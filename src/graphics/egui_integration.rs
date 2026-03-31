@@ -50,6 +50,7 @@ impl EguiRenderer {
         style.spacing.item_spacing = egui::vec2(8.0, 4.0);
         style.spacing.button_padding = egui::vec2(6.0, 2.0);
         style.spacing.interact_size = egui::vec2(40.0, 20.0);
+        style.interaction.selectable_labels = false;
 
         let theme = UiThemePreset::default();
         ctx.set_visuals(build_visuals(theme));
@@ -290,4 +291,3 @@ fn build_retro() -> egui::Visuals {
 
     v
 }
-

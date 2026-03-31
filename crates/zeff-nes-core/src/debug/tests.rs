@@ -85,4 +85,3 @@ fn clear_hits_resets_state() {
     assert!(dc.hit_breakpoint.is_none());
     assert!(dc.hit_watchpoint.is_none());
 }
-

@@ -37,7 +37,10 @@ pub(super) fn wave_level_to_velocity(level: u8) -> u8 {
     }
 }
 
-pub(super) fn finish_midi(path: PathBuf, snapshots: &[MidiApuSnapshot]) -> std::io::Result<PathBuf> {
+pub(super) fn finish_midi(
+    path: PathBuf,
+    snapshots: &[MidiApuSnapshot],
+) -> std::io::Result<PathBuf> {
     if snapshots.is_empty() {
         std::fs::write(&path, [])?;
         return Ok(path);
@@ -282,7 +285,11 @@ pub(super) fn build_midi_track_gb(snapshots: &[GbApuChannelSnapshot], channel: u
             hz_to_midi_note(hz)
         };
 
-        FrameChannelState { note, velocity, enabled }
+        FrameChannelState {
+            note,
+            velocity,
+            enabled,
+        }
     })
 }
 
@@ -298,9 +305,21 @@ pub(super) fn build_midi_track_nes(snapshots: &[NesApuChannelSnapshot], channel:
     build_midi_track(name, channel, snapshots.len(), |i| {
         let snap = &snapshots[i];
         let (enabled, timer_period, vol_raw) = match channel {
-            0 => (snap.pulse1_enabled, snap.pulse1_timer_period, snap.pulse1_volume),
-            1 => (snap.pulse2_enabled, snap.pulse2_timer_period, snap.pulse2_volume),
-            2 => (snap.triangle_enabled, snap.triangle_timer_period, snap.triangle_volume),
+            0 => (
+                snap.pulse1_enabled,
+                snap.pulse1_timer_period,
+                snap.pulse1_volume,
+            ),
+            1 => (
+                snap.pulse2_enabled,
+                snap.pulse2_timer_period,
+                snap.pulse2_volume,
+            ),
+            2 => (
+                snap.triangle_enabled,
+                snap.triangle_timer_period,
+                snap.triangle_volume,
+            ),
             3 => (snap.noise_enabled, 0, snap.noise_volume),
             _ => (false, 0, 0),
         };
@@ -317,7 +336,11 @@ pub(super) fn build_midi_track_nes(snapshots: &[NesApuChannelSnapshot], channel:
             hz_to_midi_note(hz)
         };
 
-        FrameChannelState { note, velocity, enabled }
+        FrameChannelState {
+            note,
+            velocity,
+            enabled,
+        }
     })
 }
 

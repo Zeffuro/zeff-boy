@@ -69,4 +69,3 @@ impl Cpu {
         (hi << 8) | lo
     }
 }
-

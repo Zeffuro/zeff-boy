@@ -1,4 +1,5 @@
 use super::*;
+use cpal::SampleFormat;
 
 #[test]
 fn ring_buffer_capacity_44100() {
@@ -10,6 +11,13 @@ fn ring_buffer_capacity_48000() {
     assert_eq!(ring_buffer_capacity(48000), 19200);
 }
 
+#[test]
+fn sample_format_rank_prefers_float_then_signed_then_unsigned() {
+    assert!(sample_format_rank(SampleFormat::F32) < sample_format_rank(SampleFormat::I16));
+    assert!(sample_format_rank(SampleFormat::I16) < sample_format_rank(SampleFormat::U16));
+    assert!(sample_format_rank(SampleFormat::U16) < sample_format_rank(SampleFormat::U8));
+}
+
 fn push_samples(producer: &mut rtrb::Producer<f32>, samples: &[f32]) {
     if let Ok(mut chunk) = producer.write_chunk_uninit(samples.len()) {
         let (first, second) = chunk.as_mut_slices();
@@ -19,7 +27,9 @@ fn push_samples(producer: &mut rtrb::Producer<f32>, samples: &[f32]) {
         for (dst, &src) in second.iter_mut().zip(samples[first.len()..].iter()) {
             dst.write(src);
         }
-        unsafe { chunk.commit_all(); }
+        unsafe {
+            chunk.commit_all();
+        }
     }
 }
 
@@ -105,5 +115,25 @@ fn fill_stereo_odd_samples_drops_trailing() {
     assert_eq!(data[1], 0.2);
     assert_eq!(data[2], 0.0);
     assert_eq!(data[3], 0.0);
+}
+
+#[test]
+fn low_pass_alpha_is_bounded() {
+    let alpha = low_pass_alpha(48_000, 4_800);
+    assert!(alpha > 0.0);
+    assert!(alpha < 1.0);
+}
+
+#[test]
+fn low_pass_filter_smooths_step_change() {
+    let mut filter = OnePoleLowPass::default();
+    let alpha = low_pass_alpha(48_000, 2_000);
+
+    let first = filter.apply_sample(0.0, 0, alpha);
+    let second = filter.apply_sample(1.0, 0, alpha);
+
+    assert_eq!(first, 0.0);
+    assert!(second > 0.0);
+    assert!(second < 1.0);
 }
 

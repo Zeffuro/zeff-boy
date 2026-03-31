@@ -6,12 +6,7 @@ pub fn tile_data_address(tile_index: u8, tile_data_unsigned: bool) -> usize {
     }
 }
 
-pub fn decode_tile_pixel(
-    vram: &[u8],
-    tile_data_addr: usize,
-    line: usize,
-    pixel: usize,
-) -> u8 {
+pub fn decode_tile_pixel(vram: &[u8], tile_data_addr: usize, line: usize, pixel: usize) -> u8 {
     let lo = vram.get(tile_data_addr + line * 2).copied().unwrap_or(0);
     let hi = vram
         .get(tile_data_addr + line * 2 + 1)

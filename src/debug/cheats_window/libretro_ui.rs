@@ -97,9 +97,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
         }
         if ui
             .small_button("⬇ Refresh metadata")
-            .on_hover_text(
-                "Download/compile local GB+GBC metadata cache from libretro dat files",
-            )
+            .on_hover_text("Download/compile local GB+GBC metadata cache from libretro dat files")
             .clicked()
         {
             match crate::libretro_metadata::refresh_cache_from_libretro() {
@@ -109,8 +107,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
                     {
                         let refreshed_meta =
                             crate::libretro_metadata::lookup_cached(crc32, state.rom_is_gbc);
-                        state.rom_metadata_title =
-                            refreshed_meta.as_ref().map(|m| m.title.clone());
+                        state.rom_metadata_title = refreshed_meta.as_ref().map(|m| m.title.clone());
                         state.rom_metadata_rom_name =
                             refreshed_meta.as_ref().map(|m| m.rom_name.clone());
                         state.libretro_search_hints =
@@ -133,10 +130,11 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             .small_button("✨ Use best guess")
             .on_hover_text("Apply best metadata-derived search hint")
             .clicked()
-            && let Some(best) = state.libretro_search_hints.first() {
-                state.libretro_search = best.clone();
-                do_libretro_search(state);
-            }
+            && let Some(best) = state.libretro_search_hints.first()
+        {
+            state.libretro_search = best.clone();
+            do_libretro_search(state);
+        }
     });
 }
 
@@ -199,7 +197,8 @@ fn draw_attribution(ui: &mut egui::Ui) {
         if ui
             .link(egui::RichText::new("contributing to libretro-database").small())
             .clicked()
-            && let Err(e) = open::that("https://github.com/libretro/libretro-database/tree/master/cht")
+            && let Err(e) =
+                open::that("https://github.com/libretro/libretro-database/tree/master/cht")
         {
             log::warn!("failed to open browser: {e}");
         }
@@ -215,9 +214,10 @@ fn do_libretro_search(state: &mut CheatState) {
     let cache_dir = libretro_cheats::libretro_cache_dir();
 
     if state.libretro_search.trim().is_empty()
-        && let Some(best_hint) = state.libretro_search_hints.first() {
-            state.libretro_search = best_hint.clone();
-        }
+        && let Some(best_hint) = state.libretro_search_hints.first()
+    {
+        state.libretro_search = best_hint.clone();
+    }
 
     if state.libretro_file_list.is_none() {
         state.libretro_status = Some("Fetching file list from GitHub...".to_string());
@@ -264,4 +264,3 @@ fn do_libretro_download(state: &mut CheatState, filename: &str) {
         }
     }
 }
-

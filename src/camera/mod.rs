@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -47,7 +50,9 @@ pub(crate) fn query_host_cameras() -> anyhow::Result<Vec<CameraDeviceInfo>> {
 
 #[cfg(not(feature = "camera"))]
 pub(crate) fn query_host_cameras() -> anyhow::Result<Vec<CameraDeviceInfo>> {
-    anyhow::bail!("This build was compiled without host camera support (feature `camera` disabled).")
+    anyhow::bail!(
+        "This build was compiled without host camera support (feature `camera` disabled)."
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -173,10 +178,7 @@ fn run_capture_loop_with_webcam(
     };
 
     let camera_index = current_camera_settings(&config).device_index;
-    log::info!(
-        "Pocket Camera: attempting webcam index {}",
-        camera_index
-    );
+    log::info!("Pocket Camera: attempting webcam index {}", camera_index);
 
     let mut camera = match Camera::new(
         CameraIndex::Index(camera_index),
@@ -204,7 +206,10 @@ fn run_capture_loop_with_webcam(
         return;
     }
 
-    log::info!("Pocket Camera: webcam stream active on index {}", camera_index);
+    log::info!(
+        "Pocket Camera: webcam stream active on index {}",
+        camera_index
+    );
     log::info!("Pocket Camera: host post-process active (settings tab controls)");
 
     let mut last_good = checkerboard_frame();
@@ -345,7 +350,6 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-
 #[cfg(feature = "camera")]
 fn current_camera_settings(config: &Arc<Mutex<CameraHostSettings>>) -> CameraHostSettings {
     config.lock().map(|v| *v).unwrap_or_default()
@@ -384,7 +388,13 @@ fn rgba_to_grayscale_nearest(
     downsample_rgba_box(rgba, src_w, src_h, dst_w, dst_h)
 }
 
-fn downsample_rgb_box(rgb: &[u8], src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Vec<u8> {
+fn downsample_rgb_box(
+    rgb: &[u8],
+    src_w: usize,
+    src_h: usize,
+    dst_w: usize,
+    dst_h: usize,
+) -> Vec<u8> {
     if src_w == 0 || src_h == 0 {
         return checkerboard_frame();
     }

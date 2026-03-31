@@ -45,11 +45,7 @@ pub(super) fn draw(
     });
 }
 
-fn draw_shader_submenu(
-    ui: &mut egui::Ui,
-    actions: &mut Vec<MenuAction>,
-    settings: &mut Settings,
-) {
+fn draw_shader_submenu(ui: &mut egui::Ui, actions: &mut Vec<MenuAction>, settings: &mut Settings) {
     use crate::settings::{EffectPreset, ScalingMode};
 
     ui.label("Scaling");
@@ -90,7 +86,9 @@ fn draw_shader_submenu(
             ui.close();
         }
     }
-    if settings.video.effect_preset != EffectPreset::None || settings.video.scaling_mode.is_upscaler() {
+    if settings.video.effect_preset != EffectPreset::None
+        || settings.video.scaling_mode.is_upscaler()
+    {
         ui.separator();
         let p = &mut settings.video.shader_params;
         match settings.video.scaling_mode {
@@ -116,36 +114,18 @@ fn draw_shader_submenu(
         }
         match settings.video.effect_preset {
             EffectPreset::Scanlines => {
-                ui.add(
-                    egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
-                        .text("Intensity"),
-                );
+                ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
             }
             EffectPreset::LcdGrid => {
-                ui.add(
-                    egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0)
-                        .text("Grid"),
-                );
+                ui.add(egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0).text("Grid"));
             }
             EffectPreset::Crt => {
-                ui.add(
-                    egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0)
-                        .text("Scanlines"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0)
-                        .text("Curvature"),
-                );
+                ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Scanlines"));
+                ui.add(egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0).text("Curvature"));
             }
             EffectPreset::GbcPalette => {
-                ui.add(
-                    egui::Slider::new(&mut p.palette_mix, 0.0..=1.0)
-                        .text("Palette Mix"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut p.palette_warmth, 0.0..=1.0)
-                        .text("Warmth"),
-                );
+                ui.add(egui::Slider::new(&mut p.palette_mix, 0.0..=1.0).text("Palette Mix"));
+                ui.add(egui::Slider::new(&mut p.palette_warmth, 0.0..=1.0).text("Warmth"));
             }
             EffectPreset::Custom => {
                 ui.label("Custom WGSL fragment path:");

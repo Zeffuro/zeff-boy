@@ -1,6 +1,6 @@
 use super::{
-    SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef,
-    decode_state, encode_state_bytes,
+    SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, decode_state,
+    encode_state_bytes,
 };
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
@@ -68,8 +68,7 @@ fn full_save_state_round_trip_handles_large_arrays() {
     path.push(format!("zeff-boy-save-state-roundtrip-{unique}.state"));
 
     super::write_to_file(&path, &state).expect("serialize full save-state should succeed");
-    let restored =
-        read_from_file(&path).expect("deserialize full save-state should succeed");
+    let restored = read_from_file(&path).expect("deserialize full save-state should succeed");
     let _ = std::fs::remove_file(&path);
 
     assert_eq!(restored.rom_hash, state.rom_hash);
@@ -137,4 +136,3 @@ fn bess_footer_does_not_break_native_decode() {
     assert_eq!(restored.last_opcode, 0x76);
     assert_eq!(restored.last_opcode_pc, 0x0200);
 }
-

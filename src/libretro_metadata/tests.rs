@@ -50,4 +50,3 @@ fn serialize_roundtrip_preserves_entries() {
     assert_eq!(parsed[0].rom_name, "Test Game.gb");
     assert!(!parsed[0].is_gbc);
 }
-

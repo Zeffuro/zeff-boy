@@ -93,4 +93,3 @@ pub(crate) fn collect_nes_snapshot(
 
     data
 }
-

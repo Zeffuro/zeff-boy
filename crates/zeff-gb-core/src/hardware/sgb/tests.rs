@@ -38,4 +38,3 @@ fn unknown_command_is_ignored() {
     packet[0] = (0x1E << 3) | 0x01;
     assert!(feed_packet(&mut state, packet).is_none());
 }
-

@@ -110,4 +110,3 @@ pub(crate) fn toggle_dock_tab(dock: &mut DockState<DebugTab>, tab: DebugTab) {
 pub(crate) fn is_tab_open(dock: &DockState<DebugTab>, tab: DebugTab) -> bool {
     dock.find_tab(&tab).is_some()
 }
-

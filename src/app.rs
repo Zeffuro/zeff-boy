@@ -44,12 +44,16 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.emulation.uncapped_speed;
     let vsync_mode = settings.video.vsync_mode;
+    let initial_audio_output_sample_rate = settings.audio.output_sample_rate;
 
     // Cache metadata before handing emulator to emu thread
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
-    let active_system = backend.as_ref().map(|b| b.system()).unwrap_or(ActiveSystem::GameBoy);
+    let active_system = backend
+        .as_ref()
+        .map(|b| b.system())
+        .unwrap_or(ActiveSystem::GameBoy);
 
     let mut app = App {
         emu_thread: None,
@@ -76,6 +80,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             uncapped_speed,
             last_vsync_mode: vsync_mode,
         },
+        last_audio_output_sample_rate: initial_audio_output_sample_rate,
         fast_forward_held: false,
         turbo_held: false,
         turbo_counter: 0,
@@ -192,7 +197,6 @@ struct DebugRequests {
 }
 
 impl DebugRequests {
-
     fn has_pending(&self) -> bool {
         self.step || self.continue_ || self.backstep || self.frame_advance
     }
@@ -211,6 +215,7 @@ struct App {
     exit_requested: bool,
     settings: Settings,
     timing: TimingState,
+    last_audio_output_sample_rate: u32,
     fast_forward_held: bool,
     turbo_held: bool,
     turbo_counter: u8,
@@ -353,7 +358,11 @@ impl App {
             is_mbc7,
             self.settings.tilt.input_mode,
             &mut self.auto_tilt_source,
-            &tilt::TiltInputSources { keyboard, mouse, left_stick },
+            &tilt::TiltInputSources {
+                keyboard,
+                mouse,
+                left_stick,
+            },
             stick_controls_tilt,
             &cfg,
         )

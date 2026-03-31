@@ -1,5 +1,72 @@
-use crate::hardware::ppu::PPU;
 use crate::color_correction::ColorCorrection;
+use crate::hardware::ppu::PPU;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DmgPalettePreset {
+    Gray,
+    #[default]
+    DmgGreen,
+    Pocket,
+    Mint,
+    Chocolate,
+}
+
+impl DmgPalettePreset {
+    pub const ALL: [Self; 5] = [
+        Self::Gray,
+        Self::DmgGreen,
+        Self::Pocket,
+        Self::Mint,
+        Self::Chocolate,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gray => "Gray",
+            Self::DmgGreen => "DMG green",
+            Self::Pocket => "Pocket",
+            Self::Mint => "Mint",
+            Self::Chocolate => "Chocolate",
+        }
+    }
+}
+
+const DMG_PALETTE_GRAY: [[u8; 4]; 4] = [
+    [255, 255, 255, 255],
+    [170, 170, 170, 255],
+    [85, 85, 85, 255],
+    [0, 0, 0, 255],
+];
+
+const DMG_PALETTE_GREEN: [[u8; 4]; 4] = [
+    [224, 248, 208, 255],
+    [136, 192, 112, 255],
+    [52, 104, 86, 255],
+    [8, 24, 32, 255],
+];
+
+const DMG_PALETTE_POCKET: [[u8; 4]; 4] = [
+    [232, 232, 232, 255],
+    [168, 168, 168, 255],
+    [96, 96, 96, 255],
+    [32, 32, 32, 255],
+];
+
+const DMG_PALETTE_MINT: [[u8; 4]; 4] = [
+    [224, 255, 198, 255],
+    [143, 210, 126, 255],
+    [54, 143, 93, 255],
+    [22, 45, 61, 255],
+];
+
+const DMG_PALETTE_CHOCOLATE: [[u8; 4]; 4] = [
+    [250, 233, 196, 255],
+    [207, 161, 106, 255],
+    [141, 94, 61, 255],
+    [57, 38, 31, 255],
+];
 
 pub const PALETTE_COLORS: [[u8; 4]; 4] = [
     [224, 248, 208, 255],
@@ -8,9 +75,23 @@ pub const PALETTE_COLORS: [[u8; 4]; 4] = [
     [8, 24, 32, 255],
 ];
 
-pub fn apply_palette(palette: u8, color_id: u8) -> [u8; 4] {
+pub fn dmg_palette_colors(preset: DmgPalettePreset) -> &'static [[u8; 4]; 4] {
+    match preset {
+        DmgPalettePreset::Gray => &DMG_PALETTE_GRAY,
+        DmgPalettePreset::DmgGreen => &DMG_PALETTE_GREEN,
+        DmgPalettePreset::Pocket => &DMG_PALETTE_POCKET,
+        DmgPalettePreset::Mint => &DMG_PALETTE_MINT,
+        DmgPalettePreset::Chocolate => &DMG_PALETTE_CHOCOLATE,
+    }
+}
+
+pub fn apply_dmg_palette(preset: DmgPalettePreset, palette: u8, color_id: u8) -> [u8; 4] {
     let shade = (palette >> (color_id * 2)) & 0x03;
-    PALETTE_COLORS[shade as usize]
+    dmg_palette_colors(preset)[shade as usize]
+}
+
+pub fn apply_palette(palette: u8, color_id: u8) -> [u8; 4] {
+    apply_dmg_palette(DmgPalettePreset::default(), palette, color_id)
 }
 
 fn expand_5bit_to_8bit(value: u8) -> u8 {
@@ -66,6 +147,14 @@ pub fn cgb_palette_rgba(palette_ram: &[u8; 64], palette_index: u8, color_id: u8)
 }
 
 impl PPU {
+    pub fn set_dmg_palette_preset(&mut self, preset: DmgPalettePreset) {
+        self.dmg_palette_preset = preset;
+    }
+
+    pub fn dmg_palette_preset(&self) -> DmgPalettePreset {
+        self.dmg_palette_preset
+    }
+
     pub fn cgb_bg_rgba(&self, palette_index: u8, color_id: u8) -> [u8; 4] {
         cgb_palette_rgba(&self.bg_palette_ram, palette_index, color_id)
     }

@@ -31,8 +31,7 @@ impl FpsTracker {
     }
 
     pub(crate) fn fps(&self) -> f64 {
-        let (Some(&first), Some(&last)) = (self.timestamps.front(), self.timestamps.back())
-        else {
+        let (Some(&first), Some(&last)) = (self.timestamps.front(), self.timestamps.back()) else {
             return 0.0;
         };
         let elapsed = last.duration_since(first).as_secs_f64();

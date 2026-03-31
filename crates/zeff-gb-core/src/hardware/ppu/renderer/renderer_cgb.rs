@@ -1,8 +1,5 @@
 use super::{SpriteRenderContext, decode_cgb_tile_attributes, render_sprites};
-use crate::hardware::ppu::{
-    Lcdc, PPU, SCREEN_H, SCREEN_W,
-    decode_tile_pixel, tile_data_address,
-};
+use crate::hardware::ppu::{Lcdc, PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
 
 pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     let ly = ppu.ly as usize;
@@ -89,7 +86,6 @@ pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
         ppu.framebuffer[offset..offset + 4].copy_from_slice(&rgba);
     }
 
-
     if ppu.debug_flags.sprites {
         render_sprites(SpriteRenderContext {
             cgb_mode: true,
@@ -103,6 +99,7 @@ pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             cgb_obj_palette_ram: Some(&ppu.obj_palette_ram),
             bg_color_ids: Some(&bg_color_ids),
             cgb_bg_priority_flags: Some(&bg_priority_flags),
+            dmg_palette_preset: ppu.dmg_palette_preset,
         });
     }
 }

@@ -174,4 +174,3 @@ pub(super) fn try_parse_xploder(input: &str) -> Option<(Vec<CheatPatch>, CheatTy
 
     Some((patches, CheatType::XPloder))
 }
-

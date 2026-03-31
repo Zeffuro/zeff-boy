@@ -83,4 +83,3 @@ fn case_insensitive() {
     let lower = decode_nes_game_genie("aaeaag").unwrap();
     assert_eq!(upper, lower);
 }
-

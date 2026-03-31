@@ -27,7 +27,6 @@ impl crate::debug::ui_helpers::EnumLabel for AudioRecordingFormat {
 }
 
 impl AudioRecordingFormat {
-
     pub(crate) fn extension(self) -> &'static str {
         match self {
             Self::Wav16 | Self::WavFloat => "wav",
@@ -40,4 +39,3 @@ impl AudioRecordingFormat {
         matches!(self, Self::Midi)
     }
 }
-

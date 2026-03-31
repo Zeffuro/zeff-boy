@@ -109,4 +109,3 @@ impl<'de> Deserialize<'de> for TiltKeyBindings {
         })
     }
 }
-

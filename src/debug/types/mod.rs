@@ -72,4 +72,3 @@ impl DebugWindowState {
 fn fold_bytes(bytes: &[u8]) -> u64 {
     crc32fast::hash(bytes) as u64
 }
-

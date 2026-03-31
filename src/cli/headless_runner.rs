@@ -19,7 +19,10 @@ pub(crate) fn run_headless(
     let rom_data = std::fs::read(path)?;
     let mut emulator = Emulator::from_rom_data(&rom_data, mode_preference)?;
     if let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emulator, path)
-        .unwrap_or_else(|e| { log::warn!("Failed to load battery save: {e}"); None })
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to load battery save: {e}");
+            None
+        })
     {
         log::info!("Loaded battery save from {}", sram_path);
     }
@@ -180,13 +183,15 @@ pub(crate) fn run_headless(
     }
 
     if let Some(expected) = &opts.expect_serial
-        && !serial_text.contains(expected) {
-            flush_battery(&emulator);
-            anyhow::bail!(
-                "expected serial output containing {:?}, got {:?}",
-                expected, serial_text
-            );
-        }
+        && !serial_text.contains(expected)
+    {
+        flush_battery(&emulator);
+        anyhow::bail!(
+            "expected serial output containing {:?}, got {:?}",
+            expected,
+            serial_text
+        );
+    }
 
     flush_battery(&emulator);
 

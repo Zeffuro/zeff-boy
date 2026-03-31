@@ -86,4 +86,3 @@ pub(super) fn draw(
         ui.close();
     }
 }
-

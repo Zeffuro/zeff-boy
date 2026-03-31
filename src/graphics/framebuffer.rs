@@ -401,7 +401,8 @@ impl FramebufferRenderer {
     ) {
         let scaling = settings.video.scaling_mode;
         let effect = settings.video.effect_preset;
-        let custom_path_changed = self.shader.current_custom_shader_path != settings.video.custom_shader_path;
+        let custom_path_changed =
+            self.shader.current_custom_shader_path != settings.video.custom_shader_path;
         let desired_filter = preferred_filter(scaling);
         let filter_changed = self.sampler.current_filter != desired_filter;
 
@@ -448,7 +449,8 @@ impl FramebufferRenderer {
                             self.shader.two_pass = true;
                             self.shader.current_scaling = scaling;
                             self.shader.current_effect = effect;
-                            self.shader.current_custom_shader_path = settings.video.custom_shader_path.clone();
+                            self.shader.current_custom_shader_path =
+                                settings.video.custom_shader_path.clone();
                             if filter_changed {
                                 self.apply_filter_change(device, desired_filter);
                             }
@@ -472,8 +474,12 @@ impl FramebufferRenderer {
                 || self.shader.current_effect != effect
                 || (matches!(effect, EffectPreset::Custom) && custom_path_changed)
             {
-                self.shader.pipeline =
-                    create_pipeline(device, &self.shader.bgl, self.shader.format, upscaler_source);
+                self.shader.pipeline = create_pipeline(
+                    device,
+                    &self.shader.bgl,
+                    self.shader.format,
+                    upscaler_source,
+                );
                 self.shader.effect_pipeline = Some(create_pipeline(
                     device,
                     &self.shader.bgl,
@@ -602,7 +608,10 @@ impl FramebufferRenderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.screen.view = self.screen.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.screen.view = self
+            .screen
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let sampler = match self.sampler.current_filter {
             wgpu::FilterMode::Linear => &self.sampler.linear_sampler,
@@ -681,8 +690,13 @@ impl FramebufferRenderer {
             .output_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.offscreen.intermediate_texture =
-            create_offscreen_texture(device, self.shader.format, w, h, "shader intermediate texture");
+        self.offscreen.intermediate_texture = create_offscreen_texture(
+            device,
+            self.shader.format,
+            w,
+            h,
+            "shader intermediate texture",
+        );
         self.offscreen.intermediate_view = self
             .offscreen
             .intermediate_texture

@@ -1,4 +1,4 @@
-﻿use super::CartridgeDebugInfo;
+use super::CartridgeDebugInfo;
 use super::rtc::{RTC_REG_COUNT, Rtc, T_CYCLES_PER_SECOND, sanitize_rtc_register};
 use super::{
     MAX_SAVE_RAM, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram, read_banked_rom,
@@ -219,7 +219,5 @@ impl Mbc3 {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
-

@@ -1,6 +1,8 @@
 use crate::debug::TileViewerState;
 use crate::debug::types::GbGraphicsData;
-use zeff_gb_core::hardware::ppu::{apply_palette, cgb_palette_rgba, correct_color, decode_tile_pixel};
+use zeff_gb_core::hardware::ppu::{
+    apply_dmg_palette, cgb_palette_rgba, correct_color, decode_tile_pixel,
+};
 
 pub(super) fn draw_tile_viewer_content(
     ui: &mut egui::Ui,
@@ -159,7 +161,7 @@ fn render_tile_viewer_into_image(
                         color_correction_matrix,
                     )
                 } else {
-                    apply_palette(bgp, color_id)
+                    apply_dmg_palette(gfx.dmg_palette_preset, bgp, color_id)
                 };
                 let px = tile_x * 8 + x;
                 let py = tile_y * 8 + y;

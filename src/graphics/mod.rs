@@ -56,6 +56,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) is_rewinding: bool,
     pub(crate) rewind_seconds_back: f32,
     pub(crate) is_paused: bool,
+    pub(crate) is_pocket_camera: bool,
     pub(crate) autohide_menu_bar: bool,
     pub(crate) cursor_y: Option<f32>,
     pub(crate) slot_labels: [String; 10],
@@ -128,7 +129,6 @@ impl Graphics {
         self.gpu.set_present_mode(vsync);
     }
 
-
     pub(crate) fn handle_event(&mut self, event: &WindowEvent) -> bool {
         self.egui.handle_event(&self.window, event)
     }
@@ -146,12 +146,12 @@ impl Graphics {
     }
 
     pub(crate) fn set_native_size(&mut self, width: u32, height: u32) {
-        self.framebuffer.set_native_size(&self.gpu.device, width, height);
+        self.framebuffer
+            .set_native_size(&self.gpu.device, width, height);
     }
 
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
-        self.framebuffer
-            .set_shader(&self.gpu.device, ctx.settings);
+        self.framebuffer.set_shader(&self.gpu.device, ctx.settings);
         self.framebuffer
             .update_params(&self.gpu.queue, ctx.settings);
 
@@ -227,6 +227,14 @@ impl Graphics {
         );
         let content_bounds = egui::Rect::from_min_size(content_min, content_size);
 
+        let gb_hardware_mode_label = ctx.perf_info.and_then(|perf| {
+            if perf.platform_name != "Game Boy" {
+                None
+            } else {
+                Some(perf.hardware_label.clone())
+            }
+        });
+
         if *ctx.show_settings_window {
             debug::draw_settings_window(
                 self.egui.context(),
@@ -234,6 +242,8 @@ impl Graphics {
                 ctx.debug_windows,
                 ctx.show_settings_window,
                 content_bounds,
+                gb_hardware_mode_label.as_deref(),
+                ctx.is_pocket_camera,
             );
         }
 
@@ -246,14 +256,13 @@ impl Graphics {
             let has_game_view = debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
 
             let mut offscreen_resized = false;
-            if has_game_view
-                && let Some((w, h)) = self.game_view_pixel_size {
-                    let scale = ctx.settings.video.offscreen_scale.max(1);
-                    let (nw, nh) = self.framebuffer.native_size();
-                    let ow = w.max(nw * scale);
-                    let oh = h.max(nh * scale);
-                    offscreen_resized = self.framebuffer.resize_offscreen(&self.gpu.device, ow, oh);
-                }
+            if has_game_view && let Some((w, h)) = self.game_view_pixel_size {
+                let scale = ctx.settings.video.offscreen_scale.max(1);
+                let (nw, nh) = self.framebuffer.native_size();
+                let ow = w.max(nw * scale);
+                let oh = h.max(nh * scale);
+                offscreen_resized = self.framebuffer.resize_offscreen(&self.gpu.device, ow, oh);
+            }
 
             let game_texture_id = if has_game_view {
                 match self.game_egui_texture_id {
@@ -336,7 +345,7 @@ impl Graphics {
                             ui.heading(EMPTY_STATE_MESSAGE);
                         },
                     );
-                    });
+                });
         }
 
         ctx.toast_manager.set_recording(ctx.is_recording_audio);
@@ -366,18 +375,13 @@ impl Graphics {
 
         let egui_wants_keyboard = self.egui.context().egui_wants_keyboard_input();
 
-        // Determine if the GameView tab is the active focused tab in the dock.
-        // When a non-GameView debug tab is focused, joypad/tilt input should
-        // NOT reach the game so the user can interact with debug panels.
         let game_view_focused = if has_any_emu_data {
             ctx.dock_state
                 .focused_leaf()
                 .and_then(|path| ctx.dock_state.leaf(path).ok())
                 .and_then(|leaf| leaf.tabs.get(leaf.active.0))
-                .map_or(true, |tab| *tab == DebugTab::GameView)
+                .is_none_or(|tab| *tab == DebugTab::GameView)
         } else {
-            // No emu data → no dock → treat as game focused (doesn't matter,
-            // there's nothing to send joypad input to anyway).
             true
         };
 
@@ -394,16 +398,14 @@ impl Graphics {
 
         // Offscreen shader pass:renders framebuffer through shaders into
         // the output texture used as the egui game-view image.
-        let has_game_view_in_dock =
-            (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
+        let has_game_view_in_dock = (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
             && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
         if has_game_view_in_dock {
             self.framebuffer.render_to_offscreen(&mut encoder);
         }
 
         // Emulator Framebuffer (only when not rendered inside a dock tab)
-        let render_framebuffer_directly =
-            (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
+        let render_framebuffer_directly = (ctx.cpu_debug.is_some() || ctx.perf_info.is_some())
             && !debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
 
         if render_framebuffer_directly && self.framebuffer.needs_two_pass() {
@@ -443,9 +445,10 @@ impl Graphics {
                         gh,
                         menu_bar_height,
                     )
-                } {
-                    self.framebuffer.draw(&mut pass, x, y, w, h);
                 }
+            {
+                self.framebuffer.draw(&mut pass, x, y, w, h);
+            }
         }
 
         // EGUI: prepare

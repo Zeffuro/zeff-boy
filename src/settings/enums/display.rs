@@ -25,11 +25,7 @@ impl crate::debug::ui_helpers::EnumLabel for VsyncMode {
 }
 
 impl VsyncMode {
-
-    pub(crate) fn to_present_mode(
-        self,
-        capabilities: &[wgpu::PresentMode],
-    ) -> wgpu::PresentMode {
+    pub(crate) fn to_present_mode(self, capabilities: &[wgpu::PresentMode]) -> wgpu::PresentMode {
         match self {
             Self::Off => {
                 if capabilities.contains(&wgpu::PresentMode::Immediate) {
@@ -51,4 +47,3 @@ impl VsyncMode {
         }
     }
 }
-

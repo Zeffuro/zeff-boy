@@ -24,12 +24,13 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result
 
     if let Ok(meta) = std::fs::metadata(&cache_file)
         && let Ok(modified) = meta.modified()
-            && modified.elapsed().unwrap_or_default().as_secs() < CACHE_TTL_SECS
-                && let Ok(content) = std::fs::read_to_string(&cache_file)
-                    && let Ok(names) = parse_file_list_from_json(&content)
-                        && !names.is_empty() {
-                            return Ok(names);
-                        }
+        && modified.elapsed().unwrap_or_default().as_secs() < CACHE_TTL_SECS
+        && let Ok(content) = std::fs::read_to_string(&cache_file)
+        && let Ok(names) = parse_file_list_from_json(&content)
+        && !names.is_empty()
+    {
+        return Ok(names);
+    }
 
     let dir = platform_dir(is_gbc);
     let url = format!("{}{}", GITHUB_CONTENTS_URL, urlencoded(dir));
@@ -42,9 +43,15 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result
     let names = parse_file_list_from_json(&body)?;
 
     if let Err(e) = std::fs::create_dir_all(cache_dir) {
-        log::warn!("failed to create cheat cache dir {}: {e}", cache_dir.display());
+        log::warn!(
+            "failed to create cheat cache dir {}: {e}",
+            cache_dir.display()
+        );
     } else if let Err(e) = std::fs::write(&cache_file, &body) {
-        log::warn!("failed to write cheat index cache {}: {e}", cache_file.display());
+        log::warn!(
+            "failed to write cheat index cache {}: {e}",
+            cache_file.display()
+        );
     }
 
     Ok(names)
@@ -78,7 +85,10 @@ pub(super) fn download_cht_content(
         .context("failed to read cheat file response")?;
 
     if let Err(e) = std::fs::create_dir_all(&cht_cache_dir) {
-        log::warn!("failed to create cht cache dir {}: {e}", cht_cache_dir.display());
+        log::warn!(
+            "failed to create cht cache dir {}: {e}",
+            cht_cache_dir.display()
+        );
     } else if let Err(e) = std::fs::write(&cache_file, &content) {
         log::warn!("failed to write cht cache {}: {e}", cache_file.display());
     }
@@ -224,14 +234,16 @@ fn parse_file_list_from_json(json_body: &str) -> anyhow::Result<Vec<String>> {
             }
         }
     }
-    if names.is_empty() && json_body.len() > 100
+    if names.is_empty()
+        && json_body.len() > 100
         && json_body.contains("\"message\"")
-            && let Some(msg_start) = json_body.find(r#""message":"#) {
-                let rest = &json_body[msg_start + 11..];
-                if let Some(end) = rest.find('"') {
-                    anyhow::bail!("GitHub API: {}", &rest[..end]);
-                }
-            }
+        && let Some(msg_start) = json_body.find(r#""message":"#)
+    {
+        let rest = &json_body[msg_start + 11..];
+        if let Some(end) = rest.find('"') {
+            anyhow::bail!("GitHub API: {}", &rest[..end]);
+        }
+    }
     Ok(names)
 }
 

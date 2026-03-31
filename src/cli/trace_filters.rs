@@ -57,9 +57,10 @@ pub(super) fn should_trace_op(
     }
 
     if let Some((start, end)) = opts.trace_pc_range
-        && (pc < start || pc > end) {
-            return false;
-        }
+        && (pc < start || pc > end)
+    {
+        return false;
+    }
 
     if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&op) {
         return false;

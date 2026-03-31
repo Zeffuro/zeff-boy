@@ -37,20 +37,63 @@ impl DebugTab {
     pub(crate) fn requirements(self) -> TabDataRequirements {
         match self {
             DebugTab::GameView => TabDataRequirements::default(),
-            DebugTab::CpuDebug => TabDataRequirements { needs_debug_info: true, ..Default::default() },
-            DebugTab::InputViewer => TabDataRequirements { needs_debug_info: true, ..Default::default() },
-            DebugTab::Performance => TabDataRequirements { needs_perf_info: true, ..Default::default() },
-            DebugTab::Breakpoints => TabDataRequirements { needs_debug_info: true, ..Default::default() },
-            DebugTab::ApuViewer => TabDataRequirements { needs_viewer_data: true, needs_apu: true, ..Default::default() },
-            DebugTab::TileViewer => TabDataRequirements { needs_viewer_data: true, needs_vram: true, ..Default::default() },
-            DebugTab::TilemapViewer => TabDataRequirements { needs_viewer_data: true, needs_vram: true, ..Default::default() },
-            DebugTab::OamViewer => TabDataRequirements { needs_viewer_data: true, needs_oam: true, ..Default::default() },
-            DebugTab::PaletteViewer => TabDataRequirements { needs_viewer_data: true, ..Default::default() },
-            DebugTab::RomInfo => TabDataRequirements { needs_rom_info: true, ..Default::default() },
-            DebugTab::Disassembler => TabDataRequirements { needs_disassembly: true, ..Default::default() },
-            DebugTab::MemoryViewer => TabDataRequirements { needs_memory_page: true, ..Default::default() },
+            DebugTab::CpuDebug => TabDataRequirements {
+                needs_debug_info: true,
+                ..Default::default()
+            },
+            DebugTab::InputViewer => TabDataRequirements {
+                needs_debug_info: true,
+                ..Default::default()
+            },
+            DebugTab::Performance => TabDataRequirements {
+                needs_perf_info: true,
+                ..Default::default()
+            },
+            DebugTab::Breakpoints => TabDataRequirements {
+                needs_debug_info: true,
+                ..Default::default()
+            },
+            DebugTab::ApuViewer => TabDataRequirements {
+                needs_viewer_data: true,
+                needs_apu: true,
+                ..Default::default()
+            },
+            DebugTab::TileViewer => TabDataRequirements {
+                needs_viewer_data: true,
+                needs_vram: true,
+                ..Default::default()
+            },
+            DebugTab::TilemapViewer => TabDataRequirements {
+                needs_viewer_data: true,
+                needs_vram: true,
+                ..Default::default()
+            },
+            DebugTab::OamViewer => TabDataRequirements {
+                needs_viewer_data: true,
+                needs_oam: true,
+                ..Default::default()
+            },
+            DebugTab::PaletteViewer => TabDataRequirements {
+                needs_viewer_data: true,
+                ..Default::default()
+            },
+            DebugTab::RomInfo => TabDataRequirements {
+                needs_rom_info: true,
+                ..Default::default()
+            },
+            DebugTab::Disassembler => TabDataRequirements {
+                needs_disassembly: true,
+                ..Default::default()
+            },
+            DebugTab::MemoryViewer => TabDataRequirements {
+                needs_memory_page: true,
+                ..Default::default()
+            },
             DebugTab::Cheats => TabDataRequirements::default(),
-            DebugTab::RomViewer => TabDataRequirements { needs_rom_page: true, ..Default::default() },
+            DebugTab::RomViewer => TabDataRequirements {
+                needs_rom_page: true,
+                ..Default::default()
+            },
         }
     }
 }
@@ -115,4 +158,3 @@ impl DebugTab {
             .map(|(tab, _, _)| *tab)
     }
 }
-

@@ -7,9 +7,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use crate::settings::AudioRecordingFormat;
 use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
 use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
-use crate::settings::AudioRecordingFormat;
 
 const MIDI_INITIAL_SNAPSHOT_CAPACITY: usize = 3600;
 
@@ -127,8 +127,7 @@ impl AudioRecorder {
                     }
                 }
             }
-            RecorderInner::Midi { .. } => {
-            }
+            RecorderInner::Midi { .. } => {}
         }
     }
 
@@ -150,7 +149,14 @@ impl AudioRecorder {
                 channels,
                 samples_written,
                 is_float,
-            } => finish_wav(self.path, writer, sample_rate, channels, samples_written, is_float),
+            } => finish_wav(
+                self.path,
+                writer,
+                sample_rate,
+                channels,
+                samples_written,
+                is_float,
+            ),
             RecorderInner::Ogg {
                 writer,
                 encoder,
@@ -161,7 +167,6 @@ impl AudioRecorder {
         }
     }
 }
-
 
 fn finish_wav(
     path: PathBuf,
@@ -174,11 +179,8 @@ fn finish_wav(
     writer.flush()?;
     drop(writer);
 
-    let (fmt_code, bits_per_sample, bytes_per_sample): (u16, u16, u32) = if is_float {
-        (3, 32, 4)
-    } else {
-        (1, 16, 2)
-    };
+    let (fmt_code, bits_per_sample, bytes_per_sample): (u16, u16, u32) =
+        if is_float { (3, 32, 4) } else { (1, 16, 2) };
 
     let data_size = samples_written * bytes_per_sample as u64;
     let file_size = 36 + data_size;
@@ -236,4 +238,3 @@ fn finish_ogg(
 
     Ok(path)
 }
-

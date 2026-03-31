@@ -54,6 +54,7 @@ pub(crate) fn collect_emu_snapshot(
             obj_palette_ram: emu.ppu_obj_palette_ram_snapshot(),
             color_correction: req.color_correction,
             color_correction_matrix: req.color_correction_matrix,
+            dmg_palette_preset: req.dmg_palette_preset,
         }))
     } else {
         None
@@ -144,7 +145,9 @@ pub(crate) fn collect_emu_snapshot(
         let mut results = Vec::new();
         if !search.pattern.is_empty() {
             let pattern_len = search.pattern.len();
-            let end = rom_bytes.len().saturating_sub(pattern_len.saturating_sub(1));
+            let end = rom_bytes
+                .len()
+                .saturating_sub(pattern_len.saturating_sub(1));
             for start_offset in 0..end {
                 if results.len() >= search.max_results {
                     break;
@@ -189,4 +192,3 @@ pub(crate) fn collect_emu_snapshot(
         rom_search_results,
     }
 }
-

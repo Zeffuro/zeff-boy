@@ -32,15 +32,20 @@ impl EmuThread {
         }
 
         if let Some(gb) = backend.gb_mut() {
-            gb.emu.set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+            gb.emu
+                .set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+            gb.emu
+                .set_dmg_palette_preset(input.snapshot.dmg_palette_preset);
             if let Some(ref frame) = input.host_camera_frame {
                 gb.emu.set_camera_host_frame(frame);
             }
-            gb.emu.set_apu_debug_capture_enabled(input.apu_capture_enabled);
+            gb.emu
+                .set_apu_debug_capture_enabled(input.apu_capture_enabled);
             if !uncapped_mode {
                 gb.emu.set_apu_sample_generation_enabled(!input.skip_audio);
             }
-            gb.emu.set_opcode_log_enabled(input.snapshot.want_debug_info);
+            gb.emu
+                .set_opcode_log_enabled(input.snapshot.want_debug_info);
 
             if gb.emu.is_cpu_suspended() {
                 if input.debug_continue {
@@ -52,6 +57,7 @@ impl EmuThread {
         }
 
         if let Some(nes) = backend.nes_mut() {
+            nes.emu.set_palette_mode(input.snapshot.nes_palette_mode);
             nes.emu
                 .set_apu_debug_collection_enabled(input.apu_capture_enabled);
             if nes.emu.is_cpu_suspended() {
@@ -89,18 +95,14 @@ impl EmuThread {
         Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
         let ui_data = match backend {
-            EmuBackend::Gb(gb) => {
-                ui::collect_emu_snapshot(
-                    &gb.emu,
-                    &input.snapshot,
-                    input.buffers.vram,
-                    input.buffers.oam,
-                    input.buffers.memory_page,
-                )
-            }
-            EmuBackend::Nes(nes) => {
-                ui::collect_nes_snapshot(&mut nes.emu, &input.snapshot)
-            }
+            EmuBackend::Gb(gb) => ui::collect_emu_snapshot(
+                &gb.emu,
+                &input.snapshot,
+                input.buffers.vram,
+                input.buffers.oam,
+                input.buffers.memory_page,
+            ),
+            EmuBackend::Nes(nes) => ui::collect_nes_snapshot(&mut nes.emu, &input.snapshot),
         };
 
         Self::build_frame_result(
@@ -231,4 +233,3 @@ impl EmuThread {
         std::thread::yield_now();
     }
 }
-

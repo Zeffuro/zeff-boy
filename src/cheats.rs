@@ -3,8 +3,8 @@ pub(crate) use zeff_gb_core::cheats::{
     collect_enabled_patches, export_cht_file, parse_cheat, parse_cht_file,
 };
 
-use crate::settings::Settings;
 use crate::emu_backend::ActiveSystem;
+use crate::settings::Settings;
 
 pub(crate) fn try_parse_nes_game_genie(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     let patch = zeff_nes_core::cheats::decode_nes_game_genie(input)?;
@@ -34,7 +34,9 @@ pub(crate) fn parse_cheat_for_system(
     {
         return Ok(result);
     }
-    Err("Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV)")
+    Err(
+        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV)",
+    )
 }
 
 fn sanitize_rom_title(title: &str) -> String {

@@ -11,4 +11,3 @@ fn rgb_nearest_resize_outputs_expected_size() {
     let out = rgb_to_grayscale_nearest(&src, 4, 4, CAMERA_WIDTH, CAMERA_HEIGHT);
     assert_eq!(out.len(), FRAME_LEN);
 }
-

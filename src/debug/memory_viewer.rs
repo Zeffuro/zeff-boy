@@ -1,4 +1,4 @@
-use super::common::{parse_hex_u8, parse_hex_u16, HEX_PAGE_SIZE};
+use super::common::{HEX_PAGE_SIZE, parse_hex_u8, parse_hex_u16};
 use super::hex_viewer;
 use crate::debug::types::MemoryViewerState;
 
@@ -20,10 +20,11 @@ pub(super) fn draw_memory_viewer_content(
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_hex_u16(&state.jump_input) {
-                state.view_start = addr & 0xFFF0;
-                state.jump_input = format!("{:04X}", state.view_start);
-            }
+            && let Some(addr) = parse_hex_u16(&state.jump_input)
+        {
+            state.view_start = addr & 0xFFF0;
+            state.jump_input = format!("{:04X}", state.view_start);
+        }
 
         if !input_has_focus {
             state.jump_input = format!("{:04X}", state.view_start);
@@ -100,16 +101,18 @@ pub(super) fn draw_memory_viewer_content(
                     .char_limit(4)
                     .hint_text("hex addr"),
             );
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                && let Some(addr) = parse_hex_u16(&state.edit_addr_input) {
-                    state.edit_addr = Some(addr);
-                    let val = memory_page
-                        .iter()
-                        .find(|(a, _)| *a == addr)
-                        .map(|(_, v)| *v)
-                        .unwrap_or(0);
-                    state.edit_value = format!("{:02X}", val);
-                }
+            if resp.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && let Some(addr) = parse_hex_u16(&state.edit_addr_input)
+            {
+                state.edit_addr = Some(addr);
+                let val = memory_page
+                    .iter()
+                    .find(|(a, _)| *a == addr)
+                    .map(|(_, v)| *v)
+                    .unwrap_or(0);
+                state.edit_value = format!("{:02X}", val);
+            }
         });
     }
 
@@ -162,5 +165,3 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
     state.prev_bytes.clear();
     state.prev_bytes.extend(memory_page.iter().map(|(_, v)| *v));
 }
-
-

@@ -87,11 +87,13 @@ impl NesBackend {
     }
 
     pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.emu.set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+        self.emu
+            .set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
     pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.emu.set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+        self.emu
+            .set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
     pub(crate) fn is_suspended(&self) -> bool {
@@ -139,12 +141,9 @@ pub(crate) fn try_load_battery_sram(
     emu: &mut NesEmulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
-    crate::save_paths::try_load_battery_sram(
-        rom_path,
-        "NES",
-        emu.has_battery(),
-        |bytes| emu.load_battery_sram(bytes),
-    )
+    crate::save_paths::try_load_battery_sram(rom_path, "NES", emu.has_battery(), |bytes| {
+        emu.load_battery_sram(bytes)
+    })
 }
 
 #[cfg(test)]

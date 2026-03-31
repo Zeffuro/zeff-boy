@@ -44,7 +44,7 @@ impl Apu {
         target.extend_from_slice(&self.sample_buffer);
         self.sample_buffer.clear();
     }
-    
+
     pub fn channel_snapshot(&self) -> super::ApuChannelSnapshot {
         use crate::hardware::types::constants::{NR10, NR32};
 
@@ -132,33 +132,32 @@ impl Apu {
                 self.maybe_apply_dac_gate(addr);
 
                 if value & 0x80 != 0
-                    && let Some((channel_index, channel_mask)) = trigger_channel(addr) {
-                        self.channels[channel_index].enabled =
-                            self.channel_dac_enabled(channel_index);
-                        self.reset_channel_runtime(channel_index);
-                        if channel_index == 0 {
-                            self.init_sweep_on_trigger();
-                        }
-                        if uses_envelope(channel_index) {
-                            self.channels[channel_index].envelope_volume = envelope_initial_volume(
-                                self.regs[envelope_reg_index(channel_index)],
-                            );
-                            self.channels[channel_index].envelope_timer =
-                                envelope_period_or_8(self.channels[channel_index].envelope_period);
-                        }
-                        if self.channels[channel_index].length_counter == 0 {
-                            self.channels[channel_index].length_counter =
-                                channel_max_length(channel_index);
-                            if self.channels[channel_index].length_enabled
-                                && self.frame_seq_step_is_odd()
-                                && !length_enable_clocked
-                            {
-                                self.channels[channel_index].length_counter -= 1;
-                            }
-                        }
-                        self.nr52 |= channel_mask;
-                        self.update_nr52_status();
+                    && let Some((channel_index, channel_mask)) = trigger_channel(addr)
+                {
+                    self.channels[channel_index].enabled = self.channel_dac_enabled(channel_index);
+                    self.reset_channel_runtime(channel_index);
+                    if channel_index == 0 {
+                        self.init_sweep_on_trigger();
                     }
+                    if uses_envelope(channel_index) {
+                        self.channels[channel_index].envelope_volume =
+                            envelope_initial_volume(self.regs[envelope_reg_index(channel_index)]);
+                        self.channels[channel_index].envelope_timer =
+                            envelope_period_or_8(self.channels[channel_index].envelope_period);
+                    }
+                    if self.channels[channel_index].length_counter == 0 {
+                        self.channels[channel_index].length_counter =
+                            channel_max_length(channel_index);
+                        if self.channels[channel_index].length_enabled
+                            && self.frame_seq_step_is_odd()
+                            && !length_enable_clocked
+                        {
+                            self.channels[channel_index].length_counter -= 1;
+                        }
+                    }
+                    self.nr52 |= channel_mask;
+                    self.update_nr52_status();
+                }
             }
             WAVE_RAM_START..=WAVE_RAM_END => {
                 self.wave_ram[(addr - WAVE_RAM_START) as usize] = value;
@@ -183,10 +182,7 @@ impl Apu {
         self.nr52
     }
 
-    pub fn channel_debug_samples(
-        &self,
-        channel: usize,
-    ) -> &[f32; super::DEBUG_SAMPLE_HISTORY_LEN] {
+    pub fn channel_debug_samples(&self, channel: usize) -> &[f32; super::DEBUG_SAMPLE_HISTORY_LEN] {
         &self.channel_debug_history[channel.min(3)].samples
     }
 
@@ -331,13 +327,14 @@ impl Apu {
         };
 
         if let Some(channel_index) = channel_index
-            && !self.channel_dac_enabled(channel_index) {
-                self.channels[channel_index].enabled = false;
-                if channel_index == 0 {
-                    self.channels[0].sweep_enabled = false;
-                }
-                self.update_nr52_status();
+            && !self.channel_dac_enabled(channel_index)
+        {
+            self.channels[channel_index].enabled = false;
+            if channel_index == 0 {
+                self.channels[0].sweep_enabled = false;
             }
+            self.update_nr52_status();
+        }
     }
 
     fn maybe_write_length(&mut self, addr: u16, value: u8) {

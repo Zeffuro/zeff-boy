@@ -1,5 +1,5 @@
-use crate::hardware::ppu::palette::{apply_palette, cgb_palette_rgba};
-use crate::hardware::ppu::{Lcdc, SCREEN_W, SpriteEntry};
+use crate::hardware::ppu::palette::{apply_dmg_palette, cgb_palette_rgba};
+use crate::hardware::ppu::{DmgPalettePreset, Lcdc, SCREEN_W, SpriteEntry};
 use arrayvec::ArrayVec;
 
 #[path = "renderer_cgb.rs"]
@@ -53,6 +53,7 @@ pub(super) struct SpriteRenderContext<'a> {
     pub(super) cgb_obj_palette_ram: Option<&'a [u8; 64]>,
     pub(super) bg_color_ids: Option<&'a [u8; SCREEN_W]>,
     pub(super) cgb_bg_priority_flags: Option<&'a [bool; SCREEN_W]>,
+    pub(super) dmg_palette_preset: DmgPalettePreset,
 }
 
 pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
@@ -163,7 +164,7 @@ pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
                 };
                 cgb_palette_rgba(obj_palette_ram, sprite.cgb_obj_palette_index(), color_id)
             } else {
-                apply_palette(dmg_palette, color_id)
+                apply_dmg_palette(ctx.dmg_palette_preset, dmg_palette, color_id)
             };
             let fb_offset = (ctx.ly * SCREEN_W + screen_x_usize) * 4;
             ctx.framebuffer[fb_offset..fb_offset + 4].copy_from_slice(&rgba);

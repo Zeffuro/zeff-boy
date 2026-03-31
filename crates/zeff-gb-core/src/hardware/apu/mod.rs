@@ -158,4 +158,3 @@ impl fmt::Debug for Apu {
             .finish_non_exhaustive()
     }
 }
-

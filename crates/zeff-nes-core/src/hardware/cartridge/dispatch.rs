@@ -1,6 +1,6 @@
+use super::Mapper;
 use super::header::{ChrFetchKind, Mirroring};
 use super::mappers;
-use super::Mapper;
 
 #[allow(clippy::large_enum_variant)]
 pub enum MapperImpl {
@@ -65,7 +65,12 @@ impl MapperImpl {
         dispatch_mapper!(self, ppu_nametable_read, addr, ciram)
     }
 
-    pub(super) fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+    pub(super) fn ppu_nametable_write(
+        &mut self,
+        addr: u16,
+        val: u8,
+        ciram: &mut [u8; 0x800],
+    ) -> bool {
         dispatch_mapper!(self, ppu_nametable_write, addr, val, ciram)
     }
 
@@ -77,7 +82,10 @@ impl MapperImpl {
         dispatch_mapper!(self, write_state, w)
     }
 
-    pub(super) fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+    pub(super) fn read_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
         dispatch_mapper!(self, read_state, r)
     }
 
@@ -101,4 +109,3 @@ impl MapperImpl {
         dispatch_mapper!(self, load_battery_data, bytes)
     }
 }
-

@@ -1,4 +1,4 @@
-﻿use super::CartridgeDebugInfo;
+use super::CartridgeDebugInfo;
 use super::{
     RAM_BASE_ADDR, build_debug_info, is_ram_enable, load_ram_into, read_banked_rom, read_fixed_rom,
 };
@@ -108,7 +108,5 @@ impl Mbc2 {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
-

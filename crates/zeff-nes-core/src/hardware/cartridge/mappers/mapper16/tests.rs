@@ -87,4 +87,3 @@ fn mapper16_eeprom_write_then_read_random_access() {
 
     assert_eq!(read_back, 0xAB);
 }
-

@@ -212,4 +212,3 @@ pub struct CheatCode {
     pub code_type: CheatType,
     pub patches: Vec<CheatPatch>,
 }
-

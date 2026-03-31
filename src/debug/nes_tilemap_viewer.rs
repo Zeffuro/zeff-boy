@@ -1,6 +1,6 @@
+use crate::debug::TilemapViewerState;
 use crate::debug::common::nes_palette_rgba;
 use crate::debug::types::NesGraphicsData;
-use crate::debug::TilemapViewerState;
 
 pub(super) fn draw_nes_tilemap_viewer_content(
     ui: &mut egui::Ui,
@@ -67,7 +67,8 @@ pub(super) fn draw_nes_tilemap_viewer_content(
             let scroll_x = (nt_x as f32) * 256.0 + coarse_x * 8.0 + gfx.fine_x as f32;
             let scroll_y = (nt_y as f32) * 240.0 + coarse_y * 8.0 + fine_y;
 
-            let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200));
+            let stroke =
+                egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200));
             let vp_w = 256.0_f32;
             let vp_h = 240.0_f32;
             let map_w = width as f32;
@@ -103,17 +104,22 @@ pub(super) fn draw_nes_tilemap_viewer_content(
                     egui::pos2(origin.x + rx * scale_x, origin.y + ry * scale_y),
                     egui::vec2(rw * scale_x, rh * scale_y),
                 );
-                ui.painter_at(response.rect).rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Outside);
+                ui.painter_at(response.rect).rect_stroke(
+                    rect,
+                    0.0,
+                    stroke,
+                    egui::StrokeKind::Outside,
+                );
             }
         }
 
         if let Some(pointer_pos) = response.hover_pos() {
             let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
                 / response.rect.width())
-                .floor();
+            .floor();
             let rel_y = ((pointer_pos.y - response.rect.min.y) * (height as f32)
                 / response.rect.height())
-                .floor();
+            .floor();
 
             if rel_x >= 0.0 && rel_y >= 0.0 {
                 let px = rel_x as usize;
@@ -176,7 +182,12 @@ fn render_nes_nametables(image: &mut egui::ColorImage, gfx: &NesGraphicsData) {
                     for col in 0..8usize {
                         let bit = 7 - col;
                         let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                        let rgba = nes_palette_rgba(&gfx.palette_ram, palette_index, color_id);
+                        let rgba = nes_palette_rgba(
+                            &gfx.palette_ram,
+                            palette_index,
+                            color_id,
+                            gfx.palette_mode,
+                        );
                         let px = quad_x + tile_col * 8 + col;
                         let py = quad_y + tile_row * 8 + row;
                         if px < image.size[0] && py < image.size[1] {
@@ -190,5 +201,3 @@ fn render_nes_nametables(image: &mut egui::ColorImage, gfx: &NesGraphicsData) {
         }
     }
 }
-
-

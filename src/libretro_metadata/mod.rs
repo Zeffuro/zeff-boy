@@ -209,8 +209,7 @@ fn deserialize_entries(bytes: &[u8]) -> anyhow::Result<Vec<RomMetadata>> {
 
         entries.push(RomMetadata {
             crc32,
-            title: String::from_utf8(title)
-                .context("metadata decode error (title utf8)")?,
+            title: String::from_utf8(title).context("metadata decode error (title utf8)")?,
             rom_name: String::from_utf8(rom_name)
                 .context("metadata decode error (rom_name utf8)")?,
             is_gbc,
@@ -239,8 +238,7 @@ fn load_cached_index() -> anyhow::Result<MetadataIndex> {
 fn write_cache_file(path: &Path, entries: &[RomMetadata]) -> anyhow::Result<()> {
     let data = serialize_entries(entries)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("failed to create metadata cache directory")?;
+        std::fs::create_dir_all(parent).context("failed to create metadata cache directory")?;
     }
     let mut file = std::fs::File::create(path)
         .with_context(|| format!("failed to create metadata cache file: {}", path.display()))?;

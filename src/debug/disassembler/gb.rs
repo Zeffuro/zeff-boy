@@ -10,8 +10,13 @@ pub(crate) fn disassemble_around(
     lines_before_pc: usize,
     total_lines: usize,
 ) -> Vec<DisassembledLine> {
-    let start = super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
-    super::disassemble_at(|addr| decode_instruction(&bus_read, addr), start, total_lines)
+    let start =
+        super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
+    super::disassemble_at(
+        |addr| decode_instruction(&bus_read, addr),
+        start,
+        total_lines,
+    )
 }
 
 fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
@@ -238,4 +243,3 @@ fn read_u16(bus_read: &impl Fn(u16) -> u8, addr: u16) -> u16 {
 fn fmt_rel(offset: i8, target: u16) -> Mnemonic {
     mn!("{} (${:04X})", fmt_signed(offset), target)
 }
-

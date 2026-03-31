@@ -217,4 +217,3 @@ mod tests {
         assert_eq!(w.position(), 0);
     }
 }
-

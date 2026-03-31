@@ -50,9 +50,9 @@ pub(super) fn draw_cheat_section(
                     .small_button("📋")
                     .on_hover_text("Copy to User Cheats")
                     .clicked()
-                {
-                    **target = Some(cheat.clone());
-                }
+            {
+                **target = Some(cheat.clone());
+            }
             if ui.small_button("🗑").on_hover_text("Remove").clicked() {
                 remove_idx = Some(i);
             }
@@ -85,4 +85,3 @@ pub(super) fn draw_cheat_section(
 
     changed
 }
-

@@ -100,10 +100,9 @@ impl HuC3 {
             return;
         }
 
-        if self.ram_flag == FLAG_RAM_ENABLED
-            && !self.ram.is_empty() {
-                write_banked_ram(&mut self.ram, self.ram_bank, addr, value);
-            }
+        if self.ram_flag == FLAG_RAM_ENABLED && !self.ram.is_empty() {
+            write_banked_ram(&mut self.ram, self.ram_bank, addr, value);
+        }
     }
 
     fn handle_command(&mut self, value: u8) {

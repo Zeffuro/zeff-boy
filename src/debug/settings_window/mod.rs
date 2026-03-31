@@ -14,6 +14,8 @@ pub(crate) fn draw_settings_window(
     state: &mut DebugWindowState,
     open: &mut bool,
     constrain_rect: egui::Rect,
+    gb_hardware_mode_label: Option<&str>,
+    is_pocket_camera: bool,
 ) {
     egui::Window::new("Settings")
         .open(open)
@@ -43,7 +45,7 @@ pub(crate) fn draw_settings_window(
                         0 => emulation::draw(ui, settings),
                         1 => controls::draw(ui, settings, state),
                         2 => audio::draw(ui, settings),
-                        3 => video::draw(ui, settings),
+                        3 => video::draw(ui, settings, gb_hardware_mode_label, is_pocket_camera),
                         4 => ui::draw(ui, settings),
                         5 => camera::draw(ui, settings, state),
                         _ => {}
@@ -57,4 +59,3 @@ pub(crate) fn draw_settings_window(
                 });
         });
 }
-

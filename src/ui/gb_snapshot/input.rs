@@ -60,4 +60,3 @@ pub(super) fn gb_input_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> InputD
         ],
     }
 }
-

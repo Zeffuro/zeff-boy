@@ -1,6 +1,6 @@
 use super::*;
-use crate::hardware::ppu::PPU;
 use crate::color_correction::ColorCorrection;
+use crate::hardware::ppu::PPU;
 
 #[test]
 fn rgb555_decoding_expands_channels() {
@@ -143,3 +143,34 @@ fn cgb_bg_rgba_always_returns_raw_rgb() {
     assert_eq!(still_raw, raw);
 }
 
+#[test]
+fn apply_palette_uses_default_dmg_green_preset() {
+    assert_eq!(
+        apply_palette(0b00_01_10_11, 0),
+        apply_dmg_palette(DmgPalettePreset::DmgGreen, 0b00_01_10_11, 0)
+    );
+}
+
+#[test]
+fn dmg_palette_presets_include_required_gray_and_green() {
+    assert_eq!(
+        apply_dmg_palette(DmgPalettePreset::Gray, 0b00_01_10_11, 0),
+        [0, 0, 0, 255]
+    );
+    assert_eq!(
+        apply_dmg_palette(DmgPalettePreset::Gray, 0b00_01_10_11, 3),
+        [255, 255, 255, 255]
+    );
+    assert_eq!(
+        apply_dmg_palette(DmgPalettePreset::DmgGreen, 0b00_01_10_11, 3),
+        [224, 248, 208, 255]
+    );
+}
+
+#[test]
+fn ppu_exposes_dmg_palette_preset_setter_getter() {
+    let mut ppu = PPU::new();
+    assert_eq!(ppu.dmg_palette_preset(), DmgPalettePreset::DmgGreen);
+    ppu.set_dmg_palette_preset(DmgPalettePreset::Pocket);
+    assert_eq!(ppu.dmg_palette_preset(), DmgPalettePreset::Pocket);
+}

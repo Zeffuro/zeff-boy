@@ -27,12 +27,11 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         } else {
                             bound.to_string()
                         };
-                        let capture_label =
-                            if state.rebinding_gamepad_action == Some(action) {
-                                format!("Press button... ({display})")
-                            } else {
-                                display
-                            };
+                        let capture_label = if state.rebinding_gamepad_action == Some(action) {
+                            format!("Press button... ({display})")
+                        } else {
+                            display
+                        };
                         if ui.button(capture_label).clicked() {
                             state.rebinding_gamepad_action = Some(action);
                             state.rebinding_gamepad = None;
@@ -60,4 +59,3 @@ fn gamepad_action_label(action: GamepadAction) -> &'static str {
         GamepadAction::Turbo => "Turbo / rapid-fire (hold)",
     }
 }
-

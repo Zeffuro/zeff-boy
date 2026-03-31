@@ -8,6 +8,10 @@ impl Emulator {
         self.rom_hash
     }
 
+    pub fn dmg_palette_preset(&self) -> crate::hardware::ppu::DmgPalettePreset {
+        self.bus.ppu_dmg_palette_preset()
+    }
+
     pub fn header(&self) -> &RomHeader {
         &self.header
     }
@@ -99,4 +103,3 @@ impl Emulator {
         self.bus.cartridge.rumble_active()
     }
 }
-

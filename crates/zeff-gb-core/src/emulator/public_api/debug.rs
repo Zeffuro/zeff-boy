@@ -39,4 +39,3 @@ impl Emulator {
         self.debug.iter_breakpoints()
     }
 }
-

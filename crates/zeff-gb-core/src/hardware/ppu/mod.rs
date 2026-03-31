@@ -8,10 +8,13 @@ mod timing;
 
 use std::fmt;
 
+pub use palette::DmgPalettePreset;
 pub use palette::PALETTE_COLORS;
+pub use palette::apply_dmg_palette;
 pub use palette::apply_palette;
 pub use palette::cgb_palette_rgba;
 pub use palette::correct_color;
+pub use palette::dmg_palette_colors;
 pub use sprite::SpriteEntry;
 pub use tiles::decode_tile_pixel;
 pub use tiles::tile_data_address;
@@ -104,6 +107,7 @@ pub struct PPU {
     prev_stat_line: bool,
     pub debug_flags: PpuDebugFlags,
     pub draw_dots_for_line: u64,
+    pub dmg_palette_preset: DmgPalettePreset,
 }
 
 impl Default for PPU {
@@ -155,6 +159,7 @@ impl PPU {
             blank_first_frame_after_lcd_on: false,
             debug_flags: PpuDebugFlags::default(),
             draw_dots_for_line: DRAW_DOTS_BASE,
+            dmg_palette_preset: DmgPalettePreset::default(),
         }
     }
 }

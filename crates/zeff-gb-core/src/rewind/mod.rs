@@ -70,8 +70,11 @@ impl RewindBuffer {
         if self.snapshots.len() >= self.capacity {
             self.snapshots.pop_front();
         }
-        self.snapshots
-            .push_back(RewindSnapshot::compress(state_bytes, framebuffer, &mut self.scratch));
+        self.snapshots.push_back(RewindSnapshot::compress(
+            state_bytes,
+            framebuffer,
+            &mut self.scratch,
+        ));
     }
 
     pub fn pop(&mut self) -> Option<RewindFrame> {

@@ -4,7 +4,11 @@ use super::App;
 
 impl App {
     pub(in crate::app) fn start_audio_recording(&mut self) {
-        let sample_rate = self.audio.as_ref().map(|a| a.sample_rate()).unwrap_or(48_000);
+        let sample_rate = self
+            .audio
+            .as_ref()
+            .map(|a| a.sample_rate())
+            .unwrap_or(48_000);
 
         let format = self.settings.audio.recording_format;
         let ext = format.extension();
@@ -59,4 +63,3 @@ impl App {
         }
     }
 }
-

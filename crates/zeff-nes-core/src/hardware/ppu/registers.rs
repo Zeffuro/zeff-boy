@@ -28,17 +28,29 @@ impl PpuRegisters {
 
     #[inline]
     pub fn vram_increment(&self) -> u16 {
-        if self.ctrl & CTRL_VRAM_INCREMENT != 0 { 32 } else { 1 }
+        if self.ctrl & CTRL_VRAM_INCREMENT != 0 {
+            32
+        } else {
+            1
+        }
     }
 
     #[inline]
     pub fn sprite_pattern_addr(&self) -> u16 {
-        if self.ctrl & CTRL_SPRITE_PATTERN != 0 { 0x1000 } else { 0x0000 }
+        if self.ctrl & CTRL_SPRITE_PATTERN != 0 {
+            0x1000
+        } else {
+            0x0000
+        }
     }
 
     #[inline]
     pub fn bg_pattern_addr(&self) -> u16 {
-        if self.ctrl & CTRL_BG_PATTERN != 0 { 0x1000 } else { 0x0000 }
+        if self.ctrl & CTRL_BG_PATTERN != 0 {
+            0x1000
+        } else {
+            0x0000
+        }
     }
 
     #[inline]
@@ -95,7 +107,6 @@ impl PpuRegisters {
     pub fn emphasize_blue(&self) -> bool {
         self.mask & MASK_EMPHASIZE_BLUE != 0
     }
-
 
     pub fn set_vblank(&mut self) {
         self.status |= STATUS_VBLANK;

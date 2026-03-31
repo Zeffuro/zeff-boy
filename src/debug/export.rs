@@ -27,16 +27,16 @@ pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &C
             .add_filter("PNG Image", &["png"])
             .set_file_name(default_name)
             .save_file()
-        {
-            match export_color_image_as_png(&path, image) {
-                Ok(()) => {
-                    log::info!("Exported PNG to {}", path.display());
-                    return true;
-                }
-                Err(err) => {
-                    log::error!("Failed to export PNG: {}", err);
-                }
+    {
+        match export_color_image_as_png(&path, image) {
+            Ok(()) => {
+                log::info!("Exported PNG to {}", path.display());
+                return true;
+            }
+            Err(err) => {
+                log::error!("Failed to export PNG: {}", err);
             }
         }
+    }
     false
 }

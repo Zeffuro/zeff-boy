@@ -7,7 +7,11 @@ pub(super) fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
     let rom_crc32 = crc32fast::hash(rom_bytes);
     let is_gbc = header.is_cgb_compatible || header.is_cgb_exclusive;
     let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
-    let manufacturer = header.manufacturer_code.as_deref().unwrap_or("N/A").to_string();
+    let manufacturer = header
+        .manufacturer_code
+        .as_deref()
+        .unwrap_or("N/A")
+        .to_string();
 
     let yes_no = |v: bool| if v { "Yes" } else { "No" };
     let pass_fail = |v: bool| if v { "Valid" } else { "Invalid" };
@@ -31,9 +35,18 @@ pub(super) fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
                 ("Hardware Mode".into(), format!("{:?}", emu.hardware_mode())),
                 ("CGB Flag".into(), format!("{:02X}", header.cgb_flag)),
                 ("SGB Flag".into(), format!("{:02X}", header.sgb_flag)),
-                ("CGB Compatible".into(), yes_no(header.is_cgb_compatible).into()),
-                ("CGB Exclusive".into(), yes_no(header.is_cgb_exclusive).into()),
-                ("SGB Supported".into(), yes_no(header.is_sgb_supported).into()),
+                (
+                    "CGB Compatible".into(),
+                    yes_no(header.is_cgb_compatible).into(),
+                ),
+                (
+                    "CGB Exclusive".into(),
+                    yes_no(header.is_cgb_exclusive).into(),
+                ),
+                (
+                    "SGB Supported".into(),
+                    yes_no(header.is_sgb_supported).into(),
+                ),
             ],
         },
         RomInfoSection {
@@ -83,4 +96,3 @@ pub(super) fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
 
     RomDebugInfo { sections }
 }
-

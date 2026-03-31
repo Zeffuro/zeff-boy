@@ -62,7 +62,10 @@ fn tima_overflow_reloads_from_tma_and_fires_interrupt() {
     t.set_tma_raw(0x42);
     let irq = t.step(20);
     assert_eq!(t.tima(), 0x42);
-    assert!(irq, "timer overflow should generate interrupt after 4-cycle delay");
+    assert!(
+        irq,
+        "timer overflow should generate interrupt after 4-cycle delay"
+    );
 }
 
 #[test]
@@ -171,7 +174,11 @@ fn tac_write_during_pending_overflow_does_not_cancel() {
     t.write_tac(0x07);
     let irq = t.step(4);
     assert!(irq, "overflow interrupt should still fire after TAC write");
-    assert_eq!(t.tima(), 0x30, "TMA reload should still happen after TAC write");
+    assert_eq!(
+        t.tima(),
+        0x30,
+        "TMA reload should still happen after TAC write"
+    );
 }
 
 #[test]
@@ -225,4 +232,3 @@ fn tma_write_during_overflow_delay_uses_new_value() {
     assert!(irq, "interrupt should fire");
     assert_eq!(t.tima(), 0x42, "TIMA should reload from new TMA value");
 }
-

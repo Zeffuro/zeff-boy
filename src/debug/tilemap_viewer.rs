@@ -1,8 +1,7 @@
 use crate::debug::TilemapViewerState;
 use crate::debug::types::GbGraphicsData;
 use zeff_gb_core::hardware::ppu::{
-    Lcdc, apply_palette, cgb_palette_rgba,
-    correct_color, decode_tile_pixel, tile_data_address,
+    Lcdc, apply_dmg_palette, cgb_palette_rgba, correct_color, decode_tile_pixel, tile_data_address,
 };
 
 #[derive(Clone, Copy)]
@@ -364,7 +363,7 @@ fn render_tilemap_into_image(
                     color_correction_matrix,
                 )
             } else {
-                apply_palette(ppu.bgp, color_id)
+                apply_dmg_palette(gfx.dmg_palette_preset, ppu.bgp, color_id)
             };
             let mut final_rgba = rgba;
 

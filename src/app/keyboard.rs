@@ -219,9 +219,7 @@ impl App {
                 self.settings.emulation.uncapped_speed = self.timing.uncapped_speed;
                 self.settings.save();
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::SetUncapped(
-                        self.timing.uncapped_speed,
-                    ));
+                    thread.send(EmuCommand::SetUncapped(self.timing.uncapped_speed));
                 }
             }
             return true;
@@ -234,8 +232,7 @@ impl App {
                     self.settings.audio.volume = 0.0;
                     self.toast_manager.info("🔇 Muted");
                 } else {
-                    self.settings.audio.volume =
-                        self.settings.audio.pre_mute_volume.unwrap_or(1.0);
+                    self.settings.audio.volume = self.settings.audio.pre_mute_volume.unwrap_or(1.0);
                     self.settings.audio.pre_mute_volume = None;
                     self.toast_manager.info("🔊 Unmuted");
                 }

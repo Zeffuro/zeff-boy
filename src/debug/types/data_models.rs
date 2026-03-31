@@ -1,5 +1,5 @@
 use crate::debug::common::WatchType;
-use crate::settings::ColorCorrection;
+use crate::settings::{ColorCorrection, DmgPalettePreset};
 
 #[derive(Clone, Debug)]
 pub(crate) struct WatchpointDisplay {
@@ -98,6 +98,7 @@ pub(crate) struct NesGraphicsData {
     pub(crate) chr_data: Vec<u8>,
     pub(crate) nametable_data: Vec<u8>,
     pub(crate) palette_ram: [u8; 32],
+    pub(crate) palette_mode: zeff_nes_core::hardware::ppu::NesPaletteMode,
     pub(crate) ctrl: u8,
     pub(crate) mirroring: zeff_nes_core::hardware::cartridge::Mirroring,
     pub(crate) scroll_t: u16,
@@ -112,5 +113,5 @@ pub(crate) struct GbGraphicsData {
     pub(crate) obj_palette_ram: [u8; 64],
     pub(crate) color_correction: ColorCorrection,
     pub(crate) color_correction_matrix: [f32; 9],
+    pub(crate) dmg_palette_preset: DmgPalettePreset,
 }
-

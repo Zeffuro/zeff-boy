@@ -37,9 +37,7 @@ impl EmuThread {
         let drain_rx = frame_rx.clone();
 
         let join = thread::spawn(move || {
-            let mut emu_loop = emu_loop::EmuLoop::new(
-                backend, cmd_rx, frame_tx, drain_rx, resp_tx,
-            );
+            let mut emu_loop = emu_loop::EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx);
             emu_loop.run();
         });
 
@@ -75,7 +73,8 @@ impl EmuThread {
         }
         while self.frame_rx.try_recv().is_ok() {}
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
         loop {
             let timeout = deadline.saturating_duration_since(std::time::Instant::now());
             if timeout.is_zero() {

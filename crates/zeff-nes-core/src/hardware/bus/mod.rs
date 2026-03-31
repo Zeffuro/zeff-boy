@@ -3,12 +3,21 @@ use crate::hardware::apu::Apu;
 use crate::hardware::cartridge::{Cartridge, ChrFetchKind, Mirroring};
 use crate::hardware::constants::*;
 use crate::hardware::controller::Controller;
-use crate::hardware::ppu::{Ppu, NES_PALETTE, PRE_RENDER_SCANLINE};
+use crate::hardware::ppu::{
+    NES_PALETTE, NesPaletteMode, PRE_RENDER_SCANLINE, Ppu, apply_nes_palette_mode,
+};
 use std::fmt;
 
 pub enum DebugTraceEvent {
-    Read { addr: u16, value: u8 },
-    Write { addr: u16, old_value: u8, new_value: u8 },
+    Read {
+        addr: u16,
+        value: u8,
+    },
+    Write {
+        addr: u16,
+        old_value: u8,
+        new_value: u8,
+    },
 }
 
 pub struct Bus {
@@ -26,6 +35,7 @@ pub struct Bus {
     pub(crate) cpu_odd_cycle: bool,
     pub(crate) cpu_open_bus: u8,
     pub game_genie: NesCheatState,
+    pub palette_mode: NesPaletteMode,
 
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
@@ -45,9 +55,24 @@ impl Bus {
             cpu_odd_cycle: false,
             cpu_open_bus: 0,
             game_genie: NesCheatState::new(),
+            palette_mode: NesPaletteMode::default(),
             debug_trace_enabled: false,
             debug_trace_events: Vec::new(),
         }
+    }
+
+    pub fn set_palette_mode(&mut self, mode: NesPaletteMode) {
+        self.palette_mode = mode;
+    }
+
+    pub fn palette_mode(&self) -> NesPaletteMode {
+        self.palette_mode
+    }
+
+    pub fn palette_color_rgba(&self, pal_idx: u8) -> [u8; 4] {
+        let (r, g, b) = NES_PALETTE[(pal_idx & 0x3F) as usize];
+        let (r, g, b) = apply_nes_palette_mode(self.palette_mode, (r, g, b));
+        [r, g, b, 255]
     }
 
     #[inline]
@@ -69,7 +94,8 @@ impl Bus {
         };
         self.cpu_open_bus = val;
         if self.debug_trace_enabled {
-            self.debug_trace_events.push(DebugTraceEvent::Read { addr, value: val });
+            self.debug_trace_events
+                .push(DebugTraceEvent::Read { addr, value: val });
         }
         val
     }
@@ -93,7 +119,11 @@ impl Bus {
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
         if self.debug_trace_enabled {
             let old = self.cpu_peek(addr);
-            self.debug_trace_events.push(DebugTraceEvent::Write { addr, old_value: old, new_value: val });
+            self.debug_trace_events.push(DebugTraceEvent::Write {
+                addr,
+                old_value: old,
+                new_value: val,
+            });
         }
         match addr {
             0x0000..=0x1FFF => {
@@ -168,8 +198,12 @@ impl Bus {
                 self.ppu.regs.ctrl = val;
                 self.ppu.t = (self.ppu.t & 0xF3FF) | ((val as u16 & 0x03) << 10);
             }
-            0x2001 => { self.ppu.regs.mask = val; }
-            0x2003 => { self.ppu.oam_addr = val; }
+            0x2001 => {
+                self.ppu.regs.mask = val;
+            }
+            0x2003 => {
+                self.ppu.oam_addr = val;
+            }
             0x2004 => {
                 self.ppu.oam[self.ppu.oam_addr as usize] = val;
                 self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(1);
@@ -214,7 +248,10 @@ impl Bus {
         match addr {
             0x0000..=0x1FFF => self.cartridge.chr_read_with_kind(addr, kind),
             0x2000..=0x3EFF => {
-                if let Some(val) = self.cartridge.ppu_nametable_read(addr, &self.ppu.nametable_ram) {
+                if let Some(val) = self
+                    .cartridge
+                    .ppu_nametable_read(addr, &self.ppu.nametable_ram)
+                {
                     val
                 } else {
                     let mirrored = self.mirror_nametable_addr(addr);
@@ -287,7 +324,7 @@ impl Bus {
         let render_line = visible_line || pre_render;
 
         if rendering && render_line {
-            let bg_hi  = self.ppu.regs.bg_pattern_addr() != 0;
+            let bg_hi = self.ppu.regs.bg_pattern_addr() != 0;
             let spr_hi = self.ppu.regs.sprite_pattern_addr() != 0;
             let notify_dot = if bg_hi && !spr_hi { 324 } else { 260 };
             if dot == notify_dot {
@@ -305,16 +342,15 @@ impl Bus {
         if visible_line && (1..=256).contains(&dot) {
             if rendering {
                 let pal_idx = self.ppu.compose_pixel() as usize;
-                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx);
+                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, self.palette_mode);
             } else {
                 let pal_idx = (self.ppu.palette_ram[0] & 0x3F) as usize;
-                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx);
+                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, self.palette_mode);
             }
         }
 
         if rendering && render_line {
-            let in_bg_range =
-                (1..=256).contains(&dot) || (321..=336).contains(&dot);
+            let in_bg_range = (1..=256).contains(&dot) || (321..=336).contains(&dot);
 
             if in_bg_range {
                 self.ppu.update_shifters();
@@ -327,30 +363,21 @@ impl Bus {
                     }
                     2 => {
                         let v = self.ppu.v;
-                        let addr = 0x23C0
-                            | (v & 0x0C00)
-                            | ((v >> 4) & 0x38)
-                            | ((v >> 2) & 0x07);
+                        let addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
                         let attrib = self.ppu_bus_read(addr);
                         let shift = ((v >> 4) & 0x04) | (v & 0x02);
-                        self.ppu.bg_next_tile_attrib =
-                            (attrib >> shift) & 0x03;
+                        self.ppu.bg_next_tile_attrib = (attrib >> shift) & 0x03;
                     }
                     4 => {
                         let base = self.ppu.regs.bg_pattern_addr();
                         let fine_y = (self.ppu.v >> 12) & 0x07;
-                        let addr = base
-                            + (self.ppu.bg_next_tile_id as u16) * 16
-                            + fine_y;
+                        let addr = base + (self.ppu.bg_next_tile_id as u16) * 16 + fine_y;
                         self.ppu.bg_next_tile_lo = self.ppu_bus_read(addr);
                     }
                     6 => {
                         let base = self.ppu.regs.bg_pattern_addr();
                         let fine_y = (self.ppu.v >> 12) & 0x07;
-                        let addr = base
-                            + (self.ppu.bg_next_tile_id as u16) * 16
-                            + fine_y
-                            + 8;
+                        let addr = base + (self.ppu.bg_next_tile_id as u16) * 16 + fine_y + 8;
                         self.ppu.bg_next_tile_hi = self.ppu_bus_read(addr);
                     }
                     7 => {
@@ -375,13 +402,20 @@ impl Bus {
     }
 
     #[inline]
-    fn write_pixel(ppu: &mut Ppu, dot: u16, scanline: u16, pal_idx: usize) {
+    fn write_pixel(
+        ppu: &mut Ppu,
+        dot: u16,
+        scanline: u16,
+        pal_idx: usize,
+        palette_mode: NesPaletteMode,
+    ) {
         let effective_idx = if ppu.regs.greyscale() {
             pal_idx & 0x30
         } else {
             pal_idx
         };
-        let (mut r, mut g, mut b) = NES_PALETTE[effective_idx];
+        let (r, g, b) = NES_PALETTE[effective_idx];
+        let (mut r, mut g, mut b) = apply_nes_palette_mode(palette_mode, (r, g, b));
 
         let emph_r = ppu.regs.emphasize_red();
         let emph_g = ppu.regs.emphasize_green();
@@ -389,16 +423,21 @@ impl Bus {
         if emph_r || emph_g || emph_b {
             const ATTEN_NUM: u16 = 192;
             const ATTEN_DEN: u16 = 235;
-            if !emph_r { r = (r as u16 * ATTEN_NUM / ATTEN_DEN) as u8; }
-            if !emph_g { g = (g as u16 * ATTEN_NUM / ATTEN_DEN) as u8; }
-            if !emph_b { b = (b as u16 * ATTEN_NUM / ATTEN_DEN) as u8; }
+            if !emph_r {
+                r = (r as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
+            }
+            if !emph_g {
+                g = (g as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
+            }
+            if !emph_b {
+                b = (b as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
+            }
         }
-
 
         let x = (dot - 1) as usize;
         let y = scanline as usize;
         let offset = (y * 256 + x) * 4;
-        ppu.framebuffer[offset]     = r;
+        ppu.framebuffer[offset] = r;
         ppu.framebuffer[offset + 1] = g;
         ppu.framebuffer[offset + 2] = b;
         ppu.framebuffer[offset + 3] = 0xFF;
@@ -406,8 +445,7 @@ impl Bus {
 
     #[inline]
     fn evaluate_sprites_for_scanline(&mut self, target: u16) {
-        let sprite_height: u16 =
-            if self.ppu.regs.tall_sprites() { 16 } else { 8 };
+        let sprite_height: u16 = if self.ppu.regs.tall_sprites() { 16 } else { 8 };
         let pattern_base = self.ppu.regs.sprite_pattern_addr();
 
         self.ppu.sprite_count = 0;
@@ -449,7 +487,7 @@ impl Bus {
 
             let tile_index = self.ppu.oam[base + 1];
             let attributes = self.ppu.oam[base + 2];
-            let sprite_x   = self.ppu.oam[base + 3];
+            let sprite_x = self.ppu.oam[base + 3];
             let flip_h = attributes & 0x40 != 0;
             let flip_v = attributes & 0x80 != 0;
 
@@ -482,8 +520,8 @@ impl Bus {
             let idx = count as usize;
             self.ppu.sprite_patterns_lo[idx] = lo;
             self.ppu.sprite_patterns_hi[idx] = hi;
-            self.ppu.sprite_attribs[idx]     = attributes;
-            self.ppu.sprite_x_counters[idx]  = sprite_x;
+            self.ppu.sprite_attribs[idx] = attributes;
+            self.ppu.sprite_x_counters[idx] = sprite_x;
 
             count += 1;
         }

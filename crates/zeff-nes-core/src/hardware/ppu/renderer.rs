@@ -1,4 +1,39 @@
 use super::Ppu;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NesPaletteMode {
+    #[default]
+    Raw,
+    Ntsc,
+    Pal,
+}
+
+#[inline]
+fn scale_u8(v: u8, num: u16, den: u16) -> u8 {
+    ((u16::from(v) * num) / den).min(255) as u8
+}
+
+#[inline]
+pub fn apply_nes_palette_mode(mode: NesPaletteMode, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+    let (r, g, b) = rgb;
+    match mode {
+        NesPaletteMode::Raw => (r, g, b),
+        NesPaletteMode::Ntsc => {
+            let r_out = scale_u8(r, 246, 255);
+            let g_out = scale_u8(g, 250, 255);
+            let b_out = scale_u8(b, 242, 255);
+            (r_out, g_out, b_out)
+        }
+        NesPaletteMode::Pal => {
+            let r_out = scale_u8(r, 236, 255);
+            let g_out = scale_u8(g, 244, 255);
+            let b_out = scale_u8(b, 255, 255);
+            (r_out, g_out, b_out)
+        }
+    }
+}
 
 #[rustfmt::skip]
 pub static NES_PALETTE: [(u8, u8, u8); 64] = [
@@ -70,9 +105,9 @@ impl Ppu {
 
         let (pixel, palette) = match (bg_pixel != 0, spr_pixel != 0) {
             (false, false) => (0u8, 0u8),
-            (false, true)  => (spr_pixel, spr_palette),
-            (true,  false) => (bg_pixel, bg_palette),
-            (true,  true)  => {
+            (false, true) => (spr_pixel, spr_palette),
+            (true, false) => (bg_pixel, bg_palette),
+            (true, true) => {
                 if sprite_zero_hit && x < 255 {
                     self.regs.set_sprite_zero_hit();
                 }
@@ -90,5 +125,28 @@ impl Ppu {
             let addr = (palette as usize) * 4 + pixel as usize;
             self.palette_ram[addr & 0x1F] & 0x3F
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NesPaletteMode, apply_nes_palette_mode};
+
+    #[test]
+    fn raw_mode_is_identity() {
+        assert_eq!(
+            apply_nes_palette_mode(NesPaletteMode::Raw, (100, 150, 200)),
+            (100, 150, 200)
+        );
+    }
+
+    #[test]
+    fn ntsc_and_pal_modes_produce_distinct_results() {
+        let src = (180, 120, 90);
+        let ntsc = apply_nes_palette_mode(NesPaletteMode::Ntsc, src);
+        let pal = apply_nes_palette_mode(NesPaletteMode::Pal, src);
+        assert_ne!(ntsc, src);
+        assert_ne!(pal, src);
+        assert_ne!(ntsc, pal);
     }
 }

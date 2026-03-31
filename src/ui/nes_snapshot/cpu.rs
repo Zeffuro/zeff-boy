@@ -33,7 +33,10 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
             "CTRL:{:02X}  MASK:{:02X}  STATUS:{:02X}",
             snap.ppu_ctrl, snap.ppu_mask, snap.ppu_status
         ),
-        format!("V:{:04X}  T:{:04X}  FineX:{}", snap.ppu_v, snap.ppu_t, snap.ppu_fine_x),
+        format!(
+            "V:{:04X}  T:{:04X}  FineX:{}",
+            snap.ppu_v, snap.ppu_t, snap.ppu_fine_x
+        ),
         format!("VBlank: {}", snap.ppu_in_vblank),
     ];
 
@@ -68,7 +71,8 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
     }
 
     let breakpoints: Vec<u16> = emu.iter_breakpoints().collect();
-    let watchpoints: Vec<WatchpointDisplay> = emu.debug_watchpoints()
+    let watchpoints: Vec<WatchpointDisplay> = emu
+        .debug_watchpoints()
         .iter()
         .map(|w| WatchpointDisplay {
             address: w.address,
@@ -99,4 +103,3 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         hit_watchpoint,
     }
 }
-

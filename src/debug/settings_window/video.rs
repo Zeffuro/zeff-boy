@@ -1,7 +1,12 @@
 use crate::debug::ui_helpers::enum_combo_box;
 use crate::settings::{ScalingMode, Settings};
 
-pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
+pub(super) fn draw(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    gb_hardware_mode_label: Option<&str>,
+    is_pocket_camera: bool,
+) {
     ui.heading("Video");
     enum_combo_box(ui, "VSync", &mut settings.video.vsync_mode);
 
@@ -102,6 +107,67 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.separator();
     ui.heading("Color Correction");
     use crate::settings::ColorCorrection;
+    use crate::settings::DmgPalettePreset;
+    use crate::settings::NesPaletteMode;
+
+    let gb_mode = gb_hardware_mode_label.unwrap_or_default();
+    let cgb_active = gb_mode.starts_with("CGB");
+    let sgb_active = gb_mode.starts_with("SGB");
+    let dmg_palette_applicable = !cgb_active && !sgb_active && !is_pocket_camera;
+
+    ui.add_enabled_ui(dmg_palette_applicable, |ui| {
+        enum_combo_box(ui, "DMG palette", &mut settings.video.dmg_palette_preset);
+    });
+
+    if !gb_mode.is_empty() {
+        if cgb_active {
+            ui.label(
+                egui::RichText::new(
+                    "Current game is running in CGB mode. DMG palettes apply to DMG rendering only.",
+                )
+                .weak()
+                .small(),
+            );
+        } else if sgb_active {
+            ui.label(
+                egui::RichText::new(
+                    "Current game is running in SGB mode. SGB palettes/borders override DMG palette presets.",
+                )
+                .weak()
+                .small(),
+            );
+        } else if is_pocket_camera {
+            ui.label(
+                egui::RichText::new(
+                    "Pocket Camera output uses cartridge-specific grayscale behavior; DMG palette presets are not applied.",
+                )
+                .weak()
+                .small(),
+            );
+        } else {
+            ui.label(
+                egui::RichText::new("DMG palette preset is active for the current game.")
+                    .weak()
+                    .small(),
+            );
+        }
+    }
+
+    if settings.video.dmg_palette_preset == DmgPalettePreset::DmgGreen {
+        ui.label(
+            egui::RichText::new("Classic pea-green DMG tone")
+                .weak()
+                .small(),
+        );
+    }
+    enum_combo_box(ui, "NES palette mode", &mut settings.video.nes_palette_mode);
+    if settings.video.nes_palette_mode != NesPaletteMode::Raw {
+        ui.label(
+            egui::RichText::new("Applies to NES rendering and NES palette debug views.")
+                .weak()
+                .small(),
+        );
+    }
     enum_combo_box(ui, "Color correction", &mut settings.video.color_correction);
     if settings.video.color_correction == ColorCorrection::Custom {
         ui.separator();
@@ -112,29 +178,64 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             .spacing([6.0, 4.0])
             .show(ui, |ui| {
                 ui.label("R'");
-                ui.add(egui::DragValue::new(&mut m[0]).speed(0.01).range(-2.0..=2.0));
-                ui.add(egui::DragValue::new(&mut m[1]).speed(0.01).range(-2.0..=2.0));
-                ui.add(egui::DragValue::new(&mut m[2]).speed(0.01).range(-2.0..=2.0));
+                ui.add(
+                    egui::DragValue::new(&mut m[0])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut m[1])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut m[2])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
                 ui.end_row();
 
                 ui.label("G'");
-                ui.add(egui::DragValue::new(&mut m[3]).speed(0.01).range(-2.0..=2.0));
-                ui.add(egui::DragValue::new(&mut m[4]).speed(0.01).range(-2.0..=2.0));
-                ui.add(egui::DragValue::new(&mut m[5]).speed(0.01).range(-2.0..=2.0));
+                ui.add(
+                    egui::DragValue::new(&mut m[3])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut m[4])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut m[5])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
                 ui.end_row();
 
                 ui.label("B'");
-                ui.add(egui::DragValue::new(&mut m[6]).speed(0.01).range(-2.0..=2.0));
-                ui.add(egui::DragValue::new(&mut m[7]).speed(0.01).range(-2.0..=2.0));
-                ui.add(egui::DragValue::new(&mut m[8]).speed(0.01).range(-2.0..=2.0));
+                ui.add(
+                    egui::DragValue::new(&mut m[6])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut m[7])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut m[8])
+                        .speed(0.01)
+                        .range(-2.0..=2.0),
+                );
                 ui.end_row();
             });
 
         ui.horizontal(|ui| {
             if ui.button("Identity").clicked() {
-                settings.video.color_correction_matrix = [
-                    1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
-                ];
+                settings.video.color_correction_matrix =
+                    [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
             }
             if ui.button("Load GBC matrix").clicked() {
                 settings.video.color_correction_matrix = [
@@ -162,4 +263,3 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         .small(),
     );
 }
-

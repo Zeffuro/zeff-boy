@@ -8,4 +8,3 @@ pub(crate) use layout::{
 };
 pub(crate) use tabs::{DebugTab, compute_tab_requirements};
 pub(crate) use viewer::DebugTabViewer;
-

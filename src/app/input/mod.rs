@@ -1,5 +1,5 @@
-use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::TiltBindingAction;
+use zeff_gb_core::hardware::joypad::JoypadKey;
 
 #[derive(Default)]
 pub(super) struct HostInputState {

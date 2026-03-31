@@ -1,5 +1,5 @@
-use super::*;
 use super::midi::*;
+use super::*;
 
 use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
 use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
@@ -20,7 +20,11 @@ fn gb_snapshot(ch1_enabled: bool, ch1_frequency: u16, ch1_volume: u8) -> GbApuCh
     }
 }
 
-fn nes_snapshot(pulse1_enabled: bool, pulse1_timer_period: u16, pulse1_volume: u8) -> NesApuChannelSnapshot {
+fn nes_snapshot(
+    pulse1_enabled: bool,
+    pulse1_timer_period: u16,
+    pulse1_volume: u8,
+) -> NesApuChannelSnapshot {
     NesApuChannelSnapshot {
         pulse1_enabled,
         pulse1_timer_period,
@@ -185,10 +189,7 @@ fn finish_midi_produces_valid_smf_header() {
 
 #[test]
 fn midi_note_change_on_adjacent_snapshots_advances_time() {
-    let snapshots = vec![
-        gb_snapshot(true, 1750, 15),
-        gb_snapshot(true, 1800, 15),
-    ];
+    let snapshots = vec![gb_snapshot(true, 1750, 15), gb_snapshot(true, 1800, 15)];
 
     let track = build_midi_track_gb(&snapshots, 0);
     let events = ch0_note_events(&track);
@@ -204,10 +205,7 @@ fn midi_note_change_on_adjacent_snapshots_advances_time() {
 
 #[test]
 fn midi_note_off_on_adjacent_snapshot_advances_time() {
-    let snapshots = vec![
-        gb_snapshot(true, 1750, 15),
-        gb_snapshot(false, 1750, 15),
-    ];
+    let snapshots = vec![gb_snapshot(true, 1750, 15), gb_snapshot(false, 1750, 15)];
 
     let track = build_midi_track_gb(&snapshots, 0);
     let events = ch0_note_events(&track);
@@ -219,10 +217,7 @@ fn midi_note_off_on_adjacent_snapshot_advances_time() {
 
 #[test]
 fn midi_new_note_after_one_silent_snapshot_uses_delta_one() {
-    let snapshots = vec![
-        gb_snapshot(false, 1750, 15),
-        gb_snapshot(true, 1750, 15),
-    ];
+    let snapshots = vec![gb_snapshot(false, 1750, 15), gb_snapshot(true, 1750, 15)];
 
     let track = build_midi_track_gb(&snapshots, 0);
     let events = ch0_note_events(&track);
@@ -247,4 +242,3 @@ fn nes_midi_note_change_on_adjacent_snapshots_advances_time() {
     assert_eq!(events[2].0, 0);
     assert_eq!(events[2].1, 0x90);
 }
-

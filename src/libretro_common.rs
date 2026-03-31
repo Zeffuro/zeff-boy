@@ -51,4 +51,3 @@ pub(crate) fn strip_suffix_groups(input: &str) -> String {
 
     out.trim().to_string()
 }
-

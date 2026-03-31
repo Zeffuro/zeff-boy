@@ -19,10 +19,9 @@ pub use rom_size::RomSize;
 pub use timer_clock::TimerClock;
 
 pub fn new_licensee_name(code: &str) -> &'static str {
-	new_licensee::new_licensee_name(code)
+    new_licensee::new_licensee_name(code)
 }
 
 pub fn old_licensee_name(code: u8) -> &'static str {
-	old_licensee::old_licensee_name(code)
+    old_licensee::old_licensee_name(code)
 }
-

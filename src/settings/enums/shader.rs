@@ -1,8 +1,24 @@
 use serde::{Deserialize, Serialize};
 
-
 pub(crate) use zeff_gb_core::color_correction::ColorCorrection;
 pub(crate) use zeff_gb_core::color_correction::default_color_correction_matrix;
+pub(crate) use zeff_gb_core::hardware::ppu::DmgPalettePreset;
+
+impl crate::debug::ui_helpers::EnumLabel for DmgPalettePreset {
+    fn label(self) -> &'static str {
+        DmgPalettePreset::label(self)
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[
+            Self::Gray,
+            Self::DmgGreen,
+            Self::Pocket,
+            Self::Mint,
+            Self::Chocolate,
+        ]
+    }
+}
 
 impl crate::debug::ui_helpers::EnumLabel for ColorCorrection {
     fn label(self) -> &'static str {
@@ -126,4 +142,3 @@ pub(crate) fn build_gpu_params(
 
     buf
 }
-

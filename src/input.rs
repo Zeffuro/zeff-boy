@@ -1,7 +1,7 @@
 use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs, ff};
 
-use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::{GamepadAction, GamepadBindings};
+use zeff_gb_core::hardware::joypad::JoypadKey;
 
 const RUMBLE_MAGNITUDE: u16 = 40_000;
 
@@ -98,7 +98,9 @@ impl GamepadHandler {
             if self.rumble_effect.is_none() {
                 self.rumble_effect = ff::EffectBuilder::new()
                     .add_effect(ff::BaseEffect {
-                        kind: ff::BaseEffectType::Strong { magnitude: RUMBLE_MAGNITUDE },
+                        kind: ff::BaseEffectType::Strong {
+                            magnitude: RUMBLE_MAGNITUDE,
+                        },
                         scheduling: ff::Replay {
                             play_for: ff::Ticks::from_ms(u32::MAX),
                             with_delay: ff::Ticks::from_ms(0),

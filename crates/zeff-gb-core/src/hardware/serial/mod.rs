@@ -1,5 +1,5 @@
-use std::io::{self, Write};
 use std::fmt;
+use std::io::{self, Write};
 
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};

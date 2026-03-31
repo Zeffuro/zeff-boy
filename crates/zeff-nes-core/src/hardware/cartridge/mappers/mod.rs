@@ -12,9 +12,9 @@ mod vrc4;
 
 pub use action52::Action52;
 pub use axrom::Axrom;
-pub use mapper16::BandaiFcg16;
 pub use cnrom::Cnrom;
 pub use fme7::Fme7;
+pub use mapper16::BandaiFcg16;
 pub use mmc1::Mmc1;
 pub use mmc3::Mmc3;
 pub use mmc5::Mmc5;

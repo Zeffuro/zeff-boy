@@ -27,6 +27,10 @@ impl Emulator {
         self.bus.set_ppu_debug_flags(bg, window, sprites);
     }
 
+    pub fn set_dmg_palette_preset(&mut self, preset: crate::hardware::ppu::DmgPalettePreset) {
+        self.bus.set_ppu_dmg_palette_preset(preset);
+    }
+
     pub fn clear_rom_patches(&mut self) {
         self.bus.game_genie_patches.clear();
     }

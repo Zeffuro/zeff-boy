@@ -1,4 +1,4 @@
-use crate::debug::common::{WatchType, COLOR_CONTINUE_BUTTON};
+use crate::debug::common::{COLOR_CONTINUE_BUTTON, WatchType};
 use crate::debug::types::CpuDebugSnapshot;
 
 pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar};
@@ -105,8 +105,7 @@ pub(super) fn draw_cpu_debug_content(
     let suspended = info.cpu_state == "Suspended";
     if suspended {
         ui.separator();
-        let button =
-            egui::Button::new("▶ Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
+        let button = egui::Button::new("▶ Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
         if ui.add(button).clicked() {
             actions.continue_requested = true;
         }

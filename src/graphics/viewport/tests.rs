@@ -59,4 +59,3 @@ fn integer_scale_minimum_1x() {
     assert_eq!(w, 160.0);
     assert_eq!(h, 144.0);
 }
-

@@ -1,8 +1,6 @@
-use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::TimerClock;
-use crate::save_state::{
-    StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt,
-};
+use crate::hardware::types::hardware_mode::HardwareMode;
+use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 use std::fmt;
 
@@ -66,7 +64,6 @@ impl Timer {
     pub(super) fn tac(&self) -> u8 {
         self.tac
     }
-
 
     pub(super) fn set_mode(&mut self, mode: HardwareMode) {
         self.mode = mode;

@@ -326,4 +326,3 @@ pub fn ror_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
     let v = cpu.ror_val(bus.cpu_read(a));
     bus.cpu_write(a, v);
 }
-

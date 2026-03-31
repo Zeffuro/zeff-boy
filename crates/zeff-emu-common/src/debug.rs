@@ -265,4 +265,3 @@ mod tests {
         assert_eq!(dc.watchpoints.len(), 1);
     }
 }
-

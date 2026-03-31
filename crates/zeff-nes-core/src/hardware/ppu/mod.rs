@@ -3,6 +3,8 @@ mod renderer;
 
 pub use registers::PpuRegisters;
 pub use renderer::NES_PALETTE;
+pub use renderer::NesPaletteMode;
+pub use renderer::apply_nes_palette_mode;
 
 use std::fmt;
 
@@ -22,7 +24,6 @@ const NAMETABLE_Y_BIT: u16 = 0x0800;
 const COARSE_Y_MASK: u16 = 0x03E0;
 const SCROLL_HORIZONTAL_MASK: u16 = 0x041F;
 const SCROLL_VERTICAL_MASK: u16 = 0x7BE0;
-
 
 pub struct Ppu {
     pub(crate) regs: PpuRegisters,
@@ -178,7 +179,9 @@ impl Ppu {
     }
 
     pub fn increment_scroll_x(&mut self) {
-        if !self.regs.rendering_enabled() { return; }
+        if !self.regs.rendering_enabled() {
+            return;
+        }
         if (self.v & COARSE_X_MASK) == 31 {
             self.v &= !COARSE_X_MASK;
             self.v ^= NAMETABLE_X_BIT;
@@ -188,7 +191,9 @@ impl Ppu {
     }
 
     pub fn increment_scroll_y(&mut self) {
-        if !self.regs.rendering_enabled() { return; }
+        if !self.regs.rendering_enabled() {
+            return;
+        }
         if (self.v & FINE_Y_MASK) != FINE_Y_MASK {
             self.v += 0x1000;
         } else {
@@ -207,12 +212,16 @@ impl Ppu {
     }
 
     pub fn copy_horizontal_bits(&mut self) {
-        if !self.regs.rendering_enabled() { return; }
+        if !self.regs.rendering_enabled() {
+            return;
+        }
         self.v = (self.v & !SCROLL_HORIZONTAL_MASK) | (self.t & SCROLL_HORIZONTAL_MASK);
     }
 
     pub fn copy_vertical_bits(&mut self) {
-        if !self.regs.rendering_enabled() { return; }
+        if !self.regs.rendering_enabled() {
+            return;
+        }
         self.v = (self.v & !SCROLL_VERTICAL_MASK) | (self.t & SCROLL_VERTICAL_MASK);
     }
 
@@ -222,9 +231,17 @@ impl Ppu {
         self.bg_shift_pattern_hi =
             (self.bg_shift_pattern_hi & 0xFF00) | self.bg_next_tile_hi as u16;
         self.bg_shift_attrib_lo = (self.bg_shift_attrib_lo & 0xFF00)
-            | if self.bg_next_tile_attrib & 0x01 != 0 { 0xFF } else { 0x00 };
+            | if self.bg_next_tile_attrib & 0x01 != 0 {
+                0xFF
+            } else {
+                0x00
+            };
         self.bg_shift_attrib_hi = (self.bg_shift_attrib_hi & 0xFF00)
-            | if self.bg_next_tile_attrib & 0x02 != 0 { 0xFF } else { 0x00 };
+            | if self.bg_next_tile_attrib & 0x02 != 0 {
+                0xFF
+            } else {
+                0x00
+            };
     }
 
     pub fn update_shifters(&mut self) {

@@ -213,11 +213,7 @@ impl Mapper for Mmc3 {
             self.irq_counter -= 1;
         }
 
-
-        if self.irq_counter == 0
-            && self.irq_enabled
-            && (old != 0 || self.irq_reload)
-        {
+        if self.irq_counter == 0 && self.irq_enabled && (old != 0 || self.irq_reload) {
             self.irq_pending = true;
         }
 
@@ -261,7 +257,11 @@ impl Mapper for Mmc3 {
 
         let chr = r.read_vec(1024 * 1024)?;
         if chr.len() != self.chr.len() {
-            anyhow::bail!("MMC3 CHR size mismatch: expected {}, got {}", self.chr.len(), chr.len());
+            anyhow::bail!(
+                "MMC3 CHR size mismatch: expected {}, got {}",
+                self.chr.len(),
+                chr.len()
+            );
         }
         self.chr = chr;
         Ok(())
@@ -270,4 +270,3 @@ impl Mapper for Mmc3 {
 
 #[cfg(test)]
 mod tests;
-

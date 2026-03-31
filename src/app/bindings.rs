@@ -1,7 +1,7 @@
 use super::App;
-use zeff_gb_core::hardware::joypad::JoypadKey;
 use crate::settings::TiltBindingAction;
 use winit::keyboard::KeyCode;
+use zeff_gb_core::hardware::joypad::JoypadKey;
 
 impl App {
     pub(super) fn map_key(&self, key: KeyCode) -> Option<JoypadKey> {
@@ -16,10 +16,7 @@ impl App {
             (kb.start, JoypadKey::Start),
             (kb.select, JoypadKey::Select),
         ];
-        bindings
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, j)| *j)
+        bindings.iter().find(|(k, _)| *k == key).map(|(_, j)| *j)
     }
 
     pub(super) fn map_tilt_key(&self, key: KeyCode) -> Option<TiltBindingAction> {
@@ -30,9 +27,6 @@ impl App {
             (tb.up, TiltBindingAction::Up),
             (tb.down, TiltBindingAction::Down),
         ];
-        bindings
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, a)| *a)
+        bindings.iter().find(|(k, _)| *k == key).map(|(_, a)| *a)
     }
 }

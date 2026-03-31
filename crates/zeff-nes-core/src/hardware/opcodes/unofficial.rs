@@ -348,7 +348,8 @@ pub fn anc(cpu: &mut Cpu, bus: &Bus) {
     let val = bus.cpu_peek(addr);
     cpu.regs.a &= val;
     cpu.regs.set_zn(cpu.regs.a);
-    cpu.regs.set_flag(StatusFlags::CARRY, cpu.regs.a & 0x80 != 0);
+    cpu.regs
+        .set_flag(StatusFlags::CARRY, cpu.regs.a & 0x80 != 0);
 }
 
 // ALR: AND #imm, then LSR A.
@@ -364,7 +365,11 @@ pub fn arr(cpu: &mut Cpu, bus: &Bus) {
     let addr = cpu.addr_immediate(bus);
     let val = bus.cpu_peek(addr);
     cpu.regs.a &= val;
-    let carry_in: u8 = if cpu.regs.get_flag(StatusFlags::CARRY) { 0x80 } else { 0 };
+    let carry_in: u8 = if cpu.regs.get_flag(StatusFlags::CARRY) {
+        0x80
+    } else {
+        0
+    };
     cpu.regs.a = (cpu.regs.a >> 1) | carry_in;
     cpu.regs.set_zn(cpu.regs.a);
     let bit6 = (cpu.regs.a >> 6) & 1;
@@ -422,7 +427,9 @@ pub fn nop_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
 
 // KIL/JAM: freeze the CPU. Used by various undocumented halt opcodes.
 pub fn kil(cpu: &mut Cpu, _bus: &mut Bus) {
-    log::warn!("KIL/JAM opcode executed at PC={:04X}:CPU halted", cpu.pc.wrapping_sub(1));
+    log::warn!(
+        "KIL/JAM opcode executed at PC={:04X}:CPU halted",
+        cpu.pc.wrapping_sub(1)
+    );
     cpu.state = crate::hardware::cpu::CpuState::Halted;
 }
-

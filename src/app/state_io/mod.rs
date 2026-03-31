@@ -11,7 +11,6 @@ pub(crate) use archive_and_slots::extract_rom_from_zip;
 
 use std::time::Instant;
 
-
 impl App {
     fn pause_for_dialog(&mut self) -> bool {
         let was_paused = self.paused;
@@ -23,5 +22,4 @@ impl App {
         self.paused = was_paused;
         self.timing.last_frame_time = Instant::now();
     }
-
 }

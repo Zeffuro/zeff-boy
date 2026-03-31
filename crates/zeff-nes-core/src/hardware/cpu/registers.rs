@@ -1,4 +1,4 @@
- use std::fmt;
+use std::fmt;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,12 +65,36 @@ impl fmt::Display for Registers {
             self.x,
             self.y,
             self.p.bits(),
-            if self.get_flag(StatusFlags::NEGATIVE) { 'N' } else { '-' },
-            if self.get_flag(StatusFlags::OVERFLOW) { 'V' } else { '-' },
-            if self.get_flag(StatusFlags::DECIMAL) { 'D' } else { '-' },
-            if self.get_flag(StatusFlags::INTERRUPT) { 'I' } else { '-' },
-            if self.get_flag(StatusFlags::ZERO) { 'Z' } else { '-' },
-            if self.get_flag(StatusFlags::CARRY) { 'C' } else { '-' },
+            if self.get_flag(StatusFlags::NEGATIVE) {
+                'N'
+            } else {
+                '-'
+            },
+            if self.get_flag(StatusFlags::OVERFLOW) {
+                'V'
+            } else {
+                '-'
+            },
+            if self.get_flag(StatusFlags::DECIMAL) {
+                'D'
+            } else {
+                '-'
+            },
+            if self.get_flag(StatusFlags::INTERRUPT) {
+                'I'
+            } else {
+                '-'
+            },
+            if self.get_flag(StatusFlags::ZERO) {
+                'Z'
+            } else {
+                '-'
+            },
+            if self.get_flag(StatusFlags::CARRY) {
+                'C'
+            } else {
+                '-'
+            },
         )
     }
 }
@@ -86,12 +110,36 @@ impl fmt::Debug for Registers {
                 &format_args!(
                     "{:#04X} [{}{}{}{}{}{}]",
                     self.p.bits(),
-                    if self.get_flag(StatusFlags::NEGATIVE) { 'N' } else { '-' },
-                    if self.get_flag(StatusFlags::OVERFLOW) { 'V' } else { '-' },
-                    if self.get_flag(StatusFlags::DECIMAL) { 'D' } else { '-' },
-                    if self.get_flag(StatusFlags::INTERRUPT) { 'I' } else { '-' },
-                    if self.get_flag(StatusFlags::ZERO) { 'Z' } else { '-' },
-                    if self.get_flag(StatusFlags::CARRY) { 'C' } else { '-' },
+                    if self.get_flag(StatusFlags::NEGATIVE) {
+                        'N'
+                    } else {
+                        '-'
+                    },
+                    if self.get_flag(StatusFlags::OVERFLOW) {
+                        'V'
+                    } else {
+                        '-'
+                    },
+                    if self.get_flag(StatusFlags::DECIMAL) {
+                        'D'
+                    } else {
+                        '-'
+                    },
+                    if self.get_flag(StatusFlags::INTERRUPT) {
+                        'I'
+                    } else {
+                        '-'
+                    },
+                    if self.get_flag(StatusFlags::ZERO) {
+                        'Z'
+                    } else {
+                        '-'
+                    },
+                    if self.get_flag(StatusFlags::CARRY) {
+                        'C'
+                    } else {
+                        '-'
+                    },
                 ),
             )
             .finish()

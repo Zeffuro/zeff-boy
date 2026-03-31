@@ -17,8 +17,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             }
             if state.rebinding_gamepad.is_some() {
                 ui.label(
-                    egui::RichText::new("Press a gamepad button...")
-                        .color(egui::Color32::YELLOW),
+                    egui::RichText::new("Press a gamepad button...").color(egui::Color32::YELLOW),
                 );
             }
             egui::Grid::new("joypad_combined")
@@ -95,4 +94,3 @@ fn joypad_label(action: BindingAction) -> &'static str {
         BindingAction::Select => "Select",
     }
 }
-

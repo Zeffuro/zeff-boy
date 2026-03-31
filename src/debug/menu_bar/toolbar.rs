@@ -79,4 +79,3 @@ pub(super) fn draw(
         actions.push(MenuAction::ToolbarSettingsChanged);
     }
 }
-

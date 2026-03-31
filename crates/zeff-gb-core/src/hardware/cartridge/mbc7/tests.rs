@@ -118,4 +118,3 @@ fn eeprom_read(mbc7: &mut Mbc7, addr: u8) -> u16 {
     mbc7.write_ram(0xA080, 0x00);
     result
 }
-

@@ -64,7 +64,6 @@ impl Emulator {
         crate::save_state::encode_state_bytes(&self.as_save_state_ref())
     }
 
-
     pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<()> {
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {
             let state = crate::save_state::decode_on_thread(bytes)?;

@@ -12,10 +12,7 @@ pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> anyhow::Result<(PathBuf, 
         .filter_map(|i| {
             let entry = archive.by_index(i).ok()?;
             let name = entry.name().to_string();
-            let ext = Path::new(&name)
-                .extension()?
-                .to_str()?
-                .to_ascii_lowercase();
+            let ext = Path::new(&name).extension()?.to_str()?.to_ascii_lowercase();
             if ROM_EXTENSIONS.contains(&ext.as_str()) {
                 Some((i, name))
             } else {
@@ -76,4 +73,3 @@ pub(crate) fn build_slot_labels(rom_hash: Option<[u8; 32]>, system: ActiveSystem
         }
     })
 }
-

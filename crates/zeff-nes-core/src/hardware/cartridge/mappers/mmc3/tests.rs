@@ -14,4 +14,3 @@ fn mmc3_switches_8k_prg_bank_at_8000() {
 
     assert_eq!(mapper.cpu_read(0x8000), 1);
 }
-

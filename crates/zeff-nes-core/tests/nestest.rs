@@ -10,10 +10,7 @@ fn nestest_rom_path() -> PathBuf {
 fn nestest_official_opcodes_pass() {
     let rom_path = nestest_rom_path();
     if !rom_path.exists() {
-        eprintln!(
-            "Skipping nestest: ROM not found at {}",
-            rom_path.display()
-        );
+        eprintln!("Skipping nestest: ROM not found at {}", rom_path.display());
         return;
     }
 
@@ -54,10 +51,7 @@ fn nestest_official_opcodes_pass() {
 fn nestest_unofficial_opcodes_pass() {
     let rom_path = nestest_rom_path();
     if !rom_path.exists() {
-        eprintln!(
-            "Skipping nestest: ROM not found at {}",
-            rom_path.display()
-        );
+        eprintln!("Skipping nestest: ROM not found at {}", rom_path.display());
         return;
     }
 

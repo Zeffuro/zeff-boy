@@ -4,8 +4,8 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::EmuBackend;
 
 use super::{
-    EmuCommand, EmuResponse, EmuThread, FrameResult,
-    DEFAULT_REWIND_SECONDS, REWIND_SNAPSHOTS_PER_SECOND,
+    DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
+    REWIND_SNAPSHOTS_PER_SECOND,
 };
 
 pub(super) struct EmuLoop {
@@ -105,22 +105,23 @@ impl EmuLoop {
                 }
             }
 
-            EmuCommand::SaveStateSlot(slot) => {
-                match self.backend.slot_path(slot) {
-                    Ok(path) => {
-                        if !EmuThread::save_state_async(
-                            &self.backend, path, &self.resp_tx, &self.send_resp_fn(),
-                        ) {
-                            return false;
-                        }
-                    }
-                    Err(e) => {
-                        if !self.send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
-                            return false;
-                        }
+            EmuCommand::SaveStateSlot(slot) => match self.backend.slot_path(slot) {
+                Ok(path) => {
+                    if !EmuThread::save_state_async(
+                        &self.backend,
+                        path,
+                        &self.resp_tx,
+                        &self.send_resp_fn(),
+                    ) {
+                        return false;
                     }
                 }
-            }
+                Err(e) => {
+                    if !self.send_resp(EmuResponse::SaveStateFailed(e.to_string())) {
+                        return false;
+                    }
+                }
+            },
 
             EmuCommand::LoadStateSlot {
                 slot,
@@ -147,7 +148,10 @@ impl EmuLoop {
 
             EmuCommand::SaveStateToPath(path) => {
                 if !EmuThread::save_state_async(
-                    &self.backend, path, &self.resp_tx, &self.send_resp_fn(),
+                    &self.backend,
+                    path,
+                    &self.resp_tx,
+                    &self.send_resp_fn(),
                 ) {
                     return false;
                 }
@@ -215,7 +219,10 @@ impl EmuLoop {
             EmuCommand::AutoSaveState => {
                 if let Some(path) = self.backend.auto_save_path() {
                     if !EmuThread::save_state_async(
-                        &self.backend, path, &self.resp_tx, &self.send_resp_fn(),
+                        &self.backend,
+                        path,
+                        &self.resp_tx,
+                        &self.send_resp_fn(),
                     ) {
                         return false;
                     }
@@ -286,7 +293,11 @@ impl EmuLoop {
             log::error!("Failed to flush SRAM on shutdown: {}", err);
             None
         });
-        if self.resp_tx.send(EmuResponse::SramFlushed(sram_path)).is_err() {
+        if self
+            .resp_tx
+            .send(EmuResponse::SramFlushed(sram_path))
+            .is_err()
+        {
             log::debug!("shutdown: SRAM flush response dropped (receiver closed)");
         }
         if self.resp_tx.send(EmuResponse::ShutdownComplete).is_err() {
@@ -294,4 +305,3 @@ impl EmuLoop {
         }
     }
 }
-

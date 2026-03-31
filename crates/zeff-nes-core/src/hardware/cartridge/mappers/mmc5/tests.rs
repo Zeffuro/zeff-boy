@@ -288,4 +288,3 @@ fn mmc5_compare_zero_does_not_fire_on_prerender() {
 
     assert!(!mapper.irq_pending());
 }
-

@@ -1,7 +1,6 @@
 use crate::debug::BreakpointState;
 use crate::debug::common::{
-    WatchType, parse_hex_u16,
-    COLOR_BREAKPOINT_HIT, COLOR_WATCHPOINT_HIT, COLOR_CONTINUE_BUTTON,
+    COLOR_BREAKPOINT_HIT, COLOR_CONTINUE_BUTTON, COLOR_WATCHPOINT_HIT, WatchType, parse_hex_u16,
 };
 use crate::debug::types::CpuDebugSnapshot;
 use crate::debug::ui::DebugUiActions;
@@ -22,10 +21,11 @@ pub(super) fn draw_breakpoints_content(
         );
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Add").clicked() || enter)
-            && let Some(addr) = parse_hex_u16(&state.input) {
-                actions.add_breakpoint = Some(addr);
-                state.input.clear();
-            }
+            && let Some(addr) = parse_hex_u16(&state.input)
+        {
+            actions.add_breakpoint = Some(addr);
+            state.input.clear();
+        }
     });
 
     if info.breakpoints.is_empty() {
@@ -96,10 +96,11 @@ pub(super) fn draw_breakpoints_content(
                 ui.selectable_value(&mut state.watchpoint_type, WatchType::ReadWrite, "R/W");
             });
         if ui.button("Add").clicked()
-            && let Some(addr) = parse_hex_u16(&state.watchpoint_input) {
-                actions.add_watchpoint = Some((addr, state.watchpoint_type));
-                state.watchpoint_input.clear();
-            }
+            && let Some(addr) = parse_hex_u16(&state.watchpoint_input)
+        {
+            actions.add_watchpoint = Some((addr, state.watchpoint_type));
+            state.watchpoint_input.clear();
+        }
     });
 
     if info.watchpoints.is_empty() {
@@ -157,8 +158,7 @@ pub(super) fn draw_breakpoints_content(
     let suspended = info.cpu_state == "Suspended";
     if suspended {
         ui.separator();
-        let button =
-            egui::Button::new("▶ Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
+        let button = egui::Button::new("▶ Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
         if ui.add(button).clicked() {
             actions.continue_requested = true;
         }
@@ -167,4 +167,3 @@ pub(super) fn draw_breakpoints_content(
         }
     }
 }
-

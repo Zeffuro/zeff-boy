@@ -134,12 +134,8 @@ impl Mapper for Mmc1 {
         }
         let index = if self.chr_mode() {
             match addr {
-                0x0000..=0x0FFF => {
-                    (self.chr_bank_0 as usize) * 0x1000 + addr as usize
-                }
-                0x1000..=0x1FFF => {
-                    (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize
-                }
+                0x0000..=0x0FFF => (self.chr_bank_0 as usize) * 0x1000 + addr as usize,
+                0x1000..=0x1FFF => (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize,
                 _ => addr as usize,
             }
         } else {
@@ -154,12 +150,8 @@ impl Mapper for Mmc1 {
         }
         let index = if self.chr_mode() {
             match addr {
-                0x0000..=0x0FFF => {
-                    (self.chr_bank_0 as usize) * 0x1000 + addr as usize
-                }
-                0x1000..=0x1FFF => {
-                    (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize
-                }
+                0x0000..=0x0FFF => (self.chr_bank_0 as usize) * 0x1000 + addr as usize,
+                0x1000..=0x1FFF => (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize,
                 _ => addr as usize,
             }
         } else {
@@ -196,7 +188,11 @@ impl Mapper for Mmc1 {
         self.mirroring = crate::save_state::decode_mirroring(r.read_u8()?)?;
         let chr = r.read_vec(512 * 1024)?;
         if chr.len() != self.chr.len() {
-            anyhow::bail!("MMC1 CHR size mismatch: expected {}, got {}", self.chr.len(), chr.len());
+            anyhow::bail!(
+                "MMC1 CHR size mismatch: expected {}, got {}",
+                self.chr.len(),
+                chr.len()
+            );
         }
         self.chr = chr;
         Ok(())

@@ -3,7 +3,10 @@ use crate::emu_backend::EmuBackend;
 use super::EmuThread;
 
 impl EmuThread {
-    pub(crate) fn install_rom_patches(backend: &mut EmuBackend, cheats: &[crate::cheats::CheatPatch]) {
+    pub(crate) fn install_rom_patches(
+        backend: &mut EmuBackend,
+        cheats: &[crate::cheats::CheatPatch],
+    ) {
         if let Some(gb) = backend.gb_mut() {
             use crate::cheats::CheatPatch;
             gb.emu.clear_rom_patches();
@@ -26,13 +29,12 @@ impl EmuThread {
                             crate::cheats::CheatValue::Constant(v) => v,
                             _ => continue,
                         };
-                        nes.emu.add_game_genie_patch(
-                            zeff_nes_core::cheats::NesGameGeniePatch {
+                        nes.emu
+                            .add_game_genie_patch(zeff_nes_core::cheats::NesGameGeniePatch {
                                 address,
                                 value: v,
                                 compare: None,
-                            },
-                        );
+                            });
                     }
                     CheatPatch::RomWriteIfEquals {
                         address,
@@ -47,13 +49,12 @@ impl EmuThread {
                             crate::cheats::CheatValue::Constant(c) => c,
                             _ => continue,
                         };
-                        nes.emu.add_game_genie_patch(
-                            zeff_nes_core::cheats::NesGameGeniePatch {
+                        nes.emu
+                            .add_game_genie_patch(zeff_nes_core::cheats::NesGameGeniePatch {
                                 address,
                                 value: v,
                                 compare: Some(c),
-                            },
-                        );
+                            });
                     }
                     _ => {}
                 }
@@ -61,7 +62,10 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn apply_ram_cheats(emu: &mut zeff_gb_core::emulator::Emulator, cheats: &[crate::cheats::CheatPatch]) {
+    pub(crate) fn apply_ram_cheats(
+        emu: &mut zeff_gb_core::emulator::Emulator,
+        cheats: &[crate::cheats::CheatPatch],
+    ) {
         use crate::cheats::CheatPatch;
         for patch in cheats {
             match *patch {
@@ -84,7 +88,10 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn apply_nes_ram_cheats(emu: &mut zeff_nes_core::emulator::Emulator, cheats: &[crate::cheats::CheatPatch]) {
+    pub(crate) fn apply_nes_ram_cheats(
+        emu: &mut zeff_nes_core::emulator::Emulator,
+        cheats: &[crate::cheats::CheatPatch],
+    ) {
         use crate::cheats::CheatPatch;
         for patch in cheats {
             match *patch {
@@ -114,4 +121,3 @@ impl EmuThread {
         }
     }
 }
-

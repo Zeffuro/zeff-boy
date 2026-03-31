@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use super::common::{
+    COLOR_ADDR, COLOR_DIM, COLOR_FLASH, DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_ROWS_VISIBLE,
     parse_hex_u8,
-    COLOR_ADDR, COLOR_DIM, COLOR_FLASH,
-    DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_ROWS_VISIBLE,
 };
 use crate::debug::types::{MemorySearchMode, MemorySearchResult, RomSearchResult};
 
@@ -18,10 +17,26 @@ pub(super) fn hex_text_formats(ui: &egui::Ui) -> HexFormats {
     let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
     let normal_color = ui.visuals().text_color();
     HexFormats {
-        addr: egui::TextFormat { font_id: mono.clone(), color: COLOR_ADDR, ..Default::default() },
-        normal: egui::TextFormat { font_id: mono.clone(), color: normal_color, ..Default::default() },
-        dim: egui::TextFormat { font_id: mono.clone(), color: COLOR_DIM, ..Default::default() },
-        flash: egui::TextFormat { font_id: mono, color: COLOR_FLASH, ..Default::default() },
+        addr: egui::TextFormat {
+            font_id: mono.clone(),
+            color: COLOR_ADDR,
+            ..Default::default()
+        },
+        normal: egui::TextFormat {
+            font_id: mono.clone(),
+            color: normal_color,
+            ..Default::default()
+        },
+        dim: egui::TextFormat {
+            font_id: mono.clone(),
+            color: COLOR_DIM,
+            ..Default::default()
+        },
+        flash: egui::TextFormat {
+            font_id: mono,
+            color: COLOR_FLASH,
+            ..Default::default()
+        },
     }
 }
 
@@ -63,11 +78,7 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
                 job.append("-- ", 0.0, fmt.dim.clone());
             } else {
                 let value = page[idx].1;
-                let has_flash = flash_ticks
-                    .and_then(|ft| ft.get(idx))
-                    .copied()
-                    .unwrap_or(0)
-                    > 0;
+                let has_flash = flash_ticks.and_then(|ft| ft.get(idx)).copied().unwrap_or(0) > 0;
                 let text_fmt = if has_flash { &fmt.flash } else { &fmt.normal };
                 job.append(&format!("{:02X} ", value), 0.0, text_fmt.clone());
             }
@@ -167,11 +178,7 @@ pub(super) fn draw_search_section<R: HexSearchResult>(
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(mode, MemorySearchMode::ByteValue, "Byte (hex)");
-                    ui.selectable_value(
-                        mode,
-                        MemorySearchMode::ByteSequence,
-                        "Sequence (hex)",
-                    );
+                    ui.selectable_value(mode, MemorySearchMode::ByteSequence, "Sequence (hex)");
                     ui.selectable_value(mode, MemorySearchMode::AsciiString, "ASCII");
                 });
         });
@@ -193,11 +200,7 @@ pub(super) fn draw_search_section<R: HexSearchResult>(
         });
         ui.horizontal(|ui| {
             ui.label("Max results:");
-            ui.add(
-                egui::DragValue::new(max_results)
-                    .range(1..=1024)
-                    .speed(1),
-            );
+            ui.add(egui::DragValue::new(max_results).range(1..=1024).speed(1));
         });
         if !results.is_empty() {
             ui.label(format!("{} result(s):", results.len()));
@@ -241,22 +244,22 @@ pub(super) fn draw_tbl_section(
             && let Some(path) = rfd::FileDialog::new()
                 .add_filter("TBL files", &["tbl", "txt"])
                 .pick_file()
-            {
-                match super::common::load_tbl_file(&path) {
-                    Ok(map) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("?")
-                            .to_string();
-                        *tbl_map = map;
-                        *tbl_path = Some(name);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to load TBL file: {}", e);
-                    }
+        {
+            match super::common::load_tbl_file(&path) {
+                Ok(map) => {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    *tbl_map = map;
+                    *tbl_path = Some(name);
+                }
+                Err(e) => {
+                    log::warn!("Failed to load TBL file: {}", e);
                 }
             }
+        }
     });
 }
 
@@ -267,8 +270,7 @@ pub(crate) fn parse_search_query(query: &str, mode: MemorySearchMode) -> Option<
             let bytes: Vec<u8> = query
                 .split_whitespace()
                 .filter_map(|s| {
-                    u8::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16)
-                        .ok()
+                    u8::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
                 })
                 .collect();
             if bytes.is_empty() { None } else { Some(bytes) }
@@ -279,4 +281,3 @@ pub(crate) fn parse_search_query(query: &str, mode: MemorySearchMode) -> Option<
         }
     }
 }
-

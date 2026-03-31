@@ -108,4 +108,3 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         .weak(),
     );
 }
-

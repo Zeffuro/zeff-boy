@@ -51,7 +51,8 @@ pub fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &'static
             match result {
                 Some((patches, ty)) => {
                     if let Some(prev) = detected_type
-                        && prev != ty {}
+                        && prev != ty
+                    {}
                     detected_type = Some(ty);
                     all_patches.extend(patches);
                 }
@@ -64,9 +65,10 @@ pub fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &'static
         }
 
         if let Some(ty) = detected_type
-            && !all_patches.is_empty() {
-                return Ok((all_patches, ty));
-            }
+            && !all_patches.is_empty()
+        {
+            return Ok((all_patches, ty));
+        }
     }
 
     Err(
@@ -74,10 +76,7 @@ pub fn parse_cheat(input: &str) -> Result<(Vec<CheatPatch>, CheatType), &'static
     )
 }
 
-pub fn collect_enabled_patches(
-    user: &[CheatCode],
-    libretro: &[CheatCode],
-) -> Vec<CheatPatch> {
+pub fn collect_enabled_patches(user: &[CheatCode], libretro: &[CheatCode]) -> Vec<CheatPatch> {
     user.iter()
         .chain(libretro.iter())
         .filter(|c| c.enabled)
@@ -96,4 +95,3 @@ pub fn collect_enabled_patches(
         })
         .collect()
 }
-

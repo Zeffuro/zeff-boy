@@ -9,10 +9,10 @@ mod decode;
 mod encode;
 
 pub use bess::{has_bess_footer, import_bess};
-pub use decode::{decode_on_thread, validate_compatibility};
-pub use encode::encode_state_bytes;
 #[cfg(test)]
 use decode::decode_state;
+pub use decode::{decode_on_thread, validate_compatibility};
+pub use encode::encode_state_bytes;
 pub use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use crate::hardware::bus::Bus;
@@ -107,10 +107,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let ext = path
-        .extension()
-        .and_then(|v| v.to_str())
-        .unwrap_or("state");
+    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or("state");
     tmp.set_extension(format!("{ext}.tmp.{suffix}"));
     tmp
 }

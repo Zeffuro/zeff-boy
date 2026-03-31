@@ -328,12 +328,7 @@ impl Cartridge {
     }
 
     /// Applies BESS RTC data to the cartridge (MBC3 only).
-    pub fn apply_bess_rtc(
-        &mut self,
-        current: [u8; 5],
-        latched: [u8; 5],
-        elapsed_seconds: u64,
-    ) {
+    pub fn apply_bess_rtc(&mut self, current: [u8; 5], latched: [u8; 5], elapsed_seconds: u64) {
         if let Cartridge::Mbc3(c) = self {
             c.apply_bess_rtc(current, latched, elapsed_seconds);
         }

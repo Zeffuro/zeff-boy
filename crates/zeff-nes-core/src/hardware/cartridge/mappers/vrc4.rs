@@ -290,4 +290,3 @@ impl Mapper for Vrc4 {
         Ok(())
     }
 }
-

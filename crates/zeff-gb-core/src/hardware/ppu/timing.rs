@@ -137,7 +137,7 @@ impl PPU {
                     renderer::render_scanline_dmg(self, vram, oam);
                 }
             }
-            
+
             if self.ly < 144 {
                 self.increment_window_line_counter_after_scanline();
             }

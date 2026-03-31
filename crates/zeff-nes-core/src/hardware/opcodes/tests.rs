@@ -240,12 +240,7 @@ fn jmp_indirect_page_boundary_bug() {
 
 #[test]
 fn zero_page_x_wraps() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0x42,
-        0x85, 0x03,
-        0xA2, 0x04,
-        0xB5, 0xFF,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0x42, 0x85, 0x03, 0xA2, 0x04, 0xB5, 0xFF]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -339,17 +334,16 @@ fn brk_hijack_via_direct_call() {
     cpu.nmi_pending = true;
     brk(&mut cpu, &mut bus);
 
-    assert_eq!(cpu.pc, 0x8200, "BRK with NMI pending should hijack to NMI vector");
+    assert_eq!(
+        cpu.pc, 0x8200,
+        "BRK with NMI pending should hijack to NMI vector"
+    );
     assert!(!cpu.nmi_pending, "NMI should be consumed");
 }
 
 #[test]
 fn lax_zp_loads_a_and_x() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0x42,
-        0x85, 0x10,
-        0xA7, 0x10,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0x42, 0x85, 0x10, 0xA7, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -359,13 +353,7 @@ fn lax_zp_loads_a_and_x() {
 
 #[test]
 fn sax_zp_stores_a_and_x() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0xFF,
-        0xA2, 0x0F,
-        0x87, 0x10,
-        0xA9, 0x00,
-        0xA5, 0x10,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0xFF, 0xA2, 0x0F, 0x87, 0x10, 0xA9, 0x00, 0xA5, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -376,12 +364,7 @@ fn sax_zp_stores_a_and_x() {
 
 #[test]
 fn dcp_zp_decrements_and_compares() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0x43,
-        0x85, 0x10,
-        0xA9, 0x42,
-        0xC7, 0x10,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0x43, 0x85, 0x10, 0xA9, 0x42, 0xC7, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -392,13 +375,7 @@ fn dcp_zp_decrements_and_compares() {
 
 #[test]
 fn isb_zp_increments_and_subtracts() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0x09,
-        0x85, 0x10,
-        0x38,
-        0xA9, 0x20,
-        0xE7, 0x10,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0x09, 0x85, 0x10, 0x38, 0xA9, 0x20, 0xE7, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -409,14 +386,7 @@ fn isb_zp_increments_and_subtracts() {
 
 #[test]
 fn php_plp_preserves_flags() {
-    let (mut cpu, mut bus) = setup(&[
-        0x38,
-        0x78,
-        0x08,
-        0x18,
-        0x58,
-        0x28,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0x38, 0x78, 0x08, 0x18, 0x58, 0x28]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert!(cpu.regs.get_flag(StatusFlags::CARRY));
@@ -454,13 +424,7 @@ fn tax_tay_transfer() {
 
 #[test]
 fn jsr_rts_round_trip() {
-    let (mut cpu, mut bus) = setup(&[
-        0x20, 0x05, 0x80,
-        0xEA,
-        0xEA,
-        0xA9, 0x42,
-        0x60,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0x20, 0x05, 0x80, 0xEA, 0xEA, 0xA9, 0x42, 0x60]);
     cpu.step(&mut bus);
     assert_eq!(cpu.pc, 0x8005);
     cpu.step(&mut bus);
@@ -471,10 +435,7 @@ fn jsr_rts_round_trip() {
 
 #[test]
 fn bit_test_flags() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0xC0, 0x85, 0x10,
-        0xA9, 0xFF, 0x24, 0x10,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0xC0, 0x85, 0x10, 0xA9, 0xFF, 0x24, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -486,10 +447,7 @@ fn bit_test_flags() {
 
 #[test]
 fn bit_test_zero_result() {
-    let (mut cpu, mut bus) = setup(&[
-        0xA9, 0xC0, 0x85, 0x10,
-        0xA9, 0x00, 0x24, 0x10,
-    ]);
+    let (mut cpu, mut bus) = setup(&[0xA9, 0xC0, 0x85, 0x10, 0xA9, 0x00, 0x24, 0x10]);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
@@ -536,4 +494,3 @@ fn dey_underflow() {
     assert_eq!(cpu.regs.y, 0xFF);
     assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
-

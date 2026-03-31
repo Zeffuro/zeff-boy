@@ -57,4 +57,3 @@ impl Emulator {
         self.bus.set_apu_enabled(enabled);
     }
 }
-

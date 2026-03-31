@@ -132,9 +132,10 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         JOYP_P1 => {
             bus.write_joypad_p1(value);
             if matches!(bus.hardware_mode, HardwareMode::SGB1 | HardwareMode::SGB2)
-                && let Some(event) = bus.io.sgb.on_joyp_write(value) {
-                    apply_sgb_event(bus, event);
-                }
+                && let Some(event) = bus.io.sgb.on_joyp_write(value)
+            {
+                apply_sgb_event(bus, event);
+            }
         }
         SERIAL_SB => bus.io.serial.write_sb(value),
         SERIAL_SC => bus.io.serial.write_sc(value),

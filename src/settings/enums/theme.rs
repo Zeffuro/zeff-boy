@@ -30,4 +30,3 @@ impl crate::debug::ui_helpers::EnumLabel for UiThemePreset {
         ]
     }
 }
-

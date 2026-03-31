@@ -1,6 +1,6 @@
+use crate::debug::TileViewerState;
 use crate::debug::common::nes_palette_rgba;
 use crate::debug::types::NesGraphicsData;
-use crate::debug::TileViewerState;
 
 fn decode_nes_tile_pixel(chr: &[u8], tile_addr: usize, row: usize, col: usize) -> u8 {
     let lo = chr.get(tile_addr + row).copied().unwrap_or(0);
@@ -63,6 +63,7 @@ pub(super) fn draw_nes_tile_viewer_content(
             &mut window_state.image,
             &gfx.chr_data,
             &gfx.palette_ram,
+            gfx.palette_mode,
             palette_index,
             use_obj,
         );
@@ -99,6 +100,7 @@ fn render_nes_pattern_tables(
     image: &mut egui::ColorImage,
     chr_data: &[u8],
     palette_ram: &[u8; 32],
+    palette_mode: zeff_nes_core::hardware::ppu::NesPaletteMode,
     palette_index: u8,
     use_obj: bool,
 ) {
@@ -118,7 +120,8 @@ fn render_nes_pattern_tables(
             for row in 0..8usize {
                 for col in 0..8usize {
                     let color_id = decode_nes_tile_pixel(chr_data, tile_addr, row, col);
-                    let rgba = nes_palette_rgba(palette_ram, effective_palette, color_id);
+                    let rgba =
+                        nes_palette_rgba(palette_ram, effective_palette, color_id, palette_mode);
                     let px = x_offset + tile_x * 8 + col;
                     let py = tile_y * 8 + row;
                     if px < image.size[0] && py < image.size[1] {

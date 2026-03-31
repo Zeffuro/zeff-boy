@@ -17,4 +17,3 @@ fn auto_falls_back_to_dmg_when_not_sgb() {
     let mode = HardwareModePreference::Auto.resolve(false, true, 0x01);
     assert_eq!(mode, HardwareMode::DMG);
 }
-

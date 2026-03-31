@@ -26,8 +26,9 @@ fn build_nes_test_rom() -> Vec<u8> {
 #[test]
 fn gb_save_state_roundtrip_through_emulator() {
     let rom = build_gb_test_rom();
-    let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(&rom, HardwareModePreference::Auto)
-        .expect("GB test ROM should load");
+    let mut emu =
+        zeff_gb_core::emulator::Emulator::from_rom_data(&rom, HardwareModePreference::Auto)
+            .expect("GB test ROM should load");
 
     for _ in 0..8 {
         let _ = emu.step_instruction();
@@ -72,4 +73,3 @@ fn nes_save_state_roundtrip_through_emulator() {
     assert_eq!(emu.cpu_pc(), pc_before);
     assert_eq!(emu.cpu_cycles(), cycles_before);
 }
-

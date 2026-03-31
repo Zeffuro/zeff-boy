@@ -142,4 +142,3 @@ impl<'de> Deserialize<'de> for KeyBindings {
         })
     }
 }
-

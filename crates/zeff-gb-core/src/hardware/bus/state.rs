@@ -5,9 +5,7 @@ use crate::hardware::io::IO;
 use crate::hardware::types::constants::{
     HRAM_SIZE, IO_SIZE, IO_START, OAM_SIZE, VRAM_SIZE, WRAM_SIZE,
 };
-use crate::save_state::{
-    StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt,
-};
+use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 
 impl Bus {

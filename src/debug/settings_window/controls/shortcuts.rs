@@ -10,8 +10,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                 || state.rebinding_rewind
             {
                 ui.label(
-                    egui::RichText::new("Press a key to rebind...")
-                        .color(egui::Color32::YELLOW),
+                    egui::RichText::new("Press a key to rebind...").color(egui::Color32::YELLOW),
                 );
             }
             egui::Grid::new("shortcuts_grid")
@@ -75,4 +74,3 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             );
         });
 }
-

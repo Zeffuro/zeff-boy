@@ -125,6 +125,41 @@ fn pre_mute_volume_is_skipped_in_serde() {
 }
 
 #[test]
+fn audio_output_sample_rate_serde_roundtrip() {
+    let mut s = Settings::default();
+    s.audio.output_sample_rate = 44_100;
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.audio.output_sample_rate, 44_100);
+}
+
+#[test]
+fn audio_output_sample_rate_defaults_when_missing() {
+    let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+    let s: Settings = serde_json::from_str(json).unwrap();
+    assert_eq!(s.audio.output_sample_rate, 48_000);
+}
+
+#[test]
+fn audio_low_pass_settings_serde_roundtrip() {
+    let mut s = Settings::default();
+    s.audio.low_pass_enabled = true;
+    s.audio.low_pass_cutoff_hz = 2_400;
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+    assert!(restored.audio.low_pass_enabled);
+    assert_eq!(restored.audio.low_pass_cutoff_hz, 2_400);
+}
+
+#[test]
+fn audio_low_pass_settings_defaults_when_missing() {
+    let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+    let s: Settings = serde_json::from_str(json).unwrap();
+    assert!(!s.audio.low_pass_enabled);
+    assert_eq!(s.audio.low_pass_cutoff_hz, 4_800);
+}
+
+#[test]
 fn shader_params_roundtrip() {
     let params = ShaderParams {
         scanline_intensity: 0.5,
@@ -156,7 +191,13 @@ fn shader_params_to_gpu_bytes() {
 #[test]
 fn build_gpu_params_includes_color_correction() {
     let params = ShaderParams::default();
-    let buf = build_gpu_params(&params, ColorCorrection::GbcLcd, default_color_correction_matrix(), 160.0, 144.0);
+    let buf = build_gpu_params(
+        &params,
+        ColorCorrection::GbcLcd,
+        default_color_correction_matrix(),
+        160.0,
+        144.0,
+    );
     let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
     assert_eq!(mode, 1);
     let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
@@ -166,7 +207,13 @@ fn build_gpu_params_includes_color_correction() {
 #[test]
 fn build_gpu_params_none_mode_is_identity() {
     let params = ShaderParams::default();
-    let buf = build_gpu_params(&params, ColorCorrection::None, default_color_correction_matrix(), 160.0, 144.0);
+    let buf = build_gpu_params(
+        &params,
+        ColorCorrection::None,
+        default_color_correction_matrix(),
+        160.0,
+        144.0,
+    );
     let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
     assert_eq!(mode, 0);
     let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
@@ -193,22 +240,56 @@ fn color_correction_defaults_to_none_when_missing() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
     assert_eq!(s.video.color_correction, ColorCorrection::None);
-    assert_eq!(s.video.color_correction_matrix, default_color_correction_matrix());
+    assert_eq!(
+        s.video.color_correction_matrix,
+        default_color_correction_matrix()
+    );
 }
 
 #[test]
 fn custom_color_correction_matrix_roundtrip() {
     let mut s = Settings::default();
     s.video.color_correction = ColorCorrection::Custom;
-    s.video.color_correction_matrix = [
-        1.0, 0.2, 0.0,
-        0.1, 0.9, 0.0,
-        0.0, 0.3, 0.8,
-    ];
+    s.video.color_correction_matrix = [1.0, 0.2, 0.0, 0.1, 0.9, 0.0, 0.0, 0.3, 0.8];
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.video.color_correction, ColorCorrection::Custom);
-    assert_eq!(restored.video.color_correction_matrix, s.video.color_correction_matrix);
+    assert_eq!(
+        restored.video.color_correction_matrix,
+        s.video.color_correction_matrix
+    );
+}
+
+#[test]
+fn dmg_palette_preset_serde_roundtrip() {
+    let mut s = Settings::default();
+    s.video.dmg_palette_preset = DmgPalettePreset::Mint;
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.video.dmg_palette_preset, DmgPalettePreset::Mint);
+}
+
+#[test]
+fn dmg_palette_preset_defaults_when_missing() {
+    let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+    let s: Settings = serde_json::from_str(json).unwrap();
+    assert_eq!(s.video.dmg_palette_preset, DmgPalettePreset::DmgGreen);
+}
+
+#[test]
+fn nes_palette_mode_serde_roundtrip() {
+    let mut s = Settings::default();
+    s.video.nes_palette_mode = NesPaletteMode::Pal;
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.video.nes_palette_mode, NesPaletteMode::Pal);
+}
+
+#[test]
+fn nes_palette_mode_defaults_to_raw_when_missing() {
+    let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
+    let s: Settings = serde_json::from_str(json).unwrap();
+    assert_eq!(s.video.nes_palette_mode, NesPaletteMode::Raw);
 }
 
 #[test]
@@ -241,4 +322,3 @@ fn camera_defaults_match_tuned_profile() {
     assert!((s.camera.contrast - 1.65).abs() < f32::EPSILON);
     assert!((s.camera.gamma - 1.05).abs() < f32::EPSILON);
 }
-

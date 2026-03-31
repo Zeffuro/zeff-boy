@@ -1,5 +1,5 @@
-use super::types::CheatCode;
 use super::parse_cheat;
+use super::types::CheatCode;
 
 pub fn parse_cht_file(content: &str) -> Vec<CheatCode> {
     let mut cheats = Vec::new();
@@ -14,19 +14,20 @@ pub fn parse_cht_file(content: &str) -> Vec<CheatCode> {
 
         if let Some(rest) = line.strip_prefix("cheat")
             && let Some(idx_end) = rest.find('_')
-                && let Ok(idx) = rest[..idx_end].parse::<usize>() {
-                    let field = &rest[idx_end + 1..];
-                    if let Some(value) = field.strip_prefix("desc = ") {
-                        let value = value.trim().trim_matches('"').to_string();
-                        entries.entry(idx).or_insert((None, None, false)).0 = Some(value);
-                    } else if let Some(value) = field.strip_prefix("code = ") {
-                        let value = value.trim().trim_matches('"').to_string();
-                        entries.entry(idx).or_insert((None, None, false)).1 = Some(value);
-                    } else if let Some(value) = field.strip_prefix("enable = ") {
-                        let enabled = value.trim() == "true";
-                        entries.entry(idx).or_insert((None, None, false)).2 = enabled;
-                    }
-                }
+            && let Ok(idx) = rest[..idx_end].parse::<usize>()
+        {
+            let field = &rest[idx_end + 1..];
+            if let Some(value) = field.strip_prefix("desc = ") {
+                let value = value.trim().trim_matches('"').to_string();
+                entries.entry(idx).or_insert((None, None, false)).0 = Some(value);
+            } else if let Some(value) = field.strip_prefix("code = ") {
+                let value = value.trim().trim_matches('"').to_string();
+                entries.entry(idx).or_insert((None, None, false)).1 = Some(value);
+            } else if let Some(value) = field.strip_prefix("enable = ") {
+                let enabled = value.trim() == "true";
+                entries.entry(idx).or_insert((None, None, false)).2 = enabled;
+            }
+        }
     }
 
     let mut indices: Vec<usize> = entries.keys().copied().collect();
@@ -80,4 +81,3 @@ pub fn export_cht_file(cheats: &[CheatCode]) -> String {
 
     out
 }
-

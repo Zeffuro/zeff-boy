@@ -29,7 +29,6 @@ pub const NAMETABLE_BASE: u16 = 0x2000;
 pub const ATTRIBUTE_TABLE_BASE: u16 = 0x23C0;
 pub const PALETTE_START: u16 = 0x3F00;
 
-
 pub const SCROLL_HORIZONTAL_MASK: u16 = 0x041F;
 pub const SCROLL_VERTICAL_MASK: u16 = 0x7BE0;
 pub const COARSE_X_MASK: u16 = 0x001F;
@@ -68,4 +67,3 @@ pub const FRAME_STEP_5: u64 = 37281;
 
 pub const CPU_CYCLES_PER_FRAME: u64 = 29781;
 pub const NES_FRAME_DURATION_NS: u64 = 16_639_267;
-

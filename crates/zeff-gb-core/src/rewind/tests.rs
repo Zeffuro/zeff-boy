@@ -108,4 +108,3 @@ fn peek_empty_returns_none() {
     let buf = RewindBuffer::new(10, 4);
     assert!(buf.peek().is_none());
 }
-

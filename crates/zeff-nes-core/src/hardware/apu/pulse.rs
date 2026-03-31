@@ -129,7 +129,12 @@ impl Pulse {
 
     pub fn clock_sweep(&mut self) {
         let target = self.sweep_target_period();
-        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift > 0 && self.timer_period >= 8 && target <= 0x7FF {
+        if self.sweep_divider == 0
+            && self.sweep_enabled
+            && self.sweep_shift > 0
+            && self.timer_period >= 8
+            && target <= 0x7FF
+        {
             self.timer_period = target;
         }
         if self.sweep_divider == 0 || self.sweep_reload {
@@ -242,4 +247,3 @@ pub(crate) static LENGTH_TABLE: [u8; 32] = [
     12, 16, 24, 18, 48, 20, 96, 22,
     192, 24, 72, 26, 16, 28, 32, 30,
 ];
-

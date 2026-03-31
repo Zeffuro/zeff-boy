@@ -84,4 +84,3 @@ fn halt_bug_causes_next_byte_to_be_read_twice() {
     assert_eq!(second, 0x3C);
     assert_eq!(cpu.pc, 0xC001);
 }
-

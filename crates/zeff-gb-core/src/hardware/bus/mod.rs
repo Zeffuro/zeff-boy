@@ -74,11 +74,7 @@ impl Bus {
         self.io.joypad.write(value);
     }
 
-    pub fn apply_joypad_pressed_masks(
-        &mut self,
-        buttons_pressed: u8,
-        dpad_pressed: u8,
-    ) -> bool {
+    pub fn apply_joypad_pressed_masks(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
         self.io
             .joypad
             .apply_pressed_masks(buttons_pressed, dpad_pressed)
@@ -242,6 +238,14 @@ impl Bus {
         self.io.ppu.set_sgb_mode(enabled);
     }
 
+    pub fn set_ppu_dmg_palette_preset(&mut self, preset: crate::hardware::ppu::DmgPalettePreset) {
+        self.io.ppu.set_dmg_palette_preset(preset);
+    }
+
+    pub fn ppu_dmg_palette_preset(&self) -> crate::hardware::ppu::DmgPalettePreset {
+        self.io.ppu.dmg_palette_preset()
+    }
+
     pub fn apply_bess_ppu_registers(&mut self, io: &[u8], is_cgb: bool) {
         self.io.ppu.lcdc = crate::hardware::ppu::Lcdc::from_bits_truncate(io[0x40]);
         self.io.ppu.stat = io[0x41];
@@ -333,4 +337,3 @@ impl Bus {
 
 #[cfg(test)]
 mod tests;
-

@@ -21,6 +21,8 @@ pub(crate) struct SnapshotRequest {
     pub(crate) rom_search: Option<MemorySearchRequest>,
     pub(crate) color_correction: crate::settings::ColorCorrection,
     pub(crate) color_correction_matrix: [f32; 9],
+    pub(crate) dmg_palette_preset: crate::settings::DmgPalettePreset,
+    pub(crate) nes_palette_mode: crate::settings::NesPaletteMode,
 }
 
 pub(crate) struct MemorySearchRequest {
@@ -111,4 +113,3 @@ pub(crate) enum EmuResponse {
     SramFlushed(Option<String>),
     ShutdownComplete,
 }
-

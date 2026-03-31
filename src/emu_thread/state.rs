@@ -91,10 +91,11 @@ impl EmuThread {
         rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
         enabled: bool,
     ) {
-        if enabled && rewind_buffer.tick()
-            && let Ok(bytes) = Self::encode_current_state(backend) {
-                rewind_buffer.push(&bytes, backend.framebuffer());
-            }
+        if enabled
+            && rewind_buffer.tick()
+            && let Ok(bytes) = Self::encode_current_state(backend)
+        {
+            rewind_buffer.push(&bytes, backend.framebuffer());
+        }
     }
 }
-

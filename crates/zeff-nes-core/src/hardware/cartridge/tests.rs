@@ -1,13 +1,7 @@
 use super::*;
 use header::{CHR_ROM_BANK_SIZE, INES_MAGIC, PRG_ROM_BANK_SIZE};
 
-fn make_header(
-    prg_banks: u8,
-    chr_banks: u8,
-    flags6: u8,
-    flags7: u8,
-    rest: [u8; 8],
-) -> [u8; 16] {
+fn make_header(prg_banks: u8, chr_banks: u8, flags6: u8, flags7: u8, rest: [u8; 8]) -> [u8; 16] {
     let mut h = [0u8; 16];
     h[0..4].copy_from_slice(INES_MAGIC);
     h[4] = prg_banks;

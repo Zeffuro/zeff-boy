@@ -1,14 +1,20 @@
 mod cheat_list;
 mod libretro_ui;
 
-use crate::cheats::{CheatCode, CheatPatch, export_cht_file, parse_cheat_for_system, parse_cht_file};
+use crate::cheats::{
+    CheatCode, CheatPatch, export_cht_file, parse_cheat_for_system, parse_cht_file,
+};
 use crate::debug::CheatState;
 
 pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.heading("Cheat Codes");
     let help_text = match state.active_system {
-        crate::emu_backend::ActiveSystem::Nes => "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)",
-        crate::emu_backend::ActiveSystem::GameBoy => "GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)",
+        crate::emu_backend::ActiveSystem::Nes => {
+            "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)"
+        }
+        crate::emu_backend::ActiveSystem::GameBoy => {
+            "GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)"
+        }
     };
     ui.label(help_text);
 
@@ -100,45 +106,45 @@ fn draw_import_export(ui: &mut egui::Ui, state: &mut CheatState, changed: &mut b
             && let Some(path) = rfd::FileDialog::new()
                 .add_filter("Cheat files", &["cht", "txt"])
                 .pick_file()
-            {
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => {
-                        let imported = parse_cht_file(&content);
-                        let count = imported.len();
-                        state.user_codes.extend(imported);
-                        state.parse_error = None;
-                        *changed = true;
-                        log::info!("Imported {} cheats from {}", count, path.display());
-                    }
-                    Err(e) => {
-                        state.parse_error = Some(format!("Failed to read file: {e}"));
-                    }
+        {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let imported = parse_cht_file(&content);
+                    let count = imported.len();
+                    state.user_codes.extend(imported);
+                    state.parse_error = None;
+                    *changed = true;
+                    log::info!("Imported {} cheats from {}", count, path.display());
+                }
+                Err(e) => {
+                    state.parse_error = Some(format!("Failed to read file: {e}"));
                 }
             }
+        }
         if !state.user_codes.is_empty()
             && ui
                 .button("💾 Export .cht")
                 .on_hover_text("Export user cheats to a .cht file")
                 .clicked()
-                && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Cheat files", &["cht"])
-                    .set_file_name("cheats.cht")
-                    .save_file()
-                {
-                    let content = export_cht_file(&state.user_codes);
-                    match std::fs::write(&path, content) {
-                        Ok(()) => {
-                            log::info!(
-                                "Exported {} cheats to {}",
-                                state.user_codes.len(),
-                                path.display()
-                            );
-                        }
-                        Err(e) => {
-                            state.parse_error = Some(format!("Failed to write file: {e}"));
-                        }
-                    }
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Cheat files", &["cht"])
+                .set_file_name("cheats.cht")
+                .save_file()
+        {
+            let content = export_cht_file(&state.user_codes);
+            match std::fs::write(&path, content) {
+                Ok(()) => {
+                    log::info!(
+                        "Exported {} cheats to {}",
+                        state.user_codes.len(),
+                        path.display()
+                    );
                 }
+                Err(e) => {
+                    state.parse_error = Some(format!("Failed to write file: {e}"));
+                }
+            }
+        }
     });
 }
 
@@ -174,4 +180,3 @@ pub(super) fn patches_summary(patches: &[CheatPatch]) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
-

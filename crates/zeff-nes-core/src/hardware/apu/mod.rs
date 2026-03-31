@@ -100,7 +100,11 @@ impl Apu {
                     self.frame_irq = false;
                 }
 
-                self.frame_cycle = if self.five_step_mode || !odd_cycle { 0 } else { 1 };
+                self.frame_cycle = if self.five_step_mode || !odd_cycle {
+                    0
+                } else {
+                    1
+                };
 
                 if self.five_step_mode {
                     self.clock_quarter_frame();
@@ -113,26 +117,54 @@ impl Apu {
 
     pub fn read_status(&mut self) -> u8 {
         let mut status = 0u8;
-        if self.pulse1.length_counter > 0 { status |= 0x01; }
-        if self.pulse2.length_counter > 0 { status |= 0x02; }
-        if self.triangle.length_counter > 0 { status |= 0x04; }
-        if self.noise.length_counter > 0 { status |= 0x08; }
-        if self.dmc.bytes_remaining > 0 { status |= 0x10; }
-        if self.frame_irq { status |= 0x40; }
-        if self.dmc.irq_flag { status |= 0x80; }
+        if self.pulse1.length_counter > 0 {
+            status |= 0x01;
+        }
+        if self.pulse2.length_counter > 0 {
+            status |= 0x02;
+        }
+        if self.triangle.length_counter > 0 {
+            status |= 0x04;
+        }
+        if self.noise.length_counter > 0 {
+            status |= 0x08;
+        }
+        if self.dmc.bytes_remaining > 0 {
+            status |= 0x10;
+        }
+        if self.frame_irq {
+            status |= 0x40;
+        }
+        if self.dmc.irq_flag {
+            status |= 0x80;
+        }
         self.frame_irq = false;
         status
     }
 
     pub fn peek_status(&self) -> u8 {
         let mut status = 0u8;
-        if self.pulse1.length_counter > 0 { status |= 0x01; }
-        if self.pulse2.length_counter > 0 { status |= 0x02; }
-        if self.triangle.length_counter > 0 { status |= 0x04; }
-        if self.noise.length_counter > 0 { status |= 0x08; }
-        if self.dmc.bytes_remaining > 0 { status |= 0x10; }
-        if self.frame_irq { status |= 0x40; }
-        if self.dmc.irq_flag { status |= 0x80; }
+        if self.pulse1.length_counter > 0 {
+            status |= 0x01;
+        }
+        if self.pulse2.length_counter > 0 {
+            status |= 0x02;
+        }
+        if self.triangle.length_counter > 0 {
+            status |= 0x04;
+        }
+        if self.noise.length_counter > 0 {
+            status |= 0x08;
+        }
+        if self.dmc.bytes_remaining > 0 {
+            status |= 0x10;
+        }
+        if self.frame_irq {
+            status |= 0x40;
+        }
+        if self.dmc.irq_flag {
+            status |= 0x80;
+        }
         status
     }
     pub fn tick(&mut self) {
@@ -213,7 +245,7 @@ impl Apu {
         self.sample_accumulator += self.output_sample_rate;
         if self.sample_accumulator >= APU_CPU_CLOCK_NTSC {
             self.sample_accumulator -= APU_CPU_CLOCK_NTSC;
-            
+
             let p1_raw = self.pulse1.output() as f32;
             let p2_raw = self.pulse2.output() as f32;
             let tri_raw = self.triangle.output() as f32;
@@ -245,10 +277,22 @@ impl Apu {
 
             if self.debug_collection_enabled {
                 Self::push_debug_sample(&mut self.master_debug_samples, sample.clamp(-1.0, 1.0));
-                Self::push_debug_sample(&mut self.pulse1_debug_samples, (p1_raw / 15.0).clamp(-1.0, 1.0));
-                Self::push_debug_sample(&mut self.pulse2_debug_samples, (p2_raw / 15.0).clamp(-1.0, 1.0));
-                Self::push_debug_sample(&mut self.triangle_debug_samples, ((tri_raw - 7.5) / 7.5).clamp(-1.0, 1.0));
-                Self::push_debug_sample(&mut self.noise_debug_samples, (noi_raw / 15.0).clamp(-1.0, 1.0));
+                Self::push_debug_sample(
+                    &mut self.pulse1_debug_samples,
+                    (p1_raw / 15.0).clamp(-1.0, 1.0),
+                );
+                Self::push_debug_sample(
+                    &mut self.pulse2_debug_samples,
+                    (p2_raw / 15.0).clamp(-1.0, 1.0),
+                );
+                Self::push_debug_sample(
+                    &mut self.triangle_debug_samples,
+                    ((tri_raw - 7.5) / 7.5).clamp(-1.0, 1.0),
+                );
+                Self::push_debug_sample(
+                    &mut self.noise_debug_samples,
+                    (noi_raw / 15.0).clamp(-1.0, 1.0),
+                );
             }
         }
     }
@@ -261,7 +305,10 @@ impl Apu {
     }
 
     pub fn drain_samples(&mut self) -> Vec<f32> {
-        std::mem::replace(&mut self.sample_buffer, Vec::with_capacity(INITIAL_SAMPLE_CAPACITY))
+        std::mem::replace(
+            &mut self.sample_buffer,
+            Vec::with_capacity(INITIAL_SAMPLE_CAPACITY),
+        )
     }
 
     pub fn drain_samples_into_stereo(&mut self, buf: &mut Vec<f32>) {
@@ -371,4 +418,3 @@ impl fmt::Debug for Apu {
             .finish_non_exhaustive()
     }
 }
-

@@ -1,16 +1,14 @@
 use crate::debug::types::PaletteDebugInfo;
 
-pub(super) fn draw_palette_viewer_content(
-    ui: &mut egui::Ui,
-    info: &PaletteDebugInfo,
-) {
+pub(super) fn draw_palette_viewer_content(ui: &mut egui::Ui, info: &PaletteDebugInfo) {
     for group in &info.groups {
         ui.label(&group.title);
         for row in &group.rows {
             ui.horizontal(|ui| {
                 ui.label(&row.label);
                 for rgba in &row.colors {
-                    let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+                    let color =
+                        egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
                     let luminance = (rgba[0] as u16 + rgba[1] as u16 + rgba[2] as u16) / 3;
                     let text_color = if luminance < 128 {
                         egui::Color32::WHITE

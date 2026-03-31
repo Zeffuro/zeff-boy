@@ -1,13 +1,31 @@
 use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleFormat, StreamConfig};
+use cpal::{SampleFormat, StreamConfig, SupportedStreamConfig};
 
 const NORMAL_QUEUE_MS: usize = 200;
 const FAST_FORWARD_QUEUE_MS: usize = 40;
 const STEREO_MIX_FACTOR: f32 = 0.5;
+const AUDIO_LOW_PASS_MIN_CUTOFF_HZ: u32 = 20;
+const AUDIO_LOW_PASS_MAX_CUTOFF_HZ: u32 = 20_000;
 
 fn ring_buffer_capacity(sample_rate: u32) -> usize {
     sample_rate as usize * 2 * NORMAL_QUEUE_MS / 1000
+}
+
+fn sample_format_rank(format: SampleFormat) -> u8 {
+    match format {
+        SampleFormat::F32 => 0,
+        SampleFormat::I16 => 1,
+        SampleFormat::U16 => 2,
+        SampleFormat::U8 => 3,
+        _ => 4,
+    }
+}
+
+fn same_config(a: &SupportedStreamConfig, b: &SupportedStreamConfig) -> bool {
+    a.sample_rate() == b.sample_rate()
+        && a.channels() == b.channels()
+        && a.sample_format() == b.sample_format()
 }
 
 pub(crate) struct AudioOutput {
@@ -15,50 +33,181 @@ pub(crate) struct AudioOutput {
     producer: rtrb::Producer<f32>,
     sample_rate: u32,
     capacity: usize,
+    low_pass_filter: OnePoleLowPass,
+}
+
+#[derive(Default)]
+struct OnePoleLowPass {
+    left: f32,
+    right: f32,
+    initialized: bool,
+}
+
+impl OnePoleLowPass {
+    fn reset(&mut self) {
+        self.initialized = false;
+    }
+
+    fn apply_sample(&mut self, sample: f32, channel: usize, alpha: f32) -> f32 {
+        if !self.initialized {
+            self.left = sample;
+            self.right = sample;
+            self.initialized = true;
+            return sample;
+        }
+
+        if channel & 1 == 0 {
+            self.left += alpha * (sample - self.left);
+            self.left
+        } else {
+            self.right += alpha * (sample - self.right);
+            self.right
+        }
+    }
+}
+
+fn low_pass_alpha(sample_rate: u32, cutoff_hz: u32) -> f32 {
+    let clamped_cutoff = cutoff_hz.clamp(AUDIO_LOW_PASS_MIN_CUTOFF_HZ, AUDIO_LOW_PASS_MAX_CUTOFF_HZ);
+    let rc = 1.0 / (std::f32::consts::TAU * clamped_cutoff as f32);
+    let dt = 1.0 / sample_rate.max(1) as f32;
+    (dt / (rc + dt)).clamp(0.0, 1.0)
 }
 
 impl AudioOutput {
-    pub(crate) fn new() -> anyhow::Result<Self> {
+    pub(crate) fn new(preferred_sample_rate: Option<u32>) -> anyhow::Result<Self> {
         let host = cpal::default_host();
-        let device = host.default_output_device()
+        let device = host
+            .default_output_device()
             .context("no audio output device found")?;
-        let config = device.default_output_config()
+
+        let configs = Self::select_output_configs(&device, preferred_sample_rate)
+            .context("failed to pick audio output config")?;
+
+        let mut last_err = None;
+        for config in configs {
+            let sample_rate = config.sample_rate();
+            let channels = config.channels();
+            let capacity = ring_buffer_capacity(sample_rate);
+            let (producer, consumer) = rtrb::RingBuffer::new(capacity);
+
+            match Self::build_stream_for_config(&device, &config, consumer) {
+                Ok(stream) => {
+                    stream.play().context("failed to start audio playback")?;
+                    if let Some(target) = preferred_sample_rate
+                        && sample_rate != target
+                    {
+                        log::warn!(
+                            "requested audio sample rate {target} Hz not available; using {sample_rate} Hz ({:?}, {}ch)",
+                            config.sample_format(),
+                            channels
+                        );
+                    }
+                    return Ok(Self {
+                        _stream: stream,
+                        producer,
+                        sample_rate,
+                        capacity,
+                        low_pass_filter: OnePoleLowPass::default(),
+                    });
+                }
+                Err(err) => {
+                    log::warn!(
+                        "audio output config failed: {:?} {} Hz ({}ch): {err}",
+                        config.sample_format(),
+                        sample_rate,
+                        channels
+                    );
+                    last_err = Some(err);
+                }
+            }
+        }
+
+        if let Some(err) = last_err {
+            Err(err)
+        } else {
+            anyhow::bail!("no audio output configs available")
+        }
+    }
+
+    fn select_output_configs(
+        device: &cpal::Device,
+        preferred_sample_rate: Option<u32>,
+    ) -> anyhow::Result<Vec<SupportedStreamConfig>> {
+        let default = device
+            .default_output_config()
             .context("failed to get default audio output config")?;
-
-        let sample_rate = config.sample_rate();
-        let channels = config.channels();
-        let stream_config: StreamConfig = config.clone().into();
-
-        let capacity = ring_buffer_capacity(sample_rate);
-        let (producer, consumer) = rtrb::RingBuffer::new(capacity);
-
-        let stream = match config.sample_format() {
-            SampleFormat::F32 => {
-                Self::build_stream_f32(&device, &stream_config, channels, consumer)
-                    .context("failed to build F32 audio stream")?
-            }
-            SampleFormat::I16 => {
-                Self::build_stream_converting(&device, &stream_config, channels, consumer, |s| {
-                    (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
-                })
-                    .context("failed to build I16 audio stream")?
-            }
-            SampleFormat::U16 => {
-                Self::build_stream_converting(&device, &stream_config, channels, consumer, |s| {
-                    ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16
-                })
-                    .context("failed to build U16 audio stream")?
-            }
-            other => anyhow::bail!("unsupported audio sample format: {other:?}"),
+        let Some(target_rate) = preferred_sample_rate else {
+            return Ok(vec![default]);
         };
 
-        stream.play().context("failed to start audio playback")?;
-        Ok(Self {
-            _stream: stream,
-            producer,
-            sample_rate,
-            capacity,
+        let mut candidates: Vec<SupportedStreamConfig> = match device.supported_output_configs() {
+            Ok(configs) => configs,
+            Err(err) => {
+                log::warn!(
+                    "failed to enumerate supported output configs for sample rate {target_rate} Hz: {err}"
+                );
+                return Ok(vec![default]);
+            }
+        }
+        .map(|range| {
+            let min_rate = range.min_sample_rate();
+            let max_rate = range.max_sample_rate();
+            range.with_sample_rate(target_rate.clamp(min_rate, max_rate))
         })
+        .collect();
+
+        if candidates.is_empty() {
+            return Ok(vec![default]);
+        }
+
+        let default_channels = default.channels();
+        candidates.sort_by_key(|config| {
+            (
+                sample_format_rank(config.sample_format()),
+                config.sample_rate().abs_diff(target_rate),
+                config.channels().abs_diff(default_channels),
+            )
+        });
+
+        if !candidates.iter().any(|config| same_config(config, &default)) {
+            candidates.push(default);
+        }
+
+        Ok(candidates)
+    }
+
+    fn build_stream_for_config(
+        device: &cpal::Device,
+        config: &SupportedStreamConfig,
+        consumer: rtrb::Consumer<f32>,
+    ) -> anyhow::Result<cpal::Stream> {
+        let channels = config.channels();
+        let stream_config: StreamConfig = config.clone().into();
+        match config.sample_format() {
+            SampleFormat::F32 => {
+                Self::build_stream_f32(device, &stream_config, channels, consumer)
+                    .context("failed to build F32 audio stream")
+            }
+            SampleFormat::I16 => {
+                Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
+                    (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+                })
+                .context("failed to build I16 audio stream")
+            }
+            SampleFormat::U16 => {
+                Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
+                    ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16
+                })
+                .context("failed to build U16 audio stream")
+            }
+            SampleFormat::U8 => {
+                Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
+                    ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u8::MAX as f32) as u8
+                })
+                .context("failed to build U8 audio stream")
+            }
+            other => anyhow::bail!("unsupported audio sample format: {other:?}"),
+        }
     }
 
     pub(crate) fn sample_rate(&self) -> u32 {
@@ -71,6 +220,8 @@ impl AudioOutput {
         master_volume: f32,
         fast_forward_active: bool,
         mute_during_fast_forward: bool,
+        low_pass_enabled: bool,
+        low_pass_cutoff_hz: u32,
     ) {
         if fast_forward_active && mute_during_fast_forward {
             return;
@@ -95,16 +246,33 @@ impl AudioOutput {
             return;
         }
 
+        if !low_pass_enabled {
+            self.low_pass_filter.reset();
+        }
+        let alpha = low_pass_alpha(self.sample_rate, low_pass_cutoff_hz);
+
         if let Ok(mut chunk) = self.producer.write_chunk_uninit(available) {
             let (first, second) = chunk.as_mut_slices();
             let first_len = first.len();
-            for (dst, &src) in first.iter_mut().zip(samples.iter()) {
-                dst.write(src * gain);
+            for (idx, (dst, &src)) in first.iter_mut().zip(samples.iter()).enumerate() {
+                let mut out = src * gain;
+                if low_pass_enabled {
+                    out = self.low_pass_filter.apply_sample(out, idx, alpha);
+                }
+                dst.write(out);
             }
-            for (dst, &src) in second.iter_mut().zip(samples[first_len..].iter()) {
-                dst.write(src * gain);
+            for (idx, (dst, &src)) in second.iter_mut().zip(samples[first_len..].iter()).enumerate() {
+                let mut out = src * gain;
+                if low_pass_enabled {
+                    out = self
+                        .low_pass_filter
+                        .apply_sample(out, first_len + idx, alpha);
+                }
+                dst.write(out);
             }
-            unsafe { chunk.commit_all(); }
+            unsafe {
+                chunk.commit_all();
+            }
         }
     }
 

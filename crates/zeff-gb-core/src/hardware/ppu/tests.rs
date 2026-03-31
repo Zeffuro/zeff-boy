@@ -118,16 +118,31 @@ fn mode_sequence_during_active_scanline() {
     ppu.cycles = 0;
 
     ppu.step(OAM_DOTS - 1, &vram, &oam, false);
-    assert_eq!(ppu.mode(), 2, "should still be OAM scan at dot {}", OAM_DOTS - 1);
+    assert_eq!(
+        ppu.mode(),
+        2,
+        "should still be OAM scan at dot {}",
+        OAM_DOTS - 1
+    );
 
     ppu.step(1, &vram, &oam, false);
-    assert_eq!(ppu.mode(), 3, "should enter pixel transfer at dot {}", OAM_DOTS);
+    assert_eq!(
+        ppu.mode(),
+        3,
+        "should enter pixel transfer at dot {}",
+        OAM_DOTS
+    );
 
     ppu.step(DRAW_DOTS_BASE - 1, &vram, &oam, false);
     assert_eq!(ppu.mode(), 3, "should still be pixel transfer");
 
     ppu.step(1, &vram, &oam, false);
-    assert_eq!(ppu.mode(), 0, "should enter HBlank at dot {}", OAM_DOTS + DRAW_DOTS_BASE);
+    assert_eq!(
+        ppu.mode(),
+        0,
+        "should enter HBlank at dot {}",
+        OAM_DOTS + DRAW_DOTS_BASE
+    );
 }
 
 #[test]
@@ -301,4 +316,3 @@ fn draw_dots_caps_at_10_sprites() {
         "Sprite penalty should cap at 10 sprites (10 * 6 = 60)"
     );
 }
-

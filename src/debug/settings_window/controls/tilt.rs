@@ -1,5 +1,7 @@
 use crate::debug::DebugWindowState;
-use crate::settings::{InputBindingAction, LeftStickMode, Settings, TiltBindingAction, TiltInputMode};
+use crate::settings::{
+    InputBindingAction, LeftStickMode, Settings, TiltBindingAction, TiltInputMode,
+};
 
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWindowState) {
     egui::CollapsingHeader::new("MBC7 Tilt")
@@ -61,12 +63,8 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                 egui::Slider::new(&mut settings.tilt.sensitivity, 0.1..=3.0)
                     .text("Tilt sensitivity"),
             );
-            ui.add(
-                egui::Slider::new(&mut settings.tilt.lerp, 0.0..=1.0).text("Tilt smoothing"),
-            );
-            ui.add(
-                egui::Slider::new(&mut settings.tilt.deadzone, 0.0..=0.5).text("Tilt deadzone"),
-            );
+            ui.add(egui::Slider::new(&mut settings.tilt.lerp, 0.0..=1.0).text("Tilt smoothing"));
+            ui.add(egui::Slider::new(&mut settings.tilt.deadzone, 0.0..=0.5).text("Tilt deadzone"));
 
             ui.separator();
             ui.strong("Tilt Key Bindings");
@@ -83,18 +81,15 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         TiltBindingAction::Right,
                     ] {
                         ui.label(tilt_label(action));
-                        let key_name =
-                            format!("{:?}", settings.tilt.key_bindings.get(action));
+                        let key_name = format!("{:?}", settings.tilt.key_bindings.get(action));
                         let capture_label =
-                            if state.rebinding_action == Some(InputBindingAction::Tilt(action))
-                            {
+                            if state.rebinding_action == Some(InputBindingAction::Tilt(action)) {
                                 format!("Press key... ({key_name})")
                             } else {
                                 key_name
                             };
                         if ui.button(capture_label).clicked() {
-                            state.rebinding_action =
-                                Some(InputBindingAction::Tilt(action));
+                            state.rebinding_action = Some(InputBindingAction::Tilt(action));
                         }
                         ui.end_row();
                     }
@@ -110,4 +105,3 @@ pub(super) fn tilt_label(action: TiltBindingAction) -> &'static str {
         TiltBindingAction::Right => "Tilt Right",
     }
 }
-

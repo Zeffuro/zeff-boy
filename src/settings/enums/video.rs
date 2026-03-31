@@ -1,5 +1,21 @@
 use serde::{Deserialize, Serialize};
 
+pub(crate) use zeff_nes_core::hardware::ppu::NesPaletteMode;
+
+impl crate::debug::ui_helpers::EnumLabel for NesPaletteMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Raw => "Raw (default)",
+            Self::Ntsc => "NTSC corrected",
+            Self::Pal => "PAL corrected",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Raw, Self::Ntsc, Self::Pal]
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -24,12 +40,17 @@ impl crate::debug::ui_helpers::EnumLabel for ScalingMode {
     }
 
     fn all_variants() -> &'static [Self] {
-        &[Self::PixelPerfect, Self::Bilinear, Self::HQ2xLike, Self::XBR2x, Self::Eagle2x]
+        &[
+            Self::PixelPerfect,
+            Self::Bilinear,
+            Self::HQ2xLike,
+            Self::XBR2x,
+            Self::Eagle2x,
+        ]
     }
 }
 
 impl ScalingMode {
-
     pub(crate) fn is_upscaler(self) -> bool {
         matches!(self, Self::HQ2xLike | Self::XBR2x | Self::Eagle2x)
     }
@@ -61,7 +82,14 @@ impl crate::debug::ui_helpers::EnumLabel for EffectPreset {
     }
 
     fn all_variants() -> &'static [Self] {
-        &[Self::None, Self::Scanlines, Self::LcdGrid, Self::Crt, Self::GbcPalette, Self::Custom]
+        &[
+            Self::None,
+            Self::Scanlines,
+            Self::LcdGrid,
+            Self::Crt,
+            Self::GbcPalette,
+            Self::Custom,
+        ]
     }
 }
 
@@ -100,4 +128,3 @@ impl ShaderPreset {
 pub(crate) fn default_offscreen_scale() -> u32 {
     4
 }
-

@@ -1,5 +1,7 @@
-use super::{App, SpeedMode, MAX_FRAMES_PER_TICK, MAX_IN_FLIGHT, UI_RENDER_INTERVAL, VIEWER_UPDATE_INTERVAL};
-use crate::debug::{self, DebugTab, DebugUiActions, ConsoleGraphicsData, MenuAction, is_tab_open};
+use super::{
+    App, MAX_FRAMES_PER_TICK, MAX_IN_FLIGHT, SpeedMode, UI_RENDER_INTERVAL, VIEWER_UPDATE_INTERVAL,
+};
+use crate::debug::{self, ConsoleGraphicsData, DebugTab, DebugUiActions, MenuAction, is_tab_open};
 use crate::emu_thread::{
     EmuCommand, EmuResponse, FrameInput, FrameResult, MemorySearchRequest, ReusableBuffers,
     SnapshotRequest,
@@ -22,9 +24,7 @@ impl App {
         if self.timing.uncapped_speed != self.settings.emulation.uncapped_speed {
             self.timing.uncapped_speed = self.settings.emulation.uncapped_speed;
             if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::SetUncapped(
-                    self.timing.uncapped_speed,
-                ));
+                thread.send(EmuCommand::SetUncapped(self.timing.uncapped_speed));
             }
         }
     }
@@ -40,7 +40,9 @@ impl App {
                 }
             } else if let Some(action) = self.debug_windows.rebinding_gamepad_action {
                 if let Some(button_name) = poll.raw_pressed.first() {
-                    self.settings.gamepad_bindings.set_action(action, button_name);
+                    self.settings
+                        .gamepad_bindings
+                        .set_action(action, button_name);
                     self.debug_windows.rebinding_gamepad_action = None;
                 }
             } else {
@@ -159,7 +161,8 @@ impl App {
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back =
             self.rewind.pops as f32 * self.settings.rewind.capture_interval() as f32 / 60.0;
-        let slot_labels = super::state_io::build_slot_labels(self.cached_rom_hash, self.active_system);
+        let slot_labels =
+            super::state_io::build_slot_labels(self.cached_rom_hash, self.active_system);
 
         match gfx.render(graphics::RenderContext {
             cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
@@ -186,6 +189,7 @@ impl App {
             is_rewinding,
             rewind_seconds_back,
             is_paused: self.paused,
+            is_pocket_camera: self.cached_is_pocket_camera,
             autohide_menu_bar,
             cursor_y,
             slot_labels,
@@ -208,8 +212,10 @@ impl App {
                             self.toast_manager.set_paused(self.paused);
                         }
                         MenuAction::SpeedChange(delta) => {
-                            let mult = self.settings.emulation.fast_forward_multiplier as i32 + delta;
-                            self.settings.emulation.fast_forward_multiplier = mult.clamp(1, 16) as usize;
+                            let mult =
+                                self.settings.emulation.fast_forward_multiplier as i32 + delta;
+                            self.settings.emulation.fast_forward_multiplier =
+                                mult.clamp(1, 16) as usize;
                             settings_dirty = true;
                         }
                         MenuAction::StartAudioRecording => self.start_audio_recording(),
@@ -222,8 +228,7 @@ impl App {
                         MenuAction::SetLayerToggles(bg, win, sprites) => {
                             self.pending_debug_actions.layer_toggles = Some((*bg, *win, *sprites));
                         }
-                        MenuAction::SetAspectRatio(_)
-                        | MenuAction::OpenSettings => {}
+                        MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
                     }
                 }
                 if settings_dirty {
@@ -313,6 +318,8 @@ impl App {
                 self.settings.audio.volume,
                 fast_forward,
                 self.settings.audio.mute_during_fast_forward,
+                self.settings.audio.low_pass_enabled,
+                self.settings.audio.low_pass_cutoff_hz,
             );
         }
 
@@ -403,6 +410,11 @@ impl App {
 
     pub(super) fn tick(&mut self) {
         self.sync_speed_setting();
+        if self.last_audio_output_sample_rate != self.settings.audio.output_sample_rate {
+            self.last_audio_output_sample_rate = self.settings.audio.output_sample_rate;
+            self.reset_audio_output();
+            self.settings.save();
+        }
         self.poll_gamepad();
 
         let host_tilt = self.update_host_tilt_and_stick_mode();
@@ -414,10 +426,11 @@ impl App {
             && self.settings.rewind.enabled
             && !self.rewind.pending
             && !self.rewind.backstep_pending
-            && let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::Rewind);
-                self.rewind.backstep_pending = true;
-            }
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(EmuCommand::Rewind);
+            self.rewind.backstep_pending = true;
+        }
 
         if self.rewind.held && self.settings.rewind.enabled {
             self.rewind.throttle += 1;
@@ -533,7 +546,8 @@ impl App {
                                 DebugUiActions::none(),
                             ),
                             snapshot: SnapshotRequest {
-                                want_debug_info: (reqs.needs_debug_info || self.settings.ui.show_fps),
+                                want_debug_info: (reqs.needs_debug_info
+                                    || self.settings.ui.show_fps),
                                 want_perf_info: reqs.needs_perf_info || self.settings.ui.show_fps,
                                 any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
                                 any_vram_viewer_open: reqs.needs_vram && want_viewer_update,
@@ -583,7 +597,12 @@ impl App {
                                     None
                                 },
                                 color_correction: self.settings.video.color_correction,
-                                color_correction_matrix: self.settings.video.color_correction_matrix,
+                                color_correction_matrix: self
+                                    .settings
+                                    .video
+                                    .color_correction_matrix,
+                                dmg_palette_preset: self.settings.video.dmg_palette_preset,
+                                nes_palette_mode: self.settings.video.nes_palette_mode,
                             },
                             buffers: ReusableBuffers {
                                 framebuffer: self.recycled.framebuffer.take(),

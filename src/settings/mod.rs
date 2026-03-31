@@ -6,19 +6,17 @@ mod keycode_serde;
 mod shortcuts;
 mod tilt_bindings;
 
+pub(crate) use binding_actions::{BindingAction, InputBindingAction};
 pub(crate) use enums::{
-    build_gpu_params, default_color_correction_matrix, default_offscreen_scale,
-    AudioRecordingFormat, ColorCorrection, EffectPreset, LeftStickMode, ScalingMode, ShaderParams,
-    ShaderPreset, TiltInputMode, UiThemePreset, VsyncMode,
-};
-pub(crate) use binding_actions::{
-    BindingAction, InputBindingAction,
+    AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset, LeftStickMode,
+    NesPaletteMode, ScalingMode, ShaderParams, ShaderPreset, TiltInputMode, UiThemePreset,
+    VsyncMode, build_gpu_params, default_color_correction_matrix, default_offscreen_scale,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
 pub(crate) use keyboard_bindings::KeyBindings;
+pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use tilt_bindings::{TiltBindingAction, TiltKeyBindings};
-pub(crate) use keycode_serde::keycode_from_string;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,6 +38,14 @@ fn default_camera_contrast() -> f32 {
 
 fn default_camera_brightness() -> f32 {
     0.15
+}
+
+fn default_output_sample_rate() -> u32 {
+    48_000
+}
+
+fn default_audio_low_pass_cutoff_hz() -> u32 {
+    4_800
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -119,6 +125,15 @@ pub(crate) struct AudioSettings {
     pub(crate) mute_during_fast_forward: bool,
     #[serde(rename = "audio_recording_format", default)]
     pub(crate) recording_format: AudioRecordingFormat,
+    #[serde(rename = "audio_output_sample_rate", default = "default_output_sample_rate")]
+    pub(crate) output_sample_rate: u32,
+    #[serde(rename = "audio_low_pass_enabled", default)]
+    pub(crate) low_pass_enabled: bool,
+    #[serde(
+        rename = "audio_low_pass_cutoff_hz",
+        default = "default_audio_low_pass_cutoff_hz"
+    )]
+    pub(crate) low_pass_cutoff_hz: u32,
 }
 
 impl Default for AudioSettings {
@@ -128,6 +143,9 @@ impl Default for AudioSettings {
             pre_mute_volume: None,
             mute_during_fast_forward: false,
             recording_format: AudioRecordingFormat::default(),
+            output_sample_rate: default_output_sample_rate(),
+            low_pass_enabled: false,
+            low_pass_cutoff_hz: default_audio_low_pass_cutoff_hz(),
         }
     }
 }
@@ -188,6 +206,10 @@ pub(crate) struct VideoSettings {
     pub(crate) color_correction: ColorCorrection,
     #[serde(default = "default_color_correction_matrix")]
     pub(crate) color_correction_matrix: [f32; 9],
+    #[serde(default)]
+    pub(crate) dmg_palette_preset: DmgPalettePreset,
+    #[serde(default)]
+    pub(crate) nes_palette_mode: NesPaletteMode,
     pub(crate) vsync_mode: VsyncMode,
 }
 
@@ -202,6 +224,8 @@ impl Default for VideoSettings {
             custom_shader_path: String::new(),
             color_correction: ColorCorrection::None,
             color_correction_matrix: default_color_correction_matrix(),
+            dmg_palette_preset: DmgPalettePreset::default(),
+            nes_palette_mode: NesPaletteMode::default(),
             vsync_mode: VsyncMode::default(),
         }
     }
@@ -409,7 +433,10 @@ impl Settings {
         if let Some(parent) = path.parent()
             && let Err(e) = fs::create_dir_all(parent)
         {
-            log::error!("failed to create settings directory {}: {e}", parent.display());
+            log::error!(
+                "failed to create settings directory {}: {e}",
+                parent.display()
+            );
             return;
         }
         if let Err(e) = fs::write(path, serialized) {
@@ -427,12 +454,22 @@ impl Settings {
                     settings.save_to_path(&config_path);
                     settings
                 } else {
-                    Settings { ui: UiSettings { ui_scale_needs_auto: true, ..Default::default() }, ..Default::default() }
+                    Settings {
+                        ui: UiSettings {
+                            ui_scale_needs_auto: true,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
                 }
             }
         } else {
-            Self::load_from_path(&Self::legacy_path()).unwrap_or_else(|| {
-                Settings { ui: UiSettings { ui_scale_needs_auto: true, ..Default::default() }, ..Default::default() }
+            Self::load_from_path(&Self::legacy_path()).unwrap_or_else(|| Settings {
+                ui: UiSettings {
+                    ui_scale_needs_auto: true,
+                    ..Default::default()
+                },
+                ..Default::default()
             })
         };
 
@@ -441,9 +478,9 @@ impl Settings {
     }
 
     pub(crate) fn auto_detect_ui_scale(&mut self, monitor_height: u32, os_scale_factor: f64) {
-        self.ui.auto_detect_ui_scale(monitor_height, os_scale_factor);
+        self.ui
+            .auto_detect_ui_scale(monitor_height, os_scale_factor);
     }
-
 
     pub(crate) fn save(&self) {
         self.save_to_path(&Self::active_path());

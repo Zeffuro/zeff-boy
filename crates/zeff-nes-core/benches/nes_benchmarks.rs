@@ -101,4 +101,3 @@ criterion_group!(
     bench_audio_drain,
 );
 criterion_main!(benches);
-

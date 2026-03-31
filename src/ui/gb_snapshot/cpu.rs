@@ -2,10 +2,30 @@ use crate::debug::{CpuDebugSnapshot, DebugSection, WatchHitDisplay, WatchpointDi
 
 pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
     let register_lines = vec![
-        format!("A:{:02X}  F:{:02X}    AF:{:04X}", info.a, info.f, (info.a as u16) << 8 | info.f as u16),
-        format!("B:{:02X}  C:{:02X}    BC:{:04X}", info.b, info.c, (info.b as u16) << 8 | info.c as u16),
-        format!("D:{:02X}  E:{:02X}    DE:{:04X}", info.d, info.e, (info.d as u16) << 8 | info.e as u16),
-        format!("H:{:02X}  L:{:02X}    HL:{:04X}", info.h, info.l, (info.h as u16) << 8 | info.l as u16),
+        format!(
+            "A:{:02X}  F:{:02X}    AF:{:04X}",
+            info.a,
+            info.f,
+            (info.a as u16) << 8 | info.f as u16
+        ),
+        format!(
+            "B:{:02X}  C:{:02X}    BC:{:04X}",
+            info.b,
+            info.c,
+            (info.b as u16) << 8 | info.c as u16
+        ),
+        format!(
+            "D:{:02X}  E:{:02X}    DE:{:04X}",
+            info.d,
+            info.e,
+            (info.d as u16) << 8 | info.e as u16
+        ),
+        format!(
+            "H:{:02X}  L:{:02X}    HL:{:04X}",
+            info.h,
+            info.l,
+            (info.h as u16) << 8 | info.l as u16
+        ),
         format!("PC:{:04X}  SP:{:04X}", info.pc, info.sp),
     ];
 
@@ -27,7 +47,11 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
     let mut int_detail = String::new();
     for (i, name) in int_names.iter().enumerate() {
         let ie = if info.ie & (1 << i) != 0 { "E" } else { "." };
-        let ifr = if info.if_reg & (1 << i) != 0 { "F" } else { "." };
+        let ifr = if info.if_reg & (1 << i) != 0 {
+            "F"
+        } else {
+            "."
+        };
         if !int_detail.is_empty() {
             int_detail.push_str("  ");
         }
@@ -137,4 +161,3 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         }),
     }
 }
-

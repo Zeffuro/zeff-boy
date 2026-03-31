@@ -18,18 +18,19 @@ impl App {
         self.stop_replay_recording();
 
         if self.settings.emulation.auto_save_state
-            && let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::AutoSaveState);
-                match self.recv_cold_response() {
-                    Some(EmuResponse::SaveStateOk(path)) => {
-                        log::info!("Auto-saved state to {}", path);
-                    }
-                    Some(EmuResponse::SaveStateFailed(err)) => {
-                        log::warn!("Auto-save failed: {}", err);
-                    }
-                    _ => {}
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(EmuCommand::AutoSaveState);
+            match self.recv_cold_response() {
+                Some(EmuResponse::SaveStateOk(path)) => {
+                    log::info!("Auto-saved state to {}", path);
                 }
+                Some(EmuResponse::SaveStateFailed(err)) => {
+                    log::warn!("Auto-save failed: {}", err);
+                }
+                _ => {}
             }
+        }
 
         self.settings.ui.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);
         self.settings.save();
@@ -52,5 +53,4 @@ impl App {
         self.window_id = None;
         self.latest_frame = None;
     }
-
 }

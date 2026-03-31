@@ -459,4 +459,3 @@ fn parse_empty() {
     assert!(parse_cheat("").is_err());
     assert!(parse_cheat("   ").is_err());
 }
-

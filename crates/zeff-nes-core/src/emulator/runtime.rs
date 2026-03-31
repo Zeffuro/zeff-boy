@@ -3,7 +3,6 @@ use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cpu::CpuState;
 
 impl Emulator {
-
     pub fn step_instruction(&mut self) -> (u16, u8, u64) {
         if self.cpu.state == CpuState::Suspended {
             return (self.cpu.pc, self.bus.cpu_read(self.cpu.pc), 0);
@@ -45,7 +44,11 @@ impl Emulator {
                     DebugTraceEvent::Read { addr, value } => {
                         self.debug.check_watch_read(addr, value);
                     }
-                    DebugTraceEvent::Write { addr, old_value, new_value } => {
+                    DebugTraceEvent::Write {
+                        addr,
+                        old_value,
+                        new_value,
+                    } => {
                         self.debug.check_watch_write(addr, old_value, new_value);
                     }
                 }
@@ -74,4 +77,3 @@ impl Emulator {
         }
     }
 }
-

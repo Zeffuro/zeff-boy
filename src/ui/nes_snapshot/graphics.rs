@@ -45,10 +45,10 @@ pub(super) fn nes_graphics_snapshot(
         chr_data,
         nametable_data,
         palette_ram,
+        palette_mode: emu.palette_mode(),
         ctrl: emu.ppu_ctrl(),
         mirroring: bus.cartridge.mirroring(),
         scroll_t: emu.ppu_scroll_t(),
         fine_x: emu.ppu_fine_x(),
     })
 }
-

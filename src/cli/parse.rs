@@ -28,9 +28,7 @@ fn parse_u8_arg(value: &str, flag: &str) -> anyhow::Result<u8> {
 
 fn parse_pc_range_arg(value: &str) -> anyhow::Result<(u16, u16)> {
     let Some((start_raw, end_raw)) = value.split_once('-') else {
-        anyhow::bail!(
-            "--trace-pc-range must be start-end (decimal or hex, e.g. 0x0100-0x01FF)",
-        );
+        anyhow::bail!("--trace-pc-range must be start-end (decimal or hex, e.g. 0x0100-0x01FF)",);
     };
     let start = parse_u16_arg(start_raw, "--trace-pc-range")?;
     let end = parse_u16_arg(end_raw, "--trace-pc-range")?;

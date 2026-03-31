@@ -83,10 +83,7 @@ fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
     ));
 }
 
-pub(super) fn draw_apu_viewer_content(
-    ui: &mut egui::Ui,
-    data: &ApuDebugInfo,
-) -> Option<Vec<bool>> {
+pub(super) fn draw_apu_viewer_content(ui: &mut egui::Ui, data: &ApuDebugInfo) -> Option<Vec<bool>> {
     ui.spacing_mut().item_spacing.y = 2.0;
 
     let mut muted: Vec<bool> = data.channels.iter().map(|ch| ch.muted).collect();

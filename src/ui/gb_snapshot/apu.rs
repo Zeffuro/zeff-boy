@@ -134,7 +134,11 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
                 if regs[ri(NR42)] & 0x08 != 0 { "+" } else { "-" },
                 regs[ri(NR42)] & 0x07,
                 regs[ri(NR43)] >> 4,
-                if regs[ri(NR43)] & 0x08 != 0 { "7" } else { "15" },
+                if regs[ri(NR43)] & 0x08 != 0 {
+                    "7"
+                } else {
+                    "15"
+                },
                 regs[ri(NR43)] & 0x07
             ),
             waveform: channel_samples[3].to_vec(),
@@ -162,4 +166,3 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
         }],
     })
 }
-

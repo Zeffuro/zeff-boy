@@ -75,8 +75,7 @@ impl Bus {
 
                     self.write_word(row - 8, result);
                     self.copy_block(row - 8, row - 16);
-                }
-                else if align == 0x00 && row < 0x98 {
+                } else if align == 0x00 && row < 0x98 {
                     if row == 0x40 {
                         let b = self.read_word(row);
                         let c = self.read_word(row - 4);
@@ -106,15 +105,14 @@ impl Bus {
                         let result = match row {
                             0x20 => Self::mix_and(c, mask, a & b & d & e),
                             0x60 => Self::mix_and(c, mask, b & d & e),
-                            _    => c | (a & b & d & e),
+                            _ => c | (a & b & d & e),
                         };
 
                         self.write_word(row - 8, result);
                         self.copy_block(row - 8, row - 16);
                         self.copy_block(row - 8, row - 32);
                     }
-                }
-                else {
+                } else {
                     let a = self.read_word(row);
                     let b = self.read_word(row - 8);
                     let c = self.read_word(row - 4);

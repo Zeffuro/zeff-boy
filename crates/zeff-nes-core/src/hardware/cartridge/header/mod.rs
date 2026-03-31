@@ -433,8 +433,16 @@ impl RomHeader {
             }
         };
 
-        let misc_roms = if format == RomFormat::Nes2 { byte14 & 0x03 } else { 0 };
-        let default_expansion_device = if format == RomFormat::Nes2 { byte15 & 0x3F } else { 0 };
+        let misc_roms = if format == RomFormat::Nes2 {
+            byte14 & 0x03
+        } else {
+            0
+        };
+        let default_expansion_device = if format == RomFormat::Nes2 {
+            byte15 & 0x3F
+        } else {
+            0
+        };
 
         let header = Self {
             format,

@@ -99,11 +99,7 @@ pub(crate) fn try_load_battery_sram(
     emu: &mut GbEmulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
-    crate::save_paths::try_load_battery_sram(
-        rom_path,
-        "GB",
-        emu.is_battery_backed(),
-        |bytes| emu.load_battery_sram(bytes),
-    )
+    crate::save_paths::try_load_battery_sram(rom_path, "GB", emu.is_battery_backed(), |bytes| {
+        emu.load_battery_sram(bytes)
+    })
 }
-

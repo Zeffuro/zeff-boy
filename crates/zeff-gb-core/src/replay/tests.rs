@@ -98,10 +98,7 @@ fn replay_load_rejects_bad_version() {
         Ok(_) => panic!("should reject bad version"),
     };
     let msg = format!("{err}");
-    assert!(
-        msg.contains("unsupported replay version"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("unsupported replay version"), "got: {msg}");
     let _ = std::fs::remove_file(&path);
 }
 

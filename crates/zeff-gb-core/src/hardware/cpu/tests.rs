@@ -1,4 +1,4 @@
- use super::*;
+use super::*;
 use crate::hardware::rom_header::RomHeader;
 
 fn make_test_bus(mode: HardwareMode) -> Bus {
@@ -978,4 +978,3 @@ fn step_cp_d8_sets_flags_without_modifying_a() {
     assert!(cpu.get_z());
     assert!(cpu.get_n());
 }
-

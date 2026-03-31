@@ -7,10 +7,13 @@ pub(super) fn gb_oam_snapshot(
     reusable_oam: Option<Vec<u8>>,
 ) -> (Option<OamDebugInfo>, Option<Vec<u8>>) {
     if !show {
-        return (None, reusable_oam.map(|mut v| {
-            v.clear();
-            v
-        }));
+        return (
+            None,
+            reusable_oam.map(|mut v| {
+                v.clear();
+                v
+            }),
+        );
     }
     use zeff_gb_core::hardware::ppu::SpriteEntry;
     let src = emu.oam();
@@ -43,4 +46,3 @@ pub(super) fn gb_oam_snapshot(
     }
     (Some(OamDebugInfo { headers, rows }), Some(buf))
 }
-

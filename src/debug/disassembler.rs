@@ -44,11 +44,7 @@ fn disassemble_at(
     lines
 }
 
-fn choose_centered_start(
-    inst_len: impl Fn(u16) -> usize,
-    pc: u16,
-    lines_before_pc: usize,
-) -> u16 {
+fn choose_centered_start(inst_len: impl Fn(u16) -> usize, pc: u16, lines_before_pc: usize) -> u16 {
     let mut best_start = pc;
     let mut best_steps = 0usize;
 

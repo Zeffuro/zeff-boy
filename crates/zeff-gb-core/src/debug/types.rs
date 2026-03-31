@@ -1,6 +1,6 @@
-use zeff_emu_common::debug::{WatchHit, WatchType};
 use crate::hardware::cartridge::CartridgeDebugInfo;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
+use zeff_emu_common::debug::{WatchHit, WatchType};
 
 pub struct WatchpointInfo {
     pub address: u16,
@@ -147,4 +147,3 @@ impl OpcodeLog {
         result
     }
 }
-

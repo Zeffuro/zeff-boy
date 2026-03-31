@@ -15,12 +15,12 @@ pub(super) fn nes_rom_info(emu: &zeff_nes_core::emulator::Emulator) -> RomDebugI
             heading: "ROM Header".into(),
             fields: vec![
                 ("Format".into(), format!("{:?}", header.format)),
-                ("PRG ROM".into(), format!("{} KiB", header.prg_rom_size / 1024)),
-                ("CHR ROM".into(), chr_label),
                 (
-                    "Mapper".into(),
-                    header.mapper_label(),
+                    "PRG ROM".into(),
+                    format!("{} KiB", header.prg_rom_size / 1024),
                 ),
+                ("CHR ROM".into(), chr_label),
+                ("Mapper".into(), header.mapper_label()),
                 ("Mirroring".into(), format!("{:?}", header.mirroring)),
                 ("Battery".into(), yes_no(header.has_battery).into()),
                 ("Trainer".into(), yes_no(header.has_trainer).into()),
@@ -59,4 +59,3 @@ pub(super) fn nes_rom_info(emu: &zeff_nes_core::emulator::Emulator) -> RomDebugI
 
     RomDebugInfo { sections }
 }
-

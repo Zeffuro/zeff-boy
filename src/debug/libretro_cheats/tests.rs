@@ -77,4 +77,3 @@ fn urlencoded_handles_spaces() {
         "Nintendo%20-%20Game%20Boy"
     );
 }
-

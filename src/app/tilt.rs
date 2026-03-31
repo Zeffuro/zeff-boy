@@ -117,8 +117,8 @@ pub(super) fn update_smoothed_tilt(
         return *current;
     }
 
-    let stick_active =
-        stick_controls_tilt && (left_stick.0.abs() >= cfg.deadzone || left_stick.1.abs() >= cfg.deadzone);
+    let stick_active = stick_controls_tilt
+        && (left_stick.0.abs() >= cfg.deadzone || left_stick.1.abs() >= cfg.deadzone);
 
     if stick_active && cfg.stick_bypass_lerp {
         *current = target;

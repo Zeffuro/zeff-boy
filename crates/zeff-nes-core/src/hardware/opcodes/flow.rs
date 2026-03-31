@@ -1,5 +1,5 @@
 use crate::hardware::bus::Bus;
-use crate::hardware::constants::{IRQ_VECTOR_LO, IRQ_VECTOR_HI, NMI_VECTOR_LO, NMI_VECTOR_HI};
+use crate::hardware::constants::{IRQ_VECTOR_HI, IRQ_VECTOR_LO, NMI_VECTOR_HI, NMI_VECTOR_LO};
 use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::registers::StatusFlags;
 

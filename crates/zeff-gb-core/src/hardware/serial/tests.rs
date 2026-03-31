@@ -32,4 +32,3 @@ fn step_completes_transfer_only_after_selected_period() {
     assert_eq!(serial.sb, 0xFF);
     assert_eq!(serial.sc & 0x80, 0);
 }
-
