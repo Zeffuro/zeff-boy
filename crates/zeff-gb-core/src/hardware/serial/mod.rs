@@ -75,7 +75,7 @@ impl Serial {
         self.cycles = 0;
     }
 
-    pub(super) fn step(&mut self, cycles: u64) -> bool {
+    pub(super) fn step(&mut self, cycles: u64, printer: &mut crate::hardware::printer::GameboyPrinter) -> bool {
         if self.sc & 0x81 != 0x81 {
             return false;
         }
@@ -85,11 +85,12 @@ impl Serial {
         let transfer_period = self.transfer_period();
         if self.cycles >= transfer_period {
             self.cycles -= transfer_period;
+            let response = printer.feed_serial_byte(self.sb);
             self.output_log.push(self.sb);
             print!("{}", self.sb as char);
             let _ = io::stdout().flush();
 
-            self.sb = 0xFF;
+            self.sb = response;
             self.sc &= !0x80;
             return true;
         }

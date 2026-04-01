@@ -6,7 +6,12 @@ pub(super) fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
     let rom_bytes = emu.cartridge_rom_bytes();
     let rom_crc32 = crc32fast::hash(rom_bytes);
     let is_gbc = header.is_cgb_compatible || header.is_cgb_exclusive;
-    let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
+    let platform = if is_gbc {
+        crate::libretro_common::LibretroPlatform::Gbc
+    } else {
+        crate::libretro_common::LibretroPlatform::Gb
+    };
+    let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, platform);
     let manufacturer = header
         .manufacturer_code
         .as_deref()

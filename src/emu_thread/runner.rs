@@ -36,6 +36,8 @@ impl EmuThread {
                 .set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
             gb.emu
                 .set_dmg_palette_preset(input.snapshot.dmg_palette_preset);
+            gb.emu
+                .set_sgb_border_enabled(input.snapshot.sgb_border_enabled);
             if let Some(ref frame) = input.host_camera_frame {
                 gb.emu.set_camera_host_frame(frame);
             }

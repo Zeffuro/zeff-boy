@@ -2,7 +2,7 @@ mod cheat_list;
 mod libretro_ui;
 
 use crate::cheats::{
-    CheatCode, CheatPatch, export_cht_file, parse_cheat_for_system, parse_cht_file,
+    CheatCode, CheatPatch, export_cht_file, parse_cheat_for_system, parse_cht_file_for_system,
 };
 use crate::debug::CheatState;
 
@@ -109,7 +109,7 @@ fn draw_import_export(ui: &mut egui::Ui, state: &mut CheatState, changed: &mut b
         {
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
-                    let imported = parse_cht_file(&content);
+                    let imported = parse_cht_file_for_system(&content, state.active_system);
                     let count = imported.len();
                     state.user_codes.extend(imported);
                     state.parse_error = None;

@@ -71,6 +71,7 @@ fn decode_mode_preference(tag: u8) -> Result<HardwareModePreference> {
         0 => Ok(HardwareModePreference::Auto),
         1 => Ok(HardwareModePreference::ForceDmg),
         2 => Ok(HardwareModePreference::ForceCgb),
+        3 => Ok(HardwareModePreference::ForceSgb),
         _ => bail!("invalid hardware mode preference tag in save-state file: {tag}"),
     }
 }

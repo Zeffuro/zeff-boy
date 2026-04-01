@@ -197,6 +197,73 @@ impl DebugController {
     }
 }
 
+const OPCODE_LOG_CAPACITY: usize = 32;
+const OPCODE_LOG_MASK: usize = OPCODE_LOG_CAPACITY - 1;
+
+pub struct OpcodeLog<E: Copy + Default> {
+    entries: [E; OPCODE_LOG_CAPACITY],
+    cursor: usize,
+    count: usize,
+    pub enabled: bool,
+}
+
+impl<E: Copy + Default> std::fmt::Debug for OpcodeLog<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpcodeLog")
+            .field("count", &self.count)
+            .field("enabled", &self.enabled)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<E: Copy + Default> Default for OpcodeLog<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<E: Copy + Default> OpcodeLog<E> {
+    pub fn new() -> Self {
+        Self {
+            entries: core::array::from_fn(|_| E::default()),
+            cursor: 0,
+            count: 0,
+            enabled: true,
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, entry: E) {
+        if !self.enabled {
+            return;
+        }
+        self.entries[self.cursor] = entry;
+        self.cursor = (self.cursor + 1) & OPCODE_LOG_MASK;
+        if self.count < OPCODE_LOG_CAPACITY {
+            self.count += 1;
+        }
+    }
+
+    pub fn recent(&self, n: usize) -> Vec<E> {
+        let take = n.min(self.count);
+        let mut result = Vec::with_capacity(take);
+        for i in 0..take {
+            let idx = (self.cursor.wrapping_sub(1 + i)) & OPCODE_LOG_MASK;
+            result.push(self.entries[idx]);
+        }
+        result
+    }
+
+    pub fn clear(&mut self) {
+        self.count = 0;
+        self.cursor = 0;
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +330,43 @@ mod tests {
         dc.add_watchpoint(0x500, WatchType::Read);
         dc.add_watchpoint(0x500, WatchType::Read);
         assert_eq!(dc.watchpoints.len(), 1);
+    }
+
+    #[test]
+    fn opcode_log_push_and_recent() {
+        let mut log = OpcodeLog::<(u16, u8)>::new();
+        log.push((0x100, 0xAB));
+        log.push((0x102, 0xCD));
+        let recent = log.recent(10);
+        assert_eq!(recent, vec![(0x102, 0xCD), (0x100, 0xAB)]);
+    }
+
+    #[test]
+    fn opcode_log_disabled_ignores_push() {
+        let mut log = OpcodeLog::<(u16, u8)>::new();
+        log.set_enabled(false);
+        log.push((0x100, 0xAB));
+        assert!(log.recent(10).is_empty());
+    }
+
+    #[test]
+    fn opcode_log_clear_resets() {
+        let mut log = OpcodeLog::<(u16, u8, bool)>::new();
+        log.push((0x100, 0xAB, false));
+        log.push((0x102, 0xCB, true));
+        log.clear();
+        assert!(log.recent(10).is_empty());
+    }
+
+    #[test]
+    fn opcode_log_wraps_at_capacity() {
+        let mut log = OpcodeLog::<(u16, u8)>::new();
+        for i in 0..64u16 {
+            log.push((i, i as u8));
+        }
+        let recent = log.recent(32);
+        assert_eq!(recent.len(), 32);
+        assert_eq!(recent[0], (63, 63));
+        assert_eq!(recent[31], (32, 32));
     }
 }

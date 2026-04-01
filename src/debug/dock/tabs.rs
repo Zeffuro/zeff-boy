@@ -17,6 +17,7 @@ pub(crate) enum DebugTab {
     Breakpoints,
     Cheats,
     RomViewer,
+    Mods,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -94,6 +95,7 @@ impl DebugTab {
                 needs_rom_page: true,
                 ..Default::default()
             },
+            DebugTab::Mods => TabDataRequirements::default(),
         }
     }
 }
@@ -132,6 +134,7 @@ const TAB_META: &[(DebugTab, &str, &str)] = &[
     (DebugTab::Performance, "Performance", "Performance"),
     (DebugTab::Breakpoints, "Breakpoints", "Breakpoints"),
     (DebugTab::Cheats, "Cheats", "Cheats"),
+    (DebugTab::Mods, "Mods", "Mods"),
 ];
 
 impl DebugTab {

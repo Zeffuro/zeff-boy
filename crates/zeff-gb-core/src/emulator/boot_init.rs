@@ -41,7 +41,7 @@ impl Emulator {
             hardware_mode_preference: mode_preference,
             hardware_mode,
             cycle_count: 0,
-            opcode_log: OpcodeLog::new(32),
+            opcode_log: OpcodeLog::new(),
             last_opcode: 0,
             last_opcode_pc: 0,
             debug: DebugController::new(),

@@ -1,53 +1,45 @@
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
-const GITHUB_CONTENTS_URL: &str =
-    "https://api.github.com/repos/libretro/libretro-database/contents/cht/";
+use crate::libretro_common::LibretroPlatform;
+
+const GITHUB_CHT_DIR_URL: &str =
+    "https://api.github.com/repos/libretro/libretro-database/contents/cht";
+const GITHUB_TREES_URL: &str =
+    "https://api.github.com/repos/libretro/libretro-database/git/trees/";
 const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/";
 const CACHE_TTL_SECS: u64 = 86400;
 
-fn platform_dir(is_gbc: bool) -> &'static str {
-    if is_gbc {
-        "Nintendo - Game Boy Color"
-    } else {
-        "Nintendo - Game Boy"
-    }
-}
-
-pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result<Vec<String>> {
-    let cache_file = cache_dir.join(if is_gbc {
-        "libretro_gbc_index.json"
-    } else {
-        "libretro_gb_index.json"
-    });
+pub(super) fn fetch_cheat_list(
+    platform: LibretroPlatform,
+    cache_dir: &Path,
+) -> anyhow::Result<Vec<String>> {
+    let cache_file = cache_dir.join(format!("libretro_{}_index_v2.txt", platform.cache_suffix()));
 
     if let Ok(meta) = std::fs::metadata(&cache_file)
         && let Ok(modified) = meta.modified()
         && modified.elapsed().unwrap_or_default().as_secs() < CACHE_TTL_SECS
         && let Ok(content) = std::fs::read_to_string(&cache_file)
-        && let Ok(names) = parse_file_list_from_json(&content)
-        && !names.is_empty()
     {
-        return Ok(names);
+        let names: Vec<String> = content
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect();
+        if !names.is_empty() {
+            return Ok(names);
+        }
     }
 
-    let dir = platform_dir(is_gbc);
-    let url = format!("{}{}", GITHUB_CONTENTS_URL, urlencoded(dir));
-    log::info!("Fetching libretro cheat index from {}", url);
-
-    let body = crate::libretro_common::ureq_get_github_json(&url)?
-        .read_to_string()
-        .context("failed to read GitHub API response")?;
-
-    let names = parse_file_list_from_json(&body)?;
+    let names = fetch_cheat_list_via_trees(platform)?;
 
     if let Err(e) = std::fs::create_dir_all(cache_dir) {
         log::warn!(
             "failed to create cheat cache dir {}: {e}",
             cache_dir.display()
         );
-    } else if let Err(e) = std::fs::write(&cache_file, &body) {
+    } else if let Err(e) = std::fs::write(&cache_file, names.join("\n")) {
         log::warn!(
             "failed to write cheat index cache {}: {e}",
             cache_file.display()
@@ -57,9 +49,38 @@ pub(super) fn fetch_cheat_list(is_gbc: bool, cache_dir: &Path) -> anyhow::Result
     Ok(names)
 }
 
+fn fetch_cheat_list_via_trees(platform: LibretroPlatform) -> anyhow::Result<Vec<String>> {
+    log::info!(
+        "Fetching libretro cheat index via Git Trees API for {}",
+        platform.label()
+    );
+
+    let dir_json = crate::libretro_common::ureq_get_github_json(GITHUB_CHT_DIR_URL)?
+        .read_to_string()
+        .context("failed to read cht directory listing")?;
+    let platform_sha = parse_dir_entry_sha(&dir_json, platform.platform_dir())?;
+
+    let tree_url = format!("{GITHUB_TREES_URL}{platform_sha}");
+    let tree_json = crate::libretro_common::ureq_get_github_json(&tree_url)?
+        .read_to_string()
+        .context("failed to read platform tree")?;
+    let names = parse_tree_blob_names(&tree_json);
+
+    if names.is_empty() {
+        anyhow::bail!("no .cht files found for {}", platform.label());
+    }
+
+    log::info!(
+        "Found {} cheat files for {}",
+        names.len(),
+        platform.label()
+    );
+    Ok(names)
+}
+
 pub(super) fn download_cht_content(
     filename: &str,
-    is_gbc: bool,
+    platform: LibretroPlatform,
     cache_dir: &Path,
 ) -> anyhow::Result<String> {
     let cht_cache_dir = cache_dir.join("libretro-cht");
@@ -71,7 +92,7 @@ pub(super) fn download_cht_content(
         return Ok(content);
     }
 
-    let dir = platform_dir(is_gbc);
+    let dir = platform.platform_dir();
     let url = format!(
         "{}{}/{}",
         RAW_BASE_URL,
@@ -207,8 +228,8 @@ pub(super) fn libretro_cache_dir() -> PathBuf {
     crate::settings::Settings::settings_dir().join("libretro-cache")
 }
 
-pub(super) fn browse_url(is_gbc: bool) -> String {
-    let dir = platform_dir(is_gbc);
+pub(super) fn browse_url(platform: LibretroPlatform) -> String {
+    let dir = platform.platform_dir();
     format!(
         "https://github.com/libretro/libretro-database/tree/master/cht/{}",
         urlencoded(dir)
@@ -219,32 +240,35 @@ fn urlencoded(s: &str) -> String {
     s.replace(' ', "%20")
 }
 
-fn parse_file_list_from_json(json_body: &str) -> anyhow::Result<Vec<String>> {
+fn parse_dir_entry_sha(json_body: &str, dir_name: &str) -> anyhow::Result<String> {
+    let target = format!(r#""name":"{dir_name}""#);
+    let Some(pos) = json_body.find(&target) else {
+        anyhow::bail!("directory '{}' not found in cht listing", dir_name);
+    };
+    let after = &json_body[pos..];
+    let sha_key = r#""sha":""#;
+    let Some(sha_pos) = after.find(sha_key) else {
+        anyhow::bail!("sha not found for directory '{}'", dir_name);
+    };
+    let sha_start = sha_pos + sha_key.len();
+    let sha_rest = &after[sha_start..];
+    let Some(sha_end) = sha_rest.find('"') else {
+        anyhow::bail!("unterminated sha for directory '{}'", dir_name);
+    };
+    Ok(sha_rest[..sha_end].to_string())
+}
+
+fn parse_tree_blob_names(json_body: &str) -> Vec<String> {
     let mut names = Vec::new();
-    for entry in json_body.split(r#""name":"#).skip(1) {
-        let trimmed = entry.trim_start();
-        if !trimmed.starts_with('"') {
-            continue;
-        }
-        let inner = &trimmed[1..];
-        if let Some(close) = inner.find('"') {
-            let name = &inner[..close];
-            if name.ends_with(".cht") {
-                names.push(name.to_string());
+    for segment in json_body.split(r#""path":""#).skip(1) {
+        if let Some(end) = segment.find('"') {
+            let path = &segment[..end];
+            if path.ends_with(".cht") {
+                names.push(path.to_string());
             }
         }
     }
-    if names.is_empty()
-        && json_body.len() > 100
-        && json_body.contains("\"message\"")
-        && let Some(msg_start) = json_body.find(r#""message":"#)
-    {
-        let rest = &json_body[msg_start + 11..];
-        if let Some(end) = rest.find('"') {
-            anyhow::bail!("GitHub API: {}", &rest[..end]);
-        }
-    }
-    Ok(names)
+    names
 }
 
 #[cfg(test)]

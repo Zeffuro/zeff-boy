@@ -30,5 +30,6 @@ pub(super) fn encode_mode_preference(pref: HardwareModePreference) -> u8 {
         HardwareModePreference::Auto => 0,
         HardwareModePreference::ForceDmg => 1,
         HardwareModePreference::ForceCgb => 2,
+        HardwareModePreference::ForceSgb => 3,
     }
 }

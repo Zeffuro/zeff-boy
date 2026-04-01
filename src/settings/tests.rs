@@ -1,4 +1,7 @@
 use super::*;
+use super::enums::{ShaderParams, ShaderPreset};
+use super::structs::{default_rewind_seconds, default_rewind_speed};
+use super::tilt_bindings::TiltKeyBindings;
 
 #[test]
 fn settings_default_roundtrip() {

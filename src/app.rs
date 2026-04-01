@@ -26,9 +26,11 @@ pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
 
 mod bindings;
 mod camera_host;
+mod frame_result;
 mod input;
 mod keyboard;
 mod lifecycle;
+mod render;
 mod shutdown;
 mod state_io;
 mod tick;

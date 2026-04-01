@@ -1,9 +1,11 @@
 mod cheats;
 mod data_models;
 mod memory;
+pub(crate) mod mods;
 mod viewers;
 
-pub(crate) use cheats::{BreakpointState, CheatState};
+pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
+pub(crate) use mods::ModState;
 pub(crate) use data_models::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
     GbGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo, PaletteDebugInfo,
@@ -36,6 +38,7 @@ pub(crate) struct DebugWindowState {
     pub(crate) camera_device_error: Option<String>,
     pub(crate) camera_devices_needs_refresh: bool,
     pub(crate) cheat: CheatState,
+    pub(crate) mod_state: ModState,
     pub(crate) layer_enable_bg: bool,
     pub(crate) layer_enable_window: bool,
     pub(crate) layer_enable_sprites: bool,
@@ -62,6 +65,7 @@ impl DebugWindowState {
             camera_device_error: None,
             camera_devices_needs_refresh: true,
             cheat: CheatState::new(),
+            mod_state: ModState::new(),
             layer_enable_bg: true,
             layer_enable_window: true,
             layer_enable_sprites: true,

@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod audio_recorder;
+mod bps;
 mod camera;
 mod cheats;
 mod cli;
@@ -9,8 +10,10 @@ mod emu_backend;
 mod emu_thread;
 mod graphics;
 mod input;
+mod ips;
 mod libretro_common;
 mod libretro_metadata;
+mod mods;
 mod save_paths;
 mod settings;
 mod ui;

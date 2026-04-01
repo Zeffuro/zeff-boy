@@ -30,6 +30,8 @@ pub(crate) struct MemoryViewerState {
     pub(crate) search_pending: bool,
     pub(crate) tbl_map: HashMap<u8, String>,
     pub(crate) tbl_path: Option<String>,
+    pub(crate) inspector_addr_input: String,
+    pub(crate) inspector_addr: Option<u16>,
 }
 
 impl MemoryViewerState {
@@ -51,6 +53,8 @@ impl MemoryViewerState {
             search_pending: false,
             tbl_map: HashMap::new(),
             tbl_path: None,
+            inspector_addr_input: String::new(),
+            inspector_addr: None,
         }
     }
 }

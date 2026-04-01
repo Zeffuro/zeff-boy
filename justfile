@@ -19,6 +19,10 @@ build:
 build-release:
     cargo build --release
 
+# Build without optional features (no camera, no OGG recording)
+build-minimal:
+    cargo build --no-default-features
+
 # Run the emulator (debug) with a ROM
 run rom:
     cargo run -- "{{rom}}"
@@ -26,6 +30,10 @@ run rom:
 # Run the emulator (release) with a ROM
 run-release rom:
     cargo run --release -- "{{rom}}"
+
+# Run the emulator without optional features
+run-minimal rom:
+    cargo run --no-default-features -- "{{rom}}"
 
 # Run all tests
 test:

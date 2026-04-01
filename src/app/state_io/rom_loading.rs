@@ -7,6 +7,21 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use zeff_gb_core::emulator::Emulator;
 
+fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
+    let crc = crc32fast::hash(rom_data);
+    let dir = crate::mods::mods_dir_for_rom(system, crc);
+    let mods = crate::mods::load_mod_config(&dir);
+    let enabled = mods.iter().filter(|m| m.enabled).count();
+    if enabled > 0 {
+        let warnings = crate::mods::apply_enabled_mods(rom_data, &dir, &mods);
+        for w in &warnings {
+            log::warn!("Mod warning: {w}");
+        }
+        log::info!("Applied {enabled} IPS mod(s) to ROM ({} warnings)", warnings.len());
+    }
+    crc
+}
+
 fn detect_and_extract_rom(path: &Path) -> Result<(PathBuf, Option<Vec<u8>>, ActiveSystem), String> {
     let is_zip = path
         .extension()
@@ -50,13 +65,14 @@ impl App {
         path: &Path,
         rom_path: &Path,
         preloaded_data: Option<Vec<u8>>,
-    ) -> anyhow::Result<EmuBackend> {
+    ) -> anyhow::Result<(EmuBackend, u32)> {
         match system {
             ActiveSystem::GameBoy => {
-                let rom_data = match preloaded_data {
+                let mut rom_data = match preloaded_data {
                     Some(data) => data,
                     None => std::fs::read(path).context("Failed to read GB ROM")?,
                 };
+                let original_crc = apply_mods_if_any(system, &mut rom_data);
                 Emulator::from_rom_data(&rom_data, self.settings.emulation.hardware_mode_preference)
                     .map(|mut emu| {
                         if let Some(audio) = &self.audio {
@@ -74,7 +90,7 @@ impl App {
                         {
                             log::info!("Loaded battery save from {}", sram_path);
                         }
-                        EmuBackend::from_gb(emu, rom_path.to_path_buf())
+                        (EmuBackend::from_gb(emu, rom_path.to_path_buf()), original_crc)
                     })
             }
             ActiveSystem::Nes => {
@@ -83,7 +99,8 @@ impl App {
                     None => std::fs::read(path).context("Failed to read NES ROM"),
                 };
                 match rom_data {
-                    Ok(data) => {
+                    Ok(mut data) => {
+                        let original_crc = apply_mods_if_any(system, &mut data);
                         let sample_rate = self
                             .audio
                             .as_ref()
@@ -99,7 +116,7 @@ impl App {
                             {
                                 log::info!("Loaded battery save from {}", sram_path);
                             }
-                            EmuBackend::from_nes(emu, rom_path.to_path_buf())
+                            (EmuBackend::from_nes(emu, rom_path.to_path_buf()), original_crc)
                         })
                     }
                     Err(e) => Err(e),
@@ -125,7 +142,12 @@ impl App {
             let rom_header_title = gb.emu.header().title.clone();
             let is_gbc = gb.emu.header().is_cgb_compatible || gb.emu.header().is_cgb_exclusive;
             let rom_crc32 = crc32fast::hash(gb.emu.cartridge_rom_bytes());
-            let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, is_gbc);
+            let platform = if is_gbc {
+                crate::libretro_common::LibretroPlatform::Gbc
+            } else {
+                crate::libretro_common::LibretroPlatform::Gb
+            };
+            let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, platform);
             let search_hints = crate::libretro_metadata::build_cheat_search_hints(
                 &rom_header_title,
                 libretro_meta.as_ref(),
@@ -137,7 +159,7 @@ impl App {
                 libretro_meta.as_ref().map(|m| m.title.clone());
             self.debug_windows.cheat.rom_metadata_rom_name =
                 libretro_meta.as_ref().map(|m| m.rom_name.clone());
-            self.debug_windows.cheat.rom_is_gbc = is_gbc;
+            self.debug_windows.cheat.libretro_platform = platform;
             self.debug_windows.cheat.libretro_search_hints = search_hints;
             self.debug_windows.cheat.libretro_search = self
                 .debug_windows
@@ -158,14 +180,29 @@ impl App {
                 .unwrap_or("NES ROM")
                 .to_string();
             let rom_crc32 = backend.nes().map(|nes| nes.emu.rom_crc32());
+            let platform = crate::libretro_common::LibretroPlatform::Nes;
+            let libretro_meta = rom_crc32
+                .and_then(|crc| crate::libretro_metadata::lookup_cached(crc, platform));
+            let search_hints = crate::libretro_metadata::build_cheat_search_hints(
+                &rom_title,
+                libretro_meta.as_ref(),
+            );
 
             self.debug_windows.cheat.rom_title = Some(rom_title.clone());
             self.debug_windows.cheat.rom_crc32 = rom_crc32;
-            self.debug_windows.cheat.rom_metadata_title = None;
-            self.debug_windows.cheat.rom_metadata_rom_name = None;
-            self.debug_windows.cheat.rom_is_gbc = false;
-            self.debug_windows.cheat.libretro_search_hints.clear();
-            self.debug_windows.cheat.libretro_search.clear();
+            self.debug_windows.cheat.rom_metadata_title =
+                libretro_meta.as_ref().map(|m| m.title.clone());
+            self.debug_windows.cheat.rom_metadata_rom_name =
+                libretro_meta.as_ref().map(|m| m.rom_name.clone());
+            self.debug_windows.cheat.libretro_platform = platform;
+            self.debug_windows.cheat.libretro_search_hints = search_hints;
+            self.debug_windows.cheat.libretro_search = self
+                .debug_windows
+                .cheat
+                .libretro_search_hints
+                .first()
+                .cloned()
+                .unwrap_or_else(|| rom_title.clone());
 
             let (user, libretro) =
                 crate::cheats::load_game_cheats(system, Some(&rom_title), rom_crc32);
@@ -188,6 +225,15 @@ impl App {
         self.debug_windows.cheat.cheats_dirty = true;
     }
 
+    fn setup_mods_for_rom(&mut self, system: ActiveSystem, original_crc: u32) {
+        let dir = crate::mods::mods_dir_for_rom(system, original_crc);
+        let entries = crate::mods::load_mod_config(&dir);
+        self.debug_windows.mod_state.entries = entries;
+        self.debug_windows.mod_state.mods_dir = Some(dir);
+        self.debug_windows.mod_state.needs_reload = false;
+        self.debug_windows.mod_state.status_message = None;
+    }
+
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
         self.stop_emu_thread();
         self.stop_camera_capture();
@@ -206,8 +252,8 @@ impl App {
             }
         };
 
-        let backend = match self.init_backend(system, path, &rom_path, preloaded_data) {
-            Ok(b) => b,
+        let (backend, original_crc) = match self.init_backend(system, path, &rom_path, preloaded_data) {
+            Ok(result) => result,
             Err(e) => {
                 log::error!("Failed to load ROM '{}': {}", path.display(), e);
                 self.toast_manager.error(format!("Failed to load ROM: {e}"));
@@ -234,6 +280,7 @@ impl App {
         }
 
         self.setup_cheats_for_rom(system, path, &backend);
+        self.setup_mods_for_rom(system, original_crc);
 
         self.emu_thread = Some(EmuThread::spawn(backend));
         self.fps_tracker = FpsTracker::new();
@@ -336,6 +383,8 @@ impl App {
         self.debug_windows.cheat.libretro_status = None;
         self.debug_windows.cheat.user_codes.clear();
         self.debug_windows.cheat.libretro_codes.clear();
+
+        self.debug_windows.mod_state.clear();
 
         self.toast_manager.set_paused(false);
         self.toast_manager.success("Stopped emulation");

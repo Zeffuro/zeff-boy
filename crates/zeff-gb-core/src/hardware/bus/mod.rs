@@ -149,7 +149,11 @@ impl Bus {
     }
 
     pub fn ppu_framebuffer(&self) -> &[u8] {
-        &self.io.ppu.framebuffer
+        if self.io.ppu.sgb_border_active() {
+            self.io.ppu.sgb_composite_buffer()
+        } else {
+            &self.io.ppu.framebuffer
+        }
     }
 
     pub fn ppu_lcdc(&self) -> u8 {
@@ -242,6 +246,18 @@ impl Bus {
         self.io.ppu.set_dmg_palette_preset(preset);
     }
 
+    pub fn set_ppu_sgb_border_enabled(&mut self, enabled: bool) {
+        self.io.ppu.set_sgb_border_enabled(enabled);
+    }
+
+    pub fn ppu_sgb_border_active(&self) -> bool {
+        self.io.ppu.sgb_border_active()
+    }
+
+    pub fn ppu_framebuffer_dimensions(&self) -> (usize, usize) {
+        self.io.ppu.framebuffer_dimensions()
+    }
+
     pub fn ppu_dmg_palette_preset(&self) -> crate::hardware::ppu::DmgPalettePreset {
         self.io.ppu.dmg_palette_preset()
     }
@@ -302,7 +318,7 @@ impl Bus {
 
     #[inline]
     pub(in crate::hardware) fn step_serial(&mut self, t_cycles: u64) {
-        if self.io.serial.step(t_cycles) {
+        if self.io.serial.step(t_cycles, &mut self.io.printer) {
             self.if_reg |= 0x08;
         }
     }
@@ -314,6 +330,18 @@ impl Bus {
 
     pub fn serial_output_bytes(&self) -> &[u8] {
         self.io.serial.output_bytes()
+    }
+
+    pub fn printer_latest_image(&self) -> Option<&[u8]> {
+        self.io.printer.latest_image()
+    }
+
+    pub fn printer_image_count(&self) -> usize {
+        self.io.printer.image_count()
+    }
+
+    pub fn clear_printer_images(&mut self) {
+        self.io.printer.clear();
     }
 
     pub fn sync_timer_serial_mode(&mut self) {

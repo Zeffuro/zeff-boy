@@ -54,20 +54,34 @@ fn search_filenames_with_hints_prefers_exact_like_title() {
 }
 
 #[test]
-fn parse_file_list_from_json_extracts_names() {
-    let json = r#"[{"name":"Pokemon Red.cht","path":"cht/Pokemon Red.cht"},{"name":"Tetris.cht","path":"cht/Tetris.cht"},{"name":"README.md","path":"cht/README.md"}]"#;
-    let names = parse_file_list_from_json(json).unwrap();
-    assert_eq!(names.len(), 2);
-    assert!(names.contains(&"Pokemon Red.cht".to_string()));
-    assert!(names.contains(&"Tetris.cht".to_string()));
+fn parse_dir_entry_sha_finds_platform() {
+    let json = r#"[{"name":"Nintendo - Game Boy","sha":"abc123def","type":"dir"},{"name":"Nintendo - Nintendo Entertainment System","sha":"nes456sha","type":"dir"}]"#;
+    let sha =
+        parse_dir_entry_sha(json, "Nintendo - Nintendo Entertainment System").unwrap();
+    assert_eq!(sha, "nes456sha");
 }
 
 #[test]
-fn parse_file_list_from_json_handles_error_message() {
-    let json = r#"{"message":"API rate limit exceeded","documentation_url":"..."}"#;
-    let result = parse_file_list_from_json(json);
-    assert!(result.is_ok());
-    assert!(result.unwrap().is_empty());
+fn parse_dir_entry_sha_returns_error_for_missing() {
+    let json = r#"[{"name":"Nintendo - Game Boy","sha":"abc123","type":"dir"}]"#;
+    let result = parse_dir_entry_sha(json, "NonExistent Platform");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_tree_blob_names_extracts_cht_files() {
+    let json = r#"{"sha":"abc","tree":[{"path":"Game A (USA).cht","mode":"100644","type":"blob","sha":"x"},{"path":"Game B.cht","mode":"100644","type":"blob","sha":"y"},{"path":"README.md","mode":"100644","type":"blob","sha":"z"}],"truncated":false}"#;
+    let names = parse_tree_blob_names(json);
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"Game A (USA).cht".to_string()));
+    assert!(names.contains(&"Game B.cht".to_string()));
+}
+
+#[test]
+fn parse_tree_blob_names_handles_empty_tree() {
+    let json = r#"{"sha":"abc","tree":[],"truncated":false}"#;
+    let names = parse_tree_blob_names(json);
+    assert!(names.is_empty());
 }
 
 #[test]

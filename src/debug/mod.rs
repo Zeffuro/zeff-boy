@@ -12,6 +12,7 @@ mod input_viewer;
 mod libretro_cheats;
 mod memory_viewer;
 mod menu_bar;
+mod mods_window;
 mod nes_tile_viewer;
 mod nes_tilemap_viewer;
 mod oam_viewer;
@@ -42,8 +43,8 @@ pub(crate) use types::{
     WatchpointDisplay,
 };
 pub(crate) use types::{
-    BreakpointState, CheatState, DebugWindowState, MemorySearchResult, PerfInfo, RomSearchResult,
-    TileViewerState, TilemapViewerState,
+    BreakpointState, CheatState, DebugWindowState, LibretroAsyncResult, MemorySearchResult,
+    PerfInfo, RomSearchResult, TileViewerState, TilemapViewerState,
 };
 pub(crate) use ui::{
     DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar, draw_settings_window,

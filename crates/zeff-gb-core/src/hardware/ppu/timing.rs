@@ -98,6 +98,7 @@ impl PPU {
             self.rendered_current_line = false;
             self.prev_stat_line = false;
             self.draw_dots_for_line = DRAW_DOTS_BASE;
+            self.reset_framebuffer_for_rendering();
         }
 
         if self.ly == self.wy {
@@ -157,6 +158,12 @@ impl PPU {
 
                 if self.blank_first_frame_after_lcd_on {
                     self.blank_first_frame_after_lcd_on = false;
+                }
+
+                self.reset_framebuffer_for_rendering();
+
+                if self.sgb_border_enabled && self.sgb_enabled {
+                    self.render_sgb_border_framebuffer();
                 }
             }
 

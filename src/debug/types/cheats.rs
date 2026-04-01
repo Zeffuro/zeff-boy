@@ -1,5 +1,16 @@
 use crate::cheats::CheatCode;
 use crate::debug::common::WatchType;
+use crate::libretro_common::LibretroPlatform;
+use crate::libretro_metadata::MetadataRefreshStats;
+
+pub(crate) enum LibretroAsyncResult {
+    FileList(anyhow::Result<Vec<String>>),
+    Downloaded {
+        filename: String,
+        result: anyhow::Result<String>,
+    },
+    MetadataRefreshed(anyhow::Result<MetadataRefreshStats>),
+}
 
 pub(crate) struct CheatState {
     pub(crate) user_codes: Vec<CheatCode>,
@@ -11,7 +22,7 @@ pub(crate) struct CheatState {
     pub(crate) rom_crc32: Option<u32>,
     pub(crate) rom_metadata_title: Option<String>,
     pub(crate) rom_metadata_rom_name: Option<String>,
-    pub(crate) rom_is_gbc: bool,
+    pub(crate) libretro_platform: LibretroPlatform,
     pub(crate) active_system: crate::emu_backend::ActiveSystem,
     pub(crate) libretro_search_hints: Vec<String>,
     pub(crate) libretro_search: String,
@@ -20,6 +31,8 @@ pub(crate) struct CheatState {
     pub(crate) libretro_file_list: Option<Vec<String>>,
     pub(crate) libretro_show: bool,
     pub(crate) cheats_dirty: bool,
+    pub(crate) libretro_rx: Option<crossbeam_channel::Receiver<LibretroAsyncResult>>,
+    pub(crate) libretro_busy: bool,
 }
 
 impl CheatState {
@@ -34,7 +47,7 @@ impl CheatState {
             rom_crc32: None,
             rom_metadata_title: None,
             rom_metadata_rom_name: None,
-            rom_is_gbc: false,
+            libretro_platform: LibretroPlatform::Gb,
             active_system: crate::emu_backend::ActiveSystem::GameBoy,
             libretro_search_hints: Vec::new(),
             libretro_search: String::new(),
@@ -43,6 +56,8 @@ impl CheatState {
             libretro_file_list: None,
             libretro_show: false,
             cheats_dirty: true,
+            libretro_rx: None,
+            libretro_busy: false,
         }
     }
 }

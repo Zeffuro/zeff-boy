@@ -9,7 +9,7 @@ fn parse_dat_entries_extracts_crc_title_and_rom_name() {
         )
     "#;
 
-    let entries = parse_dat_entries(dat, false);
+    let entries = parse_dat_entries(dat, LibretroPlatform::Gb);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].crc32, 0xD7037C83);
     assert_eq!(entries[0].title, "Pokemon Red Version (USA, Europe)");
@@ -17,6 +17,24 @@ fn parse_dat_entries_extracts_crc_title_and_rom_name() {
         entries[0].rom_name,
         "Pokemon Red Version (USA, Europe) (SGB Enhanced).gb"
     );
+    assert_eq!(entries[0].platform, LibretroPlatform::Gb);
+}
+
+#[test]
+fn parse_dat_entries_nes() {
+    let dat = r#"
+        game (
+            name "Super Mario Bros. (World)"
+            rom ( name "Super Mario Bros. (World).nes" size 40976 crc 3337EC46 md5 0 sha1 0 )
+        )
+    "#;
+
+    let entries = parse_dat_entries(dat, LibretroPlatform::Nes);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].crc32, 0x3337EC46);
+    assert_eq!(entries[0].title, "Super Mario Bros. (World)");
+    assert_eq!(entries[0].rom_name, "Super Mario Bros. (World).nes");
+    assert_eq!(entries[0].platform, LibretroPlatform::Nes);
 }
 
 #[test]
@@ -25,7 +43,7 @@ fn build_cheat_search_hints_prefers_metadata_aliases() {
         crc32: 0,
         title: "Pokemon Red Version (USA, Europe)".to_string(),
         rom_name: "Pokemon Red Version (USA, Europe) (SGB Enhanced).gb".to_string(),
-        is_gbc: false,
+        platform: LibretroPlatform::Gb,
     };
 
     let hints = build_cheat_search_hints("POKEMON RED", Some(&meta));
@@ -34,19 +52,44 @@ fn build_cheat_search_hints_prefers_metadata_aliases() {
 }
 
 #[test]
+fn build_cheat_search_hints_nes() {
+    let meta = RomMetadata {
+        crc32: 0,
+        title: "Super Mario Bros. (World)".to_string(),
+        rom_name: "Super Mario Bros. (World).nes".to_string(),
+        platform: LibretroPlatform::Nes,
+    };
+
+    let hints = build_cheat_search_hints("SUPER MARIO BROS", Some(&meta));
+    assert!(hints.iter().any(|h| h.contains("Super Mario Bros")));
+}
+
+#[test]
 fn serialize_roundtrip_preserves_entries() {
-    let entries = vec![RomMetadata {
-        crc32: 0x1234ABCD,
-        title: "Test Game".to_string(),
-        rom_name: "Test Game.gb".to_string(),
-        is_gbc: false,
-    }];
+    let entries = vec![
+        RomMetadata {
+            crc32: 0x1234ABCD,
+            title: "Test Game".to_string(),
+            rom_name: "Test Game.gb".to_string(),
+            platform: LibretroPlatform::Gb,
+        },
+        RomMetadata {
+            crc32: 0xDEADBEEF,
+            title: "NES Test".to_string(),
+            rom_name: "NES Test.nes".to_string(),
+            platform: LibretroPlatform::Nes,
+        },
+    ];
 
     let bytes = serialize_entries(&entries).unwrap();
     let parsed = deserialize_entries(&bytes).unwrap();
-    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed.len(), 2);
     assert_eq!(parsed[0].crc32, 0x1234ABCD);
     assert_eq!(parsed[0].title, "Test Game");
     assert_eq!(parsed[0].rom_name, "Test Game.gb");
-    assert!(!parsed[0].is_gbc);
+    assert_eq!(parsed[0].platform, LibretroPlatform::Gb);
+    assert_eq!(parsed[1].crc32, 0xDEADBEEF);
+    assert_eq!(parsed[1].title, "NES Test");
+    assert_eq!(parsed[1].rom_name, "NES Test.nes");
+    assert_eq!(parsed[1].platform, LibretroPlatform::Nes);
 }

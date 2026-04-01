@@ -1,6 +1,7 @@
 mod debug_menu;
 mod file_menu;
 mod toolbar;
+mod tools_menu;
 mod view_menu;
 
 use crate::debug::DebugWindowState;
@@ -95,7 +96,11 @@ pub(crate) fn draw_menu_bar(
                         });
 
                         ui.menu_button("Debug", |ui| {
-                            debug_menu::draw(ui, dock_state, debug_windows);
+                            debug_menu::draw(ui, dock_state);
+                        });
+
+                        ui.menu_button("Tools", |ui| {
+                            tools_menu::draw(ui, dock_state, debug_windows);
                         });
 
                         ui.menu_button("Help", |ui| {

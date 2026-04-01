@@ -1,3 +1,45 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum LibretroPlatform {
+    Gb = 0,
+    Gbc = 1,
+    Nes = 2,
+}
+
+impl LibretroPlatform {
+    pub(crate) fn platform_dir(self) -> &'static str {
+        match self {
+            Self::Gb => "Nintendo - Game Boy",
+            Self::Gbc => "Nintendo - Game Boy Color",
+            Self::Nes => "Nintendo - Nintendo Entertainment System",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Gb => "Game Boy",
+            Self::Gbc => "Game Boy Color",
+            Self::Nes => "NES",
+        }
+    }
+
+    pub(crate) fn cache_suffix(self) -> &'static str {
+        match self {
+            Self::Gb => "gb",
+            Self::Gbc => "gbc",
+            Self::Nes => "nes",
+        }
+    }
+
+    pub(crate) fn rom_extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::Gb => &[".gb"],
+            Self::Gbc => &[".gbc", ".gb"],
+            Self::Nes => &[".nes"],
+        }
+    }
+}
+
 pub(crate) const USER_AGENT: &str = "zeff-boy-emulator";
 
 pub(crate) fn ureq_get(url: &str) -> anyhow::Result<ureq::Body> {

@@ -9,6 +9,9 @@ pub(super) enum SgbEvent {
     PalSet(u8),
     MaskEn(u8),
     MltReq,
+    ChrTrn,
+    AttrTrn,
+    AttrSet(u8, u8),
 }
 
 pub(super) struct SgbState {
@@ -132,7 +135,13 @@ impl SgbState {
             }
             0x0A => Some(SgbEvent::PalSet(self.packet[1] & 0x03)),
             0x11 => Some(SgbEvent::MltReq),
+            0x15 => Some(SgbEvent::AttrSet(
+                self.packet[1] & 0x3F,
+                self.packet[2] & 0x03,
+            )),
+            0x16 => Some(SgbEvent::AttrTrn),
             0x17 => Some(SgbEvent::MaskEn(self.packet[1] & 0x03)),
+            0x18 => Some(SgbEvent::ChrTrn),
             _ => {
                 log::warn!("Unrecognized SGB command {:02X}; skipping", command);
                 None

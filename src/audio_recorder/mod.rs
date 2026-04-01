@@ -13,6 +13,10 @@ use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
 
 const MIDI_INITIAL_SNAPSHOT_CAPACITY: usize = 3600;
 
+pub(crate) fn ogg_vorbis_supported() -> bool {
+    cfg!(feature = "audio-recording")
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum MidiApuSnapshot {
     Gb(GbApuChannelSnapshot),
@@ -33,6 +37,7 @@ enum RecorderInner {
         samples_written: u64,
         is_float: bool,
     },
+    #[cfg(feature = "audio-recording")]
     Ogg {
         writer: BufWriter<File>,
         encoder: vorbis_encoder::Encoder,
@@ -65,16 +70,25 @@ impl AudioRecorder {
                 }
             }
             AudioRecordingFormat::OggVorbis => {
-                let file = File::create(path)?;
-                let writer = BufWriter::new(file);
-                let encoder = vorbis_encoder::Encoder::new(2, sample_rate as u64, 0.6)
-                    .map_err(|e| std::io::Error::other(format!("Vorbis init error: {e}")))?;
-                let chunk_threshold = sample_rate as usize * 2;
-                RecorderInner::Ogg {
-                    writer,
-                    encoder,
-                    buffer: Vec::with_capacity(chunk_threshold),
-                    chunk_threshold,
+                #[cfg(feature = "audio-recording")]
+                {
+                    let file = File::create(path)?;
+                    let writer = BufWriter::new(file);
+                    let encoder = vorbis_encoder::Encoder::new(2, sample_rate as u64, 0.6)
+                        .map_err(|e| std::io::Error::other(format!("Vorbis init error: {e}")))?;
+                    let chunk_threshold = sample_rate as usize * 2;
+                    RecorderInner::Ogg {
+                        writer,
+                        encoder,
+                        buffer: Vec::with_capacity(chunk_threshold),
+                        chunk_threshold,
+                    }
+                }
+                #[cfg(not(feature = "audio-recording"))]
+                {
+                    return Err(std::io::Error::other(
+                        "OGG Vorbis recording requires the `audio-recording` feature",
+                    ));
                 }
             }
             AudioRecordingFormat::Midi => RecorderInner::Midi {
@@ -110,6 +124,7 @@ impl AudioRecorder {
                     }
                 }
             }
+            #[cfg(feature = "audio-recording")]
             RecorderInner::Ogg {
                 writer,
                 encoder,
@@ -157,6 +172,7 @@ impl AudioRecorder {
                 samples_written,
                 is_float,
             ),
+            #[cfg(feature = "audio-recording")]
             RecorderInner::Ogg {
                 writer,
                 encoder,
@@ -213,6 +229,7 @@ fn finish_wav(
     Ok(path)
 }
 
+#[cfg(feature = "audio-recording")]
 fn finish_ogg(
     path: PathBuf,
     mut writer: BufWriter<File>,

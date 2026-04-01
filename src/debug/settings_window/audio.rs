@@ -1,3 +1,4 @@
+use crate::audio_recorder::ogg_vorbis_supported;
 use crate::debug::ui_helpers::enum_combo_box;
 use crate::settings::Settings;
 
@@ -57,6 +58,13 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.heading("Recording");
 
     enum_combo_box(ui, "Recording format", &mut settings.audio.recording_format);
+    if !ogg_vorbis_supported() {
+        ui.label(
+            egui::RichText::new("OGG Vorbis unavailable in this build (requires `audio-recording` feature).")
+                .small()
+                .weak(),
+        );
+    }
     ui.label(
         egui::RichText::new(
             "16-bit PCM: smaller files, standard compatibility.\n\

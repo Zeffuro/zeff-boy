@@ -12,10 +12,16 @@ pub enum Button {
     Right,
 }
 
+pub enum ControllerType {
+    Standard,
+    Zapper { trigger: bool, hit: bool },
+}
+
 pub struct Controller {
     buttons: u8,
     shift_register: u8,
     strobe: bool,
+    controller_type: ControllerType,
 }
 
 impl Default for Controller {
@@ -30,7 +36,12 @@ impl Controller {
             buttons: 0,
             shift_register: 0,
             strobe: false,
+            controller_type: ControllerType::Standard,
         }
+    }
+
+    pub fn set_type(&mut self, controller_type: ControllerType) {
+        self.controller_type = controller_type;
     }
 
     pub fn set_buttons(&mut self, state: u8) {
@@ -54,8 +65,33 @@ impl Controller {
     }
 
     pub fn read(&mut self) -> u8 {
+        match &self.controller_type {
+            ControllerType::Standard => self.read_standard(),
+            ControllerType::Zapper { trigger, hit } => self.read_zapper(*trigger, *hit),
+        }
+    }
+
+    fn read_standard(&mut self) -> u8 {
         if self.strobe {
             return self.buttons & 0x01;
+        }
+        let bit = self.shift_register & 0x01;
+        self.shift_register >>= 1;
+        self.shift_register |= 0x80;
+        bit
+    }
+
+    fn read_zapper(&mut self, trigger: bool, hit: bool) -> u8 {
+        if self.strobe {
+            let mut result = self.buttons & 0x01;
+            if trigger {
+                result |= 0x02;
+            }
+            if !hit {
+                result |= 0x04;
+            }
+            result |= 0x08;
+            return result;
         }
         let bit = self.shift_register & 0x01;
         self.shift_register >>= 1;
@@ -80,12 +116,32 @@ impl Controller {
         w.write_u8(self.buttons);
         w.write_u8(self.shift_register);
         w.write_bool(self.strobe);
+        match &self.controller_type {
+            ControllerType::Standard => {
+                w.write_u8(0);
+            }
+            ControllerType::Zapper { trigger, hit } => {
+                w.write_u8(1);
+                w.write_bool(*trigger);
+                w.write_bool(*hit);
+            }
+        }
     }
 
     pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
         self.buttons = r.read_u8()?;
         self.shift_register = r.read_u8()?;
         self.strobe = r.read_bool()?;
+        let type_tag = r.read_u8()?;
+        match type_tag {
+            0 => self.controller_type = ControllerType::Standard,
+            1 => {
+                let trigger = r.read_bool()?;
+                let hit = r.read_bool()?;
+                self.controller_type = ControllerType::Zapper { trigger, hit };
+            }
+            _ => self.controller_type = ControllerType::Standard,
+        }
         Ok(())
     }
 }

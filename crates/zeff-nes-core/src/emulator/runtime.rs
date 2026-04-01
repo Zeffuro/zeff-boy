@@ -17,7 +17,7 @@ impl Emulator {
         let pc_before = self.cpu.pc;
         let opcode = self.bus.cpu_read(pc_before);
 
-        self.opcode_log.push(pc_before, opcode);
+        self.opcode_log.push((pc_before, opcode));
 
         self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
 

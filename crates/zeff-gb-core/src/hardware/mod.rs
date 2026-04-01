@@ -6,6 +6,7 @@ mod io;
 pub mod joypad;
 mod opcodes;
 pub mod ppu;
+pub mod printer;
 pub mod rom_header;
 mod serial;
 mod sgb;

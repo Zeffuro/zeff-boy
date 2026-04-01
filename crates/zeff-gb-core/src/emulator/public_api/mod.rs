@@ -31,6 +31,18 @@ impl Emulator {
         self.bus.set_ppu_dmg_palette_preset(preset);
     }
 
+    pub fn set_sgb_border_enabled(&mut self, enabled: bool) {
+        self.bus.set_ppu_sgb_border_enabled(enabled);
+    }
+
+    pub fn sgb_border_active(&self) -> bool {
+        self.bus.ppu_sgb_border_active()
+    }
+
+    pub fn framebuffer_dimensions(&self) -> (usize, usize) {
+        self.bus.ppu_framebuffer_dimensions()
+    }
+
     pub fn clear_rom_patches(&mut self) {
         self.bus.game_genie_patches.clear();
     }

@@ -22,6 +22,15 @@ pub use tiles::tile_data_address;
 pub const SCREEN_W: usize = 160;
 pub const SCREEN_H: usize = 144;
 
+pub const SGB_BORDER_W: usize = 256;
+pub const SGB_BORDER_H: usize = 224;
+pub const SGB_BORDER_SIZE: usize = SGB_BORDER_W * SGB_BORDER_H * 4;
+
+pub const SGB_CHR_TRANSFER_SIZE: usize = 4096 * 16;
+pub const SGB_ATTR_FILE_SIZE: usize = 90 * 4;
+pub const SGB_ATTR_BLOCKS_W: usize = 20;
+pub const SGB_ATTR_BLOCKS_H: usize = 18;
+
 const DOTS_PER_LINE: u64 = 456;
 const OAM_DOTS: u64 = 80;
 const DRAW_DOTS_BASE: u64 = 172;
@@ -97,6 +106,13 @@ pub struct PPU {
     pub sgb_active_palette: u8,
     pub sgb_palettes: [[u16; 4]; 4],
 
+    pub sgb_border_enabled: bool,
+    pub sgb_border_tile_data: Box<[u8]>,
+    pub sgb_attr_file: [u8; SGB_ATTR_FILE_SIZE],
+    pub sgb_attr_palette: [u8; 4],
+    pub sgb_attr_map_base: u8,
+    sgb_composite_buffer: Box<[u8]>,
+
     pub window_line_counter: u8,
     pub window_was_active_this_frame: bool,
     pub window_y_triggered: bool,
@@ -148,6 +164,13 @@ impl PPU {
                 [0x7FFF, 0x56B5, 0x2D6B, 0x0000],
                 [0x7FFF, 0x56B5, 0x2D6B, 0x0000],
             ],
+
+            sgb_border_enabled: false,
+            sgb_border_tile_data: vec![0; SGB_CHR_TRANSFER_SIZE].into_boxed_slice(),
+            sgb_attr_file: [0; SGB_ATTR_FILE_SIZE],
+            sgb_attr_palette: [0; 4],
+            sgb_attr_map_base: 0,
+            sgb_composite_buffer: vec![0; SGB_BORDER_SIZE].into_boxed_slice(),
 
             window_line_counter: 0,
             window_was_active_this_frame: false,

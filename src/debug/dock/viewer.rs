@@ -6,6 +6,7 @@ use super::super::cheats_window::draw_cheats_content;
 use super::super::disasm_window::draw_disassembler_content;
 use super::super::input_viewer::draw_input_viewer_content;
 use super::super::memory_viewer::draw_memory_viewer_content;
+use super::super::mods_window::draw_mods_content;
 use super::super::nes_tile_viewer::draw_nes_tile_viewer_content;
 use super::super::nes_tilemap_viewer::draw_nes_tilemap_viewer_content;
 use super::super::oam_viewer::draw_oam_viewer_content;
@@ -178,6 +179,9 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::Cheats => {
                 draw_cheats_content(ui, &mut self.window_state.cheat);
+            }
+            DebugTab::Mods => {
+                draw_mods_content(ui, &mut self.window_state.mod_state);
             }
             DebugTab::RomViewer => {
                 if let Some(page) = self.rom_page {

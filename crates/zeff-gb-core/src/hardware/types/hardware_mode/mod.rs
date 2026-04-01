@@ -13,6 +13,7 @@ pub enum HardwareMode {
 pub enum HardwareModePreference {
     Auto,
     ForceDmg,
+    ForceSgb,
     ForceCgb,
 }
 
@@ -34,6 +35,13 @@ impl HardwareModePreference {
                 }
             }
             HardwareModePreference::ForceDmg => HardwareMode::DMG,
+            HardwareModePreference::ForceSgb => {
+                if is_sgb_supported && old_licensee_code == 0x33 {
+                    HardwareMode::SGB1
+                } else {
+                    HardwareMode::DMG
+                }
+            }
             HardwareModePreference::ForceCgb => {
                 if is_cgb_compatible {
                     HardwareMode::CGBNormal

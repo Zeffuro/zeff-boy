@@ -1,7 +1,5 @@
 pub(crate) use zeff_emu_common::cheats::{CheatCode, CheatPatch, CheatType, CheatValue};
-pub(crate) use zeff_gb_core::cheats::{
-    collect_enabled_patches, export_cht_file, parse_cheat, parse_cht_file,
-};
+pub(crate) use zeff_gb_core::cheats::{collect_enabled_patches, export_cht_file, parse_cheat};
 
 use crate::emu_backend::ActiveSystem;
 use crate::settings::Settings;
@@ -22,21 +20,130 @@ pub(crate) fn try_parse_nes_game_genie(input: &str) -> Option<(Vec<CheatPatch>, 
     Some((vec![cheat_patch], CheatType::GameGenie))
 }
 
+fn try_parse_single_for_system(
+    input: &str,
+    system: ActiveSystem,
+) -> Option<(Vec<CheatPatch>, CheatType)> {
+    if let Ok(result) = parse_cheat(input) {
+        return Some(result);
+    }
+    if system == ActiveSystem::Nes {
+        return try_parse_nes_game_genie(input);
+    }
+    None
+}
+
 pub(crate) fn parse_cheat_for_system(
     input: &str,
     system: ActiveSystem,
 ) -> Result<(Vec<CheatPatch>, CheatType), &'static str> {
-    if let Ok(result) = parse_cheat(input) {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("Empty cheat code");
+    }
+
+    if let Some(result) = try_parse_single_for_system(trimmed, system) {
         return Ok(result);
     }
-    if system == ActiveSystem::Nes
-        && let Some(result) = try_parse_nes_game_genie(input)
-    {
-        return Ok(result);
+
+    let parts: Vec<&str> = trimmed.split('+').collect();
+    if parts.len() > 1 {
+        let mut all_patches = Vec::new();
+        let mut detected_type: Option<CheatType> = None;
+
+        for part in &parts {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some((patches, ty)) = try_parse_single_for_system(part, system) {
+                detected_type = Some(ty);
+                all_patches.extend(patches);
+            } else {
+                return Err(
+                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV)",
+                );
+            }
+        }
+
+        if let Some(ty) = detected_type
+            && !all_patches.is_empty()
+        {
+            return Ok((all_patches, ty));
+        }
     }
+
     Err(
         "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV)",
     )
+}
+
+pub(crate) fn parse_cht_file_for_system(content: &str, system: ActiveSystem) -> Vec<CheatCode> {
+    let mut entries: std::collections::HashMap<usize, (Option<String>, Option<String>, bool)> =
+        std::collections::HashMap::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("cheat")
+            && let Some(idx_end) = rest.find('_')
+            && let Ok(idx) = rest[..idx_end].parse::<usize>()
+        {
+            let field = &rest[idx_end + 1..];
+            if let Some(value) = field.strip_prefix("desc = ") {
+                let value = value.trim().trim_matches('"').to_string();
+                entries.entry(idx).or_insert((None, None, false)).0 = Some(value);
+            } else if let Some(value) = field.strip_prefix("code = ") {
+                let value = value.trim().trim_matches('"').to_string();
+                entries.entry(idx).or_insert((None, None, false)).1 = Some(value);
+            } else if let Some(value) = field.strip_prefix("enable = ") {
+                let enabled = value.trim() == "true";
+                entries.entry(idx).or_insert((None, None, false)).2 = enabled;
+            }
+        }
+    }
+
+    let mut indices: Vec<usize> = entries.keys().copied().collect();
+    indices.sort_unstable();
+
+    let mut cheats = Vec::new();
+    for idx in indices {
+        if let Some((desc, code, enabled)) = entries.remove(&idx) {
+            let code_text = code.unwrap_or_default();
+            if code_text.is_empty() {
+                continue;
+            }
+            let name = desc.unwrap_or_else(|| code_text.clone());
+
+            match parse_cheat_for_system(&code_text, system) {
+                Ok((patches, code_type)) => {
+                    let parameter_value =
+                        patches.iter().copied().find_map(|p| p.default_user_value());
+                    cheats.push(CheatCode {
+                        name,
+                        code_text,
+                        enabled,
+                        parameter_value,
+                        code_type,
+                        patches,
+                    });
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse cheat '{}': {} (code: {})",
+                        name,
+                        e,
+                        code_text
+                    );
+                }
+            }
+        }
+    }
+
+    cheats
 }
 
 fn sanitize_rom_title(title: &str) -> String {
@@ -58,24 +165,37 @@ fn storage_key(rom_title: Option<&str>, rom_crc32: Option<u32>) -> Option<String
         .filter(|title| !title.trim().is_empty())
 }
 
-fn user_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
+fn cheats_root_dir(system: ActiveSystem) -> std::path::PathBuf {
     Settings::settings_dir()
         .join("cheats")
         .join(system.storage_subdir())
-        .join(format!("{key}.cht"))
+}
+
+fn cheat_system_dir(root: &std::path::Path, key: &str) -> std::path::PathBuf {
+    root.join("libretro").join(key)
+}
+
+fn user_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
+    cheat_system_dir(&cheats_root_dir(system), key).join("user.cht")
 }
 
 fn libretro_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
-    Settings::settings_dir()
-        .join("cheats")
-        .join(system.storage_subdir())
+    cheat_system_dir(&cheats_root_dir(system), key).join("libretro.cht")
+}
+
+fn legacy_user_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
+    cheats_root_dir(system).join(format!("{key}.cht"))
+}
+
+fn legacy_libretro_cheat_path(system: ActiveSystem, key: &str) -> std::path::PathBuf {
+    cheats_root_dir(system)
         .join("libretro")
         .join(format!("{key}.cht"))
 }
 
-fn read_cheat_file(path: &std::path::Path) -> Vec<CheatCode> {
+fn read_cheat_file(path: &std::path::Path, system: ActiveSystem) -> Vec<CheatCode> {
     std::fs::read_to_string(path)
-        .map(|c| parse_cht_file(&c))
+        .map(|c| parse_cht_file_for_system(&c, system))
         .unwrap_or_default()
 }
 
@@ -119,11 +239,182 @@ pub(crate) fn load_game_cheats(
     rom_crc32: Option<u32>,
 ) -> (Vec<CheatCode>, Vec<CheatCode>) {
     if let Some(key) = storage_key(rom_title, rom_crc32) {
-        let user = read_cheat_file(&user_cheat_path(system, &key));
-        let libretro = read_cheat_file(&libretro_cheat_path(system, &key));
+        let user = {
+            let path = user_cheat_path(system, &key);
+            let cheats = read_cheat_file(&path, system);
+            if cheats.is_empty() {
+                read_cheat_file(&legacy_user_cheat_path(system, &key), system)
+            } else {
+                cheats
+            }
+        };
+        let libretro = {
+            let path = libretro_cheat_path(system, &key);
+            let cheats = read_cheat_file(&path, system);
+            if cheats.is_empty() {
+                read_cheat_file(&legacy_libretro_cheat_path(system, &key), system)
+            } else {
+                cheats
+            }
+        };
         if !user.is_empty() || !libretro.is_empty() {
             return (user, libretro);
         }
     }
     (Vec::new(), Vec::new())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_key_prefers_crc32() {
+        assert_eq!(
+            storage_key(Some("Pokemon Red"), Some(0xD7037C83)),
+            Some("D7037C83".to_string())
+        );
+    }
+
+    #[test]
+    fn storage_key_uses_sanitized_title_when_crc_missing() {
+        assert_eq!(
+            storage_key(Some("Pokemon: Red/Blue?"), None),
+            Some("Pokemon_ Red_Blue_".to_string())
+        );
+    }
+
+    #[test]
+    fn load_uses_legacy_paths_when_new_paths_are_empty() {
+        let base = std::env::temp_dir().join(format!(
+            "zeff-boy-cheats-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        let key = "D7037C83";
+
+        let root = base.join("cheats").join("gbc");
+        let legacy_user = root.join(format!("{key}.cht"));
+        let legacy_libretro = root.join("libretro").join(format!("{key}.cht"));
+
+        std::fs::create_dir_all(
+            legacy_user
+                .parent()
+                .expect("legacy user path should have a parent"),
+        )
+        .expect("should create legacy user directory");
+        std::fs::create_dir_all(
+            legacy_libretro
+                .parent()
+                .expect("legacy libretro path should have a parent"),
+        )
+        .expect("should create legacy libretro directory");
+
+        std::fs::write(&legacy_user, "cheat0_code = \"01FF8000\"\n")
+            .expect("should write legacy user cheat file");
+        std::fs::write(&legacy_libretro, "cheat0_code = \"01234567\"\n")
+            .expect("should write legacy libretro cheat file");
+
+        let new_user = cheat_system_dir(&root, key).join("user.cht");
+        let new_libretro = cheat_system_dir(&root, key).join("libretro.cht");
+
+        let user = {
+            let cheats = read_cheat_file(&new_user, ActiveSystem::GameBoy);
+            if cheats.is_empty() {
+                read_cheat_file(&legacy_user, ActiveSystem::GameBoy)
+            } else {
+                cheats
+            }
+        };
+        let libretro = {
+            let cheats = read_cheat_file(&new_libretro, ActiveSystem::GameBoy);
+            if cheats.is_empty() {
+                read_cheat_file(&legacy_libretro, ActiveSystem::GameBoy)
+            } else {
+                cheats
+            }
+        };
+
+        assert_eq!(user.len(), 1);
+        assert_eq!(libretro.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn parse_cheat_for_system_nes_game_genie_8_letter() {
+        let result = parse_cheat_for_system("ALUZVGEI", ActiveSystem::Nes);
+        assert!(result.is_ok());
+        let (patches, ty) = result.unwrap();
+        assert_eq!(ty, CheatType::GameGenie);
+        assert_eq!(patches.len(), 1);
+    }
+
+    #[test]
+    fn parse_cheat_for_system_nes_game_genie_6_letter() {
+        let result = parse_cheat_for_system("ZALXZP", ActiveSystem::Nes);
+        assert!(result.is_ok());
+        let (patches, ty) = result.unwrap();
+        assert_eq!(ty, CheatType::GameGenie);
+        assert_eq!(patches.len(), 1);
+    }
+
+    #[test]
+    fn parse_cheat_for_system_nes_multi_code() {
+        let result =
+            parse_cheat_for_system("SZULZISA+EUOZIYEI+AVNULGEZ", ActiveSystem::Nes);
+        assert!(result.is_ok());
+        let (patches, _) = result.unwrap();
+        assert_eq!(patches.len(), 3);
+    }
+
+    #[test]
+    fn parse_cheat_for_system_nes_raw() {
+        let result = parse_cheat_for_system("0055:60", ActiveSystem::Nes);
+        assert!(result.is_ok());
+        let (patches, ty) = result.unwrap();
+        assert_eq!(ty, CheatType::Raw);
+        assert_eq!(patches.len(), 1);
+    }
+
+    #[test]
+    fn parse_cht_file_for_system_nes_game_genie() {
+        let content = r#"cheats = 2
+
+cheat0_desc = "Jump in Midair"
+cheat0_code = "ALUZVGEI"
+cheat0_enable = false
+
+cheat1_desc = "Walk Through Blocks"
+cheat1_code = "SZULZISA+EUOZIYEI+AVNULGEZ"
+cheat1_enable = false
+"#;
+        let cheats = parse_cht_file_for_system(content, ActiveSystem::Nes);
+        assert_eq!(cheats.len(), 2);
+        assert_eq!(cheats[0].name, "Jump in Midair");
+        assert_eq!(cheats[0].patches.len(), 1);
+        assert_eq!(cheats[1].name, "Walk Through Blocks");
+        assert_eq!(cheats[1].patches.len(), 3);
+    }
+
+    #[test]
+    fn parse_cht_file_for_system_skips_empty_codes() {
+        let content = r#"cheats = 2
+
+cheat0_desc = "Has Weapons"
+cheat0_code = "005D:FF"
+cheat0_enable = false
+
+cheat1_desc = "Unlimited B"
+cheat1_code = ""
+cheat1_enable = false
+"#;
+        let cheats = parse_cht_file_for_system(content, ActiveSystem::Nes);
+        assert_eq!(cheats.len(), 1);
+        assert_eq!(cheats[0].name, "Has Weapons");
+    }
+}
+

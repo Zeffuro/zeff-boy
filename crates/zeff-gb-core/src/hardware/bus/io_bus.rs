@@ -241,5 +241,10 @@ fn apply_sgb_event(bus: &mut Bus, event: SgbEvent) {
         SgbEvent::PalSet(index) => bus.io.ppu.set_sgb_active_palette(index),
         SgbEvent::MaskEn(mode) => bus.io.ppu.set_sgb_mask_mode(mode),
         SgbEvent::MltReq => {}
+        SgbEvent::ChrTrn => bus.io.ppu.sgb_chr_trn(&bus.vram, bus.vram_bank),
+        SgbEvent::AttrTrn => bus.io.ppu.sgb_attr_trn(&bus.vram, bus.vram_bank),
+        SgbEvent::AttrSet(map_base, palette_idx) => {
+            bus.io.ppu.sgb_attr_set(map_base, palette_idx)
+        }
     }
 }

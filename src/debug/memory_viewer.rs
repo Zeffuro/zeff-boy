@@ -132,6 +132,14 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
+    hex_viewer::draw_data_inspector(
+        ui,
+        &mut state.inspector_addr_input,
+        &mut state.inspector_addr,
+        memory_page,
+    );
+
+    ui.separator();
     hex_viewer::draw_tbl_section(ui, &mut state.tbl_map, &mut state.tbl_path);
 
     writes

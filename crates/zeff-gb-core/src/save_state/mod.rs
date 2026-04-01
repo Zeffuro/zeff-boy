@@ -1,8 +1,4 @@
-use anyhow::{Context, Result, bail};
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use anyhow::{Result, bail};
 
 mod bess;
 mod decode;
@@ -73,44 +69,6 @@ pub struct SaveStateRef<'a> {
     pub last_opcode_pc: u16,
 }
 
-pub fn write_to_file(path: &Path, state: &SaveStateRef<'_>) -> Result<()> {
-    let bytes = encode_state_bytes(state)?;
-    write_state_bytes_to_file(path, &bytes)
-}
-
-pub fn write_state_bytes_to_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context("failed to create save-state directory")?;
-    }
-
-    let tmp_path = temp_path_for(path);
-    {
-        let mut file = File::create(&tmp_path)
-            .with_context(|| format!("failed to create temp save state: {}", tmp_path.display()))?;
-        file.write_all(bytes)
-            .with_context(|| format!("failed to write temp save state: {}", tmp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to flush temp save state: {}", tmp_path.display()))?;
-    }
-
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("failed to finalize save state: {}", path.display()))
-}
-
-fn temp_path_for(path: &Path) -> PathBuf {
-    let mut tmp = path.to_path_buf();
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or("state");
-    tmp.set_extension(format!("{ext}.tmp.{suffix}"));
-    tmp
-}
 
 pub fn encode_hardware_mode(mode: HardwareMode) -> u8 {
     match mode {

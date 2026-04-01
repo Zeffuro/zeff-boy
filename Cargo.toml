@@ -3,8 +3,9 @@ members = ["crates/zeff-emu-common", "crates/zeff-gb-core", "crates/zeff-nes-cor
 exclude = ["fuzz"]
 
 [features]
-default = []
+default = ["camera", "audio-recording"]
 camera = ["dep:nokhwa", "dep:image"]
+audio-recording = ["dep:vorbis-encoder"]
 
 [package]
 name = "zeff-boy"
@@ -44,7 +45,7 @@ crc32fast = "1.5.0"
 chrono = "0.4"
 arrayvec = "0.7.6"
 ureq = "3.3.0"
-vorbis-encoder = "0.1"
+vorbis-encoder = { version = "0.1", optional = true }
 zip = { version = "8.4.0", default-features = false, features = ["deflate"] }
 nokhwa = { version = "0.10", optional = true, default-features = false, features = ["input-native"] }
 image = { version = "0.25.10", optional = true, default-features = false, features = ["jpeg"] }

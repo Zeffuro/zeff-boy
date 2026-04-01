@@ -28,6 +28,12 @@ impl PPU {
                 writer.write_u16(*color);
             }
         }
+        writer.write_bool(self.sgb_border_enabled);
+        writer.write_bytes(&self.sgb_border_tile_data);
+        writer.write_bytes(&self.sgb_attr_file);
+        writer.write_bytes(&self.sgb_attr_palette);
+        writer.write_u8(self.sgb_attr_map_base);
+        writer.write_bytes(&self.sgb_composite_buffer);
         writer.write_u8(self.window_line_counter);
         writer.write_bool(self.window_was_active_this_frame);
         writer.write_bool(self.window_y_triggered);
@@ -62,6 +68,12 @@ impl PPU {
                 *color = reader.read_u16()?;
             }
         }
+        ppu.sgb_border_enabled = reader.read_bool()?;
+        reader.read_exact(&mut ppu.sgb_border_tile_data)?;
+        reader.read_exact(&mut ppu.sgb_attr_file)?;
+        reader.read_exact(&mut ppu.sgb_attr_palette)?;
+        ppu.sgb_attr_map_base = reader.read_u8()?;
+        reader.read_exact(&mut ppu.sgb_composite_buffer)?;
         ppu.window_line_counter = reader.read_u8()?;
         ppu.window_was_active_this_frame = reader.read_bool()?;
         ppu.window_y_triggered = reader.read_bool()?;

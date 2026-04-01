@@ -141,6 +141,13 @@ impl Emulator {
         self.bus.controller2.set_buttons(buttons);
     }
 
+    pub fn set_zapper_state(&mut self, trigger: bool, hit: bool) {
+        use crate::hardware::controller::ControllerType;
+        self.bus
+            .controller2
+            .set_type(ControllerType::Zapper { trigger, hit });
+    }
+
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
         self.opcode_log.set_enabled(enabled);
     }

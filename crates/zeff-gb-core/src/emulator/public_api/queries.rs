@@ -99,6 +99,22 @@ impl Emulator {
         self.bus.read_byte_raw(addr)
     }
 
+    pub fn printer_latest_image(&self) -> Option<&[u8]> {
+        self.bus.printer_latest_image()
+    }
+
+    pub fn printer_image_count(&self) -> usize {
+        self.bus.printer_image_count()
+    }
+
+    pub fn printer_image_dimensions() -> (usize, usize) {
+        crate::hardware::printer::GameboyPrinter::image_dimensions()
+    }
+
+    pub fn clear_printer_images(&mut self) {
+        self.bus.clear_printer_images();
+    }
+
     pub fn rumble_active(&self) -> bool {
         self.bus.cartridge.rumble_active()
     }

@@ -61,7 +61,7 @@ impl Emulator {
             (opcode_at_pc, false)
         };
 
-        self.opcode_log.push(pc_before, op, cb_prefix);
+        self.opcode_log.push((pc_before, op, cb_prefix));
         self.last_opcode = op;
         self.last_opcode_pc = pc_before;
 

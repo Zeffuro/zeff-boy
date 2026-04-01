@@ -23,6 +23,7 @@ pub(crate) struct SnapshotRequest {
     pub(crate) color_correction_matrix: [f32; 9],
     pub(crate) dmg_palette_preset: crate::settings::DmgPalettePreset,
     pub(crate) nes_palette_mode: crate::settings::NesPaletteMode,
+    pub(crate) sgb_border_enabled: bool,
 }
 
 pub(crate) struct MemorySearchRequest {

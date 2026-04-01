@@ -5,19 +5,22 @@ use std::sync::{OnceLock, RwLock};
 
 use anyhow::Context;
 
+use crate::libretro_common::LibretroPlatform;
+
 const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/no-intro/";
 const GB_DAT: &str = "Nintendo%20-%20Game%20Boy.dat";
 const GBC_DAT: &str = "Nintendo%20-%20Game%20Boy%20Color.dat";
-const CACHE_FILE_NAME: &str = "gb_gbc_metadata_v1.bin";
-const MAGIC: &[u8; 8] = b"ZBMDAT01";
+const NES_DAT: &str = "Nintendo%20-%20Nintendo%20Entertainment%20System.dat";
+const CACHE_FILE_NAME: &str = "metadata_v2.bin";
+const MAGIC: &[u8; 8] = b"ZBMDAT02";
 
 #[derive(Clone, Debug)]
 pub(crate) struct RomMetadata {
     pub(crate) crc32: u32,
     pub(crate) title: String,
     pub(crate) rom_name: String,
-    pub(crate) is_gbc: bool,
+    pub(crate) platform: LibretroPlatform,
 }
 
 #[derive(Default)]
@@ -30,6 +33,7 @@ pub(crate) struct MetadataRefreshStats {
     pub(crate) total_entries: usize,
     pub(crate) gb_entries: usize,
     pub(crate) gbc_entries: usize,
+    pub(crate) nes_entries: usize,
 }
 
 fn metadata_lock() -> &'static RwLock<MetadataIndex> {
@@ -67,7 +71,7 @@ fn parse_crc_hex(line: &str) -> Option<u32> {
     u32::from_str_radix(&hex, 16).ok()
 }
 
-fn parse_dat_entries(dat: &str, is_gbc: bool) -> Vec<RomMetadata> {
+fn parse_dat_entries(dat: &str, platform: LibretroPlatform) -> Vec<RomMetadata> {
     let mut entries = Vec::new();
     let mut in_game = false;
     let mut current_title: Option<String> = None;
@@ -104,16 +108,16 @@ fn parse_dat_entries(dat: &str, is_gbc: bool) -> Vec<RomMetadata> {
         let crc = parse_crc_hex(line);
 
         if let (Some(rom_name), Some(crc32)) = (rom_name, crc) {
-            let fallback_title = rom_name
-                .trim_end_matches(".gb")
-                .trim_end_matches(".gbc")
-                .to_string();
-            let title = current_title.clone().unwrap_or(fallback_title);
+            let mut fallback = rom_name.as_str();
+            for ext in platform.rom_extensions() {
+                fallback = fallback.trim_end_matches(ext);
+            }
+            let title = current_title.clone().unwrap_or_else(|| fallback.to_string());
             entries.push(RomMetadata {
                 crc32,
                 title,
                 rom_name,
-                is_gbc,
+                platform,
             });
         }
     }
@@ -170,7 +174,7 @@ fn serialize_entries(entries: &[RomMetadata]) -> anyhow::Result<Vec<u8>> {
         }
 
         write_u32(&mut out, entry.crc32);
-        write_u8(&mut out, if entry.is_gbc { 1 } else { 0 });
+        write_u8(&mut out, entry.platform as u8);
         write_u16(&mut out, title_bytes.len() as u16);
         out.extend_from_slice(title_bytes);
         write_u16(&mut out, rom_name_bytes.len() as u16);
@@ -195,7 +199,13 @@ fn deserialize_entries(bytes: &[u8]) -> anyhow::Result<Vec<RomMetadata>> {
 
     for _ in 0..count {
         let crc32 = read_u32(&mut cur)?;
-        let is_gbc = read_u8(&mut cur)? != 0;
+        let platform_byte = read_u8(&mut cur)?;
+        let platform = match platform_byte {
+            0 => LibretroPlatform::Gb,
+            1 => LibretroPlatform::Gbc,
+            2 => LibretroPlatform::Nes,
+            _ => anyhow::bail!("unknown platform byte {platform_byte}"),
+        };
 
         let title_len = read_u16(&mut cur)? as usize;
         let mut title = vec![0u8; title_len];
@@ -212,7 +222,7 @@ fn deserialize_entries(bytes: &[u8]) -> anyhow::Result<Vec<RomMetadata>> {
             title: String::from_utf8(title).context("metadata decode error (title utf8)")?,
             rom_name: String::from_utf8(rom_name)
                 .context("metadata decode error (rom_name utf8)")?,
-            is_gbc,
+            platform,
         });
     }
 
@@ -249,14 +259,18 @@ fn write_cache_file(path: &Path, entries: &[RomMetadata]) -> anyhow::Result<()> 
 pub(crate) fn refresh_cache_from_libretro() -> anyhow::Result<MetadataRefreshStats> {
     let gb_dat = download_dat(GB_DAT)?;
     let gbc_dat = download_dat(GBC_DAT)?;
+    let nes_dat = download_dat(NES_DAT)?;
 
-    let mut gb_entries = parse_dat_entries(&gb_dat, false);
-    let gbc_entries = parse_dat_entries(&gbc_dat, true);
+    let mut gb_entries = parse_dat_entries(&gb_dat, LibretroPlatform::Gb);
+    let gbc_entries = parse_dat_entries(&gbc_dat, LibretroPlatform::Gbc);
+    let nes_entries = parse_dat_entries(&nes_dat, LibretroPlatform::Nes);
 
     let gb_count = gb_entries.len();
     let gbc_count = gbc_entries.len();
+    let nes_count = nes_entries.len();
 
     gb_entries.extend(gbc_entries);
+    gb_entries.extend(nes_entries);
     let merged_entries = gb_entries;
 
     write_cache_file(&cache_file_path(), &merged_entries)?;
@@ -270,14 +284,15 @@ pub(crate) fn refresh_cache_from_libretro() -> anyhow::Result<MetadataRefreshSta
         total_entries: merged_entries.len(),
         gb_entries: gb_count,
         gbc_entries: gbc_count,
+        nes_entries: nes_count,
     })
 }
 
-pub(crate) fn lookup_cached(crc32: u32, is_gbc: bool) -> Option<RomMetadata> {
+pub(crate) fn lookup_cached(crc32: u32, platform: LibretroPlatform) -> Option<RomMetadata> {
     let guard = metadata_lock().read().ok()?;
     let exact = guard.by_crc.get(&crc32)?;
 
-    if exact.is_gbc == is_gbc {
+    if exact.platform == platform {
         return Some(exact.clone());
     }
 
@@ -314,11 +329,11 @@ pub(crate) fn build_cheat_search_hints(
         hints.push(strip_suffix_groups(&meta.title));
         hints.push(meta.title.clone());
 
-        let rom_stem = meta
-            .rom_name
-            .trim_end_matches(".gb")
-            .trim_end_matches(".gbc")
-            .to_string();
+        let mut rom_stem = meta.rom_name.as_str();
+        for ext in meta.platform.rom_extensions() {
+            rom_stem = rom_stem.trim_end_matches(ext);
+        }
+        let rom_stem = rom_stem.to_string();
         hints.push(strip_suffix_groups(&rom_stem));
         hints.push(rom_stem.clone());
     }

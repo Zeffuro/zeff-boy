@@ -2,6 +2,11 @@ use crate::debug::{RomDebugInfo, RomInfoSection};
 
 pub(super) fn nes_rom_info(emu: &zeff_nes_core::emulator::Emulator) -> RomDebugInfo {
     let header = emu.cartridge_header();
+    let rom_crc32 = emu.rom_crc32();
+    let libretro_meta = crate::libretro_metadata::lookup_cached(
+        rom_crc32,
+        crate::libretro_common::LibretroPlatform::Nes,
+    );
     let yes_no = |v: bool| if v { "Yes" } else { "No" };
 
     let chr_label = if header.chr_rom_size > 0 {
@@ -56,6 +61,23 @@ pub(super) fn nes_rom_info(emu: &zeff_nes_core::emulator::Emulator) -> RomDebugI
             fields: vec![("PRG-RAM".into(), format!("{} B", header.prg_ram_size))],
         });
     }
+
+    sections.push(RomInfoSection {
+        heading: "Checksums".into(),
+        fields: vec![("CRC32".into(), format!("{rom_crc32:08X}"))],
+    });
+
+    let libretro_fields = match &libretro_meta {
+        Some(meta) => vec![
+            ("Title".into(), meta.title.clone()),
+            ("ROM File".into(), meta.rom_name.clone()),
+        ],
+        None => vec![("Status".into(), "No local metadata match".into())],
+    };
+    sections.push(RomInfoSection {
+        heading: "libretro Metadata".into(),
+        fields: libretro_fields,
+    });
 
     RomDebugInfo { sections }
 }

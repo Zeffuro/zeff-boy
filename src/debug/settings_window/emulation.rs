@@ -1,4 +1,5 @@
 use crate::debug::ui_helpers::{EnumLabel, enum_combo_box};
+use crate::emu_backend::ActiveSystem;
 use crate::settings::Settings;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -7,24 +8,21 @@ impl EnumLabel for HardwareModePreference {
         match self {
             Self::Auto => "Auto",
             Self::ForceDmg => "DMG",
+            Self::ForceSgb => "SGB",
             Self::ForceCgb => "CGB",
         }
     }
 
     fn all_variants() -> &'static [Self] {
-        &[Self::Auto, Self::ForceDmg, Self::ForceCgb]
+        &[Self::Auto, Self::ForceDmg, Self::ForceSgb, Self::ForceCgb]
     }
 }
 
-pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
-    ui.heading("Hardware");
-    enum_combo_box(
-        ui,
-        "Hardware mode",
-        &mut settings.emulation.hardware_mode_preference,
-    );
-
-    ui.separator();
+pub(super) fn draw(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    active_system: Option<ActiveSystem>,
+) {
     ui.heading("Speed");
     ui.add(
         egui::Slider::new(&mut settings.emulation.fast_forward_multiplier, 1..=16)
@@ -81,5 +79,48 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             3..=4 => "(normal)",
             _ => "(slow)",
         });
+    });
+
+    ui.separator();
+    draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
+    enum_combo_box(
+        ui,
+        "Hardware mode",
+        &mut settings.emulation.hardware_mode_preference,
+    );
+    ui.label(
+        egui::RichText::new("Selects DMG, SGB, or CGB hardware when loading a Game Boy ROM.")
+            .weak()
+            .small(),
+    );
+    ui.checkbox(
+        &mut settings.emulation.sgb_border_enabled,
+        "Enable SGB border rendering",
+    )
+    .on_hover_text(
+        "When enabled, renders Super Game Boy borders for compatible ROMs. \
+         Requires SGB or Auto hardware mode and an SGB-supported ROM.",
+    );
+    ui.checkbox(
+        &mut settings.emulation.nes_zapper_enabled,
+        "Enable NES Zapper (Light Gun)",
+    )
+    .on_hover_text(
+        "When enabled, replaces Player 2 controller with a Zapper light gun. \
+         Click the game screen to fire. Only works with NES games that support the Zapper.",
+    );
+}
+
+fn draw_console_section_header(
+    ui: &mut egui::Ui,
+    label: &str,
+    active_system: Option<ActiveSystem>,
+    target: ActiveSystem,
+) {
+    ui.horizontal(|ui| {
+        ui.heading(label);
+        if active_system == Some(target) {
+            ui.label(egui::RichText::new("(active)").weak().italics().small());
+        }
     });
 }

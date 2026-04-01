@@ -6,6 +6,7 @@ mod ui;
 mod video;
 
 use crate::debug::DebugWindowState;
+use crate::emu_backend::ActiveSystem;
 use crate::settings::Settings;
 
 pub(crate) fn draw_settings_window(
@@ -14,6 +15,7 @@ pub(crate) fn draw_settings_window(
     state: &mut DebugWindowState,
     open: &mut bool,
     constrain_rect: egui::Rect,
+    active_system: Option<ActiveSystem>,
     gb_hardware_mode_label: Option<&str>,
     is_pocket_camera: bool,
 ) {
@@ -42,10 +44,16 @@ pub(crate) fn draw_settings_window(
                 .auto_shrink(false)
                 .show(ui, |ui| {
                     match state.settings_tab {
-                        0 => emulation::draw(ui, settings),
+                        0 => emulation::draw(ui, settings, active_system),
                         1 => controls::draw(ui, settings, state),
                         2 => audio::draw(ui, settings),
-                        3 => video::draw(ui, settings, gb_hardware_mode_label, is_pocket_camera),
+                        3 => video::draw(
+                            ui,
+                            settings,
+                            active_system,
+                            gb_hardware_mode_label,
+                            is_pocket_camera,
+                        ),
                         4 => ui::draw(ui, settings),
                         5 => camera::draw(ui, settings, state),
                         _ => {}

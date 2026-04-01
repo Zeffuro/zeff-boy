@@ -6,15 +6,9 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn read_from_file(path: &Path) -> anyhow::Result<super::SaveState> {
-    use anyhow::Context;
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("failed to read save state: {}", path.display()))?;
-    super::decode_on_thread(bytes)
-}
 
 #[test]
 fn decode_rejects_bad_magic() {
@@ -60,6 +54,8 @@ fn full_save_state_round_trip_handles_large_arrays() {
         last_opcode_pc: 0x0100,
     };
 
+    let bytes = encode_state_bytes(&state).expect("encode should succeed");
+
     let mut path = PathBuf::from(std::env::temp_dir());
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -67,9 +63,11 @@ fn full_save_state_round_trip_handles_large_arrays() {
         .as_nanos();
     path.push(format!("zeff-boy-save-state-roundtrip-{unique}.state"));
 
-    super::write_to_file(&path, &state).expect("serialize full save-state should succeed");
-    let restored = read_from_file(&path).expect("deserialize full save-state should succeed");
+    std::fs::write(&path, &bytes).expect("write save-state file should succeed");
+    let file_bytes = std::fs::read(&path).expect("read save-state file should succeed");
     let _ = std::fs::remove_file(&path);
+
+    let restored = decode_state(&file_bytes).expect("decode should succeed");
 
     assert_eq!(restored.rom_hash, state.rom_hash);
     assert_eq!(restored.hardware_mode, state.hardware_mode);
