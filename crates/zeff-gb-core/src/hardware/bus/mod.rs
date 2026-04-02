@@ -74,6 +74,10 @@ impl Bus {
         self.io.joypad.write(value);
     }
 
+    pub fn set_sgb_multiplayer_mode(&mut self, mode: u8) {
+        self.io.joypad.set_sgb_multiplayer_mode(mode);
+    }
+
     pub fn apply_joypad_pressed_masks(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
         self.io
             .joypad

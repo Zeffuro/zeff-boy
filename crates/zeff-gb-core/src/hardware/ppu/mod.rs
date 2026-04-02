@@ -26,10 +26,16 @@ pub const SGB_BORDER_W: usize = 256;
 pub const SGB_BORDER_H: usize = 224;
 pub const SGB_BORDER_SIZE: usize = SGB_BORDER_W * SGB_BORDER_H * 4;
 
-pub const SGB_CHR_TRANSFER_SIZE: usize = 4096 * 16;
-pub const SGB_ATTR_FILE_SIZE: usize = 90 * 4;
+pub const SGB_TRN_TRANSFER_SIZE: usize = 0x1000;
+pub const SGB_CHR_TRANSFER_SIZE: usize = SGB_TRN_TRANSFER_SIZE * 2;
 pub const SGB_ATTR_BLOCKS_W: usize = 20;
 pub const SGB_ATTR_BLOCKS_H: usize = 18;
+pub const SGB_ATTR_MAP_SIZE: usize = SGB_ATTR_BLOCKS_W * SGB_ATTR_BLOCKS_H;
+pub const SGB_BORDER_TILEMAP_W: usize = 32;
+pub const SGB_BORDER_TILEMAP_H: usize = 32;
+pub const SGB_BORDER_TILEMAP_SIZE: usize = SGB_BORDER_TILEMAP_W * SGB_BORDER_TILEMAP_H;
+pub const SGB_BORDER_PALETTES: usize = 8;
+pub const SGB_BORDER_COLORS_PER_PALETTE: usize = 16;
 
 const DOTS_PER_LINE: u64 = 456;
 const OAM_DOTS: u64 = 80;
@@ -108,9 +114,11 @@ pub struct PPU {
 
     pub sgb_border_enabled: bool,
     pub sgb_border_tile_data: Box<[u8]>,
-    pub sgb_attr_file: [u8; SGB_ATTR_FILE_SIZE],
-    pub sgb_attr_palette: [u8; 4],
-    pub sgb_attr_map_base: u8,
+    pub sgb_border_tilemap: [u16; SGB_BORDER_TILEMAP_SIZE],
+    pub sgb_border_palettes: [[u16; SGB_BORDER_COLORS_PER_PALETTE]; SGB_BORDER_PALETTES],
+    pub sgb_pal_trn_data: Box<[u8]>,
+    pub sgb_attr_trn_data: Box<[u8]>,
+    pub sgb_attr_map: [u8; SGB_ATTR_MAP_SIZE],
     sgb_composite_buffer: Box<[u8]>,
 
     pub window_line_counter: u8,
@@ -167,9 +175,11 @@ impl PPU {
 
             sgb_border_enabled: false,
             sgb_border_tile_data: vec![0; SGB_CHR_TRANSFER_SIZE].into_boxed_slice(),
-            sgb_attr_file: [0; SGB_ATTR_FILE_SIZE],
-            sgb_attr_palette: [0; 4],
-            sgb_attr_map_base: 0,
+            sgb_border_tilemap: [0; SGB_BORDER_TILEMAP_SIZE],
+            sgb_border_palettes: [[0; SGB_BORDER_COLORS_PER_PALETTE]; SGB_BORDER_PALETTES],
+            sgb_pal_trn_data: vec![0; SGB_TRN_TRANSFER_SIZE].into_boxed_slice(),
+            sgb_attr_trn_data: vec![0; SGB_TRN_TRANSFER_SIZE].into_boxed_slice(),
+            sgb_attr_map: [0; SGB_ATTR_MAP_SIZE],
             sgb_composite_buffer: vec![0; SGB_BORDER_SIZE].into_boxed_slice(),
 
             window_line_counter: 0,

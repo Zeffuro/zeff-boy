@@ -238,13 +238,33 @@ fn apply_sgb_event(bus: &mut Bus, event: SgbEvent) {
             bus.io.ppu.set_sgb_palette(2, p2);
             bus.io.ppu.set_sgb_palette(3, p3);
         }
-        SgbEvent::PalSet(index) => bus.io.ppu.set_sgb_active_palette(index),
-        SgbEvent::MaskEn(mode) => bus.io.ppu.set_sgb_mask_mode(mode),
-        SgbEvent::MltReq => {}
-        SgbEvent::ChrTrn => bus.io.ppu.sgb_chr_trn(&bus.vram, bus.vram_bank),
-        SgbEvent::AttrTrn => bus.io.ppu.sgb_attr_trn(&bus.vram, bus.vram_bank),
-        SgbEvent::AttrSet(map_base, palette_idx) => {
-            bus.io.ppu.sgb_attr_set(map_base, palette_idx)
+        SgbEvent::PalSet(indices, attr_file, cancel_mask) => {
+            bus.io.ppu.sgb_pal_set(indices, attr_file, cancel_mask)
         }
+        SgbEvent::PalTrn => {
+            log::info!("SGB command dispatch: PAL_TRN");
+            bus.io.ppu.sgb_pal_trn(&bus.vram, bus.vram_bank)
+        }
+        SgbEvent::MaskEn(mode) => bus.io.ppu.set_sgb_mask_mode(mode),
+        SgbEvent::MltReq(mode) => {
+            log::info!("SGB command dispatch: MLT_REQ mode={}", mode);
+            bus.set_sgb_multiplayer_mode(mode);
+        }
+        SgbEvent::ChrTrn(bank) => {
+            log::info!("SGB command dispatch: CHR_TRN bank={}", bank & 0x01);
+            bus.io.ppu.sgb_chr_trn(&bus.vram, bus.vram_bank, bank)
+        }
+        SgbEvent::PctTrn => {
+            log::info!("SGB command dispatch: PCT_TRN");
+            bus.io.ppu.sgb_pct_trn(&bus.vram, bus.vram_bank)
+        }
+        SgbEvent::AttrTrn => bus.io.ppu.sgb_attr_trn(&bus.vram, bus.vram_bank),
+        SgbEvent::AttrSet(file_index, cancel_mask) => {
+            bus.io.ppu.sgb_attr_set(file_index, cancel_mask)
+        }
+        SgbEvent::AttrBlk(data) => bus.io.ppu.sgb_apply_attr_blk(&data),
+        SgbEvent::AttrLin(data) => bus.io.ppu.sgb_apply_attr_lin(&data),
+        SgbEvent::AttrDiv(packet) => bus.io.ppu.sgb_apply_attr_div(&packet),
+        SgbEvent::AttrChr(data) => bus.io.ppu.sgb_apply_attr_chr(&data),
     }
 }

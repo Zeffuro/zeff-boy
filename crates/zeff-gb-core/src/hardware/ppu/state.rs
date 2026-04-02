@@ -30,9 +30,17 @@ impl PPU {
         }
         writer.write_bool(self.sgb_border_enabled);
         writer.write_bytes(&self.sgb_border_tile_data);
-        writer.write_bytes(&self.sgb_attr_file);
-        writer.write_bytes(&self.sgb_attr_palette);
-        writer.write_u8(self.sgb_attr_map_base);
+        for entry in &self.sgb_border_tilemap {
+            writer.write_u16(*entry);
+        }
+        for palette in &self.sgb_border_palettes {
+            for color in palette {
+                writer.write_u16(*color);
+            }
+        }
+        writer.write_bytes(&self.sgb_pal_trn_data);
+        writer.write_bytes(&self.sgb_attr_trn_data);
+        writer.write_bytes(&self.sgb_attr_map);
         writer.write_bytes(&self.sgb_composite_buffer);
         writer.write_u8(self.window_line_counter);
         writer.write_bool(self.window_was_active_this_frame);
@@ -70,9 +78,17 @@ impl PPU {
         }
         ppu.sgb_border_enabled = reader.read_bool()?;
         reader.read_exact(&mut ppu.sgb_border_tile_data)?;
-        reader.read_exact(&mut ppu.sgb_attr_file)?;
-        reader.read_exact(&mut ppu.sgb_attr_palette)?;
-        ppu.sgb_attr_map_base = reader.read_u8()?;
+        for entry in &mut ppu.sgb_border_tilemap {
+            *entry = reader.read_u16()?;
+        }
+        for palette in &mut ppu.sgb_border_palettes {
+            for color in palette {
+                *color = reader.read_u16()?;
+            }
+        }
+        reader.read_exact(&mut ppu.sgb_pal_trn_data)?;
+        reader.read_exact(&mut ppu.sgb_attr_trn_data)?;
+        reader.read_exact(&mut ppu.sgb_attr_map)?;
         reader.read_exact(&mut ppu.sgb_composite_buffer)?;
         ppu.window_line_counter = reader.read_u8()?;
         ppu.window_was_active_this_frame = reader.read_bool()?;

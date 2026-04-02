@@ -1,6 +1,8 @@
 use super::{SpriteRenderContext, render_sprites};
 use crate::hardware::ppu::palette::apply_dmg_palette;
-use crate::hardware::ppu::{Lcdc, PPU, SCREEN_H, SCREEN_W, decode_tile_pixel, tile_data_address};
+use crate::hardware::ppu::{
+    Lcdc, PPU, SCREEN_H, SCREEN_W, SGB_ATTR_BLOCKS_W, decode_tile_pixel, tile_data_address,
+};
 
 fn render_bg_pixel(
     vram: &[u8],
@@ -160,7 +162,10 @@ pub fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
     }
 
     if ppu.sgb_enabled {
+        let tile_y = ly / 8;
         for x in 0..SCREEN_W {
+            let attr_idx = tile_y * SGB_ATTR_BLOCKS_W + (x / 8);
+            let palette_idx = ppu.sgb_attr_map.get(attr_idx).copied().unwrap_or(0) as usize;
             let offset = (ly * SCREEN_W + x) * 4;
             let rgba = [
                 ppu.framebuffer[offset],
@@ -168,7 +173,7 @@ pub fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
                 ppu.framebuffer[offset + 2],
                 ppu.framebuffer[offset + 3],
             ];
-            let mapped = ppu.sgb_remap_dmg_rgba(rgba);
+            let mapped = ppu.sgb_remap_pixel(rgba, palette_idx);
             ppu.framebuffer[offset..offset + 4].copy_from_slice(&mapped);
         }
     }

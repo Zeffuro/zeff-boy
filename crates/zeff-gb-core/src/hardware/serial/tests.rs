@@ -24,11 +24,13 @@ fn transfer_period_matches_mode_and_fast_bit() {
 #[test]
 fn step_completes_transfer_only_after_selected_period() {
     let mut serial = Serial::new();
+    let mut printer = crate::hardware::printer::GameboyPrinter::new();
     serial.mode = HardwareMode::CGBNormal;
-    serial.sc = 0x83; // start + internal clock + fast
+    serial.sc = 0x83;
 
-    assert!(!serial.step(127));
-    assert!(serial.step(1));
-    assert_eq!(serial.sb, 0xFF);
+    assert!(!serial.step(127, &mut printer));
+    assert!(serial.step(1, &mut printer));
+
+    assert_eq!(serial.sb, 0x00);
     assert_eq!(serial.sc & 0x80, 0);
 }

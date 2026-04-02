@@ -1,5 +1,6 @@
 use super::{
-    App, MAX_FRAMES_PER_TICK, MAX_IN_FLIGHT, SpeedMode, UI_RENDER_INTERVAL, VIEWER_UPDATE_INTERVAL,
+    ActiveSystem, App, MAX_FRAMES_PER_TICK, MAX_IN_FLIGHT, SpeedMode, UI_RENDER_INTERVAL,
+    VIEWER_UPDATE_INTERVAL,
 };
 use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
 use crate::emu_thread::{
@@ -7,6 +8,19 @@ use crate::emu_thread::{
 };
 use crate::settings::GamepadAction;
 use std::time::Instant;
+
+fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {
+    const GB_FRAME_LEN: usize = 160 * 144 * 4;
+    const SGB_FRAME_LEN: usize = 256 * 224 * 4;
+    const NES_FRAME_LEN: usize = 256 * 240 * 4;
+
+    match (system, frame_len) {
+        (ActiveSystem::GameBoy, GB_FRAME_LEN) => Some((160, 144)),
+        (ActiveSystem::GameBoy, SGB_FRAME_LEN) => Some((256, 224)),
+        (ActiveSystem::Nes, NES_FRAME_LEN) => Some((256, 240)),
+        _ => None,
+    }
+}
 
 impl App {
     pub(super) fn update_debug_cache_edges(&mut self) {
@@ -346,6 +360,19 @@ impl App {
 
         if let Some(frame) = self.latest_frame.take() {
             if let Some(gfx) = self.gfx.as_mut() {
+                if let Some((native_w, native_h)) =
+                    native_size_for_frame(self.active_system, frame.len())
+                {
+                    gfx.set_native_size(native_w, native_h);
+                } else {
+                    log::warn!(
+                        "Skipping frame upload with unexpected size: {} bytes for {:?}",
+                        frame.len(),
+                        self.active_system
+                    );
+                    self.recycled.framebuffer = Some(frame);
+                    return;
+                }
                 gfx.upload_framebuffer(&frame);
             }
             self.last_displayed_frame = Some(frame.clone());
