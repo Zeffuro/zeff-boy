@@ -67,16 +67,21 @@ pub(super) fn draw_rom_viewer_content(
         }
     });
 
-    state.view_start = hex_viewer::handle_scroll(ui, state.view_start, max_start);
-
     let bank = state.view_start / ROM_BANK_SIZE;
     ui.label(format!("Bank: {} (0x{:02X})", bank, bank));
 
     ui.separator();
 
-    let fmt = hex_viewer::hex_text_formats(ui);
-    hex_viewer::draw_hex_header(ui, "Offset   ", &fmt);
-    hex_viewer::draw_hex_grid(ui, rom_page, 6, &fmt, None, &state.tbl_map);
+    let hex_block = ui.vertical(|ui| {
+        let fmt = hex_viewer::hex_text_formats(ui);
+        hex_viewer::draw_hex_header(ui, "Offset   ", &fmt);
+        hex_viewer::draw_hex_grid(ui, rom_page, 6, &fmt, None, &state.tbl_map);
+    });
+    let scrolled_start = hex_viewer::handle_scroll(ui, hex_block.response.rect, state.view_start, max_start);
+    if scrolled_start != state.view_start {
+        state.view_start = scrolled_start;
+        state.jump_input = format!("{:06X}", state.view_start);
+    }
 
     ui.separator();
     if let Some(jump) = hex_viewer::draw_search_section(
@@ -92,6 +97,14 @@ pub(super) fn draw_rom_viewer_content(
         state.view_start = jump & !0xF;
         state.jump_input = format!("{:06X}", state.view_start);
     }
+
+    ui.separator();
+    hex_viewer::draw_data_inspector_rom(
+        ui,
+        &mut state.inspector_addr_input,
+        &mut state.inspector_addr,
+        rom_page,
+    );
 
     ui.separator();
     hex_viewer::draw_tbl_section(ui, &mut state.tbl_map, &mut state.tbl_path);

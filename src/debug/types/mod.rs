@@ -13,7 +13,8 @@ pub(crate) use data_models::{
     WatchpointDisplay,
 };
 pub(crate) use memory::{
-    MemorySearchMode, MemorySearchResult, MemoryViewerState, RomSearchResult, RomViewerState,
+    MemoryBookmark, MemoryByteDiff, MemorySearchMode, MemorySearchResult, MemoryViewerState,
+    RomSearchResult, RomViewerState,
 };
 pub(crate) use viewers::{PerfInfo, TileViewerState, TilemapViewerState};
 

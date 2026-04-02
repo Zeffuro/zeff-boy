@@ -45,7 +45,7 @@ pub(crate) fn draw_settings_window(
                 .show(ui, |ui| {
                     match state.settings_tab {
                         0 => emulation::draw(ui, settings, active_system),
-                        1 => controls::draw(ui, settings, state),
+                        1 => controls::draw(ui, settings, state, active_system),
                         2 => audio::draw(ui, settings),
                         3 => video::draw(
                             ui,

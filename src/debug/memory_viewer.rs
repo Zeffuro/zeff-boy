@@ -46,9 +46,6 @@ pub(super) fn draw_memory_viewer_content(
         }
     });
 
-    state.view_start =
-        hex_viewer::handle_scroll(ui, state.view_start as u32, MAX_START as u32) as u16;
-
     let slider = ui.add(
         egui::Slider::new(&mut state.view_start, 0..=MAX_START)
             .step_by(16.0)
@@ -61,16 +58,28 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
-    let fmt = hex_viewer::hex_text_formats(ui);
-    hex_viewer::draw_hex_header(ui, "Addr   ", &fmt);
-    hex_viewer::draw_hex_grid(
+    let hex_block = ui.vertical(|ui| {
+        let fmt = hex_viewer::hex_text_formats(ui);
+        hex_viewer::draw_hex_header(ui, "Addr   ", &fmt);
+        hex_viewer::draw_hex_grid(
+            ui,
+            memory_page,
+            4,
+            &fmt,
+            Some(&state.flash_ticks),
+            &state.tbl_map,
+        );
+    });
+    let scrolled_start = hex_viewer::handle_scroll(
         ui,
-        memory_page,
-        4,
-        &fmt,
-        Some(&state.flash_ticks),
-        &state.tbl_map,
-    );
+        hex_block.response.rect,
+        state.view_start as u32,
+        MAX_START as u32,
+    ) as u16;
+    if scrolled_start != state.view_start {
+        state.view_start = scrolled_start;
+        state.jump_input = format!("{:04X}", state.view_start);
+    }
 
     if state.enable_editing {
         ui.separator();
@@ -117,6 +126,37 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
+    if let Some(jump) = hex_viewer::draw_bookmarks_section(
+        ui,
+        &mut state.bookmark_addr_input,
+        &mut state.bookmark_label_input,
+        &mut state.bookmarks,
+        state.view_start,
+    ) {
+        state.view_start = jump & 0xFFF0;
+        state.jump_input = format!("{:04X}", state.view_start);
+    }
+
+    ui.separator();
+    if let Some(jump) = hex_viewer::draw_diff_section(ui, &state.recent_diffs) {
+        state.view_start = jump & 0xFFF0;
+        state.jump_input = format!("{:04X}", state.view_start);
+    }
+
+    ui.separator();
+    if let Some(jump) = hex_viewer::draw_pattern_section(
+        ui,
+        &mut state.pattern_query,
+        &mut state.pattern_max_results,
+        &mut state.pattern_results,
+        &mut state.pattern_error,
+        memory_page,
+    ) {
+        state.view_start = jump & 0xFFF0;
+        state.jump_input = format!("{:04X}", state.view_start);
+    }
+
+    ui.separator();
     if let Some(jump) = hex_viewer::draw_search_section(
         ui,
         "🔍 Search Memory",
@@ -156,14 +196,21 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
         && state.prev_bytes.len() == memory_page.len();
 
     if same_page {
+        state.recent_diffs.clear();
         for (i, (_, value)) in memory_page.iter().enumerate() {
             if *value != state.prev_bytes[i] {
                 state.flash_ticks[i] = FLASH_DURATION_TICKS;
+                state.recent_diffs.push(crate::debug::types::MemoryByteDiff {
+                    address: memory_page[i].0,
+                    old: state.prev_bytes[i],
+                    new: *value,
+                });
             } else if state.flash_ticks[i] > 0 {
                 state.flash_ticks[i] -= 1;
             }
         }
     } else {
+        state.recent_diffs.clear();
         for tick in &mut state.flash_ticks {
             *tick = 0;
         }

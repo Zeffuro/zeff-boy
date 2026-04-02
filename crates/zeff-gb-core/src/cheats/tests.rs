@@ -231,6 +231,43 @@ fn parse_xploder_from_libretro() {
 }
 
 #[test]
+fn parse_xploder_unknown_opcode_falls_back_to_ram_write() {
+    let (patches, ty) = parse_cheat("$AA11C234").unwrap();
+    assert_eq!(ty, CheatType::XPloder);
+    assert_eq!(patches.len(), 1);
+    match patches[0] {
+        CheatPatch::RamWrite { address, value } => {
+            assert_eq!(address, 0xC234);
+            assert_eq!(value, CheatValue::Constant(0x11));
+        }
+        _ => panic!("Expected RamWrite"),
+    }
+}
+
+#[test]
+fn parse_xploder_allows_whitespace_around_multi_code_separator() {
+    let (patches, ty) = parse_cheat("$0D2ACA55 + $0D61C82A").unwrap();
+    assert_eq!(ty, CheatType::XPloder);
+    assert_eq!(patches.len(), 2);
+}
+
+#[test]
+fn parse_xploder_without_prefix_is_not_detected_as_xploder() {
+    let (_, ty) = parse_cheat("0D2ACA55").unwrap();
+    assert_eq!(ty, CheatType::GameShark);
+}
+
+#[test]
+fn parse_xploder_rejects_invalid_hex() {
+    assert!(parse_cheat("$0D2ACG55").is_err());
+}
+
+#[test]
+fn parse_xploder_rejects_partial_multi_code_segment() {
+    assert!(parse_cheat("$0D2ACA55+$0D1234").is_err());
+}
+
+#[test]
 fn cheat_value_resolution_and_matching() {
     let masked = CheatValue::from_mask_base_preserve(0xF0, 0x0A);
     assert_eq!(masked.resolve_with_current(0xB7), 0xBA);
