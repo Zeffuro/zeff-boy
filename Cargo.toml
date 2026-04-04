@@ -24,7 +24,7 @@ anyhow = "1.0.102"
 cpal = "0.17.3"
 env_logger = "0.11.9"
 log = "0.4.29"
-wgpu = "29"
+wgpu = "29.0.1"
 winit = "0.30.13"
 phf = { version = "0.13.1", features = ["macros"] }
 pollster = "0.4.0"
@@ -37,18 +37,20 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 dirs = "6.0.0"
 rtrb = "0.3.3"
-egui_dock = "0.19"
-crossbeam-channel = "0.5"
-open = "5"
+rubato = "2.0.0"
+arc-swap = "1.9.1"
+egui_dock = "0.19.1"
+crossbeam-channel = "0.5.15"
+open = "5.3.3"
 png = "0.18.1"
 crc32fast = "1.5.0"
 chrono = "0.4"
-const-hex = "1"
+const-hex = "1.18.1"
 arrayvec = "0.7.6"
 ureq = "3.3.0"
-vorbis-encoder = { version = "0.1", optional = true }
-zip = { version = "8.4.0", default-features = false, features = ["deflate"] }
-nokhwa = { version = "0.10", optional = true, default-features = false, features = ["input-native"] }
+vorbis-encoder = { version = "0.1.4", optional = true }
+zip = { version = "8.5.0", default-features = false, features = ["deflate"] }
+nokhwa = { version = "0.10.10", optional = true, default-features = false, features = ["input-native"] }
 image = { version = "0.25.10", optional = true, default-features = false, features = ["jpeg"] }
 
 [profile.dev]

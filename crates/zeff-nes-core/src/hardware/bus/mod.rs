@@ -571,6 +571,7 @@ impl Bus {
             self.ppu_cycles += 1;
         }
         for _ in 0..cpu_cycles {
+            self.apu.expansion_audio = self.cartridge.audio_output();
             self.apu.tick();
 
             if self.apu.dmc.needs_dma() {

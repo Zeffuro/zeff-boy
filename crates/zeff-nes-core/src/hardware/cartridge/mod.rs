@@ -41,6 +41,10 @@ pub(crate) trait Mapper: Send {
 
     fn clock_cpu(&mut self) {}
 
+    fn audio_output(&self) -> f32 {
+        0.0
+    }
+
     fn dump_battery_data(&self) -> Option<Vec<u8>> {
         None
     }
@@ -136,6 +140,18 @@ impl Cartridge {
                     a1,
                 ))
             }
+            NesMapper::Vrc6A => MapperImpl::Vrc6(mappers::Vrc6::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                false,
+            )),
+            NesMapper::Vrc6B => MapperImpl::Vrc6(mappers::Vrc6::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                true,
+            )),
             NesMapper::Fme7 => MapperImpl::Fme7(mappers::Fme7::new(
                 prg_rom,
                 chr_rom,
@@ -210,6 +226,10 @@ impl Cartridge {
 
     pub fn clock_cpu(&mut self) {
         self.mapper.clock_cpu();
+    }
+
+    pub fn audio_output(&self) -> f32 {
+        self.mapper.audio_output()
     }
 
     pub fn dump_battery_data(&self) -> Option<Vec<u8>> {

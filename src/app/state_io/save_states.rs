@@ -36,15 +36,21 @@ impl App {
             });
         }
         match self.recv_cold_response() {
-            Some(EmuResponse::LoadStateOk { path, framebuffer }) => {
-                self.latest_frame = Some(framebuffer);
+            Some(EmuResponse::LoadStateOk { path }) => {
+                if let Some(thread) = &self.emu_thread {
+                    self.latest_frame = thread.shared_framebuffer().load_full();
+                }
                 log::info!("Loaded state from {}", path);
                 self.toast_manager.success(format!("Loaded slot {slot}"));
             }
             Some(EmuResponse::LoadStateFailed(err)) => {
                 log::error!("Failed to load state from slot {}: {}", slot, err);
-                self.toast_manager
-                    .error(format!("No save found in Slot {slot}"));
+                let msg = if err.contains("NotFound") || err.contains("not found") || err.contains("cannot find") {
+                    format!("No save in slot {slot}")
+                } else {
+                    format!("Load slot {slot} failed: {err}")
+                };
+                self.toast_manager.error(msg);
             }
             _ => {}
         }
@@ -153,9 +159,10 @@ impl App {
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path: p,
-                framebuffer,
             }) => {
-                self.latest_frame = Some(framebuffer);
+                if let Some(thread) = &self.emu_thread {
+                    self.latest_frame = thread.shared_framebuffer().load_full();
+                }
                 log::info!("Loaded state from {}", p);
                 self.toast_manager.success("State loaded from file");
             }

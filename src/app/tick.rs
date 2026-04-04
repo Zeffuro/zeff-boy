@@ -320,7 +320,6 @@ impl App {
                                 },
                             },
                             buffers: ReusableBuffers {
-                                framebuffer: self.recycled.framebuffer.take(),
                                 audio: self.recycled.audio.take(),
                                 vram: self.recycled.vram.take(),
                                 oam: self.recycled.oam.take(),
@@ -380,13 +379,11 @@ impl App {
                         frame.len(),
                         self.active_system
                     );
-                    self.recycled.framebuffer = Some(frame);
                     return;
                 }
                 gfx.upload_framebuffer(&frame);
             }
-            self.last_displayed_frame = Some(frame.clone());
-            self.recycled.framebuffer = Some(frame);
+            self.last_displayed_frame = Some(frame);
         }
 
         self.debug_windows.memory.enable_editing = self.settings.ui.enable_memory_editing;

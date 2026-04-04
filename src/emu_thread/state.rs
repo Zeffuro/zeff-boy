@@ -1,10 +1,11 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crossbeam_channel::Sender;
 
 use crate::emu_backend::EmuBackend;
 
-use super::{EmuResponse, EmuThread};
+use super::{EmuResponse, EmuThread, SharedFramebuffer};
 
 impl EmuThread {
     pub(crate) fn respond_load_state(
@@ -13,15 +14,14 @@ impl EmuThread {
         path_label: String,
         buttons_pressed: u8,
         dpad_pressed: u8,
+        shared_fb: &SharedFramebuffer,
     ) -> EmuResponse {
         match result {
             Ok(()) => {
                 backend.set_input(buttons_pressed, dpad_pressed);
                 let fb = backend.framebuffer().to_vec();
-                EmuResponse::LoadStateOk {
-                    path: path_label,
-                    framebuffer: fb,
-                }
+                shared_fb.store(Some(Arc::new(fb)));
+                EmuResponse::LoadStateOk { path: path_label }
             }
             Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
         }
@@ -54,6 +54,7 @@ impl EmuThread {
     pub(crate) fn handle_rewind(
         backend: &mut EmuBackend,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
+        shared_fb: &SharedFramebuffer,
     ) -> EmuResponse {
         let current_state = Self::encode_current_state(backend).ok();
         while let Some(rewind_frame) = rewind_buffer.pop() {
@@ -70,7 +71,8 @@ impl EmuThread {
                     } else {
                         rewind_frame.framebuffer
                     };
-                    return EmuResponse::RewindOk { framebuffer: fb };
+                    shared_fb.store(Some(Arc::new(fb)));
+                    return EmuResponse::RewindOk;
                 }
                 Err(err) => {
                     log::warn!("Rewind restore failed: {}", err);

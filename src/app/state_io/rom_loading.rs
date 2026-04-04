@@ -322,9 +322,10 @@ impl App {
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk {
                     path: p,
-                    framebuffer,
                 }) => {
-                    self.latest_frame = Some(framebuffer);
+                    if let Some(thread) = &self.emu_thread {
+                        self.latest_frame = thread.shared_framebuffer().load_full();
+                    }
                     log::info!("Auto-loaded state from {}", p);
                     self.toast_manager.success("Resumed from auto-save");
                 }

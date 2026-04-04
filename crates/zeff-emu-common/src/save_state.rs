@@ -78,6 +78,14 @@ impl<'a> StateReader<'a> {
         self.offset >= self.bytes.len()
     }
 
+    pub fn position(&self) -> usize {
+        self.offset
+    }
+
+    pub fn set_position(&mut self, pos: usize) {
+        self.offset = pos;
+    }
+
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self
             .offset

@@ -52,6 +52,7 @@ pub(super) fn draw(
     }
     ui.separator();
     ui.menu_button("Save State", |ui| {
+        ui.set_min_width(200.0);
         for slot in 0..=9u8 {
             if ui.button(&state.slot_labels[slot as usize]).clicked() {
                 actions.push(MenuAction::SaveStateSlot(slot));
@@ -65,6 +66,7 @@ pub(super) fn draw(
         }
     });
     ui.menu_button("Load State", |ui| {
+        ui.set_min_width(200.0);
         for slot in 0..=9u8 {
             if ui.button(&state.slot_labels[slot as usize]).clicked() {
                 actions.push(MenuAction::LoadStateSlot(slot));

@@ -44,6 +44,8 @@ pub struct Apu {
     sample_generation_enabled: bool,
     debug_collection_enabled: bool,
     channel_mutes: [bool; 5],
+
+    pub expansion_audio: f32,
     master_debug_samples: VecDeque<f32>,
     pulse1_debug_samples: VecDeque<f32>,
     pulse2_debug_samples: VecDeque<f32>,
@@ -69,6 +71,7 @@ impl Apu {
             sample_generation_enabled: true,
             debug_collection_enabled: true,
             channel_mutes: [false; 5],
+            expansion_audio: 0.0,
             master_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
             pulse1_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
             pulse2_debug_samples: VecDeque::with_capacity(DEBUG_SAMPLE_CAPACITY),
@@ -272,7 +275,7 @@ impl Apu {
                 0.0
             };
 
-            let sample = pulse_out + tnd_out;
+            let sample = pulse_out + tnd_out + self.expansion_audio;
             self.sample_buffer.push(sample);
 
             if self.debug_collection_enabled {

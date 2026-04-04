@@ -19,8 +19,10 @@ impl App {
         if self.rewind.pending || self.rewind.backstep_pending {
             while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
                 match resp {
-                    EmuResponse::RewindOk { framebuffer } => {
-                        self.latest_frame = Some(framebuffer);
+                    EmuResponse::RewindOk => {
+                        if let Some(thread) = &self.emu_thread {
+                            self.latest_frame = thread.shared_framebuffer().load_full();
+                        }
                         if self.rewind.backstep_pending {
                             self.rewind.backstep_pending = false;
                             self.speed.paused = true;
@@ -49,9 +51,12 @@ impl App {
 
     pub(super) fn process_frame_result(&mut self, result: FrameResult) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
-        if let Some(old) = self.latest_frame.replace(result.frame) {
-            self.recycled.framebuffer = Some(old);
+
+        // Read the latest framebuffer from the lock-free shared buffer
+        if let Some(thread) = &self.emu_thread {
+            self.latest_frame = thread.shared_framebuffer().load_full();
         }
+
         self.rom_info.is_mbc7 = result.is_mbc7;
         self.rom_info.is_pocket_camera = result.is_pocket_camera;
         self.rewind.fill = result.rewind_fill;

@@ -9,6 +9,7 @@ mod mmc5;
 mod nrom;
 mod uxrom;
 mod vrc4;
+mod vrc6;
 
 pub use action52::Action52;
 pub use axrom::Axrom;
@@ -21,3 +22,4 @@ pub use mmc5::Mmc5;
 pub use nrom::Nrom;
 pub use uxrom::Uxrom;
 pub use vrc4::Vrc4;
+pub use vrc6::Vrc6;

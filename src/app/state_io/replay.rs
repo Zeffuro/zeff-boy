@@ -98,8 +98,10 @@ impl App {
                     });
                 }
                 match self.recv_cold_response() {
-                    Some(EmuResponse::LoadStateOk { framebuffer, .. }) => {
-                        self.latest_frame = Some(framebuffer);
+                    Some(EmuResponse::LoadStateOk { .. }) => {
+                        if let Some(thread) = &self.emu_thread {
+                            self.latest_frame = thread.shared_framebuffer().load_full();
+                        }
                         self.recording.replay_player = Some(player);
                         self.toast_manager
                             .info(format!("Playing replay ({total} frames)"));

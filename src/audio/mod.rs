@@ -2,6 +2,9 @@ use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig, SupportedStreamConfig};
 
+mod resampler;
+use resampler::AudioResampler;
+
 const NORMAL_QUEUE_MS: usize = 200;
 const FAST_FORWARD_QUEUE_MS: usize = 40;
 const STEREO_MIX_FACTOR: f32 = 0.5;
@@ -42,6 +45,7 @@ pub(crate) struct AudioOutput {
     sample_rate: u32,
     capacity: usize,
     low_pass_filter: OnePoleLowPass,
+    resampler: Option<AudioResampler>,
 }
 
 #[derive(Default)]
@@ -111,12 +115,20 @@ impl AudioOutput {
                             channels
                         );
                     }
+
+                    let resampler = AudioResampler::new(sample_rate, sample_rate)
+                        .map_err(|e| {
+                            log::warn!("Audio resampler init failed: {e}; using passthrough")
+                        })
+                        .ok();
+
                     return Ok(Self {
                         _stream: stream,
                         producer,
                         sample_rate,
                         capacity,
                         low_pass_filter: OnePoleLowPass::default(),
+                        resampler,
                     });
                 }
                 Err(err) => {
@@ -242,6 +254,16 @@ impl AudioOutput {
         if occupied > max_queued {
             return;
         }
+
+        let fill_ratio = occupied as f32 / self.capacity as f32;
+
+        let resampled;
+        let samples = if let Some(ref mut resampler) = self.resampler {
+            resampled = resampler.process(samples, fill_ratio);
+            &resampled
+        } else {
+            samples
+        };
 
         let available = self.producer.slots().min(samples.len());
         if available == 0 {

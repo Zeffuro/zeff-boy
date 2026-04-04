@@ -66,28 +66,34 @@ impl Emulator {
 
     pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<()> {
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {
-            let state = crate::save_state::decode_on_thread(bytes)?;
-            validate_compatibility(&state, self.rom_hash)?;
+            match crate::save_state::decode_on_thread(bytes.clone()) {
+                Ok(state) => {
+                    validate_compatibility(&state, self.rom_hash)?;
 
-            let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
-            let mut restored_bus = state.bus;
-            restored_bus.cartridge.restore_rom_bytes(rom_bytes);
-            Self::apply_bus_fixups(
-                &mut restored_bus,
-                self.bus.apu_sample_rate(),
-                self.header.cartridge_type.is_mbc5_with_rumble(),
-            );
+                    let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
+                    let mut restored_bus = state.bus;
+                    restored_bus.cartridge.restore_rom_bytes(rom_bytes);
+                    Self::apply_bus_fixups(
+                        &mut restored_bus,
+                        self.bus.apu_sample_rate(),
+                        self.header.cartridge_type.is_mbc5_with_rumble(),
+                    );
 
-            self.cpu = state.cpu;
-            *self.bus = restored_bus;
-            self.hardware_mode_preference = state.hardware_mode_preference;
-            self.hardware_mode = state.hardware_mode;
-            self.cycle_count = state.cycle_count;
-            self.last_opcode = state.last_opcode;
-            self.last_opcode_pc = state.last_opcode_pc;
+                    self.cpu = state.cpu;
+                    *self.bus = restored_bus;
+                    self.hardware_mode_preference = state.hardware_mode_preference;
+                    self.hardware_mode = state.hardware_mode;
+                    self.cycle_count = state.cycle_count;
+                    self.last_opcode = state.last_opcode;
+                    self.last_opcode_pc = state.last_opcode_pc;
 
-            self.reset_debug_state();
-            return Ok(());
+                    self.reset_debug_state();
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("native save state decode failed, trying BESS fallback: {e}");
+                }
+            }
         }
 
         if has_bess_footer(&bytes) {

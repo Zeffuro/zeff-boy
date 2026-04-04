@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
@@ -105,7 +106,6 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         latest_frame: None,
         last_displayed_frame: None,
         recycled: RecycledBuffers {
-            framebuffer: None,
             audio: None,
             vram: None,
             oam: None,
@@ -145,7 +145,6 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
 }
 
 struct RecycledBuffers {
-    framebuffer: Option<Vec<u8>>,
     audio: Option<Vec<f32>>,
     vram: Option<Vec<u8>>,
     oam: Option<Vec<u8>>,
@@ -154,7 +153,6 @@ struct RecycledBuffers {
 
 impl RecycledBuffers {
     fn clear(&mut self) {
-        self.framebuffer = None;
         self.audio = None;
         self.vram = None;
         self.oam = None;
@@ -248,8 +246,8 @@ struct App {
     show_settings_window: bool,
     debug_requests: DebugRequests,
     active_save_slot: u8,
-    latest_frame: Option<Vec<u8>>,
-    last_displayed_frame: Option<Vec<u8>>,
+    latest_frame: Option<Arc<Vec<u8>>>,
+    last_displayed_frame: Option<Arc<Vec<u8>>>,
     recycled: RecycledBuffers,
     frames_in_flight: usize,
     cached_ui_data: Option<ui::UiFrameData>,

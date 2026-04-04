@@ -13,6 +13,7 @@ pub enum MapperImpl {
     Axrom(mappers::Axrom),
     BandaiFcg16(mappers::BandaiFcg16),
     Vrc4(mappers::Vrc4),
+    Vrc6(mappers::Vrc6),
     Fme7(mappers::Fme7),
     Action52(mappers::Action52),
 }
@@ -29,6 +30,7 @@ macro_rules! dispatch_mapper {
             MapperImpl::Axrom(m) => m.$method($($arg),*),
             MapperImpl::BandaiFcg16(m) => m.$method($($arg),*),
             MapperImpl::Vrc4(m) => m.$method($($arg),*),
+            MapperImpl::Vrc6(m) => m.$method($($arg),*),
             MapperImpl::Fme7(m) => m.$method($($arg),*),
             MapperImpl::Action52(m) => m.$method($($arg),*),
         }
@@ -104,6 +106,10 @@ impl MapperImpl {
 
     pub(super) fn clock_cpu(&mut self) {
         dispatch_mapper!(self, clock_cpu)
+    }
+
+    pub(super) fn audio_output(&self) -> f32 {
+        dispatch_mapper!(self, audio_output)
     }
 
     pub(super) fn dump_battery_data(&self) -> Option<Vec<u8>> {

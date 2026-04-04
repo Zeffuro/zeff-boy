@@ -1,7 +1,16 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use arc_swap::ArcSwapOption;
 
 use crate::debug::DebugUiActions;
 use crate::ui;
+
+pub(crate) type SharedFramebuffer = Arc<ArcSwapOption<Vec<u8>>>;
+
+pub(crate) fn new_shared_framebuffer() -> SharedFramebuffer {
+    Arc::new(ArcSwapOption::empty())
+}
 
 pub(crate) struct RenderSettings {
     pub(crate) color_correction: crate::settings::ColorCorrection,
@@ -36,7 +45,6 @@ pub(crate) struct MemorySearchRequest {
 }
 
 pub(crate) struct ReusableBuffers {
-    pub(crate) framebuffer: Option<Vec<u8>>,
     pub(crate) audio: Option<Vec<f32>>,
     pub(crate) vram: Option<Vec<u8>>,
     pub(crate) oam: Option<Vec<u8>>,
@@ -72,7 +80,6 @@ pub(crate) struct FrameInput {
 }
 
 pub(crate) struct FrameResult {
-    pub(crate) frame: Vec<u8>,
     pub(crate) rumble: bool,
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
@@ -117,9 +124,9 @@ pub(crate) enum EmuCommand {
 pub(crate) enum EmuResponse {
     SaveStateOk(String),
     SaveStateFailed(String),
-    LoadStateOk { path: String, framebuffer: Vec<u8> },
+    LoadStateOk { path: String },
     LoadStateFailed(String),
-    RewindOk { framebuffer: Vec<u8> },
+    RewindOk,
     RewindFailed(String),
     StateCaptured(Vec<u8>),
     StateCaptureFailed(String),

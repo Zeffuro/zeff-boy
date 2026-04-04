@@ -1,13 +1,16 @@
+use std::sync::Arc;
+
 use crossbeam_channel::{Sender, TrySendError};
 
 use crate::emu_backend::EmuBackend;
 use crate::ui;
 
-use super::{EmuThread, FrameInput, FrameResult};
+use super::{EmuThread, FrameInput, FrameResult, SharedFramebuffer};
 
 const UNCAPPED_BATCH_SIZE: usize = 60;
 
 impl EmuThread {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_step_frames(
         backend: &mut EmuBackend,
         input: FrameInput,
@@ -15,6 +18,7 @@ impl EmuThread {
         uncapped_mode: bool,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
+        shared_fb: &SharedFramebuffer,
     ) -> FrameResult {
         if let Some(gb) = backend.gb_mut() {
             Self::apply_debug_actions(&mut gb.emu, &input.debug_actions);
@@ -111,7 +115,7 @@ impl EmuThread {
 
         Self::build_frame_result(
             backend,
-            input.buffers.framebuffer,
+            shared_fb,
             input.buffers.audio,
             ui_data,
             input.audio.midi_capture_active,
@@ -121,16 +125,14 @@ impl EmuThread {
 
     pub(crate) fn build_frame_result(
         backend: &mut EmuBackend,
-        reusable_fb: Option<Vec<u8>>,
+        shared_fb: &SharedFramebuffer,
         reusable_audio: Option<Vec<f32>>,
         ui_data: ui::UiFrameData,
         midi_capture_active: bool,
         rewind_fill: f32,
     ) -> FrameResult {
         let src = backend.framebuffer();
-        let mut frame = reusable_fb.unwrap_or_default();
-        frame.resize(src.len(), 0);
-        frame.copy_from_slice(src);
+        shared_fb.store(Some(Arc::new(src.to_vec())));
 
         let rumble = backend.rumble_active();
         let audio_samples = if let Some(mut buf) = reusable_audio {
@@ -149,7 +151,6 @@ impl EmuThread {
         };
 
         FrameResult {
-            frame,
             rumble,
             audio_samples,
             ui_data,
@@ -178,7 +179,7 @@ impl EmuThread {
     pub(crate) fn run_uncapped_batch(
         backend: &mut EmuBackend,
         cheats: &[crate::cheats::CheatPatch],
-        uncapped_fb: &mut Option<Vec<u8>>,
+        shared_fb: &SharedFramebuffer,
         rewind_buffer: &zeff_emu_common::rewind::RewindBuffer,
         frame_tx: &Sender<FrameResult>,
         drain_rx: &crossbeam_channel::Receiver<FrameResult>,
@@ -202,12 +203,9 @@ impl EmuThread {
         }
 
         let src = backend.framebuffer();
-        let mut frame = uncapped_fb.take().unwrap_or_default();
-        frame.resize(src.len(), 0);
-        frame.copy_from_slice(src);
+        shared_fb.store(Some(Arc::new(src.to_vec())));
 
         let result = FrameResult {
-            frame,
             rumble: backend.rumble_active(),
             audio_samples: Vec::new(),
             ui_data: ui::empty_frame_data(),
@@ -220,14 +218,9 @@ impl EmuThread {
         match frame_tx.try_send(result) {
             Ok(()) => {}
             Err(TrySendError::Full(result)) => {
-                if let Ok(old) = drain_rx.try_recv() {
-                    *uncapped_fb = Some(old.frame);
-                }
+                let _ = drain_rx.try_recv();
                 match frame_tx.try_send(result) {
-                    Ok(()) => {}
-                    Err(TrySendError::Full(result)) => {
-                        *uncapped_fb = Some(result.frame);
-                    }
+                    Ok(()) | Err(TrySendError::Full(_)) => {}
                     Err(TrySendError::Disconnected(_)) => return,
                 }
             }

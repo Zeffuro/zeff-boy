@@ -13,7 +13,7 @@ use crate::emu_backend::EmuBackend;
 
 pub(crate) use types::{
     AudioConfig, EmuCommand, EmuResponse, FrameInput, FrameResult, JoypadInput,
-    MemorySearchRequest, RenderSettings, ReusableBuffers, SnapshotRequest,
+    MemorySearchRequest, RenderSettings, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
 };
 
 const DEFAULT_REWIND_SECONDS: usize = 10;
@@ -26,6 +26,7 @@ pub(crate) struct EmuThread {
     frame_rx: Receiver<FrameResult>,
     resp_rx: Receiver<EmuResponse>,
     join: Option<JoinHandle<()>>,
+    shared_framebuffer: SharedFramebuffer,
 }
 
 impl EmuThread {
@@ -36,8 +37,12 @@ impl EmuThread {
 
         let drain_rx = frame_rx.clone();
 
+        let shared_fb = types::new_shared_framebuffer();
+        let emu_fb = shared_fb.clone();
+
         let join = thread::spawn(move || {
-            let mut emu_loop = emu_loop::EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx);
+            let mut emu_loop =
+                emu_loop::EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, emu_fb);
             emu_loop.run();
         });
 
@@ -46,7 +51,12 @@ impl EmuThread {
             frame_rx,
             resp_rx,
             join: Some(join),
+            shared_framebuffer: shared_fb,
         }
+    }
+
+    pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
+        &self.shared_framebuffer
     }
 
     pub(crate) fn send(&self, cmd: EmuCommand) {

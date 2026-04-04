@@ -5,7 +5,7 @@ use crate::emu_backend::EmuBackend;
 
 use super::{
     DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_SNAPSHOTS_PER_SECOND,
+    REWIND_SNAPSHOTS_PER_SECOND, SharedFramebuffer,
 };
 
 pub(super) struct EmuLoop {
@@ -14,8 +14,8 @@ pub(super) struct EmuLoop {
     pub(super) frame_tx: Sender<FrameResult>,
     pub(super) drain_rx: Receiver<FrameResult>,
     pub(super) resp_tx: Sender<EmuResponse>,
+    pub(super) shared_framebuffer: SharedFramebuffer,
     uncapped_mode: bool,
-    uncapped_fb: Option<Vec<u8>>,
     last_cheats: Vec<CheatPatch>,
     rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
@@ -28,6 +28,7 @@ impl EmuLoop {
         frame_tx: Sender<FrameResult>,
         drain_rx: Receiver<FrameResult>,
         resp_tx: Sender<EmuResponse>,
+        shared_framebuffer: SharedFramebuffer,
     ) -> Self {
         Self {
             backend,
@@ -35,8 +36,8 @@ impl EmuLoop {
             frame_tx,
             drain_rx,
             resp_tx,
+            shared_framebuffer,
             uncapped_mode: false,
-            uncapped_fb: None,
             last_cheats: Vec::new(),
             rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new(
                 DEFAULT_REWIND_SECONDS,
@@ -69,7 +70,7 @@ impl EmuLoop {
                 EmuThread::run_uncapped_batch(
                     &mut self.backend,
                     &self.last_cheats,
-                    &mut self.uncapped_fb,
+                    &self.shared_framebuffer,
                     &self.rewind_buffer,
                     &self.frame_tx,
                     &self.drain_rx,
@@ -99,6 +100,7 @@ impl EmuLoop {
                     self.uncapped_mode,
                     &mut self.rewind_buffer,
                     &mut self.rewind_seconds,
+                    &self.shared_framebuffer,
                 );
                 if !EmuThread::send_frame(&self.frame_tx, &self.drain_rx, result) {
                     return false;
@@ -137,6 +139,7 @@ impl EmuLoop {
                     path_label,
                     buttons_pressed,
                     dpad_pressed,
+                    &self.shared_framebuffer,
                 );
                 if loaded {
                     self.rewind_buffer.clear();
@@ -172,6 +175,7 @@ impl EmuLoop {
                     label,
                     buttons_pressed,
                     dpad_pressed,
+                    &self.shared_framebuffer,
                 );
                 if loaded {
                     self.rewind_buffer.clear();
@@ -209,6 +213,7 @@ impl EmuLoop {
                     "(replay)".to_string(),
                     buttons_pressed,
                     dpad_pressed,
+                    &self.shared_framebuffer,
                 );
                 if loaded {
                     self.rewind_buffer.clear();
@@ -244,8 +249,12 @@ impl EmuLoop {
             }
 
             EmuCommand::Rewind => {
-                let resp = EmuThread::handle_rewind(&mut self.backend, &mut self.rewind_buffer);
-                if matches!(&resp, EmuResponse::RewindOk { .. }) {
+                let resp = EmuThread::handle_rewind(
+                    &mut self.backend,
+                    &mut self.rewind_buffer,
+                    &self.shared_framebuffer,
+                );
+                if matches!(&resp, EmuResponse::RewindOk) {
                     EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
                 }
                 if !self.send_resp(resp) {
@@ -281,6 +290,7 @@ impl EmuLoop {
                     label,
                     buttons_pressed,
                     dpad_pressed,
+                    &self.shared_framebuffer,
                 );
                 if loaded {
                     self.rewind_buffer.clear();
