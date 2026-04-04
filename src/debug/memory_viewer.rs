@@ -1,5 +1,5 @@
 use super::common::{HEX_PAGE_SIZE, parse_hex_u8, parse_hex_u16};
-use super::hex_viewer;
+use super::{data_inspector, hex_search, hex_viewer};
 use crate::debug::types::MemoryViewerState;
 
 const MAX_START: u16 = 0xFF00;
@@ -144,7 +144,7 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
-    if let Some(jump) = hex_viewer::draw_pattern_section(
+    if let Some(jump) = hex_search::draw_pattern_section(
         ui,
         &mut state.pattern_query,
         &mut state.pattern_max_results,
@@ -157,14 +157,16 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
-    if let Some(jump) = hex_viewer::draw_search_section(
+    if let Some(jump) = hex_search::draw_search_section(
         ui,
         "🔍 Search Memory",
         "search_mode",
-        &mut state.search_mode,
-        &mut state.search_query,
-        &mut state.search_max_results,
-        &mut state.search_pending,
+        &mut hex_search::SearchSectionParams {
+            mode: &mut state.search_mode,
+            query: &mut state.search_query,
+            max_results: &mut state.search_max_results,
+            pending: &mut state.search_pending,
+        },
         &state.search_results,
     ) {
         state.view_start = (jump as u16) & 0xFFF0;
@@ -172,7 +174,7 @@ pub(super) fn draw_memory_viewer_content(
     }
 
     ui.separator();
-    hex_viewer::draw_data_inspector(
+    data_inspector::draw_data_inspector(
         ui,
         &mut state.inspector_addr_input,
         &mut state.inspector_addr,
@@ -200,11 +202,13 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
         for (i, (_, value)) in memory_page.iter().enumerate() {
             if *value != state.prev_bytes[i] {
                 state.flash_ticks[i] = FLASH_DURATION_TICKS;
-                state.recent_diffs.push(crate::debug::types::MemoryByteDiff {
-                    address: memory_page[i].0,
-                    old: state.prev_bytes[i],
-                    new: *value,
-                });
+                state
+                    .recent_diffs
+                    .push(crate::debug::types::MemoryByteDiff {
+                        address: memory_page[i].0,
+                        old: state.prev_bytes[i],
+                        new: *value,
+                    });
             } else if state.flash_ticks[i] > 0 {
                 state.flash_ticks[i] -= 1;
             }

@@ -2,7 +2,7 @@ use crate::debug::common::{COLOR_CONTINUE_BUTTON, WatchType};
 use crate::debug::types::CpuDebugSnapshot;
 
 pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar};
-pub(crate) use super::settings_window::draw_settings_window;
+pub(crate) use super::settings_window::{SettingsContext, draw_settings_window};
 
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<u16>,

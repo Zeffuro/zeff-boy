@@ -7,6 +7,7 @@ mod cheats;
 mod cli;
 mod debug;
 mod emu_backend;
+mod emu_core_trait;
 mod emu_thread;
 mod graphics;
 mod input;
@@ -17,14 +18,13 @@ mod mods;
 mod save_paths;
 mod settings;
 mod ui;
+mod ups;
 
 use crate::emu_backend::{ActiveSystem, EmuBackend};
 use crate::settings::Settings;
 use anyhow::Context;
 use env_logger::Env;
 use std::path::Path;
-
-const NES_SAMPLE_RATE: f64 = 48000.0;
 
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -53,6 +53,14 @@ fn main() -> anyhow::Result<()> {
     app::run(backend, settings)?;
 
     Ok(())
+}
+
+fn log_sram_result(result: anyhow::Result<Option<String>>) {
+    match result {
+        Ok(Some(path)) => log::info!("Loaded battery save from {path}"),
+        Ok(None) => {}
+        Err(e) => log::warn!("Failed to load battery save: {e}"),
+    }
 }
 
 fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<EmuBackend> {
@@ -88,36 +96,25 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             ActiveSystem::supported_extensions()
         )
     })?;
+
+    let rom_data =
+        preloaded_data.map_or_else(|| std::fs::read(path).context("Failed to read ROM"), Ok)?;
+
     match system {
         ActiveSystem::GameBoy => {
-            let rom_data = preloaded_data
-                .map_or_else(|| std::fs::read(path).context("Failed to read ROM"), Ok)?;
             let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
                 &rom_data,
                 settings.emulation.hardware_mode_preference,
             )?;
-            if let Some(sram_path) = emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path)
-                .unwrap_or_else(|e| {
-                    log::warn!("Failed to load battery save: {e}");
-                    None
-                })
-            {
-                log::info!("Loaded battery save from {}", sram_path);
-            }
+            log_sram_result(emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path));
             Ok(EmuBackend::from_gb(emu, rom_path))
         }
         ActiveSystem::Nes => {
-            let rom_data = preloaded_data
-                .map_or_else(|| std::fs::read(path).context("Failed to read ROM"), Ok)?;
-            let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, NES_SAMPLE_RATE)?;
-            if let Some(sram_path) = emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path)
-                .unwrap_or_else(|e| {
-                    log::warn!("Failed to load battery save: {e}");
-                    None
-                })
-            {
-                log::info!("Loaded battery save from {}", sram_path);
-            }
+            let mut emu = zeff_nes_core::emulator::Emulator::new(
+                &rom_data,
+                zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE,
+            )?;
+            log_sram_result(emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path));
             Ok(EmuBackend::from_nes(emu, rom_path))
         }
     }

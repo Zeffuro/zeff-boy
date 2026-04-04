@@ -136,4 +136,3 @@ fn low_pass_filter_smooths_step_change() {
     assert!(second > 0.0);
     assert!(second < 1.0);
 }
-

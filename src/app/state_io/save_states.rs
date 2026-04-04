@@ -65,7 +65,8 @@ impl App {
     }
 
     pub(in crate::app) fn default_state_file_name(&self) -> String {
-        self.cached_rom_path
+        self.rom_info
+            .rom_path
             .as_ref()
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
@@ -78,7 +79,7 @@ impl App {
             return dir.clone();
         }
 
-        if let Some(rom_path) = &self.cached_rom_path
+        if let Some(rom_path) = &self.rom_info.rom_path
             && let Some(parent) = rom_path.parent()
         {
             return parent.to_path_buf();

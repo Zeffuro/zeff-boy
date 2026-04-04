@@ -8,6 +8,13 @@ pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> anyhow::Result<(PathBuf, 
     let file = std::fs::File::open(zip_path).context("Failed to open ZIP")?;
     let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
 
+    let all_names: Vec<String> = (0..archive.len())
+        .filter_map(|i| {
+            let entry = archive.by_index(i).ok()?;
+            Some(entry.name().to_string())
+        })
+        .collect();
+
     let rom_entries: Vec<(usize, String)> = (0..archive.len())
         .filter_map(|i| {
             let entry = archive.by_index(i).ok()?;
@@ -22,7 +29,28 @@ pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> anyhow::Result<(PathBuf, 
         .collect();
 
     match rom_entries.len() {
-        0 => anyhow::bail!("No ROM files found in ZIP archive"),
+        0 => {
+            let found_exts: Vec<String> = all_names
+                .iter()
+                .filter_map(|n| {
+                    Path::new(n)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| format!(".{}", e.to_ascii_lowercase()))
+                })
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let found_str = if found_exts.is_empty() {
+                "archive is empty".to_string()
+            } else {
+                format!("found: {}", found_exts.join(", "))
+            };
+            anyhow::bail!(
+                "No ROM files found in ZIP. Supported: .{}. ({found_str})",
+                ROM_EXTENSIONS.join(", ."),
+            )
+        }
         1 => {
             let (idx, name) = &rom_entries[0];
             let mut entry = archive

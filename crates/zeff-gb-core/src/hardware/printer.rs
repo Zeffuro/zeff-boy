@@ -11,7 +11,8 @@ const PRINTER_MARGIN_BOTTOM: usize = 8;
 const PRINTER_MARGIN_LEFT: usize = 8;
 const PRINTER_MARGIN_RIGHT: usize = 8;
 
-const PRINTER_IMAGE_W: usize = PRINTER_TILES_PER_ROW * 8 + PRINTER_MARGIN_LEFT + PRINTER_MARGIN_RIGHT;
+const PRINTER_IMAGE_W: usize =
+    PRINTER_TILES_PER_ROW * 8 + PRINTER_MARGIN_LEFT + PRINTER_MARGIN_RIGHT;
 const PRINTER_IMAGE_H: usize = PRINTER_TILE_ROWS * 8 + PRINTER_MARGIN_TOP + PRINTER_MARGIN_BOTTOM;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +145,9 @@ impl GameboyPrinter {
 
                 for tile_row in 0..8 {
                     for tile_col_px in 0..8 {
-                        let byte_offset = tile_data_offset + tile_row * PRINTER_TILES_PER_ROW * 2 + tile_col_px / 8 * 2;
+                        let byte_offset = tile_data_offset
+                            + tile_row * PRINTER_TILES_PER_ROW * 2
+                            + tile_col_px / 8 * 2;
                         let bit = 7 - (tile_col_px % 8);
 
                         let lo = if byte_offset < self.data_buffer.len() {

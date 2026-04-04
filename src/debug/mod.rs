@@ -2,11 +2,13 @@ mod apu_viewer;
 mod breakpoints_window;
 mod cheats_window;
 pub(crate) mod common;
+mod data_inspector;
 mod disasm_window;
 mod disassembler;
 pub(crate) mod dock;
 pub(crate) mod export;
 mod fps;
+pub(crate) mod hex_search;
 pub(crate) mod hex_viewer;
 mod input_viewer;
 mod libretro_cheats;
@@ -47,5 +49,6 @@ pub(crate) use types::{
     PerfInfo, RomSearchResult, TileViewerState, TilemapViewerState,
 };
 pub(crate) use ui::{
-    DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar, draw_settings_window,
+    DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, SettingsContext, draw_menu_bar,
+    draw_settings_window,
 };

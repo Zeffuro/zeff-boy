@@ -1,7 +1,8 @@
 use super::{
-    PPU, SGB_ATTR_BLOCKS_H, SGB_ATTR_BLOCKS_W, SGB_BORDER_COLORS_PER_PALETTE, SGB_BORDER_H,
-    SGB_BORDER_PALETTES, SGB_BORDER_TILEMAP_SIZE, SGB_BORDER_TILEMAP_W, SGB_BORDER_W,
-    SGB_TRN_TRANSFER_SIZE, SCREEN_H, SCREEN_W, Lcdc, dmg_palette_colors, tile_data_address,
+    Lcdc, PPU, SCREEN_H, SCREEN_W, SGB_ATTR_BLOCKS_H, SGB_ATTR_BLOCKS_W,
+    SGB_BORDER_COLORS_PER_PALETTE, SGB_BORDER_H, SGB_BORDER_PALETTES, SGB_BORDER_TILEMAP_SIZE,
+    SGB_BORDER_TILEMAP_W, SGB_BORDER_W, SGB_TRN_TRANSFER_SIZE, dmg_palette_colors,
+    tile_data_address,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -36,7 +37,9 @@ impl PPU {
         }
         log::info!(
             "SGB PAL_SET applied: indices={:?}, attr_file={}, cancel_mask={}",
-            pal_indices, attr_file, cancel_mask
+            pal_indices,
+            attr_file,
+            cancel_mask
         );
     }
 
@@ -49,7 +52,10 @@ impl PPU {
     }
 
     pub fn sgb_remap_pixel(&self, rgba: [u8; 4], palette_idx: usize) -> [u8; 4] {
-        for (shade, dmg_color) in dmg_palette_colors(self.dmg_palette_preset).iter().enumerate() {
+        for (shade, dmg_color) in dmg_palette_colors(self.dmg_palette_preset)
+            .iter()
+            .enumerate()
+        {
             if *dmg_color == rgba {
                 return rgb555_to_rgba(self.sgb_palettes[palette_idx & 3][shade]);
             }
@@ -197,7 +203,11 @@ impl PPU {
         }
         log::info!(
             "SGB ATTR_DIV applied: vertical={}, line={}, pals=[{},{},{}]",
-            is_vertical, line, pal_above_left, pal_on_line, pal_below_right
+            is_vertical,
+            line,
+            pal_above_left,
+            pal_on_line,
+            pal_below_right
         );
     }
 
@@ -249,7 +259,12 @@ impl PPU {
                 }
             }
         }
-        log::info!("SGB ATTR_CHR applied: {} tiles from ({},{})", count, start_x, start_y);
+        log::info!(
+            "SGB ATTR_CHR applied: {} tiles from ({},{})",
+            count,
+            start_x,
+            start_y
+        );
     }
 
     pub fn sgb_attr_set(&mut self, file_index: u8, cancel_mask: bool) {
@@ -261,7 +276,10 @@ impl PPU {
 
         let file_base = file_idx * 90;
         if file_base + 90 > self.sgb_attr_trn_data.len() {
-            log::warn!("SGB ATTR_SET: ATTR_TRN data too short for file {}", file_idx);
+            log::warn!(
+                "SGB ATTR_SET: ATTR_TRN data too short for file {}",
+                file_idx
+            );
             return;
         }
 
@@ -282,7 +300,8 @@ impl PPU {
         }
         log::info!(
             "SGB ATTR_SET applied: file={}, cancel_mask={}",
-            file_idx, cancel_mask
+            file_idx,
+            cancel_mask
         );
     }
 
@@ -299,7 +318,11 @@ impl PPU {
         let len = SGB_TRN_TRANSFER_SIZE.min(trn.len());
         let dst_addr = usize::from(transfer_bank & 0x01) * SGB_TRN_TRANSFER_SIZE;
         self.sgb_border_tile_data[dst_addr..dst_addr + len].copy_from_slice(&trn[..len]);
-        let tile_non_zero = self.sgb_border_tile_data.iter().filter(|&&b| b != 0).count();
+        let tile_non_zero = self
+            .sgb_border_tile_data
+            .iter()
+            .filter(|&&b| b != 0)
+            .count();
         log::info!(
             "SGB CHR_TRN applied: bank={}, non_zero_tile_bytes={}/{}",
             transfer_bank & 0x01,
@@ -358,7 +381,6 @@ impl PPU {
             self.sgb_border_palettes.len() * 16
         );
     }
-
 
     pub fn render_sgb_border_framebuffer(&mut self) {
         if !self.sgb_border_enabled || !self.sgb_enabled {
@@ -480,9 +502,9 @@ impl PPU {
 
 fn log_transfer_stats(label: &str, trn: &[u8; SGB_TRN_TRANSFER_SIZE]) {
     let non_zero = trn.iter().filter(|&&b| b != 0).count();
-    let checksum = trn
-        .iter()
-        .fold(0u32, |acc, &b| acc.wrapping_mul(16777619).wrapping_add(u32::from(b)));
+    let checksum = trn.iter().fold(0u32, |acc, &b| {
+        acc.wrapping_mul(16777619).wrapping_add(u32::from(b))
+    });
     let first_non_zero = trn.iter().position(|&b| b != 0).unwrap_or(usize::MAX);
     log::info!(
         "SGB {} capture: non_zero_bytes={}/{}, first_non_zero={}, checksum=0x{:08X}",

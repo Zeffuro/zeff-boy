@@ -14,7 +14,7 @@ fn stat_interrupt_triggers_only_on_rising_edge() {
     ppu.stat = (ppu.stat & !0x03) | 0x03;
     assert!(!ppu.update_stat_interrupt());
 
-    ppu.stat = (ppu.stat & !0x03) | 0x00;
+    ppu.stat &= !0x03;
     assert!(ppu.update_stat_interrupt());
 }
 
@@ -211,7 +211,7 @@ fn vram_accessible_outside_mode3() {
     assert!(!draw_ppu.cpu_vram_accessible());
     assert!(!draw_ppu.cpu_oam_accessible());
     let mut hblank_ppu = PPU::new();
-    hblank_ppu.stat = (hblank_ppu.stat & !0x03) | 0;
+    hblank_ppu.stat &= !0x03;
     assert!(hblank_ppu.cpu_vram_accessible());
     assert!(hblank_ppu.cpu_oam_accessible());
 }
@@ -337,47 +337,59 @@ fn sgb_pct_trn_populates_border_palettes() {
 
     assert_eq!(ppu.sgb_border_palettes[0][0], 0x7FFF);
     assert_eq!(ppu.sgb_border_palettes[0][1], 0x001F);
-    assert_eq!(ppu.sgb_border_palettes[4][0], 0x7FFF, "palette should be mirrored to index 4");
-    assert_eq!(ppu.sgb_border_palettes[4][1], 0x001F, "palette should be mirrored to index 4");
+    assert_eq!(
+        ppu.sgb_border_palettes[4][0], 0x7FFF,
+        "palette should be mirrored to index 4"
+    );
+    assert_eq!(
+        ppu.sgb_border_palettes[4][1], 0x001F,
+        "palette should be mirrored to index 4"
+    );
 }
 
 #[test]
 fn sgb_attr_blk_sets_inside_border_outside_palettes() {
     let mut ppu = PPU::new();
 
-    let data: Vec<u8> = vec![
-        0x00,
-        0x01,
-        0x07,
-        0x39,
-        5,
-        5,
-        10,
-        10,
-    ];
+    let data: Vec<u8> = vec![0x00, 0x01, 0x07, 0x39, 5, 5, 10, 10];
 
     ppu.sgb_apply_attr_blk(&data);
     assert_eq!(ppu.sgb_attr_map[0], 3, "outside should be palette 3");
-    assert_eq!(ppu.sgb_attr_map[5 * SGB_ATTR_BLOCKS_W + 5], 2, "border should be palette 2");
-    assert_eq!(ppu.sgb_attr_map[7 * SGB_ATTR_BLOCKS_W + 7], 1, "inside should be palette 1");
-    assert_eq!(ppu.sgb_attr_map[10 * SGB_ATTR_BLOCKS_W + 10], 2, "corner border should be palette 2");
+    assert_eq!(
+        ppu.sgb_attr_map[5 * SGB_ATTR_BLOCKS_W + 5],
+        2,
+        "border should be palette 2"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[7 * SGB_ATTR_BLOCKS_W + 7],
+        1,
+        "inside should be palette 1"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[10 * SGB_ATTR_BLOCKS_W + 10],
+        2,
+        "corner border should be palette 2"
+    );
 }
 
 #[test]
 fn sgb_attr_blk_border_inherits_inside_when_b_unset() {
     let mut ppu = PPU::new();
 
-    let data: Vec<u8> = vec![
-        0x00, 0x01,
-        0x01,
-        0x02,
-        3, 3, 8, 8,
-    ];
+    let data: Vec<u8> = vec![0x00, 0x01, 0x01, 0x02, 3, 3, 8, 8];
 
     ppu.sgb_apply_attr_blk(&data);
 
-    assert_eq!(ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W + 3], 2, "border should inherit inside palette");
-    assert_eq!(ppu.sgb_attr_map[5 * SGB_ATTR_BLOCKS_W + 5], 2, "inside should be palette 2");
+    assert_eq!(
+        ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W + 3],
+        2,
+        "border should inherit inside palette"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[5 * SGB_ATTR_BLOCKS_W + 5],
+        2,
+        "inside should be palette 2"
+    );
     assert_eq!(ppu.sgb_attr_map[0], 0, "outside should be unchanged");
 }
 
@@ -385,21 +397,32 @@ fn sgb_attr_blk_border_inherits_inside_when_b_unset() {
 fn sgb_attr_lin_sets_horizontal_and_vertical_lines() {
     let mut ppu = PPU::new();
 
-    let data: Vec<u8> = vec![
-        0x00,
-        0x02,
-        0x23,
-        0xC5,
-    ];
+    let data: Vec<u8> = vec![0x00, 0x02, 0x23, 0xC5];
 
     ppu.sgb_apply_attr_lin(&data);
 
-    assert_eq!(ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W], 1, "row 3 should be palette 1");
-    assert_eq!(ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W + 10], 1, "row 3, col 10 should be palette 1");
+    assert_eq!(
+        ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W],
+        1,
+        "row 3 should be palette 1"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W + 10],
+        1,
+        "row 3, col 10 should be palette 1"
+    );
 
     assert_eq!(ppu.sgb_attr_map[5], 2, "col 5 should be palette 2");
-    assert_eq!(ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W + 5], 2, "col 5, row 3 overridden to palette 2");
-    assert_eq!(ppu.sgb_attr_map[17 * SGB_ATTR_BLOCKS_W + 5], 2, "col 5, last row should be palette 2");
+    assert_eq!(
+        ppu.sgb_attr_map[3 * SGB_ATTR_BLOCKS_W + 5],
+        2,
+        "col 5, row 3 overridden to palette 2"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[17 * SGB_ATTR_BLOCKS_W + 5],
+        2,
+        "col 5, last row should be palette 2"
+    );
 }
 
 #[test]
@@ -412,10 +435,26 @@ fn sgb_attr_div_horizontal_split() {
     ppu.sgb_apply_attr_div(&packet);
 
     assert_eq!(ppu.sgb_attr_map[0], 0, "above line should be palette 0");
-    assert_eq!(ppu.sgb_attr_map[8 * SGB_ATTR_BLOCKS_W], 0, "just above line should be palette 0");
-    assert_eq!(ppu.sgb_attr_map[9 * SGB_ATTR_BLOCKS_W], 1, "on line should be palette 1");
-    assert_eq!(ppu.sgb_attr_map[10 * SGB_ATTR_BLOCKS_W], 2, "below line should be palette 2");
-    assert_eq!(ppu.sgb_attr_map[17 * SGB_ATTR_BLOCKS_W], 2, "last row should be palette 2");
+    assert_eq!(
+        ppu.sgb_attr_map[8 * SGB_ATTR_BLOCKS_W],
+        0,
+        "just above line should be palette 0"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[9 * SGB_ATTR_BLOCKS_W],
+        1,
+        "on line should be palette 1"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[10 * SGB_ATTR_BLOCKS_W],
+        2,
+        "below line should be palette 2"
+    );
+    assert_eq!(
+        ppu.sgb_attr_map[17 * SGB_ATTR_BLOCKS_W],
+        2,
+        "last row should be palette 2"
+    );
 }
 
 #[test]
@@ -436,15 +475,7 @@ fn sgb_attr_div_vertical_split() {
 fn sgb_attr_chr_horizontal_assignment() {
     let mut ppu = PPU::new();
 
-    let data: Vec<u8> = vec![
-        0x00,
-        2,
-        1,
-        8, 0,
-        0,
-        0b_00_01_10_11,
-        0b_11_10_01_00,
-    ];
+    let data: Vec<u8> = vec![0x00, 2, 1, 8, 0, 0, 0b_00_01_10_11, 0b_11_10_01_00];
 
     ppu.sgb_apply_attr_chr(&data);
 

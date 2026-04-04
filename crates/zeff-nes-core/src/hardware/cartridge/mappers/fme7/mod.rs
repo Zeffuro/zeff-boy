@@ -133,7 +133,7 @@ impl Fme7 {
 }
 
 impl Mapper for Fme7 {
-    fn cpu_read(&self, addr: u16) -> u8 {
+    fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
                 if self.prg_ram_select {
@@ -174,7 +174,7 @@ impl Mapper for Fme7 {
         }
     }
 
-    fn chr_read(&self, addr: u16) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr.is_empty() {
             return 0;
         }

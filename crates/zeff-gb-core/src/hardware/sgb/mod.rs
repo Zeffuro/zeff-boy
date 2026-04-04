@@ -208,7 +208,11 @@ impl SgbState {
                 let pal3 = read_u16(&self.packet, 7) & 0x01FF;
                 let attr_file = self.packet[9] & 0x3F;
                 let cancel_mask = self.packet[9] & 0x40 != 0;
-                Some(SgbEvent::PalSet([pal0, pal1, pal2, pal3], attr_file, cancel_mask))
+                Some(SgbEvent::PalSet(
+                    [pal0, pal1, pal2, pal3],
+                    attr_file,
+                    cancel_mask,
+                ))
             }
             0x0B => Some(SgbEvent::PalTrn),
             0x11 => Some(SgbEvent::MltReq(self.packet[1] & 0x03)),

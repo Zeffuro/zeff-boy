@@ -85,12 +85,7 @@ pub(crate) fn write_state_bytes_to_file(path: &Path, bytes: &[u8]) -> anyhow::Re
 }
 
 fn hex_hash(hash: &[u8; 32]) -> String {
-    use std::fmt::Write;
-    let mut s = String::with_capacity(64);
-    for b in hash {
-        let _ = write!(s, "{b:02x}");
-    }
-    s
+    const_hex::encode(hash)
 }
 
 pub(crate) fn write_sram_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {

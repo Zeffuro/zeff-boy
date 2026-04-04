@@ -2,14 +2,18 @@ use super::MenuAction;
 use crate::settings::Settings;
 use std::path::PathBuf;
 
+pub(super) struct FileMenuState<'a> {
+    pub slot_labels: &'a [String; 10],
+    pub is_recording_audio: bool,
+    pub is_recording_replay: bool,
+    pub is_playing_replay: bool,
+}
+
 pub(super) fn draw(
     ui: &mut egui::Ui,
     actions: &mut Vec<MenuAction>,
     settings: &Settings,
-    slot_labels: &[String; 10],
-    is_recording_audio: bool,
-    is_recording_replay: bool,
-    is_playing_replay: bool,
+    state: &FileMenuState<'_>,
 ) {
     if ui.button("Open").clicked() {
         actions.push(MenuAction::OpenFile);
@@ -49,7 +53,7 @@ pub(super) fn draw(
     ui.separator();
     ui.menu_button("Save State", |ui| {
         for slot in 0..=9u8 {
-            if ui.button(&slot_labels[slot as usize]).clicked() {
+            if ui.button(&state.slot_labels[slot as usize]).clicked() {
                 actions.push(MenuAction::SaveStateSlot(slot));
                 ui.close();
             }
@@ -62,7 +66,7 @@ pub(super) fn draw(
     });
     ui.menu_button("Load State", |ui| {
         for slot in 0..=9u8 {
-            if ui.button(&slot_labels[slot as usize]).clicked() {
+            if ui.button(&state.slot_labels[slot as usize]).clicked() {
                 actions.push(MenuAction::LoadStateSlot(slot));
                 ui.close();
             }
@@ -74,7 +78,7 @@ pub(super) fn draw(
         }
     });
     ui.separator();
-    if is_recording_audio {
+    if state.is_recording_audio {
         if ui.button("⏹ Stop Recording").clicked() {
             actions.push(MenuAction::StopAudioRecording);
             ui.close();
@@ -84,12 +88,12 @@ pub(super) fn draw(
         ui.close();
     }
     ui.separator();
-    if is_recording_replay {
+    if state.is_recording_replay {
         if ui.button("⏹ Stop Replay Recording").clicked() {
             actions.push(MenuAction::StopReplayRecording);
             ui.close();
         }
-    } else if is_playing_replay {
+    } else if state.is_playing_replay {
         ui.label("▶ Replay playing...");
     } else {
         if ui.button("⏺ Record Replay...").clicked() {

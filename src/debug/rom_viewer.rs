@@ -1,5 +1,5 @@
 use super::common::parse_hex_u32;
-use super::hex_viewer;
+use super::{data_inspector, hex_search, hex_viewer};
 use crate::debug::types::RomViewerState;
 
 const ROM_BANK_SIZE: u32 = 0x4000;
@@ -77,21 +77,24 @@ pub(super) fn draw_rom_viewer_content(
         hex_viewer::draw_hex_header(ui, "Offset   ", &fmt);
         hex_viewer::draw_hex_grid(ui, rom_page, 6, &fmt, None, &state.tbl_map);
     });
-    let scrolled_start = hex_viewer::handle_scroll(ui, hex_block.response.rect, state.view_start, max_start);
+    let scrolled_start =
+        hex_viewer::handle_scroll(ui, hex_block.response.rect, state.view_start, max_start);
     if scrolled_start != state.view_start {
         state.view_start = scrolled_start;
         state.jump_input = format!("{:06X}", state.view_start);
     }
 
     ui.separator();
-    if let Some(jump) = hex_viewer::draw_search_section(
+    if let Some(jump) = hex_search::draw_search_section(
         ui,
         "🔍 Search ROM",
         "rom_search_mode",
-        &mut state.search_mode,
-        &mut state.search_query,
-        &mut state.search_max_results,
-        &mut state.search_pending,
+        &mut hex_search::SearchSectionParams {
+            mode: &mut state.search_mode,
+            query: &mut state.search_query,
+            max_results: &mut state.search_max_results,
+            pending: &mut state.search_pending,
+        },
         &state.search_results,
     ) {
         state.view_start = jump & !0xF;
@@ -99,7 +102,7 @@ pub(super) fn draw_rom_viewer_content(
     }
 
     ui.separator();
-    hex_viewer::draw_data_inspector_rom(
+    data_inspector::draw_data_inspector_rom(
         ui,
         &mut state.inspector_addr_input,
         &mut state.inspector_addr,

@@ -30,7 +30,7 @@ fn ines_basic_horizontal_mirroring() {
     let hdr = RomHeader::parse(&h).unwrap();
     assert_eq!(hdr.format, RomFormat::INes);
     assert_eq!(hdr.prg_rom_size, 2 * PRG_ROM_BANK_SIZE);
-    assert_eq!(hdr.chr_rom_size, 1 * CHR_ROM_BANK_SIZE);
+    assert_eq!(hdr.chr_rom_size, CHR_ROM_BANK_SIZE);
     assert_eq!(hdr.mirroring, Mirroring::Horizontal);
     assert_eq!(hdr.mapper_id, 0);
     assert!(!hdr.has_battery);

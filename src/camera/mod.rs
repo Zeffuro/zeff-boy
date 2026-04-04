@@ -172,14 +172,14 @@ fn run_capture_loop_with_webcam(
     config: Arc<Mutex<CameraHostSettings>>,
     running: Arc<AtomicBool>,
 ) {
+    use image_processing::{
+        apply_host_postprocess, avg_luma, decode_compressed_to_grayscale_nearest,
+        rgb_to_grayscale_nearest, rgba_to_grayscale_nearest,
+    };
     use nokhwa::{
         Camera,
         pixel_format::RgbFormat,
         utils::{CameraIndex, RequestedFormat, RequestedFormatType},
-    };
-    use image_processing::{
-        apply_host_postprocess, avg_luma, decode_compressed_to_grayscale_nearest,
-        rgb_to_grayscale_nearest, rgba_to_grayscale_nearest,
     };
 
     let camera_index = current_camera_settings(&config).device_index;
@@ -361,7 +361,6 @@ fn checkerboard_frame() -> Vec<u8> {
     }
     frame
 }
-
 
 #[cfg(test)]
 mod tests;

@@ -60,11 +60,11 @@ impl App {
 
         let speedup_code = self.settings.speedup_key_code();
         if key_code == speedup_code || key_code == KeyCode::Backquote {
-            self.fast_forward_held = false;
+            self.speed.fast_forward_held = false;
         }
 
         if key_code == KeyCode::ShiftLeft {
-            self.turbo_held = false;
+            self.speed.turbo_held = false;
         }
 
         if key_code == self.settings.rewind.key_code() {
@@ -145,8 +145,10 @@ impl App {
             let speedup_code = self.settings.speedup_key_code();
             if key_code == speedup_code || key_code == KeyCode::Backquote {
                 match key_event.state {
-                    ElementState::Pressed if !key_event.repeat => self.fast_forward_held = true,
-                    ElementState::Released => self.fast_forward_held = false,
+                    ElementState::Pressed if !key_event.repeat => {
+                        self.speed.fast_forward_held = true
+                    }
+                    ElementState::Released => self.speed.fast_forward_held = false,
                     _ => {}
                 }
                 return true;
@@ -155,8 +157,8 @@ impl App {
 
         if !egui_kb && key_code == KeyCode::ShiftLeft {
             match key_event.state {
-                ElementState::Pressed if !key_event.repeat => self.turbo_held = true,
-                ElementState::Released => self.turbo_held = false,
+                ElementState::Pressed if !key_event.repeat => self.speed.turbo_held = true,
+                ElementState::Released => self.speed.turbo_held = false,
                 _ => {}
             }
             return true;
@@ -200,8 +202,8 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::Pause) || key_code == KeyCode::Pause {
             if pressed {
-                self.paused = !self.paused;
-                self.toast_manager.set_paused(self.paused);
+                self.speed.paused = !self.speed.paused;
+                self.toast_manager.set_paused(self.speed.paused);
             }
             return true;
         }
@@ -255,7 +257,7 @@ impl App {
         }
 
         if key_code == bindings.get(ShortcutAction::FrameAdvance) {
-            if pressed && self.paused {
+            if pressed && self.speed.paused {
                 self.debug_requests.frame_advance = true;
                 self.toast_manager.info("▶ Frame +1");
             }

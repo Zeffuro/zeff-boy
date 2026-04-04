@@ -30,4 +30,3 @@ impl ModState {
         self.entries.iter().filter(|m| m.enabled).count()
     }
 }
-

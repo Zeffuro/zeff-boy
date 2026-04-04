@@ -101,7 +101,7 @@ impl NesDebugSnapshot {
 fn peek_byte(bus: &crate::hardware::bus::Bus, addr: u16) -> u8 {
     match addr {
         0x0000..=0x1FFF => bus.ram[(addr & 0x07FF) as usize],
-        0x4020..=0xFFFF => bus.cartridge.cpu_read(addr),
+        0x4020..=0xFFFF => bus.cartridge.cpu_peek(addr),
         _ => 0,
     }
 }

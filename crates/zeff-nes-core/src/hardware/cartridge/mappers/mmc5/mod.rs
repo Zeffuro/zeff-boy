@@ -1,5 +1,4 @@
 use crate::hardware::cartridge::{ChrFetchKind, Mapper, Mirroring};
-use std::cell::Cell;
 
 pub struct Mmc5 {
     prg_rom: Vec<u8>,
@@ -32,13 +31,13 @@ pub struct Mmc5 {
 
     irq_line_compare: u8,
     irq_enabled: bool,
-    irq_pending: Cell<bool>,
-    in_frame: Cell<bool>,
-    current_scanline: Cell<u16>,
+    irq_pending: bool,
+    in_frame: bool,
+    current_scanline: u16,
 
-    consecutive_nt_reads: Cell<u8>,
+    consecutive_nt_reads: u8,
 
-    exram_tile_byte: Cell<u8>,
+    exram_tile_byte: u8,
 }
 
 impl Mmc5 {
@@ -79,12 +78,12 @@ impl Mmc5 {
             multiplier: 0,
             irq_line_compare: 0,
             irq_enabled: false,
-            irq_pending: Cell::new(false),
-            in_frame: Cell::new(true),
-            current_scanline: Cell::new(0),
+            irq_pending: false,
+            in_frame: true,
+            current_scanline: 0,
 
-            consecutive_nt_reads: Cell::new(0),
-            exram_tile_byte: Cell::new(0),
+            consecutive_nt_reads: 0,
+            exram_tile_byte: 0,
         };
 
         this.reset_chr_defaults();
@@ -235,7 +234,7 @@ impl Mmc5 {
 
     fn chr_bank_index(&self, addr: u16, kind: ChrFetchKind) -> usize {
         if self.exram_mode == 1 && matches!(kind, ChrFetchKind::Background) {
-            let exram_byte = self.exram_tile_byte.get();
+            let exram_byte = self.exram_tile_byte;
             let bank_4k = ((self.upper_chr_bank_bits as usize) << 6) | (exram_byte as usize & 0x3F);
             let sub = ((addr as usize) >> 10) & 0x03;
             return bank_4k * 4 + sub;
@@ -360,7 +359,7 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
-    fn cpu_read(&self, addr: u16) -> u8 {
+    fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x5C00..=0x5FFF => {
                 if self.exram_mode >= 2 {
@@ -371,14 +370,12 @@ impl Mapper for Mmc5 {
             }
             0x5204 => {
                 let mut status = 0u8;
-                if self.irq_pending.get() {
+                if self.irq_pending {
                     status |= 0x80;
                 }
-                if self.in_frame.get() {
+                if self.in_frame {
                     status |= 0x40;
                 }
-
-                self.irq_pending.set(false);
                 status
             }
             0x5205 => {
@@ -403,6 +400,14 @@ impl Mapper for Mmc5 {
         }
     }
 
+    fn cpu_read(&mut self, addr: u16) -> u8 {
+        let val = self.cpu_peek(addr);
+        if addr == 0x5204 {
+            self.irq_pending = false;
+        }
+        val
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x5100..=0x5130 | 0x5203..=0x5206 => self.write_register(addr, val),
@@ -423,12 +428,12 @@ impl Mapper for Mmc5 {
         }
     }
 
-    fn chr_read(&self, addr: u16) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8 {
         self.chr_read_kind(addr, ChrFetchKind::Background)
     }
 
-    fn chr_read_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
-        self.consecutive_nt_reads.set(0);
+    fn chr_read_kind(&mut self, addr: u16, kind: ChrFetchKind) -> u8 {
+        self.consecutive_nt_reads = 0;
 
         if self.chr.is_empty() {
             return 0;
@@ -450,24 +455,24 @@ impl Mapper for Mmc5 {
         self.chr[idx] = val;
     }
 
-    fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+    fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
         if !(0x2000..=0x3EFF).contains(&addr) {
             return None;
         }
 
-        let count = self.consecutive_nt_reads.get().saturating_add(1);
-        self.consecutive_nt_reads.set(count);
+        let count = self.consecutive_nt_reads.saturating_add(1);
+        self.consecutive_nt_reads = count;
         if count == 3 {
-            let sl = self.current_scanline.get();
+            let sl = self.current_scanline;
             if sl >= 240 {
-                self.current_scanline.set(0);
-                self.in_frame.set(true);
+                self.current_scanline = 0;
+                self.in_frame = true;
             } else {
                 let new_sl = sl + 1;
-                self.current_scanline.set(new_sl);
-                self.in_frame.set(new_sl < 240);
+                self.current_scanline = new_sl;
+                self.in_frame = new_sl < 240;
                 if new_sl < 240 && self.irq_enabled && new_sl as u8 == self.irq_line_compare {
-                    self.irq_pending.set(true);
+                    self.irq_pending = true;
                 }
             }
         }
@@ -476,9 +481,9 @@ impl Mapper for Mmc5 {
 
         if self.exram_mode == 1 {
             if offset < 0x3C0 {
-                self.exram_tile_byte.set(self.ex_ram[offset]);
+                self.exram_tile_byte = self.ex_ram[offset];
             } else {
-                let byte = self.exram_tile_byte.get();
+                let byte = self.exram_tile_byte;
                 let attr = (byte >> 6) & 0x03;
                 return Some(attr | (attr << 2) | (attr << 4) | (attr << 6));
             }
@@ -530,7 +535,7 @@ impl Mapper for Mmc5 {
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending.get()
+        self.irq_pending
     }
 
     fn notify_scanline(&mut self) {
@@ -581,13 +586,13 @@ impl Mapper for Mmc5 {
         w.write_u8(self.prg_ram_bank);
         w.write_u8(self.multiplicand);
         w.write_u8(self.multiplier);
-        w.write_u8(self.exram_tile_byte.get());
+        w.write_u8(self.exram_tile_byte);
 
         w.write_u8(self.irq_line_compare);
         w.write_bool(self.irq_enabled);
-        w.write_bool(self.irq_pending.get());
-        w.write_bool(self.in_frame.get());
-        w.write_u16(self.current_scanline.get());
+        w.write_bool(self.irq_pending);
+        w.write_bool(self.in_frame);
+        w.write_u16(self.current_scanline);
 
         w.write_bool(self.has_battery);
         w.write_vec(&self.prg_ram);
@@ -618,14 +623,13 @@ impl Mapper for Mmc5 {
         self.prg_ram_bank = r.read_u8()?;
         self.multiplicand = r.read_u8()?;
         self.multiplier = r.read_u8()?;
-        self.exram_tile_byte.set(r.read_u8()?);
+        self.exram_tile_byte = r.read_u8()?;
 
         self.irq_line_compare = r.read_u8()?;
         self.irq_enabled = r.read_bool()?;
-        self.irq_pending.set(r.read_bool()?);
-        self.in_frame.set(r.read_bool()?);
-        self.current_scanline.set(r.read_u16()?);
-
+        self.irq_pending = r.read_bool()?;
+        self.in_frame = r.read_bool()?;
+        self.current_scanline = r.read_u16()?;
         self.has_battery = r.read_bool()?;
 
         let prg_ram = r.read_vec(512 * 1024)?;

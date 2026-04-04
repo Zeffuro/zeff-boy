@@ -80,7 +80,7 @@ impl Default for ShaderParams {
 
 impl ShaderParams {
     #[cfg(test)]
-    pub(crate) fn to_gpu_bytes(&self) -> [u8; 32] {
+    pub(crate) fn to_gpu_bytes(self) -> [u8; 32] {
         let mut buf = [0u8; 32];
         buf[0..4].copy_from_slice(&self.scanline_intensity.to_le_bytes());
         buf[4..8].copy_from_slice(&self.crt_curvature.to_le_bytes());

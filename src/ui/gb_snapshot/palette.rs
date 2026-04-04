@@ -19,7 +19,7 @@ pub(super) fn gb_palette_snapshot(
     let obj_pal = emu.ppu_obj_palette_ram_snapshot();
 
     let mut groups = Vec::new();
-    let preset = req.dmg_palette_preset;
+    let preset = req.render.dmg_palette_preset;
 
     let dmg_row = |label: &str, val: u8| -> PaletteRowDebug {
         let colors = (0..4u8)
@@ -48,8 +48,8 @@ pub(super) fn gb_palette_snapshot(
     });
 
     if cgb_mode {
-        let cc = req.color_correction;
-        let ccm = req.color_correction_matrix;
+        let cc = req.render.color_correction;
+        let ccm = req.render.color_correction_matrix;
         let cgb_group = |title: &str, prefix: &str, ram: &[u8; 64]| -> PaletteGroupDebug {
             let rows = (0u8..8)
                 .map(|pal| {

@@ -23,7 +23,7 @@ impl Uxrom {
 }
 
 impl Mapper for Uxrom {
-    fn cpu_read(&self, addr: u16) -> u8 {
+    fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xBFFF => {
                 let bank = self.bank_select as usize % self.prg_bank_count();
@@ -46,7 +46,7 @@ impl Mapper for Uxrom {
         }
     }
 
-    fn chr_read(&self, addr: u16) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr.is_empty() {
             return 0;
         }

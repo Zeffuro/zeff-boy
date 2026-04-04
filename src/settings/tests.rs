@@ -1,7 +1,7 @@
-use super::*;
 use super::enums::{ShaderParams, ShaderPreset};
 use super::structs::{default_rewind_seconds, default_rewind_speed};
 use super::tilt_bindings::TiltKeyBindings;
+use super::*;
 
 #[test]
 fn settings_default_roundtrip() {
@@ -41,9 +41,11 @@ fn settings_backward_compat_missing_fields_use_defaults() {
 
 #[test]
 fn key_bindings_serde_roundtrip() {
-    let mut bindings = KeyBindings::default();
-    bindings.a = KeyCode::KeyQ;
-    bindings.b = KeyCode::KeyE;
+    let bindings = KeyBindings {
+        a: KeyCode::KeyQ,
+        b: KeyCode::KeyE,
+        ..KeyBindings::default()
+    };
 
     let json = serde_json::to_string(&bindings).unwrap();
     let restored: KeyBindings = serde_json::from_str(&json).unwrap();
@@ -60,8 +62,10 @@ fn key_bindings_deserialize_unknown_falls_back_to_defaults() {
 
 #[test]
 fn shortcut_bindings_get_returns_default_for_unknown_string() {
-    let mut bindings = ShortcutBindings::default();
-    bindings.fullscreen = "NONSENSE".to_string();
+    let bindings = ShortcutBindings {
+        fullscreen: "NONSENSE".to_string(),
+        ..ShortcutBindings::default()
+    };
 
     assert_eq!(bindings.get(ShortcutAction::Fullscreen), KeyCode::F11);
 }
@@ -85,8 +89,10 @@ fn gamepad_bindings_roundtrip() {
 
 #[test]
 fn tilt_key_bindings_serde_roundtrip() {
-    let mut bindings = TiltKeyBindings::default();
-    bindings.up = KeyCode::KeyI;
+    let bindings = TiltKeyBindings {
+        up: KeyCode::KeyI,
+        ..TiltKeyBindings::default()
+    };
     let json = serde_json::to_string(&bindings).unwrap();
     let restored: TiltKeyBindings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.up, KeyCode::KeyI);

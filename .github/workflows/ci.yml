@@ -2,15 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [master]
   pull_request:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Check & Clippy
+  linux:
+    name: Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,25 +18,120 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
+      - uses: taiki-e/install-action@cargo-nextest
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-linux"
 
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy (no default features)
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
       - name: Build
         run: cargo build --workspace
 
-  test:
-    name: Tests
+      - name: Build (no default features)
+        run: cargo build --workspace --no-default-features
+
+      - name: Run tests
+        run: xvfb-run --auto-servernum cargo nextest run --workspace
+
+      - name: Run tests (no default features)
+        run: xvfb-run --auto-servernum cargo nextest run --workspace --no-default-features
+
+      - name: Bench compile check
+        run: cargo bench --no-run --workspace
+
+      - name: Run benchmarks
+        run: cargo bench --workspace -- --output-format bencher 2>/dev/null | tee benchmark-results.txt
+
+      - name: Upload benchmark results
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results.txt
+          retention-days: 90
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: taiki-e/install-action@cargo-nextest
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-windows"
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy (no default features)
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Build (no default features)
+        run: cargo build --workspace --no-default-features
+
+      - name: Run tests
+        run: cargo nextest run --workspace
+
+      - name: Run tests (no default features)
+        run: cargo nextest run --workspace --no-default-features
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: taiki-e/install-action@cargo-nextest
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-macos"
+
+      - name: Clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Build (no default features)
+        run: cargo build --workspace --no-default-features
+
+      - name: Run tests
+        run: cargo nextest run --workspace
+
+  fuzz-check:
+    name: Fuzz Compile Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,26 +141,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-fuzz"
+          workspaces: "fuzz -> fuzz/target"
 
-      - name: Run tests
-        run: cargo test --workspace
+      - name: Check fuzz targets compile
+        run: cargo +nightly check --manifest-path fuzz/Cargo.toml
 
-  windows:
-    name: Windows Build
-    runs-on: windows-latest
+  deny:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: cargo build --workspace
-
-      - name: Run tests
-        run: cargo test --workspace
+      - uses: EmbarkStudios/cargo-deny-action@v2
 

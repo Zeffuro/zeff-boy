@@ -17,19 +17,23 @@ fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
         for w in &warnings {
             log::warn!("Mod warning: {w}");
         }
-        log::info!("Applied {enabled} IPS mod(s) to ROM ({} warnings)", warnings.len());
+        log::info!(
+            "Applied {enabled} IPS mod(s) to ROM ({} warnings)",
+            warnings.len()
+        );
     }
     crc
 }
 
-fn detect_and_extract_rom(path: &Path) -> Result<(PathBuf, Option<Vec<u8>>, ActiveSystem), String> {
+fn detect_and_extract_rom(path: &Path) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
     let is_zip = path
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
 
     let (rom_path, preloaded_data) = if is_zip {
-        let (virtual_path, data) = super::extract_rom_from_zip(path).map_err(|e| e.to_string())?;
+        let (virtual_path, data) = super::extract_rom_from_zip(path)
+            .with_context(|| format!("Failed to extract ROM from '{}'", path.display()))?;
         log::info!(
             "Extracted ROM '{}' ({} bytes) from ZIP",
             virtual_path
@@ -39,6 +43,11 @@ fn detect_and_extract_rom(path: &Path) -> Result<(PathBuf, Option<Vec<u8>>, Acti
             data.len()
         );
         (virtual_path, Some(data))
+    } else if !path.exists() {
+        anyhow::bail!(
+            "File not found: '{}'. Check that the path is correct.",
+            path.display()
+        );
     } else {
         (path.to_path_buf(), None)
     };
@@ -48,9 +57,8 @@ fn detect_and_extract_rom(path: &Path) -> Result<(PathBuf, Option<Vec<u8>>, Acti
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("(none)");
-        format!(
-            "Unsupported file type '.{}'. Supported: {}",
-            ext,
+        anyhow::anyhow!(
+            "Unsupported file type '.{ext}'. Supported extensions: {}",
             ActiveSystem::supported_extensions()
         )
     })?;
@@ -90,7 +98,10 @@ impl App {
                         {
                             log::info!("Loaded battery save from {}", sram_path);
                         }
-                        (EmuBackend::from_gb(emu, rom_path.to_path_buf()), original_crc)
+                        (
+                            EmuBackend::from_gb(emu, rom_path.to_path_buf()),
+                            original_crc,
+                        )
                     })
             }
             ActiveSystem::Nes => {
@@ -105,7 +116,7 @@ impl App {
                             .audio
                             .as_ref()
                             .map(|a| a.sample_rate() as f64)
-                            .unwrap_or(48000.0);
+                            .unwrap_or(zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE);
                         zeff_nes_core::emulator::Emulator::new(&data, sample_rate).map(|mut emu| {
                             if let Some(sram_path) =
                                 crate::emu_backend::nes::try_load_battery_sram(&mut emu, rom_path)
@@ -116,7 +127,10 @@ impl App {
                             {
                                 log::info!("Loaded battery save from {}", sram_path);
                             }
-                            (EmuBackend::from_nes(emu, rom_path.to_path_buf()), original_crc)
+                            (
+                                EmuBackend::from_nes(emu, rom_path.to_path_buf()),
+                                original_crc,
+                            )
                         })
                     }
                     Err(e) => Err(e),
@@ -181,8 +195,8 @@ impl App {
                 .to_string();
             let rom_crc32 = backend.nes().map(|nes| nes.emu.rom_crc32());
             let platform = crate::libretro_common::LibretroPlatform::Nes;
-            let libretro_meta = rom_crc32
-                .and_then(|crc| crate::libretro_metadata::lookup_cached(crc, platform));
+            let libretro_meta =
+                rom_crc32.and_then(|crc| crate::libretro_metadata::lookup_cached(crc, platform));
             let search_hints = crate::libretro_metadata::build_cheat_search_hints(
                 &rom_title,
                 libretro_meta.as_ref(),
@@ -245,21 +259,23 @@ impl App {
 
         let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
             Ok(result) => result,
-            Err(msg) => {
-                log::warn!("{}", msg);
+            Err(e) => {
+                let msg = format!("{e:#}");
+                log::warn!("{msg}");
                 self.toast_manager.error(msg);
                 return;
             }
         };
 
-        let (backend, original_crc) = match self.init_backend(system, path, &rom_path, preloaded_data) {
-            Ok(result) => result,
-            Err(e) => {
-                log::error!("Failed to load ROM '{}': {}", path.display(), e);
-                self.toast_manager.error(format!("Failed to load ROM: {e}"));
-                return;
-            }
-        };
+        let (backend, original_crc) =
+            match self.init_backend(system, path, &rom_path, preloaded_data) {
+                Ok(result) => result,
+                Err(e) => {
+                    log::error!("Failed to load ROM '{}': {}", path.display(), e);
+                    self.toast_manager.error(format!("Failed to load ROM: {e}"));
+                    return;
+                }
+            };
 
         let rom_name = path
             .file_name()
@@ -268,10 +284,10 @@ impl App {
             .to_string();
         log::info!("Loaded ROM: {}", path.display());
 
-        self.cached_is_mbc7 = backend.is_mbc7();
-        self.cached_is_pocket_camera = backend.is_pocket_camera();
-        self.cached_rom_path = Some(backend.rom_path().to_path_buf());
-        self.cached_rom_hash = backend.rom_hash();
+        self.rom_info.is_mbc7 = backend.is_mbc7();
+        self.rom_info.is_pocket_camera = backend.is_pocket_camera();
+        self.rom_info.rom_path = Some(backend.rom_path().to_path_buf());
+        self.rom_info.rom_hash = Some(backend.rom_hash());
         self.active_system = system;
 
         let (native_w, native_h) = system.screen_size();
@@ -323,7 +339,7 @@ impl App {
     }
 
     pub(in crate::app) fn reset_game(&mut self) {
-        let Some(path) = self.cached_rom_path.clone() else {
+        let Some(path) = self.rom_info.rom_path.clone() else {
             self.toast_manager.info("No ROM loaded");
             return;
         };
@@ -333,7 +349,7 @@ impl App {
     }
 
     pub(in crate::app) fn stop_game(&mut self) {
-        if self.cached_rom_path.is_none() && self.emu_thread.is_none() {
+        if self.rom_info.rom_path.is_none() && self.emu_thread.is_none() {
             self.toast_manager.info("No ROM loaded");
             return;
         }
@@ -360,11 +376,11 @@ impl App {
         self.recycled.clear();
         self.latest_frame = None;
         self.last_displayed_frame = None;
-        self.cached_rom_path = None;
-        self.cached_rom_hash = None;
-        self.cached_is_mbc7 = false;
-        self.cached_is_pocket_camera = false;
-        self.paused = false;
+        self.rom_info.rom_path = None;
+        self.rom_info.rom_hash = None;
+        self.rom_info.is_mbc7 = false;
+        self.rom_info.is_pocket_camera = false;
+        self.speed.paused = false;
         self.rewind.held = false;
         self.rewind.fill = 0.0;
         self.rewind.throttle = 0;

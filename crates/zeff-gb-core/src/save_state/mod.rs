@@ -69,7 +69,6 @@ pub struct SaveStateRef<'a> {
     pub last_opcode_pc: u16,
 }
 
-
 pub fn encode_hardware_mode(mode: HardwareMode) -> u8 {
     match mode {
         HardwareMode::DMG => 0,

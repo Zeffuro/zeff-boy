@@ -71,7 +71,17 @@ pub(crate) fn run_headless(
                 let ie = emulator.ie_reg();
                 let ime = emulator.cpu_ime();
                 if (opts.trace_opcode_limit == 0 || traced < opts.trace_opcode_limit)
-                    && should_trace_op(opts, pc, op, emulator.cpu_cycles(), &ime, if_reg, ie)
+                    && should_trace_op(
+                        opts,
+                        &super::trace_filters::CpuTraceState {
+                            pc,
+                            op,
+                            total_t: emulator.cpu_cycles(),
+                            ime: &ime,
+                            if_reg,
+                            ie,
+                        },
+                    )
                 {
                     let pending = (if_reg & ie) & 0x1F;
                     let op1 = emulator.peek_byte(pc.wrapping_add(1));

@@ -37,7 +37,12 @@ macro_rules! dispatch_mapper {
 
 impl MapperImpl {
     #[inline]
-    pub(super) fn cpu_read(&self, addr: u16) -> u8 {
+    pub(super) fn cpu_peek(&self, addr: u16) -> u8 {
+        dispatch_mapper!(self, cpu_peek, addr)
+    }
+
+    #[inline]
+    pub(super) fn cpu_read(&mut self, addr: u16) -> u8 {
         dispatch_mapper!(self, cpu_read, addr)
     }
 
@@ -47,12 +52,12 @@ impl MapperImpl {
     }
 
     #[inline]
-    pub(super) fn chr_read(&self, addr: u16) -> u8 {
+    pub(super) fn chr_read(&mut self, addr: u16) -> u8 {
         dispatch_mapper!(self, chr_read, addr)
     }
 
     #[inline]
-    pub(super) fn chr_read_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
+    pub(super) fn chr_read_kind(&mut self, addr: u16, kind: ChrFetchKind) -> u8 {
         dispatch_mapper!(self, chr_read_kind, addr, kind)
     }
 
@@ -61,7 +66,7 @@ impl MapperImpl {
         dispatch_mapper!(self, chr_write, addr, val)
     }
 
-    pub(super) fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+    pub(super) fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
         dispatch_mapper!(self, ppu_nametable_read, addr, ciram)
     }
 

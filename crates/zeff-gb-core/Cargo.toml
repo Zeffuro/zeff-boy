@@ -15,7 +15,6 @@ log = "0.4.29"
 phf = { version = "0.13.1", features = ["macros"] }
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.11.0"
-lz4_flex = "0.13.0"
 arrayvec = "0.7.6"
 
 [dev-dependencies]

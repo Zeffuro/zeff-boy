@@ -93,7 +93,7 @@ impl Joypad {
         self.select_dpad = value & 0x10 == 0;
 
         let is_both_high = !self.select_buttons && !self.select_dpad;
-        
+
         if was_both_high && !is_both_high && self.sgb_joypad_count > 1 {
             self.sgb_current_joypad = (self.sgb_current_joypad + 1) % self.sgb_joypad_count;
         }
@@ -205,7 +205,11 @@ mod tests {
         jp.set_sgb_multiplayer_mode(0x01);
         jp.write(0x00);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "ID should be player 2 after $30→$00 fall");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "ID should be player 2 after $30→$00 fall"
+        );
     }
 
     #[test]
@@ -214,7 +218,11 @@ mod tests {
         jp.set_sgb_multiplayer_mode(0x01);
         jp.write(0x20);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "ID should be player 2 after $30→$20 fall");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "ID should be player 2 after $30→$20 fall"
+        );
     }
 
     #[test]
@@ -223,7 +231,11 @@ mod tests {
         jp.set_sgb_multiplayer_mode(0x01);
         jp.write(0x10);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "ID should be player 2 after $30→$10 fall");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "ID should be player 2 after $30→$10 fall"
+        );
     }
 
     #[test]
@@ -232,7 +244,11 @@ mod tests {
         jp.set_sgb_multiplayer_mode(0x01);
         jp.write(0x20);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "Rising edge should NOT cycle (still player 2)");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "Rising edge should NOT cycle (still player 2)"
+        );
     }
 
     #[test]
@@ -242,25 +258,33 @@ mod tests {
         jp.write(0x20);
         jp.write(0x10);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "Non-both-high transitions should not cycle");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "Non-both-high transitions should not cycle"
+        );
     }
 
     #[test]
     fn post_mlt_req_packet_stop_bit_cycles_once() {
         let mut jp = Joypad::new();
         jp.set_sgb_multiplayer_mode(0x01);
-        
+
         jp.write(0x10);
 
         let mut jp = Joypad::new();
         jp.write(0x10);
         jp.set_sgb_multiplayer_mode(0x01);
-        
+
         jp.write(0x30);
         jp.write(0x20);
         jp.write(0x30);
 
-        assert_eq!(read_sgb_id(&jp), 0x0E, "Stop bit should cause exactly 1 falling-edge cycle");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "Stop bit should cause exactly 1 falling-edge cycle"
+        );
     }
 
     #[test]
@@ -270,20 +294,28 @@ mod tests {
         jp.write(0x20);
         jp.write(0x10);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "One VBlank poll should cycle to player 2");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "One VBlank poll should cycle to player 2"
+        );
     }
 
     #[test]
     fn pokemon_red_sgb_detection_sequence() {
         let mut jp = Joypad::new();
-        
+
         jp.write(0x10);
         jp.set_sgb_multiplayer_mode(0x01);
 
         jp.write(0x30);
         jp.write(0x20);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "After post-packet stop bit: player 2");
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "After post-packet stop bit: player 2"
+        );
 
         let expected_after_vblank = [0x0F, 0x0E, 0x0F, 0x0E];
         for (i, &expected) in expected_after_vblank.iter().enumerate() {
@@ -292,8 +324,12 @@ mod tests {
             jp.write(0x30);
             assert_eq!(read_sgb_id(&jp), expected, "VBlank {} mismatch", i + 1);
         }
-        
-        assert_eq!(read_sgb_id(&jp), 0x0E, "After 4 VBlanks, should be player 2");
+
+        assert_eq!(
+            read_sgb_id(&jp),
+            0x0E,
+            "After 4 VBlanks, should be player 2"
+        );
 
         jp.write(0x30);
         assert_eq!(read_sgb_id(&jp), 0x0E, "Detection read should see player 2");
@@ -306,7 +342,7 @@ mod tests {
     fn four_player_cycling() {
         let mut jp = Joypad::new();
         jp.set_sgb_multiplayer_mode(0x03);
-        
+
         for expected_id in [0x0E, 0x0D, 0x0C, 0x0F] {
             jp.write(0x00);
             jp.write(0x30);

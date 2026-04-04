@@ -8,6 +8,14 @@ const STEREO_MIX_FACTOR: f32 = 0.5;
 const AUDIO_LOW_PASS_MIN_CUTOFF_HZ: u32 = 20;
 const AUDIO_LOW_PASS_MAX_CUTOFF_HZ: u32 = 20_000;
 
+pub(crate) struct AudioQueueConfig {
+    pub master_volume: f32,
+    pub fast_forward_active: bool,
+    pub mute_during_fast_forward: bool,
+    pub low_pass_enabled: bool,
+    pub low_pass_cutoff_hz: u32,
+}
+
 fn ring_buffer_capacity(sample_rate: u32) -> usize {
     sample_rate as usize * 2 * NORMAL_QUEUE_MS / 1000
 }
@@ -67,7 +75,8 @@ impl OnePoleLowPass {
 }
 
 fn low_pass_alpha(sample_rate: u32, cutoff_hz: u32) -> f32 {
-    let clamped_cutoff = cutoff_hz.clamp(AUDIO_LOW_PASS_MIN_CUTOFF_HZ, AUDIO_LOW_PASS_MAX_CUTOFF_HZ);
+    let clamped_cutoff =
+        cutoff_hz.clamp(AUDIO_LOW_PASS_MIN_CUTOFF_HZ, AUDIO_LOW_PASS_MAX_CUTOFF_HZ);
     let rc = 1.0 / (std::f32::consts::TAU * clamped_cutoff as f32);
     let dt = 1.0 / sample_rate.max(1) as f32;
     (dt / (rc + dt)).clamp(0.0, 1.0)
@@ -169,7 +178,10 @@ impl AudioOutput {
             )
         });
 
-        if !candidates.iter().any(|config| same_config(config, &default)) {
+        if !candidates
+            .iter()
+            .any(|config| same_config(config, &default))
+        {
             candidates.push(default);
         }
 
@@ -184,10 +196,8 @@ impl AudioOutput {
         let channels = config.channels();
         let stream_config: StreamConfig = config.clone().into();
         match config.sample_format() {
-            SampleFormat::F32 => {
-                Self::build_stream_f32(device, &stream_config, channels, consumer)
-                    .context("failed to build F32 audio stream")
-            }
+            SampleFormat::F32 => Self::build_stream_f32(device, &stream_config, channels, consumer)
+                .context("failed to build F32 audio stream"),
             SampleFormat::I16 => {
                 Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
                     (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
@@ -214,22 +224,14 @@ impl AudioOutput {
         self.sample_rate
     }
 
-    pub(crate) fn queue_samples(
-        &mut self,
-        samples: &[f32],
-        master_volume: f32,
-        fast_forward_active: bool,
-        mute_during_fast_forward: bool,
-        low_pass_enabled: bool,
-        low_pass_cutoff_hz: u32,
-    ) {
-        if fast_forward_active && mute_during_fast_forward {
+    pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
+        if config.fast_forward_active && config.mute_during_fast_forward {
             return;
         }
 
-        let gain = master_volume.clamp(0.0, 1.0);
+        let gain = config.master_volume.clamp(0.0, 1.0);
 
-        let queue_ms = if fast_forward_active {
+        let queue_ms = if config.fast_forward_active {
             FAST_FORWARD_QUEUE_MS
         } else {
             NORMAL_QUEUE_MS
@@ -246,24 +248,28 @@ impl AudioOutput {
             return;
         }
 
-        if !low_pass_enabled {
+        if !config.low_pass_enabled {
             self.low_pass_filter.reset();
         }
-        let alpha = low_pass_alpha(self.sample_rate, low_pass_cutoff_hz);
+        let alpha = low_pass_alpha(self.sample_rate, config.low_pass_cutoff_hz);
 
         if let Ok(mut chunk) = self.producer.write_chunk_uninit(available) {
             let (first, second) = chunk.as_mut_slices();
             let first_len = first.len();
             for (idx, (dst, &src)) in first.iter_mut().zip(samples.iter()).enumerate() {
                 let mut out = src * gain;
-                if low_pass_enabled {
+                if config.low_pass_enabled {
                     out = self.low_pass_filter.apply_sample(out, idx, alpha);
                 }
                 dst.write(out);
             }
-            for (idx, (dst, &src)) in second.iter_mut().zip(samples[first_len..].iter()).enumerate() {
+            for (idx, (dst, &src)) in second
+                .iter_mut()
+                .zip(samples[first_len..].iter())
+                .enumerate()
+            {
                 let mut out = src * gain;
-                if low_pass_enabled {
+                if config.low_pass_enabled {
                     out = self
                         .low_pass_filter
                         .apply_sample(out, first_len + idx, alpha);

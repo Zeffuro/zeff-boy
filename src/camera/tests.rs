@@ -1,5 +1,5 @@
-use super::*;
 use super::image_processing::rgb_to_grayscale_nearest;
+use super::*;
 
 #[test]
 fn checkerboard_frame_has_expected_size() {

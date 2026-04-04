@@ -12,7 +12,7 @@ fn camera_settings_from_app(app: &App) -> CameraHostSettings {
 
 impl App {
     pub(super) fn camera_frame(&mut self) -> Option<Vec<u8>> {
-        if !self.cached_is_pocket_camera {
+        if !self.rom_info.is_pocket_camera {
             self.stop_camera_capture();
             return None;
         }

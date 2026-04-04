@@ -13,7 +13,7 @@ impl EmuThread {
         input: FrameInput,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_mode: bool,
-        rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
+        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
     ) -> FrameResult {
         if let Some(gb) = backend.gb_mut() {
@@ -24,8 +24,8 @@ impl EmuThread {
             Self::apply_nes_debug_actions(&mut nes.emu, &input.debug_actions);
         }
 
-        backend.set_input(input.buttons_pressed, input.dpad_pressed);
-        backend.set_input_p2(input.buttons_pressed_p2, input.dpad_pressed_p2);
+        backend.set_input(input.joypad.buttons, input.joypad.dpad);
+        backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
 
         if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
             backend.set_apu_channel_mutes(mutes);
@@ -35,16 +35,17 @@ impl EmuThread {
             gb.emu
                 .set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
             gb.emu
-                .set_dmg_palette_preset(input.snapshot.dmg_palette_preset);
+                .set_dmg_palette_preset(input.snapshot.render.dmg_palette_preset);
             gb.emu
-                .set_sgb_border_enabled(input.snapshot.sgb_border_enabled);
+                .set_sgb_border_enabled(input.snapshot.render.sgb_border_enabled);
             if let Some(ref frame) = input.host_camera_frame {
                 gb.emu.set_camera_host_frame(frame);
             }
             gb.emu
-                .set_apu_debug_capture_enabled(input.apu_capture_enabled);
+                .set_apu_debug_capture_enabled(input.audio.apu_capture_enabled);
             if !uncapped_mode {
-                gb.emu.set_apu_sample_generation_enabled(!input.skip_audio);
+                gb.emu
+                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
             }
             gb.emu
                 .set_opcode_log_enabled(input.snapshot.want_debug_info);
@@ -59,9 +60,10 @@ impl EmuThread {
         }
 
         if let Some(nes) = backend.nes_mut() {
-            nes.emu.set_palette_mode(input.snapshot.nes_palette_mode);
             nes.emu
-                .set_apu_debug_collection_enabled(input.apu_capture_enabled);
+                .set_palette_mode(input.snapshot.render.nes_palette_mode);
+            nes.emu
+                .set_apu_debug_collection_enabled(input.audio.apu_capture_enabled);
             if nes.emu.is_cpu_suspended() {
                 if input.debug_continue {
                     nes.emu.debug_continue();
@@ -88,7 +90,7 @@ impl EmuThread {
 
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_gb_core::rewind::RewindBuffer::new(
+            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
                 *rewind_seconds,
                 super::REWIND_SNAPSHOTS_PER_SECOND,
             );
@@ -112,7 +114,7 @@ impl EmuThread {
             input.buffers.framebuffer,
             input.buffers.audio,
             ui_data,
-            input.midi_capture_active,
+            input.audio.midi_capture_active,
             rewind_buffer.fill_ratio(),
         )
     }
@@ -177,7 +179,7 @@ impl EmuThread {
         backend: &mut EmuBackend,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_fb: &mut Option<Vec<u8>>,
-        rewind_buffer: &zeff_gb_core::rewind::RewindBuffer,
+        rewind_buffer: &zeff_emu_common::rewind::RewindBuffer,
         frame_tx: &Sender<FrameResult>,
         drain_rx: &crossbeam_channel::Receiver<FrameResult>,
     ) {

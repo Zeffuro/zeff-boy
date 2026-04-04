@@ -57,7 +57,6 @@ pub(crate) struct FramebufferRenderer {
     offscreen: OffscreenTarget,
 }
 
-
 impl FramebufferRenderer {
     pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Result<Self> {
         let screen_texture = device.create_texture(&wgpu::TextureDescriptor {

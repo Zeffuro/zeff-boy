@@ -14,7 +14,8 @@ impl App {
         let ext = format.extension();
 
         let default_name = self
-            .cached_rom_path
+            .rom_info
+            .rom_path
             .as_ref()
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())

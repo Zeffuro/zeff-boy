@@ -43,34 +43,35 @@ fn is_interrupt_watch_opcode(op: u8) -> bool {
     )
 }
 
-pub(super) fn should_trace_op(
-    opts: &HeadlessOptions,
-    pc: u16,
-    op: u8,
-    total_t: u64,
-    ime: &ImeState,
-    if_reg: u8,
-    ie: u8,
-) -> bool {
-    if total_t < opts.trace_start_t {
+pub(super) struct CpuTraceState<'a> {
+    pub pc: u16,
+    pub op: u8,
+    pub total_t: u64,
+    pub ime: &'a ImeState,
+    pub if_reg: u8,
+    pub ie: u8,
+}
+
+pub(super) fn should_trace_op(opts: &HeadlessOptions, cpu: &CpuTraceState<'_>) -> bool {
+    if cpu.total_t < opts.trace_start_t {
         return false;
     }
 
     if let Some((start, end)) = opts.trace_pc_range
-        && (pc < start || pc > end)
+        && (cpu.pc < start || cpu.pc > end)
     {
         return false;
     }
 
-    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&op) {
+    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&cpu.op) {
         return false;
     }
 
     if opts.trace_watch_interrupts {
-        let pending = (if_reg & ie) & 0x1F;
-        return is_interrupt_watch_opcode(op)
+        let pending = (cpu.if_reg & cpu.ie) & 0x1F;
+        return is_interrupt_watch_opcode(cpu.op)
             || pending != 0
-            || matches!(*ime, ImeState::PendingEnable);
+            || matches!(*cpu.ime, ImeState::PendingEnable);
     }
 
     true

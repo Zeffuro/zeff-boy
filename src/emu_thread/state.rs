@@ -53,7 +53,7 @@ impl EmuThread {
 
     pub(crate) fn handle_rewind(
         backend: &mut EmuBackend,
-        rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
+        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
     ) -> EmuResponse {
         let current_state = Self::encode_current_state(backend).ok();
         while let Some(rewind_frame) = rewind_buffer.pop() {
@@ -88,7 +88,7 @@ impl EmuThread {
 
     pub(crate) fn capture_rewind_snapshot(
         backend: &EmuBackend,
-        rewind_buffer: &mut zeff_gb_core::rewind::RewindBuffer,
+        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         enabled: bool,
     ) {
         if enabled

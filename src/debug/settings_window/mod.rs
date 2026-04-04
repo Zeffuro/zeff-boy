@@ -9,16 +9,23 @@ use crate::debug::DebugWindowState;
 use crate::emu_backend::ActiveSystem;
 use crate::settings::Settings;
 
+pub(crate) struct SettingsContext<'a> {
+    pub active_system: Option<ActiveSystem>,
+    pub gb_hardware_mode_label: Option<&'a str>,
+    pub is_pocket_camera: bool,
+}
+
 pub(crate) fn draw_settings_window(
     ctx: &egui::Context,
     settings: &mut Settings,
     state: &mut DebugWindowState,
     open: &mut bool,
     constrain_rect: egui::Rect,
-    active_system: Option<ActiveSystem>,
-    gb_hardware_mode_label: Option<&str>,
-    is_pocket_camera: bool,
+    emu: &SettingsContext<'_>,
 ) {
+    let active_system = emu.active_system;
+    let gb_hardware_mode_label = emu.gb_hardware_mode_label;
+    let is_pocket_camera = emu.is_pocket_camera;
     egui::Window::new("Settings")
         .open(open)
         .default_width(400.0)

@@ -55,15 +55,10 @@ pub(crate) fn apply_ips_patch(rom: &mut Vec<u8>, patch: &[u8]) -> anyhow::Result
     Ok(())
 }
 
-pub(crate) fn validate_ips(patch: &[u8]) -> bool {
-    patch.len() >= 8
-        && &patch[..5] == HEADER
-        && patch.len() >= 3
-        && &patch[patch.len() - 3..] == FOOTER
-}
-
 fn read_u24_be(data: &[u8], offset: usize) -> usize {
-    ((data[offset] as usize) << 16) | ((data[offset + 1] as usize) << 8) | (data[offset + 2] as usize)
+    ((data[offset] as usize) << 16)
+        | ((data[offset + 1] as usize) << 8)
+        | (data[offset + 2] as usize)
 }
 
 fn read_u16_be(data: &[u8], offset: usize) -> u16 {
@@ -84,11 +79,7 @@ mod tests {
 
     #[test]
     fn apply_simple_record() {
-        let patch = make_patch(&[
-            0x00, 0x00, 0x02,
-            0x00, 0x03,
-            0xAA, 0xBB, 0xCC,
-        ]);
+        let patch = make_patch(&[0x00, 0x00, 0x02, 0x00, 0x03, 0xAA, 0xBB, 0xCC]);
         let mut rom = vec![0u8; 16];
         apply_ips_patch(&mut rom, &patch).unwrap();
         assert_eq!(rom[2], 0xAA);
@@ -98,12 +89,7 @@ mod tests {
 
     #[test]
     fn apply_rle_record() {
-        let patch = make_patch(&[
-            0x00, 0x00, 0x04,
-            0x00, 0x00,
-            0x00, 0x05,
-            0xFF,
-        ]);
+        let patch = make_patch(&[0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x05, 0xFF]);
         let mut rom = vec![0u8; 16];
         apply_ips_patch(&mut rom, &patch).unwrap();
         assert_eq!(&rom[4..9], &[0xFF; 5]);
@@ -113,36 +99,12 @@ mod tests {
 
     #[test]
     fn apply_extends_rom() {
-        let patch = make_patch(&[
-            0x00, 0x00, 0x08,
-            0x00, 0x02,
-            0x11, 0x22,
-        ]);
+        let patch = make_patch(&[0x00, 0x00, 0x08, 0x00, 0x02, 0x11, 0x22]);
         let mut rom = vec![0u8; 4];
         apply_ips_patch(&mut rom, &patch).unwrap();
         assert_eq!(rom.len(), 10);
         assert_eq!(rom[8], 0x11);
         assert_eq!(rom[9], 0x22);
-    }
-
-    #[test]
-    fn validate_good_patch() {
-        let patch = make_patch(&[
-            0x00, 0x00, 0x00,
-            0x00, 0x01,
-            0xAA,
-        ]);
-        assert!(validate_ips(&patch));
-    }
-
-    #[test]
-    fn validate_bad_header() {
-        assert!(!validate_ips(b"XXXXX stuff EOF"));
-    }
-
-    #[test]
-    fn validate_too_short() {
-        assert!(!validate_ips(b"PAT"));
     }
 
     #[test]
@@ -155,8 +117,7 @@ mod tests {
     #[test]
     fn apply_multiple_records() {
         let patch = make_patch(&[
-            0x00, 0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB,
-            0x00, 0x00, 0x04, 0x00, 0x01, 0xCC,
+            0x00, 0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB, 0x00, 0x00, 0x04, 0x00, 0x01, 0xCC,
         ]);
         let mut rom = vec![0u8; 16];
         apply_ips_patch(&mut rom, &patch).unwrap();
@@ -165,4 +126,3 @@ mod tests {
         assert_eq!(rom[4], 0xCC);
     }
 }
-

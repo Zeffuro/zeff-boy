@@ -39,6 +39,15 @@ run-minimal rom:
 test:
     cargo test --workspace
 
+# Run all tests with nextest (parallel, isolated)
+test-nextest:
+    cargo nextest run --workspace
+
+# Run tests with both feature sets (matches CI)
+test-all:
+    cargo nextest run --workspace
+    cargo nextest run --workspace --no-default-features
+
 # Run tests with output
 test-verbose:
     cargo test --workspace -- --nocapture
@@ -46,6 +55,49 @@ test-verbose:
 # Check without building
 check:
     cargo check --workspace
+
+# Format all code
+fmt:
+    cargo fmt --all
+
+# Check formatting (CI-style, no changes)
+fmt-check:
+    cargo fmt --all -- --check
+
+# Run Clippy lints (deny warnings, all targets & features)
+lint:
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# Run Clippy lints with no default features
+lint-minimal:
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+
+# Run Clippy lints with both feature sets (matches CI)
+lint-all: lint lint-minimal
+
+# Run full CI pipeline locally (fmt + lint + test + deny)
+ci-local: fmt-check lint-all test-all deny
+
+# Check that fuzz targets compile (requires nightly)
+fuzz-check:
+    cargo +nightly check --manifest-path fuzz/Cargo.toml
+
+# Run criterion benchmarks
+bench:
+    cargo bench --workspace
+
+# Audit dependencies for vulnerabilities and license issues (requires cargo-deny)
+deny:
+    cargo deny check
+
+# Concatenate all src/*.rs files to clipboard (cross-platform alternative to scripts/get-all-code.ps1)
+[unix]
+get-all-code:
+    find src -name '*.rs' | sort | while read f; do echo "// ===== $f ====="; cat "$f"; done | xclip -selection clipboard || echo "(xclip not available — output printed to stdout)"
+
+[windows]
+get-all-code:
+    $allCode = ""; Get-ChildItem -Path src -Recurse -Filter *.rs | Sort-Object FullName | ForEach-Object { $allCode += "`n// ===== $($_.FullName) =====`n"; $allCode += Get-Content $_.FullName -Raw }; Set-Clipboard -Value $allCode
 
 # ──────────────────────────── Profiling ──────────────────────────────
 
@@ -75,6 +127,10 @@ flamegraph-named rom name frames="1800":
     cargo flamegraph --profile profiling -o "{{name}}.svg" -- --headless --no-apu --max-frames {{frames}} "{{rom}}"
 
 # ──────────────────────────── Cleaning ───────────────────────────────
+
+# Verify a release build compiles
+release-check:
+    cargo build --release
 
 # Clean build artifacts
 clean:

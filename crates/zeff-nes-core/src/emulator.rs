@@ -8,6 +8,8 @@ mod runtime;
 
 pub use crate::hardware::constants::CPU_CYCLES_PER_FRAME;
 
+pub const DEFAULT_SAMPLE_RATE: f64 = 48000.0;
+
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
@@ -210,6 +212,10 @@ impl Emulator {
 
     pub fn bus(&self) -> &Bus {
         &self.bus
+    }
+
+    pub fn bus_mut(&mut self) -> &mut Bus {
+        &mut self.bus
     }
 
     pub fn cpu_write(&mut self, addr: u16, value: u8) {

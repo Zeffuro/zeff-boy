@@ -33,9 +33,11 @@ pub(super) fn draw(
     ui.separator();
     draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
     ui.label(
-        egui::RichText::new("NES-specific input bindings can be added here as console features expand.")
-            .weak()
-            .small(),
+        egui::RichText::new(
+            "NES-specific input bindings can be added here as console features expand.",
+        )
+        .weak()
+        .small(),
     );
 }
 

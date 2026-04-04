@@ -63,7 +63,7 @@ fn ocpd_is_blocked_in_mode3_when_lcd_enabled() {
 fn bcpd_write_autoincrements_outside_mode3() {
     let mut ppu = PPU::new();
     ppu.write_bcps(0x80 | 0x01);
-    ppu.stat = (ppu.stat & !0x03) | 0x00;
+    ppu.stat &= !0x03;
 
     ppu.write_bcpd(0x12);
 

@@ -13,13 +13,13 @@ use std::time::Instant;
 
 impl App {
     fn pause_for_dialog(&mut self) -> bool {
-        let was_paused = self.paused;
-        self.paused = true;
+        let was_paused = self.speed.paused;
+        self.speed.paused = true;
         was_paused
     }
 
     fn resume_after_dialog(&mut self, was_paused: bool) {
-        self.paused = was_paused;
+        self.speed.paused = was_paused;
         self.timing.last_frame_time = Instant::now();
     }
 }

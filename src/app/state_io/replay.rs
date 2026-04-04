@@ -8,7 +8,8 @@ impl App {
         }
 
         let default_name = self
-            .cached_rom_path
+            .rom_info
+            .rom_path
             .as_ref()
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
@@ -33,7 +34,7 @@ impl App {
         }
         match self.recv_cold_response() {
             Some(EmuResponse::StateCaptured(state_bytes)) => {
-                let recorder = zeff_gb_core::replay::ReplayRecorder::new(path, state_bytes);
+                let recorder = zeff_emu_common::replay::ReplayRecorder::new(path, state_bytes);
                 self.recording.replay_recorder = Some(recorder);
                 self.toast_manager.set_replay_recording(true);
             }
@@ -85,7 +86,7 @@ impl App {
             return;
         };
 
-        match zeff_gb_core::replay::ReplayPlayer::load(&path) {
+        match zeff_emu_common::replay::ReplayPlayer::load(&path) {
             Ok(player) => {
                 let total = player.total_frames();
                 let state_bytes = player.save_state().to_vec();

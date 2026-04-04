@@ -163,4 +163,3 @@ pub(super) fn create_texture_bind_group(
         ],
     })
 }
-

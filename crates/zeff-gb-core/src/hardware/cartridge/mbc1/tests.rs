@@ -144,5 +144,5 @@ fn save_state_roundtrip() {
 
     assert_eq!(restored.read_rom(0x4000), mbc.read_rom(0x4000));
     assert_eq!(restored.read_ram(0xA000), 0x42);
-    assert_eq!(restored.banking_mode, true);
+    assert!(restored.banking_mode);
 }

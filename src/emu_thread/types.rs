@@ -3,6 +3,14 @@ use std::path::PathBuf;
 use crate::debug::DebugUiActions;
 use crate::ui;
 
+pub(crate) struct RenderSettings {
+    pub(crate) color_correction: crate::settings::ColorCorrection,
+    pub(crate) color_correction_matrix: [f32; 9],
+    pub(crate) dmg_palette_preset: crate::settings::DmgPalettePreset,
+    pub(crate) nes_palette_mode: crate::settings::NesPaletteMode,
+    pub(crate) sgb_border_enabled: bool,
+}
+
 pub(crate) struct SnapshotRequest {
     pub(crate) want_debug_info: bool,
     pub(crate) want_perf_info: bool,
@@ -19,11 +27,7 @@ pub(crate) struct SnapshotRequest {
     pub(crate) last_disasm_pc: Option<u16>,
     pub(crate) memory_search: Option<MemorySearchRequest>,
     pub(crate) rom_search: Option<MemorySearchRequest>,
-    pub(crate) color_correction: crate::settings::ColorCorrection,
-    pub(crate) color_correction_matrix: [f32; 9],
-    pub(crate) dmg_palette_preset: crate::settings::DmgPalettePreset,
-    pub(crate) nes_palette_mode: crate::settings::NesPaletteMode,
-    pub(crate) sgb_border_enabled: bool,
+    pub(crate) render: RenderSettings,
 }
 
 pub(crate) struct MemorySearchRequest {
@@ -39,19 +43,27 @@ pub(crate) struct ReusableBuffers {
     pub(crate) memory_page: Option<Vec<(u16, u8)>>,
 }
 
+pub(crate) struct JoypadInput {
+    pub(crate) buttons: u8,
+    pub(crate) dpad: u8,
+    pub(crate) buttons_p2: u8,
+    pub(crate) dpad_p2: u8,
+}
+
+pub(crate) struct AudioConfig {
+    pub(crate) apu_capture_enabled: bool,
+    pub(crate) skip_audio: bool,
+    pub(crate) midi_capture_active: bool,
+}
+
 pub(crate) struct FrameInput {
     pub(crate) frames: usize,
     pub(crate) host_tilt: (f32, f32),
     pub(crate) host_camera_frame: Option<Vec<u8>>,
-    pub(crate) buttons_pressed: u8,
-    pub(crate) dpad_pressed: u8,
-    pub(crate) buttons_pressed_p2: u8,
-    pub(crate) dpad_pressed_p2: u8,
+    pub(crate) joypad: JoypadInput,
     pub(crate) debug_step: bool,
     pub(crate) debug_continue: bool,
-    pub(crate) apu_capture_enabled: bool,
-    pub(crate) skip_audio: bool,
-    pub(crate) midi_capture_active: bool,
+    pub(crate) audio: AudioConfig,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) snapshot: SnapshotRequest,
     pub(crate) buffers: ReusableBuffers,

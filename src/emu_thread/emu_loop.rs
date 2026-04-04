@@ -17,7 +17,7 @@ pub(super) struct EmuLoop {
     uncapped_mode: bool,
     uncapped_fb: Option<Vec<u8>>,
     last_cheats: Vec<CheatPatch>,
-    rewind_buffer: zeff_gb_core::rewind::RewindBuffer,
+    rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
 }
 
@@ -38,7 +38,7 @@ impl EmuLoop {
             uncapped_mode: false,
             uncapped_fb: None,
             last_cheats: Vec::new(),
-            rewind_buffer: zeff_gb_core::rewind::RewindBuffer::new(
+            rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new(
                 DEFAULT_REWIND_SECONDS,
                 REWIND_SNAPSHOTS_PER_SECOND,
             ),

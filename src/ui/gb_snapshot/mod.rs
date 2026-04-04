@@ -52,9 +52,9 @@ pub(crate) fn collect_emu_snapshot(
             cgb_mode,
             bg_palette_ram: emu.ppu_bg_palette_ram_snapshot(),
             obj_palette_ram: emu.ppu_obj_palette_ram_snapshot(),
-            color_correction: req.color_correction,
-            color_correction_matrix: req.color_correction_matrix,
-            dmg_palette_preset: req.dmg_palette_preset,
+            color_correction: req.render.color_correction,
+            color_correction_matrix: req.render.color_correction_matrix,
+            dmg_palette_preset: req.render.dmg_palette_preset,
         }))
     } else {
         None

@@ -5,8 +5,7 @@ use crate::libretro_common::LibretroPlatform;
 
 const GITHUB_CHT_DIR_URL: &str =
     "https://api.github.com/repos/libretro/libretro-database/contents/cht";
-const GITHUB_TREES_URL: &str =
-    "https://api.github.com/repos/libretro/libretro-database/git/trees/";
+const GITHUB_TREES_URL: &str = "https://api.github.com/repos/libretro/libretro-database/git/trees/";
 const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/";
 const CACHE_TTL_SECS: u64 = 86400;
@@ -70,11 +69,7 @@ fn fetch_cheat_list_via_trees(platform: LibretroPlatform) -> anyhow::Result<Vec<
         anyhow::bail!("no .cht files found for {}", platform.label());
     }
 
-    log::info!(
-        "Found {} cheat files for {}",
-        names.len(),
-        platform.label()
-    );
+    log::info!("Found {} cheat files for {}", names.len(), platform.label());
     Ok(names)
 }
 

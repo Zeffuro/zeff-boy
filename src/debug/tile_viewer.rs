@@ -100,11 +100,13 @@ pub(super) fn draw_tile_viewer_content(
         render_tile_viewer_into_image(
             &mut window_state.image,
             gfx,
-            bgp,
-            use_cgb_colors,
-            use_obj_palette,
-            cgb_palette_index,
-            bank_base,
+            &TileRenderOptions {
+                bgp,
+                use_cgb_colors,
+                use_obj_palette,
+                cgb_palette_index,
+                bank_base,
+            },
         );
         window_state.vram_dirty = false;
     }
@@ -127,14 +129,18 @@ pub(super) fn draw_tile_viewer_content(
     });
 }
 
-fn render_tile_viewer_into_image(
-    image: &mut egui::ColorImage,
-    gfx: &GbGraphicsData,
+struct TileRenderOptions {
     bgp: u8,
     use_cgb_colors: bool,
     use_obj_palette: bool,
     cgb_palette_index: u8,
     bank_base: usize,
+}
+
+fn render_tile_viewer_into_image(
+    image: &mut egui::ColorImage,
+    gfx: &GbGraphicsData,
+    opts: &TileRenderOptions,
 ) {
     let vram = &gfx.vram;
     let bg_palette_ram = &gfx.bg_palette_ram;
@@ -144,24 +150,24 @@ fn render_tile_viewer_into_image(
     for tile in 0..384usize {
         let tile_x = tile % 16;
         let tile_y = tile / 16;
-        let tile_addr = bank_base + tile * 16;
+        let tile_addr = opts.bank_base + tile * 16;
 
         for y in 0..8usize {
             for x in 0..8usize {
                 let color_id = decode_tile_pixel(vram, tile_addr, y, x);
-                let rgba = if use_cgb_colors {
-                    let palette_ram = if use_obj_palette {
+                let rgba = if opts.use_cgb_colors {
+                    let palette_ram = if opts.use_obj_palette {
                         obj_palette_ram
                     } else {
                         bg_palette_ram
                     };
                     correct_color(
-                        cgb_palette_rgba(palette_ram, cgb_palette_index, color_id),
+                        cgb_palette_rgba(palette_ram, opts.cgb_palette_index, color_id),
                         color_correction,
                         color_correction_matrix,
                     )
                 } else {
-                    apply_dmg_palette(gfx.dmg_palette_preset, bgp, color_id)
+                    apply_dmg_palette(gfx.dmg_palette_preset, opts.bgp, color_id)
                 };
                 let px = tile_x * 8 + x;
                 let py = tile_y * 8 + y;

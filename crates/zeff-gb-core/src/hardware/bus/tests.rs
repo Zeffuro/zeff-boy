@@ -282,7 +282,7 @@ fn oam_write_blocked_during_mode_2() {
 fn oam_accessible_during_mode_0_and_1() {
     let mut bus = make_test_bus();
     bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
-    bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x00;
+    bus.io.ppu.stat &= !0x03;
     bus.write_byte(OAM_START, 0x11);
     assert_eq!(bus.read_byte_raw(OAM_START), 0x11);
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x01;
@@ -616,7 +616,7 @@ fn cgb_speed_switch_ignored_without_prepare_bit() {
 #[test]
 fn cgb_speed_switch_ignored_in_dmg_mode() {
     let mut bus = make_test_bus();
-    bus.key1 = bus.key1 | 0x01;
+    bus.key1 |= 0x01;
     assert!(!bus.maybe_switch_cgb_speed());
 }
 

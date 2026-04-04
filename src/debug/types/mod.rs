@@ -5,7 +5,6 @@ pub(crate) mod mods;
 mod viewers;
 
 pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
-pub(crate) use mods::ModState;
 pub(crate) use data_models::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
     GbGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo, PaletteDebugInfo,
@@ -16,6 +15,7 @@ pub(crate) use memory::{
     MemoryBookmark, MemoryByteDiff, MemorySearchMode, MemorySearchResult, MemoryViewerState,
     RomSearchResult, RomViewerState,
 };
+pub(crate) use mods::ModState;
 pub(crate) use viewers::{PerfInfo, TileViewerState, TilemapViewerState};
 
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
@@ -43,6 +43,8 @@ pub(crate) struct DebugWindowState {
     pub(crate) layer_enable_bg: bool,
     pub(crate) layer_enable_window: bool,
     pub(crate) layer_enable_sprites: bool,
+    pub(crate) tile_viewer_was_open: bool,
+    pub(crate) tilemap_viewer_was_open: bool,
 }
 
 impl DebugWindowState {
@@ -70,6 +72,8 @@ impl DebugWindowState {
             layer_enable_bg: true,
             layer_enable_window: true,
             layer_enable_sprites: true,
+            tile_viewer_was_open: false,
+            tilemap_viewer_was_open: false,
         }
     }
 }

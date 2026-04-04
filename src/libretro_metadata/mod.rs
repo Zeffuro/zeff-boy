@@ -112,7 +112,9 @@ fn parse_dat_entries(dat: &str, platform: LibretroPlatform) -> Vec<RomMetadata> 
             for ext in platform.rom_extensions() {
                 fallback = fallback.trim_end_matches(ext);
             }
-            let title = current_title.clone().unwrap_or_else(|| fallback.to_string());
+            let title = current_title
+                .clone()
+                .unwrap_or_else(|| fallback.to_string());
             entries.push(RomMetadata {
                 crc32,
                 title,
@@ -293,10 +295,10 @@ pub(crate) fn lookup_cached(crc32: u32, platform: LibretroPlatform) -> Option<Ro
     let exact = guard.by_crc.get(&crc32)?;
 
     if exact.platform == platform {
-        return Some(exact.clone());
+        Some(exact.clone())
+    } else {
+        None
     }
-
-    Some(exact.clone())
 }
 
 fn normalized_words(input: &str) -> Vec<String> {

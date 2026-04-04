@@ -56,8 +56,7 @@ fn search_filenames_with_hints_prefers_exact_like_title() {
 #[test]
 fn parse_dir_entry_sha_finds_platform() {
     let json = r#"[{"name":"Nintendo - Game Boy","sha":"abc123def","type":"dir"},{"name":"Nintendo - Nintendo Entertainment System","sha":"nes456sha","type":"dir"}]"#;
-    let sha =
-        parse_dir_entry_sha(json, "Nintendo - Nintendo Entertainment System").unwrap();
+    let sha = parse_dir_entry_sha(json, "Nintendo - Nintendo Entertainment System").unwrap();
     assert_eq!(sha, "nes456sha");
 }
 

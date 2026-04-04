@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
-description = "Shared debug, cheat, and save-state types for zeff-boy emulator cores."
+description = "Shared debug, cheat, save-state, rewind, and replay types for zeff-boy emulator cores."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 anyhow = "1.0.102"
-
+log = "0.4.29"
+lz4_flex = "0.13.0"

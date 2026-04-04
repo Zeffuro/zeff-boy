@@ -125,7 +125,13 @@ pub(super) fn draw(
     );
 
     ui.separator();
-    draw_gb_palette_section(ui, settings, active_system, gb_hardware_mode_label, is_pocket_camera);
+    draw_gb_palette_section(
+        ui,
+        settings,
+        active_system,
+        gb_hardware_mode_label,
+        is_pocket_camera,
+    );
 
     ui.separator();
     draw_nes_palette_section(ui, settings, active_system);
@@ -292,8 +298,7 @@ fn draw_custom_color_matrix(ui: &mut egui::Ui, settings: &mut Settings) {
 
     ui.horizontal(|ui| {
         if ui.button("Identity").clicked() {
-            settings.video.color_correction_matrix =
-                [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            settings.video.color_correction_matrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         }
         if ui.button("Load GBC matrix").clicked() {
             settings.video.color_correction_matrix = [

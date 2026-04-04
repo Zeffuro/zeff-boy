@@ -18,15 +18,22 @@ pub(super) fn nes_disassembly_view(emu: &zeff_nes_core::emulator::Emulator) -> D
 fn nes_disasm_peek_byte(bus: &zeff_nes_core::hardware::bus::Bus, addr: u16) -> u8 {
     match addr {
         0x0000..=0x1FFF => bus.ram[(addr & 0x07FF) as usize],
-        0x4020..=0xFFFF => bus.cartridge.cpu_read(addr),
+        0x4020..=0xFFFF => bus.cartridge.cpu_peek(addr),
         _ => 0,
     }
 }
 
 pub(super) fn nes_graphics_snapshot(
-    emu: &zeff_nes_core::emulator::Emulator,
+    emu: &mut zeff_nes_core::emulator::Emulator,
 ) -> ConsoleGraphicsData {
-    let bus = emu.bus();
+    let palette_mode = emu.palette_mode();
+    let palette_ram = *emu.ppu_palette_ram();
+    let ctrl = emu.ppu_ctrl();
+    let scroll_t = emu.ppu_scroll_t();
+    let fine_x = emu.ppu_fine_x();
+    let mirroring = emu.bus().cartridge.mirroring();
+
+    let bus = emu.bus_mut();
 
     let mut chr_data = vec![0u8; 0x2000];
     for addr in 0..0x2000u16 {
@@ -39,16 +46,14 @@ pub(super) fn nes_graphics_snapshot(
         nametable_data[offset as usize] = bus.ppu_bus_read(addr);
     }
 
-    let palette_ram = *emu.ppu_palette_ram();
-
     ConsoleGraphicsData::Nes(NesGraphicsData {
         chr_data,
         nametable_data,
         palette_ram,
-        palette_mode: emu.palette_mode(),
-        ctrl: emu.ppu_ctrl(),
-        mirroring: bus.cartridge.mirroring(),
-        scroll_t: emu.ppu_scroll_t(),
-        fine_x: emu.ppu_fine_x(),
+        palette_mode,
+        ctrl,
+        mirroring,
+        scroll_t,
+        fine_x,
     })
 }

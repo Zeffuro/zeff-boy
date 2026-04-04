@@ -30,7 +30,7 @@ impl Action52 {
 }
 
 impl Mapper for Action52 {
-    fn cpu_read(&self, addr: u16) -> u8 {
+    fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xBFFF => {
                 let offset = (addr as usize - 0x8000) + self.prg_page_lo * 0x4000;
@@ -82,7 +82,7 @@ impl Mapper for Action52 {
         }
     }
 
-    fn chr_read(&self, addr: u16) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr.is_empty() {
             return 0;
         }

@@ -119,8 +119,9 @@ impl CheatValue {
 }
 
 fn nybble_to_hex(v: u8) -> char {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    HEX[v as usize] as char
+    char::from_digit(v as u32, 16)
+        .unwrap_or('0')
+        .to_ascii_uppercase()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

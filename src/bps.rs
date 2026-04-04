@@ -4,7 +4,10 @@ const HEADER: &[u8; 4] = b"BPS1";
 const FOOTER_SIZE: usize = 12;
 
 pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec<u8>> {
-    ensure!(patch.len() >= HEADER.len() + FOOTER_SIZE, "BPS patch too short");
+    ensure!(
+        patch.len() >= HEADER.len() + FOOTER_SIZE,
+        "BPS patch too short"
+    );
     ensure!(&patch[..4] == HEADER, "BPS patch missing BPS1 header");
 
     let patch_body = &patch[..patch.len() - 4];
@@ -50,7 +53,10 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
         match action {
             0 => {
                 for _ in 0..length {
-                    ensure!(output_offset < target_size, "BPS target overflow (SourceRead)");
+                    ensure!(
+                        output_offset < target_size,
+                        "BPS target overflow (SourceRead)"
+                    );
                     target[output_offset] = if output_offset < source.len() {
                         source[output_offset]
                     } else {
@@ -62,7 +68,10 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
             1 => {
                 for _ in 0..length {
                     ensure!(pos < data_end, "BPS patch truncated (TargetRead)");
-                    ensure!(output_offset < target_size, "BPS target overflow (TargetRead)");
+                    ensure!(
+                        output_offset < target_size,
+                        "BPS target overflow (TargetRead)"
+                    );
                     target[output_offset] = patch[pos];
                     output_offset += 1;
                     pos += 1;
@@ -78,8 +87,14 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
                     source_relative = source_relative.wrapping_add(delta);
                 }
                 for _ in 0..length {
-                    ensure!(output_offset < target_size, "BPS target overflow (SourceCopy)");
-                    ensure!(source_relative < source.len(), "BPS source read out of bounds");
+                    ensure!(
+                        output_offset < target_size,
+                        "BPS target overflow (SourceCopy)"
+                    );
+                    ensure!(
+                        source_relative < source.len(),
+                        "BPS source read out of bounds"
+                    );
                     target[output_offset] = source[source_relative];
                     output_offset += 1;
                     source_relative += 1;
@@ -95,8 +110,14 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
                     target_relative = target_relative.wrapping_add(delta);
                 }
                 for _ in 0..length {
-                    ensure!(output_offset < target_size, "BPS target overflow (TargetCopy)");
-                    ensure!(target_relative < target_size, "BPS target copy out of bounds");
+                    ensure!(
+                        output_offset < target_size,
+                        "BPS target overflow (TargetCopy)"
+                    );
+                    ensure!(
+                        target_relative < target_size,
+                        "BPS target copy out of bounds"
+                    );
                     target[output_offset] = target[target_relative];
                     output_offset += 1;
                     target_relative += 1;
@@ -114,10 +135,6 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
     );
 
     Ok(target)
-}
-
-pub(crate) fn validate_bps(patch: &[u8]) -> bool {
-    patch.len() >= HEADER.len() + FOOTER_SIZE && &patch[..4] == HEADER
 }
 
 fn decode_varint(data: &[u8], pos: &mut usize) -> anyhow::Result<u64> {
@@ -146,7 +163,6 @@ fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     ])
 }
 
-/// Encode a value as a BPS variable-length integer (for tests).
 #[cfg(test)]
 fn encode_varint(mut value: u64) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -172,22 +188,17 @@ fn write_u32_le(val: u32) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Build a minimal valid BPS patch from source to target using TargetRead actions.
     fn make_simple_bps(source: &[u8], target: &[u8]) -> Vec<u8> {
         let mut patch = Vec::new();
         patch.extend_from_slice(HEADER);
         patch.extend(encode_varint(source.len() as u64));
         patch.extend(encode_varint(target.len() as u64));
-        patch.extend(encode_varint(0)); // no metadata
+        patch.extend(encode_varint(0));
 
-        // Emit all target bytes via TargetRead actions.
-        // action = (length - 1) << 2 | 1
         let cmd = ((target.len() as u64 - 1) << 2) | 1;
         patch.extend(encode_varint(cmd));
         patch.extend_from_slice(target);
 
-        // Footer: source CRC, target CRC, patch CRC (over everything before it).
         let source_crc = crc32fast::hash(source);
         let target_crc = crc32fast::hash(target);
         patch.extend_from_slice(&write_u32_le(source_crc));
@@ -230,18 +241,16 @@ mod tests {
 
     #[test]
     fn apply_source_read() {
-        // Build a patch that uses SourceRead to copy source bytes.
         let source = vec![0xAA, 0xBB, 0xCC, 0xDD];
-        let target_expected = source.clone(); // identical copy via SourceRead
+        let target_expected = source.clone();
 
         let mut patch = Vec::new();
         patch.extend_from_slice(HEADER);
         patch.extend(encode_varint(source.len() as u64));
         patch.extend(encode_varint(target_expected.len() as u64));
-        patch.extend(encode_varint(0)); // no metadata
+        patch.extend(encode_varint(0));
 
-        // SourceRead action: action=0, length=4 → cmd = (4-1)<<2 | 0 = 12
-        let cmd = ((source.len() as u64 - 1) << 2) | 0;
+        let cmd = (source.len() as u64 - 1) << 2;
         patch.extend(encode_varint(cmd));
 
         let source_crc = crc32fast::hash(&source);
@@ -256,24 +265,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_good_patch() {
-        let source = vec![0u8; 4];
-        let target = vec![0xFFu8; 4];
-        let patch = make_simple_bps(&source, &target);
-        assert!(validate_bps(&patch));
-    }
-
-    #[test]
-    fn validate_bad_header() {
-        assert!(!validate_bps(b"XXXX stuff here plus padding"));
-    }
-
-    #[test]
-    fn validate_too_short() {
-        assert!(!validate_bps(b"BPS1"));
-    }
-
-    #[test]
     fn apply_rejects_bad_header() {
         let source = vec![0u8; 4];
         let result = apply_bps_patch(&source, b"XXXX plus enough padding bytes here!");
@@ -285,7 +276,7 @@ mod tests {
         let source = vec![0u8; 4];
         let target = vec![0xFFu8; 4];
         let mut patch = make_simple_bps(&source, &target);
-        // Corrupt the source CRC (at patch.len() - 12).
+
         let off = patch.len() - 12;
         patch[off] ^= 0xFF;
         // Recompute patch CRC.
@@ -293,9 +284,8 @@ mod tests {
         let len = patch.len();
         patch[len - 4..].copy_from_slice(&write_u32_le(patch_crc));
 
-        let wrong_source = vec![0x11u8; 4]; // different source
+        let wrong_source = vec![0x11u8; 4];
         let result = apply_bps_patch(&wrong_source, &patch);
         assert!(result.is_err());
     }
 }
-

@@ -80,10 +80,10 @@ fn mmc5_status_read_acknowledges_irq_pending() {
 fn mmc5_scanline_counter_resets_on_prerender_notification() {
     let prg = vec![0u8; 4 * 0x2000];
     let chr = vec![0u8; 0x2000];
-    let mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+    let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
     let ciram = [0u8; 0x800];
 
-    mapper.current_scanline.set(240);
+    mapper.current_scanline = 240;
 
     // Simulate a scanline boundary via nametable reads:should reset to 0
     mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
@@ -91,8 +91,8 @@ fn mmc5_scanline_counter_resets_on_prerender_notification() {
     mapper.ppu_nametable_read(0x2000, &ciram);
     mapper.ppu_nametable_read(0x2000, &ciram);
 
-    assert_eq!(mapper.current_scanline.get(), 0);
-    assert!(mapper.in_frame.get());
+    assert_eq!(mapper.current_scanline, 0);
+    assert!(mapper.in_frame);
 }
 
 #[test]
@@ -261,7 +261,7 @@ fn mmc5_exram_mode1_chr_bank_override() {
     mapper.cpu_write(0x5104, 1);
     mapper.cpu_write(0x5130, 0);
 
-    mapper.exram_tile_byte.set(0x05);
+    mapper.exram_tile_byte = 0x05;
 
     let val = mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
     assert_eq!(val, 0xDE);
@@ -280,7 +280,7 @@ fn mmc5_compare_zero_does_not_fire_on_prerender() {
     mapper.cpu_write(0x5203, 0);
     mapper.cpu_write(0x5204, 0x80);
 
-    mapper.current_scanline.set(240);
+    mapper.current_scanline = 240;
     mapper.chr_read_kind(0x0000, ChrFetchKind::Background);
     mapper.ppu_nametable_read(0x2000, &ciram);
     mapper.ppu_nametable_read(0x2000, &ciram);

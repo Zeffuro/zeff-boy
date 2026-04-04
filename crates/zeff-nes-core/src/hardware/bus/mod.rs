@@ -238,12 +238,12 @@ impl Bus {
     }
 
     #[inline]
-    pub fn ppu_bus_read(&self, addr: u16) -> u8 {
+    pub fn ppu_bus_read(&mut self, addr: u16) -> u8 {
         self.ppu_bus_read_with_kind(addr, ChrFetchKind::Background)
     }
 
     #[inline]
-    fn ppu_bus_read_with_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
+    fn ppu_bus_read_with_kind(&mut self, addr: u16, kind: ChrFetchKind) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.cartridge.chr_read_with_kind(addr, kind),
@@ -552,7 +552,7 @@ impl Bus {
         Ok(())
     }
 
-    fn dmc_dma_read(&self, addr: u16) -> u8 {
+    fn dmc_dma_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
             0x4020..=0xFFFF => self.cartridge.cpu_read(addr),

@@ -6,9 +6,7 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-
 
 #[test]
 fn decode_rejects_bad_magic() {
@@ -56,7 +54,7 @@ fn full_save_state_round_trip_handles_large_arrays() {
 
     let bytes = encode_state_bytes(&state).expect("encode should succeed");
 
-    let mut path = PathBuf::from(std::env::temp_dir());
+    let mut path = std::env::temp_dir();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after epoch")

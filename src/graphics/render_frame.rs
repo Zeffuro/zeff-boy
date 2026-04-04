@@ -6,8 +6,8 @@ use crate::debug::{
     PaletteDebugInfo, PerfInfo, RomDebugInfo, ToastManager,
 };
 
-use super::viewport::calculate_viewport;
 use super::Graphics;
+use super::viewport::calculate_viewport;
 
 pub(crate) enum FrameError {
     Timeout,
@@ -156,9 +156,11 @@ impl Graphics {
                 ctx.debug_windows,
                 ctx.show_settings_window,
                 content_bounds,
-                active_system,
-                gb_hardware_mode_label.as_deref(),
-                ctx.is_pocket_camera,
+                &debug::SettingsContext {
+                    active_system,
+                    gb_hardware_mode_label: gb_hardware_mode_label.as_deref(),
+                    is_pocket_camera: ctx.is_pocket_camera,
+                },
             );
         }
 
@@ -399,4 +401,3 @@ impl Graphics {
         })
     }
 }
-

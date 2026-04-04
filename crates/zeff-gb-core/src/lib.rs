@@ -5,6 +5,6 @@ pub mod color_correction;
 pub mod debug;
 pub mod emulator;
 pub mod hardware;
-pub mod replay;
-pub mod rewind;
+pub use zeff_emu_common::replay;
+pub use zeff_emu_common::rewind;
 pub mod save_state;

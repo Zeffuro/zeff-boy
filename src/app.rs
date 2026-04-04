@@ -83,9 +83,12 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             last_vsync_mode: vsync_mode,
         },
         last_audio_output_sample_rate: initial_audio_output_sample_rate,
-        fast_forward_held: false,
-        turbo_held: false,
-        turbo_counter: 0,
+        speed: SpeedState {
+            paused: false,
+            fast_forward_held: false,
+            turbo_held: false,
+            turbo_counter: 0,
+        },
         modifiers: ModifierKeys::default(),
         host_input: HostInputState::new(),
         cursor_pos: None,
@@ -110,13 +113,13 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         },
         frames_in_flight: 0,
         cached_ui_data: None,
-        cached_is_mbc7,
-        cached_is_pocket_camera,
-        cached_rom_path,
-        cached_rom_hash: None,
+        rom_info: CachedRomInfo {
+            is_mbc7: cached_is_mbc7,
+            is_pocket_camera: cached_is_pocket_camera,
+            rom_path: cached_rom_path,
+            rom_hash: None,
+        },
         pending_debug_actions: DebugUiActions::none(),
-        tile_viewer_was_open: false,
-        tilemap_viewer_was_open: false,
         shutdown_performed: false,
         toast_manager: ToastManager::new(),
         recording: RecordingState {
@@ -124,7 +127,6 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             replay_recorder: None,
             replay_player: None,
         },
-        paused: false,
         rewind: RewindState {
             held: false,
             fill: 0.0,
@@ -171,8 +173,8 @@ struct RewindState {
 
 struct RecordingState {
     audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
-    replay_recorder: Option<zeff_gb_core::replay::ReplayRecorder>,
-    replay_player: Option<zeff_gb_core::replay::ReplayPlayer>,
+    replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
+    replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
 }
 
 struct TimingState {
@@ -204,6 +206,20 @@ impl DebugRequests {
     }
 }
 
+struct CachedRomInfo {
+    is_mbc7: bool,
+    is_pocket_camera: bool,
+    rom_path: Option<PathBuf>,
+    rom_hash: Option<[u8; 32]>,
+}
+
+struct SpeedState {
+    paused: bool,
+    fast_forward_held: bool,
+    turbo_held: bool,
+    turbo_counter: u8,
+}
+
 struct App {
     initial_backend: Option<EmuBackend>,
     emu_thread: Option<EmuThread>,
@@ -218,9 +234,7 @@ struct App {
     settings: Settings,
     timing: TimingState,
     last_audio_output_sample_rate: u32,
-    fast_forward_held: bool,
-    turbo_held: bool,
-    turbo_counter: u8,
+    speed: SpeedState,
     modifiers: ModifierKeys,
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
@@ -239,17 +253,11 @@ struct App {
     recycled: RecycledBuffers,
     frames_in_flight: usize,
     cached_ui_data: Option<ui::UiFrameData>,
-    cached_is_mbc7: bool,
-    cached_is_pocket_camera: bool,
-    cached_rom_path: Option<PathBuf>,
-    cached_rom_hash: Option<[u8; 32]>,
+    rom_info: CachedRomInfo,
     pending_debug_actions: DebugUiActions,
-    tile_viewer_was_open: bool,
-    tilemap_viewer_was_open: bool,
     shutdown_performed: bool,
     toast_manager: ToastManager,
     recording: RecordingState,
-    paused: bool,
     rewind: RewindState,
     egui_wants_keyboard: bool,
     game_view_focused: bool,
@@ -279,7 +287,7 @@ impl App {
     fn speed_mode(&self) -> SpeedMode {
         if self.timing.uncapped_speed {
             SpeedMode::Uncapped
-        } else if self.fast_forward_held {
+        } else if self.speed.fast_forward_held {
             SpeedMode::FastForward
         } else {
             SpeedMode::Normal
@@ -287,7 +295,7 @@ impl App {
     }
 
     fn speed_mode_label(&self) -> &'static str {
-        if self.paused {
+        if self.speed.paused {
             return "Paused";
         }
         match self.speed_mode() {
@@ -384,7 +392,7 @@ impl App {
     }
 
     fn update_host_tilt_and_stick_mode(&mut self) -> (f32, f32) {
-        let is_mbc7 = self.cached_is_mbc7;
+        let is_mbc7 = self.rom_info.is_mbc7;
         let keyboard = self.host_input.tilt_vector();
         let mouse = self.mouse_tilt_vector();
         let left_stick = self.left_stick;

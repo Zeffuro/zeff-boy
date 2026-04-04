@@ -23,7 +23,7 @@ impl App {
         let rewind_seconds_back =
             self.rewind.pops as f32 * self.settings.rewind.capture_interval() as f32 / 60.0;
         let slot_labels =
-            super::state_io::build_slot_labels(self.cached_rom_hash, self.active_system);
+            super::state_io::build_slot_labels(self.rom_info.rom_hash, self.active_system);
 
         match gfx.render(graphics::RenderContext {
             cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
@@ -49,8 +49,8 @@ impl App {
             is_playing_replay,
             is_rewinding,
             rewind_seconds_back,
-            is_paused: self.paused,
-            is_pocket_camera: self.cached_is_pocket_camera,
+            is_paused: self.speed.paused,
+            is_pocket_camera: self.rom_info.is_pocket_camera,
             autohide_menu_bar,
             cursor_y,
             slot_labels,
@@ -69,8 +69,8 @@ impl App {
                         MenuAction::LoadRecentRom(path) => self.load_rom(path),
                         MenuAction::ToggleFullscreen => self.toggle_fullscreen(),
                         MenuAction::TogglePause => {
-                            self.paused = !self.paused;
-                            self.toast_manager.set_paused(self.paused);
+                            self.speed.paused = !self.speed.paused;
+                            self.toast_manager.set_paused(self.speed.paused);
                         }
                         MenuAction::SpeedChange(delta) => {
                             let mult =
@@ -159,4 +159,3 @@ impl App {
         }
     }
 }
-

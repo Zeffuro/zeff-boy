@@ -9,7 +9,9 @@ use super::enums::{
 };
 use super::keycode_serde::keycode_from_string;
 use super::tilt_bindings::TiltKeyBindings;
-use super::{LeftStickMode, TiltInputMode, default_color_correction_matrix, default_offscreen_scale};
+use super::{
+    LeftStickMode, TiltInputMode, default_color_correction_matrix, default_offscreen_scale,
+};
 
 fn default_camera_gamma() -> f32 {
     1.05
@@ -108,7 +110,10 @@ pub(crate) struct AudioSettings {
     pub(crate) mute_during_fast_forward: bool,
     #[serde(rename = "audio_recording_format", default)]
     pub(crate) recording_format: AudioRecordingFormat,
-    #[serde(rename = "audio_output_sample_rate", default = "default_output_sample_rate")]
+    #[serde(
+        rename = "audio_output_sample_rate",
+        default = "default_output_sample_rate"
+    )]
     pub(crate) output_sample_rate: u32,
     #[serde(rename = "audio_low_pass_enabled", default)]
     pub(crate) low_pass_enabled: bool,

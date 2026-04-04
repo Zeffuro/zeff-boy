@@ -23,7 +23,7 @@ impl Axrom {
 }
 
 impl Mapper for Axrom {
-    fn cpu_read(&self, addr: u16) -> u8 {
+    fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xFFFF => {
                 let bank = self.prg_bank as usize % self.prg_bank_count();
@@ -45,7 +45,7 @@ impl Mapper for Axrom {
         }
     }
 
-    fn chr_read(&self, addr: u16) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr_ram.is_empty() {
             return 0;
         }

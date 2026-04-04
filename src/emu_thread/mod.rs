@@ -12,8 +12,8 @@ use crossbeam_channel::{self as chan, Receiver, Sender};
 use crate::emu_backend::EmuBackend;
 
 pub(crate) use types::{
-    EmuCommand, EmuResponse, FrameInput, FrameResult, MemorySearchRequest, ReusableBuffers,
-    SnapshotRequest,
+    AudioConfig, EmuCommand, EmuResponse, FrameInput, FrameResult, JoypadInput,
+    MemorySearchRequest, RenderSettings, ReusableBuffers, SnapshotRequest,
 };
 
 const DEFAULT_REWIND_SECONDS: usize = 10;

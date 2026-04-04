@@ -1,6 +1,6 @@
 use crate::cheats::parse_cht_file_for_system;
-use crate::debug::{CheatState, LibretroAsyncResult};
 use crate::debug::libretro_cheats;
+use crate::debug::{CheatState, LibretroAsyncResult};
 use crate::emu_backend::ActiveSystem;
 use crate::libretro_common::LibretroPlatform;
 
@@ -34,7 +34,9 @@ pub(super) fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
                 search_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
             let can_search = !state.libretro_busy;
-            if (ui.add_enabled(can_search, egui::Button::new("🔍 Search")).clicked()
+            if (ui
+                .add_enabled(can_search, egui::Button::new("🔍 Search"))
+                .clicked()
                 || enter_pressed)
                 && can_search
             {
@@ -100,8 +102,7 @@ fn poll_async_results(state: &mut CheatState) {
                 let count = imported.len();
                 state.libretro_codes.extend(imported);
                 state.cheats_dirty = true;
-                state.libretro_status =
-                    Some(format!("Imported {count} cheat(s) from {filename}"));
+                state.libretro_status = Some(format!("Imported {count} cheat(s) from {filename}"));
                 log::info!("Imported {} cheats from libretro: {}", count, filename);
             }
             LibretroAsyncResult::Downloaded {
@@ -116,10 +117,8 @@ fn poll_async_results(state: &mut CheatState) {
                 let rom_title = state.rom_title.clone();
                 let platform = state.libretro_platform;
                 if let (Some(crc32), Some(title)) = (rom_crc32, rom_title) {
-                    let refreshed_meta =
-                        crate::libretro_metadata::lookup_cached(crc32, platform);
-                    state.rom_metadata_title =
-                        refreshed_meta.as_ref().map(|m| m.title.clone());
+                    let refreshed_meta = crate::libretro_metadata::lookup_cached(crc32, platform);
+                    state.rom_metadata_title = refreshed_meta.as_ref().map(|m| m.title.clone());
                     state.rom_metadata_rom_name =
                         refreshed_meta.as_ref().map(|m| m.rom_name.clone());
                     state.libretro_search_hints =
@@ -195,10 +194,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
         }
         let can_refresh = !state.libretro_busy;
         if ui
-            .add_enabled(
-                can_refresh,
-                egui::Button::new("⬇ Refresh metadata").small(),
-            )
+            .add_enabled(can_refresh, egui::Button::new("⬇ Refresh metadata").small())
             .on_hover_text(
                 "Download/compile local metadata cache from libretro dat files (GB+GBC+NES)",
             )

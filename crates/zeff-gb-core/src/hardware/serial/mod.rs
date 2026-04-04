@@ -75,7 +75,11 @@ impl Serial {
         self.cycles = 0;
     }
 
-    pub(super) fn step(&mut self, cycles: u64, printer: &mut crate::hardware::printer::GameboyPrinter) -> bool {
+    pub(super) fn step(
+        &mut self,
+        cycles: u64,
+        printer: &mut crate::hardware::printer::GameboyPrinter,
+    ) -> bool {
         if self.sc & 0x81 != 0x81 {
             return false;
         }

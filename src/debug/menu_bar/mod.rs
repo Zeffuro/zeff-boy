@@ -84,10 +84,12 @@ pub(crate) fn draw_menu_bar(
                                 ui,
                                 &mut actions,
                                 settings,
-                                mb.slot_labels,
-                                mb.is_recording_audio,
-                                mb.is_recording_replay,
-                                mb.is_playing_replay,
+                                &file_menu::FileMenuState {
+                                    slot_labels: mb.slot_labels,
+                                    is_recording_audio: mb.is_recording_audio,
+                                    is_recording_replay: mb.is_recording_replay,
+                                    is_playing_replay: mb.is_playing_replay,
+                                },
                             );
                         });
 

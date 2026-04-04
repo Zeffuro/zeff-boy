@@ -23,7 +23,7 @@ impl App {
                         self.latest_frame = Some(framebuffer);
                         if self.rewind.backstep_pending {
                             self.rewind.backstep_pending = false;
-                            self.paused = true;
+                            self.speed.paused = true;
                             self.timing.last_frame_time = Instant::now();
                             self.toast_manager.set_paused(true);
                             self.toast_manager.info("⏮ Stepped back");
@@ -52,8 +52,8 @@ impl App {
         if let Some(old) = self.latest_frame.replace(result.frame) {
             self.recycled.framebuffer = Some(old);
         }
-        self.cached_is_mbc7 = result.is_mbc7;
-        self.cached_is_pocket_camera = result.is_pocket_camera;
+        self.rom_info.is_mbc7 = result.is_mbc7;
+        self.rom_info.is_pocket_camera = result.is_pocket_camera;
         self.rewind.fill = result.rewind_fill;
 
         if let Some(gamepad) = &mut self.gamepad {
@@ -64,11 +64,13 @@ impl App {
         if let Some(audio) = &mut self.audio {
             audio.queue_samples(
                 &result.audio_samples,
-                self.settings.audio.volume,
-                fast_forward,
-                self.settings.audio.mute_during_fast_forward,
-                self.settings.audio.low_pass_enabled,
-                self.settings.audio.low_pass_cutoff_hz,
+                &crate::audio::AudioQueueConfig {
+                    master_volume: self.settings.audio.volume,
+                    fast_forward_active: fast_forward,
+                    mute_during_fast_forward: self.settings.audio.mute_during_fast_forward,
+                    low_pass_enabled: self.settings.audio.low_pass_enabled,
+                    low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,
+                },
             );
         }
 
@@ -157,4 +159,3 @@ impl App {
         self.cached_ui_data = Some(ui_data);
     }
 }
-

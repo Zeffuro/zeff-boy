@@ -19,7 +19,7 @@ impl Nrom {
 }
 
 impl Mapper for Nrom {
-    fn cpu_read(&self, addr: u16) -> u8 {
+    fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
             0x8000..=0xFFFF => {
@@ -36,7 +36,7 @@ impl Mapper for Nrom {
         }
     }
 
-    fn chr_read(&self, addr: u16) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr.is_empty() {
             return 0;
         }

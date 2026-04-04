@@ -21,4 +21,3 @@ pub(super) fn draw(
     ui.checkbox(&mut debug_windows.layer_enable_window, "Window");
     ui.checkbox(&mut debug_windows.layer_enable_sprites, "Sprites");
 }
-

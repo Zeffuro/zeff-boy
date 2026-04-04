@@ -93,3 +93,27 @@ fn serialize_roundtrip_preserves_entries() {
     assert_eq!(parsed[1].rom_name, "NES Test.nes");
     assert_eq!(parsed[1].platform, LibretroPlatform::Nes);
 }
+
+#[test]
+fn lookup_cached_filters_by_platform() {
+    let entries = vec![RomMetadata {
+        crc32: 0xAABBCCDD,
+        title: "Some GB Game".to_string(),
+        rom_name: "Some GB Game.gb".to_string(),
+        platform: LibretroPlatform::Gb,
+    }];
+
+    let bytes = serialize_entries(&entries).unwrap();
+    let parsed = deserialize_entries(&bytes).unwrap();
+    let index = build_index(parsed);
+
+    let gb_hit = index.by_crc.get(&0xAABBCCDD);
+    assert!(gb_hit.is_some());
+    assert_eq!(gb_hit.unwrap().platform, LibretroPlatform::Gb);
+
+    let nes_hit = index
+        .by_crc
+        .get(&0xAABBCCDD)
+        .filter(|e| e.platform == LibretroPlatform::Nes);
+    assert!(nes_hit.is_none());
+}

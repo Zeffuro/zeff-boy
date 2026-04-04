@@ -4,7 +4,8 @@ use super::{
 };
 use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
 use crate::emu_thread::{
-    EmuCommand, FrameInput, MemorySearchRequest, ReusableBuffers, SnapshotRequest,
+    AudioConfig, EmuCommand, FrameInput, JoypadInput, MemorySearchRequest, RenderSettings,
+    ReusableBuffers, SnapshotRequest,
 };
 use crate::settings::GamepadAction;
 use std::time::Instant;
@@ -24,10 +25,14 @@ fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32,
 
 impl App {
     pub(super) fn update_debug_cache_edges(&mut self) {
-        if is_tab_open(&self.debug_dock, DebugTab::TileViewer) && !self.tile_viewer_was_open {
+        if is_tab_open(&self.debug_dock, DebugTab::TileViewer)
+            && !self.debug_windows.tile_viewer_was_open
+        {
             self.debug_windows.tiles.invalidate_cache();
         }
-        if is_tab_open(&self.debug_dock, DebugTab::TilemapViewer) && !self.tilemap_viewer_was_open {
+        if is_tab_open(&self.debug_dock, DebugTab::TilemapViewer)
+            && !self.debug_windows.tilemap_viewer_was_open
+        {
             self.debug_windows.tilemap.invalidate_cache();
         }
     }
@@ -64,19 +69,19 @@ impl App {
                 for (action, pressed) in poll.action_events {
                     match action {
                         GamepadAction::SpeedUp => {
-                            self.fast_forward_held = pressed;
+                            self.speed.fast_forward_held = pressed;
                         }
                         GamepadAction::Rewind => {
                             self.rewind.held = pressed;
                         }
                         GamepadAction::Pause => {
                             if pressed {
-                                self.paused = !self.paused;
-                                self.toast_manager.set_paused(self.paused);
+                                self.speed.paused = !self.speed.paused;
+                                self.toast_manager.set_paused(self.speed.paused);
                             }
                         }
                         GamepadAction::Turbo => {
-                            self.turbo_held = pressed;
+                            self.speed.turbo_held = pressed;
                         }
                     }
                 }
@@ -110,7 +115,6 @@ impl App {
             }
         }
     }
-
 
     pub(super) fn tick(&mut self) {
         self.sync_speed_setting();
@@ -157,7 +161,7 @@ impl App {
             self.rewind.pops = 0;
             if self.frames_in_flight < MAX_IN_FLIGHT {
                 let now = Instant::now();
-                let frames_to_step = if self.paused {
+                let frames_to_step = if self.speed.paused {
                     self.timing.last_frame_time = now;
                     if std::mem::take(&mut self.debug_requests.frame_advance) {
                         1
@@ -208,13 +212,13 @@ impl App {
                                 )
                             };
 
-                        if self.turbo_held {
-                            self.turbo_counter = self.turbo_counter.wrapping_add(1);
-                            if self.turbo_counter % 2 == 1 {
+                        if self.speed.turbo_held {
+                            self.speed.turbo_counter = self.speed.turbo_counter.wrapping_add(1);
+                            if self.speed.turbo_counter % 2 == 1 {
                                 buttons_pressed = 0;
                             }
                         } else {
-                            self.turbo_counter = 0;
+                            self.speed.turbo_counter = 0;
                         }
 
                         if let Some(recorder) = &mut self.recording.replay_recorder {
@@ -226,25 +230,29 @@ impl App {
                             frames: frames_to_step,
                             host_tilt,
                             host_camera_frame,
-                            buttons_pressed,
-                            dpad_pressed,
-                            buttons_pressed_p2: 0,
-                            dpad_pressed_p2: 0,
+                            joypad: JoypadInput {
+                                buttons: buttons_pressed,
+                                dpad: dpad_pressed,
+                                buttons_p2: 0,
+                                dpad_p2: 0,
+                            },
                             debug_step: std::mem::take(&mut self.debug_requests.step),
                             debug_continue: std::mem::take(&mut self.debug_requests.continue_),
-                            apu_capture_enabled: reqs.needs_apu,
-                            skip_audio: match self.speed_mode() {
-                                SpeedMode::Uncapped => true,
-                                SpeedMode::FastForward => {
-                                    self.settings.audio.mute_during_fast_forward
-                                }
-                                SpeedMode::Normal => false,
+                            audio: AudioConfig {
+                                apu_capture_enabled: reqs.needs_apu,
+                                skip_audio: match self.speed_mode() {
+                                    SpeedMode::Uncapped => true,
+                                    SpeedMode::FastForward => {
+                                        self.settings.audio.mute_during_fast_forward
+                                    }
+                                    SpeedMode::Normal => false,
+                                },
+                                midi_capture_active: self
+                                    .recording
+                                    .audio_recorder
+                                    .as_ref()
+                                    .is_some_and(|r| r.is_midi()),
                             },
-                            midi_capture_active: self
-                                .recording
-                                .audio_recorder
-                                .as_ref()
-                                .is_some_and(|r| r.is_midi()),
                             debug_actions: std::mem::replace(
                                 &mut self.pending_debug_actions,
                                 DebugUiActions::none(),
@@ -266,7 +274,7 @@ impl App {
                                 last_disasm_pc: self.debug_windows.last_disasm_pc,
                                 memory_search: if self.debug_windows.memory.search_pending {
                                     self.debug_windows.memory.search_pending = false;
-                                    debug::hex_viewer::parse_search_query(
+                                    debug::hex_search::parse_search_query(
                                         &self.debug_windows.memory.search_query,
                                         self.debug_windows.memory.search_mode,
                                     )
@@ -284,7 +292,7 @@ impl App {
                                 },
                                 rom_search: if self.debug_windows.rom_viewer.search_pending {
                                     self.debug_windows.rom_viewer.search_pending = false;
-                                    debug::hex_viewer::parse_search_query(
+                                    debug::hex_search::parse_search_query(
                                         &self.debug_windows.rom_viewer.search_query,
                                         self.debug_windows.rom_viewer.search_mode,
                                     )
@@ -300,14 +308,16 @@ impl App {
                                 } else {
                                     None
                                 },
-                                color_correction: self.settings.video.color_correction,
-                                color_correction_matrix: self
-                                    .settings
-                                    .video
-                                    .color_correction_matrix,
-                                dmg_palette_preset: self.settings.video.dmg_palette_preset,
-                                nes_palette_mode: self.settings.video.nes_palette_mode,
-                                sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
+                                render: RenderSettings {
+                                    color_correction: self.settings.video.color_correction,
+                                    color_correction_matrix: self
+                                        .settings
+                                        .video
+                                        .color_correction_matrix,
+                                    dmg_palette_preset: self.settings.video.dmg_palette_preset,
+                                    nes_palette_mode: self.settings.video.nes_palette_mode,
+                                    sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
+                                },
                             },
                             buffers: ReusableBuffers {
                                 framebuffer: self.recycled.framebuffer.take(),
@@ -388,7 +398,9 @@ impl App {
             return;
         }
 
-        self.tile_viewer_was_open = is_tab_open(&self.debug_dock, DebugTab::TileViewer);
-        self.tilemap_viewer_was_open = is_tab_open(&self.debug_dock, DebugTab::TilemapViewer);
+        self.debug_windows.tile_viewer_was_open =
+            is_tab_open(&self.debug_dock, DebugTab::TileViewer);
+        self.debug_windows.tilemap_viewer_was_open =
+            is_tab_open(&self.debug_dock, DebugTab::TilemapViewer);
     }
 }

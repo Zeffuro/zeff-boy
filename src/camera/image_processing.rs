@@ -224,4 +224,3 @@ pub(super) fn decode_compressed_to_grayscale_nearest(
         dst_h,
     ))
 }
-

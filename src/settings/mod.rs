@@ -10,16 +10,16 @@ mod tilt_bindings;
 pub(crate) use binding_actions::{BindingAction, InputBindingAction};
 pub(crate) use enums::{
     AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset, LeftStickMode,
-    NesPaletteMode, ScalingMode, TiltInputMode, UiThemePreset,
-    VsyncMode, build_gpu_params, default_color_correction_matrix, default_offscreen_scale,
+    NesPaletteMode, ScalingMode, TiltInputMode, UiThemePreset, VsyncMode, build_gpu_params,
+    default_color_correction_matrix, default_offscreen_scale,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
 pub(crate) use keyboard_bindings::KeyBindings;
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
-    AudioSettings, CameraSettings, EmulationSettings, RecentRomEntry, RewindSettings,
-    TiltSettings, UiSettings, VideoSettings,
+    AudioSettings, CameraSettings, EmulationSettings, RecentRomEntry, RewindSettings, TiltSettings,
+    UiSettings, VideoSettings,
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 
@@ -30,7 +30,6 @@ use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
 const MAX_RECENT_ROMS: usize = 10;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]

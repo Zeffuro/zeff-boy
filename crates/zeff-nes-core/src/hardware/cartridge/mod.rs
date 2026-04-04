@@ -13,14 +13,17 @@ const HEADER_SIZE: usize = 16;
 const TRAINER_SIZE: usize = 512;
 
 pub(crate) trait Mapper: Send {
-    fn cpu_read(&self, addr: u16) -> u8;
+    fn cpu_peek(&self, addr: u16) -> u8;
+    fn cpu_read(&mut self, addr: u16) -> u8 {
+        self.cpu_peek(addr)
+    }
     fn cpu_write(&mut self, addr: u16, val: u8);
-    fn chr_read(&self, addr: u16) -> u8;
-    fn chr_read_kind(&self, addr: u16, _kind: ChrFetchKind) -> u8 {
+    fn chr_read(&mut self, addr: u16) -> u8;
+    fn chr_read_kind(&mut self, addr: u16, _kind: ChrFetchKind) -> u8 {
         self.chr_read(addr)
     }
     fn chr_write(&mut self, addr: u16, val: u8);
-    fn ppu_nametable_read(&self, _addr: u16, _ciram: &[u8; 0x800]) -> Option<u8> {
+    fn ppu_nametable_read(&mut self, _addr: u16, _ciram: &[u8; 0x800]) -> Option<u8> {
         None
     }
     fn ppu_nametable_write(&mut self, _addr: u16, _val: u8, _ciram: &mut [u8; 0x800]) -> bool {
@@ -161,13 +164,13 @@ impl Cartridge {
     }
 
     #[inline]
-    pub fn cpu_read(&self, addr: u16) -> u8 {
+    pub fn cpu_read(&mut self, addr: u16) -> u8 {
         self.mapper.cpu_read(addr)
     }
 
     #[inline]
     pub fn cpu_peek(&self, addr: u16) -> u8 {
-        self.mapper.cpu_read(addr)
+        self.mapper.cpu_peek(addr)
     }
 
     #[inline]
@@ -176,12 +179,12 @@ impl Cartridge {
     }
 
     #[inline]
-    pub fn chr_read(&self, addr: u16) -> u8 {
+    pub fn chr_read(&mut self, addr: u16) -> u8 {
         self.mapper.chr_read(addr)
     }
 
     #[inline]
-    pub fn chr_read_with_kind(&self, addr: u16, kind: ChrFetchKind) -> u8 {
+    pub fn chr_read_with_kind(&mut self, addr: u16, kind: ChrFetchKind) -> u8 {
         self.mapper.chr_read_kind(addr, kind)
     }
 
@@ -189,7 +192,7 @@ impl Cartridge {
         self.mapper.chr_write(addr, val);
     }
 
-    pub fn ppu_nametable_read(&self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+    pub fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
         self.mapper.ppu_nametable_read(addr, ciram)
     }
 

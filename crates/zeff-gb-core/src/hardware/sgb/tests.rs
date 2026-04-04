@@ -15,7 +15,7 @@ fn feed_packet(state: &mut SgbState, packet: [u8; 16]) -> Option<SgbEvent> {
 fn decodes_pal01_packet() {
     let mut state = SgbState::new();
     let mut packet = [0u8; 16];
-    packet[0] = (0x00 << 3) | 0x01;
+    packet[0] = 0x01;
     packet[1] = 0xFF;
     packet[2] = 0x7F;
     packet[3] = 0x00;
@@ -105,10 +105,13 @@ fn multi_packet_continuation_consumed_not_misinterpreted() {
     attr_blk_1[0] = (0x04 << 3) | 0x02;
     attr_blk_1[1] = 0x01;
     let event = feed_packet(&mut state, attr_blk_1);
-    assert!(event.is_none(), "First ATTR_BLK packet should buffer, not fire event");
+    assert!(
+        event.is_none(),
+        "First ATTR_BLK packet should buffer, not fire event"
+    );
 
     let mut attr_blk_2 = [0u8; 16];
-    attr_blk_2[0] = (0x00 << 3) | 0x01;
+    attr_blk_2[0] = 0x01;
     let event = feed_packet(&mut state, attr_blk_2);
     assert!(
         matches!(event, Some(SgbEvent::AttrBlk(_))),
@@ -116,7 +119,7 @@ fn multi_packet_continuation_consumed_not_misinterpreted() {
     );
 
     let mut pal01 = [0u8; 16];
-    pal01[0] = (0x00 << 3) | 0x01;
+    pal01[0] = 0x01;
     pal01[1] = 0xFF;
     pal01[2] = 0x7F;
     let event = feed_packet(&mut state, pal01).expect("expected PAL01 event after ATTR_BLK");

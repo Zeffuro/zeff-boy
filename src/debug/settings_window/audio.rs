@@ -60,9 +60,11 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     enum_combo_box(ui, "Recording format", &mut settings.audio.recording_format);
     if !ogg_vorbis_supported() {
         ui.label(
-            egui::RichText::new("OGG Vorbis unavailable in this build (requires `audio-recording` feature).")
-                .small()
-                .weak(),
+            egui::RichText::new(
+                "OGG Vorbis unavailable in this build (requires `audio-recording` feature).",
+            )
+            .small()
+            .weak(),
         );
     }
     ui.label(
