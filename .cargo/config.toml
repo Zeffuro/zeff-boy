@@ -3,3 +3,5 @@ prof = "build --profile profiling"
 rp = "run --profile profiling"
 tw = "test --workspace"
 
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=-bulk-memory"]
