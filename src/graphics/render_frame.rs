@@ -44,6 +44,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) autohide_menu_bar: bool,
     pub(crate) cursor_y: Option<f32>,
     pub(crate) slot_labels: [String; 10],
+    pub(crate) active_save_slot: u8,
 }
 
 pub(crate) struct RenderResult {
@@ -106,6 +107,7 @@ impl Graphics {
                     is_playing_replay: ctx.is_playing_replay,
                     is_paused: ctx.is_paused,
                     slot_labels: &ctx.slot_labels,
+                    active_save_slot: ctx.active_save_slot,
                 },
                 ctx.dock_state,
                 ctx.settings,

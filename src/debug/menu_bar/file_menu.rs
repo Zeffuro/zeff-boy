@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub(super) struct FileMenuState<'a> {
     pub slot_labels: &'a [String; 10],
+    pub active_slot: u8,
     pub is_recording_audio: bool,
     pub is_recording_replay: bool,
     pub is_playing_replay: bool,
@@ -52,9 +53,21 @@ pub(super) fn draw(
     }
     ui.separator();
     ui.menu_button("Save State", |ui| {
-        ui.set_min_width(200.0);
+        ui.set_min_width(220.0);
         for slot in 0..=9u8 {
-            if ui.button(&state.slot_labels[slot as usize]).clicked() {
+            let is_active = slot == state.active_slot;
+            let label = if is_active {
+                format!("▶ {}", state.slot_labels[slot as usize])
+            } else {
+                format!("   {}", state.slot_labels[slot as usize])
+            };
+            let text = if is_active {
+                egui::RichText::new(label).strong()
+            } else {
+                egui::RichText::new(label)
+            };
+            let btn = egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend);
+            if ui.add(btn).clicked() {
                 actions.push(MenuAction::SaveStateSlot(slot));
                 ui.close();
             }
@@ -66,9 +79,21 @@ pub(super) fn draw(
         }
     });
     ui.menu_button("Load State", |ui| {
-        ui.set_min_width(200.0);
+        ui.set_min_width(220.0);
         for slot in 0..=9u8 {
-            if ui.button(&state.slot_labels[slot as usize]).clicked() {
+            let is_active = slot == state.active_slot;
+            let label = if is_active {
+                format!("▶ {}", state.slot_labels[slot as usize])
+            } else {
+                format!("   {}", state.slot_labels[slot as usize])
+            };
+            let text = if is_active {
+                egui::RichText::new(label).strong()
+            } else {
+                egui::RichText::new(label)
+            };
+            let btn = egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend);
+            if ui.add(btn).clicked() {
                 actions.push(MenuAction::LoadStateSlot(slot));
                 ui.close();
             }

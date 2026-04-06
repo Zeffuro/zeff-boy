@@ -7,7 +7,15 @@ pub(super) fn draw(
     settings: &mut Settings,
     is_paused: bool,
     speed_mode_label: Option<&str>,
+    active_save_slot: u8,
 ) {
+    ui.label(
+        egui::RichText::new(format!("Slot {active_save_slot}"))
+            .small()
+            .color(egui::Color32::LIGHT_GRAY),
+    );
+    ui.separator();
+
     let pause_icon = if is_paused { "▶" } else { "⏸" };
     let pause_tooltip = if is_paused {
         "Resume (F9)"

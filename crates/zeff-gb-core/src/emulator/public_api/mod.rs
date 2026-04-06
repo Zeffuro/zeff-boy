@@ -54,4 +54,12 @@ impl Emulator {
     pub fn rom_patches(&self) -> &[crate::cheats::CheatPatch] {
         &self.bus.game_genie_patches
     }
+
+    pub fn wram_snapshot(&self) -> &[u8] {
+        &self.bus.wram
+    }
+
+    pub fn vram_snapshot(&self) -> &[u8] {
+        &self.bus.vram
+    }
 }

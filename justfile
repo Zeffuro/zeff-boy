@@ -19,6 +19,19 @@ build:
 build-release:
     cargo build --release
 
+# Build the libretro core (cdylib)
+build-libretro:
+    cargo build --release -p zeff-libretro
+
+# Install the libretro core into RetroArch (Windows)
+# Usage: just install-libretro "C:\RetroArch-Win64"
+[windows]
+install-libretro retroarch_dir:
+    cargo build --release -p zeff-libretro
+    Copy-Item "target\release\zeff_libretro.dll" "{{retroarch_dir}}\cores\zeff_libretro.dll" -Force
+    Copy-Item "crates\zeff-libretro\zeff_libretro.info" "{{retroarch_dir}}\info\zeff_libretro.info" -Force
+    Write-Host "Installed zeff_libretro.dll and .info to {{retroarch_dir}}"
+
 # Build without optional features (no camera, no OGG recording)
 build-minimal:
     cargo build --no-default-features

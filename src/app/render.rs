@@ -54,6 +54,7 @@ impl App {
             autohide_menu_bar,
             cursor_y,
             slot_labels,
+            active_save_slot: self.active_save_slot,
         }) {
             Ok(result) => {
                 let mut settings_dirty = false;

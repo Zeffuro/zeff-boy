@@ -58,6 +58,7 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) is_playing_replay: bool,
     pub(crate) is_paused: bool,
     pub(crate) slot_labels: &'a [String; 10],
+    pub(crate) active_save_slot: u8,
 }
 
 pub(crate) fn draw_menu_bar(
@@ -86,6 +87,7 @@ pub(crate) fn draw_menu_bar(
                                 settings,
                                 &file_menu::FileMenuState {
                                     slot_labels: mb.slot_labels,
+                                    active_slot: mb.active_save_slot,
                                     is_recording_audio: mb.is_recording_audio,
                                     is_recording_replay: mb.is_recording_replay,
                                     is_playing_replay: mb.is_playing_replay,
@@ -128,6 +130,7 @@ pub(crate) fn draw_menu_bar(
                                 settings,
                                 mb.is_paused,
                                 mb.speed_mode_label,
+                                mb.active_save_slot,
                             );
                         });
                     });

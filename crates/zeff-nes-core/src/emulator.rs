@@ -273,6 +273,18 @@ impl Emulator {
     pub fn ppu_tall_sprites(&self) -> bool {
         self.bus.ppu.regs.tall_sprites()
     }
+
+    pub fn system_ram(&self) -> &[u8] {
+        &self.bus.ram
+    }
+
+    pub fn chr_ram_snapshot(&mut self) -> Vec<u8> {
+        let mut buf = vec![0u8; 0x2000];
+        for addr in 0..0x2000u16 {
+            buf[addr as usize] = self.bus.cartridge.chr_read(addr);
+        }
+        buf
+    }
 }
 
 impl fmt::Debug for Emulator {
