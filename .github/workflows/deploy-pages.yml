@@ -29,7 +29,7 @@ jobs:
         run: cargo install trunk --locked
 
       - name: Build
-        run: trunk build --release --no-minification
+        run: trunk build --release -- --no-minification
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
