@@ -26,10 +26,10 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install Trunk
-        uses: jetli/trunk-action@v0.5.0
+        run: cargo install trunk --locked
 
       - name: Build
-        run: trunk build --release --no-default-features
+        run: trunk build --release
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
