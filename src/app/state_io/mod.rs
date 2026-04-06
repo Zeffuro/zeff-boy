@@ -1,5 +1,6 @@
 use super::App;
 mod archive_and_slots;
+#[cfg(not(target_arch = "wasm32"))]
 mod audio_recording;
 mod replay;
 mod rom_loading;
@@ -9,7 +10,10 @@ mod screenshots;
 pub(super) use archive_and_slots::build_slot_labels;
 pub(crate) use archive_and_slots::extract_rom_from_zip;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 impl App {
     fn pause_for_dialog(&mut self) -> bool {

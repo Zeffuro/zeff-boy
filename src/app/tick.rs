@@ -8,7 +8,10 @@ use crate::emu_thread::{
     ReusableBuffers, SnapshotRequest,
 };
 use crate::settings::GamepadAction;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {
     const GB_FRAME_LEN: usize = 160 * 144 * 4;
@@ -247,11 +250,12 @@ impl App {
                                     }
                                     SpeedMode::Normal => false,
                                 },
-                                midi_capture_active: self
-                                    .recording
-                                    .audio_recorder
-                                    .as_ref()
-                                    .is_some_and(|r| r.is_midi()),
+                                midi_capture_active: {
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    { self.recording.audio_recorder.as_ref().is_some_and(|r| r.is_midi()) }
+                                    #[cfg(target_arch = "wasm32")]
+                                    { false }
+                                },
                             },
                             debug_actions: std::mem::replace(
                                 &mut self.pending_debug_actions,

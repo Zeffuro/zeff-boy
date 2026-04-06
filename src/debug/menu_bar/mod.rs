@@ -109,15 +109,23 @@ pub(crate) fn draw_menu_bar(
 
                         ui.menu_button("Help", |ui| {
                             if ui.button("GitHub Repository").clicked() {
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Err(e) = open::that("https://github.com/zeffuro/zeff-boy") {
                                     log::warn!("failed to open browser: {e}");
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    let _ = web_sys::window().and_then(|w| w.open_with_url("https://github.com/zeffuro/zeff-boy").ok());
                                 }
                                 ui.close();
                             }
                             if ui.button("Open Settings Folder").clicked() {
-                                let dir = Settings::settings_dir();
-                                if let Err(e) = open::that(&dir) {
-                                    log::warn!("failed to open folder {}: {e}", dir.display());
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    let dir = Settings::settings_dir();
+                                    if let Err(e) = open::that(&dir) {
+                                        log::warn!("failed to open folder {}: {e}", dir.display());
+                                    }
                                 }
                                 ui.close();
                             }

@@ -1,7 +1,9 @@
 use super::App;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 impl App {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn take_screenshot(&mut self) {
         let (native_w, native_h) = self.active_system.screen_size();
         let expected_len = (native_w * native_h * 4) as usize;
@@ -49,6 +51,12 @@ impl App {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn take_screenshot(&mut self) {
+        self.toast_manager.info("Screenshots not available on web");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn screenshots_dir() -> PathBuf {
         if let Some(config_dir) = dirs::config_dir() {
             return config_dir.join("zeff-boy").join("screenshots");

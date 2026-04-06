@@ -1,12 +1,19 @@
+#[cfg(not(target_arch = "wasm32"))]
 mod cheats;
+#[cfg(not(target_arch = "wasm32"))]
 mod debug_actions;
+#[cfg(not(target_arch = "wasm32"))]
 mod emu_loop;
+#[cfg(not(target_arch = "wasm32"))]
 mod runner;
+#[cfg(not(target_arch = "wasm32"))]
 mod state;
 mod types;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread::{self, JoinHandle};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crossbeam_channel::{self as chan, Receiver, Sender};
 
 use crate::emu_backend::EmuBackend;
@@ -18,9 +25,12 @@ pub(crate) use types::{
 
 const DEFAULT_REWIND_SECONDS: usize = 10;
 const REWIND_SNAPSHOTS_PER_SECOND: usize = 4;
+#[cfg(not(target_arch = "wasm32"))]
 const FRAME_CHANNEL_CAPACITY: usize = 1;
+#[cfg(not(target_arch = "wasm32"))]
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct EmuThread {
     cmd_tx: Sender<EmuCommand>,
     frame_rx: Receiver<FrameResult>,
@@ -29,6 +39,7 @@ pub(crate) struct EmuThread {
     shared_framebuffer: SharedFramebuffer,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
         let (cmd_tx, cmd_rx) = chan::unbounded();
@@ -108,8 +119,53 @@ impl EmuThread {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for EmuThread {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct EmuThread {
+    pending_frames: Vec<FrameResult>,
+    pending_responses: Vec<EmuResponse>,
+    shared_framebuffer: SharedFramebuffer,
+    backend: Option<EmuBackend>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl EmuThread {
+    pub(crate) fn spawn(backend: EmuBackend) -> Self {
+        Self {
+            pending_frames: Vec::new(),
+            pending_responses: Vec::new(),
+            shared_framebuffer: types::new_shared_framebuffer(),
+            backend: Some(backend),
+        }
+    }
+
+    pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
+        &self.shared_framebuffer
+    }
+
+    pub(crate) fn send(&self, _cmd: EmuCommand) {
+        log::debug!("WASM EmuThread: command ignored (stub)");
+    }
+
+    pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
+        None
+    }
+
+    pub(crate) fn recv(&self) -> Option<EmuResponse> {
+        None
+    }
+
+    pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
+        None
+    }
+
+    pub(crate) fn shutdown(&mut self) {
+        self.backend = None;
     }
 }

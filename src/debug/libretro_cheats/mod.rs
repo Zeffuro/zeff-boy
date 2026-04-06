@@ -3,13 +3,18 @@ use std::path::{Path, PathBuf};
 
 use crate::libretro_common::LibretroPlatform;
 
+#[cfg(not(target_arch = "wasm32"))]
 const GITHUB_CHT_DIR_URL: &str =
     "https://api.github.com/repos/libretro/libretro-database/contents/cht";
+#[cfg(not(target_arch = "wasm32"))]
 const GITHUB_TREES_URL: &str = "https://api.github.com/repos/libretro/libretro-database/git/trees/";
+#[cfg(not(target_arch = "wasm32"))]
 const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/cht/";
+#[cfg(not(target_arch = "wasm32"))]
 const CACHE_TTL_SECS: u64 = 86400;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn fetch_cheat_list(
     platform: LibretroPlatform,
     cache_dir: &Path,
@@ -48,6 +53,7 @@ pub(super) fn fetch_cheat_list(
     Ok(names)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fetch_cheat_list_via_trees(platform: LibretroPlatform) -> anyhow::Result<Vec<String>> {
     log::info!(
         "Fetching libretro cheat index via Git Trees API for {}",
@@ -73,6 +79,7 @@ fn fetch_cheat_list_via_trees(platform: LibretroPlatform) -> anyhow::Result<Vec<
     Ok(names)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn download_cht_content(
     filename: &str,
     platform: LibretroPlatform,
@@ -235,6 +242,7 @@ fn urlencoded(s: &str) -> String {
     s.replace(' ', "%20")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_dir_entry_sha(json_body: &str, dir_name: &str) -> anyhow::Result<String> {
     let target = format!(r#""name":"{dir_name}""#);
     let Some(pos) = json_body.find(&target) else {
@@ -253,6 +261,7 @@ fn parse_dir_entry_sha(json_body: &str, dir_name: &str) -> anyhow::Result<String
     Ok(sha_rest[..sha_end].to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_tree_blob_names(json_body: &str) -> Vec<String> {
     let mut names = Vec::new();
     for segment in json_body.split(r#""path":""#).skip(1) {

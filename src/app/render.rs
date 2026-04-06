@@ -14,7 +14,12 @@ impl App {
             .and_then(|d| d.perf_info.as_ref())
             .map(|info| info.speed_mode_label.as_str());
 
-        let is_recording = self.recording.audio_recorder.is_some();
+        let is_recording = {
+            #[cfg(not(target_arch = "wasm32"))]
+            { self.recording.audio_recorder.is_some() }
+            #[cfg(target_arch = "wasm32")]
+            { false }
+        };
         let is_recording_replay = self.recording.replay_recorder.is_some();
         let is_playing_replay = self.recording.replay_player.is_some();
         let is_rewinding = self.rewind.held && self.settings.rewind.enabled;
@@ -80,8 +85,14 @@ impl App {
                                 mult.clamp(1, 16) as usize;
                             settings_dirty = true;
                         }
-                        MenuAction::StartAudioRecording => self.start_audio_recording(),
-                        MenuAction::StopAudioRecording => self.stop_audio_recording(),
+                        MenuAction::StartAudioRecording => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.start_audio_recording();
+                        }
+                        MenuAction::StopAudioRecording => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.stop_audio_recording();
+                        }
                         MenuAction::StartReplayRecording => self.start_replay_recording(),
                         MenuAction::StopReplayRecording => self.stop_replay_recording(),
                         MenuAction::LoadReplay => self.load_and_play_replay(),

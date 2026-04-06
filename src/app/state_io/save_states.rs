@@ -57,17 +57,25 @@ impl App {
     }
 
     pub(in crate::app) fn default_save_state_dir(system: ActiveSystem) -> PathBuf {
-        if let Some(config_dir) = dirs::config_dir() {
-            return config_dir
-                .join("zeff-boy")
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(config_dir) = dirs::config_dir() {
+                return config_dir
+                    .join("zeff-boy")
+                    .join("saves")
+                    .join(system.storage_subdir());
+            }
+
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
                 .join("saves")
-                .join(system.storage_subdir());
+                .join(system.storage_subdir())
         }
 
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("saves")
-            .join(system.storage_subdir())
+        #[cfg(target_arch = "wasm32")]
+        {
+            PathBuf::from(system.storage_subdir())
+        }
     }
 
     pub(in crate::app) fn default_state_file_name(&self) -> String {
@@ -94,6 +102,7 @@ impl App {
         Self::default_save_state_dir(self.active_system)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn save_state_file_dialog(&mut self) {
         if self.emu_thread.is_none() {
             return;
@@ -130,6 +139,7 @@ impl App {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn load_state_file_dialog(&mut self) {
         if self.emu_thread.is_none() {
             return;
@@ -172,5 +182,15 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn save_state_file_dialog(&mut self) {
+        self.toast_manager.info("File save dialog not available on web");
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn load_state_file_dialog(&mut self) {
+        self.toast_manager.info("File load dialog not available on web");
     }
 }

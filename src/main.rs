@@ -1,9 +1,18 @@
 mod app;
 mod audio;
+#[cfg(not(target_arch = "wasm32"))]
+mod audio_recorder;
+#[cfg(target_arch = "wasm32")]
+#[path = "stubs/audio_recorder.rs"]
 mod audio_recorder;
 mod bps;
+#[cfg(not(target_arch = "wasm32"))]
+mod camera;
+#[cfg(target_arch = "wasm32")]
+#[path = "stubs/camera.rs"]
 mod camera;
 mod cheats;
+#[cfg(not(target_arch = "wasm32"))]
 mod cli;
 mod debug;
 mod emu_backend;
@@ -12,20 +21,38 @@ mod emu_thread;
 mod graphics;
 mod input;
 mod ips;
+#[cfg(not(target_arch = "wasm32"))]
 mod libretro_common;
+#[cfg(target_arch = "wasm32")]
+#[path = "stubs/libretro_common.rs"]
+mod libretro_common;
+#[cfg(not(target_arch = "wasm32"))]
 mod libretro_metadata;
+#[cfg(target_arch = "wasm32")]
+#[path = "stubs/libretro_metadata.rs"]
+mod libretro_metadata;
+#[cfg(not(target_arch = "wasm32"))]
+mod mods;
+#[cfg(target_arch = "wasm32")]
+#[path = "stubs/mods.rs"]
 mod mods;
 mod save_paths;
 mod settings;
 mod ui;
 mod ups;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::emu_backend::{ActiveSystem, EmuBackend};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::settings::Settings;
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::Context;
+#[cfg(not(target_arch = "wasm32"))]
 use env_logger::Env;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
@@ -55,6 +82,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn log_sram_result(result: anyhow::Result<Option<String>>) {
     match result {
         Ok(Some(path)) => log::info!("Loaded battery save from {path}"),
@@ -63,6 +91,7 @@ fn log_sram_result(result: anyhow::Result<Option<String>>) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<EmuBackend> {
     let path = Path::new(rom_path_arg);
 
@@ -118,4 +147,14 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             Ok(EmuBackend::from_nes(emu, rom_path))
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(log::Level::Info);
+    log::info!("zeff-boy WASM starting");
+
+    let settings = settings::Settings::default();
+    app::run(None, settings).expect("app::run failed");
 }

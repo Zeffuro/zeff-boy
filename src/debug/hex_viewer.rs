@@ -135,23 +135,25 @@ pub(super) fn draw_tbl_section(
         } else {
             ui.label("No TBL file loaded (using ASCII)");
         }
-        if ui.button("Load TBL File...").clicked()
-            && let Some(path) = rfd::FileDialog::new()
+        if ui.button("Load TBL File...").clicked() {
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(path) = rfd::FileDialog::new()
                 .add_filter("TBL files", &["tbl", "txt"])
                 .pick_file()
-        {
-            match super::common::load_tbl_file(&path) {
-                Ok(map) => {
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("?")
-                        .to_string();
-                    *tbl_map = map;
-                    *tbl_path = Some(name);
-                }
-                Err(e) => {
-                    log::warn!("Failed to load TBL file: {}", e);
+            {
+                match super::common::load_tbl_file(&path) {
+                    Ok(map) => {
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("?")
+                            .to_string();
+                        *tbl_map = map;
+                        *tbl_path = Some(name);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load TBL file: {}", e);
+                    }
                 }
             }
         }

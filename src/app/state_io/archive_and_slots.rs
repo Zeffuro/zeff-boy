@@ -89,13 +89,13 @@ pub(crate) fn build_slot_labels(rom_hash: Option<[u8; 32]>, system: ActiveSystem
 
         match std::fs::metadata(&path) {
             Ok(meta) => {
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Ok(modified) = meta.modified() {
                     let dt: chrono::DateTime<chrono::Local> = modified.into();
                     let stamp = dt.format("%b %d %H:%M");
-                    format!("Slot {slot}  ({stamp})")
-                } else {
-                    format!("Slot {slot}")
+                    return format!("Slot {slot}  ({stamp})");
                 }
+                format!("Slot {slot}")
             }
             Err(_) => format!("Slot {slot}  (empty)"),
         }

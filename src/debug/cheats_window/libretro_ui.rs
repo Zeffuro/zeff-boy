@@ -78,6 +78,7 @@ pub(super) fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
     state.libretro_show = response.openness > 0.0;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn poll_async_results(state: &mut CheatState) {
     let Some(rx) = state.libretro_rx.take() else {
         return;
@@ -145,6 +146,10 @@ fn poll_async_results(state: &mut CheatState) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn poll_async_results(_state: &mut CheatState) {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn spawn_async(state: &mut CheatState) -> crossbeam_channel::Sender<LibretroAsyncResult> {
     let (tx, rx) = crossbeam_channel::unbounded();
     state.libretro_rx = Some(rx);
@@ -188,8 +193,13 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             .clicked()
         {
             let url = libretro_cheats::browse_url(state.libretro_platform);
+            #[cfg(not(target_arch = "wasm32"))]
             if let Err(e) = open::that(url) {
                 log::warn!("failed to open browser: {e}");
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = web_sys::window().map(|w| { let _ = w.open_with_url(&url); });
             }
         }
         let can_refresh = !state.libretro_busy;
@@ -200,12 +210,19 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             )
             .clicked()
         {
-            state.libretro_status = Some("Refreshing metadata...".to_string());
-            let tx = spawn_async(state);
-            std::thread::spawn(move || {
-                let result = crate::libretro_metadata::refresh_cache_from_libretro();
-                let _ = tx.send(LibretroAsyncResult::MetadataRefreshed(result));
-            });
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                state.libretro_status = Some("Refreshing metadata...".to_string());
+                let tx = spawn_async(state);
+                std::thread::spawn(move || {
+                    let result = crate::libretro_metadata::refresh_cache_from_libretro();
+                    let _ = tx.send(LibretroAsyncResult::MetadataRefreshed(result));
+                });
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                state.libretro_status = Some("Not available on web".to_string());
+            }
         }
         let can_guess = !state.libretro_busy;
         if ui
@@ -261,9 +278,15 @@ fn draw_attribution(ui: &mut egui::Ui) {
         if ui
             .link(egui::RichText::new("libretro-database").small())
             .clicked()
-            && let Err(e) = open::that("https://github.com/libretro/libretro-database")
         {
-            log::warn!("failed to open browser: {e}");
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Err(e) = open::that("https://github.com/libretro/libretro-database") {
+                log::warn!("failed to open browser: {e}");
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = web_sys::window().and_then(|w| w.open_with_url("https://github.com/libretro/libretro-database").ok());
+            }
         }
         ui.label(
             egui::RichText::new(" · CC-BY-SA-4.0")
@@ -280,10 +303,15 @@ fn draw_attribution(ui: &mut egui::Ui) {
         if ui
             .link(egui::RichText::new("contributing to libretro-database").small())
             .clicked()
-            && let Err(e) =
-                open::that("https://github.com/libretro/libretro-database/tree/master/cht")
         {
-            log::warn!("failed to open browser: {e}");
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Err(e) = open::that("https://github.com/libretro/libretro-database/tree/master/cht") {
+                log::warn!("failed to open browser: {e}");
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = web_sys::window().and_then(|w| w.open_with_url("https://github.com/libretro/libretro-database/tree/master/cht").ok());
+            }
         }
         ui.label(
             egui::RichText::new("!")
@@ -311,12 +339,19 @@ fn do_libretro_search(state: &mut CheatState) {
 
     state.libretro_status = Some("Fetching file list from GitHub...".to_string());
     let platform = state.libretro_platform;
-    let tx = spawn_async(state);
-    std::thread::spawn(move || {
-        let cache_dir = libretro_cheats::libretro_cache_dir();
-        let result = libretro_cheats::fetch_cheat_list(platform, &cache_dir);
-        let _ = tx.send(LibretroAsyncResult::FileList(result));
-    });
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let tx = spawn_async(state);
+        std::thread::spawn(move || {
+            let cache_dir = libretro_cheats::libretro_cache_dir();
+            let result = libretro_cheats::fetch_cheat_list(platform, &cache_dir);
+            let _ = tx.send(LibretroAsyncResult::FileList(result));
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        state.libretro_status = Some("Not available on web".to_string());
+    }
 }
 
 fn run_local_search(state: &mut CheatState) {
@@ -341,13 +376,20 @@ fn do_libretro_download(state: &mut CheatState, filename: &str) {
     state.libretro_status = Some(format!("Downloading {}...", filename));
     let platform = state.libretro_platform;
     let filename_owned = filename.to_string();
-    let tx = spawn_async(state);
-    std::thread::spawn(move || {
-        let cache_dir = libretro_cheats::libretro_cache_dir();
-        let result = libretro_cheats::download_cht_content(&filename_owned, platform, &cache_dir);
-        let _ = tx.send(LibretroAsyncResult::Downloaded {
-            filename: filename_owned,
-            result,
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let tx = spawn_async(state);
+        std::thread::spawn(move || {
+            let cache_dir = libretro_cheats::libretro_cache_dir();
+            let result = libretro_cheats::download_cht_content(&filename_owned, platform, &cache_dir);
+            let _ = tx.send(LibretroAsyncResult::Downloaded {
+                filename: filename_owned,
+                result,
+            });
         });
-    });
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        state.libretro_status = Some("Not available on web".to_string());
+    }
 }

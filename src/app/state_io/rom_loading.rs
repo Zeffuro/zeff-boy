@@ -4,9 +4,13 @@ use crate::emu_backend::{ActiveSystem, EmuBackend};
 use crate::emu_thread::{EmuCommand, EmuResponse, EmuThread};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 use zeff_gb_core::emulator::Emulator;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
     let crc = crc32fast::hash(rom_data);
     let dir = crate::mods::mods_dir_for_rom(system, crc);
@@ -23,6 +27,11 @@ fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
         );
     }
     crc
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_mods_if_any(_system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
+    crc32fast::hash(rom_data)
 }
 
 fn detect_and_extract_rom(path: &Path) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
@@ -139,6 +148,7 @@ impl App {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn setup_cheats_for_rom(&mut self, system: ActiveSystem, path: &Path, backend: &EmuBackend) {
         if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
             crate::cheats::save_game_cheats(
@@ -239,6 +249,7 @@ impl App {
         self.debug_windows.cheat.cheats_dirty = true;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn setup_mods_for_rom(&mut self, system: ActiveSystem, original_crc: u32) {
         let dir = crate::mods::mods_dir_for_rom(system, original_crc);
         let entries = crate::mods::load_mod_config(&dir);
@@ -295,7 +306,9 @@ impl App {
             gfx.set_native_size(native_w, native_h);
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         self.setup_cheats_for_rom(system, path, &backend);
+        #[cfg(not(target_arch = "wasm32"))]
         self.setup_mods_for_rom(system, original_crc);
 
         self.emu_thread = Some(EmuThread::spawn(backend));
@@ -407,6 +420,7 @@ impl App {
         self.toast_manager.success("Stopped emulation");
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn open_file_dialog(&mut self) {
         let was_paused = self.pause_for_dialog();
         let file = rfd::FileDialog::new()
@@ -422,6 +436,11 @@ impl App {
         if let Some(path) = file {
             self.load_rom(&path);
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn open_file_dialog(&mut self) {
+        self.toast_manager.info("Drop a ROM file onto the window to load it");
     }
 
     pub(in crate::app) fn handle_dropped_file(&mut self, path: PathBuf) {

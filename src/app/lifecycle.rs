@@ -6,6 +6,10 @@ use crate::{
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Fullscreen;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 impl App {
     pub(super) fn reset_audio_output(&mut self) {
@@ -47,8 +51,14 @@ impl App {
             thread.send(EmuCommand::SetSampleRate(audio.sample_rate()));
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         let gfx = pollster::block_on(Graphics::new(event_loop, self.settings.video.vsync_mode))
             .expect("failed to initialize graphics");
+
+        #[cfg(target_arch = "wasm32")]
+        let gfx = pollster_lite_block(Graphics::new(event_loop, self.settings.video.vsync_mode))
+            .expect("failed to initialize graphics");
+
         let size = gfx.window().inner_size();
         self.window_size = (size.width as f32, size.height as f32);
         self.window_id = Some(gfx.window().id());
@@ -62,6 +72,18 @@ impl App {
             let scale_factor = gfx.window().scale_factor();
             self.settings
                 .auto_detect_ui_scale(monitor_height, scale_factor);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::WindowExtWebSys;
+            if let Some(canvas) = gfx.window().canvas() {
+                let window = web_sys::window().unwrap();
+                let document = window.document().unwrap();
+                let body = document.body().unwrap();
+                let _ = body.append_child(&canvas);
+                canvas.set_attribute("style", "width:100%;height:100%").ok();
+            }
         }
 
         self.gfx = Some(gfx);
@@ -87,13 +109,13 @@ impl App {
         match self.speed_mode() {
             SpeedMode::Normal => {
                 let effective = self.effective_frame_duration();
-                let now = std::time::Instant::now();
+                let now = Instant::now();
                 let next_frame_time = self.timing.last_frame_time + effective;
                 if now >= next_frame_time {
                     event_loop.set_control_flow(ControlFlow::Poll);
                     gfx.window().request_redraw();
                 } else {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time.into()));
                 }
             }
             SpeedMode::FastForward | SpeedMode::Uncapped => {
@@ -101,5 +123,20 @@ impl App {
                 gfx.window().request_redraw();
             }
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn pollster_lite_block<F: std::future::Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, Wake, Waker};
+    use std::pin::pin;
+    struct NoopWake;
+    impl Wake for NoopWake { fn wake(self: std::sync::Arc<Self>) {} }
+    let waker = Waker::from(std::sync::Arc::new(NoopWake));
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = pin!(fut);
+    match fut.as_mut().poll(&mut cx) {
+        Poll::Ready(val) => val,
+        Poll::Pending => panic!("GPU init returned Pending on WASM"),
     }
 }

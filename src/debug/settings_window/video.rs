@@ -91,12 +91,14 @@ pub(super) fn draw(
                 ui.monospace(&settings.video.custom_shader_path);
             }
             ui.horizontal(|ui| {
-                if ui.button("Load .wgsl...").clicked()
-                    && let Some(path) = rfd::FileDialog::new()
+                if ui.button("Load .wgsl...").clicked() {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(path) = rfd::FileDialog::new()
                         .add_filter("WGSL", &["wgsl"])
                         .pick_file()
-                {
-                    settings.video.custom_shader_path = path.to_string_lossy().to_string();
+                    {
+                        settings.video.custom_shader_path = path.to_string_lossy().to_string();
+                    }
                 }
                 if ui.button("Clear").clicked() {
                     settings.video.custom_shader_path.clear();

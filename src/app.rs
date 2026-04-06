@@ -1,7 +1,11 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -23,7 +27,33 @@ use crate::{
     ui,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
+#[cfg(target_arch = "wasm32")]
+pub(super) use camera_stub::{CameraCapture, CameraHostSettings};
+
+#[cfg(target_arch = "wasm32")]
+mod camera_stub {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub(crate) struct CameraHostSettings {
+        pub(crate) device_index: u32,
+        pub(crate) auto_levels: bool,
+        pub(crate) gamma: f32,
+        pub(crate) brightness: f32,
+        pub(crate) contrast: f32,
+    }
+    impl Default for CameraHostSettings {
+        fn default() -> Self {
+            Self { device_index: 0, auto_levels: false, gamma: 1.0, brightness: 0.0, contrast: 1.0 }
+        }
+    }
+    pub(crate) struct CameraCapture;
+    impl CameraCapture {
+        pub(crate) fn start(_settings: CameraHostSettings) -> Self { Self }
+        pub(crate) fn update_settings(&self, _settings: CameraHostSettings) {}
+        pub(crate) fn latest_frame(&self) -> Vec<u8> { vec![128u8; 128 * 112] }
+    }
+}
 
 mod bindings;
 mod camera_host;
@@ -123,6 +153,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         shutdown_performed: false,
         toast_manager: ToastManager::new(),
         recording: RecordingState {
+            #[cfg(not(target_arch = "wasm32"))]
             audio_recorder: None,
             replay_recorder: None,
             replay_player: None,
@@ -170,6 +201,7 @@ struct RewindState {
 }
 
 struct RecordingState {
+    #[cfg(not(target_arch = "wasm32"))]
     audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
     replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
     replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,

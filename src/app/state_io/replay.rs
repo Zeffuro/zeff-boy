@@ -1,7 +1,9 @@
 use super::App;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::emu_thread::{EmuCommand, EmuResponse};
 
 impl App {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn start_replay_recording(&mut self) {
         if self.emu_thread.is_none() {
             return;
@@ -47,6 +49,7 @@ impl App {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn stop_replay_recording(&mut self) {
         if let Some(recorder) = self.recording.replay_recorder.take() {
             self.toast_manager.set_replay_recording(false);
@@ -71,6 +74,7 @@ impl App {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn load_and_play_replay(&mut self) {
         if self.emu_thread.is_none() {
             return;
@@ -121,4 +125,13 @@ impl App {
             }
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn start_replay_recording(&mut self) {}
+
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn stop_replay_recording(&mut self) {}
+
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn load_and_play_replay(&mut self) {}
 }

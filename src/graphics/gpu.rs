@@ -34,7 +34,10 @@ impl GpuContext {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("zeff-boy device"),
                 required_features: wgpu::Features::empty(),
+                #[cfg(not(target_arch = "wasm32"))]
                 required_limits: wgpu::Limits::default(),
+                #[cfg(target_arch = "wasm32")]
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
                 memory_hints: Default::default(),
                 experimental_features: Default::default(),
                 trace: wgpu::Trace::Off,
@@ -75,6 +78,7 @@ impl GpuContext {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width;
         self.config.height = height;
+        #[cfg(not(target_arch = "wasm32"))]
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,

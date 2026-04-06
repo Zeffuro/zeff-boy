@@ -1,11 +1,20 @@
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::Context;
+#[cfg(not(target_arch = "wasm32"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(not(target_arch = "wasm32"))]
 use cpal::{SampleFormat, StreamConfig, SupportedStreamConfig};
 
+#[cfg(not(target_arch = "wasm32"))]
 mod resampler;
-use resampler::AudioResampler;
+
+#[cfg(target_arch = "wasm32")]
+mod web;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use web::AudioOutput;
 
 const NORMAL_QUEUE_MS: usize = 200;
+#[cfg(not(target_arch = "wasm32"))]
 const FAST_FORWARD_QUEUE_MS: usize = 40;
 const STEREO_MIX_FACTOR: f32 = 0.5;
 const AUDIO_LOW_PASS_MIN_CUTOFF_HZ: u32 = 20;
@@ -19,10 +28,12 @@ pub(crate) struct AudioQueueConfig {
     pub low_pass_cutoff_hz: u32,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn ring_buffer_capacity(sample_rate: u32) -> usize {
     sample_rate as usize * 2 * NORMAL_QUEUE_MS / 1000
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sample_format_rank(format: SampleFormat) -> u8 {
     match format {
         SampleFormat::F32 => 0,
@@ -33,21 +44,24 @@ fn sample_format_rank(format: SampleFormat) -> u8 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn same_config(a: &SupportedStreamConfig, b: &SupportedStreamConfig) -> bool {
     a.sample_rate() == b.sample_rate()
         && a.channels() == b.channels()
         && a.sample_format() == b.sample_format()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct AudioOutput {
     _stream: cpal::Stream,
     producer: rtrb::Producer<f32>,
     sample_rate: u32,
     capacity: usize,
     low_pass_filter: OnePoleLowPass,
-    resampler: Option<AudioResampler>,
+    resampler: Option<resampler::AudioResampler>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct OnePoleLowPass {
     left: f32,
@@ -55,6 +69,7 @@ struct OnePoleLowPass {
     initialized: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl OnePoleLowPass {
     fn reset(&mut self) {
         self.initialized = false;
@@ -78,6 +93,7 @@ impl OnePoleLowPass {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn low_pass_alpha(sample_rate: u32, cutoff_hz: u32) -> f32 {
     let clamped_cutoff =
         cutoff_hz.clamp(AUDIO_LOW_PASS_MIN_CUTOFF_HZ, AUDIO_LOW_PASS_MAX_CUTOFF_HZ);
@@ -86,6 +102,7 @@ fn low_pass_alpha(sample_rate: u32, cutoff_hz: u32) -> f32 {
     (dt / (rc + dt)).clamp(0.0, 1.0)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AudioOutput {
     pub(crate) fn new(preferred_sample_rate: Option<u32>) -> anyhow::Result<Self> {
         let host = cpal::default_host();
@@ -116,7 +133,7 @@ impl AudioOutput {
                         );
                     }
 
-                    let resampler = AudioResampler::new(sample_rate, sample_rate)
+                    let resampler = resampler::AudioResampler::new(sample_rate, sample_rate)
                         .map_err(|e| {
                             log::warn!("Audio resampler init failed: {e}; using passthrough")
                         })
@@ -343,6 +360,7 @@ impl AudioOutput {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fill_output_f32(data: &mut [f32], channels: u16, consumer: &mut rtrb::Consumer<f32>) {
     if channels < 2 {
         let available = consumer.slots().min(data.len());

@@ -152,6 +152,24 @@ clean:
 # Clean and rebuild in profiling mode
 clean-profile: clean build-profile
 
+# ──────────────────────────── WASM / Web ─────────────────────────────
+
+# Check WASM target compiles
+check-wasm:
+    cargo check --target wasm32-unknown-unknown --no-default-features
+
+# Build WASM via Trunk (debug)
+build-wasm:
+    trunk build
+
+# Build WASM via Trunk (release, optimized)
+build-wasm-release:
+    trunk build --release
+
+# Serve WASM locally with hot-reload (open http://localhost:8080)
+serve-wasm:
+    trunk serve
+
 # ──────────────────────────── Documentation ──────────────────────────
 
 # Generate documentation

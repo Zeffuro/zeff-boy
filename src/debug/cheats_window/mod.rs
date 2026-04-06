@@ -99,51 +99,58 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
 
 fn draw_import_export(ui: &mut egui::Ui, state: &mut CheatState, changed: &mut bool) {
     ui.horizontal(|ui| {
-        if ui
-            .button("📂 Import .cht")
-            .on_hover_text("Import cheats from a .cht file into user cheats")
-            .clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("Cheat files", &["cht", "txt"])
-                .pick_file()
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    let imported = parse_cht_file_for_system(&content, state.active_system);
-                    let count = imported.len();
-                    state.user_codes.extend(imported);
-                    state.parse_error = None;
-                    *changed = true;
-                    log::info!("Imported {} cheats from {}", count, path.display());
+            if ui
+                .button("📂 Import .cht")
+                .on_hover_text("Import cheats from a .cht file into user cheats")
+                .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Cheat files", &["cht", "txt"])
+                    .pick_file()
+            {
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let imported = parse_cht_file_for_system(&content, state.active_system);
+                        let count = imported.len();
+                        state.user_codes.extend(imported);
+                        state.parse_error = None;
+                        *changed = true;
+                        log::info!("Imported {} cheats from {}", count, path.display());
+                    }
+                    Err(e) => {
+                        state.parse_error = Some(format!("Failed to read file: {e}"));
+                    }
                 }
-                Err(e) => {
-                    state.parse_error = Some(format!("Failed to read file: {e}"));
+            }
+            if !state.user_codes.is_empty()
+                && ui
+                    .button("💾 Export .cht")
+                    .on_hover_text("Export user cheats to a .cht file")
+                    .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Cheat files", &["cht"])
+                    .set_file_name("cheats.cht")
+                    .save_file()
+            {
+                let content = export_cht_file(&state.user_codes);
+                match std::fs::write(&path, content) {
+                    Ok(()) => {
+                        log::info!(
+                            "Exported {} cheats to {}",
+                            state.user_codes.len(),
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        state.parse_error = Some(format!("Failed to write file: {e}"));
+                    }
                 }
             }
         }
-        if !state.user_codes.is_empty()
-            && ui
-                .button("💾 Export .cht")
-                .on_hover_text("Export user cheats to a .cht file")
-                .clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("Cheat files", &["cht"])
-                .set_file_name("cheats.cht")
-                .save_file()
+        #[cfg(target_arch = "wasm32")]
         {
-            let content = export_cht_file(&state.user_codes);
-            match std::fs::write(&path, content) {
-                Ok(()) => {
-                    log::info!(
-                        "Exported {} cheats to {}",
-                        state.user_codes.len(),
-                        path.display()
-                    );
-                }
-                Err(e) => {
-                    state.parse_error = Some(format!("Failed to write file: {e}"));
-                }
-            }
+            ui.label("Import/Export not available on web");
         }
     });
 }

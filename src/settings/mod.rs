@@ -23,6 +23,7 @@ pub(crate) use structs::{
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -102,20 +103,24 @@ impl Settings {
         self.recent_roms.truncate(MAX_RECENT_ROMS);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn legacy_path() -> PathBuf {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("settings.json")
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn config_path() -> Option<PathBuf> {
         dirs::config_dir().map(|base| base.join("zeff-boy").join("settings.json"))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn active_path() -> PathBuf {
         Self::config_path().unwrap_or_else(Self::legacy_path)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn settings_dir() -> PathBuf {
         Self::active_path()
             .parent()
@@ -123,11 +128,18 @@ impl Settings {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn settings_dir() -> PathBuf {
+        PathBuf::from(".")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn load_from_path(path: &Path) -> Option<Self> {
         let bytes = fs::read(path).ok()?;
         serde_json::from_slice::<Self>(&bytes).ok()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_to_path(&self, path: &Path) {
         let Ok(serialized) = serde_json::to_vec_pretty(self) else {
             log::error!("failed to serialize settings");
@@ -147,6 +159,7 @@ impl Settings {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn load_or_default() -> Self {
         let mut settings = if let Some(config_path) = Self::config_path() {
             if let Some(settings) = Self::load_from_path(&config_path) {
@@ -180,13 +193,39 @@ impl Settings {
         settings
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn load_or_default() -> Self {
+        let storage = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten());
+        if let Some(storage) = storage {
+            if let Ok(Some(json)) = storage.get_item("zeff-boy-settings") {
+                if let Ok(settings) = serde_json::from_str::<Self>(&json) {
+                    return settings;
+                }
+            }
+        }
+        Self::default()
+    }
+
     pub(crate) fn auto_detect_ui_scale(&mut self, monitor_height: u32, os_scale_factor: f64) {
         self.ui
             .auto_detect_ui_scale(monitor_height, os_scale_factor);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn save(&self) {
         self.save_to_path(&Self::active_path());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn save(&self) {
+        let storage = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten());
+        if let Some(storage) = storage {
+            if let Ok(json) = serde_json::to_string_pretty(self) {
+                let _ = storage.set_item("zeff-boy-settings", &json);
+            }
+        }
     }
 }
 

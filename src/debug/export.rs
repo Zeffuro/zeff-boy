@@ -20,6 +20,7 @@ pub(crate) fn export_color_image_as_png(path: &Path, image: &ColorImage) -> anyh
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &ColorImage) -> bool {
     if ui.button("Export PNG").clicked()
         && let Some(path) = rfd::FileDialog::new()
@@ -40,3 +41,9 @@ pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &C
     }
     false
 }
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn export_png_button(_ui: &mut egui::Ui, _default_name: &str, _image: &ColorImage) -> bool {
+    false
+}
+
