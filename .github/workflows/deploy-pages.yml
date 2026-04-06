@@ -29,7 +29,9 @@ jobs:
         run: cargo install trunk --locked
 
       - name: Build
-        run: trunk build --release -- --no-minification
+        env:
+          RUSTFLAGS: "-C target-feature=-bulk-memory,-nontrapping-fptoint"
+        run: trunk build --release
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
