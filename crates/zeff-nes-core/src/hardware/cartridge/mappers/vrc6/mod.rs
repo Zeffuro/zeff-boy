@@ -27,12 +27,7 @@ pub struct Vrc6 {
 }
 
 impl Vrc6 {
-    pub fn new(
-        prg_rom: Vec<u8>,
-        chr: Vec<u8>,
-        mirroring: Mirroring,
-        a0_a1_swap: bool,
-    ) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring, a0_a1_swap: bool) -> Self {
         Self {
             prg_rom,
             chr,
@@ -64,7 +59,7 @@ impl Vrc6 {
     fn chr_bank_count_1k(&self) -> usize {
         (self.chr.len() / 0x0400).max(1)
     }
-    
+
     fn decode_sub_reg(&self, addr: u16) -> u8 {
         let r = (addr & 0x03) as u8;
         if self.a0_a1_swap {
@@ -291,4 +286,3 @@ impl Mapper for Vrc6 {
 
 #[cfg(test)]
 mod tests;
-

@@ -1,20 +1,7 @@
+use super::RomMetadata;
 use crate::libretro_common::LibretroPlatform;
 
-#[derive(Clone, Debug)]
-pub(crate) struct RomMetadata {
-    pub(crate) crc32: u32,
-    pub(crate) title: String,
-    pub(crate) rom_name: String,
-    pub(crate) platform: LibretroPlatform,
-}
-
-#[derive(Default)]
-pub(crate) struct MetadataRefreshStats {
-    pub(crate) total_entries: usize,
-    pub(crate) gb_entries: usize,
-    pub(crate) gbc_entries: usize,
-    pub(crate) nes_entries: usize,
-}
+use super::MetadataRefreshStats;
 
 pub(crate) fn refresh_cache_from_libretro() -> anyhow::Result<MetadataRefreshStats> {
     anyhow::bail!("metadata refresh not available on web")
@@ -30,4 +17,3 @@ pub(crate) fn build_cheat_search_hints(
 ) -> Vec<String> {
     Vec::new()
 }
-

@@ -1,6 +1,6 @@
 use rubato::{
-    audioadapter::Adapter, audioadapter_buffers::direct::SequentialSliceOfVecs, Async, FixedAsync,
-    Resampler, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+    Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction, audioadapter::Adapter, audioadapter_buffers::direct::SequentialSliceOfVecs,
 };
 
 const CHUNK_SIZE: usize = 256;
@@ -25,8 +25,14 @@ impl AudioResampler {
             oversampling_factor: 128,
             window: WindowFunction::BlackmanHarris2,
         };
-        let resampler =
-            Async::<f32>::new_sinc(ratio, MAX_RATIO_RELATIVE, &params, CHUNK_SIZE, 2, FixedAsync::Input)?;
+        let resampler = Async::<f32>::new_sinc(
+            ratio,
+            MAX_RATIO_RELATIVE,
+            &params,
+            CHUNK_SIZE,
+            2,
+            FixedAsync::Input,
+        )?;
 
         Ok(Self {
             resampler,
@@ -53,8 +59,8 @@ impl AudioResampler {
             let left: Vec<f32> = self.pending_left.drain(..self.chunk_size).collect();
             let right: Vec<f32> = self.pending_right.drain(..self.chunk_size).collect();
             let input_buf = vec![left, right];
-            let adapter =
-                SequentialSliceOfVecs::new(input_buf.as_slice(), 2, self.chunk_size).unwrap();
+            let adapter = SequentialSliceOfVecs::new(input_buf.as_slice(), 2, self.chunk_size)
+                .expect("audio input must have exactly 2 channels with matching chunk size");
             match self.resampler.process(&adapter, 0, None) {
                 Ok(result) => {
                     let out_frames = result.frames();

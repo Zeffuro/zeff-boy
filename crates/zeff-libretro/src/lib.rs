@@ -1,58 +1,48 @@
-#![allow(dead_code, clippy::not_unsafe_ptr_arg_deref)]
+// Libretro core — C ABI callbacks receiving raw pointers from the frontend.
 
 mod api;
 mod core;
 
 use api::*;
-use std::cell::UnsafeCell;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_uint, c_void};
 use std::panic::catch_unwind;
-
-struct SyncCell<T>(UnsafeCell<T>);
-unsafe impl<T> Sync for SyncCell<T> {}
-
-impl<T> SyncCell<T> {
-    const fn new(val: T) -> Self {
-        Self(UnsafeCell::new(val))
-    }
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn get_mut(&self) -> &mut T {
-        unsafe { &mut *self.0.get() }
-    }
-}
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // ── Global state ─────────────────────────────────────────────────────
 
-static CORE: SyncCell<Option<core::CoreState>> = SyncCell::new(None);
-static SRAM_BUF: SyncCell<Vec<u8>> = SyncCell::new(Vec::new());
-static MAX_SERIALIZE_SIZE: SyncCell<usize> = SyncCell::new(0);
-static FRAME_COUNTER: SyncCell<u64> = SyncCell::new(0);
-static OPTIONS_DIRTY: SyncCell<bool> = SyncCell::new(false);
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
-static mut CB_ENVIRONMENT: Option<retro_environment_t> = None;
-static mut CB_VIDEO_REFRESH: Option<retro_video_refresh_t> = None;
-static mut CB_AUDIO_SAMPLE: Option<retro_audio_sample_t> = None;
-static mut CB_AUDIO_SAMPLE_BATCH: Option<retro_audio_sample_batch_t> = None;
-static mut CB_INPUT_POLL: Option<retro_input_poll_t> = None;
-static mut CB_INPUT_STATE: Option<retro_input_state_t> = None;
-static mut CB_LOG: Option<retro_log_printf_t> = None;
-static mut CB_RUMBLE: Option<retro_rumble_set_state_t> = None;
+static CORE: Mutex<Option<core::CoreState>> = Mutex::new(None);
+static SRAM_BUF: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+static MAX_SERIALIZE_SIZE: Mutex<usize> = Mutex::new(0);
+static FRAME_COUNTER: Mutex<u64> = Mutex::new(0);
+#[allow(dead_code)]
+static OPTIONS_DIRTY: Mutex<bool> = Mutex::new(false);
 
-static mut USE_XRGB8888: bool = false;
+static CB_ENVIRONMENT: Mutex<Option<retro_environment_t>> = Mutex::new(None);
+static CB_VIDEO_REFRESH: Mutex<Option<retro_video_refresh_t>> = Mutex::new(None);
+static CB_AUDIO_SAMPLE: Mutex<Option<retro_audio_sample_t>> = Mutex::new(None);
+static CB_AUDIO_SAMPLE_BATCH: Mutex<Option<retro_audio_sample_batch_t>> = Mutex::new(None);
+static CB_INPUT_POLL: Mutex<Option<retro_input_poll_t>> = Mutex::new(None);
+static CB_INPUT_STATE: Mutex<Option<retro_input_state_t>> = Mutex::new(None);
+static CB_LOG: Mutex<Option<retro_log_printf_t>> = Mutex::new(None);
+static CB_RUMBLE: Mutex<Option<retro_rumble_set_state_t>> = Mutex::new(None);
+
+static USE_XRGB8888: AtomicBool = AtomicBool::new(false);
 
 const LIB_NAME: &CStr = c"zeff-boy";
 const LIB_VERSION: &CStr = c"0.1.0";
 const VALID_EXTENSIONS: &CStr = c"gb|gbc|nes";
 
-
 fn retro_log(level: c_uint, msg: &str) {
-    unsafe {
-        if let Some(log_fn) = CB_LOG {
-            let c_msg = std::ffi::CString::new(msg).unwrap_or_default();
-            log_fn(level, c"%s\n".as_ptr(), c_msg.as_ptr());
-            return;
-        }
+    if let Some(log_fn) = *lock(&CB_LOG) {
+        let c_msg = std::ffi::CString::new(msg).unwrap_or_default();
+        unsafe { log_fn(level, c"%s\n".as_ptr(), c_msg.as_ptr()) };
+        return;
     }
     log_to_file(msg);
 }
@@ -90,19 +80,12 @@ fn log_to_file(msg: &str) {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn env_cmd(cmd: c_uint, data: *mut c_void) -> bool {
-    unsafe {
-        if let Some(cb) = CB_ENVIRONMENT {
-            cb(cmd, data)
-        } else {
-            false
-        }
+    if let Some(cb) = *lock(&CB_ENVIRONMENT) {
+        unsafe { cb(cmd, data) }
+    } else {
+        false
     }
 }
-
-unsafe fn core_mut() -> Option<&'static mut core::CoreState> {
-    unsafe { CORE.get_mut().as_mut() }
-}
-
 
 const OPT_DMG_PALETTE: &CStr = c"zeff_dmg_palette";
 const OPT_NES_PALETTE: &CStr = c"zeff_nes_palette_mode";
@@ -211,11 +194,9 @@ fn apply_core_options(state: &mut core::CoreState) {
 }
 
 fn poll_joypad_port(port: c_uint) -> (u8, u8) {
+    let cb_state = *lock(&CB_INPUT_STATE);
     let query = |id: c_uint| -> bool {
-        unsafe {
-            CB_INPUT_STATE
-                .is_some_and(|cb| cb(port, RETRO_DEVICE_JOYPAD, 0, id) != 0)
-        }
+        cb_state.is_some_and(|cb| unsafe { cb(port, RETRO_DEVICE_JOYPAD, 0, id) != 0 })
     };
 
     let mut buttons: u8 = 0;
@@ -250,11 +231,9 @@ fn poll_joypad_port(port: c_uint) -> (u8, u8) {
 }
 
 fn poll_lightgun_port(port: c_uint) -> (bool, bool) {
+    let cb_state = *lock(&CB_INPUT_STATE);
     let query = |id: c_uint| -> bool {
-        unsafe {
-            CB_INPUT_STATE
-                .is_some_and(|cb| cb(port, RETRO_DEVICE_LIGHTGUN, 0, id) != 0)
-        }
+        cb_state.is_some_and(|cb| unsafe { cb(port, RETRO_DEVICE_LIGHTGUN, 0, id) != 0 })
     };
     let trigger = query(RETRO_DEVICE_ID_LIGHTGUN_TRIGGER);
     let offscreen = query(RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN);
@@ -413,21 +392,16 @@ fn set_input_descriptors(is_nes: bool) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_environment(cb: retro_environment_t) {
-    unsafe {
-        CB_ENVIRONMENT = Some(cb);
-    }
+    *lock(&CB_ENVIRONMENT) = Some(cb);
 
     let _ = catch_unwind(|| {
         let mut log_cb = retro_log_callback { log: None };
         if env_cmd(
             RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
             &mut log_cb as *mut retro_log_callback as *mut c_void,
-        ) {
-            if let Some(log_fn) = log_cb.log {
-                unsafe {
-                    CB_LOG = Some(log_fn);
-                }
-            }
+        ) && let Some(log_fn) = log_cb.log
+        {
+            *lock(&CB_LOG) = Some(log_fn);
         }
 
         retro_log_info("retro_set_environment");
@@ -444,23 +418,23 @@ pub extern "C" fn retro_set_environment(cb: retro_environment_t) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_video_refresh(cb: retro_video_refresh_t) {
-    unsafe { CB_VIDEO_REFRESH = Some(cb) }
+    *lock(&CB_VIDEO_REFRESH) = Some(cb);
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_audio_sample(cb: retro_audio_sample_t) {
-    unsafe { CB_AUDIO_SAMPLE = Some(cb) }
+    *lock(&CB_AUDIO_SAMPLE) = Some(cb);
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_audio_sample_batch(cb: retro_audio_sample_batch_t) {
-    unsafe { CB_AUDIO_SAMPLE_BATCH = Some(cb) }
+    *lock(&CB_AUDIO_SAMPLE_BATCH) = Some(cb);
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_input_poll(cb: retro_input_poll_t) {
-    unsafe { CB_INPUT_POLL = Some(cb) }
+    *lock(&CB_INPUT_POLL) = Some(cb);
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_input_state(cb: retro_input_state_t) {
-    unsafe { CB_INPUT_STATE = Some(cb) }
+    *lock(&CB_INPUT_STATE) = Some(cb);
 }
 
 #[unsafe(no_mangle)]
@@ -476,12 +450,9 @@ pub extern "C" fn retro_init() {
         if env_cmd(
             RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE,
             &mut rumble as *mut retro_rumble_interface as *mut c_void,
-        ) {
-            if let Some(rumble_fn) = rumble.set_rumble_state {
-                unsafe {
-                    CB_RUMBLE = Some(rumble_fn);
-                }
-            }
+        ) && let Some(rumble_fn) = rumble.set_rumble_state
+        {
+            *lock(&CB_RUMBLE) = Some(rumble_fn);
         }
     });
 }
@@ -489,13 +460,11 @@ pub extern "C" fn retro_init() {
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_deinit() {
     retro_log_info("retro_deinit");
-    unsafe {
-        *CORE.get_mut() = None;
-        SRAM_BUF.get_mut().clear();
-        *MAX_SERIALIZE_SIZE.get_mut() = 0;
-        CB_LOG = None;
-        CB_RUMBLE = None;
-    }
+    *lock(&CORE) = None;
+    lock(&SRAM_BUF).clear();
+    *lock(&MAX_SERIALIZE_SIZE) = 0;
+    *lock(&CB_LOG) = None;
+    *lock(&CB_RUMBLE) = None;
 }
 
 #[unsafe(no_mangle)]
@@ -503,6 +472,7 @@ pub extern "C" fn retro_api_version() -> c_uint {
     RETRO_API_VERSION
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_system_info(info: *mut retro_system_info) {
     if info.is_null() {
@@ -517,13 +487,15 @@ pub extern "C" fn retro_get_system_info(info: *mut retro_system_info) {
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_system_av_info(info: *mut retro_system_av_info) {
     if info.is_null() {
         return;
     }
-    let (w, h, fps, sr) = unsafe {
-        if let Some(state) = CORE.get_mut().as_ref() {
+    let (w, h, fps, sr) = {
+        let core = lock(&CORE);
+        if let Some(state) = core.as_ref() {
             (
                 state.native_width(),
                 state.native_height(),
@@ -559,19 +531,19 @@ pub extern "C" fn retro_set_controller_port_device(port: c_uint, device: c_uint)
     retro_log_info(&format!(
         "retro_set_controller_port_device: port={port}, device={device}"
     ));
-    unsafe {
-        if let Some(state) = core_mut() {
-            if (port as usize) < state.port_device.len() {
-                state.port_device[port as usize] = device;
-            }
-        }
+    let mut core = lock(&CORE);
+    if let Some(state) = core.as_mut()
+        && (port as usize) < state.port_device.len()
+    {
+        state.port_device[port as usize] = device;
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_reset() {
-    let _ = catch_unwind(|| unsafe {
-        if let Some(state) = core_mut() {
+    let _ = catch_unwind(|| {
+        let mut core = lock(&CORE);
+        if let Some(state) = core.as_mut() {
             state.reset();
             apply_core_options(state);
         }
@@ -580,21 +552,23 @@ pub extern "C" fn retro_reset() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_run() {
-    let result = catch_unwind(|| unsafe {
-        let Some(state) = core_mut() else {
+    let result = catch_unwind(|| {
+        let mut core = lock(&CORE);
+        let Some(state) = core.as_mut() else {
             return;
         };
 
-        let counter = FRAME_COUNTER.get_mut();
-        *counter += 1;
-        let _frame_num = *counter;
+        {
+            let mut counter = lock(&FRAME_COUNTER);
+            *counter += 1;
+        }
 
         if check_variables_updated() {
             apply_core_options(state);
         }
 
-        if let Some(poll) = CB_INPUT_POLL {
-            poll();
+        if let Some(poll) = *lock(&CB_INPUT_POLL) {
+            unsafe { poll() };
         }
 
         let (buttons, dpad) = poll_joypad_port(0);
@@ -615,19 +589,19 @@ pub extern "C" fn retro_run() {
 
         let w = state.native_width();
         let h = state.native_height();
-        let use_xrgb = USE_XRGB8888;
+        let use_xrgb = USE_XRGB8888.load(Ordering::Relaxed);
 
         if use_xrgb {
             let xrgb = state.framebuffer_as_xrgb8888();
             let pitch = w as usize * 4;
-            if let Some(cb) = CB_VIDEO_REFRESH {
-                cb(xrgb.as_ptr() as *const c_void, w, h, pitch);
+            if let Some(cb) = *lock(&CB_VIDEO_REFRESH) {
+                unsafe { cb(xrgb.as_ptr() as *const c_void, w, h, pitch) };
             }
         } else {
             let rgb565 = state.framebuffer_as_rgb565();
             let pitch = w as usize * 2;
-            if let Some(cb) = CB_VIDEO_REFRESH {
-                cb(rgb565.as_ptr() as *const c_void, w, h, pitch);
+            if let Some(cb) = *lock(&CB_VIDEO_REFRESH) {
+                unsafe { cb(rgb565.as_ptr() as *const c_void, w, h, pitch) };
             }
         }
 
@@ -641,12 +615,12 @@ pub extern "C" fn retro_run() {
                 .collect();
             let frames = i16_buf.len() / 2;
 
-            if let Some(cb) = CB_AUDIO_SAMPLE_BATCH {
-                cb(i16_buf.as_ptr(), frames);
+            if let Some(cb) = *lock(&CB_AUDIO_SAMPLE_BATCH) {
+                unsafe { cb(i16_buf.as_ptr(), frames) };
             }
         }
 
-        state.sync_sram_to_buf(SRAM_BUF.get_mut());
+        state.sync_sram_to_buf(&mut lock(&SRAM_BUF));
 
         state.refresh_system_ram();
         state.refresh_video_ram();
@@ -656,6 +630,7 @@ pub extern "C" fn retro_run() {
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
     let result = catch_unwind(|| {
@@ -676,9 +651,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
                 &mut fmt as *mut c_uint as *mut c_void,
             );
         }
-        unsafe {
-            USE_XRGB8888 = accepted;
-        }
+        USE_XRGB8888.store(accepted, Ordering::Relaxed);
         retro_log_info(&format!(
             "retro_load_game: pixel format = {}",
             if accepted { "XRGB8888" } else { "RGB565" }
@@ -721,16 +694,16 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
 
                 apply_core_options(&mut state);
 
-                unsafe {
-                    let sram_buf = SRAM_BUF.get_mut();
+                {
+                    let mut sram_buf = lock(&SRAM_BUF);
                     sram_buf.clear();
                     if let Some(sram) = state.battery_sram() {
                         *sram_buf = sram;
                     }
-                    *CORE.get_mut() = Some(state);
-                    *FRAME_COUNTER.get_mut() = 0;
-                    *MAX_SERIALIZE_SIZE.get_mut() = 0;
                 }
+                *lock(&CORE) = Some(state);
+                *lock(&FRAME_COUNTER) = 0;
+                *lock(&MAX_SERIALIZE_SIZE) = 0;
 
                 set_input_descriptors(is_nes);
 
@@ -760,12 +733,11 @@ pub extern "C" fn retro_load_game_special(
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_unload_game() {
     retro_log_info("retro_unload_game");
-    unsafe {
-        if let Some(state) = CORE.get_mut().as_ref() {
-            state.sync_sram_to_buf(SRAM_BUF.get_mut());
-        }
-        *CORE.get_mut() = None;
+    let mut core = lock(&CORE);
+    if let Some(state) = core.as_ref() {
+        state.sync_sram_to_buf(&mut lock(&SRAM_BUF));
     }
+    *core = None;
 }
 
 #[unsafe(no_mangle)]
@@ -777,13 +749,13 @@ const SERIALIZE_LENGTH_PREFIX: usize = 4;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_serialize_size() -> usize {
-    catch_unwind(|| unsafe {
-        let actual = CORE
-            .get_mut()
+    catch_unwind(|| {
+        let core = lock(&CORE);
+        let actual = core
             .as_ref()
             .and_then(|s| s.encode_state().ok())
             .map_or(0, |v| v.len());
-        let max = MAX_SERIALIZE_SIZE.get_mut();
+        let mut max = lock(&MAX_SERIALIZE_SIZE);
         if actual > *max {
             *max = actual;
         }
@@ -792,31 +764,33 @@ pub extern "C" fn retro_serialize_size() -> usize {
     .unwrap_or(0)
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_serialize(data: *mut c_void, size: usize) -> bool {
     if data.is_null() {
         return false;
     }
-    catch_unwind(|| unsafe {
-        let Some(state) = CORE.get_mut().as_ref() else {
+    catch_unwind(|| {
+        let core = lock(&CORE);
+        let Some(state) = core.as_ref() else {
             return false;
         };
         match state.encode_state() {
             Ok(bytes) if SERIALIZE_LENGTH_PREFIX + bytes.len() <= size => {
-                std::ptr::write_bytes(data as *mut u8, 0, size);
-                return false;
-                let len_bytes = (bytes.len() as u32).to_le_bytes();
-                std::ptr::copy_nonoverlapping(
-                    len_bytes.as_ptr(),
-                    data as *mut u8,
-                    SERIALIZE_LENGTH_PREFIX,
-                );
-        Err(_) => false,
-                std::ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    (data as *mut u8).add(SERIALIZE_LENGTH_PREFIX),
-                    bytes.len(),
-                );
+                unsafe {
+                    std::ptr::write_bytes(data as *mut u8, 0, size);
+                    let len_bytes = (bytes.len() as u32).to_le_bytes();
+                    std::ptr::copy_nonoverlapping(
+                        len_bytes.as_ptr(),
+                        data as *mut u8,
+                        SERIALIZE_LENGTH_PREFIX,
+                    );
+                    std::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        (data as *mut u8).add(SERIALIZE_LENGTH_PREFIX),
+                        bytes.len(),
+                    );
+                }
                 true
             }
             _ => false,
@@ -825,23 +799,26 @@ pub extern "C" fn retro_serialize(data: *mut c_void, size: usize) -> bool {
     .unwrap_or(false)
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_unserialize(data: *const c_void, size: usize) -> bool {
     if data.is_null() || size < SERIALIZE_LENGTH_PREFIX {
         return false;
     }
-    catch_unwind(|| unsafe {
-        let Some(state) = core_mut() else {
+    catch_unwind(|| {
+        let mut core = lock(&CORE);
+        let Some(state) = core.as_mut() else {
             return false;
         };
-        let all_bytes = std::slice::from_raw_parts(data as *const u8, size);
-        let payload_len =
-            u32::from_le_bytes(all_bytes[..4].try_into().unwrap()) as usize;
+        let all_bytes = unsafe { std::slice::from_raw_parts(data as *const u8, size) };
+        let Ok(len_bytes) = all_bytes[..4].try_into() else {
+            return false;
+        };
+        let payload_len = u32::from_le_bytes(len_bytes) as usize;
         if payload_len == 0 || SERIALIZE_LENGTH_PREFIX + payload_len > size {
             return false;
         }
-        let payload =
-            &all_bytes[SERIALIZE_LENGTH_PREFIX..SERIALIZE_LENGTH_PREFIX + payload_len];
+        let payload = &all_bytes[SERIALIZE_LENGTH_PREFIX..SERIALIZE_LENGTH_PREFIX + payload_len];
         state.load_state(payload).is_ok()
     })
     .unwrap_or(false)
@@ -849,67 +826,62 @@ pub extern "C" fn retro_unserialize(data: *const c_void, size: usize) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_memory_data(id: c_uint) -> *mut c_void {
-    unsafe {
-        match id {
-            RETRO_MEMORY_SAVE_RAM => {
-                let buf = SRAM_BUF.get_mut();
-                if !buf.is_empty() {
-                    buf.as_mut_ptr() as *mut c_void
-                } else {
-                    std::ptr::null_mut()
-                }
-            }
-            RETRO_MEMORY_SYSTEM_RAM => {
-                if let Some(state) = core_mut() {
-                    if !state.system_ram_buf.is_empty() {
-                        return state.system_ram_buf.as_mut_ptr() as *mut c_void;
-                    }
-                }
+    // SAFETY: The returned pointer points into a Vec that lives in a static Mutex.
+    // The libretro contract guarantees single-threaded access; the frontend will not
+    // use this pointer concurrently with calls that reallocate the underlying buffer.
+    match id {
+        RETRO_MEMORY_SAVE_RAM => {
+            let mut buf = lock(&SRAM_BUF);
+            if !buf.is_empty() {
+                buf.as_mut_ptr() as *mut c_void
+            } else {
                 std::ptr::null_mut()
             }
-            RETRO_MEMORY_VIDEO_RAM => {
-                if let Some(state) = core_mut() {
-                    if !state.video_ram_buf.is_empty() {
-                        return state.video_ram_buf.as_mut_ptr() as *mut c_void;
-                    }
-                }
-                std::ptr::null_mut()
-            }
-            _ => std::ptr::null_mut(),
         }
+        RETRO_MEMORY_SYSTEM_RAM => {
+            let mut core = lock(&CORE);
+            if let Some(state) = core.as_mut()
+                && !state.system_ram_buf.is_empty()
+            {
+                return state.system_ram_buf.as_mut_ptr() as *mut c_void;
+            }
+            std::ptr::null_mut()
+        }
+        RETRO_MEMORY_VIDEO_RAM => {
+            let mut core = lock(&CORE);
+            if let Some(state) = core.as_mut()
+                && !state.video_ram_buf.is_empty()
+            {
+                return state.video_ram_buf.as_mut_ptr() as *mut c_void;
+            }
+            std::ptr::null_mut()
+        }
+        _ => std::ptr::null_mut(),
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_memory_size(id: c_uint) -> usize {
-    unsafe {
-        match id {
-            RETRO_MEMORY_SAVE_RAM => SRAM_BUF.get_mut().len(),
-            RETRO_MEMORY_SYSTEM_RAM => {
-                CORE.get_mut()
-                    .as_ref()
-                    .map_or(0, |s| s.system_ram_size())
-            }
-            RETRO_MEMORY_VIDEO_RAM => {
-                CORE.get_mut()
-                    .as_ref()
-                    .map_or(0, |s| s.video_ram_size())
-            }
-            _ => 0,
-        }
+    match id {
+        RETRO_MEMORY_SAVE_RAM => lock(&SRAM_BUF).len(),
+        RETRO_MEMORY_SYSTEM_RAM => lock(&CORE).as_ref().map_or(0, |s| s.system_ram_size()),
+        RETRO_MEMORY_VIDEO_RAM => lock(&CORE).as_ref().map_or(0, |s| s.video_ram_size()),
+        _ => 0,
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_cheat_reset() {
-    let _ = catch_unwind(|| unsafe {
-        if let Some(state) = core_mut() {
+    let _ = catch_unwind(|| {
+        let mut core = lock(&CORE);
+        if let Some(state) = core.as_mut() {
             state.cheat_reset();
             retro_log_info("retro_cheat_reset");
         }
     });
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_cheat_set(_index: c_uint, enabled: bool, code: *const c_char) {
     let _ = catch_unwind(|| {
@@ -920,11 +892,10 @@ pub extern "C" fn retro_cheat_set(_index: c_uint, enabled: bool, code: *const c_
         let Ok(code_str) = code_str.to_str() else {
             return;
         };
-        unsafe {
-            if let Some(state) = core_mut() {
-                retro_log_info(&format!("retro_cheat_set: '{code_str}'"));
-                state.cheat_set(code_str);
-            }
+        let mut core = lock(&CORE);
+        if let Some(state) = core.as_mut() {
+            retro_log_info(&format!("retro_cheat_set: '{code_str}'"));
+            state.cheat_set(code_str);
         }
     });
 }

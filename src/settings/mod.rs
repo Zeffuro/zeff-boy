@@ -23,12 +23,12 @@ pub(crate) use structs::{
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
+
+use crate::platform;
 
 const MAX_RECENT_ROMS: usize = 10;
 
@@ -103,108 +103,24 @@ impl Settings {
         self.recent_roms.truncate(MAX_RECENT_ROMS);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn legacy_path() -> PathBuf {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("settings.json")
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn config_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|base| base.join("zeff-boy").join("settings.json"))
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn active_path() -> PathBuf {
-        Self::config_path().unwrap_or_else(Self::legacy_path)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn settings_dir() -> PathBuf {
-        Self::active_path()
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        platform::settings_dir()
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn settings_dir() -> PathBuf {
-        PathBuf::from(".")
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn load_from_path(path: &Path) -> Option<Self> {
-        let bytes = fs::read(path).ok()?;
-        serde_json::from_slice::<Self>(&bytes).ok()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn save_to_path(&self, path: &Path) {
-        let Ok(serialized) = serde_json::to_vec_pretty(self) else {
-            log::error!("failed to serialize settings");
-            return;
-        };
-        if let Some(parent) = path.parent()
-            && let Err(e) = fs::create_dir_all(parent)
+    pub(crate) fn load_or_default() -> Self {
+        if let Some(json) = platform::load_settings_json()
+            && let Ok(mut settings) = serde_json::from_str::<Self>(&json)
         {
-            log::error!(
-                "failed to create settings directory {}: {e}",
-                parent.display()
-            );
-            return;
+            settings.video.migrate_shader_preset();
+            return settings;
         }
-        if let Err(e) = fs::write(path, serialized) {
-            log::error!("failed to write settings to {}: {e}", path.display());
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn load_or_default() -> Self {
-        let mut settings = if let Some(config_path) = Self::config_path() {
-            if let Some(settings) = Self::load_from_path(&config_path) {
-                settings
-            } else {
-                let legacy_path = Self::legacy_path();
-                if let Some(settings) = Self::load_from_path(&legacy_path) {
-                    settings.save_to_path(&config_path);
-                    settings
-                } else {
-                    Settings {
-                        ui: UiSettings {
-                            ui_scale_needs_auto: true,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                }
-            }
-        } else {
-            Self::load_from_path(&Self::legacy_path()).unwrap_or_else(|| Settings {
-                ui: UiSettings {
-                    ui_scale_needs_auto: true,
-                    ..Default::default()
-                },
+        Settings {
+            ui: UiSettings {
+                ui_scale_needs_auto: true,
                 ..Default::default()
-            })
-        };
-
-        settings.video.migrate_shader_preset();
-        settings
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn load_or_default() -> Self {
-        let storage = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten());
-        if let Some(storage) = storage {
-            if let Ok(Some(json)) = storage.get_item("zeff-boy-settings") {
-                if let Ok(settings) = serde_json::from_str::<Self>(&json) {
-                    return settings;
-                }
-            }
+            },
+            ..Default::default()
         }
-        Self::default()
     }
 
     pub(crate) fn auto_detect_ui_scale(&mut self, monitor_height: u32, os_scale_factor: f64) {
@@ -212,20 +128,12 @@ impl Settings {
             .auto_detect_ui_scale(monitor_height, os_scale_factor);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn save(&self) {
-        self.save_to_path(&Self::active_path());
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn save(&self) {
-        let storage = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten());
-        if let Some(storage) = storage {
-            if let Ok(json) = serde_json::to_string_pretty(self) {
-                let _ = storage.set_item("zeff-boy-settings", &json);
-            }
-        }
+        let Ok(json) = serde_json::to_string_pretty(self) else {
+            log::error!("failed to serialize settings");
+            return;
+        };
+        platform::save_settings_json(&json);
     }
 }
 

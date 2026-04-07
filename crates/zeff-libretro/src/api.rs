@@ -94,8 +94,7 @@ pub type retro_input_poll_t = unsafe extern "C" fn();
 pub type retro_input_state_t =
     unsafe extern "C" fn(port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16;
 
-pub type retro_log_printf_t =
-    unsafe extern "C" fn(level: c_uint, fmt: *const c_char, ...);
+pub type retro_log_printf_t = unsafe extern "C" fn(level: c_uint, fmt: *const c_char, ...);
 
 pub type retro_rumble_set_state_t =
     unsafe extern "C" fn(port: c_uint, effect: c_uint, strength: u16) -> bool;

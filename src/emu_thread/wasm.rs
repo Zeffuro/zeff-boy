@@ -1,0 +1,345 @@
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, SharedFramebuffer};
+use crate::emu_backend::EmuBackend;
+use crate::ui;
+
+struct Inner {
+    backend: EmuBackend,
+    pending_frames: VecDeque<FrameResult>,
+    pending_responses: VecDeque<EmuResponse>,
+    uncapped_mode: bool,
+}
+
+pub(crate) struct EmuThread {
+    inner: RefCell<Inner>,
+    shared_framebuffer: SharedFramebuffer,
+}
+
+impl EmuThread {
+    pub(crate) fn spawn(backend: EmuBackend) -> Self {
+        Self {
+            inner: RefCell::new(Inner {
+                backend,
+                pending_frames: VecDeque::new(),
+                pending_responses: VecDeque::new(),
+                uncapped_mode: false,
+            }),
+            shared_framebuffer: types::new_shared_framebuffer(),
+        }
+    }
+
+    pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
+        &self.shared_framebuffer
+    }
+
+    pub(crate) fn send(&self, cmd: EmuCommand) {
+        let mut inner = self.inner.borrow_mut();
+        match cmd {
+            EmuCommand::StepFrames(input) => {
+                let uncapped = inner.uncapped_mode;
+                let result = Self::step_frames_inline(
+                    &mut inner.backend,
+                    *input,
+                    uncapped,
+                    &self.shared_framebuffer,
+                );
+                inner.pending_frames.push_back(result);
+            }
+            EmuCommand::SetSampleRate(rate) => {
+                inner.backend.set_sample_rate(rate);
+            }
+            EmuCommand::SetUncapped(on) => {
+                inner.uncapped_mode = on;
+                inner.backend.set_apu_sample_generation_enabled(!on);
+            }
+            EmuCommand::SaveStateSlot(slot) => {
+                let resp = Self::save_state_sync(&inner.backend, slot);
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::LoadStateSlot {
+                slot,
+                buttons_pressed,
+                dpad_pressed,
+            } => {
+                let resp = Self::load_state_sync(
+                    &mut inner.backend,
+                    slot,
+                    buttons_pressed,
+                    dpad_pressed,
+                    &self.shared_framebuffer,
+                );
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::SaveStateToPath(path) => {
+                let resp = match inner.backend.encode_state_bytes() {
+                    Ok(bytes) => {
+                        match crate::save_paths::write_state_bytes_to_file(&path, &bytes) {
+                            Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                            Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                        }
+                    }
+                    Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                };
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::LoadStateFromPath {
+                path,
+                buttons_pressed,
+                dpad_pressed,
+            } => {
+                let result = inner.backend.load_state_from_path(&path);
+                let resp = Self::respond_load(
+                    &mut inner.backend,
+                    result,
+                    path.display().to_string(),
+                    buttons_pressed,
+                    dpad_pressed,
+                    &self.shared_framebuffer,
+                );
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::AutoSaveState => {
+                let resp = match inner.backend.auto_save_path() {
+                    Some(path) => match inner.backend.encode_state_bytes() {
+                        Ok(bytes) => {
+                            match crate::save_paths::write_state_bytes_to_file(&path, &bytes) {
+                                Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                                Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                            }
+                        }
+                        Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                    },
+                    None => EmuResponse::SaveStateFailed("no auto-save path".to_string()),
+                };
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::AutoLoadState {
+                buttons_pressed,
+                dpad_pressed,
+            } => {
+                let resp = match inner.backend.auto_save_path() {
+                    Some(path) => {
+                        let result = inner.backend.load_state_from_path(&path);
+                        Self::respond_load(
+                            &mut inner.backend,
+                            result,
+                            path.display().to_string(),
+                            buttons_pressed,
+                            dpad_pressed,
+                            &self.shared_framebuffer,
+                        )
+                    }
+                    None => EmuResponse::LoadStateFailed("no auto-save path".to_string()),
+                };
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::CaptureStateBytes => {
+                let resp = match inner.backend.encode_state_bytes() {
+                    Ok(bytes) => EmuResponse::StateCaptured(bytes),
+                    Err(e) => EmuResponse::StateCaptureFailed(e.to_string()),
+                };
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::LoadStateBytes {
+                state_bytes,
+                buttons_pressed,
+                dpad_pressed,
+            } => {
+                let result = inner.backend.load_state_from_bytes(state_bytes);
+                let resp = Self::respond_load(
+                    &mut inner.backend,
+                    result,
+                    "bytes".to_string(),
+                    buttons_pressed,
+                    dpad_pressed,
+                    &self.shared_framebuffer,
+                );
+                inner.pending_responses.push_back(resp);
+            }
+            EmuCommand::UpdateCheats(patches) => {
+                Self::install_rom_patches(&mut inner.backend, &patches);
+            }
+            EmuCommand::Rewind => {
+                // Rewind not supported on WASM yet (no rewind buffer)
+                inner.pending_responses.push_back(EmuResponse::RewindFailed(
+                    "rewind not available on web".to_string(),
+                ));
+            }
+            EmuCommand::Shutdown => {
+                inner
+                    .pending_responses
+                    .push_back(EmuResponse::ShutdownComplete);
+            }
+        }
+    }
+
+    pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
+        self.inner.borrow_mut().pending_frames.pop_front()
+    }
+
+    pub(crate) fn recv(&self) -> Option<EmuResponse> {
+        self.inner.borrow_mut().pending_responses.pop_front()
+    }
+
+    pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
+        self.inner.borrow_mut().pending_responses.pop_front()
+    }
+
+    pub(crate) fn shutdown(&mut self) {}
+
+    fn save_state_sync(backend: &EmuBackend, slot: u8) -> EmuResponse {
+        match backend.encode_state_bytes() {
+            Ok(bytes) => {
+                let path = match backend.slot_path(slot) {
+                    Ok(p) => p,
+                    Err(e) => return EmuResponse::SaveStateFailed(e.to_string()),
+                };
+                match crate::save_paths::write_state_bytes_to_file(&path, &bytes) {
+                    Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                    Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                }
+            }
+            Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+        }
+    }
+
+    fn load_state_sync(
+        backend: &mut EmuBackend,
+        slot: u8,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
+        shared_fb: &SharedFramebuffer,
+    ) -> EmuResponse {
+        let path = match backend.slot_path(slot) {
+            Ok(p) => p,
+            Err(e) => return EmuResponse::LoadStateFailed(e.to_string()),
+        };
+        let result = backend.load_state_from_path(&path);
+        Self::respond_load(
+            backend,
+            result,
+            path.display().to_string(),
+            buttons_pressed,
+            dpad_pressed,
+            shared_fb,
+        )
+    }
+
+    fn respond_load(
+        backend: &mut EmuBackend,
+        result: anyhow::Result<()>,
+        path_label: String,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
+        shared_fb: &SharedFramebuffer,
+    ) -> EmuResponse {
+        match result {
+            Ok(()) => {
+                backend.set_input(buttons_pressed, dpad_pressed);
+                let fb = backend.framebuffer().to_vec();
+                shared_fb.store(Some(Arc::new(fb)));
+                EmuResponse::LoadStateOk { path: path_label }
+            }
+            Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
+        }
+    }
+
+    fn step_frames_inline(
+        backend: &mut EmuBackend,
+        input: FrameInput,
+        uncapped_mode: bool,
+        shared_fb: &SharedFramebuffer,
+    ) -> FrameResult {
+        backend.set_input(input.joypad.buttons, input.joypad.dpad);
+        backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+
+        if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
+            backend.set_apu_channel_mutes(mutes);
+        }
+
+        if let Some(gb) = backend.gb_mut() {
+            gb.emu
+                .set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
+            gb.emu
+                .set_dmg_palette_preset(input.snapshot.render.dmg_palette_preset);
+            gb.emu
+                .set_sgb_border_enabled(input.snapshot.render.sgb_border_enabled);
+            if let Some(ref frame) = input.host_camera_frame {
+                gb.emu.set_camera_host_frame(frame);
+            }
+            gb.emu
+                .set_apu_debug_capture_enabled(input.audio.apu_capture_enabled);
+            if !uncapped_mode {
+                gb.emu
+                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
+            }
+            gb.emu
+                .set_opcode_log_enabled(input.snapshot.want_debug_info);
+
+            if gb.emu.is_cpu_suspended() {
+                if input.debug_continue {
+                    gb.emu.debug_continue();
+                } else if input.debug_step {
+                    gb.emu.debug_step();
+                }
+            }
+        }
+
+        if let Some(nes) = backend.nes_mut() {
+            nes.emu
+                .set_palette_mode(input.snapshot.render.nes_palette_mode);
+            nes.emu
+                .set_apu_debug_collection_enabled(input.audio.apu_capture_enabled);
+            if nes.emu.is_cpu_suspended() {
+                if input.debug_continue {
+                    nes.emu.debug_continue();
+                } else if input.debug_step {
+                    nes.emu.debug_step();
+                }
+            }
+        }
+
+        if input.frames > 0 && backend.is_running() {
+            for _ in 0..input.frames {
+                backend.step_frame();
+                if backend.is_suspended() {
+                    break;
+                }
+            }
+        }
+
+        let ui_data = match backend {
+            EmuBackend::Gb(gb) => ui::collect_emu_snapshot(
+                &gb.emu,
+                &input.snapshot,
+                input.buffers.vram,
+                input.buffers.oam,
+                input.buffers.memory_page,
+            ),
+            EmuBackend::Nes(nes) => ui::collect_nes_snapshot(&mut nes.emu, &input.snapshot),
+        };
+
+        let src = backend.framebuffer();
+        shared_fb.store(Some(Arc::new(src.to_vec())));
+
+        let audio_samples = if let Some(mut buf) = input.buffers.audio {
+            backend.drain_audio_samples_into(&mut buf);
+            buf
+        } else {
+            backend.drain_audio_samples()
+        };
+
+        FrameResult {
+            rumble: backend.rumble_active(),
+            audio_samples,
+            ui_data,
+            is_mbc7: backend.is_mbc7(),
+            is_pocket_camera: backend.is_pocket_camera(),
+            rewind_fill: 0.0,
+            apu_snapshot: None,
+        }
+    }
+}

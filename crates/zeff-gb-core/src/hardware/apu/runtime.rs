@@ -12,8 +12,8 @@ impl Apu {
         }
 
         self.frame_seq_cycle_accum = self.frame_seq_cycle_accum.wrapping_add(t_cycles);
-        while self.frame_seq_cycle_accum >= 8192 {
-            self.frame_seq_cycle_accum -= 8192;
+        while self.frame_seq_cycle_accum >= FRAME_SEQUENCER_PERIOD_CYCLES {
+            self.frame_seq_cycle_accum -= FRAME_SEQUENCER_PERIOD_CYCLES;
             self.frame_sequencer_step();
             self.frame_seq_step = (self.frame_seq_step + 1) & 0x07;
         }

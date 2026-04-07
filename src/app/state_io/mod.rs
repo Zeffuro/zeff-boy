@@ -1,19 +1,20 @@
 use super::App;
 mod archive_and_slots;
-#[cfg(not(target_arch = "wasm32"))]
 mod audio_recording;
+mod cheats_setup;
 mod replay;
 mod rom_loading;
 mod save_states;
 mod screenshots;
+mod wasm_rom;
 
-pub(super) use archive_and_slots::build_slot_labels;
+pub(crate) use archive_and_slots::SlotInfo;
+pub(super) use archive_and_slots::build_slot_info;
 pub(crate) use archive_and_slots::extract_rom_from_zip;
+#[allow(unused_imports)] // Used on WASM for drag-and-drop ROM loading
+pub(super) use archive_and_slots::extract_rom_from_zip_bytes;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
+use crate::platform::Instant;
 
 impl App {
     fn pause_for_dialog(&mut self) -> bool {

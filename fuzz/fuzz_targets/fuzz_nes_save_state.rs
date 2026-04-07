@@ -1,6 +1,5 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use std::path::PathBuf;
 
 fuzz_target!(|data: &[u8]| {
     let mut minimal_rom = vec![0u8; 16 + 16384];
@@ -10,7 +9,6 @@ fuzz_target!(|data: &[u8]| {
 
     let emu = zeff_nes_core::emulator::Emulator::new(
         &minimal_rom,
-        PathBuf::from("fuzz.nes"),
         48000.0,
     );
     if let Ok(mut emu) = emu {

@@ -121,7 +121,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             }
             ui.horizontal(|ui| {
                 if ui.button("Load .wgsl...").clicked()
-                    && let Some(path) = rfd::FileDialog::new()
+                    && let Some(path) = crate::platform::FileDialog::new()
                         .add_filter("WGSL", &["wgsl"])
                         .pick_file()
                 {

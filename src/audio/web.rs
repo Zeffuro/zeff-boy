@@ -2,13 +2,19 @@ use super::AudioQueueConfig;
 use wasm_bindgen::prelude::*;
 use web_sys::AudioContext;
 
-const WEB_SAMPLE_RATE: u32 = 48000;
-const BUFFER_SIZE: usize = 2048;
+const BUFFER_FRAMES: usize = 1024;
+
+const MAX_QUEUE_AHEAD_SECS: f64 = 0.12;
+
+const CATCHUP_OFFSET_SECS: f64 = 0.010;
 
 pub(crate) struct AudioOutput {
     ctx: AudioContext,
     sample_rate: u32,
     buffer: Vec<f32>,
+    next_play_time: f64,
+    left: Vec<f32>,
+    right: Vec<f32>,
 }
 
 impl AudioOutput {
@@ -21,7 +27,10 @@ impl AudioOutput {
         Ok(Self {
             ctx,
             sample_rate,
-            buffer: Vec::with_capacity(BUFFER_SIZE * 2),
+            buffer: Vec::with_capacity(BUFFER_FRAMES * 4),
+            next_play_time: 0.0,
+            left: Vec::with_capacity(BUFFER_FRAMES),
+            right: Vec::with_capacity(BUFFER_FRAMES),
         })
     }
 
@@ -31,6 +40,7 @@ impl AudioOutput {
 
     pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
         if config.fast_forward_active && config.mute_during_fast_forward {
+            self.buffer.clear();
             return;
         }
 
@@ -40,34 +50,50 @@ impl AudioOutput {
             self.buffer.push(s * gain);
         }
 
-        if self.buffer.len() < BUFFER_SIZE * 2 {
-            return;
+        while self.buffer.len() >= BUFFER_FRAMES * 2 {
+            let current_time = self.ctx.current_time();
+
+            if self.next_play_time < current_time {
+                self.next_play_time = current_time + CATCHUP_OFFSET_SECS;
+            }
+
+            if self.next_play_time > current_time + MAX_QUEUE_AHEAD_SECS {
+                break;
+            }
+
+            let Ok(audio_buffer) =
+                self.ctx
+                    .create_buffer(2, BUFFER_FRAMES as u32, self.sample_rate as f32)
+            else {
+                self.buffer.drain(..BUFFER_FRAMES * 2);
+                continue;
+            };
+
+            self.left.clear();
+            self.right.clear();
+            for pair in self.buffer[..BUFFER_FRAMES * 2].chunks_exact(2) {
+                self.left.push(pair[0]);
+                self.right.push(pair[1]);
+            }
+            self.buffer.drain(..BUFFER_FRAMES * 2);
+
+            let _ = audio_buffer.copy_to_channel(&self.left, 0);
+            let _ = audio_buffer.copy_to_channel(&self.right, 1);
+
+            if let Ok(source) = self.ctx.create_buffer_source() {
+                source.set_buffer(Some(&audio_buffer));
+                let _ = source.connect_with_audio_node(&self.ctx.destination());
+                let _ = source.start_with_when(self.next_play_time);
+            }
+
+            self.next_play_time += BUFFER_FRAMES as f64 / self.sample_rate as f64;
         }
 
-        let frames = self.buffer.len() / 2;
-        let Ok(audio_buffer) = self.ctx.create_buffer(2, frames as u32, self.sample_rate as f32)
-        else {
-            self.buffer.clear();
-            return;
-        };
-
-        let mut left = Vec::with_capacity(frames);
-        let mut right = Vec::with_capacity(frames);
-        for chunk in self.buffer.chunks_exact(2) {
-            left.push(chunk[0]);
-            right.push(chunk[1]);
+        let max_buffered = self.sample_rate as usize * 2 * 200 / 1000;
+        if self.buffer.len() > max_buffered {
+            let excess = self.buffer.len() - max_buffered;
+            let drop = excess & !1;
+            self.buffer.drain(..drop);
         }
-
-        let _ = audio_buffer.copy_to_channel(&left, 0);
-        let _ = audio_buffer.copy_to_channel(&right, 1);
-
-        if let Ok(source) = self.ctx.create_buffer_source() {
-            source.set_buffer(Some(&audio_buffer));
-            let _ = source.connect_with_audio_node(&self.ctx.destination());
-            let _ = source.start();
-        }
-
-        self.buffer.clear();
     }
 }
-

@@ -134,15 +134,13 @@ fn draw_shader_submenu(ui: &mut egui::Ui, actions: &mut Vec<MenuAction>, setting
                 } else {
                     settings.video.custom_shader_path.clone()
                 });
-                if ui.button("Load .wgsl...").clicked() {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if let Some(path) = rfd::FileDialog::new()
+                if ui.button("Load .wgsl...").clicked()
+                    && let Some(path) = crate::platform::FileDialog::new()
                         .add_filter("WGSL", &["wgsl"])
                         .pick_file()
-                    {
-                        settings.video.custom_shader_path = path.to_string_lossy().to_string();
-                        actions.push(MenuAction::ToolbarSettingsChanged);
-                    }
+                {
+                    settings.video.custom_shader_path = path.to_string_lossy().to_string();
+                    actions.push(MenuAction::ToolbarSettingsChanged);
                 }
                 if ui.button("Clear custom shader").clicked() {
                     settings.video.custom_shader_path.clear();

@@ -1,20 +1,11 @@
-#[cfg(not(target_arch = "wasm32"))]
 use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs, ff};
 
-use crate::settings::{GamepadAction, GamepadBindings};
-use zeff_gb_core::hardware::joypad::JoypadKey;
+use crate::settings::GamepadBindings;
 
-#[cfg(not(target_arch = "wasm32"))]
+use super::GamepadPoll;
+
 const RUMBLE_MAGNITUDE: u16 = 40_000;
 
-pub(crate) struct GamepadPoll {
-    pub(crate) events: Vec<(JoypadKey, bool)>,
-    pub(crate) action_events: Vec<(GamepadAction, bool)>,
-    pub(crate) left_stick: (f32, f32),
-    pub(crate) raw_pressed: Vec<&'static str>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
     active_gamepad: Option<GamepadId>,
@@ -22,7 +13,6 @@ pub(crate) struct GamepadHandler {
     rumble_playing: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl GamepadHandler {
     pub(crate) fn new() -> anyhow::Result<Self> {
         let gilrs = Gilrs::new()
@@ -134,7 +124,6 @@ impl GamepadHandler {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Drop for GamepadHandler {
     fn drop(&mut self) {
         if let Some(effect) = &mut self.rumble_effect
@@ -145,7 +134,6 @@ impl Drop for GamepadHandler {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn button_name(button: Button) -> &'static str {
     match button {
         Button::South => "South",
@@ -169,25 +157,4 @@ fn button_name(button: Button) -> &'static str {
         Button::DPadRight => "DPadRight",
         Button::Unknown => "Unknown",
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) struct GamepadHandler;
-
-#[cfg(target_arch = "wasm32")]
-impl GamepadHandler {
-    pub(crate) fn new() -> anyhow::Result<Self> {
-        anyhow::bail!("gamepad not supported on web")
-    }
-
-    pub(crate) fn poll(&mut self, _bindings: &GamepadBindings) -> GamepadPoll {
-        GamepadPoll {
-            events: Vec::new(),
-            action_events: Vec::new(),
-            left_stick: (0.0, 0.0),
-            raw_pressed: Vec::new(),
-        }
-    }
-
-    pub(crate) fn set_rumble(&mut self, _active: bool) {}
 }

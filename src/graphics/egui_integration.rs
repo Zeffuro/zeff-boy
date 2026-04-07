@@ -1,6 +1,6 @@
 use anyhow::Result;
 use egui::ClippedPrimitive;
-use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window};
+use winit::{event::WindowEvent, window::Window};
 
 use crate::graphics::gpu::GpuContext;
 use crate::settings::UiThemePreset;
@@ -18,7 +18,6 @@ pub(crate) struct EguiRenderer {
 
 impl EguiRenderer {
     pub(crate) fn new(
-        event_loop: &ActiveEventLoop,
         window: &Window,
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
@@ -59,7 +58,7 @@ impl EguiRenderer {
         let state = egui_winit::State::new(
             ctx.clone(),
             ctx.viewport_id(),
-            event_loop,
+            window,
             Some(window.scale_factor() as f32),
             None,
             None,

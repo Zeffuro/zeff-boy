@@ -40,8 +40,10 @@ impl LibretroPlatform {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const USER_AGENT: &str = "zeff-boy-emulator";
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn ureq_get(url: &str) -> anyhow::Result<ureq::Body> {
     let resp = ureq::get(url)
         .header("User-Agent", USER_AGENT)
@@ -50,6 +52,7 @@ pub(crate) fn ureq_get(url: &str) -> anyhow::Result<ureq::Body> {
     Ok(resp.into_body())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn ureq_get_github_json(url: &str) -> anyhow::Result<ureq::Body> {
     let resp = ureq::get(url)
         .header("Accept", "application/vnd.github.v3+json")

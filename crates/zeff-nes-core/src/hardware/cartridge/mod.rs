@@ -146,12 +146,9 @@ impl Cartridge {
                 header.mirroring,
                 false,
             )),
-            NesMapper::Vrc6B => MapperImpl::Vrc6(mappers::Vrc6::new(
-                prg_rom,
-                chr_rom,
-                header.mirroring,
-                true,
-            )),
+            NesMapper::Vrc6B => {
+                MapperImpl::Vrc6(mappers::Vrc6::new(prg_rom, chr_rom, header.mirroring, true))
+            }
             NesMapper::Fme7 => MapperImpl::Fme7(mappers::Fme7::new(
                 prg_rom,
                 chr_rom,

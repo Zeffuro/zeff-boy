@@ -1,15 +1,7 @@
 mod app;
 mod audio;
-#[cfg(not(target_arch = "wasm32"))]
-mod audio_recorder;
-#[cfg(target_arch = "wasm32")]
-#[path = "stubs/audio_recorder.rs"]
 mod audio_recorder;
 mod bps;
-#[cfg(not(target_arch = "wasm32"))]
-mod camera;
-#[cfg(target_arch = "wasm32")]
-#[path = "stubs/camera.rs"]
 mod camera;
 mod cheats;
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,21 +13,10 @@ mod emu_thread;
 mod graphics;
 mod input;
 mod ips;
-#[cfg(not(target_arch = "wasm32"))]
 mod libretro_common;
-#[cfg(target_arch = "wasm32")]
-#[path = "stubs/libretro_common.rs"]
-mod libretro_common;
-#[cfg(not(target_arch = "wasm32"))]
 mod libretro_metadata;
-#[cfg(target_arch = "wasm32")]
-#[path = "stubs/libretro_metadata.rs"]
-mod libretro_metadata;
-#[cfg(not(target_arch = "wasm32"))]
 mod mods;
-#[cfg(target_arch = "wasm32")]
-#[path = "stubs/mods.rs"]
-mod mods;
+mod platform;
 mod save_paths;
 mod settings;
 mod ui;
@@ -48,13 +29,11 @@ use crate::settings::Settings;
 #[cfg(not(target_arch = "wasm32"))]
 use anyhow::Context;
 #[cfg(not(target_arch = "wasm32"))]
-use env_logger::Env;
-#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    platform::init_logging();
 
     let mut settings = Settings::load_or_default();
     let args = cli::parse_args()?;
@@ -151,10 +130,12 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    console_error_panic_hook::set_once();
-    let _ = console_log::init_with_level(log::Level::Info);
+    platform::init_logging();
     log::info!("zeff-boy WASM starting");
 
-    let settings = settings::Settings::default();
-    app::run(None, settings).expect("app::run failed");
+    wasm_bindgen_futures::spawn_local(async {
+        platform::init_storage().await;
+        let settings = settings::Settings::load_or_default();
+        app::run(None, settings).expect("app::run failed");
+    });
 }

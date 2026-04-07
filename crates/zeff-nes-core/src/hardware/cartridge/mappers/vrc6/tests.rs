@@ -130,4 +130,3 @@ fn vrc6b_address_swap() {
     }
     assert_eq!(m.audio.pulse1.output(), 8);
 }
-

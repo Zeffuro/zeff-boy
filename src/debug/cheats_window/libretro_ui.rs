@@ -78,7 +78,6 @@ pub(super) fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
     state.libretro_show = response.openness > 0.0;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn poll_async_results(state: &mut CheatState) {
     let Some(rx) = state.libretro_rx.take() else {
         return;
@@ -146,12 +145,9 @@ fn poll_async_results(state: &mut CheatState) {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn poll_async_results(_state: &mut CheatState) {}
-
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_async(state: &mut CheatState) -> crossbeam_channel::Sender<LibretroAsyncResult> {
-    let (tx, rx) = crossbeam_channel::unbounded();
+fn spawn_async(state: &mut CheatState) -> std::sync::mpsc::Sender<LibretroAsyncResult> {
+    let (tx, rx) = std::sync::mpsc::channel();
     state.libretro_rx = Some(rx);
     state.libretro_busy = true;
     tx
@@ -193,14 +189,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             .clicked()
         {
             let url = libretro_cheats::browse_url(state.libretro_platform);
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Err(e) = open::that(url) {
-                log::warn!("failed to open browser: {e}");
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = web_sys::window().map(|w| { let _ = w.open_with_url(&url); });
-            }
+            crate::platform::open_url(&url);
         }
         let can_refresh = !state.libretro_busy;
         if ui
@@ -279,14 +268,7 @@ fn draw_attribution(ui: &mut egui::Ui) {
             .link(egui::RichText::new("libretro-database").small())
             .clicked()
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Err(e) = open::that("https://github.com/libretro/libretro-database") {
-                log::warn!("failed to open browser: {e}");
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = web_sys::window().and_then(|w| w.open_with_url("https://github.com/libretro/libretro-database").ok());
-            }
+            crate::platform::open_url("https://github.com/libretro/libretro-database");
         }
         ui.label(
             egui::RichText::new(" · CC-BY-SA-4.0")
@@ -304,14 +286,9 @@ fn draw_attribution(ui: &mut egui::Ui) {
             .link(egui::RichText::new("contributing to libretro-database").small())
             .clicked()
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Err(e) = open::that("https://github.com/libretro/libretro-database/tree/master/cht") {
-                log::warn!("failed to open browser: {e}");
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = web_sys::window().and_then(|w| w.open_with_url("https://github.com/libretro/libretro-database/tree/master/cht").ok());
-            }
+            crate::platform::open_url(
+                "https://github.com/libretro/libretro-database/tree/master/cht",
+            );
         }
         ui.label(
             egui::RichText::new("!")
@@ -381,7 +358,8 @@ fn do_libretro_download(state: &mut CheatState, filename: &str) {
         let tx = spawn_async(state);
         std::thread::spawn(move || {
             let cache_dir = libretro_cheats::libretro_cache_dir();
-            let result = libretro_cheats::download_cht_content(&filename_owned, platform, &cache_dir);
+            let result =
+                libretro_cheats::download_cht_content(&filename_owned, platform, &cache_dir);
             let _ = tx.send(LibretroAsyncResult::Downloaded {
                 filename: filename_owned,
                 result,

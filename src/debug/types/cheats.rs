@@ -31,8 +31,7 @@ pub(crate) struct CheatState {
     pub(crate) libretro_file_list: Option<Vec<String>>,
     pub(crate) libretro_show: bool,
     pub(crate) cheats_dirty: bool,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) libretro_rx: Option<crossbeam_channel::Receiver<LibretroAsyncResult>>,
+    pub(crate) libretro_rx: Option<std::sync::mpsc::Receiver<LibretroAsyncResult>>,
     pub(crate) libretro_busy: bool,
 }
 
@@ -57,7 +56,6 @@ impl CheatState {
             libretro_file_list: None,
             libretro_show: false,
             cheats_dirty: true,
-            #[cfg(not(target_arch = "wasm32"))]
             libretro_rx: None,
             libretro_busy: false,
         }

@@ -91,6 +91,9 @@ lint-all: lint lint-minimal
 # Run full CI pipeline locally (fmt + lint + test + deny)
 ci-local: fmt-check lint-all test-all deny
 
+# Run WASM CI check locally (requires wasm32 target: rustup target add wasm32-unknown-unknown)
+ci-local-wasm: check-wasm
+
 # Check that fuzz targets compile (requires nightly)
 fuzz-check:
     cargo +nightly check --manifest-path fuzz/Cargo.toml

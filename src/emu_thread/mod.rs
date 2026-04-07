@@ -1,4 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
 mod cheats;
 #[cfg(not(target_arch = "wasm32"))]
 mod debug_actions;
@@ -11,161 +10,19 @@ mod state;
 mod types;
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::thread::{self, JoinHandle};
-
+mod native;
 #[cfg(not(target_arch = "wasm32"))]
-use crossbeam_channel::{self as chan, Receiver, Sender};
+pub(crate) use native::EmuThread;
 
-use crate::emu_backend::EmuBackend;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use wasm::EmuThread;
 
 pub(crate) use types::{
     AudioConfig, EmuCommand, EmuResponse, FrameInput, FrameResult, JoypadInput,
     MemorySearchRequest, RenderSettings, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
 };
 
-const DEFAULT_REWIND_SECONDS: usize = 10;
-const REWIND_SNAPSHOTS_PER_SECOND: usize = 4;
-#[cfg(not(target_arch = "wasm32"))]
-const FRAME_CHANNEL_CAPACITY: usize = 1;
-#[cfg(not(target_arch = "wasm32"))]
-const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) struct EmuThread {
-    cmd_tx: Sender<EmuCommand>,
-    frame_rx: Receiver<FrameResult>,
-    resp_rx: Receiver<EmuResponse>,
-    join: Option<JoinHandle<()>>,
-    shared_framebuffer: SharedFramebuffer,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl EmuThread {
-    pub(crate) fn spawn(backend: EmuBackend) -> Self {
-        let (cmd_tx, cmd_rx) = chan::unbounded();
-        let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(FRAME_CHANNEL_CAPACITY);
-        let (resp_tx, resp_rx) = chan::unbounded();
-
-        let drain_rx = frame_rx.clone();
-
-        let shared_fb = types::new_shared_framebuffer();
-        let emu_fb = shared_fb.clone();
-
-        let join = thread::spawn(move || {
-            let mut emu_loop =
-                emu_loop::EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, emu_fb);
-            emu_loop.run();
-        });
-
-        Self {
-            cmd_tx,
-            frame_rx,
-            resp_rx,
-            join: Some(join),
-            shared_framebuffer: shared_fb,
-        }
-    }
-
-    pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
-        &self.shared_framebuffer
-    }
-
-    pub(crate) fn send(&self, cmd: EmuCommand) {
-        if self.cmd_tx.send(cmd).is_err() {
-            log::warn!("Failed to send command to emu thread (channel closed)");
-        }
-    }
-
-    pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
-        self.frame_rx.try_recv().ok()
-    }
-
-    pub(crate) fn recv(&self) -> Option<EmuResponse> {
-        self.resp_rx.recv().ok()
-    }
-
-    pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
-        self.resp_rx.try_recv().ok()
-    }
-
-    pub(crate) fn shutdown(&mut self) {
-        if self.cmd_tx.send(EmuCommand::Shutdown).is_err() {
-            log::debug!("Shutdown command could not be sent (channel closed)");
-        }
-        while self.frame_rx.try_recv().is_ok() {}
-
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
-        loop {
-            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
-            if timeout.is_zero() {
-                log::warn!("Emu thread shutdown timed out after {SHUTDOWN_TIMEOUT_SECS}s");
-                break;
-            }
-            match self.resp_rx.recv_timeout(timeout) {
-                Ok(EmuResponse::ShutdownComplete) => break,
-                Ok(EmuResponse::SramFlushed(Some(path))) => {
-                    log::info!("Saved battery RAM to {}", path);
-                }
-                Ok(_) => continue,
-                Err(_) => break,
-            }
-        }
-        if let Some(join) = self.join.take()
-            && join.join().is_err()
-        {
-            log::error!("emulator thread panicked during shutdown");
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Drop for EmuThread {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) struct EmuThread {
-    pending_frames: Vec<FrameResult>,
-    pending_responses: Vec<EmuResponse>,
-    shared_framebuffer: SharedFramebuffer,
-    backend: Option<EmuBackend>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl EmuThread {
-    pub(crate) fn spawn(backend: EmuBackend) -> Self {
-        Self {
-            pending_frames: Vec::new(),
-            pending_responses: Vec::new(),
-            shared_framebuffer: types::new_shared_framebuffer(),
-            backend: Some(backend),
-        }
-    }
-
-    pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
-        &self.shared_framebuffer
-    }
-
-    pub(crate) fn send(&self, _cmd: EmuCommand) {
-        log::debug!("WASM EmuThread: command ignored (stub)");
-    }
-
-    pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
-        None
-    }
-
-    pub(crate) fn recv(&self) -> Option<EmuResponse> {
-        None
-    }
-
-    pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
-        None
-    }
-
-    pub(crate) fn shutdown(&mut self) {
-        self.backend = None;
-    }
-}
+pub(crate) const DEFAULT_REWIND_SECONDS: usize = 10;
+pub(crate) const REWIND_SNAPSHOTS_PER_SECOND: usize = 4;

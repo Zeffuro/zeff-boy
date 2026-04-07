@@ -14,7 +14,6 @@ impl App {
         }
         self.shutdown_performed = true;
 
-        #[cfg(not(target_arch = "wasm32"))]
         self.stop_audio_recording();
         self.stop_replay_recording();
 

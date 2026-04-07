@@ -15,6 +15,7 @@ impl App {
             Some(EmuResponse::SaveStateOk(path)) => {
                 log::info!("Saved state to {}", path);
                 self.toast_manager.success(format!("Saved to slot {slot}"));
+                self.refresh_slot_info();
             }
             Some(EmuResponse::SaveStateFailed(err)) => {
                 log::error!("Failed to save state in slot {}: {}", slot, err);
@@ -45,7 +46,10 @@ impl App {
             }
             Some(EmuResponse::LoadStateFailed(err)) => {
                 log::error!("Failed to load state from slot {}: {}", slot, err);
-                let msg = if err.contains("NotFound") || err.contains("not found") || err.contains("cannot find") {
+                let msg = if err.contains("NotFound")
+                    || err.contains("not found")
+                    || err.contains("cannot find")
+                {
                     format!("No save in slot {slot}")
                 } else {
                     format!("Load slot {slot} failed: {err}")
@@ -57,25 +61,7 @@ impl App {
     }
 
     pub(in crate::app) fn default_save_state_dir(system: ActiveSystem) -> PathBuf {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(config_dir) = dirs::config_dir() {
-                return config_dir
-                    .join("zeff-boy")
-                    .join("saves")
-                    .join(system.storage_subdir());
-            }
-
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("saves")
-                .join(system.storage_subdir())
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            PathBuf::from(system.storage_subdir())
-        }
+        crate::platform::save_dir(system.storage_subdir())
     }
 
     pub(in crate::app) fn default_state_file_name(&self) -> String {
@@ -102,95 +88,148 @@ impl App {
         Self::default_save_state_dir(self.active_system)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn save_state_file_dialog(&mut self) {
         if self.emu_thread.is_none() {
             return;
         }
 
-        let was_paused = self.pause_for_dialog();
-        let file = rfd::FileDialog::new()
-            .set_title("Save State As")
-            .set_directory(self.state_dialog_dir())
-            .add_filter("Zeff Boy Save State", &["state"])
-            .set_file_name(self.default_state_file_name())
-            .save_file();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let was_paused = self.pause_for_dialog();
+            let file = crate::platform::FileDialog::new()
+                .set_title("Save State As")
+                .set_directory(self.state_dialog_dir())
+                .add_filter("Zeff Boy Save State", &["state"])
+                .set_file_name(&self.default_state_file_name())
+                .save_file();
 
-        self.resume_after_dialog(was_paused);
-        let Some(path) = file else {
-            return;
-        };
+            self.resume_after_dialog(was_paused);
+            let Some(path) = file else {
+                return;
+            };
 
-        self.last_state_dir = path.parent().map(|p| p.to_path_buf());
+            self.last_state_dir = path.parent().map(|p| p.to_path_buf());
 
-        if let Some(thread) = &self.emu_thread {
-            thread.send(EmuCommand::SaveStateToPath(path.clone()));
-        }
-        match self.recv_cold_response() {
-            Some(EmuResponse::SaveStateOk(saved)) => {
-                log::info!("Saved state to {}", saved);
-                self.toast_manager.success("State saved to file");
+            if let Some(thread) = &self.emu_thread {
+                thread.send(EmuCommand::SaveStateToPath(path.clone()));
             }
-            Some(EmuResponse::SaveStateFailed(err)) => {
-                log::error!("Failed to save state to {}: {}", path.display(), err);
-                self.toast_manager.error(format!("Save failed: {err}"));
-            }
-            _ => {}
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(in crate::app) fn load_state_file_dialog(&mut self) {
-        if self.emu_thread.is_none() {
-            return;
-        }
-
-        let was_paused = self.pause_for_dialog();
-        let file = rfd::FileDialog::new()
-            .set_title("Load State")
-            .set_directory(self.state_dialog_dir())
-            .add_filter("Zeff Boy Save State", &["state"])
-            .pick_file();
-
-        self.resume_after_dialog(was_paused);
-        let Some(path) = file else {
-            return;
-        };
-
-        self.last_state_dir = path.parent().map(|p| p.to_path_buf());
-
-        if let Some(thread) = &self.emu_thread {
-            thread.send(EmuCommand::LoadStateFromPath {
-                path: path.clone(),
-                buttons_pressed: self.host_input.buttons_pressed(),
-                dpad_pressed: self.host_input.dpad_pressed(),
-            });
-        }
-        match self.recv_cold_response() {
-            Some(EmuResponse::LoadStateOk {
-                path: p,
-            }) => {
-                if let Some(thread) = &self.emu_thread {
-                    self.latest_frame = thread.shared_framebuffer().load_full();
+            match self.recv_cold_response() {
+                Some(EmuResponse::SaveStateOk(saved)) => {
+                    log::info!("Saved state to {}", saved);
+                    self.toast_manager.success("State saved to file");
                 }
-                log::info!("Loaded state from {}", p);
-                self.toast_manager.success("State loaded from file");
+                Some(EmuResponse::SaveStateFailed(err)) => {
+                    log::error!("Failed to save state to {}: {}", path.display(), err);
+                    self.toast_manager.error(format!("Save failed: {err}"));
+                }
+                _ => {}
             }
-            Some(EmuResponse::LoadStateFailed(err)) => {
-                log::error!("Failed to load state from {}: {}", path.display(), err);
-                self.toast_manager.error(format!("Load failed: {err}"));
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(thread) = &self.emu_thread {
+                thread.send(EmuCommand::CaptureStateBytes);
             }
-            _ => {}
+            match self.recv_cold_response() {
+                Some(EmuResponse::StateCaptured(bytes)) => {
+                    let filename = self.default_state_file_name();
+                    crate::platform::download_file(&filename, &bytes);
+                    self.toast_manager.success("State exported to download");
+                }
+                Some(EmuResponse::StateCaptureFailed(err)) => {
+                    self.toast_manager.error(format!("Export failed: {err}"));
+                }
+                _ => {}
+            }
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub(in crate::app) fn save_state_file_dialog(&mut self) {
-        self.toast_manager.info("File save dialog not available on web");
+    pub(in crate::app) fn load_state_file_dialog(&mut self) {
+        if self.emu_thread.is_none() {
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let was_paused = self.pause_for_dialog();
+            let file = crate::platform::FileDialog::new()
+                .set_title("Load State")
+                .set_directory(self.state_dialog_dir())
+                .add_filter("Zeff Boy Save State", &["state"])
+                .pick_file();
+
+            self.resume_after_dialog(was_paused);
+            let Some(path) = file else {
+                return;
+            };
+
+            self.last_state_dir = path.parent().map(|p| p.to_path_buf());
+
+            if let Some(thread) = &self.emu_thread {
+                thread.send(EmuCommand::LoadStateFromPath {
+                    path: path.clone(),
+                    buttons_pressed: self.host_input.buttons_pressed(),
+                    dpad_pressed: self.host_input.dpad_pressed(),
+                });
+            }
+            match self.recv_cold_response() {
+                Some(EmuResponse::LoadStateOk { path: p }) => {
+                    if let Some(thread) = &self.emu_thread {
+                        self.latest_frame = thread.shared_framebuffer().load_full();
+                    }
+                    log::info!("Loaded state from {}", p);
+                    self.toast_manager.success("State loaded from file");
+                }
+                Some(EmuResponse::LoadStateFailed(err)) => {
+                    log::error!("Failed to load state from {}: {}", path.display(), err);
+                    self.toast_manager.error(format!("Load failed: {err}"));
+                }
+                _ => {}
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::platform::FileDialog::new()
+                .add_filter("Save States", &["state", "gbstate", "nstate"])
+                .set_title("Load State")
+                .pick_file_web(self.pending_state_load.clone());
+        }
     }
 
+    /// Check the WASM pending-state-load slot and apply the state if data arrived.
     #[cfg(target_arch = "wasm32")]
-    pub(in crate::app) fn load_state_file_dialog(&mut self) {
-        self.toast_manager.info("File load dialog not available on web");
+    pub(in crate::app) fn check_pending_state_load(&mut self) {
+        let data = self.pending_state_load.borrow_mut().take();
+        if let Some((name, bytes)) = data {
+            if self.emu_thread.is_none() {
+                self.toast_manager
+                    .error("No game running — cannot load state");
+                return;
+            }
+            if let Some(thread) = &self.emu_thread {
+                thread.send(EmuCommand::LoadStateBytes {
+                    state_bytes: bytes,
+                    buttons_pressed: self.host_input.buttons_pressed(),
+                    dpad_pressed: self.host_input.dpad_pressed(),
+                });
+            }
+            match self.recv_cold_response() {
+                Some(EmuResponse::LoadStateOk { path }) => {
+                    if let Some(thread) = &self.emu_thread {
+                        self.latest_frame = thread.shared_framebuffer().load_full();
+                    }
+                    log::info!("Loaded state from file: {name}");
+                    self.toast_manager
+                        .success(format!("State loaded from {name}"));
+                }
+                Some(EmuResponse::LoadStateFailed(err)) => {
+                    log::error!("Failed to load state from {name}: {err}");
+                    self.toast_manager.error(format!("Load failed: {err}"));
+                }
+                _ => {}
+            }
+        }
     }
 }

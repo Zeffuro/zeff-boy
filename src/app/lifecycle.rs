@@ -3,13 +3,10 @@ use crate::{
     audio::AudioOutput,
     emu_thread::{EmuCommand, EmuThread},
     graphics::Graphics,
+    platform::Instant,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Fullscreen;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 
 impl App {
     pub(super) fn reset_audio_output(&mut self) {
@@ -41,6 +38,11 @@ impl App {
             return;
         }
 
+        #[cfg(target_arch = "wasm32")]
+        if self.pending_gfx.is_some() {
+            return;
+        }
+
         if self.audio.is_none() {
             self.reset_audio_output();
         }
@@ -51,17 +53,71 @@ impl App {
             thread.send(EmuCommand::SetSampleRate(audio.sample_rate()));
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let gfx = pollster::block_on(Graphics::new(event_loop, self.settings.video.vsync_mode))
-            .expect("failed to initialize graphics");
+        let window = match Graphics::create_window(event_loop) {
+            Ok(w) => w,
+            Err(e) => {
+                log::error!("Failed to create window: {e}");
+                return;
+            }
+        };
+
+        let size = window.inner_size();
+        self.window_size = (size.width as f32, size.height as f32);
+        self.window_id = Some(window.id());
 
         #[cfg(target_arch = "wasm32")]
-        let gfx = pollster_lite_block(Graphics::new(event_loop, self.settings.video.vsync_mode))
-            .expect("failed to initialize graphics");
+        {
+            use wasm_bindgen::JsCast;
+            use winit::platform::web::WindowExtWebSys;
+            if let Some(canvas) = window.canvas() {
+                let web_window = web_sys::window().expect("browser window must exist");
+                let document = web_window.document().expect("document must exist");
+                let body = document.body().expect("document body must exist");
+                let _ = body.append_child(&canvas);
+                canvas.set_attribute("style", "width:100%;height:100%").ok();
 
+                let target: &web_sys::EventTarget = body.unchecked_ref();
+                crate::platform::setup_drop_handler(target, self.pending_rom_load.clone());
+
+                let visible_flag = self.wasm_tab_visible.clone();
+                let doc_clone = document.clone();
+                let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+                    let hidden = doc_clone.hidden();
+                    visible_flag.set(!hidden);
+                })
+                    as Box<dyn Fn()>);
+                let _ = document.add_event_listener_with_callback(
+                    "visibilitychange",
+                    closure.as_ref().unchecked_ref(),
+                );
+                closure.forget(); // leak — lives for the page lifetime
+            }
+        }
+
+        let vsync = self.settings.video.vsync_mode;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let gfx = pollster::block_on(Graphics::new(window, vsync))
+                .expect("failed to initialize graphics");
+            self.finalize_gfx_init(gfx);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let slot_clone = slot.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = Graphics::new(window, vsync).await;
+                *slot_clone.borrow_mut() = Some(result);
+            });
+            self.pending_gfx = Some(slot);
+        }
+    }
+
+    fn finalize_gfx_init(&mut self, gfx: Graphics) {
         let size = gfx.window().inner_size();
         self.window_size = (size.width as f32, size.height as f32);
-        self.window_id = Some(gfx.window().id());
 
         if self.settings.ui.ui_scale_needs_auto {
             let monitor_height = gfx
@@ -74,19 +130,58 @@ impl App {
                 .auto_detect_ui_scale(monitor_height, scale_factor);
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            use winit::platform::web::WindowExtWebSys;
-            if let Some(canvas) = gfx.window().canvas() {
-                let window = web_sys::window().unwrap();
-                let document = window.document().unwrap();
-                let body = document.body().unwrap();
-                let _ = body.append_child(&canvas);
-                canvas.set_attribute("style", "width:100%;height:100%").ok();
-            }
-        }
-
         self.gfx = Some(gfx);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn check_pending_gfx(&mut self) {
+        if self.gfx.is_some() {
+            return;
+        }
+        let slot = match self.pending_gfx.take() {
+            Some(s) => s,
+            None => return,
+        };
+        if let Some(result) = slot.borrow_mut().take() {
+            match result {
+                Ok(gfx) => {
+                    self.finalize_gfx_init(gfx);
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        let size = gfx.window().inner_size();
+                        if size.width > 0 && size.height > 0 {
+                            gfx.resize(size.width, size.height);
+                        }
+                        gfx.window().request_redraw();
+                    }
+                }
+                Err(e) => log::error!("Graphics initialization failed: {e}"),
+            }
+        } else {
+            self.pending_gfx = Some(slot);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn check_tab_visibility(&mut self) {
+        let visible = self.wasm_tab_visible.get();
+        if visible != self.wasm_tab_was_visible {
+            self.wasm_tab_was_visible = visible;
+            self.handle_focus_change(visible);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn wasm_poll_hooks(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn wasm_poll_hooks(&mut self, event_loop: &ActiveEventLoop) {
+        self.check_pending_gfx();
+        self.check_pending_rom();
+        self.check_pending_state_load();
+        self.check_tab_visibility();
+        if self.gfx.is_none() && self.pending_gfx.is_some() {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        }
     }
 
     pub(super) fn toggle_fullscreen(&mut self) {
@@ -106,6 +201,24 @@ impl App {
             return;
         };
 
+        // On WASM, Normal mode uses requestAnimationFrame (via request_redraw)
+        // instead of setTimeout (WaitUntil). rAF is vsync-aligned and jitter-free,
+        // while setTimeout has ≥4ms granularity that causes visible hitches.
+        // ControlFlow::Wait means the event loop sleeps until the rAF callback fires —
+        // no extra wakeups, no busy loops.
+        #[cfg(target_arch = "wasm32")]
+        match self.speed_mode() {
+            SpeedMode::Normal => {
+                event_loop.set_control_flow(ControlFlow::Wait);
+                gfx.window().request_redraw();
+            }
+            SpeedMode::FastForward | SpeedMode::Uncapped => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                gfx.window().request_redraw();
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         match self.speed_mode() {
             SpeedMode::Normal => {
                 let effective = self.effective_frame_duration();
@@ -115,7 +228,7 @@ impl App {
                     event_loop.set_control_flow(ControlFlow::Poll);
                     gfx.window().request_redraw();
                 } else {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time.into()));
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
                 }
             }
             SpeedMode::FastForward | SpeedMode::Uncapped => {
@@ -123,20 +236,5 @@ impl App {
                 gfx.window().request_redraw();
             }
         }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn pollster_lite_block<F: std::future::Future>(fut: F) -> F::Output {
-    use std::task::{Context, Poll, Wake, Waker};
-    use std::pin::pin;
-    struct NoopWake;
-    impl Wake for NoopWake { fn wake(self: std::sync::Arc<Self>) {} }
-    let waker = Waker::from(std::sync::Arc::new(NoopWake));
-    let mut cx = Context::from_waker(&waker);
-    let mut fut = pin!(fut);
-    match fut.as_mut().poll(&mut cx) {
-        Poll::Ready(val) => val,
-        Poll::Pending => panic!("GPU init returned Pending on WASM"),
     }
 }

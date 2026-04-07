@@ -310,7 +310,9 @@ mod tests {
         assert!(dc.has_watchpoints());
         dc.check_watch_write(0x300, 10, 20);
         assert!(dc.hit_watchpoint.is_some());
-        let hit = dc.hit_watchpoint.unwrap();
+        let hit = dc
+            .hit_watchpoint
+            .expect("watchpoint should have been triggered");
         assert_eq!(hit.address, 0x300);
         assert_eq!(hit.old_value, 10);
         assert_eq!(hit.new_value, 20);

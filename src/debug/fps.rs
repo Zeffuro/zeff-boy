@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
-use std::time::Instant;
+
+use crate::platform::Instant;
 
 // FPS tracker
 pub(crate) struct FpsTracker {

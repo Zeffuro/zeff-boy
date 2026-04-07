@@ -22,12 +22,10 @@ pub(super) fn draw_mods_content(ui: &mut egui::Ui, state: &mut ModState) {
         });
         ui.horizontal(|ui| {
             if ui.button("Open Folder").clicked() {
-                #[cfg(not(target_arch = "wasm32"))]
                 if let Err(e) = std::fs::create_dir_all(dir) {
                     log::warn!("Failed to create mods dir: {e}");
                 }
-                #[cfg(not(target_arch = "wasm32"))]
-                let _ = open::that(dir);
+                crate::platform::open_url(&dir.display().to_string());
             }
             if ui.button("Refresh").clicked() {
                 state.entries = crate::mods::load_mod_config(dir);

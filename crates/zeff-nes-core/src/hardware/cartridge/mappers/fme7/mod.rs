@@ -3,8 +3,8 @@ use crate::hardware::cartridge::{Mapper, Mirroring};
 const AY_PRESCALER_PERIOD: u16 = 16;
 
 const AY_VOLUME_TABLE: [f32; 16] = [
-    0.0, 0.0074, 0.0108, 0.0158, 0.0230, 0.0337, 0.0492, 0.0719, 0.1050, 0.1534, 0.2241,
-    0.3273, 0.4781, 0.6984, 1.0, 1.0,
+    0.0, 0.0074, 0.0108, 0.0158, 0.0230, 0.0337, 0.0492, 0.0719, 0.1050, 0.1534, 0.2241, 0.3273,
+    0.4781, 0.6984, 1.0, 1.0,
 ];
 
 struct Sunsoft5BAudio {
@@ -103,11 +103,7 @@ impl Sunsoft5BAudio {
         let env_vol = self.envelope.output();
         let mut sum = 0.0f32;
         for ch in &self.channels {
-            let vol_index = if ch.use_envelope {
-                env_vol
-            } else {
-                ch.volume
-            } as usize;
+            let vol_index = if ch.use_envelope { env_vol } else { ch.volume } as usize;
             let level = AY_VOLUME_TABLE[vol_index.min(15)];
             if ch.tone_disable || ch.output_high {
                 sum += level;
@@ -260,7 +256,11 @@ impl Sunsoft5BEnvelope {
     }
 
     fn update_output(&mut self) {
-        self.output = if self.attack { self.step } else { 15 - self.step };
+        self.output = if self.attack {
+            self.step
+        } else {
+            15 - self.step
+        };
     }
 
     fn output(&self) -> u8 {

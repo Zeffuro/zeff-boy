@@ -1,10 +1,7 @@
 use super::{App, SpeedMode};
 use crate::debug::{ConsoleGraphicsData, DebugTab, is_tab_open};
 use crate::emu_thread::{EmuResponse, FrameResult};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
+use crate::platform::Instant;
 
 impl App {
     pub(super) fn drain_emu_responses(&mut self) {
@@ -82,13 +79,10 @@ impl App {
             );
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(recorder) = &mut self.recording.audio_recorder {
-                recorder.write_samples(&result.audio_samples);
-                if let Some(snapshot) = result.apu_snapshot {
-                    recorder.write_apu_snapshot(snapshot);
-                }
+        if let Some(recorder) = &mut self.recording.audio_recorder {
+            recorder.write_samples(&result.audio_samples);
+            if let Some(snapshot) = result.apu_snapshot {
+                recorder.write_apu_snapshot(snapshot);
             }
         }
         self.recycled.audio = Some(result.audio_samples);

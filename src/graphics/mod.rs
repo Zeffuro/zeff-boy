@@ -35,16 +35,19 @@ pub(crate) struct Graphics {
 }
 
 impl Graphics {
-    pub(crate) async fn new(event_loop: &ActiveEventLoop, vsync: VsyncMode) -> Result<Self> {
-        let window =
-            Arc::new(event_loop.create_window(WindowAttributes::default().with_title("zeff-boy"))?);
+    pub(crate) fn create_window(event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
+        Ok(Arc::new(event_loop.create_window(
+            WindowAttributes::default().with_title("zeff-boy"),
+        )?))
+    }
 
+    pub(crate) async fn new(window: Arc<Window>, vsync: VsyncMode) -> Result<Self> {
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
 
         let gpu = GpuContext::new(window.clone(), width, height, vsync).await?;
-        let egui = EguiRenderer::new(event_loop, &window, &gpu.device, gpu.config.format)?;
+        let egui = EguiRenderer::new(&window, &gpu.device, gpu.config.format)?;
         let framebuffer = FramebufferRenderer::new(&gpu.device, gpu.config.format)?;
 
         Ok(Self {

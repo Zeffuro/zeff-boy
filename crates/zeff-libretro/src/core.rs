@@ -160,6 +160,7 @@ impl CoreState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn serialize_size(&self) -> usize {
         self.encode_state().map_or(0, |v| v.len())
     }
@@ -171,6 +172,7 @@ impl CoreState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn load_battery_sram(&mut self, data: &[u8]) {
         match &mut self.core {
             ActiveCore::Gb(emu) => {
@@ -221,6 +223,7 @@ impl CoreState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn load_sram_from_buf(&mut self, buf: &[u8]) {
         if !buf.is_empty() {
             self.load_battery_sram(buf);
@@ -257,6 +260,7 @@ impl CoreState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_gb(&self) -> bool {
         matches!(self.core, ActiveCore::Gb(_))
     }
@@ -274,20 +278,16 @@ impl CoreState {
 
     pub fn cheat_set(&mut self, code: &str) {
         match &mut self.core {
-            ActiveCore::Gb(_) => {
+            ActiveCore::Gb(emu) => {
                 if let Ok((patches, _)) = zeff_gb_core::cheats::parse_cheat(code) {
-                    if let ActiveCore::Gb(emu) = &mut self.core {
-                        for p in patches {
-                            emu.add_rom_patch(p);
-                        }
+                    for p in patches {
+                        emu.add_rom_patch(p);
                     }
                 }
             }
-            ActiveCore::Nes(_) => {
+            ActiveCore::Nes(emu) => {
                 if let Some(patch) = zeff_nes_core::cheats::decode_nes_game_genie(code) {
-                    if let ActiveCore::Nes(emu) = &mut self.core {
-                        emu.add_game_genie_patch(patch);
-                    }
+                    emu.add_game_genie_patch(patch);
                 }
             }
         }

@@ -58,6 +58,7 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) is_playing_replay: bool,
     pub(crate) is_paused: bool,
     pub(crate) slot_labels: &'a [String; 10],
+    pub(crate) slot_occupied: &'a [bool; 10],
     pub(crate) active_save_slot: u8,
 }
 
@@ -87,6 +88,7 @@ pub(crate) fn draw_menu_bar(
                                 settings,
                                 &file_menu::FileMenuState {
                                     slot_labels: mb.slot_labels,
+                                    slot_occupied: mb.slot_occupied,
                                     active_slot: mb.active_save_slot,
                                     is_recording_audio: mb.is_recording_audio,
                                     is_recording_replay: mb.is_recording_replay,
@@ -109,24 +111,12 @@ pub(crate) fn draw_menu_bar(
 
                         ui.menu_button("Help", |ui| {
                             if ui.button("GitHub Repository").clicked() {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                if let Err(e) = open::that("https://github.com/zeffuro/zeff-boy") {
-                                    log::warn!("failed to open browser: {e}");
-                                }
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    let _ = web_sys::window().and_then(|w| w.open_with_url("https://github.com/zeffuro/zeff-boy").ok());
-                                }
+                                crate::platform::open_url("https://github.com/zeffuro/zeff-boy");
                                 ui.close();
                             }
                             if ui.button("Open Settings Folder").clicked() {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    let dir = Settings::settings_dir();
-                                    if let Err(e) = open::that(&dir) {
-                                        log::warn!("failed to open folder {}: {e}", dir.display());
-                                    }
-                                }
+                                let dir = Settings::settings_dir();
+                                crate::platform::open_url(&dir.display().to_string());
                                 ui.close();
                             }
                         });

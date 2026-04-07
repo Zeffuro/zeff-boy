@@ -299,6 +299,12 @@ pub(crate) struct EmulationSettings {
     pub(crate) sgb_border_enabled: bool,
     #[serde(default)]
     pub(crate) nes_zapper_enabled: bool,
+    #[serde(default = "default_pause_on_unfocus")]
+    pub(crate) pause_on_unfocus: bool,
+}
+
+fn default_pause_on_unfocus() -> bool {
+    true
 }
 
 impl Default for EmulationSettings {
@@ -312,6 +318,7 @@ impl Default for EmulationSettings {
             auto_save_state: false,
             sgb_border_enabled: false,
             nes_zapper_enabled: false,
+            pause_on_unfocus: true,
         }
     }
 }

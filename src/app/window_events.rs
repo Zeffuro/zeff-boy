@@ -1,4 +1,5 @@
 use super::App;
+use crate::platform::Instant;
 use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::WindowId};
 
 impl App {
@@ -69,12 +70,29 @@ impl App {
             }
             WindowEvent::DroppedFile(path) => self.handle_dropped_file(path),
             WindowEvent::RedrawRequested => self.tick(),
+            WindowEvent::Focused(focused) => self.handle_focus_change(focused),
             _ => {}
         }
 
         if self.exit_requested {
             self.perform_shutdown();
             event_loop.exit();
+        }
+    }
+
+    pub(super) fn handle_focus_change(&mut self, focused: bool) {
+        if focused {
+            self.timing.last_frame_time = Instant::now();
+
+            if self.paused_by_unfocus {
+                self.paused_by_unfocus = false;
+                self.speed.paused = false;
+                self.toast_manager.set_paused(false);
+            }
+        } else if self.settings.emulation.pause_on_unfocus && !self.speed.paused {
+            self.paused_by_unfocus = true;
+            self.speed.paused = true;
+            self.toast_manager.set_paused(true);
         }
     }
 }

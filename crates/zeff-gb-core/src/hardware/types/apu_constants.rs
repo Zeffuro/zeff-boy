@@ -24,6 +24,8 @@ pub const WAVE_RAM_END: u16 = 0xFF3F;
 pub const CGB_PCM12: u16 = 0xFF76;
 pub const CGB_PCM34: u16 = 0xFF77;
 
+pub const FRAME_SEQUENCER_PERIOD_CYCLES: u64 = 8192;
+
 pub const NR10_READ_MASK: u8 = 0x80;
 pub const NR11_READ_MASK: u8 = 0x3F;
 pub const NR12_READ_MASK: u8 = 0x00;

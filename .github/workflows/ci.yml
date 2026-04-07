@@ -110,7 +110,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: taiki-e/install-action@cargo-nextest
 
@@ -118,8 +118,14 @@ jobs:
         with:
           prefix-key: "v1-macos"
 
+      - name: Format check
+        run: cargo fmt --all -- --check
+
       - name: Clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy (no default features)
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
       - name: Build
         run: cargo build --workspace
@@ -129,6 +135,9 @@ jobs:
 
       - name: Run tests
         run: cargo nextest run --workspace
+
+      - name: Run tests (no default features)
+        run: cargo nextest run --workspace --no-default-features
 
   fuzz-check:
     name: Fuzz Compile Check
@@ -150,6 +159,23 @@ jobs:
 
       - name: Check fuzz targets compile
         run: cargo +nightly check --manifest-path fuzz/Cargo.toml
+
+  wasm:
+    name: WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-wasm"
+
+      - name: Check WASM target compiles
+        run: cargo check --target wasm32-unknown-unknown --no-default-features
 
   deny:
     name: Dependency Audit

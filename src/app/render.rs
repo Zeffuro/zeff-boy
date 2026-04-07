@@ -14,12 +14,7 @@ impl App {
             .and_then(|d| d.perf_info.as_ref())
             .map(|info| info.speed_mode_label.as_str());
 
-        let is_recording = {
-            #[cfg(not(target_arch = "wasm32"))]
-            { self.recording.audio_recorder.is_some() }
-            #[cfg(target_arch = "wasm32")]
-            { false }
-        };
+        let is_recording = self.recording.is_audio_recording();
         let is_recording_replay = self.recording.replay_recorder.is_some();
         let is_playing_replay = self.recording.replay_player.is_some();
         let is_rewinding = self.rewind.held && self.settings.rewind.enabled;
@@ -27,8 +22,8 @@ impl App {
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back =
             self.rewind.pops as f32 * self.settings.rewind.capture_interval() as f32 / 60.0;
-        let slot_labels =
-            super::state_io::build_slot_labels(self.rom_info.rom_hash, self.active_system);
+        let slot_labels = self.cached_slot_info.labels.clone();
+        let slot_occupied = self.cached_slot_info.occupied;
 
         match gfx.render(graphics::RenderContext {
             cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
@@ -59,6 +54,7 @@ impl App {
             autohide_menu_bar,
             cursor_y,
             slot_labels,
+            slot_occupied,
             active_save_slot: self.active_save_slot,
         }) {
             Ok(result) => {
@@ -86,11 +82,9 @@ impl App {
                             settings_dirty = true;
                         }
                         MenuAction::StartAudioRecording => {
-                            #[cfg(not(target_arch = "wasm32"))]
                             self.start_audio_recording();
                         }
                         MenuAction::StopAudioRecording => {
-                            #[cfg(not(target_arch = "wasm32"))]
                             self.stop_audio_recording();
                         }
                         MenuAction::StartReplayRecording => self.start_replay_recording(),

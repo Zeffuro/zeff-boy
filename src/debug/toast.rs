@@ -1,4 +1,4 @@
-use std::time::Instant;
+use crate::platform::Instant;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ToastKind {

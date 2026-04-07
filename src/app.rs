@@ -2,16 +2,14 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop},
     window::WindowId,
 };
+
+use crate::platform::Instant;
 
 use crate::{
     audio::AudioOutput,
@@ -27,33 +25,7 @@ use crate::{
     ui,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
-#[cfg(target_arch = "wasm32")]
-pub(super) use camera_stub::{CameraCapture, CameraHostSettings};
-
-#[cfg(target_arch = "wasm32")]
-mod camera_stub {
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub(crate) struct CameraHostSettings {
-        pub(crate) device_index: u32,
-        pub(crate) auto_levels: bool,
-        pub(crate) gamma: f32,
-        pub(crate) brightness: f32,
-        pub(crate) contrast: f32,
-    }
-    impl Default for CameraHostSettings {
-        fn default() -> Self {
-            Self { device_index: 0, auto_levels: false, gamma: 1.0, brightness: 0.0, contrast: 1.0 }
-        }
-    }
-    pub(crate) struct CameraCapture;
-    impl CameraCapture {
-        pub(crate) fn start(_settings: CameraHostSettings) -> Self { Self }
-        pub(crate) fn update_settings(&self, _settings: CameraHostSettings) {}
-        pub(crate) fn latest_frame(&self) -> Vec<u8> { vec![128u8; 128 * 112] }
-    }
-}
 
 mod bindings;
 mod camera_host;
@@ -96,6 +68,16 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             .map_err(|e| log::error!("Gamepad init failed: {e}"))
             .ok(),
         gfx: None,
+        #[cfg(target_arch = "wasm32")]
+        pending_gfx: None,
+        #[cfg(target_arch = "wasm32")]
+        pending_rom_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+        #[cfg(target_arch = "wasm32")]
+        pending_state_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+        #[cfg(target_arch = "wasm32")]
+        wasm_tab_visible: std::rc::Rc::new(std::cell::Cell::new(true)),
+        #[cfg(target_arch = "wasm32")]
+        wasm_tab_was_visible: true,
         window_id: None,
         fps_tracker: FpsTracker::new(),
         debug_windows: DebugWindowState::new(),
@@ -153,7 +135,6 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         shutdown_performed: false,
         toast_manager: ToastManager::new(),
         recording: RecordingState {
-            #[cfg(not(target_arch = "wasm32"))]
             audio_recorder: None,
             replay_recorder: None,
             replay_player: None,
@@ -169,6 +150,11 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         egui_wants_keyboard: false,
         game_view_focused: true,
         active_system,
+        cached_slot_info: state_io::SlotInfo {
+            labels: std::array::from_fn(|i| format!("Slot {i}  (empty)")),
+            occupied: [false; 10],
+        },
+        paused_by_unfocus: false,
     };
 
     event_loop.run_app(&mut app)?;
@@ -201,10 +187,15 @@ struct RewindState {
 }
 
 struct RecordingState {
-    #[cfg(not(target_arch = "wasm32"))]
     audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
     replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
     replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
+}
+
+impl RecordingState {
+    fn is_audio_recording(&self) -> bool {
+        self.audio_recorder.is_some()
+    }
 }
 
 struct TimingState {
@@ -256,6 +247,16 @@ struct App {
     audio: Option<AudioOutput>,
     gamepad: Option<GamepadHandler>,
     gfx: Option<Graphics>,
+    #[cfg(target_arch = "wasm32")]
+    pending_gfx: Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Graphics>>>>>,
+    #[cfg(target_arch = "wasm32")]
+    pending_rom_load: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
+    #[cfg(target_arch = "wasm32")]
+    pending_state_load: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
+    #[cfg(target_arch = "wasm32")]
+    wasm_tab_visible: std::rc::Rc<std::cell::Cell<bool>>,
+    #[cfg(target_arch = "wasm32")]
+    wasm_tab_was_visible: bool,
     window_id: Option<WindowId>,
     fps_tracker: FpsTracker,
     debug_windows: DebugWindowState,
@@ -292,6 +293,8 @@ struct App {
     egui_wants_keyboard: bool,
     game_view_focused: bool,
     active_system: ActiveSystem,
+    cached_slot_info: state_io::SlotInfo,
+    paused_by_unfocus: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -308,9 +311,8 @@ const MAX_FRAMES_PER_TICK: usize = 10;
 
 const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 
-const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33); // ~30Hz
+const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33);
 
-/// NES runs at ~60.0988 fps → 16_639_267 ns per frame
 const NES_FRAME_DURATION: Duration = Duration::from_nanos(16_639_267);
 
 impl App {
@@ -322,6 +324,11 @@ impl App {
         } else {
             SpeedMode::Normal
         }
+    }
+
+    fn refresh_slot_info(&mut self) {
+        self.cached_slot_info =
+            state_io::build_slot_info(self.rom_info.rom_hash, self.active_system);
     }
 
     fn speed_mode_label(&self) -> &'static str {
@@ -455,6 +462,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.wasm_poll_hooks(event_loop);
         self.schedule_next_frame(event_loop);
     }
 

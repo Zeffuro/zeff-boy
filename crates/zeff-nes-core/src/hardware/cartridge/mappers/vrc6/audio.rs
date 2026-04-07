@@ -72,10 +72,10 @@ impl Vrc6Audio {
 // ─── VRC6 Pulse channel ────────────────────────────────────────────
 
 pub struct Vrc6Pulse {
-    mode: bool,   // Direct mode (ignore duty, always output volume)
-    duty: u8,     // 0–7
-    volume: u8,   // 0–15
-    period: u16,  // 12-bit
+    mode: bool,  // Direct mode (ignore duty, always output volume)
+    duty: u8,    // 0–7
+    volume: u8,  // 0–15
+    period: u16, // 12-bit
     enabled: bool,
     timer: u16,
     step: u8, // 0–15
@@ -244,4 +244,3 @@ impl Vrc6Sawtooth {
         Ok(())
     }
 }
-

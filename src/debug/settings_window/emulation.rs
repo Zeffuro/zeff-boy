@@ -50,6 +50,14 @@ pub(super) fn draw(
         "Automatically save emulator state when closing and \
              restore it when loading the same ROM.",
     );
+    ui.checkbox(
+        &mut settings.emulation.pause_on_unfocus,
+        "Pause when window loses focus",
+    )
+    .on_hover_text(
+        "Automatically pause emulation when the window or browser tab \
+             loses focus, and resume when it regains focus.",
+    );
 
     ui.separator();
     ui.heading("Rewind");
