@@ -94,7 +94,11 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/^display_version = .*/display_version = \"${VERSION}\"/" crates/zeff-libretro/zeff_libretro.info
+          if [[ "$OSTYPE" == darwin* ]]; then
+            sed -i '' "s/^display_version = .*/display_version = \"${VERSION}\"/" crates/zeff-libretro/zeff_libretro.info
+          else
+            sed -i "s/^display_version = .*/display_version = \"${VERSION}\"/" crates/zeff-libretro/zeff_libretro.info
+          fi
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -168,6 +172,8 @@ jobs:
 
           cp packaging/zeff-boy.desktop AppDir/usr/share/applications/zeff-boy.desktop
           cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/
+          # appimagetool also looks for the short appdata name
+          ln -s com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/zeff-boy.appdata.xml
 
           cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png
 
@@ -181,9 +187,14 @@ jobs:
 
       - name: Build AppImage
         run: |
-          export VERSION="${{ github.ref_name }}"
+          TAG="${{ github.ref_name }}"
+          export LINUXDEPLOY_OUTPUT_VERSION="${TAG}"
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
-          mv zeff-boy-*.AppImage zeff-boy-${{ github.ref_name }}-x86_64.AppImage
+          # linuxdeploy names it zeff-boy-<version>-x86_64.AppImage; ensure our expected name
+          EXPECTED="zeff-boy-${TAG}-x86_64.AppImage"
+          if [ ! -f "$EXPECTED" ]; then
+            mv zeff-boy-*x86_64.AppImage "$EXPECTED"
+          fi
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v7
