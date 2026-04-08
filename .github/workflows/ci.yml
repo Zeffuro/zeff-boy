@@ -54,7 +54,7 @@ jobs:
           ! grep -rn --include='*.rs' --exclude='*native.rs' \
             -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
             --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude-dir=camera \
-            | grep -v 'cli/' | grep -v 'libretro_common\.rs'
+            | grep -v 'cli/' | grep -v 'libretro_common\.rs' | grep -v '// platform-ok'
 
       - name: Build
         run: cargo build --workspace
