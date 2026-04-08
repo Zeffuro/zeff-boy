@@ -37,6 +37,7 @@ pub(crate) struct Graphics {
 impl Graphics {
     pub(crate) fn create_window(event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
         let title = format!("zeff-boy v{}", env!("CARGO_PKG_VERSION"));
+        #[allow(unused_mut)]
         let mut attrs = WindowAttributes::default().with_title(title);
 
         #[cfg(not(target_arch = "wasm32"))]
