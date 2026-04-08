@@ -37,18 +37,5 @@
       </description>
     </release>
   </releases>
-
-  <categories>
-    <category>Game</category>
-    <category>Emulator</category>
-  </categories>
-
-  <keywords>
-    <keyword>emulator</keyword>
-    <keyword>gameboy</keyword>
-    <keyword>nes</keyword>
-    <keyword>nintendo</keyword>
-    <keyword>retro</keyword>
-  </keywords>
 </component>
 
