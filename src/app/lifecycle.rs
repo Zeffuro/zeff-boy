@@ -70,27 +70,35 @@ impl App {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas) = window.canvas() {
-                let web_window = web_sys::window().expect("browser window must exist");
-                let document = web_window.document().expect("document must exist");
-                let body = document.body().expect("document body must exist");
-                let _ = body.append_child(&canvas);
-                canvas.set_attribute("style", "width:100%;height:100%").ok();
-
-                let target: &web_sys::EventTarget = body.unchecked_ref();
-                crate::platform::setup_drop_handler(target, self.pending_rom_load.clone());
-
+                let pending_rom_load = self.pending_rom_load.clone();
                 let visible_flag = self.wasm_tab_visible.clone();
-                let doc_clone = document.clone();
-                let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
-                    let hidden = doc_clone.hidden();
-                    visible_flag.set(!hidden);
-                })
-                    as Box<dyn Fn()>);
-                let _ = document.add_event_listener_with_callback(
-                    "visibilitychange",
-                    closure.as_ref().unchecked_ref(),
-                );
-                closure.forget(); // leak — lives for the page lifetime
+
+                let setup = wasm_bindgen::closure::Closure::once_into_js(move || {
+                    let web_window = web_sys::window().expect("browser window must exist");
+                    let document = web_window.document().expect("document must exist");
+                    let body = document.body().expect("document body must exist");
+                    let _ = body.append_child(&canvas);
+                    canvas.set_attribute("style", "width:100%;height:100%").ok();
+
+                    let target: &web_sys::EventTarget = body.unchecked_ref();
+                    crate::platform::setup_drop_handler(target, pending_rom_load);
+
+                    let doc_clone = document.clone();
+                    let vis_cb = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+                        let hidden = doc_clone.hidden();
+                        visible_flag.set(!hidden);
+                    })
+                        as Box<dyn Fn()>);
+                    let _ = document.add_event_listener_with_callback(
+                        "visibilitychange",
+                        vis_cb.as_ref().unchecked_ref(),
+                    );
+                    vis_cb.forget();
+                });
+
+                let _ = web_sys::window()
+                    .expect("browser window must exist")
+                    .set_timeout_with_callback(setup.unchecked_ref());
             }
         }
 

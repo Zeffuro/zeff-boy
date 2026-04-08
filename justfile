@@ -182,9 +182,17 @@ build-wasm:
 build-wasm-release:
     trunk build --release
 
+# Build WASM exactly as GitHub Pages does (with public-url prefix)
+build-wasm-ghpages:
+    trunk build --release --public-url /zeff-boy/
+
 # Serve WASM locally with hot-reload (open http://localhost:8080)
 serve-wasm:
     trunk serve
+
+# Serve WASM release build locally (reproduces GitHub Pages conditions)
+serve-wasm-release:
+    trunk serve --release
 
 # ──────────────────────────── Documentation ──────────────────────────
 

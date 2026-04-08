@@ -63,6 +63,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         .map(|b| b.system())
         .unwrap_or(ActiveSystem::GameBoy);
 
+    #[allow(unused_mut)]
     let mut app = App {
         emu_thread: None,
         initial_backend: backend,
@@ -164,7 +165,15 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         paused_by_unfocus: false,
     };
 
+    #[cfg(not(target_arch = "wasm32"))]
     event_loop.run_app(&mut app)?;
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::EventLoopExtWebSys;
+        event_loop.spawn_app(app);
+    }
+
     Ok(())
 }
 
