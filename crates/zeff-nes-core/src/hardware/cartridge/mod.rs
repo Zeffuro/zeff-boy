@@ -156,6 +156,21 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery,
             )),
+            NesMapper::Namco163 => MapperImpl::Namco163(mappers::Namco163::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.prg_ram_size + header.prg_nvram_size,
+                header.has_battery || header.prg_nvram_size > 0,
+            )),
+            NesMapper::Vrc7 => MapperImpl::Vrc7(mappers::Vrc7::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.prg_ram_size + header.prg_nvram_size,
+                header.has_battery || header.prg_nvram_size > 0,
+            )),
+            NesMapper::Fds => MapperImpl::Fds(mappers::Fds::new(prg_rom, header.mirroring)),
             NesMapper::Action52 => {
                 MapperImpl::Action52(mappers::Action52::new(prg_rom, chr_rom, header.mirroring))
             }

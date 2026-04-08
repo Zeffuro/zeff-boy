@@ -98,10 +98,10 @@ impl App {
         self.fps_tracker = FpsTracker::new();
         self.timing.last_frame_time = Instant::now();
 
-        if self.timing.uncapped_speed {
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::SetUncapped(true));
-            }
+        if self.timing.uncapped_speed
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(EmuCommand::SetUncapped(true));
         }
 
         self.toast_manager.info(format!("Loaded {rom_name}"));

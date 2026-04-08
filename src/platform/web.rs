@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+pub(crate) type FileDataSlot = std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>;
+
 pub(crate) struct FileDialog {
     accept: String,
 }
@@ -38,10 +40,7 @@ impl FileDialog {
         None
     }
 
-    pub(crate) fn pick_file_web(
-        self,
-        slot: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
-    ) {
+    pub(crate) fn pick_file_web(self, slot: FileDataSlot) {
         trigger_file_picker(&self.accept, slot);
     }
 
@@ -50,10 +49,7 @@ impl FileDialog {
     }
 }
 
-fn trigger_file_picker(
-    accept: &str,
-    slot: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
-) {
+fn trigger_file_picker(accept: &str, slot: FileDataSlot) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
 
@@ -84,10 +80,7 @@ fn trigger_file_picker(
     input.click();
 }
 
-pub(crate) fn setup_drop_handler(
-    target: &web_sys::EventTarget,
-    slot: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
-) {
+pub(crate) fn setup_drop_handler(target: &web_sys::EventTarget, slot: FileDataSlot) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
 
@@ -118,10 +111,7 @@ pub(crate) fn setup_drop_handler(
     drop_handler.forget();
 }
 
-fn read_file_into_slot(
-    file: web_sys::File,
-    slot: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
-) {
+fn read_file_into_slot(file: web_sys::File, slot: FileDataSlot) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
 
@@ -215,8 +205,8 @@ pub(crate) fn download_file(filename: &str, bytes: &[u8]) {
     let parts = js_sys::Array::new();
     parts.push(&uint8);
 
-    let mut opts = web_sys::BlobPropertyBag::new();
-    opts.type_("application/octet-stream");
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type("application/octet-stream");
 
     let blob = match web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts) {
         Ok(b) => b,

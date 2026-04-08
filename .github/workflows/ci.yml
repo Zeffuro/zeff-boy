@@ -32,12 +32,23 @@ jobs:
 
       - name: Format check
         run: cargo fmt --all -- --check
+        if: always()
 
       - name: Clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        if: always()
 
       - name: Clippy (no default features)
         run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+        if: always()
+
+      - name: Platform-leak audit
+        run: |
+          # Fail if any native-only API (rfd, gilrs, cpal, dirs, etc.) appears
+          # in shared src/ code outside of platform/input/audio/cli modules.
+          ! grep -rn --include='*.rs' -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
+            --exclude-dir=platform --exclude-dir=input --exclude-dir=audio \
+            | grep -v 'cli/' | grep -v '// platform-ok'
 
       - name: Build
         run: cargo build --workspace
@@ -64,6 +75,18 @@ jobs:
           name: benchmark-results
           path: benchmark-results.txt
           retention-days: 90
+
+      - name: Job summary
+        if: failure()
+        run: |
+          echo "## ❌ Linux CI Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "One or more steps in the Linux CI job failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick reproduction" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "just ci-local" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   windows:
     name: Windows
@@ -102,6 +125,14 @@ jobs:
       - name: Run tests (no default features)
         run: cargo nextest run --workspace --no-default-features
 
+      - name: Job summary
+        if: failure()
+        shell: bash
+        run: |
+          echo "## ❌ Windows CI Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "One or more steps in the Windows CI job failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+
   macos:
     name: macOS
     runs-on: macos-latest
@@ -139,6 +170,13 @@ jobs:
       - name: Run tests (no default features)
         run: cargo nextest run --workspace --no-default-features
 
+      - name: Job summary
+        if: failure()
+        run: |
+          echo "## ❌ macOS CI Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "One or more steps in the macOS CI job failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+
   fuzz-check:
     name: Fuzz Compile Check
     runs-on: ubuntu-latest
@@ -169,10 +207,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-wasm"
+
+      - name: Clippy (WASM)
+        run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
 
       - name: Check WASM target compiles
         run: cargo check --target wasm32-unknown-unknown --no-default-features

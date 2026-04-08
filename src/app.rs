@@ -1,7 +1,5 @@
 use anyhow::Result;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -38,10 +36,15 @@ mod shutdown;
 mod state_io;
 mod tick;
 mod tilt;
+mod types;
 mod window_events;
 
 use input::HostInputState;
 use tilt::{AutoTiltSource, TiltConfig};
+use types::*;
+
+#[cfg(target_arch = "wasm32")]
+type PendingGfx = Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Graphics>>>>>;
 
 pub(crate) use state_io::extract_rom_from_zip;
 
@@ -106,11 +109,15 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         host_input: HostInputState::new(),
         cursor_pos: None,
         window_size: (160.0, 144.0),
-        smoothed_tilt: (0.0, 0.0),
-        left_stick: (0.0, 0.0),
-        auto_tilt_source: AutoTiltSource::Keyboard,
-        camera_capture: None,
-        camera_capture_index: None,
+        tilt: TiltState {
+            smoothed: (0.0, 0.0),
+            left_stick: (0.0, 0.0),
+            auto_source: AutoTiltSource::Keyboard,
+        },
+        camera: CameraState {
+            capture: None,
+            capture_index: None,
+        },
         last_state_dir: None,
         show_settings_window: false,
         debug_requests: DebugRequests::default(),
@@ -161,86 +168,6 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     Ok(())
 }
 
-struct RecycledBuffers {
-    audio: Option<Vec<f32>>,
-    vram: Option<Vec<u8>>,
-    oam: Option<Vec<u8>>,
-    memory_page: Option<Vec<(u16, u8)>>,
-}
-
-impl RecycledBuffers {
-    fn clear(&mut self) {
-        self.audio = None;
-        self.vram = None;
-        self.oam = None;
-        self.memory_page = None;
-    }
-}
-
-struct RewindState {
-    held: bool,
-    fill: f32,
-    throttle: usize,
-    pops: usize,
-    pending: bool,
-    backstep_pending: bool,
-}
-
-struct RecordingState {
-    audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
-    replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
-    replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
-}
-
-impl RecordingState {
-    fn is_audio_recording(&self) -> bool {
-        self.audio_recorder.is_some()
-    }
-}
-
-struct TimingState {
-    last_frame_time: Instant,
-    last_render_time: Instant,
-    last_viewer_update: Instant,
-    uncapped_speed: bool,
-    last_vsync_mode: crate::settings::VsyncMode,
-}
-
-#[derive(Default)]
-struct ModifierKeys {
-    shift: bool,
-    ctrl: bool,
-    alt: bool,
-}
-
-#[derive(Default)]
-struct DebugRequests {
-    step: bool,
-    continue_: bool,
-    backstep: bool,
-    frame_advance: bool,
-}
-
-impl DebugRequests {
-    fn has_pending(&self) -> bool {
-        self.step || self.continue_ || self.backstep || self.frame_advance
-    }
-}
-
-struct CachedRomInfo {
-    is_mbc7: bool,
-    is_pocket_camera: bool,
-    rom_path: Option<PathBuf>,
-    rom_hash: Option<[u8; 32]>,
-}
-
-struct SpeedState {
-    paused: bool,
-    fast_forward_held: bool,
-    turbo_held: bool,
-    turbo_counter: u8,
-}
-
 struct App {
     initial_backend: Option<EmuBackend>,
     emu_thread: Option<EmuThread>,
@@ -248,11 +175,11 @@ struct App {
     gamepad: Option<GamepadHandler>,
     gfx: Option<Graphics>,
     #[cfg(target_arch = "wasm32")]
-    pending_gfx: Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Graphics>>>>>,
+    pending_gfx: PendingGfx,
     #[cfg(target_arch = "wasm32")]
-    pending_rom_load: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
+    pending_rom_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
-    pending_state_load: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
+    pending_state_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
     wasm_tab_visible: std::rc::Rc<std::cell::Cell<bool>>,
     #[cfg(target_arch = "wasm32")]
@@ -270,12 +197,9 @@ struct App {
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
     window_size: (f32, f32),
-    smoothed_tilt: (f32, f32),
-    left_stick: (f32, f32),
-    auto_tilt_source: AutoTiltSource,
-    camera_capture: Option<CameraCapture>,
-    camera_capture_index: Option<u32>,
-    last_state_dir: Option<PathBuf>,
+    tilt: TiltState,
+    camera: CameraState,
+    last_state_dir: Option<std::path::PathBuf>,
     show_settings_window: bool,
     debug_requests: DebugRequests,
     active_save_slot: u8,
@@ -296,24 +220,6 @@ struct App {
     cached_slot_info: state_io::SlotInfo,
     paused_by_unfocus: bool,
 }
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SpeedMode {
-    Normal,
-    Uncapped,
-    FastForward,
-}
-
-const GB_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
-
-const MAX_IN_FLIGHT: usize = 2;
-const MAX_FRAMES_PER_TICK: usize = 10;
-
-const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
-
-const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33);
-
-const NES_FRAME_DURATION: Duration = Duration::from_nanos(16_639_267);
 
 impl App {
     fn speed_mode(&self) -> SpeedMode {
@@ -342,7 +248,7 @@ impl App {
         }
     }
 
-    fn effective_frame_duration(&self) -> Duration {
+    fn effective_frame_duration(&self) -> std::time::Duration {
         let base = match self.active_system {
             ActiveSystem::GameBoy => GB_FRAME_DURATION,
             ActiveSystem::Nes => NES_FRAME_DURATION,
@@ -371,7 +277,7 @@ impl App {
     fn sync_host_input_with_stick_mode(&mut self, is_mbc7: bool) {
         if self.left_stick_controls_dpad(is_mbc7) {
             self.host_input
-                .set_gamepad_stick_dpad(self.left_stick, self.settings.tilt.deadzone);
+                .set_gamepad_stick_dpad(self.tilt.left_stick, self.settings.tilt.deadzone);
         } else {
             self.host_input.clear_gamepad_stick_dpad();
         }
@@ -404,7 +310,7 @@ impl App {
         tilt::compute_target_tilt(
             is_mbc7,
             self.settings.tilt.input_mode,
-            &mut self.auto_tilt_source,
+            &mut self.tilt.auto_source,
             &tilt::TiltInputSources {
                 keyboard,
                 mouse,
@@ -419,10 +325,10 @@ impl App {
         let stick_controls_tilt = self.left_stick_controls_tilt(is_mbc7);
         let cfg = self.tilt_config();
         tilt::update_smoothed_tilt(
-            &mut self.smoothed_tilt,
+            &mut self.tilt.smoothed,
             target,
             is_mbc7,
-            self.left_stick,
+            self.tilt.left_stick,
             stick_controls_tilt,
             &cfg,
         )
@@ -432,7 +338,7 @@ impl App {
         let is_mbc7 = self.rom_info.is_mbc7;
         let keyboard = self.host_input.tilt_vector();
         let mouse = self.mouse_tilt_vector();
-        let left_stick = self.left_stick;
+        let left_stick = self.tilt.left_stick;
 
         self.sync_host_input_with_stick_mode(is_mbc7);
         let target = self.compute_target_tilt(is_mbc7, keyboard, mouse, left_stick);

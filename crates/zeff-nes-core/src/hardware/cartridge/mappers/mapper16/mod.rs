@@ -1,5 +1,8 @@
 use crate::hardware::cartridge::{Mapper, Mirroring};
 
+mod eeprom;
+use eeprom::{Eeprom, EepromReadPhase, EepromState};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mapper16Mode {
     Unspecified,
@@ -33,21 +36,6 @@ impl Mapper16Mode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EepromState {
-    Standby,
-    ReceiveControl,
-    ReceiveAddress,
-    ReceiveWriteData,
-    SendReadData,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EepromReadPhase {
-    OutputBits,
-    AwaitMasterAck,
-}
-
 pub struct BandaiFcg16 {
     prg_rom: Vec<u8>,
     chr: Vec<u8>,
@@ -65,17 +53,7 @@ pub struct BandaiFcg16 {
 
     mode: Mapper16Mode,
     has_eeprom: bool,
-    eeprom: [u8; 256],
-    eeprom_scl: bool,
-    eeprom_sda_in: bool,
-    eeprom_read_enable: bool,
-    eeprom_state: EepromState,
-    eeprom_shift: u8,
-    eeprom_bits: u8,
-    eeprom_pointer: u8,
-    eeprom_address_latched: bool,
-    eeprom_read_phase: EepromReadPhase,
-    eeprom_read_bit: u8,
+    eeprom: Eeprom,
 }
 
 impl BandaiFcg16 {
@@ -100,17 +78,7 @@ impl BandaiFcg16 {
             irq_pending: false,
             mode: Mapper16Mode::from_submapper(submapper_id),
             has_eeprom,
-            eeprom: [0; 256],
-            eeprom_scl: true,
-            eeprom_sda_in: true,
-            eeprom_read_enable: false,
-            eeprom_state: EepromState::Standby,
-            eeprom_shift: 0,
-            eeprom_bits: 0,
-            eeprom_pointer: 0,
-            eeprom_address_latched: false,
-            eeprom_read_phase: EepromReadPhase::OutputBits,
-            eeprom_read_bit: 0,
+            eeprom: Eeprom::new(),
         }
     }
 
@@ -122,135 +90,18 @@ impl BandaiFcg16 {
         (self.chr.len() / 0x0400).max(1)
     }
 
-    fn begin_receive_byte(&mut self, next_state: EepromState) {
-        self.eeprom_state = next_state;
-        self.eeprom_shift = 0;
-        self.eeprom_bits = 0;
-    }
-
-    fn eeprom_start_condition(&mut self) {
-        self.begin_receive_byte(EepromState::ReceiveControl);
-        self.eeprom_address_latched = false;
-    }
-
-    fn eeprom_stop_condition(&mut self) {
-        self.eeprom_state = EepromState::Standby;
-        self.eeprom_read_phase = EepromReadPhase::OutputBits;
-        self.eeprom_bits = 0;
-    }
-
-    fn eeprom_receive_byte_bit(&mut self, sda: bool) {
-        self.eeprom_shift = (self.eeprom_shift << 1) | u8::from(sda);
-        self.eeprom_bits += 1;
-        if self.eeprom_bits < 8 {
-            return;
-        }
-
-        let byte = self.eeprom_shift;
-        self.eeprom_shift = 0;
-        self.eeprom_bits = 0;
-
-        match self.eeprom_state {
-            EepromState::ReceiveControl => {
-                let device_match = (byte & 0xF0) == 0xA0;
-                let read = byte & 0x01 != 0;
-                if !device_match {
-                    self.eeprom_state = EepromState::Standby;
-                    return;
-                }
-                if read {
-                    self.eeprom_state = EepromState::SendReadData;
-                    self.eeprom_read_phase = EepromReadPhase::OutputBits;
-                    self.eeprom_read_bit = 0;
-                } else if self.eeprom_address_latched {
-                    self.eeprom_state = EepromState::ReceiveWriteData;
-                } else {
-                    self.eeprom_state = EepromState::ReceiveAddress;
-                }
-            }
-            EepromState::ReceiveAddress => {
-                self.eeprom_pointer = byte;
-                self.eeprom_address_latched = true;
-                self.eeprom_state = EepromState::ReceiveWriteData;
-            }
-            EepromState::ReceiveWriteData => {
-                self.eeprom[self.eeprom_pointer as usize] = byte;
-                self.eeprom_pointer = self.eeprom_pointer.wrapping_add(1);
-            }
-            _ => {}
-        }
-    }
-
-    fn eeprom_clock_rising_edge(&mut self, sda: bool) {
-        match self.eeprom_state {
-            EepromState::SendReadData => match self.eeprom_read_phase {
-                EepromReadPhase::OutputBits => {
-                    self.eeprom_read_bit = self.eeprom_read_bit.saturating_add(1);
-                    if self.eeprom_read_bit >= 8 {
-                        self.eeprom_read_phase = EepromReadPhase::AwaitMasterAck;
-                    }
-                }
-                EepromReadPhase::AwaitMasterAck => {
-                    if sda {
-                        self.eeprom_state = EepromState::Standby;
-                    } else {
-                        self.eeprom_pointer = self.eeprom_pointer.wrapping_add(1);
-                        self.eeprom_read_phase = EepromReadPhase::OutputBits;
-                        self.eeprom_read_bit = 0;
-                    }
-                }
-            },
-            EepromState::ReceiveControl
-            | EepromState::ReceiveAddress
-            | EepromState::ReceiveWriteData => self.eeprom_receive_byte_bit(sda),
-            EepromState::Standby => {}
-        }
-    }
-
     fn handle_eeprom_control_write(&mut self, val: u8) {
         if !self.mode.eeprom_supported() || !self.has_eeprom {
             return;
         }
-
-        let scl = val & 0x80 != 0;
-        let sda_in = val & 0x40 != 0;
-        self.eeprom_read_enable = val & 0x20 != 0;
-
-        let prev_scl = self.eeprom_scl;
-        let prev_sda = self.eeprom_sda_in;
-
-        if prev_scl && scl {
-            if prev_sda && !sda_in {
-                self.eeprom_start_condition();
-            } else if !prev_sda && sda_in {
-                self.eeprom_stop_condition();
-            }
-        }
-
-        if !prev_scl && scl {
-            self.eeprom_clock_rising_edge(sda_in);
-        }
-
-        self.eeprom_scl = scl;
-        self.eeprom_sda_in = sda_in;
+        self.eeprom.handle_control_write(val);
     }
 
     fn eeprom_data_out(&self) -> bool {
-        if !self.mode.eeprom_supported() || !self.has_eeprom || !self.eeprom_read_enable {
+        if !self.mode.eeprom_supported() || !self.has_eeprom || !self.eeprom.read_enable {
             return true;
         }
-
-        match self.eeprom_state {
-            EepromState::SendReadData => match self.eeprom_read_phase {
-                EepromReadPhase::OutputBits => {
-                    let byte = self.eeprom[self.eeprom_pointer as usize];
-                    let bit = 7u8.saturating_sub(self.eeprom_read_bit);
-                    ((byte >> bit) & 1) != 0
-                }
-                EepromReadPhase::AwaitMasterAck => true,
-            },
-            _ => true,
-        }
+        self.eeprom.data_out()
     }
 
     fn handles_register_write(&self, addr: u16) -> bool {
@@ -399,26 +250,26 @@ impl Mapper for BandaiFcg16 {
             Mapper16Mode::Lz93d50 => 5,
         });
         w.write_bool(self.has_eeprom);
-        w.write_bytes(&self.eeprom);
-        w.write_bool(self.eeprom_scl);
-        w.write_bool(self.eeprom_sda_in);
-        w.write_bool(self.eeprom_read_enable);
-        w.write_u8(match self.eeprom_state {
+        w.write_bytes(&self.eeprom.data);
+        w.write_bool(self.eeprom.scl);
+        w.write_bool(self.eeprom.sda_in);
+        w.write_bool(self.eeprom.read_enable);
+        w.write_u8(match self.eeprom.state {
             EepromState::Standby => 0,
             EepromState::ReceiveControl => 1,
             EepromState::ReceiveAddress => 2,
             EepromState::ReceiveWriteData => 3,
             EepromState::SendReadData => 4,
         });
-        w.write_u8(self.eeprom_shift);
-        w.write_u8(self.eeprom_bits);
-        w.write_u8(self.eeprom_pointer);
-        w.write_bool(self.eeprom_address_latched);
-        w.write_u8(match self.eeprom_read_phase {
+        w.write_u8(self.eeprom.shift);
+        w.write_u8(self.eeprom.bits);
+        w.write_u8(self.eeprom.pointer);
+        w.write_bool(self.eeprom.address_latched);
+        w.write_u8(match self.eeprom.read_phase {
             EepromReadPhase::OutputBits => 0,
             EepromReadPhase::AwaitMasterAck => 1,
         });
-        w.write_u8(self.eeprom_read_bit);
+        w.write_u8(self.eeprom.read_bit);
 
         w.write_vec(&self.chr);
     }
@@ -443,11 +294,11 @@ impl Mapper for BandaiFcg16 {
             other => anyhow::bail!("invalid mapper16 mode tag: {other}"),
         };
         self.has_eeprom = r.read_bool()?;
-        r.read_exact(&mut self.eeprom)?;
-        self.eeprom_scl = r.read_bool()?;
-        self.eeprom_sda_in = r.read_bool()?;
-        self.eeprom_read_enable = r.read_bool()?;
-        self.eeprom_state = match r.read_u8()? {
+        r.read_exact(&mut self.eeprom.data)?;
+        self.eeprom.scl = r.read_bool()?;
+        self.eeprom.sda_in = r.read_bool()?;
+        self.eeprom.read_enable = r.read_bool()?;
+        self.eeprom.state = match r.read_u8()? {
             0 => EepromState::Standby,
             1 => EepromState::ReceiveControl,
             2 => EepromState::ReceiveAddress,
@@ -455,16 +306,16 @@ impl Mapper for BandaiFcg16 {
             4 => EepromState::SendReadData,
             other => anyhow::bail!("invalid mapper16 EEPROM state tag: {other}"),
         };
-        self.eeprom_shift = r.read_u8()?;
-        self.eeprom_bits = r.read_u8()?;
-        self.eeprom_pointer = r.read_u8()?;
-        self.eeprom_address_latched = r.read_bool()?;
-        self.eeprom_read_phase = match r.read_u8()? {
+        self.eeprom.shift = r.read_u8()?;
+        self.eeprom.bits = r.read_u8()?;
+        self.eeprom.pointer = r.read_u8()?;
+        self.eeprom.address_latched = r.read_bool()?;
+        self.eeprom.read_phase = match r.read_u8()? {
             0 => EepromReadPhase::OutputBits,
             1 => EepromReadPhase::AwaitMasterAck,
             other => anyhow::bail!("invalid mapper16 EEPROM read phase tag: {other}"),
         };
-        self.eeprom_read_bit = r.read_u8()?;
+        self.eeprom.read_bit = r.read_u8()?;
 
         let chr = r.read_vec(1024 * 1024)?;
         if chr.len() != self.chr.len() {
@@ -480,7 +331,7 @@ impl Mapper for BandaiFcg16 {
 
     fn dump_battery_data(&self) -> Option<Vec<u8>> {
         if self.has_eeprom {
-            Some(self.eeprom.to_vec())
+            Some(self.eeprom.data.to_vec())
         } else {
             None
         }
@@ -490,10 +341,10 @@ impl Mapper for BandaiFcg16 {
         if !self.has_eeprom {
             return Ok(());
         }
-        let copy_len = self.eeprom.len().min(bytes.len());
-        self.eeprom[..copy_len].copy_from_slice(&bytes[..copy_len]);
-        if copy_len < self.eeprom.len() {
-            self.eeprom[copy_len..].fill(0);
+        let copy_len = self.eeprom.data.len().min(bytes.len());
+        self.eeprom.data[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        if copy_len < self.eeprom.data.len() {
+            self.eeprom.data[copy_len..].fill(0);
         }
         Ok(())
     }

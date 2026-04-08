@@ -8,7 +8,6 @@ impl App {
         {
             self.toast_manager
                 .error("Audio recording is not available on web");
-            return;
         }
 
         #[cfg(not(target_arch = "wasm32"))]

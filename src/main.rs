@@ -1,3 +1,8 @@
+#![cfg_attr(
+    target_arch = "wasm32",
+    allow(dead_code, unused_imports, unused_variables)
+)]
+
 mod app;
 mod audio;
 mod audio_recorder;

@@ -1,3 +1,5 @@
+mod frame_seq;
+mod mixing;
 mod noise;
 mod runtime;
 mod square;

@@ -30,3 +30,13 @@ name = "fuzz_nes_save_state"
 path = "fuzz_targets/fuzz_nes_save_state.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_gb_cartridge_load"
+path = "fuzz_targets/fuzz_gb_cartridge_load.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_gb_save_state"
+path = "fuzz_targets/fuzz_gb_save_state.rs"
+doc = false
+

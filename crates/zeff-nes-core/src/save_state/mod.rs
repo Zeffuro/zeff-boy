@@ -59,7 +59,7 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
     if magic != NES_SAVE_STATE_MAGIC {
         bail!("not a valid NES save-state (bad magic)");
     }
-    let format_version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let format_version = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
 
     // Get the payload bytes (either raw or lz4-decompressed)
     let payload: Vec<u8>;

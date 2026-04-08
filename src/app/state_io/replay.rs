@@ -11,7 +11,6 @@ impl App {
         {
             self.toast_manager
                 .error("Replay recording is not yet available on web");
-            return;
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -90,7 +89,6 @@ impl App {
         {
             self.toast_manager
                 .error("Replay playback is not yet available on web");
-            return;
         }
 
         #[cfg(not(target_arch = "wasm32"))]

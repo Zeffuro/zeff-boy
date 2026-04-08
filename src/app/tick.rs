@@ -87,7 +87,7 @@ impl App {
                 }
             }
 
-            self.left_stick = poll.left_stick;
+            self.tilt.left_stick = poll.left_stick;
         }
     }
 

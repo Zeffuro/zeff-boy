@@ -16,6 +16,9 @@ pub enum MapperImpl {
     Vrc6(mappers::Vrc6),
     Fme7(mappers::Fme7),
     Action52(mappers::Action52),
+    Namco163(mappers::Namco163),
+    Vrc7(mappers::Vrc7),
+    Fds(mappers::Fds),
 }
 
 macro_rules! dispatch_mapper {
@@ -33,6 +36,9 @@ macro_rules! dispatch_mapper {
             MapperImpl::Vrc6(m) => m.$method($($arg),*),
             MapperImpl::Fme7(m) => m.$method($($arg),*),
             MapperImpl::Action52(m) => m.$method($($arg),*),
+            MapperImpl::Namco163(m) => m.$method($($arg),*),
+            MapperImpl::Vrc7(m) => m.$method($($arg),*),
+            MapperImpl::Fds(m) => m.$method($($arg),*),
         }
     };
 }

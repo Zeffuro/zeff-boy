@@ -8,7 +8,7 @@ mod opcodes;
 pub mod ppu;
 pub mod printer;
 pub mod rom_header;
-mod serial;
+pub(crate) mod serial;
 mod sgb;
 mod timer;
 pub mod types;

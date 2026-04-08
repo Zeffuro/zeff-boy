@@ -85,14 +85,27 @@ lint:
 lint-minimal:
     cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
-# Run Clippy lints with both feature sets (matches CI)
-lint-all: lint lint-minimal
+# Run Clippy lints for WASM target
+lint-wasm:
+    cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
 
-# Run full CI pipeline locally (fmt + lint + test + deny)
-ci-local: fmt-check lint-all test-all deny
+# Run Clippy lints with all feature sets (matches CI)
+lint-all: lint lint-minimal lint-wasm
+
+# Check that no native-only APIs leaked into shared code
+[unix]
+lint-platform-leaks:
+    ! grep -rn --include='*.rs' -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude='cli/*' | grep -v '// platform-ok'
+
+[windows]
+lint-platform-leaks:
+    $hits = Get-ChildItem -Path src -Recurse -Filter *.rs | Where-Object { $_.FullName -notmatch '\\(platform|input\\native|audio\\native|audio\\tests|camera|cli|mods\\native|libretro_common)' -and $_.Name -ne 'native.rs' } | Select-String -Pattern 'rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::' | Where-Object { $_.Line -notmatch '// platform-ok' }; if ($hits) { $hits; exit 1 } else { Write-Host 'No platform leaks found.' }
+
+# Run full CI pipeline locally (fmt + lint + platform check + test + deny)
+ci-local: fmt-check lint-all lint-platform-leaks test-all deny
 
 # Run WASM CI check locally (requires wasm32 target: rustup target add wasm32-unknown-unknown)
-ci-local-wasm: check-wasm
+ci-local-wasm: lint-wasm check-wasm
 
 # Check that fuzz targets compile (requires nightly)
 fuzz-check:

@@ -30,6 +30,22 @@ const RAM_BANK_SIZE: usize = 0x2000;
 const RAM_BASE_ADDR: u16 = 0xA000;
 const MAX_SAVE_RAM: usize = 0x20_000;
 
+macro_rules! dispatch_cart {
+    ($self:expr, $c:ident => $body:expr) => {
+        match $self {
+            Cartridge::RomOnly($c) => $body,
+            Cartridge::Mbc1($c) => $body,
+            Cartridge::Mbc2($c) => $body,
+            Cartridge::Mbc3($c) => $body,
+            Cartridge::Mbc5($c) => $body,
+            Cartridge::Mbc7($c) => $body,
+            Cartridge::HuC1($c) => $body,
+            Cartridge::HuC3($c) => $body,
+            Cartridge::PocketCamera($c) => $body,
+        }
+    };
+}
+
 #[derive(Clone)]
 pub struct CartridgeDebugInfo {
     pub mapper: &'static str,
@@ -116,59 +132,19 @@ impl Cartridge {
     }
 
     pub fn read_rom(&self, addr: u16) -> u8 {
-        match self {
-            Cartridge::RomOnly(c) => c.read_rom(addr),
-            Cartridge::Mbc1(c) => c.read_rom(addr),
-            Cartridge::Mbc2(c) => c.read_rom(addr),
-            Cartridge::Mbc3(c) => c.read_rom(addr),
-            Cartridge::Mbc5(c) => c.read_rom(addr),
-            Cartridge::Mbc7(c) => c.read_rom(addr),
-            Cartridge::HuC1(c) => c.read_rom(addr),
-            Cartridge::HuC3(c) => c.read_rom(addr),
-            Cartridge::PocketCamera(c) => c.read_rom(addr),
-        }
+        dispatch_cart!(self, c => c.read_rom(addr))
     }
 
     pub fn write_rom(&mut self, addr: u16, value: u8) {
-        match self {
-            Cartridge::RomOnly(c) => c.write_rom(addr, value),
-            Cartridge::Mbc1(c) => c.write_rom(addr, value),
-            Cartridge::Mbc2(c) => c.write_rom(addr, value),
-            Cartridge::Mbc3(c) => c.write_rom(addr, value),
-            Cartridge::Mbc5(c) => c.write_rom(addr, value),
-            Cartridge::Mbc7(c) => c.write_rom(addr, value),
-            Cartridge::HuC1(c) => c.write_rom(addr, value),
-            Cartridge::HuC3(c) => c.write_rom(addr, value),
-            Cartridge::PocketCamera(c) => c.write_rom(addr, value),
-        }
+        dispatch_cart!(self, c => c.write_rom(addr, value))
     }
 
     pub fn read_ram(&self, addr: u16) -> u8 {
-        match self {
-            Cartridge::RomOnly(c) => c.read_ram(addr),
-            Cartridge::Mbc1(c) => c.read_ram(addr),
-            Cartridge::Mbc2(c) => c.read_ram(addr),
-            Cartridge::Mbc3(c) => c.read_ram(addr),
-            Cartridge::Mbc5(c) => c.read_ram(addr),
-            Cartridge::Mbc7(c) => c.read_ram(addr),
-            Cartridge::HuC1(c) => c.read_ram(addr),
-            Cartridge::HuC3(c) => c.read_ram(addr),
-            Cartridge::PocketCamera(c) => c.read_ram(addr),
-        }
+        dispatch_cart!(self, c => c.read_ram(addr))
     }
 
     pub fn write_ram(&mut self, addr: u16, value: u8) {
-        match self {
-            Cartridge::RomOnly(c) => c.write_ram(addr, value),
-            Cartridge::Mbc1(c) => c.write_ram(addr, value),
-            Cartridge::Mbc2(c) => c.write_ram(addr, value),
-            Cartridge::Mbc3(c) => c.write_ram(addr, value),
-            Cartridge::Mbc5(c) => c.write_ram(addr, value),
-            Cartridge::Mbc7(c) => c.write_ram(addr, value),
-            Cartridge::HuC1(c) => c.write_ram(addr, value),
-            Cartridge::HuC3(c) => c.write_ram(addr, value),
-            Cartridge::PocketCamera(c) => c.write_ram(addr, value),
-        }
+        dispatch_cart!(self, c => c.write_ram(addr, value))
     }
 
     pub fn step(&mut self, t_cycles: u64) {
@@ -206,72 +182,30 @@ impl Cartridge {
     }
 
     pub fn rom_bytes(&self) -> &[u8] {
-        match self {
-            Cartridge::RomOnly(c) => c.rom_bytes(),
-            Cartridge::Mbc1(c) => c.rom_bytes(),
-            Cartridge::Mbc2(c) => c.rom_bytes(),
-            Cartridge::Mbc3(c) => c.rom_bytes(),
-            Cartridge::Mbc5(c) => c.rom_bytes(),
-            Cartridge::Mbc7(c) => c.rom_bytes(),
-            Cartridge::HuC1(c) => c.rom_bytes(),
-            Cartridge::HuC3(c) => c.rom_bytes(),
-            Cartridge::PocketCamera(c) => c.rom_bytes(),
-        }
+        dispatch_cart!(self, c => c.rom_bytes())
     }
 
     pub fn debug_info(&self) -> CartridgeDebugInfo {
-        match self {
-            Cartridge::RomOnly(c) => c.debug_info(),
-            Cartridge::Mbc1(c) => c.debug_info(),
-            Cartridge::Mbc2(c) => c.debug_info(),
-            Cartridge::Mbc3(c) => c.debug_info(),
-            Cartridge::Mbc5(c) => c.debug_info(),
-            Cartridge::Mbc7(c) => c.debug_info(),
-            Cartridge::HuC1(c) => c.debug_info(),
-            Cartridge::HuC3(c) => c.debug_info(),
-            Cartridge::PocketCamera(c) => c.debug_info(),
-        }
+        dispatch_cart!(self, c => c.debug_info())
     }
 
     pub fn restore_rom_bytes(&mut self, rom: Vec<u8>) {
-        match self {
-            Cartridge::RomOnly(c) => c.restore_rom_bytes(rom),
-            Cartridge::Mbc1(c) => c.restore_rom_bytes(rom),
-            Cartridge::Mbc2(c) => c.restore_rom_bytes(rom),
-            Cartridge::Mbc3(c) => c.restore_rom_bytes(rom),
-            Cartridge::Mbc5(c) => c.restore_rom_bytes(rom),
-            Cartridge::Mbc7(c) => c.restore_rom_bytes(rom),
-            Cartridge::HuC1(c) => c.restore_rom_bytes(rom),
-            Cartridge::HuC3(c) => c.restore_rom_bytes(rom),
-            Cartridge::PocketCamera(c) => c.restore_rom_bytes(rom),
-        }
+        dispatch_cart!(self, c => c.restore_rom_bytes(rom))
     }
 
     pub fn sram_len(&self) -> usize {
         match self {
-            Cartridge::RomOnly(c) => c.ram_bytes().len(),
-            Cartridge::Mbc1(c) => c.ram_bytes().len(),
-            Cartridge::Mbc2(c) => c.ram_bytes().len(),
             Cartridge::Mbc3(c) => c.save_len(),
-            Cartridge::Mbc5(c) => c.ram_bytes().len(),
-            Cartridge::Mbc7(c) => c.ram_bytes().len(),
-            Cartridge::HuC1(c) => c.ram_bytes().len(),
             Cartridge::HuC3(c) => c.sram_len(),
-            Cartridge::PocketCamera(c) => c.ram_bytes().len(),
+            _ => dispatch_cart!(self, c => c.ram_bytes().len()),
         }
     }
 
     pub fn dump_sram(&self) -> Vec<u8> {
         match self {
-            Cartridge::RomOnly(c) => c.ram_bytes().to_vec(),
-            Cartridge::Mbc1(c) => c.ram_bytes().to_vec(),
-            Cartridge::Mbc2(c) => c.ram_bytes().to_vec(),
             Cartridge::Mbc3(c) => c.dump_sram(),
-            Cartridge::Mbc5(c) => c.ram_bytes().to_vec(),
-            Cartridge::Mbc7(c) => c.ram_bytes().to_vec(),
-            Cartridge::HuC1(c) => c.ram_bytes().to_vec(),
             Cartridge::HuC3(c) => c.dump_sram(),
-            Cartridge::PocketCamera(c) => c.ram_bytes().to_vec(),
+            _ => dispatch_cart!(self, c => c.ram_bytes().to_vec()),
         }
     }
 
@@ -289,22 +223,10 @@ impl Cartridge {
         }
     }
 
-    /// Returns a reference to the raw MBC RAM bytes (no RTC footer).
     pub fn mbc_ram_bytes(&self) -> &[u8] {
-        match self {
-            Cartridge::RomOnly(c) => c.ram_bytes(),
-            Cartridge::Mbc1(c) => c.ram_bytes(),
-            Cartridge::Mbc2(c) => c.ram_bytes(),
-            Cartridge::Mbc3(c) => c.ram_bytes(),
-            Cartridge::Mbc5(c) => c.ram_bytes(),
-            Cartridge::Mbc7(c) => c.ram_bytes(),
-            Cartridge::HuC1(c) => c.ram_bytes(),
-            Cartridge::HuC3(c) => c.ram_bytes(),
-            Cartridge::PocketCamera(c) => c.ram_bytes(),
-        }
+        dispatch_cart!(self, c => c.ram_bytes())
     }
 
-    /// Returns BESS MBC register write pairs for the current mapper state.
     pub fn bess_mbc_writes(&self) -> Vec<(u16, u8)> {
         match self {
             Cartridge::RomOnly(_) => Vec::new(),
@@ -319,7 +241,6 @@ impl Cartridge {
         }
     }
 
-    /// Returns BESS RTC data (current, latched registers) for MBC3 carts with RTC.
     pub fn bess_rtc_data(&self) -> Option<([u8; 5], [u8; 5])> {
         match self {
             Cartridge::Mbc3(c) => c.bess_rtc_data(),
@@ -327,7 +248,6 @@ impl Cartridge {
         }
     }
 
-    /// Applies BESS RTC data to the cartridge (MBC3 only).
     pub fn apply_bess_rtc(&mut self, current: [u8; 5], latched: [u8; 5], elapsed_seconds: u64) {
         if let Cartridge::Mbc3(c) = self {
             c.apply_bess_rtc(current, latched, elapsed_seconds);
@@ -335,44 +255,19 @@ impl Cartridge {
     }
 
     pub fn write_state(&self, writer: &mut StateWriter) {
-        match self {
-            Cartridge::RomOnly(c) => {
-                writer.write_u8(0);
-                c.write_state(writer);
-            }
-            Cartridge::Mbc1(c) => {
-                writer.write_u8(1);
-                c.write_state(writer);
-            }
-            Cartridge::Mbc2(c) => {
-                writer.write_u8(2);
-                c.write_state(writer);
-            }
-            Cartridge::Mbc3(c) => {
-                writer.write_u8(3);
-                c.write_state(writer);
-            }
-            Cartridge::Mbc5(c) => {
-                writer.write_u8(4);
-                c.write_state(writer);
-            }
-            Cartridge::Mbc7(c) => {
-                writer.write_u8(5);
-                c.write_state(writer);
-            }
-            Cartridge::HuC1(c) => {
-                writer.write_u8(6);
-                c.write_state(writer);
-            }
-            Cartridge::HuC3(c) => {
-                writer.write_u8(7);
-                c.write_state(writer);
-            }
-            Cartridge::PocketCamera(c) => {
-                writer.write_u8(8);
-                c.write_state(writer);
-            }
-        }
+        let tag = match self {
+            Cartridge::RomOnly(_) => 0u8,
+            Cartridge::Mbc1(_) => 1,
+            Cartridge::Mbc2(_) => 2,
+            Cartridge::Mbc3(_) => 3,
+            Cartridge::Mbc5(_) => 4,
+            Cartridge::Mbc7(_) => 5,
+            Cartridge::HuC1(_) => 6,
+            Cartridge::HuC3(_) => 7,
+            Cartridge::PocketCamera(_) => 8,
+        };
+        writer.write_u8(tag);
+        dispatch_cart!(self, c => c.write_state(writer));
     }
 
     pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {

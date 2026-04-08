@@ -5,6 +5,19 @@ use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 
+pub trait SerialDevice {
+    fn exchange_byte(&mut self, byte: u8) -> u8;
+}
+
+#[allow(dead_code)]
+pub struct DisconnectedDevice;
+
+impl SerialDevice for DisconnectedDevice {
+    fn exchange_byte(&mut self, _byte: u8) -> u8 {
+        0xFF
+    }
+}
+
 pub(super) struct Serial {
     sb: u8,
     sc: u8,
@@ -75,11 +88,7 @@ impl Serial {
         self.cycles = 0;
     }
 
-    pub(super) fn step(
-        &mut self,
-        cycles: u64,
-        printer: &mut crate::hardware::printer::GameboyPrinter,
-    ) -> bool {
+    pub(super) fn step(&mut self, cycles: u64, device: &mut dyn SerialDevice) -> bool {
         if self.sc & 0x81 != 0x81 {
             return false;
         }
@@ -89,7 +98,7 @@ impl Serial {
         let transfer_period = self.transfer_period();
         if self.cycles >= transfer_period {
             self.cycles -= transfer_period;
-            let response = printer.feed_serial_byte(self.sb);
+            let response = device.exchange_byte(self.sb);
             self.output_log.push(self.sb);
             print!("{}", self.sb as char);
             let _ = io::stdout().flush();

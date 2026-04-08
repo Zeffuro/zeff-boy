@@ -1,3 +1,4 @@
+use crate::hardware::serial::SerialDevice;
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::Result;
 
@@ -249,5 +250,11 @@ impl GameboyPrinter {
             status,
             images,
         })
+    }
+}
+
+impl SerialDevice for GameboyPrinter {
+    fn exchange_byte(&mut self, byte: u8) -> u8 {
+        self.feed_serial_byte(byte)
     }
 }

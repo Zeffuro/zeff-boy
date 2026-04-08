@@ -108,17 +108,17 @@ fn migrate_local_storage() {
                 keys_to_remove.push(key);
                 continue;
             }
-            if let Some(hex) = storage.get_item(&key).ok().flatten() {
-                if let Ok(bytes) = const_hex::decode(&hex) {
-                    let k = key.clone();
-                    let b = bytes.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = idb_put(&k, &b).await;
-                    });
-                    cache.insert(key.clone(), bytes);
-                    keys_to_remove.push(key);
-                    migrated += 1;
-                }
+            if let Some(hex) = storage.get_item(&key).ok().flatten()
+                && let Ok(bytes) = const_hex::decode(&hex)
+            {
+                let k = key.clone();
+                let b = bytes.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = idb_put(&k, &b).await;
+                });
+                cache.insert(key.clone(), bytes);
+                keys_to_remove.push(key);
+                migrated += 1;
             }
         }
     });

@@ -98,7 +98,7 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let gfx = pollster::block_on(Graphics::new(window, vsync))
+            let gfx = pollster::block_on(Graphics::new(window, vsync)) // platform-ok
                 .expect("failed to initialize graphics");
             self.finalize_gfx_init(gfx);
         }
