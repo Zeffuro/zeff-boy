@@ -5,3 +5,4 @@ no_default_features = true
 
 [tools]
 wasm_bindgen = "0.2.117"
+wasm_opt = "version_129"

@@ -27,7 +27,7 @@ pub(crate) fn host_camera_supported() -> bool {
 
 #[cfg(feature = "camera")]
 pub(crate) fn query_host_cameras() -> anyhow::Result<Vec<CameraDeviceInfo>> {
-    use nokhwa::{ // platform-ok
+    use nokhwa::{
         query,
         utils::{ApiBackend, CameraIndex},
     };

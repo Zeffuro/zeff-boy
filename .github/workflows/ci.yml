@@ -13,7 +13,7 @@ jobs:
     name: Linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: |
@@ -24,11 +24,13 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-linux"
+          prefix-key: "v2-linux"
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -45,11 +47,14 @@ jobs:
       - name: Platform-leak audit
         run: |
           # Fail if any native-only API (rfd, gilrs, cpal, dirs, etc.) appears
-          # in shared src/ code outside of platform/input/audio/cli modules.
+          # in shared src/ code outside of platform/input/audio/cli/camera modules.
+          # Files named *native.rs are excluded (inherently platform-specific).
+          # camera/ is excluded (feature-gated module).
+          # libretro_common.rs is excluded (all native API usage is cfg-gated).
           ! grep -rn --include='*.rs' --exclude='*native.rs' \
             -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
-            --exclude-dir=platform --exclude-dir=input --exclude-dir=audio \
-            | grep -v 'cli/' | grep -v '// platform-ok'
+            --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude-dir=camera \
+            | grep -v 'cli/' | grep -v 'libretro_common\.rs'
 
       - name: Build
         run: cargo build --workspace
@@ -71,7 +76,7 @@ jobs:
 
       - name: Upload benchmark results
         if: github.ref == 'refs/heads/master'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: benchmark-results.txt
@@ -93,17 +98,19 @@ jobs:
     name: Windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-windows"
+          prefix-key: "v2-windows"
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -138,17 +145,19 @@ jobs:
     name: macOS
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-macos"
+          prefix-key: "v2-macos"
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -182,7 +191,7 @@ jobs:
     name: Fuzz Compile Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: |
@@ -193,7 +202,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-fuzz"
+          prefix-key: "v2-fuzz"
           workspaces: "fuzz -> fuzz/target"
 
       - name: Check fuzz targets compile
@@ -203,7 +212,7 @@ jobs:
     name: WASM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -212,7 +221,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-wasm"
+          prefix-key: "v2-wasm"
 
       - name: Clippy (WASM)
         run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
@@ -224,7 +233,6 @@ jobs:
     name: Dependency Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: EmbarkStudios/cargo-deny-action@v2
-

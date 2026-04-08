@@ -30,7 +30,7 @@ jobs:
             artifact: zeff-boy
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -44,7 +44,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-release-${{ matrix.target }}"
+          prefix-key: "v2-release-${{ matrix.target }}"
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -62,7 +62,7 @@ jobs:
           7z a ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.zip ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zeff-boy-${{ matrix.target }}
           path: zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.*
@@ -72,10 +72,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -85,4 +85,3 @@ jobs:
         with:
           generate_release_notes: true
           files: artifacts/*
-
