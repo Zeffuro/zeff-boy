@@ -90,6 +90,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Sync .info display_version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^display_version = .*/display_version = \"${VERSION}\"/" crates/zeff-libretro/zeff_libretro.info
+
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -111,13 +117,15 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.archive_name }} ${{ matrix.lib }}
+          cp ../../../crates/zeff-libretro/zeff_libretro.info .
+          tar czf ../../../${{ matrix.archive_name }} ${{ matrix.lib }} zeff_libretro.info
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../${{ matrix.archive_name }} ${{ matrix.lib }}
+          cp ../../../crates/zeff-libretro/zeff_libretro.info .
+          7z a ../../../${{ matrix.archive_name }} ${{ matrix.lib }} zeff_libretro.info
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

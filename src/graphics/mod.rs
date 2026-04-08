@@ -37,9 +37,44 @@ pub(crate) struct Graphics {
 impl Graphics {
     pub(crate) fn create_window(event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
         let title = format!("zeff-boy v{}", env!("CARGO_PKG_VERSION"));
-        Ok(Arc::new(event_loop.create_window(
-            WindowAttributes::default().with_title(title),
-        )?))
+        let mut attrs = WindowAttributes::default().with_title(title);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(icon) = Self::load_window_icon() {
+                attrs = attrs.with_window_icon(Some(icon));
+            }
+        }
+
+        Ok(Arc::new(event_loop.create_window(attrs)?))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_window_icon() -> Option<winit::window::Icon> {
+        use std::io::Cursor;
+
+        static ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
+
+        let decoder = png::Decoder::new(Cursor::new(ICON_PNG));
+        let mut reader = decoder.read_info().ok()?;
+        let mut buf = vec![0u8; reader.output_buffer_size()?];
+        let info = reader.next_frame(&mut buf).ok()?;
+        buf.truncate(info.buffer_size());
+
+        let rgba = match info.color_type {
+            png::ColorType::Rgba => buf,
+            png::ColorType::Rgb => {
+                let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
+                for chunk in buf.chunks_exact(3) {
+                    rgba.extend_from_slice(chunk);
+                    rgba.push(255);
+                }
+                rgba
+            }
+            _ => return None,
+        };
+
+        winit::window::Icon::from_rgba(rgba, info.width, info.height).ok()
     }
 
     pub(crate) async fn new(window: Arc<Window>, vsync: VsyncMode) -> Result<Self> {

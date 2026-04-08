@@ -26,7 +26,13 @@ pub(crate) static CB_RUMBLE: Mutex<Option<retro_rumble_set_state_t>> = Mutex::ne
 pub(crate) static USE_XRGB8888: AtomicBool = AtomicBool::new(false);
 
 pub(crate) const LIB_NAME: &CStr = c"zeff-boy";
-pub(crate) const LIB_VERSION: &CStr = c"0.1.0";
+pub(crate) const LIB_VERSION: &CStr = const {
+    const BYTES: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+    match CStr::from_bytes_with_nul(BYTES) {
+        Ok(s) => s,
+        Err(_) => unreachable!(),
+    }
+};
 pub(crate) const VALID_EXTENSIONS: &CStr = c"gb|gbc|nes";
 
 pub(crate) fn env_cmd(cmd: c_uint, data: *mut c_void) -> bool {
