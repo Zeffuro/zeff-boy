@@ -5,24 +5,85 @@ on:
     branches: [master]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  linux:
-    name: Linux
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            deps: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
     steps:
       - uses: actions/checkout@v6
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev xvfb
+        if: matrix.deps
+        run: ${{ matrix.deps }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-${{ matrix.name }}
+
+      - name: Clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy (no default features)
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+
+  test:
+    name: Test (${{ matrix.name }})
+    needs: clippy
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            deps: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev xvfb
+            wrapper: xvfb-run --auto-servernum
+          - name: Windows
+            os: windows-latest
+            wrapper: ""
+          - name: macOS
+            os: macos-latest
+            wrapper: ""
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        if: matrix.deps
+        run: ${{ matrix.deps }}
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: taiki-e/install-action@v2
         with:
@@ -30,46 +91,43 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v2-linux"
+          prefix-key: v3-${{ matrix.name }}
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-        if: always()
+      - name: Run tests
+        run: ${{ matrix.wrapper }} cargo nextest run --workspace
 
-      - name: Clippy (all features)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-        if: always()
+      - name: Run tests (no default features)
+        run: ${{ matrix.wrapper }} cargo nextest run --workspace --no-default-features
 
-      - name: Clippy (no default features)
-        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-        if: always()
-
-      - name: Platform-leak audit
+  platform-audit:
+    name: Platform-leak audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check for platform API leaks
         run: |
-          # Fail if any native-only API (rfd, gilrs, cpal, dirs, etc.) appears
-          # in shared src/ code outside of platform/input/audio/cli/camera modules.
-          # Files named *native.rs are excluded (inherently platform-specific).
-          # camera/ is excluded (feature-gated module).
-          # libretro_common.rs is excluded (all native API usage is cfg-gated).
           ! grep -rn --include='*.rs' --exclude='*native.rs' \
             -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
             --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude-dir=camera \
             | grep -v 'cli/' | grep -v 'libretro_common\.rs' | grep -v '// platform-ok'
 
-      - name: Build
-        run: cargo build --workspace
+  bench:
+    name: Benchmarks
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
-      - name: Build (no default features)
-        run: cargo build --workspace --no-default-features
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
 
-      - name: Run tests
-        run: xvfb-run --auto-servernum cargo nextest run --workspace
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Run tests (no default features)
-        run: xvfb-run --auto-servernum cargo nextest run --workspace --no-default-features
-
-      - name: Bench compile check
-        run: cargo bench --no-run --workspace
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-bench
 
       - name: Run benchmarks
         run: cargo bench --workspace -- --output-format bencher 2>/dev/null | tee benchmark-results.txt
@@ -82,110 +140,23 @@ jobs:
           path: benchmark-results.txt
           retention-days: 90
 
-      - name: Job summary
-        if: failure()
-        run: |
-          echo "## ❌ Linux CI Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "One or more steps in the Linux CI job failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Quick reproduction" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "just ci-local" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-  windows:
-    name: Windows
-    runs-on: windows-latest
+  wasm:
+    name: WASM
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
+          targets: wasm32-unknown-unknown
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v2-windows"
+          prefix-key: v3-wasm
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (all features)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Clippy (no default features)
-        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-
-      - name: Build
-        run: cargo build --workspace
-
-      - name: Build (no default features)
-        run: cargo build --workspace --no-default-features
-
-      - name: Run tests
-        run: cargo nextest run --workspace
-
-      - name: Run tests (no default features)
-        run: cargo nextest run --workspace --no-default-features
-
-      - name: Job summary
-        if: failure()
-        shell: bash
-        run: |
-          echo "## ❌ Windows CI Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "One or more steps in the Windows CI job failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
-
-  macos:
-    name: macOS
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v2-macos"
-
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (all features)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Clippy (no default features)
-        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-
-      - name: Build
-        run: cargo build --workspace
-
-      - name: Build (no default features)
-        run: cargo build --workspace --no-default-features
-
-      - name: Run tests
-        run: cargo nextest run --workspace
-
-      - name: Run tests (no default features)
-        run: cargo nextest run --workspace --no-default-features
-
-      - name: Job summary
-        if: failure()
-        run: |
-          echo "## ❌ macOS CI Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "One or more steps in the macOS CI job failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+      - name: Clippy (WASM)
+        run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
 
   fuzz-check:
     name: Fuzz Compile Check
@@ -202,32 +173,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v2-fuzz"
+          prefix-key: v3-fuzz
           workspaces: "fuzz -> fuzz/target"
 
-      - name: Check fuzz targets compile
-        run: cargo +nightly check --manifest-path fuzz/Cargo.toml
-
-  wasm:
-    name: WASM
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v2-wasm"
-
-      - name: Clippy (WASM)
-        run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
-
-      - name: Check WASM target compiles
-        run: cargo check --target wasm32-unknown-unknown --no-default-features
+      - run: cargo +nightly check --manifest-path fuzz/Cargo.toml
 
   deny:
     name: Dependency Audit

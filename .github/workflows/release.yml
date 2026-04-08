@@ -173,7 +173,6 @@ jobs:
           cp packaging/zeff-boy.desktop AppDir/usr/share/applications/zeff-boy.desktop
           cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/
 
-
           cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png
 
           cp AppDir/usr/share/applications/zeff-boy.desktop AppDir/zeff-boy.desktop
@@ -219,3 +218,120 @@ jobs:
         with:
           generate_release_notes: true
           files: artifacts/*
+
+  update-scoop:
+    name: Update Scoop manifest
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: Zeffuro/scoop-zeff-boy
+          token: ${{ secrets.PACKAGE_REPO_TOKEN }}
+
+      - name: Update manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/Zeffuro/zeff-boy/releases/download/v${VERSION}/zeff-boy-v${VERSION}-x86_64-pc-windows-msvc.zip"
+          SHA256=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          jq -n \
+            --arg ver "$VERSION" \
+            --arg url "$URL" \
+            --arg hash "$SHA256" \
+            '{
+              version: $ver,
+              description: "A Game Boy, Game Boy Color, and NES emulator written in Rust",
+              homepage: "https://github.com/Zeffuro/zeff-boy",
+              license: { identifier: "MIT|Apache-2.0", url: "https://github.com/Zeffuro/zeff-boy/blob/master/LICENSE-MIT" },
+              architecture: { "64bit": { url: $url, hash: $hash } },
+              bin: "zeff-boy.exe",
+              checkver: { github: "https://github.com/Zeffuro/zeff-boy" },
+              autoupdate: { architecture: { "64bit": { url: "https://github.com/Zeffuro/zeff-boy/releases/download/v$version/zeff-boy-v$version-x86_64-pc-windows-msvc.zip" } } }
+            }' > bucket/zeff-boy.json
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bucket/zeff-boy.json
+          git diff --cached --quiet || git commit -m "Update zeff-boy to ${GITHUB_REF_NAME}"
+          git push
+
+  update-homebrew:
+    name: Update Homebrew cask
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: Zeffuro/homebrew-zeff-boy
+          token: ${{ secrets.PACKAGE_REPO_TOKEN }}
+
+      - name: Update cask
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/Zeffuro/zeff-boy/releases/download/v${VERSION}/zeff-boy-v${VERSION}-aarch64-apple-darwin.tar.gz"
+          SHA256=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          python3 -c "
+          v, s = '${VERSION}', '${SHA256}'
+          print(f'''cask \"zeff-boy\" do
+            version \"{v}\"
+            sha256 \"{s}\"
+
+            url \"https://github.com/Zeffuro/zeff-boy/releases/download/v#{{version}}/zeff-boy-v#{{version}}-aarch64-apple-darwin.tar.gz\"
+            name \"zeff-boy\"
+            desc \"A Game Boy, Game Boy Color, and NES emulator written in Rust\"
+            homepage \"https://github.com/Zeffuro/zeff-boy\"
+
+            binary \"zeff-boy\"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
+          end''')
+          " > Casks/zeff-boy.rb
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/zeff-boy.rb
+          git diff --cached --quiet || git commit -m "Update zeff-boy to ${GITHUB_REF_NAME}"
+          git push
+
+  update-aur:
+    name: Update AUR
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate PKGBUILD and .SRCINFO
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/Zeffuro/zeff-boy/releases/download/v${VERSION}/zeff-boy-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          SHA256=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          mkdir -p aur-work
+          python3 scripts/generate-aur.py "$VERSION" "$SHA256" aur-work
+
+      - name: Push to AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n  StrictHostKeyChecking accept-new\n' > ~/.ssh/config
+
+          git clone ssh://aur@aur.archlinux.org/zeff-boy-bin.git aur-repo
+          cp aur-work/PKGBUILD aur-repo/PKGBUILD
+          cp aur-work/.SRCINFO aur-repo/.SRCINFO
+
+          cd aur-repo
+          git config user.name "Zeffuro"
+          git config user.email "Jeffroiscool@gmail.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet || git commit -m "Update to v${GITHUB_REF_NAME#v}"
+          git push
+

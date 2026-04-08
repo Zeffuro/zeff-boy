@@ -20,19 +20,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install Trunk
-        run: cargo install trunk --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-pages
 
       - name: Build
         run: trunk build --release --public-url /zeff-boy/
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
 
@@ -43,6 +46,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - id: deployment
         uses: actions/deploy-pages@v5
