@@ -136,7 +136,7 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
 #[cfg(target_arch = "wasm32")]
 fn main() {
     platform::init_logging();
-    log::info!("zeff-boy WASM starting");
+    log::info!("zeff-boy v{} WASM starting", env!("CARGO_PKG_VERSION"));
 
     wasm_bindgen_futures::spawn_local(async {
         platform::init_storage().await;

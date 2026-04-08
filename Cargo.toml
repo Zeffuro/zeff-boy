@@ -37,6 +37,7 @@ crc32fast = "1.5.0"
 const-hex = "1.18.1"
 arrayvec = "0.7.6"
 zip = { version = "8.5.0", default-features = false, features = ["deflate"] }
+gilrs = "0.11"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.egui-winit]
 version = "0.34.1"
@@ -51,7 +52,6 @@ cpal = "0.17.3"
 env_logger = "0.11.9"
 pollster = "0.4.0"
 rfd = "0.17.2"
-gilrs = "0.11"
 dirs = "6.0.0"
 rubato = "2.0.0"
 crossbeam-channel = "0.5.15"

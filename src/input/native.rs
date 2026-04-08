@@ -1,15 +1,20 @@
-use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs, ff};
+use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs};
+#[cfg(not(target_arch = "wasm32"))]
+use gilrs::ff;
 
 use crate::settings::GamepadBindings;
 
 use super::GamepadPoll;
 
+#[cfg(not(target_arch = "wasm32"))]
 const RUMBLE_MAGNITUDE: u16 = 40_000;
 
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
     active_gamepad: Option<GamepadId>,
+    #[cfg(not(target_arch = "wasm32"))]
     rumble_effect: Option<ff::Effect>,
+    #[cfg(not(target_arch = "wasm32"))]
     rumble_playing: bool,
 }
 
@@ -20,7 +25,9 @@ impl GamepadHandler {
         Ok(Self {
             gilrs,
             active_gamepad: None,
+            #[cfg(not(target_arch = "wasm32"))]
             rumble_effect: None,
+            #[cfg(not(target_arch = "wasm32"))]
             rumble_playing: false,
         })
     }
@@ -53,8 +60,11 @@ impl GamepadHandler {
                 }
                 EventType::Disconnected => {
                     if self.active_gamepad == Some(id) {
-                        self.rumble_effect = None;
-                        self.rumble_playing = false;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            self.rumble_effect = None;
+                            self.rumble_playing = false;
+                        }
                     }
                 }
                 _ => {}
@@ -79,6 +89,7 @@ impl GamepadHandler {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn set_rumble(&mut self, active: bool) {
         if active == self.rumble_playing {
             return;
@@ -122,8 +133,12 @@ impl GamepadHandler {
             self.rumble_playing = false;
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn set_rumble(&mut self, _active: bool) {}
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for GamepadHandler {
     fn drop(&mut self) {
         if let Some(effect) = &mut self.rumble_effect

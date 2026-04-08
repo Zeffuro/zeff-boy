@@ -36,8 +36,9 @@ pub(crate) struct Graphics {
 
 impl Graphics {
     pub(crate) fn create_window(event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
+        let title = format!("zeff-boy v{}", env!("CARGO_PKG_VERSION"));
         Ok(Arc::new(event_loop.create_window(
-            WindowAttributes::default().with_title("zeff-boy"),
+            WindowAttributes::default().with_title(title),
         )?))
     }
 
