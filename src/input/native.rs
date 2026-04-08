@@ -1,6 +1,6 @@
-use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs};
 #[cfg(not(target_arch = "wasm32"))]
 use gilrs::ff;
+use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs};
 
 use crate::settings::GamepadBindings;
 

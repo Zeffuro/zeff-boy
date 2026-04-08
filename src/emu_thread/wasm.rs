@@ -204,11 +204,7 @@ impl EmuThread {
                 Self::install_rom_patches(backend, last_cheats);
             }
             EmuCommand::Rewind => {
-                let resp = Self::handle_rewind(
-                    backend,
-                    rewind_buffer,
-                    &self.shared_framebuffer,
-                );
+                let resp = Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer);
                 if matches!(&resp, EmuResponse::RewindOk) {
                     Self::install_rom_patches(backend, last_cheats);
                 }
