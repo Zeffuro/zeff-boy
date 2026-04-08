@@ -154,7 +154,7 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2 libudev1 libfuse2
+          sudo apt-get install -y libasound2t64 libudev1 libfuse2
 
       - name: Create AppDir structure
         run: |
