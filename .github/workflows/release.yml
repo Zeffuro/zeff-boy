@@ -172,7 +172,7 @@ jobs:
 
           cp packaging/zeff-boy.desktop AppDir/usr/share/applications/zeff-boy.desktop
           cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/
-          # appimagetool also looks for the short appdata name
+
           ln -s com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/zeff-boy.appdata.xml
 
           cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png
