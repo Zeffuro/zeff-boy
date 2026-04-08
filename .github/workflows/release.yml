@@ -67,9 +67,125 @@ jobs:
           name: zeff-boy-${{ matrix.target }}
           path: zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.*
 
+  libretro:
+    name: Libretro Core (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            lib: libzeff_libretro.so
+            archive_name: zeff_libretro-linux-x86_64.tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            lib: zeff_libretro.dll
+            archive_name: zeff_libretro-windows-x86_64.zip
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            lib: libzeff_libretro.dylib
+            archive_name: zeff_libretro-macos-aarch64.tar.gz
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v2-libretro-${{ matrix.target }}"
+
+      - name: Build libretro core
+        run: cargo build --release --target ${{ matrix.target }} -p zeff-libretro
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../${{ matrix.archive_name }} ${{ matrix.lib }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../${{ matrix.archive_name }} ${{ matrix.lib }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: libretro-${{ matrix.target }}
+          path: ${{ matrix.archive_name }}
+
+  appimage:
+    name: AppImage
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download Linux build
+        uses: actions/download-artifact@v8
+        with:
+          name: zeff-boy-x86_64-unknown-linux-gnu
+          path: linux-artifact
+
+      - name: Extract binary
+        run: |
+          cd linux-artifact
+          tar xzf zeff-boy-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2 libudev1 libfuse2
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/metainfo
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+
+          cp linux-artifact/zeff-boy AppDir/usr/bin/zeff-boy
+          chmod +x AppDir/usr/bin/zeff-boy
+
+          cp packaging/zeff-boy.desktop AppDir/usr/share/applications/zeff-boy.desktop
+          cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/
+
+          cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png
+
+          cp AppDir/usr/share/applications/zeff-boy.desktop AppDir/zeff-boy.desktop
+          cp AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png AppDir/zeff-boy.png
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Build AppImage
+        run: |
+          export VERSION="${{ github.ref_name }}"
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+          mv zeff-boy-*.AppImage zeff-boy-${{ github.ref_name }}-x86_64.AppImage
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeff-boy-appimage
+          path: zeff-boy-${{ github.ref_name }}-x86_64.AppImage
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, libretro, appimage]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

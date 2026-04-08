@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.zeffuro.zeff-boy</id>
+  <name>zeff-boy</name>
+  <summary>A Game Boy, Game Boy Color, and NES emulator</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+
+  <description>
+    <p>
+      zeff-boy is a Game Boy, Game Boy Color, and NES emulator written in Rust.
+      It features save states, cheats, a libretro core,
+      and runs on Windows, macOS, Linux, and the web.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">zeff-boy.desktop</launchable>
+
+  <url type="homepage">https://github.com/Zeffuro/zeff-boy</url>
+  <url type="bugtracker">https://github.com/Zeffuro/zeff-boy/issues</url>
+  <url type="vcs-browser">https://github.com/Zeffuro/zeff-boy</url>
+
+  <developer id="com.github.zeffuro">
+    <name>Zeffuro</name>
+  </developer>
+
+  <provides>
+    <binary>zeff-boy</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-04-08">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
+
+  <categories>
+    <category>Game</category>
+    <category>Emulator</category>
+  </categories>
+
+  <keywords>
+    <keyword>emulator</keyword>
+    <keyword>gameboy</keyword>
+    <keyword>nes</keyword>
+    <keyword>nintendo</keyword>
+    <keyword>retro</keyword>
+  </keywords>
+</component>
+
