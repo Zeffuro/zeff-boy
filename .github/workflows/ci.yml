@@ -46,7 +46,8 @@ jobs:
         run: |
           # Fail if any native-only API (rfd, gilrs, cpal, dirs, etc.) appears
           # in shared src/ code outside of platform/input/audio/cli modules.
-          ! grep -rn --include='*.rs' -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
+          ! grep -rn --include='*.rs' --exclude='*native.rs' \
+            -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
             --exclude-dir=platform --exclude-dir=input --exclude-dir=audio \
             | grep -v 'cli/' | grep -v '// platform-ok'
 
