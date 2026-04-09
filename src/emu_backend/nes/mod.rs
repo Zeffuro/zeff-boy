@@ -25,26 +25,19 @@ fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
 }
 
 impl EmulatorCore for NesBackend {
+    #[inline]
     fn step_frame(&mut self) {
         self.emu.step_frame();
     }
 
+    #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
     }
 
+    #[inline]
     fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         self.emu.drain_audio_into_stereo(buf);
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<f32> {
-        let mono = self.emu.drain_audio_samples();
-        let mut stereo = Vec::with_capacity(mono.len() * 2);
-        for &sample in &mono {
-            stereo.push(sample);
-            stereo.push(sample);
-        }
-        stereo
     }
 
     fn set_sample_rate(&mut self, rate: u32) {
@@ -60,16 +53,13 @@ impl EmulatorCore for NesBackend {
         self.emu.set_apu_channel_mutes(arr);
     }
 
+    #[inline]
     fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         self.emu
             .set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
-    fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.emu
-            .set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
-    }
-
+    #[inline]
     fn is_suspended(&self) -> bool {
         self.emu.is_cpu_suspended()
     }
@@ -92,6 +82,12 @@ impl EmulatorCore for NesBackend {
 
     fn rom_hash(&self) -> [u8; 32] {
         self.emu.rom_hash()
+    }
+
+    #[inline]
+    fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.emu
+            .set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
     fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {

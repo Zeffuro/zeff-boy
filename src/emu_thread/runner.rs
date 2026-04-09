@@ -135,12 +135,8 @@ impl EmuThread {
         shared_fb.store(Some(Arc::new(src.to_vec())));
 
         let rumble = backend.rumble_active();
-        let audio_samples = if let Some(mut buf) = reusable_audio {
-            backend.drain_audio_samples_into(&mut buf);
-            buf
-        } else {
-            backend.drain_audio_samples()
-        };
+        let mut audio_samples = reusable_audio.unwrap_or_default();
+        backend.drain_audio_samples_into(&mut audio_samples);
         let is_mbc7 = backend.is_mbc7();
         let is_pocket_camera = backend.is_pocket_camera();
 

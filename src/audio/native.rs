@@ -44,21 +44,15 @@ pub(crate) struct AudioOutput {
 pub(super) struct OnePoleLowPass {
     left: f32,
     right: f32,
-    initialized: bool,
 }
 
 impl OnePoleLowPass {
     pub(super) fn reset(&mut self) {
-        self.initialized = false;
+        self.left = 0.0;
+        self.right = 0.0;
     }
 
     pub(super) fn apply_sample(&mut self, sample: f32, channel: usize, alpha: f32) -> f32 {
-        if !self.initialized {
-            self.left = sample;
-            self.right = sample;
-            self.initialized = true;
-            return sample;
-        }
 
         if channel & 1 == 0 {
             self.left += alpha * (sample - self.left);

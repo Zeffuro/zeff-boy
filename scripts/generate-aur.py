@@ -27,20 +27,13 @@ license=('MIT' 'Apache-2.0')
 depends=('alsa-lib' 'systemd-libs')
 provides=('zeff-boy')
 conflicts=('zeff-boy')
-source=(
-    "zeff-boy-${{pkgver}}.tar.gz::https://github.com/Zeffuro/zeff-boy/releases/download/v${{pkgver}}/zeff-boy-v${{pkgver}}-x86_64-unknown-linux-gnu.tar.gz"
-    "zeff-boy.desktop::https://raw.githubusercontent.com/Zeffuro/zeff-boy/v${{pkgver}}/packaging/zeff-boy.desktop"
-    "LICENSE-MIT::https://raw.githubusercontent.com/Zeffuro/zeff-boy/v${{pkgver}}/LICENSE-MIT"
-    "LICENSE-APACHE::https://raw.githubusercontent.com/Zeffuro/zeff-boy/v${{pkgver}}/LICENSE-APACHE"
-)
-sha256sums=('{sha256}'
-            'SKIP'
-            'SKIP'
-            'SKIP')
+source=("zeff-boy-${{pkgver}}.tar.gz::https://github.com/Zeffuro/zeff-boy/releases/download/v${{pkgver}}/zeff-boy-v${{pkgver}}-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('{sha256}')
 
 package() {{
     install -Dm755 "zeff-boy" "${{pkgdir}}/usr/bin/zeff-boy"
     install -Dm644 "zeff-boy.desktop" "${{pkgdir}}/usr/share/applications/zeff-boy.desktop"
+    install -Dm644 "zeff-boy.png" "${{pkgdir}}/usr/share/icons/hicolor/256x256/apps/zeff-boy.png"
     install -Dm644 "LICENSE-MIT" "${{pkgdir}}/usr/share/licenses/${{pkgname}}/LICENSE-MIT"
     install -Dm644 "LICENSE-APACHE" "${{pkgdir}}/usr/share/licenses/${{pkgname}}/LICENSE-APACHE"
 }}
@@ -60,13 +53,7 @@ pkgbase = zeff-boy-bin
 \tprovides = zeff-boy
 \tconflicts = zeff-boy
 \tsource = zeff-boy-{version}.tar.gz::https://github.com/Zeffuro/zeff-boy/releases/download/v{version}/zeff-boy-v{version}-x86_64-unknown-linux-gnu.tar.gz
-\tsource = zeff-boy.desktop::https://raw.githubusercontent.com/Zeffuro/zeff-boy/v{version}/packaging/zeff-boy.desktop
-\tsource = LICENSE-MIT::https://raw.githubusercontent.com/Zeffuro/zeff-boy/v{version}/LICENSE-MIT
-\tsource = LICENSE-APACHE::https://raw.githubusercontent.com/Zeffuro/zeff-boy/v{version}/LICENSE-APACHE
 \tsha256sums = {sha256}
-\tsha256sums = SKIP
-\tsha256sums = SKIP
-\tsha256sums = SKIP
 
 pkgname = zeff-boy-bin
 """

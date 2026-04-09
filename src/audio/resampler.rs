@@ -12,6 +12,9 @@ pub(crate) struct AudioResampler {
     resampler: Async<f32>,
     pending_left: Vec<f32>,
     pending_right: Vec<f32>,
+    scratch_left: Vec<f32>,
+    scratch_right: Vec<f32>,
+    output: Vec<f32>,
     chunk_size: usize,
 }
 
@@ -38,6 +41,9 @@ impl AudioResampler {
             resampler,
             pending_left: Vec::with_capacity(CHUNK_SIZE * 2),
             pending_right: Vec::with_capacity(CHUNK_SIZE * 2),
+            scratch_left: Vec::with_capacity(CHUNK_SIZE),
+            scratch_right: Vec::with_capacity(CHUNK_SIZE),
+            output: Vec::new(),
             chunk_size: CHUNK_SIZE,
         })
     }
@@ -53,32 +59,44 @@ impl AudioResampler {
         let clamped = ratio_adjust.clamp(1.0 / MAX_RATIO_RELATIVE, MAX_RATIO_RELATIVE);
         let _ = self.resampler.set_resample_ratio_relative(clamped, true);
 
-        let mut output = Vec::new();
+        self.output.clear();
 
         while self.pending_left.len() >= self.chunk_size {
-            let left: Vec<f32> = self.pending_left.drain(..self.chunk_size).collect();
-            let right: Vec<f32> = self.pending_right.drain(..self.chunk_size).collect();
-            let input_buf = vec![left, right];
-            let adapter = SequentialSliceOfVecs::new(input_buf.as_slice(), 2, self.chunk_size)
-                .expect("audio input must have exactly 2 channels with matching chunk size");
-            match self.resampler.process(&adapter, 0, None) {
-                Ok(result) => {
-                    let out_frames = result.frames();
-                    let out_channels = result.channels();
-                    let data = result.take_data();
-                    output.reserve(out_frames * 2);
-                    for f in 0..out_frames {
-                        output.push(data[f * out_channels]);
-                        output.push(data[f * out_channels + 1]);
+            self.scratch_left.clear();
+            self.scratch_left.extend(self.pending_left.drain(..self.chunk_size));
+            self.scratch_right.clear();
+            self.scratch_right.extend(self.pending_right.drain(..self.chunk_size));
+
+            let input_buf = [
+                std::mem::take(&mut self.scratch_left),
+                std::mem::take(&mut self.scratch_right),
+            ];
+            {
+                let adapter =
+                    SequentialSliceOfVecs::new(&input_buf, 2, self.chunk_size)
+                        .expect("audio input must have exactly 2 channels with matching chunk size");
+                match self.resampler.process(&adapter, 0, None) {
+                    Ok(result) => {
+                        let out_frames = result.frames();
+                        let out_channels = result.channels();
+                        let data = result.take_data();
+                        self.output.reserve(out_frames * 2);
+                        for f in 0..out_frames {
+                            self.output.push(data[f * out_channels]);
+                            self.output.push(data[f * out_channels + 1]);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("audio resampler error: {e}");
                     }
                 }
-                Err(e) => {
-                    log::warn!("audio resampler error: {e}");
-                }
             }
+            let [left, right] = input_buf;
+            self.scratch_left = left;
+            self.scratch_right = right;
         }
 
-        output
+        std::mem::take(&mut self.output)
     }
 
     #[allow(dead_code)]

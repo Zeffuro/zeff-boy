@@ -73,6 +73,7 @@ impl EmuBackend {
         }
     }
 
+    #[inline]
     pub(crate) fn core(&self) -> &dyn EmulatorCore {
         match self {
             Self::Gb(b) => &**b,
@@ -80,6 +81,7 @@ impl EmuBackend {
         }
     }
 
+    #[inline]
     pub(crate) fn core_mut(&mut self) -> &mut dyn EmulatorCore {
         match self {
             Self::Gb(b) => &mut **b,
@@ -147,7 +149,6 @@ impl EmuBackend {
 
     delegate_to_core_mut! {
         fn step_frame(&mut self);
-        fn drain_audio_samples(&mut self) -> Vec<f32>;
         fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>);
         fn set_sample_rate(&mut self, rate: u32);
         fn set_apu_sample_generation_enabled(&mut self, enabled: bool);

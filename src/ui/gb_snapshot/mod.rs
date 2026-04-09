@@ -102,19 +102,20 @@ pub(crate) fn collect_emu_snapshot(
     let memory_search_results = if let Some(ref search) = req.memory_search {
         let mut results = Vec::new();
         if !search.pattern.is_empty() {
-            let mut flat = vec![0u8; 0x10000];
-            for addr in 0u32..=0xFFFFu32 {
-                flat[addr as usize] = emu.peek_byte_raw(addr as u16);
-            }
             let pattern_len = search.pattern.len();
             for start_addr in 0..=(0x10000usize - pattern_len) {
                 if results.len() >= search.max_results {
                     break;
                 }
-                if flat[start_addr..start_addr + pattern_len] == search.pattern[..] {
+                let matched = (0..pattern_len)
+                    .all(|j| emu.peek_byte_raw((start_addr + j) as u16) == search.pattern[j]);
+                if matched {
+                    let matched_bytes: Vec<u8> = (0..pattern_len)
+                        .map(|j| emu.peek_byte_raw((start_addr + j) as u16))
+                        .collect();
                     results.push(MemorySearchResult {
                         address: start_addr as u16,
-                        matched_bytes: flat[start_addr..start_addr + pattern_len].to_vec(),
+                        matched_bytes,
                     });
                 }
             }

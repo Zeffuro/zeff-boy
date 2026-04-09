@@ -53,7 +53,12 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+          cp ../../../packaging/zeff-boy.desktop .
+          cp ../../../LICENSE-MIT .
+          cp ../../../LICENSE-APACHE .
+          cp ../../../assets/icon.png zeff-boy.png
+          tar czf ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            ${{ matrix.artifact }} zeff-boy.desktop LICENSE-MIT LICENSE-APACHE zeff-boy.png
 
       - name: Package (Windows)
         if: runner.os == 'Windows'

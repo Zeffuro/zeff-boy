@@ -79,13 +79,6 @@ impl CoreState {
         }
     }
 
-    pub fn framebuffer(&self) -> &[u8] {
-        match &self.core {
-            ActiveCore::Gb(emu) => emu.framebuffer(),
-            ActiveCore::Nes(emu) => emu.framebuffer(),
-        }
-    }
-
     pub fn drain_audio(&mut self) {
         self.audio_buf.clear();
         match &mut self.core {
@@ -185,7 +178,10 @@ impl CoreState {
     }
 
     pub fn framebuffer_as_xrgb8888(&mut self) -> &[u8] {
-        let fb = self.framebuffer().to_vec();
+        let fb = match &self.core {
+            ActiveCore::Gb(emu) => emu.framebuffer(),
+            ActiveCore::Nes(emu) => emu.framebuffer(),
+        };
         self.xrgb_buf.resize(fb.len(), 0);
         for (i, chunk) in fb.chunks_exact(4).enumerate() {
             let r = chunk[0];
@@ -201,7 +197,10 @@ impl CoreState {
     }
 
     pub fn framebuffer_as_rgb565(&mut self) -> &[u8] {
-        let fb = self.framebuffer().to_vec();
+        let fb = match &self.core {
+            ActiveCore::Gb(emu) => emu.framebuffer(),
+            ActiveCore::Nes(emu) => emu.framebuffer(),
+        };
         let pixel_count = fb.len() / 4;
         self.rgb565_buf.resize(pixel_count * 2, 0);
         for (i, chunk) in fb.chunks_exact(4).enumerate() {

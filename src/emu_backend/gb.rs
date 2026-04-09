@@ -17,22 +17,22 @@ impl GbBackend {
 }
 
 impl EmulatorCore for GbBackend {
+    #[inline]
     fn step_frame(&mut self) {
         self.emu.step_frame();
     }
 
+    #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
     }
 
+    #[inline]
     fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         self.emu.drain_audio_samples_into(buf);
     }
 
-    fn drain_audio_samples(&mut self) -> Vec<f32> {
-        self.emu.drain_audio_samples()
-    }
-
+    #[inline]
     fn set_sample_rate(&mut self, rate: u32) {
         self.emu.set_sample_rate(rate);
     }
@@ -46,10 +46,12 @@ impl EmulatorCore for GbBackend {
         self.emu.set_apu_channel_mutes(arr);
     }
 
+    #[inline]
     fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         self.emu.set_input(buttons_pressed, dpad_pressed);
     }
 
+    #[inline]
     fn is_suspended(&self) -> bool {
         self.emu.is_cpu_suspended()
     }
@@ -74,18 +76,22 @@ impl EmulatorCore for GbBackend {
         self.emu.rom_hash()
     }
 
+    #[inline]
     fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
         Some(MidiApuSnapshot::Gb(self.emu.apu_channel_snapshot()))
     }
 
+    #[inline]
     fn rumble_active(&self) -> bool {
         self.emu.rumble_active()
     }
 
+    #[inline]
     fn is_mbc7(&self) -> bool {
         self.emu.is_mbc7_cartridge()
     }
 
+    #[inline]
     fn is_pocket_camera(&self) -> bool {
         self.emu.is_pocket_camera_cartridge()
     }

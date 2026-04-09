@@ -397,12 +397,8 @@ impl EmuThread {
         let src = backend.framebuffer();
         shared_fb.store(Some(Arc::new(src.to_vec())));
 
-        let audio_samples = if let Some(mut buf) = input.buffers.audio {
-            backend.drain_audio_samples_into(&mut buf);
-            buf
-        } else {
-            backend.drain_audio_samples()
-        };
+        let mut audio_samples = input.buffers.audio.unwrap_or_default();
+        backend.drain_audio_samples_into(&mut audio_samples);
 
         FrameResult {
             rumble: backend.rumble_active(),
