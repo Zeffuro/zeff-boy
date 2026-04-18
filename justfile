@@ -157,11 +157,11 @@ flamegraph-named rom name frames="1800":
 
 # Run the core profiling harness (3000 frames per ROM from manifests)
 profile-cores:
-    cargo run --profile profiling --bin profile_cores
+    cargo run --profile profiling --bin profile_cores --features profile-cores
 
 # Generate a flamegraph from the core profiling harness (requires admin on Windows)
 flamegraph-cores:
-    cargo flamegraph --profile profiling --bin profile_cores -o flamegraph.svg
+    cargo flamegraph --profile profiling --bin profile_cores --features profile-cores -o flamegraph.svg
 
 # Run Criterion benchmarks for GB core
 bench-gb:

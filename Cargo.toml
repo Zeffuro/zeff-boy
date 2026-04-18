@@ -6,10 +6,11 @@ exclude = ["fuzz"]
 default = ["camera", "audio-recording"]
 camera = ["dep:nokhwa", "dep:image"]
 audio-recording = ["dep:vorbis-encoder"]
+profile-cores = []
 
 [package]
 name = "zeff-boy"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
@@ -98,3 +99,7 @@ strip = "symbols"
 inherits = "release"
 debug = true
 strip = false
+
+[[bin]]
+name = "profile_cores"
+required-features = ["profile-cores"]
