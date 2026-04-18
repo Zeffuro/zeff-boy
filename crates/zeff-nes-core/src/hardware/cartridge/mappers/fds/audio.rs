@@ -91,10 +91,8 @@ impl FdsAudio {
 
     pub fn write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x4040..=0x407F => {
-                if self.wave_write_enable {
-                    self.wave_table[(addr - 0x4040) as usize] = val & 0x3F;
-                }
+            0x4040..=0x407F if self.wave_write_enable => {
+                self.wave_table[(addr - 0x4040) as usize] = val & 0x3F;
             }
             0x4080 => {
                 self.vol_env_disable = val & 0x80 != 0;
@@ -140,12 +138,10 @@ impl FdsAudio {
                     self.mod_phase = 0;
                 }
             }
-            0x4088 => {
-                if self.mod_halt {
-                    let idx = (self.mod_table_pos & 0x3F) as usize % MOD_TABLE_SIZE;
-                    self.mod_table[idx] = val & 0x07;
-                    self.mod_table_pos = self.mod_table_pos.wrapping_add(1) & 0x3F;
-                }
+            0x4088 if self.mod_halt => {
+                let idx = (self.mod_table_pos & 0x3F) as usize % MOD_TABLE_SIZE;
+                self.mod_table[idx] = val & 0x07;
+                self.mod_table_pos = self.mod_table_pos.wrapping_add(1) & 0x3F;
             }
             0x4089 => {
                 self.wave_write_enable = val & 0x80 != 0;

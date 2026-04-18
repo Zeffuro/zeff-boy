@@ -50,7 +50,9 @@ impl FramebufferRenderer {
         if want_two_pass {
             let upscaler_source = scaling_shader_source(scaling);
             let effect_source = if matches!(effect, EffectPreset::Custom) {
-                if let Some(combined) = load_custom_shader_source(&settings.video.custom_shader_path) {
+                if let Some(combined) =
+                    load_custom_shader_source(&settings.video.custom_shader_path)
+                {
                     if self.shader.current_scaling != scaling
                         || self.shader.current_effect != effect
                         || custom_path_changed

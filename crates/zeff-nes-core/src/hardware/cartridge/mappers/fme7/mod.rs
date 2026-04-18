@@ -166,10 +166,8 @@ impl Mapper for Fme7 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x6000..=0x7FFF => {
-                if self.prg_ram_select && self.prg_ram_enable {
-                    self.prg_ram_write(self.prg_6000_bank, addr, val);
-                }
+            0x6000..=0x7FFF if self.prg_ram_select && self.prg_ram_enable => {
+                self.prg_ram_write(self.prg_6000_bank, addr, val);
             }
             0x8000..=0x9FFF => {
                 self.command = val & 0x0F;

@@ -195,4 +195,3 @@ proptest! {
         prop_assert!(cpu.get_c());
     }
 }
-

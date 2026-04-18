@@ -134,8 +134,9 @@ macro_rules! store_all_modes {
 }
 
 // LDA: 0xA9, 0xA5, 0xB5, 0xAD, 0xBD, 0xB9, 0xA1, 0xB1
-load_all_modes!(a, lda_imm, lda_zp, lda_zp_x, lda_abs,
-    lda_abs_x, lda_abs_y, lda_ind_x, lda_ind_y);
+load_all_modes!(
+    a, lda_imm, lda_zp, lda_zp_x, lda_abs, lda_abs_x, lda_abs_y, lda_ind_x, lda_ind_y
+);
 
 // LDX: 0xA2, 0xA6, 0xB6, 0xAE, 0xBE
 load_all_modes!(x, ldx_imm, ldx_zp, ldx_zp_y, ldx_abs, ldx_abs_y;
@@ -146,8 +147,9 @@ load_all_modes!(y, ldy_imm, ldy_zp, ldy_zp_x, ldy_abs, ldy_abs_x;
     zp_addr = addr_zero_page_x, abs_addr = addr_absolute_x);
 
 // STA: 0x85, 0x95, 0x8D, 0x9D, 0x99, 0x81, 0x91
-store_all_modes!(a, sta_zp, sta_zp_x, sta_abs,
-    sta_abs_x, sta_abs_y, sta_ind_x, sta_ind_y);
+store_all_modes!(
+    a, sta_zp, sta_zp_x, sta_abs, sta_abs_x, sta_abs_y, sta_ind_x, sta_ind_y
+);
 
 // STX: 0x86, 0x96, 0x8E
 store_all_modes!(x, stx_zp, stx_zp_y, stx_abs; alt = addr_zero_page_y);

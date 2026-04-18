@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use zeff_nes_core::emulator::Emulator;
 use std::path::Path;
+use zeff_nes_core::emulator::Emulator;
 
 fn build_minimal_nes_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -96,8 +96,7 @@ fn bench_audio_drain(c: &mut Criterion) {
 
 // Real ROM benchmarks, manifest: test-roms/nes-bench-roms.txt
 fn load_bench_manifest() -> Vec<(String, String)> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-roms/nes-bench-roms.txt");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-roms/nes-bench-roms.txt");
     let Ok(contents) = std::fs::read_to_string(&manifest) else {
         eprintln!("bench manifest not found: {}", manifest.display());
         return Vec::new();

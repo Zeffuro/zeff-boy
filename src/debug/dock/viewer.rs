@@ -16,9 +16,7 @@ use super::super::rom_info::draw_rom_info_content;
 use super::super::rom_viewer::draw_rom_viewer_content;
 use super::super::tile_viewer::draw_tile_viewer_content;
 use super::super::tilemap_viewer::draw_tilemap_viewer_content;
-use super::super::types::{
-    ConsoleGraphicsData, DebugDataRefs,
-};
+use super::super::types::{ConsoleGraphicsData, DebugDataRefs};
 use super::super::ui::draw_cpu_debug_content;
 use super::super::{DebugUiActions, DebugWindowState};
 use crate::graphics::AspectRatioMode;

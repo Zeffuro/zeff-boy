@@ -39,18 +39,9 @@ pub(super) fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
                 ("Hardware Mode", format!("{:?}", emu.hardware_mode())),
                 ("CGB Flag", format!("{:02X}", header.cgb_flag)),
                 ("SGB Flag", format!("{:02X}", header.sgb_flag)),
-                (
-                    "CGB Compatible",
-                    yes_no(header.is_cgb_compatible).into(),
-                ),
-                (
-                    "CGB Exclusive",
-                    yes_no(header.is_cgb_exclusive).into(),
-                ),
-                (
-                    "SGB Supported",
-                    yes_no(header.is_sgb_supported).into(),
-                ),
+                ("CGB Compatible", yes_no(header.is_cgb_compatible).into()),
+                ("CGB Exclusive", yes_no(header.is_cgb_exclusive).into()),
+                ("SGB Supported", yes_no(header.is_sgb_supported).into()),
             ],
         },
         RomInfoSection {
@@ -78,10 +69,7 @@ pub(super) fn gb_rom_info(emu: &Emulator) -> RomDebugInfo {
         ("RAM Enabled", yes_no(cart_state.ram_enabled).into()),
     ];
     if let Some(mode) = cart_state.banking_mode {
-        cart_fields.push((
-            "Banking Mode",
-            if mode { "RAM" } else { "ROM" }.into(),
-        ));
+        cart_fields.push(("Banking Mode", if mode { "RAM" } else { "ROM" }.into()));
     }
     sections.push(RomInfoSection {
         heading: "Cartridge State",

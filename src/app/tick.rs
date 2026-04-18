@@ -2,8 +2,8 @@ use super::{
     ActiveSystem, App, MAX_FRAMES_PER_TICK, MAX_IN_FLIGHT, SpeedMode, UI_RENDER_INTERVAL,
     VIEWER_UPDATE_INTERVAL,
 };
-use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
 use crate::debug::dock::TabDataRequirements;
+use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
 use crate::emu_thread::{
     AudioConfig, EmuCommand, FrameInput, JoypadInput, MemorySearchRequest, RenderSettings,
     ReusableBuffers, SnapshotRequest,
@@ -11,18 +11,17 @@ use crate::emu_thread::{
 use crate::platform::Instant;
 use crate::settings::GamepadAction;
 
-fn parse_pending_search(
-    state: &mut impl SearchableState,
-) -> Option<MemorySearchRequest> {
+fn parse_pending_search(state: &mut impl SearchableState) -> Option<MemorySearchRequest> {
     if !state.search_pending() {
         return None;
     }
     state.set_search_pending(false);
-    debug::hex_search::parse_search_query(state.search_query(), state.search_mode())
-        .map(|pattern| MemorySearchRequest {
+    debug::hex_search::parse_search_query(state.search_query(), state.search_mode()).map(
+        |pattern| MemorySearchRequest {
             pattern,
             max_results: state.search_max_results(),
-        })
+        },
+    )
 }
 
 trait SearchableState {
@@ -34,19 +33,39 @@ trait SearchableState {
 }
 
 impl SearchableState for crate::debug::MemoryViewerState {
-    fn search_pending(&self) -> bool { self.search_pending }
-    fn set_search_pending(&mut self, v: bool) { self.search_pending = v; }
-    fn search_query(&self) -> &str { &self.search_query }
-    fn search_mode(&self) -> crate::debug::MemorySearchMode { self.search_mode }
-    fn search_max_results(&self) -> usize { self.search_max_results }
+    fn search_pending(&self) -> bool {
+        self.search_pending
+    }
+    fn set_search_pending(&mut self, v: bool) {
+        self.search_pending = v;
+    }
+    fn search_query(&self) -> &str {
+        &self.search_query
+    }
+    fn search_mode(&self) -> crate::debug::MemorySearchMode {
+        self.search_mode
+    }
+    fn search_max_results(&self) -> usize {
+        self.search_max_results
+    }
 }
 
 impl SearchableState for crate::debug::RomViewerState {
-    fn search_pending(&self) -> bool { self.search_pending }
-    fn set_search_pending(&mut self, v: bool) { self.search_pending = v; }
-    fn search_query(&self) -> &str { &self.search_query }
-    fn search_mode(&self) -> crate::debug::MemorySearchMode { self.search_mode }
-    fn search_max_results(&self) -> usize { self.search_max_results }
+    fn search_pending(&self) -> bool {
+        self.search_pending
+    }
+    fn set_search_pending(&mut self, v: bool) {
+        self.search_pending = v;
+    }
+    fn search_query(&self) -> &str {
+        &self.search_query
+    }
+    fn search_mode(&self) -> crate::debug::MemorySearchMode {
+        self.search_mode
+    }
+    fn search_max_results(&self) -> usize {
+        self.search_max_results
+    }
 }
 
 fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {

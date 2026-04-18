@@ -78,7 +78,6 @@ impl Emulator {
             }
         } else {
             while self.cpu.cycles < target {
-
                 self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
                 let cycles = self.cpu.step(&mut self.bus);
 

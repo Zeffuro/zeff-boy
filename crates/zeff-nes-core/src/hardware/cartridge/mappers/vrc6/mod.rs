@@ -147,15 +147,11 @@ impl Mapper for Vrc6 {
             0xC000 => {
                 self.prg_bank_8k = val & 0x1F;
             }
-            0xD000 => {
-                if (sub as usize) < 4 {
-                    self.chr_banks[sub as usize] = val;
-                }
+            0xD000 if (sub as usize) < 4 => {
+                self.chr_banks[sub as usize] = val;
             }
-            0xE000 => {
-                if (sub as usize) < 4 {
-                    self.chr_banks[4 + sub as usize] = val;
-                }
+            0xE000 if (sub as usize) < 4 => {
+                self.chr_banks[4 + sub as usize] = val;
             }
             0xF000 => match sub {
                 0 => {

@@ -113,13 +113,7 @@ impl Mmc3 {
 impl Mapper for Mmc3 {
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x7FFF => {
-                if self.prg_ram_enable {
-                    self.prg_ram[(addr - 0x6000) as usize]
-                } else {
-                    0
-                }
-            }
+            0x6000..=0x7FFF if self.prg_ram_enable => self.prg_ram[(addr - 0x6000) as usize],
             0x8000..=0xFFFF => {
                 let bank = self.map_prg_bank(addr);
                 let offset = (addr as usize) & 0x1FFF;
@@ -131,10 +125,8 @@ impl Mapper for Mmc3 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x6000..=0x7FFF => {
-                if self.prg_ram_enable && !self.prg_ram_write_protect {
-                    self.prg_ram[(addr - 0x6000) as usize] = val;
-                }
+            0x6000..=0x7FFF if self.prg_ram_enable && !self.prg_ram_write_protect => {
+                self.prg_ram[(addr - 0x6000) as usize] = val;
             }
             0x8000..=0x9FFF => {
                 if addr & 1 == 0 {

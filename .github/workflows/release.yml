@@ -177,23 +177,41 @@ jobs:
 
           cp packaging/zeff-boy.desktop AppDir/usr/share/applications/zeff-boy.desktop
           cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/
+          cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/zeff-boy.appdata.xml
 
           cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png
 
           cp AppDir/usr/share/applications/zeff-boy.desktop AppDir/zeff-boy.desktop
           cp AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png AppDir/zeff-boy.png
 
-      - name: Download linuxdeploy
+      - name: Download linuxdeploy and AppImage runtime
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
+
+          # Pre-download the type-2 runtime with retries (avoids transient 504s from GitHub CDN)
+          for i in 1 2 3 4 5; do
+            if wget -q -O runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64; then
+              echo "Runtime downloaded on attempt $i"
+              break
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+          if [ ! -f runtime-x86_64 ]; then
+            echo "::error::Failed to download AppImage runtime after 5 attempts"
+            exit 1
+          fi
 
       - name: Build AppImage
         run: |
           TAG="${{ github.ref_name }}"
           export LINUXDEPLOY_OUTPUT_VERSION="${TAG}"
+          export APPIMAGE_EXTRACT_AND_RUN=1
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
-          # linuxdeploy names it zeff-boy-<version>-x86_64.AppImage; ensure our expected name
+
+          # Ensure the expected filename exists
           EXPECTED="zeff-boy-${TAG}-x86_64.AppImage"
           if [ ! -f "$EXPECTED" ]; then
             mv zeff-boy-*x86_64.AppImage "$EXPECTED"

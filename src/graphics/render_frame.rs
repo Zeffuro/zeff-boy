@@ -1,6 +1,4 @@
-use crate::debug::{
-    self, DebugTab, DebugTabViewer, DebugUiActions, DebugWindowState, MenuAction,
-};
+use crate::debug::{self, DebugTab, DebugTabViewer, DebugUiActions, DebugWindowState, MenuAction};
 use crate::debug::{DebugDataRefs, ToastManager};
 
 use super::Graphics;
@@ -44,7 +42,9 @@ pub(crate) struct RenderResult {
 const EMPTY_STATE_MESSAGE: &str = "Drag & drop a ROM file, or use File > Open";
 
 impl Graphics {
-    fn acquire_surface_frame(&self) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView), FrameError> {
+    fn acquire_surface_frame(
+        &self,
+    ) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView), FrameError> {
         let frame = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -391,10 +391,10 @@ impl Graphics {
         let menu_bar_height =
             menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
 
-        let has_game_view_in_dock = has_any_emu_data
-            && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
-        let render_framebuffer_directly = has_any_emu_data
-            && !debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
+        let has_game_view_in_dock =
+            has_any_emu_data && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
+        let render_framebuffer_directly =
+            has_any_emu_data && !debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
 
         self.submit_gpu_passes(
             &view,

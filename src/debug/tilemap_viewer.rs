@@ -97,7 +97,8 @@ pub(super) fn draw_tilemap_viewer_content(
     });
 
     let show_viewport_id = ui.make_persistent_id("tilemap_viewer_show_viewport");
-    let show_viewport = super::common::persisted_checkbox(ui, show_viewport_id, "Show screen viewport", true);
+    let show_viewport =
+        super::common::persisted_checkbox(ui, show_viewport_id, "Show screen viewport", true);
     ui.ctx()
         .data_mut(|d| d.insert_persisted(attr_overlay_id, show_attr_overlay));
     ui.ctx()

@@ -39,7 +39,11 @@ fn discover_finds_ups_files() {
     let dir = std::env::temp_dir().join("zeff_test_mods_discover_ups");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
-    std::fs::write(dir.join("patch.ups"), crate::patching::ups::make_ups(&[0; 4], &[0; 4])).unwrap();
+    std::fs::write(
+        dir.join("patch.ups"),
+        crate::patching::ups::make_ups(&[0; 4], &[0; 4]),
+    )
+    .unwrap();
     std::fs::write(dir.join("not_ups.ups"), b"NOPE not a real ups file here").unwrap();
     let mods = discover_mods(&dir);
     let names: Vec<&str> = mods.iter().map(|m| m.filename.as_str()).collect();
@@ -153,7 +157,3 @@ fn make_test_bps(source: &[u8], target: &[u8]) -> Vec<u8> {
     crate::patching::append_patch_crcs(&mut patch, source, target);
     patch
 }
-
-
-
-

@@ -330,6 +330,6 @@ fn decode_cpu_state(tag: u8) -> Result<CpuState> {
 }
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod alu_proptests;
+#[cfg(test)]
+mod tests;

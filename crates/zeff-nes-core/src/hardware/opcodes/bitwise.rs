@@ -107,13 +107,21 @@ pub fn bit_abs(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // ASL: 0x0A, 0x06, 0x16, 0x0E, 0x1E
-rmw_shift_modes!(asl_acc, asl_val, asl_acc, asl_zp, asl_zp_x, asl_abs, asl_abs_x);
+rmw_shift_modes!(
+    asl_acc, asl_val, asl_acc, asl_zp, asl_zp_x, asl_abs, asl_abs_x
+);
 
 // LSR: 0x4A, 0x46, 0x56, 0x4E, 0x5E
-rmw_shift_modes!(lsr_acc, lsr_val, lsr_acc, lsr_zp, lsr_zp_x, lsr_abs, lsr_abs_x);
+rmw_shift_modes!(
+    lsr_acc, lsr_val, lsr_acc, lsr_zp, lsr_zp_x, lsr_abs, lsr_abs_x
+);
 
 // ROL: 0x2A, 0x26, 0x36, 0x2E, 0x3E
-rmw_shift_modes!(rol_acc, rol_val, rol_acc, rol_zp, rol_zp_x, rol_abs, rol_abs_x);
+rmw_shift_modes!(
+    rol_acc, rol_val, rol_acc, rol_zp, rol_zp_x, rol_abs, rol_abs_x
+);
 
 // ROR: 0x6A, 0x66, 0x76, 0x6E, 0x7E
-rmw_shift_modes!(ror_acc, ror_val, ror_acc, ror_zp, ror_zp_x, ror_abs, ror_abs_x);
+rmw_shift_modes!(
+    ror_acc, ror_val, ror_acc, ror_zp, ror_zp_x, ror_abs, ror_abs_x
+);

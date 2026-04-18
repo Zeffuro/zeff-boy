@@ -90,12 +90,8 @@ impl Vrc7 {
 impl Mapper for Vrc7 {
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x7FFF => {
-                if self.wram_enable && !self.prg_ram.is_empty() {
-                    self.prg_ram[(addr as usize - 0x6000) % self.prg_ram.len()]
-                } else {
-                    0
-                }
+            0x6000..=0x7FFF if self.wram_enable && !self.prg_ram.is_empty() => {
+                self.prg_ram[(addr as usize - 0x6000) % self.prg_ram.len()]
             }
             0x8000..=0x9FFF => self.read_prg_8k(self.prg_banks[0] as usize, addr as usize),
             0xA000..=0xBFFF => self.read_prg_8k(self.prg_banks[1] as usize, addr as usize),
@@ -107,11 +103,9 @@ impl Mapper for Vrc7 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x6000..=0x7FFF => {
-                if self.wram_enable && !self.prg_ram.is_empty() {
-                    let idx = (addr as usize - 0x6000) % self.prg_ram.len();
-                    self.prg_ram[idx] = val;
-                }
+            0x6000..=0x7FFF if self.wram_enable && !self.prg_ram.is_empty() => {
+                let idx = (addr as usize - 0x6000) % self.prg_ram.len();
+                self.prg_ram[idx] = val;
             }
             0x8000 => self.prg_banks[0] = val & 0x3F,
             0x8010 => self.prg_banks[1] = val & 0x3F,

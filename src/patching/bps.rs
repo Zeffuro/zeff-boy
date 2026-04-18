@@ -119,7 +119,6 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
     Ok(target)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,7 +136,6 @@ mod tests {
         super::super::append_patch_crcs(&mut patch, source, target);
         patch
     }
-
 
     #[test]
     fn apply_simple_patch() {
@@ -203,4 +201,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

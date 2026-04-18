@@ -121,7 +121,10 @@ fn build_rom_search(
     Some(results)
 }
 
-fn build_libretro_section(rom_crc32: u32, platform: crate::libretro_common::LibretroPlatform) -> RomInfoSection {
+fn build_libretro_section(
+    rom_crc32: u32,
+    platform: crate::libretro_common::LibretroPlatform,
+) -> RomInfoSection {
     let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, platform);
     let fields = match &libretro_meta {
         Some(meta) => vec![
@@ -153,7 +156,6 @@ pub(crate) struct UiFrameData {
     pub(crate) rom_size: u32,
     pub(crate) rom_search_results: Option<Vec<RomSearchResult>>,
 }
-
 
 pub(crate) fn apply_debug_actions(
     actions: &DebugUiActions,

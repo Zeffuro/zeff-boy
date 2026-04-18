@@ -42,7 +42,10 @@ fn gb_step_frame_produces_framebuffer() {
 
     emu.step_frame();
     let fb = emu.framebuffer();
-    assert!(!fb.is_empty(), "framebuffer should not be empty after a frame");
+    assert!(
+        !fb.is_empty(),
+        "framebuffer should not be empty after a frame"
+    );
     assert!(
         fb.len() >= 160 * 144 * 4,
         "framebuffer should be at least 160x144x4 bytes"
@@ -116,7 +119,10 @@ fn nes_step_frame_produces_framebuffer() {
 
     emu.step_frame();
     let fb = emu.framebuffer();
-    assert!(!fb.is_empty(), "framebuffer should not be empty after a frame");
+    assert!(
+        !fb.is_empty(),
+        "framebuffer should not be empty after a frame"
+    );
     assert!(
         fb.len() >= 256 * 240 * 4,
         "framebuffer should be at least 256x240x4 bytes"
@@ -180,5 +186,3 @@ fn nes_framebuffer_deterministic() {
     );
     assert_eq!(emu1.cpu_cycles(), emu2.cpu_cycles());
 }
-
-

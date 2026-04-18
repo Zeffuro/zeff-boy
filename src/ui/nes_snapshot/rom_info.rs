@@ -16,10 +16,7 @@ pub(super) fn nes_rom_info(emu: &zeff_nes_core::emulator::Emulator) -> RomDebugI
             heading: "ROM Header",
             fields: vec![
                 ("Format", format!("{:?}", header.format)),
-                (
-                    "PRG ROM",
-                    format!("{} KiB", header.prg_rom_size / 1024),
-                ),
+                ("PRG ROM", format!("{} KiB", header.prg_rom_size / 1024)),
                 ("CHR ROM", chr_label),
                 ("Mapper", header.mapper_label()),
                 ("Mirroring", format!("{:?}", header.mirroring)),

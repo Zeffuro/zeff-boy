@@ -63,18 +63,19 @@ impl AudioResampler {
 
         while self.pending_left.len() >= self.chunk_size {
             self.scratch_left.clear();
-            self.scratch_left.extend(self.pending_left.drain(..self.chunk_size));
+            self.scratch_left
+                .extend(self.pending_left.drain(..self.chunk_size));
             self.scratch_right.clear();
-            self.scratch_right.extend(self.pending_right.drain(..self.chunk_size));
+            self.scratch_right
+                .extend(self.pending_right.drain(..self.chunk_size));
 
             let input_buf = [
                 std::mem::take(&mut self.scratch_left),
                 std::mem::take(&mut self.scratch_right),
             ];
             {
-                let adapter =
-                    SequentialSliceOfVecs::new(&input_buf, 2, self.chunk_size)
-                        .expect("audio input must have exactly 2 channels with matching chunk size");
+                let adapter = SequentialSliceOfVecs::new(&input_buf, 2, self.chunk_size)
+                    .expect("audio input must have exactly 2 channels with matching chunk size");
                 match self.resampler.process(&adapter, 0, None) {
                     Ok(result) => {
                         let out_frames = result.frames();

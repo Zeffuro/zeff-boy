@@ -1,10 +1,7 @@
 use super::App;
 
 #[cfg(target_arch = "wasm32")]
-use {
-    crate::emu_backend::ActiveSystem,
-    std::path::PathBuf,
-};
+use {crate::emu_backend::ActiveSystem, std::path::PathBuf};
 
 impl App {
     #[cfg(target_arch = "wasm32")]

@@ -110,14 +110,13 @@ impl Bus {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => self.cartridge.chr_write(addr, val),
-            0x2000..=0x3EFF => {
+            0x2000..=0x3EFF
                 if !self
                     .cartridge
-                    .ppu_nametable_write(addr, val, &mut self.ppu.nametable_ram)
-                {
-                    let mirrored = self.mirror_nametable_addr(addr);
-                    self.ppu.nametable_ram[mirrored] = val;
-                }
+                    .ppu_nametable_write(addr, val, &mut self.ppu.nametable_ram) =>
+            {
+                let mirrored = self.mirror_nametable_addr(addr);
+                self.ppu.nametable_ram[mirrored] = val;
             }
             0x3F00..=0x3FFF => {
                 let idx = Self::palette_index(addr);

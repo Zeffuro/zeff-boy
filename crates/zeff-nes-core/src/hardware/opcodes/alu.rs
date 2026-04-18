@@ -147,16 +147,19 @@ macro_rules! rmw_modes {
 }
 
 // ADC: 0x69, 0x65, 0x75, 0x6D, 0x7D, 0x79, 0x61, 0x71
-read_op_all_modes!(adc, adc_imm, adc_zp, adc_zp_x, adc_abs,
-    adc_abs_x, adc_abs_y, adc_ind_x, adc_ind_y);
+read_op_all_modes!(
+    adc, adc_imm, adc_zp, adc_zp_x, adc_abs, adc_abs_x, adc_abs_y, adc_ind_x, adc_ind_y
+);
 
 // SBC: 0xE9, 0xE5, 0xF5, 0xED, 0xFD, 0xF9, 0xE1, 0xF1
-read_op_all_modes!(sbc, sbc_imm, sbc_zp, sbc_zp_x, sbc_abs,
-    sbc_abs_x, sbc_abs_y, sbc_ind_x, sbc_ind_y);
+read_op_all_modes!(
+    sbc, sbc_imm, sbc_zp, sbc_zp_x, sbc_abs, sbc_abs_x, sbc_abs_y, sbc_ind_x, sbc_ind_y
+);
 
 // CMP: 0xC9, 0xC5, 0xD5, 0xCD, 0xDD, 0xD9, 0xC1, 0xD1
-compare_all_modes!(a, cmp_imm, cmp_zp, cmp_zp_x, cmp_abs,
-    cmp_abs_x, cmp_abs_y, cmp_ind_x, cmp_ind_y);
+compare_all_modes!(
+    a, cmp_imm, cmp_zp, cmp_zp_x, cmp_abs, cmp_abs_x, cmp_abs_y, cmp_ind_x, cmp_ind_y
+);
 
 // CPX: 0xE0, 0xE4, 0xEC
 compare_all_modes!(x, cpx_imm, cpx_zp, cpx_abs);

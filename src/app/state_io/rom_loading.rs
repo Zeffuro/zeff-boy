@@ -23,7 +23,9 @@ fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
     crc
 }
 
-pub(crate) fn detect_and_extract_rom(path: &Path) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
+pub(crate) fn detect_and_extract_rom(
+    path: &Path,
+) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
     let is_zip = path
         .extension()
         .and_then(|e| e.to_str())

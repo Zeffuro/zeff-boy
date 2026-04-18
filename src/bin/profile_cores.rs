@@ -79,4 +79,3 @@ fn main() {
     println!("=== NES Profiling ({FRAMES} frames each) ===");
     profile_nes();
 }
-

@@ -97,7 +97,6 @@ pub(crate) fn make_ups(source: &[u8], target: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn apply_simple_patch() {
         let source = vec![0x00u8; 8];
@@ -169,4 +168,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

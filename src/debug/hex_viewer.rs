@@ -73,9 +73,15 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
         let mut job = egui::text::LayoutJob::default();
         scratch.clear();
         match addr_width {
-            4 => { let _ = write!(scratch, "{:04X}:  ", row_addr); }
-            6 => { let _ = write!(scratch, "{:06X}:  ", row_addr); }
-            _ => { let _ = write!(scratch, "{:08X}:  ", row_addr); }
+            4 => {
+                let _ = write!(scratch, "{:04X}:  ", row_addr);
+            }
+            6 => {
+                let _ = write!(scratch, "{:06X}:  ", row_addr);
+            }
+            _ => {
+                let _ = write!(scratch, "{:08X}:  ", row_addr);
+            }
         }
         job.append(&scratch, 0.0, fmt.addr.clone());
 
@@ -99,11 +105,12 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
             if idx < page.len() {
                 let byte = page[idx].1;
                 let ch = super::common::tbl_lookup(byte, tbl_map);
-                let text_fmt = if ch.len() == 1 && ch.as_bytes()[0] == b'.' && !tbl_map.contains_key(&byte) {
-                    &fmt.dim
-                } else {
-                    &fmt.normal
-                };
+                let text_fmt =
+                    if ch.len() == 1 && ch.as_bytes()[0] == b'.' && !tbl_map.contains_key(&byte) {
+                        &fmt.dim
+                    } else {
+                        &fmt.normal
+                    };
                 job.append(&ch, 0.0, text_fmt.clone());
             }
         }
@@ -119,7 +126,7 @@ pub(super) fn handle_scroll(
     max_start: u32,
 ) -> u32 {
     if ui.rect_contains_pointer(hover_rect) {
-        let scroll = ui.input(| i | i.smooth_scroll_delta.y);
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll >= 1.0 {
             return view_start.saturating_sub(0x10);
         } else if scroll <= -1.0 {

@@ -6,11 +6,21 @@ use crate::audio_recorder::MidiApuSnapshot;
 use crate::emu_core_trait::EmulatorCore;
 
 impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
-    fn add_breakpoint(&mut self, addr: u16) { self.add_breakpoint(addr) }
-    fn add_watchpoint(&mut self, addr: u16, wt: zeff_emu_common::debug::WatchType) { self.add_watchpoint(addr, wt) }
-    fn remove_breakpoint(&mut self, addr: u16) { self.remove_breakpoint(addr) }
-    fn toggle_breakpoint(&mut self, addr: u16) { self.toggle_breakpoint(addr) }
-    fn debug_write(&mut self, addr: u16, val: u8) { self.cpu_write(addr, val) }
+    fn add_breakpoint(&mut self, addr: u16) {
+        self.add_breakpoint(addr)
+    }
+    fn add_watchpoint(&mut self, addr: u16, wt: zeff_emu_common::debug::WatchType) {
+        self.add_watchpoint(addr, wt)
+    }
+    fn remove_breakpoint(&mut self, addr: u16) {
+        self.remove_breakpoint(addr)
+    }
+    fn toggle_breakpoint(&mut self, addr: u16) {
+        self.toggle_breakpoint(addr)
+    }
+    fn debug_write(&mut self, addr: u16, val: u8) {
+        self.cpu_write(addr, val)
+    }
 }
 
 pub(crate) struct NesBackend {

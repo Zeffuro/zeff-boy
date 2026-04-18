@@ -52,24 +52,23 @@ pub(super) fn gb_palette_snapshot(
     if cgb_mode {
         let cc = req.render.color_correction;
         let ccm = req.render.color_correction_matrix;
-        let cgb_group =
-            |title: &'static str, prefix: &str, ram: &[u8; 64]| -> PaletteGroupDebug {
-                let rows = (0u8..8)
-                    .map(|pal| {
-                        let colors = (0u8..4)
-                            .map(|cid| correct_color(cgb_palette_rgba(ram, pal, cid), cc, ccm))
-                            .collect();
-                        PaletteRowDebug {
-                            label: format!("{}{}", prefix, pal),
-                            colors,
-                        }
-                    })
-                    .collect();
-                PaletteGroupDebug {
-                    title: Cow::Borrowed(title),
-                    rows,
-                }
-            };
+        let cgb_group = |title: &'static str, prefix: &str, ram: &[u8; 64]| -> PaletteGroupDebug {
+            let rows = (0u8..8)
+                .map(|pal| {
+                    let colors = (0u8..4)
+                        .map(|cid| correct_color(cgb_palette_rgba(ram, pal, cid), cc, ccm))
+                        .collect();
+                    PaletteRowDebug {
+                        label: format!("{}{}", prefix, pal),
+                        colors,
+                    }
+                })
+                .collect();
+            PaletteGroupDebug {
+                title: Cow::Borrowed(title),
+                rows,
+            }
+        };
         groups.push(cgb_group("CGB BG palettes", "BG", &bg_pal));
         groups.push(cgb_group("CGB OBJ palettes", "OB", &obj_pal));
     }

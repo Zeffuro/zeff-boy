@@ -126,4 +126,3 @@ mod tests {
         assert_eq!(rom[4], 0xCC);
     }
 }
-

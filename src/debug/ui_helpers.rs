@@ -19,20 +19,17 @@ pub(crate) fn draw_scaling_params(ui: &mut egui::Ui, settings: &mut crate::setti
     match settings.video.scaling_mode {
         ScalingMode::HQ2xLike => {
             ui.add(
-                egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
-                    .text("Edge Strength"),
+                egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0).text("Edge Strength"),
             );
         }
         ScalingMode::XBR2x => {
             ui.add(
-                egui::Slider::new(&mut p.upscale_edge_strength, 0.1..=2.0)
-                    .text("Edge Strength"),
+                egui::Slider::new(&mut p.upscale_edge_strength, 0.1..=2.0).text("Edge Strength"),
             );
         }
         ScalingMode::Eagle2x => {
             ui.add(
-                egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=1.0)
-                    .text("Edge Strength"),
+                egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=1.0).text("Edge Strength"),
             );
         }
         _ => {}

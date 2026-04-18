@@ -6,10 +6,7 @@ mod palette;
 mod rom_info;
 
 use super::UiFrameData;
-use crate::debug::{
-    ConsoleGraphicsData, GbGraphicsData, PerfInfo,
-    disassemble_around,
-};
+use crate::debug::{ConsoleGraphicsData, GbGraphicsData, PerfInfo, disassemble_around};
 use crate::emu_thread::SnapshotRequest;
 use zeff_gb_core::emulator::Emulator;
 

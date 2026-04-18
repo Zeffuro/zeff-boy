@@ -59,12 +59,10 @@ impl EmuThread {
         path: &std::path::Path,
     ) -> EmuResponse {
         match backend.encode_state_bytes() {
-            Ok(bytes) => {
-                match crate::save_paths::write_state_bytes_to_file(path, &bytes) {
-                    Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
-                    Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
-                }
-            }
+            Ok(bytes) => match crate::save_paths::write_state_bytes_to_file(path, &bytes) {
+                Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+            },
             Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
         }
     }
@@ -277,4 +275,3 @@ impl EmuThread {
         }
     }
 }
-

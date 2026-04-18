@@ -114,16 +114,14 @@ impl BandaiFcg16 {
         match reg & 0x000F {
             0x0..=0x7 => self.chr_banks[(reg & 0x0007) as usize] = val,
             0x8 => self.prg_bank = val,
-            0x9 => {
-                if !self.fixed_four_screen {
-                    self.mirroring = match val & 0x03 {
-                        0 => Mirroring::Vertical,
-                        1 => Mirroring::Horizontal,
-                        2 => Mirroring::SingleScreenLower,
-                        3 => Mirroring::SingleScreenUpper,
-                        _ => Mirroring::Horizontal,
-                    };
-                }
+            0x9 if !self.fixed_four_screen => {
+                self.mirroring = match val & 0x03 {
+                    0 => Mirroring::Vertical,
+                    1 => Mirroring::Horizontal,
+                    2 => Mirroring::SingleScreenLower,
+                    3 => Mirroring::SingleScreenUpper,
+                    _ => Mirroring::Horizontal,
+                };
             }
             0xA => {
                 self.irq_enabled = val & 0x01 != 0;

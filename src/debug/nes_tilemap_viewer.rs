@@ -4,7 +4,12 @@ use crate::debug::types::NesGraphicsData;
 
 use super::tilemap_viewer::{ViewportOverlay, draw_wrapped_viewport_rect};
 
-fn nes_attr_palette(nametable_data: &[u8], nt_offset: usize, tile_col: usize, tile_row: usize) -> (u8, u8) {
+fn nes_attr_palette(
+    nametable_data: &[u8],
+    nt_offset: usize,
+    tile_col: usize,
+    tile_row: usize,
+) -> (u8, u8) {
     let attr_col = tile_col / 4;
     let attr_row = tile_row / 4;
     let attr_addr = nt_offset + 0x3C0 + attr_row * 8 + attr_col;
@@ -22,7 +27,8 @@ pub(super) fn draw_nes_tilemap_viewer_content(
     ui.label(&mirroring_label);
 
     let show_viewport_id = ui.make_persistent_id("nes_tilemap_show_viewport");
-    let show_viewport = super::common::persisted_checkbox(ui, show_viewport_id, "Show screen viewport", true);
+    let show_viewport =
+        super::common::persisted_checkbox(ui, show_viewport_id, "Show screen viewport", true);
 
     let width = 512usize;
     let height = 480usize;
@@ -99,7 +105,8 @@ pub(super) fn draw_nes_tilemap_viewer_content(
             let nt_offset = nt_quad * 0x400;
             let tile_idx_addr = nt_offset + tile_row * 32 + tile_col;
             let tile_index = gfx.nametable_data.get(tile_idx_addr).copied().unwrap_or(0);
-            let (attr_byte, palette) = nes_attr_palette(&gfx.nametable_data, nt_offset, tile_col, tile_row);
+            let (attr_byte, palette) =
+                nes_attr_palette(&gfx.nametable_data, nt_offset, tile_col, tile_row);
 
             ui.separator();
             ui.monospace(format!(
@@ -126,12 +133,18 @@ fn render_nes_nametables(image: &mut egui::ColorImage, gfx: &NesGraphicsData) {
                     .copied()
                     .unwrap_or(0) as usize;
 
-                let (_, palette_index) = nes_attr_palette(&gfx.nametable_data, nt_offset, tile_col, tile_row);
+                let (_, palette_index) =
+                    nes_attr_palette(&gfx.nametable_data, nt_offset, tile_col, tile_row);
 
                 let tile_addr = bg_pattern_base + tile_index * 16;
                 for row in 0..8usize {
                     for col in 0..8usize {
-                        let color_id = super::nes_tile_viewer::decode_nes_tile_pixel(&gfx.chr_data, tile_addr, row, col);
+                        let color_id = super::nes_tile_viewer::decode_nes_tile_pixel(
+                            &gfx.chr_data,
+                            tile_addr,
+                            row,
+                            col,
+                        );
                         let rgba = nes_palette_rgba(
                             &gfx.palette_ram,
                             palette_index,

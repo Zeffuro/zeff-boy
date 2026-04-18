@@ -53,7 +53,6 @@ impl OnePoleLowPass {
     }
 
     pub(super) fn apply_sample(&mut self, sample: f32, channel: usize, alpha: f32) -> f32 {
-
         if channel & 1 == 0 {
             self.left += alpha * (sample - self.left);
             self.left
@@ -265,7 +264,10 @@ impl AudioOutput {
             let (first, second) = chunk.as_mut_slices();
             let first_len = first.len();
             let mut global_idx = 0usize;
-            for slices in [first.iter_mut().zip(&samples[..first_len]), second.iter_mut().zip(&samples[first_len..available])] {
+            for slices in [
+                first.iter_mut().zip(&samples[..first_len]),
+                second.iter_mut().zip(&samples[first_len..available]),
+            ] {
                 for (dst, &src) in slices {
                     let mut out = src * gain;
                     if config.low_pass_enabled {

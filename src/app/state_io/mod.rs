@@ -11,13 +11,13 @@ mod wasm_rom;
 pub(crate) use archive_and_slots::SlotInfo;
 pub(super) use archive_and_slots::build_slot_info;
 pub(crate) use archive_and_slots::extract_rom_from_zip;
-pub(crate) use rom_loading::detect_and_extract_rom;
 #[allow(unused_imports)] // Used on WASM for drag-and-drop ROM loading
 pub(super) use archive_and_slots::extract_rom_from_zip_bytes;
+pub(crate) use rom_loading::detect_and_extract_rom;
 
-use crate::emu_thread::{EmuCommand, EmuThread};
 use crate::debug::FpsTracker;
 use crate::emu_backend::EmuBackend;
+use crate::emu_thread::{EmuCommand, EmuThread};
 use crate::platform::Instant;
 
 impl App {

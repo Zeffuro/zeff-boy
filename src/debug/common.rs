@@ -113,10 +113,7 @@ pub(super) fn show_viewer_texture(
     });
     tex.set(image.clone(), egui::TextureOptions::NEAREST);
 
-    let display_size = egui::vec2(
-        image.size[0] as f32 * scale,
-        image.size[1] as f32 * scale,
-    );
+    let display_size = egui::vec2(image.size[0] as f32 * scale, image.size[1] as f32 * scale);
     ui.horizontal(|ui| {
         super::export::export_png_button(ui, export_filename, image);
     });
@@ -125,7 +122,12 @@ pub(super) fn show_viewer_texture(
         .inner
 }
 
-pub(super) fn persisted_checkbox(ui: &mut egui::Ui, id: egui::Id, label: &str, default: bool) -> bool {
+pub(super) fn persisted_checkbox(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    label: &str,
+    default: bool,
+) -> bool {
     let mut val = ui
         .ctx()
         .data_mut(|d| d.get_persisted::<bool>(id))
@@ -141,12 +143,10 @@ pub(super) fn hover_pixel_coords(
     height: usize,
 ) -> Option<(usize, usize)> {
     let pointer_pos = response.hover_pos()?;
-    let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
-        / response.rect.width())
-    .floor();
-    let rel_y = ((pointer_pos.y - response.rect.min.y) * (height as f32)
-        / response.rect.height())
-    .floor();
+    let rel_x =
+        ((pointer_pos.x - response.rect.min.x) * (width as f32) / response.rect.width()).floor();
+    let rel_y =
+        ((pointer_pos.y - response.rect.min.y) * (height as f32) / response.rect.height()).floor();
     if rel_x >= 0.0 && rel_y >= 0.0 {
         let px = rel_x as usize;
         let py = rel_y as usize;

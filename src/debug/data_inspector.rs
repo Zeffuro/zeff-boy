@@ -82,7 +82,11 @@ pub(super) fn draw_data_inspector(
 ) {
     draw_inspector_generic(
         ui,
-        InspectorState { addr_input, inspector_addr, page: memory_page },
+        InspectorState {
+            addr_input,
+            inspector_addr,
+            page: memory_page,
+        },
         &MEMORY_CONFIG,
         parse_hex_u16,
         |a| format!("Address {:04X}", a),
@@ -97,7 +101,11 @@ pub(super) fn draw_data_inspector_rom(
 ) {
     draw_inspector_generic(
         ui,
-        InspectorState { addr_input, inspector_addr, page: rom_page },
+        InspectorState {
+            addr_input,
+            inspector_addr,
+            page: rom_page,
+        },
         &ROM_CONFIG,
         parse_hex_u32,
         |a| format!("Offset {:06X}", a),

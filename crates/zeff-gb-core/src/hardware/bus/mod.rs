@@ -293,7 +293,8 @@ impl Bus {
             self.hardware_mode,
             HardwareMode::CGBNormal | HardwareMode::CGBDouble
         );
-        let interrupts = self.io
+        let interrupts = self
+            .io
             .ppu
             .step(system_t_cycles, &self.vram, &self.oam, cgb_mode);
         (interrupts, self.io.ppu.stat & 0x03)

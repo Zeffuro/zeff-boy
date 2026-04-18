@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::path::Path;
 use zeff_gb_core::emulator::Emulator;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
-use std::path::Path;
 
 fn build_minimal_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 0x8000];
@@ -121,8 +121,7 @@ fn bench_audio_drain_into(c: &mut Criterion) {
 
 // Real ROM benchmarks, manifest: test-roms/gb-bench-roms.txt
 fn load_bench_manifest() -> Vec<(String, String)> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-roms/gb-bench-roms.txt");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-roms/gb-bench-roms.txt");
     let Ok(contents) = std::fs::read_to_string(&manifest) else {
         eprintln!("bench manifest not found: {}", manifest.display());
         return Vec::new();

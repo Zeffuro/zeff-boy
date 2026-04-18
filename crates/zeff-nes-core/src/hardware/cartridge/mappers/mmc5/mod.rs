@@ -178,13 +178,7 @@ impl Mmc5 {
 impl Mapper for Mmc5 {
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
-            0x5C00..=0x5FFF => {
-                if self.exram_mode >= 2 {
-                    self.ex_ram[(addr - 0x5C00) as usize]
-                } else {
-                    0
-                }
-            }
+            0x5C00..=0x5FFF if self.exram_mode >= 2 => self.ex_ram[(addr - 0x5C00) as usize],
             0x5204 => {
                 let mut status = 0u8;
                 if self.irq_pending {
@@ -228,17 +222,13 @@ impl Mapper for Mmc5 {
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x5100..=0x5130 | 0x5203..=0x5206 => self.write_register(addr, val),
-            0x5C00..=0x5FFF => {
-                if self.exram_mode != 3 {
-                    self.ex_ram[(addr - 0x5C00) as usize] = val;
-                }
+            0x5C00..=0x5FFF if self.exram_mode != 3 => {
+                self.ex_ram[(addr - 0x5C00) as usize] = val;
             }
-            0x6000..=0x7FFF => {
-                if !self.prg_ram.is_empty() && self.prg_ram_writable() {
-                    let bank = (self.prg_ram_bank as usize) % self.prg_ram_bank_count_8k();
-                    let offset = (addr as usize) & 0x1FFF;
-                    self.prg_ram[bank * 0x2000 + offset] = val;
-                }
+            0x6000..=0x7FFF if !self.prg_ram.is_empty() && self.prg_ram_writable() => {
+                let bank = (self.prg_ram_bank as usize) % self.prg_ram_bank_count_8k();
+                let offset = (addr as usize) & 0x1FFF;
+                self.prg_ram[bank * 0x2000 + offset] = val;
             }
             0x8000..=0xFFFF => self.map_prg_write(addr, val),
             _ => {}
@@ -337,10 +327,8 @@ impl Mapper for Mmc5 {
         match self.nametable_source(table) {
             0 => ciram[offset] = val,
             1 => ciram[0x400 + offset] = val,
-            2 => {
-                if self.exram_mode <= 1 {
-                    self.ex_ram[offset] = val;
-                }
+            2 if self.exram_mode <= 1 => {
+                self.ex_ram[offset] = val;
             }
             _ => {}
         }

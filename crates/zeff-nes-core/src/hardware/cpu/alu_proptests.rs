@@ -164,4 +164,3 @@ proptest! {
         prop_assert_eq!(cpu.regs.get_flag(StatusFlags::NEGATIVE), val & 0x80 != 0);
     }
 }
-

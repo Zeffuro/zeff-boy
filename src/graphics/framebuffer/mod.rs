@@ -79,7 +79,8 @@ pub(crate) struct FramebufferRenderer {
 
 impl FramebufferRenderer {
     pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Result<Self> {
-        let screen_texture = create_screen_texture(device, MIN_OFFSCREEN_WIDTH, MIN_OFFSCREEN_HEIGHT);
+        let screen_texture =
+            create_screen_texture(device, MIN_OFFSCREEN_WIDTH, MIN_OFFSCREEN_HEIGHT);
 
         let screen_view = screen_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {

@@ -163,11 +163,9 @@ impl Mapper for Namco163 {
                 self.irq_enable = val & 0x80 != 0;
                 self.irq_pending = false;
             }
-            0x6000..=0x7FFF => {
-                if !self.prg_ram.is_empty() {
-                    let offset = (addr as usize - 0x6000) % self.prg_ram.len();
-                    self.prg_ram[offset] = val;
-                }
+            0x6000..=0x7FFF if !self.prg_ram.is_empty() => {
+                let offset = (addr as usize - 0x6000) % self.prg_ram.len();
+                self.prg_ram[offset] = val;
             }
             0x8000..=0x87FF => self.chr_banks[0] = val,
             0x8800..=0x8FFF => self.chr_banks[1] = val,

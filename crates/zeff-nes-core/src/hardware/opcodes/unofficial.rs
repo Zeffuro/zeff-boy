@@ -162,23 +162,29 @@ macro_rules! rmw_unofficial_modes {
     };
 }
 
-rmw_unofficial_modes!(dcp_op, dcp_zp, dcp_zp_x, dcp_abs,
-    dcp_abs_x, dcp_abs_y, dcp_ind_x, dcp_ind_y);
+rmw_unofficial_modes!(
+    dcp_op, dcp_zp, dcp_zp_x, dcp_abs, dcp_abs_x, dcp_abs_y, dcp_ind_x, dcp_ind_y
+);
 
-rmw_unofficial_modes!(isb_op, isb_zp, isb_zp_x, isb_abs,
-    isb_abs_x, isb_abs_y, isb_ind_x, isb_ind_y);
+rmw_unofficial_modes!(
+    isb_op, isb_zp, isb_zp_x, isb_abs, isb_abs_x, isb_abs_y, isb_ind_x, isb_ind_y
+);
 
-rmw_unofficial_modes!(slo_op, slo_zp, slo_zp_x, slo_abs,
-    slo_abs_x, slo_abs_y, slo_ind_x, slo_ind_y);
+rmw_unofficial_modes!(
+    slo_op, slo_zp, slo_zp_x, slo_abs, slo_abs_x, slo_abs_y, slo_ind_x, slo_ind_y
+);
 
-rmw_unofficial_modes!(rla_op, rla_zp, rla_zp_x, rla_abs,
-    rla_abs_x, rla_abs_y, rla_ind_x, rla_ind_y);
+rmw_unofficial_modes!(
+    rla_op, rla_zp, rla_zp_x, rla_abs, rla_abs_x, rla_abs_y, rla_ind_x, rla_ind_y
+);
 
-rmw_unofficial_modes!(sre_op, sre_zp, sre_zp_x, sre_abs,
-    sre_abs_x, sre_abs_y, sre_ind_x, sre_ind_y);
+rmw_unofficial_modes!(
+    sre_op, sre_zp, sre_zp_x, sre_abs, sre_abs_x, sre_abs_y, sre_ind_x, sre_ind_y
+);
 
-rmw_unofficial_modes!(rra_op, rra_zp, rra_zp_x, rra_abs,
-    rra_abs_x, rra_abs_y, rra_ind_x, rra_ind_y);
+rmw_unofficial_modes!(
+    rra_op, rra_zp, rra_zp_x, rra_abs, rra_abs_x, rra_abs_y, rra_ind_x, rra_ind_y
+);
 
 // ── Immediate-mode combined ops ─────────────────────────────────────
 
