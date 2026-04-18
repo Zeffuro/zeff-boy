@@ -107,29 +107,24 @@ impl HuC3 {
 
     fn handle_command(&mut self, value: u8) {
         match value & 0xF0 {
-            RTC_CMD_READ_NIBBLE => {
-                if self.rtc_timer_read {
-                    self.update_latch();
-                    self.rtc_read_value =
-                        ((self.rtc_datetime >> self.rtc_clock_shift) & 0x0F) as u8;
-                    self.rtc_clock_shift += 4;
-                    if self.rtc_clock_shift > 24 {
-                        self.rtc_clock_shift = 0;
-                    }
+            RTC_CMD_READ_NIBBLE if self.rtc_timer_read => {
+                self.update_latch();
+                self.rtc_read_value = ((self.rtc_datetime >> self.rtc_clock_shift) & 0x0F) as u8;
+                self.rtc_clock_shift += 4;
+                if self.rtc_clock_shift > 24 {
+                    self.rtc_clock_shift = 0;
                 }
             }
-            RTC_CMD_WRITE_NIBBLE => {
-                if !self.rtc_timer_read {
-                    if self.rtc_clock_shift == 0 {
-                        self.rtc_writing_time = 0;
-                    }
-                    if self.rtc_clock_shift < 24 {
-                        self.rtc_writing_time |= ((value & 0x0F) as u32) << self.rtc_clock_shift;
-                        self.rtc_clock_shift += 4;
-                        if self.rtc_clock_shift == 24 {
-                            self.commit_written_time();
-                            self.rtc_timer_read = true;
-                        }
+            RTC_CMD_WRITE_NIBBLE if !self.rtc_timer_read => {
+                if self.rtc_clock_shift == 0 {
+                    self.rtc_writing_time = 0;
+                }
+                if self.rtc_clock_shift < 24 {
+                    self.rtc_writing_time |= ((value & 0x0F) as u32) << self.rtc_clock_shift;
+                    self.rtc_clock_shift += 4;
+                    if self.rtc_clock_shift == 24 {
+                        self.commit_written_time();
+                        self.rtc_timer_read = true;
                     }
                 }
             }

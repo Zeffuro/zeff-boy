@@ -34,13 +34,7 @@ impl Mbc1 {
 
     pub fn read_rom(&self, addr: u16) -> u8 {
         let bank = match addr {
-            0x0000..=0x3FFF => {
-                if self.banking_mode {
-                    self.ram_bank << 5
-                } else {
-                    0
-                }
-            }
+            0x0000..=0x3FFF if self.banking_mode => self.ram_bank << 5,
             0x4000..=0x7FFF => {
                 let b = if self.rom_bank == 0 { 1 } else { self.rom_bank };
                 b | (self.ram_bank << 5)

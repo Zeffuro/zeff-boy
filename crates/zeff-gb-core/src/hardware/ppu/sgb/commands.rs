@@ -70,14 +70,12 @@ impl PPU {
             return;
         }
         let count = data[1] as usize;
-        let mut offset = 2;
 
-        for _ in 0..count {
+        for (offset, _) in (2..).zip(0..count) {
             if offset >= data.len() {
                 break;
             }
             let byte = data[offset];
-            offset += 1;
 
             let line = (byte & 0x1F) as usize;
             let palette = (byte >> 5) & 3;

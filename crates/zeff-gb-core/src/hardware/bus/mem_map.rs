@@ -67,10 +67,8 @@ impl Bus {
                             address,
                             value,
                             compare,
-                        } if address == addr => {
-                            if compare.matches(raw) {
-                                return value.resolve_with_current(raw);
-                            }
+                        } if address == addr && compare.matches(raw) => {
+                            return value.resolve_with_current(raw);
                         }
                         _ => {}
                     }

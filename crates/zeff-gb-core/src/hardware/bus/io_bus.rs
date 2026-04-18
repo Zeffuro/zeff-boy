@@ -159,66 +159,42 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         PPU_OBP0 => bus.io.ppu.obp0 = value,
         PPU_OBP1 => bus.io.ppu.obp1 = value,
         PPU_DMA => bus.start_oam_dma(value),
-        CGB_KEY1 => {
-            if bus.is_cgb_mode() {
-                bus.key1 = (bus.key1 & 0x80) | (value & 0x01) | 0x7E;
-            }
+        CGB_KEY1 if bus.is_cgb_mode() => {
+            bus.key1 = (bus.key1 & 0x80) | (value & 0x01) | 0x7E;
         }
-        CGB_BCPS => {
-            if bus.is_cgb_mode() {
-                bus.io.ppu.write_bcps(value);
-            }
+        CGB_BCPS if bus.is_cgb_mode() => {
+            bus.io.ppu.write_bcps(value);
         }
-        CGB_BCPD => {
-            if bus.is_cgb_mode() {
-                bus.io.ppu.write_bcpd(value);
-            }
+        CGB_BCPD if bus.is_cgb_mode() => {
+            bus.io.ppu.write_bcpd(value);
         }
-        CGB_OCPS => {
-            if bus.is_cgb_mode() {
-                bus.io.ppu.write_ocps(value);
-            }
+        CGB_OCPS if bus.is_cgb_mode() => {
+            bus.io.ppu.write_ocps(value);
         }
-        CGB_OCPD => {
-            if bus.is_cgb_mode() {
-                bus.io.ppu.write_ocpd(value);
-            }
+        CGB_OCPD if bus.is_cgb_mode() => {
+            bus.io.ppu.write_ocpd(value);
         }
-        CGB_HDMA1 => {
-            if bus.is_cgb_mode() {
-                bus.hdma1 = value;
-            }
+        CGB_HDMA1 if bus.is_cgb_mode() => {
+            bus.hdma1 = value;
         }
-        CGB_HDMA2 => {
-            if bus.is_cgb_mode() {
-                bus.hdma2 = value;
-            }
+        CGB_HDMA2 if bus.is_cgb_mode() => {
+            bus.hdma2 = value;
         }
-        CGB_HDMA3 => {
-            if bus.is_cgb_mode() {
-                bus.hdma3 = value;
-            }
+        CGB_HDMA3 if bus.is_cgb_mode() => {
+            bus.hdma3 = value;
         }
-        CGB_HDMA4 => {
-            if bus.is_cgb_mode() {
-                bus.hdma4 = value;
-            }
+        CGB_HDMA4 if bus.is_cgb_mode() => {
+            bus.hdma4 = value;
         }
-        CGB_HDMA5 => {
-            if bus.is_cgb_mode() {
-                return bus.execute_hdma_transfer(value);
-            }
+        CGB_HDMA5 if bus.is_cgb_mode() => {
+            return bus.execute_hdma_transfer(value);
         }
-        PPU_VBK => {
-            if bus.is_cgb_mode() {
-                bus.vram_bank = value & 0x01;
-            }
+        PPU_VBK if bus.is_cgb_mode() => {
+            bus.vram_bank = value & 0x01;
         }
-        CGB_SVBK => {
-            if bus.is_cgb_mode() {
-                let bank = value & 0x07;
-                bus.wram_bank = if bank == 0 { 1 } else { bank };
-            }
+        CGB_SVBK if bus.is_cgb_mode() => {
+            let bank = value & 0x07;
+            bus.wram_bank = if bank == 0 { 1 } else { bank };
         }
         NR10..=NR52 | WAVE_RAM_START..=WAVE_RAM_END => bus.io.apu.write(addr, value),
 

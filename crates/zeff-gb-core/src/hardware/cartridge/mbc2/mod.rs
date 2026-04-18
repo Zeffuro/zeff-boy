@@ -32,16 +32,12 @@ impl Mbc2 {
 
     pub fn write_rom(&mut self, addr: u16, value: u8) {
         match addr {
-            0x0000..=0x1FFF => {
-                if addr & 0x0100 == 0 {
-                    self.ram_enable = is_ram_enable(value);
-                }
+            0x0000..=0x1FFF if addr & 0x0100 == 0 => {
+                self.ram_enable = is_ram_enable(value);
             }
-            0x2000..=0x3FFF => {
-                if addr & 0x0100 != 0 {
-                    let bank = (value & 0x0F) as usize;
-                    self.rom_bank = if bank == 0 { 1 } else { bank };
-                }
+            0x2000..=0x3FFF if addr & 0x0100 != 0 => {
+                let bank = (value & 0x0F) as usize;
+                self.rom_bank = if bank == 0 { 1 } else { bank };
             }
             _ => {}
         }

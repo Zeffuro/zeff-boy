@@ -124,55 +124,47 @@ impl Mbc7 {
         self.count += 1;
 
         match self.command {
-            CMD_EXTENDED => {
-                if self.count == DATA_BITS {
-                    match self.address >> 6 {
-                        EXT_EWDS => {
-                            self.write_enable = false;
-                            self.state = STATE_IDLE;
-                        }
-                        EXT_WRAL => {
-                            if self.write_enable {
-                                self.eeprom_fill_all(self.buffer);
-                            }
-                            self.state = STATE_WRITE_PENDING;
-                        }
-                        EXT_ERAL => {
-                            if self.write_enable {
-                                self.eeprom.fill(0xFF);
-                            }
-                            self.state = STATE_WRITE_PENDING;
-                        }
-                        EXT_EWEN => {
-                            self.write_enable = true;
-                            self.state = STATE_IDLE;
-                        }
-                        _ => {}
+            CMD_EXTENDED if self.count == DATA_BITS => {
+                match self.address >> 6 {
+                    EXT_EWDS => {
+                        self.write_enable = false;
+                        self.state = STATE_IDLE;
                     }
-                    self.count = 0;
+                    EXT_WRAL => {
+                        if self.write_enable {
+                            self.eeprom_fill_all(self.buffer);
+                        }
+                        self.state = STATE_WRITE_PENDING;
+                    }
+                    EXT_ERAL => {
+                        if self.write_enable {
+                            self.eeprom.fill(0xFF);
+                        }
+                        self.state = STATE_WRITE_PENDING;
+                    }
+                    EXT_EWEN => {
+                        self.write_enable = true;
+                        self.state = STATE_IDLE;
+                    }
+                    _ => {}
                 }
+                self.count = 0;
             }
-            CMD_WRITE => {
-                if self.count == DATA_BITS {
-                    self.count = 0;
-                    self.state = STATE_WRITE_PENDING;
-                    self.do_value = 0;
-                }
+            CMD_WRITE if self.count == DATA_BITS => {
+                self.count = 0;
+                self.state = STATE_WRITE_PENDING;
+                self.do_value = 0;
             }
-            CMD_READ => {
-                if self.count == 1 {
-                    self.state = STATE_SHIFT_OUT;
-                    self.count = 0;
-                    self.buffer = self.eeprom_read_word(self.address);
-                }
+            CMD_READ if self.count == 1 => {
+                self.state = STATE_SHIFT_OUT;
+                self.count = 0;
+                self.buffer = self.eeprom_read_word(self.address);
             }
-            CMD_ERASE => {
-                if self.count == DATA_BITS {
-                    self.count = 0;
-                    self.state = STATE_WRITE_PENDING;
-                    self.do_value = 0;
-                    self.buffer = 0xFFFF;
-                }
+            CMD_ERASE if self.count == DATA_BITS => {
+                self.count = 0;
+                self.state = STATE_WRITE_PENDING;
+                self.do_value = 0;
+                self.buffer = 0xFFFF;
             }
             _ => {}
         }
