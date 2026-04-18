@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use crate::debug::common::{COLOR_CONTINUE_BUTTON, WatchType};
 use crate::debug::types::CpuDebugSnapshot;
 
@@ -71,7 +73,7 @@ pub(super) fn draw_cpu_debug_content(
     ui.separator();
 
     for section in &info.sections {
-        ui.heading(&section.heading);
+        ui.heading(section.heading);
         for line in &section.lines {
             ui.monospace(line);
         }
@@ -86,9 +88,9 @@ pub(super) fn draw_cpu_debug_content(
                 ui.monospace(&line);
                 line.clear();
             }
-            line.push_str(&format!("{:04X}: ", addr));
+            let _ = write!(line, "{:04X}: ", addr);
         }
-        line.push_str(&format!("{:02X} ", val));
+        let _ = write!(line, "{:02X} ", val);
     }
     if !line.is_empty() {
         ui.monospace(&line);

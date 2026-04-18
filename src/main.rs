@@ -6,7 +6,6 @@
 mod app;
 mod audio;
 mod audio_recorder;
-mod bps;
 mod camera;
 mod cheats;
 #[cfg(not(target_arch = "wasm32"))]
@@ -17,15 +16,14 @@ mod emu_core_trait;
 mod emu_thread;
 mod graphics;
 mod input;
-mod ips;
 mod libretro_common;
 mod libretro_metadata;
 mod mods;
+mod patching;
 mod platform;
 mod save_paths;
 mod settings;
 mod ui;
-mod ups;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::emu_backend::{ActiveSystem, EmuBackend};
@@ -78,37 +76,7 @@ fn log_sram_result(result: anyhow::Result<Option<String>>) {
 #[cfg(not(target_arch = "wasm32"))]
 fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<EmuBackend> {
     let path = Path::new(rom_path_arg);
-
-    let is_zip = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
-
-    let (rom_path, preloaded_data) = if is_zip {
-        let (virtual_path, data) = app::extract_rom_from_zip(path)?;
-        log::info!(
-            "Extracted ROM '{}' ({} bytes) from ZIP",
-            virtual_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            data.len()
-        );
-        (virtual_path, Some(data))
-    } else {
-        (path.to_path_buf(), None)
-    };
-
-    let system = ActiveSystem::from_path(&rom_path).ok_or_else(|| {
-        let ext = rom_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("(none)");
-        anyhow::anyhow!(
-            "Unsupported file type '.{ext}'. Supported extensions: {}",
-            ActiveSystem::supported_extensions()
-        )
-    })?;
+    let (rom_path, preloaded_data, system) = app::detect_and_extract_rom(path)?;
 
     let rom_data =
         preloaded_data.map_or_else(|| std::fs::read(path).context("Failed to read ROM"), Ok)?;

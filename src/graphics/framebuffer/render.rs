@@ -20,105 +20,56 @@ impl FramebufferRenderer {
 
     pub(crate) fn render_to_offscreen(&self, encoder: &mut wgpu::CommandEncoder) {
         if self.shader.two_pass {
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shader upscaler pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.offscreen.intermediate_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_viewport(
-                    0.0,
-                    0.0,
-                    self.offscreen.width as f32,
-                    self.offscreen.height as f32,
-                    0.0,
-                    1.0,
-                );
-                pass.set_pipeline(&self.shader.pipeline);
-                pass.set_bind_group(0, &self.screen.bind_group_no_cc, &[]);
-                pass.draw(0..3, 0..1);
-            }
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shader effect pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.offscreen.output_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_viewport(
-                    0.0,
-                    0.0,
-                    self.offscreen.width as f32,
-                    self.offscreen.height as f32,
-                    0.0,
-                    1.0,
-                );
-                pass.set_pipeline(
-                    self.shader
-                        .effect_pipeline
-                        .as_ref()
-                        .expect("effect_pipeline must exist in two-pass mode"),
-                );
-                pass.set_bind_group(0, &self.offscreen.intermediate_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
-        } else {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shader offscreen pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.offscreen.output_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_viewport(
-                0.0,
-                0.0,
-                self.offscreen.width as f32,
-                self.offscreen.height as f32,
-                0.0,
-                1.0,
+            self.run_offscreen_pass(
+                encoder,
+                "shader upscaler pass",
+                &self.offscreen.intermediate_view,
+                &self.shader.pipeline,
+                &self.screen.bind_group_no_cc,
             );
-            pass.set_pipeline(&self.shader.pipeline);
-            pass.set_bind_group(0, &self.screen.bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            self.run_offscreen_pass(
+                encoder,
+                "shader effect pass",
+                &self.offscreen.output_view,
+                self.shader
+                    .effect_pipeline
+                    .as_ref()
+                    .expect("effect_pipeline must exist in two-pass mode"),
+                &self.offscreen.intermediate_bind_group,
+            );
+        } else {
+            self.run_offscreen_pass(
+                encoder,
+                "shader offscreen pass",
+                &self.offscreen.output_view,
+                &self.shader.pipeline,
+                &self.screen.bind_group,
+            );
         }
     }
 
     pub(crate) fn render_upscale_pass(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.run_offscreen_pass(
+            encoder,
+            "shader upscale direct pass",
+            &self.offscreen.output_view,
+            &self.shader.pipeline,
+            &self.screen.bind_group_no_cc,
+        );
+    }
+
+    fn run_offscreen_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        label: &str,
+        target_view: &wgpu::TextureView,
+        pipeline: &wgpu::RenderPipeline,
+        bind_group: &wgpu::BindGroup,
+    ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("shader upscale direct pass"),
+            label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.offscreen.output_view,
+                view: target_view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -139,8 +90,8 @@ impl FramebufferRenderer {
             0.0,
             1.0,
         );
-        pass.set_pipeline(&self.shader.pipeline);
-        pass.set_bind_group(0, &self.screen.bind_group_no_cc, &[]);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 

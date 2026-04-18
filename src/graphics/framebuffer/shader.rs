@@ -7,6 +7,23 @@ use super::super::pipeline::{
     combined_shader_source, effect_shader_source, needs_two_pass, scaling_shader_source,
 };
 
+fn load_custom_shader_source(path: &str) -> Option<String> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    match std::fs::read_to_string(path) {
+        Ok(fragment) => Some(format!(
+            "{}\n{}",
+            include_str!("../../shaders/common_vertex.wgsl"),
+            fragment
+        )),
+        Err(err) => {
+            log::warn!("Failed to load custom shader '{}': {}", path, err);
+            None
+        }
+    }
+}
+
 impl FramebufferRenderer {
     pub(crate) fn set_shader(
         &mut self,
@@ -33,52 +50,35 @@ impl FramebufferRenderer {
         if want_two_pass {
             let upscaler_source = scaling_shader_source(scaling);
             let effect_source = if matches!(effect, EffectPreset::Custom) {
-                if settings.video.custom_shader_path.trim().is_empty() {
-                    effect_shader_source(EffectPreset::None)
-                } else {
-                    match std::fs::read_to_string(&settings.video.custom_shader_path) {
-                        Ok(fragment) => {
-                            let combined = format!(
-                                "{}\n{}",
-                                include_str!("../../shaders/common_vertex.wgsl"),
-                                fragment
-                            );
-                            if self.shader.current_scaling != scaling
-                                || self.shader.current_effect != effect
-                                || custom_path_changed
-                            {
-                                self.shader.pipeline = create_pipeline(
-                                    device,
-                                    &self.shader.bgl,
-                                    self.shader.format,
-                                    upscaler_source,
-                                );
-                                self.shader.effect_pipeline = Some(create_pipeline(
-                                    device,
-                                    &self.shader.bgl,
-                                    self.shader.format,
-                                    &combined,
-                                ));
-                            }
-                            self.shader.two_pass = true;
-                            self.shader.current_scaling = scaling;
-                            self.shader.current_effect = effect;
-                            self.shader.current_custom_shader_path =
-                                settings.video.custom_shader_path.clone();
-                            if filter_changed {
-                                self.apply_filter_change(device, desired_filter);
-                            }
-                            return;
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "Failed to load custom shader '{}': {}",
-                                settings.video.custom_shader_path,
-                                err
-                            );
-                            effect_shader_source(EffectPreset::None)
-                        }
+                if let Some(combined) = load_custom_shader_source(&settings.video.custom_shader_path) {
+                    if self.shader.current_scaling != scaling
+                        || self.shader.current_effect != effect
+                        || custom_path_changed
+                    {
+                        self.shader.pipeline = create_pipeline(
+                            device,
+                            &self.shader.bgl,
+                            self.shader.format,
+                            upscaler_source,
+                        );
+                        self.shader.effect_pipeline = Some(create_pipeline(
+                            device,
+                            &self.shader.bgl,
+                            self.shader.format,
+                            &combined,
+                        ));
                     }
+                    self.shader.two_pass = true;
+                    self.shader.current_scaling = scaling;
+                    self.shader.current_effect = effect;
+                    self.shader.current_custom_shader_path =
+                        settings.video.custom_shader_path.clone();
+                    if filter_changed {
+                        self.apply_filter_change(device, desired_filter);
+                    }
+                    return;
+                } else {
+                    effect_shader_source(EffectPreset::None)
                 }
             } else {
                 effect_shader_source(effect)
@@ -106,27 +106,11 @@ impl FramebufferRenderer {
             // Single pass
             let dynamic_source: String;
             let source = if matches!(effect, EffectPreset::Custom) && !scaling.is_upscaler() {
-                if settings.video.custom_shader_path.trim().is_empty() {
-                    combined_shader_source(scaling, EffectPreset::None)
+                if let Some(src) = load_custom_shader_source(&settings.video.custom_shader_path) {
+                    dynamic_source = src;
+                    &dynamic_source
                 } else {
-                    match std::fs::read_to_string(&settings.video.custom_shader_path) {
-                        Ok(fragment) => {
-                            dynamic_source = format!(
-                                "{}\n{}",
-                                include_str!("../../shaders/common_vertex.wgsl"),
-                                fragment
-                            );
-                            &dynamic_source
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "Failed to load custom shader '{}': {}",
-                                settings.video.custom_shader_path,
-                                err
-                            );
-                            combined_shader_source(scaling, EffectPreset::None)
-                        }
-                    }
+                    combined_shader_source(scaling, EffectPreset::None)
                 }
             } else {
                 combined_shader_source(scaling, effect)
@@ -153,7 +137,12 @@ impl FramebufferRenderer {
     }
 
     fn apply_filter_change(&mut self, device: &wgpu::Device, desired_filter: wgpu::FilterMode) {
-        let sampler = match desired_filter {
+        self.sampler.current_filter = desired_filter;
+        self.rebuild_screen_bind_groups(device);
+    }
+
+    pub(crate) fn rebuild_screen_bind_groups(&mut self, device: &wgpu::Device) {
+        let sampler = match self.sampler.current_filter {
             wgpu::FilterMode::Linear => &self.sampler.linear_sampler,
             wgpu::FilterMode::Nearest => &self.sampler.nearest_sampler,
         };
@@ -173,7 +162,6 @@ impl FramebufferRenderer {
             &self.sampler.params_buffer_no_cc,
             "screen bind group no color correction",
         );
-        self.sampler.current_filter = desired_filter;
     }
 
     pub(crate) fn update_params(&self, queue: &wgpu::Queue, settings: &crate::settings::Settings) {

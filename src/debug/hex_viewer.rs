@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 
 use super::common::{
     COLOR_ADDR, COLOR_DIM, COLOR_FLASH, DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_ROWS_VISIBLE,
@@ -42,9 +43,12 @@ pub(super) fn hex_text_formats(ui: &egui::Ui) -> HexFormats {
 
 pub(super) fn draw_hex_header(ui: &mut egui::Ui, addr_label: &str, fmt: &HexFormats) {
     let mut job = egui::text::LayoutJob::default();
+    let mut scratch = String::with_capacity(8);
     job.append(addr_label, 0.0, fmt.addr.clone());
     for i in 0..HEX_BYTES_PER_ROW {
-        job.append(&format!("+{:X} ", i), 0.0, fmt.addr.clone());
+        scratch.clear();
+        let _ = write!(scratch, "+{:X} ", i);
+        job.append(&scratch, 0.0, fmt.addr.clone());
     }
     job.append("  ASCII", 0.0, fmt.addr.clone());
     ui.label(job);
@@ -58,6 +62,7 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
     flash_ticks: Option<&[u8]>,
     tbl_map: &HashMap<u8, String>,
 ) {
+    let mut scratch = String::with_capacity(12);
     for row in 0..HEX_ROWS_VISIBLE {
         let row_start = row * HEX_BYTES_PER_ROW;
         if row_start >= page.len() {
@@ -66,11 +71,13 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
         let row_addr: u32 = page[row_start].0.into();
 
         let mut job = egui::text::LayoutJob::default();
+        scratch.clear();
         match addr_width {
-            4 => job.append(&format!("{:04X}:  ", row_addr), 0.0, fmt.addr.clone()),
-            6 => job.append(&format!("{:06X}:  ", row_addr), 0.0, fmt.addr.clone()),
-            _ => job.append(&format!("{:08X}:  ", row_addr), 0.0, fmt.addr.clone()),
+            4 => { let _ = write!(scratch, "{:04X}:  ", row_addr); }
+            6 => { let _ = write!(scratch, "{:06X}:  ", row_addr); }
+            _ => { let _ = write!(scratch, "{:08X}:  ", row_addr); }
         }
+        job.append(&scratch, 0.0, fmt.addr.clone());
 
         for col in 0..HEX_BYTES_PER_ROW {
             let idx = row_start + col;
@@ -80,7 +87,9 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
                 let value = page[idx].1;
                 let has_flash = flash_ticks.and_then(|ft| ft.get(idx)).copied().unwrap_or(0) > 0;
                 let text_fmt = if has_flash { &fmt.flash } else { &fmt.normal };
-                job.append(&format!("{:02X} ", value), 0.0, text_fmt.clone());
+                scratch.clear();
+                let _ = write!(scratch, "{:02X} ", value);
+                job.append(&scratch, 0.0, text_fmt.clone());
             }
         }
 
@@ -89,8 +98,8 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
             let idx = row_start + col;
             if idx < page.len() {
                 let byte = page[idx].1;
-                let (ch, is_mapped) = super::common::tbl_lookup(byte, tbl_map);
-                let text_fmt = if !is_mapped && ch == "." {
+                let ch = super::common::tbl_lookup(byte, tbl_map);
+                let text_fmt = if ch.len() == 1 && ch.as_bytes()[0] == b'.' && !tbl_map.contains_key(&byte) {
                     &fmt.dim
                 } else {
                     &fmt.normal
@@ -110,7 +119,7 @@ pub(super) fn handle_scroll(
     max_start: u32,
 ) -> u32 {
     if ui.rect_contains_pointer(hover_rect) {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        let scroll = ui.input(| i | i.smooth_scroll_delta.y);
         if scroll >= 1.0 {
             return view_start.saturating_sub(0x10);
         } else if scroll <= -1.0 {

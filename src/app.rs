@@ -46,7 +46,7 @@ use types::*;
 #[cfg(target_arch = "wasm32")]
 type PendingGfx = Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Graphics>>>>>;
 
-pub(crate) use state_io::extract_rom_from_zip;
+pub(crate) use state_io::detect_and_extract_rom;
 
 pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()> {
     let event_loop = EventLoop::new()?;
@@ -130,6 +130,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             vram: None,
             oam: None,
             memory_page: None,
+            nes_chr: None,
+            nes_nametable: None,
         },
         frames_in_flight: 0,
         cached_ui_data: None,

@@ -42,11 +42,11 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
 
     let sections = vec![
         DebugSection {
-            heading: "Interrupts".into(),
+            heading: "Interrupts",
             lines: int_lines,
         },
         DebugSection {
-            heading: "PPU".into(),
+            heading: "PPU",
             lines: ppu_lines,
         },
     ];
@@ -95,7 +95,7 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         cycles: snap.cycles,
         last_opcode_line: format!("@ {:04X} = {:02X}", snap.last_opcode_pc, snap.last_opcode),
         sections,
-        mem_around_pc: snap.mem_around_pc.to_vec(),
+        mem_around_pc: snap.mem_around_pc,
         recent_op_lines,
         breakpoints,
         watchpoints,

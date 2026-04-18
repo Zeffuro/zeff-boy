@@ -2,7 +2,7 @@ use crate::debug::types::PaletteDebugInfo;
 
 pub(super) fn draw_palette_viewer_content(ui: &mut egui::Ui, info: &PaletteDebugInfo) {
     for group in &info.groups {
-        ui.label(&group.title);
+        ui.label(group.title.as_ref());
         for row in &group.rows {
             ui.horizontal(|ui| {
                 ui.label(&row.label);

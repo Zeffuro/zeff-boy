@@ -40,6 +40,23 @@ pub(crate) fn run_headless(
             }
         }
     };
+    let check_breakpoint = |emulator: &Emulator| -> Option<anyhow::Result<()>> {
+        if !emulator.is_cpu_suspended() {
+            return None;
+        }
+        println!(
+            "{}",
+            format_headless_breakpoint(
+                emulator.cpu_pc(),
+                emulator.cpu_cycles(),
+                emulator.cpu_a(),
+                emulator.cpu_f(),
+                emulator.cpu_sp(),
+            )
+        );
+        flush_battery(emulator);
+        Some(Ok(()))
+    };
     if let Some(addr) = opts.break_at {
         emulator.add_breakpoint(addr);
     }
@@ -53,19 +70,8 @@ pub(crate) fn run_headless(
                 .wrapping_add(Emulator::cycles_per_frame(emulator.hardware_mode()));
             while emulator.cpu_cycles() < target {
                 let (pc, op, cb_prefix, step_cycles) = emulator.step_instruction();
-                if emulator.is_cpu_suspended() {
-                    println!(
-                        "{}",
-                        format_headless_breakpoint(
-                            emulator.cpu_pc(),
-                            emulator.cpu_cycles(),
-                            emulator.cpu_a(),
-                            emulator.cpu_f(),
-                            emulator.cpu_sp(),
-                        )
-                    );
-                    flush_battery(&emulator);
-                    return Ok(());
+                if let Some(result) = check_breakpoint(&emulator) {
+                    return result;
                 }
                 let if_reg = emulator.if_reg();
                 let ie = emulator.ie_reg();
@@ -153,19 +159,8 @@ pub(crate) fn run_headless(
             }
         } else {
             emulator.step_frame();
-            if emulator.is_cpu_suspended() {
-                println!(
-                    "{}",
-                    format_headless_breakpoint(
-                        emulator.cpu_pc(),
-                        emulator.cpu_cycles(),
-                        emulator.cpu_a(),
-                        emulator.cpu_f(),
-                        emulator.cpu_sp(),
-                    )
-                );
-                flush_battery(&emulator);
-                return Ok(());
+            if let Some(result) = check_breakpoint(&emulator) {
+                return result;
             }
         }
     }

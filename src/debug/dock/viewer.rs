@@ -17,28 +17,16 @@ use super::super::rom_viewer::draw_rom_viewer_content;
 use super::super::tile_viewer::draw_tile_viewer_content;
 use super::super::tilemap_viewer::draw_tilemap_viewer_content;
 use super::super::types::{
-    ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, InputDebugInfo, OamDebugInfo,
-    PaletteDebugInfo, PerfInfo, RomDebugInfo,
+    ConsoleGraphicsData, DebugDataRefs,
 };
 use super::super::ui::draw_cpu_debug_content;
-use super::super::{DebugUiActions, DebugWindowState, DisassemblyView};
+use super::super::{DebugUiActions, DebugWindowState};
 use crate::graphics::AspectRatioMode;
 
 use super::tabs::DebugTab;
 
 pub(crate) struct DebugTabViewer<'a> {
-    pub(crate) cpu_debug: Option<&'a CpuDebugSnapshot>,
-    pub(crate) perf_info: Option<&'a PerfInfo>,
-    pub(crate) apu_debug: Option<&'a ApuDebugInfo>,
-    pub(crate) oam_debug: Option<&'a OamDebugInfo>,
-    pub(crate) palette_debug: Option<&'a PaletteDebugInfo>,
-    pub(crate) rom_debug: Option<&'a RomDebugInfo>,
-    pub(crate) input_debug: Option<&'a InputDebugInfo>,
-    pub(crate) graphics_data: Option<&'a ConsoleGraphicsData>,
-    pub(crate) disassembly_view: Option<&'a DisassemblyView>,
-    pub(crate) memory_page: Option<&'a [(u16, u8)]>,
-    pub(crate) rom_page: Option<&'a [(u32, u8)]>,
-    pub(crate) rom_size: u32,
+    pub(crate) data: DebugDataRefs<'a>,
     pub(crate) window_state: &'a mut DebugWindowState,
     pub(crate) actions: DebugUiActions,
     pub(crate) game_texture_id: Option<egui::TextureId>,
@@ -99,29 +87,29 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::CpuDebug => {
-                if let Some(info) = self.cpu_debug {
+                if let Some(info) = self.data.cpu_debug {
                     draw_cpu_debug_content(ui, info, &mut self.actions);
                 }
             }
             DebugTab::InputViewer => {
-                if let Some(info) = self.input_debug {
+                if let Some(info) = self.data.input_debug {
                     draw_input_viewer_content(ui, info);
                 }
             }
             DebugTab::ApuViewer => {
-                if let Some(data) = self.apu_debug
+                if let Some(data) = self.data.apu_debug
                     && let Some(mutes) = draw_apu_viewer_content(ui, data)
                 {
                     self.actions.apu_channel_mutes = Some(mutes);
                 }
             }
             DebugTab::RomInfo => {
-                if let Some(info) = self.rom_debug {
+                if let Some(info) = self.data.rom_debug {
                     draw_rom_info_content(ui, info);
                 }
             }
             DebugTab::Disassembler => {
-                if let Some(view) = self.disassembly_view {
+                if let Some(view) = self.data.disassembly_view {
                     let disasm_actions = draw_disassembler_content(ui, view);
                     self.actions
                         .toggle_breakpoints
@@ -132,43 +120,43 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::MemoryViewer => {
-                if let Some(page) = self.memory_page {
+                if let Some(page) = self.data.memory_page {
                     let writes =
                         draw_memory_viewer_content(ui, &mut self.window_state.memory, page);
                     self.actions.memory_writes.extend(writes);
                 }
             }
             DebugTab::TileViewer => {
-                if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
+                if let Some(ConsoleGraphicsData::Gb(data)) = self.data.graphics_data {
                     draw_tile_viewer_content(ui, data, data.ppu.bgp, &mut self.window_state.tiles);
-                } else if let Some(ConsoleGraphicsData::Nes(data)) = self.graphics_data {
+                } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
             }
             DebugTab::TilemapViewer => {
-                if let Some(ConsoleGraphicsData::Gb(data)) = self.graphics_data {
+                if let Some(ConsoleGraphicsData::Gb(data)) = self.data.graphics_data {
                     draw_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
-                } else if let Some(ConsoleGraphicsData::Nes(data)) = self.graphics_data {
+                } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 }
             }
             DebugTab::OamViewer => {
-                if let Some(info) = self.oam_debug {
+                if let Some(info) = self.data.oam_debug {
                     draw_oam_viewer_content(ui, info);
                 }
             }
             DebugTab::PaletteViewer => {
-                if let Some(info) = self.palette_debug {
+                if let Some(info) = self.data.palette_debug {
                     draw_palette_viewer_content(ui, info);
                 }
             }
             DebugTab::Performance => {
-                if let Some(info) = self.perf_info {
+                if let Some(info) = self.data.perf_info {
                     draw_performance_content(ui, info, &mut self.window_state.perf_history);
                 }
             }
             DebugTab::Breakpoints => {
-                if let Some(info) = self.cpu_debug {
+                if let Some(info) = self.data.cpu_debug {
                     draw_breakpoints_content(
                         ui,
                         info,
@@ -184,12 +172,12 @@ impl TabViewer for DebugTabViewer<'_> {
                 draw_mods_content(ui, &mut self.window_state.mod_state);
             }
             DebugTab::RomViewer => {
-                if let Some(page) = self.rom_page {
+                if let Some(page) = self.data.rom_page {
                     draw_rom_viewer_content(
                         ui,
                         &mut self.window_state.rom_viewer,
                         page,
-                        self.rom_size,
+                        self.data.rom_size,
                     );
                 }
             }

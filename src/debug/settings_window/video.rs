@@ -1,6 +1,6 @@
 use crate::debug::ui_helpers::enum_combo_box;
 use crate::emu_backend::ActiveSystem;
-use crate::settings::{ScalingMode, Settings};
+use crate::settings::Settings;
 
 pub(super) fn draw(
     ui: &mut egui::Ui,
@@ -17,28 +17,7 @@ pub(super) fn draw(
     enum_combo_box(ui, "Scaling mode", &mut settings.video.scaling_mode);
 
     if settings.video.scaling_mode.is_upscaler() {
-        let p = &mut settings.video.shader_params;
-        match settings.video.scaling_mode {
-            ScalingMode::HQ2xLike => {
-                ui.add(
-                    egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=2.0)
-                        .text("Edge Strength"),
-                );
-            }
-            ScalingMode::XBR2x => {
-                ui.add(
-                    egui::Slider::new(&mut p.upscale_edge_strength, 0.1..=2.0)
-                        .text("Edge Strength"),
-                );
-            }
-            ScalingMode::Eagle2x => {
-                ui.add(
-                    egui::Slider::new(&mut p.upscale_edge_strength, 0.0..=1.0)
-                        .text("Edge Strength"),
-                );
-            }
-            _ => {}
-        }
+        crate::debug::ui_helpers::draw_scaling_params(ui, settings);
     }
 
     ui.horizontal(|ui| {
@@ -64,47 +43,9 @@ pub(super) fn draw(
 
     ui.separator();
     ui.heading("Effects");
-    use crate::settings::EffectPreset;
     enum_combo_box(ui, "Effect", &mut settings.video.effect_preset);
 
-    let p = &mut settings.video.shader_params;
-    match settings.video.effect_preset {
-        EffectPreset::Scanlines => {
-            ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Intensity"));
-        }
-        EffectPreset::LcdGrid => {
-            ui.add(egui::Slider::new(&mut p.grid_intensity, 0.0..=1.0).text("Grid"));
-        }
-        EffectPreset::Crt => {
-            ui.add(egui::Slider::new(&mut p.scanline_intensity, 0.0..=1.0).text("Scanlines"));
-            ui.add(egui::Slider::new(&mut p.crt_curvature, 0.0..=1.0).text("Curvature"));
-        }
-        EffectPreset::GbcPalette => {
-            ui.add(egui::Slider::new(&mut p.palette_mix, 0.0..=1.0).text("Palette Mix"));
-            ui.add(egui::Slider::new(&mut p.palette_warmth, 0.0..=1.0).text("Warmth"));
-        }
-        EffectPreset::Custom => {
-            ui.label("Custom WGSL fragment path:");
-            if settings.video.custom_shader_path.is_empty() {
-                ui.monospace("(not set)");
-            } else {
-                ui.monospace(&settings.video.custom_shader_path);
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Load .wgsl...").clicked()
-                    && let Some(path) = crate::platform::FileDialog::new()
-                        .add_filter("WGSL", &["wgsl"])
-                        .pick_file()
-                {
-                    settings.video.custom_shader_path = path.to_string_lossy().to_string();
-                }
-                if ui.button("Clear").clicked() {
-                    settings.video.custom_shader_path.clear();
-                }
-            });
-        }
-        EffectPreset::None => {}
-    }
+    crate::debug::ui_helpers::draw_effect_params(ui, settings);
 
     ui.separator();
     ui.heading("Color Correction");
@@ -137,20 +78,6 @@ pub(super) fn draw(
     draw_nes_palette_section(ui, settings, active_system);
 }
 
-fn draw_console_section_header(
-    ui: &mut egui::Ui,
-    label: &str,
-    active_system: Option<ActiveSystem>,
-    target: ActiveSystem,
-) {
-    ui.horizontal(|ui| {
-        ui.heading(label);
-        if active_system == Some(target) {
-            ui.label(egui::RichText::new("(active)").weak().italics().small());
-        }
-    });
-}
-
 fn draw_gb_palette_section(
     ui: &mut egui::Ui,
     settings: &mut Settings,
@@ -160,7 +87,7 @@ fn draw_gb_palette_section(
 ) {
     use crate::settings::DmgPalettePreset;
 
-    draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
+    super::draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
 
     let gb_mode = gb_hardware_mode_label.unwrap_or_default();
     let cgb_active = gb_mode.starts_with("CGB");
@@ -221,7 +148,7 @@ fn draw_nes_palette_section(
 ) {
     use crate::settings::NesPaletteMode;
 
-    draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
+    super::draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
 
     enum_combo_box(ui, "NES palette mode", &mut settings.video.nes_palette_mode);
     if settings.video.nes_palette_mode != NesPaletteMode::Raw {

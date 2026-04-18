@@ -209,35 +209,27 @@ impl App {
             return;
         };
 
-        // On WASM, Normal mode uses requestAnimationFrame (via request_redraw)
-        // instead of setTimeout (WaitUntil). rAF is vsync-aligned and jitter-free,
-        // while setTimeout has ≥4ms granularity that causes visible hitches.
-        // ControlFlow::Wait means the event loop sleeps until the rAF callback fires —
-        // no extra wakeups, no busy loops.
-        #[cfg(target_arch = "wasm32")]
         match self.speed_mode() {
             SpeedMode::Normal => {
-                event_loop.set_control_flow(ControlFlow::Wait);
-                gfx.window().request_redraw();
-            }
-            SpeedMode::FastForward | SpeedMode::Uncapped => {
-                event_loop.set_control_flow(ControlFlow::Poll);
-                gfx.window().request_redraw();
-            }
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        match self.speed_mode() {
-            SpeedMode::Normal => {
-                let effective = self.effective_frame_duration();
-                let now = Instant::now();
-                let next_frame_time = self.timing.last_frame_time + effective;
-                if now >= next_frame_time {
-                    event_loop.set_control_flow(ControlFlow::Poll);
-                    gfx.window().request_redraw();
-                } else {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
+                // On WASM, Normal mode uses requestAnimationFrame (via request_redraw)
+                // instead of setTimeout (WaitUntil). rAF is vsync-aligned and jitter-free,
+                // while setTimeout has ≥4ms granularity that causes visible hitches.
+                #[cfg(target_arch = "wasm32")]
+                {
+                    event_loop.set_control_flow(ControlFlow::Wait);
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let effective = self.effective_frame_duration();
+                    let now = Instant::now();
+                    let next_frame_time = self.timing.last_frame_time + effective;
+                    if now >= next_frame_time {
+                        event_loop.set_control_flow(ControlFlow::Poll);
+                    } else {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
+                    }
+                }
+                gfx.window().request_redraw();
             }
             SpeedMode::FastForward | SpeedMode::Uncapped => {
                 event_loop.set_control_flow(ControlFlow::Poll);

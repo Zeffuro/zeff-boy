@@ -249,7 +249,7 @@ impl Mapper for Vrc6 {
         w.write_bool(self.irq_pending);
 
         self.audio.write_state(w);
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -271,15 +271,7 @@ impl Mapper for Vrc6 {
 
         self.audio.read_state(r)?;
 
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "VRC6 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "VRC6")?;
         Ok(())
     }
 }

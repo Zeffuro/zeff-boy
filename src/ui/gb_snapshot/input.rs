@@ -3,7 +3,7 @@ use crate::debug::{DebugSection, InputDebugInfo};
 pub(super) fn gb_input_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> InputDebugInfo {
     let sections = vec![
         DebugSection {
-            heading: "Input State".into(),
+            heading: "Input State",
             lines: vec![
                 format!(
                     "MBC7 active: {}",
@@ -20,7 +20,7 @@ pub(super) fn gb_input_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> InputD
             ],
         },
         DebugSection {
-            heading: "Tilt Sources".into(),
+            heading: "Tilt Sources",
             lines: vec![
                 format!(
                     "Keyboard  x:{:>6.2} y:{:>6.2}",
@@ -37,7 +37,7 @@ pub(super) fn gb_input_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> InputD
             ],
         },
         DebugSection {
-            heading: "Tilt Output".into(),
+            heading: "Tilt Output",
             lines: vec![
                 format!(
                     "Target    x:{:>6.2} y:{:>6.2}",
@@ -55,8 +55,8 @@ pub(super) fn gb_input_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> InputD
     InputDebugInfo {
         sections,
         progress_bars: vec![
-            ("Smoothed X (-1..1)".into(), smoothed_x),
-            ("Smoothed Y (-1..1)".into(), smoothed_y),
+            ("Smoothed X (-1..1)", smoothed_x),
+            ("Smoothed Y (-1..1)", smoothed_y),
         ],
     }
 }

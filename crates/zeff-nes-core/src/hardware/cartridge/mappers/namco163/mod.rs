@@ -312,7 +312,7 @@ impl Mapper for Namco163 {
         w.write_bool(self.irq_pending);
         w.write_bytes(&self.prg_ram);
         self.audio.write_state(w);
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -340,15 +340,7 @@ impl Mapper for Namco163 {
 
         self.audio.read_state(r)?;
 
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "N163 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "N163")?;
         Ok(())
     }
 }

@@ -91,10 +91,19 @@ impl App {
 
         if let Some(ref mut cached) = self.cached_ui_data {
             if ui_data.graphics_data.is_some() {
-                if let Some(ConsoleGraphicsData::Gb(gb)) = cached.graphics_data.take()
-                    && !gb.vram.is_empty()
-                {
-                    self.recycled.vram = Some(gb.vram);
+                match cached.graphics_data.take() {
+                    Some(ConsoleGraphicsData::Gb(gb)) if !gb.vram.is_empty() => {
+                        self.recycled.vram = Some(gb.vram);
+                    }
+                    Some(ConsoleGraphicsData::Nes(nes)) => {
+                        if !nes.chr_data.is_empty() {
+                            self.recycled.nes_chr = Some(nes.chr_data);
+                        }
+                        if !nes.nametable_data.is_empty() {
+                            self.recycled.nes_nametable = Some(nes.nametable_data);
+                        }
+                    }
+                    _ => {}
                 }
             } else {
                 ui_data.graphics_data = cached.graphics_data.take();
@@ -128,7 +137,7 @@ impl App {
             } else {
                 0.0
             };
-            perf.speed_mode_label = self.speed_mode_label().to_string();
+            perf.speed_mode_label = self.speed_mode_label();
             perf.frames_in_flight = self.frames_in_flight;
         }
 

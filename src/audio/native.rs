@@ -264,25 +264,16 @@ impl AudioOutput {
         if let Ok(mut chunk) = self.producer.write_chunk_uninit(available) {
             let (first, second) = chunk.as_mut_slices();
             let first_len = first.len();
-            for (idx, (dst, &src)) in first.iter_mut().zip(samples.iter()).enumerate() {
-                let mut out = src * gain;
-                if config.low_pass_enabled {
-                    out = self.low_pass_filter.apply_sample(out, idx, alpha);
+            let mut global_idx = 0usize;
+            for slices in [first.iter_mut().zip(&samples[..first_len]), second.iter_mut().zip(&samples[first_len..available])] {
+                for (dst, &src) in slices {
+                    let mut out = src * gain;
+                    if config.low_pass_enabled {
+                        out = self.low_pass_filter.apply_sample(out, global_idx, alpha);
+                    }
+                    dst.write(out);
+                    global_idx += 1;
                 }
-                dst.write(out);
-            }
-            for (idx, (dst, &src)) in second
-                .iter_mut()
-                .zip(samples[first_len..].iter())
-                .enumerate()
-            {
-                let mut out = src * gain;
-                if config.low_pass_enabled {
-                    out = self
-                        .low_pass_filter
-                        .apply_sample(out, first_len + idx, alpha);
-                }
-                dst.write(out);
             }
             unsafe {
                 chunk.commit_all();

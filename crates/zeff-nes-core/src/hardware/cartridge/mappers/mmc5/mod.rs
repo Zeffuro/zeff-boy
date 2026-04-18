@@ -414,7 +414,7 @@ impl Mapper for Mmc5 {
         w.write_bool(self.has_battery);
         w.write_vec(&self.prg_ram);
         w.write_vec(&self.ex_ram);
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -469,15 +469,7 @@ impl Mapper for Mmc5 {
         }
         self.ex_ram.copy_from_slice(&ex_ram);
 
-        let chr = r.read_vec(1024 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "MMC5 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "MMC5")?;
 
         Ok(())
     }

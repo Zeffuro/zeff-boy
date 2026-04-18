@@ -2,7 +2,7 @@ use crate::debug::types::InputDebugInfo;
 
 pub(super) fn draw_input_viewer_content(ui: &mut egui::Ui, info: &InputDebugInfo) {
     for section in &info.sections {
-        ui.heading(&section.heading);
+        ui.heading(section.heading);
         for line in &section.lines {
             ui.monospace(line);
         }
@@ -13,7 +13,7 @@ pub(super) fn draw_input_viewer_content(ui: &mut egui::Ui, info: &InputDebugInfo
         ui.add(
             egui::ProgressBar::new(*value)
                 .show_percentage()
-                .text(label.as_str()),
+                .text(*label),
         );
     }
 }

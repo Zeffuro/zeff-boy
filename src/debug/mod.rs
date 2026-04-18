@@ -30,7 +30,9 @@ pub(crate) mod types;
 mod ui;
 pub(crate) mod ui_helpers;
 
-pub(crate) use disassembler::{DisassemblyView, disassemble_around, nes_disassemble_around};
+pub(crate) use disassembler::{
+    DisassembledLine, DisassemblyView, disassemble_around, nes_disassemble_around,
+};
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, compute_tab_requirements, create_default_dock_state,
     create_dock_from_saved_tabs, create_ide_dock_state, ensure_game_view_tab, is_tab_open,
@@ -45,8 +47,9 @@ pub(crate) use types::{
     WatchpointDisplay,
 };
 pub(crate) use types::{
-    BreakpointState, CheatState, DebugWindowState, LibretroAsyncResult, MemorySearchResult,
-    PerfInfo, RomSearchResult, TileViewerState, TilemapViewerState,
+    BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,
+    MemorySearchMode, MemorySearchResult, MemoryViewerState, PerfInfo, RomSearchResult,
+    RomViewerState, TileViewerState, TilemapViewerState,
 };
 pub(crate) use ui::{
     DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, SettingsContext, draw_menu_bar,

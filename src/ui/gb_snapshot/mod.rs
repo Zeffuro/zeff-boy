@@ -7,8 +7,8 @@ mod rom_info;
 
 use super::UiFrameData;
 use crate::debug::{
-    ConsoleGraphicsData, DisassemblyView, GbGraphicsData, MemorySearchResult, PerfInfo,
-    RomSearchResult, disassemble_around,
+    ConsoleGraphicsData, GbGraphicsData, PerfInfo,
+    disassemble_around,
 };
 use crate::emu_thread::SnapshotRequest;
 use zeff_gb_core::emulator::Emulator;
@@ -60,22 +60,13 @@ pub(crate) fn collect_emu_snapshot(
         None
     };
 
-    let disassembly_view = if req.show_disassembler {
-        let pc_changed = req.last_disasm_pc != Some(emu.cpu_pc());
-        if pc_changed {
-            let mut breakpoints: Vec<u16> = emu.iter_breakpoints().collect();
-            breakpoints.sort_unstable();
-            Some(DisassemblyView {
-                pc: emu.cpu_pc(),
-                lines: disassemble_around(|addr| emu.peek_byte(addr), emu.cpu_pc(), 12, 26),
-                breakpoints,
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let disassembly_view = super::build_disassembly_view(
+        req.show_disassembler,
+        req.last_disasm_pc,
+        emu.cpu_pc(),
+        || disassemble_around(|addr| emu.peek_byte(addr), emu.cpu_pc(), 12, 26),
+        emu.iter_breakpoints(),
+    );
 
     let rom_debug = if req.show_rom_info {
         Some(gb_rom_info(emu))
@@ -83,97 +74,31 @@ pub(crate) fn collect_emu_snapshot(
         None
     };
 
-    let memory_page = if req.show_memory_viewer {
-        let mut buf = reusable_memory_page.unwrap_or_else(|| Vec::with_capacity(256));
-        buf.clear();
-        let start = req.memory_view_start;
-        for i in 0..256u16 {
-            let addr = start.wrapping_add(i);
-            buf.push((addr, emu.peek_byte(addr)));
-        }
-        Some(buf)
-    } else {
-        reusable_memory_page.map(|mut v| {
-            v.clear();
-            v
-        })
-    };
+    let memory_page = super::build_memory_page(
+        req.show_memory_viewer,
+        req.memory_view_start,
+        reusable_memory_page,
+        |addr| emu.peek_byte(addr),
+    );
 
-    let memory_search_results = if let Some(ref search) = req.memory_search {
-        let mut results = Vec::new();
-        if !search.pattern.is_empty() {
-            let pattern_len = search.pattern.len();
-            for start_addr in 0..=(0x10000usize - pattern_len) {
-                if results.len() >= search.max_results {
-                    break;
-                }
-                let matched = (0..pattern_len)
-                    .all(|j| emu.peek_byte_raw((start_addr + j) as u16) == search.pattern[j]);
-                if matched {
-                    let matched_bytes: Vec<u8> = (0..pattern_len)
-                        .map(|j| emu.peek_byte_raw((start_addr + j) as u16))
-                        .collect();
-                    results.push(MemorySearchResult {
-                        address: start_addr as u16,
-                        matched_bytes,
-                    });
-                }
-            }
-        }
-        Some(results)
-    } else {
-        None
-    };
+    let memory_search_results =
+        super::build_memory_search(req.memory_search.as_ref(), |addr| emu.peek_byte_raw(addr));
 
     let rom_bytes = emu.cartridge_rom_bytes();
     let rom_size = rom_bytes.len() as u32;
 
-    let rom_page = if req.show_rom_viewer {
-        let start = req.rom_view_start as usize;
-        let mut buf = Vec::with_capacity(256);
-        for i in 0..256usize {
-            let offset = start + i;
-            if offset < rom_bytes.len() {
-                buf.push((offset as u32, rom_bytes[offset]));
-            }
-        }
-        Some(buf)
-    } else {
-        None
-    };
+    let rom_page = super::build_rom_page(req.show_rom_viewer, req.rom_view_start, rom_bytes);
 
-    let rom_search_results = if let Some(ref search) = req.rom_search {
-        let mut results = Vec::new();
-        if !search.pattern.is_empty() {
-            let pattern_len = search.pattern.len();
-            let end = rom_bytes
-                .len()
-                .saturating_sub(pattern_len.saturating_sub(1));
-            for start_offset in 0..end {
-                if results.len() >= search.max_results {
-                    break;
-                }
-                if rom_bytes[start_offset..start_offset + pattern_len] == search.pattern[..] {
-                    results.push(RomSearchResult {
-                        offset: start_offset as u32,
-                        matched_bytes: rom_bytes[start_offset..start_offset + pattern_len].to_vec(),
-                    });
-                }
-            }
-        }
-        Some(results)
-    } else {
-        None
-    };
+    let rom_search_results = super::build_rom_search(req.rom_search.as_ref(), rom_bytes);
 
     let perf_info = gb_info.as_ref().map(|di| PerfInfo {
         fps: di.fps,
-        speed_mode_label: di.speed_mode_label.to_string(),
+        speed_mode_label: di.speed_mode_label,
         frames_in_flight: di.frames_in_flight,
         cycles: di.cycles,
         platform_name: "Game Boy",
-        hardware_label: format!("{:?}", di.hardware_mode),
-        hardware_pref_label: format!("{:?}", di.hardware_mode_preference),
+        hardware_label: format!("{:?}", di.hardware_mode).into(),
+        hardware_pref_label: format!("{:?}", di.hardware_mode_preference).into(),
     });
 
     UiFrameData {

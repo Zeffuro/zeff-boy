@@ -108,7 +108,7 @@ impl Mapper for Action52 {
         w.write_u32(self.prg_page_hi as u32);
         w.write_u32(self.chr_bank as u32);
         w.write_u8(crate::save_state::encode_mirroring(self.mirroring));
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -116,15 +116,7 @@ impl Mapper for Action52 {
         self.prg_page_hi = r.read_u32()? as usize;
         self.chr_bank = r.read_u32()? as usize;
         self.mirroring = crate::save_state::decode_mirroring(r.read_u8()?)?;
-        let chr = r.read_vec(2 * 1024 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "Action52 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "Action52")?;
         Ok(())
     }
 }

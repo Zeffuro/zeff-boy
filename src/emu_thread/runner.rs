@@ -5,158 +5,11 @@ use crossbeam_channel::{Sender, TrySendError};
 use crate::emu_backend::EmuBackend;
 use crate::ui;
 
-use super::{EmuThread, FrameInput, FrameResult, SharedFramebuffer};
+use super::{EmuThread, FrameResult, SharedFramebuffer};
 
 const UNCAPPED_BATCH_SIZE: usize = 60;
 
 impl EmuThread {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn handle_step_frames(
-        backend: &mut EmuBackend,
-        input: FrameInput,
-        cheats: &[crate::cheats::CheatPatch],
-        uncapped_mode: bool,
-        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
-        rewind_seconds: &mut usize,
-        shared_fb: &SharedFramebuffer,
-    ) -> FrameResult {
-        if let Some(gb) = backend.gb_mut() {
-            Self::apply_debug_actions(&mut gb.emu, &input.debug_actions);
-        }
-
-        if let Some(nes) = backend.nes_mut() {
-            Self::apply_nes_debug_actions(&mut nes.emu, &input.debug_actions);
-        }
-
-        backend.set_input(input.joypad.buttons, input.joypad.dpad);
-        backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
-
-        if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
-            backend.set_apu_channel_mutes(mutes);
-        }
-
-        if let Some(gb) = backend.gb_mut() {
-            gb.emu
-                .set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
-            gb.emu
-                .set_dmg_palette_preset(input.snapshot.render.dmg_palette_preset);
-            gb.emu
-                .set_sgb_border_enabled(input.snapshot.render.sgb_border_enabled);
-            if let Some(ref frame) = input.host_camera_frame {
-                gb.emu.set_camera_host_frame(frame);
-            }
-            gb.emu
-                .set_apu_debug_capture_enabled(input.audio.apu_capture_enabled);
-            if !uncapped_mode {
-                gb.emu
-                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
-            }
-            gb.emu
-                .set_opcode_log_enabled(input.snapshot.want_debug_info);
-
-            if gb.emu.is_cpu_suspended() {
-                if input.debug_continue {
-                    gb.emu.debug_continue();
-                } else if input.debug_step {
-                    gb.emu.debug_step();
-                }
-            }
-        }
-
-        if let Some(nes) = backend.nes_mut() {
-            nes.emu
-                .set_palette_mode(input.snapshot.render.nes_palette_mode);
-            nes.emu
-                .set_apu_debug_collection_enabled(input.audio.apu_capture_enabled);
-            if nes.emu.is_cpu_suspended() {
-                if input.debug_continue {
-                    nes.emu.debug_continue();
-                } else if input.debug_step {
-                    nes.emu.debug_step();
-                }
-            }
-        }
-
-        if input.frames > 0 && backend.is_running() {
-            for _ in 0..input.frames {
-                backend.step_frame();
-                if let Some(gb) = backend.gb_mut() {
-                    Self::apply_ram_cheats(&mut gb.emu, cheats);
-                }
-                if let Some(nes) = backend.nes_mut() {
-                    Self::apply_nes_ram_cheats(&mut nes.emu, cheats);
-                }
-                if backend.is_suspended() {
-                    break;
-                }
-            }
-        }
-
-        if input.rewind_seconds != *rewind_seconds {
-            *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
-                *rewind_seconds,
-                super::REWIND_SNAPSHOTS_PER_SECOND,
-            );
-        }
-
-        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
-
-        let ui_data = match backend {
-            EmuBackend::Gb(gb) => ui::collect_emu_snapshot(
-                &gb.emu,
-                &input.snapshot,
-                input.buffers.vram,
-                input.buffers.oam,
-                input.buffers.memory_page,
-            ),
-            EmuBackend::Nes(nes) => ui::collect_nes_snapshot(&mut nes.emu, &input.snapshot),
-        };
-
-        Self::build_frame_result(
-            backend,
-            shared_fb,
-            input.buffers.audio,
-            ui_data,
-            input.audio.midi_capture_active,
-            rewind_buffer.fill_ratio(),
-        )
-    }
-
-    pub(crate) fn build_frame_result(
-        backend: &mut EmuBackend,
-        shared_fb: &SharedFramebuffer,
-        reusable_audio: Option<Vec<f32>>,
-        ui_data: ui::UiFrameData,
-        midi_capture_active: bool,
-        rewind_fill: f32,
-    ) -> FrameResult {
-        let src = backend.framebuffer();
-        shared_fb.store(Some(Arc::new(src.to_vec())));
-
-        let rumble = backend.rumble_active();
-        let mut audio_samples = reusable_audio.unwrap_or_default();
-        backend.drain_audio_samples_into(&mut audio_samples);
-        let is_mbc7 = backend.is_mbc7();
-        let is_pocket_camera = backend.is_pocket_camera();
-
-        let apu_snapshot = if midi_capture_active {
-            backend.apu_channel_snapshot()
-        } else {
-            None
-        };
-
-        FrameResult {
-            rumble,
-            audio_samples,
-            ui_data,
-            is_mbc7,
-            is_pocket_camera,
-            rewind_fill,
-            apu_snapshot,
-        }
-    }
-
     pub(crate) fn send_frame(
         frame_tx: &Sender<FrameResult>,
         drain_rx: &crossbeam_channel::Receiver<FrameResult>,
@@ -185,18 +38,7 @@ impl EmuThread {
             return;
         }
 
-        for _ in 0..UNCAPPED_BATCH_SIZE {
-            backend.step_frame();
-            if let Some(gb) = backend.gb_mut() {
-                Self::apply_ram_cheats(&mut gb.emu, cheats);
-            }
-            if let Some(nes) = backend.nes_mut() {
-                Self::apply_nes_ram_cheats(&mut nes.emu, cheats);
-            }
-            if backend.is_suspended() {
-                break;
-            }
-        }
+        Self::step_n_frames(backend, UNCAPPED_BATCH_SIZE, cheats);
 
         let src = backend.framebuffer();
         shared_fb.store(Some(Arc::new(src.to_vec())));
@@ -204,24 +46,14 @@ impl EmuThread {
         let result = FrameResult {
             rumble: backend.rumble_active(),
             audio_samples: Vec::new(),
-            ui_data: ui::empty_frame_data(),
+            ui_data: ui::UiFrameData::default(),
             is_mbc7: backend.is_mbc7(),
             is_pocket_camera: backend.is_pocket_camera(),
             rewind_fill: rewind_buffer.fill_ratio(),
             apu_snapshot: None,
         };
 
-        match frame_tx.try_send(result) {
-            Ok(()) => {}
-            Err(TrySendError::Full(result)) => {
-                let _ = drain_rx.try_recv();
-                match frame_tx.try_send(result) {
-                    Ok(()) | Err(TrySendError::Full(_)) => {}
-                    Err(TrySendError::Disconnected(_)) => return,
-                }
-            }
-            Err(TrySendError::Disconnected(_)) => return,
-        }
+        Self::send_frame(frame_tx, drain_rx, result);
 
         std::thread::yield_now();
     }

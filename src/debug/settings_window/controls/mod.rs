@@ -27,11 +27,11 @@ pub(super) fn draw(
     joypad::draw(ui, settings, state);
 
     ui.separator();
-    draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
+    super::draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
     tilt::draw(ui, settings, state);
 
     ui.separator();
-    draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
+    super::draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
     ui.label(
         egui::RichText::new(
             "NES-specific input bindings can be added here as console features expand.",
@@ -39,18 +39,4 @@ pub(super) fn draw(
         .weak()
         .small(),
     );
-}
-
-fn draw_console_section_header(
-    ui: &mut egui::Ui,
-    label: &str,
-    active_system: Option<ActiveSystem>,
-    target: ActiveSystem,
-) {
-    ui.horizontal(|ui| {
-        ui.heading(label);
-        if active_system == Some(target) {
-            ui.label(egui::RichText::new("(active)").weak().italics().small());
-        }
-    });
 }

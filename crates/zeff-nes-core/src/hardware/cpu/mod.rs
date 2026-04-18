@@ -187,3 +187,6 @@ impl Cpu {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod alu_proptests;

@@ -97,13 +97,7 @@ pub(super) fn draw_tilemap_viewer_content(
     });
 
     let show_viewport_id = ui.make_persistent_id("tilemap_viewer_show_viewport");
-    let mut show_viewport = ui
-        .ctx()
-        .data_mut(|d| d.get_persisted::<bool>(show_viewport_id))
-        .unwrap_or(true);
-    ui.checkbox(&mut show_viewport, "Show screen viewport");
-    ui.ctx()
-        .data_mut(|d| d.insert_persisted(show_viewport_id, show_viewport));
+    let show_viewport = super::common::persisted_checkbox(ui, show_viewport_id, "Show screen viewport", true);
     ui.ctx()
         .data_mut(|d| d.insert_persisted(attr_overlay_id, show_attr_overlay));
     ui.ctx()
@@ -120,7 +114,7 @@ pub(super) fn draw_tilemap_viewer_content(
         || window_state.last_show_attr_overlay != Some(show_attr_overlay)
         || window_state.last_render_cgb_colors != Some(render_cgb_colors);
     if options_changed {
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
         window_state.last_use_window_map = Some(use_window_map);
         window_state.last_show_attr_overlay = Some(show_attr_overlay);
         window_state.last_render_cgb_colors = Some(render_cgb_colors);
@@ -128,10 +122,10 @@ pub(super) fn draw_tilemap_viewer_content(
 
     if window_state.image.size != [width, height] {
         window_state.image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
     }
 
-    if window_state.vram_dirty {
+    if window_state.tracker.vram_dirty {
         render_tilemap_into_image(
             &mut window_state.image,
             gfx,
@@ -143,7 +137,7 @@ pub(super) fn draw_tilemap_viewer_content(
                 show_attr_overlay,
             },
         );
-        window_state.vram_dirty = false;
+        window_state.tracker.vram_dirty = false;
     }
 
     let texture = window_state.texture.get_or_insert_with(|| {
@@ -202,58 +196,45 @@ pub(super) fn draw_tilemap_viewer_content(
         }
 
         if cgb_attr_available
-            && let Some(pointer_pos) = response.hover_pos() {
-                let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
-                    / response.rect.width())
-                    .floor();
-                let rel_y = ((pointer_pos.y - response.rect.min.y) * (height as f32)
-                    / response.rect.height())
-                    .floor();
-
-                if rel_x >= 0.0 && rel_y >= 0.0 {
-                    let px = rel_x as usize;
-                    let py = rel_y as usize;
-                    if px < width && py < height {
-                        let tile_row = py / 8;
-                        let tile_col = px / 8;
-                        let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
-                        let tile_index = vram.get(tile_map_addr).copied().unwrap_or(0);
-                        let raw_attr = vram.get(0x2000 + tile_map_addr).copied().unwrap_or(0);
-                        let attr = decode_tile_attr(raw_attr);
-                        ui.separator();
-                        ui.monospace(format!(
-                            "Tile ({:3}, {:3}) map:{:04X} idx:{:02X} attr:{:02X} pal:{} bank:{} fx:{} fy:{} prio:{}",
-                            px,
-                            py,
-                            0x8000 + tile_map_addr,
-                            tile_index,
-                            raw_attr,
-                            attr.palette,
-                            attr.vram_bank,
-                            if attr.flip_x { 1 } else { 0 },
-                            if attr.flip_y { 1 } else { 0 },
-                            if attr.priority { 1 } else { 0 },
-                        ));
-                    }
-                }
+            && let Some((px, py)) = super::common::hover_pixel_coords(&response, width, height) {
+                let tile_row = py / 8;
+                let tile_col = px / 8;
+                let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
+                let tile_index = vram.get(tile_map_addr).copied().unwrap_or(0);
+                let raw_attr = vram.get(0x2000 + tile_map_addr).copied().unwrap_or(0);
+                let attr = decode_tile_attr(raw_attr);
+                ui.separator();
+                ui.monospace(format!(
+                    "Tile ({:3}, {:3}) map:{:04X} idx:{:02X} attr:{:02X} pal:{} bank:{} fx:{} fy:{} prio:{}",
+                    px,
+                    py,
+                    0x8000 + tile_map_addr,
+                    tile_index,
+                    raw_attr,
+                    attr.palette,
+                    attr.vram_bank,
+                    if attr.flip_x { 1 } else { 0 },
+                    if attr.flip_y { 1 } else { 0 },
+                    if attr.priority { 1 } else { 0 },
+                ));
             }
     });
 }
 
-struct ViewportOverlay {
-    origin: egui::Pos2,
-    scale_x: f32,
-    scale_y: f32,
-    scroll_x: f32,
-    scroll_y: f32,
-    viewport_w: f32,
-    viewport_h: f32,
-    map_w: f32,
-    map_h: f32,
-    color: egui::Color32,
+pub(super) struct ViewportOverlay {
+    pub(super) origin: egui::Pos2,
+    pub(super) scale_x: f32,
+    pub(super) scale_y: f32,
+    pub(super) scroll_x: f32,
+    pub(super) scroll_y: f32,
+    pub(super) viewport_w: f32,
+    pub(super) viewport_h: f32,
+    pub(super) map_w: f32,
+    pub(super) map_h: f32,
+    pub(super) color: egui::Color32,
 }
 
-fn draw_wrapped_viewport_rect(painter: &egui::Painter, vp: &ViewportOverlay) {
+pub(super) fn draw_wrapped_viewport_rect(painter: &egui::Painter, vp: &ViewportOverlay) {
     let stroke = egui::Stroke::new(2.0, vp.color);
     let x = vp.scroll_x;
     let y = vp.scroll_y;

@@ -35,15 +35,7 @@ impl App {
         self.settings.ui.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);
         self.settings.save();
 
-        if let Some(ref title) = self.debug_windows.cheat.rom_title {
-            crate::cheats::save_game_cheats(
-                self.active_system,
-                Some(title),
-                self.debug_windows.cheat.rom_crc32,
-                &self.debug_windows.cheat.user_codes,
-                &self.debug_windows.cheat.libretro_codes,
-            );
-        }
+        self.save_current_cheats();
 
         self.stop_emu_thread();
         self.stop_camera_capture();

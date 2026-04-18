@@ -131,21 +131,13 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state(slot);
-                let loaded = result.is_ok();
-                let path_label = result.as_ref().ok().cloned().unwrap_or_default();
-                let resp = EmuThread::respond_load_state(
-                    &mut self.backend,
+                let label = result.as_ref().ok().cloned().unwrap_or_default();
+                if !self.finalize_load_state(
                     result.map(|_| ()),
-                    path_label,
+                    label,
                     buttons_pressed,
                     dpad_pressed,
-                    &self.shared_framebuffer,
-                );
-                if loaded {
-                    self.rewind_buffer.clear();
-                    EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
-                }
-                if !self.send_resp(resp) {
+                ) {
                     return false;
                 }
             }
@@ -168,20 +160,7 @@ impl EmuLoop {
             } => {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                let loaded = result.is_ok();
-                let resp = EmuThread::respond_load_state(
-                    &mut self.backend,
-                    result,
-                    label,
-                    buttons_pressed,
-                    dpad_pressed,
-                    &self.shared_framebuffer,
-                );
-                if loaded {
-                    self.rewind_buffer.clear();
-                    EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
-                }
-                if !self.send_resp(resp) {
+                if !self.finalize_load_state(result, label, buttons_pressed, dpad_pressed) {
                     return false;
                 }
             }
@@ -206,20 +185,12 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state_from_bytes(state_bytes);
-                let loaded = result.is_ok();
-                let resp = EmuThread::respond_load_state(
-                    &mut self.backend,
+                if !self.finalize_load_state(
                     result,
                     "(replay)".to_string(),
                     buttons_pressed,
                     dpad_pressed,
-                    &self.shared_framebuffer,
-                );
-                if loaded {
-                    self.rewind_buffer.clear();
-                    EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
-                }
-                if !self.send_resp(resp) {
+                ) {
                     return false;
                 }
             }
@@ -278,25 +249,35 @@ impl EmuLoop {
         |resp| self.resp_tx.send(resp).is_ok()
     }
 
+    fn finalize_load_state(
+        &mut self,
+        result: anyhow::Result<()>,
+        label: String,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
+    ) -> bool {
+        let loaded = result.is_ok();
+        let resp = EmuThread::respond_load_state(
+            &mut self.backend,
+            result,
+            label,
+            buttons_pressed,
+            dpad_pressed,
+            &self.shared_framebuffer,
+        );
+        if loaded {
+            self.rewind_buffer.clear();
+            EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
+        }
+        self.send_resp(resp)
+    }
+
     fn handle_auto_load(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
         if let Some(path) = self.backend.auto_save_path() {
             if path.exists() {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                let loaded = result.is_ok();
-                let resp = EmuThread::respond_load_state(
-                    &mut self.backend,
-                    result,
-                    label,
-                    buttons_pressed,
-                    dpad_pressed,
-                    &self.shared_framebuffer,
-                );
-                if loaded {
-                    self.rewind_buffer.clear();
-                    EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
-                }
-                self.send_resp(resp)
+                self.finalize_load_state(result, label, buttons_pressed, dpad_pressed)
             } else {
                 self.send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string()))
             }

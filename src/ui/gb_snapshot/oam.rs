@@ -21,12 +21,8 @@ pub(super) fn gb_oam_snapshot(
     buf.resize(src.len(), 0);
     buf.copy_from_slice(src);
 
-    let headers = vec![
-        "#", "X", "Y", "Tile", "Flags", "FlipX", "FlipY", "Prio", "Pal", "CGB Pal", "VRAM",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let headers: &'static [&'static str] =
+        &["#", "X", "Y", "Tile", "Flags", "FlipX", "FlipY", "Prio", "Pal", "CGB Pal", "VRAM"];
     let mut rows = Vec::with_capacity(40);
     for i in 0..40usize {
         let sprite = SpriteEntry::from_oam(&buf, i);

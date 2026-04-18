@@ -2,6 +2,17 @@ use crate::debug::TilemapViewerState;
 use crate::debug::common::nes_palette_rgba;
 use crate::debug::types::NesGraphicsData;
 
+use super::tilemap_viewer::{ViewportOverlay, draw_wrapped_viewport_rect};
+
+fn nes_attr_palette(nametable_data: &[u8], nt_offset: usize, tile_col: usize, tile_row: usize) -> (u8, u8) {
+    let attr_col = tile_col / 4;
+    let attr_row = tile_row / 4;
+    let attr_addr = nt_offset + 0x3C0 + attr_row * 8 + attr_col;
+    let attr_byte = nametable_data.get(attr_addr).copied().unwrap_or(0);
+    let shift = ((tile_col / 2) & 1) * 2 + ((tile_row / 2) & 1) * 4;
+    (attr_byte, (attr_byte >> shift) & 0x03)
+}
+
 pub(super) fn draw_nes_tilemap_viewer_content(
     ui: &mut egui::Ui,
     gfx: &NesGraphicsData,
@@ -11,27 +22,21 @@ pub(super) fn draw_nes_tilemap_viewer_content(
     ui.label(&mirroring_label);
 
     let show_viewport_id = ui.make_persistent_id("nes_tilemap_show_viewport");
-    let mut show_viewport = ui
-        .ctx()
-        .data_mut(|d| d.get_persisted::<bool>(show_viewport_id))
-        .unwrap_or(true);
-    ui.checkbox(&mut show_viewport, "Show screen viewport");
-    ui.ctx()
-        .data_mut(|d| d.insert_persisted(show_viewport_id, show_viewport));
+    let show_viewport = super::common::persisted_checkbox(ui, show_viewport_id, "Show screen viewport", true);
 
     let width = 512usize;
     let height = 480usize;
 
     if window_state.image.size != [width, height] {
         window_state.image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
     }
 
-    window_state.vram_dirty = true;
+    window_state.tracker.vram_dirty = true;
 
-    if window_state.vram_dirty {
+    if window_state.tracker.vram_dirty {
         render_nes_nametables(&mut window_state.image, gfx);
-        window_state.vram_dirty = false;
+        window_state.tracker.vram_dirty = false;
     }
 
     let texture = window_state.texture.get_or_insert_with(|| {
@@ -67,87 +72,40 @@ pub(super) fn draw_nes_tilemap_viewer_content(
             let scroll_x = (nt_x as f32) * 256.0 + coarse_x * 8.0 + gfx.fine_x as f32;
             let scroll_y = (nt_y as f32) * 240.0 + coarse_y * 8.0 + fine_y;
 
-            let stroke =
-                egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200));
-            let vp_w = 256.0_f32;
-            let vp_h = 240.0_f32;
-            let map_w = width as f32;
-            let map_h = height as f32;
-
-            let x2 = scroll_x + vp_w;
-            let y2 = scroll_y + vp_h;
-            let wraps_x = x2 > map_w;
-            let wraps_y = y2 > map_h;
-
-            let mut rects = Vec::with_capacity(4);
-            if !wraps_x && !wraps_y {
-                rects.push((scroll_x, scroll_y, vp_w, vp_h));
-            } else if wraps_x && !wraps_y {
-                rects.push((scroll_x, scroll_y, map_w - scroll_x, vp_h));
-                rects.push((0.0, scroll_y, x2 - map_w, vp_h));
-            } else if !wraps_x && wraps_y {
-                rects.push((scroll_x, scroll_y, vp_w, map_h - scroll_y));
-                rects.push((scroll_x, 0.0, vp_w, y2 - map_h));
-            } else {
-                let w1 = map_w - scroll_x;
-                let w2 = x2 - map_w;
-                let h1 = map_h - scroll_y;
-                let h2 = y2 - map_h;
-                rects.push((scroll_x, scroll_y, w1, h1));
-                rects.push((0.0, scroll_y, w2, h1));
-                rects.push((scroll_x, 0.0, w1, h2));
-                rects.push((0.0, 0.0, w2, h2));
-            }
-
-            for (rx, ry, rw, rh) in rects {
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(origin.x + rx * scale_x, origin.y + ry * scale_y),
-                    egui::vec2(rw * scale_x, rh * scale_y),
-                );
-                ui.painter_at(response.rect).rect_stroke(
-                    rect,
-                    0.0,
-                    stroke,
-                    egui::StrokeKind::Outside,
-                );
-            }
+            let painter = ui.painter_at(response.rect);
+            draw_wrapped_viewport_rect(
+                &painter,
+                &ViewportOverlay {
+                    origin,
+                    scale_x,
+                    scale_y,
+                    scroll_x,
+                    scroll_y,
+                    viewport_w: 256.0,
+                    viewport_h: 240.0,
+                    map_w: width as f32,
+                    map_h: height as f32,
+                    color: egui::Color32::from_rgba_unmultiplied(0, 255, 0, 200),
+                },
+            );
         }
 
-        if let Some(pointer_pos) = response.hover_pos() {
-            let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
-                / response.rect.width())
-            .floor();
-            let rel_y = ((pointer_pos.y - response.rect.min.y) * (height as f32)
-                / response.rect.height())
-            .floor();
+        if let Some((px, py)) = super::common::hover_pixel_coords(&response, width, height) {
+            let nt_quad = (px / 256) + (py / 240) * 2;
+            let local_x = px % 256;
+            let local_y = py % 240;
+            let tile_col = local_x / 8;
+            let tile_row = local_y / 8;
+            let nt_offset = nt_quad * 0x400;
+            let tile_idx_addr = nt_offset + tile_row * 32 + tile_col;
+            let tile_index = gfx.nametable_data.get(tile_idx_addr).copied().unwrap_or(0);
+            let (attr_byte, palette) = nes_attr_palette(&gfx.nametable_data, nt_offset, tile_col, tile_row);
 
-            if rel_x >= 0.0 && rel_y >= 0.0 {
-                let px = rel_x as usize;
-                let py = rel_y as usize;
-                if px < width && py < height {
-                    let nt_quad = (px / 256) + (py / 240) * 2;
-                    let local_x = px % 256;
-                    let local_y = py % 240;
-                    let tile_col = local_x / 8;
-                    let tile_row = local_y / 8;
-                    let nt_offset = nt_quad * 0x400;
-                    let tile_idx_addr = nt_offset + tile_row * 32 + tile_col;
-                    let tile_index = gfx.nametable_data.get(tile_idx_addr).copied().unwrap_or(0);
-
-                    let attr_col = tile_col / 4;
-                    let attr_row = tile_row / 4;
-                    let attr_addr = nt_offset + 0x3C0 + attr_row * 8 + attr_col;
-                    let attr_byte = gfx.nametable_data.get(attr_addr).copied().unwrap_or(0);
-                    let shift = ((tile_col / 2) & 1) * 2 + ((tile_row / 2) & 1) * 4;
-                    let palette = (attr_byte >> shift) & 0x03;
-
-                    ui.separator();
-                    ui.monospace(format!(
-                        "NT{} ({:3},{:3}) tile:{:02X} attr:{:02X} pal:{}",
-                        nt_quad, local_x, local_y, tile_index, attr_byte, palette,
-                    ));
-                }
-            }
+            ui.separator();
+            ui.monospace(format!(
+                "NT{} ({:3},{:3}) tile:{:02X} attr:{:02X} pal:{}",
+                nt_quad, local_x, local_y, tile_index, attr_byte, palette,
+            ));
         }
     });
 }
@@ -168,20 +126,12 @@ fn render_nes_nametables(image: &mut egui::ColorImage, gfx: &NesGraphicsData) {
                     .copied()
                     .unwrap_or(0) as usize;
 
-                let attr_col = tile_col / 4;
-                let attr_row = tile_row / 4;
-                let attr_addr = nt_offset + 0x3C0 + attr_row * 8 + attr_col;
-                let attr_byte = gfx.nametable_data.get(attr_addr).copied().unwrap_or(0);
-                let shift = ((tile_col / 2) & 1) * 2 + ((tile_row / 2) & 1) * 4;
-                let palette_index = (attr_byte >> shift) & 0x03;
+                let (_, palette_index) = nes_attr_palette(&gfx.nametable_data, nt_offset, tile_col, tile_row);
 
                 let tile_addr = bg_pattern_base + tile_index * 16;
                 for row in 0..8usize {
-                    let lo = gfx.chr_data.get(tile_addr + row).copied().unwrap_or(0);
-                    let hi = gfx.chr_data.get(tile_addr + 8 + row).copied().unwrap_or(0);
                     for col in 0..8usize {
-                        let bit = 7 - col;
-                        let color_id = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                        let color_id = super::nes_tile_viewer::decode_nes_tile_pixel(&gfx.chr_data, tile_addr, row, col);
                         let rgba = nes_palette_rgba(
                             &gfx.palette_ram,
                             palette_index,

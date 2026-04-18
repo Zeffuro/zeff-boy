@@ -255,7 +255,7 @@ impl Mapper for Vrc4 {
         w.write_bool(self.irq_cycle_mode);
         w.write_bool(self.irq_pending);
 
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -278,15 +278,7 @@ impl Mapper for Vrc4 {
         self.irq_cycle_mode = r.read_bool()?;
         self.irq_pending = r.read_bool()?;
 
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "VRC4 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "VRC4")?;
         Ok(())
     }
 }

@@ -3,6 +3,23 @@ mod shader;
 
 use anyhow::Result;
 
+fn create_screen_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("screen texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
 use super::pipeline::{
     combined_shader_source, create_offscreen_texture, create_pipeline, create_texture_bind_group,
     preferred_filter,
@@ -62,20 +79,7 @@ pub(crate) struct FramebufferRenderer {
 
 impl FramebufferRenderer {
     pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Result<Self> {
-        let screen_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("screen texture"),
-            size: wgpu::Extent3d {
-                width: MIN_OFFSCREEN_WIDTH,
-                height: MIN_OFFSCREEN_HEIGHT,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let screen_texture = create_screen_texture(device, MIN_OFFSCREEN_WIDTH, MIN_OFFSCREEN_HEIGHT);
 
         let screen_view = screen_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -249,45 +253,13 @@ impl FramebufferRenderer {
         self.screen.native_width = width;
         self.screen.native_height = height;
 
-        self.screen.texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("screen texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        self.screen.texture = create_screen_texture(device, width, height);
         self.screen.view = self
             .screen
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let sampler = match self.sampler.current_filter {
-            wgpu::FilterMode::Linear => &self.sampler.linear_sampler,
-            wgpu::FilterMode::Nearest => &self.sampler.nearest_sampler,
-        };
-        self.screen.bind_group = create_texture_bind_group(
-            device,
-            &self.shader.bgl,
-            &self.screen.view,
-            sampler,
-            &self.sampler.params_buffer,
-            "screen bind group",
-        );
-        self.screen.bind_group_no_cc = create_texture_bind_group(
-            device,
-            &self.shader.bgl,
-            &self.screen.view,
-            sampler,
-            &self.sampler.params_buffer_no_cc,
-            "screen bind group no color correction",
-        );
+        self.rebuild_screen_bind_groups(device);
     }
 
     pub(crate) fn upload_framebuffer(&self, queue: &wgpu::Queue, framebuffer: &[u8]) {

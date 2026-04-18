@@ -95,15 +95,15 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
 
     let sections = vec![
         DebugSection {
-            heading: "Interrupts".into(),
+            heading: "Interrupts",
             lines: int_lines,
         },
         DebugSection {
-            heading: "PPU".into(),
+            heading: "PPU",
             lines: ppu_lines,
         },
         DebugSection {
-            heading: "Timer".into(),
+            heading: "Timer",
             lines: timer_lines,
         },
     ];
@@ -141,7 +141,7 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         cycles: info.cycles,
         last_opcode_line: format!("@ {:04X} = {:02X}", info.last_opcode_pc, info.last_opcode),
         sections,
-        mem_around_pc: info.mem_around_pc.to_vec(),
+        mem_around_pc: info.mem_around_pc,
         recent_op_lines,
         breakpoints: info.breakpoints.clone(),
         watchpoints: info

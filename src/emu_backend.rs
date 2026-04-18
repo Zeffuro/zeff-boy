@@ -50,6 +50,15 @@ pub(crate) enum EmuBackend {
     Nes(Box<NesBackend>),
 }
 
+macro_rules! dispatch {
+    ($self:expr, $method:ident ( $($arg:expr),* )) => {
+        match $self {
+            EmuBackend::Gb(b) => b.$method($($arg),*),
+            EmuBackend::Nes(b) => b.$method($($arg),*),
+        }
+    };
+}
+
 impl EmuBackend {
     pub(crate) fn from_gb(emu: zeff_gb_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Gb(Box::new(GbBackend::new(emu, rom_path)))
@@ -70,22 +79,6 @@ impl EmuBackend {
         match self {
             Self::Gb(..) => "gbstate",
             Self::Nes(..) => "nstate",
-        }
-    }
-
-    #[inline]
-    pub(crate) fn core(&self) -> &dyn EmulatorCore {
-        match self {
-            Self::Gb(b) => &**b,
-            Self::Nes(b) => &**b,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn core_mut(&mut self) -> &mut dyn EmulatorCore {
-        match self {
-            Self::Gb(b) => &mut **b,
-            Self::Nes(b) => &mut **b,
         }
     }
 
@@ -118,56 +111,96 @@ impl EmuBackend {
     }
 }
 
-macro_rules! delegate_to_core {
-    ($(fn $name:ident(&self $(, $($arg:ident : $ty:ty),*)?) $(-> $ret:ty)?;)*) => { $(
-        pub(crate) fn $name(&self $(, $($arg: $ty),*)?) $(-> $ret)? {
-            self.core().$name($($($arg),*)?)
-        }
-    )* };
-}
-
-macro_rules! delegate_to_core_mut {
-    ($(fn $name:ident(&mut self $(, $($arg:ident : $ty:ty),*)?) $(-> $ret:ty)?;)*) => { $(
-        pub(crate) fn $name(&mut self $(, $($arg: $ty),*)?) $(-> $ret)? {
-            self.core_mut().$name($($($arg),*)?)
-        }
-    )* };
-}
-
 impl EmuBackend {
-    delegate_to_core! {
-        fn framebuffer(&self) -> &[u8];
-        fn is_suspended(&self) -> bool;
-        fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>>;
-        fn rom_path(&self) -> &Path;
-        fn rom_hash(&self) -> [u8; 32];
-        fn rumble_active(&self) -> bool;
-        fn is_mbc7(&self) -> bool;
-        fn is_pocket_camera(&self) -> bool;
-        fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot>;
+    #[inline]
+    pub(crate) fn framebuffer(&self) -> &[u8] {
+        dispatch!(self, framebuffer())
     }
 
-    delegate_to_core_mut! {
-        fn step_frame(&mut self);
-        fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>);
-        fn set_sample_rate(&mut self, rate: u32);
-        fn set_apu_sample_generation_enabled(&mut self, enabled: bool);
-        fn set_apu_channel_mutes(&mut self, mutes: &[bool]);
-        fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8);
-        fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8);
-        fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>>;
-        fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()>;
+    #[inline]
+    pub(crate) fn is_suspended(&self) -> bool {
+        dispatch!(self, is_suspended())
+    }
+
+    pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        dispatch!(self, encode_state_bytes())
+    }
+
+    pub(crate) fn rom_path(&self) -> &Path {
+        dispatch!(self, rom_path())
+    }
+
+    pub(crate) fn rom_hash(&self) -> [u8; 32] {
+        dispatch!(self, rom_hash())
+    }
+
+    #[inline]
+    pub(crate) fn rumble_active(&self) -> bool {
+        dispatch!(self, rumble_active())
+    }
+
+    #[inline]
+    pub(crate) fn is_mbc7(&self) -> bool {
+        dispatch!(self, is_mbc7())
+    }
+
+    #[inline]
+    pub(crate) fn is_pocket_camera(&self) -> bool {
+        dispatch!(self, is_pocket_camera())
+    }
+
+    pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {
+        dispatch!(self, apu_channel_snapshot())
+    }
+
+    #[inline]
+    pub(crate) fn step_frame(&mut self) {
+        dispatch!(self, step_frame())
+    }
+
+    #[inline]
+    pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        dispatch!(self, drain_audio_samples_into(buf))
+    }
+
+    pub(crate) fn set_sample_rate(&mut self, rate: u32) {
+        dispatch!(self, set_sample_rate(rate))
+    }
+
+    pub(crate) fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        dispatch!(self, set_apu_sample_generation_enabled(enabled))
+    }
+
+    pub(crate) fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
+        dispatch!(self, set_apu_channel_mutes(mutes))
+    }
+
+    #[inline]
+    pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        dispatch!(self, set_input(buttons_pressed, dpad_pressed))
+    }
+
+    pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        dispatch!(self, set_input_p2(buttons_pressed, dpad_pressed))
+    }
+
+    pub(crate) fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        dispatch!(self, flush_battery_sram())
+    }
+
+    pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        dispatch!(self, load_state_from_bytes(bytes))
     }
 
     pub(crate) fn is_running(&self) -> bool {
-        !self.core().is_suspended()
+        !self.is_suspended()
     }
 
     pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<PathBuf> {
         crate::save_paths::slot_path(
             self.system().storage_subdir(),
             self.state_extension(),
-            self.core().rom_hash(),
+            self.rom_hash(),
             slot,
         )
     }
@@ -176,7 +209,7 @@ impl EmuBackend {
         Some(crate::save_paths::auto_save_path(
             self.system().storage_subdir(),
             self.state_extension(),
-            self.core().rom_hash(),
+            self.rom_hash(),
         ))
     }
 
@@ -185,7 +218,7 @@ impl EmuBackend {
         let bytes = crate::platform::read_save_data(&path)
             .with_context(|| format!("failed to read save state: {}", path.display()))?
             .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
-        self.core_mut().load_state_from_bytes(bytes)?;
+        self.load_state_from_bytes(bytes)?;
         Ok(path.display().to_string())
     }
 
@@ -193,7 +226,7 @@ impl EmuBackend {
         let bytes = crate::platform::read_save_data(path)
             .with_context(|| format!("failed to read save state: {}", path.display()))?
             .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
-        self.core_mut().load_state_from_bytes(bytes)
+        self.load_state_from_bytes(bytes)
     }
 }
 

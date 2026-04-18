@@ -86,3 +86,7 @@ static KEYCODE_MAP: phf::Map<&'static str, KeyCode> = phf::phf_map! {
 pub(crate) fn keycode_from_string(name: &str) -> Option<KeyCode> {
     KEYCODE_MAP.get(name).copied()
 }
+
+pub(crate) fn parse_key_or_default(raw: Option<&str>, default: KeyCode) -> KeyCode {
+    raw.and_then(keycode_from_string).unwrap_or(default)
+}

@@ -1,25 +1,10 @@
-use super::{DisassembledLine, Mnemonic, fmt_signed};
+use super::{DisassembledLine, InstructionBytes, Mnemonic, fmt_signed};
 
 const REG8: [&str; 8] = ["B", "C", "D", "E", "H", "L", "(HL)", "A"];
 const ALU_OPS: [&str; 8] = ["ADD A", "ADC A", "SUB", "SBC A", "AND", "XOR", "OR", "CP"];
 const ROT_OPS: [&str; 8] = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SWAP", "SRL"];
 
-pub(crate) fn disassemble_around(
-    bus_read: impl Fn(u16) -> u8,
-    pc: u16,
-    lines_before_pc: usize,
-    total_lines: usize,
-) -> Vec<DisassembledLine> {
-    let start =
-        super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
-    super::disassemble_at(
-        |addr| decode_instruction(&bus_read, addr),
-        start,
-        total_lines,
-    )
-}
-
-fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
+pub(super) fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
     let opcode = bus_read(addr);
     if opcode == 0xCB {
         return 2;
@@ -35,21 +20,24 @@ fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
     }
 }
 
-fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
+pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
     let opcode = bus_read(addr);
     if opcode == 0xCB {
         let cb = bus_read(addr.wrapping_add(1));
+        let mut bytes = InstructionBytes::new();
+        bytes.push(opcode);
+        bytes.push(cb);
         return DisassembledLine {
             address: addr,
-            bytes: vec![opcode, cb],
+            bytes,
             mnemonic: cb_mnemonic(cb),
         };
     }
 
     let len = instruction_len(bus_read, addr);
-    let bytes = (0..len)
+    let bytes: InstructionBytes = (0..len)
         .map(|i| bus_read(addr.wrapping_add(i as u16)))
-        .collect::<Vec<_>>();
+        .collect();
 
     let d8 = bus_read(addr.wrapping_add(1));
     let d16 = read_u16(bus_read, addr.wrapping_add(1));

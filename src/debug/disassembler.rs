@@ -1,4 +1,5 @@
 pub(crate) type Mnemonic = arrayvec::ArrayString<32>;
+pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 3>;
 
 macro_rules! mn {
     ($($arg:tt)*) => {{
@@ -11,7 +12,7 @@ macro_rules! mn {
 #[derive(Clone)]
 pub(crate) struct DisassembledLine {
     pub(crate) address: u16,
-    pub(crate) bytes: Vec<u8>,
+    pub(crate) bytes: InstructionBytes,
     pub(crate) mnemonic: Mnemonic,
 }
 
@@ -25,8 +26,46 @@ pub(crate) struct DisassemblyView {
 mod gb;
 mod nes;
 
-pub(crate) use gb::disassemble_around;
-pub(crate) use nes::disassemble_around as nes_disassemble_around;
+pub(crate) fn disassemble_around(
+    bus_read: impl Fn(u16) -> u8,
+    pc: u16,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    disassemble_around_with(
+        |addr| gb::instruction_len(&bus_read, addr),
+        |addr| gb::decode_instruction(&bus_read, addr),
+        pc,
+        lines_before_pc,
+        total_lines,
+    )
+}
+
+pub(crate) fn nes_disassemble_around(
+    bus_read: impl Fn(u16) -> u8,
+    pc: u16,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    disassemble_around_with(
+        |addr| nes::instruction_len(&bus_read, addr),
+        |addr| nes::decode_instruction(&bus_read, addr),
+        pc,
+        lines_before_pc,
+        total_lines,
+    )
+}
+
+fn disassemble_around_with(
+    inst_len: impl Fn(u16) -> usize,
+    decode: impl Fn(u16) -> DisassembledLine,
+    pc: u16,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    let start = choose_centered_start(inst_len, pc, lines_before_pc);
+    disassemble_at(decode, start, total_lines)
+}
 
 fn disassemble_at(
     decode: impl Fn(u16) -> DisassembledLine,

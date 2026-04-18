@@ -2,7 +2,7 @@ use crate::debug::TileViewerState;
 use crate::debug::common::nes_palette_rgba;
 use crate::debug::types::NesGraphicsData;
 
-fn decode_nes_tile_pixel(chr: &[u8], tile_addr: usize, row: usize, col: usize) -> u8 {
+pub(super) fn decode_nes_tile_pixel(chr: &[u8], tile_addr: usize, row: usize, col: usize) -> u8 {
     let lo = chr.get(tile_addr + row).copied().unwrap_or(0);
     let hi = chr.get(tile_addr + 8 + row).copied().unwrap_or(0);
     let bit = 7 - col;
@@ -48,17 +48,17 @@ pub(super) fn draw_nes_tile_viewer_content(
     let options_changed = window_state.last_use_cgb_colors != Some(use_obj)
         || window_state.last_cgb_palette_index != Some(palette_index);
     if options_changed {
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
         window_state.last_use_cgb_colors = Some(use_obj);
         window_state.last_cgb_palette_index = Some(palette_index);
     }
 
     if window_state.image.size != [width, height] {
         window_state.image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
     }
 
-    if window_state.vram_dirty {
+    if window_state.tracker.vram_dirty {
         render_nes_pattern_tables(
             &mut window_state.image,
             &gfx.chr_data,
@@ -67,32 +67,23 @@ pub(super) fn draw_nes_tile_viewer_content(
             palette_index,
             use_obj,
         );
-        window_state.vram_dirty = false;
+        window_state.tracker.vram_dirty = false;
     }
 
-    let texture = window_state.texture.get_or_insert_with(|| {
-        ui.ctx().load_texture(
-            "nes_tile_viewer",
-            window_state.image.clone(),
-            egui::TextureOptions::NEAREST,
-        )
-    });
-    texture.set(window_state.image.clone(), egui::TextureOptions::NEAREST);
-
-    let display_size = egui::vec2((width as f32) * 2.0, (height as f32) * 2.0);
-    ui.horizontal(|ui| {
-        super::export::export_png_button(ui, "nes_tiles.png", &window_state.image);
-    });
+    super::common::show_viewer_texture(
+        ui,
+        &mut window_state.texture,
+        &window_state.image,
+        "nes_tile_viewer",
+        "nes_tiles.png",
+        2.0,
+    );
 
     ui.separator();
     ui.horizontal(|ui| {
         ui.label("Pattern Table 0 ($0000)");
         ui.add_space(width as f32 - 100.0);
         ui.label("Pattern Table 1 ($1000)");
-    });
-
-    egui::ScrollArea::both().show(ui, |ui| {
-        ui.image((texture.id(), display_size));
     });
 }
 

@@ -21,36 +21,24 @@ pub(super) struct TraceContext<'a> {
     pub(super) op_extra: &'a str,
 }
 
+use std::fmt::Write;
+
 pub(super) fn format_op_line(traced: u64, ctx: &TraceContext<'_>) -> String {
-    format!(
-        "[op] n={} pc={:04X} op={:02X} cb={} step_t={} total_t={} ime={} if={:02X} ie={:02X} pend={:02X} div={:02X} tima={:02X} tac={:02X} a={:02X} f={:02X} znhc={}{}{}{} mode={}{}",
-        traced,
-        ctx.pc,
-        ctx.op,
-        if ctx.cb_prefix { 1 } else { 0 },
-        ctx.step_cycles,
-        ctx.total_t,
-        ctx.ime,
-        ctx.if_reg,
-        ctx.ie,
-        ctx.pending,
-        ctx.div,
-        ctx.tima,
-        ctx.tac,
-        ctx.a,
-        ctx.f,
-        ctx.zf,
-        ctx.nf,
-        ctx.hf,
-        ctx.cf,
-        ctx.mode,
-        ctx.op_extra
-    )
+    let mut s = format!("[op] n={}", traced);
+    write_op_fields(&mut s, ctx);
+    s
 }
 
 pub(super) fn format_op_tail_line(ctx: &TraceContext<'_>) -> String {
-    format!(
-        "[op-tail] pc={:04X} op={:02X} cb={} step_t={} total_t={} ime={} if={:02X} ie={:02X} pend={:02X} div={:02X} tima={:02X} tac={:02X} a={:02X} f={:02X} znhc={}{}{}{} mode={}{}",
+    let mut s = String::from("[op-tail]");
+    write_op_fields(&mut s, ctx);
+    s
+}
+
+fn write_op_fields(out: &mut String, ctx: &TraceContext<'_>) {
+    let _ = write!(
+        out,
+        " pc={:04X} op={:02X} cb={} step_t={} total_t={} ime={} if={:02X} ie={:02X} pend={:02X} div={:02X} tima={:02X} tac={:02X} a={:02X} f={:02X} znhc={}{}{}{} mode={}{}",
         ctx.pc,
         ctx.op,
         if ctx.cb_prefix { 1 } else { 0 },
@@ -71,7 +59,7 @@ pub(super) fn format_op_tail_line(ctx: &TraceContext<'_>) -> String {
         ctx.cf,
         ctx.mode,
         ctx.op_extra
-    )
+    );
 }
 
 pub(super) fn format_headless_summary(

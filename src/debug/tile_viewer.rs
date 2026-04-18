@@ -83,7 +83,7 @@ pub(super) fn draw_tile_viewer_content(
         || window_state.last_use_obj_palette != Some(use_obj_palette)
         || window_state.last_cgb_palette_index != Some(cgb_palette_index);
     if options_changed {
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
         window_state.last_vram_bank = Some(vram_bank);
         window_state.last_use_cgb_colors = Some(use_cgb_colors);
         window_state.last_use_obj_palette = Some(use_obj_palette);
@@ -92,11 +92,11 @@ pub(super) fn draw_tile_viewer_content(
 
     if window_state.image.size != [width, height] {
         window_state.image = egui::ColorImage::filled([width, height], egui::Color32::BLACK);
-        window_state.vram_dirty = true;
+        window_state.tracker.vram_dirty = true;
     }
 
     let bank_base = vram_bank * 0x2000;
-    if window_state.vram_dirty {
+    if window_state.tracker.vram_dirty {
         render_tile_viewer_into_image(
             &mut window_state.image,
             gfx,
@@ -108,25 +108,17 @@ pub(super) fn draw_tile_viewer_content(
                 bank_base,
             },
         );
-        window_state.vram_dirty = false;
+        window_state.tracker.vram_dirty = false;
     }
 
-    let texture = window_state.texture.get_or_insert_with(|| {
-        ui.ctx().load_texture(
-            "tile_viewer",
-            window_state.image.clone(),
-            egui::TextureOptions::NEAREST,
-        )
-    });
-    texture.set(window_state.image.clone(), egui::TextureOptions::NEAREST);
-
-    let display_size = egui::vec2((width as f32) * 2.0, (height as f32) * 2.0);
-    ui.horizontal(|ui| {
-        super::export::export_png_button(ui, "tiles.png", &window_state.image);
-    });
-    egui::ScrollArea::both().show(ui, |ui| {
-        ui.image((texture.id(), display_size));
-    });
+    super::common::show_viewer_texture(
+        ui,
+        &mut window_state.texture,
+        &window_state.image,
+        "tile_viewer",
+        "tiles.png",
+        2.0,
+    );
 }
 
 struct TileRenderOptions {

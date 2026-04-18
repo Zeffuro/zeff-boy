@@ -2,6 +2,14 @@ use std::path::Path;
 
 use crate::audio_recorder::MidiApuSnapshot;
 
+pub(crate) trait DebuggableEmulator {
+    fn add_breakpoint(&mut self, addr: u16);
+    fn add_watchpoint(&mut self, addr: u16, wt: zeff_emu_common::debug::WatchType);
+    fn remove_breakpoint(&mut self, addr: u16);
+    fn toggle_breakpoint(&mut self, addr: u16);
+    fn debug_write(&mut self, addr: u16, val: u8);
+}
+
 pub(crate) trait EmulatorCore {
     fn step_frame(&mut self);
     fn framebuffer(&self) -> &[u8];

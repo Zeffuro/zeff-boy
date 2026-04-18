@@ -4,17 +4,8 @@ pub(super) fn nes_oam_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> OamDe
     let oam = emu.ppu_oam();
     let tall_sprites = emu.ppu_tall_sprites();
 
-    let headers = vec![
-        "#".into(),
-        "X".into(),
-        "Y".into(),
-        "Tile".into(),
-        "Attr".into(),
-        "FlipH".into(),
-        "FlipV".into(),
-        "Pri".into(),
-        "Pal".into(),
-    ];
+    let headers: &'static [&'static str] =
+        &["#", "X", "Y", "Tile", "Attr", "FlipH", "FlipV", "Pri", "Pal"];
 
     let mut rows = Vec::with_capacity(64);
     for i in 0..64usize {

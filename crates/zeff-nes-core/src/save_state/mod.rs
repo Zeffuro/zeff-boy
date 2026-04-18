@@ -6,6 +6,25 @@ pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 2;
 
 const FORMAT_VERSION_V1_UNCOMPRESSED: u32 = 1;
 
+const CHR_MAX_SIZE: usize = 2 * 1024 * 1024;
+
+pub fn write_chr_state(w: &mut StateWriter, chr: &[u8]) {
+    w.write_vec(chr);
+}
+
+pub fn read_chr_state(r: &mut StateReader, chr: &mut Vec<u8>, label: &str) -> Result<()> {
+    let loaded = r.read_vec(CHR_MAX_SIZE)?;
+    if loaded.len() != chr.len() {
+        bail!(
+            "{label} CHR size mismatch: expected {}, got {}",
+            chr.len(),
+            loaded.len()
+        );
+    }
+    *chr = loaded;
+    Ok(())
+}
+
 pub fn encode_mirroring(m: crate::hardware::cartridge::Mirroring) -> u8 {
     use crate::hardware::cartridge::Mirroring;
     match m {

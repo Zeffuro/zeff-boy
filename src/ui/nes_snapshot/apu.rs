@@ -30,7 +30,7 @@ pub(super) fn nes_apu_snapshot(
 
     let channels = vec![
         ApuChannelDebug {
-            name: "Pulse 1".into(),
+            name: "Pulse 1",
             enabled: apu.pulse1.midi_active(),
             muted: muted[0],
             register_lines: vec![format!(
@@ -43,7 +43,7 @@ pub(super) fn nes_apu_snapshot(
             waveform: apu.channel_debug_samples_ordered(0),
         },
         ApuChannelDebug {
-            name: "Pulse 2".into(),
+            name: "Pulse 2",
             enabled: apu.pulse2.midi_active(),
             muted: muted[1],
             register_lines: vec![format!(
@@ -56,7 +56,7 @@ pub(super) fn nes_apu_snapshot(
             waveform: apu.channel_debug_samples_ordered(1),
         },
         ApuChannelDebug {
-            name: "Triangle".into(),
+            name: "Triangle",
             enabled: apu.triangle.midi_active(),
             muted: muted[2],
             register_lines: vec![format!(
@@ -68,7 +68,7 @@ pub(super) fn nes_apu_snapshot(
             waveform: apu.channel_debug_samples_ordered(2),
         },
         ApuChannelDebug {
-            name: "Noise".into(),
+            name: "Noise",
             enabled: apu.noise.midi_active(),
             muted: muted[3],
             register_lines: vec![format!(

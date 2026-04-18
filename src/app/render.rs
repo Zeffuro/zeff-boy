@@ -1,5 +1,5 @@
 use super::App;
-use crate::debug::{DebugUiActions, MenuAction};
+use crate::debug::{DebugDataRefs, DebugUiActions, MenuAction};
 use crate::graphics;
 
 impl App {
@@ -12,7 +12,7 @@ impl App {
 
         let speed_label = ui_frame_data
             .and_then(|d| d.perf_info.as_ref())
-            .map(|info| info.speed_mode_label.as_str());
+            .map(|info| info.speed_mode_label);
 
         let is_recording = self.recording.is_audio_recording();
         let is_recording_replay = self.recording.replay_recorder.is_some();
@@ -22,22 +22,24 @@ impl App {
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back =
             self.rewind.pops as f32 * self.settings.rewind.capture_interval() as f32 / 60.0;
-        let slot_labels = self.cached_slot_info.labels.clone();
+        let slot_labels = &self.cached_slot_info.labels;
         let slot_occupied = self.cached_slot_info.occupied;
 
         match gfx.render(graphics::RenderContext {
-            cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
-            perf_info: ui_frame_data.and_then(|d| d.perf_info.as_ref()),
-            apu_debug: ui_frame_data.and_then(|d| d.apu_debug.as_ref()),
-            oam_debug: ui_frame_data.and_then(|d| d.oam_debug.as_ref()),
-            palette_debug: ui_frame_data.and_then(|d| d.palette_debug.as_ref()),
-            rom_debug: ui_frame_data.and_then(|d| d.rom_debug.as_ref()),
-            input_debug: ui_frame_data.and_then(|d| d.input_debug.as_ref()),
-            graphics_data: ui_frame_data.and_then(|d| d.graphics_data.as_ref()),
-            disassembly_view: ui_frame_data.and_then(|d| d.disassembly_view.as_ref()),
-            memory_page: ui_frame_data.and_then(|d| d.memory_page.as_deref()),
-            rom_page: ui_frame_data.and_then(|d| d.rom_page.as_deref()),
-            rom_size: ui_frame_data.map_or(0, |d| d.rom_size),
+            data: DebugDataRefs {
+                cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
+                perf_info: ui_frame_data.and_then(|d| d.perf_info.as_ref()),
+                apu_debug: ui_frame_data.and_then(|d| d.apu_debug.as_ref()),
+                oam_debug: ui_frame_data.and_then(|d| d.oam_debug.as_ref()),
+                palette_debug: ui_frame_data.and_then(|d| d.palette_debug.as_ref()),
+                rom_debug: ui_frame_data.and_then(|d| d.rom_debug.as_ref()),
+                input_debug: ui_frame_data.and_then(|d| d.input_debug.as_ref()),
+                graphics_data: ui_frame_data.and_then(|d| d.graphics_data.as_ref()),
+                disassembly_view: ui_frame_data.and_then(|d| d.disassembly_view.as_ref()),
+                memory_page: ui_frame_data.and_then(|d| d.memory_page.as_deref()),
+                rom_page: ui_frame_data.and_then(|d| d.rom_page.as_deref()),
+                rom_size: ui_frame_data.map_or(0, |d| d.rom_size),
+            },
             debug_windows: &mut self.debug_windows,
             settings: &mut self.settings,
             show_settings_window: &mut self.show_settings_window,

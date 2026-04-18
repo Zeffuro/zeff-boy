@@ -1,6 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use zeff_gb_core::emulator::Emulator;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use std::path::Path;
 
 fn build_minimal_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 0x8000];
@@ -118,6 +119,45 @@ fn bench_audio_drain_into(c: &mut Criterion) {
     });
 }
 
+// Real ROM benchmarks, manifest: test-roms/gb-bench-roms.txt
+fn load_bench_manifest() -> Vec<(String, String)> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-roms/gb-bench-roms.txt");
+    let Ok(contents) = std::fs::read_to_string(&manifest) else {
+        eprintln!("bench manifest not found: {}", manifest.display());
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let (label, path) = l.split_once('\t')?;
+            Some((label.trim().to_string(), path.trim().to_string()))
+        })
+        .collect()
+}
+
+fn bench_real_roms(c: &mut Criterion) {
+    let test_roms_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-roms");
+    for (label, rom_path) in load_bench_manifest() {
+        let full = test_roms_dir.join(&rom_path);
+        let Ok(data) = std::fs::read(&full) else {
+            eprintln!("skipping {label}: ROM not found at {}", full.display());
+            continue;
+        };
+        let Ok(mut emu) = Emulator::from_rom_data(&data, HardwareModePreference::Auto) else {
+            eprintln!("skipping {label}: failed to load ROM");
+            continue;
+        };
+        for _ in 0..60 {
+            emu.step_frame();
+        }
+        c.bench_function(&label, |b| {
+            b.iter(|| emu.step_frame());
+        });
+    }
+}
+
 criterion_group!(
     benches,
     bench_step_instruction,
@@ -126,5 +166,6 @@ criterion_group!(
     bench_save_state_roundtrip,
     bench_audio_drain,
     bench_audio_drain_into,
+    bench_real_roms,
 );
 criterion_main!(benches);

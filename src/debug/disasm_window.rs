@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt::Write;
 
 use super::common::{COLOR_ADDR, COLOR_PC_HIGHLIGHT_BG, DEBUG_MONO_FONT_SIZE};
 use crate::debug::DisassemblyView;
@@ -70,15 +71,20 @@ pub(super) fn draw_disassembler_content(
     ui.label(header);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
+        let mut scratch = String::with_capacity(16);
+        let mut addr_buf = String::with_capacity(8);
+        let mut padded = String::with_capacity(12);
         for line in &view.lines {
             let is_pc = line.address == view.pc;
             let has_breakpoint = breakpoints.contains(&line.address);
-            let bytes = line
-                .bytes
-                .iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(" ");
+
+            scratch.clear();
+            for (i, b) in line.bytes.iter().enumerate() {
+                if i > 0 {
+                    scratch.push(' ');
+                }
+                let _ = write!(scratch, "{:02X}", b);
+            }
 
             let mut job = egui::text::LayoutJob::default();
 
@@ -88,13 +94,17 @@ pub(super) fn draw_disassembler_content(
                 job.append("     ", 0.0, fmt_normal.clone());
             }
 
-            job.append(&format!("{:04X}: ", line.address), 0.0, fmt_addr.clone());
+            addr_buf.clear();
+            let _ = write!(addr_buf, "{:04X}: ", line.address);
+            job.append(&addr_buf, 0.0, fmt_addr.clone());
 
             let mut fmt_code = fmt_normal.clone();
             if is_pc {
                 fmt_code.background = COLOR_PC_HIGHLIGHT_BG;
             }
-            job.append(&format!("{:<11} ", bytes), 0.0, fmt_code.clone());
+            padded.clear();
+            let _ = write!(padded, "{:<11} ", scratch);
+            job.append(&padded, 0.0, fmt_code.clone());
             job.append(&line.mnemonic, 0.0, fmt_code);
 
             let label = ui.add(egui::Label::new(job).sense(egui::Sense::click()));

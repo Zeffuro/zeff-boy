@@ -1,22 +1,26 @@
 use super::common::parse_hex_u8;
 use crate::debug::types::{MemorySearchMode, MemorySearchResult, RomSearchResult};
+use std::fmt::Write;
 
 pub(super) trait HexSearchResult {
     fn display_label(&self) -> String;
     fn jump_address(&self) -> u32;
 }
 
+fn format_matched_bytes(s: &mut String, bytes: &[u8]) {
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        let _ = write!(s, "{:02X}", b);
+    }
+}
+
 impl HexSearchResult for MemorySearchResult {
     fn display_label(&self) -> String {
-        format!(
-            "{:04X}: {}",
-            self.address,
-            self.matched_bytes
-                .iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
+        let mut s = format!("{:04X}: ", self.address);
+        format_matched_bytes(&mut s, &self.matched_bytes);
+        s
     }
     fn jump_address(&self) -> u32 {
         self.address as u32
@@ -26,16 +30,9 @@ impl HexSearchResult for MemorySearchResult {
 impl HexSearchResult for RomSearchResult {
     fn display_label(&self) -> String {
         let bank = self.offset / 0x4000;
-        format!(
-            "{:06X} [bank {:02X}]: {}",
-            self.offset,
-            bank,
-            self.matched_bytes
-                .iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
+        let mut s = format!("{:06X} [bank {:02X}]: ", self.offset, bank);
+        format_matched_bytes(&mut s, &self.matched_bytes);
+        s
     }
     fn jump_address(&self) -> u32 {
         self.offset

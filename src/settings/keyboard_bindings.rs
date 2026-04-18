@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use winit::keyboard::KeyCode;
 
 use super::binding_actions::BindingAction;
-use super::keycode_serde::{keycode_from_string, keycode_to_string};
+use super::keycode_serde::{keycode_to_string, parse_key_or_default};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeyBindings {
@@ -97,48 +97,16 @@ impl<'de> Deserialize<'de> for KeyBindings {
         }
 
         let raw = RawKeyBindings::deserialize(deserializer)?;
-        let defaults = Self::default();
+        let d = Self::default();
         Ok(Self {
-            up: raw
-                .up
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.up),
-            down: raw
-                .down
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.down),
-            left: raw
-                .left
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.left),
-            right: raw
-                .right
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.right),
-            a: raw
-                .a
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.a),
-            b: raw
-                .b
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.b),
-            start: raw
-                .start
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.start),
-            select: raw
-                .select
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.select),
+            up: parse_key_or_default(raw.up.as_deref(), d.up),
+            down: parse_key_or_default(raw.down.as_deref(), d.down),
+            left: parse_key_or_default(raw.left.as_deref(), d.left),
+            right: parse_key_or_default(raw.right.as_deref(), d.right),
+            a: parse_key_or_default(raw.a.as_deref(), d.a),
+            b: parse_key_or_default(raw.b.as_deref(), d.b),
+            start: parse_key_or_default(raw.start.as_deref(), d.start),
+            select: parse_key_or_default(raw.select.as_deref(), d.select),
         })
     }
 }

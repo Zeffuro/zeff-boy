@@ -74,3 +74,17 @@ pub(crate) fn draw_settings_window(
                 });
         });
 }
+
+pub(super) fn draw_console_section_header(
+    ui: &mut egui::Ui,
+    label: &str,
+    active_system: Option<ActiveSystem>,
+    target: ActiveSystem,
+) {
+    ui.horizontal(|ui| {
+        ui.heading(label);
+        if active_system == Some(target) {
+            ui.label(egui::RichText::new("(active)").weak().italics().small());
+        }
+    });
+}

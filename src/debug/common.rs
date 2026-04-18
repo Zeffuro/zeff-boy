@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 pub(crate) const COLOR_ADDR: egui::Color32 = egui::Color32::from_rgb(140, 140, 170);
@@ -24,12 +25,13 @@ pub(crate) fn printable_ascii(byte: u8) -> char {
     }
 }
 
-pub(crate) fn tbl_lookup(byte: u8, tbl_map: &HashMap<u8, String>) -> (String, bool) {
+pub(crate) fn tbl_lookup<'a>(byte: u8, tbl_map: &'a HashMap<u8, String>) -> Cow<'a, str> {
     if let Some(mapped) = tbl_map.get(&byte) {
-        (mapped.clone(), true)
+        Cow::Borrowed(mapped.as_str())
     } else {
         let ch = printable_ascii(byte);
-        (ch.to_string(), false)
+        let mut buf = [0u8; 4];
+        Cow::Owned(ch.encode_utf8(&mut buf).to_owned())
     }
 }
 
@@ -95,4 +97,62 @@ pub(crate) fn nes_palette_rgba(
     let (r, g, b) = NES_PALETTE[nes_color];
     let (r, g, b) = apply_nes_palette_mode(palette_mode, (r, g, b));
     [r, g, b, 255]
+}
+
+pub(super) fn show_viewer_texture(
+    ui: &mut egui::Ui,
+    texture: &mut Option<egui::TextureHandle>,
+    image: &egui::ColorImage,
+    name: &str,
+    export_filename: &str,
+    scale: f32,
+) -> egui::Response {
+    let tex = texture.get_or_insert_with(|| {
+        ui.ctx()
+            .load_texture(name, image.clone(), egui::TextureOptions::NEAREST)
+    });
+    tex.set(image.clone(), egui::TextureOptions::NEAREST);
+
+    let display_size = egui::vec2(
+        image.size[0] as f32 * scale,
+        image.size[1] as f32 * scale,
+    );
+    ui.horizontal(|ui| {
+        super::export::export_png_button(ui, export_filename, image);
+    });
+    egui::ScrollArea::both()
+        .show(ui, |ui| ui.image((tex.id(), display_size)))
+        .inner
+}
+
+pub(super) fn persisted_checkbox(ui: &mut egui::Ui, id: egui::Id, label: &str, default: bool) -> bool {
+    let mut val = ui
+        .ctx()
+        .data_mut(|d| d.get_persisted::<bool>(id))
+        .unwrap_or(default);
+    ui.checkbox(&mut val, label);
+    ui.ctx().data_mut(|d| d.insert_persisted(id, val));
+    val
+}
+
+pub(super) fn hover_pixel_coords(
+    response: &egui::Response,
+    width: usize,
+    height: usize,
+) -> Option<(usize, usize)> {
+    let pointer_pos = response.hover_pos()?;
+    let rel_x = ((pointer_pos.x - response.rect.min.x) * (width as f32)
+        / response.rect.width())
+    .floor();
+    let rel_y = ((pointer_pos.y - response.rect.min.y) * (height as f32)
+        / response.rect.height())
+    .floor();
+    if rel_x >= 0.0 && rel_y >= 0.0 {
+        let px = rel_x as usize;
+        let py = rel_y as usize;
+        if px < width && py < height {
+            return Some((px, py));
+        }
+    }
+    None
 }

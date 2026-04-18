@@ -95,13 +95,13 @@ pub(crate) fn apply_enabled_mods(rom: &mut Vec<u8>, dir: &Path, mods: &[ModEntry
                     .and_then(|e| e.to_str())
                     .map(|s| s.to_ascii_lowercase());
                 let result = match ext.as_deref() {
-                    Some("bps") => crate::bps::apply_bps_patch(rom, &patch_data).map(|new| {
+                    Some("bps") => crate::patching::apply_bps_patch(rom, &patch_data).map(|new| {
                         *rom = new;
                     }),
-                    Some("ups") => crate::ups::apply_ups_patch(rom, &patch_data).map(|new| {
+                    Some("ups") => crate::patching::apply_ups_patch(rom, &patch_data).map(|new| {
                         *rom = new;
                     }),
-                    _ => crate::ips::apply_ips_patch(rom, &patch_data),
+                    _ => crate::patching::apply_ips_patch(rom, &patch_data),
                 };
                 match result {
                     Ok(()) => log::info!("Applied mod: {}", entry.filename),

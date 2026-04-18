@@ -271,7 +271,7 @@ impl Mapper for Fme7 {
 
         w.write_bool(self.has_battery);
         w.write_vec(&self.prg_ram);
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
 
         // Sunsoft 5B audio state (new — preceded by marker for detection)
         w.write_bytes(SN5B_AUDIO_MARKER);
@@ -307,15 +307,7 @@ impl Mapper for Fme7 {
         }
         self.prg_ram = prg_ram;
 
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "FME-7 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "FME-7")?;
 
         let saved_pos = r.position();
         let mut marker = [0u8; 4];

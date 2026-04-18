@@ -39,7 +39,7 @@ fn discover_finds_ups_files() {
     let dir = std::env::temp_dir().join("zeff_test_mods_discover_ups");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
-    std::fs::write(dir.join("patch.ups"), make_test_ups(&[0; 4], &[0; 4])).unwrap();
+    std::fs::write(dir.join("patch.ups"), crate::patching::ups::make_ups(&[0; 4], &[0; 4])).unwrap();
     std::fs::write(dir.join("not_ups.ups"), b"NOPE not a real ups file here").unwrap();
     let mods = discover_mods(&dir);
     let names: Vec<&str> = mods.iter().map(|m| m.filename.as_str()).collect();
@@ -124,7 +124,7 @@ fn apply_enabled_mods_applies_ups_patches() {
 
     let source = vec![0u8; 8];
     let target = vec![0xAA, 0xBB, 0xCC, 0xDD, 0x00, 0x00, 0x00, 0x00];
-    let patch = make_test_ups(&source, &target);
+    let patch = crate::patching::ups::make_ups(&source, &target);
     std::fs::write(dir.join("test.ups"), &patch).unwrap();
 
     let entries = vec![ModEntry {
@@ -140,93 +140,20 @@ fn apply_enabled_mods_applies_ups_patches() {
 }
 
 fn make_test_bps(source: &[u8], target: &[u8]) -> Vec<u8> {
-    fn encode_varint(mut value: u64) -> Vec<u8> {
-        let mut buf = Vec::new();
-        loop {
-            let mut byte = (value & 0x7f) as u8;
-            value >>= 7;
-            if value == 0 {
-                byte |= 0x80;
-                buf.push(byte);
-                break;
-            }
-            buf.push(byte);
-            value -= 1;
-        }
-        buf
-    }
-
     let mut patch = Vec::new();
     patch.extend_from_slice(b"BPS1");
-    patch.extend(encode_varint(source.len() as u64));
-    patch.extend(encode_varint(target.len() as u64));
-    patch.extend(encode_varint(0));
+    patch.extend(crate::patching::encode_varint(source.len() as u64));
+    patch.extend(crate::patching::encode_varint(target.len() as u64));
+    patch.extend(crate::patching::encode_varint(0));
 
     let cmd = ((target.len() as u64 - 1) << 2) | 1;
-    patch.extend(encode_varint(cmd));
+    patch.extend(crate::patching::encode_varint(cmd));
     patch.extend_from_slice(target);
 
-    let source_crc = crc32fast::hash(source);
-    let target_crc = crc32fast::hash(target);
-    patch.extend_from_slice(&source_crc.to_le_bytes());
-    patch.extend_from_slice(&target_crc.to_le_bytes());
-    let patch_crc = crc32fast::hash(&patch);
-    patch.extend_from_slice(&patch_crc.to_le_bytes());
+    crate::patching::append_patch_crcs(&mut patch, source, target);
     patch
 }
 
-fn make_test_ups(source: &[u8], target: &[u8]) -> Vec<u8> {
-    fn encode_varint(mut value: u64) -> Vec<u8> {
-        let mut buf = Vec::new();
-        loop {
-            let mut byte = (value & 0x7f) as u8;
-            value >>= 7;
-            if value == 0 {
-                byte |= 0x80;
-                buf.push(byte);
-                break;
-            }
-            buf.push(byte);
-            value -= 1;
-        }
-        buf
-    }
 
-    let mut patch = Vec::new();
-    patch.extend_from_slice(b"UPS1");
-    patch.extend(encode_varint(source.len() as u64));
-    patch.extend(encode_varint(target.len() as u64));
 
-    let max_len = source.len().max(target.len());
-    let mut write_offset: usize = 0;
-    let mut i = 0;
-    while i < max_len {
-        let s = if i < source.len() { source[i] } else { 0 };
-        let t = if i < target.len() { target[i] } else { 0 };
-        if s != t {
-            let skip = i - write_offset;
-            patch.extend(encode_varint(skip as u64));
-            while i < max_len {
-                let s = if i < source.len() { source[i] } else { 0 };
-                let t = if i < target.len() { target[i] } else { 0 };
-                let xor = s ^ t;
-                if xor == 0 {
-                    break;
-                }
-                patch.push(xor);
-                i += 1;
-            }
-            patch.push(0x00);
-            write_offset = i + 1;
-        }
-        i += 1;
-    }
 
-    let source_crc = crc32fast::hash(source);
-    let target_crc = crc32fast::hash(target);
-    patch.extend_from_slice(&source_crc.to_le_bytes());
-    patch.extend_from_slice(&target_crc.to_le_bytes());
-    let patch_crc = crc32fast::hash(&patch);
-    patch.extend_from_slice(&patch_crc.to_le_bytes());
-    patch
-}

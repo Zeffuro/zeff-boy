@@ -19,6 +19,7 @@ arrayvec = "0.7.6"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
+proptest = "1.6"
 
 [[bench]]
 name = "gb_benchmarks"

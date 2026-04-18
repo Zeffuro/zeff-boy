@@ -38,22 +38,22 @@ impl Emulator {
 
         if watch_active {
             self.bus.debug_trace_enabled = false;
-            let events: Vec<DebugTraceEvent> = self.bus.debug_trace_events.drain(..).collect();
-            for event in events {
+            let debug = &mut self.debug;
+            for event in self.bus.debug_trace_events.drain(..) {
                 match event {
                     DebugTraceEvent::Read { addr, value } => {
-                        self.debug.check_watch_read(addr, value);
+                        debug.check_watch_read(addr, value);
                     }
                     DebugTraceEvent::Write {
                         addr,
                         old_value,
                         new_value,
                     } => {
-                        self.debug.check_watch_write(addr, old_value, new_value);
+                        debug.check_watch_write(addr, old_value, new_value);
                     }
                 }
             }
-            if self.debug.hit_watchpoint.is_some() {
+            if debug.hit_watchpoint.is_some() {
                 self.cpu.state = CpuState::Suspended;
             }
         }

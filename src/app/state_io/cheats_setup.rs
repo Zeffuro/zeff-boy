@@ -1,23 +1,29 @@
 use super::App;
+use crate::debug::types::CheatState;
 use crate::emu_backend::{ActiveSystem, EmuBackend};
+use crate::libretro_common::LibretroPlatform;
 use std::path::Path;
 
 impl App {
+    pub(in crate::app) fn save_current_cheats(&self) {
+        if let Some(ref title) = self.debug_windows.cheat.rom_title {
+            crate::cheats::save_game_cheats(
+                self.active_system,
+                Some(title),
+                self.debug_windows.cheat.rom_crc32,
+                &self.debug_windows.cheat.user_codes,
+                &self.debug_windows.cheat.libretro_codes,
+            );
+        }
+    }
+
     pub(in crate::app) fn setup_cheats_for_rom(
         &mut self,
         system: ActiveSystem,
         path: &Path,
         backend: &EmuBackend,
     ) {
-        if let Some(ref old_title) = self.debug_windows.cheat.rom_title {
-            crate::cheats::save_game_cheats(
-                self.debug_windows.cheat.active_system,
-                Some(old_title),
-                self.debug_windows.cheat.rom_crc32,
-                &self.debug_windows.cheat.user_codes,
-                &self.debug_windows.cheat.libretro_codes,
-            );
-        }
+        self.save_current_cheats();
 
         self.debug_windows.cheat.active_system = system;
 
@@ -30,32 +36,13 @@ impl App {
             } else {
                 crate::libretro_common::LibretroPlatform::Gb
             };
-            let libretro_meta = crate::libretro_metadata::lookup_cached(rom_crc32, platform);
-            let search_hints = crate::libretro_metadata::build_cheat_search_hints(
-                &rom_header_title,
-                libretro_meta.as_ref(),
+            apply_cheat_rom_info(
+                &mut self.debug_windows.cheat,
+                system,
+                rom_header_title,
+                Some(rom_crc32),
+                platform,
             );
-
-            self.debug_windows.cheat.rom_title = Some(rom_header_title.clone());
-            self.debug_windows.cheat.rom_crc32 = Some(rom_crc32);
-            self.debug_windows.cheat.rom_metadata_title =
-                libretro_meta.as_ref().map(|m| m.title.clone());
-            self.debug_windows.cheat.rom_metadata_rom_name =
-                libretro_meta.as_ref().map(|m| m.rom_name.clone());
-            self.debug_windows.cheat.libretro_platform = platform;
-            self.debug_windows.cheat.libretro_search_hints = search_hints;
-            self.debug_windows.cheat.libretro_search = self
-                .debug_windows
-                .cheat
-                .libretro_search_hints
-                .first()
-                .cloned()
-                .unwrap_or_else(|| rom_header_title.clone());
-
-            let (user, libretro) =
-                crate::cheats::load_game_cheats(system, Some(&rom_header_title), Some(rom_crc32));
-            self.debug_windows.cheat.user_codes = user;
-            self.debug_windows.cheat.libretro_codes = libretro;
         } else if system == ActiveSystem::Nes {
             let rom_title = path
                 .file_stem()
@@ -64,33 +51,13 @@ impl App {
                 .to_string();
             let rom_crc32 = backend.nes().map(|nes| nes.emu.rom_crc32());
             let platform = crate::libretro_common::LibretroPlatform::Nes;
-            let libretro_meta =
-                rom_crc32.and_then(|crc| crate::libretro_metadata::lookup_cached(crc, platform));
-            let search_hints = crate::libretro_metadata::build_cheat_search_hints(
-                &rom_title,
-                libretro_meta.as_ref(),
+            apply_cheat_rom_info(
+                &mut self.debug_windows.cheat,
+                system,
+                rom_title,
+                rom_crc32,
+                platform,
             );
-
-            self.debug_windows.cheat.rom_title = Some(rom_title.clone());
-            self.debug_windows.cheat.rom_crc32 = rom_crc32;
-            self.debug_windows.cheat.rom_metadata_title =
-                libretro_meta.as_ref().map(|m| m.title.clone());
-            self.debug_windows.cheat.rom_metadata_rom_name =
-                libretro_meta.as_ref().map(|m| m.rom_name.clone());
-            self.debug_windows.cheat.libretro_platform = platform;
-            self.debug_windows.cheat.libretro_search_hints = search_hints;
-            self.debug_windows.cheat.libretro_search = self
-                .debug_windows
-                .cheat
-                .libretro_search_hints
-                .first()
-                .cloned()
-                .unwrap_or_else(|| rom_title.clone());
-
-            let (user, libretro) =
-                crate::cheats::load_game_cheats(system, Some(&rom_title), rom_crc32);
-            self.debug_windows.cheat.user_codes = user;
-            self.debug_windows.cheat.libretro_codes = libretro;
         } else {
             self.debug_windows.cheat.rom_title = None;
             self.debug_windows.cheat.rom_crc32 = None;
@@ -116,4 +83,34 @@ impl App {
         self.debug_windows.mod_state.needs_reload = false;
         self.debug_windows.mod_state.status_message = None;
     }
+}
+
+fn apply_cheat_rom_info(
+    cheat: &mut CheatState,
+    system: ActiveSystem,
+    rom_title: String,
+    rom_crc32: Option<u32>,
+    platform: LibretroPlatform,
+) {
+    let libretro_meta =
+        rom_crc32.and_then(|crc| crate::libretro_metadata::lookup_cached(crc, platform));
+    let search_hints =
+        crate::libretro_metadata::build_cheat_search_hints(&rom_title, libretro_meta.as_ref());
+
+    cheat.rom_title = Some(rom_title.clone());
+    cheat.rom_crc32 = rom_crc32;
+    cheat.rom_metadata_title = libretro_meta.as_ref().map(|m| m.title.clone());
+    cheat.rom_metadata_rom_name = libretro_meta.as_ref().map(|m| m.rom_name.clone());
+    cheat.libretro_platform = platform;
+    cheat.libretro_search_hints = search_hints;
+    cheat.libretro_search = cheat
+        .libretro_search_hints
+        .first()
+        .cloned()
+        .unwrap_or(rom_title);
+
+    let (user, libretro) =
+        crate::cheats::load_game_cheats(system, cheat.rom_title.as_deref(), rom_crc32);
+    cheat.user_codes = user;
+    cheat.libretro_codes = libretro;
 }

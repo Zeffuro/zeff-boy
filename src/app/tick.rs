@@ -3,12 +3,51 @@ use super::{
     VIEWER_UPDATE_INTERVAL,
 };
 use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
+use crate::debug::dock::TabDataRequirements;
 use crate::emu_thread::{
     AudioConfig, EmuCommand, FrameInput, JoypadInput, MemorySearchRequest, RenderSettings,
     ReusableBuffers, SnapshotRequest,
 };
 use crate::platform::Instant;
 use crate::settings::GamepadAction;
+
+fn parse_pending_search(
+    state: &mut impl SearchableState,
+) -> Option<MemorySearchRequest> {
+    if !state.search_pending() {
+        return None;
+    }
+    state.set_search_pending(false);
+    debug::hex_search::parse_search_query(state.search_query(), state.search_mode())
+        .map(|pattern| MemorySearchRequest {
+            pattern,
+            max_results: state.search_max_results(),
+        })
+}
+
+trait SearchableState {
+    fn search_pending(&self) -> bool;
+    fn set_search_pending(&mut self, v: bool);
+    fn search_query(&self) -> &str;
+    fn search_mode(&self) -> crate::debug::MemorySearchMode;
+    fn search_max_results(&self) -> usize;
+}
+
+impl SearchableState for crate::debug::MemoryViewerState {
+    fn search_pending(&self) -> bool { self.search_pending }
+    fn set_search_pending(&mut self, v: bool) { self.search_pending = v; }
+    fn search_query(&self) -> &str { &self.search_query }
+    fn search_mode(&self) -> crate::debug::MemorySearchMode { self.search_mode }
+    fn search_max_results(&self) -> usize { self.search_max_results }
+}
+
+impl SearchableState for crate::debug::RomViewerState {
+    fn search_pending(&self) -> bool { self.search_pending }
+    fn set_search_pending(&mut self, v: bool) { self.search_pending = v; }
+    fn search_query(&self) -> &str { &self.search_query }
+    fn search_mode(&self) -> crate::debug::MemorySearchMode { self.search_mode }
+    fn search_max_results(&self) -> usize { self.search_max_results }
+}
 
 fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {
     const GB_FRAME_LEN: usize = 160 * 144 * 4;
@@ -130,6 +169,83 @@ impl App {
         }
     }
 
+    fn gather_joypad_input(&mut self) -> (u8, u8) {
+        let (mut buttons, dpad) = if let Some(player) = &mut self.recording.replay_player {
+            if let Some((buttons, dpad)) = player.next_frame() {
+                (buttons, dpad)
+            } else {
+                self.toast_manager.info("Replay finished");
+                self.recording.replay_player = None;
+                (
+                    self.host_input.buttons_pressed(),
+                    self.host_input.dpad_pressed(),
+                )
+            }
+        } else {
+            (
+                self.host_input.buttons_pressed(),
+                self.host_input.dpad_pressed(),
+            )
+        };
+
+        if self.speed.turbo_held {
+            self.speed.turbo_counter = self.speed.turbo_counter.wrapping_add(1);
+            if self.speed.turbo_counter % 2 == 1 {
+                buttons = 0;
+            }
+        } else {
+            self.speed.turbo_counter = 0;
+        }
+
+        if let Some(recorder) = &mut self.recording.replay_recorder {
+            recorder.record_frame(buttons, dpad);
+        }
+
+        (buttons, dpad)
+    }
+
+    fn build_snapshot_request(
+        &mut self,
+        reqs: &TabDataRequirements,
+        want_viewer_update: bool,
+    ) -> SnapshotRequest {
+        SnapshotRequest {
+            want_debug_info: (reqs.needs_debug_info || self.settings.ui.show_fps),
+            want_perf_info: reqs.needs_perf_info || self.settings.ui.show_fps,
+            any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
+            any_vram_viewer_open: reqs.needs_vram && want_viewer_update,
+            show_oam_viewer: reqs.needs_oam && want_viewer_update,
+            show_apu_viewer: reqs.needs_apu && want_viewer_update,
+            show_disassembler: reqs.needs_disassembly && want_viewer_update,
+            show_rom_info: reqs.needs_rom_info && want_viewer_update,
+            show_memory_viewer: reqs.needs_memory_page && want_viewer_update,
+            memory_view_start: self.debug_windows.memory.view_start,
+            show_rom_viewer: reqs.needs_rom_page && want_viewer_update,
+            rom_view_start: self.debug_windows.rom_viewer.view_start,
+            last_disasm_pc: self.debug_windows.last_disasm_pc,
+            memory_search: parse_pending_search(&mut self.debug_windows.memory),
+            rom_search: parse_pending_search(&mut self.debug_windows.rom_viewer),
+            render: RenderSettings {
+                color_correction: self.settings.video.color_correction,
+                color_correction_matrix: self.settings.video.color_correction_matrix,
+                dmg_palette_preset: self.settings.video.dmg_palette_preset,
+                nes_palette_mode: self.settings.video.nes_palette_mode,
+                sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
+            },
+        }
+    }
+
+    fn take_reusable_buffers(&mut self) -> ReusableBuffers {
+        ReusableBuffers {
+            audio: self.recycled.audio.take(),
+            vram: self.recycled.vram.take(),
+            oam: self.recycled.oam.take(),
+            memory_page: self.recycled.memory_page.take(),
+            nes_chr: self.recycled.nes_chr.take(),
+            nes_nametable: self.recycled.nes_nametable.take(),
+        }
+    }
+
     pub(super) fn tick(&mut self) {
         self.sync_speed_setting();
         if self.last_audio_output_sample_rate != self.settings.audio.output_sample_rate {
@@ -190,158 +306,65 @@ impl App {
                     self.debug_requests.has_pending() || self.pending_debug_actions.has_pending();
 
                 if frames_to_step > 0 || has_pending {
-                    let host_camera_frame = self.camera_frame();
-                    if let Some(thread) = &self.emu_thread {
-                        let want_viewer_update = match self.speed_mode() {
-                            SpeedMode::Normal => true,
-                            SpeedMode::FastForward | SpeedMode::Uncapped => {
-                                let now = Instant::now();
-                                if now.duration_since(self.timing.last_viewer_update)
-                                    >= VIEWER_UPDATE_INTERVAL
-                                {
-                                    self.timing.last_viewer_update = now;
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                        };
-
-                        let (mut buttons_pressed, dpad_pressed) =
-                            if let Some(player) = &mut self.recording.replay_player {
-                                if let Some((buttons, dpad)) = player.next_frame() {
-                                    (buttons, dpad)
-                                } else {
-                                    self.toast_manager.info("Replay finished");
-                                    self.recording.replay_player = None;
-                                    (
-                                        self.host_input.buttons_pressed(),
-                                        self.host_input.dpad_pressed(),
-                                    )
-                                }
+                    let want_viewer_update = match self.speed_mode() {
+                        SpeedMode::Normal => true,
+                        SpeedMode::FastForward | SpeedMode::Uncapped => {
+                            let now = Instant::now();
+                            if now.duration_since(self.timing.last_viewer_update)
+                                >= VIEWER_UPDATE_INTERVAL
+                            {
+                                self.timing.last_viewer_update = now;
+                                true
                             } else {
-                                (
-                                    self.host_input.buttons_pressed(),
-                                    self.host_input.dpad_pressed(),
-                                )
-                            };
-
-                        if self.speed.turbo_held {
-                            self.speed.turbo_counter = self.speed.turbo_counter.wrapping_add(1);
-                            if self.speed.turbo_counter % 2 == 1 {
-                                buttons_pressed = 0;
+                                false
                             }
-                        } else {
-                            self.speed.turbo_counter = 0;
                         }
+                    };
 
-                        if let Some(recorder) = &mut self.recording.replay_recorder {
-                            recorder.record_frame(buttons_pressed, dpad_pressed);
-                        }
+                    let host_camera_frame = self.camera_frame();
+                    let (buttons_pressed, dpad_pressed) = self.gather_joypad_input();
+                    let reqs = debug::compute_tab_requirements(&self.debug_dock);
+                    let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
+                    let buffers = self.take_reusable_buffers();
 
-                        let reqs = debug::compute_tab_requirements(&self.debug_dock);
-                        let input = FrameInput {
-                            frames: frames_to_step,
-                            host_tilt,
-                            host_camera_frame,
-                            joypad: JoypadInput {
-                                buttons: buttons_pressed,
-                                dpad: dpad_pressed,
-                                buttons_p2: 0,
-                                dpad_p2: 0,
+                    let input = FrameInput {
+                        frames: frames_to_step,
+                        host_tilt,
+                        host_camera_frame,
+                        joypad: JoypadInput {
+                            buttons: buttons_pressed,
+                            dpad: dpad_pressed,
+                            buttons_p2: 0,
+                            dpad_p2: 0,
+                        },
+                        debug_step: std::mem::take(&mut self.debug_requests.step),
+                        debug_continue: std::mem::take(&mut self.debug_requests.continue_),
+                        audio: AudioConfig {
+                            apu_capture_enabled: reqs.needs_apu,
+                            skip_audio: match self.speed_mode() {
+                                SpeedMode::Uncapped => true,
+                                SpeedMode::FastForward => {
+                                    self.settings.audio.mute_during_fast_forward
+                                }
+                                SpeedMode::Normal => false,
                             },
-                            debug_step: std::mem::take(&mut self.debug_requests.step),
-                            debug_continue: std::mem::take(&mut self.debug_requests.continue_),
-                            audio: AudioConfig {
-                                apu_capture_enabled: reqs.needs_apu,
-                                skip_audio: match self.speed_mode() {
-                                    SpeedMode::Uncapped => true,
-                                    SpeedMode::FastForward => {
-                                        self.settings.audio.mute_during_fast_forward
-                                    }
-                                    SpeedMode::Normal => false,
-                                },
-                                midi_capture_active: self
-                                    .recording
-                                    .audio_recorder
-                                    .as_ref()
-                                    .is_some_and(|r| r.is_midi()),
-                            },
-                            debug_actions: std::mem::replace(
-                                &mut self.pending_debug_actions,
-                                DebugUiActions::none(),
-                            ),
-                            snapshot: SnapshotRequest {
-                                want_debug_info: (reqs.needs_debug_info
-                                    || self.settings.ui.show_fps),
-                                want_perf_info: reqs.needs_perf_info || self.settings.ui.show_fps,
-                                any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
-                                any_vram_viewer_open: reqs.needs_vram && want_viewer_update,
-                                show_oam_viewer: reqs.needs_oam && want_viewer_update,
-                                show_apu_viewer: reqs.needs_apu && want_viewer_update,
-                                show_disassembler: reqs.needs_disassembly && want_viewer_update,
-                                show_rom_info: reqs.needs_rom_info && want_viewer_update,
-                                show_memory_viewer: reqs.needs_memory_page && want_viewer_update,
-                                memory_view_start: self.debug_windows.memory.view_start,
-                                show_rom_viewer: reqs.needs_rom_page && want_viewer_update,
-                                rom_view_start: self.debug_windows.rom_viewer.view_start,
-                                last_disasm_pc: self.debug_windows.last_disasm_pc,
-                                memory_search: if self.debug_windows.memory.search_pending {
-                                    self.debug_windows.memory.search_pending = false;
-                                    debug::hex_search::parse_search_query(
-                                        &self.debug_windows.memory.search_query,
-                                        self.debug_windows.memory.search_mode,
-                                    )
-                                    .map(|pattern| {
-                                        MemorySearchRequest {
-                                            pattern,
-                                            max_results: self
-                                                .debug_windows
-                                                .memory
-                                                .search_max_results,
-                                        }
-                                    })
-                                } else {
-                                    None
-                                },
-                                rom_search: if self.debug_windows.rom_viewer.search_pending {
-                                    self.debug_windows.rom_viewer.search_pending = false;
-                                    debug::hex_search::parse_search_query(
-                                        &self.debug_windows.rom_viewer.search_query,
-                                        self.debug_windows.rom_viewer.search_mode,
-                                    )
-                                    .map(|pattern| {
-                                        MemorySearchRequest {
-                                            pattern,
-                                            max_results: self
-                                                .debug_windows
-                                                .rom_viewer
-                                                .search_max_results,
-                                        }
-                                    })
-                                } else {
-                                    None
-                                },
-                                render: RenderSettings {
-                                    color_correction: self.settings.video.color_correction,
-                                    color_correction_matrix: self
-                                        .settings
-                                        .video
-                                        .color_correction_matrix,
-                                    dmg_palette_preset: self.settings.video.dmg_palette_preset,
-                                    nes_palette_mode: self.settings.video.nes_palette_mode,
-                                    sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
-                                },
-                            },
-                            buffers: ReusableBuffers {
-                                audio: self.recycled.audio.take(),
-                                vram: self.recycled.vram.take(),
-                                oam: self.recycled.oam.take(),
-                                memory_page: self.recycled.memory_page.take(),
-                            },
-                            rewind_enabled: self.settings.rewind.enabled && !self.rewind.held,
-                            rewind_seconds: self.settings.rewind.seconds,
-                        };
+                            midi_capture_active: self
+                                .recording
+                                .audio_recorder
+                                .as_ref()
+                                .is_some_and(|r| r.is_midi()),
+                        },
+                        debug_actions: std::mem::replace(
+                            &mut self.pending_debug_actions,
+                            DebugUiActions::none(),
+                        ),
+                        snapshot,
+                        buffers,
+                        rewind_enabled: self.settings.rewind.enabled && !self.rewind.held,
+                        rewind_seconds: self.settings.rewind.seconds,
+                    };
+
+                    if let Some(thread) = &self.emu_thread {
                         if self.debug_windows.cheat.cheats_dirty {
                             self.debug_windows.cheat.cheats_dirty = false;
                             thread.send(EmuCommand::UpdateCheats(

@@ -1,4 +1,4 @@
-use super::{DisassembledLine, Mnemonic, fmt_signed};
+use super::{DisassembledLine, InstructionBytes, Mnemonic, fmt_signed};
 
 #[derive(Clone, Copy)]
 enum NesAddrMode {
@@ -17,22 +17,7 @@ enum NesAddrMode {
     Rel,
 }
 
-pub(crate) fn disassemble_around(
-    bus_read: impl Fn(u16) -> u8,
-    pc: u16,
-    lines_before_pc: usize,
-    total_lines: usize,
-) -> Vec<DisassembledLine> {
-    let start =
-        super::choose_centered_start(|addr| instruction_len(&bus_read, addr), pc, lines_before_pc);
-    super::disassemble_at(
-        |addr| decode_instruction(&bus_read, addr),
-        start,
-        total_lines,
-    )
-}
-
-fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
+pub(super) fn instruction_len(bus_read: &impl Fn(u16) -> u8, addr: u16) -> usize {
     let opcode = bus_read(addr);
     match opcode_info(opcode) {
         Some((_, mode)) => mode_len(mode),
@@ -54,20 +39,22 @@ fn mode_len(mode: NesAddrMode) -> usize {
     }
 }
 
-fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
+pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
     let opcode = bus_read(addr);
     let Some((mnemonic, mode)) = opcode_info(opcode) else {
+        let mut bytes = InstructionBytes::new();
+        bytes.push(opcode);
         return DisassembledLine {
             address: addr,
-            bytes: vec![opcode],
+            bytes,
             mnemonic: mn!("DB ${:02X}", opcode),
         };
     };
 
     let len = mode_len(mode);
-    let bytes = (0..len)
+    let bytes: InstructionBytes = (0..len)
         .map(|i| bus_read(addr.wrapping_add(i as u16)))
-        .collect::<Vec<_>>();
+        .collect();
 
     let operand = match mode {
         NesAddrMode::Imp => Mnemonic::new(),

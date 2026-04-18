@@ -3,7 +3,7 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use winit::keyboard::KeyCode;
 
-use super::keycode_serde::{keycode_from_string, keycode_to_string};
+use super::keycode_serde::{keycode_to_string, parse_key_or_default};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TiltBindingAction {
@@ -84,28 +84,12 @@ impl<'de> Deserialize<'de> for TiltKeyBindings {
         }
 
         let raw = RawTiltKeyBindings::deserialize(deserializer)?;
-        let defaults = Self::default();
+        let d = Self::default();
         Ok(Self {
-            up: raw
-                .up
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.up),
-            down: raw
-                .down
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.down),
-            left: raw
-                .left
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.left),
-            right: raw
-                .right
-                .as_deref()
-                .and_then(keycode_from_string)
-                .unwrap_or(defaults.right),
+            up: parse_key_or_default(raw.up.as_deref(), d.up),
+            down: parse_key_or_default(raw.down.as_deref(), d.down),
+            left: parse_key_or_default(raw.left.as_deref(), d.left),
+            right: parse_key_or_default(raw.right.as_deref(), d.right),
         })
     }
 }

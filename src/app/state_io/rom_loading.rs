@@ -1,8 +1,6 @@
 use super::App;
-use crate::debug::FpsTracker;
 use crate::emu_backend::{ActiveSystem, EmuBackend};
-use crate::emu_thread::{EmuCommand, EmuResponse, EmuThread};
-use crate::platform::Instant;
+use crate::emu_thread::{EmuCommand, EmuResponse};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 use zeff_gb_core::emulator::Emulator;
@@ -25,7 +23,7 @@ fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
     crc
 }
 
-fn detect_and_extract_rom(path: &Path) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
+pub(crate) fn detect_and_extract_rom(path: &Path) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
     let is_zip = path
         .extension()
         .and_then(|e| e.to_str())
@@ -175,29 +173,12 @@ impl App {
             .to_string();
         log::info!("Loaded ROM: {}", path.display());
 
-        self.rom_info.is_mbc7 = backend.is_mbc7();
-        self.rom_info.is_pocket_camera = backend.is_pocket_camera();
-        self.rom_info.rom_path = Some(backend.rom_path().to_path_buf());
-        self.rom_info.rom_hash = Some(backend.rom_hash());
-        self.active_system = system;
-
-        let (native_w, native_h) = system.screen_size();
-        if let Some(gfx) = self.gfx.as_mut() {
-            gfx.set_native_size(native_w, native_h);
-        }
+        self.finalize_rom_load(&backend, system, backend.rom_path().to_path_buf());
 
         self.setup_cheats_for_rom(system, path, &backend);
         self.setup_mods_for_rom(system, original_crc);
 
-        self.emu_thread = Some(EmuThread::spawn(backend));
-        self.fps_tracker = FpsTracker::new();
-        self.timing.last_frame_time = Instant::now();
-
-        if self.timing.uncapped_speed
-            && let Some(thread) = &self.emu_thread
-        {
-            thread.send(EmuCommand::SetUncapped(true));
-        }
+        self.spawn_emu_thread(backend);
 
         self.settings.add_recent_rom(path);
         self.settings.save();
@@ -245,15 +226,7 @@ impl App {
             return;
         }
 
-        if let Some(ref title) = self.debug_windows.cheat.rom_title {
-            crate::cheats::save_game_cheats(
-                self.active_system,
-                Some(title),
-                self.debug_windows.cheat.rom_crc32,
-                &self.debug_windows.cheat.user_codes,
-                &self.debug_windows.cheat.libretro_codes,
-            );
-        }
+        self.save_current_cheats();
 
         self.stop_emu_thread();
         self.stop_camera_capture();
@@ -327,5 +300,23 @@ impl App {
 
     pub(in crate::app) fn handle_dropped_file(&mut self, path: PathBuf) {
         self.load_rom(&path);
+    }
+
+    pub(in crate::app) fn finalize_rom_load(
+        &mut self,
+        backend: &EmuBackend,
+        system: ActiveSystem,
+        rom_path_buf: PathBuf,
+    ) {
+        self.rom_info.is_mbc7 = backend.is_mbc7();
+        self.rom_info.is_pocket_camera = backend.is_pocket_camera();
+        self.rom_info.rom_path = Some(rom_path_buf);
+        self.rom_info.rom_hash = Some(backend.rom_hash());
+        self.active_system = system;
+
+        let (native_w, native_h) = system.screen_size();
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.set_native_size(native_w, native_h);
+        }
     }
 }

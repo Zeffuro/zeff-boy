@@ -222,7 +222,7 @@ pub fn ldh_a8_a(cpu: &mut Cpu, bus: &mut Bus) {
 pop_rp!(pop_hl, set_hl);
 
 pub fn ld_c_addr_a(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = 0xFF00 | (cpu.regs.c as u16);
+    let addr = memory_constants::IO_START | (cpu.regs.c as u16);
     cpu.bus_write_timed(bus, addr, cpu.regs.a);
 }
 
@@ -242,7 +242,7 @@ pub fn ldh_a_a8(cpu: &mut Cpu, bus: &mut Bus) {
 pop_rp!(pop_af, set_af);
 
 pub fn ld_a_c_addr(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = 0xFF00 | (cpu.regs.c as u16);
+    let addr = memory_constants::IO_START | (cpu.regs.c as u16);
     cpu.regs.a = cpu.bus_read_timed(bus, addr);
 }
 

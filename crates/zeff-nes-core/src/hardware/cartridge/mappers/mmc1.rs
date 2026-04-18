@@ -73,6 +73,19 @@ impl Mmc1 {
     fn prg_bank_count(&self) -> usize {
         self.prg_rom.len() / 0x4000
     }
+
+    fn chr_index(&self, addr: u16) -> usize {
+        let raw = if self.chr_mode() {
+            match addr {
+                0x0000..=0x0FFF => (self.chr_bank_0 as usize) * 0x1000 + addr as usize,
+                0x1000..=0x1FFF => (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize,
+                _ => addr as usize,
+            }
+        } else {
+            (self.chr_bank_0 as usize >> 1) * 0x2000 + addr as usize
+        };
+        raw % self.chr.len()
+    }
 }
 
 impl Mapper for Mmc1 {
@@ -132,33 +145,15 @@ impl Mapper for Mmc1 {
         if self.chr.is_empty() {
             return 0;
         }
-        let index = if self.chr_mode() {
-            match addr {
-                0x0000..=0x0FFF => (self.chr_bank_0 as usize) * 0x1000 + addr as usize,
-                0x1000..=0x1FFF => (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize,
-                _ => addr as usize,
-            }
-        } else {
-            (self.chr_bank_0 as usize >> 1) * 0x2000 + addr as usize
-        };
-        self.chr[index % self.chr.len()]
+        self.chr[self.chr_index(addr)]
     }
 
     fn chr_write(&mut self, addr: u16, val: u8) {
         if self.chr.is_empty() {
             return;
         }
-        let index = if self.chr_mode() {
-            match addr {
-                0x0000..=0x0FFF => (self.chr_bank_0 as usize) * 0x1000 + addr as usize,
-                0x1000..=0x1FFF => (self.chr_bank_1 as usize) * 0x1000 + (addr - 0x1000) as usize,
-                _ => addr as usize,
-            }
-        } else {
-            (self.chr_bank_0 as usize >> 1) * 0x2000 + addr as usize
-        };
-        let len = self.chr.len();
-        self.chr[index % len] = val;
+        let idx = self.chr_index(addr);
+        self.chr[idx] = val;
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -174,7 +169,7 @@ impl Mapper for Mmc1 {
         w.write_u8(self.chr_bank_1);
         w.write_u8(self.prg_bank);
         w.write_u8(crate::save_state::encode_mirroring(self.mirroring));
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -186,15 +181,7 @@ impl Mapper for Mmc1 {
         self.chr_bank_1 = r.read_u8()?;
         self.prg_bank = r.read_u8()?;
         self.mirroring = crate::save_state::decode_mirroring(r.read_u8()?)?;
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "MMC1 CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "MMC1")?;
         Ok(())
     }
 }

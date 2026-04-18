@@ -20,6 +20,8 @@ pub(super) struct RecycledBuffers {
     pub(super) vram: Option<Vec<u8>>,
     pub(super) oam: Option<Vec<u8>>,
     pub(super) memory_page: Option<Vec<(u16, u8)>>,
+    pub(super) nes_chr: Option<Vec<u8>>,
+    pub(super) nes_nametable: Option<Vec<u8>>,
 }
 
 impl RecycledBuffers {
@@ -28,6 +30,8 @@ impl RecycledBuffers {
         self.vram = None;
         self.oam = None;
         self.memory_page = None;
+        self.nes_chr = None;
+        self.nes_nametable = None;
     }
 }
 

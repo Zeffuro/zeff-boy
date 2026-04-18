@@ -15,65 +15,63 @@ fn lax_set(cpu: &mut Cpu, val: u8) {
     cpu.regs.set_zn(val);
 }
 
-pub fn lax_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    let val = bus.cpu_read(addr);
-    lax_set(cpu, val);
+macro_rules! lax_modes {
+    ($zp:ident, $zpy:ident, $abs:ident, $absy:ident, $indx:ident, $indy:ident) => {
+        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_zero_page(bus);
+            lax_set(cpu, bus.cpu_read(addr));
+        }
+        pub fn $zpy(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_zero_page_y(bus);
+            lax_set(cpu, bus.cpu_read(addr));
+        }
+        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_absolute(bus);
+            lax_set(cpu, bus.cpu_read(addr));
+        }
+        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+            let (addr, crossed) = cpu.addr_absolute_y(bus);
+            lax_set(cpu, bus.cpu_read(addr));
+            page_cross_penalty(crossed)
+        }
+        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_indirect_x(bus);
+            lax_set(cpu, bus.cpu_read(addr));
+        }
+        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+            let (addr, crossed) = cpu.addr_indirect_y(bus);
+            lax_set(cpu, bus.cpu_read(addr));
+            page_cross_penalty(crossed)
+        }
+    };
 }
 
-pub fn lax_zp_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_y(bus);
-    let val = bus.cpu_read(addr);
-    lax_set(cpu, val);
-}
-
-pub fn lax_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    let val = bus.cpu_read(addr);
-    lax_set(cpu, val);
-}
-
-pub fn lax_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-    let (addr, crossed) = cpu.addr_absolute_y(bus);
-    let val = bus.cpu_read(addr);
-    lax_set(cpu, val);
-    page_cross_penalty(crossed)
-}
-
-pub fn lax_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    let val = bus.cpu_read(addr);
-    lax_set(cpu, val);
-}
-
-pub fn lax_ind_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-    let (addr, crossed) = cpu.addr_indirect_y(bus);
-    let val = bus.cpu_read(addr);
-    lax_set(cpu, val);
-    page_cross_penalty(crossed)
-}
+lax_modes!(lax_zp, lax_zp_y, lax_abs, lax_abs_y, lax_ind_x, lax_ind_y);
 
 // ── SAX: store A & X ────────────────────────────────────────────────
 
-pub fn sax_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
+macro_rules! sax_modes {
+    ($zp:ident, $zpy:ident, $abs:ident, $indx:ident) => {
+        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_zero_page(bus);
+            bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
+        }
+        pub fn $zpy(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_zero_page_y(bus);
+            bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
+        }
+        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_absolute(bus);
+            bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
+        }
+        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_indirect_x(bus);
+            bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
+        }
+    };
 }
 
-pub fn sax_zp_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_y(bus);
-    bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
-}
-
-pub fn sax_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
-}
-
-pub fn sax_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
-}
+sax_modes!(sax_zp, sax_zp_y, sax_abs, sax_ind_x);
 
 // ── DCP: DEC + CMP ─────────────────────────────────────────────────
 
@@ -83,82 +81,12 @@ fn dcp_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
     cpu.compare(cpu.regs.a, val);
 }
 
-pub fn dcp_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    dcp_op(cpu, bus, addr);
-}
-
-pub fn dcp_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_x(bus);
-    dcp_op(cpu, bus, addr);
-}
-
-pub fn dcp_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    dcp_op(cpu, bus, addr);
-}
-
-pub fn dcp_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_x(bus);
-    dcp_op(cpu, bus, addr);
-}
-
-pub fn dcp_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_y(bus);
-    dcp_op(cpu, bus, addr);
-}
-
-pub fn dcp_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    dcp_op(cpu, bus, addr);
-}
-
-pub fn dcp_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_indirect_y(bus);
-    dcp_op(cpu, bus, addr);
-}
-
 // ── ISB (ISC): INC + SBC ───────────────────────────────────────────
 
 fn isb_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
     let val = bus.cpu_read(addr).wrapping_add(1);
     bus.cpu_write(addr, val);
     cpu.sbc(val);
-}
-
-pub fn isb_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    isb_op(cpu, bus, addr);
-}
-
-pub fn isb_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_x(bus);
-    isb_op(cpu, bus, addr);
-}
-
-pub fn isb_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    isb_op(cpu, bus, addr);
-}
-
-pub fn isb_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_x(bus);
-    isb_op(cpu, bus, addr);
-}
-
-pub fn isb_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_y(bus);
-    isb_op(cpu, bus, addr);
-}
-
-pub fn isb_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    isb_op(cpu, bus, addr);
-}
-
-pub fn isb_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_indirect_y(bus);
-    isb_op(cpu, bus, addr);
 }
 
 // ── SLO: ASL + ORA ─────────────────────────────────────────────────
@@ -171,41 +99,6 @@ fn slo_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-pub fn slo_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    slo_op(cpu, bus, addr);
-}
-
-pub fn slo_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_x(bus);
-    slo_op(cpu, bus, addr);
-}
-
-pub fn slo_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    slo_op(cpu, bus, addr);
-}
-
-pub fn slo_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_x(bus);
-    slo_op(cpu, bus, addr);
-}
-
-pub fn slo_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_y(bus);
-    slo_op(cpu, bus, addr);
-}
-
-pub fn slo_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    slo_op(cpu, bus, addr);
-}
-
-pub fn slo_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_indirect_y(bus);
-    slo_op(cpu, bus, addr);
-}
-
 // ── RLA: ROL + AND ─────────────────────────────────────────────────
 
 fn rla_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
@@ -214,41 +107,6 @@ fn rla_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
     bus.cpu_write(addr, rotated);
     cpu.regs.a &= rotated;
     cpu.regs.set_zn(cpu.regs.a);
-}
-
-pub fn rla_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    rla_op(cpu, bus, addr);
-}
-
-pub fn rla_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_x(bus);
-    rla_op(cpu, bus, addr);
-}
-
-pub fn rla_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    rla_op(cpu, bus, addr);
-}
-
-pub fn rla_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_x(bus);
-    rla_op(cpu, bus, addr);
-}
-
-pub fn rla_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_y(bus);
-    rla_op(cpu, bus, addr);
-}
-
-pub fn rla_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    rla_op(cpu, bus, addr);
-}
-
-pub fn rla_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_indirect_y(bus);
-    rla_op(cpu, bus, addr);
 }
 
 // ── SRE: LSR + EOR ─────────────────────────────────────────────────
@@ -261,41 +119,6 @@ fn sre_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
     cpu.regs.set_zn(cpu.regs.a);
 }
 
-pub fn sre_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    sre_op(cpu, bus, addr);
-}
-
-pub fn sre_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_x(bus);
-    sre_op(cpu, bus, addr);
-}
-
-pub fn sre_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    sre_op(cpu, bus, addr);
-}
-
-pub fn sre_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_x(bus);
-    sre_op(cpu, bus, addr);
-}
-
-pub fn sre_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_y(bus);
-    sre_op(cpu, bus, addr);
-}
-
-pub fn sre_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    sre_op(cpu, bus, addr);
-}
-
-pub fn sre_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_indirect_y(bus);
-    sre_op(cpu, bus, addr);
-}
-
 // ── RRA: ROR + ADC ─────────────────────────────────────────────────
 
 fn rra_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
@@ -305,40 +128,57 @@ fn rra_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
     cpu.adc(rotated);
 }
 
-pub fn rra_zp(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page(bus);
-    rra_op(cpu, bus, addr);
+macro_rules! rmw_unofficial_modes {
+    ($op:ident, $zp:ident, $zpx:ident, $abs:ident,
+     $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
+        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_zero_page(bus);
+            $op(cpu, bus, addr);
+        }
+        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_zero_page_x(bus);
+            $op(cpu, bus, addr);
+        }
+        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_absolute(bus);
+            $op(cpu, bus, addr);
+        }
+        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
+            let (addr, _) = cpu.addr_absolute_x(bus);
+            $op(cpu, bus, addr);
+        }
+        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) {
+            let (addr, _) = cpu.addr_absolute_y(bus);
+            $op(cpu, bus, addr);
+        }
+        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+            let addr = cpu.addr_indirect_x(bus);
+            $op(cpu, bus, addr);
+        }
+        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) {
+            let (addr, _) = cpu.addr_indirect_y(bus);
+            $op(cpu, bus, addr);
+        }
+    };
 }
 
-pub fn rra_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_zero_page_x(bus);
-    rra_op(cpu, bus, addr);
-}
+rmw_unofficial_modes!(dcp_op, dcp_zp, dcp_zp_x, dcp_abs,
+    dcp_abs_x, dcp_abs_y, dcp_ind_x, dcp_ind_y);
 
-pub fn rra_abs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute(bus);
-    rra_op(cpu, bus, addr);
-}
+rmw_unofficial_modes!(isb_op, isb_zp, isb_zp_x, isb_abs,
+    isb_abs_x, isb_abs_y, isb_ind_x, isb_ind_y);
 
-pub fn rra_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_x(bus);
-    rra_op(cpu, bus, addr);
-}
+rmw_unofficial_modes!(slo_op, slo_zp, slo_zp_x, slo_abs,
+    slo_abs_x, slo_abs_y, slo_ind_x, slo_ind_y);
 
-pub fn rra_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_absolute_y(bus);
-    rra_op(cpu, bus, addr);
-}
+rmw_unofficial_modes!(rla_op, rla_zp, rla_zp_x, rla_abs,
+    rla_abs_x, rla_abs_y, rla_ind_x, rla_ind_y);
 
-pub fn rra_ind_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_x(bus);
-    rra_op(cpu, bus, addr);
-}
+rmw_unofficial_modes!(sre_op, sre_zp, sre_zp_x, sre_abs,
+    sre_abs_x, sre_abs_y, sre_ind_x, sre_ind_y);
 
-pub fn rra_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, _) = cpu.addr_indirect_y(bus);
-    rra_op(cpu, bus, addr);
-}
+rmw_unofficial_modes!(rra_op, rra_zp, rra_zp_x, rra_abs,
+    rra_abs_x, rra_abs_y, rra_ind_x, rra_ind_y);
 
 // ── Immediate-mode combined ops ─────────────────────────────────────
 

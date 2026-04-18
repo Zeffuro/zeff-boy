@@ -18,6 +18,24 @@ pub(crate) use memory::{
 pub(crate) use mods::ModState;
 pub(crate) use viewers::{PerfInfo, TileViewerState, TilemapViewerState};
 
+use super::DisassemblyView;
+
+#[derive(Clone, Copy)]
+pub(crate) struct DebugDataRefs<'a> {
+    pub(crate) cpu_debug: Option<&'a CpuDebugSnapshot>,
+    pub(crate) perf_info: Option<&'a PerfInfo>,
+    pub(crate) apu_debug: Option<&'a ApuDebugInfo>,
+    pub(crate) oam_debug: Option<&'a OamDebugInfo>,
+    pub(crate) palette_debug: Option<&'a PaletteDebugInfo>,
+    pub(crate) rom_debug: Option<&'a RomDebugInfo>,
+    pub(crate) input_debug: Option<&'a InputDebugInfo>,
+    pub(crate) graphics_data: Option<&'a ConsoleGraphicsData>,
+    pub(crate) disassembly_view: Option<&'a DisassemblyView>,
+    pub(crate) memory_page: Option<&'a [(u16, u8)]>,
+    pub(crate) rom_page: Option<&'a [(u32, u8)]>,
+    pub(crate) rom_size: u32,
+}
+
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
 
 pub(crate) struct DebugWindowState {

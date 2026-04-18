@@ -90,7 +90,7 @@ pub(super) fn draw(
     });
 
     ui.separator();
-    draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
+    super::draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
     enum_combo_box(
         ui,
         "Hardware mode",
@@ -117,18 +117,4 @@ pub(super) fn draw(
         "When enabled, replaces Player 2 controller with a Zapper light gun. \
          Click the game screen to fire. Only works with NES games that support the Zapper.",
     );
-}
-
-fn draw_console_section_header(
-    ui: &mut egui::Ui,
-    label: &str,
-    active_system: Option<ActiveSystem>,
-    target: ActiveSystem,
-) {
-    ui.horizontal(|ui| {
-        ui.heading(label);
-        if active_system == Some(target) {
-            ui.label(egui::RichText::new("(active)").weak().italics().small());
-        }
-    });
 }

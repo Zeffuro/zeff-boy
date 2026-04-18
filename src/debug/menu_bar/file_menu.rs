@@ -54,25 +54,7 @@ pub(super) fn draw(
     }
     ui.separator();
     ui.menu_button("Save State", |ui| {
-        ui.set_min_width(220.0);
-        for slot in 0..=9u8 {
-            let is_active = slot == state.active_slot;
-            let label = if is_active {
-                format!("▶ {}", state.slot_labels[slot as usize])
-            } else {
-                format!("   {}", state.slot_labels[slot as usize])
-            };
-            let text = if is_active {
-                egui::RichText::new(label).strong()
-            } else {
-                egui::RichText::new(label)
-            };
-            let btn = egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend);
-            if ui.add(btn).clicked() {
-                actions.push(MenuAction::SaveStateSlot(slot));
-                ui.close();
-            }
-        }
+        draw_slot_menu(ui, actions, state, false, MenuAction::SaveStateSlot);
         ui.separator();
         if ui.button("Save to File...").clicked() {
             actions.push(MenuAction::SaveStateFile);
@@ -80,26 +62,7 @@ pub(super) fn draw(
         }
     });
     ui.menu_button("Load State", |ui| {
-        ui.set_min_width(220.0);
-        for slot in 0..=9u8 {
-            let is_active = slot == state.active_slot;
-            let occupied = state.slot_occupied[slot as usize];
-            let label = if is_active {
-                format!("▶ {}", state.slot_labels[slot as usize])
-            } else {
-                format!("   {}", state.slot_labels[slot as usize])
-            };
-            let text = if is_active {
-                egui::RichText::new(label).strong()
-            } else {
-                egui::RichText::new(label)
-            };
-            let btn = egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend);
-            if ui.add_enabled(occupied, btn).clicked() {
-                actions.push(MenuAction::LoadStateSlot(slot));
-                ui.close();
-            }
-        }
+        draw_slot_menu(ui, actions, state, true, MenuAction::LoadStateSlot);
         ui.separator();
         if ui.button("Load from File...").clicked() {
             actions.push(MenuAction::LoadStateFile);
@@ -138,5 +101,34 @@ pub(super) fn draw(
     if ui.button("Screenshot...").clicked() {
         actions.push(MenuAction::TakeScreenshot);
         ui.close();
+    }
+}
+
+fn draw_slot_menu(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<MenuAction>,
+    state: &FileMenuState<'_>,
+    require_occupied: bool,
+    make_action: impl Fn(u8) -> MenuAction,
+) {
+    ui.set_min_width(220.0);
+    for slot in 0..=9u8 {
+        let is_active = slot == state.active_slot;
+        let label = if is_active {
+            format!("▶ {}", state.slot_labels[slot as usize])
+        } else {
+            format!("   {}", state.slot_labels[slot as usize])
+        };
+        let text = if is_active {
+            egui::RichText::new(label).strong()
+        } else {
+            egui::RichText::new(label)
+        };
+        let btn = egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend);
+        let enabled = !require_occupied || state.slot_occupied[slot as usize];
+        if ui.add_enabled(enabled, btn).clicked() {
+            actions.push(make_action(slot));
+            ui.close();
+        }
     }
 }

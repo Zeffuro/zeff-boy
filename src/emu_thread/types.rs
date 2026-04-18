@@ -49,6 +49,8 @@ pub(crate) struct ReusableBuffers {
     pub(crate) vram: Option<Vec<u8>>,
     pub(crate) oam: Option<Vec<u8>>,
     pub(crate) memory_page: Option<Vec<(u16, u8)>>,
+    pub(crate) nes_chr: Option<Vec<u8>>,
+    pub(crate) nes_nametable: Option<Vec<u8>>,
 }
 
 pub(crate) struct JoypadInput {

@@ -16,6 +16,11 @@ impl Cnrom {
             chr_bank_select: 0,
         }
     }
+
+    fn chr_index(&self, addr: u16) -> usize {
+        let bank = self.chr_bank_select as usize;
+        (bank * 0x2000 + addr as usize) % self.chr.len()
+    }
 }
 
 impl Mapper for Cnrom {
@@ -39,21 +44,15 @@ impl Mapper for Cnrom {
         if self.chr.is_empty() {
             return 0;
         }
-        let bank = self.chr_bank_select as usize;
-        let offset = addr as usize;
-        let index = bank * 0x2000 + offset;
-        self.chr[index % self.chr.len()]
+        self.chr[self.chr_index(addr)]
     }
 
     fn chr_write(&mut self, addr: u16, val: u8) {
         if self.chr.is_empty() {
             return;
         }
-        let bank = self.chr_bank_select as usize;
-        let offset = addr as usize;
-        let index = bank * 0x2000 + offset;
-        let len = self.chr.len();
-        self.chr[index % len] = val;
+        let idx = self.chr_index(addr);
+        self.chr[idx] = val;
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -62,20 +61,12 @@ impl Mapper for Cnrom {
 
     fn write_state(&self, w: &mut crate::save_state::StateWriter) {
         w.write_u8(self.chr_bank_select);
-        w.write_vec(&self.chr);
+        crate::save_state::write_chr_state(w, &self.chr);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
         self.chr_bank_select = r.read_u8()?;
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr.len() {
-            anyhow::bail!(
-                "CNROM CHR size mismatch: expected {}, got {}",
-                self.chr.len(),
-                chr.len()
-            );
-        }
-        self.chr = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr, "CNROM")?;
         Ok(())
     }
 }

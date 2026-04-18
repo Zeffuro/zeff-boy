@@ -66,21 +66,13 @@ impl Mapper for Axrom {
     fn write_state(&self, w: &mut crate::save_state::StateWriter) {
         w.write_u8(self.prg_bank);
         w.write_u8(crate::save_state::encode_mirroring(self.mirroring));
-        w.write_vec(&self.chr_ram);
+        crate::save_state::write_chr_state(w, &self.chr_ram);
     }
 
     fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
         self.prg_bank = r.read_u8()?;
         self.mirroring = crate::save_state::decode_mirroring(r.read_u8()?)?;
-        let chr = r.read_vec(512 * 1024)?;
-        if chr.len() != self.chr_ram.len() {
-            anyhow::bail!(
-                "AxROM CHR-RAM size mismatch: expected {}, got {}",
-                self.chr_ram.len(),
-                chr.len()
-            );
-        }
-        self.chr_ram = chr;
+        crate::save_state::read_chr_state(r, &mut self.chr_ram, "AxROM")?;
         Ok(())
     }
 }

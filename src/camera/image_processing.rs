@@ -17,7 +17,7 @@ pub(super) fn rgb_to_grayscale_nearest(
     dst_w: usize,
     dst_h: usize,
 ) -> Vec<u8> {
-    downsample_rgb_box(rgb, src_w, src_h, dst_w, dst_h)
+    downsample_box(rgb, 3, src_w, src_h, dst_w, dst_h)
 }
 
 #[cfg_attr(not(feature = "camera"), allow(dead_code))]
@@ -28,11 +28,12 @@ pub(super) fn rgba_to_grayscale_nearest(
     dst_w: usize,
     dst_h: usize,
 ) -> Vec<u8> {
-    downsample_rgba_box(rgba, src_w, src_h, dst_w, dst_h)
+    downsample_box(rgba, 4, src_w, src_h, dst_w, dst_h)
 }
 
-fn downsample_rgb_box(
-    rgb: &[u8],
+fn downsample_box(
+    data: &[u8],
+    pixel_stride: usize,
     src_w: usize,
     src_h: usize,
     dst_w: usize,
@@ -53,53 +54,13 @@ fn downsample_rgb_box(
             let mut count: u64 = 0;
             for sy in y0..y1 {
                 for sx in x0..x1 {
-                    let idx = (sy * src_w + sx) * 3;
-                    if idx + 2 >= rgb.len() {
+                    let idx = (sy * src_w + sx) * pixel_stride;
+                    if idx + 2 >= data.len() {
                         continue;
                     }
-                    let r = rgb[idx] as u64;
-                    let g = rgb[idx + 1] as u64;
-                    let b = rgb[idx + 2] as u64;
-                    sum = sum.saturating_add((r * 77 + g * 150 + b * 29) >> 8);
-                    count = count.saturating_add(1);
-                }
-            }
-            out[y * dst_w + x] = if count == 0 { 0 } else { (sum / count) as u8 };
-        }
-    }
-    out
-}
-
-#[cfg_attr(not(feature = "camera"), allow(dead_code))]
-fn downsample_rgba_box(
-    rgba: &[u8],
-    src_w: usize,
-    src_h: usize,
-    dst_w: usize,
-    dst_h: usize,
-) -> Vec<u8> {
-    if src_w == 0 || src_h == 0 {
-        return checkerboard_frame();
-    }
-
-    let mut out = vec![0u8; dst_w * dst_h];
-    for y in 0..dst_h {
-        let y0 = y * src_h / dst_h;
-        let y1 = ((y + 1) * src_h / dst_h).max(y0 + 1).min(src_h);
-        for x in 0..dst_w {
-            let x0 = x * src_w / dst_w;
-            let x1 = ((x + 1) * src_w / dst_w).max(x0 + 1).min(src_w);
-            let mut sum: u64 = 0;
-            let mut count: u64 = 0;
-            for sy in y0..y1 {
-                for sx in x0..x1 {
-                    let idx = (sy * src_w + sx) * 4;
-                    if idx + 2 >= rgba.len() {
-                        continue;
-                    }
-                    let r = rgba[idx] as u64;
-                    let g = rgba[idx + 1] as u64;
-                    let b = rgba[idx + 2] as u64;
+                    let r = data[idx] as u64;
+                    let g = data[idx + 1] as u64;
+                    let b = data[idx + 2] as u64;
                     sum = sum.saturating_add((r * 77 + g * 150 + b * 29) >> 8);
                     count = count.saturating_add(1);
                 }

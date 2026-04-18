@@ -4,6 +4,12 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 use std::path::PathBuf;
 
 impl App {
+    fn refresh_framebuffer_after_load(&mut self) {
+        if let Some(thread) = &self.emu_thread {
+            self.latest_frame = thread.shared_framebuffer().load_full();
+        }
+    }
+
     pub(in crate::app) fn save_state_slot(&mut self, slot: u8) {
         if self.emu_thread.is_none() {
             return;
@@ -38,9 +44,7 @@ impl App {
         }
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk { path }) => {
-                if let Some(thread) = &self.emu_thread {
-                    self.latest_frame = thread.shared_framebuffer().load_full();
-                }
+                self.refresh_framebuffer_after_load();
                 log::info!("Loaded state from {}", path);
                 self.toast_manager.success(format!("Loaded slot {slot}"));
             }
@@ -175,9 +179,7 @@ impl App {
             }
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk { path: p }) => {
-                    if let Some(thread) = &self.emu_thread {
-                        self.latest_frame = thread.shared_framebuffer().load_full();
-                    }
+                    self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from {}", p);
                     self.toast_manager.success("State loaded from file");
                 }
@@ -217,9 +219,7 @@ impl App {
             }
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk { path }) => {
-                    if let Some(thread) = &self.emu_thread {
-                        self.latest_frame = thread.shared_framebuffer().load_full();
-                    }
+                    self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from file: {name}");
                     self.toast_manager
                         .success(format!("State loaded from {name}"));

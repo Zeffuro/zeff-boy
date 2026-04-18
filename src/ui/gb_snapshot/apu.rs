@@ -47,7 +47,7 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
 
     let channels = vec![
         ApuChannelDebug {
-            name: "CH1 (Square + Sweep)".into(),
+            name: "CH1 (Square + Sweep)",
             enabled: nr52 & 0x01 != 0,
             muted: muted[0],
             register_lines: vec![format!(
@@ -70,7 +70,7 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
             waveform: channel_samples[0].to_vec(),
         },
         ApuChannelDebug {
-            name: "CH2 (Square)".into(),
+            name: "CH2 (Square)",
             enabled: nr52 & 0x02 != 0,
             muted: muted[1],
             register_lines: vec![format!(
@@ -92,7 +92,7 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
             waveform: channel_samples[1].to_vec(),
         },
         ApuChannelDebug {
-            name: "CH3 (Wave)".into(),
+            name: "CH3 (Wave)",
             enabled: nr52 & 0x04 != 0,
             muted: muted[2],
             register_lines: vec![format!(
@@ -117,7 +117,7 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
             waveform: channel_samples[2].to_vec(),
         },
         ApuChannelDebug {
-            name: "CH4 (Noise)".into(),
+            name: "CH4 (Noise)",
             enabled: nr52 & 0x08 != 0,
             muted: muted[3],
             register_lines: vec![format!(
@@ -148,11 +148,15 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
     let wave_lines: Vec<String> = wave_ram
         .chunks(4)
         .map(|chunk| {
-            chunk
-                .iter()
-                .map(|b| format!("{b:02X}"))
-                .collect::<Vec<_>>()
-                .join(" ")
+            use std::fmt::Write;
+            let mut s = String::with_capacity(chunk.len() * 3);
+            for (i, b) in chunk.iter().enumerate() {
+                if i > 0 {
+                    s.push(' ');
+                }
+                let _ = write!(s, "{b:02X}");
+            }
+            s
         })
         .collect();
 
@@ -161,7 +165,7 @@ pub(super) fn gb_apu_snapshot(emu: &Emulator, show: bool) -> Option<ApuDebugInfo
         master_waveform: master_samples.to_vec(),
         channels,
         extra_sections: vec![DebugSection {
-            heading: "Wave RAM".into(),
+            heading: "Wave RAM",
             lines: wave_lines,
         }],
     })

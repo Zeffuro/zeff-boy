@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::debug::common::WatchType;
 use crate::settings::{ColorCorrection, DmgPalettePreset};
 
@@ -16,7 +18,7 @@ pub(crate) struct WatchHitDisplay {
 }
 
 pub(crate) struct DebugSection {
-    pub(crate) heading: String,
+    pub(crate) heading: &'static str,
     pub(crate) lines: Vec<String>,
 }
 
@@ -30,7 +32,7 @@ pub(crate) struct CpuDebugSnapshot {
 
     pub(crate) last_opcode_line: String,
     pub(crate) sections: Vec<DebugSection>,
-    pub(crate) mem_around_pc: Vec<(u16, u8)>,
+    pub(crate) mem_around_pc: [(u16, u8); 32],
     pub(crate) recent_op_lines: Vec<String>,
 
     pub(crate) breakpoints: Vec<u16>,
@@ -40,7 +42,7 @@ pub(crate) struct CpuDebugSnapshot {
 }
 
 pub(crate) struct ApuChannelDebug {
-    pub(crate) name: String,
+    pub(crate) name: &'static str,
     pub(crate) enabled: bool,
     pub(crate) muted: bool,
     pub(crate) register_lines: Vec<String>,
@@ -56,7 +58,7 @@ pub(crate) struct ApuDebugInfo {
 }
 
 pub(crate) struct OamDebugInfo {
-    pub(crate) headers: Vec<String>,
+    pub(crate) headers: &'static [&'static str],
     pub(crate) rows: Vec<Vec<String>>,
 }
 
@@ -67,7 +69,7 @@ pub(crate) struct PaletteRowDebug {
 }
 
 pub(crate) struct PaletteGroupDebug {
-    pub(crate) title: String,
+    pub(crate) title: Cow<'static, str>,
     pub(crate) rows: Vec<PaletteRowDebug>,
 }
 
@@ -76,8 +78,8 @@ pub(crate) struct PaletteDebugInfo {
 }
 
 pub(crate) struct RomInfoSection {
-    pub(crate) heading: String,
-    pub(crate) fields: Vec<(String, String)>,
+    pub(crate) heading: &'static str,
+    pub(crate) fields: Vec<(&'static str, String)>,
 }
 
 pub(crate) struct RomDebugInfo {
@@ -86,7 +88,7 @@ pub(crate) struct RomDebugInfo {
 
 pub(crate) struct InputDebugInfo {
     pub(crate) sections: Vec<DebugSection>,
-    pub(crate) progress_bars: Vec<(String, f32)>,
+    pub(crate) progress_bars: Vec<(&'static str, f32)>,
 }
 
 pub(crate) enum ConsoleGraphicsData {

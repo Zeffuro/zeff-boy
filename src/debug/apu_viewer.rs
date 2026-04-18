@@ -106,7 +106,7 @@ pub(super) fn draw_apu_viewer_content(ui: &mut egui::Ui, data: &ApuDebugInfo) ->
     for (idx, channel) in data.channels.iter().enumerate() {
         ui.separator();
         ui.horizontal(|ui| {
-            draw_channel_header(ui, &channel.name, channel.enabled);
+            draw_channel_header(ui, channel.name, channel.enabled);
             if !channel.detail_line.is_empty() {
                 ui.label(egui::RichText::new(&channel.detail_line).small());
             }
@@ -124,7 +124,7 @@ pub(super) fn draw_apu_viewer_content(ui: &mut egui::Ui, data: &ApuDebugInfo) ->
 
     for section in &data.extra_sections {
         ui.separator();
-        ui.heading(&section.heading);
+        ui.heading(section.heading);
         for line in &section.lines {
             ui.monospace(line);
         }

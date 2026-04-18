@@ -10,25 +10,12 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
     );
     ensure!(&patch[..4] == HEADER, "BPS patch missing BPS1 header");
 
-    let patch_body = &patch[..patch.len() - 4];
-    let expected_patch_crc = read_u32_le(patch, patch.len() - 4);
-    let actual_patch_crc = crc32fast::hash(patch_body);
-    ensure!(
-        actual_patch_crc == expected_patch_crc,
-        "BPS patch CRC mismatch: expected {expected_patch_crc:08x}, got {actual_patch_crc:08x}"
-    );
-
-    let expected_source_crc = read_u32_le(patch, patch.len() - 12);
-    let actual_source_crc = crc32fast::hash(source);
-    ensure!(
-        actual_source_crc == expected_source_crc,
-        "BPS source CRC mismatch: expected {expected_source_crc:08x}, got {actual_source_crc:08x}"
-    );
+    super::verify_patch_crcs(patch, source, "BPS")?;
 
     let mut pos = 4;
-    let source_size = decode_varint(patch, &mut pos)? as usize;
-    let target_size = decode_varint(patch, &mut pos)? as usize;
-    let metadata_size = decode_varint(patch, &mut pos)? as usize;
+    let source_size = super::decode_varint(patch, &mut pos, "BPS")? as usize;
+    let target_size = super::decode_varint(patch, &mut pos, "BPS")? as usize;
+    let metadata_size = super::decode_varint(patch, &mut pos, "BPS")? as usize;
 
     ensure!(
         source_size == source.len(),
@@ -46,7 +33,7 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
     let data_end = patch.len() - FOOTER_SIZE;
 
     while pos < data_end {
-        let cmd = decode_varint(patch, &mut pos)? as usize;
+        let cmd = super::decode_varint(patch, &mut pos, "BPS")? as usize;
         let action = cmd & 3;
         let length = (cmd >> 2) + 1;
 
@@ -78,7 +65,7 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
                 }
             }
             2 => {
-                let raw = decode_varint(patch, &mut pos)? as usize;
+                let raw = super::decode_varint(patch, &mut pos, "BPS")? as usize;
                 let sign_negative = raw & 1 != 0;
                 let delta = raw >> 1;
                 if sign_negative {
@@ -101,7 +88,7 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
                 }
             }
             3 => {
-                let raw = decode_varint(patch, &mut pos)? as usize;
+                let raw = super::decode_varint(patch, &mut pos, "BPS")? as usize;
                 let sign_negative = raw & 1 != 0;
                 let delta = raw >> 1;
                 if sign_negative {
@@ -127,63 +114,11 @@ pub(crate) fn apply_bps_patch(source: &[u8], patch: &[u8]) -> anyhow::Result<Vec
         }
     }
 
-    let expected_target_crc = read_u32_le(patch, patch.len() - 8);
-    let actual_target_crc = crc32fast::hash(&target);
-    ensure!(
-        actual_target_crc == expected_target_crc,
-        "BPS target CRC mismatch: expected {expected_target_crc:08x}, got {actual_target_crc:08x}"
-    );
+    super::verify_target_crc(patch, &target, "BPS")?;
 
     Ok(target)
 }
 
-fn decode_varint(data: &[u8], pos: &mut usize) -> anyhow::Result<u64> {
-    let mut result = 0u64;
-    let mut shift = 1u64;
-    loop {
-        ensure!(*pos < data.len(), "BPS varint truncated");
-        let byte = data[*pos] as u64;
-        *pos += 1;
-        result += (byte & 0x7f) * shift;
-        if byte & 0x80 != 0 {
-            break;
-        }
-        shift <<= 7;
-        result += shift;
-    }
-    Ok(result)
-}
-
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ])
-}
-
-#[cfg(test)]
-fn encode_varint(mut value: u64) -> Vec<u8> {
-    let mut buf = Vec::new();
-    loop {
-        let mut byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value == 0 {
-            byte |= 0x80;
-            buf.push(byte);
-            break;
-        }
-        buf.push(byte);
-        value -= 1;
-    }
-    buf
-}
-
-#[cfg(test)]
-fn write_u32_le(val: u32) -> [u8; 4] {
-    val.to_le_bytes()
-}
 
 #[cfg(test)]
 mod tests {
@@ -191,33 +126,18 @@ mod tests {
     fn make_simple_bps(source: &[u8], target: &[u8]) -> Vec<u8> {
         let mut patch = Vec::new();
         patch.extend_from_slice(HEADER);
-        patch.extend(encode_varint(source.len() as u64));
-        patch.extend(encode_varint(target.len() as u64));
-        patch.extend(encode_varint(0));
+        patch.extend(super::super::encode_varint(source.len() as u64));
+        patch.extend(super::super::encode_varint(target.len() as u64));
+        patch.extend(super::super::encode_varint(0));
 
         let cmd = ((target.len() as u64 - 1) << 2) | 1;
-        patch.extend(encode_varint(cmd));
+        patch.extend(super::super::encode_varint(cmd));
         patch.extend_from_slice(target);
 
-        let source_crc = crc32fast::hash(source);
-        let target_crc = crc32fast::hash(target);
-        patch.extend_from_slice(&write_u32_le(source_crc));
-        patch.extend_from_slice(&write_u32_le(target_crc));
-        let patch_crc = crc32fast::hash(&patch);
-        patch.extend_from_slice(&write_u32_le(patch_crc));
+        super::super::append_patch_crcs(&mut patch, source, target);
         patch
     }
 
-    #[test]
-    fn varint_roundtrip() {
-        for value in [0, 1, 127, 128, 255, 1000, 65535, 0x1_0000] {
-            let encoded = encode_varint(value);
-            let mut pos = 0;
-            let decoded = decode_varint(&encoded, &mut pos).unwrap();
-            assert_eq!(decoded, value, "varint roundtrip failed for {value}");
-            assert_eq!(pos, encoded.len());
-        }
-    }
 
     #[test]
     fn apply_simple_patch() {
@@ -246,19 +166,14 @@ mod tests {
 
         let mut patch = Vec::new();
         patch.extend_from_slice(HEADER);
-        patch.extend(encode_varint(source.len() as u64));
-        patch.extend(encode_varint(target_expected.len() as u64));
-        patch.extend(encode_varint(0));
+        patch.extend(super::super::encode_varint(source.len() as u64));
+        patch.extend(super::super::encode_varint(target_expected.len() as u64));
+        patch.extend(super::super::encode_varint(0));
 
         let cmd = (source.len() as u64 - 1) << 2;
-        patch.extend(encode_varint(cmd));
+        patch.extend(super::super::encode_varint(cmd));
 
-        let source_crc = crc32fast::hash(&source);
-        let target_crc = crc32fast::hash(&target_expected);
-        patch.extend_from_slice(&write_u32_le(source_crc));
-        patch.extend_from_slice(&write_u32_le(target_crc));
-        let patch_crc = crc32fast::hash(&patch);
-        patch.extend_from_slice(&write_u32_le(patch_crc));
+        super::super::append_patch_crcs(&mut patch, &source, &target_expected);
 
         let result = apply_bps_patch(&source, &patch).unwrap();
         assert_eq!(result, target_expected);
@@ -279,13 +194,13 @@ mod tests {
 
         let off = patch.len() - 12;
         patch[off] ^= 0xFF;
-        // Recompute patch CRC.
         let patch_crc = crc32fast::hash(&patch[..patch.len() - 4]);
         let len = patch.len();
-        patch[len - 4..].copy_from_slice(&write_u32_le(patch_crc));
+        patch[len - 4..].copy_from_slice(&super::super::write_u32_le(patch_crc));
 
         let wrong_source = vec![0x11u8; 4];
         let result = apply_bps_patch(&wrong_source, &patch);
         assert!(result.is_err());
     }
 }
+

@@ -5,11 +5,12 @@ mod oam;
 mod palette;
 mod rom_info;
 
+use crate::debug::nes_disassemble_around;
 use crate::emu_thread::SnapshotRequest;
 
 use apu::nes_apu_snapshot;
 use cpu::nes_cpu_snapshot;
-use graphics::{nes_disassembly_view, nes_graphics_snapshot};
+use graphics::{nes_disasm_peek_byte, nes_graphics_snapshot};
 use oam::nes_oam_snapshot;
 use palette::nes_palette_snapshot;
 use rom_info::nes_rom_info;
@@ -17,20 +18,23 @@ use rom_info::nes_rom_info;
 pub(crate) fn collect_nes_snapshot(
     emu: &mut zeff_nes_core::emulator::Emulator,
     snapshot: &SnapshotRequest,
+    reusable_chr: Option<Vec<u8>>,
+    reusable_nametable: Option<Vec<u8>>,
+    reusable_memory_page: Option<Vec<(u16, u8)>>,
 ) -> super::UiFrameData {
-    let mut data = super::empty_frame_data();
+    let mut data = super::UiFrameData::default();
 
     emu.set_opcode_log_enabled(snapshot.want_debug_info);
 
     if snapshot.want_perf_info {
         data.perf_info = Some(crate::debug::PerfInfo {
             fps: 0.0,
-            speed_mode_label: "1×".to_string(),
+            speed_mode_label: "1×",
             frames_in_flight: 0,
             cycles: emu.cpu_cycles(),
             platform_name: "NES",
-            hardware_label: emu.cartridge_header().mapper_label(),
-            hardware_pref_label: format!("{:?}", emu.cartridge_header().timing),
+            hardware_label: emu.cartridge_header().mapper_label().into(),
+            hardware_pref_label: format!("{:?}", emu.cartridge_header().timing).into(),
         });
     }
 
@@ -42,19 +46,27 @@ pub(crate) fn collect_nes_snapshot(
         data.apu_debug = nes_apu_snapshot(emu, true);
     }
 
-    if snapshot.show_disassembler {
-        let pc_changed = snapshot.last_disasm_pc != Some(emu.cpu_pc());
-        if pc_changed {
-            data.disassembly_view = Some(nes_disassembly_view(emu));
-        }
-    }
+    data.disassembly_view = super::build_disassembly_view(
+        snapshot.show_disassembler,
+        snapshot.last_disasm_pc,
+        emu.cpu_pc(),
+        || {
+            nes_disassemble_around(
+                |addr| nes_disasm_peek_byte(emu.bus(), addr),
+                emu.cpu_pc(),
+                12,
+                26,
+            )
+        },
+        emu.iter_breakpoints(),
+    );
 
     if snapshot.show_rom_info {
         data.rom_debug = Some(nes_rom_info(emu));
     }
 
     if snapshot.any_vram_viewer_open {
-        data.graphics_data = Some(nes_graphics_snapshot(emu));
+        data.graphics_data = Some(nes_graphics_snapshot(emu, reusable_chr, reusable_nametable));
     }
 
     if snapshot.show_oam_viewer {
@@ -65,15 +77,12 @@ pub(crate) fn collect_nes_snapshot(
         data.palette_debug = Some(nes_palette_snapshot(emu));
     }
 
-    if snapshot.show_memory_viewer {
-        let start = snapshot.memory_view_start;
-        let mut page = Vec::with_capacity(256);
-        for i in 0..256u16 {
-            let addr = start.wrapping_add(i);
-            page.push((addr, emu.cpu_peek(addr)));
-        }
-        data.memory_page = Some(page);
-    }
+    data.memory_page = super::build_memory_page(
+        snapshot.show_memory_viewer,
+        snapshot.memory_view_start,
+        reusable_memory_page,
+        |addr| emu.cpu_peek(addr),
+    );
 
     if snapshot.show_rom_viewer {
         let rom_header = emu.cartridge_header();
