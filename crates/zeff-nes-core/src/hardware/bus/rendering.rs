@@ -1,8 +1,6 @@
 use super::Bus;
 use crate::hardware::cartridge::ChrFetchKind;
-use crate::hardware::ppu::{
-    NES_PALETTE, NesPaletteMode, PRE_RENDER_SCANLINE, Ppu, apply_nes_palette_mode,
-};
+use crate::hardware::ppu::{PRE_RENDER_SCANLINE, Ppu};
 
 impl Bus {
     pub(super) fn ppu_render_dot(&mut self) {
@@ -32,10 +30,10 @@ impl Bus {
         if visible_line && (1..=256).contains(&dot) {
             if rendering {
                 let pal_idx = self.ppu.compose_pixel() as usize;
-                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, self.palette_mode);
+                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, &self.palette_lut);
             } else {
                 let pal_idx = (self.ppu.palette_ram[0] & 0x3F) as usize;
-                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, self.palette_mode);
+                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, &self.palette_lut);
             }
         }
 
@@ -97,29 +95,26 @@ impl Bus {
         dot: u16,
         scanline: u16,
         pal_idx: usize,
-        palette_mode: NesPaletteMode,
+        palette_lut: &[[u8; 4]; 64],
     ) {
         let effective_idx = if ppu.regs.greyscale() {
             pal_idx & 0x30
         } else {
             pal_idx
         };
-        let (r, g, b) = NES_PALETTE[effective_idx];
-        let (mut r, mut g, mut b) = apply_nes_palette_mode(palette_mode, (r, g, b));
+        let [mut r, mut g, mut b, _] = palette_lut[effective_idx];
 
-        let emph_r = ppu.regs.emphasize_red();
-        let emph_g = ppu.regs.emphasize_green();
-        let emph_b = ppu.regs.emphasize_blue();
-        if emph_r || emph_g || emph_b {
+        let emph_bits = ppu.regs.mask & 0xE0;
+        if emph_bits != 0 {
             const ATTEN_NUM: u16 = 192;
             const ATTEN_DEN: u16 = 235;
-            if !emph_r {
+            if emph_bits & 0x20 == 0 {
                 r = (r as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
             }
-            if !emph_g {
+            if emph_bits & 0x40 == 0 {
                 g = (g as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
             }
-            if !emph_b {
+            if emph_bits & 0x80 == 0 {
                 b = (b as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
             }
         }
@@ -127,10 +122,7 @@ impl Bus {
         let x = (dot - 1) as usize;
         let y = scanline as usize;
         let offset = (y * 256 + x) * 4;
-        ppu.framebuffer[offset] = r;
-        ppu.framebuffer[offset + 1] = g;
-        ppu.framebuffer[offset + 2] = b;
-        ppu.framebuffer[offset + 3] = 0xFF;
+        ppu.framebuffer[offset..offset + 4].copy_from_slice(&[r, g, b, 0xFF]);
     }
 
     #[inline]

@@ -93,6 +93,7 @@ impl Apu {
         status
     }
 
+    #[inline]
     pub fn tick(&mut self) {
         self.triangle.tick();
         self.dmc.tick();
@@ -108,6 +109,7 @@ impl Apu {
         self.frame_cycle += 1;
     }
 
+    #[inline]
     pub fn irq_pending(&self) -> bool {
         self.frame_irq || self.dmc.irq_flag
     }

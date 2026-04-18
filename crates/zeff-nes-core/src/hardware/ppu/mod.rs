@@ -135,6 +135,7 @@ impl Ppu {
         }
     }
 
+    #[inline]
     pub fn tick(&mut self) -> bool {
         let mut raise_nmi = false;
 
@@ -178,6 +179,7 @@ impl Ppu {
         raise_nmi
     }
 
+    #[inline]
     pub fn increment_scroll_x(&mut self) {
         if !self.regs.rendering_enabled() {
             return;
@@ -190,6 +192,7 @@ impl Ppu {
         }
     }
 
+    #[inline]
     pub fn increment_scroll_y(&mut self) {
         if !self.regs.rendering_enabled() {
             return;
@@ -211,6 +214,7 @@ impl Ppu {
         }
     }
 
+    #[inline]
     pub fn copy_horizontal_bits(&mut self) {
         if !self.regs.rendering_enabled() {
             return;
@@ -218,6 +222,7 @@ impl Ppu {
         self.v = (self.v & !SCROLL_HORIZONTAL_MASK) | (self.t & SCROLL_HORIZONTAL_MASK);
     }
 
+    #[inline]
     pub fn copy_vertical_bits(&mut self) {
         if !self.regs.rendering_enabled() {
             return;
@@ -225,6 +230,7 @@ impl Ppu {
         self.v = (self.v & !SCROLL_VERTICAL_MASK) | (self.t & SCROLL_VERTICAL_MASK);
     }
 
+    #[inline]
     pub fn load_bg_shifters(&mut self) {
         self.bg_shift_pattern_lo =
             (self.bg_shift_pattern_lo & 0xFF00) | self.bg_next_tile_lo as u16;
@@ -244,6 +250,7 @@ impl Ppu {
             };
     }
 
+    #[inline]
     pub fn update_shifters(&mut self) {
         if self.regs.show_bg() {
             self.bg_shift_pattern_lo <<= 1;

@@ -71,6 +71,7 @@ impl Noise {
         }
     }
 
+    #[inline]
     pub fn tick(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
@@ -105,6 +106,7 @@ impl Noise {
         }
     }
 
+    #[inline]
     pub fn output(&self) -> u8 {
         if !self.enabled || self.length_counter == 0 || self.shift_register & 1 != 0 {
             return 0;

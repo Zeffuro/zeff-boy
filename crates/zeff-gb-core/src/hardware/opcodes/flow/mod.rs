@@ -21,9 +21,9 @@ pub fn stop(cpu: &mut Cpu, bus: &mut Bus) {
 
         let prev_mode = bus.ppu_mode();
 
-        let int = bus.step_ppu(apu_delay);
+        let (int, new_mode) = bus.step_ppu(apu_delay);
         bus.if_reg |= int;
-        bus.maybe_step_hblank_hdma(prev_mode, bus.ppu_mode());
+        bus.maybe_step_hblank_hdma(prev_mode, new_mode);
 
         let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
         cpu.timed_cycles_accounted += if is_double_speed { delay * 2 } else { delay };

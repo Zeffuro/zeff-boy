@@ -84,6 +84,7 @@ impl Dmc {
         }
     }
 
+    #[inline]
     pub fn tick(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
@@ -144,6 +145,7 @@ impl Dmc {
         }
     }
 
+    #[inline]
     pub fn output(&self) -> u8 {
         self.output_level
     }

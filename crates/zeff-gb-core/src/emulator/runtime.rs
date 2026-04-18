@@ -82,8 +82,15 @@ impl Emulator {
         let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
         let target = self.cpu.cycles.wrapping_add(frame_cycles);
 
-        while self.cpu.cycles < target && !matches!(self.cpu.running, CpuState::Suspended) {
-            let _ = self.step_instruction();
+        if self.debug.any_active() || self.opcode_log.enabled {
+            while self.cpu.cycles < target && !matches!(self.cpu.running, CpuState::Suspended) {
+                let _ = self.step_instruction();
+            }
+        } else {
+            while self.cpu.cycles < target {
+                self.cpu.step(&mut self.bus);
+                self.hardware_mode = self.bus.hardware_mode;
+            }
         }
     }
 

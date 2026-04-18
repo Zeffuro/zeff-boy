@@ -4,6 +4,7 @@ use super::{Apu, ApuChannelSnapshot, DEBUG_SAMPLE_CAPACITY, INITIAL_SAMPLE_CAPAC
 use crate::hardware::constants::*;
 
 impl Apu {
+    #[inline]
     pub(super) fn generate_sample(&mut self) {
         if !self.sample_generation_enabled {
             return;

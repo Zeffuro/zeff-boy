@@ -39,12 +39,15 @@ pub struct Bus {
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
 
+    pub(crate) palette_lut: [[u8; 4]; 64],
+
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
 }
 
 impl Bus {
     pub fn new(cartridge: Cartridge, sample_rate: f64) -> Self {
+        let palette_mode = NesPaletteMode::default();
         Self {
             ram: [0; RAM_SIZE],
             ppu: Ppu::new(),
@@ -57,14 +60,25 @@ impl Bus {
             cpu_odd_cycle: false,
             cpu_open_bus: 0,
             game_genie: NesCheatState::new(),
-            palette_mode: NesPaletteMode::default(),
+            palette_mode,
+            palette_lut: Self::build_palette_lut(palette_mode),
             debug_trace_enabled: false,
             debug_trace_events: Vec::new(),
         }
     }
 
+    fn build_palette_lut(mode: NesPaletteMode) -> [[u8; 4]; 64] {
+        let mut lut = [[0u8; 4]; 64];
+        for (i, entry) in lut.iter_mut().enumerate() {
+            let (r, g, b) = apply_nes_palette_mode(mode, NES_PALETTE[i]);
+            *entry = [r, g, b, 0xFF];
+        }
+        lut
+    }
+
     pub fn set_palette_mode(&mut self, mode: NesPaletteMode) {
         self.palette_mode = mode;
+        self.palette_lut = Self::build_palette_lut(mode);
     }
 
     pub fn palette_mode(&self) -> NesPaletteMode {
@@ -72,9 +86,7 @@ impl Bus {
     }
 
     pub fn palette_color_rgba(&self, pal_idx: u8) -> [u8; 4] {
-        let (r, g, b) = NES_PALETTE[(pal_idx & 0x3F) as usize];
-        let (r, g, b) = apply_nes_palette_mode(self.palette_mode, (r, g, b));
-        [r, g, b, 255]
+        self.palette_lut[(pal_idx & 0x3F) as usize]
     }
 
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {

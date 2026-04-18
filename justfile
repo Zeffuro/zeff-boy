@@ -155,6 +155,25 @@ flamegraph rom frames="1800":
 flamegraph-named rom name frames="1800":
     cargo flamegraph --profile profiling -o "{{name}}.svg" -- --headless --no-apu --max-frames {{frames}} "{{rom}}"
 
+# Run the core profiling harness (3000 frames per ROM from manifests)
+profile-cores:
+    cargo run --profile profiling --bin profile_cores
+
+# Generate a flamegraph from the core profiling harness (requires admin on Windows)
+flamegraph-cores:
+    cargo flamegraph --profile profiling --bin profile_cores -o flamegraph.svg
+
+# Run Criterion benchmarks for GB core
+bench-gb:
+    cargo bench --bench gb_benchmarks -p zeff-gb-core
+
+# Run Criterion benchmarks for NES core
+bench-nes:
+    cargo bench --bench nes_benchmarks -p zeff-nes-core
+
+# Run all Criterion benchmarks (GB + NES)
+bench-all: bench-gb bench-nes
+
 # ──────────────────────────── Cleaning ───────────────────────────────
 
 # Verify a release build compiles

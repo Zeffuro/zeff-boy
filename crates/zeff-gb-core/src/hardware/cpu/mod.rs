@@ -190,6 +190,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     pub fn tick_internal_timed(&mut self, bus: &mut Bus, t_cycles: u64) {
         self.tick_peripherals(bus, t_cycles);
     }
@@ -270,10 +271,8 @@ impl Cpu {
         bus.step_apu(system_t_cycles);
 
         let previous_ppu_mode = bus.ppu_mode();
-        let ppu_interrupt = bus.step_ppu(system_t_cycles);
+        let (ppu_interrupt, current_ppu_mode) = bus.step_ppu(system_t_cycles);
         bus.if_reg |= ppu_interrupt;
-
-        let current_ppu_mode = bus.ppu_mode();
         bus.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
 
         bus.step_oam_dma(t_cycles);

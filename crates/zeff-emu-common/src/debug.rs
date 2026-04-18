@@ -144,6 +144,11 @@ impl DebugController {
         self.watchpoints_active
     }
 
+    #[inline]
+    pub fn any_active(&self) -> bool {
+        self.breakpoints_active || self.break_on_next || self.watchpoints_active
+    }
+
     pub fn check_watch_read(&mut self, addr: u16, value: u8) {
         if self.watchpoints.is_empty() {
             return;
@@ -228,7 +233,7 @@ impl<E: Copy + Default> OpcodeLog<E> {
             entries: core::array::from_fn(|_| E::default()),
             cursor: 0,
             count: 0,
-            enabled: true,
+            enabled: false,
         }
     }
 
@@ -337,6 +342,7 @@ mod tests {
     #[test]
     fn opcode_log_push_and_recent() {
         let mut log = OpcodeLog::<(u16, u8)>::new();
+        log.set_enabled(true);
         log.push((0x100, 0xAB));
         log.push((0x102, 0xCD));
         let recent = log.recent(10);
@@ -354,6 +360,7 @@ mod tests {
     #[test]
     fn opcode_log_clear_resets() {
         let mut log = OpcodeLog::<(u16, u8, bool)>::new();
+        log.set_enabled(true);
         log.push((0x100, 0xAB, false));
         log.push((0x102, 0xCB, true));
         log.clear();
@@ -363,6 +370,7 @@ mod tests {
     #[test]
     fn opcode_log_wraps_at_capacity() {
         let mut log = OpcodeLog::<(u16, u8)>::new();
+        log.set_enabled(true);
         for i in 0..64u16 {
             log.push((i, i as u8));
         }

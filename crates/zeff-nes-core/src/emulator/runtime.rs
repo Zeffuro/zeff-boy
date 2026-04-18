@@ -72,8 +72,28 @@ impl Emulator {
 
         let target = self.cpu.cycles.wrapping_add(CPU_CYCLES_PER_FRAME);
 
-        while self.cpu.cycles < target && self.cpu.state == CpuState::Running {
-            self.step_instruction();
+        if self.debug.any_active() || self.opcode_log.enabled {
+            while self.cpu.cycles < target && self.cpu.state == CpuState::Running {
+                self.step_instruction();
+            }
+        } else {
+            while self.cpu.cycles < target {
+
+                self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
+                let cycles = self.cpu.step(&mut self.bus);
+
+                let dma_cycles = self.bus.dma_stall_cycles;
+                self.bus.dma_stall_cycles = 0;
+                let total_cycles = cycles + dma_cycles;
+                self.cpu.cycles += dma_cycles;
+
+                let nmi = self.bus.tick_peripherals(total_cycles);
+                self.cpu.irq_line = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
+
+                if nmi {
+                    self.cpu.nmi_pending = true;
+                }
+            }
         }
     }
 }

@@ -102,18 +102,22 @@ impl MapperImpl {
         dispatch_mapper!(self, read_state, r)
     }
 
+    #[inline]
     pub(super) fn irq_pending(&self) -> bool {
         dispatch_mapper!(self, irq_pending)
     }
 
+    #[inline]
     pub(super) fn notify_scanline(&mut self) {
         dispatch_mapper!(self, notify_scanline)
     }
 
+    #[inline]
     pub(super) fn clock_cpu(&mut self) {
         dispatch_mapper!(self, clock_cpu)
     }
 
+    #[inline]
     pub(super) fn audio_output(&self) -> f32 {
         dispatch_mapper!(self, audio_output)
     }

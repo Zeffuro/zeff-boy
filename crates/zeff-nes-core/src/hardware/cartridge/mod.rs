@@ -228,18 +228,22 @@ impl Cartridge {
         self.mapper.ppu_nametable_write(addr, val, ciram)
     }
 
+    #[inline]
     pub fn irq_pending(&self) -> bool {
         self.mapper.irq_pending()
     }
 
+    #[inline]
     pub fn notify_scanline(&mut self) {
         self.mapper.notify_scanline();
     }
 
+    #[inline]
     pub fn clock_cpu(&mut self) {
         self.mapper.clock_cpu();
     }
 
+    #[inline]
     pub fn audio_output(&self) -> f32 {
         self.mapper.audio_output()
     }

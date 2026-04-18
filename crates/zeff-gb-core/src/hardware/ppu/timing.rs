@@ -198,22 +198,27 @@ impl PPU {
         interrupts
     }
 
+    #[inline]
     pub(in crate::hardware) fn mode(&self) -> u8 {
         self.stat & 0x03
     }
 
+    #[inline]
     pub(in crate::hardware) fn lcd_enabled(&self) -> bool {
         self.lcdc.contains(Lcdc::LCD_ENABLE)
     }
 
+    #[inline]
     pub(in crate::hardware) fn cpu_vram_accessible(&self) -> bool {
         !self.lcd_enabled() || self.mode() != 3
     }
 
+    #[inline]
     pub(in crate::hardware) fn cpu_oam_accessible(&self) -> bool {
         !self.lcd_enabled() || (self.mode() != 2 && self.mode() != 3)
     }
 
+    #[inline]
     pub(in crate::hardware::ppu) fn cpu_palette_accessible(&self) -> bool {
         !self.lcd_enabled() || self.mode() != 3
     }

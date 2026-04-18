@@ -14,6 +14,7 @@ pub enum CpuAccessTraceEvent {
 }
 
 impl Bus {
+    #[inline]
     pub fn cpu_read_byte(&mut self, addr: u16) -> u8 {
         if self.oam_dma_active && !is_hram_addr(addr) {
             return 0xFF;

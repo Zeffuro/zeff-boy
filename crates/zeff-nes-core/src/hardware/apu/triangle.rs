@@ -63,6 +63,7 @@ impl Triangle {
     }
 
     /// Called every CPU cycle.
+    #[inline]
     pub fn tick(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
@@ -91,6 +92,7 @@ impl Triangle {
         }
     }
 
+    #[inline]
     pub fn output(&self) -> u8 {
         TRIANGLE_SEQUENCE[self.sequence_pos as usize]
     }

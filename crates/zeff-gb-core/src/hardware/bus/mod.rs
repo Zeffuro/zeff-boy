@@ -148,6 +148,7 @@ impl Bus {
         self.io.apu.apply_bess_io(io_regs);
     }
 
+    #[inline]
     pub(in crate::hardware) fn ppu_mode(&self) -> u8 {
         self.io.ppu.mode()
     }
@@ -287,14 +288,15 @@ impl Bus {
     }
 
     #[inline]
-    pub(in crate::hardware) fn step_ppu(&mut self, system_t_cycles: u64) -> u8 {
+    pub(in crate::hardware) fn step_ppu(&mut self, system_t_cycles: u64) -> (u8, u8) {
         let cgb_mode = matches!(
             self.hardware_mode,
             HardwareMode::CGBNormal | HardwareMode::CGBDouble
         );
-        self.io
+        let interrupts = self.io
             .ppu
-            .step(system_t_cycles, &self.vram, &self.oam, cgb_mode)
+            .step(system_t_cycles, &self.vram, &self.oam, cgb_mode);
+        (interrupts, self.io.ppu.stat & 0x03)
     }
 
     pub fn timer_div(&self) -> u8 {
