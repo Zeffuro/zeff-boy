@@ -64,9 +64,9 @@ nokhwa = { version = "0.10.10", optional = true, default-features = false, featu
 image = { version = "0.25.10", optional = true, default-features = false, features = ["jpeg"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2.117"
-wasm-bindgen-futures = "0.4.67"
-web-sys = { version = "0.3.94", features = [
+wasm-bindgen = "0.2.118"
+wasm-bindgen-futures = "0.4.68"
+web-sys = { version = "0.3.95", features = [
     "Window", "Document", "HtmlCanvasElement", "HtmlElement",
     "HtmlAnchorElement", "Element", "Storage", "console",
     "AudioContext", "AudioDestinationNode", "AudioBuffer",
@@ -77,7 +77,7 @@ web-sys = { version = "0.3.94", features = [
     "DragEvent", "DataTransfer",
     "Url",
 ] }
-js-sys = "0.3.94"
+js-sys = "0.3.95"
 console_log = "1"
 console_error_panic_hook = "0.1"
 web-time = "1"

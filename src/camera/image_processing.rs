@@ -65,7 +65,7 @@ fn downsample_box(
                     count = count.saturating_add(1);
                 }
             }
-            out[y * dst_w + x] = if count == 0 { 0 } else { (sum / count) as u8 };
+            out[y * dst_w + x] = (sum.checked_div(count)).unwrap_or(0) as u8;
         }
     }
     out

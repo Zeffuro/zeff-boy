@@ -58,13 +58,11 @@ impl GamepadHandler {
                         action_events.push((action, false));
                     }
                 }
-                EventType::Disconnected => {
-                    if self.active_gamepad == Some(id) {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            self.rumble_effect = None;
-                            self.rumble_playing = false;
-                        }
+                EventType::Disconnected if self.active_gamepad == Some(id) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.rumble_effect = None;
+                        self.rumble_playing = false;
                     }
                 }
                 _ => {}
