@@ -4,6 +4,7 @@ pub(crate) enum LibretroPlatform {
     Gb = 0,
     Gbc = 1,
     Nes = 2,
+    Gba = 3,
 }
 
 impl LibretroPlatform {
@@ -12,6 +13,7 @@ impl LibretroPlatform {
             Self::Gb => "Nintendo - Game Boy",
             Self::Gbc => "Nintendo - Game Boy Color",
             Self::Nes => "Nintendo - Nintendo Entertainment System",
+            Self::Gba => "Nintendo - Game Boy Advance",
         }
     }
 
@@ -20,6 +22,7 @@ impl LibretroPlatform {
             Self::Gb => "Game Boy",
             Self::Gbc => "Game Boy Color",
             Self::Nes => "NES",
+            Self::Gba => "GBA",
         }
     }
 
@@ -28,6 +31,7 @@ impl LibretroPlatform {
             Self::Gb => "gb",
             Self::Gbc => "gbc",
             Self::Nes => "nes",
+            Self::Gba => "gba",
         }
     }
 
@@ -36,6 +40,7 @@ impl LibretroPlatform {
             Self::Gb => &[".gb"],
             Self::Gbc => &[".gbc", ".gb"],
             Self::Nes => &[".nes"],
+            Self::Gba => &[".gba"],
         }
     }
 }

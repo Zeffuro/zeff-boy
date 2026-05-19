@@ -1,15 +1,16 @@
 use crate::debug::DebugUiActions;
 use crate::emu_core_trait::DebuggableEmulator;
+use zeff_emu_common::address::Address;
 use zeff_emu_common::debug::WatchType;
 
 use super::EmuThread;
 
 enum DebugAction {
-    AddBreakpoint(u16),
-    AddWatchpoint(u16, WatchType),
-    RemoveBreakpoint(u16),
-    ToggleBreakpoint(u16),
-    WriteMemory(u16, u8),
+    AddBreakpoint(Address),
+    AddWatchpoint(Address, WatchType),
+    RemoveBreakpoint(Address),
+    ToggleBreakpoint(Address),
+    WriteMemory(Address, u8),
 }
 
 fn collect_debug_actions(actions: &DebugUiActions) -> impl Iterator<Item = DebugAction> + '_ {
@@ -68,6 +69,13 @@ impl EmuThread {
 
     pub(crate) fn apply_nes_debug_actions(
         emu: &mut zeff_nes_core::emulator::Emulator,
+        actions: &DebugUiActions,
+    ) {
+        apply_debug_actions_to(emu, actions);
+    }
+
+    pub(crate) fn apply_gba_debug_actions(
+        emu: &mut zeff_gba_core::emulator::Emulator,
         actions: &DebugUiActions,
     ) {
         apply_debug_actions_to(emu, actions);

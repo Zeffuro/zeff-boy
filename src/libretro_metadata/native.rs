@@ -12,9 +12,10 @@ const RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/no-intro/";
 const GB_DAT: &str = "Nintendo%20-%20Game%20Boy.dat";
 const GBC_DAT: &str = "Nintendo%20-%20Game%20Boy%20Color.dat";
+const GBA_DAT: &str = "Nintendo%20-%20Game%20Boy%20Advance.dat";
 const NES_DAT: &str = "Nintendo%20-%20Nintendo%20Entertainment%20System.dat";
-const CACHE_FILE_NAME: &str = "metadata_v2.bin";
-const MAGIC: &[u8; 8] = b"ZBMDAT02";
+const CACHE_FILE_NAME: &str = "metadata_v3.bin";
+const MAGIC: &[u8; 8] = b"ZBMDAT03";
 
 #[derive(Default)]
 pub(super) struct MetadataIndex {
@@ -191,6 +192,7 @@ pub(super) fn deserialize_entries(bytes: &[u8]) -> anyhow::Result<Vec<RomMetadat
             0 => LibretroPlatform::Gb,
             1 => LibretroPlatform::Gbc,
             2 => LibretroPlatform::Nes,
+            3 => LibretroPlatform::Gba,
             _ => anyhow::bail!("unknown platform byte {platform_byte}"),
         };
 
@@ -246,17 +248,21 @@ fn write_cache_file(path: &Path, entries: &[RomMetadata]) -> anyhow::Result<()> 
 pub(crate) fn refresh_cache_from_libretro() -> anyhow::Result<MetadataRefreshStats> {
     let gb_dat = download_dat(GB_DAT)?;
     let gbc_dat = download_dat(GBC_DAT)?;
+    let gba_dat = download_dat(GBA_DAT)?;
     let nes_dat = download_dat(NES_DAT)?;
 
     let mut gb_entries = parse_dat_entries(&gb_dat, LibretroPlatform::Gb);
     let gbc_entries = parse_dat_entries(&gbc_dat, LibretroPlatform::Gbc);
+    let gba_entries = parse_dat_entries(&gba_dat, LibretroPlatform::Gba);
     let nes_entries = parse_dat_entries(&nes_dat, LibretroPlatform::Nes);
 
     let gb_count = gb_entries.len();
     let gbc_count = gbc_entries.len();
+    let gba_count = gba_entries.len();
     let nes_count = nes_entries.len();
 
     gb_entries.extend(gbc_entries);
+    gb_entries.extend(gba_entries);
     gb_entries.extend(nes_entries);
     let merged_entries = gb_entries;
 
@@ -271,6 +277,7 @@ pub(crate) fn refresh_cache_from_libretro() -> anyhow::Result<MetadataRefreshSta
         total_entries: merged_entries.len(),
         gb_entries: gb_count,
         gbc_entries: gbc_count,
+        gba_entries: gba_count,
         nes_entries: nes_count,
     })
 }

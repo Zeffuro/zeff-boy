@@ -2,16 +2,17 @@ use std::borrow::Cow;
 
 use crate::debug::common::WatchType;
 use crate::settings::{ColorCorrection, DmgPalettePreset};
+use zeff_emu_common::address::Address;
 
 #[derive(Clone, Debug)]
 pub(crate) struct WatchpointDisplay {
-    pub(crate) address: u16,
+    pub(crate) address: Address,
     pub(crate) watch_type: WatchType,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct WatchHitDisplay {
-    pub(crate) address: u16,
+    pub(crate) address: Address,
     pub(crate) old_value: u8,
     pub(crate) new_value: u8,
     pub(crate) watch_type: WatchType,
@@ -32,12 +33,12 @@ pub(crate) struct CpuDebugSnapshot {
 
     pub(crate) last_opcode_line: String,
     pub(crate) sections: Vec<DebugSection>,
-    pub(crate) mem_around_pc: [(u16, u8); 32],
+    pub(crate) mem_around_pc: [(Address, u8); 32],
     pub(crate) recent_op_lines: Vec<String>,
 
-    pub(crate) breakpoints: Vec<u16>,
+    pub(crate) breakpoints: Vec<Address>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
-    pub(crate) hit_breakpoint: Option<u16>,
+    pub(crate) hit_breakpoint: Option<Address>,
     pub(crate) hit_watchpoint: Option<WatchHitDisplay>,
 }
 
@@ -93,7 +94,15 @@ pub(crate) struct InputDebugInfo {
 
 pub(crate) enum ConsoleGraphicsData {
     Gb(GbGraphicsData),
+    Gba(GbaGraphicsData),
     Nes(NesGraphicsData),
+}
+
+pub(crate) struct GbaGraphicsData {
+    pub(crate) vram: Vec<u8>,
+    pub(crate) palette_ram: Vec<u8>,
+    pub(crate) oam: Vec<u8>,
+    pub(crate) ppu: zeff_gba_core::hardware::ppu::PpuDebugSnapshot,
 }
 
 pub(crate) struct NesGraphicsData {

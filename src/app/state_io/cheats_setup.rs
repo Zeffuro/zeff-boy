@@ -58,6 +58,23 @@ impl App {
                 rom_crc32,
                 platform,
             );
+        } else if let Some(gba) = backend.gba() {
+            let rom_title = if gba.emu.cartridge_header().title.is_empty() {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("GBA ROM")
+                    .to_string()
+            } else {
+                gba.emu.cartridge_header().title.clone()
+            };
+            let rom_crc32 = Some(crc32fast::hash(gba.emu.cartridge_rom_bytes()));
+            apply_cheat_rom_info(
+                &mut self.debug_windows.cheat,
+                system,
+                rom_title,
+                rom_crc32,
+                crate::libretro_common::LibretroPlatform::Gba,
+            );
         } else {
             self.debug_windows.cheat.rom_title = None;
             self.debug_windows.cheat.rom_crc32 = None;

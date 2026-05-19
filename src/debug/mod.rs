@@ -8,6 +8,8 @@ mod disassembler;
 pub(crate) mod dock;
 pub(crate) mod export;
 mod fps;
+mod gba_tile_viewer;
+mod gba_tilemap_viewer;
 pub(crate) mod hex_search;
 pub(crate) mod hex_viewer;
 mod input_viewer;
@@ -42,9 +44,9 @@ pub(crate) use fps::FpsTracker;
 pub(crate) use toast::ToastManager;
 pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
-    GbGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo, PaletteDebugInfo,
-    PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection, WatchHitDisplay,
-    WatchpointDisplay,
+    GbGraphicsData, GbaGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo,
+    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection,
+    WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use types::{
     BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,

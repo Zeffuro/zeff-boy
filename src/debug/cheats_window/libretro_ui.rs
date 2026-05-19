@@ -128,8 +128,12 @@ fn poll_async_results(state: &mut CheatState) {
                         );
                 }
                 state.libretro_status = Some(format!(
-                    "Metadata refreshed: {} total (GB {}, GBC {}, NES {})",
-                    stats.total_entries, stats.gb_entries, stats.gbc_entries, stats.nes_entries
+                    "Metadata refreshed: {} total (GB {}, GBC {}, GBA {}, NES {})",
+                    stats.total_entries,
+                    stats.gb_entries,
+                    stats.gbc_entries,
+                    stats.gba_entries,
+                    stats.nes_entries
                 ));
             }
             LibretroAsyncResult::MetadataRefreshed(Err(e)) => {
@@ -181,6 +185,9 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             ActiveSystem::Nes => {
                 ui.label("NES");
             }
+            ActiveSystem::GameBoyAdvance => {
+                ui.label("GBA");
+            }
         }
         ui.separator();
         if ui
@@ -195,7 +202,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
         if ui
             .add_enabled(can_refresh, egui::Button::new("⬇ Refresh metadata").small())
             .on_hover_text(
-                "Download/compile local metadata cache from libretro dat files (GB+GBC+NES)",
+                "Download/compile local metadata cache from libretro dat files (GB+GBC+GBA+NES)",
             )
             .clicked()
         {

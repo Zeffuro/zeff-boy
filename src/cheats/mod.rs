@@ -24,13 +24,13 @@ fn try_parse_single_for_system(
     input: &str,
     system: ActiveSystem,
 ) -> Option<(Vec<CheatPatch>, CheatType)> {
-    if let Ok(result) = parse_cheat(input) {
-        return Some(result);
+    match system {
+        ActiveSystem::GameBoy => parse_cheat(input).ok(),
+        ActiveSystem::Nes => parse_cheat(input)
+            .ok()
+            .or_else(|| try_parse_nes_game_genie(input)),
+        ActiveSystem::GameBoyAdvance => None,
     }
-    if system == ActiveSystem::Nes {
-        return try_parse_nes_game_genie(input);
-    }
-    None
 }
 
 pub(crate) fn parse_cheat_for_system(

@@ -30,6 +30,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) slot_labels: &'a [String; 10],
     pub(crate) slot_occupied: [bool; 10],
     pub(crate) active_save_slot: u8,
+    pub(crate) can_undo_load_state: bool,
 }
 
 pub(crate) struct RenderResult {
@@ -256,6 +257,7 @@ impl Graphics {
                     slot_labels: ctx.slot_labels,
                     slot_occupied: &ctx.slot_occupied,
                     active_save_slot: ctx.active_save_slot,
+                    can_undo_load_state: ctx.can_undo_load_state,
                 },
                 ctx.dock_state,
                 ctx.settings,

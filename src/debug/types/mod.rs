@@ -7,9 +7,9 @@ mod viewers;
 pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
 pub(crate) use data_models::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
-    GbGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo, PaletteDebugInfo,
-    PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection, WatchHitDisplay,
-    WatchpointDisplay,
+    GbGraphicsData, GbaGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo,
+    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection,
+    WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use memory::{
     MemoryBookmark, MemoryByteDiff, MemorySearchMode, MemorySearchResult, MemoryViewerState,
@@ -19,6 +19,7 @@ pub(crate) use mods::ModState;
 pub(crate) use viewers::{PerfInfo, TileViewerState, TilemapViewerState};
 
 use super::DisassemblyView;
+use zeff_emu_common::address::Address;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DebugDataRefs<'a> {
@@ -31,7 +32,7 @@ pub(crate) struct DebugDataRefs<'a> {
     pub(crate) input_debug: Option<&'a InputDebugInfo>,
     pub(crate) graphics_data: Option<&'a ConsoleGraphicsData>,
     pub(crate) disassembly_view: Option<&'a DisassemblyView>,
-    pub(crate) memory_page: Option<&'a [(u16, u8)]>,
+    pub(crate) memory_page: Option<&'a [(Address, u8)]>,
     pub(crate) rom_page: Option<&'a [(u32, u8)]>,
     pub(crate) rom_size: u32,
 }
@@ -47,7 +48,7 @@ pub(crate) struct DebugWindowState {
     pub(crate) rebinding_gamepad_action: Option<crate::settings::GamepadAction>,
     pub(crate) rebinding_speedup: bool,
     pub(crate) rebinding_rewind: bool,
-    pub(crate) last_disasm_pc: Option<u16>,
+    pub(crate) last_disasm_pc: Option<Address>,
     pub(crate) tilemap: TilemapViewerState,
     pub(crate) tiles: TileViewerState,
     pub(crate) rom_viewer: RomViewerState,

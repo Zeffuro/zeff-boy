@@ -13,6 +13,7 @@ pub(crate) struct MetadataRefreshStats {
     pub(crate) total_entries: usize,
     pub(crate) gb_entries: usize,
     pub(crate) gbc_entries: usize,
+    pub(crate) gba_entries: usize,
     pub(crate) nes_entries: usize,
 }
 

@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use super::common::{COLOR_ADDR, COLOR_PC_HIGHLIGHT_BG, DEBUG_MONO_FONT_SIZE};
+use super::common::{COLOR_ADDR, COLOR_PC_HIGHLIGHT_BG, DEBUG_MONO_FONT_SIZE, format_addr};
 use crate::debug::DisassemblyView;
+use zeff_emu_common::address::Address;
 
 pub(crate) struct DisassemblerActions {
-    pub(crate) toggle_breakpoints: Vec<u16>,
+    pub(crate) toggle_breakpoints: Vec<Address>,
     pub(crate) step_requested: bool,
     pub(crate) continue_requested: bool,
     pub(crate) backstep_requested: bool,
@@ -21,7 +22,7 @@ pub(super) fn draw_disassembler_content(
         continue_requested: false,
         backstep_requested: false,
     };
-    let mut breakpoints: HashSet<u16> = view.breakpoints.iter().copied().collect();
+    let mut breakpoints: HashSet<Address> = view.breakpoints.iter().copied().collect();
 
     ui.horizontal(|ui| {
         if ui.button("▶ Continue (F9)").clicked() {
@@ -95,7 +96,7 @@ pub(super) fn draw_disassembler_content(
             }
 
             addr_buf.clear();
-            let _ = write!(addr_buf, "{:04X}: ", line.address);
+            let _ = write!(addr_buf, "{}: ", format_addr(line.address));
             job.append(&addr_buf, 0.0, fmt_addr.clone());
 
             let mut fmt_code = fmt_normal.clone();

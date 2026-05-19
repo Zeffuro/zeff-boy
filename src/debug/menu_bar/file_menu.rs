@@ -6,6 +6,7 @@ pub(super) struct FileMenuState<'a> {
     pub slot_labels: &'a [String; 10],
     pub slot_occupied: &'a [bool; 10],
     pub active_slot: u8,
+    pub can_undo_load_state: bool,
     pub is_recording_audio: bool,
     pub is_recording_replay: bool,
     pub is_playing_replay: bool,
@@ -69,6 +70,17 @@ pub(super) fn draw(
             ui.close();
         }
     });
+    if ui
+        .add_enabled(
+            state.can_undo_load_state,
+            egui::Button::new("Undo Last Load State"),
+        )
+        .on_hover_text("Restore the emulator state from before the last successful load")
+        .clicked()
+    {
+        actions.push(MenuAction::UndoLoadState);
+        ui.close();
+    }
     ui.separator();
     if state.is_recording_audio {
         if ui.button("⏹ Stop Recording").clicked() {

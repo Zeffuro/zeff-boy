@@ -1,5 +1,6 @@
 pub(crate) type Mnemonic = arrayvec::ArrayString<32>;
 pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 3>;
+use zeff_emu_common::address::Address;
 
 macro_rules! mn {
     ($($arg:tt)*) => {{
@@ -11,16 +12,16 @@ macro_rules! mn {
 
 #[derive(Clone)]
 pub(crate) struct DisassembledLine {
-    pub(crate) address: u16,
+    pub(crate) address: Address,
     pub(crate) bytes: InstructionBytes,
     pub(crate) mnemonic: Mnemonic,
 }
 
 #[derive(Clone)]
 pub(crate) struct DisassemblyView {
-    pub(crate) pc: u16,
+    pub(crate) pc: Address,
     pub(crate) lines: Vec<DisassembledLine>,
-    pub(crate) breakpoints: Vec<u16>,
+    pub(crate) breakpoints: Vec<Address>,
 }
 
 mod gb;

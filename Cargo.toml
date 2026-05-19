@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/zeff-emu-common", "crates/zeff-gb-core", "crates/zeff-nes-core", "crates/zeff-libretro"]
+members = ["crates/zeff-emu-common", "crates/zeff-gb-core", "crates/zeff-gba-core", "crates/zeff-nes-core", "crates/zeff-libretro"]
 exclude = ["fuzz"]
 
 [features]
@@ -14,12 +14,13 @@ version = "0.1.2"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
-description = "A Game Boy, Game Boy Color, and NES emulator written in Rust."
+description = "A Game Boy, Game Boy Color, Game Boy Advance (experimental) and NES emulator written in Rust."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 zeff-emu-common = { path = "crates/zeff-emu-common" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
+zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }
 anyhow = "1.0.102"
 log = "0.4.29"

@@ -10,6 +10,59 @@ impl App {
         }
     }
 
+    fn capture_current_state_for_undo(&mut self) -> Option<Vec<u8>> {
+        let Some(thread) = &self.emu_thread else {
+            return None;
+        };
+        thread.send(EmuCommand::CaptureStateBytes);
+        match self.recv_cold_response() {
+            Some(EmuResponse::StateCaptured(bytes)) => Some(bytes),
+            Some(EmuResponse::StateCaptureFailed(err)) => {
+                log::warn!("Failed to capture undo state before load: {err}");
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub(in crate::app) fn undo_load_state(&mut self) {
+        let Some(state_bytes) = self.undo_load_state.take() else {
+            self.toast_manager.info("No loaded state to undo");
+            return;
+        };
+        if self.emu_thread.is_none() {
+            self.undo_load_state = Some(state_bytes);
+            return;
+        }
+
+        let redo_state = self.capture_current_state_for_undo();
+        let state_bytes_for_retry = state_bytes.clone();
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::LoadStateBytes {
+                state_bytes,
+                buttons_pressed: self.host_input.buttons_pressed(),
+                dpad_pressed: self.host_input.dpad_pressed(),
+            });
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::LoadStateOk { path }) => {
+                self.refresh_framebuffer_after_load();
+                log::info!("Undid loaded state via {path}");
+                self.undo_load_state = redo_state;
+                self.toast_manager
+                    .success("Restored state from before load");
+            }
+            Some(EmuResponse::LoadStateFailed(err)) => {
+                log::error!("Failed to undo loaded state: {err}");
+                self.undo_load_state = Some(state_bytes_for_retry);
+                self.toast_manager.error(format!("Undo load failed: {err}"));
+            }
+            _ => {
+                self.undo_load_state = Some(state_bytes_for_retry);
+            }
+        }
+    }
+
     pub(in crate::app) fn save_state_slot(&mut self, slot: u8) {
         if self.emu_thread.is_none() {
             return;
@@ -35,6 +88,7 @@ impl App {
         if self.emu_thread.is_none() {
             return;
         }
+        let undo_state = self.capture_current_state_for_undo();
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::LoadStateSlot {
                 slot,
@@ -46,6 +100,7 @@ impl App {
             Some(EmuResponse::LoadStateOk { path }) => {
                 self.refresh_framebuffer_after_load();
                 log::info!("Loaded state from {}", path);
+                self.undo_load_state = undo_state;
                 self.toast_manager.success(format!("Loaded slot {slot}"));
             }
             Some(EmuResponse::LoadStateFailed(err)) => {
@@ -169,6 +224,7 @@ impl App {
             };
 
             self.last_state_dir = path.parent().map(|p| p.to_path_buf());
+            let undo_state = self.capture_current_state_for_undo();
 
             if let Some(thread) = &self.emu_thread {
                 thread.send(EmuCommand::LoadStateFromPath {
@@ -181,6 +237,7 @@ impl App {
                 Some(EmuResponse::LoadStateOk { path: p }) => {
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from {}", p);
+                    self.undo_load_state = undo_state;
                     self.toast_manager.success("State loaded from file");
                 }
                 Some(EmuResponse::LoadStateFailed(err)) => {
@@ -210,6 +267,7 @@ impl App {
                     .error("No game running — cannot load state");
                 return;
             }
+            let undo_state = self.capture_current_state_for_undo();
             if let Some(thread) = &self.emu_thread {
                 thread.send(EmuCommand::LoadStateBytes {
                     state_bytes: bytes,
@@ -221,6 +279,7 @@ impl App {
                 Some(EmuResponse::LoadStateOk { path }) => {
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from file: {name}");
+                    self.undo_load_state = undo_state;
                     self.toast_manager
                         .success(format!("State loaded from {name}"));
                 }

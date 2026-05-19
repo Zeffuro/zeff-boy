@@ -4,6 +4,7 @@ use zeff_nes_core::hardware::ppu::NesPaletteMode;
 
 pub(crate) enum ActiveCore {
     Gb(Box<zeff_gb_core::emulator::Emulator>),
+    Gba(Box<zeff_gba_core::emulator::Emulator>),
     Nes(Box<zeff_nes_core::emulator::Emulator>),
 }
 
@@ -30,6 +31,10 @@ impl CoreState {
         let sample_rate = 48000u32;
 
         let core = match ext.as_str() {
+            "gba" => {
+                let emu = zeff_gba_core::emulator::Emulator::new(data, sample_rate)?;
+                ActiveCore::Gba(Box::new(emu))
+            }
             "nes" => {
                 let emu = zeff_nes_core::emulator::Emulator::new(data, sample_rate as f64)?;
                 ActiveCore::Nes(Box::new(emu))
@@ -68,6 +73,13 @@ impl CoreState {
                     self.core = ActiveCore::Gb(Box::new(emu));
                 }
             }
+            ActiveCore::Gba(_) => {
+                if let Ok(emu) =
+                    zeff_gba_core::emulator::Emulator::new(&self.rom_data, self.sample_rate)
+                {
+                    self.core = ActiveCore::Gba(Box::new(emu));
+                }
+            }
             ActiveCore::Nes(emu) => emu.reset(),
         }
     }
@@ -75,6 +87,7 @@ impl CoreState {
     pub fn step_frame(&mut self) {
         match &mut self.core {
             ActiveCore::Gb(emu) => emu.step_frame(),
+            ActiveCore::Gba(emu) => emu.step_frame(),
             ActiveCore::Nes(emu) => emu.step_frame(),
         }
     }
@@ -83,6 +96,9 @@ impl CoreState {
         self.audio_buf.clear();
         match &mut self.core {
             ActiveCore::Gb(emu) => {
+                emu.drain_audio_samples_into(&mut self.audio_buf);
+            }
+            ActiveCore::Gba(emu) => {
                 emu.drain_audio_samples_into(&mut self.audio_buf);
             }
             ActiveCore::Nes(emu) => {
@@ -94,6 +110,7 @@ impl CoreState {
     pub fn set_input(&mut self, buttons: u8, dpad: u8) {
         match &mut self.core {
             ActiveCore::Gb(emu) => emu.set_input(buttons, dpad),
+            ActiveCore::Gba(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Nes(emu) => {
                 emu.set_input_p1(map_host_to_nes_byte(buttons, dpad));
             }
@@ -118,6 +135,7 @@ impl CoreState {
                 let (w, _) = emu.framebuffer_dimensions();
                 w as u32
             }
+            ActiveCore::Gba(_) => 240,
             ActiveCore::Nes(_) => 256,
         }
     }
@@ -128,6 +146,7 @@ impl CoreState {
                 let (_, h) = emu.framebuffer_dimensions();
                 h as u32
             }
+            ActiveCore::Gba(_) => 160,
             ActiveCore::Nes(_) => 240,
         }
     }
@@ -135,6 +154,7 @@ impl CoreState {
     pub fn fps(&self) -> f64 {
         match &self.core {
             ActiveCore::Gb(_) => 59.7275,
+            ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::FPS,
             ActiveCore::Nes(_) => 60.0988,
         }
     }
@@ -142,6 +162,7 @@ impl CoreState {
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {
         match &self.core {
             ActiveCore::Gb(emu) => emu.encode_state_bytes(),
+            ActiveCore::Gba(emu) => emu.encode_state(),
             ActiveCore::Nes(emu) => emu.encode_state(),
         }
     }
@@ -149,6 +170,7 @@ impl CoreState {
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         match &mut self.core {
             ActiveCore::Gb(emu) => emu.load_state_from_bytes(data.to_vec()),
+            ActiveCore::Gba(emu) => emu.load_state(data),
             ActiveCore::Nes(emu) => emu.load_state(data),
         }
     }
@@ -161,6 +183,7 @@ impl CoreState {
     pub fn battery_sram(&self) -> Option<Vec<u8>> {
         match &self.core {
             ActiveCore::Gb(emu) => emu.dump_battery_sram(),
+            ActiveCore::Gba(emu) => emu.dump_battery_sram(),
             ActiveCore::Nes(emu) => emu.dump_battery_sram(),
         }
     }
@@ -169,6 +192,9 @@ impl CoreState {
     pub fn load_battery_sram(&mut self, data: &[u8]) {
         match &mut self.core {
             ActiveCore::Gb(emu) => {
+                let _ = emu.load_battery_sram(data);
+            }
+            ActiveCore::Gba(emu) => {
                 let _ = emu.load_battery_sram(data);
             }
             ActiveCore::Nes(emu) => {
@@ -180,6 +206,7 @@ impl CoreState {
     pub fn framebuffer_as_xrgb8888(&mut self) -> &[u8] {
         let fb = match &self.core {
             ActiveCore::Gb(emu) => emu.framebuffer(),
+            ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
         };
         self.xrgb_buf.resize(fb.len(), 0);
@@ -199,6 +226,7 @@ impl CoreState {
     pub fn framebuffer_as_rgb565(&mut self) -> &[u8] {
         let fb = match &self.core {
             ActiveCore::Gb(emu) => emu.framebuffer(),
+            ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
         };
         let pixel_count = fb.len() / 4;
@@ -268,9 +296,14 @@ impl CoreState {
         matches!(self.core, ActiveCore::Nes(_))
     }
 
+    pub fn is_gba(&self) -> bool {
+        matches!(self.core, ActiveCore::Gba(_))
+    }
+
     pub fn cheat_reset(&mut self) {
         match &mut self.core {
             ActiveCore::Gb(emu) => emu.clear_rom_patches(),
+            ActiveCore::Gba(_) => {}
             ActiveCore::Nes(emu) => emu.clear_game_genie(),
         }
     }
@@ -284,6 +317,7 @@ impl CoreState {
                     }
                 }
             }
+            ActiveCore::Gba(_) => {}
             ActiveCore::Nes(emu) => {
                 if let Some(patch) = zeff_nes_core::cheats::decode_nes_game_genie(code) {
                     emu.add_game_genie_patch(patch);
@@ -298,6 +332,12 @@ impl CoreState {
                 let wram = emu.wram_snapshot();
                 self.system_ram_buf.resize(wram.len(), 0);
                 self.system_ram_buf.copy_from_slice(wram);
+            }
+            ActiveCore::Gba(emu) => {
+                let (ewram, iwram) = emu.system_ram();
+                self.system_ram_buf.clear();
+                self.system_ram_buf.extend_from_slice(ewram);
+                self.system_ram_buf.extend_from_slice(iwram);
             }
             ActiveCore::Nes(emu) => {
                 let ram = emu.system_ram();
@@ -314,6 +354,11 @@ impl CoreState {
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(vram);
             }
+            ActiveCore::Gba(emu) => {
+                let vram = emu.vram_snapshot();
+                self.video_ram_buf.resize(vram.len(), 0);
+                self.video_ram_buf.copy_from_slice(vram);
+            }
             ActiveCore::Nes(emu) => {
                 let vram = emu.chr_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
@@ -325,6 +370,7 @@ impl CoreState {
     pub fn system_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gb(emu) => emu.wram_snapshot().len(),
+            ActiveCore::Gba(_) => 0x48000,
             ActiveCore::Nes(_) => 0x800, // 2 KiB
         }
     }
@@ -332,6 +378,7 @@ impl CoreState {
     pub fn video_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gb(emu) => emu.vram_snapshot().len(),
+            ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::VRAM_SIZE,
             ActiveCore::Nes(_) => 0x2000,
         }
     }

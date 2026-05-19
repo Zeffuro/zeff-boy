@@ -1,8 +1,6 @@
-use crate::emu_backend::ActiveSystem;
+use crate::emu_backend::{ActiveSystem, ROM_EXTENSIONS};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
-
-const ROM_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "nes"];
 
 pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> anyhow::Result<(PathBuf, Vec<u8>)> {
     let file = std::fs::File::open(zip_path).context("Failed to open ZIP")?;
@@ -108,6 +106,7 @@ pub(crate) fn build_slot_info(rom_hash: Option<[u8; 32]>, system: ActiveSystem) 
         let (subdir, ext) = match system {
             ActiveSystem::Nes => ("nes", "nstate"),
             ActiveSystem::GameBoy => ("gbc", "gbstate"),
+            ActiveSystem::GameBoyAdvance => ("gba", "gbastate"),
         };
         let Ok(path) = crate::save_paths::slot_path(subdir, ext, hash, slot) else {
             labels[i] = format!("Slot {slot}  (empty)");
@@ -129,4 +128,43 @@ pub(crate) fn build_slot_info(rom_hash: Option<[u8; 32]>, system: ActiveSystem) 
         }
     }
     SlotInfo { labels, occupied }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+
+    fn zip_with_file(name: &str, bytes: &[u8]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .expect("zip entry should start");
+        writer.write_all(bytes).expect("zip entry should write");
+        writer.finish().expect("zip should finish").into_inner()
+    }
+
+    #[test]
+    fn extracts_gba_rom_from_zip() {
+        let rom = [0x12, 0x34, 0x56];
+        let zip = zip_with_file("folder/game.gba", &rom);
+
+        let (path, data) = extract_rom_from_zip_bytes(&zip, "archive.zip")
+            .expect("GBA ROM inside ZIP should be supported");
+
+        assert_eq!(path, PathBuf::from("archive.zip").join("folder/game.gba"));
+        assert_eq!(data, rom);
+    }
+
+    #[test]
+    fn missing_rom_error_mentions_gba() {
+        let zip = zip_with_file("readme.txt", b"not a rom");
+
+        let err = extract_rom_from_zip_bytes(&zip, "archive.zip")
+            .expect_err("ZIP without a supported ROM should fail")
+            .to_string();
+
+        assert!(err.contains(".gba"), "error was: {err}");
+    }
 }

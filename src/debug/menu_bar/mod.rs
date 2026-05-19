@@ -19,6 +19,7 @@ pub(crate) enum MenuAction {
     OpenSettings,
     SaveStateFile,
     LoadStateFile,
+    UndoLoadState,
     SaveStateSlot(u8),
     LoadStateSlot(u8),
     SetAspectRatio(AspectRatioMode),
@@ -60,6 +61,7 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) slot_labels: &'a [String; 10],
     pub(crate) slot_occupied: &'a [bool; 10],
     pub(crate) active_save_slot: u8,
+    pub(crate) can_undo_load_state: bool,
 }
 
 pub(crate) fn draw_menu_bar(
@@ -90,6 +92,7 @@ pub(crate) fn draw_menu_bar(
                                     slot_labels: mb.slot_labels,
                                     slot_occupied: mb.slot_occupied,
                                     active_slot: mb.active_save_slot,
+                                    can_undo_load_state: mb.can_undo_load_state,
                                     is_recording_audio: mb.is_recording_audio,
                                     is_recording_replay: mb.is_recording_replay,
                                     is_playing_replay: mb.is_playing_replay,

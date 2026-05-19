@@ -17,7 +17,9 @@ impl EmuThread {
             Ok(bytes) => {
                 let tx = resp_tx.clone();
                 std::thread::spawn(move || {
-                    let resp = match crate::save_paths::write_state_bytes_to_file(&path, &bytes) {
+                    let resp = match crate::save_paths::write_state_bytes_to_file_with_backup(
+                        &path, &bytes,
+                    ) {
                         Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
                         Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
                     };

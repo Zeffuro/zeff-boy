@@ -98,6 +98,14 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             log_sram_result(emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path));
             Ok(EmuBackend::from_nes(emu, rom_path))
         }
+        ActiveSystem::GameBoyAdvance => {
+            let mut emu = zeff_gba_core::emulator::Emulator::new(
+                &rom_data,
+                zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE,
+            )?;
+            log_sram_result(emu_backend::gba::try_load_battery_sram(&mut emu, &rom_path));
+            Ok(EmuBackend::from_gba(emu, rom_path))
+        }
     }
 }
 

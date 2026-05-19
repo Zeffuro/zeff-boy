@@ -5585,6 +5585,7 @@ dependencies = [
  "winit",
  "zeff-emu-common",
  "zeff-gb-core",
+ "zeff-gba-core",
  "zeff-nes-core",
  "zip",
 ]
@@ -5615,6 +5616,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeff-gba-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.1",
+ "sha2",
+ "zeff-emu-common",
+]
+
+[[package]]
 name = "zeff-libretro"
 version = "0.1.0"
 dependencies = [
@@ -5623,6 +5634,7 @@ dependencies = [
  "log",
  "zeff-emu-common",
  "zeff-gb-core",
+ "zeff-gba-core",
  "zeff-nes-core",
 ]
 

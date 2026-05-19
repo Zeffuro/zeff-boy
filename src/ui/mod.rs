@@ -4,23 +4,26 @@ use crate::debug::{
     RomInfoSection, RomSearchResult,
 };
 use crate::emu_thread::MemorySearchRequest;
+use zeff_emu_common::address::Address;
 
 mod gb_snapshot;
+mod gba_snapshot;
 mod nes_snapshot;
 
 pub(crate) use gb_snapshot::collect_emu_snapshot;
+pub(crate) use gba_snapshot::collect_gba_snapshot;
 pub(crate) use nes_snapshot::collect_nes_snapshot;
 
 fn build_memory_page(
     show: bool,
-    start: u16,
-    reusable: Option<Vec<(u16, u8)>>,
-    peek: impl Fn(u16) -> u8,
-) -> Option<Vec<(u16, u8)>> {
+    start: Address,
+    reusable: Option<Vec<(Address, u8)>>,
+    peek: impl Fn(Address) -> u8,
+) -> Option<Vec<(Address, u8)>> {
     if show {
         let mut page = reusable.unwrap_or_else(|| Vec::with_capacity(256));
         page.clear();
-        for i in 0..256u16 {
+        for i in 0..256u32 {
             let addr = start.wrapping_add(i);
             page.push((addr, peek(addr)));
         }
@@ -50,10 +53,10 @@ fn build_rom_page(show: bool, start: u32, rom_bytes: &[u8]) -> Option<Vec<(u32, 
 
 fn build_disassembly_view(
     show: bool,
-    last_pc: Option<u16>,
-    current_pc: u16,
+    last_pc: Option<Address>,
+    current_pc: Address,
     disassemble: impl FnOnce() -> Vec<crate::debug::DisassembledLine>,
-    breakpoints_iter: impl Iterator<Item = u16>,
+    breakpoints_iter: impl Iterator<Item = Address>,
 ) -> Option<DisassemblyView> {
     if !show {
         return None;
@@ -61,7 +64,7 @@ fn build_disassembly_view(
     if last_pc == Some(current_pc) {
         return None;
     }
-    let mut breakpoints: Vec<u16> = breakpoints_iter.collect();
+    let mut breakpoints: Vec<Address> = breakpoints_iter.collect();
     breakpoints.sort_unstable();
     Some(DisassemblyView {
         pc: current_pc,
@@ -72,23 +75,52 @@ fn build_disassembly_view(
 
 fn build_memory_search(
     search: Option<&MemorySearchRequest>,
-    peek: impl Fn(u16) -> u8,
+    peek: impl Fn(Address) -> u8,
+) -> Option<Vec<MemorySearchResult>> {
+    build_memory_search_ranges(search, &[(0, 0xFFFF)], peek)
+}
+
+fn build_memory_search_ranges(
+    search: Option<&MemorySearchRequest>,
+    ranges: &[(Address, Address)],
+    peek: impl Fn(Address) -> u8,
 ) -> Option<Vec<MemorySearchResult>> {
     let search = search?;
     let mut results = Vec::new();
     if !search.pattern.is_empty() {
-        let pattern_len = search.pattern.len();
-        for start_addr in 0..=(0x10000usize - pattern_len) {
+        let pattern_len = search.pattern.len() as Address;
+        for &(range_start, range_end) in ranges {
+            let Some(last_start) = pattern_len
+                .checked_sub(1)
+                .and_then(|tail| range_end.checked_sub(tail))
+            else {
+                continue;
+            };
+            if pattern_len == 0 || last_start < range_start {
+                continue;
+            }
+            let mut start_addr = range_start;
+            while start_addr <= last_start {
+                if results.len() >= search.max_results {
+                    break;
+                }
+                let matched =
+                    search.pattern.iter().enumerate().all(|(j, expected)| {
+                        peek(start_addr.wrapping_add(j as Address)) == *expected
+                    });
+                if matched {
+                    results.push(MemorySearchResult {
+                        address: start_addr,
+                        matched_bytes: search.pattern.clone(),
+                    });
+                }
+                let Some(next) = start_addr.checked_add(1) else {
+                    break;
+                };
+                start_addr = next;
+            }
             if results.len() >= search.max_results {
                 break;
-            }
-            let matched =
-                (0..pattern_len).all(|j| peek((start_addr + j) as u16) == search.pattern[j]);
-            if matched {
-                results.push(MemorySearchResult {
-                    address: start_addr as u16,
-                    matched_bytes: search.pattern.clone(),
-                });
             }
         }
     }
@@ -150,7 +182,7 @@ pub(crate) struct UiFrameData {
     pub(crate) input_debug: Option<InputDebugInfo>,
     pub(crate) graphics_data: Option<ConsoleGraphicsData>,
     pub(crate) disassembly_view: Option<DisassemblyView>,
-    pub(crate) memory_page: Option<Vec<(u16, u8)>>,
+    pub(crate) memory_page: Option<Vec<(Address, u8)>>,
     pub(crate) memory_search_results: Option<Vec<MemorySearchResult>>,
     pub(crate) rom_page: Option<Vec<(u32, u8)>>,
     pub(crate) rom_size: u32,

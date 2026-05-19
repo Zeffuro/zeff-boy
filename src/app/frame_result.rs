@@ -159,7 +159,7 @@ impl App {
                     self.debug_windows.tilemap.update_dirty_inputs(gb_data);
                 }
             }
-            Some(ConsoleGraphicsData::Nes(_)) => {
+            Some(ConsoleGraphicsData::Gba(_)) | Some(ConsoleGraphicsData::Nes(_)) => {
                 if is_tab_open(&self.debug_dock, DebugTab::TileViewer) {
                     self.debug_windows.tiles.invalidate_cache();
                 }

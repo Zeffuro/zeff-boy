@@ -128,6 +128,10 @@ get-all-code:
 get-all-code:
     $allCode = ""; Get-ChildItem -Path src -Recurse -Filter *.rs | Sort-Object FullName | ForEach-Object { $allCode += "`n// ===== $($_.FullName) =====`n"; $allCode += Get-Content $_.FullName -Raw }; Set-Clipboard -Value $allCode
 
+[windows]
+get-all-code-crates:
+    $allCode = ""; Get-ChildItem -Path crates -Recurse -Filter *.rs | Sort-Object FullName | ForEach-Object { $allCode += "`n// ===== $($_.FullName) =====`n"; $allCode += Get-Content $_.FullName -Raw }; Set-Clipboard -Value $allCode
+
 # ──────────────────────────── Profiling ──────────────────────────────
 
 # Build with profiling profile (debug symbols, optimized)

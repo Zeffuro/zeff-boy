@@ -1,4 +1,5 @@
 use crate::debug::{CpuDebugSnapshot, DebugSection, WatchHitDisplay, WatchpointDisplay};
+use zeff_emu_common::address::Address;
 
 pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
     let register_lines = vec![
@@ -141,20 +142,25 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         cycles: info.cycles,
         last_opcode_line: format!("@ {:04X} = {:02X}", info.last_opcode_pc, info.last_opcode),
         sections,
-        mem_around_pc: info.mem_around_pc,
+        mem_around_pc: info.mem_around_pc.map(|(addr, value)| (addr.into(), value)),
         recent_op_lines,
-        breakpoints: info.breakpoints.clone(),
+        breakpoints: info
+            .breakpoints
+            .iter()
+            .copied()
+            .map(Address::from)
+            .collect(),
         watchpoints: info
             .watchpoints
             .iter()
             .map(|w| WatchpointDisplay {
-                address: w.address,
+                address: w.address.into(),
                 watch_type: w.watch_type,
             })
             .collect(),
-        hit_breakpoint: info.hit_breakpoint,
+        hit_breakpoint: info.hit_breakpoint.map(Address::from),
         hit_watchpoint: info.hit_watchpoint.as_ref().map(|h| WatchHitDisplay {
-            address: h.address,
+            address: h.address.into(),
             old_value: h.old_value,
             new_value: h.new_value,
             watch_type: h.watch_type,

@@ -3,9 +3,10 @@ use std::fmt::Write;
 
 use super::common::{
     COLOR_ADDR, COLOR_DIM, COLOR_FLASH, DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_ROWS_VISIBLE,
-    parse_hex_u16,
+    parse_hex_u32,
 };
 use crate::debug::types::{MemoryBookmark, MemoryByteDiff};
+use zeff_emu_common::address::Address;
 
 pub(super) struct HexFormats {
     pub addr: egui::TextFormat,
@@ -179,20 +180,20 @@ pub(super) fn draw_bookmarks_section(
     addr_input: &mut String,
     label_input: &mut String,
     bookmarks: &mut Vec<MemoryBookmark>,
-    current_view_start: u16,
-) -> Option<u16> {
+    current_view_start: Address,
+) -> Option<Address> {
     let mut jump_to = None;
     ui.collapsing("Bookmarks", |ui| {
         ui.horizontal(|ui| {
             ui.label("Address:");
             ui.add(
                 egui::TextEdit::singleline(addr_input)
-                    .desired_width(60.0)
-                    .char_limit(4)
+                    .desired_width(80.0)
+                    .char_limit(8)
                     .hint_text("hex"),
             );
             if ui.button("Current").clicked() {
-                *addr_input = format!("{:04X}", current_view_start);
+                *addr_input = format!("{:08X}", current_view_start);
             }
         });
         ui.horizontal(|ui| {
@@ -205,10 +206,10 @@ pub(super) fn draw_bookmarks_section(
         });
         ui.horizontal(|ui| {
             if ui.button("Add / Update").clicked()
-                && let Some(address) = parse_hex_u16(addr_input)
+                && let Some(address) = parse_hex_u32(addr_input)
             {
                 upsert_bookmark(bookmarks, address, label_input);
-                *addr_input = format!("{:04X}", address);
+                *addr_input = format!("{:08X}", address);
                 label_input.clear();
             }
             if !bookmarks.is_empty() && ui.button("Clear All").clicked() {
@@ -227,7 +228,7 @@ pub(super) fn draw_bookmarks_section(
                 let mut remove_idx = None;
                 for (idx, bookmark) in bookmarks.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        let row_label = format!("{:04X}  {}", bookmark.address, bookmark.label);
+                        let row_label = format!("{:08X}  {}", bookmark.address, bookmark.label);
                         if ui
                             .add(
                                 egui::Label::new(egui::RichText::new(row_label).monospace())
@@ -253,7 +254,7 @@ pub(super) fn draw_bookmarks_section(
     jump_to
 }
 
-pub(super) fn draw_diff_section(ui: &mut egui::Ui, diffs: &[MemoryByteDiff]) -> Option<u16> {
+pub(super) fn draw_diff_section(ui: &mut egui::Ui, diffs: &[MemoryByteDiff]) -> Option<Address> {
     let mut jump_to = None;
     ui.collapsing("Diff View", |ui| {
         if diffs.is_empty() {
@@ -281,7 +282,7 @@ pub(super) fn draw_diff_section(ui: &mut egui::Ui, diffs: &[MemoryByteDiff]) -> 
     jump_to
 }
 
-fn upsert_bookmark(bookmarks: &mut Vec<MemoryBookmark>, address: u16, label_input: &str) {
+fn upsert_bookmark(bookmarks: &mut Vec<MemoryBookmark>, address: Address, label_input: &str) {
     let label = normalize_bookmark_label(address, label_input);
     if let Some(existing) = bookmarks.iter_mut().find(|entry| entry.address == address) {
         existing.label = label;
@@ -291,17 +292,17 @@ fn upsert_bookmark(bookmarks: &mut Vec<MemoryBookmark>, address: u16, label_inpu
     }
 }
 
-fn normalize_bookmark_label(address: u16, label_input: &str) -> String {
+fn normalize_bookmark_label(address: Address, label_input: &str) -> String {
     let trimmed = label_input.trim();
     if trimmed.is_empty() {
-        format!("0x{address:04X}")
+        format!("0x{address:08X}")
     } else {
         trimmed.to_string()
     }
 }
 
 fn format_diff_line(diff: MemoryByteDiff) -> String {
-    format!("{:04X}: {:02X} -> {:02X}", diff.address, diff.old, diff.new)
+    format!("{:08X}: {:02X} -> {:02X}", diff.address, diff.old, diff.new)
 }
 
 #[cfg(test)]
@@ -325,7 +326,7 @@ mod tests {
 
     #[test]
     fn normalize_bookmark_label_falls_back_to_hex_address() {
-        assert_eq!(normalize_bookmark_label(0xC000, "   "), "0xC000");
+        assert_eq!(normalize_bookmark_label(0xC000, "   "), "0x0000C000");
     }
 
     #[test]
@@ -335,6 +336,6 @@ mod tests {
             old: 0x1A,
             new: 0x2B,
         });
-        assert_eq!(line, "C123: 1A -> 2B");
+        assert_eq!(line, "0000C123: 1A -> 2B");
     }
 }

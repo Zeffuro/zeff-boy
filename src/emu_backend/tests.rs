@@ -24,6 +24,40 @@ fn build_nes_test_rom() -> Vec<u8> {
     rom
 }
 
+fn build_gba_test_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0xC0];
+    rom[0xA0..0xA4].copy_from_slice(b"TEST");
+    rom[0xAC..0xB0].copy_from_slice(b"ABCD");
+    rom[0xB0..0xB2].copy_from_slice(b"01");
+    rom[0xB2] = 0x96;
+    rom
+}
+
+#[test]
+fn active_system_detects_supported_rom_extensions() {
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("GAME.GB")),
+        Some(ActiveSystem::GameBoy)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.gbc")),
+        Some(ActiveSystem::GameBoy)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.sgb")),
+        Some(ActiveSystem::GameBoy)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.gba")),
+        Some(ActiveSystem::GameBoyAdvance)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.nes")),
+        Some(ActiveSystem::Nes)
+    );
+    assert_eq!(ActiveSystem::from_path(&PathBuf::from("game.7z")), None);
+}
+
 #[test]
 fn gb_backend_smoke_roundtrip() {
     let rom = build_gb_test_rom();
@@ -69,4 +103,26 @@ fn nes_backend_smoke_roundtrip() {
     backend
         .load_state_from_bytes(state)
         .expect("NES backend should load save-state");
+}
+
+#[test]
+fn gba_backend_smoke_roundtrip() {
+    let rom = build_gba_test_rom();
+    let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("GBA emulator should initialize");
+
+    let mut backend = EmuBackend::from_gba(gba, PathBuf::from("test.gba"));
+
+    assert_eq!(backend.system(), ActiveSystem::GameBoyAdvance);
+    assert_eq!(backend.framebuffer().len(), (240 * 160 * 4) as usize);
+    assert!(backend.is_running());
+
+    backend.step_frame();
+
+    let state = backend
+        .encode_state_bytes()
+        .expect("GBA backend should encode save-state");
+    backend
+        .load_state_from_bytes(state)
+        .expect("GBA backend should load save-state");
 }

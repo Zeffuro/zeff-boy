@@ -58,6 +58,7 @@ impl App {
             slot_labels,
             slot_occupied,
             active_save_slot: self.active_save_slot,
+            can_undo_load_state: self.undo_load_state.is_some(),
         }) {
             Ok(result) => {
                 let mut settings_dirty = false;
@@ -68,6 +69,7 @@ impl App {
                         MenuAction::StopGame => self.stop_game(),
                         MenuAction::SaveStateFile => self.save_state_file_dialog(),
                         MenuAction::LoadStateFile => self.load_state_file_dialog(),
+                        MenuAction::UndoLoadState => self.undo_load_state(),
                         MenuAction::SaveStateSlot(slot) => self.save_state_slot(*slot),
                         MenuAction::LoadStateSlot(slot) => self.load_state_slot(*slot),
                         MenuAction::LoadRecentRom(path) => self.load_rom(path),

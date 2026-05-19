@@ -1,5 +1,5 @@
 use super::App;
-use crate::emu_backend::{ActiveSystem, EmuBackend};
+use crate::emu_backend::{ActiveSystem, EmuBackend, ROM_AND_ARCHIVE_EXTENSIONS};
 use crate::emu_thread::{EmuCommand, EmuResponse};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -136,6 +136,36 @@ impl App {
                     Err(e) => Err(e),
                 }
             }
+            ActiveSystem::GameBoyAdvance => {
+                let mut rom_data = match preloaded_data {
+                    Some(data) => data,
+                    None => std::fs::read(path).context("Failed to read GBA ROM")?,
+                };
+                let original_crc = apply_mods_if_any(system, &mut rom_data);
+                let sample_rate = self
+                    .audio
+                    .as_ref()
+                    .map(|a| a.sample_rate())
+                    .unwrap_or(zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE);
+                zeff_gba_core::emulator::Emulator::new(&rom_data, sample_rate).map(|mut emu| {
+                    let buttons = self.host_input.buttons_pressed();
+                    let dpad = self.host_input.dpad_pressed();
+                    emu.set_input(buttons, dpad);
+                    if let Some(sram_path) =
+                        crate::emu_backend::gba::try_load_battery_sram(&mut emu, rom_path)
+                            .unwrap_or_else(|e| {
+                                log::warn!("Failed to load battery save: {e}");
+                                None
+                            })
+                    {
+                        log::info!("Loaded battery save from {}", sram_path);
+                    }
+                    (
+                        EmuBackend::from_gba(emu, rom_path.to_path_buf()),
+                        original_crc,
+                    )
+                })
+            }
         }
     }
 
@@ -147,6 +177,7 @@ impl App {
         self.cached_ui_data = None;
         self.recycled.clear();
         self.debug_windows.last_disasm_pc = None;
+        self.undo_load_state = None;
 
         let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
             Ok(result) => result,
@@ -242,6 +273,7 @@ impl App {
         self.recycled.clear();
         self.latest_frame = None;
         self.last_displayed_frame = None;
+        self.undo_load_state = None;
         self.rom_info.rom_path = None;
         self.rom_info.rom_hash = None;
         self.rom_info.is_mbc7 = false;
@@ -278,8 +310,9 @@ impl App {
         {
             let was_paused = self.pause_for_dialog();
             let file = crate::platform::FileDialog::new()
-                .add_filter("ROMs", &["gb", "gbc", "nes", "zip"])
-                .add_filter("Game Boy ROMs", &["gb", "gbc"])
+                .add_filter("ROMs", ROM_AND_ARCHIVE_EXTENSIONS)
+                .add_filter("Game Boy ROMs", &["gb", "gbc", "sgb"])
+                .add_filter("Game Boy Advance ROMs", &["gba"])
                 .add_filter("NES ROMs", &["nes"])
                 .add_filter("ZIP Archives", &["zip"])
                 .add_filter("All files", &["*"])
@@ -294,7 +327,7 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         {
             crate::platform::FileDialog::new()
-                .add_filter("ROMs", &["gb", "gbc", "nes", "zip"])
+                .add_filter("ROMs", ROM_AND_ARCHIVE_EXTENSIONS)
                 .set_title("Open ROM")
                 .pick_file_web(self.pending_rom_load.clone());
         }
@@ -315,6 +348,7 @@ impl App {
         self.rom_info.rom_path = Some(rom_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.active_system = system;
+        self.debug_windows.memory.configure_for_system(system);
 
         let (native_w, native_h) = system.screen_size();
         if let Some(gfx) = self.gfx.as_mut() {

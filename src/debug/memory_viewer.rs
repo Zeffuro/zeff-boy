@@ -1,16 +1,18 @@
-use super::common::{HEX_PAGE_SIZE, parse_hex_u8, parse_hex_u16};
+use super::common::{HEX_PAGE_SIZE, parse_hex_u8, parse_hex_u32};
 use super::{data_inspector, hex_search, hex_viewer};
 use crate::debug::types::MemoryViewerState;
+use zeff_emu_common::address::Address;
 
-const MAX_START: u16 = 0xFF00;
 const FLASH_DURATION_TICKS: u8 = 12;
 
 pub(super) fn draw_memory_viewer_content(
     ui: &mut egui::Ui,
     state: &mut MemoryViewerState,
-    memory_page: &[(u16, u8)],
-) -> Vec<(u16, u8)> {
+    memory_page: &[(Address, u8)],
+) -> Vec<(Address, u8)> {
     let mut writes = Vec::new();
+    let address_space = state.address_space;
+    state.view_start = address_space.clamp_start(state.view_start);
 
     sync_flash_state(state, memory_page);
 
@@ -20,14 +22,14 @@ pub(super) fn draw_memory_viewer_content(
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_hex_u16(&state.jump_input)
+            && let Some(addr) = parse_hex_u32(&state.jump_input)
         {
-            state.view_start = addr & 0xFFF0;
-            state.jump_input = format!("{:04X}", state.view_start);
+            state.view_start = address_space.clamp_start(addr);
+            state.jump_input = address_space.format(state.view_start);
         }
 
         if !input_has_focus {
-            state.jump_input = format!("{:04X}", state.view_start);
+            state.jump_input = address_space.format(state.view_start);
         }
     });
 
@@ -36,24 +38,33 @@ pub(super) fn draw_memory_viewer_content(
             state.view_start = state.view_start.saturating_sub(0x10);
         }
         if ui.button("+0x10").clicked() {
-            state.view_start = state.view_start.saturating_add(0x10).min(MAX_START);
+            state.view_start = address_space.clamp_start(state.view_start.saturating_add(0x10));
         }
         if ui.button("-0x100").clicked() {
             state.view_start = state.view_start.saturating_sub(0x100);
         }
         if ui.button("+0x100").clicked() {
-            state.view_start = state.view_start.saturating_add(0x100).min(MAX_START);
+            state.view_start = address_space.clamp_start(state.view_start.saturating_add(0x100));
         }
     });
 
+    ui.label(format!(
+        "Range: {}..{}",
+        address_space.format(address_space.min),
+        address_space.format(address_space.max_start.saturating_add(0xFF))
+    ));
+
     let slider = ui.add(
-        egui::Slider::new(&mut state.view_start, 0..=MAX_START)
-            .step_by(16.0)
-            .text("Start"),
+        egui::Slider::new(
+            &mut state.view_start,
+            address_space.min..=address_space.max_start,
+        )
+        .step_by(16.0)
+        .text("Start"),
     );
-    state.view_start &= 0xFFF0;
+    state.view_start = address_space.clamp_start(state.view_start);
     if slider.changed() {
-        state.jump_input = format!("{:04X}", state.view_start);
+        state.jump_input = address_space.format(state.view_start);
     }
 
     ui.separator();
@@ -64,7 +75,7 @@ pub(super) fn draw_memory_viewer_content(
         hex_viewer::draw_hex_grid(
             ui,
             memory_page,
-            4,
+            address_space.addr_width,
             &fmt,
             Some(&state.flash_ticks),
             &state.tbl_map,
@@ -73,19 +84,19 @@ pub(super) fn draw_memory_viewer_content(
     let scrolled_start = hex_viewer::handle_scroll(
         ui,
         hex_block.response.rect,
-        state.view_start as u32,
-        MAX_START as u32,
-    ) as u16;
+        state.view_start,
+        address_space.max_start,
+    );
     if scrolled_start != state.view_start {
-        state.view_start = scrolled_start;
-        state.jump_input = format!("{:04X}", state.view_start);
+        state.view_start = address_space.clamp_start(scrolled_start);
+        state.jump_input = address_space.format(state.view_start);
     }
 
     if state.enable_editing {
         ui.separator();
         if let Some(addr) = state.edit_addr {
             ui.horizontal(|ui| {
-                ui.monospace(format!("Edit {:04X}:", addr));
+                ui.monospace(format!("Edit {}:", address_space.format(addr)));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.edit_value)
                         .desired_width(50.0)
@@ -106,13 +117,17 @@ pub(super) fn draw_memory_viewer_content(
             ui.label("Edit addr:");
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut state.edit_addr_input)
-                    .desired_width(60.0)
-                    .char_limit(4)
+                    .desired_width(if address_space.addr_width <= 4 {
+                        60.0
+                    } else {
+                        80.0
+                    })
+                    .char_limit(address_space.addr_width)
                     .hint_text("hex addr"),
             );
             if resp.lost_focus()
                 && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                && let Some(addr) = parse_hex_u16(&state.edit_addr_input)
+                && let Some(addr) = parse_hex_u32(&state.edit_addr_input)
             {
                 state.edit_addr = Some(addr);
                 let val = memory_page
@@ -133,14 +148,14 @@ pub(super) fn draw_memory_viewer_content(
         &mut state.bookmarks,
         state.view_start,
     ) {
-        state.view_start = jump & 0xFFF0;
-        state.jump_input = format!("{:04X}", state.view_start);
+        state.view_start = address_space.clamp_start(jump);
+        state.jump_input = address_space.format(state.view_start);
     }
 
     ui.separator();
     if let Some(jump) = hex_viewer::draw_diff_section(ui, &state.recent_diffs) {
-        state.view_start = jump & 0xFFF0;
-        state.jump_input = format!("{:04X}", state.view_start);
+        state.view_start = address_space.clamp_start(jump);
+        state.jump_input = address_space.format(state.view_start);
     }
 
     ui.separator();
@@ -152,8 +167,8 @@ pub(super) fn draw_memory_viewer_content(
         &mut state.pattern_error,
         memory_page,
     ) {
-        state.view_start = jump & 0xFFF0;
-        state.jump_input = format!("{:04X}", state.view_start);
+        state.view_start = address_space.clamp_start(jump);
+        state.jump_input = address_space.format(state.view_start);
     }
 
     ui.separator();
@@ -169,8 +184,8 @@ pub(super) fn draw_memory_viewer_content(
         },
         &state.search_results,
     ) {
-        state.view_start = (jump as u16) & 0xFFF0;
-        state.jump_input = format!("{:04X}", state.view_start);
+        state.view_start = address_space.clamp_start(jump);
+        state.jump_input = address_space.format(state.view_start);
     }
 
     ui.separator();
@@ -187,7 +202,7 @@ pub(super) fn draw_memory_viewer_content(
     writes
 }
 
-fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(u16, u8)]) {
+fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(Address, u8)]) {
     if state.flash_ticks.len() != HEX_PAGE_SIZE {
         state.flash_ticks = vec![0; HEX_PAGE_SIZE];
     }

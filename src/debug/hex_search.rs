@@ -1,6 +1,7 @@
 use super::common::parse_hex_u8;
 use crate::debug::types::{MemorySearchMode, MemorySearchResult, RomSearchResult};
 use std::fmt::Write;
+use zeff_emu_common::address::Address;
 
 pub(super) trait HexSearchResult {
     fn display_label(&self) -> String;
@@ -18,12 +19,12 @@ fn format_matched_bytes(s: &mut String, bytes: &[u8]) {
 
 impl HexSearchResult for MemorySearchResult {
     fn display_label(&self) -> String {
-        let mut s = format!("{:04X}: ", self.address);
+        let mut s = format!("{:08X}: ", self.address);
         format_matched_bytes(&mut s, &self.matched_bytes);
         s
     }
     fn jump_address(&self) -> u32 {
-        self.address as u32
+        self.address
     }
 }
 
@@ -145,8 +146,8 @@ pub(super) fn draw_pattern_section(
     max_results: &mut usize,
     results: &mut Vec<MemorySearchResult>,
     error: &mut Option<String>,
-    memory_page: &[(u16, u8)],
-) -> Option<u16> {
+    memory_page: &[(Address, u8)],
+) -> Option<Address> {
     let mut jump_to = None;
     ui.collapsing("Pattern Data", |ui| {
         ui.label("Match hex bytes with optional wildcard `??` (e.g. A9 ?? 00)");
@@ -222,7 +223,7 @@ fn parse_pattern_query(query: &str) -> Result<Vec<Option<u8>>, &'static str> {
 }
 
 fn find_pattern_matches(
-    memory_page: &[(u16, u8)],
+    memory_page: &[(Address, u8)],
     pattern: &[Option<u8>],
     max_results: usize,
 ) -> Vec<MemorySearchResult> {

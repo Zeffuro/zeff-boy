@@ -1,6 +1,7 @@
 use crate::debug::BreakpointState;
 use crate::debug::common::{
-    COLOR_BREAKPOINT_HIT, COLOR_CONTINUE_BUTTON, COLOR_WATCHPOINT_HIT, WatchType, parse_hex_u16,
+    COLOR_BREAKPOINT_HIT, COLOR_CONTINUE_BUTTON, COLOR_WATCHPOINT_HIT, WatchType, format_addr,
+    parse_hex_u32,
 };
 use crate::debug::types::CpuDebugSnapshot;
 use crate::debug::ui::DebugUiActions;
@@ -21,7 +22,7 @@ pub(super) fn draw_breakpoints_content(
         );
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Add").clicked() || enter)
-            && let Some(addr) = parse_hex_u16(&state.input)
+            && let Some(addr) = parse_hex_u32(&state.input)
         {
             actions.add_breakpoint = Some(addr);
             state.input.clear();
@@ -48,11 +49,11 @@ pub(super) fn draw_breakpoints_content(
                 for &addr in &info.breakpoints {
                     let hit = info.hit_breakpoint == Some(addr);
                     let label = if hit {
-                        egui::RichText::new(format!("{:04X} ●", addr))
+                        egui::RichText::new(format!("{} ●", format_addr(addr)))
                             .color(COLOR_BREAKPOINT_HIT)
                             .monospace()
                     } else {
-                        egui::RichText::new(format!("{:04X}", addr)).monospace()
+                        egui::RichText::new(format_addr(addr)).monospace()
                     };
                     ui.label(label);
                     ui.horizontal(|ui| {
@@ -96,7 +97,7 @@ pub(super) fn draw_breakpoints_content(
                 ui.selectable_value(&mut state.watchpoint_type, WatchType::ReadWrite, "R/W");
             });
         if ui.button("Add").clicked()
-            && let Some(addr) = parse_hex_u16(&state.watchpoint_input)
+            && let Some(addr) = parse_hex_u32(&state.watchpoint_input)
         {
             actions.add_watchpoint = Some((addr, state.watchpoint_type));
             state.watchpoint_input.clear();
@@ -124,11 +125,11 @@ pub(super) fn draw_breakpoints_content(
                         .as_ref()
                         .is_some_and(|h| h.address == wp.address);
                     let label = if hit {
-                        egui::RichText::new(format!("{:04X} ●", wp.address))
+                        egui::RichText::new(format!("{} ●", format_addr(wp.address)))
                             .color(COLOR_WATCHPOINT_HIT)
                             .monospace()
                     } else {
-                        egui::RichText::new(format!("{:04X}", wp.address)).monospace()
+                        egui::RichText::new(format_addr(wp.address)).monospace()
                     };
                     ui.label(label);
                     ui.monospace(format!("{:?}", wp.watch_type));
@@ -141,7 +142,7 @@ pub(super) fn draw_breakpoints_content(
         ui.separator();
         ui.colored_label(
             COLOR_BREAKPOINT_HIT,
-            format!("⚑ Breakpoint hit @ {:04X}", bp),
+            format!("⚑ Breakpoint hit @ {}", format_addr(bp)),
         );
     }
     if let Some(ref hit) = info.hit_watchpoint {
@@ -149,8 +150,11 @@ pub(super) fn draw_breakpoints_content(
         ui.colored_label(
             COLOR_WATCHPOINT_HIT,
             format!(
-                "⚑ Watchpoint {:?} @ {:04X}: {:02X} → {:02X}",
-                hit.watch_type, hit.address, hit.old_value, hit.new_value
+                "⚑ Watchpoint {:?} @ {}: {:02X} → {:02X}",
+                hit.watch_type,
+                format_addr(hit.address),
+                hit.old_value,
+                hit.new_value
             ),
         );
     }

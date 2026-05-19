@@ -164,8 +164,11 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             labels: std::array::from_fn(|i| format!("Slot {i}  (empty)")),
             occupied: [false; 10],
         },
+        undo_load_state: None,
         paused_by_unfocus: false,
     };
+
+    app.debug_windows.memory.configure_for_system(active_system);
 
     #[cfg(not(target_arch = "wasm32"))]
     event_loop.run_app(&mut app)?;
@@ -229,6 +232,7 @@ struct App {
     game_view_focused: bool,
     active_system: ActiveSystem,
     cached_slot_info: state_io::SlotInfo,
+    undo_load_state: Option<Vec<u8>>,
     paused_by_unfocus: bool,
 }
 
@@ -262,6 +266,7 @@ impl App {
     fn effective_frame_duration(&self) -> std::time::Duration {
         let base = match self.active_system {
             ActiveSystem::GameBoy => GB_FRAME_DURATION,
+            ActiveSystem::GameBoyAdvance => GBA_FRAME_DURATION,
             ActiveSystem::Nes => NES_FRAME_DURATION,
         };
         match self.speed_mode() {

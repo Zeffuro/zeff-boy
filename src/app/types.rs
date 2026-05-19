@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::camera::CameraCapture;
 use crate::platform::Instant;
+use zeff_emu_common::address::Address;
 
 pub(super) struct TiltState {
     pub(super) smoothed: (f32, f32),
@@ -19,7 +20,7 @@ pub(super) struct RecycledBuffers {
     pub(super) audio: Option<Vec<f32>>,
     pub(super) vram: Option<Vec<u8>>,
     pub(super) oam: Option<Vec<u8>>,
-    pub(super) memory_page: Option<Vec<(u16, u8)>>,
+    pub(super) memory_page: Option<Vec<(Address, u8)>>,
     pub(super) nes_chr: Option<Vec<u8>>,
     pub(super) nes_nametable: Option<Vec<u8>>,
 }
@@ -107,6 +108,7 @@ pub(super) enum SpeedMode {
 }
 
 pub(super) const GB_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
+pub(super) const GBA_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
 pub(super) const MAX_IN_FLIGHT: usize = 2;
 pub(super) const MAX_FRAMES_PER_TICK: usize = 10;
 pub(super) const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);

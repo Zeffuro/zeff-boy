@@ -5,6 +5,7 @@ use arc_swap::ArcSwapOption;
 
 use crate::debug::DebugUiActions;
 use crate::ui;
+use zeff_emu_common::address::Address;
 
 pub(crate) type SharedFramebuffer = Arc<ArcSwapOption<Vec<u8>>>;
 
@@ -30,10 +31,10 @@ pub(crate) struct SnapshotRequest {
     pub(crate) show_disassembler: bool,
     pub(crate) show_rom_info: bool,
     pub(crate) show_memory_viewer: bool,
-    pub(crate) memory_view_start: u16,
+    pub(crate) memory_view_start: Address,
     pub(crate) show_rom_viewer: bool,
     pub(crate) rom_view_start: u32,
-    pub(crate) last_disasm_pc: Option<u16>,
+    pub(crate) last_disasm_pc: Option<Address>,
     pub(crate) memory_search: Option<MemorySearchRequest>,
     pub(crate) rom_search: Option<MemorySearchRequest>,
     pub(crate) render: RenderSettings,
@@ -48,7 +49,7 @@ pub(crate) struct ReusableBuffers {
     pub(crate) audio: Option<Vec<f32>>,
     pub(crate) vram: Option<Vec<u8>>,
     pub(crate) oam: Option<Vec<u8>>,
-    pub(crate) memory_page: Option<Vec<(u16, u8)>>,
+    pub(crate) memory_page: Option<Vec<(Address, u8)>>,
     pub(crate) nes_chr: Option<Vec<u8>>,
     pub(crate) nes_nametable: Option<Vec<u8>>,
 }

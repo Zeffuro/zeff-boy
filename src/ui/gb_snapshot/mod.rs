@@ -8,6 +8,7 @@ mod rom_info;
 use super::UiFrameData;
 use crate::debug::{ConsoleGraphicsData, GbGraphicsData, PerfInfo, disassemble_around};
 use crate::emu_thread::SnapshotRequest;
+use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_gb_core::emulator::Emulator;
 
 use apu::gb_apu_snapshot;
@@ -22,7 +23,7 @@ pub(crate) fn collect_emu_snapshot(
     req: &SnapshotRequest,
     reusable_vram: Option<Vec<u8>>,
     reusable_oam: Option<Vec<u8>>,
-    reusable_memory_page: Option<Vec<(u16, u8)>>,
+    reusable_memory_page: Option<Vec<(Address, u8)>>,
 ) -> UiFrameData {
     let gb_info = if req.want_debug_info {
         Some(emu.snapshot())
@@ -60,9 +61,9 @@ pub(crate) fn collect_emu_snapshot(
     let disassembly_view = super::build_disassembly_view(
         req.show_disassembler,
         req.last_disasm_pc,
-        emu.cpu_pc(),
+        emu.cpu_pc().into(),
         || disassemble_around(|addr| emu.peek_byte(addr), emu.cpu_pc(), 12, 26),
-        emu.iter_breakpoints(),
+        emu.iter_breakpoints().map(Address::from),
     );
 
     let rom_debug = if req.show_rom_info {
@@ -75,11 +76,12 @@ pub(crate) fn collect_emu_snapshot(
         req.show_memory_viewer,
         req.memory_view_start,
         reusable_memory_page,
-        |addr| emu.peek_byte(addr),
+        |addr| emu.peek_byte(narrow_u16(addr)),
     );
 
-    let memory_search_results =
-        super::build_memory_search(req.memory_search.as_ref(), |addr| emu.peek_byte_raw(addr));
+    let memory_search_results = super::build_memory_search(req.memory_search.as_ref(), |addr| {
+        emu.peek_byte_raw(narrow_u16(addr))
+    });
 
     let rom_bytes = emu.cartridge_rom_bytes();
     let rom_size = rom_bytes.len() as u32;

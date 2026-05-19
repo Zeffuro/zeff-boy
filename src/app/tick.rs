@@ -70,12 +70,14 @@ impl SearchableState for crate::debug::RomViewerState {
 
 fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {
     const GB_FRAME_LEN: usize = 160 * 144 * 4;
+    const GBA_FRAME_LEN: usize = 240 * 160 * 4;
     const SGB_FRAME_LEN: usize = 256 * 224 * 4;
     const NES_FRAME_LEN: usize = 256 * 240 * 4;
 
     match (system, frame_len) {
         (ActiveSystem::GameBoy, GB_FRAME_LEN) => Some((160, 144)),
         (ActiveSystem::GameBoy, SGB_FRAME_LEN) => Some((256, 224)),
+        (ActiveSystem::GameBoyAdvance, GBA_FRAME_LEN) => Some((240, 160)),
         (ActiveSystem::Nes, NES_FRAME_LEN) => Some((256, 240)),
         _ => None,
     }

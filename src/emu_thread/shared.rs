@@ -59,10 +59,12 @@ impl EmuThread {
         path: &std::path::Path,
     ) -> EmuResponse {
         match backend.encode_state_bytes() {
-            Ok(bytes) => match crate::save_paths::write_state_bytes_to_file(path, &bytes) {
-                Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
-                Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
-            },
+            Ok(bytes) => {
+                match crate::save_paths::write_state_bytes_to_file_with_backup(path, &bytes) {
+                    Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                    Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+                }
+            }
             Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
         }
     }
@@ -197,6 +199,21 @@ impl EmuThread {
                 }
             }
         }
+
+        if let Some(gba) = backend.gba_mut() {
+            Self::apply_gba_debug_actions(&mut gba.emu, &input.debug_actions);
+            if !uncapped_mode {
+                gba.emu
+                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
+            }
+            if gba.emu.is_cpu_suspended() {
+                if input.debug_continue {
+                    gba.emu.debug_continue();
+                } else if input.debug_step {
+                    gba.emu.debug_step();
+                }
+            }
+        }
     }
 
     pub(crate) fn step_n_frames(
@@ -238,6 +255,7 @@ impl EmuThread {
                 buffers.nes_nametable,
                 buffers.memory_page,
             ),
+            EmuBackend::Gba(gba) => ui::collect_gba_snapshot(&gba.emu, snapshot, buffers),
         }
     }
 

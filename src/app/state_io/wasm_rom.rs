@@ -21,6 +21,7 @@ impl App {
         self.cached_ui_data = None;
         self.recycled.clear();
         self.debug_windows.last_disasm_pc = None;
+        self.undo_load_state = None;
 
         let path = PathBuf::from(&name);
         let is_zip = path

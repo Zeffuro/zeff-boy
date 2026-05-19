@@ -1,4 +1,5 @@
-use super::common::{COLOR_ADDR, DEBUG_MONO_FONT_SIZE, parse_hex_u16, parse_hex_u32};
+use super::common::{COLOR_ADDR, DEBUG_MONO_FONT_SIZE, parse_hex_u32};
+use zeff_emu_common::address::Address;
 
 struct InspectorConfig {
     label: &'static str,
@@ -10,8 +11,8 @@ struct InspectorConfig {
 
 const MEMORY_CONFIG: InspectorConfig = InspectorConfig {
     label: "Address:",
-    desired_width: 60.0,
-    char_limit: 4,
+    desired_width: 80.0,
+    char_limit: 8,
     empty_hint: "Enter an address to inspect.",
     missing_fmt: "not in current page.",
 };
@@ -77,8 +78,8 @@ fn draw_inspector_generic<A>(
 pub(super) fn draw_data_inspector(
     ui: &mut egui::Ui,
     addr_input: &mut String,
-    inspector_addr: &mut Option<u16>,
-    memory_page: &[(u16, u8)],
+    inspector_addr: &mut Option<Address>,
+    memory_page: &[(Address, u8)],
 ) {
     draw_inspector_generic(
         ui,
@@ -88,8 +89,8 @@ pub(super) fn draw_data_inspector(
             page: memory_page,
         },
         &MEMORY_CONFIG,
-        parse_hex_u16,
-        |a| format!("Address {:04X}", a),
+        parse_hex_u32,
+        |a| format!("Address {:08X}", a),
     );
 }
 

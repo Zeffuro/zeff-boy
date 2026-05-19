@@ -28,7 +28,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
         bytes.push(opcode);
         bytes.push(cb);
         return DisassembledLine {
-            address: addr,
+            address: addr.into(),
             bytes,
             mnemonic: cb_mnemonic(cb),
         };
@@ -194,7 +194,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
     };
 
     DisassembledLine {
-        address: addr,
+        address: addr.into(),
         bytes,
         mnemonic,
     }

@@ -45,7 +45,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
         let mut bytes = InstructionBytes::new();
         bytes.push(opcode);
         return DisassembledLine {
-            address: addr,
+            address: addr.into(),
             bytes,
             mnemonic: mn!("DB ${:02X}", opcode),
         };
@@ -83,7 +83,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
     };
 
     DisassembledLine {
-        address: addr,
+        address: addr.into(),
         bytes,
         mnemonic: rendered,
     }

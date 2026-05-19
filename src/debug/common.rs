@@ -1,6 +1,7 @@
 use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use zeff_emu_common::address::Address;
 
 pub(crate) const COLOR_ADDR: egui::Color32 = egui::Color32::from_rgb(140, 140, 170);
 pub(crate) const COLOR_DIM: egui::Color32 = egui::Color32::from_rgb(90, 90, 90);
@@ -16,6 +17,14 @@ pub(crate) const HEX_PAGE_SIZE: usize = HEX_ROWS_VISIBLE * HEX_BYTES_PER_ROW;
 pub(crate) const DEBUG_MONO_FONT_SIZE: f32 = 13.0;
 
 pub(crate) use zeff_emu_common::debug::WatchType;
+
+pub(crate) fn format_addr(addr: Address) -> String {
+    if addr <= 0xFFFF {
+        format!("{addr:04X}")
+    } else {
+        format!("{addr:08X}")
+    }
+}
 
 pub(crate) fn printable_ascii(byte: u8) -> char {
     if byte.is_ascii_graphic() || byte == b' ' {
@@ -78,7 +87,6 @@ macro_rules! parse_hex_fn {
 }
 
 parse_hex_fn!(parse_hex_u8, u8);
-parse_hex_fn!(parse_hex_u16, u16);
 parse_hex_fn!(parse_hex_u32, u32);
 
 pub(crate) fn nes_palette_rgba(

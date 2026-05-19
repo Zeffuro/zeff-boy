@@ -7,6 +7,7 @@ mod rom_info;
 
 use crate::debug::nes_disassemble_around;
 use crate::emu_thread::SnapshotRequest;
+use zeff_emu_common::address::{Address, narrow_u16};
 
 use apu::nes_apu_snapshot;
 use cpu::nes_cpu_snapshot;
@@ -20,7 +21,7 @@ pub(crate) fn collect_nes_snapshot(
     snapshot: &SnapshotRequest,
     reusable_chr: Option<Vec<u8>>,
     reusable_nametable: Option<Vec<u8>>,
-    reusable_memory_page: Option<Vec<(u16, u8)>>,
+    reusable_memory_page: Option<Vec<(Address, u8)>>,
 ) -> super::UiFrameData {
     let mut data = super::UiFrameData::default();
 
@@ -49,7 +50,7 @@ pub(crate) fn collect_nes_snapshot(
     data.disassembly_view = super::build_disassembly_view(
         snapshot.show_disassembler,
         snapshot.last_disasm_pc,
-        emu.cpu_pc(),
+        emu.cpu_pc().into(),
         || {
             nes_disassemble_around(
                 |addr| nes_disasm_peek_byte(emu.bus(), addr),
@@ -58,7 +59,7 @@ pub(crate) fn collect_nes_snapshot(
                 26,
             )
         },
-        emu.iter_breakpoints(),
+        emu.iter_breakpoints().map(Address::from),
     );
 
     if snapshot.show_rom_info {
@@ -81,7 +82,7 @@ pub(crate) fn collect_nes_snapshot(
         snapshot.show_memory_viewer,
         snapshot.memory_view_start,
         reusable_memory_page,
-        |addr| emu.cpu_peek(addr),
+        |addr| emu.cpu_peek(narrow_u16(addr)),
     );
 
     if snapshot.show_rom_viewer {

@@ -4,6 +4,8 @@ use super::super::apu_viewer::draw_apu_viewer_content;
 use super::super::breakpoints_window::draw_breakpoints_content;
 use super::super::cheats_window::draw_cheats_content;
 use super::super::disasm_window::draw_disassembler_content;
+use super::super::gba_tile_viewer::draw_gba_tile_viewer_content;
+use super::super::gba_tilemap_viewer::draw_gba_tilemap_viewer_content;
 use super::super::input_viewer::draw_input_viewer_content;
 use super::super::memory_viewer::draw_memory_viewer_content;
 use super::super::mods_window::draw_mods_content;
@@ -127,6 +129,8 @@ impl TabViewer for DebugTabViewer<'_> {
             DebugTab::TileViewer => {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.data.graphics_data {
                     draw_tile_viewer_content(ui, data, data.ppu.bgp, &mut self.window_state.tiles);
+                } else if let Some(ConsoleGraphicsData::Gba(data)) = self.data.graphics_data {
+                    draw_gba_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
@@ -134,6 +138,8 @@ impl TabViewer for DebugTabViewer<'_> {
             DebugTab::TilemapViewer => {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.data.graphics_data {
                     draw_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
+                } else if let Some(ConsoleGraphicsData::Gba(data)) = self.data.graphics_data {
+                    draw_gba_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 }

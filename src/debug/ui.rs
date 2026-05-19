@@ -1,17 +1,18 @@
 use std::fmt::Write;
 
-use crate::debug::common::{COLOR_CONTINUE_BUTTON, WatchType};
+use crate::debug::common::{COLOR_CONTINUE_BUTTON, WatchType, format_addr};
 use crate::debug::types::CpuDebugSnapshot;
+use zeff_emu_common::address::Address;
 
 pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar};
 pub(crate) use super::settings_window::{SettingsContext, draw_settings_window};
 
 pub(crate) struct DebugUiActions {
-    pub(crate) add_breakpoint: Option<u16>,
-    pub(crate) add_watchpoint: Option<(u16, WatchType)>,
-    pub(crate) remove_breakpoints: Vec<u16>,
-    pub(crate) toggle_breakpoints: Vec<u16>,
-    pub(crate) memory_writes: Vec<(u16, u8)>,
+    pub(crate) add_breakpoint: Option<Address>,
+    pub(crate) add_watchpoint: Option<(Address, WatchType)>,
+    pub(crate) remove_breakpoints: Vec<Address>,
+    pub(crate) toggle_breakpoints: Vec<Address>,
+    pub(crate) memory_writes: Vec<(Address, u8)>,
     pub(crate) apu_channel_mutes: Option<Vec<bool>>,
     pub(crate) step_requested: bool,
     pub(crate) continue_requested: bool,
@@ -88,7 +89,7 @@ pub(super) fn draw_cpu_debug_content(
                 ui.monospace(&line);
                 line.clear();
             }
-            let _ = write!(line, "{:04X}: ", addr);
+            let _ = write!(line, "{}: ", format_addr(*addr));
         }
         let _ = write!(line, "{:02X} ", val);
     }
@@ -123,12 +124,15 @@ pub(super) fn draw_cpu_debug_content(
     });
 
     if let Some(bp) = info.hit_breakpoint {
-        ui.monospace(format!("Hit breakpoint @ {:04X}", bp));
+        ui.monospace(format!("Hit breakpoint @ {}", format_addr(bp)));
     }
     if let Some(hit) = &info.hit_watchpoint {
         ui.monospace(format!(
-            "Watch hit: {:?} @ {:04X}: {:02X} -> {:02X}",
-            hit.watch_type, hit.address, hit.old_value, hit.new_value
+            "Watch hit: {:?} @ {}: {:02X} -> {:02X}",
+            hit.watch_type,
+            format_addr(hit.address),
+            hit.old_value,
+            hit.new_value
         ));
     }
 }

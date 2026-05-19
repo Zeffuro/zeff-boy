@@ -57,6 +57,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
             Ok(mut state) => {
                 let sram_size = state.sram_size();
                 let is_nes = state.is_nes();
+                let is_gba = state.is_gba();
                 retro_log_info(&format!(
                     "retro_load_game OK: {}x{} @ {:.2} Hz, sample_rate={}, sram_size={}, system={}",
                     state.native_width(),
@@ -64,7 +65,13 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
                     state.fps(),
                     state.sample_rate,
                     sram_size,
-                    if is_nes { "NES" } else { "GB/GBC" },
+                    if is_nes {
+                        "NES"
+                    } else if is_gba {
+                        "GBA"
+                    } else {
+                        "GB/GBC"
+                    },
                 ));
 
                 crate::options::apply_core_options(&mut state);

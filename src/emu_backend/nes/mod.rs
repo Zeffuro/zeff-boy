@@ -1,25 +1,26 @@
 use std::path::{Path, PathBuf};
 
+use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
 use crate::audio_recorder::MidiApuSnapshot;
 use crate::emu_core_trait::EmulatorCore;
 
 impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
-    fn add_breakpoint(&mut self, addr: u16) {
-        self.add_breakpoint(addr)
+    fn add_breakpoint(&mut self, addr: Address) {
+        self.add_breakpoint(narrow_u16(addr))
     }
-    fn add_watchpoint(&mut self, addr: u16, wt: zeff_emu_common::debug::WatchType) {
-        self.add_watchpoint(addr, wt)
+    fn add_watchpoint(&mut self, addr: Address, wt: zeff_emu_common::debug::WatchType) {
+        self.add_watchpoint(narrow_u16(addr), wt)
     }
-    fn remove_breakpoint(&mut self, addr: u16) {
-        self.remove_breakpoint(addr)
+    fn remove_breakpoint(&mut self, addr: Address) {
+        self.remove_breakpoint(narrow_u16(addr))
     }
-    fn toggle_breakpoint(&mut self, addr: u16) {
-        self.toggle_breakpoint(addr)
+    fn toggle_breakpoint(&mut self, addr: Address) {
+        self.toggle_breakpoint(narrow_u16(addr))
     }
-    fn debug_write(&mut self, addr: u16, val: u8) {
-        self.cpu_write(addr, val)
+    fn debug_write(&mut self, addr: Address, val: u8) {
+        self.cpu_write(narrow_u16(addr), val)
     }
 }
 

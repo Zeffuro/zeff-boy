@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod address;
 pub mod cheats;
 pub mod debug;
 pub mod replay;

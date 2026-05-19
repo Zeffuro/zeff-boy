@@ -30,6 +30,38 @@ pub(crate) fn write_state_bytes_to_file(path: &Path, bytes: &[u8]) -> anyhow::Re
     platform::write_save_data(path, bytes)
 }
 
+pub(crate) fn backup_state_path(path: &Path) -> PathBuf {
+    let backup_ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!("{ext}.bak"))
+        .unwrap_or_else(|| "bak".to_string());
+    path.with_extension(backup_ext)
+}
+
+pub(crate) fn write_state_bytes_to_file_with_backup(
+    path: &Path,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
+    if platform::save_data_exists(path) {
+        let backup_path = backup_state_path(path);
+        if let Some(parent) = backup_path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create backup directory: {}", parent.display())
+            })?;
+        }
+        std::fs::copy(path, &backup_path).with_context(|| {
+            format!(
+                "failed to back up existing save state from {} to {}",
+                path.display(),
+                backup_path.display()
+            )
+        })?;
+    }
+
+    write_state_bytes_to_file(path, bytes)
+}
+
 pub(crate) fn write_sram_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     platform::write_save_data(path, bytes)
 }
@@ -39,6 +71,15 @@ fn hex_hash(hash: &[u8; 32]) -> String {
 }
 
 pub(crate) fn sram_path_for_rom(rom_path: &Path) -> PathBuf {
+    for ancestor in rom_path.ancestors() {
+        if ancestor
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+        {
+            return ancestor.with_extension("sav");
+        }
+    }
     rom_path.with_extension("sav")
 }
 
@@ -71,4 +112,25 @@ pub(crate) fn try_load_battery_sram(
     };
     load_fn(&bytes)?;
     Ok(Some(save_path.display().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sram_for_regular_rom_uses_rom_stem() {
+        assert_eq!(
+            sram_path_for_rom(Path::new(r"F:\Games\gba\Game.gba")),
+            PathBuf::from(r"F:\Games\gba\Game.sav")
+        );
+    }
+
+    #[test]
+    fn sram_for_zipped_rom_uses_archive_stem() {
+        assert_eq!(
+            sram_path_for_rom(Path::new(r"F:\Games\gba\Game.zip\Inner.gba")),
+            PathBuf::from(r"F:\Games\gba\Game.sav")
+        );
+    }
 }
