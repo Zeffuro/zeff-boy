@@ -16,6 +16,8 @@ pub struct NesDebugSnapshot {
     pub last_opcode_pc: u16,
     pub nmi_pending: bool,
     pub irq_line: bool,
+    pub nmi_count: u64,
+    pub irq_count: u64,
 
     pub ppu_scanline: u16,
     pub ppu_dot: u16,
@@ -72,6 +74,8 @@ impl NesDebugSnapshot {
             last_opcode_pc: cpu.last_opcode_pc,
             nmi_pending: cpu.nmi_pending,
             irq_line: cpu.irq_line,
+            nmi_count: cpu.nmi_count,
+            irq_count: cpu.irq_count,
 
             ppu_scanline: ppu.scanline,
             ppu_dot: ppu.dot,

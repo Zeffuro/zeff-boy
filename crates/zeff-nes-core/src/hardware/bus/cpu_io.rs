@@ -4,14 +4,15 @@ use crate::hardware::constants::*;
 impl Bus {
     #[inline]
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
+        let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
         let val = match addr {
             0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
             0x2000..=0x3FFF => self.ppu_read_register(addr & PPU_REG_MIRROR_MASK),
             0x4000..=0x4013 => self.cpu_open_bus,
             OAM_DMA => self.cpu_open_bus,
             APU_STATUS => self.apu.read_status(),
-            CONTROLLER1 => self.controller1.read(),
-            CONTROLLER2 => self.controller2.read(),
+            CONTROLLER1 => self.controller1.read() | self.expansion_device.read_4016(),
+            CONTROLLER2 => self.controller2.read() | self.expansion_device.read_4017(),
             0x4018..=0x401F => self.cpu_open_bus,
             0x4020..=0x7FFF => self.cartridge.cpu_read(addr),
             0x8000..=0xFFFF => {
@@ -21,8 +22,11 @@ impl Bus {
         };
         self.cpu_open_bus = val;
         if self.debug_trace_enabled {
-            self.debug_trace_events
-                .push(super::DebugTraceEvent::Read { addr, value: val });
+            self.debug_trace_events.push(super::DebugTraceEvent::Read {
+                addr,
+                value: val,
+                ppu_addr,
+            });
         }
         val
     }
@@ -46,10 +50,12 @@ impl Bus {
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
         if self.debug_trace_enabled {
             let old = self.cpu_peek(addr);
+            let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
             self.debug_trace_events.push(super::DebugTraceEvent::Write {
                 addr,
                 old_value: old,
                 new_value: val,
+                ppu_addr,
             });
         }
         match addr {
@@ -79,6 +85,8 @@ impl Bus {
             CONTROLLER1 => {
                 self.controller1.write(val);
                 self.controller2.write(val);
+                self.expansion_device.write(val);
+                self.cartridge.cpu_write(addr, val);
             }
 
             0x4018..=0x401F => {}
@@ -86,6 +94,15 @@ impl Bus {
             0x4020..=0xFFFF => {
                 self.cartridge.cpu_write(addr, val);
             }
+        }
+    }
+
+    #[inline]
+    fn ppu_data_addr_for_cpu_register_access(&self, addr: u16) -> Option<u16> {
+        if (0x2000..=0x3FFF).contains(&addr) && (addr & PPU_REG_MIRROR_MASK) == 0x2007 {
+            Some(self.ppu.v & 0x3FFF)
+        } else {
+            None
         }
     }
 }

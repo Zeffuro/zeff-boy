@@ -187,6 +187,10 @@ fn branch_taken_same_page_3_cycles() {
     cpu.step(&mut bus);
     let cycles = cpu.step(&mut bus);
     assert_eq!(cycles, 3);
+    assert!(
+        cpu.last_step_branch_taken_same_page,
+        "taken same-page branches have a distinct interrupt poll point"
+    );
 }
 
 #[test]
@@ -339,6 +343,74 @@ fn brk_hijack_via_direct_call() {
         "BRK with NMI pending should hijack to NMI vector"
     );
     assert!(!cpu.nmi_pending, "NMI should be consumed");
+}
+
+#[test]
+fn cli_delays_pending_irq_for_one_instruction() {
+    let (mut cpu, mut bus) = setup(&[0x58, 0xEA, 0xEA]);
+    cpu.irq_line = true;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x8001);
+    assert!(!cpu.regs.get_flag(StatusFlags::INTERRUPT));
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x8002, "instruction after CLI should run");
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x0000, "pending IRQ should be serviced next");
+}
+
+#[test]
+fn sei_delay_allows_irq_after_cli_sei_pair() {
+    let (mut cpu, mut bus) = setup(&[0x58, 0x78, 0xEA]);
+    cpu.irq_line = true;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x8001);
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x8002);
+    assert!(cpu.regs.get_flag(StatusFlags::INTERRUPT));
+
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.pc, 0x0000,
+        "SEI inhibition is delayed by one instruction"
+    );
+}
+
+#[test]
+fn delayed_irq_poll_runs_one_more_instruction() {
+    let (mut cpu, mut bus) = setup(&[0xEA, 0xEA, 0xEA]);
+    cpu.regs.set_flag(StatusFlags::INTERRUPT, false);
+    cpu.irq_line = true;
+    cpu.delay_irq_poll_once();
+
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.pc, 0x8001,
+        "poll delay should let one instruction execute"
+    );
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x0000, "IRQ should be serviced after the delay");
+}
+
+#[test]
+fn delayed_nmi_poll_runs_one_more_instruction() {
+    let (mut cpu, mut bus) = setup(&[0xEA, 0xEA, 0xEA]);
+    cpu.nmi_pending = true;
+    cpu.delay_nmi_poll_once();
+
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.pc, 0x8001,
+        "poll delay should let one instruction execute before NMI"
+    );
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x0000, "NMI should be serviced after the delay");
 }
 
 #[test]

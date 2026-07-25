@@ -6,20 +6,31 @@ use crate::cheats::NesCheatState;
 use crate::hardware::apu::Apu;
 use crate::hardware::cartridge::Cartridge;
 use crate::hardware::constants::*;
-use crate::hardware::controller::Controller;
+use crate::hardware::controller::{Controller, ExpansionDevice};
 use crate::hardware::ppu::{NES_PALETTE, NesPaletteMode, Ppu, apply_nes_palette_mode};
 use std::fmt;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DebugTraceEvent {
     Read {
         addr: u16,
         value: u8,
+        ppu_addr: Option<u16>,
     },
     Write {
         addr: u16,
         old_value: u8,
         new_value: u8,
+        ppu_addr: Option<u16>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PeripheralTickEvents {
+    pub nmi_raised: bool,
+    pub first_nmi_cpu_cycle: Option<u64>,
+    pub irq_pending: bool,
+    pub first_irq_cpu_cycle: Option<u64>,
 }
 
 pub struct Bus {
@@ -29,6 +40,7 @@ pub struct Bus {
     pub cartridge: Cartridge,
     pub controller1: Controller,
     pub controller2: Controller,
+    pub expansion_device: ExpansionDevice,
 
     pub(crate) ppu_cycles: u64,
 
@@ -36,6 +48,7 @@ pub struct Bus {
 
     pub(crate) cpu_odd_cycle: bool,
     pub(crate) cpu_open_bus: u8,
+    pub(crate) ppu_nmi_pending_from_register_write: bool,
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
 
@@ -55,10 +68,12 @@ impl Bus {
             cartridge,
             controller1: Controller::new(),
             controller2: Controller::new(),
+            expansion_device: ExpansionDevice::None,
             ppu_cycles: 0,
             dma_stall_cycles: 0,
             cpu_odd_cycle: false,
             cpu_open_bus: 0,
+            ppu_nmi_pending_from_register_write: false,
             game_genie: NesCheatState::new(),
             palette_mode,
             palette_lut: Self::build_palette_lut(palette_mode),
@@ -109,6 +124,7 @@ impl Bus {
         self.controller2.read_state(r)?;
         self.ppu_cycles = r.read_u64()?;
         self.cpu_open_bus = r.read_u8()?;
+        self.ppu_nmi_pending_from_register_write = false;
         Ok(())
     }
 
@@ -120,17 +136,25 @@ impl Bus {
         }
     }
 
-    pub fn tick_peripherals(&mut self, cpu_cycles: u64) -> bool {
-        let ppu_dots = cpu_cycles * 3;
-        let mut nmi_raised = false;
-        for _ in 0..ppu_dots {
-            self.ppu_render_dot();
-            if self.ppu.tick() {
-                nmi_raised = true;
-            }
-            self.ppu_cycles += 1;
+    pub fn tick_peripherals(&mut self, cpu_cycles: u64) -> PeripheralTickEvents {
+        let mut events = PeripheralTickEvents::default();
+
+        if self.ppu_nmi_pending_from_register_write {
+            self.ppu_nmi_pending_from_register_write = false;
+            events.nmi_raised = true;
+            events.first_nmi_cpu_cycle = Some(0);
         }
-        for _ in 0..cpu_cycles {
+
+        for cpu_cycle in 1..=cpu_cycles {
+            for _ in 0..3 {
+                self.ppu_render_dot();
+                if self.ppu.tick() {
+                    events.nmi_raised = true;
+                    events.first_nmi_cpu_cycle.get_or_insert(cpu_cycle);
+                }
+                self.ppu_cycles += 1;
+            }
+
             self.apu.expansion_audio = self.cartridge.audio_output();
             self.apu.tick();
 
@@ -144,8 +168,15 @@ impl Bus {
             }
 
             self.cartridge.clock_cpu();
+
+            let irq_pending = self.apu.irq_pending() || self.cartridge.irq_pending();
+            events.irq_pending = irq_pending;
+            if irq_pending {
+                events.first_irq_cpu_cycle.get_or_insert(cpu_cycle);
+            }
         }
-        nmi_raised
+
+        events
     }
 }
 

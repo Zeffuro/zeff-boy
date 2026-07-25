@@ -187,3 +187,36 @@ fn ines_diskdude_style_junk_ignores_legacy_extension_bytes() {
     assert_eq!(hdr.timing, TimingMode::Ntsc);
     assert_eq!(hdr.console_type, ConsoleType::Nes);
 }
+
+#[test]
+fn ines_ni_tag_does_not_get_misdetected_as_nes2() {
+    let h = make_header(
+        0x10,
+        0x00,
+        0x13,
+        0x78,
+        [0xA9, 0xFF, b'N', b'i', b'0', b'3', b'3', b'0'],
+    );
+    let hdr = RomHeader::parse(&h).unwrap();
+
+    assert_eq!(hdr.format, RomFormat::INes);
+    assert_eq!(hdr.mapper_id, 1);
+    assert_eq!(hdr.submapper_id, 0);
+    assert_eq!(hdr.prg_rom_size, 16 * PRG_ROM_BANK_SIZE);
+    assert_eq!(hdr.chr_rom_size, 0);
+    assert_eq!(hdr.prg_ram_size, 8192);
+    assert_eq!(hdr.timing, TimingMode::Ntsc);
+}
+
+#[test]
+fn ines_archaic_flags7_ignores_legacy_extension_bytes() {
+    let h = make_header(0x08, 0x00, 0x10, 0x44, [0; 8]);
+    let hdr = RomHeader::parse(&h).unwrap();
+
+    assert_eq!(hdr.format, RomFormat::INes);
+    assert_eq!(hdr.mapper_id, 1);
+    assert_eq!(hdr.submapper_id, 0);
+    assert_eq!(hdr.console_type, ConsoleType::Nes);
+    assert_eq!(hdr.prg_ram_size, 8192);
+    assert_eq!(hdr.timing, TimingMode::Ntsc);
+}

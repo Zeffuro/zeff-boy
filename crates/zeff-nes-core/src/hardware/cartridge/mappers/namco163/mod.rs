@@ -218,7 +218,7 @@ impl Mapper for Namco163 {
         }
     }
 
-    fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+    fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8]) -> Option<u8> {
         let nt_idx = ((addr >> 10) & 3) as usize;
         let bank = self.nt_banks[nt_idx];
         let offset = (addr as usize) & 0x03FF;
@@ -231,7 +231,7 @@ impl Mapper for Namco163 {
         }
     }
 
-    fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+    fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8]) -> bool {
         let nt_idx = ((addr >> 10) & 3) as usize;
         let bank = self.nt_banks[nt_idx];
         let offset = (addr as usize) & 0x03FF;

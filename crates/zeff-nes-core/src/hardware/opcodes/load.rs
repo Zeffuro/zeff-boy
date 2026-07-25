@@ -211,5 +211,6 @@ pub fn pla(cpu: &mut Cpu, bus: &mut Bus) {
 // 0x28: PLP
 pub fn plp(cpu: &mut Cpu, bus: &mut Bus) {
     let v = cpu.pop8(bus);
+    cpu.delay_irq_inhibit_change();
     cpu.regs.p = StatusFlags::from_bits_truncate((v & 0xEF) | 0x20);
 }

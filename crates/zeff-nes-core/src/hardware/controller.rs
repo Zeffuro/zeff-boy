@@ -17,6 +17,20 @@ pub enum ControllerType {
     Zapper { trigger: bool, hit: bool },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExpansionDevice {
+    #[default]
+    None,
+    HyperShot(HyperShot),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HyperShot {
+    buttons: u8,
+    shift_register: u8,
+    strobe: bool,
+}
+
 pub struct Controller {
     buttons: u8,
     shift_register: u8,
@@ -146,11 +160,143 @@ impl Controller {
     }
 }
 
+impl ExpansionDevice {
+    pub fn set_buttons(&mut self, state: u8) {
+        if let Self::HyperShot(device) = self {
+            device.set_buttons(state);
+        }
+    }
+
+    pub fn write(&mut self, val: u8) {
+        if let Self::HyperShot(device) = self {
+            device.write(val);
+        }
+    }
+
+    pub fn read_4016(&mut self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::HyperShot(device) => device.read_4016(),
+        }
+    }
+
+    pub fn read_4017(&self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::HyperShot(device) => device.read_4017(),
+        }
+    }
+}
+
+impl HyperShot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_buttons(&mut self, state: u8) {
+        self.buttons = state;
+    }
+
+    pub fn write(&mut self, val: u8) {
+        let new_strobe = val & 0x01 != 0;
+        if self.strobe && !new_strobe {
+            self.shift_register = self.serial_buttons();
+        }
+        self.strobe = new_strobe;
+    }
+
+    pub fn read_4016(&mut self) -> u8 {
+        let bit = if self.strobe {
+            self.serial_buttons() & 0x01
+        } else {
+            let bit = self.shift_register & 0x01;
+            self.shift_register >>= 1;
+            self.shift_register |= 0x80;
+            bit
+        };
+        bit << 1
+    }
+
+    pub fn read_4017(&self) -> u8 {
+        let no_light_reflected = 0x08;
+        let trigger = if self.buttons & Self::trigger_button_mask() != 0 {
+            0x10
+        } else {
+            0
+        };
+        no_light_reflected | trigger
+    }
+
+    fn serial_buttons(&self) -> u8 {
+        self.buttons & !Self::trigger_button_mask()
+    }
+
+    fn trigger_button_mask() -> u8 {
+        Self::button_mask(Button::A)
+    }
+
+    fn button_mask(button: Button) -> u8 {
+        Controller::button_mask(button)
+    }
+}
+
 impl fmt::Debug for Controller {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Controller")
             .field("buttons", &format_args!("{:#04X}", self.buttons))
             .field("strobe", &self.strobe)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hyper_shot_outputs_serial_controller_bits_on_4016_bit_one() {
+        let mut device = HyperShot::new();
+        device.set_buttons(
+            Controller::button_mask(Button::Start) | Controller::button_mask(Button::Right),
+        );
+
+        device.write(1);
+        device.write(0);
+
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0x02);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0x02);
+    }
+
+    #[test]
+    fn hyper_shot_outputs_trigger_and_light_bits_on_4017() {
+        let mut device = HyperShot::new();
+
+        assert_eq!(device.read_4017(), 0x08);
+
+        device.set_buttons(Controller::button_mask(Button::A));
+        assert_eq!(device.read_4017(), 0x18);
+    }
+
+    #[test]
+    fn hyper_shot_trigger_is_not_part_of_serial_controller_data() {
+        let mut device = HyperShot::new();
+        device.set_buttons(
+            Controller::button_mask(Button::A) | Controller::button_mask(Button::Start),
+        );
+
+        device.write(1);
+        assert_eq!(device.read_4016(), 0);
+
+        device.write(0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0);
+        assert_eq!(device.read_4016(), 0x02);
     }
 }

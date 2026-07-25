@@ -18,23 +18,19 @@ impl Apu {
                 self.frame_irq = false;
             }
             0x4017 => {
-                let _old_mode = self.five_step_mode;
                 self.five_step_mode = val & 0x80 != 0;
                 self.irq_inhibit = val & 0x40 != 0;
                 if self.irq_inhibit {
                     self.frame_irq = false;
                 }
 
-                self.frame_cycle = if self.five_step_mode || !odd_cycle {
-                    0
-                } else {
-                    1
-                };
-
-                if self.five_step_mode {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                }
+                // The frame sequencer reset caused by $4017 is not immediate on
+                // hardware; it is delayed by 3 or 4 CPU clocks after the write
+                // cycle. This core invokes cpu_write() before ticking the CPU
+                // cycles consumed by the instruction, so include the usual
+                // store-instruction tail in the delay instead of resetting the
+                // sequencer at opcode dispatch time.
+                self.frame_reset_delay = if odd_cycle { 8 } else { 7 };
             }
             _ => {}
         }
@@ -115,6 +111,17 @@ impl Apu {
     }
 
     fn step_frame_counter(&mut self) {
+        if self.frame_reset_delay > 0 {
+            self.frame_reset_delay -= 1;
+            if self.frame_reset_delay == 0 {
+                self.frame_cycle = 0;
+                if self.five_step_mode {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                }
+            }
+        }
+
         if !self.five_step_mode {
             match self.frame_cycle {
                 FRAME_STEP_1 | FRAME_STEP_3 => self.clock_quarter_frame(),

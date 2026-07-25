@@ -14,6 +14,14 @@ pub enum CpuState {
     Suspended,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CpuStepKind {
+    Instruction,
+    Nmi,
+    Irq,
+    Idle,
+}
+
 #[derive(Debug)]
 pub struct Cpu {
     pub pc: u16,
@@ -24,8 +32,16 @@ pub struct Cpu {
     pub last_step_cycles: u64,
     pub nmi_pending: bool,
     pub irq_line: bool,
+    nmi_poll_delay: u8,
+    irq_inhibit_delay: u8,
+    irq_inhibit_before_delay: bool,
+    irq_poll_delay: u8,
+    pub last_step_kind: CpuStepKind,
+    pub last_step_branch_taken_same_page: bool,
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
+    pub nmi_count: u64,
+    pub irq_count: u64,
 }
 
 impl Default for Cpu {
@@ -45,8 +61,16 @@ impl Cpu {
             last_step_cycles: 0,
             nmi_pending: false,
             irq_line: false,
+            nmi_poll_delay: 0,
+            irq_inhibit_delay: 0,
+            irq_inhibit_before_delay: false,
+            irq_poll_delay: 0,
+            last_step_kind: CpuStepKind::Idle,
+            last_step_branch_taken_same_page: false,
             last_opcode: 0,
             last_opcode_pc: 0,
+            nmi_count: 0,
+            irq_count: 0,
         }
     }
 
@@ -60,36 +84,82 @@ impl Cpu {
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u64 {
+        self.last_step_kind = CpuStepKind::Idle;
+        self.last_step_branch_taken_same_page = false;
+
         if self.state != CpuState::Running {
             self.last_step_cycles = 1;
             self.cycles += 1;
             return 1;
         }
 
-        if self.nmi_pending {
+        if self.nmi_pending && self.nmi_poll_delay == 0 {
             self.nmi_pending = false;
             let cycles = self.service_nmi(bus);
+            self.last_step_kind = CpuStepKind::Nmi;
             self.last_step_cycles = cycles;
             self.cycles += cycles;
             return cycles;
         }
 
-        if self.irq_line && !self.regs.get_flag(StatusFlags::INTERRUPT) {
+        if self.irq_line && !self.irq_inhibited() {
             let cycles = self.service_irq(bus);
+            self.last_step_kind = CpuStepKind::Irq;
             self.last_step_cycles = cycles;
             self.cycles += cycles;
             return cycles;
         }
 
+        self.last_step_kind = CpuStepKind::Instruction;
         self.last_opcode_pc = self.pc;
         let opcode = self.fetch8(bus);
         self.last_opcode = opcode;
         let base_cycles = crate::hardware::opcodes::cycles::CYCLE_TABLE[opcode as usize] as u64;
         let extra = crate::hardware::opcodes::dispatch::execute_opcode(self, bus, opcode) as u64;
         let cycles = base_cycles + extra;
+        self.tick_irq_delays();
         self.last_step_cycles = cycles;
         self.cycles += cycles;
         cycles
+    }
+
+    fn irq_inhibited(&self) -> bool {
+        if self.irq_poll_delay > 0 {
+            return true;
+        }
+        if self.irq_inhibit_delay > 0 {
+            self.irq_inhibit_before_delay
+        } else {
+            self.regs.get_flag(StatusFlags::INTERRUPT)
+        }
+    }
+
+    pub(crate) fn delay_irq_inhibit_change(&mut self) {
+        self.irq_inhibit_before_delay = self.regs.get_flag(StatusFlags::INTERRUPT);
+        self.irq_inhibit_delay = 2;
+    }
+
+    pub(crate) fn clear_irq_inhibit_delay(&mut self) {
+        self.irq_inhibit_delay = 0;
+        self.irq_inhibit_before_delay = self.regs.get_flag(StatusFlags::INTERRUPT);
+    }
+
+    pub(crate) fn delay_irq_poll_once(&mut self) {
+        self.irq_poll_delay = 1;
+    }
+
+    pub(crate) fn delay_nmi_poll_once(&mut self) {
+        self.nmi_poll_delay = 1;
+    }
+
+    pub(crate) fn mark_branch_taken_same_page(&mut self) {
+        self.last_step_branch_taken_same_page = true;
+    }
+
+    fn tick_irq_delays(&mut self) {
+        self.nmi_poll_delay = self.nmi_poll_delay.saturating_sub(1);
+        self.irq_inhibit_delay = self.irq_inhibit_delay.saturating_sub(1);
+        self.irq_poll_delay = self.irq_poll_delay.saturating_sub(1);
     }
 
     pub(crate) fn fetch8(&mut self, bus: &mut Bus) -> u8 {
@@ -126,9 +196,11 @@ impl Cpu {
     }
 
     fn service_nmi(&mut self, bus: &mut Bus) -> u64 {
+        self.nmi_count = self.nmi_count.wrapping_add(1);
         self.push16(bus, self.pc);
         self.push8(bus, self.regs.status_for_push(false));
         self.regs.set_flag(StatusFlags::INTERRUPT, true);
+        self.clear_irq_inhibit_delay();
         let lo = bus.cpu_read(NMI_VECTOR_LO) as u16;
         let hi = bus.cpu_read(NMI_VECTOR_HI) as u16;
         self.pc = (hi << 8) | lo;
@@ -136,13 +208,22 @@ impl Cpu {
     }
 
     fn service_irq(&mut self, bus: &mut Bus) -> u64 {
+        self.irq_count = self.irq_count.wrapping_add(1);
         self.push16(bus, self.pc);
         self.push8(bus, self.regs.status_for_push(false));
         self.regs.set_flag(StatusFlags::INTERRUPT, true);
+        self.clear_irq_inhibit_delay();
         let lo = bus.cpu_read(IRQ_VECTOR_LO) as u16;
         let hi = bus.cpu_read(IRQ_VECTOR_HI) as u16;
         self.pc = (hi << 8) | lo;
         7
+    }
+
+    pub(crate) fn redirect_to_nmi_vector(&mut self, bus: &mut Bus) {
+        self.nmi_count = self.nmi_count.wrapping_add(1);
+        let lo = bus.cpu_read(NMI_VECTOR_LO) as u16;
+        let hi = bus.cpu_read(NMI_VECTOR_HI) as u16;
+        self.pc = (hi << 8) | lo;
     }
 
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
@@ -182,8 +263,15 @@ impl Cpu {
         self.last_step_cycles = r.read_u64()?;
         self.nmi_pending = r.read_bool()?;
         self.irq_line = r.read_bool()?;
+        self.nmi_poll_delay = 0;
+        self.clear_irq_inhibit_delay();
+        self.irq_poll_delay = 0;
+        self.last_step_kind = CpuStepKind::Idle;
+        self.last_step_branch_taken_same_page = false;
         self.last_opcode = r.read_u8()?;
         self.last_opcode_pc = r.read_u16()?;
+        self.nmi_count = 0;
+        self.irq_count = 0;
         Ok(())
     }
 }

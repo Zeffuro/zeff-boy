@@ -8,6 +8,7 @@ pub struct Vrc4 {
 
     a0_mask: u16,
     a1_mask: u16,
+    chr_bank_shift: u8,
 
     prg_bank_0: u8,
     prg_bank_1: u8,
@@ -32,6 +33,17 @@ impl Vrc4 {
         a0_mask: u16,
         a1_mask: u16,
     ) -> Self {
+        Self::new_with_chr_bank_shift(prg_rom, chr, mirroring, a0_mask, a1_mask, 0)
+    }
+
+    pub fn new_with_chr_bank_shift(
+        prg_rom: Vec<u8>,
+        chr: Vec<u8>,
+        mirroring: Mirroring,
+        a0_mask: u16,
+        a1_mask: u16,
+        chr_bank_shift: u8,
+    ) -> Self {
         Self {
             prg_rom,
             chr,
@@ -39,6 +51,7 @@ impl Vrc4 {
             mirroring,
             a0_mask,
             a1_mask,
+            chr_bank_shift,
             prg_bank_0: 0,
             prg_bank_1: 0,
             prg_swap_mode: false,
@@ -59,6 +72,10 @@ impl Vrc4 {
 
     fn chr_bank_count_1k(&self) -> usize {
         (self.chr.len() / 0x0400).max(1)
+    }
+
+    fn selected_chr_bank(&self, slot: usize) -> usize {
+        usize::from(self.chr_banks[slot] >> self.chr_bank_shift) % self.chr_bank_count_1k()
     }
 
     fn decode_reg(&self, addr: u16) -> u8 {
@@ -195,7 +212,7 @@ impl Mapper for Vrc4 {
             return 0;
         }
         let slot = ((addr as usize) >> 10) & 0x07;
-        let bank = (self.chr_banks[slot] as usize) % self.chr_bank_count_1k();
+        let bank = self.selected_chr_bank(slot);
         let offset = (addr as usize) & 0x03FF;
         self.chr[(bank * 0x0400 + offset) % self.chr.len()]
     }
@@ -205,7 +222,7 @@ impl Mapper for Vrc4 {
             return;
         }
         let slot = ((addr as usize) >> 10) & 0x07;
-        let bank = (self.chr_banks[slot] as usize) % self.chr_bank_count_1k();
+        let bank = self.selected_chr_bank(slot);
         let offset = (addr as usize) & 0x03FF;
         let idx = (bank * 0x0400 + offset) % self.chr.len();
         self.chr[idx] = val;

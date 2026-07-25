@@ -262,7 +262,7 @@ impl Mapper for Mmc5 {
         self.chr[idx] = val;
     }
 
-    fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+    fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8]) -> Option<u8> {
         if !(0x2000..=0x3EFF).contains(&addr) {
             return None;
         }
@@ -318,7 +318,7 @@ impl Mapper for Mmc5 {
         Some(value)
     }
 
-    fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+    fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8]) -> bool {
         if !(0x2000..=0x3EFF).contains(&addr) {
             return false;
         }

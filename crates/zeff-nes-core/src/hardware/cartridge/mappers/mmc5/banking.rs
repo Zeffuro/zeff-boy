@@ -139,7 +139,8 @@ impl Mmc5 {
     }
 
     pub(super) fn chr_bank_index(&self, addr: u16, kind: ChrFetchKind) -> usize {
-        if self.exram_mode == 1 && matches!(kind, ChrFetchKind::Background) {
+        if self.exram_mode == 1 && matches!(kind, ChrFetchKind::Background | ChrFetchKind::CpuData)
+        {
             let exram_byte = self.exram_tile_byte;
             let bank_4k = ((self.upper_chr_bank_bits as usize) << 6) | (exram_byte as usize & 0x3F);
             let sub = ((addr as usize) >> 10) & 0x03;
@@ -149,7 +150,9 @@ impl Mmc5 {
         let addr = addr as usize;
         let (r1, r3, r5, r7, slot_mask) = match kind {
             ChrFetchKind::Sprite => (1usize, 3usize, 5usize, 7usize, 0x07usize),
-            ChrFetchKind::Background => (8usize, 9usize, 10usize, 11usize, 0x03usize),
+            ChrFetchKind::Background | ChrFetchKind::CpuData => {
+                (8usize, 9usize, 10usize, 11usize, 0x03usize)
+            }
         };
 
         match self.chr_mode & 0x03 {

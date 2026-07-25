@@ -11,6 +11,10 @@ pub use header::{
 
 const HEADER_SIZE: usize = 16;
 const TRAINER_SIZE: usize = 512;
+const SAMURAI_SPIRITS_2_BAD_MAPPER90_CRC32: u32 = 0xBB64_D4A1;
+const MORTAL_KOMBAT_3_SPECIAL_BAD_HEADER_CRC32: u32 = 0x4088_6623;
+const SWEET_HOME_TRANSLATION_BAD_MAPPER33_CRC32: u32 = 0x74CE_0ADA;
+const SMB_EXTREME_BAD_MAPPER64_CRC32: u32 = 0xD76A_E771;
 
 pub(crate) trait Mapper: Send {
     fn cpu_peek(&self, addr: u16) -> u8;
@@ -23,10 +27,10 @@ pub(crate) trait Mapper: Send {
         self.chr_read(addr)
     }
     fn chr_write(&mut self, addr: u16, val: u8);
-    fn ppu_nametable_read(&mut self, _addr: u16, _ciram: &[u8; 0x800]) -> Option<u8> {
+    fn ppu_nametable_read(&mut self, _addr: u16, _ciram: &[u8]) -> Option<u8> {
         None
     }
-    fn ppu_nametable_write(&mut self, _addr: u16, _val: u8, _ciram: &mut [u8; 0x800]) -> bool {
+    fn ppu_nametable_write(&mut self, _addr: u16, _val: u8, _ciram: &mut [u8]) -> bool {
         false
     }
     fn mirroring(&self) -> Mirroring;
@@ -45,6 +49,10 @@ pub(crate) trait Mapper: Send {
         0.0
     }
 
+    fn load_trainer(&mut self, _bytes: &[u8], _header: &RomHeader) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     fn dump_battery_data(&self) -> Option<Vec<u8>> {
         None
     }
@@ -57,6 +65,7 @@ pub(crate) trait Mapper: Send {
 pub struct Cartridge {
     header: RomHeader,
     mapper: MapperImpl,
+    effective_mapper_label: Option<&'static str>,
 }
 
 impl Cartridge {
@@ -72,9 +81,21 @@ impl Cartridge {
 
         let trainer_offset = if header.has_trainer { TRAINER_SIZE } else { 0 };
         let prg_start = HEADER_SIZE + trainer_offset;
+        let rom_crc32 = crc32fast::hash(rom_data);
+        let mut mapper_kind = header.mapper_kind();
+        let mut effective_mapper_label = None;
+        apply_bad_header_mapper_overrides(rom_crc32, &mut mapper_kind, &mut effective_mapper_label);
         let prg_size = header.prg_rom_size;
+        let mut chr_size = header.chr_rom_size;
+        if matches!(mapper_kind, NesMapper::Mapper251) && chr_size == 0 {
+            let trailing_size = rom_data.len().saturating_sub(prg_start);
+            if trailing_size > prg_size {
+                // Mapper 251 is a bad-header alias for GA23C. Known dumps can declare
+                // 1 MiB PRG and 0 CHR while storing the remaining tile data after PRG.
+                chr_size = trailing_size - prg_size;
+            }
+        }
         let chr_start = prg_start + prg_size;
-        let chr_size = header.chr_rom_size;
 
         let expected_min = chr_start + chr_size;
         if rom_data.len() < expected_min {
@@ -91,9 +112,11 @@ impl Cartridge {
         } else {
             vec![0; header::CHR_ROM_BANK_SIZE]
         };
+        let trainer = header
+            .has_trainer
+            .then(|| rom_data[HEADER_SIZE..HEADER_SIZE + TRAINER_SIZE].to_vec());
 
-        let mapper_kind = header.mapper_kind();
-        let mapper = match mapper_kind {
+        let mut mapper = match mapper_kind {
             NesMapper::Nrom => {
                 MapperImpl::Nrom(mappers::Nrom::new(prg_rom, chr_rom, header.mirroring))
             }
@@ -106,6 +129,37 @@ impl Cartridge {
             NesMapper::CnRom => {
                 MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring))
             }
+            NesMapper::CnRomWithProtectionDiodes => MapperImpl::Cnrom185(mappers::Cnrom185::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.submapper_id,
+            )),
+            NesMapper::ColorDreams => MapperImpl::ColorDreams(mappers::ColorDreams::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::FfeMapper12 => {
+                if chr_size == 0 && prg_size == 0x8000 {
+                    MapperImpl::Cprom(mappers::Cprom::new(prg_rom))
+                } else {
+                    bail!(
+                        "Unsupported mapper: {}. Mapper 12 is only handled for CPROM-shaped bad headers",
+                        header.mapper_label()
+                    )
+                }
+            }
+            NesMapper::CpRom => MapperImpl::Cprom(mappers::Cprom::new(prg_rom)),
+            NesMapper::Contra100In1Function16 => MapperImpl::Contra100In1(
+                mappers::Contra100In1::new(prg_rom, chr_rom, header.mirroring),
+            ),
+            NesMapper::PxRom => {
+                MapperImpl::Mmc2(mappers::Mmc2::new_mmc2(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::FxRom => {
+                MapperImpl::Mmc2(mappers::Mmc2::new_mmc4(prg_rom, chr_rom, header.mirroring))
+            }
             NesMapper::TxRom => {
                 MapperImpl::Mmc3(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring))
             }
@@ -116,9 +170,181 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery || header.prg_nvram_size > 0,
             )),
+            NesMapper::FfeMapper6 => {
+                MapperImpl::SuperMagicCard(mappers::SuperMagicCard::new_mapper6(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    header.submapper_id,
+                    chr_size > 0,
+                ))
+            }
             NesMapper::AxRom => {
                 MapperImpl::Axrom(mappers::Axrom::new(prg_rom, chr_rom, header.mirroring))
             }
+            NesMapper::FfeMapper8 => {
+                MapperImpl::FfeMapper8(mappers::FfeMapper8::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::IremG101 => {
+                MapperImpl::IremG101(mappers::IremG101::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::IremH3001 => {
+                MapperImpl::IremH3001(mappers::IremH3001::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::TaitoTc0190 => MapperImpl::TaitoTc0190(mappers::TaitoTc0190::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::JalecoJf17 => {
+                MapperImpl::JalecoJf17(mappers::JalecoJf17::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Vrc3 => {
+                MapperImpl::Vrc3(mappers::Vrc3::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::TaitoX1005 => MapperImpl::TaitoX1005(mappers::TaitoX1005::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.has_battery,
+            )),
+            NesMapper::TaitoX1017 => MapperImpl::TaitoX1017(mappers::TaitoX1017::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.has_battery || header.prg_nvram_size > 0,
+            )),
+            NesMapper::ConyYoko => {
+                MapperImpl::ConyYoko(mappers::ConyYoko::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::JalecoEarlyMapper1 => MapperImpl::JalecoJf17(
+                mappers::JalecoJf17::new_fixed_low_prg(prg_rom, chr_rom, header.mirroring),
+            ),
+            NesMapper::BnRom => {
+                let is_nina = header.submapper_id == 1 || chr_size > 0;
+                if is_nina {
+                    MapperImpl::Nina001(mappers::Nina001::new(
+                        prg_rom,
+                        chr_rom,
+                        header.prg_ram_size + header.prg_nvram_size,
+                        header.has_battery || header.prg_nvram_size > 0,
+                    ))
+                } else {
+                    MapperImpl::Bnrom(mappers::Bnrom::new(prg_rom, chr_rom, header.mirroring))
+                }
+            }
+            NesMapper::GxRom => {
+                MapperImpl::Gxrom(mappers::Gxrom::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Rambo1 => {
+                MapperImpl::Rambo1(mappers::Rambo1::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Sunsoft3 if prg_size == 0x8000 && chr_size == 0x4000 => {
+                // Known bad-header dump shape, e.g. "Ninja Jajamaru Kun (Mapper 3
+                // Wrong Size)": the header says mapper 67, but the program writes
+                // $8000 as a CNROM CHR bank register.
+                effective_mapper_label = Some("CNROM (bad mapper 67 header)");
+                MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Sunsoft3 => {
+                MapperImpl::Sunsoft3(mappers::Sunsoft3::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::AfterBurner => {
+                MapperImpl::Sunsoft4(mappers::Sunsoft4::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Bandai74161 => MapperImpl::Bandai74161(mappers::Bandai74161::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::CamericaCodemasters => {
+                MapperImpl::Camerica(mappers::Camerica::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Nina03Or06 => {
+                MapperImpl::Nina03(mappers::Nina03::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Vrc1 => {
+                MapperImpl::Vrc1(mappers::Vrc1::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Mapper112 => {
+                MapperImpl::Mapper112(mappers::Mapper112::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::JalecoJf11 => {
+                MapperImpl::JalecoJf11(mappers::JalecoJf11::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Vrc1VsSystem => {
+                MapperImpl::Vrc1(mappers::Vrc1::new(prg_rom, chr_rom, Mirroring::FourScreen))
+            }
+            NesMapper::NapoleonSenki => {
+                MapperImpl::NapoleonSenki(mappers::NapoleonSenki::new(prg_rom, chr_rom))
+            }
+            NesMapper::HolyDiver => MapperImpl::HolyDiver(mappers::HolyDiver::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.submapper_id,
+            )),
+            NesMapper::JalecoJf13 => {
+                MapperImpl::JalecoJf13(mappers::JalecoJf13::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::J87 => {
+                MapperImpl::J87(mappers::J87::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::SunsoftMapper89 => MapperImpl::Sunsoft2Mapper89(
+                mappers::Sunsoft2Mapper89::new(prg_rom, chr_rom, header.mirroring),
+            ),
+            NesMapper::JyAsic if rom_crc32 == SAMURAI_SPIRITS_2_BAD_MAPPER90_CRC32 => {
+                effective_mapper_label = Some("J.Y. ASIC mapper 209 (bad mapper 90 header)");
+                MapperImpl::JyAsic(mappers::JyAsic::new_mapper209(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                ))
+            }
+            NesMapper::JyAsic if rom_crc32 == MORTAL_KOMBAT_3_SPECIAL_BAD_HEADER_CRC32 => {
+                MapperImpl::JyAsic(mappers::JyAsic::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::JyAsic => {
+                MapperImpl::JyAsic(mappers::JyAsic::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::JyAsicMapper35 | NesMapper::JyAsicMapper209 => MapperImpl::JyAsic(
+                mappers::JyAsic::new_mapper209(prg_rom, chr_rom, header.mirroring),
+            ),
+            NesMapper::JyAsicMapper211 => MapperImpl::JyAsic(mappers::JyAsic::new_mapper211(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::Mapper91 => MapperImpl::Mapper91(mappers::Mapper91::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                header.submapper_id,
+            )),
+            NesMapper::SenjouNoOokami => MapperImpl::SenjouNoOokami(mappers::SenjouNoOokami::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::IremTamS1 => {
+                MapperImpl::IremTamS1(mappers::IremTamS1::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::LegacyVsVrc1 => {
+                if prg_size == 0x10000 && chr_size == 0x10000 {
+                    MapperImpl::Vrc1(mappers::Vrc1::new(prg_rom, chr_rom, Mirroring::FourScreen))
+                } else {
+                    bail!(
+                        "Unsupported mapper: {}. Mapper 98 is only handled for legacy Vs. VRC1 headers",
+                        header.mapper_label()
+                    )
+                }
+            }
+            NesMapper::VsSystem => MapperImpl::VsSystem(mappers::VsSystem::new(prg_rom, chr_rom)),
+            NesMapper::Mapper88 => MapperImpl::Namco108(mappers::Namco108::new_mapper88(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
             NesMapper::BandaiEprom24C02 => MapperImpl::BandaiFcg16(mappers::BandaiFcg16::new(
                 prg_rom,
                 chr_rom,
@@ -126,11 +352,60 @@ impl Cartridge {
                 header.submapper_id,
                 header.has_battery || header.prg_nvram_size >= 256,
             )),
+            NesMapper::SuperMagicCard => {
+                MapperImpl::SuperMagicCard(mappers::SuperMagicCard::new_mapper17(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    chr_size > 0,
+                ))
+            }
+            NesMapper::JalecoSs8806 => MapperImpl::JalecoSs8806(mappers::JalecoSs8806::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
             NesMapper::Vrc4A => {
                 let (a0, a1) = match header.submapper_id {
                     1 => (0x02, 0x04),
                     2 => (0x40, 0x80),
                     _ => (0x02 | 0x40, 0x04 | 0x80),
+                };
+                MapperImpl::Vrc4(mappers::Vrc4::new(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    a0,
+                    a1,
+                ))
+            }
+            NesMapper::Vrc2A => MapperImpl::Vrc4(mappers::Vrc4::new_with_chr_bank_shift(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+                0x02,
+                0x01,
+                1,
+            )),
+            NesMapper::Vrc2B => {
+                let (a0, a1) = match header.submapper_id {
+                    1 | 3 => (0x01, 0x02),
+                    2 => (0x04, 0x08),
+                    _ => (0x01 | 0x04, 0x02 | 0x08),
+                };
+                MapperImpl::Vrc4(mappers::Vrc4::new(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    a0,
+                    a1,
+                ))
+            }
+            NesMapper::Vrc4B => {
+                let (a0, a1) = match header.submapper_id {
+                    1 | 3 => (0x02, 0x01),
+                    2 => (0x08, 0x04),
+                    _ => (0x02 | 0x08, 0x01 | 0x04),
                 };
                 MapperImpl::Vrc4(mappers::Vrc4::new(
                     prg_rom,
@@ -156,6 +431,9 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery,
             )),
+            NesMapper::Ga23c | NesMapper::Mapper251 => MapperImpl::Ga23c(
+                mappers::Ga23c::with_chr_ram(prg_rom, chr_rom, header.mirroring, chr_size == 0),
+            ),
             NesMapper::Namco163 => MapperImpl::Namco163(mappers::Namco163::new(
                 prg_rom,
                 chr_rom,
@@ -163,6 +441,14 @@ impl Cartridge {
                 header.prg_ram_size + header.prg_nvram_size,
                 header.has_battery || header.prg_nvram_size > 0,
             )),
+            NesMapper::Nina03Or06Multicart => MapperImpl::Nina03(mappers::Nina03::new_multicart(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::TqRom => {
+                MapperImpl::Tqrom(mappers::Tqrom::new(prg_rom, chr_rom, header.mirroring))
+            }
             NesMapper::Vrc7 => MapperImpl::Vrc7(mappers::Vrc7::new(
                 prg_rom,
                 chr_rom,
@@ -174,17 +460,63 @@ impl Cartridge {
             NesMapper::Action52 => {
                 MapperImpl::Action52(mappers::Action52::new(prg_rom, chr_rom, header.mirroring))
             }
+            NesMapper::CamericaCodemastersQuattro => {
+                MapperImpl::Quattro(mappers::Quattro::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Sunsoft1 => {
+                MapperImpl::Sunsoft1(mappers::Sunsoft1::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::KaraokeStudio => MapperImpl::KaraokeStudio(mappers::KaraokeStudio::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::Mapper240 => {
+                MapperImpl::Mapper240(mappers::Mapper240::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Mapper242 => {
+                MapperImpl::Mapper242(mappers::Mapper242::new(prg_rom, header.mirroring))
+            }
+            NesMapper::WaixingF003 => MapperImpl::WaixingF003(mappers::WaixingF003::new(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
+            NesMapper::G0151 => {
+                MapperImpl::G0151(mappers::G0151::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::Mapper250 => {
+                MapperImpl::Mapper250(mappers::Mapper250::new(prg_rom, chr_rom, header.mirroring))
+            }
+            NesMapper::DxRom => MapperImpl::Namco108(mappers::Namco108::new_dxrom(
+                prg_rom,
+                chr_rom,
+                header.mirroring,
+            )),
             _ => bail!(
                 "Unsupported mapper: {}. This mapper is not yet implemented",
                 header.mapper_label()
             ),
         };
+        if let Some(trainer) = trainer.as_deref() {
+            mapper.load_trainer(trainer, &header)?;
+        }
 
-        Ok(Self { header, mapper })
+        Ok(Self {
+            header,
+            mapper,
+            effective_mapper_label,
+        })
     }
 
     pub fn header(&self) -> &RomHeader {
         &self.header
+    }
+
+    pub fn effective_mapper_label(&self) -> String {
+        self.effective_mapper_label
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.header.mapper_label())
     }
 
     pub fn mirroring(&self) -> Mirroring {
@@ -220,11 +552,11 @@ impl Cartridge {
         self.mapper.chr_write(addr, val);
     }
 
-    pub fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8; 0x800]) -> Option<u8> {
+    pub fn ppu_nametable_read(&mut self, addr: u16, ciram: &[u8]) -> Option<u8> {
         self.mapper.ppu_nametable_read(addr, ciram)
     }
 
-    pub fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8; 0x800]) -> bool {
+    pub fn ppu_nametable_write(&mut self, addr: u16, val: u8, ciram: &mut [u8]) -> bool {
         self.mapper.ppu_nametable_write(addr, val, ciram)
     }
 
@@ -262,6 +594,28 @@ impl Cartridge {
 
     pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
         self.mapper.read_state(r)
+    }
+}
+
+fn apply_bad_header_mapper_overrides(
+    rom_crc32: u32,
+    mapper_kind: &mut NesMapper,
+    effective_mapper_label: &mut Option<&'static str>,
+) {
+    match rom_crc32 {
+        MORTAL_KOMBAT_3_SPECIAL_BAD_HEADER_CRC32 => {
+            *mapper_kind = NesMapper::JyAsic;
+            *effective_mapper_label = Some("J.Y. ASIC mapper 90 (bad mapper 10 header)");
+        }
+        SWEET_HOME_TRANSLATION_BAD_MAPPER33_CRC32 => {
+            *mapper_kind = NesMapper::SxRom;
+            *effective_mapper_label = Some("SxROM / MMC1 (bad mapper 33 header)");
+        }
+        SMB_EXTREME_BAD_MAPPER64_CRC32 => {
+            *mapper_kind = NesMapper::Nrom;
+            *effective_mapper_label = Some("NROM (bad mapper 64 header)");
+        }
+        _ => {}
     }
 }
 

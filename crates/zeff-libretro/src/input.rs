@@ -23,6 +23,12 @@ pub(crate) fn poll_joypad_port(port: c_uint) -> (u8, u8) {
     if query(RETRO_DEVICE_ID_JOYPAD_START) {
         buttons |= 0x08;
     }
+    if query(RETRO_DEVICE_ID_JOYPAD_L) {
+        buttons |= 0x10;
+    }
+    if query(RETRO_DEVICE_ID_JOYPAD_R) {
+        buttons |= 0x20;
+    }
     if query(RETRO_DEVICE_ID_JOYPAD_RIGHT) {
         dpad |= 0x01;
     }

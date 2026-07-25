@@ -1,5 +1,6 @@
 use super::Bus;
 use crate::hardware::cartridge::{ChrFetchKind, Mirroring};
+use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
 
 impl Bus {
     pub(super) fn ppu_read_register(&mut self, addr: u16) -> u8 {
@@ -7,6 +8,7 @@ impl Bus {
             0x2002 => {
                 let status = (self.ppu.regs.status & 0xE0) | (self.ppu.io_latch & 0x1F);
                 self.ppu.regs.clear_vblank();
+                self.ppu.nmi_output = false;
                 self.ppu.w = false;
                 status
             }
@@ -17,9 +19,10 @@ impl Bus {
 
                 if addr >= 0x3F00 {
                     data = self.ppu_bus_read(addr);
-                    self.ppu.read_buffer = self.ppu_bus_read(addr - 0x1000);
+                    self.ppu.read_buffer =
+                        self.ppu_bus_read_with_kind(addr - 0x1000, ChrFetchKind::CpuData);
                 } else {
-                    self.ppu.read_buffer = self.ppu_bus_read(addr);
+                    self.ppu.read_buffer = self.ppu_bus_read_with_kind(addr, ChrFetchKind::CpuData);
                 }
 
                 self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
@@ -35,8 +38,14 @@ impl Bus {
         self.ppu.io_latch = val;
         match addr {
             0x2000 => {
+                let old_nmi_output = self.ppu.nmi_output;
                 self.ppu.regs.ctrl = val;
                 self.ppu.t = (self.ppu.t & 0xF3FF) | ((val as u16 & 0x03) << 10);
+                self.ppu.nmi_output =
+                    val & CTRL_NMI_ENABLE != 0 && self.ppu.regs.status & STATUS_VBLANK != 0;
+                if !old_nmi_output && self.ppu.nmi_output {
+                    self.ppu_nmi_pending_from_register_write = true;
+                }
             }
             0x2001 => {
                 self.ppu.regs.mask = val;
@@ -152,5 +161,59 @@ impl Bus {
             idx -= 16;
         }
         idx
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::cartridge::Cartridge;
+    use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
+
+    fn test_bus() -> Bus {
+        let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[5] = 1;
+
+        let cart = Cartridge::load(&rom).expect("test ROM should load");
+        Bus::new(cart, 44_100.0)
+    }
+
+    #[test]
+    fn enabling_nmi_during_vblank_raises_edge_once() {
+        let mut bus = test_bus();
+        bus.ppu.regs.set_vblank();
+
+        bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
+
+        assert!(bus.ppu.nmi_output);
+        assert!(bus.ppu_nmi_pending_from_register_write);
+
+        let events = bus.tick_peripherals(0);
+
+        assert!(events.nmi_raised);
+        assert_eq!(events.first_nmi_cpu_cycle, Some(0));
+        assert!(!bus.ppu_nmi_pending_from_register_write);
+
+        let events = bus.tick_peripherals(0);
+        assert!(!events.nmi_raised);
+    }
+
+    #[test]
+    fn reading_ppustatus_clears_vblank_and_nmi_output() {
+        let mut bus = test_bus();
+        bus.ppu.regs.set_vblank();
+        bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
+        bus.ppu_nmi_pending_from_register_write = false;
+
+        let status = bus.ppu_read_register(0x2002);
+
+        assert_ne!(status & STATUS_VBLANK, 0);
+        assert_eq!(bus.ppu.regs.status & STATUS_VBLANK, 0);
+        assert!(!bus.ppu.nmi_output);
+
+        bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
+        assert!(!bus.ppu_nmi_pending_from_register_write);
     }
 }

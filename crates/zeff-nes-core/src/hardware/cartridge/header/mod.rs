@@ -23,6 +23,7 @@ pub enum Mirroring {
 pub enum ChrFetchKind {
     Background,
     Sprite,
+    CpuData,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,13 +104,16 @@ impl RomHeader {
         let byte14 = raw[14];
         let byte15 = raw[15];
 
-        let format = if (flags7 >> 2) & 0x03 == 0x02 {
+        let has_legacy_ines_junk_tail = Self::has_legacy_ines_junk_tail(&raw[..HEADER_SIZE]);
+        let has_archaic_ines_flags7 = Self::has_archaic_ines_flags7(flags7);
+        let has_legacy_ines_junk_header = has_legacy_ines_junk_tail || has_archaic_ines_flags7;
+        let format = if (flags7 >> 2) & 0x03 == 0x02 && !has_legacy_ines_junk_header {
             RomFormat::Nes2
         } else {
             RomFormat::INes
         };
-        let has_ines_junk_tail =
-            format == RomFormat::INes && raw[12..16].iter().any(|&byte| byte != 0);
+        let has_ines_junk_tail = format == RomFormat::INes
+            && (has_legacy_ines_junk_header || raw[12..16].iter().any(|&byte| byte != 0));
 
         if has_ines_junk_tail {
             log::warn!(
@@ -252,6 +256,14 @@ impl RomHeader {
 
     fn shift_count_to_size(shift: u8) -> usize {
         if shift == 0 { 0 } else { 64 << shift as usize }
+    }
+
+    fn has_legacy_ines_junk_tail(header: &[u8]) -> bool {
+        header[7..16].starts_with(b"DiskDude!") || header[10..12] == *b"Ni"
+    }
+
+    fn has_archaic_ines_flags7(flags7: u8) -> bool {
+        flags7 & 0x0C == 0x04
     }
 
     pub fn mapper_kind(&self) -> NesMapper {

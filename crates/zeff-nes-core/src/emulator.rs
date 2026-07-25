@@ -22,10 +22,9 @@ pub struct Emulator {
 impl Emulator {
     pub fn new(rom_data: &[u8], sample_rate: f64) -> anyhow::Result<Self> {
         let cartridge = Cartridge::load(rom_data)?;
-        let bus = Bus::new(cartridge, sample_rate);
-
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let rom_crc32 = crc32fast::hash(rom_data);
+        let bus = Bus::new(cartridge, sample_rate);
 
         let mut emu = Self {
             cpu: Cpu::new(),
@@ -162,6 +161,50 @@ impl Emulator {
         self.cpu.cycles
     }
 
+    pub fn cpu_a(&self) -> u8 {
+        self.cpu.regs.a
+    }
+
+    pub fn cpu_x(&self) -> u8 {
+        self.cpu.regs.x
+    }
+
+    pub fn cpu_y(&self) -> u8 {
+        self.cpu.regs.y
+    }
+
+    pub fn cpu_sp(&self) -> u8 {
+        self.cpu.sp
+    }
+
+    pub fn cpu_status(&self) -> u8 {
+        self.cpu.regs.p.bits()
+    }
+
+    pub fn cpu_last_opcode(&self) -> u8 {
+        self.cpu.last_opcode
+    }
+
+    pub fn cpu_last_step_cycles(&self) -> u64 {
+        self.cpu.last_step_cycles
+    }
+
+    pub fn cpu_nmi_pending(&self) -> bool {
+        self.cpu.nmi_pending
+    }
+
+    pub fn cpu_irq_line(&self) -> bool {
+        self.cpu.irq_line
+    }
+
+    pub fn cpu_nmi_count(&self) -> u64 {
+        self.cpu.nmi_count
+    }
+
+    pub fn cpu_irq_count(&self) -> u64 {
+        self.cpu.irq_count
+    }
+
     pub fn is_cpu_suspended(&self) -> bool {
         self.cpu.state == CpuState::Suspended
     }
@@ -230,6 +273,10 @@ impl Emulator {
         self.bus.cartridge.header()
     }
 
+    pub fn cartridge_effective_mapper_label(&self) -> String {
+        self.bus.cartridge.effective_mapper_label()
+    }
+
     pub fn clear_game_genie(&mut self) {
         self.bus.game_genie.clear();
     }
@@ -254,8 +301,40 @@ impl Emulator {
         &self.bus.ppu.oam
     }
 
+    pub fn ppu_nametable_ram(&self) -> &[u8; 0x1000] {
+        &self.bus.ppu.nametable_ram
+    }
+
     pub fn ppu_ctrl(&self) -> u8 {
         self.bus.ppu.regs.ctrl
+    }
+
+    pub fn ppu_mask(&self) -> u8 {
+        self.bus.ppu.regs.mask
+    }
+
+    pub fn ppu_status(&self) -> u8 {
+        self.bus.ppu.regs.status
+    }
+
+    pub fn ppu_scanline(&self) -> u16 {
+        self.bus.ppu.scanline
+    }
+
+    pub fn ppu_dot(&self) -> u16 {
+        self.bus.ppu.dot
+    }
+
+    pub fn ppu_frame_count(&self) -> u64 {
+        self.bus.ppu.frame_count
+    }
+
+    pub fn ppu_in_vblank(&self) -> bool {
+        self.bus.ppu.in_vblank
+    }
+
+    pub fn ppu_frame_ready(&self) -> bool {
+        self.bus.ppu.frame_ready
     }
 
     pub fn ppu_scroll_v(&self) -> u16 {

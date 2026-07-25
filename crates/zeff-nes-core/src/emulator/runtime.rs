@@ -1,16 +1,29 @@
 use super::{CPU_CYCLES_PER_FRAME, Emulator};
 use crate::hardware::bus::DebugTraceEvent;
-use crate::hardware::cpu::CpuState;
+use crate::hardware::cpu::{CpuState, CpuStepKind};
 
 impl Emulator {
     pub fn step_instruction(&mut self) -> (u16, u8, u64) {
+        let (pc, opcode, cycles, _) = self.step_instruction_inner(false);
+        (pc, opcode, cycles)
+    }
+
+    pub fn step_instruction_with_bus_trace(&mut self) -> (u16, u8, u64, Vec<DebugTraceEvent>) {
+        self.step_instruction_inner(true)
+    }
+
+    fn step_instruction_inner(
+        &mut self,
+        collect_bus_trace: bool,
+    ) -> (u16, u8, u64, Vec<DebugTraceEvent>) {
         if self.cpu.state == CpuState::Suspended {
-            return (self.cpu.pc, self.bus.cpu_read(self.cpu.pc), 0);
+            return (self.cpu.pc, self.bus.cpu_read(self.cpu.pc), 0, Vec::new());
         }
 
         let watch_active = self.debug.has_watchpoints();
-        self.bus.debug_trace_enabled = watch_active;
-        if watch_active {
+        let trace_active = watch_active || collect_bus_trace;
+        self.bus.debug_trace_enabled = trace_active;
+        if trace_active {
             self.bus.debug_trace_events.clear();
         }
 
@@ -28,28 +41,32 @@ impl Emulator {
         let total_cycles = cycles + dma_cycles;
         self.cpu.cycles += dma_cycles;
 
-        let nmi = self.bus.tick_peripherals(total_cycles);
+        self.tick_peripherals_after_cpu_step(total_cycles);
 
-        self.cpu.irq_line = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
-
-        if nmi {
-            self.cpu.nmi_pending = true;
-        }
-
-        if watch_active {
+        let mut bus_trace_events = Vec::new();
+        if trace_active {
             self.bus.debug_trace_enabled = false;
+            let events = std::mem::take(&mut self.bus.debug_trace_events);
+
+            if collect_bus_trace {
+                bus_trace_events = events.clone();
+            }
+
             let debug = &mut self.debug;
-            for event in self.bus.debug_trace_events.drain(..) {
-                match event {
-                    DebugTraceEvent::Read { addr, value } => {
-                        debug.check_watch_read(addr, value);
-                    }
-                    DebugTraceEvent::Write {
-                        addr,
-                        old_value,
-                        new_value,
-                    } => {
-                        debug.check_watch_write(addr, old_value, new_value);
+            if watch_active {
+                for event in events {
+                    match event {
+                        DebugTraceEvent::Read { addr, value, .. } => {
+                            debug.check_watch_read(addr, value);
+                        }
+                        DebugTraceEvent::Write {
+                            addr,
+                            old_value,
+                            new_value,
+                            ..
+                        } => {
+                            debug.check_watch_write(addr, old_value, new_value);
+                        }
                     }
                 }
             }
@@ -62,7 +79,7 @@ impl Emulator {
             self.cpu.state = CpuState::Suspended;
         }
 
-        (pc_before, opcode, total_cycles)
+        (pc_before, opcode, total_cycles, bus_trace_events)
     }
 
     pub fn step_frame(&mut self) {
@@ -70,14 +87,21 @@ impl Emulator {
             return;
         }
 
-        let target = self.cpu.cycles.wrapping_add(CPU_CYCLES_PER_FRAME);
+        self.bus.ppu.frame_ready = false;
+        let start_cycles = self.cpu.cycles;
+        let max_cycles = CPU_CYCLES_PER_FRAME * 2;
 
         if self.debug.any_active() || self.opcode_log.enabled {
-            while self.cpu.cycles < target && self.cpu.state == CpuState::Running {
+            while !self.bus.ppu.frame_ready
+                && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
+                && self.cpu.state == CpuState::Running
+            {
                 self.step_instruction();
             }
         } else {
-            while self.cpu.cycles < target {
+            while !self.bus.ppu.frame_ready
+                && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
+            {
                 self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
                 let cycles = self.cpu.step(&mut self.bus);
 
@@ -86,13 +110,67 @@ impl Emulator {
                 let total_cycles = cycles + dma_cycles;
                 self.cpu.cycles += dma_cycles;
 
-                let nmi = self.bus.tick_peripherals(total_cycles);
-                self.cpu.irq_line = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
-
-                if nmi {
-                    self.cpu.nmi_pending = true;
-                }
+                self.tick_peripherals_after_cpu_step(total_cycles);
             }
         }
     }
+
+    fn tick_peripherals_after_cpu_step(&mut self, total_cycles: u64) {
+        let events = self.bus.tick_peripherals(total_cycles);
+        let final_irq_pending = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
+
+        let branch_taken_same_page = self.cpu.last_step_branch_taken_same_page;
+
+        if events.nmi_raised {
+            match self.cpu.last_step_kind {
+                CpuStepKind::Instruction if self.cpu.last_opcode == 0x00 => {
+                    self.cpu.redirect_to_nmi_vector(&mut self.bus);
+                }
+                CpuStepKind::Irq => {
+                    self.cpu.redirect_to_nmi_vector(&mut self.bus);
+                }
+                _ => {
+                    self.cpu.nmi_pending = true;
+                    if interrupt_missed_poll(
+                        events.first_nmi_cpu_cycle,
+                        self.cpu.last_step_cycles,
+                        branch_taken_same_page,
+                    ) {
+                        self.cpu.delay_nmi_poll_once();
+                    }
+                }
+            }
+        }
+
+        let irq_was_pending = self.cpu.irq_line;
+        self.cpu.irq_line = final_irq_pending;
+
+        if !irq_was_pending
+            && final_irq_pending
+            && interrupt_missed_poll(
+                events.first_irq_cpu_cycle,
+                self.cpu.last_step_cycles,
+                branch_taken_same_page,
+            )
+        {
+            self.cpu.delay_irq_poll_once();
+        }
+    }
+}
+
+fn interrupt_missed_poll(
+    first_interrupt_cpu_cycle: Option<u64>,
+    instruction_cycles: u64,
+    branch_taken_same_page: bool,
+) -> bool {
+    if !branch_taken_same_page {
+        return false;
+    }
+
+    let Some(first_interrupt_cpu_cycle) = first_interrupt_cpu_cycle else {
+        return false;
+    };
+
+    let missed_poll_cycle = instruction_cycles.saturating_sub(1);
+    missed_poll_cycle != 0 && first_interrupt_cpu_cycle >= missed_poll_cycle
 }

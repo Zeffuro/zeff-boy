@@ -9,6 +9,7 @@ pub fn brk(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.push16(bus, cpu.pc);
     cpu.push8(bus, cpu.regs.status_for_push(true));
     cpu.regs.set_flag(StatusFlags::INTERRUPT, true);
+    cpu.clear_irq_inhibit_delay();
 
     let (vec_lo, vec_hi) = if cpu.nmi_pending {
         cpu.nmi_pending = false;
@@ -35,7 +36,12 @@ fn branch(cpu: &mut Cpu, bus: &mut Bus, condition: bool) -> u8 {
     if condition {
         let page_cross = (cpu.pc & 0xFF00) != (target & 0xFF00);
         cpu.pc = target;
-        if page_cross { 2 } else { 1 }
+        if page_cross {
+            2
+        } else {
+            cpu.mark_branch_taken_same_page();
+            1
+        }
     } else {
         0
     }
@@ -111,6 +117,7 @@ pub fn rti(cpu: &mut Cpu, bus: &mut Bus) {
     let p = cpu.pop8(bus);
     cpu.regs.p = StatusFlags::from_bits_truncate((p & 0xEF) | 0x20);
     cpu.pc = cpu.pop16(bus);
+    cpu.clear_irq_inhibit_delay();
 }
 
 // 0x18: CLC
@@ -125,11 +132,13 @@ pub fn sec(cpu: &mut Cpu, _bus: &mut Bus) {
 
 // 0x58: CLI
 pub fn cli(cpu: &mut Cpu, _bus: &mut Bus) {
+    cpu.delay_irq_inhibit_change();
     cpu.regs.set_flag(StatusFlags::INTERRUPT, false);
 }
 
 // 0x78: SEI
 pub fn sei(cpu: &mut Cpu, _bus: &mut Bus) {
+    cpu.delay_irq_inhibit_change();
     cpu.regs.set_flag(StatusFlags::INTERRUPT, true);
 }
 

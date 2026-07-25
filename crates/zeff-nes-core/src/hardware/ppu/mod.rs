@@ -34,7 +34,7 @@ pub struct Ppu {
     pub(crate) in_vblank: bool,
     pub(crate) odd_frame: bool,
 
-    pub(crate) nametable_ram: [u8; 0x800],
+    pub(crate) nametable_ram: [u8; 0x1000],
     pub(crate) palette_ram: [u8; 32],
 
     pub(crate) oam: [u8; 256],
@@ -87,7 +87,7 @@ impl Ppu {
             nmi_output: false,
             in_vblank: false,
             odd_frame: false,
-            nametable_ram: [0; 0x800],
+            nametable_ram: [0; 0x1000],
             palette_ram: [0; 32],
             oam: [0; 256],
             secondary_oam: [0xFF; 32],
@@ -143,15 +143,16 @@ impl Ppu {
             self.in_vblank = true;
             self.regs.set_vblank();
             self.frame_ready = true;
-            if self.regs.nmi_enabled() {
-                raise_nmi = true;
-            }
+            let new_nmi_output = self.regs.nmi_enabled();
+            raise_nmi = !self.nmi_output && new_nmi_output;
+            self.nmi_output = new_nmi_output;
         }
 
         if self.scanline == PRE_RENDER_SCANLINE {
             if self.dot == 1 {
                 self.in_vblank = false;
                 self.regs.clear_vblank();
+                self.nmi_output = false;
                 self.regs.clear_sprite_zero_hit();
                 self.regs.clear_sprite_overflow();
             }
