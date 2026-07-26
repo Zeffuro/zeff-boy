@@ -98,10 +98,16 @@ impl App {
                         {
                             log::info!("Loaded battery save from {}", sram_path);
                         }
-                        (
-                            EmuBackend::from_gb(emu, rom_path.to_path_buf()),
-                            original_crc,
-                        )
+                        let backend = if path == rom_path {
+                            EmuBackend::from_gb(emu, rom_path.to_path_buf())
+                        } else {
+                            EmuBackend::from_gb_with_source(
+                                emu,
+                                rom_path.to_path_buf(),
+                                path.to_path_buf(),
+                            )
+                        };
+                        (backend, original_crc)
                     })
             }
             ActiveSystem::Nes => {
@@ -127,10 +133,16 @@ impl App {
                             {
                                 log::info!("Loaded battery save from {}", sram_path);
                             }
-                            (
-                                EmuBackend::from_nes(emu, rom_path.to_path_buf()),
-                                original_crc,
-                            )
+                            let backend = if path == rom_path {
+                                EmuBackend::from_nes(emu, rom_path.to_path_buf())
+                            } else {
+                                EmuBackend::from_nes_with_source(
+                                    emu,
+                                    rom_path.to_path_buf(),
+                                    path.to_path_buf(),
+                                )
+                            };
+                            (backend, original_crc)
                         })
                     }
                     Err(e) => Err(e),
@@ -160,10 +172,16 @@ impl App {
                     {
                         log::info!("Loaded battery save from {}", sram_path);
                     }
-                    (
-                        EmuBackend::from_gba(emu, rom_path.to_path_buf()),
-                        original_crc,
-                    )
+                    let backend = if path == rom_path {
+                        EmuBackend::from_gba(emu, rom_path.to_path_buf())
+                    } else {
+                        EmuBackend::from_gba_with_source(
+                            emu,
+                            rom_path.to_path_buf(),
+                            path.to_path_buf(),
+                        )
+                    };
+                    (backend, original_crc)
                 })
             }
         }
@@ -206,7 +224,12 @@ impl App {
             .to_string();
         log::info!("Loaded ROM: {}", path.display());
 
-        self.finalize_rom_load(&backend, system, backend.rom_path().to_path_buf());
+        self.finalize_rom_load(
+            &backend,
+            system,
+            backend.rom_path().to_path_buf(),
+            backend.source_path().to_path_buf(),
+        );
 
         self.setup_cheats_for_rom(system, path, &backend);
         self.setup_mods_for_rom(system, original_crc);
@@ -244,7 +267,7 @@ impl App {
     }
 
     pub(in crate::app) fn reset_game(&mut self) {
-        let Some(path) = self.rom_info.rom_path.clone() else {
+        let Some(path) = self.rom_info.source_path.clone() else {
             self.toast_manager.info("No ROM loaded");
             return;
         };
@@ -275,6 +298,7 @@ impl App {
         self.last_displayed_frame = None;
         self.undo_load_state = None;
         self.rom_info.rom_path = None;
+        self.rom_info.source_path = None;
         self.rom_info.rom_hash = None;
         self.rom_info.is_mbc7 = false;
         self.rom_info.is_pocket_camera = false;
@@ -342,10 +366,12 @@ impl App {
         backend: &EmuBackend,
         system: ActiveSystem,
         rom_path_buf: PathBuf,
+        source_path_buf: PathBuf,
     ) {
         self.rom_info.is_mbc7 = backend.is_mbc7();
         self.rom_info.is_pocket_camera = backend.is_pocket_camera();
         self.rom_info.rom_path = Some(rom_path_buf);
+        self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.active_system = system;
         self.debug_windows.memory.configure_for_system(system);

@@ -7,9 +7,16 @@ use super::types::{
 };
 
 fn parse_u64_arg(value: &str, flag: &str) -> anyhow::Result<u64> {
-    value
-        .parse::<u64>()
-        .map_err(|_| anyhow::anyhow!("{} must be an unsigned integer", flag))
+    let trimmed = value.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16)
+    } else {
+        trimmed.parse::<u64>()
+    }
+    .map_err(|_| anyhow::anyhow!("{} must be an unsigned integer", flag))
 }
 
 fn parse_usize_arg(value: &str, flag: &str) -> anyhow::Result<usize> {
@@ -36,32 +43,33 @@ fn parse_u8_arg(value: &str, flag: &str) -> anyhow::Result<u8> {
     u8::try_from(parsed).map_err(|_| anyhow::anyhow!("{} value must fit in u8", flag))
 }
 
-fn parse_addr_arg(value: &str, flag: &str) -> anyhow::Result<u16> {
+fn parse_addr_arg(value: &str, flag: &str) -> anyhow::Result<u64> {
     let trimmed = value.trim();
     let trimmed = trimmed.strip_prefix('$').unwrap_or(trimmed);
     let parsed = if let Some(hex) = trimmed
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
     {
-        u16::from_str_radix(hex, 16)
+        u64::from_str_radix(hex, 16)
     } else if trimmed.len() == 4
+        || trimmed.len() == 8
         || trimmed
             .chars()
             .any(|c| c.is_ascii_hexdigit() && !c.is_ascii_digit())
     {
-        u16::from_str_radix(trimmed, 16)
+        u64::from_str_radix(trimmed, 16)
     } else {
-        trimmed.parse::<u16>()
+        trimmed.parse::<u64>()
     };
-    parsed.map_err(|_| anyhow::anyhow!("{} must be a u16 address", flag))
+    parsed.map_err(|_| anyhow::anyhow!("{} must be an address", flag))
 }
 
-fn parse_pc_range_arg(value: &str) -> anyhow::Result<(u16, u16)> {
+fn parse_pc_range_arg(value: &str) -> anyhow::Result<(u64, u64)> {
     let Some((start_raw, end_raw)) = value.split_once('-') else {
         anyhow::bail!("--trace-pc-range must be start-end (decimal or hex, e.g. 0x0100-0x01FF)",);
     };
-    let start = parse_u16_arg(start_raw, "--trace-pc-range")?;
-    let end = parse_u16_arg(end_raw, "--trace-pc-range")?;
+    let start = parse_u64_arg(start_raw, "--trace-pc-range")?;
+    let end = parse_u64_arg(end_raw, "--trace-pc-range")?;
     if start > end {
         anyhow::bail!("--trace-pc-range start must be <= end");
     }
@@ -106,6 +114,68 @@ fn parse_addr_range_list_arg(
     }
 
     Ok(filters)
+}
+
+fn parse_gba_bg_layer_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool; 4]> {
+    let mut hidden = [false; 4];
+    let mut parsed_any = false;
+    for raw in value.split(',') {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        parsed_any = true;
+        let raw = raw
+            .strip_prefix("bg")
+            .or_else(|| raw.strip_prefix("BG"))
+            .unwrap_or(raw);
+        let index = parse_usize_arg(raw, flag)?;
+        if index > 3 {
+            anyhow::bail!("{flag} accepts BG layers 0, 1, 2, or 3");
+        }
+        hidden[index] = true;
+    }
+    if !parsed_any {
+        anyhow::bail!("{flag} requires at least one BG layer");
+    }
+    Ok(hidden)
+}
+
+fn parse_gba_audio_mute_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool; 6]> {
+    let mut mutes = [false; 6];
+    let mut parsed_any = false;
+    for raw in value.split(',') {
+        let token = raw.trim().to_ascii_lowercase().replace(['_', '-'], "");
+        if token.is_empty() {
+            continue;
+        }
+        parsed_any = true;
+        let index = match token.as_str() {
+            "0" | "1" | "psg0" | "psg1" | "square1" | "ch1" => 0,
+            "2" | "psg2" | "square2" | "ch2" => 1,
+            "3" | "psg3" | "wave" | "ch3" => 2,
+            "4" | "psg4" | "noise" | "ch4" => 3,
+            "5" | "fifoa" | "directa" | "a" => 4,
+            "6" | "fifob" | "directb" | "b" => 5,
+            "psg" => {
+                mutes[..4].fill(true);
+                continue;
+            }
+            "fifo" | "direct" | "pcm" => {
+                mutes[4] = true;
+                mutes[5] = true;
+                continue;
+            }
+            other => anyhow::bail!(
+                "{flag} has unknown channel {other:?}; expected psg1..psg4, fifoA, fifoB, psg, fifo"
+            ),
+        };
+        mutes[index] = true;
+    }
+    if !parsed_any {
+        anyhow::bail!("{flag} requires at least one audio channel");
+    }
+    Ok(mutes)
 }
 
 fn parse_frame_range_arg(value: &str, flag: &str) -> anyhow::Result<(u64, u64)> {
@@ -409,6 +479,13 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.input_events.extend(parse_input_script(value)?);
                 i += 2;
             }
+            "--load-state" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--load-state requires a file path");
+                };
+                headless.load_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
             "--screenshot" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--screenshot requires a file path");
@@ -423,6 +500,20 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.screenshot_frame = Some(parse_u64_arg(value, "--screenshot-frame")?);
                 i += 2;
             }
+            "--screenshot-dir" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--screenshot-dir requires a directory path");
+                };
+                headless.screenshot_dir = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--screenshot-every" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--screenshot-every requires a numeric frame interval");
+                };
+                headless.screenshot_every = parse_u64_arg(value, "--screenshot-every")?;
+                i += 2;
+            }
             "--debug-state" => {
                 headless.print_debug_state = true;
                 i += 1;
@@ -432,6 +523,48 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                     anyhow::bail!("--debug-state-out requires a file path");
                 };
                 headless.debug_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--audio-dump" | "--audio-out" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires a file path", args[i]);
+                };
+                headless.audio_dump_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--break-on-gba-bad-state" => {
+                headless.break_on_gba_bad_state = true;
+                i += 1;
+            }
+            "--gba-mute-audio" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--gba-mute-audio requires a comma-separated channel list");
+                };
+                let mutes = parse_gba_audio_mute_list_arg(value, "--gba-mute-audio")?;
+                for (dst, src) in headless.gba_audio_mutes.iter_mut().zip(mutes) {
+                    *dst |= src;
+                }
+                i += 2;
+            }
+            "--gba-hide-bg" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--gba-hide-bg requires a comma-separated BG layer list");
+                };
+                let hidden = parse_gba_bg_layer_list_arg(value, "--gba-hide-bg")?;
+                for (dst, src) in headless.gba_hidden_bg_layers.iter_mut().zip(hidden) {
+                    *dst |= src;
+                }
+                i += 2;
+            }
+            "--gba-hide-sprites" => {
+                headless.gba_hide_sprites = true;
+                i += 1;
+            }
+            "--gba-dump-memory" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--gba-dump-memory requires a directory path");
+                };
+                headless.gba_dump_memory_dir = Some(PathBuf::from(value));
                 i += 2;
             }
             other => {

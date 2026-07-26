@@ -79,5 +79,11 @@ impl EmuThread {
         actions: &DebugUiActions,
     ) {
         apply_debug_actions_to(emu, actions);
+        if let Some((bg, win, sprites)) = actions.layer_toggles {
+            emu.set_ppu_debug_flags(bg, win, sprites);
+        }
+        if let Some(layers) = actions.gba_bg_layer_toggles {
+            emu.set_ppu_debug_bg_layers(layers);
+        }
     }
 }

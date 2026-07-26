@@ -18,6 +18,7 @@ pub(crate) struct DebugUiActions {
     pub(crate) continue_requested: bool,
     pub(crate) backstep_requested: bool,
     pub(crate) layer_toggles: Option<(bool, bool, bool)>,
+    pub(crate) gba_bg_layer_toggles: Option<[bool; 4]>,
 }
 
 impl DebugUiActions {
@@ -33,6 +34,7 @@ impl DebugUiActions {
             continue_requested: false,
             backstep_requested: false,
             layer_toggles: None,
+            gba_bg_layer_toggles: None,
         }
     }
 
@@ -44,6 +46,7 @@ impl DebugUiActions {
             || !self.memory_writes.is_empty()
             || self.apu_channel_mutes.is_some()
             || self.layer_toggles.is_some()
+            || self.gba_bg_layer_toggles.is_some()
     }
 }
 

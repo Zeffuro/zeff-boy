@@ -1,4 +1,4 @@
-use crate::hardware::bus::Bus;
+use crate::hardware::bus::{Bus, DebugTraceEvent};
 use crate::hardware::cartridge::{BackupKind, Cartridge, RomHeader};
 use crate::hardware::constants::CYCLES_PER_FRAME;
 use crate::hardware::cpu::{Cpu, CpuMode};
@@ -48,25 +48,98 @@ impl Emulator {
         if self.cpu.is_suspended() {
             return;
         }
-        let target = self.cpu.cycles.wrapping_add(u64::from(CYCLES_PER_FRAME));
-        while self.cpu.cycles < target {
-            if self.debug.should_break(self.cpu.pc()) {
-                self.cpu.suspend();
-                break;
-            }
-            let before_cycles = self.cpu.cycles;
-            self.cpu.step(&mut self.bus);
-            let elapsed = self
-                .cpu
-                .cycles
-                .wrapping_sub(before_cycles)
-                .min(u64::from(u32::MAX));
-            self.bus.step_cycles(elapsed as u32);
-            if self.cpu.is_suspended() {
+        self.clear_frame_ready();
+        let guard = self
+            .cpu
+            .cycles
+            .wrapping_add(u64::from(CYCLES_PER_FRAME) * 2);
+        while !self.frame_ready() && self.cpu.cycles < guard {
+            if self.step_instruction().is_none() && self.cpu.is_suspended() {
                 break;
             }
         }
-        self.bus.render_frame();
+        self.finish_frame();
+    }
+
+    pub fn step_instruction(&mut self) -> Option<crate::hardware::cpu::FetchedInstruction> {
+        self.step_instruction_inner(false, false, false).0
+    }
+
+    pub fn step_instruction_with_bus_trace(
+        &mut self,
+        trace_reads: bool,
+        trace_writes: bool,
+    ) -> (
+        Option<crate::hardware::cpu::FetchedInstruction>,
+        Vec<DebugTraceEvent>,
+    ) {
+        self.step_instruction_inner(trace_reads || trace_writes, trace_reads, trace_writes)
+    }
+
+    fn step_instruction_inner(
+        &mut self,
+        collect_bus_trace: bool,
+        trace_reads: bool,
+        trace_writes: bool,
+    ) -> (
+        Option<crate::hardware::cpu::FetchedInstruction>,
+        Vec<DebugTraceEvent>,
+    ) {
+        if self.cpu.is_suspended() {
+            return (None, Vec::new());
+        }
+        if self.bus.interrupt_pending() && self.bus.irq_handler_installed() {
+            self.cpu.try_service_irq(true);
+        }
+        if self.debug.should_break(self.cpu.pc()) {
+            self.cpu.suspend();
+            return (None, Vec::new());
+        }
+        if self.cpu.state == crate::hardware::cpu::CpuState::Halted {
+            let cycles = self.bus.cycles_until_next_halt_check();
+            self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(cycles));
+            self.bus.step_cycles(cycles);
+            if self.bus.interrupt_pending() {
+                self.cpu.resume();
+            }
+            return (None, Vec::new());
+        }
+
+        self.bus.debug_trace_enabled = collect_bus_trace;
+        self.bus.debug_trace_reads = trace_reads;
+        self.bus.debug_trace_writes = trace_writes;
+        if collect_bus_trace {
+            self.bus.debug_trace_events.borrow_mut().clear();
+        }
+
+        let before_cycles = self.cpu.cycles;
+        let fetched = self.cpu.step(&mut self.bus);
+        let elapsed = self
+            .cpu
+            .cycles
+            .wrapping_sub(before_cycles)
+            .min(u64::from(u32::MAX));
+        let dma_cycles = self.bus.take_pending_dma_cycles();
+        self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(dma_cycles));
+        self.bus
+            .step_cycles((elapsed as u32).saturating_add(dma_cycles));
+
+        let bus_trace_events = if collect_bus_trace {
+            self.bus.debug_trace_enabled = false;
+            self.bus.debug_trace_reads = false;
+            self.bus.debug_trace_writes = false;
+            std::mem::take(&mut *self.bus.debug_trace_events.borrow_mut())
+        } else {
+            Vec::new()
+        };
+
+        (fetched, bus_trace_events)
+    }
+
+    pub fn finish_frame(&mut self) {
+        if !self.bus.ppu.frame_ready {
+            self.bus.render_frame();
+        }
         self.frame_count = self.frame_count.wrapping_add(1);
     }
 
@@ -102,6 +175,22 @@ impl Emulator {
         self.bus.apu.set_channel_mutes(mutes);
     }
 
+    pub fn apu_debug_snapshot(&self) -> crate::hardware::apu::ApuDebugSnapshot {
+        self.bus.apu.debug_snapshot()
+    }
+
+    pub fn dma_channels_snapshot(&self) -> [crate::hardware::dma::DmaChannel; 4] {
+        self.bus.dma.channels()
+    }
+
+    pub fn set_ppu_debug_flags(&mut self, bg: bool, window: bool, sprites: bool) {
+        self.bus.set_ppu_debug_flags(bg, window, sprites);
+    }
+
+    pub fn set_ppu_debug_bg_layers(&mut self, layers: [bool; 4]) {
+        self.bus.set_ppu_debug_bg_layers(layers);
+    }
+
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         self.bus
             .keypad
@@ -110,6 +199,10 @@ impl Emulator {
 
     pub fn is_cpu_suspended(&self) -> bool {
         self.cpu.is_suspended()
+    }
+
+    pub fn cpu_state(&self) -> crate::hardware::cpu::CpuState {
+        self.cpu.state
     }
 
     pub fn cpu_pc(&self) -> u32 {
@@ -232,6 +325,10 @@ impl Emulator {
         &self.bus.palette_ram
     }
 
+    pub fn io_snapshot(&self) -> &[u8] {
+        &self.bus.io
+    }
+
     pub fn oam_snapshot(&self) -> &[u8] {
         &self.bus.oam
     }
@@ -327,5 +424,21 @@ mod tests {
         let hit = emu.debug_hit_watchpoint().expect("watchpoint should hit");
         assert_eq!(hit.address, 0x0200_0000);
         assert_eq!(hit.new_value, 0x5A);
+    }
+
+    #[test]
+    fn halted_cpu_wakes_on_exact_hblank_interrupt_cycle() {
+        let rom = minimal_rom();
+        let mut emu = Emulator::new(&rom, 48_000).unwrap();
+        emu.cpu_write16(0x0400_0004, 1 << 4);
+        emu.cpu_write16(0x0400_0200, 1 << 1);
+        emu.cpu_write16(0x0400_0208, 1);
+        emu.cpu.state = crate::hardware::cpu::CpuState::Halted;
+
+        while emu.cpu.state == crate::hardware::cpu::CpuState::Halted {
+            emu.step_instruction();
+        }
+
+        assert_eq!(emu.cpu_cycles(), 1006);
     }
 }

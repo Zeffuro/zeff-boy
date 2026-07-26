@@ -35,6 +35,7 @@ pub(crate) enum MenuAction {
     LoadReplay,
     TakeScreenshot,
     SetLayerToggles(bool, bool, bool),
+    SetGbaBgLayerToggles([bool; 4]),
 }
 
 pub(crate) struct MenuBarResult {
@@ -147,6 +148,9 @@ pub(crate) fn draw_menu_bar(
         debug_windows.layer_enable_bg,
         debug_windows.layer_enable_window,
         debug_windows.layer_enable_sprites,
+    ));
+    actions.push(MenuAction::SetGbaBgLayerToggles(
+        debug_windows.gba_layer_enable_bg,
     ));
 
     MenuBarResult {

@@ -4,18 +4,51 @@ use crate::hardware::bus::Bus;
 impl Cpu {
     pub(super) fn execute_software_interrupt(&mut self, bus: &mut Bus, function: u32) {
         match function {
+            0x01 => bus.register_ram_reset(self.regs[0] as u8),
+            0x02 => self.state = super::CpuState::Halted,
+            0x04 => self.swi_intr_wait(bus, self.regs[0] != 0, self.regs[1] as u16),
+            0x05 => self.swi_intr_wait(bus, true, 1),
             0x06 => self.swi_div(),
             0x07 => self.swi_div_arm(),
             0x08 => self.swi_sqrt(),
+            0x0E => self.swi_bg_affine_set(bus),
+            0x0F => self.swi_obj_affine_set(bus),
             0x10 => self.swi_bit_unpack(bus),
-            0x11 | 0x12 => self.swi_lz77_uncomp(bus),
+            0x11 => self.swi_lz77_uncomp(bus, DecompWriteMode::Byte),
+            0x12 => self.swi_lz77_uncomp(bus, DecompWriteMode::Halfword),
+            0x13 => self.swi_huff_uncomp(bus),
             0x0B => self.swi_cpu_set(bus, false),
             0x0C => self.swi_cpu_set(bus, true),
-            0x14 | 0x15 => self.swi_rl_uncomp(bus),
-            0x02..=0x05 => {}
+            0x14 => self.swi_rl_uncomp(bus, DecompWriteMode::Byte),
+            0x15 => self.swi_rl_uncomp(bus, DecompWriteMode::Halfword),
+            0x16 => self.swi_diff_8bit_unfilter(bus, DecompWriteMode::Byte),
+            0x17 => self.swi_diff_8bit_unfilter(bus, DecompWriteMode::Halfword),
+            0x18 => self.swi_diff_16bit_unfilter(bus),
+            0x19 => bus.set_sound_bias_level(self.regs[0] != 0),
             _ => {}
         }
+        self.bios_protected_read_latch = super::POST_SWI_BIOS_READ_LATCH;
         self.cycles = self.cycles.wrapping_add(4);
+    }
+
+    fn swi_intr_wait(&mut self, bus: &mut Bus, discard_old_flags: bool, mask: u16) {
+        let mask = mask & 0x3FFF;
+        if mask == 0 {
+            return;
+        }
+
+        if discard_old_flags {
+            bus.clear_bios_irq_flags(mask);
+        }
+
+        let ready = (bus.bios_irq_flags() | bus.enabled_interrupt_flags()) & mask;
+        if ready != 0 {
+            bus.clear_bios_irq_flags(ready);
+            return;
+        }
+
+        bus.enable_master_interrupts();
+        self.state = super::CpuState::Halted;
     }
 
     fn swi_div(&mut self) {
@@ -73,9 +106,64 @@ impl Cpu {
         self.regs[1] = dst;
     }
 
-    fn swi_lz77_uncomp(&mut self, bus: &mut Bus) {
+    fn swi_bg_affine_set(&mut self, bus: &mut Bus) {
         let mut src = self.regs[0];
         let mut dst = self.regs[1];
+        for _ in 0..self.regs[2] {
+            let center_x = read_i32(bus, src);
+            let center_y = read_i32(bus, src.wrapping_add(4));
+            let display_x = i32::from(read_i16(bus, src.wrapping_add(8)));
+            let display_y = i32::from(read_i16(bus, src.wrapping_add(10)));
+            let scale_x = read_i16(bus, src.wrapping_add(12));
+            let scale_y = read_i16(bus, src.wrapping_add(14));
+            let angle = bus.read16(src.wrapping_add(16));
+            let params = affine_params(scale_x, scale_y, angle);
+            let start_x = center_x
+                .wrapping_sub(i32::from(params.pa).wrapping_mul(display_x))
+                .wrapping_sub(i32::from(params.pb).wrapping_mul(display_y));
+            let start_y = center_y
+                .wrapping_sub(i32::from(params.pc).wrapping_mul(display_x))
+                .wrapping_sub(i32::from(params.pd).wrapping_mul(display_y));
+
+            write_i16(bus, dst, params.pa);
+            write_i16(bus, dst.wrapping_add(2), params.pb);
+            write_i16(bus, dst.wrapping_add(4), params.pc);
+            write_i16(bus, dst.wrapping_add(6), params.pd);
+            write_i32(bus, dst.wrapping_add(8), start_x);
+            write_i32(bus, dst.wrapping_add(12), start_y);
+
+            src = src.wrapping_add(20);
+            dst = dst.wrapping_add(16);
+        }
+        self.regs[0] = src;
+        self.regs[1] = dst;
+    }
+
+    fn swi_obj_affine_set(&mut self, bus: &mut Bus) {
+        let mut src = self.regs[0];
+        let mut dst = self.regs[1];
+        let offset = self.regs[3];
+        for _ in 0..self.regs[2] {
+            let scale_x = read_i16(bus, src);
+            let scale_y = read_i16(bus, src.wrapping_add(2));
+            let angle = bus.read16(src.wrapping_add(4));
+            let params = affine_params(scale_x, scale_y, angle);
+
+            write_i16(bus, dst, params.pa);
+            write_i16(bus, dst.wrapping_add(offset), params.pb);
+            write_i16(bus, dst.wrapping_add(offset.wrapping_mul(2)), params.pc);
+            write_i16(bus, dst.wrapping_add(offset.wrapping_mul(3)), params.pd);
+
+            src = src.wrapping_add(6);
+            dst = dst.wrapping_add(offset.wrapping_mul(4));
+        }
+        self.regs[0] = src;
+        self.regs[1] = dst;
+    }
+
+    fn swi_lz77_uncomp(&mut self, bus: &mut Bus, write_mode: DecompWriteMode) {
+        let mut src = self.regs[0];
+        let dst = self.regs[1];
         let header = bus.read32(src);
         src = src.wrapping_add(4);
         if header & 0xFF != 0x10 {
@@ -109,25 +197,22 @@ impl Cpu {
                 }
             }
         }
-        for value in out {
-            bus.write8(dst, value);
-            dst = dst.wrapping_add(1);
-        }
+        let dst = write_decompressed_output(bus, dst, &out, write_mode);
         self.regs[0] = src;
         self.regs[1] = dst;
     }
 
-    fn swi_rl_uncomp(&mut self, bus: &mut Bus) {
+    fn swi_rl_uncomp(&mut self, bus: &mut Bus, write_mode: DecompWriteMode) {
         let mut src = self.regs[0];
-        let mut dst = self.regs[1];
+        let dst = self.regs[1];
         let header = bus.read32(src);
         src = src.wrapping_add(4);
         if header & 0xFF != 0x30 {
             return;
         }
         let out_len = (header >> 8) as usize;
-        let mut written = 0usize;
-        while written < out_len {
+        let mut out = Vec::with_capacity(out_len);
+        while out.len() < out_len {
             let control = bus.read8(src);
             src = src.wrapping_add(1);
             if control & 0x80 != 0 {
@@ -135,28 +220,91 @@ impl Cpu {
                 let value = bus.read8(src);
                 src = src.wrapping_add(1);
                 for _ in 0..count {
-                    if written >= out_len {
+                    if out.len() >= out_len {
                         break;
                     }
-                    bus.write8(dst, value);
-                    dst = dst.wrapping_add(1);
-                    written += 1;
+                    out.push(value);
                 }
             } else {
                 let count = usize::from(control) + 1;
                 for _ in 0..count {
-                    if written >= out_len {
+                    if out.len() >= out_len {
                         break;
                     }
                     let value = bus.read8(src);
                     src = src.wrapping_add(1);
-                    bus.write8(dst, value);
-                    dst = dst.wrapping_add(1);
-                    written += 1;
+                    out.push(value);
                 }
             }
         }
+        let dst = write_decompressed_output(bus, dst, &out, write_mode);
         self.regs[0] = src;
+        self.regs[1] = dst;
+    }
+
+    fn swi_huff_uncomp(&mut self, bus: &mut Bus) {
+        let mut src = self.regs[0];
+        let dst = self.regs[1];
+        let header = bus.read32(src);
+        src = src.wrapping_add(4);
+        if (header >> 4) & 0xF != 0x2 {
+            return;
+        }
+        let data_size = header & 0xF;
+        if data_size != 4 && data_size != 8 {
+            return;
+        }
+        let out_len = (header >> 8) as usize;
+        let tree_size = usize::from(bus.read8(src));
+        let tree_header = src;
+        let tree_base = src.wrapping_add(1);
+        let bitstream = tree_header.wrapping_add(((tree_size + 1) * 2) as u32);
+        let mut bit_addr = bitstream;
+        let mut bit_mask = 0u32;
+        let mut bit_word = 0u32;
+        let mut node_addr = tree_base;
+        let mut out = Vec::with_capacity(out_len);
+        let mut nibble_accum: Option<u8> = None;
+
+        while out.len() < out_len {
+            if bit_mask == 0 {
+                bit_word = bus.read32(bit_addr);
+                bit_addr = bit_addr.wrapping_add(4);
+                bit_mask = 1 << 31;
+            }
+            let bit = u32::from(bit_word & bit_mask != 0);
+            bit_mask >>= 1;
+
+            let node = bus.read8(node_addr);
+            let child_addr = (node_addr & !1)
+                .wrapping_add(u32::from(node & 0x3F) * 2)
+                .wrapping_add(2 + bit);
+            let child = bus.read8(child_addr);
+            let terminal = if bit == 0 {
+                node & 0x80 != 0
+            } else {
+                node & 0x40 != 0
+            };
+
+            if terminal {
+                if data_size == 8 {
+                    out.push(child);
+                } else {
+                    let nibble = child & 0x0F;
+                    if let Some(lo) = nibble_accum.take() {
+                        out.push(lo | (nibble << 4));
+                    } else {
+                        nibble_accum = Some(nibble);
+                    }
+                }
+                node_addr = tree_base;
+            } else {
+                node_addr = child_addr;
+            }
+        }
+
+        let dst = write_words(bus, dst, &out);
+        self.regs[0] = bit_addr;
         self.regs[1] = dst;
     }
 
@@ -178,6 +326,7 @@ impl Cpu {
         };
         let mut accum = 0u32;
         let mut accum_bits = 0u32;
+        let mut out = Vec::new();
         for _ in 0..source_len {
             let byte = bus.read8(src);
             src = src.wrapping_add(1);
@@ -190,8 +339,7 @@ impl Cpu {
                 accum |= value << accum_bits;
                 accum_bits += dest_width;
                 while accum_bits >= 8 {
-                    bus.write8(dst, accum as u8);
-                    dst = dst.wrapping_add(1);
+                    out.push(accum as u8);
                     accum >>= 8;
                     accum_bits -= 8;
                 }
@@ -199,10 +347,148 @@ impl Cpu {
             }
         }
         if accum_bits != 0 {
-            bus.write8(dst, accum as u8);
-            dst = dst.wrapping_add(1);
+            out.push(accum as u8);
+        }
+        for chunk in out.chunks(4) {
+            let mut word = [0; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            bus.write32(dst, u32::from_le_bytes(word));
+            dst = dst.wrapping_add(4);
         }
         self.regs[0] = src;
         self.regs[1] = dst;
     }
+
+    fn swi_diff_8bit_unfilter(&mut self, bus: &mut Bus, write_mode: DecompWriteMode) {
+        let mut src = self.regs[0];
+        let dst = self.regs[1];
+        let header = bus.read32(src);
+        src = src.wrapping_add(4);
+        if header & 0xFF != 0x81 {
+            return;
+        }
+        let out_len = (header >> 8) as usize;
+        let mut out = Vec::with_capacity(out_len);
+        let mut last = 0u8;
+        for i in 0..out_len {
+            let diff = bus.read8(src);
+            src = src.wrapping_add(1);
+            last = if i == 0 {
+                diff
+            } else {
+                last.wrapping_add(diff)
+            };
+            out.push(last);
+        }
+        let dst = write_decompressed_output(bus, dst, &out, write_mode);
+        self.regs[0] = src;
+        self.regs[1] = dst;
+    }
+
+    fn swi_diff_16bit_unfilter(&mut self, bus: &mut Bus) {
+        let mut src = self.regs[0];
+        let mut dst = self.regs[1];
+        let header = bus.read32(src);
+        src = src.wrapping_add(4);
+        if header & 0xFF != 0x82 {
+            return;
+        }
+        let out_len = (header >> 8) as usize;
+        let mut last = 0u16;
+        for i in (0..out_len).step_by(2) {
+            let diff = bus.read16(src);
+            src = src.wrapping_add(2);
+            last = if i == 0 {
+                diff
+            } else {
+                last.wrapping_add(diff)
+            };
+            bus.write16(dst, last);
+            dst = dst.wrapping_add(2);
+        }
+        self.regs[0] = src;
+        self.regs[1] = dst;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DecompWriteMode {
+    Byte,
+    Halfword,
+}
+
+struct AffineParams {
+    pa: i16,
+    pb: i16,
+    pc: i16,
+    pd: i16,
+}
+
+fn affine_params(scale_x: i16, scale_y: i16, angle: u16) -> AffineParams {
+    let radians = f64::from(angle >> 8) * std::f64::consts::TAU / 256.0;
+    let sin = radians.sin();
+    let cos = radians.cos();
+    AffineParams {
+        pa: q8_8_mul(scale_x, cos),
+        pb: q8_8_mul(scale_x, -sin),
+        pc: q8_8_mul(scale_y, sin),
+        pd: q8_8_mul(scale_y, cos),
+    }
+}
+
+fn q8_8_mul(scale: i16, trig: f64) -> i16 {
+    (f64::from(scale) * trig)
+        .round()
+        .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+}
+
+fn read_i16(bus: &Bus, addr: u32) -> i16 {
+    bus.read16(addr) as i16
+}
+
+fn read_i32(bus: &Bus, addr: u32) -> i32 {
+    bus.read32(addr) as i32
+}
+
+fn write_i16(bus: &mut Bus, addr: u32, value: i16) {
+    bus.write16(addr, value as u16);
+}
+
+fn write_i32(bus: &mut Bus, addr: u32, value: i32) {
+    bus.write32(addr, value as u32);
+}
+
+fn write_decompressed_output(
+    bus: &mut Bus,
+    mut dst: u32,
+    out: &[u8],
+    mode: DecompWriteMode,
+) -> u32 {
+    match mode {
+        DecompWriteMode::Byte => {
+            for &value in out {
+                bus.write8(dst, value);
+                dst = dst.wrapping_add(1);
+            }
+        }
+        DecompWriteMode::Halfword => {
+            for chunk in out.chunks(2) {
+                let lo = chunk[0];
+                let hi = chunk.get(1).copied().unwrap_or(0);
+                bus.write16(dst, u16::from_le_bytes([lo, hi]));
+                dst = dst.wrapping_add(2);
+            }
+        }
+    }
+    dst
+}
+
+fn write_words(bus: &mut Bus, mut dst: u32, out: &[u8]) -> u32 {
+    for chunk in out.chunks(4) {
+        let mut word = [0; 4];
+        word[..chunk.len()].copy_from_slice(chunk);
+        bus.write32(dst, u32::from_le_bytes(word));
+        dst = dst.wrapping_add(4);
+    }
+    dst
 }

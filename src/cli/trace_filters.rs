@@ -44,7 +44,7 @@ fn is_interrupt_watch_opcode(op: u8) -> bool {
 }
 
 pub(super) struct CpuTraceState<'a> {
-    pub pc: u16,
+    pub pc: u64,
     pub op: u8,
     pub total_t: u64,
     pub ime: &'a ImeState,

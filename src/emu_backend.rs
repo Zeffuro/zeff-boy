@@ -75,12 +75,48 @@ impl EmuBackend {
         Self::Gb(Box::new(GbBackend::new(emu, rom_path)))
     }
 
+    pub(crate) fn from_gb_with_source(
+        emu: zeff_gb_core::emulator::Emulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::Gb(Box::new(GbBackend::with_source_path(
+            emu,
+            rom_path,
+            source_path,
+        )))
+    }
+
     pub(crate) fn from_gba(emu: zeff_gba_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Gba(Box::new(GbaBackend::new(emu, rom_path)))
     }
 
+    pub(crate) fn from_gba_with_source(
+        emu: zeff_gba_core::emulator::Emulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::Gba(Box::new(GbaBackend::with_source_path(
+            emu,
+            rom_path,
+            source_path,
+        )))
+    }
+
     pub(crate) fn from_nes(emu: zeff_nes_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Nes(Box::new(NesBackend::new(emu, rom_path)))
+    }
+
+    pub(crate) fn from_nes_with_source(
+        emu: zeff_nes_core::emulator::Emulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::Nes(Box::new(NesBackend::with_source_path(
+            emu,
+            rom_path,
+            source_path,
+        )))
     }
 
     pub(crate) fn system(&self) -> ActiveSystem {
@@ -159,6 +195,10 @@ impl EmuBackend {
 
     pub(crate) fn rom_path(&self) -> &Path {
         dispatch!(self, rom_path())
+    }
+
+    pub(crate) fn source_path(&self) -> &Path {
+        dispatch!(self, source_path())
     }
 
     pub(crate) fn rom_hash(&self) -> [u8; 32] {

@@ -126,3 +126,18 @@ fn gba_backend_smoke_roundtrip() {
         .load_state_from_bytes(state)
         .expect("GBA backend should load save-state");
 }
+
+#[test]
+fn gba_backend_tracks_logical_rom_path_and_reload_source_path_separately() {
+    let rom = build_gba_test_rom();
+    let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("GBA emulator should initialize");
+    let backend = EmuBackend::from_gba_with_source(
+        gba,
+        PathBuf::from("inside_archive.gba"),
+        PathBuf::from("archive.zip"),
+    );
+
+    assert_eq!(backend.rom_path(), PathBuf::from("inside_archive.gba"));
+    assert_eq!(backend.source_path(), PathBuf::from("archive.zip"));
+}

@@ -17,7 +17,32 @@ pub(super) fn draw(
     }
     ui.separator();
     ui.label("PPU Layers");
-    ui.checkbox(&mut debug_windows.layer_enable_bg, "Background");
+    if ui
+        .checkbox(&mut debug_windows.layer_enable_bg, "Background")
+        .changed()
+    {
+        debug_windows.gba_layer_enable_bg = [debug_windows.layer_enable_bg; 4];
+    }
+    let mut gba_bg_changed = false;
+    ui.add_enabled_ui(debug_windows.layer_enable_bg, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("GBA");
+            for bg in 0..4 {
+                gba_bg_changed |= ui
+                    .checkbox(
+                        &mut debug_windows.gba_layer_enable_bg[bg],
+                        format!("BG{bg}"),
+                    )
+                    .changed();
+            }
+        });
+    });
+    if gba_bg_changed {
+        debug_windows.layer_enable_bg = debug_windows
+            .gba_layer_enable_bg
+            .iter()
+            .any(|&enabled| enabled);
+    }
     ui.checkbox(&mut debug_windows.layer_enable_window, "Window");
     ui.checkbox(&mut debug_windows.layer_enable_sprites, "Sprites");
 }

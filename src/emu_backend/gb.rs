@@ -27,11 +27,28 @@ impl crate::emu_core_trait::DebuggableEmulator for GbEmulator {
 pub(crate) struct GbBackend {
     pub(crate) emu: GbEmulator,
     rom_path: PathBuf,
+    source_path: PathBuf,
 }
 
 impl GbBackend {
     pub(crate) fn new(emu: GbEmulator, rom_path: PathBuf) -> Self {
-        Self { emu, rom_path }
+        Self::with_source_path(emu, rom_path.clone(), rom_path)
+    }
+
+    pub(crate) fn with_source_path(
+        emu: GbEmulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self {
+            emu,
+            rom_path,
+            source_path,
+        }
+    }
+
+    pub(crate) fn source_path(&self) -> &Path {
+        &self.source_path
     }
 }
 

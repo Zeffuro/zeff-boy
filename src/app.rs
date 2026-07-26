@@ -58,6 +58,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
+    let cached_source_path = backend.as_ref().map(|b| b.source_path().to_path_buf());
     let active_system = backend
         .as_ref()
         .map(|b| b.system())
@@ -139,6 +140,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             is_mbc7: cached_is_mbc7,
             is_pocket_camera: cached_is_pocket_camera,
             rom_path: cached_rom_path,
+            source_path: cached_source_path,
             rom_hash: None,
         },
         pending_debug_actions: DebugUiActions::none(),

@@ -88,7 +88,15 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
                 settings.emulation.hardware_mode_preference,
             )?;
             log_sram_result(emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path));
-            Ok(EmuBackend::from_gb(emu, rom_path))
+            if path == rom_path {
+                Ok(EmuBackend::from_gb(emu, rom_path))
+            } else {
+                Ok(EmuBackend::from_gb_with_source(
+                    emu,
+                    rom_path,
+                    path.to_path_buf(),
+                ))
+            }
         }
         ActiveSystem::Nes => {
             let mut emu = zeff_nes_core::emulator::Emulator::new(
@@ -96,7 +104,15 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
                 zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE,
             )?;
             log_sram_result(emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path));
-            Ok(EmuBackend::from_nes(emu, rom_path))
+            if path == rom_path {
+                Ok(EmuBackend::from_nes(emu, rom_path))
+            } else {
+                Ok(EmuBackend::from_nes_with_source(
+                    emu,
+                    rom_path,
+                    path.to_path_buf(),
+                ))
+            }
         }
         ActiveSystem::GameBoyAdvance => {
             let mut emu = zeff_gba_core::emulator::Emulator::new(
@@ -104,7 +120,15 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
                 zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE,
             )?;
             log_sram_result(emu_backend::gba::try_load_battery_sram(&mut emu, &rom_path));
-            Ok(EmuBackend::from_gba(emu, rom_path))
+            if path == rom_path {
+                Ok(EmuBackend::from_gba(emu, rom_path))
+            } else {
+                Ok(EmuBackend::from_gba_with_source(
+                    emu,
+                    rom_path,
+                    path.to_path_buf(),
+                ))
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ use anyhow::{Context, bail};
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use crate::emulator::Emulator;
+use crate::hardware::apu::ApuSaveState;
 use crate::hardware::constants::{
     EWRAM_SIZE, IO_SIZE, IWRAM_SIZE, OAM_SIZE, PALETTE_RAM_SIZE, VRAM_SIZE,
 };
@@ -12,27 +13,44 @@ use crate::hardware::timer::{Timer, Timers};
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
 const VERSION: u32 = 1;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
+const MAX_FIFO_SIZE: usize = 32;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::with_capacity(0x80_000);
     w.write_bytes(MAGIC);
     w.write_u32(VERSION);
 
-    for reg in emu.cpu.regs {
+    let mut cpu = emu.cpu.clone();
+    cpu.sync_active_bank();
+
+    for reg in cpu.regs {
         w.write_u32(reg);
     }
-    w.write_u32(emu.cpu.cpsr);
-    w.write_u32(emu.cpu.spsr);
-    w.write_u64(emu.cpu.cycles);
-    w.write_u8(match emu.cpu.state {
+    w.write_u32(cpu.cpsr);
+    w.write_u32(cpu.spsr);
+    w.write_u64(cpu.cycles);
+    w.write_u8(match cpu.state {
         CpuState::Running => 0,
         CpuState::Halted => 1,
         CpuState::Suspended => 2,
     });
-    w.write_u32(emu.cpu.last_opcode_pc);
-    w.write_bool(emu.cpu.break_after_next_stub);
-    w.write_bool(emu.cpu.next_fetch_sequential);
+    w.write_u32(cpu.last_opcode_pc);
+    w.write_bool(cpu.break_after_next_stub);
+    w.write_bool(cpu.next_fetch_sequential);
+    for value in cpu.banked_sp {
+        w.write_u32(value);
+    }
+    for value in cpu.banked_lr {
+        w.write_u32(value);
+    }
+    for value in cpu.banked_spsr {
+        w.write_u32(value);
+    }
     w.write_u64(emu.frame_count);
+    let (ppu_vcount, ppu_line_cycles, ppu_frame_ready) = emu.bus.ppu.state();
+    w.write_u16(ppu_vcount);
+    w.write_u32(ppu_line_cycles);
+    w.write_bool(ppu_frame_ready);
 
     w.write_vec(&emu.bus.ewram);
     w.write_vec(&emu.bus.iwram);
@@ -55,6 +73,9 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
         w.write_u32(ch.destination);
         w.write_u16(ch.count);
         w.write_u16(ch.control);
+        w.write_u32(ch.active_source);
+        w.write_u32(ch.active_destination);
+        w.write_u16(ch.active_count);
     }
 
     w.write_vec(&emu.bus.cartridge.dump_battery_data().unwrap_or_default());
@@ -63,6 +84,24 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     for mute in emu.bus.apu.channel_mutes() {
         w.write_bool(mute);
     }
+    let apu_state = emu.bus.apu.save_state();
+    w.write_vec(&apu_state.fifo_a);
+    w.write_vec(&apu_state.fifo_b);
+    w.write_u8(apu_state.current_a as u8);
+    w.write_u8(apu_state.current_b as u8);
+    w.write_f64(apu_state.output_phase);
+    w.write_f64(apu_state.dac_phase);
+    write_f32(&mut w, apu_state.dac_accum_left);
+    write_f32(&mut w, apu_state.dac_accum_right);
+    w.write_u32(apu_state.dac_accum_count);
+    write_f32(&mut w, apu_state.last_dac_left);
+    write_f32(&mut w, apu_state.last_dac_right);
+    write_f32(&mut w, apu_state.output_filter_left);
+    write_f32(&mut w, apu_state.output_filter_right);
+    w.write_u32(apu_state.psg_cycle_accum);
+    w.write_u64(apu_state.output_pairs_generated);
+    w.write_u64(apu_state.direct_pairs_generated);
+    w.write_u64(apu_state.psg_pairs_generated);
 
     Ok(w.into_bytes())
 }
@@ -94,7 +133,22 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.cpu.last_opcode_pc = r.read_u32()?;
     emu.cpu.break_after_next_stub = r.read_bool()?;
     emu.cpu.next_fetch_sequential = r.read_bool()?;
+    for value in &mut emu.cpu.banked_sp {
+        *value = r.read_u32()?;
+    }
+    for value in &mut emu.cpu.banked_lr {
+        *value = r.read_u32()?;
+    }
+    for value in &mut emu.cpu.banked_spsr {
+        *value = r.read_u32()?;
+    }
     emu.frame_count = r.read_u64()?;
+    let ppu_vcount = r.read_u16()?;
+    let ppu_line_cycles = r.read_u32()?;
+    let ppu_frame_ready = r.read_bool()?;
+    emu.bus
+        .ppu
+        .set_state(ppu_vcount, ppu_line_cycles, ppu_frame_ready);
 
     read_fixed_vec(&mut r, &mut emu.bus.ewram, EWRAM_SIZE).context("EWRAM")?;
     read_fixed_vec(&mut r, &mut emu.bus.iwram, IWRAM_SIZE).context("IWRAM")?;
@@ -123,6 +177,9 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         ch.destination = r.read_u32()?;
         ch.count = r.read_u16()?;
         ch.control = r.read_u16()?;
+        ch.active_source = r.read_u32()?;
+        ch.active_destination = r.read_u32()?;
+        ch.active_count = r.read_u16()?;
     }
     let mut dma = DmaController::default();
     dma.set_channels(channels);
@@ -133,18 +190,44 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         emu.bus.cartridge.load_battery_data(&backup)?;
     }
 
-    emu.bus.apu.set_sample_rate(r.read_u32()?);
-    emu.bus.apu.set_sample_generation_enabled(r.read_bool()?);
-    let mut mutes = [false; 6];
-    for mute in &mut mutes {
-        *mute = r.read_bool()?;
+    let _saved_sample_rate = r.read_u32()?;
+    let _saved_sample_generation_enabled = r.read_bool()?;
+    for _ in 0..6 {
+        let _saved_mute = r.read_bool()?;
     }
-    emu.bus.apu.set_channel_mutes(mutes);
+    let apu_state = ApuSaveState {
+        fifo_a: r.read_vec(MAX_FIFO_SIZE)?,
+        fifo_b: r.read_vec(MAX_FIFO_SIZE)?,
+        current_a: r.read_u8()? as i8,
+        current_b: r.read_u8()? as i8,
+        output_phase: r.read_f64()?,
+        dac_phase: r.read_f64()?,
+        dac_accum_left: read_f32(&mut r)?,
+        dac_accum_right: read_f32(&mut r)?,
+        dac_accum_count: r.read_u32()?,
+        last_dac_left: read_f32(&mut r)?,
+        last_dac_right: read_f32(&mut r)?,
+        output_filter_left: read_f32(&mut r)?,
+        output_filter_right: read_f32(&mut r)?,
+        psg_cycle_accum: r.read_u32()?,
+        output_pairs_generated: r.read_u64()?,
+        direct_pairs_generated: r.read_u64()?,
+        psg_pairs_generated: r.read_u64()?,
+    };
+    emu.bus.apu.load_save_state(apu_state);
 
     if !r.is_exhausted() {
         bail!("GBA save state has trailing bytes");
     }
     Ok(())
+}
+
+fn write_f32(w: &mut StateWriter, value: f32) {
+    w.write_u32(value.to_bits());
+}
+
+fn read_f32(r: &mut StateReader<'_>) -> anyhow::Result<f32> {
+    Ok(f32::from_bits(r.read_u32()?))
 }
 
 fn read_fixed_vec(
@@ -183,5 +266,41 @@ mod tests {
         decode_state(&mut restored, &bytes).unwrap();
         assert_eq!(restored.cpu_peek8(0x0200_0000), 0x55);
         assert_eq!(restored.frame_count(), 1);
+    }
+
+    #[test]
+    fn rejects_unsupported_state_version() {
+        let rom = minimal_rom();
+        let emu = Emulator::new(&rom, 48_000).unwrap();
+        let mut bytes = encode_state(&emu).unwrap();
+        bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        let err = decode_state(&mut restored, &bytes).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unsupported GBA save-state version 2")
+        );
+    }
+
+    #[test]
+    fn decode_preserves_runtime_audio_config() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 96_000).unwrap();
+        saved.set_apu_sample_generation_enabled(true);
+        saved.set_apu_channel_mutes([true, false, true, false, true, false]);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        restored.set_apu_sample_generation_enabled(false);
+        restored.set_apu_channel_mutes([false, true, false, true, false, true]);
+
+        decode_state(&mut restored, &bytes).unwrap();
+
+        let apu = restored.apu_debug_snapshot();
+        assert_eq!(apu.sample_rate, 48_000);
+        assert!(!apu.sample_generation_enabled);
+        assert_eq!(apu.channel_mutes, [false, true, false, true, false, true]);
     }
 }

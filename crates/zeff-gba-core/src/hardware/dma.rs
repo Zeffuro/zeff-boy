@@ -4,6 +4,17 @@ pub struct DmaChannel {
     pub destination: u32,
     pub count: u16,
     pub control: u16,
+    pub active_source: u32,
+    pub active_destination: u32,
+    pub active_count: u16,
+}
+
+impl DmaChannel {
+    pub fn latch_initial_registers(&mut self) {
+        self.active_source = self.source;
+        self.active_destination = self.destination;
+        self.active_count = self.count;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -27,6 +38,12 @@ impl DmaController {
     pub fn set_channel(&mut self, channel: usize, value: DmaChannel) {
         if let Some(ch) = self.channels.get_mut(channel) {
             *ch = value;
+        }
+    }
+
+    pub fn latch_channel(&mut self, channel: usize) {
+        if let Some(ch) = self.channels.get_mut(channel) {
+            ch.latch_initial_registers();
         }
     }
 

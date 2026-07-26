@@ -27,11 +27,28 @@ impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
 pub(crate) struct NesBackend {
     pub(crate) emu: NesEmulator,
     rom_path: PathBuf,
+    source_path: PathBuf,
 }
 
 impl NesBackend {
     pub(crate) fn new(emu: NesEmulator, rom_path: PathBuf) -> Self {
-        Self { emu, rom_path }
+        Self::with_source_path(emu, rom_path.clone(), rom_path)
+    }
+
+    pub(crate) fn with_source_path(
+        emu: NesEmulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self {
+            emu,
+            rom_path,
+            source_path,
+        }
+    }
+
+    pub(crate) fn source_path(&self) -> &Path {
+        &self.source_path
     }
 }
 

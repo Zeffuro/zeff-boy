@@ -99,6 +99,9 @@ impl App {
                         MenuAction::SetLayerToggles(bg, win, sprites) => {
                             self.pending_debug_actions.layer_toggles = Some((*bg, *win, *sprites));
                         }
+                        MenuAction::SetGbaBgLayerToggles(layers) => {
+                            self.pending_debug_actions.gba_bg_layer_toggles = Some(*layers);
+                        }
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
                     }
                 }
@@ -166,6 +169,12 @@ impl App {
         pending.memory_writes.extend(actions.memory_writes);
         if actions.apu_channel_mutes.is_some() {
             pending.apu_channel_mutes = actions.apu_channel_mutes;
+        }
+        if actions.layer_toggles.is_some() {
+            pending.layer_toggles = actions.layer_toggles;
+        }
+        if actions.gba_bg_layer_toggles.is_some() {
+            pending.gba_bg_layer_toggles = actions.gba_bg_layer_toggles;
         }
     }
 }

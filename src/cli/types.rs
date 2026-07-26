@@ -18,8 +18,8 @@ pub(crate) enum HeadlessBusTraceAccess {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HeadlessBusTraceFilter {
-    pub(crate) start_addr: u16,
-    pub(crate) end_addr: u16,
+    pub(crate) start_addr: u64,
+    pub(crate) end_addr: u64,
     pub(crate) access: HeadlessBusTraceAccess,
 }
 
@@ -29,7 +29,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) trace_opcodes: bool,
     pub(crate) trace_opcode_limit: u64,
     pub(crate) trace_start_t: u64,
-    pub(crate) trace_pc_range: Option<(u16, u16)>,
+    pub(crate) trace_pc_range: Option<(u64, u64)>,
     pub(crate) trace_opcode_filter: Vec<u8>,
     pub(crate) trace_watch_interrupts: bool,
     pub(crate) trace_bus_filters: Vec<HeadlessBusTraceFilter>,
@@ -41,10 +41,19 @@ pub(crate) struct HeadlessOptions {
     pub(crate) stuck_pc_threshold: usize,
     pub(crate) fail_on_stuck: bool,
     pub(crate) input_events: Vec<HeadlessInputEvent>,
+    pub(crate) load_state_path: Option<std::path::PathBuf>,
     pub(crate) screenshot_path: Option<std::path::PathBuf>,
     pub(crate) screenshot_frame: Option<u64>,
+    pub(crate) screenshot_dir: Option<std::path::PathBuf>,
+    pub(crate) screenshot_every: u64,
     pub(crate) print_debug_state: bool,
     pub(crate) debug_state_path: Option<std::path::PathBuf>,
+    pub(crate) audio_dump_path: Option<std::path::PathBuf>,
+    pub(crate) break_on_gba_bad_state: bool,
+    pub(crate) gba_audio_mutes: [bool; 6],
+    pub(crate) gba_hidden_bg_layers: [bool; 4],
+    pub(crate) gba_hide_sprites: bool,
+    pub(crate) gba_dump_memory_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for HeadlessOptions {
@@ -67,10 +76,19 @@ impl Default for HeadlessOptions {
             stuck_pc_threshold: 8,
             fail_on_stuck: false,
             input_events: Vec::new(),
+            load_state_path: None,
             screenshot_path: None,
             screenshot_frame: None,
+            screenshot_dir: None,
+            screenshot_every: 0,
             print_debug_state: false,
             debug_state_path: None,
+            audio_dump_path: None,
+            break_on_gba_bad_state: false,
+            gba_audio_mutes: [false; 6],
+            gba_hidden_bg_layers: [false; 4],
+            gba_hide_sprites: false,
+            gba_dump_memory_dir: None,
         }
     }
 }

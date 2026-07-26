@@ -63,6 +63,9 @@ mod vrc7;
 mod vs_system;
 mod waixing_f003;
 
+#[cfg(test)]
+mod load_tests;
+
 pub use action52::Action52;
 pub use axrom::Axrom;
 pub use bandai_74161::Bandai74161;
