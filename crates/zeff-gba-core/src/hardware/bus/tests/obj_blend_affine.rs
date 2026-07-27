@@ -1,5 +1,11 @@
 use super::*;
 
+fn hide_oam_from(bus: &mut Bus, first_hidden_obj: usize) {
+    for obj in first_hidden_obj..128 {
+        bus.write16(0x0700_0000 + (obj * 8) as u32, 1 << 9);
+    }
+}
+
 #[test]
 fn obj_render_draws_sprite_pixels() {
     let mut bus = Bus::new(cartridge(), 48_000);
@@ -184,6 +190,48 @@ fn obj_priority_draws_over_equal_priority_bg() {
     bus.render_frame();
 
     assert_eq!(&bus.ppu.framebuffer()[0..4], &[0x00, 0x00, 0xFF, 0xFF]);
+}
+
+#[test]
+fn lower_oam_index_obj_draws_over_equal_priority_obj() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    hide_oam_from(&mut bus, 2);
+    bus.write16(0x0400_0000, (1 << 6) | (1 << 12));
+    bus.write16(0x0500_0202, 0x001F);
+    bus.write16(0x0500_0204, 0x03E0);
+    poke_vram8(&mut bus, 0x0601_0000, 0x11);
+    poke_vram8(&mut bus, 0x0601_0020, 0x22);
+    bus.write16(0x0700_0000, 0);
+    bus.write16(0x0700_0002, 0);
+    bus.write16(0x0700_0004, 0);
+    bus.write16(0x0700_0008, 0);
+    bus.write16(0x0700_000A, 0);
+    bus.write16(0x0700_000C, 1);
+
+    bus.render_frame();
+
+    assert_eq!(&bus.ppu.framebuffer()[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+}
+
+#[test]
+fn obj_priority_bits_draw_over_oam_index_order() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    hide_oam_from(&mut bus, 2);
+    bus.write16(0x0400_0000, (1 << 6) | (1 << 12));
+    bus.write16(0x0500_0202, 0x001F);
+    bus.write16(0x0500_0204, 0x03E0);
+    poke_vram8(&mut bus, 0x0601_0000, 0x11);
+    poke_vram8(&mut bus, 0x0601_0020, 0x22);
+    bus.write16(0x0700_0000, 0);
+    bus.write16(0x0700_0002, 0);
+    bus.write16(0x0700_0004, 1 << 10);
+    bus.write16(0x0700_0008, 0);
+    bus.write16(0x0700_000A, 0);
+    bus.write16(0x0700_000C, 1);
+
+    bus.render_frame();
+
+    assert_eq!(&bus.ppu.framebuffer()[0..4], &[0x00, 0xFF, 0x00, 0xFF]);
 }
 
 #[test]

@@ -35,6 +35,7 @@ impl Ppu {
         let mut bg_second_colors = vec![0u16; SCREEN_WIDTH * SCREEN_HEIGHT];
         let mut pixel_layers = vec![Layer::Backdrop; SCREEN_WIDTH * SCREEN_HEIGHT];
         let mut pixel_colors = vec![0u16; SCREEN_WIDTH * SCREEN_HEIGHT];
+        let mut obj_priorities = vec![4u8; SCREEN_WIDTH * SCREEN_HEIGHT];
         if debug_flags.bg {
             match mode {
                 0 => self.render_text_mode(
@@ -180,6 +181,7 @@ impl Ppu {
                 oam,
                 &bg_priorities,
                 &bg_second_priorities,
+                &mut obj_priorities,
                 &mut pixel_layers,
                 &mut pixel_colors,
                 effects,
@@ -223,6 +225,7 @@ impl Ppu {
         let mut bg_second_colors = [0u16; SCREEN_WIDTH];
         let mut pixel_layers = [Layer::Backdrop; SCREEN_WIDTH];
         let mut pixel_colors = [0u16; SCREEN_WIDTH];
+        let mut obj_priorities = [4u8; SCREEN_WIDTH];
 
         self.fill_backdrop_line(
             y,
@@ -373,6 +376,7 @@ impl Ppu {
                 y,
                 &bg_priorities,
                 &bg_second_priorities,
+                &mut obj_priorities,
                 &mut pixel_layers,
                 &mut pixel_colors,
                 effects,

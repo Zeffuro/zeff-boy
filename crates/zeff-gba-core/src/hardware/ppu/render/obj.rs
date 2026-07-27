@@ -16,6 +16,7 @@ impl Ppu {
         oam: &[u8],
         bg_priorities: &[u8],
         bg_second_priorities: &[u8],
+        obj_priorities: &mut [u8],
         pixel_layers: &mut [Layer],
         pixel_colors: &mut [u16],
         effects: ColorEffects,
@@ -101,6 +102,9 @@ impl Ppu {
                         0x100 + palette_bank * 16 + usize::from(color_index)
                     };
                     let color = read_le16(palette_ram, palette_index * 2);
+                    if obj_priority > obj_priorities[dst] {
+                        continue;
+                    }
                     if obj_priority > bg_priorities[dst] {
                         if obj_priority <= bg_second_priorities[dst] {
                             blend_obj_under_current_top(
@@ -116,6 +120,7 @@ impl Ppu {
                         }
                         continue;
                     }
+                    obj_priorities[dst] = obj_priority;
                     draw_color(
                         &mut self.framebuffer,
                         pixel_layers,
@@ -142,6 +147,7 @@ impl Ppu {
         y: usize,
         bg_priorities: &[u8; SCREEN_WIDTH],
         bg_second_priorities: &[u8; SCREEN_WIDTH],
+        obj_priorities: &mut [u8; SCREEN_WIDTH],
         pixel_layers: &mut [Layer; SCREEN_WIDTH],
         pixel_colors: &mut [u16; SCREEN_WIDTH],
         effects: ColorEffects,
@@ -227,6 +233,9 @@ impl Ppu {
                     0x100 + palette_bank * 16 + usize::from(color_index)
                 };
                 let color = read_le16(palette_ram, palette_index * 2);
+                if obj_priority > obj_priorities[x] {
+                    continue;
+                }
                 if obj_priority > bg_priorities[x] {
                     if obj_priority <= bg_second_priorities[x] {
                         blend_obj_under_current_top_line(
@@ -242,6 +251,7 @@ impl Ppu {
                     }
                     continue;
                 }
+                obj_priorities[x] = obj_priority;
                 draw_color_line(
                     &mut self.framebuffer,
                     pixel_layers,

@@ -139,8 +139,29 @@ fn main() {
     log::info!("zeff-boy v{} WASM starting", env!("CARGO_PKG_VERSION"));
 
     wasm_bindgen_futures::spawn_local(async {
+        platform::set_boot_status(
+            "Checking graphics support…",
+            "zeff-boy needs browser WebGPU or WebGL2 access to render.",
+        );
+        if !platform::check_webgpu_support().await {
+            log::error!("graphics preflight failed; not starting app");
+            return;
+        }
+
+        platform::set_boot_status(
+            "Loading emulator data…",
+            "Preparing browser storage and settings.",
+        );
         platform::init_storage().await;
         let settings = settings::Settings::load_or_default();
-        app::run(None, settings).expect("app::run failed");
+        platform::set_boot_status("Starting emulator UI…", "Creating the window and renderer.");
+        if let Err(error) = app::run(None, settings) {
+            log::error!("app::run failed: {error}");
+            platform::show_boot_error(
+                "zeff-boy failed to start.",
+                "The emulator could not create its browser event loop.",
+                &error.to_string(),
+            );
+        }
     });
 }

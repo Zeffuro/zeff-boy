@@ -19,7 +19,16 @@ impl GpuContext {
         height: u32,
         vsync: VsyncMode,
     ) -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
         let instance = wgpu::Instance::default();
+
+        #[cfg(target_arch = "wasm32")]
+        let instance = wgpu::util::new_instance_with_webgpu_detection(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY | wgpu::Backends::SECONDARY,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        })
+        .await;
+
         let surface = instance.create_surface(window)?;
 
         let adapter = instance

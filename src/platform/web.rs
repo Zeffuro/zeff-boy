@@ -1,6 +1,85 @@
 use std::path::{Path, PathBuf};
 
+use wasm_bindgen::prelude::*;
+
 pub(crate) type FileDataSlot = std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>;
+
+#[wasm_bindgen(inline_js = r#"
+export async function zeffBoyCheckWebGpuSupport() {
+    if (globalThis.zeffBoyBoot && globalThis.zeffBoyBoot.preflight) {
+        return await globalThis.zeffBoyBoot.preflight;
+    }
+
+    if (globalThis.zeffBoyBoot && globalThis.zeffBoyBoot.checkWebGpuSupport) {
+        return await globalThis.zeffBoyBoot.checkWebGpuSupport();
+    }
+
+    if (!navigator.gpu) {
+        return false;
+    }
+
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+    return !!adapter;
+}
+
+export function zeffBoyBootSetStatus(message, detail) {
+    if (globalThis.zeffBoyBoot && globalThis.zeffBoyBoot.setStatus) {
+        globalThis.zeffBoyBoot.setStatus(message, detail);
+    }
+}
+
+export function zeffBoyBootHide() {
+    if (globalThis.zeffBoyBoot && globalThis.zeffBoyBoot.hide) {
+        globalThis.zeffBoyBoot.hide();
+    }
+}
+
+export function zeffBoyBootShowError(title, detail, technical) {
+    if (globalThis.zeffBoyBoot && globalThis.zeffBoyBoot.showError) {
+        globalThis.zeffBoyBoot.showError(title, detail, technical);
+    }
+}
+"#)]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = zeffBoyCheckWebGpuSupport)]
+    async fn js_check_webgpu_support() -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(js_name = zeffBoyBootSetStatus)]
+    fn js_boot_set_status(message: &str, detail: &str);
+
+    #[wasm_bindgen(js_name = zeffBoyBootHide)]
+    fn js_boot_hide();
+
+    #[wasm_bindgen(js_name = zeffBoyBootShowError)]
+    fn js_boot_show_error(title: &str, detail: &str, technical: &str);
+}
+
+pub(crate) async fn check_webgpu_support() -> bool {
+    match js_check_webgpu_support().await {
+        Ok(value) => value.as_bool().unwrap_or(true),
+        Err(error) => {
+            log::error!("graphics preflight failed: {error:?}");
+            show_boot_error(
+                "Graphics support check failed.",
+                "The browser failed before zeff-boy could initialize graphics. Update the browser/GPU driver and make sure browser hardware acceleration is enabled.",
+                &format!("{error:?}"),
+            );
+            false
+        }
+    }
+}
+
+pub(crate) fn set_boot_status(message: &str, detail: &str) {
+    js_boot_set_status(message, detail);
+}
+
+pub(crate) fn hide_boot_screen() {
+    js_boot_hide();
+}
+
+pub(crate) fn show_boot_error(title: &str, detail: &str, technical: &str) {
+    js_boot_show_error(title, detail, technical);
+}
 
 pub(crate) struct FileDialog {
     accept: String,

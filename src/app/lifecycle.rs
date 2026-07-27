@@ -57,6 +57,12 @@ impl App {
             Ok(w) => w,
             Err(e) => {
                 log::error!("Failed to create window: {e}");
+                #[cfg(target_arch = "wasm32")]
+                crate::platform::show_boot_error(
+                    "Failed to create the emulator window.",
+                    "The browser did not allow zeff-boy to create its rendering canvas.",
+                    &e.to_string(),
+                );
                 return;
             }
         };
@@ -113,6 +119,10 @@ impl App {
 
         #[cfg(target_arch = "wasm32")]
         {
+            crate::platform::set_boot_status(
+                "Starting graphics…",
+                "Creating the WebGPU surface and render pipeline.",
+            );
             let slot = std::rc::Rc::new(std::cell::RefCell::new(None));
             let slot_clone = slot.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -139,6 +149,9 @@ impl App {
         }
 
         self.gfx = Some(gfx);
+
+        #[cfg(target_arch = "wasm32")]
+        crate::platform::hide_boot_screen();
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -162,7 +175,14 @@ impl App {
                         gfx.window().request_redraw();
                     }
                 }
-                Err(e) => log::error!("Graphics initialization failed: {e}"),
+                Err(e) => {
+                    log::error!("Graphics initialization failed: {e}");
+                    crate::platform::show_boot_error(
+                        "Graphics initialization failed.",
+                        "zeff-boy could not start WebGPU rendering. This usually means browser hardware acceleration is disabled, the GPU is blocked by the browser, or no compatible adapter is available.",
+                        &e.to_string(),
+                    );
+                }
             }
         } else {
             self.pending_gfx = Some(slot);

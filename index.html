@@ -19,14 +19,271 @@
             align-items: center;
             justify-content: center;
         }
+
+        #zeff-boot-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            padding: 24px;
+            background:
+                radial-gradient(circle at 50% 35%, rgba(80, 112, 255, 0.22), transparent 34rem),
+                #11121f;
+            color: #f4f6ff;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            transition: opacity 160ms ease;
+        }
+
+        #zeff-boot-screen.is-hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .boot-card {
+            width: min(520px, 100%);
+            box-sizing: border-box;
+            padding: 28px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 18px;
+            background: rgba(17, 18, 31, 0.88);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+        }
+
+        .boot-title {
+            margin: 0 0 14px;
+            font-size: 28px;
+            letter-spacing: 0.02em;
+        }
+
+        .boot-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .boot-spinner {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+            border: 3px solid rgba(255, 255, 255, 0.24);
+            border-top-color: #89a7ff;
+            border-radius: 999px;
+            animation: zeff-spin 850ms linear infinite;
+        }
+
+        @keyframes zeff-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #zeff-boot-screen.is-error .boot-spinner {
+            display: none;
+        }
+
+        #zeff-boot-status {
+            margin: 0;
+            font-size: 16px;
+            line-height: 1.45;
+        }
+
+        #zeff-boot-detail {
+            margin: 14px 0 0;
+            color: #c7cbe8;
+            line-height: 1.5;
+        }
+
+        #zeff-boot-detail:empty {
+            display: none;
+        }
+
+        #zeff-boot-technical {
+            display: none;
+            margin: 16px 0 0;
+            padding: 12px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.08);
+            color: #d9dcf5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+        }
+
+        #zeff-boot-technical:not(:empty) {
+            display: block;
+        }
+
+        #zeff-boot-reload {
+            display: none;
+            margin-top: 18px;
+            border: 0;
+            border-radius: 10px;
+            padding: 10px 14px;
+            background: #89a7ff;
+            color: #11121f;
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        #zeff-boot-screen.is-error #zeff-boot-reload {
+            display: inline-flex;
+        }
+
         canvas {
             display: block;
             width: 100% !important;
             height: 100% !important;
         }
     </style>
+    <script>
+        (() => {
+            function text(id, value) {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.textContent = value || "";
+                }
+            }
+
+            function screen() {
+                return document.getElementById("zeff-boot-screen");
+            }
+
+            function setStatus(message, detail = "") {
+                const el = screen();
+                if (el) {
+                    el.classList.remove("is-error", "is-hidden");
+                    el.removeAttribute("aria-hidden");
+                }
+                text("zeff-boot-status", message);
+                text("zeff-boot-detail", detail);
+                text("zeff-boot-technical", "");
+            }
+
+            function hide() {
+                const el = screen();
+                if (!el) {
+                    return;
+                }
+                el.classList.add("is-hidden");
+                el.setAttribute("aria-hidden", "true");
+                window.setTimeout(() => el.remove(), 220);
+            }
+
+            function showError(title, detail, technical = "") {
+                const el = screen();
+                if (el) {
+                    el.classList.add("is-error");
+                    el.classList.remove("is-hidden");
+                    el.removeAttribute("aria-hidden");
+                }
+                text("zeff-boot-status", title);
+                text("zeff-boot-detail", detail);
+                text("zeff-boot-technical", technical);
+            }
+
+            async function checkWebGpuSupport() {
+                setStatus(
+                    "Checking graphics support…",
+                    "zeff-boy uses WebGPU when available, with a WebGL2 fallback."
+                );
+
+                if (!("gpu" in navigator)) {
+                    setStatus(
+                        "WebGPU is not exposed by this browser.",
+                        "Trying the WebGL2 fallback…"
+                    );
+                } else {
+                    let adapter = null;
+                    try {
+                        adapter = await navigator.gpu.requestAdapter({
+                            powerPreference: "high-performance"
+                        });
+                    } catch (error) {
+                        setStatus(
+                            "WebGPU adapter request failed.",
+                            "Trying the WebGL2 fallback…"
+                        );
+                    }
+
+                    if (adapter) {
+                        setStatus("WebGPU adapter found.", "Loading emulator files…");
+                        return true;
+                    }
+
+                    setStatus(
+                        "No WebGPU adapter found.",
+                        "Trying the WebGL2 fallback…"
+                    );
+                }
+
+                if (hasWebGl2()) {
+                    setStatus("WebGL2 fallback available.", "Loading emulator files…");
+                    return true;
+                }
+
+                showError(
+                    "No suitable graphics adapter found.",
+                    "zeff-boy could not get WebGPU or WebGL2. This usually means browser hardware acceleration is disabled, the GPU is blocked by the browser, or the browser is running in a VM/remote session. Enable hardware acceleration, restart the browser, update GPU drivers, or try another browser/device.",
+                    "navigator.gpu.requestAdapter() returned null or was unavailable; WebGL2 context creation also failed"
+                );
+                return false;
+            }
+
+            function hasWebGl2() {
+                try {
+                    const canvas = document.createElement("canvas");
+                    const gl = canvas.getContext("webgl2", {
+                        alpha: false,
+                        antialias: false,
+                        depth: false,
+                        failIfMajorPerformanceCaveat: false,
+                        stencil: false,
+                    });
+                    if (gl && gl.getExtension) {
+                        const loseContext = gl.getExtension("WEBGL_lose_context");
+                        if (loseContext) {
+                            loseContext.loseContext();
+                        }
+                    }
+                    return !!gl;
+                } catch (_) {
+                    return false;
+                }
+            }
+
+            window.zeffBoyBoot = {
+                setStatus,
+                hide,
+                showError,
+                checkWebGpuSupport,
+            };
+
+            window.zeffBoyBoot.setStatus("Loading zeff-boy…", "Preparing the web emulator.");
+        })();
+    </script>
 </head>
 <body>
+    <div id="zeff-boot-screen" role="status" aria-live="polite">
+        <div class="boot-card">
+            <h1 class="boot-title">zeff-boy</h1>
+            <div class="boot-row">
+                <div class="boot-spinner" aria-hidden="true"></div>
+                <p id="zeff-boot-status">Loading zeff-boy…</p>
+            </div>
+            <p id="zeff-boot-detail">Preparing the web emulator.</p>
+            <pre id="zeff-boot-technical"></pre>
+            <button id="zeff-boot-reload" type="button" onclick="location.reload()">Reload</button>
+        </div>
+    </div>
+    <script>
+        if (window.zeffBoyBoot && !window.zeffBoyBoot.preflight) {
+            window.zeffBoyBoot.preflight = window.zeffBoyBoot.checkWebGpuSupport();
+        }
+    </script>
     <link data-trunk rel="rust" data-bin="zeff-boy" data-cargo-no-default-features
           data-wasm-opt="z"
           data-wasm-opt-params="--enable-bulk-memory --enable-sign-ext --enable-nontrapping-float-to-int" />
