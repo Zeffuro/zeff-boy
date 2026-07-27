@@ -112,17 +112,44 @@ pub(super) fn read_io(bus: &Bus, addr: u16) -> u8 {
                 0xFF
             }
         }
+        CGB_UNDOC_FF72 | CGB_UNDOC_FF73 => {
+            if bus.is_cgb_hardware() {
+                bus.io_bank[(addr - IO_START) as usize]
+            } else {
+                0xFF
+            }
+        }
+        CGB_UNDOC_FF75 => {
+            if bus.is_cgb_hardware() {
+                bus.io_bank[(addr - IO_START) as usize] | 0x8F
+            } else {
+                0xFF
+            }
+        }
         NR10..=NR52 | WAVE_RAM_START..=WAVE_RAM_END => bus.io.apu.read(addr),
         CGB_PCM12 | CGB_PCM34 => {
-            if bus.is_cgb_mode() {
+            if bus.is_cgb_hardware() {
                 bus.io.apu.read(addr)
             } else {
                 0xFF
             }
         }
 
+        _ if unused_io_read_returns_ff(addr) => 0xFF,
         _ => bus.io_bank[(addr - IO_START) as usize],
     }
+}
+
+fn unused_io_read_returns_ff(addr: u16) -> bool {
+    matches!(
+        addr,
+        0xFF03
+            | 0xFF08..=0xFF0E
+            | 0xFF15
+            | 0xFF1F
+            | 0xFF27..=0xFF2F
+            | 0xFF4C..=0xFF7F
+    )
 }
 
 pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
@@ -140,14 +167,29 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         SERIAL_SB => bus.io.serial.write_sb(value),
         SERIAL_SC => bus.io.serial.write_sc(value),
 
-        TIMER_DIV => bus.io.timer.reset_div(),
-        TIMER_TIMA => bus.io.timer.write_tima(value),
+        TIMER_DIV => {
+            if bus.io.timer.reset_div_after_cpu_write_cycle() {
+                bus.if_reg |= 0x04;
+            }
+            bus.clock_apu_div_events();
+        }
+        TIMER_TIMA => {
+            bus.io.timer.write_tima(value);
+            bus.clear_cpu_interrupt_pending_before_if(0x04);
+        }
         TIMER_TMA => bus.io.timer.write_tma(value),
-        TIMER_TAC => bus.io.timer.write_tac(value),
+        TIMER_TAC => {
+            if bus.io.timer.write_tac_after_cpu_write_cycle(value) {
+                bus.if_reg |= 0x04;
+            }
+        }
 
-        INTERRUPT_IF => bus.if_reg = value & 0x1F,
+        INTERRUPT_IF => {
+            bus.if_reg = value & 0x1F;
+            bus.clear_cpu_interrupt_pending_before_if(!value);
+        }
 
-        PPU_LCDC => bus.io.ppu.lcdc = crate::hardware::ppu::Lcdc::from_bits_truncate(value),
+        PPU_LCDC => bus.if_reg |= bus.io.ppu.write_lcdc(value),
         PPU_STAT => bus.io.ppu.stat = (bus.io.ppu.stat & 0x07) | (value & 0xF8),
         PPU_SCY => bus.io.ppu.scy = value,
         PPU_SCX => bus.io.ppu.scx = value,
@@ -196,7 +238,16 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
             let bank = value & 0x07;
             bus.wram_bank = if bank == 0 { 1 } else { bank };
         }
-        NR10..=NR52 | WAVE_RAM_START..=WAVE_RAM_END => bus.io.apu.write(addr, value),
+        CGB_UNDOC_FF72 | CGB_UNDOC_FF73 | CGB_UNDOC_FF75 if bus.is_cgb_hardware() => {}
+        NR52 => {
+            let powering_on = value & 0x80 != 0 && !bus.io.apu.powered();
+            let skip_first_div_apu_event = powering_on && bus.io.timer.div_apu_bit();
+            bus.io.apu.write(addr, value);
+            bus.io
+                .apu
+                .skip_next_div_apu_event_if(skip_first_div_apu_event);
+        }
+        NR10..=NR51 | WAVE_RAM_START..=WAVE_RAM_END => bus.io.apu.write(addr, value),
 
         _ => {}
     }

@@ -30,13 +30,13 @@ macro_rules! read_op_all_modes {
             cpu.$op(v);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_absolute_x(bus);
+            let (a, crossed) = cpu.addr_absolute_x_read(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
             page_cross_penalty(crossed)
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_absolute_y(bus);
+            let (a, crossed) = cpu.addr_absolute_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
             page_cross_penalty(crossed)
@@ -47,7 +47,7 @@ macro_rules! read_op_all_modes {
             cpu.$op(v);
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_indirect_y(bus);
+            let (a, crossed) = cpu.addr_indirect_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
             page_cross_penalty(crossed)
@@ -79,13 +79,13 @@ macro_rules! compare_all_modes {
             cpu.compare(cpu.regs.$reg, v);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_absolute_x(bus);
+            let (a, crossed) = cpu.addr_absolute_x_read(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
             page_cross_penalty(crossed)
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_absolute_y(bus);
+            let (a, crossed) = cpu.addr_absolute_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
             page_cross_penalty(crossed)
@@ -96,7 +96,7 @@ macro_rules! compare_all_modes {
             cpu.compare(cpu.regs.$reg, v);
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_indirect_y(bus);
+            let (a, crossed) = cpu.addr_indirect_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
             page_cross_penalty(crossed)
@@ -125,22 +125,30 @@ macro_rules! rmw_modes {
     ($op:ident, $zp:ident, $zpx:ident, $abs:ident, $absx:ident) => {
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_zero_page(bus);
-            let v = cpu.$op(bus.cpu_read(a));
+            let old = bus.cpu_read(a);
+            bus.cpu_write(a, old);
+            let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
         pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_zero_page_x(bus);
-            let v = cpu.$op(bus.cpu_read(a));
+            let old = bus.cpu_read(a);
+            bus.cpu_write(a, old);
+            let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
         pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute(bus);
-            let v = cpu.$op(bus.cpu_read(a));
+            let old = bus.cpu_read(a);
+            bus.cpu_write(a, old);
+            let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
-            let (a, _) = cpu.addr_absolute_x(bus);
-            let v = cpu.$op(bus.cpu_read(a));
+            let a = cpu.addr_absolute_x_write(bus);
+            let old = bus.cpu_read(a);
+            bus.cpu_write(a, old);
+            let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
     };

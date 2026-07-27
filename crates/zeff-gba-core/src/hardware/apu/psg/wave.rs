@@ -12,9 +12,35 @@ impl Psg {
         u64::from(base.max(1)) * 2
     }
 
+    pub(super) fn maybe_apply_wave_frequency_write(&mut self, addr: u16) {
+        if !matches!(addr, NR33 | NR34) || !self.channels[2].enabled || self.ch3_output_delay == 0 {
+            return;
+        }
+
+        self.ch3_timer = self.wave_period_t_cycles(self.ch3_frequency());
+    }
+
     pub(super) fn advance_wave_channel(&mut self, t_cycles: u64) {
         if !self.channels[2].enabled {
             return;
+        }
+
+        let mut remaining = t_cycles;
+        if self.ch3_output_delay != 0 {
+            if self.ch3_output_delay > remaining {
+                self.ch3_output_delay -= remaining;
+                return;
+            }
+
+            remaining -= self.ch3_output_delay;
+            self.ch3_output_delay = 0;
+            if self.ch3_restart_pending {
+                self.ch3_restart_pending = false;
+                self.ch3_wave_pos = 1;
+            }
+            if remaining == 0 {
+                return;
+            }
         }
 
         let period = self.wave_period_t_cycles(self.ch3_frequency());
@@ -22,7 +48,6 @@ impl Psg {
             self.ch3_timer = period;
         }
 
-        let mut remaining = t_cycles;
         while remaining >= self.ch3_timer {
             remaining -= self.ch3_timer;
             self.ch3_timer = period;
@@ -32,7 +57,10 @@ impl Psg {
     }
 
     pub(super) fn ch3_sample(&self) -> f32 {
-        if !self.channels[2].enabled || (self.regs[(NR30 - NR10) as usize] & 0x80) == 0 {
+        if !self.channels[2].enabled
+            || (self.ch3_output_delay != 0 && !self.ch3_restart_pending)
+            || (self.regs[(NR30 - NR10) as usize] & 0x80) == 0
+        {
             return 0.0;
         }
 

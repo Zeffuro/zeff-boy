@@ -1,46 +1,191 @@
 use super::Apu;
-use crate::hardware::types::constants::{NR10, NR43};
+use crate::hardware::types::constants::{NR10, NR42, NR43};
 
 impl Apu {
-    pub(super) fn noise_period_t_cycles(&self) -> u64 {
-        let nr43 = self.regs[(NR43 - NR10) as usize];
-        let shift = (nr43 >> 4) & 0x0F;
-        let divisor_code = nr43 & 0x07;
-        let divisor = match divisor_code {
-            0 => 8u32,
-            1 => 16,
-            2 => 32,
-            3 => 48,
-            4 => 64,
-            5 => 80,
-            6 => 96,
-            _ => 112,
-        };
-        u64::from(divisor << shift).max(8)
-    }
-
-    pub(super) fn advance_noise_channel(&mut self, t_cycles: u64) {
-        if !self.channels[3].enabled {
+    pub(super) fn maybe_apply_noise_frequency_write(
+        &mut self,
+        addr: u16,
+        value: u8,
+        old_value: u8,
+    ) {
+        if addr != NR43 || value == old_value {
             return;
         }
 
-        let period = self.noise_period_t_cycles();
-        if self.ch4_timer == 0 {
-            self.ch4_timer = period;
+        if !self.channels[3].enabled || self.ch4_counter_countdown == 0 {
+            return;
         }
 
-        let mut remaining = t_cycles;
-        while remaining >= self.ch4_timer {
-            remaining -= self.ch4_timer;
-            self.ch4_timer = period;
+        let old_divisor = noise_counter_divisor_from_nr43(old_value);
+        let new_divisor = noise_counter_divisor_from_nr43(value);
 
-            let xor = (self.ch4_lfsr & 0x01) ^ ((self.ch4_lfsr >> 1) & 0x01);
-            self.ch4_lfsr = (self.ch4_lfsr >> 1) | (xor << 14);
-            if (self.regs[(NR43 - NR10) as usize] & 0x08) != 0 {
-                self.ch4_lfsr = (self.ch4_lfsr & !(1 << 6)) | (xor << 6);
+        if new_divisor < old_divisor {
+            self.ch4_counter_countdown = self.ch4_counter_countdown.min(new_divisor);
+        } else if new_divisor > old_divisor && self.ch4_counter_countdown == old_divisor {
+            self.ch4_counter_countdown = new_divisor;
+            if (old_value & 0x07) == 0 && (self.ch4_alignment & 0x03) == 0 {
+                self.ch4_counter_countdown += 2;
             }
         }
-        self.ch4_timer -= remaining;
+    }
+
+    pub(super) fn reset_noise_runtime(&mut self, was_active: bool) {
+        self.ch4_counter_active = (self.regs[(NR42 - NR10) as usize] & 0xF8) != 0;
+        let was_background_counting = self.ch4_background_counter_active;
+        self.ch4_background_counter_active = true;
+
+        let mut divisor_code = self.regs[(NR43 - NR10) as usize] & 0x07;
+        let mut instant_lfsr_step = false;
+        let mut divisor_one_glitch = false;
+
+        if divisor_code > 1 && self.ch4_counter_countdown == 1 {
+            self.ch4_counter = self.ch4_counter.wrapping_add(1) & 0x3FFF;
+        } else if self.ch4_counter_countdown == 2 && (self.ch4_alignment & 0x03) == 0 && was_active
+        {
+            if divisor_code == 0 {
+                divisor_code = 8;
+            } else if divisor_code == 1 {
+                if !self.ch4_did_step_counter {
+                    divisor_one_glitch = true;
+                }
+
+                let mask = 1 << (self.regs[(NR43 - NR10) as usize] >> 4);
+                let old_bit = (self.ch4_counter & mask) != 0;
+                self.ch4_counter = self.ch4_counter.wrapping_add(1) & 0x3FFF;
+                let new_bit = (self.ch4_counter & mask) != 0;
+                instant_lfsr_step = new_bit && !old_bit;
+            }
+        }
+
+        self.ch4_counter_countdown = if divisor_code == 0 {
+            6
+        } else {
+            u64::from(divisor_code) * 4 + 6
+        };
+
+        match (self.ch4_alignment & 0x03, divisor_code) {
+            (1 | 3, 0) => {
+                if was_background_counting {
+                    self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(1);
+                } else {
+                    self.ch4_counter_countdown += 1;
+                }
+            }
+            (3, _) => {
+                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(3);
+            }
+            (1, _) => {
+                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(1);
+                if divisor_code == 1
+                    && was_active
+                    && (self.regs[(NR43 - NR10) as usize] & 0xF0) == 0
+                {
+                    self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
+                }
+            }
+            (2, _) if divisor_code != 0 => {
+                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(2);
+            }
+            (0, _) if divisor_code > 1 => {
+                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
+            }
+            (0, 1) if was_active && (self.regs[(NR43 - NR10) as usize] & 0xF0) == 0 => {
+                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
+            }
+            _ => {}
+        }
+
+        if divisor_code > 1 && !self.ch4_counter_active && (self.ch4_alignment & 0x03) == 0 {
+            self.ch4_counter_countdown += 4;
+        } else if divisor_code <= 1
+            && was_background_counting
+            && !was_active
+            && (self.ch4_alignment & 0x03) == 0
+        {
+            if divisor_code != 0 {
+                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
+            }
+        }
+
+        if divisor_one_glitch {
+            self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
+        }
+
+        self.ch4_lfsr = 0x7FFF;
+        self.ch4_did_step_counter = (self.ch4_alignment & 0x03) == 2;
+        self.ch4_countdown_reloaded = false;
+
+        if instant_lfsr_step {
+            self.step_noise_lfsr();
+        }
+    }
+
+    pub(super) fn reset_noise_divider_state(&mut self) {
+        self.ch4_timer = 0;
+        self.noise_cycle_accum = 0;
+        self.ch4_lfsr = 0x7FFF;
+        self.ch4_counter = 0;
+        self.ch4_counter_countdown = 0;
+        self.ch4_alignment = 0;
+        self.ch4_counter_active = false;
+        self.ch4_background_counter_active = false;
+        self.ch4_did_step_counter = false;
+        self.ch4_countdown_reloaded = false;
+    }
+
+    pub(super) fn advance_noise_clock(&mut self, t_cycles: u64) {
+        self.noise_cycle_accum = self.noise_cycle_accum.wrapping_add(t_cycles);
+        while self.noise_cycle_accum >= 2 {
+            self.noise_cycle_accum -= 2;
+            self.ch4_alignment = self.ch4_alignment.wrapping_add(1);
+            self.advance_noise_channel_2mhz(1);
+        }
+    }
+
+    fn advance_noise_channel_2mhz(&mut self, cycles: u64) {
+        if !self.ch4_counter_active && !self.ch4_background_counter_active {
+            return;
+        }
+
+        let divisor = self.noise_counter_divisor_2mhz();
+        if self.ch4_counter_countdown == 0 {
+            self.ch4_counter_countdown = divisor;
+        }
+
+        let mut remaining = cycles;
+        while remaining >= self.ch4_counter_countdown {
+            remaining -= self.ch4_counter_countdown;
+            self.ch4_counter_countdown = divisor;
+
+            let mask = 1 << (self.regs[(NR43 - NR10) as usize] >> 4);
+            let old_bit = (self.ch4_counter & mask) != 0;
+            self.ch4_counter = self.ch4_counter.wrapping_add(1) & 0x3FFF;
+            self.ch4_did_step_counter = true;
+            let new_bit = (self.ch4_counter & mask) != 0;
+
+            if self.channels[3].enabled && new_bit && !old_bit {
+                self.step_noise_lfsr();
+            }
+        }
+
+        if remaining > 0 {
+            self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(remaining);
+            self.ch4_countdown_reloaded = false;
+        } else {
+            self.ch4_countdown_reloaded = true;
+        }
+    }
+
+    fn noise_counter_divisor_2mhz(&self) -> u64 {
+        noise_counter_divisor_from_nr43(self.regs[(NR43 - NR10) as usize])
+    }
+
+    fn step_noise_lfsr(&mut self) {
+        let xor = (self.ch4_lfsr & 0x01) ^ ((self.ch4_lfsr >> 1) & 0x01);
+        self.ch4_lfsr = (self.ch4_lfsr >> 1) | (xor << 14);
+        if (self.regs[(NR43 - NR10) as usize] & 0x08) != 0 {
+            self.ch4_lfsr = (self.ch4_lfsr & !(1 << 6)) | (xor << 6);
+        }
     }
 
     pub(super) fn ch4_sample(&self) -> f32 {
@@ -54,4 +199,20 @@ impl Apu {
             -volume
         }
     }
+
+    pub(super) fn ch4_pcm_output(&self) -> u8 {
+        if !self.channels[3].enabled {
+            return 0;
+        }
+        if (self.ch4_lfsr & 0x01) == 0 {
+            self.channels[3].envelope_volume & 0x0F
+        } else {
+            0
+        }
+    }
+}
+
+fn noise_counter_divisor_from_nr43(value: u8) -> u64 {
+    let divisor = u64::from((value & 0x07) << 2);
+    if divisor == 0 { 2 } else { divisor }
 }

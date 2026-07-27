@@ -3,6 +3,9 @@ use crate::hardware::rom_header::RomHeader;
 
 fn make_test_bus(mode: HardwareMode) -> Bus {
     let mut rom = vec![0u8; 0x8000];
+    if matches!(mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble) {
+        rom[0x0143] = 0x80;
+    }
     rom[0x0058] = 0xC3;
     rom[0x0059] = 0xC3;
     rom[0x005A] = 0xDE;
@@ -29,7 +32,7 @@ fn halt_bug_skips_next_pc_increment_once() {
 }
 
 #[test]
-fn halted_with_ime_enabled_dispatches_interrupt_in_24_t_cycles() {
+fn halted_with_ime_enabled_dispatches_interrupt_in_20_t_cycles() {
     let mut cpu = Cpu::new();
     let mut bus = make_test_bus(HardwareMode::DMG);
     cpu.pc = 0xC123;
@@ -41,7 +44,7 @@ fn halted_with_ime_enabled_dispatches_interrupt_in_24_t_cycles() {
 
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.last_step_cycles, 24);
+    assert_eq!(cpu.last_step_cycles, 20);
     assert_eq!(cpu.pc, INT_VBLANK);
     assert_eq!(cpu.sp, 0xFFFC);
     assert_eq!(bus.if_reg & 0x01, 0x00);
@@ -67,6 +70,103 @@ fn running_with_ime_enabled_dispatches_interrupt_in_20_t_cycles() {
 }
 
 #[test]
+fn running_cpu_accepts_timer_irq_before_if_becomes_readable() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC123;
+    cpu.sp = 0xFFFE;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x04;
+    bus.if_reg = 0x00;
+    bus.request_cpu_interrupt_before_if(0x04);
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.last_step_cycles, 20);
+    assert_eq!(cpu.pc, INT_TIMER);
+    assert_eq!(cpu.sp, 0xFFFC);
+    assert_eq!(bus.if_reg & 0x04, 0x00);
+    assert_eq!(bus.pending_interrupts_for_cpu(), 0x00);
+}
+
+#[test]
+fn halt_does_not_wake_from_timer_irq_before_if_becomes_readable() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC123;
+    cpu.running = CpuState::Halted;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x04;
+    bus.if_reg = 0x00;
+    bus.request_cpu_interrupt_before_if(0x04);
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.last_step_cycles, 4);
+    assert_eq!(cpu.pc, 0xC123);
+    assert!(matches!(cpu.running, CpuState::Halted));
+    assert_eq!(bus.pending_interrupts_for_cpu(), 0x04);
+    assert_eq!(bus.pending_interrupts_for_halt(), 0x00);
+}
+
+#[test]
+fn interrupt_high_push_to_ie_can_cancel_dispatch() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0x0235;
+    cpu.sp = 0x0000;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x04;
+    bus.if_reg = 0x04;
+
+    assert!(cpu.handle_interrupts(&mut bus));
+
+    assert_eq!(cpu.timed_cycles_accounted, 20);
+    assert_eq!(cpu.pc, 0x0000);
+    assert_eq!(cpu.sp, 0xFFFE);
+    assert_eq!(bus.ie, 0x02);
+    assert_eq!(bus.if_reg & 0x1F, 0x04);
+}
+
+#[test]
+fn interrupt_low_push_to_ie_is_too_late_to_cancel_dispatch() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0x0235;
+    cpu.sp = 0x0001;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x08;
+    bus.if_reg = 0x08;
+
+    assert!(cpu.handle_interrupts(&mut bus));
+
+    assert_eq!(cpu.timed_cycles_accounted, 20);
+    assert_eq!(cpu.pc, INT_SERIAL);
+    assert_eq!(cpu.sp, 0xFFFF);
+    assert_eq!(bus.ie, 0x35);
+    assert_eq!(bus.if_reg & 0x1F, 0x00);
+}
+
+#[test]
+fn interrupt_high_push_to_ie_can_reselect_dispatch_vector() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0x0235;
+    cpu.sp = 0x0000;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x03;
+    bus.if_reg = 0x03;
+
+    assert!(cpu.handle_interrupts(&mut bus));
+
+    assert_eq!(cpu.timed_cycles_accounted, 20);
+    assert_eq!(cpu.pc, INT_STAT);
+    assert_eq!(cpu.sp, 0xFFFE);
+    assert_eq!(bus.ie, 0x02);
+    assert_eq!(bus.if_reg & 0x1F, 0x01);
+}
+
+#[test]
 fn halted_with_ime_disabled_wakes_without_dispatch_and_executes_next_opcode() {
     let mut cpu = Cpu::new();
     let mut bus = make_test_bus(HardwareMode::DMG);
@@ -79,7 +179,7 @@ fn halted_with_ime_disabled_wakes_without_dispatch_and_executes_next_opcode() {
 
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.last_step_cycles, 8);
+    assert_eq!(cpu.last_step_cycles, 4);
     assert_eq!(cpu.pc, 0xC001);
     assert!(matches!(cpu.running, CpuState::Running));
     assert_eq!(bus.if_reg & 0x01, 0x01);
@@ -98,11 +198,39 @@ fn halted_with_ime_pending_enable_wakes_without_dispatch_and_enables_ime_after_i
 
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.last_step_cycles, 8);
+    assert_eq!(cpu.last_step_cycles, 4);
     assert_eq!(cpu.pc, 0xC001);
     assert!(matches!(cpu.running, CpuState::Running));
     assert!(matches!(cpu.ime, ImeState::Enabled));
     assert_eq!(bus.if_reg & 0x01, 0x01);
+}
+
+#[test]
+fn ei_halt_with_pending_irq_dispatches_with_return_addr_at_halt() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC000;
+    cpu.sp = 0xFFFE;
+    cpu.ime = ImeState::Disabled;
+    bus.ie = 0x01;
+    bus.if_reg = 0x01;
+    bus.write_byte(0xC000, 0xFB); // EI
+    bus.write_byte(0xC001, 0x76); // HALT
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0xC001);
+    assert!(matches!(cpu.ime, ImeState::PendingEnable));
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0xC001);
+    assert!(matches!(cpu.running, CpuState::Halted));
+    assert!(matches!(cpu.ime, ImeState::Enabled));
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, INT_VBLANK);
+    assert_eq!(cpu.sp, 0xFFFC);
+    assert_eq!(bus.read_byte_raw(0xFFFC), 0x01);
+    assert_eq!(bus.read_byte_raw(0xFFFD), 0xC0);
 }
 
 #[test]

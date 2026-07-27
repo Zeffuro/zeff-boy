@@ -206,6 +206,11 @@ impl MapperImpl {
     }
 
     #[inline]
+    pub(super) fn notify_ppu_a12(&mut self, high: bool) {
+        dispatch_mapper!(self, notify_ppu_a12, high)
+    }
+
+    #[inline]
     pub(super) fn clock_cpu(&mut self) {
         dispatch_mapper!(self, clock_cpu)
     }

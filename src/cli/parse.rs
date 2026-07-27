@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
+use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::types::{
-    CliArgs, HeadlessBusTraceAccess, HeadlessBusTraceFilter, HeadlessInputEvent, HeadlessOptions,
+    CliArgs, HeadlessBusTraceAccess, HeadlessBusTraceFilter, HeadlessInputEvent,
+    HeadlessMemoryDump, HeadlessOptions,
 };
 
 fn parse_u64_arg(value: &str, flag: &str) -> anyhow::Result<u64> {
@@ -116,6 +118,27 @@ fn parse_addr_range_list_arg(
     Ok(filters)
 }
 
+fn parse_memory_dump_arg(value: &str, flag: &str) -> anyhow::Result<HeadlessMemoryDump> {
+    let Some((addr_raw, len_raw)) = value.split_once(':') else {
+        anyhow::bail!("{flag} must be addr:len, e.g. C000:60 or 0xC000:0x60");
+    };
+    let addr = parse_addr_arg(addr_raw, flag)?;
+    let len = parse_u64_arg(len_raw, flag)?;
+    if addr > u64::from(u16::MAX) {
+        anyhow::bail!("{flag} address must fit in the GB 16-bit address space");
+    }
+    if len == 0 {
+        anyhow::bail!("{flag} length must be greater than zero");
+    }
+    if len > 4096 {
+        anyhow::bail!("{flag} length is capped at 4096 bytes");
+    }
+    Ok(HeadlessMemoryDump {
+        start_addr: addr as u16,
+        len: len as u16,
+    })
+}
+
 fn parse_gba_bg_layer_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool; 4]> {
     let mut hidden = [false; 4];
     let mut parsed_any = false;
@@ -139,6 +162,20 @@ fn parse_gba_bg_layer_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool;
         anyhow::bail!("{flag} requires at least one BG layer");
     }
     Ok(hidden)
+}
+
+fn parse_dmg_palette_arg(value: &str, flag: &str) -> anyhow::Result<DmgPalettePreset> {
+    let token = value.trim().to_ascii_lowercase().replace(['_', '-'], "");
+    match token.as_str() {
+        "gray" | "grey" | "grayscale" | "greyscale" => Ok(DmgPalettePreset::Gray),
+        "dmggreen" | "green" => Ok(DmgPalettePreset::DmgGreen),
+        "pocket" | "gameboypocket" => Ok(DmgPalettePreset::Pocket),
+        "mint" => Ok(DmgPalettePreset::Mint),
+        "chocolate" => Ok(DmgPalettePreset::Chocolate),
+        _ => anyhow::bail!(
+            "{flag} has unknown palette {value:?}; expected gray, dmg-green, pocket, mint, or chocolate"
+        ),
+    }
 }
 
 fn parse_gba_audio_mute_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool; 6]> {
@@ -336,6 +373,10 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.expect_serial = Some(value.to_string());
                 i += 2;
             }
+            "--expect-test-pass" => {
+                headless.expect_test_pass = true;
+                i += 1;
+            }
             "--trace-opcodes" => {
                 headless.trace_opcodes = true;
                 i += 1;
@@ -424,6 +465,15 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.trace_bus_limit = parse_u64_arg(value, "--trace-bus-limit")?;
                 i += 2;
             }
+            "--dump-mem" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--dump-mem requires addr:len");
+                };
+                headless
+                    .memory_dumps
+                    .push(parse_memory_dump_arg(value, "--dump-mem")?);
+                i += 2;
+            }
             "--break-at" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--break-at requires an address value");
@@ -438,6 +488,16 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
             "--no-sram" | "--no-battery" => {
                 headless.no_sram = true;
                 i += 1;
+            }
+            "--gb-dmg-palette" | "--dmg-palette" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!(
+                        "{} requires one of: gray|dmg-green|pocket|mint|chocolate",
+                        args[i]
+                    );
+                };
+                headless.gb_dmg_palette_preset = Some(parse_dmg_palette_arg(value, &args[i])?);
+                i += 2;
             }
             "--detect-stuck" => {
                 if headless.stuck_window_frames == 0 {

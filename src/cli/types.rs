@@ -1,3 +1,4 @@
+use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,9 +24,16 @@ pub(crate) struct HeadlessBusTraceFilter {
     pub(crate) access: HeadlessBusTraceAccess,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HeadlessMemoryDump {
+    pub(crate) start_addr: u16,
+    pub(crate) len: u16,
+}
+
 pub(crate) struct HeadlessOptions {
     pub(crate) max_frames: u64,
     pub(crate) expect_serial: Option<String>,
+    pub(crate) expect_test_pass: bool,
     pub(crate) trace_opcodes: bool,
     pub(crate) trace_opcode_limit: u64,
     pub(crate) trace_start_t: u64,
@@ -34,9 +42,11 @@ pub(crate) struct HeadlessOptions {
     pub(crate) trace_watch_interrupts: bool,
     pub(crate) trace_bus_filters: Vec<HeadlessBusTraceFilter>,
     pub(crate) trace_bus_limit: u64,
+    pub(crate) memory_dumps: Vec<HeadlessMemoryDump>,
     pub(crate) break_at: Option<u16>,
     pub(crate) no_apu: bool,
     pub(crate) no_sram: bool,
+    pub(crate) gb_dmg_palette_preset: Option<DmgPalettePreset>,
     pub(crate) stuck_window_frames: u64,
     pub(crate) stuck_pc_threshold: usize,
     pub(crate) fail_on_stuck: bool,
@@ -61,6 +71,7 @@ impl Default for HeadlessOptions {
         Self {
             max_frames: 600,
             expect_serial: None,
+            expect_test_pass: false,
             trace_opcodes: false,
             trace_opcode_limit: 512,
             trace_start_t: 0,
@@ -69,9 +80,11 @@ impl Default for HeadlessOptions {
             trace_watch_interrupts: false,
             trace_bus_filters: Vec::new(),
             trace_bus_limit: 512,
+            memory_dumps: Vec::new(),
             break_at: None,
             no_apu: false,
             no_sram: false,
+            gb_dmg_palette_preset: None,
             stuck_window_frames: 0,
             stuck_pc_threshold: 8,
             fail_on_stuck: false,

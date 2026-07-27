@@ -39,6 +39,7 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
+        self.bus.reset();
         self.cpu = Cpu::new();
         self.cpu.reset(&mut self.bus);
         self.opcode_log.clear();

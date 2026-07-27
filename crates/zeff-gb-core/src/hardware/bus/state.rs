@@ -2,9 +2,11 @@ use super::Bus;
 use super::io_bus;
 use crate::hardware::cartridge::Cartridge;
 use crate::hardware::io::IO;
+use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::constants::{
     HRAM_SIZE, IO_SIZE, IO_START, OAM_SIZE, VRAM_SIZE, WRAM_SIZE,
 };
+use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 
@@ -49,10 +51,15 @@ impl Bus {
     pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
         let hardware_mode = reader.read_hardware_mode()?;
         let cartridge = Cartridge::read_state(reader)?;
+        let cgb_dmg_compat = matches!(
+            hardware_mode,
+            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+        ) && !RomHeader::from_rom(cartridge.rom_bytes())?.is_cgb_compatible;
 
         let mut bus = Self {
             cartridge,
             hardware_mode,
+            cgb_dmg_compat,
             vram: vec![0u8; VRAM_SIZE * 2].into_boxed_slice(),
             wram: vec![0u8; WRAM_SIZE * 8].into_boxed_slice(),
             vram_bank: 0,
@@ -70,11 +77,13 @@ impl Bus {
             oam_dma_source_base: 0,
             oam_dma_index: 0,
             oam_dma_t_cycle_accum: 0,
+            oam_dma_pending_source_base: None,
             oam: [0; OAM_SIZE],
             io_bank: [0; IO_SIZE],
             hram: [0; HRAM_SIZE],
             ie: 0,
             if_reg: 0,
+            cpu_interrupt_pending_before_if: 0,
             io: IO::new(),
             trace_cpu_accesses: false,
             cpu_read_trace: Vec::with_capacity(8),
@@ -99,6 +108,7 @@ impl Bus {
         bus.oam_dma_source_base = reader.read_u16()?;
         bus.oam_dma_index = reader.read_u16()?;
         bus.oam_dma_t_cycle_accum = reader.read_u64()?;
+        bus.oam_dma_pending_source_base = None;
         reader.read_exact(&mut bus.oam)?;
         reader.read_exact(&mut bus.io_bank)?;
         reader.read_exact(&mut bus.hram)?;
@@ -106,6 +116,7 @@ impl Bus {
         bus.if_reg = reader.read_u8()?;
         bus.io = IO::read_state(reader)?;
 
+        bus.sync_timer_serial_mode();
         bus.trace_cpu_accesses = false;
         bus.cpu_read_trace.clear();
         bus.cpu_write_trace.clear();

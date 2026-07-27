@@ -36,7 +36,7 @@ impl Dmc {
             loop_flag: false,
             rate_index: 0,
             timer_period: DMC_RATE_TABLE[0],
-            timer_counter: DMC_RATE_TABLE[0],
+            timer_counter: DMC_RATE_TABLE[0] - 1,
             output_level: 0,
             sample_address: 0xC000,
             current_address: 0xC000,
@@ -87,7 +87,7 @@ impl Dmc {
     #[inline]
     pub fn tick(&mut self) {
         if self.timer_counter == 0 {
-            self.timer_counter = self.timer_period;
+            self.timer_counter = self.timer_period.saturating_sub(1);
             self.tick_output_unit();
         } else {
             self.timer_counter -= 1;
@@ -190,5 +190,29 @@ impl Dmc {
         self.sample_buffer = if has_buf { Some(buf_val) } else { None };
         self.silence_flag = r.read_bool()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timer_ticks_output_unit_after_exact_period_cycles() {
+        let mut dmc = Dmc::new();
+        dmc.timer_period = 4;
+        dmc.timer_counter = 3;
+        dmc.bits_remaining = 8;
+        dmc.silence_flag = true;
+
+        dmc.tick();
+        dmc.tick();
+        dmc.tick();
+        assert_eq!(dmc.bits_remaining, 8);
+        assert_eq!(dmc.timer_counter, 0);
+
+        dmc.tick();
+        assert_eq!(dmc.bits_remaining, 7);
+        assert_eq!(dmc.timer_counter, 3);
     }
 }

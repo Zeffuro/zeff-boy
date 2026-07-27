@@ -31,13 +31,13 @@ macro_rules! load_all_modes {
             cpu.regs.set_zn(cpu.regs.$reg);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_absolute_x(bus);
+            let (a, crossed) = cpu.addr_absolute_x_read(bus);
             cpu.regs.$reg = bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.$reg);
             page_cross_penalty(crossed)
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_absolute_y(bus);
+            let (a, crossed) = cpu.addr_absolute_y_read(bus);
             cpu.regs.$reg = bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.$reg);
             page_cross_penalty(crossed)
@@ -48,7 +48,7 @@ macro_rules! load_all_modes {
             cpu.regs.set_zn(cpu.regs.$reg);
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (a, crossed) = cpu.addr_indirect_y(bus);
+            let (a, crossed) = cpu.addr_indirect_y_read(bus);
             cpu.regs.$reg = bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.$reg);
             page_cross_penalty(crossed)
@@ -101,11 +101,11 @@ macro_rules! store_all_modes {
             bus.cpu_write(a, cpu.regs.$reg);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
-            let (a, _) = cpu.addr_absolute_x(bus);
+            let a = cpu.addr_absolute_x_write(bus);
             bus.cpu_write(a, cpu.regs.$reg);
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) {
-            let (a, _) = cpu.addr_absolute_y(bus);
+            let a = cpu.addr_absolute_y_write(bus);
             bus.cpu_write(a, cpu.regs.$reg);
         }
         pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
@@ -113,7 +113,7 @@ macro_rules! store_all_modes {
             bus.cpu_write(a, cpu.regs.$reg);
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) {
-            let (a, _) = cpu.addr_indirect_y(bus);
+            let a = cpu.addr_indirect_y_write(bus);
             bus.cpu_write(a, cpu.regs.$reg);
         }
     };
@@ -140,11 +140,11 @@ load_all_modes!(
 
 // LDX: 0xA2, 0xA6, 0xB6, 0xAE, 0xBE
 load_all_modes!(x, ldx_imm, ldx_zp, ldx_zp_y, ldx_abs, ldx_abs_y;
-    zp_addr = addr_zero_page_y, abs_addr = addr_absolute_y);
+    zp_addr = addr_zero_page_y, abs_addr = addr_absolute_y_read);
 
 // LDY: 0xA0, 0xA4, 0xB4, 0xAC, 0xBC
 load_all_modes!(y, ldy_imm, ldy_zp, ldy_zp_x, ldy_abs, ldy_abs_x;
-    zp_addr = addr_zero_page_x, abs_addr = addr_absolute_x);
+    zp_addr = addr_zero_page_x, abs_addr = addr_absolute_x_read);
 
 // STA: 0x85, 0x95, 0x8D, 0x9D, 0x99, 0x81, 0x91
 store_all_modes!(

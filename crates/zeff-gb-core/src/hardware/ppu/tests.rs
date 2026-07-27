@@ -146,6 +146,49 @@ fn mode_sequence_during_active_scanline() {
 }
 
 #[test]
+fn stat_mode0_interrupt_is_delayed_after_visible_hblank() {
+    let mut ppu = PPU::new();
+    let vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.cycles = OAM_DOTS + DRAW_DOTS_BASE - 1;
+    ppu.stat = (ppu.stat & !0x0B) | 0x0B;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+
+    assert_eq!(
+        ppu.step(1, &vram, &oam, false) & 0x02,
+        0,
+        "visible HBlank should not assert STAT mode0 IRQ immediately"
+    );
+    assert_eq!(ppu.mode(), 0);
+
+    assert_eq!(
+        ppu.step(STAT_IRQ_HBLANK_DELAY_DOTS, &vram, &oam, false) & 0x02,
+        0x02,
+        "STAT mode0 IRQ should assert after the HBlank delay"
+    );
+}
+
+#[test]
+fn stat_mode0_has_cpu_early_edge_before_if_visible() {
+    let mut ppu = PPU::new();
+    let vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.cycles = STAT_IRQ_OAM_DOTS + DRAW_DOTS_BASE - 1;
+    ppu.stat = (ppu.stat & !0x0B) | 0x0B;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+
+    assert_eq!(ppu.step(1, &vram, &oam, false) & 0x02, 0);
+    assert!(ppu.drain_cpu_stat_interrupt_pending_before_if());
+    assert!(!ppu.drain_cpu_stat_interrupt_pending_before_if());
+}
+
+#[test]
 fn vblank_interrupt_fires_at_line_144() {
     let mut ppu = PPU::new();
     let vram = [0u8; 0x4000];
@@ -208,12 +251,107 @@ fn vram_accessible_outside_mode3() {
 
     let mut draw_ppu = PPU::new();
     draw_ppu.stat = (draw_ppu.stat & !0x03) | 3;
+    draw_ppu.cycles = STAT_IRQ_OAM_DOTS;
     assert!(!draw_ppu.cpu_vram_accessible());
     assert!(!draw_ppu.cpu_oam_accessible());
     let mut hblank_ppu = PPU::new();
     hblank_ppu.stat &= !0x03;
+    hblank_ppu.cycles = 300;
     assert!(hblank_ppu.cpu_vram_accessible());
     assert!(hblank_ppu.cpu_oam_accessible());
+}
+
+#[test]
+fn vram_cpu_access_blocks_before_visible_mode3_status() {
+    let mut ppu = PPU::new();
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 10;
+    ppu.cycles = STAT_IRQ_OAM_DOTS - 1;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+    ppu.stat = (ppu.stat & !0x03) | 2;
+
+    assert!(ppu.cpu_vram_accessible());
+
+    ppu.cycles = STAT_IRQ_OAM_DOTS;
+
+    assert_eq!(
+        ppu.mode(),
+        2,
+        "STAT mode is still OAM search at the CPU access edge"
+    );
+    assert!(!ppu.cpu_vram_accessible());
+}
+
+#[test]
+fn cgb_vram_cpu_access_leaves_dot80_readable() {
+    let mut ppu = PPU::new();
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.cgb_mode = true;
+    ppu.ly = 10;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+    ppu.cycles = STAT_IRQ_OAM_DOTS;
+
+    assert!(ppu.cpu_vram_accessible());
+
+    ppu.cycles = STAT_IRQ_OAM_DOTS + 1;
+
+    assert!(!ppu.cpu_vram_accessible());
+}
+
+#[test]
+fn cgb_double_speed_lcd_on_line_uses_dot84_block_edge() {
+    let mut ppu = PPU::new();
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.blank_first_frame_after_lcd_on = true;
+    ppu.cgb_mode = true;
+    ppu.cgb_double_speed = true;
+    ppu.ly = 0;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+    ppu.cycles = LCD_ON_INITIAL_MODE0_DOTS;
+
+    assert!(!ppu.cpu_vram_accessible());
+}
+
+#[test]
+fn cgb_double_speed_oam_write_blocks_lcd_on_dot82_edge() {
+    let mut ppu = PPU::new();
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.blank_first_frame_after_lcd_on = true;
+    ppu.cgb_mode = true;
+    ppu.cgb_double_speed = true;
+    ppu.ly = 0;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+
+    ppu.cycles = LCD_ON_INITIAL_MODE0_DOTS - 6;
+    assert!(ppu.cpu_oam_write_accessible());
+
+    ppu.cycles = LCD_ON_INITIAL_MODE0_DOTS - 4;
+    assert!(ppu.cpu_oam_read_accessible());
+    assert!(!ppu.cpu_oam_write_accessible());
+}
+
+#[test]
+fn cgb_double_speed_oam_read_allows_dot0_search_edge() {
+    let mut ppu = PPU::new();
+
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.cgb_mode = true;
+    ppu.cgb_double_speed = true;
+    ppu.ly = 1;
+    ppu.cycles = 0;
+    ppu.draw_dots_for_line = DRAW_DOTS_BASE;
+
+    assert!(ppu.cpu_oam_read_accessible());
+    assert!(!ppu.cpu_oam_write_accessible());
 }
 
 #[test]
@@ -268,8 +406,8 @@ fn draw_dots_increases_with_sprites_on_line() {
 
     assert_eq!(
         ppu.draw_dots_for_line,
-        DRAW_DOTS_BASE + 3 * 6,
-        "3 sprites should add 18 penalty dots (3 * 6)"
+        DRAW_DOTS_BASE + 24,
+        "3 sprites should include per-fetch and bucket-stall penalty dots"
     );
 }
 
@@ -308,8 +446,8 @@ fn draw_dots_caps_at_10_sprites() {
 
     assert_eq!(
         ppu.draw_dots_for_line,
-        DRAW_DOTS_BASE + 10 * 6,
-        "Sprite penalty should cap at 10 sprites (10 * 6 = 60)"
+        DRAW_DOTS_BASE + 84,
+        "Sprite penalty should cap at 10 selected sprites and include bucket stalls"
     );
 }
 

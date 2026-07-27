@@ -97,6 +97,8 @@ struct ChannelState {
     envelope_increase: bool,
     envelope_volume: u8,
     envelope_timer: u8,
+    envelope_zero_period_arm: bool,
+    envelope_forced_tick_delay: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -138,10 +140,31 @@ pub(super) struct Psg {
     ch2_timer: u64,
     ch3_timer: u64,
     ch4_timer: u64,
+    pulse_noise_cycle_accum: u64,
+    wave_cycle_accum: u64,
+    noise_cycle_accum: u64,
+    ch1_output_delay: u64,
+    ch2_output_delay: u64,
+    ch1_output_suppressed: bool,
+    ch2_output_suppressed: bool,
+    ch1_just_reloaded: bool,
+    ch2_just_reloaded: bool,
+    ch1_sweep_pending_disable_delay: u64,
+    ch3_output_delay: u64,
+    ch3_restart_pending: bool,
+    ch1_current_duty: u8,
+    ch2_current_duty: u8,
     ch1_duty_pos: u8,
     ch2_duty_pos: u8,
     ch3_wave_pos: u8,
     ch4_lfsr: u16,
+    ch4_counter: u16,
+    ch4_counter_countdown: u64,
+    ch4_alignment: u8,
+    ch4_counter_active: bool,
+    ch4_background_counter_active: bool,
+    ch4_did_step_counter: bool,
+    ch4_countdown_reloaded: bool,
     sample_rate: u32,
     sample_buffer: Vec<f32>,
     sample_cycle_accum: f64,
@@ -167,10 +190,31 @@ impl Psg {
             ch2_timer: 0,
             ch3_timer: 0,
             ch4_timer: 0,
+            pulse_noise_cycle_accum: 0,
+            wave_cycle_accum: 0,
+            noise_cycle_accum: 0,
+            ch1_output_delay: 0,
+            ch2_output_delay: 0,
+            ch1_output_suppressed: false,
+            ch2_output_suppressed: false,
+            ch1_just_reloaded: false,
+            ch2_just_reloaded: false,
+            ch1_sweep_pending_disable_delay: 0,
+            ch3_output_delay: 0,
+            ch3_restart_pending: false,
+            ch1_current_duty: 0,
+            ch2_current_duty: 0,
             ch1_duty_pos: 0,
             ch2_duty_pos: 0,
             ch3_wave_pos: 0,
             ch4_lfsr: 0x7FFF,
+            ch4_counter: 0,
+            ch4_counter_countdown: 0,
+            ch4_alignment: 0,
+            ch4_counter_active: false,
+            ch4_background_counter_active: false,
+            ch4_did_step_counter: false,
+            ch4_countdown_reloaded: false,
             sample_rate: sample_rate.max(8_000),
             sample_buffer: Vec::with_capacity(APU_INITIAL_SAMPLE_CAPACITY),
             sample_cycle_accum: 0.0,
@@ -223,5 +267,109 @@ impl Apu {
             return;
         }
         self.psg.step(u64::from(psg_cycles));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn powered_psg() -> Psg {
+        let mut psg = Psg::new(48_000);
+        psg.write(NR52, 0x80);
+        psg
+    }
+
+    #[test]
+    fn sweep_period_zero_counts_as_8_but_suppresses_calculation_until_nonzero() {
+        let mut psg = powered_psg();
+        psg.write(NR12, 0xF0);
+        psg.write(NR10, 0x01);
+        psg.write(NR13, 100);
+        psg.write(NR14, 0x80);
+
+        psg.frame_seq_step = 2;
+        for _ in 0..8 {
+            psg.frame_sequencer_step();
+        }
+        assert_eq!(psg.ch1_frequency(), 100);
+
+        psg.write(NR10, 0x11);
+        for _ in 0..7 {
+            psg.frame_sequencer_step();
+        }
+        assert_eq!(psg.ch1_frequency(), 100);
+
+        psg.frame_sequencer_step();
+        assert_eq!(psg.ch1_frequency(), 150);
+    }
+
+    #[test]
+    fn sweep_shift_zero_checks_overflow_without_writing_frequency() {
+        let mut psg = powered_psg();
+        psg.write(NR12, 0xF0);
+        psg.write(NR10, 0x10);
+        psg.write(NR13, 0xFF);
+        psg.write(NR14, 0x87);
+
+        psg.frame_seq_step = 2;
+        psg.frame_sequencer_step();
+
+        assert_eq!(psg.ch1_frequency(), 0x07FF);
+        assert_eq!(psg.nr52 & 0x01, 0x01);
+
+        psg.step(8);
+        assert_eq!(psg.nr52 & 0x01, 0x00);
+    }
+
+    #[test]
+    fn envelope_period_one_enable_schedules_forced_tick() {
+        let mut psg = powered_psg();
+        psg.write(NR12, 0x08);
+        psg.write(NR14, 0x80);
+
+        psg.write(NR12, 0x09);
+
+        assert_eq!(psg.channels[0].envelope_volume, 1);
+        assert_eq!(psg.channels[0].envelope_forced_tick_delay, 1);
+
+        psg.frame_seq_cycle_accum = FRAME_SEQUENCER_PERIOD_CYCLES - 1;
+        psg.step(1);
+
+        assert_eq!(psg.channels[0].envelope_volume, 2);
+        assert_eq!(psg.channels[0].envelope_forced_tick_delay, 0);
+    }
+
+    #[test]
+    fn square_trigger_output_is_delayed_from_inactive_state() {
+        let mut psg = powered_psg();
+        psg.write(NR50, 0x77);
+        psg.write(NR51, 0x11);
+        psg.write(NR12, 0xF0);
+        psg.write(NR11, 0xC0);
+        psg.write(NR13, 0xFF);
+        psg.write(NR14, 0x87);
+
+        assert_eq!(psg.ch1_output_delay, 12);
+        assert_eq!(psg.square_sample(0, psg.ch1_duty_pos), 0.0);
+
+        psg.step(8);
+        assert_eq!(psg.square_sample(0, psg.ch1_duty_pos), 0.0);
+
+        psg.step(4);
+        assert_eq!(psg.ch1_output_delay, 0);
+        assert!(psg.square_sample(0, psg.ch1_duty_pos) > 0.0);
+    }
+
+    #[test]
+    fn noise_frequency_write_clamps_countdown_when_new_divisor_is_shorter() {
+        let mut psg = powered_psg();
+        psg.regs[(NR43 - NR10) as usize] = 0x09;
+        psg.channels[3].enabled = true;
+        psg.ch4_counter_countdown = 4;
+
+        psg.write(NR43, 0x38);
+
+        assert_eq!(psg.ch4_counter_countdown, 2);
     }
 }

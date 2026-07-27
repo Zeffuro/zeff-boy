@@ -118,8 +118,14 @@ impl Emulator {
     fn tick_peripherals_after_cpu_step(&mut self, total_cycles: u64) {
         let events = self.bus.tick_peripherals(total_cycles);
         let final_irq_pending = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
+        let nmi_suppressed_by_status_read = self.bus.ppu_nmi_suppressed_by_status_read;
+        self.bus.ppu_nmi_suppressed_by_status_read = false;
 
         let branch_taken_same_page = self.cpu.last_step_branch_taken_same_page;
+
+        if nmi_suppressed_by_status_read {
+            self.cpu.nmi_pending = false;
+        }
 
         if events.nmi_raised {
             match self.cpu.last_step_kind {
@@ -130,13 +136,17 @@ impl Emulator {
                     self.cpu.redirect_to_nmi_vector(&mut self.bus);
                 }
                 _ => {
-                    self.cpu.nmi_pending = true;
-                    if interrupt_missed_poll(
-                        events.first_nmi_cpu_cycle,
-                        self.cpu.last_step_cycles,
-                        branch_taken_same_page,
-                    ) {
-                        self.cpu.delay_nmi_poll_once();
+                    if !nmi_suppressed_by_status_read {
+                        self.cpu.nmi_pending = true;
+                        if events.first_nmi_cpu_cycle == Some(0)
+                            || interrupt_missed_poll(
+                                events.first_nmi_cpu_cycle,
+                                self.cpu.last_step_cycles,
+                                branch_taken_same_page,
+                            )
+                        {
+                            self.cpu.delay_nmi_poll_once();
+                        }
                     }
                 }
             }

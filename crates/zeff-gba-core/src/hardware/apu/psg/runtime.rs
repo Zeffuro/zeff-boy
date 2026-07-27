@@ -1,6 +1,5 @@
 use super::frame_seq::{
-    channel_max_length, envelope_initial_volume, envelope_period_or_8, envelope_reg_index,
-    trigger_channel, uses_envelope,
+    channel_max_length, envelope_initial_volume, envelope_reg_index, trigger_channel, uses_envelope,
 };
 use super::*;
 
@@ -10,7 +9,11 @@ impl Psg {
         if !self.apu_enabled {
             return;
         }
-        if !self.powered() {
+
+        let powered = self.powered();
+        self.advance_channel_timer_clocks(t_cycles, powered);
+        self.clock_delayed_sweep_disable(t_cycles);
+        if !powered {
             return;
         }
 
@@ -18,10 +21,10 @@ impl Psg {
         while self.frame_seq_cycle_accum >= FRAME_SEQUENCER_PERIOD_CYCLES {
             self.frame_seq_cycle_accum -= FRAME_SEQUENCER_PERIOD_CYCLES;
             self.frame_sequencer_step();
+            self.clock_forced_envelope_ticks();
             self.frame_seq_step = (self.frame_seq_step + 1) & 0x07;
         }
 
-        self.step_wave_generators(t_cycles);
         if self.debug_capture_enabled {
             self.capture_debug_samples(t_cycles);
         }
@@ -83,8 +86,23 @@ impl Psg {
                 self.ch2_timer = 0;
                 self.ch3_timer = 0;
                 self.ch4_timer = 0;
+                self.reset_noise_divider_state();
+                self.pulse_noise_cycle_accum = 0;
+                self.wave_cycle_accum = 0;
+                self.noise_cycle_accum = 0;
+                self.ch1_output_delay = 0;
+                self.ch2_output_delay = 0;
+                self.ch1_output_suppressed = false;
+                self.ch2_output_suppressed = false;
+                self.ch1_just_reloaded = false;
+                self.ch2_just_reloaded = false;
+                self.ch1_sweep_pending_disable_delay = 0;
+                self.ch3_output_delay = 0;
+                self.ch3_restart_pending = false;
                 self.ch1_duty_pos = 0;
                 self.ch2_duty_pos = 0;
+                self.ch1_current_duty = 0;
+                self.ch2_current_duty = 0;
                 self.ch3_wave_pos = 0;
                 self.ch4_lfsr = 0x7FFF;
                 self.sample_cycle_accum = 0.0;
@@ -100,8 +118,16 @@ impl Psg {
                     channel.enabled = false;
                     channel.length_enabled = false;
                     channel.length_counter = 0;
+                    channel.envelope_zero_period_arm = false;
+                    channel.envelope_forced_tick_delay = 0;
                 }
             } else {
+                if !self.powered() {
+                    self.reset_noise_divider_state();
+                    self.pulse_noise_cycle_accum = 0;
+                    self.wave_cycle_accum = 0;
+                    self.noise_cycle_accum = 0;
+                }
                 self.nr52 |= 0x80;
                 self.update_nr52_status();
             }
@@ -117,18 +143,24 @@ impl Psg {
 
         match addr {
             NR10..=NR51 => {
+                let old_value = self.regs[(addr - NR10) as usize];
                 self.regs[(addr - NR10) as usize] = value;
                 self.maybe_write_length(addr, value);
-                let length_enable_clocked = self.maybe_write_length_enable(addr, value);
+                self.maybe_write_length_enable(addr, value);
                 self.maybe_write_sweep(addr, value);
-                self.maybe_write_envelope(addr, value);
+                self.maybe_write_envelope(addr, value, old_value);
+                self.maybe_apply_square_duty_write(addr, value);
+                self.maybe_apply_square_frequency_write(addr);
+                self.maybe_apply_wave_frequency_write(addr);
+                self.maybe_apply_noise_frequency_write(addr, value, old_value);
                 self.maybe_apply_dac_gate(addr);
 
                 if value & 0x80 != 0
                     && let Some((channel_index, channel_mask)) = trigger_channel(addr)
                 {
+                    let was_enabled = self.channels[channel_index].enabled;
                     self.channels[channel_index].enabled = self.channel_dac_enabled(channel_index);
-                    self.reset_channel_runtime(channel_index);
+                    self.reset_channel_runtime(channel_index, was_enabled);
                     if channel_index == 0 {
                         self.init_sweep_on_trigger();
                     }
@@ -136,14 +168,15 @@ impl Psg {
                         self.channels[channel_index].envelope_volume =
                             envelope_initial_volume(self.regs[envelope_reg_index(channel_index)]);
                         self.channels[channel_index].envelope_timer =
-                            envelope_period_or_8(self.channels[channel_index].envelope_period);
+                            self.channels[channel_index].envelope_period;
+                        self.channels[channel_index].envelope_zero_period_arm = false;
+                        self.channels[channel_index].envelope_forced_tick_delay = 0;
                     }
                     if self.channels[channel_index].length_counter == 0 {
                         self.channels[channel_index].length_counter =
                             channel_max_length(channel_index);
                         if self.channels[channel_index].length_enabled
                             && self.frame_seq_step_is_odd()
-                            && !length_enable_clocked
                         {
                             self.channels[channel_index].length_counter -= 1;
                         }
@@ -170,6 +203,33 @@ impl Psg {
     pub(super) fn square_period_t_cycles(&self, freq: u16) -> u64 {
         let base = 2048u16.saturating_sub(freq.max(1));
         u64::from(base.max(1)) * 4
+    }
+
+    pub(super) fn square_trigger_phase_delay(&self) -> u64 {
+        self.pulse_noise_cycle_accum
+    }
+
+    fn advance_channel_timer_clocks(&mut self, t_cycles: u64, powered: bool) {
+        self.pulse_noise_cycle_accum = self.pulse_noise_cycle_accum.wrapping_add(t_cycles);
+        while self.pulse_noise_cycle_accum >= 4 {
+            self.pulse_noise_cycle_accum -= 4;
+            if powered {
+                self.advance_square_channel(0, 4);
+                self.advance_square_channel(1, 4);
+            }
+        }
+
+        if powered {
+            self.advance_noise_clock(t_cycles);
+        }
+
+        self.wave_cycle_accum = self.wave_cycle_accum.wrapping_add(t_cycles);
+        while self.wave_cycle_accum >= 2 {
+            self.wave_cycle_accum -= 2;
+            if powered {
+                self.advance_wave_channel(2);
+            }
+        }
     }
 }
 

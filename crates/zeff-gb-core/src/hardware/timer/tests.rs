@@ -121,6 +121,19 @@ fn tac_glitch_falling_edge_increments_tima() {
 }
 
 #[test]
+fn tac_cpu_write_overflow_reloads_during_write_cycle() {
+    let mut t = make_timer();
+    t.reset_div();
+    t.write_tac(0x04);
+    t.set_tima_raw(0xFF);
+    t.set_tma_raw(0x42);
+    t.step(512);
+
+    assert!(t.write_tac_after_cpu_write_cycle(0x00));
+    assert_eq!(t.tima(), 0x42);
+}
+
+#[test]
 fn reset_div_falling_edge_increments_tima() {
     let mut t = make_timer();
     t.reset_div();
@@ -231,4 +244,37 @@ fn tma_write_during_overflow_delay_uses_new_value() {
     let irq = t.step(4);
     assert!(irq, "interrupt should fire");
     assert_eq!(t.tima(), 0x42, "TIMA should reload from new TMA value");
+}
+
+#[test]
+fn tima_write_on_reload_cycle_is_ignored() {
+    let mut t = make_timer();
+    t.reset_div();
+    t.write_tac(0x05);
+    t.set_tima_raw(0xFF);
+    t.set_tma_raw(0xFE);
+
+    t.step(16);
+    assert_eq!(t.tima(), 0x00, "overflow delay should start");
+    assert!(t.step(4), "reload cycle should request interrupt");
+
+    t.write_tima(0x7F);
+    assert_eq!(t.tima(), 0xFE, "TIMA write should be ignored during reload");
+}
+
+#[test]
+fn tma_write_on_reload_cycle_updates_reloaded_tima() {
+    let mut t = make_timer();
+    t.reset_div();
+    t.write_tac(0x05);
+    t.set_tima_raw(0xFF);
+    t.set_tma_raw(0xFE);
+
+    t.step(16);
+    assert_eq!(t.tima(), 0x00, "overflow delay should start");
+    assert!(t.step(4), "reload cycle should request interrupt");
+
+    t.write_tma(0x7F);
+    assert_eq!(t.tma(), 0x7F);
+    assert_eq!(t.tima(), 0x7F, "TMA write should update TIMA during reload");
 }

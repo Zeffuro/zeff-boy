@@ -18,6 +18,7 @@ pub use trace::CpuAccessTraceEvent;
 pub struct Bus {
     pub cartridge: Cartridge,
     pub hardware_mode: HardwareMode,
+    cgb_dmg_compat: bool,
     pub vram: Box<[u8]>,
     pub wram: Box<[u8]>,
     pub vram_bank: u8,
@@ -35,11 +36,13 @@ pub struct Bus {
     oam_dma_source_base: u16,
     oam_dma_index: u16,
     oam_dma_t_cycle_accum: u64,
+    oam_dma_pending_source_base: Option<u16>,
     pub oam: [u8; OAM_SIZE],
     pub io_bank: [u8; IO_SIZE],
     pub hram: [u8; HRAM_SIZE],
     pub ie: u8,
     pub if_reg: u8,
+    cpu_interrupt_pending_before_if: u8,
     io: IO,
     pub trace_cpu_accesses: bool,
     cpu_read_trace: Vec<(u16, u8)>,
@@ -51,6 +54,7 @@ impl fmt::Debug for Bus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Bus")
             .field("hardware_mode", &self.hardware_mode)
+            .field("cgb_dmg_compat", &self.cgb_dmg_compat)
             .field("vram_bank", &self.vram_bank)
             .field("wram_bank", &self.wram_bank)
             .field("key1", &format_args!("{:#04X}", self.key1))
@@ -72,6 +76,34 @@ impl Bus {
 
     pub fn write_joypad_p1(&mut self, value: u8) {
         self.io.joypad.write(value);
+    }
+
+    pub fn apply_dmg_post_boot_io_state(&mut self) {
+        self.io_bank.fill(0xFF);
+
+        self.write_joypad_p1(0x00);
+        self.io.serial.write_sb(0x00);
+        self.io.serial.write_sc(0x00);
+        self.io.serial.set_clock_phase(4044);
+
+        self.io.timer.set_tima_raw(0x00);
+        self.io.timer.set_tma_raw(0x00);
+        self.io.timer.set_tac_raw(0x00);
+
+        self.io.apu.apply_dmg_post_boot_io();
+
+        self.io.ppu.scy = 0x00;
+        self.io.ppu.scx = 0x00;
+        self.io.ppu.lyc = 0x00;
+        self.io.ppu.bgp = 0xFC;
+        self.io.ppu.obp0 = 0xFF;
+        self.io.ppu.obp1 = 0xFF;
+        self.io.ppu.wy = 0x00;
+        self.io.ppu.wx = 0x00;
+
+        self.io_bank[(PPU_DMA - IO_START) as usize] = 0xFF;
+        self.if_reg = 0xE1;
+        self.ie = 0x00;
     }
 
     pub fn set_sgb_multiplayer_mode(&mut self, mode: u8) {
@@ -289,14 +321,16 @@ impl Bus {
 
     #[inline]
     pub(in crate::hardware) fn step_ppu(&mut self, system_t_cycles: u64) -> (u8, u8) {
-        let cgb_mode = matches!(
-            self.hardware_mode,
-            HardwareMode::CGBNormal | HardwareMode::CGBDouble
-        );
+        let cgb_mode = self.is_cgb_mode();
+        self.io.ppu.cgb_double_speed =
+            self.hardware_mode == HardwareMode::CGBDouble && !self.cgb_dmg_compat;
         let interrupts = self
             .io
             .ppu
             .step(system_t_cycles, &self.vram, &self.oam, cgb_mode);
+        if self.io.ppu.drain_cpu_stat_interrupt_pending_before_if() {
+            self.cpu_interrupt_pending_before_if |= 0x02;
+        }
         (interrupts, self.io.ppu.stat & 0x03)
     }
 
@@ -321,6 +355,41 @@ impl Bus {
         if self.io.timer.step(t_cycles) {
             self.if_reg |= 0x04;
         }
+        if self.io.timer.drain_cpu_interrupt_pending_before_if() {
+            self.cpu_interrupt_pending_before_if |= 0x04;
+        }
+        if self.if_reg & 0x04 != 0 {
+            self.cpu_interrupt_pending_before_if &= !0x04;
+        }
+        self.clock_apu_div_events();
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn pending_interrupts_for_cpu(&self) -> u8 {
+        (self.if_reg | self.cpu_interrupt_pending_before_if) & self.ie & 0x1F
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn pending_interrupts_for_halt(&self) -> u8 {
+        self.if_reg & self.ie & 0x1F
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn clear_interrupt_bit(&mut self, bit: usize) {
+        let mask = !(1u8 << bit);
+        self.if_reg &= mask;
+        self.cpu_interrupt_pending_before_if &= mask;
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(in crate::hardware) fn request_cpu_interrupt_before_if(&mut self, mask: u8) {
+        self.cpu_interrupt_pending_before_if |= mask & 0x1F;
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn clear_cpu_interrupt_pending_before_if(&mut self, mask: u8) {
+        self.cpu_interrupt_pending_before_if &= !(mask & 0x1F);
     }
 
     #[inline]
@@ -352,8 +421,34 @@ impl Bus {
     }
 
     pub fn sync_timer_serial_mode(&mut self) {
-        self.io.timer.set_mode(self.hardware_mode);
-        self.io.serial.set_mode(self.hardware_mode);
+        let native_mode = if self.cgb_dmg_compat {
+            HardwareMode::DMG
+        } else {
+            self.hardware_mode
+        };
+        self.io.timer.set_mode(native_mode);
+        self.io.serial.set_mode(native_mode);
+        self.io.apu.set_cgb_hardware(matches!(
+            self.hardware_mode,
+            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+        ));
+        self.io.apu.set_cgb_double_speed(
+            self.hardware_mode == HardwareMode::CGBDouble && !self.cgb_dmg_compat,
+        );
+        self.io.ppu.cgb_double_speed =
+            self.hardware_mode == HardwareMode::CGBDouble && !self.cgb_dmg_compat;
+    }
+
+    pub(super) fn clock_apu_div_events(&mut self) {
+        let secondary_events = self.io.timer.drain_div_apu_secondary_events();
+        for _ in 0..secondary_events {
+            self.io.apu.clock_div_apu_secondary_event();
+        }
+
+        let events = self.io.timer.drain_div_apu_events();
+        for _ in 0..events {
+            self.io.apu.clock_div_apu();
+        }
     }
 
     pub fn apply_bess_timer_serial_registers(&mut self, io: &[u8], mode: HardwareMode) {

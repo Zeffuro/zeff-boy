@@ -180,11 +180,10 @@ impl PPU {
     }
 
     pub fn write_bcpd(&mut self, value: u8) {
-        if !self.cpu_palette_accessible() {
-            return;
-        }
         let index = (self.bcps & 0x3F) as usize;
-        self.bg_palette_ram[index] = value;
+        if self.cpu_palette_accessible() {
+            self.bg_palette_ram[index] = value;
+        }
         if self.bcps & 0x80 != 0 {
             self.bcps = (self.bcps & 0x80) | ((index as u8).wrapping_add(1) & 0x3F);
         }
@@ -207,11 +206,10 @@ impl PPU {
     }
 
     pub fn write_ocpd(&mut self, value: u8) {
-        if !self.cpu_palette_accessible() {
-            return;
-        }
         let index = (self.ocps & 0x3F) as usize;
-        self.obj_palette_ram[index] = value;
+        if self.cpu_palette_accessible() {
+            self.obj_palette_ram[index] = value;
+        }
         if self.ocps & 0x80 != 0 {
             self.ocps = (self.ocps & 0x80) | ((index as u8).wrapping_add(1) & 0x3F);
         }

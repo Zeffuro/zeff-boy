@@ -13,6 +13,10 @@ impl Bus {
         let mut bus = Self {
             cartridge,
             hardware_mode,
+            cgb_dmg_compat: matches!(
+                hardware_mode,
+                HardwareMode::CGBNormal | HardwareMode::CGBDouble
+            ) && !header.is_cgb_compatible,
             vram: vec![0u8; VRAM_SIZE * 2].into_boxed_slice(),
             wram: vec![0u8; WRAM_SIZE * 8].into_boxed_slice(),
             vram_bank: 0,
@@ -30,11 +34,13 @@ impl Bus {
             oam_dma_source_base: 0,
             oam_dma_index: 0,
             oam_dma_t_cycle_accum: 0,
+            oam_dma_pending_source_base: None,
             oam: [0; OAM_SIZE],
             io_bank: [0; IO_SIZE],
             hram: [0; HRAM_SIZE],
             ie: 0,
             if_reg: 0xE1,
+            cpu_interrupt_pending_before_if: 0,
             io: IO::new(),
             trace_cpu_accesses: false,
             cpu_read_trace: Vec::with_capacity(8),
@@ -55,11 +61,15 @@ impl Bus {
         Ok(bus)
     }
 
-    pub(super) fn is_cgb_mode(&self) -> bool {
+    pub(super) fn is_cgb_hardware(&self) -> bool {
         matches!(
             self.hardware_mode,
             HardwareMode::CGBNormal | HardwareMode::CGBDouble
         )
+    }
+
+    pub(super) fn is_cgb_mode(&self) -> bool {
+        self.is_cgb_hardware() && !self.cgb_dmg_compat
     }
 
     pub(super) fn active_vram_offset(&self) -> usize {

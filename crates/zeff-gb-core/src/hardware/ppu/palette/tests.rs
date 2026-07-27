@@ -43,7 +43,11 @@ fn bcpd_is_blocked_in_mode3_when_lcd_enabled() {
     assert_eq!(ppu.read_bcpd(), 0xFF);
     ppu.write_bcpd(0xAA);
     assert_eq!(ppu.bg_palette_ram[2], 0x55);
-    assert_eq!(ppu.bcps & 0x3F, 0x02);
+    assert_eq!(
+        ppu.bcps & 0x3F,
+        0x03,
+        "blocked BCPD writes still auto-increment BCPS"
+    );
 }
 
 #[test]
@@ -56,7 +60,11 @@ fn ocpd_is_blocked_in_mode3_when_lcd_enabled() {
     assert_eq!(ppu.read_ocpd(), 0xFF);
     ppu.write_ocpd(0xBB);
     assert_eq!(ppu.obj_palette_ram[1], 0x66);
-    assert_eq!(ppu.ocps & 0x3F, 0x01);
+    assert_eq!(
+        ppu.ocps & 0x3F,
+        0x02,
+        "blocked OCPD writes still auto-increment OCPS"
+    );
 }
 
 #[test]

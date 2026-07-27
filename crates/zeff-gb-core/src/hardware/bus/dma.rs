@@ -1,32 +1,155 @@
-use super::Bus;
+use super::{Bus, OamCorruptionType};
 use crate::hardware::ppu::Lcdc;
-use crate::hardware::types::constants::{VRAM_END, VRAM_START};
+use crate::hardware::types::constants::{
+    ECHO_RAM_END, ECHO_RAM_OFFSET, ECHO_RAM_START, ERAM_END, ERAM_START, HRAM_END, HRAM_START,
+    IE_ADDR, IO_END, IO_START, NOT_USABLE_END, NOT_USABLE_START, OAM_END, OAM_START, PPU_DMA,
+    ROM_BANK_0_START, ROM_BANK_N_END, VRAM_END, VRAM_START, WRAM_0_END, WRAM_0_START, WRAM_N_END,
+    WRAM_N_START,
+};
 use crate::hardware::types::hardware_mode::HardwareMode;
 
 impl Bus {
     pub fn step_oam_dma(&mut self, t_cycles: u64) {
-        if !self.oam_dma_active {
+        if !self.oam_dma_active && self.oam_dma_pending_source_base.is_none() {
             return;
         }
 
         self.oam_dma_t_cycle_accum = self.oam_dma_t_cycle_accum.wrapping_add(t_cycles);
-        while self.oam_dma_index < 160 {
-            let needed_cycles = if self.oam_dma_index == 0 { 8 } else { 4 };
-            if self.oam_dma_t_cycle_accum < needed_cycles {
+        while self.oam_dma_t_cycle_accum >= 4 {
+            self.oam_dma_t_cycle_accum -= 4;
+
+            if self.oam_dma_active && self.oam_dma_index < 160 {
+                let source_addr = self.oam_dma_source_base.wrapping_add(self.oam_dma_index);
+                let value = self.read_oam_dma_source_byte(source_addr);
+                self.oam[self.oam_dma_index as usize] = value;
+                self.oam_dma_index += 1;
+
+                if self.oam_dma_index >= 160 {
+                    self.oam_dma_active = false;
+                }
+            }
+
+            if let Some(source_base) = self.oam_dma_pending_source_base.take() {
+                self.oam_dma_source_base = source_base;
+                self.oam_dma_index = 0;
+                self.oam_dma_active = true;
+            }
+
+            if !self.oam_dma_active && self.oam_dma_pending_source_base.is_none() {
+                self.oam_dma_t_cycle_accum = 0;
                 break;
             }
-            self.oam_dma_t_cycle_accum -= needed_cycles;
+        }
+    }
 
-            let source_addr = self.oam_dma_source_base.wrapping_add(self.oam_dma_index);
-            let value = self.read_byte(source_addr);
-            self.oam[self.oam_dma_index as usize] = value;
-            self.oam_dma_index += 1;
+    pub fn oam_dma_blocks_cpu_access(&self, addr: u16) -> bool {
+        if !self.oam_dma_active {
+            return false;
         }
 
-        if self.oam_dma_index >= 160 {
-            self.oam_dma_active = false;
-            self.oam_dma_t_cycle_accum = 0;
+        if matches!(addr, HRAM_START..=HRAM_END | PPU_DMA) {
+            return false;
         }
+
+        if matches!(
+            addr,
+            OAM_START..=OAM_END
+                | NOT_USABLE_START..=NOT_USABLE_END
+                | IO_START..=IO_END
+                | IE_ADDR
+        ) {
+            return true;
+        }
+
+        cpu_oam_dma_bus(addr)
+            .zip(cpu_oam_dma_bus(self.oam_dma_source_base))
+            .is_some_and(|(cpu_bus, dma_bus)| cpu_bus == dma_bus)
+    }
+
+    pub fn cpu_read_byte_after_oam_dma_check(&mut self, addr: u16, blocked: bool) -> u8 {
+        if blocked {
+            if self.trace_cpu_accesses {
+                self.cpu_read_trace.push((addr, 0xFF));
+            }
+            return 0xFF;
+        }
+
+        self.cpu_read_byte_unblocked(addr)
+    }
+
+    pub fn cpu_write_byte_after_oam_dma_check(
+        &mut self,
+        addr: u16,
+        value: u8,
+        blocked: bool,
+    ) -> u64 {
+        if blocked {
+            return 0;
+        }
+
+        self.cpu_write_byte_unblocked(addr, value)
+    }
+
+    pub fn cpu_write_byte_after_oam_dma_and_oam_access_check(
+        &mut self,
+        addr: u16,
+        value: u8,
+        blocked_by_oam_dma: bool,
+        oam_accessible_at_access: Option<bool>,
+    ) -> u64 {
+        if blocked_by_oam_dma {
+            return 0;
+        }
+
+        if let Some(oam_accessible) = oam_accessible_at_access {
+            if !oam_accessible {
+                self.maybe_trigger_oam_corruption(addr, OamCorruptionType::Write);
+                return 0;
+            }
+
+            let old_value = self.oam[(addr - OAM_START) as usize];
+            self.oam[(addr - OAM_START) as usize] = value;
+            if self.trace_cpu_accesses {
+                self.cpu_write_trace.push((addr, old_value, value));
+            }
+            return 0;
+        }
+
+        self.cpu_write_byte_unblocked(addr, value)
+    }
+
+    pub fn cpu_oam_write_accessible(&self) -> bool {
+        self.io.ppu.cpu_oam_write_accessible()
+    }
+
+    pub(super) fn cpu_read_byte_unblocked(&mut self, addr: u16) -> u8 {
+        if (OAM_START..=NOT_USABLE_END).contains(&addr) && !self.io.ppu.cpu_oam_read_accessible() {
+            self.maybe_trigger_oam_corruption(addr, OamCorruptionType::Read);
+        }
+
+        let value = self.read_byte(addr);
+        if self.trace_cpu_accesses {
+            self.cpu_read_trace.push((addr, value));
+        }
+        value
+    }
+
+    pub(super) fn cpu_write_byte_unblocked(&mut self, addr: u16, value: u8) -> u64 {
+        let old_value = if self.trace_cpu_accesses {
+            self.read_byte(addr)
+        } else {
+            0
+        };
+        if (OAM_START..=NOT_USABLE_END).contains(&addr) && !self.io.ppu.cpu_oam_write_accessible() {
+            self.maybe_trigger_oam_corruption(addr, OamCorruptionType::Write);
+        }
+
+        let extra_t_cycles = self.write_byte(addr, value);
+        if self.trace_cpu_accesses {
+            let new_value = self.read_byte(addr);
+            self.cpu_write_trace.push((addr, old_value, new_value));
+        }
+        extra_t_cycles
     }
 
     fn write_vram_dma(&mut self, addr: u16, value: u8) {
@@ -81,7 +204,7 @@ impl Bus {
         if self.hdma_active && self.hdma_hblank && (control & 0x80) == 0 {
             self.hdma_active = false;
             self.hdma_hblank = false;
-            self.hdma5 = 0x80 | (self.hdma_blocks_left.saturating_sub(1) & 0x7F);
+            self.hdma5 = 0x80 | (control & 0x7F);
             return 0;
         }
 
@@ -91,6 +214,11 @@ impl Bus {
 
         if self.hdma_hblank {
             self.hdma5 = self.hdma_blocks_left.wrapping_sub(1) & 0x7F;
+            if !self.io.ppu.lcdc.contains(Lcdc::LCD_ENABLE)
+                || (self.io.ppu.ly < 144 && self.io.ppu.mode() == 0)
+            {
+                self.transfer_one_hdma_block();
+            }
             return 0;
         }
 
@@ -122,9 +250,33 @@ impl Bus {
     }
 
     pub fn start_oam_dma(&mut self, value: u8) {
-        self.oam_dma_source_base = (value as u16) << 8;
-        self.oam_dma_index = 0;
+        self.oam_dma_pending_source_base = Some((value as u16) << 8);
         self.oam_dma_t_cycle_accum = 0;
-        self.oam_dma_active = true;
+    }
+
+    fn read_oam_dma_source_byte(&self, addr: u16) -> u8 {
+        if !self.is_cgb_mode() && (ECHO_RAM_START..=IE_ADDR).contains(&addr) {
+            return self.read_byte(addr - ECHO_RAM_OFFSET);
+        }
+
+        self.read_byte(addr)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OamDmaBus {
+    External,
+    Video,
+}
+
+fn cpu_oam_dma_bus(addr: u16) -> Option<OamDmaBus> {
+    match addr {
+        ROM_BANK_0_START..=ROM_BANK_N_END
+        | ERAM_START..=ERAM_END
+        | WRAM_0_START..=WRAM_0_END
+        | WRAM_N_START..=WRAM_N_END
+        | ECHO_RAM_START..=ECHO_RAM_END => Some(OamDmaBus::External),
+        VRAM_START..=VRAM_END => Some(OamDmaBus::Video),
+        _ => None,
     }
 }

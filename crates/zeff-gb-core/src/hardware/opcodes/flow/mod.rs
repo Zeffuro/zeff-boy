@@ -1,4 +1,4 @@
-use crate::hardware::bus::Bus;
+use crate::hardware::bus::{Bus, OamCorruptionType};
 use crate::hardware::cpu::Cpu;
 #[cfg(test)]
 use crate::hardware::rom_header::RomHeader;
@@ -35,8 +35,9 @@ pub fn stop(cpu: &mut Cpu, bus: &mut Bus) {
 // 0x18: JR r8 - Relative Jump
 pub fn jr_r8(cpu: &mut Cpu, bus: &mut Bus) {
     let offset = cpu.fetch8_timed(bus) as i8;
-    cpu.jump_relative(offset);
+    bus.maybe_trigger_oam_corruption(cpu.pc, OamCorruptionType::Write);
     cpu.tick_internal_timed(bus, 4);
+    cpu.jump_relative(offset);
 }
 
 // 0x20: JR NZ, r8 - Relative Jump if Z
@@ -44,6 +45,7 @@ pub fn jr_nz_r8(cpu: &mut Cpu, bus: &mut Bus) {
     let offset = cpu.fetch8_timed(bus) as i8;
     if !cpu.get_z() {
         cpu.jump_relative(offset);
+        bus.maybe_trigger_oam_corruption(cpu.pc, OamCorruptionType::Write);
         cpu.tick_internal_timed(bus, 4);
     }
 }
@@ -53,6 +55,7 @@ pub fn jr_z_r8(cpu: &mut Cpu, bus: &mut Bus) {
     let offset = cpu.fetch8_timed(bus) as i8;
     if cpu.get_z() {
         cpu.jump_relative(offset);
+        bus.maybe_trigger_oam_corruption(cpu.pc, OamCorruptionType::Write);
         cpu.tick_internal_timed(bus, 4);
     }
 }
@@ -62,6 +65,7 @@ pub fn jr_nc_r8(cpu: &mut Cpu, bus: &mut Bus) {
     let offset = cpu.fetch8_timed(bus) as i8;
     if !cpu.get_c() {
         cpu.jump_relative(offset);
+        bus.maybe_trigger_oam_corruption(cpu.pc, OamCorruptionType::Write);
         cpu.tick_internal_timed(bus, 4);
     }
 }
@@ -71,6 +75,7 @@ pub fn jr_c_r8(cpu: &mut Cpu, bus: &mut Bus) {
     let offset = cpu.fetch8_timed(bus) as i8;
     if cpu.get_c() {
         cpu.jump_relative(offset);
+        bus.maybe_trigger_oam_corruption(cpu.pc, OamCorruptionType::Write);
         cpu.tick_internal_timed(bus, 4);
     }
 }
@@ -78,9 +83,12 @@ pub fn jr_c_r8(cpu: &mut Cpu, bus: &mut Bus) {
 // 0x76: HALT - Halt Cpu until interrupt
 pub fn halt(cpu: &mut Cpu, bus: &mut Bus) {
     let pending = bus.if_reg & bus.ie & 0x1F;
-    if matches!(cpu.ime, ImeState::Disabled | ImeState::PendingEnable) && pending != 0 {
+    if cpu.ime == ImeState::Disabled && pending != 0 {
         cpu.trigger_halt_bug();
         return;
+    }
+    if cpu.ime == ImeState::PendingEnable && pending != 0 {
+        cpu.pc = cpu.pc.wrapping_sub(1);
     }
 
     cpu.running = CpuState::Halted;
@@ -117,7 +125,7 @@ pub fn call_nz_a16(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.fetch16_timed(bus);
     if !cpu.get_z() {
         cpu.tick_internal_timed(bus, 4);
-        cpu.push16_timed(bus, cpu.pc);
+        cpu.push16_timed_oam(bus, cpu.pc);
         cpu.jump(addr);
     }
 }
@@ -125,7 +133,7 @@ pub fn call_nz_a16(cpu: &mut Cpu, bus: &mut Bus) {
 // 0xC7: RST 00H
 pub fn rst_00(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0000;
 }
 
@@ -141,8 +149,8 @@ pub fn ret_z(cpu: &mut Cpu, bus: &mut Bus) {
 
 // 0xC9: RET - Return from subroutine
 pub fn ret(cpu: &mut Cpu, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
     let addr = cpu.pop16_timed(bus);
+    cpu.tick_internal_timed(bus, 4);
     cpu.jump(addr);
 }
 
@@ -160,7 +168,7 @@ pub fn call_z_a16(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.fetch16_timed(bus);
     if cpu.get_z() {
         cpu.tick_internal_timed(bus, 4);
-        cpu.push16_timed(bus, cpu.pc);
+        cpu.push16_timed_oam(bus, cpu.pc);
         cpu.jump(addr);
     }
 }
@@ -169,14 +177,14 @@ pub fn call_z_a16(cpu: &mut Cpu, bus: &mut Bus) {
 pub fn call_a16(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.fetch16_timed(bus);
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.jump(addr);
 }
 
 // 0xCF: RST 08H
 pub fn rst_08(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0008;
 }
 
@@ -204,7 +212,7 @@ pub fn call_nc_a16(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.fetch16_timed(bus);
     if !cpu.get_c() {
         cpu.tick_internal_timed(bus, 4);
-        cpu.push16_timed(bus, cpu.pc);
+        cpu.push16_timed_oam(bus, cpu.pc);
         cpu.jump(addr);
     }
 }
@@ -212,7 +220,7 @@ pub fn call_nc_a16(cpu: &mut Cpu, bus: &mut Bus) {
 // 0xD7: RST 10H
 pub fn rst_10(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0010;
 }
 
@@ -228,10 +236,10 @@ pub fn ret_c(cpu: &mut Cpu, bus: &mut Bus) {
 
 // 0xD9: RETI - Return and enable interrupts
 pub fn reti(cpu: &mut Cpu, bus: &mut Bus) {
-    cpu.tick_internal_timed(bus, 4);
     let addr = cpu.pop16_timed(bus);
-    cpu.jump(addr);
     cpu.ime = ImeState::Enabled;
+    cpu.tick_internal_timed(bus, 4);
+    cpu.jump(addr);
 }
 
 // 0xDA: JP C, a16 - Jump if Carry
@@ -248,7 +256,7 @@ pub fn call_c_a16(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.fetch16_timed(bus);
     if cpu.get_c() {
         cpu.tick_internal_timed(bus, 4);
-        cpu.push16_timed(bus, cpu.pc);
+        cpu.push16_timed_oam(bus, cpu.pc);
         cpu.jump(addr);
     }
 }
@@ -256,14 +264,14 @@ pub fn call_c_a16(cpu: &mut Cpu, bus: &mut Bus) {
 // 0xDF: RST 18H
 pub fn rst_18(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0018;
 }
 
 // 0xE7: RST 20H
 pub fn rst_20(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0020;
 }
 
@@ -275,7 +283,7 @@ pub fn jp_hl(cpu: &mut Cpu, _bus: &mut Bus) {
 // 0xEF: RST 28H
 pub fn rst_28(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0028;
 }
 
@@ -287,7 +295,7 @@ pub fn di(cpu: &mut Cpu, _: &mut Bus) {
 // 0xF7: RST 30H
 pub fn rst_30(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0030;
 }
 
@@ -299,7 +307,7 @@ pub fn ei(cpu: &mut Cpu, _bus: &mut Bus) {
 // 0xFF: RST 38H
 pub fn rst_38(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.tick_internal_timed(bus, 4);
-    cpu.push16_timed(bus, cpu.pc);
+    cpu.push16_timed_oam(bus, cpu.pc);
     cpu.pc = 0x0038;
 }
 

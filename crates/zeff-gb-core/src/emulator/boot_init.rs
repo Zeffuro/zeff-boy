@@ -28,9 +28,7 @@ impl Emulator {
         );
         if matches!(mode_preference, HardwareModePreference::ForceCgb) && !header.is_cgb_compatible
         {
-            log::warn!(
-                "ForceCgb requested for DMG-only ROM; falling back to DMG mode for compatibility"
-            );
+            log::warn!("ForceCgb requested for DMG-only ROM; running in CGB mode anyway");
         }
         let bus = Box::new(Bus::new(rom.to_vec(), &header, hardware_mode)?);
 
@@ -72,5 +70,12 @@ impl Emulator {
         self.cpu.regs.e = e;
         self.cpu.regs.h = h;
         self.cpu.regs.l = l;
+
+        if matches!(
+            self.hardware_mode,
+            HardwareMode::DMG | HardwareMode::SGB1 | HardwareMode::SGB2
+        ) {
+            self.bus.apply_dmg_post_boot_io_state();
+        }
     }
 }

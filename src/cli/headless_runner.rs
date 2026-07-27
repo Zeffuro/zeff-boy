@@ -190,6 +190,12 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     if opts.expect_serial.is_some() {
         anyhow::bail!("--expect-serial is only supported for GB/GBC headless runs");
     }
+    if system == "gba" && opts.expect_test_pass {
+        anyhow::bail!("--expect-test-pass is only supported for GB/GBC and NES headless runs");
+    }
+    if !opts.memory_dumps.is_empty() {
+        anyhow::bail!("--dump-mem is only supported for GB/GBC headless runs");
+    }
     if opts.break_at.is_some() {
         anyhow::bail!("--break-at is only supported for GB/GBC headless runs");
     }
@@ -221,6 +227,9 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     }
     if system != "gba" && opts.audio_dump_path.is_some() {
         anyhow::bail!("--audio-dump is currently only supported for GBA headless runs");
+    }
+    if opts.gb_dmg_palette_preset.is_some() {
+        anyhow::bail!("--gb-dmg-palette/--dmg-palette is only supported for GB/GBC headless runs");
     }
 
     log::info!("Running {system} headless smoke test");

@@ -1,13 +1,6 @@
 use super::*;
 
 impl Psg {
-    pub(super) fn step_wave_generators(&mut self, t_cycles: u64) {
-        self.advance_square_channel(0, t_cycles);
-        self.advance_square_channel(1, t_cycles);
-        self.advance_wave_channel(t_cycles);
-        self.advance_noise_channel(t_cycles);
-    }
-
     pub(super) fn generate_samples(&mut self, t_cycles: u64) {
         let cycles_per_sample = APU_T_CYCLES_PER_SECOND / self.sample_rate as f64;
         self.sample_cycle_accum += t_cycles as f64;
@@ -80,10 +73,10 @@ impl Psg {
     }
 
     fn ch1_sample(&self) -> f32 {
-        self.square_sample(0, self.ch1_duty_pos, self.regs[(NR11 - NR10) as usize])
+        self.square_sample(0, self.ch1_duty_pos)
     }
 
     fn ch2_sample(&self) -> f32 {
-        self.square_sample(1, self.ch2_duty_pos, self.regs[(NR21 - NR10) as usize])
+        self.square_sample(1, self.ch2_duty_pos)
     }
 }

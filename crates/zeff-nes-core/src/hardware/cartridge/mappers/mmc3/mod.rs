@@ -17,6 +17,8 @@ pub struct Mmc3 {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    irq_zero_from_decrement: bool,
+    last_ppu_a12: bool,
 }
 
 impl Mmc3 {
@@ -36,6 +38,8 @@ impl Mmc3 {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
+            irq_zero_from_decrement: false,
+            last_ppu_a12: false,
         }
     }
 
@@ -153,6 +157,7 @@ impl Mapper for Mmc3 {
             0xC000..=0xDFFF => {
                 if addr & 1 == 0 {
                     self.irq_latch = val;
+                    self.irq_zero_from_decrement = false;
                 } else {
                     self.irq_reload = true;
                 }
@@ -197,19 +202,30 @@ impl Mapper for Mmc3 {
     }
 
     fn notify_scanline(&mut self) {
-        let old = self.irq_counter;
+        let old_counter = self.irq_counter;
+        let reloading = self.irq_counter == 0 || self.irq_reload;
+        let suppress_zero_reload_irq =
+            reloading && old_counter == 0 && !self.irq_reload && self.irq_zero_from_decrement;
 
-        if self.irq_counter == 0 || self.irq_reload {
+        if reloading {
             self.irq_counter = self.irq_latch;
         } else {
             self.irq_counter -= 1;
         }
 
-        if self.irq_counter == 0 && self.irq_enabled && (old != 0 || self.irq_reload) {
+        if self.irq_counter == 0 && self.irq_enabled && !suppress_zero_reload_irq {
             self.irq_pending = true;
         }
 
+        self.irq_zero_from_decrement = !reloading && self.irq_counter == 0;
         self.irq_reload = false;
+    }
+
+    fn notify_ppu_a12(&mut self, high: bool) {
+        if high && !self.last_ppu_a12 {
+            self.notify_scanline();
+        }
+        self.last_ppu_a12 = high;
     }
 
     fn write_state(&self, w: &mut crate::save_state::StateWriter) {
@@ -227,6 +243,7 @@ impl Mapper for Mmc3 {
         w.write_bool(self.irq_reload);
         w.write_bool(self.irq_enabled);
         w.write_bool(self.irq_pending);
+        w.write_bool(self.irq_zero_from_decrement);
 
         crate::save_state::write_chr_state(w, &self.chr);
     }
@@ -246,6 +263,8 @@ impl Mapper for Mmc3 {
         self.irq_reload = r.read_bool()?;
         self.irq_enabled = r.read_bool()?;
         self.irq_pending = r.read_bool()?;
+        self.irq_zero_from_decrement = r.read_bool()?;
+        self.last_ppu_a12 = false;
 
         crate::save_state::read_chr_state(r, &mut self.chr, "MMC3")?;
         Ok(())

@@ -11,7 +11,7 @@ impl Bus {
         match addr {
             ROM_BANK_0_START..=ROM_BANK_N_END => self.cartridge.read_rom(addr),
             VRAM_START..=VRAM_END => {
-                if !self.io.ppu.cpu_vram_accessible() {
+                if !self.io.ppu.cpu_vram_read_accessible() {
                     return 0xFF;
                 }
                 let local = (addr - VRAM_START) as usize;
@@ -33,7 +33,7 @@ impl Bus {
                 }
             }
             OAM_START..=OAM_END => {
-                if !self.io.ppu.cpu_oam_accessible() {
+                if !self.io.ppu.cpu_oam_read_accessible() {
                     return 0xFF;
                 }
                 self.oam[(addr - OAM_START) as usize]
@@ -41,7 +41,7 @@ impl Bus {
             NOT_USABLE_START..=NOT_USABLE_END => 0xFF,
             SERIAL_SB => self.io.serial.sb(),
             SERIAL_SC => self.io.serial.sc(),
-            INTERRUPT_IF => self.if_reg,
+            INTERRUPT_IF => self.if_reg | 0xE0,
             IO_START..=IO_END => self.read_io(addr),
             HRAM_START..=HRAM_END => self.hram[(addr - HRAM_START) as usize],
             IE_ADDR => self.ie,
@@ -88,7 +88,7 @@ impl Bus {
                 0
             }
             VRAM_START..=VRAM_END => {
-                if !self.io.ppu.cpu_vram_accessible() {
+                if !self.io.ppu.cpu_vram_write_accessible() {
                     return 0;
                 }
                 let local = (addr - VRAM_START) as usize;
@@ -121,7 +121,7 @@ impl Bus {
                 0
             }
             OAM_START..=OAM_END => {
-                if !self.io.ppu.cpu_oam_accessible() {
+                if !self.io.ppu.cpu_oam_write_accessible() {
                     return 0;
                 }
                 self.oam[(addr - OAM_START) as usize] = value;

@@ -43,6 +43,8 @@ pub(crate) trait Mapper: Send {
 
     fn notify_scanline(&mut self) {}
 
+    fn notify_ppu_a12(&mut self, _high: bool) {}
+
     fn clock_cpu(&mut self) {}
 
     fn audio_output(&self) -> f32 {
@@ -568,6 +570,11 @@ impl Cartridge {
     #[inline]
     pub fn notify_scanline(&mut self) {
         self.mapper.notify_scanline();
+    }
+
+    #[inline]
+    pub fn notify_ppu_a12(&mut self, high: bool) {
+        self.mapper.notify_ppu_a12(high);
     }
 
     #[inline]

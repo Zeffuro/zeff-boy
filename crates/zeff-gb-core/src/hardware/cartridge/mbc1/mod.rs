@@ -1,7 +1,7 @@
 use super::CartridgeDebugInfo;
 use super::{
-    MAX_SAVE_RAM, ROM_BANK_SIZE, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram,
-    write_banked_ram,
+    MAX_SAVE_RAM, RAM_BANK_SIZE, ROM_BANK_SIZE, build_debug_info, is_ram_enable, load_ram_into,
+    read_banked_ram, write_banked_ram,
 };
 use crate::save_state::{StateReader, StateWriter, StateWriterGbExt};
 use anyhow::Result;
@@ -14,12 +14,14 @@ pub struct Mbc1 {
     ram_bank: usize,
     banking_mode: bool,
     rom_bank_mask: usize,
+    multicart: bool,
 }
 
 impl Mbc1 {
     pub fn new(rom: Vec<u8>, ram_size: usize) -> Self {
         let num_banks = (rom.len() / ROM_BANK_SIZE).max(1);
         let rom_bank_mask = num_banks.next_power_of_two() - 1;
+        let multicart = detect_mbc1_multicart(&rom);
 
         Self {
             rom,
@@ -29,16 +31,14 @@ impl Mbc1 {
             ram_bank: 0,
             banking_mode: false,
             rom_bank_mask,
+            multicart,
         }
     }
 
     pub fn read_rom(&self, addr: u16) -> u8 {
         let bank = match addr {
-            0x0000..=0x3FFF if self.banking_mode => self.ram_bank << 5,
-            0x4000..=0x7FFF => {
-                let b = if self.rom_bank == 0 { 1 } else { self.rom_bank };
-                b | (self.ram_bank << 5)
-            }
+            0x0000..=0x3FFF if self.banking_mode => self.fixed_area_rom_bank(),
+            0x4000..=0x7FFF => self.switchable_rom_bank(),
             _ => 0,
         };
 
@@ -62,7 +62,7 @@ impl Mbc1 {
             return 0xFF;
         }
 
-        let bank = if self.banking_mode { self.ram_bank } else { 0 };
+        let bank = self.effective_ram_bank();
         read_banked_ram(&self.ram, bank, addr)
     }
 
@@ -71,7 +71,7 @@ impl Mbc1 {
             return;
         }
 
-        let bank = if self.banking_mode { self.ram_bank } else { 0 };
+        let bank = self.effective_ram_bank();
         write_banked_ram(&mut self.ram, bank, addr, value);
     }
 
@@ -80,11 +80,10 @@ impl Mbc1 {
     }
 
     pub fn debug_info(&self) -> CartridgeDebugInfo {
-        let low_bank = if self.rom_bank == 0 { 1 } else { self.rom_bank };
         build_debug_info(
             "MBC1",
-            (low_bank | (self.ram_bank << 5)) & self.rom_bank_mask,
-            if self.banking_mode { self.ram_bank } else { 0 },
+            self.switchable_rom_bank() & self.rom_bank_mask,
+            self.effective_ram_bank(),
             self.ram_enable,
             Some(self.banking_mode),
         )
@@ -94,6 +93,7 @@ impl Mbc1 {
         self.rom = rom;
         let num_banks = (self.rom.len() / ROM_BANK_SIZE).max(1);
         self.rom_bank_mask = num_banks.next_power_of_two() - 1;
+        self.multicart = detect_mbc1_multicart(&self.rom);
     }
 
     pub(super) fn ram_bytes(&self) -> &[u8] {
@@ -132,9 +132,55 @@ impl Mbc1 {
             ram_bank: reader.read_u64()? as usize,
             banking_mode: reader.read_bool()?,
             rom_bank_mask: reader.read_u64()? as usize,
+            multicart: false,
         })
     }
+
+    fn fixed_area_rom_bank(&self) -> usize {
+        if self.multicart {
+            self.ram_bank << 4
+        } else {
+            self.ram_bank << 5
+        }
+    }
+
+    fn switchable_rom_bank(&self) -> usize {
+        let low_bank = if self.rom_bank == 0 { 1 } else { self.rom_bank };
+        if self.multicart {
+            (self.ram_bank << 4) | (low_bank & 0x0F)
+        } else {
+            low_bank | (self.ram_bank << 5)
+        }
+    }
+
+    fn effective_ram_bank(&self) -> usize {
+        if !self.banking_mode {
+            return 0;
+        }
+
+        let bank_count = (self.ram.len() / RAM_BANK_SIZE).max(1);
+        self.ram_bank % bank_count
+    }
 }
+
+fn detect_mbc1_multicart(rom: &[u8]) -> bool {
+    rom.len() == 64 * ROM_BANK_SIZE
+        && [0, 16, 32, 48]
+            .into_iter()
+            .all(|bank| bank_has_nintendo_logo(rom, bank))
+}
+
+fn bank_has_nintendo_logo(rom: &[u8], bank: usize) -> bool {
+    let start = bank * ROM_BANK_SIZE + 0x0104;
+    let end = start + NINTENDO_LOGO.len();
+    rom.get(start..end) == Some(NINTENDO_LOGO.as_slice())
+}
+
+const NINTENDO_LOGO: [u8; 48] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+];
 
 #[cfg(test)]
 mod tests;

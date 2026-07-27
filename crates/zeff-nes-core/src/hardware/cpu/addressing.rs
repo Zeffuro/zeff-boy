@@ -24,18 +24,42 @@ impl Cpu {
         self.fetch16(bus)
     }
 
-    pub(crate) fn addr_absolute_x(&mut self, bus: &mut Bus) -> (u16, bool) {
+    pub(crate) fn addr_absolute_x_read(&mut self, bus: &mut Bus) -> (u16, bool) {
         let base = self.fetch16(bus);
         let addr = base.wrapping_add(self.regs.x as u16);
         let crossed = (base & 0xFF00) != (addr & 0xFF00);
+        if crossed {
+            let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+            let _ = bus.cpu_read(dummy_addr);
+        }
         (addr, crossed)
     }
 
-    pub(crate) fn addr_absolute_y(&mut self, bus: &mut Bus) -> (u16, bool) {
+    pub(crate) fn addr_absolute_x_write(&mut self, bus: &mut Bus) -> u16 {
+        let base = self.fetch16(bus);
+        let addr = base.wrapping_add(self.regs.x as u16);
+        let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+        let _ = bus.cpu_read(dummy_addr);
+        addr
+    }
+
+    pub(crate) fn addr_absolute_y_read(&mut self, bus: &mut Bus) -> (u16, bool) {
         let base = self.fetch16(bus);
         let addr = base.wrapping_add(self.regs.y as u16);
         let crossed = (base & 0xFF00) != (addr & 0xFF00);
+        if crossed {
+            let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+            let _ = bus.cpu_read(dummy_addr);
+        }
         (addr, crossed)
+    }
+
+    pub(crate) fn addr_absolute_y_write(&mut self, bus: &mut Bus) -> u16 {
+        let base = self.fetch16(bus);
+        let addr = base.wrapping_add(self.regs.y as u16);
+        let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+        let _ = bus.cpu_read(dummy_addr);
+        addr
     }
 
     pub(crate) fn addr_indirect_x(&mut self, bus: &mut Bus) -> u16 {
@@ -45,14 +69,29 @@ impl Cpu {
         (hi << 8) | lo
     }
 
-    pub(crate) fn addr_indirect_y(&mut self, bus: &mut Bus) -> (u16, bool) {
+    pub(crate) fn addr_indirect_y_read(&mut self, bus: &mut Bus) -> (u16, bool) {
         let zp = self.fetch8(bus);
         let lo = bus.cpu_read(zp as u16) as u16;
         let hi = bus.cpu_read(zp.wrapping_add(1) as u16) as u16;
         let base = (hi << 8) | lo;
         let addr = base.wrapping_add(self.regs.y as u16);
         let crossed = (base & 0xFF00) != (addr & 0xFF00);
+        if crossed {
+            let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+            let _ = bus.cpu_read(dummy_addr);
+        }
         (addr, crossed)
+    }
+
+    pub(crate) fn addr_indirect_y_write(&mut self, bus: &mut Bus) -> u16 {
+        let zp = self.fetch8(bus);
+        let lo = bus.cpu_read(zp as u16) as u16;
+        let hi = bus.cpu_read(zp.wrapping_add(1) as u16) as u16;
+        let base = (hi << 8) | lo;
+        let addr = base.wrapping_add(self.regs.y as u16);
+        let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+        let _ = bus.cpu_read(dummy_addr);
+        addr
     }
 
     pub(crate) fn addr_relative(&mut self, bus: &mut Bus) -> u16 {

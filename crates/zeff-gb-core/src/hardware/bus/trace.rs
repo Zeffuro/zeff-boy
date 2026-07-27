@@ -1,5 +1,4 @@
 use super::Bus;
-use crate::hardware::types::constants::{HRAM_END, HRAM_START};
 
 pub enum CpuAccessTraceEvent {
     Read {
@@ -16,31 +15,20 @@ pub enum CpuAccessTraceEvent {
 impl Bus {
     #[inline]
     pub fn cpu_read_byte(&mut self, addr: u16) -> u8 {
-        if self.oam_dma_active && !is_hram_addr(addr) {
+        if self.oam_dma_blocks_cpu_access(addr) {
+            if self.trace_cpu_accesses {
+                self.cpu_read_trace.push((addr, 0xFF));
+            }
             return 0xFF;
         }
-        let value = self.read_byte(addr);
-        if self.trace_cpu_accesses {
-            self.cpu_read_trace.push((addr, value));
-        }
-        value
+        self.cpu_read_byte_unblocked(addr)
     }
 
     pub fn cpu_write_byte(&mut self, addr: u16, value: u8) -> u64 {
-        if self.oam_dma_active && !is_hram_addr(addr) {
+        if self.oam_dma_blocks_cpu_access(addr) {
             return 0;
         }
-        let old_value = if self.trace_cpu_accesses {
-            self.read_byte(addr)
-        } else {
-            0
-        };
-        let extra_t_cycles = self.write_byte(addr, value);
-        if self.trace_cpu_accesses {
-            let new_value = self.read_byte(addr);
-            self.cpu_write_trace.push((addr, old_value, new_value));
-        }
-        extra_t_cycles
+        self.cpu_write_byte_unblocked(addr, value)
     }
 
     pub fn begin_cpu_access_trace(&mut self) {
@@ -62,8 +50,4 @@ impl Bus {
         self.cpu_read_trace.clear();
         self.cpu_write_trace.clear();
     }
-}
-
-fn is_hram_addr(addr: u16) -> bool {
-    (HRAM_START..=HRAM_END).contains(&addr)
 }

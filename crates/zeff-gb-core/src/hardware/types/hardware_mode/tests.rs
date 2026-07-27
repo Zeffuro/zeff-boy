@@ -17,3 +17,9 @@ fn auto_falls_back_to_dmg_when_not_sgb() {
     let mode = HardwareModePreference::Auto.resolve(false, true, 0x01);
     assert_eq!(mode, HardwareMode::DMG);
 }
+
+#[test]
+fn force_cgb_runs_dmg_header_roms_on_cgb_hardware() {
+    let mode = HardwareModePreference::ForceCgb.resolve(false, false, 0x00);
+    assert_eq!(mode, HardwareMode::CGBNormal);
+}

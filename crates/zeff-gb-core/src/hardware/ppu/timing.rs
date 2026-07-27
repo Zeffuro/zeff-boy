@@ -1,6 +1,59 @@
-use super::{DOTS_PER_LINE, DRAW_DOTS_BASE, Lcdc, OAM_DOTS, PPU, SCREEN_H, renderer};
+use super::{
+    DOTS_PER_LINE, DRAW_DOTS_BASE, LCD_ON_INITIAL_MODE0_DOTS, Lcdc, OAM_DOTS, PPU, SCREEN_H,
+    STAT_IRQ_HBLANK_DELAY_DOTS, STAT_IRQ_OAM_DOTS, renderer,
+};
 
 impl PPU {
+    pub(in crate::hardware) fn write_lcdc(&mut self, value: u8) -> u8 {
+        let was_enabled = self.lcdc.contains(Lcdc::LCD_ENABLE);
+        self.lcdc = Lcdc::from_bits_truncate(value);
+        let enabled = self.lcdc.contains(Lcdc::LCD_ENABLE);
+
+        match (was_enabled, enabled) {
+            (false, true) => self.enable_lcd_after_lcdc_write(),
+            (true, false) => {
+                self.disable_lcd_after_lcdc_write();
+                0
+            }
+            _ => 0,
+        }
+    }
+
+    fn enable_lcd_after_lcdc_write(&mut self) -> u8 {
+        self.lcd_was_enabled = true;
+        self.blank_first_frame_after_lcd_on = true;
+
+        self.cycles = 4;
+        self.ly = 0;
+        self.stat &= !0x03;
+        self.window_line_counter = 0;
+        self.window_was_active_this_frame = false;
+        self.window_y_triggered = false;
+        self.rendered_current_line = false;
+        self.draw_dots_for_line = DRAW_DOTS_BASE;
+        self.prev_cpu_stat_mode0_line = false;
+        self.cpu_stat_mode0_pending_before_if = false;
+        self.reset_framebuffer_for_rendering();
+
+        u8::from(self.update_stat_interrupt_for_mode(0)) << 1
+    }
+
+    fn disable_lcd_after_lcdc_write(&mut self) {
+        self.lcd_was_enabled = false;
+        self.blank_first_frame_after_lcd_on = false;
+
+        self.cycles = 0;
+        self.ly = 0;
+        self.stat &= !0x03;
+        self.window_line_counter = 0;
+        self.window_was_active_this_frame = false;
+        self.window_y_triggered = false;
+        self.rendered_current_line = false;
+        self.draw_dots_for_line = DRAW_DOTS_BASE;
+        self.prev_cpu_stat_mode0_line = false;
+        self.cpu_stat_mode0_pending_before_if = false;
+    }
+
     pub(super) fn window_enable_condition(&self) -> bool {
         self.lcdc.contains(Lcdc::WINDOW_ENABLE)
     }
@@ -27,23 +80,7 @@ impl PPU {
         let scx_penalty = (self.scx & 7) as u64;
 
         let sprite_penalty = if self.lcdc.contains(Lcdc::OBJ_ENABLE) {
-            let tall = self.lcdc.contains(Lcdc::OBJ_SIZE);
-            let sprite_h: i32 = if tall { 16 } else { 8 };
-            let mut count: u64 = 0;
-            for i in 0..40usize {
-                let base = i * 4;
-                if base + 3 >= oam.len() {
-                    break;
-                }
-                let sy = oam[base] as i32 - 16;
-                if (self.ly as i32) >= sy && (self.ly as i32) < sy + sprite_h {
-                    count += 1;
-                    if count >= 10 {
-                        break;
-                    }
-                }
-            }
-            count * 6
+            self.sprite_fetch_penalty_dots(oam)
         } else {
             0
         };
@@ -57,6 +94,54 @@ impl PPU {
         DRAW_DOTS_BASE + scx_penalty + sprite_penalty + window_penalty
     }
 
+    fn sprite_fetch_penalty_dots(&self, oam: &[u8]) -> u64 {
+        let tall = self.lcdc.contains(Lcdc::OBJ_SIZE);
+        let sprite_h: i32 = if tall { 16 } else { 8 };
+        let scx = u16::from(self.scx & 7);
+        let mut selected = arrayvec::ArrayVec::<u8, 10>::new();
+
+        for i in 0..40usize {
+            let base = i * 4;
+            if base + 3 >= oam.len() {
+                break;
+            }
+
+            let sy = i32::from(oam[base]) - 16;
+            if i32::from(self.ly) >= sy && i32::from(self.ly) < sy + sprite_h {
+                selected.push(oam[base + 1]);
+                if selected.is_full() {
+                    break;
+                }
+            }
+        }
+
+        let mut penalty = 0u64;
+        let mut bucket_stalls = [0u8; 22];
+        if selected.iter().any(|&x| x == 0) {
+            penalty += u64::from(scx);
+        }
+
+        for &x in &selected {
+            if x >= 168 {
+                continue;
+            }
+
+            let adjusted_x = u16::from(x) + scx;
+            let bucket = usize::from(adjusted_x >> 3);
+            let stall = 5u8.saturating_sub((adjusted_x & 7) as u8);
+            bucket_stalls[bucket] = bucket_stalls[bucket].max(stall);
+            penalty += 6;
+        }
+
+        let total = penalty
+            + bucket_stalls
+                .iter()
+                .map(|&stall| u64::from(stall))
+                .sum::<u64>();
+
+        total & !3
+    }
+
     #[inline]
     pub(in crate::hardware) fn step(
         &mut self,
@@ -68,37 +153,17 @@ impl PPU {
         self.cgb_mode = cgb_mode;
 
         let lcd_enabled = self.lcdc.contains(Lcdc::LCD_ENABLE);
+        let mut interrupts = 0u8;
 
         if !lcd_enabled {
-            self.lcd_was_enabled = false;
-            self.blank_first_frame_after_lcd_on = false;
-
-            self.cycles = 0;
-            self.ly = 0;
-            self.stat &= !0x03;
-            self.window_line_counter = 0;
-            self.window_was_active_this_frame = false;
-            self.window_y_triggered = false;
-            self.rendered_current_line = false;
-            self.prev_stat_line = false;
-            self.draw_dots_for_line = DRAW_DOTS_BASE;
+            if self.lcd_was_enabled {
+                self.disable_lcd_after_lcdc_write();
+            }
             return 0;
         }
 
         if !self.lcd_was_enabled {
-            self.lcd_was_enabled = true;
-            self.blank_first_frame_after_lcd_on = true;
-
-            self.cycles = 4;
-            self.ly = 0;
-            self.stat = (self.stat & !0x03) | 2;
-            self.window_line_counter = 0;
-            self.window_was_active_this_frame = false;
-            self.window_y_triggered = false;
-            self.rendered_current_line = false;
-            self.prev_stat_line = false;
-            self.draw_dots_for_line = DRAW_DOTS_BASE;
-            self.reset_framebuffer_for_rendering();
+            interrupts |= self.enable_lcd_after_lcdc_write();
         }
 
         if self.ly == self.wy {
@@ -110,7 +175,6 @@ impl PPU {
         }
 
         let previous_mode = self.stat & 0x03;
-        let mut interrupts = 0u8;
 
         self.cycles += cycles;
 
@@ -177,21 +241,19 @@ impl PPU {
         }
 
         let draw_dots = self.draw_dots_for_line;
-        let current_mode = if self.ly >= 144 {
-            1 // VBlank
-        } else if self.cycles < OAM_DOTS {
-            2 // OAM scan
-        } else if self.cycles < OAM_DOTS + draw_dots {
-            3 // Drawing
-        } else {
-            0 // HBlank
-        };
+        let current_mode = self.mode_for_cycles(self.cycles, draw_dots, OAM_DOTS);
 
         if current_mode != previous_mode {
             self.stat = (self.stat & !0x03) | current_mode;
         }
 
-        if self.update_stat_interrupt() {
+        let interrupt_mode = self.stat_interrupt_mode_for_cycles(self.cycles, draw_dots);
+
+        if self.update_cpu_stat_mode0_interrupt_before_if(self.cycles, draw_dots) {
+            self.cpu_stat_mode0_pending_before_if = true;
+        }
+
+        if self.update_stat_interrupt_for_mode(interrupt_mode) {
             interrupts |= 0x02;
         }
 
@@ -203,42 +265,226 @@ impl PPU {
         self.stat & 0x03
     }
 
+    fn mode_for_cycles(&self, cycles: u64, draw_dots: u64, oam_dots: u64) -> u8 {
+        if self.ly >= 144 {
+            1
+        } else if self.blank_first_frame_after_lcd_on && self.ly == 0 {
+            if cycles < LCD_ON_INITIAL_MODE0_DOTS {
+                0
+            } else if cycles < LCD_ON_INITIAL_MODE0_DOTS + draw_dots {
+                3
+            } else {
+                0
+            }
+        } else if self.blank_first_frame_after_lcd_on && cycles < 4 {
+            0
+        } else if cycles < oam_dots {
+            2
+        } else if cycles < oam_dots + draw_dots {
+            3
+        } else {
+            0
+        }
+    }
+
+    fn stat_interrupt_mode_for_cycles(&self, cycles: u64, draw_dots: u64) -> u8 {
+        if self.ly >= 144 {
+            1
+        } else if self.blank_first_frame_after_lcd_on && self.ly == 0 {
+            if cycles < LCD_ON_INITIAL_MODE0_DOTS {
+                0
+            } else if cycles < LCD_ON_INITIAL_MODE0_DOTS + draw_dots + STAT_IRQ_HBLANK_DELAY_DOTS {
+                3
+            } else {
+                0
+            }
+        } else if self.blank_first_frame_after_lcd_on && cycles < 4 {
+            0
+        } else if cycles < STAT_IRQ_OAM_DOTS {
+            2
+        } else if cycles < OAM_DOTS + draw_dots + STAT_IRQ_HBLANK_DELAY_DOTS {
+            3
+        } else {
+            0
+        }
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn drain_cpu_stat_interrupt_pending_before_if(&mut self) -> bool {
+        let pending = self.cpu_stat_mode0_pending_before_if;
+        self.cpu_stat_mode0_pending_before_if = false;
+        pending
+    }
+
     #[inline]
     pub(in crate::hardware) fn lcd_enabled(&self) -> bool {
         self.lcdc.contains(Lcdc::LCD_ENABLE)
     }
 
-    #[inline]
+    #[cfg(test)]
     pub(in crate::hardware) fn cpu_vram_accessible(&self) -> bool {
-        !self.lcd_enabled() || self.mode() != 3
+        self.cpu_vram_read_accessible()
     }
 
     #[inline]
+    pub(in crate::hardware) fn cpu_vram_read_accessible(&self) -> bool {
+        !self.cpu_vram_blocked_by_ppu()
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn cpu_vram_write_accessible(&self) -> bool {
+        !self.cpu_vram_blocked_by_ppu()
+    }
+
+    fn cpu_access_block_window(&self) -> (u64, u64, u64, u64) {
+        let start_dot = if self.cgb_mode {
+            STAT_IRQ_OAM_DOTS + 1
+        } else {
+            STAT_IRQ_OAM_DOTS
+        };
+        let end_dot = if self.cgb_double_speed {
+            start_dot + self.draw_dots_for_line + 1
+        } else if self.cgb_mode {
+            start_dot + self.draw_dots_for_line
+        } else {
+            start_dot + self.draw_dots_for_line + 1
+        };
+        let first_line_end_dot = if self.cgb_double_speed {
+            start_dot + self.draw_dots_for_line + 2 + u64::from(self.scx & 1)
+        } else if self.cgb_mode {
+            start_dot + self.draw_dots_for_line + 2
+        } else {
+            end_dot + 2
+        };
+        let cgb_normal_speed_first_line_edge_grace = self.cgb_mode && !self.cgb_double_speed;
+        let first_line_start_dot = if cgb_normal_speed_first_line_edge_grace {
+            LCD_ON_INITIAL_MODE0_DOTS + 1
+        } else {
+            LCD_ON_INITIAL_MODE0_DOTS
+        };
+
+        (start_dot, end_dot, first_line_start_dot, first_line_end_dot)
+    }
+
+    fn cpu_vram_blocked_by_ppu(&self) -> bool {
+        if !self.lcd_enabled() || self.ly >= 144 {
+            return false;
+        }
+
+        let (start_dot, end_dot, first_line_start_dot, first_line_end_dot) =
+            self.cpu_access_block_window();
+
+        if self.blank_first_frame_after_lcd_on && self.ly == 0 {
+            return self.cycles >= first_line_start_dot && self.cycles < first_line_end_dot;
+        }
+
+        if self.blank_first_frame_after_lcd_on && self.cycles < 4 {
+            return false;
+        }
+
+        self.cycles >= start_dot && self.cycles < end_dot
+    }
+
+    #[cfg(test)]
     pub(in crate::hardware) fn cpu_oam_accessible(&self) -> bool {
-        !self.lcd_enabled() || (self.mode() != 2 && self.mode() != 3)
+        self.cpu_oam_read_accessible()
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn cpu_oam_read_accessible(&self) -> bool {
+        !self.cpu_oam_read_blocked_by_ppu()
+    }
+
+    #[inline]
+    pub(in crate::hardware) fn cpu_oam_write_accessible(&self) -> bool {
+        !self.cpu_oam_write_blocked_by_ppu()
+    }
+
+    fn cpu_oam_read_blocked_by_ppu(&self) -> bool {
+        if !self.lcd_enabled() || self.ly >= 144 {
+            return false;
+        }
+
+        let (_, end_dot, _, first_line_end_dot) = self.cpu_access_block_window();
+
+        if self.cgb_double_speed && self.cycles == 0 {
+            return false;
+        }
+
+        if self.blank_first_frame_after_lcd_on && self.ly == 0 {
+            return self.cycles >= LCD_ON_INITIAL_MODE0_DOTS && self.cycles < first_line_end_dot;
+        }
+
+        if self.blank_first_frame_after_lcd_on && self.ly > 0 && self.ly < 144 && self.cycles < 4 {
+            return true;
+        }
+
+        self.cycles < end_dot
+    }
+
+    fn cpu_oam_write_blocked_by_ppu(&self) -> bool {
+        if !self.lcd_enabled() || self.ly >= 144 {
+            return false;
+        }
+
+        let (_, end_dot, _, first_line_end_dot) = self.cpu_access_block_window();
+
+        if self.blank_first_frame_after_lcd_on && self.ly == 0 {
+            let first_line_start_dot = if self.cgb_double_speed {
+                LCD_ON_INITIAL_MODE0_DOTS.saturating_sub(4)
+            } else {
+                LCD_ON_INITIAL_MODE0_DOTS
+            };
+            return self.cycles >= first_line_start_dot && self.cycles < first_line_end_dot;
+        }
+
+        if self.blank_first_frame_after_lcd_on && self.ly > 0 && self.ly < 144 && self.cycles < 4 {
+            return true;
+        }
+
+        self.cycles < end_dot
     }
 
     #[inline]
     pub(in crate::hardware::ppu) fn cpu_palette_accessible(&self) -> bool {
-        !self.lcd_enabled() || self.mode() != 3
+        if !self.lcd_enabled() {
+            return true;
+        }
+
+        self.mode() != 3
     }
 
+    #[cfg(test)]
     pub(super) fn update_stat_interrupt(&mut self) -> bool {
-        let ly_match = self.ly == self.lyc;
+        self.update_stat_interrupt_for_mode(self.stat & 0x03)
+    }
+
+    pub(super) fn update_stat_interrupt_for_mode(&mut self, interrupt_mode: u8) -> bool {
+        let ly_match = self.ly == self.lyc
+            && !(self.blank_first_frame_after_lcd_on && self.ly > 0 && self.cycles < 4);
         if ly_match {
             self.stat |= 0x04;
         } else {
             self.stat &= !0x04;
         }
 
-        let mode = self.stat & 0x03;
         let stat_line = (self.stat & 0x40 != 0 && ly_match)
-            || (self.stat & 0x20 != 0 && mode == 2)
-            || (self.stat & 0x10 != 0 && mode == 1)
-            || (self.stat & 0x08 != 0 && mode == 0);
+            || (self.stat & 0x20 != 0 && (interrupt_mode == 2 || self.ly == 144))
+            || (self.stat & 0x10 != 0 && interrupt_mode == 1)
+            || (self.stat & 0x08 != 0 && interrupt_mode == 0);
 
         let rising_edge = stat_line && !self.prev_stat_line;
         self.prev_stat_line = stat_line;
+        rising_edge
+    }
+
+    fn update_cpu_stat_mode0_interrupt_before_if(&mut self, cycles: u64, draw_dots: u64) -> bool {
+        let mode0_line = self.ly < 144
+            && cycles >= STAT_IRQ_OAM_DOTS + draw_dots
+            && cycles < DOTS_PER_LINE
+            && self.stat & 0x08 != 0;
+        let rising_edge = mode0_line && !self.prev_cpu_stat_mode0_line && !self.prev_stat_line;
+        self.prev_cpu_stat_mode0_line = mode0_line;
         rising_edge
     }
 }

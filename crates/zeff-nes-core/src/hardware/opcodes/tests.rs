@@ -210,6 +210,23 @@ fn lda_abs_x_page_cross() {
 }
 
 #[test]
+fn las_abs_y_loads_a_x_sp_and_page_crosses() {
+    let (mut cpu, mut bus) = setup(&[0xBB, 0xF0, 0x00]);
+    cpu.regs.y = 0x10;
+    cpu.sp = 0x3C;
+    bus.ram[0x0100] = 0xF3;
+
+    let cycles = cpu.step(&mut bus);
+
+    assert_eq!(cycles, 5);
+    assert_eq!(cpu.regs.a, 0x30);
+    assert_eq!(cpu.regs.x, 0x30);
+    assert_eq!(cpu.sp, 0x30);
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(!cpu.regs.get_flag(StatusFlags::NEGATIVE));
+}
+
+#[test]
 fn jmp_indirect_page_boundary_bug() {
     let mut program = vec![0u8; 0x4000];
     program[0] = 0x6C;
@@ -424,6 +441,21 @@ fn lax_zp_loads_a_and_x() {
 }
 
 #[test]
+fn atx_immediate_loads_operand_into_a_and_x() {
+    let (mut cpu, mut bus) = setup(&[0xAB, 0x80]);
+    cpu.regs.a = 0x3C;
+    cpu.regs.x = 0x00;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs.a, 0x80);
+    assert_eq!(cpu.regs.x, 0x80);
+    assert_eq!(cpu.pc, 0x8002);
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
+}
+
+#[test]
 fn sax_zp_stores_a_and_x() {
     let (mut cpu, mut bus) = setup(&[0xA9, 0xFF, 0xA2, 0x0F, 0x87, 0x10, 0xA9, 0x00, 0xA5, 0x10]);
     cpu.step(&mut bus);
@@ -432,6 +464,64 @@ fn sax_zp_stores_a_and_x() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert_eq!(cpu.regs.a, 0x0F);
+}
+
+#[test]
+fn shy_abs_x_page_cross_writes_wrapped_address_with_base_high_mask() {
+    let (mut cpu, mut bus) = setup(&[0x9C, 0xFE, 0x02]);
+    cpu.regs.x = 0x02;
+    cpu.regs.y = 0xFF;
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_events.clear();
+
+    cpu.step(&mut bus);
+
+    let accesses: Vec<_> = bus
+        .debug_trace_events
+        .iter()
+        .filter_map(|event| match event {
+            crate::hardware::bus::DebugTraceEvent::Read { addr, .. } if *addr == 0x0200 => {
+                Some(("read", *addr, 0))
+            }
+            crate::hardware::bus::DebugTraceEvent::Write {
+                addr, new_value, ..
+            } if *addr == 0x0200 || *addr == 0x0300 => Some(("write", *addr, *new_value)),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0200, 0x03)]);
+    assert_eq!(bus.ram[0x0200], 0x03);
+    assert_eq!(bus.ram[0x0300], 0x00);
+}
+
+#[test]
+fn shx_abs_y_page_cross_writes_wrapped_address_with_base_high_mask() {
+    let (mut cpu, mut bus) = setup(&[0x9E, 0xFE, 0x02]);
+    cpu.regs.x = 0xFF;
+    cpu.regs.y = 0x02;
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_events.clear();
+
+    cpu.step(&mut bus);
+
+    let accesses: Vec<_> = bus
+        .debug_trace_events
+        .iter()
+        .filter_map(|event| match event {
+            crate::hardware::bus::DebugTraceEvent::Read { addr, .. } if *addr == 0x0200 => {
+                Some(("read", *addr, 0))
+            }
+            crate::hardware::bus::DebugTraceEvent::Write {
+                addr, new_value, ..
+            } if *addr == 0x0200 || *addr == 0x0300 => Some(("write", *addr, *new_value)),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0200, 0x03)]);
+    assert_eq!(bus.ram[0x0200], 0x03);
+    assert_eq!(bus.ram[0x0300], 0x00);
 }
 
 #[test]
@@ -547,6 +637,110 @@ fn ror_accumulator_with_carry() {
     assert_eq!(cpu.regs.a, 0x80);
     assert!(cpu.regs.get_flag(StatusFlags::CARRY));
     assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
+}
+
+#[test]
+fn official_rmw_writes_original_then_modified_value() {
+    let (mut cpu, mut bus) = setup(&[0x0E, 0x00, 0x02]);
+    bus.ram[0x0200] = 0x41;
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_events.clear();
+
+    cpu.step(&mut bus);
+
+    let writes: Vec<_> = bus
+        .debug_trace_events
+        .iter()
+        .filter_map(|event| match event {
+            crate::hardware::bus::DebugTraceEvent::Write {
+                addr, new_value, ..
+            } if *addr == 0x0200 => Some(*new_value),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(writes, vec![0x41, 0x82]);
+    assert_eq!(bus.ram[0x0200], 0x82);
+}
+
+#[test]
+fn unofficial_rmw_writes_original_then_modified_value() {
+    let (mut cpu, mut bus) = setup(&[0xCF, 0x00, 0x02]);
+    cpu.regs.a = 0x40;
+    bus.ram[0x0200] = 0x41;
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_events.clear();
+
+    cpu.step(&mut bus);
+
+    let writes: Vec<_> = bus
+        .debug_trace_events
+        .iter()
+        .filter_map(|event| match event {
+            crate::hardware::bus::DebugTraceEvent::Write {
+                addr, new_value, ..
+            } if *addr == 0x0200 => Some(*new_value),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(writes, vec![0x41, 0x40]);
+    assert_eq!(bus.ram[0x0200], 0x40);
+    assert!(cpu.regs.get_flag(StatusFlags::CARRY));
+    assert!(cpu.regs.get_flag(StatusFlags::ZERO));
+}
+
+#[test]
+fn absolute_x_read_page_cross_performs_wrapped_dummy_read() {
+    let (mut cpu, mut bus) = setup(&[0xA2, 0x01, 0xBD, 0xFF, 0x02]);
+    bus.ram[0x0200] = 0x11;
+    bus.ram[0x0300] = 0xA5;
+    cpu.step(&mut bus);
+    assert_eq!(cpu.regs.x, 1);
+
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_events.clear();
+    cpu.step(&mut bus);
+
+    let reads: Vec<_> = bus
+        .debug_trace_events
+        .iter()
+        .filter_map(|event| match event {
+            crate::hardware::bus::DebugTraceEvent::Read { addr, .. }
+                if *addr == 0x0200 || *addr == 0x0300 =>
+            {
+                Some(*addr)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reads, vec![0x0200, 0x0300]);
+    assert_eq!(cpu.regs.a, 0xA5);
+}
+
+#[test]
+fn absolute_x_store_performs_wrapped_dummy_read_before_write() {
+    let (mut cpu, mut bus) = setup(&[0xA2, 0x01, 0xA9, 0x7E, 0x9D, 0xFF, 0x02]);
+    cpu.step(&mut bus);
+    cpu.step(&mut bus);
+
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_events.clear();
+    cpu.step(&mut bus);
+
+    let accesses: Vec<_> = bus
+        .debug_trace_events
+        .iter()
+        .filter_map(|event| match event {
+            crate::hardware::bus::DebugTraceEvent::Read { addr, .. } if *addr == 0x0200 => {
+                Some(("read", *addr, 0))
+            }
+            crate::hardware::bus::DebugTraceEvent::Write {
+                addr, new_value, ..
+            } if *addr == 0x0300 => Some(("write", *addr, *new_value)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0300, 0x7E)]);
+    assert_eq!(bus.ram[0x0300], 0x7E);
 }
 
 #[test]

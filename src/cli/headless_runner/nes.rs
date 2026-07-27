@@ -37,6 +37,12 @@ pub(super) fn run_nes_headless(
     let mut frames_run = 0u64;
     let mut traced = 0u64;
     let mut bus_traced = 0u64;
+    let mut test_pass_seen = false;
+    let mut test_status_seen = false;
+    let mut last_test_status: Option<(u8, String)> = None;
+    let mut reset_at_frame: Option<u64> = None;
+    let mut reset_requests = 0u8;
+    let mut reset_request_active = false;
     let mut tail: VecDeque<String> = VecDeque::with_capacity(64);
     let bus_trace_active = !opts.trace_bus_filters.is_empty();
     write_screenshot_if_requested(
@@ -48,11 +54,16 @@ pub(super) fn run_nes_headless(
     )?;
     write_screenshot_sequence_if_requested(opts, 0, emulator.framebuffer(), (256, 240))?;
 
-    for frame in 0..opts.max_frames {
+    'frames: for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
         current_input = input_for_frame(opts, frame_number);
         if current_input.reset {
             emulator.reset();
+        }
+        if reset_at_frame.is_some_and(|target| frame_number >= target) {
+            emulator.reset();
+            reset_at_frame = None;
+            println!("[headless] nes-test scripted-reset frame={frame_number}");
         }
         emulator.set_input_p1(map_host_to_nes_byte(
             current_input.buttons,
@@ -144,6 +155,42 @@ pub(super) fn run_nes_headless(
             &mut stuck_active,
         );
 
+        if opts.expect_test_pass
+            && let Some((status, text)) = read_nes_memory_test_status(&emulator)
+        {
+            test_status_seen = true;
+            last_test_status = Some((status, text.clone()));
+            match status {
+                0x00 => {
+                    println!("[headless] nes-test result=pass status=00 text={text:?}");
+                    test_pass_seen = true;
+                    break 'frames;
+                }
+                0x01..=0x7F => {
+                    anyhow::bail!("NES test failed with status={status:02X} text={text:?}");
+                }
+                0x81 => {
+                    if !reset_request_active && reset_at_frame.is_none() {
+                        reset_request_active = true;
+                        reset_requests = reset_requests.saturating_add(1);
+                        if reset_requests > 8 {
+                            anyhow::bail!(
+                                "NES test requested more than 8 scripted resets; last text={text:?}"
+                            );
+                        }
+                        reset_at_frame = Some(frame_number + 7);
+                        println!(
+                            "[headless] nes-test reset-request status=81 frame={frame_number} reset_at_frame={} text={text:?}",
+                            frame_number + 7
+                        );
+                    }
+                }
+                _ => {
+                    reset_request_active = false;
+                }
+            }
+        }
+
         if emulator.is_cpu_suspended() {
             println!(
                 "[headless] system=nes suspended frame={} cycles={} pc={}",
@@ -189,10 +236,49 @@ pub(super) fn run_nes_headless(
             screenshot_path_if_written(opts, screenshot_written),
         ),
     )?;
+    if opts.expect_test_pass && !test_pass_seen {
+        if test_status_seen {
+            if let Some((status, text)) = last_test_status {
+                anyhow::bail!(
+                    "expected NES memory-status test pass before max frame limit, last status={status:02X} text={text:?}"
+                );
+            }
+        } else {
+            anyhow::bail!(
+                "expected NES memory-status test pass before max frame limit, but no $6000 signature was observed"
+            );
+        }
+    }
     if !opts.no_sram {
         flush_battery(path, emulator.dump_battery_sram());
     }
     fail_on_stuck_if_needed("nes", stuck.as_ref(), opts)?;
 
     Ok(())
+}
+
+fn read_nes_memory_test_status(emulator: &NesEmulator) -> Option<(u8, String)> {
+    let signature = [
+        emulator.cpu_peek(0x6001),
+        emulator.cpu_peek(0x6002),
+        emulator.cpu_peek(0x6003),
+    ];
+    if signature != [0xDE, 0xB0, 0x61] {
+        return None;
+    }
+
+    let status = emulator.cpu_peek(0x6000);
+    let mut text = Vec::new();
+    for addr in 0x6004..=0x7FFF {
+        let byte = emulator.cpu_peek(addr);
+        if byte == 0 {
+            break;
+        }
+        text.push(byte);
+        if text.len() >= 4096 {
+            break;
+        }
+    }
+
+    Some((status, String::from_utf8_lossy(&text).to_string()))
 }

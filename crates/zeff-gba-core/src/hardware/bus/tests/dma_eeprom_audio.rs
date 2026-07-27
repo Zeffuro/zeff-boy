@@ -317,7 +317,7 @@ fn gba_psg_registers_drive_gb_compatible_square_channel() {
 
     assert_ne!(bus.read8(0x0400_0084) & 0x82, 0);
 
-    bus.step_cycles(4096);
+    bus.step_cycles(8192);
     let mut samples = Vec::new();
     bus.apu.drain_samples_into(&mut samples);
 

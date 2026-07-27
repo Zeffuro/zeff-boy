@@ -26,6 +26,18 @@ pub(in crate::cli::headless_runner) fn gb_debug_state(
         "sp_hex": format!("{:04X}", emulator.cpu_sp()),
         "a": emulator.cpu_a(),
         "f": emulator.cpu_f(),
+        "b": emulator.cpu_b(),
+        "c": emulator.cpu_c(),
+        "d": emulator.cpu_d(),
+        "e": emulator.cpu_e(),
+        "h": emulator.cpu_h(),
+        "l": emulator.cpu_l(),
+        "test_pass": emulator.cpu_b() == 3
+            && emulator.cpu_c() == 5
+            && emulator.cpu_d() == 8
+            && emulator.cpu_e() == 13
+            && emulator.cpu_h() == 21
+            && emulator.cpu_l() == 34,
         "hardware_mode": format!("{:?}", emulator.hardware_mode()),
         "cpu_state": format!("{:?}", emulator.cpu_running()),
         "ime": format!("{:?}", emulator.cpu_ime()),

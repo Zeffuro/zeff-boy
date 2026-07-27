@@ -49,6 +49,7 @@ pub struct Bus {
     pub(crate) cpu_odd_cycle: bool,
     pub(crate) cpu_open_bus: u8,
     pub(crate) ppu_nmi_pending_from_register_write: bool,
+    pub(crate) ppu_nmi_suppressed_by_status_read: bool,
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
 
@@ -74,6 +75,7 @@ impl Bus {
             cpu_odd_cycle: false,
             cpu_open_bus: 0,
             ppu_nmi_pending_from_register_write: false,
+            ppu_nmi_suppressed_by_status_read: false,
             game_genie: NesCheatState::new(),
             palette_mode,
             palette_lut: Self::build_palette_lut(palette_mode),
@@ -94,6 +96,13 @@ impl Bus {
     pub fn set_palette_mode(&mut self, mode: NesPaletteMode) {
         self.palette_mode = mode;
         self.palette_lut = Self::build_palette_lut(mode);
+    }
+
+    pub fn reset(&mut self) {
+        self.apu.reset();
+        self.dma_stall_cycles = 0;
+        self.ppu_nmi_pending_from_register_write = false;
+        self.ppu_nmi_suppressed_by_status_read = false;
     }
 
     pub fn palette_mode(&self) -> NesPaletteMode {
@@ -125,6 +134,7 @@ impl Bus {
         self.ppu_cycles = r.read_u64()?;
         self.cpu_open_bus = r.read_u8()?;
         self.ppu_nmi_pending_from_register_write = false;
+        self.ppu_nmi_suppressed_by_status_read = false;
         Ok(())
     }
 

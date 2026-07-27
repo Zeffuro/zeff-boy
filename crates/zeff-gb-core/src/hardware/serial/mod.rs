@@ -69,7 +69,12 @@ impl Serial {
     }
 
     pub(super) fn sc(&self) -> u8 {
-        self.sc
+        let read_mask = if matches!(self.mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble) {
+            0x7C
+        } else {
+            0x7E
+        };
+        self.sc | read_mask
     }
 
     pub(super) fn write_sb(&mut self, value: u8) {
@@ -78,6 +83,10 @@ impl Serial {
 
     pub(super) fn write_sc(&mut self, value: u8) {
         self.sc = value;
+    }
+
+    pub(super) fn set_clock_phase(&mut self, cycles: u64) {
+        self.cycles = cycles % self.transfer_period();
     }
 
     pub(super) fn set_mode(&mut self, mode: HardwareMode) {
@@ -89,15 +98,13 @@ impl Serial {
     }
 
     pub(super) fn step(&mut self, cycles: u64, device: &mut dyn SerialDevice) -> bool {
-        if self.sc & 0x81 != 0x81 {
-            return false;
-        }
-
-        self.cycles += cycles;
-
         let transfer_period = self.transfer_period();
-        if self.cycles >= transfer_period {
-            self.cycles -= transfer_period;
+        let active = self.sc & 0x81 == 0x81;
+        let previous_cycles = self.cycles;
+        self.cycles = self.cycles.wrapping_add(cycles) % transfer_period;
+        let crossed_period = previous_cycles + cycles >= transfer_period;
+
+        if active && crossed_period {
             let response = device.exchange_byte(self.sb);
             self.output_log.push(self.sb);
             print!("{}", self.sb as char);

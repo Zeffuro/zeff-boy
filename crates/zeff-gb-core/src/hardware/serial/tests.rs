@@ -36,6 +36,21 @@ fn step_completes_transfer_only_after_selected_period() {
 }
 
 #[test]
+fn transfer_completion_uses_free_running_clock_phase() {
+    let mut serial = Serial::new();
+    let mut printer = crate::hardware::printer::GameboyPrinter::new();
+    serial.mode = HardwareMode::DMG;
+    serial.set_clock_phase(4044);
+
+    assert!(!serial.step(104, &mut printer));
+    serial.sc = 0x81;
+
+    assert!(!serial.step(4043, &mut printer));
+    assert!(serial.step(1, &mut printer));
+    assert_eq!(serial.sc & 0x80, 0);
+}
+
+#[test]
 fn disconnected_device_returns_ff() {
     let mut dev = DisconnectedDevice;
     assert_eq!(dev.exchange_byte(0x42), 0xFF);

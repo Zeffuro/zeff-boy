@@ -72,7 +72,7 @@ impl Joypad {
 
         let mut lines = 0x0F;
         if !self.select_buttons && !self.select_dpad && self.sgb_joypad_count > 1 {
-            // SGB uses P14/P15 high reads to expose current joypad index when multiplayer mode is active.
+            // SGB uses P14/P15 high reads to expose the current joypad index when multiplayer mode is active.
             lines = 0x0Fu8.saturating_sub(self.sgb_current_joypad & 0x03);
         } else {
             if self.select_buttons {
@@ -87,26 +87,38 @@ impl Joypad {
     }
 
     pub fn write(&mut self, value: u8) {
-        let was_both_high = !self.select_buttons && !self.select_dpad;
+        let was_buttons_selected = self.select_buttons;
 
         self.select_buttons = value & 0x20 == 0;
         self.select_dpad = value & 0x10 == 0;
 
-        let is_both_high = !self.select_buttons && !self.select_dpad;
-
-        if was_both_high && !is_both_high && self.sgb_joypad_count > 1 {
-            self.sgb_current_joypad = (self.sgb_current_joypad + 1) % self.sgb_joypad_count;
+        if was_buttons_selected && !self.select_buttons && self.sgb_controller_switching_enabled() {
+            self.sgb_current_joypad = (self.sgb_current_joypad + 1) & (self.sgb_joypad_count - 1);
         }
     }
 
     pub fn set_sgb_multiplayer_mode(&mut self, mode: u8) {
-        self.sgb_joypad_count = match mode & 0x03 {
-            0x00 => 1,
-            0x01 => 2,
-            0x03 => 4,
-            _ => 1,
+        match mode & 0x03 {
+            0x00 => {
+                self.sgb_joypad_count = 1;
+                self.sgb_current_joypad = 0;
+            }
+            0x01 => {
+                self.sgb_joypad_count = 2;
+                self.sgb_current_joypad &= 0x01;
+            }
+            0x02 => {
+                // MLT_REQ 2 is invalid, but hardware exposes a glitched 3-player state:
+                // the selected player is forced to player 1 or player 3, and ordinary
+                // multiplayer switching is disabled while this mode is active.
+                self.sgb_joypad_count = 3;
+                self.sgb_current_joypad = self.sgb_current_joypad.wrapping_add(1) & 0x02;
+            }
+            _ => {
+                self.sgb_joypad_count = 4;
+                self.sgb_current_joypad &= 0x03;
+            }
         };
-        self.sgb_current_joypad = 0;
     }
 
     pub fn key_down(&mut self, key: JoypadKey) -> bool {
@@ -153,6 +165,10 @@ impl Joypad {
         }
     }
 
+    fn sgb_controller_switching_enabled(&self) -> bool {
+        self.sgb_joypad_count > 1 && self.sgb_joypad_count & 1 == 0
+    }
+
     pub fn write_state(&self, writer: &mut StateWriter) {
         writer.write_u8(self.buttons);
         writer.write_u8(self.dpad);
@@ -189,6 +205,38 @@ mod tests {
         jp.read() & 0x0F
     }
 
+    fn write_increment(jp: &mut Joypad) {
+        jp.write(0x10);
+        jp.write(0x30);
+    }
+
+    fn send_mlt_req(jp: &mut Joypad, mode: u8) {
+        let mut packet = [0u8; 16];
+        packet[0] = (0x11 << 3) | 0x01;
+        packet[1] = mode & 0x03;
+
+        jp.write(0x00);
+        jp.write(0x30);
+
+        for (byte_index, byte) in packet.iter().copied().enumerate() {
+            for bit in 0..8 {
+                let value = if (byte >> bit) & 1 == 0 { 0x20 } else { 0x10 };
+                jp.write(value);
+                if byte_index == 15 && bit == 7 {
+                    jp.set_sgb_multiplayer_mode(mode);
+                }
+                jp.write(0x30);
+            }
+        }
+
+        jp.write(0x20);
+        jp.write(0x30);
+    }
+
+    fn push_p1(out: &mut Vec<u8>, jp: &Joypad) {
+        out.push(jp.read());
+    }
+
     #[test]
     fn repeated_0x30_does_not_cycle_id() {
         let mut jp = Joypad::new();
@@ -196,146 +244,202 @@ mod tests {
         jp.write(0x30);
         jp.write(0x30);
         jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0F, "ID should still be player 1");
+        assert_eq!(read_sgb_id(&jp), 0x0F);
     }
 
     #[test]
-    fn falling_edge_0x30_to_0x00_cycles() {
+    fn sgb_controller_switches_on_p15_rising_edge() {
         let mut jp = Joypad::new();
         jp.set_sgb_multiplayer_mode(0x01);
+
+        jp.write(0x20);
+        jp.write(0x30);
+        assert_eq!(read_sgb_id(&jp), 0x0F, "P14 rising does not switch");
+
+        jp.write(0x10);
+        jp.write(0x30);
+        assert_eq!(read_sgb_id(&jp), 0x0E, "P15 rising switches");
+
         jp.write(0x00);
         jp.write(0x30);
         assert_eq!(
             read_sgb_id(&jp),
-            0x0E,
-            "ID should be player 2 after $30→$00 fall"
+            0x0F,
+            "Both-low to both-high also raises P15 and switches"
         );
     }
 
     #[test]
-    fn falling_edge_0x30_to_0x20_cycles() {
+    fn sgb_mlt_req_1_increment_patterns_match_samesuite() {
         let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x01);
-        jp.write(0x20);
-        jp.write(0x30);
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "ID should be player 2 after $30→$20 fall"
-        );
-    }
+        send_mlt_req(&mut jp, 0x01);
 
-    #[test]
-    fn falling_edge_0x30_to_0x10_cycles() {
-        let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x01);
+        let mut actual = Vec::new();
+
         jp.write(0x10);
         jp.write(0x30);
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "ID should be player 2 after $30→$10 fall"
-        );
-    }
+        push_p1(&mut actual, &jp);
 
-    #[test]
-    fn rising_edge_does_not_cycle() {
-        let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x01);
         jp.write(0x20);
         jp.write(0x30);
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "Rising edge should NOT cycle (still player 2)"
-        );
-    }
+        push_p1(&mut actual, &jp);
 
-    #[test]
-    fn non_both_high_transitions_do_not_cycle() {
-        let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x01);
+        jp.write(0x10);
+        jp.write(0x20);
+        jp.write(0x30);
+        push_p1(&mut actual, &jp);
+
+        jp.write(0x10);
         jp.write(0x20);
         jp.write(0x10);
         jp.write(0x30);
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "Non-both-high transitions should not cycle"
-        );
+        push_p1(&mut actual, &jp);
+
+        jp.write(0x10);
+        jp.write(0x10);
+        jp.write(0x30);
+        push_p1(&mut actual, &jp);
+
+        jp.write(0x00);
+        jp.write(0x10);
+        jp.write(0x30);
+        push_p1(&mut actual, &jp);
+
+        jp.write(0x10);
+        jp.write(0x00);
+        jp.write(0x30);
+        push_p1(&mut actual, &jp);
+
+        jp.write(0x00);
+        jp.write(0x30);
+        push_p1(&mut actual, &jp);
+
+        assert_eq!(actual, [0xFE, 0xFE, 0xFF, 0xFF, 0xFE, 0xFF, 0xFE, 0xFF]);
     }
 
     #[test]
-    fn post_mlt_req_packet_stop_bit_cycles_once() {
+    fn sgb_mlt_req_packet_side_effects_match_samesuite() {
         let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x01);
+        let mut actual = Vec::new();
 
-        jp.write(0x10);
+        send_mlt_req(&mut jp, 0x01);
+        push_p1(&mut actual, &jp);
 
-        let mut jp = Joypad::new();
-        jp.write(0x10);
-        jp.set_sgb_multiplayer_mode(0x01);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
 
-        jp.write(0x30);
-        jp.write(0x20);
-        jp.write(0x30);
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x01);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x02);
+        push_p1(&mut actual, &jp);
+
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        push_p1(&mut actual, &jp);
+
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        send_mlt_req(&mut jp, 0x01);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x01);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x01);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x01);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        push_p1(&mut actual, &jp);
+        send_mlt_req(&mut jp, 0x03);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        send_mlt_req(&mut jp, 0x02);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x02);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x02);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x02);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        send_mlt_req(&mut jp, 0x02);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x02);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
+
+        send_mlt_req(&mut jp, 0x00);
+        send_mlt_req(&mut jp, 0x03);
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        send_mlt_req(&mut jp, 0x02);
+        write_increment(&mut jp);
+        push_p1(&mut actual, &jp);
 
         assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "Stop bit should cause exactly 1 falling-edge cycle"
+            actual,
+            [
+                0xFF, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xFD, 0xFC, 0xFE, 0xFF, 0xFE, 0xFF, 0xFF,
+                0xFD, 0xFD, 0xFD, 0xFF, 0xFF, 0xFD, 0xFD, 0xFD, 0xFD, 0xFF
+            ]
         );
-    }
-
-    #[test]
-    fn vblank_joypad_poll_cycles_once() {
-        let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x01);
-        jp.write(0x20);
-        jp.write(0x10);
-        jp.write(0x30);
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "One VBlank poll should cycle to player 2"
-        );
-    }
-
-    #[test]
-    fn pokemon_red_sgb_detection_sequence() {
-        let mut jp = Joypad::new();
-
-        jp.write(0x10);
-        jp.set_sgb_multiplayer_mode(0x01);
-
-        jp.write(0x30);
-        jp.write(0x20);
-        jp.write(0x30);
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "After post-packet stop bit: player 2"
-        );
-
-        let expected_after_vblank = [0x0F, 0x0E, 0x0F, 0x0E];
-        for (i, &expected) in expected_after_vblank.iter().enumerate() {
-            jp.write(0x20);
-            jp.write(0x10);
-            jp.write(0x30);
-            assert_eq!(read_sgb_id(&jp), expected, "VBlank {} mismatch", i + 1);
-        }
-
-        assert_eq!(
-            read_sgb_id(&jp),
-            0x0E,
-            "After 4 VBlanks, should be player 2"
-        );
-
-        jp.write(0x30);
-        assert_eq!(read_sgb_id(&jp), 0x0E, "Detection read should see player 2");
-
-        let p1_val = jp.read();
-        assert_ne!(p1_val & 0x03, 0x03, "Game should detect SGB");
     }
 
     #[test]
@@ -344,7 +448,7 @@ mod tests {
         jp.set_sgb_multiplayer_mode(0x03);
 
         for expected_id in [0x0E, 0x0D, 0x0C, 0x0F] {
-            jp.write(0x00);
+            jp.write(0x10);
             jp.write(0x30);
             assert_eq!(read_sgb_id(&jp), expected_id);
         }
@@ -353,9 +457,23 @@ mod tests {
     #[test]
     fn single_player_mode_ignores_cycling() {
         let mut jp = Joypad::new();
-        jp.set_sgb_multiplayer_mode(0x00); // 1-player
-        jp.write(0x00); // would be falling edge, but count=1
+        jp.set_sgb_multiplayer_mode(0x00);
+        jp.write(0x00);
         jp.write(0x30);
         assert_eq!(jp.read() & 0x0F, 0x0F);
+    }
+
+    #[test]
+    fn unsupported_mlt_req_2_disables_switching_on_glitched_player_id() {
+        let mut jp = Joypad::new();
+        jp.set_sgb_multiplayer_mode(0x03);
+        write_increment(&mut jp);
+
+        jp.set_sgb_multiplayer_mode(0x02);
+        assert_eq!(jp.read(), 0xFD);
+
+        write_increment(&mut jp);
+        write_increment(&mut jp);
+        assert_eq!(jp.read(), 0xFD);
     }
 }

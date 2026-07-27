@@ -1,12 +1,19 @@
 use super::Bus;
 use crate::hardware::cartridge::{ChrFetchKind, Mirroring};
 use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
+use crate::hardware::ppu::VBLANK_SCANLINE;
 
 impl Bus {
     pub(super) fn ppu_read_register(&mut self, addr: u16) -> u8 {
         let result = match addr {
             0x2002 => {
                 let status = (self.ppu.regs.status & 0xE0) | (self.ppu.io_latch & 0x1F);
+                if self.ppu.scanline == VBLANK_SCANLINE && (1..=3).contains(&self.ppu.dot) {
+                    self.ppu_nmi_suppressed_by_status_read = true;
+                    if self.ppu.dot == 1 {
+                        self.ppu.suppress_vblank_edge = true;
+                    }
+                }
                 self.ppu.regs.clear_vblank();
                 self.ppu.nmi_output = false;
                 self.ppu.w = false;
@@ -15,6 +22,7 @@ impl Bus {
             0x2004 => self.ppu.oam[self.ppu.oam_addr as usize],
             0x2007 => {
                 let addr = self.ppu.v & 0x3FFF;
+                let old_v = self.ppu.v;
                 let mut data = self.ppu.read_buffer;
 
                 if addr >= 0x3F00 {
@@ -26,6 +34,9 @@ impl Bus {
                 }
 
                 self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
+                if old_v & 0x1000 != self.ppu.v & 0x1000 {
+                    self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
+                }
                 data
             }
             _ => self.ppu.io_latch,
@@ -72,15 +83,23 @@ impl Bus {
                 if !self.ppu.w {
                     self.ppu.t = (self.ppu.t & 0x00FF) | ((val as u16 & 0x3F) << 8);
                 } else {
+                    let old_v = self.ppu.v;
                     self.ppu.t = (self.ppu.t & 0xFF00) | val as u16;
                     self.ppu.v = self.ppu.t;
+                    if old_v & 0x1000 != self.ppu.v & 0x1000 {
+                        self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
+                    }
                 }
                 self.ppu.w = !self.ppu.w;
             }
             0x2007 => {
                 let addr = self.ppu.v & 0x3FFF;
+                let old_v = self.ppu.v;
                 self.ppu_bus_write(addr, val);
                 self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
+                if old_v & 0x1000 != self.ppu.v & 0x1000 {
+                    self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
+                }
             }
             _ => {}
         }
@@ -95,7 +114,12 @@ impl Bus {
     pub(super) fn ppu_bus_read_with_kind(&mut self, addr: u16, kind: ChrFetchKind) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => self.cartridge.chr_read_with_kind(addr, kind),
+            0x0000..=0x1FFF => {
+                if matches!(kind, ChrFetchKind::CpuData) {
+                    self.cartridge.notify_ppu_a12(addr & 0x1000 != 0);
+                }
+                self.cartridge.chr_read_with_kind(addr, kind)
+            }
             0x2000..=0x3EFF => {
                 if let Some(val) = self
                     .cartridge
@@ -118,7 +142,10 @@ impl Bus {
     pub fn ppu_bus_write(&mut self, addr: u16, val: u8) {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF => self.cartridge.chr_write(addr, val),
+            0x0000..=0x1FFF => {
+                self.cartridge.notify_ppu_a12(addr & 0x1000 != 0);
+                self.cartridge.chr_write(addr, val);
+            }
             0x2000..=0x3EFF
                 if !self
                     .cartridge
@@ -215,5 +242,41 @@ mod tests {
 
         bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
         assert!(!bus.ppu_nmi_pending_from_register_write);
+    }
+
+    #[test]
+    fn reading_ppustatus_on_vblank_edge_suppresses_flag_and_nmi() {
+        let mut bus = test_bus();
+        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.dot = 1;
+        bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
+        bus.ppu_nmi_pending_from_register_write = false;
+
+        let status = bus.ppu_read_register(0x2002);
+        assert_eq!(status & STATUS_VBLANK, 0);
+        assert!(bus.ppu.suppress_vblank_edge);
+        assert!(bus.ppu_nmi_suppressed_by_status_read);
+
+        let events = bus.tick_peripherals(1);
+        assert!(!events.nmi_raised);
+        assert_eq!(bus.ppu.regs.status & STATUS_VBLANK, 0);
+        assert!(!bus.ppu.nmi_output);
+        assert!(!bus.ppu.suppress_vblank_edge);
+    }
+
+    #[test]
+    fn reading_ppustatus_right_after_vblank_edge_marks_pending_nmi_suppressed() {
+        let mut bus = test_bus();
+        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.dot = 2;
+        bus.ppu.regs.set_vblank();
+        bus.ppu.nmi_output = true;
+
+        let status = bus.ppu_read_register(0x2002);
+
+        assert_ne!(status & STATUS_VBLANK, 0);
+        assert_eq!(bus.ppu.regs.status & STATUS_VBLANK, 0);
+        assert!(bus.ppu_nmi_suppressed_by_status_read);
+        assert!(!bus.ppu.suppress_vblank_edge);
     }
 }

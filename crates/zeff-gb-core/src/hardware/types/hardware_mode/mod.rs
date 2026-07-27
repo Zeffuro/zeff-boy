@@ -42,13 +42,7 @@ impl HardwareModePreference {
                     HardwareMode::DMG
                 }
             }
-            HardwareModePreference::ForceCgb => {
-                if is_cgb_compatible {
-                    HardwareMode::CGBNormal
-                } else {
-                    HardwareMode::DMG
-                }
-            }
+            HardwareModePreference::ForceCgb => HardwareMode::CGBNormal,
         }
     }
 }

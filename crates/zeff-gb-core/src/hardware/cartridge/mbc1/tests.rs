@@ -11,6 +11,21 @@ fn make_mbc1(n_banks: usize, ram_size: usize) -> Mbc1 {
     Mbc1::new(rom, ram_size)
 }
 
+fn make_mbc1_multicart() -> Mbc1 {
+    let mut rom = vec![0u8; 64 * ROM_BANK_SIZE];
+    for bank in 0..64 {
+        let start = bank * ROM_BANK_SIZE;
+        for byte in &mut rom[start..start + ROM_BANK_SIZE] {
+            *byte = bank as u8;
+        }
+    }
+    for bank in [0, 16, 32, 48] {
+        let start = bank * ROM_BANK_SIZE + 0x0104;
+        rom[start..start + NINTENDO_LOGO.len()].copy_from_slice(&NINTENDO_LOGO);
+    }
+    Mbc1::new(rom, 0)
+}
+
 #[test]
 fn default_bank_is_1() {
     let mbc = make_mbc1(4, 0);
@@ -83,6 +98,37 @@ fn banking_mode_1_uses_ram_bank_for_low_rom() {
 }
 
 #[test]
+fn normal_64_bank_cart_uses_32_bank_high_rom_groups() {
+    let mut mbc = make_mbc1(64, 0);
+    assert!(!mbc.multicart);
+
+    mbc.write_rom(0x4000, 0x01);
+    mbc.write_rom(0x2000, 0x10);
+
+    assert_eq!(mbc.read_rom(0x4000), 48);
+}
+
+#[test]
+fn multicart_uses_16_bank_high_rom_groups() {
+    let mut mbc = make_mbc1_multicart();
+    assert!(mbc.multicart);
+
+    mbc.write_rom(0x6000, 0x01);
+    mbc.write_rom(0x4000, 0x01);
+    assert_eq!(mbc.read_rom(0x0000), 16);
+
+    mbc.write_rom(0x2000, 0x00);
+    assert_eq!(mbc.read_rom(0x4000), 17);
+
+    mbc.write_rom(0x2000, 0x10);
+    assert_eq!(mbc.read_rom(0x4000), 16);
+
+    mbc.write_rom(0x4000, 0x03);
+    mbc.write_rom(0x2000, 0x1F);
+    assert_eq!(mbc.read_rom(0x4000), 63);
+}
+
+#[test]
 fn banking_mode_1_ram_bank_switching() {
     let mut mbc = make_mbc1(4, 0x8000);
     mbc.write_rom(0x0000, 0x0A);
@@ -98,6 +144,23 @@ fn banking_mode_1_ram_bank_switching() {
     assert_eq!(mbc.read_ram(0xA000), 0xAA);
 
     mbc.write_rom(0x4000, 0x01);
+    assert_eq!(mbc.read_ram(0xA000), 0xBB);
+}
+
+#[test]
+fn banking_mode_1_mirrors_single_ram_bank() {
+    let mut mbc = make_mbc1(4, 0x2000);
+    mbc.write_rom(0x0000, 0x0A);
+    mbc.write_rom(0x6000, 0x01);
+
+    mbc.write_rom(0x4000, 0x00);
+    mbc.write_ram(0xA000, 0xAA);
+
+    mbc.write_rom(0x4000, 0x01);
+    assert_eq!(mbc.read_ram(0xA000), 0xAA);
+    mbc.write_ram(0xA000, 0xBB);
+
+    mbc.write_rom(0x4000, 0x00);
     assert_eq!(mbc.read_ram(0xA000), 0xBB);
 }
 

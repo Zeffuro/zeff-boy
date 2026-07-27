@@ -55,6 +55,30 @@ impl Emulator {
         self.cpu.regs.f
     }
 
+    pub fn cpu_b(&self) -> u8 {
+        self.cpu.regs.b
+    }
+
+    pub fn cpu_c(&self) -> u8 {
+        self.cpu.regs.c
+    }
+
+    pub fn cpu_d(&self) -> u8 {
+        self.cpu.regs.d
+    }
+
+    pub fn cpu_e(&self) -> u8 {
+        self.cpu.regs.e
+    }
+
+    pub fn cpu_h(&self) -> u8 {
+        self.cpu.regs.h
+    }
+
+    pub fn cpu_l(&self) -> u8 {
+        self.cpu.regs.l
+    }
+
     pub fn cpu_ime(&self) -> ImeState {
         self.cpu.ime
     }
@@ -85,6 +109,26 @@ impl Emulator {
 
     pub fn timer_tac(&self) -> u8 {
         self.bus.timer_tac()
+    }
+
+    pub fn ppu_cycles(&self) -> u64 {
+        self.bus.ppu_cycles()
+    }
+
+    pub fn ppu_lcdc(&self) -> u8 {
+        self.bus.ppu_lcdc()
+    }
+
+    pub fn ppu_stat(&self) -> u8 {
+        self.bus.ppu_stat()
+    }
+
+    pub fn ppu_ly(&self) -> u8 {
+        self.bus.ppu_ly()
+    }
+
+    pub fn ppu_lyc(&self) -> u8 {
+        self.bus.ppu_lyc()
     }
 
     pub fn serial_output_bytes(&self) -> &[u8] {

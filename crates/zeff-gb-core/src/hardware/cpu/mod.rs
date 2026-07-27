@@ -51,9 +51,9 @@ impl Cpu {
     #[inline]
     pub fn step(&mut self, bus: &mut Bus) {
         self.timed_cycles_accounted = 0;
-        let pending = bus.if_reg & bus.ie & 0x1F;
 
         if self.running == CpuState::Halted {
+            let pending = bus.pending_interrupts_for_halt();
             if pending == 0 {
                 self.tick_internal_timed(bus, 4);
                 self.commit_step_cycles();
@@ -62,15 +62,15 @@ impl Cpu {
 
             self.running = CpuState::Running;
             if self.ime == ImeState::Enabled {
-                self.tick_internal_timed(bus, 4);
                 if self.handle_interrupts(bus) {
                     self.commit_step_cycles();
                     return;
                 }
-            } else {
-                self.tick_internal_timed(bus, 4);
             }
-        } else if self.ime == ImeState::Enabled && pending != 0 && self.handle_interrupts(bus) {
+        } else if self.ime == ImeState::Enabled
+            && bus.pending_interrupts_for_cpu() != 0
+            && self.handle_interrupts(bus)
+        {
             self.commit_step_cycles();
             return;
         }
@@ -97,25 +97,31 @@ impl Cpu {
     }
 
     pub fn handle_interrupts(&mut self, bus: &mut Bus) -> bool {
-        let triggered = bus.if_reg & bus.ie;
+        let triggered = bus.pending_interrupts_for_cpu();
         if triggered == 0 || self.ime != ImeState::Enabled {
             return false;
         }
 
         const INT_VECTORS: [u16; 5] = [INT_VBLANK, INT_STAT, INT_TIMER, INT_SERIAL, INT_JOYPAD];
 
-        let bit = (triggered & 0x1F).trailing_zeros() as usize;
-        if bit >= 5 {
-            return false;
-        }
-
-        bus.if_reg &= !(1 << bit);
         self.ime = ImeState::Disabled;
 
         self.tick_internal_timed(bus, 8);
-        self.push16_timed(bus, self.pc);
+        let return_addr = self.pc;
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus_write_timed(bus, self.sp, (return_addr >> 8) as u8);
+
+        let triggered_after_high_push = bus.pending_interrupts_for_cpu();
+        let dispatch_bit = (triggered_after_high_push != 0).then(|| {
+            let bit = triggered_after_high_push.trailing_zeros() as usize;
+            bus.clear_interrupt_bit(bit);
+            bit
+        });
+
+        self.sp = self.sp.wrapping_sub(1);
+        self.bus_write_timed(bus, self.sp, (return_addr & 0xFF) as u8);
         self.tick_internal_timed(bus, 4);
-        self.pc = INT_VECTORS[bit];
+        self.pc = dispatch_bit.map_or(0x0000, |bit| INT_VECTORS[bit]);
 
         true
     }
@@ -150,21 +156,11 @@ impl Cpu {
 
     pub fn push16_timed_oam(&mut self, bus: &mut Bus, value: u16) {
         bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Write);
-        self.sp = self.sp.wrapping_sub(1);
-        self.bus_write_timed(bus, self.sp, (value >> 8) as u8);
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Write);
-        self.sp = self.sp.wrapping_sub(1);
-        self.bus_write_timed(bus, self.sp, (value & 0xFF) as u8);
+        self.push16_timed(bus, value);
     }
 
     pub fn pop16_timed_oam(&mut self, bus: &mut Bus) -> u16 {
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Read);
-        let low = self.bus_read_timed(bus, self.sp) as u16;
-        self.sp = self.sp.wrapping_add(1);
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Read);
-        let high = self.bus_read_timed(bus, self.sp) as u16;
-        self.sp = self.sp.wrapping_add(1);
-        (high << 8) | low
+        self.pop16_timed(bus)
     }
 
     pub fn jump(&mut self, addr: u16) {
@@ -177,14 +173,24 @@ impl Cpu {
 
     #[inline]
     pub fn bus_read_timed(&mut self, bus: &mut Bus, addr: u16) -> u8 {
+        let blocked_by_oam_dma = bus.oam_dma_blocks_cpu_access(addr);
         self.tick_peripherals(bus, 4);
-        bus.cpu_read_byte(addr)
+        bus.cpu_read_byte_after_oam_dma_check(addr, blocked_by_oam_dma)
     }
 
     #[inline]
     pub fn bus_write_timed(&mut self, bus: &mut Bus, addr: u16, value: u8) {
+        let blocked_by_oam_dma = bus.oam_dma_blocks_cpu_access(addr);
+        let oam_accessible_at_access = (OAM_START..=OAM_END)
+            .contains(&addr)
+            .then(|| bus.cpu_oam_write_accessible());
         self.tick_peripherals(bus, 4);
-        let extra_t_cycles = bus.cpu_write_byte(addr, value);
+        let extra_t_cycles = bus.cpu_write_byte_after_oam_dma_and_oam_access_check(
+            addr,
+            value,
+            blocked_by_oam_dma,
+            oam_accessible_at_access,
+        );
         if extra_t_cycles != 0 {
             self.tick_peripherals(bus, extra_t_cycles);
         }

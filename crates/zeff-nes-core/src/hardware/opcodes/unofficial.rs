@@ -30,7 +30,7 @@ macro_rules! lax_modes {
             lax_set(cpu, bus.cpu_read(addr));
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (addr, crossed) = cpu.addr_absolute_y(bus);
+            let (addr, crossed) = cpu.addr_absolute_y_read(bus);
             lax_set(cpu, bus.cpu_read(addr));
             page_cross_penalty(crossed)
         }
@@ -39,7 +39,7 @@ macro_rules! lax_modes {
             lax_set(cpu, bus.cpu_read(addr));
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-            let (addr, crossed) = cpu.addr_indirect_y(bus);
+            let (addr, crossed) = cpu.addr_indirect_y_read(bus);
             lax_set(cpu, bus.cpu_read(addr));
             page_cross_penalty(crossed)
         }
@@ -47,6 +47,18 @@ macro_rules! lax_modes {
 }
 
 lax_modes!(lax_zp, lax_zp_y, lax_abs, lax_abs_y, lax_ind_x, lax_ind_y);
+
+// LAS/LAR/LAE: load A, X, and SP with memory & SP. The absolute,Y mode has
+// the same page-cross timing behavior as normal indexed loads.
+pub fn las_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+    let (addr, crossed) = cpu.addr_absolute_y_read(bus);
+    let val = bus.cpu_read(addr) & cpu.sp;
+    cpu.regs.a = val;
+    cpu.regs.x = val;
+    cpu.sp = val;
+    cpu.regs.set_zn(val);
+    page_cross_penalty(crossed)
+}
 
 // ── SAX: store A & X ────────────────────────────────────────────────
 
@@ -73,10 +85,64 @@ macro_rules! sax_modes {
 
 sax_modes!(sax_zp, sax_zp_y, sax_abs, sax_ind_x);
 
+#[inline]
+fn unstable_high_byte_mask(base: u16) -> u8 {
+    ((base >> 8) as u8).wrapping_add(1)
+}
+
+fn addr_absolute_x_unstable_store(cpu: &mut Cpu, bus: &mut Bus) -> (u16, u8) {
+    let base = cpu.addr_absolute(bus);
+    let indexed = base.wrapping_add(u16::from(cpu.regs.x));
+    let write_addr = (base & 0xFF00) | (indexed & 0x00FF);
+    let _ = bus.cpu_read(write_addr);
+    (write_addr, unstable_high_byte_mask(base))
+}
+
+fn addr_absolute_y_unstable_store(cpu: &mut Cpu, bus: &mut Bus) -> (u16, u8) {
+    let base = cpu.addr_absolute(bus);
+    let indexed = base.wrapping_add(u16::from(cpu.regs.y));
+    let write_addr = (base & 0xFF00) | (indexed & 0x00FF);
+    let _ = bus.cpu_read(write_addr);
+    (write_addr, unstable_high_byte_mask(base))
+}
+
+pub fn ahx_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
+    let addr = cpu.addr_indirect_y_write(bus);
+    let val = cpu.regs.a & cpu.regs.x & unstable_high_byte_mask(addr);
+    bus.cpu_write(addr, val);
+}
+
+pub fn tas_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
+    let addr = cpu.addr_absolute_y_write(bus);
+    cpu.sp = cpu.regs.a & cpu.regs.x;
+    let val = cpu.sp & unstable_high_byte_mask(addr);
+    bus.cpu_write(addr, val);
+}
+
+pub fn shy_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
+    let (addr, mask) = addr_absolute_x_unstable_store(cpu, bus);
+    let val = cpu.regs.y & mask;
+    bus.cpu_write(addr, val);
+}
+
+pub fn shx_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
+    let (addr, mask) = addr_absolute_y_unstable_store(cpu, bus);
+    let val = cpu.regs.x & mask;
+    bus.cpu_write(addr, val);
+}
+
+pub fn ahx_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
+    let addr = cpu.addr_absolute_y_write(bus);
+    let val = cpu.regs.a & cpu.regs.x & unstable_high_byte_mask(addr);
+    bus.cpu_write(addr, val);
+}
+
 // ── DCP: DEC + CMP ─────────────────────────────────────────────────
 
 fn dcp_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
-    let val = bus.cpu_read(addr).wrapping_sub(1);
+    let old = bus.cpu_read(addr);
+    bus.cpu_write(addr, old);
+    let val = old.wrapping_sub(1);
     bus.cpu_write(addr, val);
     cpu.compare(cpu.regs.a, val);
 }
@@ -84,7 +150,9 @@ fn dcp_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 // ── ISB (ISC): INC + SBC ───────────────────────────────────────────
 
 fn isb_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
-    let val = bus.cpu_read(addr).wrapping_add(1);
+    let old = bus.cpu_read(addr);
+    bus.cpu_write(addr, old);
+    let val = old.wrapping_add(1);
     bus.cpu_write(addr, val);
     cpu.sbc(val);
 }
@@ -92,8 +160,9 @@ fn isb_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 // ── SLO: ASL + ORA ─────────────────────────────────────────────────
 
 fn slo_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
-    let val = bus.cpu_read(addr);
-    let shifted = cpu.asl_val(val);
+    let old = bus.cpu_read(addr);
+    bus.cpu_write(addr, old);
+    let shifted = cpu.asl_val(old);
     bus.cpu_write(addr, shifted);
     cpu.regs.a |= shifted;
     cpu.regs.set_zn(cpu.regs.a);
@@ -102,8 +171,9 @@ fn slo_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 // ── RLA: ROL + AND ─────────────────────────────────────────────────
 
 fn rla_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
-    let val = bus.cpu_read(addr);
-    let rotated = cpu.rol_val(val);
+    let old = bus.cpu_read(addr);
+    bus.cpu_write(addr, old);
+    let rotated = cpu.rol_val(old);
     bus.cpu_write(addr, rotated);
     cpu.regs.a &= rotated;
     cpu.regs.set_zn(cpu.regs.a);
@@ -112,8 +182,9 @@ fn rla_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 // ── SRE: LSR + EOR ─────────────────────────────────────────────────
 
 fn sre_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
-    let val = bus.cpu_read(addr);
-    let shifted = cpu.lsr_val(val);
+    let old = bus.cpu_read(addr);
+    bus.cpu_write(addr, old);
+    let shifted = cpu.lsr_val(old);
     bus.cpu_write(addr, shifted);
     cpu.regs.a ^= shifted;
     cpu.regs.set_zn(cpu.regs.a);
@@ -122,8 +193,9 @@ fn sre_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 // ── RRA: ROR + ADC ─────────────────────────────────────────────────
 
 fn rra_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
-    let val = bus.cpu_read(addr);
-    let rotated = cpu.ror_val(val);
+    let old = bus.cpu_read(addr);
+    bus.cpu_write(addr, old);
+    let rotated = cpu.ror_val(old);
     bus.cpu_write(addr, rotated);
     cpu.adc(rotated);
 }
@@ -144,11 +216,11 @@ macro_rules! rmw_unofficial_modes {
             $op(cpu, bus, addr);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
-            let (addr, _) = cpu.addr_absolute_x(bus);
+            let addr = cpu.addr_absolute_x_write(bus);
             $op(cpu, bus, addr);
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) {
-            let (addr, _) = cpu.addr_absolute_y(bus);
+            let addr = cpu.addr_absolute_y_write(bus);
             $op(cpu, bus, addr);
         }
         pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
@@ -156,7 +228,7 @@ macro_rules! rmw_unofficial_modes {
             $op(cpu, bus, addr);
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) {
-            let (addr, _) = cpu.addr_indirect_y(bus);
+            let addr = cpu.addr_indirect_y_write(bus);
             $op(cpu, bus, addr);
         }
     };
@@ -235,6 +307,16 @@ pub fn axs(cpu: &mut Cpu, bus: &Bus) {
     cpu.regs.set_zn(result);
 }
 
+// ATX/LAX #imm: unstable on hardware. Blargg's instr_test treats it as
+// immediate LAX: A and X receive the operand.
+pub fn atx(cpu: &mut Cpu, bus: &Bus) {
+    let addr = cpu.addr_immediate(bus);
+    let val = bus.cpu_peek(addr);
+    cpu.regs.a = val;
+    cpu.regs.x = val;
+    cpu.regs.set_zn(val);
+}
+
 // SBC duplicate at 0xEB:identical to official SBC #imm.
 pub fn sbc_unofficial(cpu: &mut Cpu, bus: &Bus) {
     let addr = cpu.addr_immediate(bus);
@@ -266,7 +348,7 @@ pub fn nop_abs(cpu: &mut Cpu, bus: &mut Bus) {
 // 3-byte NOP (absolute, X). Reads and discards. Returns page-cross penalty.
 // Used by 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC.
 pub fn nop_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
-    let (addr, crossed) = cpu.addr_absolute_x(bus);
+    let (addr, crossed) = cpu.addr_absolute_x_read(bus);
     let _ = bus.cpu_read(addr);
     page_cross_penalty(crossed)
 }

@@ -541,7 +541,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
             0
         }
         0x93 => {
-            unimplemented_handler(cpu, opcode, 1);
+            unoff::ahx_ind_y(cpu, bus);
             0
         } // SHA (ind),Y:unstable
         0x94 => {
@@ -573,11 +573,11 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
             0
         }
         0x9B => {
-            unimplemented_handler(cpu, opcode, 2);
+            unoff::tas_abs_y(cpu, bus);
             0
         } // TAS:unstable (abs,Y)
         0x9C => {
-            unimplemented_handler(cpu, opcode, 2);
+            unoff::shy_abs_x(cpu, bus);
             0
         } // SHY:unstable (abs,X)
         0x9D => {
@@ -585,11 +585,11 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
             0
         }
         0x9E => {
-            unimplemented_handler(cpu, opcode, 2);
+            unoff::shx_abs_y(cpu, bus);
             0
         } // SHX:unstable (abs,Y)
         0x9F => {
-            unimplemented_handler(cpu, opcode, 2);
+            unoff::ahx_abs_y(cpu, bus);
             0
         } // SHA abs,Y:unstable
         0xA0 => {
@@ -637,7 +637,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
             0
         }
         0xAB => {
-            unimplemented_handler(cpu, opcode, 1);
+            unoff::atx(cpu, bus);
             0
         } // LAX #imm:unstable
         0xAC => {
@@ -688,10 +688,7 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
             crate::hardware::opcodes::load::tsx(cpu, bus);
             0
         }
-        0xBB => {
-            unimplemented_handler(cpu, opcode, 2);
-            0
-        } // LAS:unstable (abs,Y)
+        0xBB => unoff::las_abs_y(cpu, bus), // LAS:unstable (abs,Y)
         0xBC => crate::hardware::opcodes::load::ldy_abs_x(cpu, bus),
         0xBD => crate::hardware::opcodes::load::lda_abs_x(cpu, bus),
         0xBE => crate::hardware::opcodes::load::ldx_abs_y(cpu, bus),

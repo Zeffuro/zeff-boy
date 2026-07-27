@@ -61,6 +61,23 @@ fn bank_select_requires_bit8_set() {
 }
 
 #[test]
+fn bank_select_uses_bit8_even_below_2000() {
+    let mut mbc = make_mbc2(8);
+    mbc.write_rom(0x0100, 5);
+
+    assert_eq!(mbc.read_rom(0x4000), 5);
+}
+
+#[test]
+fn ram_enable_uses_bit8_even_above_1fff() {
+    let mut mbc = make_mbc2(4);
+    mbc.write_rom(0x2000, 0x0A);
+    mbc.write_ram(0xA000, 0x05);
+
+    assert_eq!(mbc.read_ram(0xA000), 0xF5);
+}
+
+#[test]
 fn ram_is_4_bit() {
     let mut mbc = make_mbc2(4);
     mbc.write_rom(0x0000, 0x0A);

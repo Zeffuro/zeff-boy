@@ -33,6 +33,7 @@ pub struct Ppu {
     pub(crate) nmi_output: bool,
     pub(crate) in_vblank: bool,
     pub(crate) odd_frame: bool,
+    pub(crate) suppress_vblank_edge: bool,
 
     pub(crate) nametable_ram: [u8; 0x1000],
     pub(crate) palette_ram: [u8; 32],
@@ -87,6 +88,7 @@ impl Ppu {
             nmi_output: false,
             in_vblank: false,
             odd_frame: false,
+            suppress_vblank_edge: false,
             nametable_ram: [0; 0x1000],
             palette_ram: [0; 32],
             oam: [0; 256],
@@ -140,12 +142,19 @@ impl Ppu {
         let mut raise_nmi = false;
 
         if self.scanline == VBLANK_SCANLINE && self.dot == 1 {
-            self.in_vblank = true;
-            self.regs.set_vblank();
-            self.frame_ready = true;
-            let new_nmi_output = self.regs.nmi_enabled();
-            raise_nmi = !self.nmi_output && new_nmi_output;
-            self.nmi_output = new_nmi_output;
+            if self.suppress_vblank_edge {
+                self.suppress_vblank_edge = false;
+                self.in_vblank = false;
+                self.regs.clear_vblank();
+                self.nmi_output = false;
+            } else {
+                self.in_vblank = true;
+                self.regs.set_vblank();
+                self.frame_ready = true;
+                let new_nmi_output = self.regs.nmi_enabled();
+                raise_nmi = !self.nmi_output && new_nmi_output;
+                self.nmi_output = new_nmi_output;
+            }
         }
 
         if self.scanline == PRE_RENDER_SCANLINE {
@@ -359,6 +368,7 @@ impl Ppu {
         self.sprite_zero_rendering = r.read_bool()?;
 
         self.frame_ready = false;
+        self.suppress_vblank_edge = false;
 
         Ok(())
     }

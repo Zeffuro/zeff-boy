@@ -38,7 +38,10 @@ pub const SGB_BORDER_PALETTES: usize = 8;
 pub const SGB_BORDER_COLORS_PER_PALETTE: usize = 16;
 
 const DOTS_PER_LINE: u64 = 456;
-const OAM_DOTS: u64 = 80;
+const LCD_ON_INITIAL_MODE0_DOTS: u64 = 84;
+const STAT_IRQ_OAM_DOTS: u64 = 80;
+const STAT_IRQ_HBLANK_DELAY_DOTS: u64 = 2;
+const OAM_DOTS: u64 = 84;
 const DRAW_DOTS_BASE: u64 = 172;
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,10 +128,13 @@ pub struct PPU {
     pub window_was_active_this_frame: bool,
     pub window_y_triggered: bool,
     pub cgb_mode: bool,
+    pub cgb_double_speed: bool,
     pub rendered_current_line: bool,
     pub lcd_was_enabled: bool,
     pub blank_first_frame_after_lcd_on: bool,
     prev_stat_line: bool,
+    prev_cpu_stat_mode0_line: bool,
+    cpu_stat_mode0_pending_before_if: bool,
     pub debug_flags: PpuDebugFlags,
     pub draw_dots_for_line: u64,
     pub dmg_palette_preset: DmgPalettePreset,
@@ -186,8 +192,11 @@ impl PPU {
             window_was_active_this_frame: false,
             window_y_triggered: false,
             cgb_mode: false,
+            cgb_double_speed: false,
             rendered_current_line: false,
             prev_stat_line: false,
+            prev_cpu_stat_mode0_line: false,
+            cpu_stat_mode0_pending_before_if: false,
             lcd_was_enabled: false,
             blank_first_frame_after_lcd_on: false,
             debug_flags: PpuDebugFlags::default(),
@@ -215,6 +224,7 @@ impl fmt::Debug for PPU {
             .field("ocps", &format_args!("{:#04X}", self.ocps))
             .field("cycles", &self.cycles)
             .field("cgb_mode", &self.cgb_mode)
+            .field("cgb_double_speed", &self.cgb_double_speed)
             .field("window_line_counter", &self.window_line_counter)
             .field("debug_flags", &self.debug_flags)
             .finish_non_exhaustive()

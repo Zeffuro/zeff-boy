@@ -23,6 +23,15 @@ fn make_cgb_test_bus() -> Bus {
     Bus::new(rom, &header, HardwareMode::CGBNormal).expect("test bus should initialize")
 }
 
+fn make_cgb_compat_test_bus() -> Bus {
+    let mut rom = vec![0u8; 0x8000];
+    for (i, byte) in rom.iter_mut().take(0x100).enumerate() {
+        *byte = i as u8;
+    }
+    let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
+    Bus::new(rom, &header, HardwareMode::CGBNormal).expect("test bus should initialize")
+}
+
 #[test]
 fn oam_dma_transfers_one_byte_per_m_cycle() {
     let mut bus = make_test_bus();
@@ -30,12 +39,12 @@ fn oam_dma_transfers_one_byte_per_m_cycle() {
     bus.oam[1] = 0xBB;
     bus.write_byte(PPU_DMA, 0x00);
 
-    assert!(bus.oam_dma_active);
+    assert!(!bus.oam_dma_active);
     assert_eq!(bus.oam[0], 0xAA);
 
     bus.step_oam_dma(4);
+    assert!(bus.oam_dma_active);
     assert_eq!(bus.oam[0], 0xAA);
-    assert_eq!(bus.oam[1], 0xBB);
 
     bus.step_oam_dma(4);
     assert_eq!(bus.oam[0], 0x00);
@@ -50,7 +59,7 @@ fn oam_dma_completes_after_160_m_cycles() {
     let mut bus = make_test_bus();
     bus.write_byte(PPU_DMA, 0x00);
 
-    bus.step_oam_dma(8 + (158 * 4));
+    bus.step_oam_dma(160 * 4);
     assert!(bus.oam_dma_active);
 
     bus.step_oam_dma(4);
@@ -66,16 +75,21 @@ fn oam_dma_restart_resets_progress_to_byte_zero() {
     bus.write_byte(0xC101, 0xBB);
 
     bus.write_byte(PPU_DMA, 0xC0);
-    bus.step_oam_dma(8);
+    bus.step_oam_dma(4);
+    assert!(bus.oam_dma_active);
+    assert_eq!(bus.oam[0], 0x00);
+
     bus.step_oam_dma(4);
     assert_eq!(bus.oam[0], 0x11);
-    assert_eq!(bus.oam[1], 0x22);
+    assert_eq!(bus.oam[1], 0x00);
 
-    bus.write_byte(PPU_DMA, 0xC1);
+    bus.cpu_write_byte(PPU_DMA, 0xC1);
+    assert_eq!(bus.oam_dma_pending_source_base, Some(0xC100));
+    assert_eq!(bus.oam_dma_index, 1);
+
+    bus.step_oam_dma(4);
     assert_eq!(bus.oam_dma_index, 0);
-
-    bus.step_oam_dma(4);
-    assert_eq!(bus.oam[0], 0x11);
+    assert_eq!(bus.oam[1], 0x22);
 
     bus.step_oam_dma(4);
     assert_eq!(bus.oam[0], 0xAA);
@@ -91,6 +105,7 @@ fn oam_dma_source_reads_ff_from_vram_during_mode_3() {
     bus.vram[0] = 0x5A;
     bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
+    bus.io.ppu.cycles = 100;
 
     bus.write_byte(PPU_DMA, 0x80);
     bus.step_oam_dma(8);
@@ -99,9 +114,27 @@ fn oam_dma_source_reads_ff_from_vram_during_mode_3() {
 }
 
 #[test]
+fn oam_dma_fe00_ff00_sources_mirror_wram_on_dmg() {
+    let mut bus = make_test_bus();
+    bus.write_byte(0xDE00, 0x12);
+    bus.write_byte(PPU_DMA, 0xFE);
+    bus.step_oam_dma(8);
+    assert_eq!(bus.oam[0], 0x12);
+
+    let mut bus = make_test_bus();
+    bus.write_byte(0xDF00, 0x34);
+    bus.write_byte(PPU_DMA, 0xFF);
+    bus.step_oam_dma(8);
+    assert_eq!(bus.oam[0], 0x34);
+}
+
+#[test]
 fn oam_dma_blocks_cpu_access_except_hram() {
     let mut bus = make_test_bus();
     bus.write_byte(PPU_DMA, 0x00);
+
+    assert_eq!(bus.cpu_read_byte(0x0001), 0x01);
+    bus.step_oam_dma(4);
 
     assert_eq!(bus.cpu_read_byte(0x0001), 0xFF);
     bus.ie = 0x1F;
@@ -113,8 +146,22 @@ fn oam_dma_blocks_cpu_access_except_hram() {
     bus.cpu_write_byte(IE_ADDR, 0x00);
     assert_eq!(bus.ie, 0x1F);
 
+    bus.cpu_write_byte(PPU_DMA, 0xC0);
+    assert_eq!(bus.oam_dma_pending_source_base, Some(0xC000));
+
     bus.cpu_write_byte(HRAM_START, 0x34);
     assert_eq!(bus.cpu_read_byte(HRAM_START), 0x34);
+}
+
+#[test]
+fn oam_dma_blocks_only_conflicting_cpu_bus_and_oam_destination() {
+    let mut bus = make_test_bus();
+    bus.write_byte(PPU_DMA, 0x80);
+    bus.step_oam_dma(4);
+
+    assert_eq!(bus.cpu_read_byte(0xC000), 0x00);
+    assert_eq!(bus.cpu_read_byte(0x8000), 0xFF);
+    assert_eq!(bus.cpu_read_byte(OAM_START), 0xFF);
 }
 
 #[test]
@@ -161,6 +208,72 @@ fn read_write_ie() {
 }
 
 #[test]
+fn unused_io_reads_return_ff_after_writes() {
+    let mut bus = make_test_bus();
+
+    for addr in [
+        0xFF03, 0xFF08, 0xFF0E, 0xFF15, 0xFF1F, 0xFF27, 0xFF2F, 0xFF4C, 0xFF7F,
+    ] {
+        bus.write_byte(addr, 0x00);
+        assert_eq!(bus.read_byte_raw(addr), 0xFF, "addr={addr:04X}");
+    }
+}
+
+#[test]
+fn cgb_undocumented_io_registers_have_expected_unused_bits() {
+    let mut bus = make_cgb_test_bus();
+
+    bus.write_byte(CGB_UNDOC_FF72, 0x00);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF72), 0x00);
+    bus.write_byte(CGB_UNDOC_FF72, 0xFF);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF72), 0xFF);
+
+    bus.write_byte(CGB_UNDOC_FF73, 0x00);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF73), 0x00);
+    bus.write_byte(CGB_UNDOC_FF73, 0xFF);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF73), 0xFF);
+
+    bus.write_byte(CGB_UNDOC_FF75, 0x00);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF75), 0x8F);
+    bus.write_byte(CGB_UNDOC_FF75, 0x70);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF75), 0xFF);
+}
+
+#[test]
+fn dmg_reads_cgb_undocumented_io_registers_as_unused() {
+    let mut bus = make_test_bus();
+
+    for addr in [CGB_UNDOC_FF72, CGB_UNDOC_FF73, CGB_UNDOC_FF75] {
+        bus.write_byte(addr, 0x00);
+        assert_eq!(bus.read_byte_raw(addr), 0xFF, "addr={addr:04X}");
+    }
+}
+
+#[test]
+fn cgb_dmg_compat_exposes_cgb_hardware_but_not_native_features() {
+    let mut bus = make_cgb_compat_test_bus();
+
+    assert!(bus.is_cgb_hardware());
+    assert!(!bus.is_cgb_mode());
+
+    bus.write_byte(CGB_UNDOC_FF72, 0x00);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF72), 0x00);
+    bus.write_byte(CGB_UNDOC_FF75, 0x70);
+    assert_eq!(bus.read_byte_raw(CGB_UNDOC_FF75), 0xFF);
+
+    assert_eq!(bus.read_byte_raw(CGB_KEY1), 0xFF);
+    bus.write_byte(CGB_KEY1, 0x01);
+    assert_eq!(bus.key1 & 0x01, 0x00);
+
+    bus.write_byte(SERIAL_SC, 0x00);
+    assert_eq!(bus.read_byte_raw(SERIAL_SC) & 0x7E, 0x7E);
+
+    bus.write_byte(CGB_BCPD, 0x00);
+    assert_eq!(bus.read_byte_raw(CGB_BCPD), 0xFF);
+    assert_eq!(bus.read_byte_raw(CGB_PCM12), 0x00);
+}
+
+#[test]
 fn read_not_usable_returns_ff() {
     let bus = make_test_bus();
     assert_eq!(bus.read_byte_raw(NOT_USABLE_START), 0xFF);
@@ -170,6 +283,7 @@ fn read_not_usable_returns_ff() {
 #[test]
 fn read_write_oam() {
     let mut bus = make_test_bus();
+    bus.io.ppu.lcdc &= !Lcdc::LCD_ENABLE;
     bus.write_byte(OAM_START, 0x42);
     bus.write_byte(OAM_START + 0x9F, 0x99);
     assert_eq!(bus.read_byte_raw(OAM_START), 0x42);
@@ -230,6 +344,7 @@ fn vram_read_returns_ff_during_mode_3() {
     bus.vram[0] = 0x5A;
     bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
+    bus.io.ppu.cycles = 100;
     assert_eq!(bus.read_byte_raw(VRAM_START), 0xFF);
 }
 
@@ -238,6 +353,7 @@ fn vram_write_blocked_during_mode_3() {
     let mut bus = make_test_bus();
     bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x03;
+    bus.io.ppu.cycles = 100;
     bus.write_byte(VRAM_START, 0xAB);
     assert_eq!(bus.vram[0], 0x00);
 }
@@ -283,9 +399,11 @@ fn oam_accessible_during_mode_0_and_1() {
     let mut bus = make_test_bus();
     bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
     bus.io.ppu.stat &= !0x03;
+    bus.io.ppu.cycles = 300;
     bus.write_byte(OAM_START, 0x11);
     assert_eq!(bus.read_byte_raw(OAM_START), 0x11);
     bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x01;
+    bus.io.ppu.ly = 144;
     bus.write_byte(OAM_START, 0x22);
     assert_eq!(bus.read_byte_raw(OAM_START), 0x22);
 }
@@ -388,8 +506,11 @@ fn gdma_double_speed_uses_64_t_per_block() {
 }
 
 #[test]
-fn hblank_hdma_setup_does_not_transfer_immediately() {
+fn hblank_hdma_setup_in_mode_2_does_not_transfer_immediately() {
     let mut bus = make_cgb_test_bus();
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
+    bus.io.ppu.ly = 0;
+    bus.io.ppu.stat = (bus.io.ppu.stat & !0x03) | 0x02;
     bus.hdma1 = 0xC0;
     bus.hdma2 = 0x00;
     bus.hdma3 = 0x00;
@@ -400,6 +521,47 @@ fn hblank_hdma_setup_does_not_transfer_immediately() {
     assert!(bus.hdma_hblank);
     assert_eq!(bus.hdma_blocks_left, 2);
     assert_eq!(t_cycles, 0);
+}
+
+#[test]
+fn hblank_hdma_with_lcd_off_transfers_one_block_immediately() {
+    let mut bus = make_cgb_test_bus();
+    bus.io.ppu.lcdc &= !Lcdc::LCD_ENABLE;
+    bus.hdma1 = 0xC0;
+    bus.hdma2 = 0x00;
+    bus.hdma3 = 0x00;
+    bus.hdma4 = 0x00;
+    bus.wram[0] = 0xAA;
+    bus.wram[0x10] = 0xBB;
+
+    let t_cycles = bus.execute_hdma_transfer(0x83);
+
+    assert!(bus.hdma_active);
+    assert!(bus.hdma_hblank);
+    assert_eq!(bus.hdma_blocks_left, 3);
+    assert_eq!(bus.hdma5, 0x02);
+    assert_eq!(t_cycles, 0);
+    assert_eq!(bus.vram[0], 0xAA);
+    assert_eq!(bus.vram[0x10], 0x00);
+}
+
+#[test]
+fn hblank_hdma_started_in_mode_0_transfers_one_block_immediately() {
+    let mut bus = make_cgb_test_bus();
+    bus.io.ppu.lcdc |= Lcdc::LCD_ENABLE;
+    bus.io.ppu.ly = 0;
+    bus.io.ppu.stat &= !0x03;
+    bus.hdma1 = 0xC0;
+    bus.hdma2 = 0x00;
+    bus.hdma3 = 0x00;
+    bus.hdma4 = 0x00;
+    bus.wram[0] = 0xCC;
+
+    bus.execute_hdma_transfer(0x83);
+
+    assert_eq!(bus.hdma_blocks_left, 3);
+    assert_eq!(bus.hdma5, 0x02);
+    assert_eq!(bus.vram[0], 0xCC);
 }
 
 #[test]
@@ -475,7 +637,7 @@ fn hblank_hdma_cancel() {
     assert!(!bus.hdma_active);
     assert!(!bus.hdma_hblank);
     assert_eq!(t_cycles, 0);
-    assert_ne!(bus.hdma5 & 0x80, 0);
+    assert_eq!(bus.hdma5, 0x80);
 }
 
 #[test]
@@ -584,7 +746,7 @@ fn if_register_read_write() {
     let mut bus = make_test_bus();
     assert_eq!(bus.read_byte_raw(INTERRUPT_IF), 0xE1);
     bus.if_reg = 0x00;
-    assert_eq!(bus.read_byte_raw(INTERRUPT_IF), 0x00);
+    assert_eq!(bus.read_byte_raw(INTERRUPT_IF), 0xE0);
 }
 
 #[test]

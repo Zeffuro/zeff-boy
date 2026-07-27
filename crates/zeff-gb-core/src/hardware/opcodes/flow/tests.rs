@@ -1,7 +1,10 @@
 use super::*;
 
 fn make_test_bus(mode: HardwareMode) -> Bus {
-    let rom = vec![0u8; 0x8000];
+    let mut rom = vec![0u8; 0x8000];
+    if matches!(mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble) {
+        rom[0x0143] = 0x80;
+    }
     let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
     Bus::new(rom, &header, mode).expect("test bus should initialize")
 }
@@ -43,21 +46,18 @@ fn stop_in_dmg_mode_does_not_switch_speed() {
 }
 
 #[test]
-fn halt_with_pending_irq_and_ime_pending_enable_triggers_halt_bug() {
+fn halt_with_pending_irq_and_ime_pending_enable_enters_halt_at_halt_opcode() {
     let mut cpu = Cpu::new();
     let mut bus = make_test_bus(HardwareMode::DMG);
     cpu.ime = ImeState::PendingEnable;
-    cpu.pc = 0xC000;
+    cpu.pc = 0xC001;
     bus.ie = 0x01;
     bus.if_reg = 0x01;
-    bus.write_byte(0xC000, 0x00);
 
     halt(&mut cpu, &mut bus);
 
-    assert!(matches!(cpu.running, CpuState::Running));
-    assert!(cpu.halt_bug_active);
-    let first = cpu.fetch8_timed(&mut bus);
-    assert_eq!(first, 0x00);
+    assert!(matches!(cpu.running, CpuState::Halted));
+    assert!(!cpu.halt_bug_active);
     assert_eq!(cpu.pc, 0xC000);
 }
 
