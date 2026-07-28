@@ -263,17 +263,18 @@ pub(super) fn run_gb_headless(
                     _ => {}
                 }
             }
-            if opts.expect_test_pass && !test_pass_seen {
-                if let Some((result, screen_text)) = gb_screen_test_pass_result(&emulator) {
-                    match result {
-                        TestPassResult::Pass => {
-                            test_pass_seen = true;
-                        }
-                        TestPassResult::Fail => {
-                            flush_battery(&emulator);
-                            print_gb_memory_dumps(&emulator, opts);
-                            anyhow::bail!("screen test failure: {}", screen_text);
-                        }
+            if opts.expect_test_pass
+                && !test_pass_seen
+                && let Some((result, screen_text)) = gb_screen_test_pass_result(&emulator)
+            {
+                match result {
+                    TestPassResult::Pass => {
+                        test_pass_seen = true;
+                    }
+                    TestPassResult::Fail => {
+                        flush_battery(&emulator);
+                        print_gb_memory_dumps(&emulator, opts);
+                        anyhow::bail!("screen test failure: {}", screen_text);
                     }
                 }
             }

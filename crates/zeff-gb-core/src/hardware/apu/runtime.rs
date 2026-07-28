@@ -14,6 +14,7 @@ impl Apu {
         let powered = self.powered();
         self.advance_channel_timer_clocks(t_cycles, powered);
         self.clock_delayed_sweep_disable(t_cycles);
+        self.clock_sweep_trigger_visibility_delay(t_cycles);
         if !powered {
             return;
         }
@@ -156,6 +157,7 @@ impl Apu {
                 self.ch1_just_reloaded = false;
                 self.ch2_just_reloaded = false;
                 self.ch1_sweep_pending_disable_delay = 0;
+                self.ch1_sweep_trigger_visibility_delay = 0;
                 self.ch3_output_delay = 0;
                 self.ch3_restart_pending = false;
                 self.ch3_wave_access_window = 0;

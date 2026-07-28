@@ -190,9 +190,6 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     if opts.expect_serial.is_some() {
         anyhow::bail!("--expect-serial is only supported for GB/GBC headless runs");
     }
-    if system == "gba" && opts.expect_test_pass {
-        anyhow::bail!("--expect-test-pass is only supported for GB/GBC and NES headless runs");
-    }
     if !opts.memory_dumps.is_empty() {
         anyhow::bail!("--dump-mem is only supported for GB/GBC headless runs");
     }
@@ -265,6 +262,7 @@ fn framebuffer_fingerprint(framebuffer: &[u8]) -> u64 {
     hash
 }
 
+#[allow(clippy::too_many_arguments)]
 fn observe_stuck(
     tracker: &mut Option<StuckTracker>,
     system: &str,

@@ -1,0 +1,43 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/cpu_reset"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "reset"]
+notes = "Local-only CPU reset tests. The runner handles blargg scripted reset requests."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "registers"
+archive_path = "nes-test-roms/cpu_reset/registers.nes"
+sha256 = "a30f33fb6c9f56012fba38dc85ddc3dccc06bfc0b25fef7711b63f8207279715"
+legacy_paths = ["test-roms/nes-test-roms/cpu_reset/registers.nes"]
+
+[[test_groups.roms]]
+id = "ram_after_reset"
+archive_path = "nes-test-roms/cpu_reset/ram_after_reset.nes"
+sha256 = "f1802a5618aaaa0c4d592caa45b0b13c54082af93fc311bda0c27bceacbc7c7f"
+legacy_paths = ["test-roms/nes-test-roms/cpu_reset/ram_after_reset.nes"]

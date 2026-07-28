@@ -121,7 +121,7 @@ impl JyAsic {
     }
 
     fn prg_outer_window_8k(&self) -> usize {
-        self.prg_bank_count_8k().min(64).max(1)
+        self.prg_bank_count_8k().clamp(1, 64)
     }
 
     fn prg_outer_base(&self) -> usize {

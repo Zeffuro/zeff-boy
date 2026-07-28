@@ -1,0 +1,212 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use anyhow::{Context, bail};
+
+use crate::model::{Core, Tier};
+use crate::{
+    DEFAULT_BASELINE_PATH, DEFAULT_MANIFEST_DIR, DEFAULT_SOURCE_CACHE_DIR, DEFAULT_SOURCES_PATH,
+};
+
+#[derive(Debug)]
+pub(crate) struct Cli {
+    pub(crate) command: CommandKind,
+    pub(crate) manifest_dir: PathBuf,
+    pub(crate) sources_path: PathBuf,
+    pub(crate) source_cache_dir: PathBuf,
+    pub(crate) filter: TestFilter,
+    pub(crate) include_games: bool,
+    pub(crate) allow_missing: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) zeff_boy: Option<PathBuf>,
+    pub(crate) report_json: Option<PathBuf>,
+    pub(crate) report_md: Option<PathBuf>,
+    pub(crate) report_junit: Option<PathBuf>,
+    pub(crate) report_baseline: Option<PathBuf>,
+    pub(crate) baseline: Option<PathBuf>,
+    pub(crate) actual_json: Option<PathBuf>,
+}
+
+impl Cli {
+    pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> anyhow::Result<Self> {
+        let mut args = args.into_iter();
+        let command = match args.next().as_deref().and_then(|s| s.to_str()) {
+            None | Some("help") | Some("--help") | Some("-h") => CommandKind::Help,
+            Some("list") => CommandKind::List,
+            Some("check") => CommandKind::Check,
+            Some("prepare") => CommandKind::Prepare,
+            Some("fetch") => CommandKind::Fetch,
+            Some("run") => CommandKind::Run,
+            Some("compare") => CommandKind::Compare,
+            Some("summary") | Some("status") => CommandKind::Summary,
+            Some(other) => bail!("unknown command '{other}'"),
+        };
+
+        let mut cli = Self {
+            command,
+            manifest_dir: PathBuf::from(DEFAULT_MANIFEST_DIR),
+            sources_path: PathBuf::from(DEFAULT_SOURCES_PATH),
+            source_cache_dir: PathBuf::from(DEFAULT_SOURCE_CACHE_DIR),
+            filter: TestFilter::default(),
+            include_games: false,
+            allow_missing: false,
+            dry_run: false,
+            zeff_boy: None,
+            report_json: None,
+            report_md: None,
+            report_junit: None,
+            report_baseline: None,
+            baseline: None,
+            actual_json: None,
+        };
+
+        let rest: Vec<OsString> = args.collect();
+        let mut i = 0;
+        while i < rest.len() {
+            let flag = rest[i].to_string_lossy();
+            match flag.as_ref() {
+                "--manifest-dir" => {
+                    cli.manifest_dir = next_path(&rest, &mut i, "--manifest-dir")?;
+                }
+                "--sources" => {
+                    cli.sources_path = next_path(&rest, &mut i, "--sources")?;
+                }
+                "--source-cache-dir" => {
+                    cli.source_cache_dir = next_path(&rest, &mut i, "--source-cache-dir")?;
+                }
+                "--core" => {
+                    cli.filter.core = Some(next_value(&rest, &mut i, "--core")?.parse()?);
+                }
+                "--tier" => {
+                    cli.filter.tier = Some(next_value(&rest, &mut i, "--tier")?.parse()?);
+                }
+                "--exclude-tier" => {
+                    cli.filter
+                        .exclude_tiers
+                        .push(next_value(&rest, &mut i, "--exclude-tier")?.parse()?);
+                }
+                "--id" => {
+                    cli.filter.id_contains = Some(next_value(&rest, &mut i, "--id")?);
+                }
+                "--tag" => {
+                    cli.filter.tag = Some(next_value(&rest, &mut i, "--tag")?);
+                }
+                "--include-games" => {
+                    cli.include_games = true;
+                    i += 1;
+                }
+                "--allow-missing" => {
+                    cli.allow_missing = true;
+                    i += 1;
+                }
+                "--dry-run" => {
+                    cli.dry_run = true;
+                    i += 1;
+                }
+                "--zeff-boy" => {
+                    cli.zeff_boy = Some(next_path(&rest, &mut i, "--zeff-boy")?);
+                }
+                "--report-json" => {
+                    cli.report_json = Some(next_path(&rest, &mut i, "--report-json")?);
+                }
+                "--report-md" => {
+                    cli.report_md = Some(next_path(&rest, &mut i, "--report-md")?);
+                }
+                "--report-junit" => {
+                    cli.report_junit = Some(next_path(&rest, &mut i, "--report-junit")?);
+                }
+                "--report-baseline" => {
+                    cli.report_baseline = Some(next_path(&rest, &mut i, "--report-baseline")?);
+                }
+                "--baseline" => {
+                    cli.baseline = Some(next_path(&rest, &mut i, "--baseline")?);
+                }
+                "--actual-json" => {
+                    cli.actual_json = Some(next_path(&rest, &mut i, "--actual-json")?);
+                }
+                "--help" | "-h" => {
+                    cli.command = CommandKind::Help;
+                    i += 1;
+                }
+                _ => bail!("unknown option '{flag}'"),
+            }
+        }
+
+        Ok(cli)
+    }
+}
+
+fn next_value(args: &[OsString], index: &mut usize, flag: &str) -> anyhow::Result<String> {
+    let value = args
+        .get(*index + 1)
+        .with_context(|| format!("{flag} requires a value"))?;
+    *index += 2;
+    Ok(value.to_string_lossy().into_owned())
+}
+
+fn next_path(args: &[OsString], index: &mut usize, flag: &str) -> anyhow::Result<PathBuf> {
+    Ok(PathBuf::from(next_value(args, index, flag)?))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommandKind {
+    Help,
+    List,
+    Check,
+    Prepare,
+    Fetch,
+    Run,
+    Compare,
+    Summary,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TestFilter {
+    pub(crate) core: Option<Core>,
+    pub(crate) tier: Option<Tier>,
+    pub(crate) exclude_tiers: Vec<Tier>,
+    pub(crate) id_contains: Option<String>,
+    pub(crate) tag: Option<String>,
+}
+
+pub(crate) fn print_help() {
+    println!(
+        "\
+zeff-romtest <command> [options]
+
+Commands:
+  list                 List selected manifest entries
+  check                Validate manifests and repository policy
+  prepare              Populate rom-tests/cache from known local legacy paths
+  fetch                Download pinned source archives and extract selected test ROMs
+  run                  Run selected tests through Zeff Boy headless CLI
+  compare              Compare a run JSON report against a baseline JSON report
+  summary              Print status/coverage/suite tables from an existing report
+  status               Alias for summary
+
+Options:
+  --manifest-dir PATH  Manifest file or directory (default: {DEFAULT_MANIFEST_DIR})
+  --sources PATH       Source catalog path (default: {DEFAULT_SOURCES_PATH})
+  --source-cache-dir PATH
+                        Download cache for source archives (default: {DEFAULT_SOURCE_CACHE_DIR})
+  --core gb|gba|nes    Filter by core
+  --tier TIER          Filter by tier: smoke|accuracy|visual|local|compat
+  --exclude-tier TIER  Exclude a tier; may be repeated
+  --id TEXT            Filter by id substring
+  --tag TEXT           Filter by tag
+  --include-games      Include game_rom entries in selection
+  --allow-missing      Treat missing selected ROM files as skipped
+  --dry-run            Print commands without running them
+  --zeff-boy PATH      Use a prebuilt zeff-boy executable instead of cargo run -p zeff-boy
+  --report-json PATH   Write JSON report
+  --report-md PATH     Write Markdown table report
+  --report-junit PATH  Write JUnit XML report
+  --report-baseline PATH
+                        Write deterministic baseline JSON from a run
+  --baseline PATH      Baseline JSON path for compare
+                        or summary (default: {DEFAULT_BASELINE_PATH})
+  --actual-json PATH   Actual run JSON path for compare
+                        or summary
+"
+    );
+}

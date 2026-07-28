@@ -67,7 +67,7 @@ pub const FRAME_STEP_1: u64 = 7453;
 pub const FRAME_STEP_2: u64 = 14909;
 pub const FRAME_STEP_3: u64 = 22367;
 pub const FRAME_STEP_4: u64 = 29825;
-pub const FRAME_STEP_5: u64 = 37276;
+pub const FRAME_STEP_5: u64 = 37280;
 pub const FRAME_STEP_4_RESET: u64 = 29829;
 pub const FRAME_STEP_5_RESET: u64 = 37281;
 

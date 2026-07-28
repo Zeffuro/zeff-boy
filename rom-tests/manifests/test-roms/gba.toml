@@ -1,0 +1,119 @@
+manifest_version = 1
+
+[suite]
+id = "gba-public-suite-placeholders"
+name = "GBA public test suite placeholders"
+core = "gba"
+upstream_url = "https://github.com/jsmolka/gba-tests"
+license = "MIT"
+
+[[tests]]
+id = "gba/jsmolka/arm"
+core = "gba"
+tier = "accuracy"
+max_frames = 18000
+tags = ["gba", "jsmolka", "cpu", "arm"]
+notes = "jsmolka renders either 'All tests passed' or 'Failed test NNN' in mode 4; headless GBA decodes that screen convention."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/jsmolka/gba-tests"
+source_version = "a7113b67e63f83a9b321696ddd7042ccfad6c881 raw arm.gba"
+source_id = "jsmolka-gba-tests-arm-a7113b67"
+
+[tests.rom]
+path = "rom-tests/cache/gba/jsmolka/arm.gba"
+sha256 = "77ee88662552bdc885c1080c0172ff119d54db791bd73b21808cf1ff1fe5b40e"
+
+[tests.pass]
+kind = "gba_screen_text"
+contains = "All tests passed"
+
+[tests.expectation]
+kind = "pass"
+
+[[tests]]
+id = "gba/jsmolka/thumb"
+core = "gba"
+tier = "accuracy"
+max_frames = 18000
+tags = ["gba", "jsmolka", "cpu", "thumb"]
+notes = "jsmolka renders either 'All tests passed' or 'Failed test NNN' in mode 4; headless GBA decodes that screen convention."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/jsmolka/gba-tests"
+source_version = "a7113b67e63f83a9b321696ddd7042ccfad6c881 raw thumb.gba"
+source_id = "jsmolka-gba-tests-thumb-a7113b67"
+
+[tests.rom]
+path = "rom-tests/cache/gba/jsmolka/thumb.gba"
+sha256 = "b5cb2291df4ab314b31c598acd9bff2ccfa0b38efff29daadfe97422ce369b67"
+
+[tests.pass]
+kind = "gba_screen_text"
+contains = "All tests passed"
+
+[tests.expectation]
+kind = "pass"
+
+[[tests]]
+id = "gba/jsmolka/memory"
+core = "gba"
+tier = "accuracy"
+max_frames = 18000
+tags = ["gba", "jsmolka", "memory"]
+notes = "jsmolka renders either 'All tests passed' or 'Failed test NNN' in mode 4; headless GBA decodes that screen convention."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/jsmolka/gba-tests"
+source_version = "a7113b67e63f83a9b321696ddd7042ccfad6c881 raw memory.gba"
+source_id = "jsmolka-gba-tests-memory-a7113b67"
+
+[tests.rom]
+path = "rom-tests/cache/gba/jsmolka/memory.gba"
+sha256 = "21024fb6aae6343f5f0466dd54e3149de1fbeb23f78e7d85a015c983684d2f87"
+
+[tests.pass]
+kind = "gba_screen_text"
+contains = "All tests passed"
+
+[tests.expectation]
+kind = "pass"
+
+[[tests]]
+id = "gba/mgba-suite/memory"
+core = "gba"
+tier = "accuracy"
+max_frames = 18000
+tags = ["gba", "mgba-suite", "memory"]
+notes = "Tracked now, skipped until suite build/fetch and its exact pass/fail convention are wired into the runner."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "fetch-build-pending"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/memory.gba"
+
+[tests.pass]
+kind = "gba_screen_text"
+contains = "PASS"
+
+[tests.expectation]
+kind = "skip"
+reason = "mGBA suite fetch/build path and exact pass protocol are not implemented yet."

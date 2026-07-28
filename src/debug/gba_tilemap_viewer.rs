@@ -76,11 +76,15 @@ fn render_text_map(image: &mut egui::ColorImage, gfx: &GbaGraphicsData, control:
     let screen_base = (((control >> 8) & 0x1F) as usize) * 0x800;
     let width = image.size[0];
     let height = image.size[1];
+    let params = TextMapParams {
+        char_base,
+        screen_base,
+        bg_width: width,
+        color_256,
+    };
     for y in 0..height {
         for x in 0..width {
-            let Some(color_index) =
-                text_color_index(&gfx.vram, char_base, screen_base, x, y, width, color_256)
-            else {
+            let Some(color_index) = text_color_index(&gfx.vram, params, x, y) else {
                 continue;
             };
             let rgba = super::gba_tile_viewer::gba_palette_rgba(&gfx.palette_ram, color_index);
@@ -114,15 +118,21 @@ fn render_affine_map(image: &mut egui::ColorImage, gfx: &GbaGraphicsData, contro
     }
 }
 
-fn text_color_index(
-    vram: &[u8],
+#[derive(Clone, Copy)]
+struct TextMapParams {
     char_base: usize,
     screen_base: usize,
-    x: usize,
-    y: usize,
     bg_width: usize,
     color_256: bool,
-) -> Option<usize> {
+}
+
+fn text_color_index(vram: &[u8], params: TextMapParams, x: usize, y: usize) -> Option<usize> {
+    let TextMapParams {
+        char_base,
+        screen_base,
+        bg_width,
+        color_256,
+    } = params;
     let screen_x = x / 256;
     let screen_y = y / 256;
     let block = match (bg_width > 256, screen_y > 0, screen_x > 0) {

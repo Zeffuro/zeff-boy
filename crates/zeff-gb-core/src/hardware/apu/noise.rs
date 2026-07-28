@@ -101,10 +101,9 @@ impl Apu {
             && was_background_counting
             && !was_active
             && (self.ch4_alignment & 0x03) == 0
+            && divisor_code != 0
         {
-            if divisor_code != 0 {
-                self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
-            }
+            self.ch4_counter_countdown = self.ch4_counter_countdown.saturating_sub(4);
         }
 
         if divisor_one_glitch {

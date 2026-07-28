@@ -1,0 +1,127 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/instr_test_v5/rom_singles"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "instructions"]
+notes = "Local-only blargg CPU instruction singles. Useful for regression tracking, but not fetch-backed yet."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "01-basics"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/01-basics.nes"
+sha256 = "4dd1cdd406bc3f747972e7da314ce8ca89321eb7a836c1ced569ee54ae44a384"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/01-basics.nes"]
+
+[[test_groups.roms]]
+id = "02-implied"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/02-implied.nes"
+sha256 = "1c4d4fa130cf6feebc072543a5cd3627ae71063b56b08642bf43e9a6c6f44996"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/02-implied.nes"]
+
+[[test_groups.roms]]
+id = "03-immediate"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/03-immediate.nes"
+sha256 = "6f7ad8ff31c762c37deaee0f323df03eb94025cf1f3b0343ebe6fe567da0e943"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/03-immediate.nes"]
+
+[[test_groups.roms]]
+id = "04-zero_page"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/04-zero_page.nes"
+sha256 = "7a8feada4bb4460250c8f05401e5d728878bbe71956756d0b11d488e57eb12fd"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/04-zero_page.nes"]
+
+[[test_groups.roms]]
+id = "05-zp_xy"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/05-zp_xy.nes"
+sha256 = "767f422dc4e651e331456b207f7c6d60d19329fde0c0827e83591dbd91ae5e23"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/05-zp_xy.nes"]
+
+[[test_groups.roms]]
+id = "06-absolute"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/06-absolute.nes"
+sha256 = "98df36dc4fcc4f37d9eb0539c71283020776b1e5dc6a6ce58671739a8d6534af"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/06-absolute.nes"]
+
+[[test_groups.roms]]
+id = "07-abs_xy"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/07-abs_xy.nes"
+sha256 = "9ff58d77d8d384cc918fcd3ed877898c5e7330cd475ed2dafb11cbe80ff32eff"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/07-abs_xy.nes"]
+
+[[test_groups.roms]]
+id = "08-ind_x"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/08-ind_x.nes"
+sha256 = "2ec6f5d4a8caee5d8295cebe563f203c26ea9bc05f1dbc967feb88f5dc4f261f"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/08-ind_x.nes"]
+
+[[test_groups.roms]]
+id = "09-ind_y"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/09-ind_y.nes"
+sha256 = "0fbc8b228d5daa83a4a083bf87ae3a61b5247ebdd91a6b91c8cf8c42784804ac"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/09-ind_y.nes"]
+
+[[test_groups.roms]]
+id = "10-branches"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/10-branches.nes"
+sha256 = "63ab768e88931db6f7dfcfafe43d5e29ebc3dcb80da8fc7fcda8c930f34aef54"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/10-branches.nes"]
+
+[[test_groups.roms]]
+id = "11-stack"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/11-stack.nes"
+sha256 = "c534191fe3ea4c8940944fda98dd58eb42710268d453f97e8e2c4ae7f15f9cdb"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/11-stack.nes"]
+
+[[test_groups.roms]]
+id = "12-jmp_jsr"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/12-jmp_jsr.nes"
+sha256 = "f5b4652690fc04e6b573a2b3b54a29407ad0615d3c264e7cb618b6694b50de55"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/12-jmp_jsr.nes"]
+
+[[test_groups.roms]]
+id = "13-rts"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/13-rts.nes"
+sha256 = "b711d25bc55585c252046a1304a0bc64c13cacce7c96a1bac5c8e91f9fc2597f"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/13-rts.nes"]
+
+[[test_groups.roms]]
+id = "14-rti"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/14-rti.nes"
+sha256 = "f084b00605be1840946b53935032581e68abe1bb24479942751cfe46ddfcb280"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/14-rti.nes"]
+
+[[test_groups.roms]]
+id = "15-brk"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/15-brk.nes"
+sha256 = "da7ae9a191c4483b540771e15b1f6f18df68f1d1ecd717b59ea8b1ee3596ec3e"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/15-brk.nes"]
+
+[[test_groups.roms]]
+id = "16-special"
+archive_path = "nes-test-roms/instr_test-v5/rom_singles/16-special.nes"
+sha256 = "7d03410b61784e49920901e84b00a4f31a19078391f20005c6fac9036d2190f7"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/rom_singles/16-special.nes"]

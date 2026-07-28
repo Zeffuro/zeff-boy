@@ -19,6 +19,7 @@ impl Apu {
         self.ch1_just_reloaded = false;
         self.ch2_just_reloaded = false;
         self.ch1_sweep_pending_disable_delay = 0;
+        self.ch1_sweep_trigger_visibility_delay = 0;
         self.div_apu_phase_high = false;
 
         for channel in &mut self.channels {
@@ -58,6 +59,7 @@ impl Apu {
         self.ch1_just_reloaded = false;
         self.ch2_just_reloaded = false;
         self.ch1_sweep_pending_disable_delay = 0;
+        self.ch1_sweep_trigger_visibility_delay = 0;
         self.div_apu_phase_high = false;
         for channel in &mut self.channels {
             channel.envelope_zero_period_arm = false;
@@ -139,6 +141,7 @@ impl Apu {
         apu.ch1_just_reloaded = false;
         apu.ch2_just_reloaded = false;
         apu.ch1_sweep_pending_disable_delay = 0;
+        apu.ch1_sweep_trigger_visibility_delay = 0;
         apu.div_apu_phase_high = false;
 
         apu.sample_buffer.clear();

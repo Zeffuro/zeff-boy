@@ -101,7 +101,7 @@ impl Cpu {
                 let carry_in = u32::from(old_carry);
                 let (s1, c1) = lhs.overflowing_add(rhs);
                 let (s2, c2) = s1.overflowing_add(carry_in);
-                (s2, true, Some((c1 || c2, add_overflow(lhs, rhs, s1))))
+                (s2, true, Some((c1 || c2, add_overflow(lhs, rhs, s2))))
             }
             0x6 => {
                 let rhs2 = rhs.wrapping_add(u32::from(!old_carry));
@@ -266,7 +266,7 @@ impl Cpu {
         let rd = ((raw >> 8) & 0x7) as usize;
         let addr = self.regs[13].wrapping_add(u32::from(raw & 0xFF) << 2);
         if load {
-            self.regs[rd] = self.cpu_read32(bus, addr);
+            self.regs[rd] = rotate_right(self.cpu_read32(bus, addr), (addr & 3) * 8);
         } else {
             bus.write32(addr, self.regs[rd]);
         }
@@ -334,11 +334,13 @@ impl Cpu {
             if load {
                 self.write_reg(15, self.cpu_read32(bus, addr), true);
             } else {
-                bus.write32(addr, self.regs[15].wrapping_add(2));
+                bus.write32(addr, self.regs[15].wrapping_add(4));
             }
             self.regs[rb] = self.regs[rb].wrapping_add(0x40);
             return;
         }
+        let final_addr = addr.wrapping_add(4 * list.count_ones());
+        let base_is_first_stored_reg = list & ((1 << rb) - 1) == 0;
         for reg in 0..8 {
             if list & (1 << reg) == 0 {
                 continue;
@@ -346,7 +348,12 @@ impl Cpu {
             if load {
                 self.regs[reg] = self.cpu_read32(bus, addr);
             } else {
-                bus.write32(addr, self.regs[reg]);
+                let value = if reg == rb && !base_is_first_stored_reg {
+                    final_addr
+                } else {
+                    self.regs[reg]
+                };
+                bus.write32(addr, value);
             }
             addr = addr.wrapping_add(4);
         }

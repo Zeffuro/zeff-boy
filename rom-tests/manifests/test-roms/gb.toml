@@ -1,0 +1,98 @@
+manifest_version = 1
+
+[suite]
+id = "gb-initial-smoke"
+name = "GB/GBC initial smoke and local accuracy set"
+core = "gb"
+upstream_url = "https://github.com/c-sp/gameboy-test-roms"
+license = "mixed; see per-test artifact metadata"
+
+[[tests]]
+id = "gb/mooneye/acceptance/bits/reg_f"
+core = "gb"
+tier = "smoke"
+model = "dmg"
+max_frames = 7200
+tags = ["gb", "mooneye", "cpu", "flags"]
+notes = "Mooneye pass protocol: LD B,B stop with Fibonacci registers."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/Gekkio/mooneye-test-suite"
+source_version = "c-sp/game-boy-test-roms v7.0"
+source_id = "c-sp-game-boy-test-roms-v7.0"
+
+[tests.rom]
+path = "rom-tests/cache/gb/mooneye-test-suite/acceptance/bits/reg_f.gb"
+sha256 = "0eeaab1343a7f85eef2a1364c849cf244dd76d4e19e25f41defdff95f46febe4"
+archive_path = "mooneye-test-suite/acceptance/bits/reg_f.gb"
+legacy_paths = ["test-roms/Lots/mooneye-test-suite/acceptance/bits/reg_f.gb"]
+
+[tests.pass]
+kind = "gb_fibonacci_ld_b_b"
+
+[tests.expectation]
+kind = "pass"
+
+[[tests]]
+id = "gb/mooneye/acceptance/timer/div_write"
+core = "gb"
+tier = "smoke"
+model = "dmg"
+max_frames = 7200
+tags = ["gb", "mooneye", "timer"]
+notes = "Mooneye pass protocol: LD B,B stop with Fibonacci registers."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/Gekkio/mooneye-test-suite"
+source_version = "c-sp/game-boy-test-roms v7.0"
+source_id = "c-sp-game-boy-test-roms-v7.0"
+
+[tests.rom]
+path = "rom-tests/cache/gb/mooneye-test-suite/acceptance/timer/div_write.gb"
+sha256 = "b647f603c71d942a5c4ab92e6d2336af3fd9729e95a845b1561bd8e7c06163b5"
+archive_path = "mooneye-test-suite/acceptance/timer/div_write.gb"
+legacy_paths = ["test-roms/Lots/mooneye-test-suite/acceptance/timer/div_write.gb"]
+
+[tests.pass]
+kind = "gb_fibonacci_ld_b_b"
+
+[tests.expectation]
+kind = "pass"
+
+[[tests]]
+id = "gb/samesuite/apu/channel_1_freq_change"
+core = "gb"
+tier = "accuracy"
+model = "cgb"
+max_frames = 7200
+tags = ["gb", "samesuite", "apu", "channel1"]
+notes = "SameSuite APU tests other than div_write_trigger/div_write_trigger_10 are CGB-focused."
+
+[tests.artifact]
+kind = "test_rom"
+license = "X11/MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/LIJI32/SameSuite"
+source_version = "c-sp/game-boy-test-roms v7.0"
+source_id = "c-sp-game-boy-test-roms-v7.0"
+
+[tests.rom]
+path = "rom-tests/cache/gb/same-suite/apu/channel_1/channel_1_freq_change.gb"
+sha256 = "144da4f576e67157f140a5d371c9d4db70298cd2e9a75dff29f60626b0eb93ce"
+archive_path = "same-suite/apu/channel_1/channel_1_freq_change.gb"
+legacy_paths = ["test-roms/Lots/same-suite/apu/channel_1/channel_1_freq_change.gb"]
+
+[tests.pass]
+kind = "gb_fibonacci_ld_b_b"
+
+[tests.expectation]
+kind = "pass"

@@ -61,11 +61,9 @@ impl Cpu {
             }
 
             self.running = CpuState::Running;
-            if self.ime == ImeState::Enabled {
-                if self.handle_interrupts(bus) {
-                    self.commit_step_cycles();
-                    return;
-                }
+            if self.ime == ImeState::Enabled && self.handle_interrupts(bus) {
+                self.commit_step_cycles();
+                return;
             }
         } else if self.ime == ImeState::Enabled
             && bus.pending_interrupts_for_cpu() != 0

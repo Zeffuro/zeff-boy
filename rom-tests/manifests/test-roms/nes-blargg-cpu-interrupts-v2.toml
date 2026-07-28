@@ -1,0 +1,59 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/cpu_interrupts_v2/rom_singles"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "interrupts"]
+notes = "Local-only interrupt timing tests. Known-fail entries document current NES interrupt/DMA timing gaps."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "2-nmi_and_brk"
+archive_path = "nes-test-roms/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
+sha256 = "6e6bf6205930afcfebdc213c583df53986a688a8b36f8856b805ef4c1853e6eb"
+legacy_paths = ["test-roms/nes-test-roms/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"]
+expectation = { kind = "known_fail", reason = "Current NES core fails blargg cpu_interrupts_v2/2-nmi_and_brk with status=01." }
+
+[[test_groups.roms]]
+id = "3-nmi_and_irq"
+archive_path = "nes-test-roms/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
+sha256 = "3008a9524d174a8aca562ff0361eba81da53e38cf1ebb5125322fe151f14d945"
+legacy_paths = ["test-roms/nes-test-roms/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"]
+expectation = { kind = "known_fail", reason = "Current NES core fails blargg cpu_interrupts_v2/3-nmi_and_irq with status=01." }
+
+[[test_groups.roms]]
+id = "4-irq_and_dma"
+archive_path = "nes-test-roms/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
+sha256 = "6d7b4c1947ada64679af56cf0c227286b2408afe1747dfaa4dc7363d57ff87f6"
+legacy_paths = ["test-roms/nes-test-roms/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"]
+expectation = { kind = "known_fail", reason = "Current NES core fails blargg cpu_interrupts_v2/4-irq_and_dma with status=01." }
+
+[[test_groups.roms]]
+id = "5-branch_delays_irq"
+archive_path = "nes-test-roms/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"
+sha256 = "f9e10b4a24d8f3cd3e51fb7457c72858aab96a6467fdbbd806d0661c2d32fdc7"
+legacy_paths = ["test-roms/nes-test-roms/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"]
+expectation = { kind = "known_fail", reason = "Current NES core fails blargg cpu_interrupts_v2/5-branch_delays_irq with status=01." }

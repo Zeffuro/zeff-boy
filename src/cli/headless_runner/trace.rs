@@ -81,12 +81,12 @@ pub(super) fn should_trace_nes_bus_event(opts: &HeadlessOptions, event: NesBusTr
     opts.trace_bus_filters.iter().any(|filter| {
         u64::from(addr) >= filter.start_addr
             && u64::from(addr) <= filter.end_addr
-            && match (filter.access, is_read) {
-                (HeadlessBusTraceAccess::ReadWrite, _) => true,
-                (HeadlessBusTraceAccess::Read, true) => true,
-                (HeadlessBusTraceAccess::Write, false) => true,
-                _ => false,
-            }
+            && matches!(
+                (filter.access, is_read),
+                (HeadlessBusTraceAccess::ReadWrite, _)
+                    | (HeadlessBusTraceAccess::Read, true)
+                    | (HeadlessBusTraceAccess::Write, false)
+            )
     })
 }
 
@@ -99,12 +99,12 @@ pub(super) fn should_trace_gba_bus_event(opts: &HeadlessOptions, event: GbaBusTr
     opts.trace_bus_filters.iter().any(|filter| {
         u64::from(addr) >= filter.start_addr
             && u64::from(addr) <= filter.end_addr
-            && match (filter.access, is_read) {
-                (HeadlessBusTraceAccess::ReadWrite, _) => true,
-                (HeadlessBusTraceAccess::Read, true) => true,
-                (HeadlessBusTraceAccess::Write, false) => true,
-                _ => false,
-            }
+            && matches!(
+                (filter.access, is_read),
+                (HeadlessBusTraceAccess::ReadWrite, _)
+                    | (HeadlessBusTraceAccess::Read, true)
+                    | (HeadlessBusTraceAccess::Write, false)
+            )
     })
 }
 

@@ -129,6 +129,7 @@ fn windows_enabled(dispcnt: u16) -> bool {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum ObjWindowMask {
     Disabled,
     Full(Vec<bool>),
@@ -215,10 +216,10 @@ fn visit_obj_window_pixels(
             if !(0..SCREEN_HEIGHT as i32).contains(&screen_y) {
                 continue;
             }
-            if let Some(line_y) = line_y {
-                if screen_y as usize != line_y {
-                    continue;
-                }
+            if let Some(line_y) = line_y
+                && screen_y as usize != line_y
+            {
+                continue;
             }
             for px in 0..draw_width {
                 let screen_x = x + px as i32;

@@ -25,6 +25,9 @@ const BANK_SUPERVISOR: usize = 3;
 const BANK_ABORT: usize = 4;
 const BANK_UNDEFINED: usize = 5;
 const CPU_BANKS: usize = 6;
+const R8_R12_USER_SYSTEM_BANK: usize = 0;
+const R8_R12_FIQ_BANK: usize = 1;
+const R8_R12_BANKS: usize = 2;
 const PREFETCH_QUEUE_LEN: usize = 2;
 const BIOS_END: u32 = 0x0000_3FFF;
 const POST_STARTUP_BIOS_READ_LATCH: u32 = 0xE129_F000;
@@ -101,6 +104,14 @@ fn bank_index(mode: CpuMode) -> usize {
     }
 }
 
+fn r8_r12_bank_index(mode: CpuMode) -> usize {
+    if matches!(mode, CpuMode::Fiq) {
+        R8_R12_FIQ_BANK
+    } else {
+        R8_R12_USER_SYSTEM_BANK
+    }
+}
+
 fn mode_has_spsr(mode: CpuMode) -> bool {
     matches!(
         mode,
@@ -124,6 +135,7 @@ pub struct Cpu {
     pub(crate) banked_sp: [u32; CPU_BANKS],
     pub(crate) banked_lr: [u32; CPU_BANKS],
     pub(crate) banked_spsr: [u32; CPU_BANKS],
+    pub(crate) banked_r8_r12: [[u32; 5]; R8_R12_BANKS],
 }
 
 impl Default for Cpu {
@@ -149,6 +161,7 @@ impl Cpu {
             banked_sp: [0; CPU_BANKS],
             banked_lr: [0; CPU_BANKS],
             banked_spsr: [0; CPU_BANKS],
+            banked_r8_r12: [[0; 5]; R8_R12_BANKS],
         }
     }
 
@@ -202,6 +215,8 @@ impl Cpu {
 
     pub(crate) fn sync_active_bank(&mut self) {
         let bank = bank_index(self.mode());
+        let r8_bank = r8_r12_bank_index(self.mode());
+        self.banked_r8_r12[r8_bank].copy_from_slice(&self.regs[8..13]);
         self.banked_sp[bank] = self.regs[13];
         self.banked_lr[bank] = self.regs[14];
         if mode_has_spsr(self.mode()) {
@@ -211,6 +226,8 @@ impl Cpu {
 
     fn load_active_bank(&mut self) {
         let bank = bank_index(self.mode());
+        let r8_bank = r8_r12_bank_index(self.mode());
+        self.regs[8..13].copy_from_slice(&self.banked_r8_r12[r8_bank]);
         self.regs[13] = self.banked_sp[bank];
         self.regs[14] = self.banked_lr[bank];
         self.spsr = if mode_has_spsr(self.mode()) {

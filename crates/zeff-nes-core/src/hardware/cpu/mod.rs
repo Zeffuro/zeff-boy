@@ -74,13 +74,38 @@ impl Cpu {
         }
     }
 
+    pub fn power_on(&mut self, bus: &mut Bus) {
+        self.load_reset_vector(bus);
+        self.finish_reset();
+    }
+
     pub fn reset(&mut self, bus: &mut Bus) {
+        self.load_reset_vector(bus);
+        self.sp = self.sp.wrapping_sub(3);
+        self.finish_reset();
+    }
+
+    fn load_reset_vector(&mut self, bus: &mut Bus) {
         let lo = bus.cpu_read(RESET_VECTOR_LO) as u16;
         let hi = bus.cpu_read(RESET_VECTOR_HI) as u16;
         self.pc = (hi << 8) | lo;
-        self.sp = self.sp.wrapping_sub(3);
+    }
+
+    fn finish_reset(&mut self) {
         self.regs.set_flag(StatusFlags::INTERRUPT, true);
+        self.state = CpuState::Running;
         self.cycles = 7;
+        self.last_step_cycles = 0;
+        self.nmi_pending = false;
+        self.irq_line = false;
+        self.nmi_poll_delay = 0;
+        self.irq_inhibit_delay = 0;
+        self.irq_inhibit_before_delay = self.regs.get_flag(StatusFlags::INTERRUPT);
+        self.irq_poll_delay = 0;
+        self.last_step_kind = CpuStepKind::Idle;
+        self.last_step_branch_taken_same_page = false;
+        self.last_opcode = 0;
+        self.last_opcode_pc = self.pc;
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u64 {

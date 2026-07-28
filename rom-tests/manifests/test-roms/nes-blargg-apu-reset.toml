@@ -1,0 +1,67 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/apu_reset"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "apu", "reset"]
+notes = "Local-only APU reset tests. The runner handles blargg scripted reset requests."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "4015_cleared"
+archive_path = "nes-test-roms/apu_reset/4015_cleared.nes"
+sha256 = "ef83bc2831f0ddb9e563ac5cbcfa21b129f092911ef42adabae7d47b3e990d95"
+legacy_paths = ["test-roms/nes-test-roms/apu_reset/4015_cleared.nes"]
+
+[[test_groups.roms]]
+id = "4017_timing"
+archive_path = "nes-test-roms/apu_reset/4017_timing.nes"
+sha256 = "0e6072c6dcee98fb73dc7f3af2e48face78be300e8510515ed48dc75d15c1f13"
+legacy_paths = ["test-roms/nes-test-roms/apu_reset/4017_timing.nes"]
+
+[[test_groups.roms]]
+id = "4017_written"
+archive_path = "nes-test-roms/apu_reset/4017_written.nes"
+sha256 = "022bd3b45a733179d9a0a9bf0311d09ca81419d7e7434e6f559e42650b39616b"
+legacy_paths = ["test-roms/nes-test-roms/apu_reset/4017_written.nes"]
+
+[[test_groups.roms]]
+id = "irq_flag_cleared"
+archive_path = "nes-test-roms/apu_reset/irq_flag_cleared.nes"
+sha256 = "e2435b213bf21065b7c9c645359500c1c860a7395d12d051232ab14dad1b0bb5"
+legacy_paths = ["test-roms/nes-test-roms/apu_reset/irq_flag_cleared.nes"]
+
+[[test_groups.roms]]
+id = "len_ctrs_enabled"
+archive_path = "nes-test-roms/apu_reset/len_ctrs_enabled.nes"
+sha256 = "e05546cbfaa1414d9193b0212084b324ea6b13130af5f171a34c9e574f5ac373"
+legacy_paths = ["test-roms/nes-test-roms/apu_reset/len_ctrs_enabled.nes"]
+
+[[test_groups.roms]]
+id = "works_immediately"
+archive_path = "nes-test-roms/apu_reset/works_immediately.nes"
+sha256 = "c750113762ee375319b1bfbf65c457875dbb194649d7e7b3594fba38eb8eefa1"
+legacy_paths = ["test-roms/nes-test-roms/apu_reset/works_immediately.nes"]

@@ -52,6 +52,54 @@ run-minimal rom:
 test:
     cargo test --workspace
 
+# List configured emulator accuracy test ROMs. ROM binaries stay out of git.
+romtest-list:
+    cargo run -p zeff-romtest -- list
+
+# Validate emulator accuracy test manifests without running ROMs.
+romtest-check:
+    cargo run -p zeff-romtest -- check
+
+# Populate the ignored canonical ROM cache from known local legacy paths.
+romtest-prepare:
+    cargo run -p zeff-romtest -- prepare
+
+# Download verified public test ROM sources and extract selected clone-friendly entries.
+romtest-fetch:
+    cargo run -p zeff-romtest -- fetch --exclude-tier local
+
+# Run fast emulator accuracy smoke tests from local ignored ROM cache.
+romtest-smoke:
+    cargo run -p zeff-romtest -- run --tier smoke --report-json rom-tests/results/smoke.json --report-md rom-tests/results/smoke.md --report-junit rom-tests/results/smoke.junit.xml --report-baseline rom-tests/results/smoke.baseline.json
+
+# Run clone-friendly configured emulator accuracy tests. Local-only ROMs are excluded.
+romtest-run:
+    cargo run -p zeff-romtest -- run --exclude-tier local --report-json rom-tests/results/current.json --report-md rom-tests/results/current.md --report-junit rom-tests/results/current.junit.xml --report-baseline rom-tests/results/current.baseline.json
+
+# Regenerate the committed clone-friendly ROM test baseline. Review this diff before committing.
+romtest-baseline:
+    cargo run -p zeff-romtest -- run --exclude-tier local --report-json rom-tests/results/current.json --report-md rom-tests/results/current.md --report-junit rom-tests/results/current.junit.xml --report-baseline rom-tests/baselines/current.json
+
+# Run local-only ROM tests from ignored local caches.
+romtest-run-local:
+    cargo run -p zeff-romtest -- run --tier local --report-json rom-tests/results/local.json --report-md rom-tests/results/local.md --report-junit rom-tests/results/local.junit.xml --report-baseline rom-tests/results/local.baseline.json
+
+# Regenerate the committed local-only ROM test baseline. Requires local ROM cache.
+romtest-baseline-local:
+    cargo run -p zeff-romtest -- run --tier local --report-json rom-tests/results/local.json --report-md rom-tests/results/local.md --report-junit rom-tests/results/local.junit.xml --report-baseline rom-tests/baselines/local.json
+
+# Compare a run JSON report against a curated baseline.
+romtest-compare baseline="rom-tests/baselines/current.json" actual="rom-tests/results/current.json":
+    cargo run -p zeff-romtest -- compare --baseline "{{baseline}}" --actual-json "{{actual}}"
+
+# Print status/coverage/suite tables from the committed ROM test baseline.
+romtest-status baseline="rom-tests/baselines/current.json":
+    cargo run -p zeff-romtest -- status --baseline "{{baseline}}"
+
+# Print status/coverage/suite tables from the committed local-only ROM test baseline.
+romtest-status-local baseline="rom-tests/baselines/local.json":
+    cargo run -p zeff-romtest -- status --baseline "{{baseline}}"
+
 # Run all tests with nextest (parallel, isolated)
 test-nextest:
     cargo nextest run --workspace

@@ -1,0 +1,62 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[tests]]
+id = "nes/blargg/instr_test_v5/official_only"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "instructions"]
+notes = "Useful local test, but kept out of smoke because redistribution/license status needs verification."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[tests.rom]
+path = "rom-tests/cache/nes/nes-test-roms/instr_test-v5/official_only.nes"
+sha256 = "589b8835deb5cbc69618dac193a3dbd675540f7f2794e2d2a92e97beb8abc3cb"
+legacy_paths = ["test-roms/nes-test-roms/instr_test-v5/official_only.nes"]
+
+[tests.pass]
+kind = "nes_6000_status"
+
+[tests.expectation]
+kind = "pass"
+
+[[tests]]
+id = "nes/blargg/cpu_interrupts_v2/1_cli_latency"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "interrupts"]
+notes = "Useful local test, but kept out of smoke because redistribution/license status needs verification."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[tests.rom]
+path = "rom-tests/cache/nes/nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
+sha256 = "e402d36118f77dcbbe8ddca90c15fc76a46bcb30b25cb028c383e4a621de5fc0"
+legacy_paths = ["test-roms/nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"]
+
+[tests.pass]
+kind = "nes_6000_status"
+
+[tests.expectation]
+kind = "pass"

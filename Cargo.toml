@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/zeff-emu-common", "crates/zeff-gb-core", "crates/zeff-gba-core", "crates/zeff-nes-core", "crates/zeff-libretro"]
+members = [
+    "crates/zeff-emu-common",
+    "crates/zeff-gb-core",
+    "crates/zeff-gba-core",
+    "crates/zeff-nes-core",
+    "crates/zeff-libretro",
+    "crates/zeff-romtest",
+]
 exclude = ["fuzz"]
 
 [features]

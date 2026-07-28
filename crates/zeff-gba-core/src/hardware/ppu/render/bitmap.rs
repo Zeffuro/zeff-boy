@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use super::effects::{ColorEffects, Layer, Mosaic};
 use super::window::Windows;
 use super::{draw_bg_color, draw_bg_color_line, read_le16};

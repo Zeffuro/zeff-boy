@@ -1,0 +1,218 @@
+manifest_version = 1
+
+[suite]
+id = "gb-mooneye-accuracy"
+name = "GB Mooneye accuracy batch"
+core = "gb"
+upstream_url = "https://github.com/Gekkio/mooneye-test-suite"
+license = "MIT"
+
+[[test_groups]]
+id_prefix = "gb/mooneye"
+cache_prefix = "rom-tests/cache/gb"
+core = "gb"
+tier = "accuracy"
+model = "dmg"
+max_frames = 7200
+tags = ["gb", "mooneye", "acceptance"]
+notes = "Mooneye pass protocol: LD B,B stop with Fibonacci registers."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/Gekkio/mooneye-test-suite"
+source_version = "c-sp/game-boy-test-roms v7.0"
+source_id = "c-sp-game-boy-test-roms-v7.0"
+
+[test_groups.pass]
+kind = "gb_fibonacci_ld_b_b"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "acceptance/reti_timing"
+archive_path = "mooneye-test-suite/acceptance/reti_timing.gb"
+sha256 = "c9f2d36b5c1641c1e498599362dd4ef2d06adb9ebc07a9cd95b0a7515864a8ec"
+
+[[test_groups.roms]]
+id = "acceptance/reti_intr_timing"
+archive_path = "mooneye-test-suite/acceptance/reti_intr_timing.gb"
+sha256 = "1ee8d500795dfb053233aa70493ccab8cf585558eb864b0debe45621f1411de9"
+
+[[test_groups.roms]]
+id = "acceptance/ret_timing"
+archive_path = "mooneye-test-suite/acceptance/ret_timing.gb"
+sha256 = "6a481b276197f99d2189c4883ec8bdb39b6f9209e44fe982f3b7eea4a88b51f0"
+
+[[test_groups.roms]]
+id = "acceptance/rapid_di_ei"
+archive_path = "mooneye-test-suite/acceptance/rapid_di_ei.gb"
+sha256 = "25d931e2c859a5fb2fc3ec1979ac824ef5eb9f5f9f08833f03bc932b282d4c2d"
+
+[[test_groups.roms]]
+id = "acceptance/bits/mem_oam"
+archive_path = "mooneye-test-suite/acceptance/bits/mem_oam.gb"
+sha256 = "0cfccd002d873a1c9cc0f9317b9e23d97b2b47d151cb413d0deb3d65e5666cae"
+
+[[test_groups.roms]]
+id = "acceptance/ei_sequence"
+archive_path = "mooneye-test-suite/acceptance/ei_sequence.gb"
+sha256 = "307214288a36c73feac8cbbf242cc282eaf58df4a93e21244d4389ba9bf508ab"
+
+[[test_groups.roms]]
+id = "acceptance/oam_dma_start"
+archive_path = "mooneye-test-suite/acceptance/oam_dma_start.gb"
+sha256 = "03ea63cc5f90888184a2e0e0dfe8c595b6196a49989993c5e1f7a00266fe2c02"
+
+[[test_groups.roms]]
+id = "acceptance/halt_ime0_ei"
+archive_path = "mooneye-test-suite/acceptance/halt_ime0_ei.gb"
+sha256 = "8959f1d31e0552baa4c3a8efff686ffc7a94e889e30c46e87a0c33f8f3f59172"
+
+[[test_groups.roms]]
+id = "acceptance/call_cc_timing"
+archive_path = "mooneye-test-suite/acceptance/call_cc_timing.gb"
+sha256 = "29255bd13b3104e9dbe40eaef74f5a7eb84e01acd33c3c47ccf66a88ab00f535"
+
+[[test_groups.roms]]
+id = "acceptance/ei_timing"
+archive_path = "mooneye-test-suite/acceptance/ei_timing.gb"
+sha256 = "285929da5ca1268156bdfe5da2204d5fc6c2e9119fb5c2ead13b5780f73b2ee2"
+
+[[test_groups.roms]]
+id = "acceptance/ret_cc_timing"
+archive_path = "mooneye-test-suite/acceptance/ret_cc_timing.gb"
+sha256 = "833aa0c5e5c93695291936173b7a4f18165dd178ca36262f24476751e6aff17f"
+
+[[test_groups.roms]]
+id = "acceptance/halt_ime0_nointr_timing"
+archive_path = "mooneye-test-suite/acceptance/halt_ime0_nointr_timing.gb"
+sha256 = "34073e22bb26c0e1f4705d43394f6e0eda95bbff7706884b8ba48e0fe8e63f8b"
+
+[[test_groups.roms]]
+id = "acceptance/halt_ime1_timing"
+archive_path = "mooneye-test-suite/acceptance/halt_ime1_timing.gb"
+sha256 = "3492099da389311f7a07f6de764da4ae9cef8e3fe0b7fb39878dc47d05a8f4cb"
+
+[[test_groups.roms]]
+id = "acceptance/div_timing"
+archive_path = "mooneye-test-suite/acceptance/div_timing.gb"
+sha256 = "26d6c1e66750b56b894131898bc896fc9fe56aa2a46199bcc6514e658cd996bd"
+
+[[test_groups.roms]]
+id = "acceptance/jp_cc_timing"
+archive_path = "mooneye-test-suite/acceptance/jp_cc_timing.gb"
+sha256 = "849882b90083162964e9876d8286efe46de30849fdc8db0929d44bccc1a52fca"
+
+[[test_groups.roms]]
+id = "acceptance/call_timing"
+archive_path = "mooneye-test-suite/acceptance/call_timing.gb"
+sha256 = "85fd265448e8362adc60daf6f1c891abe5fe53f3ee095eff8ef1c08fb4d59ab8"
+
+[[test_groups.roms]]
+id = "acceptance/add_sp_e_timing"
+archive_path = "mooneye-test-suite/acceptance/add_sp_e_timing.gb"
+sha256 = "93d45e0ba554fcb66b8612e34b9c7dcd2a7a4683fef291481a0242ba25ce26d4"
+
+[[test_groups.roms]]
+id = "acceptance/call_cc_timing2"
+archive_path = "mooneye-test-suite/acceptance/call_cc_timing2.gb"
+sha256 = "6fca59e6ee031b5ab531d6b984fa4b1be5064f22aa0c9a85f8efbf705ca42b91"
+
+[[test_groups.roms]]
+id = "acceptance/call_timing2"
+archive_path = "mooneye-test-suite/acceptance/call_timing2.gb"
+sha256 = "5a2e8c848e461ddd3922830767e59a9f9f24628ff910e9c48e5b5e6b776aaff1"
+
+[[test_groups.roms]]
+id = "acceptance/instr/daa"
+archive_path = "mooneye-test-suite/acceptance/instr/daa.gb"
+sha256 = "d01e4e7124471bfe3f4773fe20dd27167f8933ef473c43f063cc76170c9c962e"
+
+[[test_groups.roms]]
+id = "acceptance/jp_timing"
+archive_path = "mooneye-test-suite/acceptance/jp_timing.gb"
+sha256 = "3d6e4cefe7fff78eabc14f9f8c331928bf82207c07bed830558679b6fa3388da"
+
+[[test_groups.roms]]
+id = "acceptance/push_timing"
+archive_path = "mooneye-test-suite/acceptance/push_timing.gb"
+sha256 = "956fca98e4a768da4760b732fe8f5ce55f5ddd317a2429b3ca3347f014a2424c"
+
+[[test_groups.roms]]
+id = "acceptance/pop_timing"
+archive_path = "mooneye-test-suite/acceptance/pop_timing.gb"
+sha256 = "f5aae636e7bf15fd8f88609f3c2f030a85b42561ef82e5c16126ec75f76b551e"
+
+[[test_groups.roms]]
+id = "acceptance/ld_hl_sp_e_timing"
+archive_path = "mooneye-test-suite/acceptance/ld_hl_sp_e_timing.gb"
+sha256 = "b0781b501db9cf98f7af46e37753608104fe02bfe7279ac1f7ab404e1ee25c50"
+
+[[test_groups.roms]]
+id = "acceptance/intr_timing"
+archive_path = "mooneye-test-suite/acceptance/intr_timing.gb"
+sha256 = "fdcd2f8d98f26d895f8a17c9468cd5829e5bab4acb11cf053f4ed8edc1f07786"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim00"
+archive_path = "mooneye-test-suite/acceptance/timer/tim00.gb"
+sha256 = "44986744a87a85580c0113a04f014ca6c91eb5a3f26fceb9ca411bdd8044c45f"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim01"
+archive_path = "mooneye-test-suite/acceptance/timer/tim01.gb"
+sha256 = "7d779278591dfa24db661fada5b99e21e0d3dcfbe2ba3b2b3a0343db367fdfc0"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim10"
+archive_path = "mooneye-test-suite/acceptance/timer/tim10.gb"
+sha256 = "99d1c44d744ea2250d1846673de16273fecc2243760c0be9653c5561fa4f1995"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim11"
+archive_path = "mooneye-test-suite/acceptance/timer/tim11.gb"
+sha256 = "cc2585b8f161f6ce2a0519fd70e85d84cf792cdacf1a7d86eb244afaa473a3d5"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tima_reload"
+archive_path = "mooneye-test-suite/acceptance/timer/tima_reload.gb"
+sha256 = "1999c25db46f28570e23d4cb019bf0e6f5814a947a5a358e7dc25baa52c49f96"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tima_write_reloading"
+archive_path = "mooneye-test-suite/acceptance/timer/tima_write_reloading.gb"
+sha256 = "43d7331b6914d59b6692ad9ea2db18741c80d1b666c1386003f63b64a2488bf3"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tma_write_reloading"
+archive_path = "mooneye-test-suite/acceptance/timer/tma_write_reloading.gb"
+sha256 = "81ef3e9a375993bb3615a6c2788e8003507be1b9c58a61f629b87706c354ea6d"
+
+[[test_groups.roms]]
+id = "acceptance/timer/rapid_toggle"
+archive_path = "mooneye-test-suite/acceptance/timer/rapid_toggle.gb"
+sha256 = "6b3595a303447eb93220e7ab97966df2f43c7911627b84ec477d79d25e8c38ec"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim00_div_trigger"
+archive_path = "mooneye-test-suite/acceptance/timer/tim00_div_trigger.gb"
+sha256 = "8dfe42b6bc78b64aaafe0e1eab10e8c4c487e25285d0419b1485b2e9e0094cc4"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim01_div_trigger"
+archive_path = "mooneye-test-suite/acceptance/timer/tim01_div_trigger.gb"
+sha256 = "d65804dcaaaeb907002cd5cdec1ecbec3edc1e7e1d95323ae306ba9a5bacb7ce"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim10_div_trigger"
+archive_path = "mooneye-test-suite/acceptance/timer/tim10_div_trigger.gb"
+sha256 = "f0d16cccfde31a51758d68c261c7b72529c0c1143e6ddb3423d50a0ba4c45de1"
+
+[[test_groups.roms]]
+id = "acceptance/timer/tim11_div_trigger"
+archive_path = "mooneye-test-suite/acceptance/timer/tim11_div_trigger.gb"
+sha256 = "14982050eb7713c149841dfd91c6d733821e1dcfb3b1c7c6fbc14e17f692821b"

@@ -1,0 +1,41 @@
+catalog_version = 1
+
+[[sources]]
+id = "c-sp-game-boy-test-roms-v7.0"
+kind = "zip"
+url = "https://github.com/c-sp/game-boy-test-roms/releases/download/v7.0/game-boy-test-roms-v7.0.zip"
+sha256 = "b9a9d7a1075aa35a3d07c07c34974048672d8520dca9e07a50178f5860c3832c"
+license = "MIT collection; individual included suites retain their own notices"
+license_confidence = "collection_verified"
+redistributable = false
+notes = "Pinned c-sp Game Boy test ROM collection release. The archive is downloaded into the ignored source cache and selected ROMs are extracted into rom-tests/cache/."
+
+[[sources]]
+id = "jsmolka-gba-tests-arm-a7113b67"
+kind = "file"
+url = "https://raw.githubusercontent.com/jsmolka/gba-tests/a7113b67e63f83a9b321696ddd7042ccfad6c881/arm/arm.gba"
+sha256 = "77ee88662552bdc885c1080c0172ff119d54db791bd73b21808cf1ff1fe5b40e"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned raw built ARM test ROM from jsmolka/gba-tests commit a7113b67e63f83a9b321696ddd7042ccfad6c881."
+
+[[sources]]
+id = "jsmolka-gba-tests-thumb-a7113b67"
+kind = "file"
+url = "https://raw.githubusercontent.com/jsmolka/gba-tests/a7113b67e63f83a9b321696ddd7042ccfad6c881/thumb/thumb.gba"
+sha256 = "b5cb2291df4ab314b31c598acd9bff2ccfa0b38efff29daadfe97422ce369b67"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned raw built THUMB test ROM from jsmolka/gba-tests commit a7113b67e63f83a9b321696ddd7042ccfad6c881."
+
+[[sources]]
+id = "jsmolka-gba-tests-memory-a7113b67"
+kind = "file"
+url = "https://raw.githubusercontent.com/jsmolka/gba-tests/a7113b67e63f83a9b321696ddd7042ccfad6c881/memory/memory.gba"
+sha256 = "21024fb6aae6343f5f0466dd54e3149de1fbeb23f78e7d85a015c983684d2f87"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned raw built memory test ROM from jsmolka/gba-tests commit a7113b67e63f83a9b321696ddd7042ccfad6c881."

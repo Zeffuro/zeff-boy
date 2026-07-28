@@ -117,7 +117,7 @@ impl PPU {
 
         let mut penalty = 0u64;
         let mut bucket_stalls = [0u8; 22];
-        if selected.iter().any(|&x| x == 0) {
+        if selected.contains(&0) {
             penalty += u64::from(scx);
         }
 

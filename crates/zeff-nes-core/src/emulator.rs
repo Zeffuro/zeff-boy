@@ -34,13 +34,12 @@ impl Emulator {
             opcode_log: crate::debug::OpcodeLog::new(),
             debug: crate::debug::DebugController::new(),
         };
-        emu.reset();
+        emu.cpu.power_on(&mut emu.bus);
         Ok(emu)
     }
 
     pub fn reset(&mut self) {
         self.bus.reset();
-        self.cpu = Cpu::new();
         self.cpu.reset(&mut self.bus);
         self.opcode_log.clear();
         self.debug.clear_hits();
@@ -375,5 +374,60 @@ impl fmt::Debug for Emulator {
             .field("opcode_log", &self.opcode_log)
             .field("debug", &self.debug)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::cpu::StatusFlags;
+
+    fn build_test_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[5] = 1;
+        let prg = 16;
+        rom[prg] = 0xEA;
+        rom[prg + 0x3FFC] = 0x00;
+        rom[prg + 0x3FFD] = 0x80;
+        rom
+    }
+
+    #[test]
+    fn new_uses_power_on_reset_without_stack_adjust() {
+        let emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+
+        assert_eq!(emu.cpu.pc, 0x8000);
+        assert_eq!(emu.cpu.sp, 0xFD);
+        assert_eq!(emu.cpu.regs.a, 0);
+        assert_eq!(emu.cpu.regs.x, 0);
+        assert_eq!(emu.cpu.regs.y, 0);
+        assert_eq!(emu.cpu.regs.p.bits(), 0x24);
+    }
+
+    #[test]
+    fn reset_preserves_cpu_registers_and_decrements_stack() {
+        let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+        emu.cpu.regs.a = 0x34;
+        emu.cpu.regs.x = 0x56;
+        emu.cpu.regs.y = 0x78;
+        emu.cpu.regs.p = StatusFlags::from_bits_truncate(0xFB);
+        emu.cpu.sp = 0x12;
+        emu.bus.ram[0x110] = 0xBC;
+        emu.bus.ram[0x111] = 0x9A;
+        emu.bus.ram[0x112] = 0xFB;
+
+        emu.reset();
+
+        assert_eq!(emu.cpu.pc, 0x8000);
+        assert_eq!(emu.cpu.regs.a, 0x34);
+        assert_eq!(emu.cpu.regs.x, 0x56);
+        assert_eq!(emu.cpu.regs.y, 0x78);
+        assert_eq!(emu.cpu.regs.p.bits(), 0xFF);
+        assert_eq!(emu.cpu.sp, 0x0F);
+        assert_eq!(emu.bus.ram[0x110], 0xBC);
+        assert_eq!(emu.bus.ram[0x111], 0x9A);
+        assert_eq!(emu.bus.ram[0x112], 0xFB);
     }
 }

@@ -11,7 +11,7 @@ use crate::hardware::dma::{DmaChannel, DmaController};
 use crate::hardware::timer::{Timer, Timers};
 
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
 const MAX_FIFO_SIZE: usize = 32;
 
@@ -45,6 +45,11 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     }
     for value in cpu.banked_spsr {
         w.write_u32(value);
+    }
+    for bank in cpu.banked_r8_r12 {
+        for value in bank {
+            w.write_u32(value);
+        }
     }
     w.write_u64(emu.frame_count);
     let (ppu_vcount, ppu_line_cycles, ppu_frame_ready) = emu.bus.ppu.state();
@@ -141,6 +146,11 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     }
     for value in &mut emu.cpu.banked_spsr {
         *value = r.read_u32()?;
+    }
+    for bank in &mut emu.cpu.banked_r8_r12 {
+        for value in bank {
+            *value = r.read_u32()?;
+        }
     }
     emu.frame_count = r.read_u64()?;
     let ppu_vcount = r.read_u16()?;
@@ -269,18 +279,37 @@ mod tests {
     }
 
     #[test]
+    fn roundtrips_fiq_banked_r8_state() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.cpu.regs[8] = 0x1111_2222;
+        saved.cpu.set_cpsr(0xC0 | 0x11);
+        saved.cpu.regs[8] = 0x3333_4444;
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.cpu.regs[8], 0x3333_4444);
+        restored.cpu.set_cpsr(0xC0 | 0x1F);
+        assert_eq!(restored.cpu.regs[8], 0x1111_2222);
+        restored.cpu.set_cpsr(0xC0 | 0x11);
+        assert_eq!(restored.cpu.regs[8], 0x3333_4444);
+    }
+
+    #[test]
     fn rejects_unsupported_state_version() {
         let rom = minimal_rom();
         let emu = Emulator::new(&rom, 48_000).unwrap();
         let mut bytes = encode_state(&emu).unwrap();
-        bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
 
         let mut restored = Emulator::new(&rom, 48_000).unwrap();
         let err = decode_state(&mut restored, &bytes).unwrap_err();
 
         assert!(
             err.to_string()
-                .contains("unsupported GBA save-state version 2")
+                .contains("unsupported GBA save-state version 3")
         );
     }
 

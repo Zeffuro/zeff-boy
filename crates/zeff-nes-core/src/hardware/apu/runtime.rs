@@ -159,11 +159,16 @@ impl Apu {
                     self.clock_half_frame();
                 }
                 FRAME_STEP_4 => {
+                    if !self.irq_inhibit {
+                        self.frame_irq = true;
+                    }
+                }
+                cycle if cycle == FRAME_STEP_4 + 1 => {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
                     if !self.irq_inhibit {
                         self.frame_irq = true;
-                        self.frame_irq_repeat = 2;
+                        self.frame_irq_repeat = 1;
                     }
                 }
                 FRAME_STEP_4_RESET => {
@@ -271,5 +276,22 @@ mod tests {
         assert!(!apu.irq_inhibit);
         assert!(!apu.frame_irq);
         assert_eq!(apu.frame_cycle, 9);
+    }
+
+    #[test]
+    fn four_step_frame_irq_becomes_visible_before_length_clock() {
+        let mut apu = Apu::new(44_100.0);
+        apu.write_register(0x4015, 0x01, false);
+        apu.pulse1.length_counter = 1;
+        apu.frame_irq = false;
+        apu.frame_irq_repeat = 0;
+        apu.frame_reset_delay = 0;
+        apu.frame_cycle = FRAME_STEP_4;
+
+        apu.tick();
+        assert_eq!(apu.peek_status() & 0x41, 0x41);
+
+        apu.tick();
+        assert_eq!(apu.peek_status() & 0x41, 0x40);
     }
 }

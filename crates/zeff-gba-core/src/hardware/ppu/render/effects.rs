@@ -57,8 +57,7 @@ impl ColorEffects {
         lower_layer: Layer,
         force_alpha: bool,
     ) -> Option<u16> {
-        if (self.blend_mode() == 1 || force_alpha)
-            && (force_alpha || self.is_first_target(top_layer))
+        if (force_alpha || self.blend_mode() == 1 && self.is_first_target(top_layer))
             && self.is_second_target(lower_layer)
         {
             Some(alpha_blend(top_color, lower_color, self.eva, self.evb))

@@ -1,0 +1,33 @@
+manifest_version = 1
+
+[suite]
+id = "compat-games-example"
+name = "Local copyrighted game compatibility template"
+core = "gba"
+license = "copyrighted; user-owned local dumps only"
+
+[[tests]]
+id = "compat/local/gba/example"
+core = "gba"
+tier = "compat"
+max_frames = 3600
+tags = ["compat", "gba", "local-only"]
+notes = "Copy this file to local-your-name.toml and replace placeholders. Do not commit real game titles or hashes."
+
+[tests.artifact]
+kind = "game_rom"
+license = "copyrighted"
+license_confidence = "user_owned"
+redistributable = false
+source_url = "local user-owned cartridge dump"
+source_version = "local"
+
+[tests.rom]
+path = "test-roms/GBA/Your legally dumped game.gba"
+
+[tests.pass]
+kind = "manual"
+
+[tests.expectation]
+kind = "skip"
+reason = "Template only."

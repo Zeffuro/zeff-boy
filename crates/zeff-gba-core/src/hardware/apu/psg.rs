@@ -150,6 +150,7 @@ pub(super) struct Psg {
     ch1_just_reloaded: bool,
     ch2_just_reloaded: bool,
     ch1_sweep_pending_disable_delay: u64,
+    ch1_sweep_trigger_visibility_delay: u64,
     ch3_output_delay: u64,
     ch3_restart_pending: bool,
     ch1_current_duty: u8,
@@ -200,6 +201,7 @@ impl Psg {
             ch1_just_reloaded: false,
             ch2_just_reloaded: false,
             ch1_sweep_pending_disable_delay: 0,
+            ch1_sweep_trigger_visibility_delay: 0,
             ch3_output_delay: 0,
             ch3_restart_pending: false,
             ch1_current_duty: 0,
@@ -287,6 +289,7 @@ mod tests {
         psg.write(NR10, 0x01);
         psg.write(NR13, 100);
         psg.write(NR14, 0x80);
+        psg.step(8);
 
         psg.frame_seq_step = 2;
         for _ in 0..8 {
@@ -311,6 +314,7 @@ mod tests {
         psg.write(NR10, 0x10);
         psg.write(NR13, 0xFF);
         psg.write(NR14, 0x87);
+        psg.step(8);
 
         psg.frame_seq_step = 2;
         psg.frame_sequencer_step();
@@ -320,6 +324,26 @@ mod tests {
 
         psg.step(8);
         assert_eq!(psg.nr52 & 0x01, 0x00);
+    }
+
+    #[test]
+    fn ch1_sweep_clock_inside_trigger_visibility_delay_does_not_use_restart_frequency() {
+        let mut psg = powered_psg();
+        psg.write(NR12, 0xF0);
+        psg.write(NR10, 0x10);
+        psg.write(NR13, 0xFF);
+        psg.write(NR14, 0x83);
+        psg.step(8);
+
+        psg.write(NR14, 0x87);
+        psg.step(4);
+
+        psg.frame_seq_step = 2;
+        psg.frame_sequencer_step();
+        psg.step(16);
+
+        assert_eq!(psg.ch1_frequency(), 0x07FF);
+        assert_eq!(psg.nr52 & 0x01, 0x01);
     }
 
     #[test]

@@ -118,43 +118,7 @@ fn gba_swi_name(function: u32) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::thumb_ldrh_immediate_address;
-
-    #[test]
-    fn thumb_ldrh_immediate_address_decodes_dispstat_poll() {
-        let mut regs = [0; 16];
-        regs[2] = 0x0400_0004;
-
-        assert_eq!(
-            thumb_ldrh_immediate_address(0x8811, &regs),
-            Some(0x0400_0004)
-        );
-    }
-
-    #[test]
-    fn thumb_ldrh_immediate_address_scales_halfword_offset() {
-        let mut regs = [0; 16];
-        regs[3] = 0x0400_0000;
-
-        // LDRH r0, [r3, #4]
-        assert_eq!(
-            thumb_ldrh_immediate_address(0x8898, &regs),
-            Some(0x0400_0004)
-        );
-    }
-
-    #[test]
-    fn thumb_ldrh_immediate_address_rejects_non_ldrh_halfword_ops() {
-        let mut regs = [0; 16];
-        regs[2] = 0x0400_0004;
-
-        // STRH r1, [r2, #0]
-        assert_eq!(thumb_ldrh_immediate_address(0x8011, &regs), None);
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(in crate::cli::headless_runner) fn gba_debug_state(
     emulator: &GbaEmulator,
     frames_run: u64,
@@ -555,4 +519,41 @@ fn read_i16_slice(data: &[u8], offset: usize) -> i16 {
         data.get(offset).copied().unwrap_or(0),
         data.get(offset + 1).copied().unwrap_or(0),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thumb_ldrh_immediate_address;
+
+    #[test]
+    fn thumb_ldrh_immediate_address_decodes_dispstat_poll() {
+        let mut regs = [0; 16];
+        regs[2] = 0x0400_0004;
+
+        assert_eq!(
+            thumb_ldrh_immediate_address(0x8811, &regs),
+            Some(0x0400_0004)
+        );
+    }
+
+    #[test]
+    fn thumb_ldrh_immediate_address_scales_halfword_offset() {
+        let mut regs = [0; 16];
+        regs[3] = 0x0400_0000;
+
+        // LDRH r0, [r3, #4]
+        assert_eq!(
+            thumb_ldrh_immediate_address(0x8898, &regs),
+            Some(0x0400_0004)
+        );
+    }
+
+    #[test]
+    fn thumb_ldrh_immediate_address_rejects_non_ldrh_halfword_ops() {
+        let mut regs = [0; 16];
+        regs[2] = 0x0400_0004;
+
+        // STRH r1, [r2, #0]
+        assert_eq!(thumb_ldrh_immediate_address(0x8011, &regs), None);
+    }
 }

@@ -77,7 +77,7 @@ impl Timers {
         let period = timer_period(timer.control);
         let accum = self.cycle_accum.get(index).copied().unwrap_or(0);
         let cycles_until_increment = period.saturating_sub(accum).max(1);
-        let increments_until_overflow = u32::from(0x1_0000 - u32::from(timer.counter));
+        let increments_until_overflow = 0x1_0000 - u32::from(timer.counter);
         Some(
             cycles_until_increment.saturating_add(
                 increments_until_overflow

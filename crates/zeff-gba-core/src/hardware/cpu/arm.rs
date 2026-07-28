@@ -13,7 +13,12 @@ impl Cpu {
         let set_flags = raw & (1 << 20) != 0;
         let rn = ((raw >> 16) & 0xF) as usize;
         let rd = ((raw >> 12) & 0xF) as usize;
-        let lhs = self.reg_read_arm(rn, pc);
+        let register_shift = raw & (1 << 25) == 0 && raw & (1 << 4) != 0;
+        let lhs = if register_shift && rn == 15 {
+            pc.wrapping_add(12)
+        } else {
+            self.reg_read_arm(rn, pc)
+        };
         let (rhs, shifter_carry) = if raw & (1 << 25) != 0 {
             arm_immediate_operand(raw, self.carry())
         } else {
@@ -52,7 +57,7 @@ impl Cpu {
                     let carry_in = u32::from(self.carry());
                     let (sum1, c1) = lhs.overflowing_add(rhs);
                     let (sum2, c2) = sum1.overflowing_add(carry_in);
-                    self.set_nzcv(sum2, c1 || c2, add_overflow(lhs, rhs, sum1));
+                    self.set_nzcv(sum2, c1 || c2, add_overflow(lhs, rhs, sum2));
                 }
                 0x6 => {
                     let borrow = u32::from(!self.carry());
@@ -65,6 +70,9 @@ impl Cpu {
                     self.set_nzcv(result, rhs >= lhs2, sub_overflow(rhs, lhs2, result));
                 }
                 _ => {}
+            }
+            if !write_result && rd == 15 && mode_has_spsr(self.mode()) {
+                self.set_cpsr(self.spsr);
             }
         }
 
@@ -272,7 +280,7 @@ impl Cpu {
             );
         }
 
-        if !pre_index || writeback {
+        if (!pre_index || writeback) && !(load && rn == rd) {
             self.regs[rn] = offset_base;
         }
     }
@@ -311,7 +319,7 @@ impl Cpu {
             bus.write16(addr, self.reg_read_arm(rd, pc) as u16);
         }
 
-        if !pre_index || writeback {
+        if (!pre_index || writeback) && !(load && rn == rd) {
             self.regs[rn] = offset_base;
         }
     }
@@ -337,7 +345,11 @@ impl Cpu {
         let load = raw & (1 << 20) != 0;
         let rn = ((raw >> 16) & 0xF) as usize;
         let reg_list = raw & 0xFFFF;
-        let count = reg_list.count_ones().max(1);
+        let count = if reg_list == 0 {
+            16
+        } else {
+            reg_list.count_ones()
+        };
         let restore_cpsr = load && psr_force_user && reg_list & (1 << 15) != 0;
         let force_user_regs = psr_force_user && !restore_cpsr;
         let base = self.regs[rn];
@@ -404,6 +416,9 @@ impl Cpu {
     fn block_transfer_read_reg(&self, reg: usize, pc: u32, force_user: bool) -> u32 {
         if force_user && bank_index(self.mode()) != BANK_USER_SYSTEM {
             match reg {
+                8..=12 if self.mode() == CpuMode::Fiq => {
+                    self.banked_r8_r12[R8_R12_USER_SYSTEM_BANK][reg - 8]
+                }
                 13 => self.banked_sp[BANK_USER_SYSTEM],
                 14 => self.banked_lr[BANK_USER_SYSTEM],
                 _ => self.reg_read_arm(reg, pc),
@@ -416,6 +431,9 @@ impl Cpu {
     fn block_transfer_write_reg(&mut self, reg: usize, value: u32, force_user: bool) {
         if force_user && bank_index(self.mode()) != BANK_USER_SYSTEM {
             match reg {
+                8..=12 if self.mode() == CpuMode::Fiq => {
+                    self.banked_r8_r12[R8_R12_USER_SYSTEM_BANK][reg - 8] = value
+                }
                 13 => self.banked_sp[BANK_USER_SYSTEM] = value,
                 14 => self.banked_lr[BANK_USER_SYSTEM] = value,
                 _ => self.write_reg(reg, value, false),

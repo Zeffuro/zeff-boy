@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use super::Ppu;
 use crate::hardware::constants::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -543,12 +545,11 @@ fn blend_obj_under_current_top(
     if !matches!(top_layer, Layer::Bg(_)) {
         return;
     }
-    if let Some(color) =
-        effects.alpha_blend_pixel(pixel_colors[index], top_layer, obj_color, Layer::Obj, false)
+    if effects_enabled
+        && let Some(color) =
+            effects.alpha_blend_pixel(pixel_colors[index], top_layer, obj_color, Layer::Obj, false)
     {
-        if effects_enabled {
-            write_rgba(framebuffer, x, y, bgr555_to_rgb(color));
-        }
+        write_rgba(framebuffer, x, y, bgr555_to_rgb(color));
     }
 }
 
@@ -566,12 +567,11 @@ fn blend_obj_under_current_top_line(
     if !matches!(top_layer, Layer::Bg(_)) {
         return;
     }
-    if let Some(color) =
-        effects.alpha_blend_pixel(pixel_colors[x], top_layer, obj_color, Layer::Obj, false)
+    if effects_enabled
+        && let Some(color) =
+            effects.alpha_blend_pixel(pixel_colors[x], top_layer, obj_color, Layer::Obj, false)
     {
-        if effects_enabled {
-            write_rgba(framebuffer, x, y, bgr555_to_rgb(color));
-        }
+        write_rgba(framebuffer, x, y, bgr555_to_rgb(color));
     }
 }
 

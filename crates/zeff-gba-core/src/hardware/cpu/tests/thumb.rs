@@ -52,6 +52,37 @@ fn thumb_immediate_and_sp_relative_load_store_execute() {
 }
 
 #[test]
+fn thumb_adc_overflow_includes_carry_in() {
+    let mut bus = bus_with_rom(&0x4148_u16.to_le_bytes()); // adc r0, r1
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB | CPSR_CARRY;
+    cpu.regs[0] = 0x7FFF_FFFE;
+    cpu.regs[1] = 1;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0x8000_0000);
+    assert_ne!(cpu.cpsr & CPSR_OVERFLOW, 0);
+    assert_ne!(cpu.cpsr & CPSR_NEGATIVE, 0);
+    assert_eq!(cpu.cpsr & CPSR_CARRY, 0);
+}
+
+#[test]
+fn thumb_sp_relative_ldr_misaligned_address_rotates_word() {
+    let mut bus = bus_with_rom(&0x9A01_u16.to_le_bytes()); // ldr r2, [sp, #4]
+    bus.write32(0x0200_0004, 0x0000_00FF);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB;
+    cpu.regs[13] = 0x0200_0001;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[2], 0xFF00_0000);
+}
+
+#[test]
 fn thumb_ldrh_odd_address_rotates_aligned_halfword() {
     let mut bus = bus_with_rom(&0x5A0A_u16.to_le_bytes()); // ldrh r2, [r1, r0]
     bus.write16(0x0200_0000, 0xBBAA);
@@ -110,6 +141,60 @@ fn thumb_ldmia_with_base_in_list_keeps_loaded_base() {
     assert_eq!(cpu.regs[1], 0x0400_00D4);
     assert_eq!(cpu.regs[2], 0x0800_18B4);
     assert_eq!(cpu.regs[4], 0x8400_0050);
+}
+
+#[test]
+fn thumb_empty_stmia_stores_visible_pc_and_adds_0x40() {
+    let mut bus = bus_with_rom(&0xC000_u16.to_le_bytes()); // stmia r0!, {}
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB;
+    cpu.regs[0] = 0x0200_0000;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read32(0x0200_0000), RESET_VECTOR + 6);
+    assert_eq!(cpu.regs[0], 0x0200_0040);
+}
+
+#[test]
+fn thumb_stmia_base_in_list_after_first_stores_writeback_value() {
+    let mut bus = bus_with_rom(&0xC10F_u16.to_le_bytes()); // stmia r1!, {r0-r3}
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB;
+    cpu.regs[0] = 0x1111_1111;
+    cpu.regs[1] = 0x0200_0000;
+    cpu.regs[2] = 0x2222_2222;
+    cpu.regs[3] = 0x3333_3333;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read32(0x0200_0000), 0x1111_1111);
+    assert_eq!(bus.read32(0x0200_0004), 0x0200_0010);
+    assert_eq!(bus.read32(0x0200_0008), 0x2222_2222);
+    assert_eq!(bus.read32(0x0200_000C), 0x3333_3333);
+    assert_eq!(cpu.regs[1], 0x0200_0010);
+}
+
+#[test]
+fn thumb_stmia_base_first_in_list_stores_original_base() {
+    let mut bus = bus_with_rom(&0xC11E_u16.to_le_bytes()); // stmia r1!, {r1-r4}
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB;
+    cpu.regs[1] = 0x0200_0000;
+    cpu.regs[2] = 0x2222_2222;
+    cpu.regs[3] = 0x3333_3333;
+    cpu.regs[4] = 0x4444_4444;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read32(0x0200_0000), 0x0200_0000);
+    assert_eq!(bus.read32(0x0200_0004), 0x2222_2222);
+    assert_eq!(bus.read32(0x0200_0008), 0x3333_3333);
+    assert_eq!(bus.read32(0x0200_000C), 0x4444_4444);
+    assert_eq!(cpu.regs[1], 0x0200_0010);
 }
 
 #[test]

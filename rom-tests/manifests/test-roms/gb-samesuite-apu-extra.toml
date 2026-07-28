@@ -1,0 +1,238 @@
+manifest_version = 1
+
+[suite]
+id = "gb-samesuite-apu-extra"
+name = "GB SameSuite APU expanded batch"
+core = "gb"
+upstream_url = "https://github.com/LIJI32/SameSuite"
+license = "X11/MIT"
+
+[[test_groups]]
+id_prefix = "gb/samesuite/apu"
+cache_prefix = "rom-tests/cache/gb"
+core = "gb"
+tier = "accuracy"
+model = "cgb"
+max_frames = 7200
+tags = ["gb", "samesuite", "apu"]
+notes = "Generic CGB SameSuite APU tests. Hardware-revision-specific variants stay out until the manifest can express CGB/AGB CPU revisions."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "X11/MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/LIJI32/SameSuite"
+source_version = "c-sp/game-boy-test-roms v7.0"
+source_id = "c-sp-game-boy-test-roms-v7.0"
+
+[test_groups.pass]
+kind = "gb_fibonacci_ld_b_b"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "channel_1/channel_1_align_cpu"
+archive_path = "same-suite/apu/channel_1/channel_1_align_cpu.gb"
+sha256 = "2bcb12b10e3634589a680827f832c58b25c96d08ab027a53e4365e0214bfd199"
+
+[[test_groups.roms]]
+id = "channel_1/channel_1_duty_delay"
+archive_path = "same-suite/apu/channel_1/channel_1_duty_delay.gb"
+sha256 = "4745e1fd06d9633b88fcd3c1d466409138d661fa9055575e41ca242fd5535cb2"
+
+[[test_groups.roms]]
+id = "channel_1/channel_1_nrx2_glitch"
+archive_path = "same-suite/apu/channel_1/channel_1_nrx2_glitch.gb"
+sha256 = "45f8ab450948fe8f63d089c938d82cad51099f9b1da2334afb12d08da5fa4601"
+
+[[test_groups.roms]]
+id = "channel_1/channel_1_nrx2_speed_change"
+archive_path = "same-suite/apu/channel_1/channel_1_nrx2_speed_change.gb"
+sha256 = "317f727c841ffaf935f55859942fc1944ff11ffbf11cb6e3df2d107901cc6eeb"
+
+[[test_groups.roms]]
+id = "channel_1/channel_1_restart_nrx2_glitch"
+archive_path = "same-suite/apu/channel_1/channel_1_restart_nrx2_glitch.gb"
+sha256 = "d31b01e46355ea076d773856e5d442c93765b0e0043586ae26c7332fc515333c"
+
+[[test_groups.roms]]
+id = "channel_1/channel_1_sweep_restart_2"
+archive_path = "same-suite/apu/channel_1/channel_1_sweep_restart_2.gb"
+sha256 = "d49b383a5d6a479e510f5cd6603a878f6e9e46cceddd6152fa2a87dda7e2ffe6"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_align_cpu"
+archive_path = "same-suite/apu/channel_2/channel_2_align_cpu.gb"
+sha256 = "f4305776a87faf2b7c7a14a21594faa9dafc5d4bca110751787c0580f100b942"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_duty_delay"
+archive_path = "same-suite/apu/channel_2/channel_2_duty_delay.gb"
+sha256 = "d833c03053f6a90457bfaca5fdffcdfa2e358ea6229b29fc52634b8ad99dbd87"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_nrx2_glitch"
+archive_path = "same-suite/apu/channel_2/channel_2_nrx2_glitch.gb"
+sha256 = "24aac2bff0fa15aa146f48e6fd719472b119cb2e77a8499a5137f8f8182a982a"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_nrx2_speed_change"
+archive_path = "same-suite/apu/channel_2/channel_2_nrx2_speed_change.gb"
+sha256 = "9372b59dfa4bba522b69fbf4022531143ce5d56f0d1668b74ac86a1de6e9c0d5"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_restart_nrx2_glitch"
+archive_path = "same-suite/apu/channel_2/channel_2_restart_nrx2_glitch.gb"
+sha256 = "9b02f43d6915322a14b4b531ba31e187a0b14bd6ebe39f41d55faa3bb0d05726"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_stop_div"
+archive_path = "same-suite/apu/channel_2/channel_2_stop_div.gb"
+sha256 = "c1bf9fb0cd8d4fef5ab0052747af52e3da8a14950b6dc118db5ecf308439efcc"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_stop_restart"
+archive_path = "same-suite/apu/channel_2/channel_2_stop_restart.gb"
+sha256 = "2847535c6bef5c8580444111761b5afcb45b3aef0b91e0e96e26ee71dfa0eb02"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_volume"
+archive_path = "same-suite/apu/channel_2/channel_2_volume.gb"
+sha256 = "457588c00ef49f54f4f73dcf4471ee83cf22b2e48ba18b021297335ab14513ad"
+
+[[test_groups.roms]]
+id = "channel_2/channel_2_volume_div"
+archive_path = "same-suite/apu/channel_2/channel_2_volume_div.gb"
+sha256 = "ba0583bfcdd4bdc66feb53e081508376fef91fea530d828d806b26c7957f5c05"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_and_glitch"
+archive_path = "same-suite/apu/channel_3/channel_3_and_glitch.gb"
+sha256 = "4ef5c152c03abc525cbf2e7360489ea0c6e174f64d36e6618e890f2cb06ecdc0"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_delay.gb"
+sha256 = "811a481191376ea81750835e7d7b7ba1c739264a46a5a76a978c9f0ab64227ca"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_first_sample"
+archive_path = "same-suite/apu/channel_3/channel_3_first_sample.gb"
+sha256 = "180c0c7c67c41d28080939649d232c378c34792a3606018a0e7337eefa142807"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_freq_change_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_freq_change_delay.gb"
+sha256 = "7c7f6ba21eb3fbda1ff8ef122bc8e7bcc7d5a441333b9476e641888f59246b80"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_restart_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_restart_delay.gb"
+sha256 = "f01bb28f9d8993108efe1e15d66b0331c95b7843ddb9c04c975f29b1b258c675"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_restart_during_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_restart_during_delay.gb"
+sha256 = "676d547959e60f636ae6af4d2e323b24522ab78e61fbd4467ae631cbe1965ab6"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_restart_stop_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_restart_stop_delay.gb"
+sha256 = "ee7fe7682191491450704121f88bbd92298cfe8aeeac980bf5c3187c110a54a4"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_shift_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_shift_delay.gb"
+sha256 = "512fb6fc4551156090a81415b941e1c684ba35f1f7793f4455eec53926748fa5"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_shift_skip_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_shift_skip_delay.gb"
+sha256 = "1d361236b7dc945ae4d7e5a71bfd4f42c96280bcdf72f8d9c1c72e59af2f8fa1"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_stop_delay"
+archive_path = "same-suite/apu/channel_3/channel_3_stop_delay.gb"
+sha256 = "3819b732b20919700aab263643c34e99a19fc2a7cda7162dbf564afa492dc94e"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_stop_div"
+archive_path = "same-suite/apu/channel_3/channel_3_stop_div.gb"
+sha256 = "5e7aed963797926e9c81cda40db1fc2f465dbf72c3eb75c4a00e6087d70dca04"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_wave_ram_dac_on_rw"
+archive_path = "same-suite/apu/channel_3/channel_3_wave_ram_dac_on_rw.gb"
+sha256 = "2a22b2669b4a0a540f177846fa88d33e9d3f4c2448d60e375fd719c01525c9b3"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_wave_ram_locked_write"
+archive_path = "same-suite/apu/channel_3/channel_3_wave_ram_locked_write.gb"
+sha256 = "44f805b342dcb2f209d4deef603dca0d078c274467493d81f12099c10fc16d31"
+
+[[test_groups.roms]]
+id = "channel_3/channel_3_wave_ram_sync"
+archive_path = "same-suite/apu/channel_3/channel_3_wave_ram_sync.gb"
+sha256 = "bc67b3de28609995ac3dae786484f723a33b8c2b3c321216ee85f8621084139e"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_align"
+archive_path = "same-suite/apu/channel_4/channel_4_align.gb"
+sha256 = "1230e7c4b3e2e7e60722cda039f3798c43218a71239cdde9be8bd570067c67a6"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_delay"
+archive_path = "same-suite/apu/channel_4/channel_4_delay.gb"
+sha256 = "f694ea8f238365be19b121dd346759deda801bab47fb4e1f277b4a4e9e56e23a"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_equivalent_frequencies"
+archive_path = "same-suite/apu/channel_4/channel_4_equivalent_frequencies.gb"
+sha256 = "2f518867a4426b590b4b650c2f4180b90d1d4206e3cfbf42e3fa23d7a5c4e7fd"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_freq_change"
+archive_path = "same-suite/apu/channel_4/channel_4_freq_change.gb"
+sha256 = "37f141efca6505ec37a3b1a131153867339eac0d4deeaf4e446152f75815eb2e"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_frequency_alignment"
+archive_path = "same-suite/apu/channel_4/channel_4_frequency_alignment.gb"
+sha256 = "eb3781e7686ad31b486f2af703c405705ce02bba66879b7d77e4d845b143567a"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_lfsr"
+archive_path = "same-suite/apu/channel_4/channel_4_lfsr.gb"
+sha256 = "dd46439f07bdcfff8db0ac0fa49bcda4f9fccb8f722a9aa673325aa45196d98b"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_lfsr15"
+archive_path = "same-suite/apu/channel_4/channel_4_lfsr15.gb"
+sha256 = "e210a115c06e6bcd5507abfceac5926dbb99eaca3cf10cf8d69d1bf0f3dbae4d"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_lfsr_15_7"
+archive_path = "same-suite/apu/channel_4/channel_4_lfsr_15_7.gb"
+sha256 = "20d6e72c9166d1b4fc94ae70ca1530cebc5ae810df1834db62da404c73a8be9d"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_lfsr_7_15"
+archive_path = "same-suite/apu/channel_4/channel_4_lfsr_7_15.gb"
+sha256 = "734d8be70f25828fb968c1852cf7cc33185fed3222b2b8a8b650a9720e98a557"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_lfsr_restart"
+archive_path = "same-suite/apu/channel_4/channel_4_lfsr_restart.gb"
+sha256 = "49d9e6c09ebde591ddb178ebd1b0bacefa70c7e7fd80311b9f91944cdd59581a"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_lfsr_restart_fast"
+archive_path = "same-suite/apu/channel_4/channel_4_lfsr_restart_fast.gb"
+sha256 = "b7838d49ad08436cdcece65b35e786838298848bef523af9a7aa83347e2dc983"
+
+[[test_groups.roms]]
+id = "channel_4/channel_4_volume_div"
+archive_path = "same-suite/apu/channel_4/channel_4_volume_div.gb"
+sha256 = "ff8145597adf36b08dc0b32fa30cb855b230d70e082e77b33ee54279e1b9f642"

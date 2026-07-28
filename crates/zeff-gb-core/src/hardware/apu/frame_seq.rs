@@ -2,6 +2,8 @@ use super::Apu;
 use crate::hardware::types::constants::*;
 
 impl Apu {
+    const CH1_SWEEP_TRIGGER_VISIBILITY_DELAY_T_CYCLES: u64 = 8;
+
     pub(super) fn frame_sequencer_step(&mut self) {
         let step = self.frame_seq_step;
         if matches!(step, 0 | 2 | 4 | 6) {
@@ -28,6 +30,10 @@ impl Apu {
     }
 
     fn clock_sweep(&mut self) {
+        if self.ch1_sweep_trigger_visibility_delay != 0 {
+            return;
+        }
+
         let (current_shadow, shift, negate) = {
             let ch1 = &mut self.channels[0];
             if !ch1.enabled || !ch1.sweep_enabled {
@@ -268,6 +274,7 @@ impl Apu {
 
     pub(super) fn init_sweep_on_trigger(&mut self) {
         self.ch1_sweep_pending_disable_delay = 0;
+        self.ch1_sweep_trigger_visibility_delay = Self::CH1_SWEEP_TRIGGER_VISIBILITY_DELAY_T_CYCLES;
         let current_freq = self.ch1_frequency();
         let ch1 = &mut self.channels[0];
         ch1.sweep_shadow_freq = current_freq;
@@ -283,6 +290,12 @@ impl Apu {
             let shift = ch1.sweep_shift;
             self.schedule_ch1_sweep_disable(shift);
         }
+    }
+
+    pub(super) fn clock_sweep_trigger_visibility_delay(&mut self, t_cycles: u64) {
+        self.ch1_sweep_trigger_visibility_delay = self
+            .ch1_sweep_trigger_visibility_delay
+            .saturating_sub(t_cycles);
     }
 
     pub(super) fn clock_delayed_sweep_disable(&mut self, t_cycles: u64) {
@@ -359,9 +372,7 @@ impl Apu {
     }
 
     pub(super) fn square_trigger_start_delay(&self, was_active: bool) -> u64 {
-        if was_active {
-            4
-        } else if self.cgb_double_speed && (self.pulse_noise_cycle_accum & 0x03) == 1 {
+        if was_active || (self.cgb_double_speed && (self.pulse_noise_cycle_accum & 0x03) == 1) {
             4
         } else {
             8

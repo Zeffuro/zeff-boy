@@ -75,6 +75,9 @@ pub(super) fn run_gba_headless(
     let mut audio_scratch: Vec<f32> = Vec::new();
     let mut audio_dump: Vec<f32> = Vec::new();
     let mut audio_stats = AudioStats::default();
+    let mut test_pass_seen = false;
+    let mut test_status_seen = false;
+    let mut last_test_status: Option<GbaTestStatus> = None;
     write_screenshot_if_requested(
         opts,
         0,
@@ -182,6 +185,32 @@ pub(super) fn run_gba_headless(
             emulator.framebuffer_dimensions(),
         )?;
 
+        if opts.expect_test_pass
+            && let Some(status) = read_gba_test_status(&emulator)
+        {
+            test_status_seen = true;
+            last_test_status = Some(status.clone());
+            match status.result {
+                GbaTestResult::Pass => {
+                    println!(
+                        "[headless] gba-test result=pass protocol={} status={:02X} text={:?}",
+                        status.protocol, status.code, status.text
+                    );
+                    test_pass_seen = true;
+                    break;
+                }
+                GbaTestResult::Fail => {
+                    anyhow::bail!(
+                        "GBA test failed via {} status={:02X} text={:?}",
+                        status.protocol,
+                        status.code,
+                        status.text
+                    );
+                }
+                GbaTestResult::Running => {}
+            }
+        }
+
         let wait_classification = gba_wait_classification(&emulator);
         observe_stuck(
             &mut stuck,
@@ -261,5 +290,208 @@ pub(super) fn run_gba_headless(
     }
     fail_on_stuck_if_needed("gba", stuck.as_ref(), opts)?;
 
+    if opts.expect_test_pass && !test_pass_seen {
+        if test_status_seen {
+            if let Some(status) = last_test_status {
+                anyhow::bail!(
+                    "expected GBA test pass before max frame limit, last protocol={} status={:02X} text={:?}",
+                    status.protocol,
+                    status.code,
+                    status.text
+                );
+            }
+        } else {
+            anyhow::bail!(
+                "expected GBA test pass before max frame limit, but no supported GBA test status was observed"
+            );
+        }
+    }
+
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct GbaTestStatus {
+    protocol: &'static str,
+    code: u32,
+    text: String,
+    result: GbaTestResult,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GbaTestResult {
+    Pass,
+    Fail,
+    Running,
+}
+
+fn read_gba_test_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> {
+    read_gba_memory_test_status(emulator).or_else(|| read_jsmolka_gba_screen_status(emulator))
+}
+
+fn read_gba_memory_test_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> {
+    const BASE: u32 = 0x0200_0000;
+    const TEXT_LIMIT: u32 = 4096;
+
+    let signature = [
+        emulator.cpu_peek8(BASE + 1),
+        emulator.cpu_peek8(BASE + 2),
+        emulator.cpu_peek8(BASE + 3),
+    ];
+    if signature != [0xDE, 0xB0, 0x61] {
+        return None;
+    }
+
+    let code = emulator.cpu_peek8(BASE);
+    let mut text_bytes = Vec::new();
+    for offset in 0..TEXT_LIMIT {
+        let byte = emulator.cpu_peek8(BASE + 4 + offset);
+        if byte == 0 {
+            break;
+        }
+        text_bytes.push(byte);
+    }
+    let text = String::from_utf8_lossy(&text_bytes).to_string();
+    let result = match code {
+        0x00 => GbaTestResult::Pass,
+        0x01..=0x7F => GbaTestResult::Fail,
+        _ => GbaTestResult::Running,
+    };
+
+    Some(GbaTestStatus {
+        protocol: "memory_status_02000000",
+        code: u32::from(code),
+        text,
+        result,
+    })
+}
+
+fn read_jsmolka_gba_screen_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> {
+    const TEXT_Y: usize = 76;
+    const PASS_X: usize = 56;
+    const FAIL_X: usize = 60;
+
+    let vram = emulator.vram_snapshot();
+    if gba_mode4_vram_matches_text(vram, PASS_X, TEXT_Y, "All tests passed") {
+        return Some(GbaTestStatus {
+            protocol: "jsmolka_mode4_text",
+            code: 0,
+            text: "All tests passed".to_string(),
+            result: GbaTestResult::Pass,
+        });
+    }
+
+    if gba_mode4_vram_matches_text(vram, FAIL_X, TEXT_Y, "Failed test ") {
+        let digits_x = FAIL_X + "Failed test ".len() * 8;
+        let digits = (0..3)
+            .map(|digit| gba_mode4_vram_digit_at(vram, digits_x + digit * 8, TEXT_Y))
+            .collect::<Option<String>>()
+            .unwrap_or_else(|| "???".to_string());
+        let code = digits.parse::<u32>().ok().unwrap_or(0x7FFF);
+        return Some(GbaTestStatus {
+            protocol: "jsmolka_mode4_text",
+            code,
+            text: format!("Failed test {digits}"),
+            result: GbaTestResult::Fail,
+        });
+    }
+
+    None
+}
+
+fn gba_mode4_vram_digit_at(vram: &[u8], x: usize, y: usize) -> Option<char> {
+    ('0'..='9').find(|&digit| gba_mode4_vram_matches_char(vram, x, y, digit))
+}
+
+fn gba_mode4_vram_matches_text(vram: &[u8], x: usize, y: usize, text: &str) -> bool {
+    text.chars()
+        .enumerate()
+        .all(|(index, ch)| gba_mode4_vram_matches_char(vram, x + index * 8, y, ch))
+}
+
+fn gba_mode4_vram_matches_char(vram: &[u8], x: usize, y: usize, ch: char) -> bool {
+    let Some((upper, lower)) = gba_jsmolka_glyph_words(ch) else {
+        return false;
+    };
+
+    if x + 8 > 240 || y + 8 > 160 {
+        return false;
+    }
+
+    for py in 0..8 {
+        let word = if py < 4 { upper } else { lower };
+        let row = py % 4;
+        for px in 0..8 {
+            let bit = ((word >> (row * 8 + px)) & 1) as u8;
+            let offset = (y + py) * 240 + x + px;
+            if vram.get(offset).copied().unwrap_or(0) != bit {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn gba_jsmolka_glyph_words(ch: char) -> Option<(u32, u32)> {
+    match ch {
+        ' ' => Some((0x0000_0000, 0x0000_0000)),
+        '0' => Some((0x7E76_663C, 0x003C_666E)),
+        '1' => Some((0x181E_1C18, 0x0018_1818)),
+        '2' => Some((0x3060_663C, 0x007E_0C18)),
+        '3' => Some((0x3860_663C, 0x003C_6660)),
+        '4' => Some((0x3336_3C38, 0x0030_307F)),
+        '5' => Some((0x603E_067E, 0x003C_6660)),
+        '6' => Some((0x3E06_0C38, 0x003C_6666)),
+        '7' => Some((0x3060_607E, 0x0018_1818)),
+        '8' => Some((0x3C66_663C, 0x003C_6666)),
+        '9' => Some((0x7C66_663C, 0x001C_3060)),
+        'A' => Some((0x7E66_663C, 0x0066_6666)),
+        'F' => Some((0x1E06_067E, 0x0006_0606)),
+        'a' => Some((0x603C_0000, 0x007C_667C)),
+        'd' => Some((0x667C_6060, 0x007C_6666)),
+        'e' => Some((0x663C_0000, 0x003C_067E)),
+        'i' => Some((0x1818_0018, 0x0030_1818)),
+        'l' => Some((0x1818_1818, 0x0030_1818)),
+        'p' => Some((0x663E_0000, 0x0606_3E66)),
+        's' => Some((0x063C_0000, 0x003E_603C)),
+        't' => Some((0x0C3E_0C0C, 0x0038_0C0C)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{gba_jsmolka_glyph_words, gba_mode4_vram_matches_text};
+
+    fn draw_char(vram: &mut [u8], x: usize, y: usize, ch: char) {
+        let (upper, lower) = gba_jsmolka_glyph_words(ch).unwrap();
+        for py in 0..8 {
+            let word = if py < 4 { upper } else { lower };
+            let row = py % 4;
+            for px in 0..8 {
+                let bit = ((word >> (row * 8 + px)) & 1) as u8;
+                vram[(y + py) * 240 + x + px] = bit;
+            }
+        }
+    }
+
+    fn draw_text(vram: &mut [u8], x: usize, y: usize, text: &str) {
+        for (index, ch) in text.chars().enumerate() {
+            draw_char(vram, x + index * 8, y, ch);
+        }
+    }
+
+    #[test]
+    fn jsmolka_mode4_text_match_finds_pass_string() {
+        let mut vram = vec![0; 0x18000];
+        draw_text(&mut vram, 56, 76, "All tests passed");
+        assert!(gba_mode4_vram_matches_text(
+            &vram,
+            56,
+            76,
+            "All tests passed"
+        ));
+        assert!(!gba_mode4_vram_matches_text(&vram, 60, 76, "Failed test "));
+    }
 }

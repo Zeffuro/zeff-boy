@@ -294,6 +294,7 @@ fn sweep_tick_updates_ch1_frequency() {
     apu.write(NR13, 100);
     apu.write(NR14, 0x80);
 
+    apu.step(8);
     apu.frame_seq_step = 2;
     apu.frame_sequencer_step();
 
@@ -570,6 +571,7 @@ fn sweep_period_zero_counts_as_8_but_suppresses_calculation_until_nonzero() {
     apu.write(NR13, 100);
     apu.write(NR14, 0x80);
 
+    apu.step(8);
     apu.frame_seq_step = 2;
     for _ in 0..7 {
         apu.frame_sequencer_step();
@@ -599,6 +601,7 @@ fn sweep_shift_zero_checks_overflow_on_timer_without_updating_frequency() {
     apu.write(NR14, 0x87);
     assert_eq!(apu.nr52_raw() & 0x01, 0x01);
 
+    apu.step(8);
     apu.frame_seq_step = 2;
     apu.frame_sequencer_step();
 
@@ -611,6 +614,27 @@ fn sweep_shift_zero_checks_overflow_on_timer_without_updating_frequency() {
 }
 
 #[test]
+fn ch1_sweep_clock_inside_trigger_visibility_delay_does_not_use_restart_frequency() {
+    let mut apu = Apu::new();
+    apu.write(NR52, 0x80);
+    apu.write(NR12, 0xF0);
+    apu.write(NR10, 0x10);
+    apu.write(NR13, 0xFF);
+    apu.write(NR14, 0x83);
+    apu.step(8);
+
+    apu.write(NR14, 0x87);
+    apu.step(4);
+
+    apu.frame_seq_step = 2;
+    apu.frame_sequencer_step();
+    apu.step(16);
+
+    assert_eq!(apu.ch1_frequency(), 0x07FF);
+    assert_eq!(apu.nr52_raw() & 0x01, 0x01);
+}
+
+#[test]
 fn sweep_shift_zero_does_not_update_frequency_when_calculation_fits() {
     let mut apu = Apu::new();
     apu.write(NR52, 0x80);
@@ -619,6 +643,7 @@ fn sweep_shift_zero_does_not_update_frequency_when_calculation_fits() {
     apu.write(NR13, 0xFF);
     apu.write(NR14, 0x83);
 
+    apu.step(8);
     apu.frame_seq_step = 2;
     apu.frame_sequencer_step();
 
@@ -666,6 +691,7 @@ fn periodic_shift_zero_negate_calculation_marks_negate_used() {
     apu.write(NR13, 0x00);
     apu.write(NR14, 0x80);
 
+    apu.step(8);
     apu.frame_seq_step = 2;
     apu.frame_sequencer_step();
     apu.write(NR10, 0x10);

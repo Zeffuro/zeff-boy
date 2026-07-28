@@ -1,0 +1,43 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/instr_timing/rom_singles"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "timing"]
+notes = "Local-only blargg instruction timing singles."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "1-instr_timing"
+archive_path = "nes-test-roms/instr_timing/rom_singles/1-instr_timing.nes"
+sha256 = "e260068839fe3d0402376e97e4ee15f5790ee77c701fd0700bba057527910222"
+legacy_paths = ["test-roms/nes-test-roms/instr_timing/rom_singles/1-instr_timing.nes"]
+
+[[test_groups.roms]]
+id = "2-branch_timing"
+archive_path = "nes-test-roms/instr_timing/rom_singles/2-branch_timing.nes"
+sha256 = "0afaa393f375844ab98834c1ecba7fa6d8c44880c8b6e738936d0f04a84c8538"
+legacy_paths = ["test-roms/nes-test-roms/instr_timing/rom_singles/2-branch_timing.nes"]

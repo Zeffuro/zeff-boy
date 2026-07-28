@@ -3,3 +3,6 @@
 /temp
 /.idea/
 /dist/
+/rom-tests/cache/
+/rom-tests/results/
+/rom-tests/manifests/compat-games/local*.toml

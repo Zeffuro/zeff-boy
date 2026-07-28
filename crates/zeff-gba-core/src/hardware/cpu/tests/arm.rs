@@ -55,6 +55,33 @@ fn arm_ldm_writeback_is_suppressed_when_base_is_loaded() {
 }
 
 #[test]
+fn arm_empty_ldmia_loads_pc_and_adds_0x40_to_base() {
+    let mut bus = bus_with_rom(&0xE8B0_0000_u32.to_le_bytes()); // ldmia r0!, {}
+    bus.write32(0x0200_0000, RESET_VECTOR + 0x20);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0x0200_0000;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.pc(), RESET_VECTOR + 0x20);
+    assert_eq!(cpu.regs[0], 0x0200_0040);
+}
+
+#[test]
+fn arm_empty_stmdb_stores_pc_and_subtracts_0x40_from_base() {
+    let mut bus = bus_with_rom(&0xE920_0000_u32.to_le_bytes()); // stmdb r0!, {}
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0x0200_0040;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read32(0x0200_0000), RESET_VECTOR + 12);
+    assert_eq!(cpu.regs[0], 0x0200_0000);
+}
+
+#[test]
 fn arm_condition_can_skip_branch() {
     let mut bus = bus_with_rom(&0x0A00_0000_u32.to_le_bytes());
     let mut cpu = Cpu::new();
@@ -91,6 +118,22 @@ fn arm_data_processing_and_load_store_execute() {
     assert_eq!(cpu.regs[1], 3);
     assert_eq!(cpu.regs[2], 3);
     assert_ne!(cpu.cpsr & CPSR_ZERO, 0);
+}
+
+#[test]
+fn arm_adc_overflow_includes_carry_in() {
+    let mut bus = bus_with_rom(&0xE2B0_0001_u32.to_le_bytes()); // adcs r0, r0, #1
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0x7FFF_FFFE;
+    cpu.cpsr |= CPSR_CARRY;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0x8000_0000);
+    assert_ne!(cpu.cpsr & CPSR_OVERFLOW, 0);
+    assert_ne!(cpu.cpsr & CPSR_NEGATIVE, 0);
+    assert_eq!(cpu.cpsr & CPSR_CARRY, 0);
 }
 
 #[test]
@@ -154,6 +197,32 @@ fn arm_swpb_exchanges_byte_and_zero_extends_loaded_value() {
 }
 
 #[test]
+fn arm_ldr_with_writeback_to_same_register_keeps_loaded_value() {
+    let mut bus = bus_with_rom(&0xE5B0_0004_u32.to_le_bytes()); // ldr r0, [r0, #4]!
+    bus.write32(0x0200_0004, 0x1234_5678);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0x0200_0000;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+}
+
+#[test]
+fn arm_post_index_ldr_with_writeback_to_same_register_keeps_loaded_value() {
+    let mut bus = bus_with_rom(&0xE490_0004_u32.to_le_bytes()); // ldr r0, [r0], #4
+    bus.write32(0x0200_0000, 0x1234_5678);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0x0200_0000;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+}
+
+#[test]
 fn arm_ldrh_odd_address_rotates_aligned_halfword() {
     let mut bus = bus_with_rom(&0xE1D1_20B0_u32.to_le_bytes()); // ldrh r2, [r1]
     bus.write16(0x0200_0000, 0xBBAA);
@@ -164,6 +233,19 @@ fn arm_ldrh_odd_address_rotates_aligned_halfword() {
     cpu.step(&mut bus);
 
     assert_eq!(cpu.regs[2], 0xAA00_00BB);
+}
+
+#[test]
+fn arm_ldrh_with_writeback_to_same_register_keeps_loaded_value() {
+    let mut bus = bus_with_rom(&0xE1F0_00B4_u32.to_le_bytes()); // ldrh r0, [r0, #4]!
+    bus.write16(0x0200_0004, 0x1234);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0x0200_0000;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0x1234);
 }
 
 #[test]
@@ -200,6 +282,59 @@ fn arm_ldm_with_s_bit_and_pc_restores_cpsr_from_spsr() {
 }
 
 #[test]
+fn arm_bad_cmp_with_rd_pc_restores_cpsr_from_spsr_without_branching() {
+    let mut bus = bus_with_rom(&0xE15F_F000_u32.to_le_bytes()); // cmp pc, pc, r0
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[8] = 32;
+    cpu.set_cpsr(CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x11);
+    cpu.regs[0] = 1;
+    cpu.regs[8] = 64;
+    cpu.spsr = CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x1F;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.mode(), CpuMode::System);
+    assert_eq!(cpu.regs[8], 32);
+    assert_eq!(cpu.pc(), RESET_VECTOR + 4);
+    assert!(cpu.next_fetch_sequential);
+}
+
+#[test]
+fn arm_bad_cmp_with_rd_pc_without_spsr_does_not_flush_pipeline() {
+    let mut bus = bus_with_rom(&0xE15F_F000_u32.to_le_bytes()); // cmp pc, pc, r0
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 1;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.mode(), CpuMode::System);
+    assert_eq!(cpu.pc(), RESET_VECTOR + 4);
+    assert!(cpu.next_fetch_sequential);
+}
+
+#[test]
+fn fiq_mode_banks_r8_to_r12() {
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[8] = 32;
+    cpu.regs[9] = 33;
+
+    cpu.set_cpsr(CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x11);
+    cpu.regs[8] = 64;
+    cpu.regs[9] = 65;
+
+    cpu.set_cpsr(CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x1F);
+    assert_eq!(cpu.regs[8], 32);
+    assert_eq!(cpu.regs[9], 33);
+
+    cpu.set_cpsr(CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x11);
+    assert_eq!(cpu.regs[8], 64);
+    assert_eq!(cpu.regs[9], 65);
+}
+
+#[test]
 fn arm_stm_with_s_bit_reads_user_sp_lr_bank() {
     let mut bus = bus_with_rom(&0xE8C0_6000_u32.to_le_bytes()); // stmia r0, {sp, lr}^
     let mut cpu = Cpu::new();
@@ -215,6 +350,22 @@ fn arm_stm_with_s_bit_reads_user_sp_lr_bank() {
 
     assert_eq!(bus.read32(0x0200_0000), 0x0300_1234);
     assert_eq!(bus.read32(0x0200_0004), 0x0800_5678);
+}
+
+#[test]
+fn arm_stm_with_s_bit_reads_user_r8_bank_from_fiq_mode() {
+    let mut bus = bus_with_rom(&0xE8C0_0100_u32.to_le_bytes()); // stmia r0, {r8}^
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[8] = 0x1111_2222;
+    cpu.set_cpsr(CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x11);
+    cpu.regs[0] = 0x0200_0000;
+    cpu.regs[8] = 0x3333_4444;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read32(0x0200_0000), 0x1111_2222);
+    assert_eq!(cpu.regs[8], 0x3333_4444);
 }
 
 #[test]
@@ -280,6 +431,18 @@ fn arm_register_shift_reads_pc_shift_amount_as_pc_plus_12() {
     cpu.step(&mut bus);
 
     assert_eq!(cpu.regs[0], 0x1000);
+}
+
+#[test]
+fn arm_register_shift_reads_pc_operand1_as_pc_plus_12() {
+    let mut bus = bus_with_rom(&0xE08F_0010_u32.to_le_bytes()); // add r0, pc, r0, lsl r0
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], RESET_VECTOR + 12);
 }
 
 #[test]

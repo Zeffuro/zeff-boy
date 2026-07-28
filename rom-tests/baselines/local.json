@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "selected_count": 36,
+  "results": [
+    {
+      "id": "nes/blargg/apu_reset/4015_cleared",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_reset/4017_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_reset/4017_written",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_reset/irq_flag_cleared",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_reset/len_ctrs_enabled",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_reset/works_immediately",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/cpu_interrupts_v2/rom_singles/4-irq_and_dma",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/cpu_interrupts_v2/rom_singles/5-branch_delays_irq",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/cpu_reset/registers",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/cpu_reset/ram_after_reset",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_misc/rom_singles/01-abs_x_wrap",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_misc/rom_singles/02-branch_wrap",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_misc/rom_singles/03-dummy_reads",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_misc/rom_singles/04-dummy_reads_apu",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/01-basics",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/02-implied",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/03-immediate",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/04-zero_page",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/05-zp_xy",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/06-absolute",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/07-abs_xy",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/08-ind_x",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/09-ind_y",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/10-branches",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/11-stack",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/12-jmp_jsr",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/13-rts",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/14-rti",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/15-brk",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/rom_singles/16-special",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_timing/rom_singles/1-instr_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_timing/rom_singles/2-branch_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/instr_test_v5/official_only",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/cpu_interrupts_v2/1_cli_latency",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    }
+  ]
+}

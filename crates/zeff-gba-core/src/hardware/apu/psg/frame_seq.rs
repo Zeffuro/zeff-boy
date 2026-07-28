@@ -1,6 +1,8 @@
 use super::*;
 
 impl Psg {
+    const CH1_SWEEP_TRIGGER_VISIBILITY_DELAY_T_CYCLES: u64 = 8;
+
     pub(super) fn frame_sequencer_step(&mut self) {
         let step = self.frame_seq_step;
         if matches!(step, 0 | 2 | 4 | 6) {
@@ -27,6 +29,10 @@ impl Psg {
     }
 
     fn clock_sweep(&mut self) {
+        if self.ch1_sweep_trigger_visibility_delay != 0 {
+            return;
+        }
+
         let (current_shadow, shift, negate) = {
             let ch1 = &mut self.channels[0];
             if !ch1.enabled || !ch1.sweep_enabled {
@@ -271,6 +277,7 @@ impl Psg {
 
     pub(super) fn init_sweep_on_trigger(&mut self) {
         self.ch1_sweep_pending_disable_delay = 0;
+        self.ch1_sweep_trigger_visibility_delay = Self::CH1_SWEEP_TRIGGER_VISIBILITY_DELAY_T_CYCLES;
         let current_freq = self.ch1_frequency();
         let ch1 = &mut self.channels[0];
         ch1.sweep_shadow_freq = current_freq;
@@ -286,6 +293,12 @@ impl Psg {
             let shift = ch1.sweep_shift;
             self.schedule_ch1_sweep_disable(shift);
         }
+    }
+
+    pub(super) fn clock_sweep_trigger_visibility_delay(&mut self, t_cycles: u64) {
+        self.ch1_sweep_trigger_visibility_delay = self
+            .ch1_sweep_trigger_visibility_delay
+            .saturating_sub(t_cycles);
     }
 
     pub(super) fn clock_delayed_sweep_disable(&mut self, t_cycles: u64) {

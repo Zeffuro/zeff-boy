@@ -1,0 +1,103 @@
+manifest_version = 1
+
+[suite]
+id = "gb-mooneye-extra"
+name = "GB Mooneye expanded acceptance batch"
+core = "gb"
+upstream_url = "https://github.com/Gekkio/mooneye-test-suite"
+license = "MIT"
+
+[[test_groups]]
+id_prefix = "gb/mooneye"
+cache_prefix = "rom-tests/cache/gb"
+core = "gb"
+tier = "accuracy"
+model = "dmg"
+max_frames = 7200
+tags = ["gb", "mooneye", "acceptance"]
+notes = "Generic Mooneye acceptance tests using the LD B,B/Fibonacci pass convention. Boot-ROM, SGB, and suffix-specific hardware variants are intentionally separate future work."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/Gekkio/mooneye-test-suite"
+source_version = "c-sp/game-boy-test-roms v7.0"
+source_id = "c-sp-game-boy-test-roms-v7.0"
+
+[test_groups.pass]
+kind = "gb_fibonacci_ld_b_b"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "acceptance/if_ie_registers"
+archive_path = "mooneye-test-suite/acceptance/if_ie_registers.gb"
+sha256 = "d02bc5978fb8c595486b4dcf99a6ac34e2bfc2a8756c17b1050b6cfb3720ba14"
+
+[[test_groups.roms]]
+id = "acceptance/interrupts/ie_push"
+archive_path = "mooneye-test-suite/acceptance/interrupts/ie_push.gb"
+sha256 = "5f826104e61727273d59999f7796a11351a42bfc0802cad26d2a9d4cfb61d34b"
+
+[[test_groups.roms]]
+id = "acceptance/oam_dma/basic"
+archive_path = "mooneye-test-suite/acceptance/oam_dma/basic.gb"
+sha256 = "7b4c048451510fcb224a23d653edd4bb339a4cf136873e736941d29e6c60b3f9"
+
+[[test_groups.roms]]
+id = "acceptance/oam_dma/reg_read"
+archive_path = "mooneye-test-suite/acceptance/oam_dma/reg_read.gb"
+sha256 = "ddb2a356f4bfdad7694375e6886003c784b89ef6ef70a1731679a66791314618"
+
+[[test_groups.roms]]
+id = "acceptance/oam_dma_restart"
+archive_path = "mooneye-test-suite/acceptance/oam_dma_restart.gb"
+sha256 = "b6c023cf7e27c1461e87d6215d4424e915555e98f54829668a6a6be86795cc26"
+
+[[test_groups.roms]]
+id = "acceptance/oam_dma_timing"
+archive_path = "mooneye-test-suite/acceptance/oam_dma_timing.gb"
+sha256 = "aac188b351934a038604b34e4ccf8b066e28af53f7b94698f11887b51b9e4f78"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/intr_2_0_timing"
+archive_path = "mooneye-test-suite/acceptance/ppu/intr_2_0_timing.gb"
+sha256 = "2b6e171f8e999dca4ae945c45ccbb793799bad77bc1310d170ad72a401863be1"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/intr_2_mode0_timing"
+archive_path = "mooneye-test-suite/acceptance/ppu/intr_2_mode0_timing.gb"
+sha256 = "39fd496590b444dbc85fa74bcf3f4d4e1da02c6479cb90b9c528971828c9ebad"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/intr_2_mode0_timing_sprites"
+archive_path = "mooneye-test-suite/acceptance/ppu/intr_2_mode0_timing_sprites.gb"
+sha256 = "4665062fc25e5ece8685ed4e6f9c4c589877e36ae54a10f750ed6074aa9ca9cd"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/intr_2_mode3_timing"
+archive_path = "mooneye-test-suite/acceptance/ppu/intr_2_mode3_timing.gb"
+sha256 = "1ca5c3d0c72759fa5971dfcb7d7b7c8b4864b83f615c69c97c5be2fdaf007c18"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/intr_2_oam_ok_timing"
+archive_path = "mooneye-test-suite/acceptance/ppu/intr_2_oam_ok_timing.gb"
+sha256 = "71aacaa7da1c84be2391ddbd143eef9ae29a3893b7c0b533c3d0eb23a8cb3e25"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/stat_irq_blocking"
+archive_path = "mooneye-test-suite/acceptance/ppu/stat_irq_blocking.gb"
+sha256 = "bdc27c61f0efaaf171a9b85526878424f4433c1d3fec1d60ea70a0f0ce3286bc"
+
+[[test_groups.roms]]
+id = "acceptance/ppu/stat_lyc_onoff"
+archive_path = "mooneye-test-suite/acceptance/ppu/stat_lyc_onoff.gb"
+sha256 = "d3516dd6a1c5e50fae0cbdfb84a368a03612974b37aaf1648aa5e8b705ff7a3e"
+
+[[test_groups.roms]]
+id = "acceptance/rst_timing"
+archive_path = "mooneye-test-suite/acceptance/rst_timing.gb"
+sha256 = "586b4ea3cc3fb52b84b2324b9cd5b5415f99c6d6858f6c34f7a39ba4979fe1a5"

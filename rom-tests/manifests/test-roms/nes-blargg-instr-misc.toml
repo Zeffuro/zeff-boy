@@ -1,0 +1,55 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/instr_misc/rom_singles"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "timing"]
+notes = "Local-only blargg instruction edge-case singles."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.nesdev.org/wiki/Emulator_tests"
+source_version = "local-cache-pending"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "01-abs_x_wrap"
+archive_path = "nes-test-roms/instr_misc/rom_singles/01-abs_x_wrap.nes"
+sha256 = "892e892b3b5d3526913b5491252f628d987baf44509dd28a7d109efc8a16bacc"
+legacy_paths = ["test-roms/nes-test-roms/instr_misc/rom_singles/01-abs_x_wrap.nes"]
+
+[[test_groups.roms]]
+id = "02-branch_wrap"
+archive_path = "nes-test-roms/instr_misc/rom_singles/02-branch_wrap.nes"
+sha256 = "2e535f572a16ab0e27bf6e076de6aaa2a9885c9ae1b02acda7853810529b24c5"
+legacy_paths = ["test-roms/nes-test-roms/instr_misc/rom_singles/02-branch_wrap.nes"]
+
+[[test_groups.roms]]
+id = "03-dummy_reads"
+archive_path = "nes-test-roms/instr_misc/rom_singles/03-dummy_reads.nes"
+sha256 = "9210b8a274c060e0abf9cf7a9f4a140598a8fa01ce852b0a9aef500c9728e822"
+legacy_paths = ["test-roms/nes-test-roms/instr_misc/rom_singles/03-dummy_reads.nes"]
+
+[[test_groups.roms]]
+id = "04-dummy_reads_apu"
+archive_path = "nes-test-roms/instr_misc/rom_singles/04-dummy_reads_apu.nes"
+sha256 = "3e4e974a57b82247861576bc855b589fa6d00291ec159f79795c9e3f50c39fef"
+legacy_paths = ["test-roms/nes-test-roms/instr_misc/rom_singles/04-dummy_reads_apu.nes"]

@@ -28,7 +28,7 @@ pub(super) fn write_screenshot_sequence_if_requested(
     framebuffer: &[u8],
     dimensions: (usize, usize),
 ) -> anyhow::Result<()> {
-    if opts.screenshot_every == 0 || frame % opts.screenshot_every != 0 {
+    if opts.screenshot_every == 0 || !frame.is_multiple_of(opts.screenshot_every) {
         return Ok(());
     }
     let Some(dir) = &opts.screenshot_dir else {

@@ -1,0 +1,958 @@
+{
+  "schema_version": 1,
+  "selected_count": 119,
+  "results": [
+    {
+      "id": "gb/mooneye/acceptance/reti_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/reti_intr_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ret_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/rapid_di_ei",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/bits/mem_oam",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ei_sequence",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/oam_dma_start",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/halt_ime0_ei",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/call_cc_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ei_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ret_cc_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/halt_ime0_nointr_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/halt_ime1_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/div_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/jp_cc_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/call_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/add_sp_e_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/call_cc_timing2",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/call_timing2",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/instr/daa",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/jp_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/push_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/pop_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ld_hl_sp_e_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/intr_timing",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim00",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim01",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim10",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim11",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tima_reload",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tima_write_reloading",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tma_write_reloading",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/rapid_toggle",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim00_div_trigger",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim01_div_trigger",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim10_div_trigger",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/tim11_div_trigger",
+      "suite_id": "gb-mooneye-accuracy",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/if_ie_registers",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/interrupts/ie_push",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/oam_dma/basic",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/oam_dma/reg_read",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/oam_dma_restart",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/oam_dma_timing",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/intr_2_0_timing",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/intr_2_mode0_timing",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/intr_2_mode0_timing_sprites",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/intr_2_mode3_timing",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/intr_2_oam_ok_timing",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/stat_irq_blocking",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/ppu/stat_lyc_onoff",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/rst_timing",
+      "suite_id": "gb-mooneye-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_align_cpu",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_duty_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_nrx2_glitch",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_nrx2_speed_change",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_restart_nrx2_glitch",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_sweep_restart_2",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_align_cpu",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_duty_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_nrx2_glitch",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_nrx2_speed_change",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_restart_nrx2_glitch",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_stop_div",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_stop_restart",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_volume",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_volume_div",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_and_glitch",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_first_sample",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_freq_change_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_restart_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_restart_during_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_restart_stop_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_shift_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_shift_skip_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_stop_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_stop_div",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_wave_ram_dac_on_rw",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_wave_ram_locked_write",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_3/channel_3_wave_ram_sync",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_align",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_delay",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_equivalent_frequencies",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_freq_change",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_frequency_alignment",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_lfsr",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_lfsr15",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_lfsr_15_7",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_lfsr_7_15",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_lfsr_restart",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_lfsr_restart_fast",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_4/channel_4_volume_div",
+      "suite_id": "gb-samesuite-apu-extra",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/div_write_trigger",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/div_write_trigger_10",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/div_trigger_volume_10",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/div_write_trigger_volume",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/div_write_trigger_volume_10",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_duty",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_delay",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_align",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_restart",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_stop_restart",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_stop_div",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_volume",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_volume_div",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_sweep",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1/channel_1_sweep_restart",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_duty",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_delay",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_align",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_restart",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_2/channel_2_freq_change",
+      "suite_id": "gb-samesuite-apu",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/bits/reg_f",
+      "suite_id": "gb-initial-smoke",
+      "core": "gb",
+      "tier": "smoke",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/mooneye/acceptance/timer/div_write",
+      "suite_id": "gb-initial-smoke",
+      "core": "gb",
+      "tier": "smoke",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gb/samesuite/apu/channel_1_freq_change",
+      "suite_id": "gb-initial-smoke",
+      "core": "gb",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/arm",
+      "suite_id": "gba-public-suite-placeholders",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/thumb",
+      "suite_id": "gba-public-suite-placeholders",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/memory",
+      "suite_id": "gba-public-suite-placeholders",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/memory",
+      "suite_id": "gba-public-suite-placeholders",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "skip",
+      "status": "skipped"
+    }
+  ]
+}
