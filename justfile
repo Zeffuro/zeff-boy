@@ -100,6 +100,18 @@ romtest-status baseline="rom-tests/baselines/current.json":
 romtest-status-local baseline="rom-tests/baselines/local.json":
     cargo run -p zeff-romtest -- status --baseline "{{baseline}}"
 
+# List local user-owned compatibility game entries. Real local*.toml manifests are ignored.
+romtest-list-compat:
+    cargo run -p zeff-romtest -- list --tier compat --include-games
+
+# Run ignored local user-owned compatibility game entries. Missing paths are reported as skipped.
+romtest-run-compat:
+    cargo run -p zeff-romtest -- run --tier compat --include-games --allow-missing --report-json rom-tests/results/compat.json --report-md rom-tests/results/compat.md --report-junit rom-tests/results/compat.junit.xml --report-baseline rom-tests/results/compat.baseline.json
+
+# Print status/coverage/suite tables from the latest local compatibility run.
+romtest-status-compat:
+    cargo run -p zeff-romtest -- status --actual-json rom-tests/results/compat.json
+
 # Run all tests with nextest (parallel, isolated)
 test-nextest:
     cargo nextest run --workspace

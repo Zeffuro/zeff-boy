@@ -8,6 +8,6 @@ description = "Shared debug, cheat, save-state, rewind, and replay types for zef
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
-anyhow = "1.0.103"
-log = "0.4.29"
-lz4_flex = "0.13.0"
+anyhow = "1.0.104"
+log = "0.4.33"
+lz4_flex = "0.14.0"

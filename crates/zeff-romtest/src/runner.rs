@@ -292,6 +292,7 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
             }
             screenshot_path = Some(path);
         }
+        PassKind::HeadlessExit => {}
         PassKind::ScreenshotPerceptual | PassKind::Manual => return Ok(None),
     }
 

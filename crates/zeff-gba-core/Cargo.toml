@@ -9,7 +9,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 zeff-emu-common = { path = "../zeff-emu-common" }
-anyhow = "1.0.103"
-bitflags = "2"
+anyhow = "1.0.104"
+bitflags = "2.13.1"
 sha2 = "0.11.0"
 

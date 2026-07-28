@@ -14,6 +14,6 @@ zeff-emu-common = { path = "../zeff-emu-common" }
 zeff-gb-core = { path = "../zeff-gb-core" }
 zeff-gba-core = { path = "../zeff-gba-core" }
 zeff-nes-core = { path = "../zeff-nes-core" }
-anyhow = "1.0"
-log = "0.4"
-env_logger = "0.11"
+anyhow = "1.0.104"
+log = "0.4.33"
+env_logger = "0.11.11"

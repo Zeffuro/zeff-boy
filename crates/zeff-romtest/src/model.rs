@@ -129,6 +129,7 @@ pub(crate) enum PassKind {
     GbaScreenshot,
     ScreenshotExact,
     ScreenshotPerceptual,
+    HeadlessExit,
     Manual,
 }
 
@@ -144,6 +145,7 @@ impl fmt::Display for PassKind {
             Self::GbaScreenshot => "gba_screenshot",
             Self::ScreenshotExact => "screenshot_exact",
             Self::ScreenshotPerceptual => "screenshot_perceptual",
+            Self::HeadlessExit => "headless_exit",
             Self::Manual => "manual",
         })
     }

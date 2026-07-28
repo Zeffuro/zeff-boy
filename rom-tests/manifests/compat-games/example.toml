@@ -12,7 +12,7 @@ core = "gba"
 tier = "compat"
 max_frames = 3600
 tags = ["compat", "gba", "local-only"]
-notes = "Copy this file to local-your-name.toml and replace placeholders. Do not commit real game titles or hashes."
+notes = "Copy this file to local-your-name.toml and replace placeholders. local*.toml is ignored. Do not commit real game titles or hashes."
 
 [tests.artifact]
 kind = "game_rom"
@@ -26,8 +26,8 @@ source_version = "local"
 path = "test-roms/GBA/Your legally dumped game.gba"
 
 [tests.pass]
-kind = "manual"
+kind = "headless_exit"
 
 [tests.expectation]
 kind = "skip"
-reason = "Template only."
+reason = "Template only. Change this to pass in your ignored local*.toml once the path points at a user-owned dump."

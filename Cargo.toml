@@ -29,52 +29,52 @@ zeff-emu-common = { path = "crates/zeff-emu-common" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }
-anyhow = "1.0.103"
-log = "0.4.29"
-wgpu = "29.0.1"
+anyhow = "1.0.104"
+log = "0.4.33"
+wgpu = "29.0.4"
 winit = "0.30.13"
-phf = { version = "0.13.1", features = ["macros"] }
-egui = "0.34.1"
-egui-wgpu = "0.34.1"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-rtrb = "0.3.3"
-arc-swap = "1.9.1"
-egui_dock = "0.19.1"
+phf = { version = "0.14.0", features = ["macros"] }
+egui = "0.35.0"
+egui-wgpu = "0.35.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+rtrb = "0.3.4"
+arc-swap = "1.9.2"
+egui_dock = "0.20.1"
 png = "0.18.1"
 crc32fast = "1.5.0"
-const-hex = "1.18.1"
-arrayvec = "0.7.6"
-zip = { version = "8.5.0", default-features = false, features = ["deflate"] }
-gilrs = "0.11"
+const-hex = "1.19.1"
+arrayvec = "0.7.8"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+gilrs = "0.11.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.egui-winit]
-version = "0.34.1"
+version = "0.35.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.egui-winit]
-version = "0.34.1"
+version = "0.35.0"
 default-features = false
 features = ["links"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cpal = "0.17.3"
-env_logger = "0.11.9"
-pollster = "0.4.0"
+cpal = "0.18.1"
+env_logger = "0.11.11"
+pollster = "1.0.1"
 rfd = "0.17.2"
 dirs = "6.0.0"
-rubato = "2.0.0"
-crossbeam-channel = "0.5.15"
-open = "5.3.3"
-chrono = "0.4"
+rubato = "4.0.0"
+crossbeam-channel = "0.5.16"
+open = "5.4.0"
+chrono = "0.4.45"
 ureq = "3.3.0"
 vorbis-encoder = { version = "0.1.4", optional = true }
-nokhwa = { version = "0.10.10", optional = true, default-features = false, features = ["input-native"] }
+nokhwa = { version = "0.10.11", optional = true, default-features = false, features = ["input-native"] }
 image = { version = "0.25.10", optional = true, default-features = false, features = ["jpeg"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2.118"
-wasm-bindgen-futures = "0.4.68"
-web-sys = { version = "0.3.95", features = [
+wasm-bindgen = "0.2.126"
+wasm-bindgen-futures = "0.4.76"
+web-sys = { version = "0.3.103", features = [
     "Window", "Document", "HtmlCanvasElement", "HtmlElement",
     "HtmlAnchorElement", "Element", "Storage", "console",
     "AudioContext", "AudioDestinationNode", "AudioBuffer",
@@ -85,8 +85,8 @@ web-sys = { version = "0.3.95", features = [
     "DragEvent", "DataTransfer",
     "Url",
 ] }
-js-sys = "0.3.95"
-console_log = "1"
+js-sys = "0.3.103"
+console_log = "1.1.0"
 console_error_panic_hook = "0.1"
 web-time = "1"
 

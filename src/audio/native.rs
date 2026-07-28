@@ -191,24 +191,24 @@ impl AudioOutput {
         consumer: rtrb::Consumer<f32>,
     ) -> anyhow::Result<cpal::Stream> {
         let channels = config.channels();
-        let stream_config: StreamConfig = config.clone().into();
+        let stream_config: StreamConfig = (*config).into();
         match config.sample_format() {
-            SampleFormat::F32 => Self::build_stream_f32(device, &stream_config, channels, consumer)
+            SampleFormat::F32 => Self::build_stream_f32(device, stream_config, channels, consumer)
                 .context("failed to build F32 audio stream"),
             SampleFormat::I16 => {
-                Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
+                Self::build_stream_converting(device, stream_config, channels, consumer, |s| {
                     (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
                 })
                 .context("failed to build I16 audio stream")
             }
             SampleFormat::U16 => {
-                Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
+                Self::build_stream_converting(device, stream_config, channels, consumer, |s| {
                     ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16
                 })
                 .context("failed to build U16 audio stream")
             }
             SampleFormat::U8 => {
-                Self::build_stream_converting(device, &stream_config, channels, consumer, |s| {
+                Self::build_stream_converting(device, stream_config, channels, consumer, |s| {
                     ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u8::MAX as f32) as u8
                 })
                 .context("failed to build U8 audio stream")
@@ -285,10 +285,10 @@ impl AudioOutput {
 
     fn build_stream_f32(
         device: &cpal::Device,
-        config: &StreamConfig,
+        config: StreamConfig,
         channels: u16,
         mut consumer: rtrb::Consumer<f32>,
-    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    ) -> Result<cpal::Stream, cpal::Error> {
         device.build_output_stream(
             config,
             move |data: &mut [f32], _| {
@@ -301,11 +301,11 @@ impl AudioOutput {
 
     fn build_stream_converting<S: cpal::SizedSample + Send + 'static>(
         device: &cpal::Device,
-        config: &StreamConfig,
+        config: StreamConfig,
         channels: u16,
         mut consumer: rtrb::Consumer<f32>,
         convert: fn(f32) -> S,
-    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    ) -> Result<cpal::Stream, cpal::Error> {
         let mut scratch = Vec::<f32>::with_capacity(4096);
         device.build_output_stream(
             config,

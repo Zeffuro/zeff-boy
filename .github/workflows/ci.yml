@@ -99,6 +99,63 @@ jobs:
       - name: Run tests (no default features)
         run: ${{ matrix.wrapper }} cargo nextest run --workspace --no-default-features
 
+  romtest:
+    name: ROM tests
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-romtest
+
+      - name: Validate ROM test manifests
+        run: cargo run -p zeff-romtest -- check
+
+      - name: Fetch clone-friendly ROM tests
+        run: cargo run -p zeff-romtest -- fetch --exclude-tier local
+
+      - name: Build Zeff Boy for ROM tests
+        run: cargo build --bin zeff-boy
+
+      - name: Run clone-friendly ROM tests
+        run: |
+          mkdir -p rom-tests/results
+          cargo run -p zeff-romtest -- run \
+            --exclude-tier local \
+            --zeff-boy target/debug/zeff-boy \
+            --report-json rom-tests/results/current.json \
+            --report-md rom-tests/results/current.md \
+            --report-junit rom-tests/results/current.junit.xml \
+            --report-baseline rom-tests/results/current.baseline.json
+
+      - name: Compare ROM test baseline
+        run: |
+          cargo run -p zeff-romtest -- compare \
+            --baseline rom-tests/baselines/current.json \
+            --actual-json rom-tests/results/current.json
+
+      - name: Upload ROM test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: romtest-reports
+          path: |
+            rom-tests/results/current.json
+            rom-tests/results/current.md
+            rom-tests/results/current.junit.xml
+            rom-tests/results/current.baseline.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   platform-audit:
     name: Platform-leak audit
     runs-on: ubuntu-latest
@@ -157,6 +214,9 @@ jobs:
 
       - name: Clippy (WASM)
         run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
+
+      - name: Check (WASM)
+        run: cargo check --target wasm32-unknown-unknown --no-default-features
 
   fuzz-check:
     name: Fuzz Compile Check

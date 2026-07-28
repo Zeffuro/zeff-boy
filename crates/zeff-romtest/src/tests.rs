@@ -124,6 +124,41 @@ kind = "pass"
 }
 
 #[test]
+fn parses_headless_exit_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "compat"
+name = "Compat"
+core = "gba"
+
+[[tests]]
+id = "compat/local/gba/game"
+core = "gba"
+tier = "compat"
+max_frames = 60
+
+[tests.artifact]
+kind = "game_rom"
+license = "copyrighted"
+license_confidence = "user_owned"
+redistributable = false
+
+[tests.rom]
+path = "test-roms/GBA/game.gba"
+
+[tests.pass]
+kind = "headless_exit"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::HeadlessExit);
+}
+
+#[test]
 fn expands_grouped_manifest_entries() {
     let manifest: Manifest = toml::from_str(
         r#"

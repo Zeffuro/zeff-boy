@@ -80,7 +80,32 @@ pub(crate) fn sram_path_for_rom(rom_path: &Path) -> PathBuf {
             return ancestor.with_extension("sav");
         }
     }
+    if let Some(zip_path) = backslash_or_slash_zip_ancestor(rom_path) {
+        return zip_path.with_extension("sav");
+    }
     rom_path.with_extension("sav")
+}
+
+fn backslash_or_slash_zip_ancestor(path: &Path) -> Option<PathBuf> {
+    let text = path.as_os_str().to_string_lossy();
+    let mut component_start = 0;
+    for (index, ch) in text.char_indices() {
+        if !matches!(ch, '\\' | '/') {
+            continue;
+        }
+        if component_has_zip_extension(&text[component_start..index]) {
+            return Some(PathBuf::from(&text[..index]));
+        }
+        component_start = index + ch.len_utf8();
+    }
+    component_has_zip_extension(&text[component_start..]).then(|| PathBuf::from(text.as_ref()))
+}
+
+fn component_has_zip_extension(component: &str) -> bool {
+    Path::new(component)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
 }
 
 pub(crate) fn flush_battery_sram(

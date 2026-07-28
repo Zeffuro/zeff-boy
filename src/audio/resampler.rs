@@ -1,5 +1,5 @@
 use rubato::{
-    Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+    Adjustable, Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
     WindowFunction, audioadapter::Adapter, audioadapter_buffers::direct::SequentialSliceOfVecs,
 };
 
@@ -23,7 +23,7 @@ impl AudioResampler {
         let ratio = target_rate as f64 / source_rate as f64;
         let params = SincInterpolationParameters {
             sinc_len: 128,
-            f_cutoff: 0.95,
+            f_cutoff: Some(0.95),
             interpolation: SincInterpolationType::Cubic,
             oversampling_factor: 128,
             window: WindowFunction::BlackmanHarris2,
@@ -76,7 +76,7 @@ impl AudioResampler {
             {
                 let adapter = SequentialSliceOfVecs::new(&input_buf, 2, self.chunk_size)
                     .expect("audio input must have exactly 2 channels with matching chunk size");
-                match self.resampler.process(&adapter, 0, None) {
+                match self.resampler.process(&adapter, None) {
                     Ok(result) => {
                         let out_frames = result.frames();
                         let out_channels = result.channels();

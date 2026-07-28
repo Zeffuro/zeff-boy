@@ -17,7 +17,7 @@ mod util;
 #[cfg(test)]
 mod tests;
 
-const DEFAULT_MANIFEST_DIR: &str = "rom-tests/manifests/test-roms";
+const DEFAULT_MANIFEST_DIR: &str = "rom-tests/manifests";
 const DEFAULT_SOURCES_PATH: &str = "rom-tests/sources.toml";
 const DEFAULT_SOURCE_CACHE_DIR: &str = "rom-tests/cache/_sources";
 const DEFAULT_SCREENSHOT_OUTPUT_DIR: &str = "rom-tests/results/screenshots";
