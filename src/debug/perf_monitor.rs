@@ -103,7 +103,7 @@ pub(super) fn draw_performance_content(
         if points.len() >= 2 {
             painter.add(egui::Shape::line(
                 points,
-                egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 200, 100)),
+                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(100, 200, 100)),
             ));
         }
 
@@ -113,7 +113,7 @@ pub(super) fn draw_performance_content(
             painter.line_segment(
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
                 egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     egui::Color32::from_rgba_unmultiplied(255, 200, 60, 120),
                 ),
             );

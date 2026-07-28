@@ -189,7 +189,10 @@ pub(super) fn draw_tilemap_viewer_content(
                     painter.rect_stroke(
                         rect,
                         0.0,
-                        egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(255, 165, 0, 200)),
+                        egui::Stroke::new(
+                            2.0_f32,
+                            egui::Color32::from_rgba_unmultiplied(255, 165, 0, 200),
+                        ),
                         egui::StrokeKind::Outside,
                     );
                 }
@@ -236,7 +239,7 @@ pub(super) struct ViewportOverlay {
 }
 
 pub(super) fn draw_wrapped_viewport_rect(painter: &egui::Painter, vp: &ViewportOverlay) {
-    let stroke = egui::Stroke::new(2.0, vp.color);
+    let stroke = egui::Stroke::new(2.0_f32, vp.color);
     let x = vp.scroll_x;
     let y = vp.scroll_y;
     let w = vp.viewport_w;

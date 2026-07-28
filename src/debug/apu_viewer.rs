@@ -46,7 +46,7 @@ fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
     painter.rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(70)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(70)),
         egui::StrokeKind::Outside,
     );
     painter.line_segment(
@@ -54,7 +54,7 @@ fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
             egui::pos2(rect.left(), mid_y),
             egui::pos2(rect.right(), mid_y),
         ],
-        egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(60)),
     );
 
     if samples.len() < 2 {
@@ -79,7 +79,7 @@ fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
 
     painter.add(egui::Shape::line(
         points,
-        egui::Stroke::new(1.25, egui::Color32::from_rgb(90, 220, 140)),
+        egui::Stroke::new(1.25_f32, egui::Color32::from_rgb(90, 220, 140)),
     ));
 }
 
