@@ -17,7 +17,7 @@ profile-cores = []
 
 [package]
 name = "zeff-boy"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
