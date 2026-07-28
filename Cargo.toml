@@ -29,7 +29,7 @@ zeff-emu-common = { path = "crates/zeff-emu-common" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 log = "0.4.29"
 wgpu = "29.0.1"
 winit = "0.30.13"

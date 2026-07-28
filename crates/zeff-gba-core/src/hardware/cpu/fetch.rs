@@ -30,12 +30,15 @@ impl Cpu {
         instruction_set: InstructionSet,
         width_bytes: u8,
     ) -> FetchedInstruction {
-        if self
-            .prefetch_queue
-            .front()
-            .is_some_and(|fetched| fetched.pc == pc && fetched.instruction_set == instruction_set)
-        {
-            return self.prefetch_queue.pop_front().unwrap();
+        let queued_front_matches = matches!(
+            self.prefetch_queue.front(),
+            Some(fetched) if fetched.pc == pc && fetched.instruction_set == instruction_set
+        );
+        if queued_front_matches {
+            return self
+                .prefetch_queue
+                .remove(0)
+                .expect("prefetch queue front existed");
         }
 
         self.prefetch_queue.clear();

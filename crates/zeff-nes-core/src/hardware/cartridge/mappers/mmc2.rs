@@ -127,14 +127,12 @@ impl Mapper for Mmc2 {
             0xC000..=0xCFFF => self.chr_banks[1] = val & 0x1F,
             0xD000..=0xDFFF => self.chr_banks[2] = val & 0x1F,
             0xE000..=0xEFFF => self.chr_banks[3] = val & 0x1F,
-            0xF000..=0xFFFF => {
-                if !self.fixed_four_screen {
-                    self.mirroring = if val & 0x01 == 0 {
-                        Mirroring::Vertical
-                    } else {
-                        Mirroring::Horizontal
-                    };
-                }
+            0xF000..=0xFFFF if !self.fixed_four_screen => {
+                self.mirroring = if val & 0x01 == 0 {
+                    Mirroring::Vertical
+                } else {
+                    Mirroring::Horizontal
+                };
             }
             _ => {}
         }
