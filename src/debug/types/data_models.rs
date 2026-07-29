@@ -118,6 +118,7 @@ pub(crate) struct NesGraphicsData {
 
 pub(crate) struct GbGraphicsData {
     pub(crate) vram: Vec<u8>,
+    pub(crate) oam: Vec<u8>,
     pub(crate) ppu: zeff_gb_core::debug::PpuSnapshot,
     pub(crate) cgb_mode: bool,
     pub(crate) bg_palette_ram: [u8; 64],

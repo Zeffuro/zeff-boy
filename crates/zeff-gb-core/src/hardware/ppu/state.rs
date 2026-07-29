@@ -48,6 +48,12 @@ impl PPU {
         writer.write_bool(self.cgb_mode);
         writer.write_bool(self.rendered_current_line);
         writer.write_bool(self.prev_stat_line);
+        writer.write_bool(self.cgb_double_speed);
+        writer.write_bool(self.lcd_was_enabled);
+        writer.write_bool(self.blank_first_frame_after_lcd_on);
+        writer.write_bool(self.prev_cpu_stat_mode0_line);
+        writer.write_bool(self.cpu_stat_mode0_pending_before_if);
+        writer.write_u64(self.draw_dots_for_line);
     }
 
     pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
@@ -96,6 +102,12 @@ impl PPU {
         ppu.cgb_mode = reader.read_bool()?;
         ppu.rendered_current_line = reader.read_bool()?;
         ppu.prev_stat_line = reader.read_bool()?;
+        ppu.cgb_double_speed = reader.read_bool()?;
+        ppu.lcd_was_enabled = reader.read_bool()?;
+        ppu.blank_first_frame_after_lcd_on = reader.read_bool()?;
+        ppu.prev_cpu_stat_mode0_line = reader.read_bool()?;
+        ppu.cpu_stat_mode0_pending_before_if = reader.read_bool()?;
+        ppu.draw_dots_for_line = reader.read_u64()?;
         ppu.framebuffer = default_framebuffer();
         Ok(ppu)
     }

@@ -21,6 +21,8 @@ const BIOS_IRQ_FLAGS: u32 = 0x0300_7FF8;
 const INT_VBLANK: u16 = 1 << 0;
 const INT_HBLANK: u16 = 1 << 1;
 const INT_VCOUNT: u16 = 1 << 2;
+const IRQ_DELAY_CYCLES: u32 = 7;
+const IRQ_SAMPLE_LOOKAHEAD_CYCLES: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DebugTraceEvent {
@@ -52,6 +54,7 @@ pub struct Bus {
     pub vram: Vec<u8>,
     pub oam: Vec<u8>,
     pending_dma_cycles: u32,
+    irq_delay_cycles: Option<u32>,
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_reads: bool,
     pub(crate) debug_trace_writes: bool,
@@ -74,6 +77,7 @@ impl Bus {
             vram: vec![0; VRAM_SIZE],
             oam: vec![0; OAM_SIZE],
             pending_dma_cycles: 0,
+            irq_delay_cycles: None,
             debug_trace_enabled: false,
             debug_trace_reads: false,
             debug_trace_writes: false,
@@ -99,12 +103,18 @@ impl Bus {
             0x0600_0000..=0x06FF_FFFF => self.vram[vram_index(addr)],
             0x0700_0000..=0x07FF_FFFF => self.oam[(addr as usize) & (OAM_SIZE - 1)],
             0x0800_0000..=0x0DFF_FFFF => self.cartridge.rom_read8(addr),
-            0x0E00_0000..=0x0E00_FFFF => self.cartridge.backup_read8(addr),
+            0x0E00_0000..=0x0FFF_FFFF => self.cartridge.backup_read8(addr),
             _ => 0xFF,
         }
     }
 
     pub fn read16(&self, addr: u32) -> u16 {
+        if is_backup_addr(addr) {
+            let byte = self.cartridge.backup_read8(addr);
+            let value = u16::from_le_bytes([byte, byte]);
+            self.record_read(addr, u32::from(value), 2);
+            return value;
+        }
         let aligned = addr & !1;
         if self.cartridge.is_eeprom_access_addr(aligned) {
             let value = self.cartridge.eeprom_read16(aligned);
@@ -117,11 +127,21 @@ impl Bus {
     }
 
     fn read16_raw(&self, addr: u32) -> u16 {
+        if is_backup_addr(addr) {
+            let byte = self.cartridge.backup_read8(addr);
+            return u16::from_le_bytes([byte, byte]);
+        }
         let aligned = addr & !1;
         u16::from_le_bytes([self.read8_raw(aligned), self.read8_raw(aligned + 1)])
     }
 
     pub fn read32(&self, addr: u32) -> u32 {
+        if is_backup_addr(addr) {
+            let byte = self.cartridge.backup_read8(addr);
+            let value = u32::from_le_bytes([byte, byte, byte, byte]);
+            self.record_read(addr, value, 4);
+            return value;
+        }
         let aligned = addr & !3;
         let value = u32::from_le_bytes([
             self.read8_raw(aligned),
@@ -134,6 +154,10 @@ impl Bus {
     }
 
     fn read32_raw(&self, addr: u32) -> u32 {
+        if is_backup_addr(addr) {
+            let byte = self.cartridge.backup_read8(addr);
+            return u32::from_le_bytes([byte, byte, byte, byte]);
+        }
         let aligned = addr & !3;
         u32::from_le_bytes([
             self.read8_raw(aligned),
@@ -169,12 +193,24 @@ impl Bus {
                 }
             }
             0x0700_0000..=0x07FF_FFFF => {}
-            0x0E00_0000..=0x0E00_FFFF => self.cartridge.backup_write8(addr, value),
+            0x0E00_0000..=0x0FFF_FFFF => self.cartridge.backup_write8(addr, value),
             _ => {}
         }
     }
 
     pub fn write16(&mut self, addr: u32, value: u16) {
+        if is_backup_addr(addr) {
+            let old_value = u32::from(self.cartridge.backup_read8(addr));
+            let byte = value.to_le_bytes()[(addr & 1) as usize];
+            self.cartridge.backup_write8(addr, byte);
+            self.record_write(
+                addr,
+                old_value,
+                u32::from(self.cartridge.backup_read8(addr)),
+                2,
+            );
+            return;
+        }
         let aligned = addr & !1;
         if self.cartridge.is_eeprom_access_addr(aligned) {
             self.cartridge.eeprom_write16(aligned, value);
@@ -203,6 +239,18 @@ impl Bus {
     }
 
     pub fn write32(&mut self, addr: u32, value: u32) {
+        if is_backup_addr(addr) {
+            let old_value = u32::from(self.cartridge.backup_read8(addr));
+            let byte = value.to_le_bytes()[(addr & 3) as usize];
+            self.cartridge.backup_write8(addr, byte);
+            self.record_write(
+                addr,
+                old_value,
+                u32::from(self.cartridge.backup_read8(addr)),
+                4,
+            );
+            return;
+        }
         let aligned = addr & !3;
         let old_value = self.read32_raw(aligned);
         if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
@@ -248,7 +296,7 @@ impl Bus {
                 self.oam[index] = bytes[0];
                 self.oam[(index + 1) & (OAM_SIZE - 1)] = bytes[1];
             }
-            0x0E00_0000..=0x0E00_FFFF => {
+            0x0E00_0000..=0x0FFF_FFFF => {
                 self.cartridge.backup_write8(addr, bytes[0]);
                 self.cartridge.backup_write8(addr.wrapping_add(1), bytes[1]);
             }
@@ -287,7 +335,7 @@ impl Bus {
                     self.oam[(index + offset) & (OAM_SIZE - 1)] = byte;
                 }
             }
-            0x0E00_0000..=0x0E00_FFFF => {
+            0x0E00_0000..=0x0FFF_FFFF => {
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.cartridge
                         .backup_write8(addr.wrapping_add(offset as u32), byte);
@@ -303,10 +351,17 @@ impl Bus {
             let was_in_hblank = self.ppu.in_hblank();
             let old_vcount = self.ppu.vcount();
             let soundcnt_h = read_io16(&self.io, 0x82);
-            let step = cycles
+            let mut step = cycles
                 .min(self.ppu.cycles_until_next_status_event().max(1))
-                .min(self.cycles_until_next_direct_sound_overflow(soundcnt_h));
+                .min(self.cycles_until_next_direct_sound_overflow(soundcnt_h))
+                .min(self.cycles_until_irq_event());
+            for timer in 0..4 {
+                if let Some(next) = self.timers.cycles_until_overflow(timer) {
+                    step = step.min(next.max(1));
+                }
+            }
 
+            self.step_irq_event(step);
             self.ppu.step_cycles(step);
             self.cartridge.step_cycles(step);
             cycles -= step;
@@ -331,12 +386,13 @@ impl Bus {
                 read_io16(&self.io, 0x84),
                 read_io16(&self.io, SOUNDBIAS),
             );
-            let (timer_interrupts, timer_overflows) = self.timers.step_with_overflows(step);
+            let (timer_interrupts, timer_overflows, timer_irq_extra_delays) =
+                self.timers.step_with_overflows(step);
             if timer_overflows.iter().any(|&count| count != 0) {
                 self.service_sound_timer_overflows(timer_overflows, soundcnt_h);
             }
             if timer_interrupts != 0 {
-                self.request_interrupt(timer_interrupts);
+                self.request_timer_interrupts(timer_interrupts, timer_irq_extra_delays);
             }
         }
     }
@@ -348,12 +404,66 @@ impl Bus {
     pub fn cycles_until_next_halt_check(&self) -> u32 {
         let mut cycles = 64;
         cycles = cycles.min(self.ppu.cycles_until_next_status_event().max(1));
+        cycles = cycles.min(self.cycles_until_irq_event());
         for timer in 0..4 {
             if let Some(next) = self.timers.cycles_until_overflow(timer) {
                 cycles = cycles.min(next.max(1));
             }
         }
         cycles.max(1)
+    }
+
+    pub(crate) fn interrupt_ready(&self) -> bool {
+        self.interrupt_pending()
+            && self
+                .irq_delay_cycles
+                .is_some_and(|cycles| cycles <= IRQ_SAMPLE_LOOKAHEAD_CYCLES)
+    }
+
+    pub(crate) fn take_irq_sample_delay_cycles(&mut self) -> u32 {
+        let Some(cycles) = self.irq_delay_cycles else {
+            return 0;
+        };
+        if cycles > IRQ_SAMPLE_LOOKAHEAD_CYCLES {
+            return 0;
+        }
+        self.irq_delay_cycles = Some(0);
+        cycles
+    }
+
+    pub(crate) fn test_irq_signal(&mut self, cycles_late: u32) {
+        self.test_irq_signal_with_extra_delay(cycles_late, 0);
+    }
+
+    pub(crate) fn test_irq_signal_with_extra_delay(&mut self, cycles_late: u32, extra_delay: u32) {
+        if self.irq_line_asserted() && self.irq_delay_cycles.is_none() {
+            self.irq_delay_cycles = Some(
+                IRQ_DELAY_CYCLES
+                    .saturating_add(extra_delay)
+                    .saturating_sub(cycles_late),
+            );
+        }
+    }
+
+    fn cycles_until_irq_event(&self) -> u32 {
+        self.irq_delay_cycles
+            .filter(|&cycles| cycles > 0)
+            .unwrap_or(u32::MAX)
+    }
+
+    fn step_irq_event(&mut self, cycles: u32) {
+        if let Some(delay) = self.irq_delay_cycles {
+            let next = delay.saturating_sub(cycles);
+            self.irq_delay_cycles = if next == 0 && !self.irq_line_asserted() {
+                None
+            } else {
+                Some(next)
+            };
+        }
+    }
+
+    fn irq_line_asserted(&self) -> bool {
+        read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x3FFF != 0
     }
 
     pub fn render_frame(&mut self) {
@@ -473,6 +583,10 @@ fn bios_stub_read8(addr: u32) -> u8 {
 
 fn is_sound_fifo_register(addr: u32) -> bool {
     matches!(addr & 0x03FF, 0x0A0 | 0x0A2 | 0x0A4 | 0x0A6)
+}
+
+fn is_backup_addr(addr: u32) -> bool {
+    matches!(addr, 0x0E00_0000..=0x0FFF_FFFF)
 }
 
 fn write_repeated_video_byte(memory: &mut [u8], addr: usize, value: u8) {

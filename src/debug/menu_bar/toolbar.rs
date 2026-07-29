@@ -41,7 +41,7 @@ pub(super) fn draw(
         actions.push(MenuAction::SpeedChange(1));
     }
     ui.label(
-        egui::RichText::new(format!("{}×", mult))
+        egui::RichText::new(format!("{mult}×"))
             .small()
             .color(egui::Color32::LIGHT_GRAY),
     );

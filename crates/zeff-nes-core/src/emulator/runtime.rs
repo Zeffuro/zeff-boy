@@ -17,7 +17,7 @@ impl Emulator {
         collect_bus_trace: bool,
     ) -> (u16, u8, u64, Vec<DebugTraceEvent>) {
         if self.cpu.state == CpuState::Suspended {
-            return (self.cpu.pc, self.bus.cpu_read(self.cpu.pc), 0, Vec::new());
+            return (self.cpu.pc, self.bus.cpu_peek(self.cpu.pc), 0, Vec::new());
         }
 
         let watch_active = self.debug.has_watchpoints();
@@ -28,11 +28,12 @@ impl Emulator {
         }
 
         let pc_before = self.cpu.pc;
-        let opcode = self.bus.cpu_read(pc_before);
+        let opcode = self.bus.cpu_peek(pc_before);
 
         self.opcode_log.push((pc_before, opcode));
 
         self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
+        self.bus.begin_cpu_step_timing();
 
         let cycles = self.cpu.step(&mut self.bus);
 
@@ -103,6 +104,7 @@ impl Emulator {
                 && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
             {
                 self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
+                self.bus.begin_cpu_step_timing();
                 let cycles = self.cpu.step(&mut self.bus);
 
                 let dma_cycles = self.bus.dma_stall_cycles;
@@ -116,7 +118,7 @@ impl Emulator {
     }
 
     fn tick_peripherals_after_cpu_step(&mut self, total_cycles: u64) {
-        let events = self.bus.tick_peripherals(total_cycles);
+        let events = self.bus.finish_cpu_step_timing(total_cycles);
         let final_irq_pending = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
         let nmi_suppressed_by_status_read = self.bus.ppu_nmi_suppressed_by_status_read;
         self.bus.ppu_nmi_suppressed_by_status_read = false;
@@ -139,10 +141,9 @@ impl Emulator {
                     if !nmi_suppressed_by_status_read {
                         self.cpu.nmi_pending = true;
                         if events.first_nmi_cpu_cycle == Some(0)
-                            || interrupt_missed_poll(
+                            || nmi_missed_poll(
                                 events.first_nmi_cpu_cycle,
                                 self.cpu.last_step_cycles,
-                                branch_taken_same_page,
                             )
                         {
                             self.cpu.delay_nmi_poll_once();
@@ -157,7 +158,7 @@ impl Emulator {
 
         if !irq_was_pending
             && final_irq_pending
-            && interrupt_missed_poll(
+            && irq_missed_poll(
                 events.first_irq_cpu_cycle,
                 self.cpu.last_step_cycles,
                 branch_taken_same_page,
@@ -168,7 +169,16 @@ impl Emulator {
     }
 }
 
-fn interrupt_missed_poll(
+fn nmi_missed_poll(first_interrupt_cpu_cycle: Option<u64>, instruction_cycles: u64) -> bool {
+    let Some(first_interrupt_cpu_cycle) = first_interrupt_cpu_cycle else {
+        return false;
+    };
+
+    let missed_poll_cycle = instruction_cycles.saturating_sub(1);
+    missed_poll_cycle != 0 && first_interrupt_cpu_cycle >= missed_poll_cycle
+}
+
+fn irq_missed_poll(
     first_interrupt_cpu_cycle: Option<u64>,
     instruction_cycles: u64,
     branch_taken_same_page: bool,
@@ -177,10 +187,5 @@ fn interrupt_missed_poll(
         return false;
     }
 
-    let Some(first_interrupt_cpu_cycle) = first_interrupt_cpu_cycle else {
-        return false;
-    };
-
-    let missed_poll_cycle = instruction_cycles.saturating_sub(1);
-    missed_poll_cycle != 0 && first_interrupt_cpu_cycle >= missed_poll_cycle
+    nmi_missed_poll(first_interrupt_cpu_cycle, instruction_cycles)
 }

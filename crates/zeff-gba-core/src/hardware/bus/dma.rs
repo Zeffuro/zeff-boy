@@ -133,7 +133,7 @@ impl Bus {
         }
 
         let dest_mode = (ch.control >> 5) & 0x3;
-        let src_mode = (ch.control >> 7) & 0x3;
+        let configured_src_mode = (ch.control >> 7) & 0x3;
         let mut src = ch.active_source;
         let mut dst = ch.active_destination;
         let mut transfer_cycles = 0u32;
@@ -153,7 +153,7 @@ impl Bus {
                 let value = self.read16(src);
                 bits.push((value & 1) as u8);
                 self.record_write(dst, 0xFFFF, u32::from(value & 1), 2);
-                src = step_dma_addr(src, src_mode, unit);
+                src = step_dma_addr(src, configured_src_mode, unit);
                 dst = step_dma_addr(dst, dest_mode, unit);
             }
             self.cartridge
@@ -181,7 +181,7 @@ impl Bus {
                 let value = self.cartridge.eeprom_read16(src);
                 self.record_read(src, u32::from(value), 2);
                 self.write16(dst, value);
-                src = step_dma_addr(src, src_mode, unit);
+                src = step_dma_addr(src, configured_src_mode, unit);
                 dst = step_dma_addr(dst, dest_mode, unit);
             }
             self.pending_dma_cycles = self
@@ -203,14 +203,36 @@ impl Bus {
             transfer_cycles =
                 transfer_cycles.saturating_add(access_cycles(dst, width, access_type));
 
+            let read_addr = dma_source_addr(channel, src) & !(unit - 1);
+            let write_addr = dma_destination_addr(channel, dst) & !(unit - 1);
             if word {
-                let value = self.read32(src);
-                self.write32(dst, value);
+                let source_uses_latch = dma_source_uses_latch(read_addr);
+                let value = if source_uses_latch {
+                    ch.data_latch
+                } else {
+                    self.read32(read_addr)
+                };
+                if !source_uses_latch {
+                    ch.data_latch = value;
+                }
+                self.write32(write_addr, value);
             } else {
-                let value = self.read16(src);
-                self.write16(dst, value);
+                let source_uses_latch = dma_source_uses_latch(read_addr);
+                let value = if source_uses_latch {
+                    ch.data_latch as u16
+                } else {
+                    self.read16(read_addr)
+                };
+                if !source_uses_latch {
+                    ch.data_latch = u32::from(value) | (u32::from(value) << 16);
+                }
+                self.write16(write_addr, value);
             }
-            src = step_dma_addr(src, src_mode, unit);
+            src = step_dma_addr(
+                src,
+                effective_dma_source_step_mode(channel, src, configured_src_mode),
+                unit,
+            );
             dst = step_dma_addr(dst, dest_mode, unit);
         }
         self.pending_dma_cycles = self
@@ -219,6 +241,34 @@ impl Bus {
         ch.active_source = src;
         ch.active_destination = dst;
         ch.active_count = 0;
+    }
+}
+
+fn dma_source_addr(channel: usize, addr: u32) -> u32 {
+    if channel == 0 {
+        addr & 0x07FF_FFFF
+    } else {
+        addr & 0x0FFF_FFFF
+    }
+}
+
+fn dma_destination_addr(channel: usize, addr: u32) -> u32 {
+    if channel == 3 {
+        addr & 0x0FFF_FFFF
+    } else {
+        addr & 0x07FF_FFFF
+    }
+}
+
+fn dma_source_uses_latch(addr: u32) -> bool {
+    matches!(addr, 0x0000_0000..=0x01FF_FFFF | 0x1000_0000..=0xFFFF_FFFF)
+}
+
+fn effective_dma_source_step_mode(channel: usize, addr: u32, configured_mode: u16) -> u16 {
+    if channel != 0 && matches!(addr, 0x0800_0000..=0x0DFF_FFFF) {
+        0
+    } else {
+        configured_mode
     }
 }
 

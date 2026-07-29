@@ -230,7 +230,7 @@ impl App {
         };
 
         match self.speed_mode() {
-            SpeedMode::Normal => {
+            SpeedMode::Normal | SpeedMode::SlowMotion => {
                 // On WASM, Normal mode uses requestAnimationFrame (via request_redraw)
                 // instead of setTimeout (WaitUntil). rAF is vsync-aligned and jitter-free,
                 // while setTimeout has ≥4ms granularity that causes visible hitches.

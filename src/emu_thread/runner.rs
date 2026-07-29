@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
 use crossbeam_channel::{Sender, TrySendError};
 
 use crate::emu_backend::EmuBackend;
 use crate::ui;
 
+use super::types::publish_framebuffer;
 use super::{EmuThread, FrameResult, SharedFramebuffer};
 
 const UNCAPPED_BATCH_SIZE: usize = 60;
@@ -40,8 +39,7 @@ impl EmuThread {
 
         Self::step_n_frames(backend, UNCAPPED_BATCH_SIZE, cheats);
 
-        let src = backend.framebuffer();
-        shared_fb.store(Some(Arc::new(src.to_vec())));
+        publish_framebuffer(shared_fb, backend.framebuffer());
 
         let result = FrameResult {
             rumble: backend.rumble_active(),

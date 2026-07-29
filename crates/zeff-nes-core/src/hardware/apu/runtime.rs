@@ -15,12 +15,13 @@ impl Apu {
         self.frame_irq = false;
         self.frame_irq_repeat = 0;
         self.frame_reset_delay = 0;
-        self.frame_cycle = 9;
+        self.frame_cycle = 8;
         self.write_register(0x4017, frame_counter_value, false);
         self.frame_reset_delay = 0;
-        self.frame_cycle = 9;
+        self.frame_cycle = 8;
         self.frame_irq = false;
         self.frame_irq_repeat = 0;
+        self.frame_irq_suppression_ticks = 0;
     }
 
     pub fn write_register(&mut self, addr: u16, val: u8, odd_cycle: bool) {
@@ -63,6 +64,10 @@ impl Apu {
     }
 
     pub fn read_status(&mut self) -> u8 {
+        self.read_status_with_frame_irq_lookahead(0)
+    }
+
+    pub fn read_status_with_frame_irq_lookahead(&mut self, lookahead_cycles: u8) -> u8 {
         let mut status = 0u8;
         if self.pulse1.length_counter > 0 {
             status |= 0x01;
@@ -79,13 +84,21 @@ impl Apu {
         if self.dmc.bytes_remaining > 0 {
             status |= 0x10;
         }
-        if self.frame_irq {
+        let visible_future_frame_irq_ticks = self.frame_irq_visible_tick_count(lookahead_cycles);
+        let visible_frame_irq_ticks_through_next =
+            self.frame_irq_visible_tick_count(lookahead_cycles.saturating_add(1));
+        if self.frame_irq || visible_future_frame_irq_ticks > 0 {
             status |= 0x40;
         }
         if self.dmc.irq_flag {
             status |= 0x80;
         }
         self.frame_irq = false;
+        if visible_future_frame_irq_ticks > 0
+            && visible_frame_irq_ticks_through_next == visible_future_frame_irq_ticks
+        {
+            self.frame_irq_suppression_ticks = self.frame_irq_suppression_ticks.max(1);
+        }
         status
     }
 
@@ -137,8 +150,11 @@ impl Apu {
     }
 
     fn step_frame_counter(&mut self) {
+        let suppress_frame_irq = self.frame_irq_suppression_ticks > 0;
+        self.frame_irq_suppression_ticks = self.frame_irq_suppression_ticks.saturating_sub(1);
+
         if self.frame_irq_repeat > 0 {
-            if !self.irq_inhibit {
+            if !self.irq_inhibit && !suppress_frame_irq {
                 self.frame_irq = true;
             }
             self.frame_irq_repeat -= 1;
@@ -159,14 +175,14 @@ impl Apu {
                     self.clock_half_frame();
                 }
                 FRAME_STEP_4 => {
-                    if !self.irq_inhibit {
+                    if !self.irq_inhibit && !suppress_frame_irq {
                         self.frame_irq = true;
                     }
                 }
                 cycle if cycle == FRAME_STEP_4 + 1 => {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
-                    if !self.irq_inhibit {
+                    if !self.irq_inhibit && !suppress_frame_irq {
                         self.frame_irq = true;
                         self.frame_irq_repeat = 1;
                     }
@@ -195,6 +211,60 @@ impl Apu {
         }
     }
 
+    fn frame_irq_visible_tick_count(&self, lookahead_cycles: u8) -> u8 {
+        if self.irq_inhibit || lookahead_cycles == 0 {
+            return 0;
+        }
+
+        self.frame_future_event_counts(lookahead_cycles)
+            .frame_irq_ticks
+    }
+
+    fn frame_future_event_counts(&self, lookahead_cycles: u8) -> FrameFutureEventCounts {
+        let mut frame_cycle = self.frame_cycle;
+        let mut frame_reset_delay = self.frame_reset_delay;
+        let mut frame_irq_repeat = self.frame_irq_repeat;
+        let mut counts = FrameFutureEventCounts::default();
+
+        for _ in 0..lookahead_cycles {
+            if frame_irq_repeat > 0 {
+                counts.frame_irq_ticks = counts.frame_irq_ticks.saturating_add(1);
+                frame_irq_repeat -= 1;
+            }
+
+            if frame_reset_delay > 0 {
+                frame_reset_delay -= 1;
+                if frame_reset_delay == 0 {
+                    frame_cycle = 0;
+                }
+            }
+
+            if !self.five_step_mode {
+                match frame_cycle {
+                    FRAME_STEP_4 => {
+                        counts.frame_irq_ticks = counts.frame_irq_ticks.saturating_add(1);
+                    }
+                    cycle if cycle == FRAME_STEP_4 + 1 => {
+                        counts.frame_irq_ticks = counts.frame_irq_ticks.saturating_add(1);
+                        frame_irq_repeat = 1;
+                    }
+                    _ => {}
+                }
+                if frame_cycle == FRAME_STEP_4_RESET {
+                    frame_cycle = 0;
+                }
+            } else {
+                if frame_cycle == FRAME_STEP_5_RESET {
+                    frame_cycle = 0;
+                }
+            }
+
+            frame_cycle += 1;
+        }
+
+        counts
+    }
+
     fn clock_quarter_frame(&mut self) {
         self.pulse1.clock_envelope();
         self.pulse2.clock_envelope();
@@ -210,6 +280,11 @@ impl Apu {
         self.pulse1.clock_sweep();
         self.pulse2.clock_sweep();
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameFutureEventCounts {
+    frame_irq_ticks: u8,
 }
 
 #[cfg(test)]
@@ -260,7 +335,7 @@ mod tests {
 
         assert!(apu.five_step_mode);
         assert!(!apu.frame_irq);
-        assert_eq!(apu.frame_cycle, 9);
+        assert_eq!(apu.frame_cycle, 8);
         assert_eq!(apu.peek_status() & 0x0F, 0);
     }
 
@@ -275,7 +350,7 @@ mod tests {
         assert!(!apu.five_step_mode);
         assert!(!apu.irq_inhibit);
         assert!(!apu.frame_irq);
-        assert_eq!(apu.frame_cycle, 9);
+        assert_eq!(apu.frame_cycle, 8);
     }
 
     #[test]

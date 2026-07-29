@@ -15,6 +15,8 @@ fn settings_default_roundtrip() {
 fn settings_with_modified_values_roundtrip() {
     let mut s = Settings::default();
     s.emulation.fast_forward_multiplier = 8;
+    s.emulation.slow_motion_divisor = 6;
+    s.emulation.slow_motion_enabled = true;
     s.audio.volume = 0.5;
     s.rewind.speed = 5;
     s.rewind.seconds = 30;
@@ -37,6 +39,8 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.rewind.seconds, default_rewind_seconds());
     assert_eq!(s.video.shader_preset, ShaderPreset::None);
     assert!(!s.ui.autohide_menu_bar);
+    assert_eq!(s.emulation.slow_motion_divisor, 4);
+    assert!(!s.emulation.slow_motion_enabled);
 }
 
 #[test]
@@ -68,6 +72,14 @@ fn shortcut_bindings_get_returns_default_for_unknown_string() {
     };
 
     assert_eq!(bindings.get(ShortcutAction::Fullscreen), KeyCode::F11);
+}
+
+#[test]
+fn shortcut_bindings_default_slow_motion_uses_f4() {
+    assert_eq!(
+        ShortcutBindings::default().get(ShortcutAction::SlowMotion),
+        KeyCode::F4
+    );
 }
 
 #[test]

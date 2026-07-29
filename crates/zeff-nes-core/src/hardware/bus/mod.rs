@@ -33,6 +33,26 @@ pub struct PeripheralTickEvents {
     pub first_irq_cpu_cycle: Option<u64>,
 }
 
+impl PeripheralTickEvents {
+    fn merge_with_offset(&mut self, other: Self, cycle_offset: u64) {
+        if other.nmi_raised {
+            self.nmi_raised = true;
+            if let Some(cycle) = other.first_nmi_cpu_cycle {
+                self.first_nmi_cpu_cycle
+                    .get_or_insert(cycle_offset.saturating_add(cycle));
+            }
+        }
+
+        if other.irq_pending {
+            self.irq_pending = true;
+            if let Some(cycle) = other.first_irq_cpu_cycle {
+                self.first_irq_cpu_cycle
+                    .get_or_insert(cycle_offset.saturating_add(cycle));
+            }
+        }
+    }
+}
+
 pub struct Bus {
     pub ram: [u8; RAM_SIZE],
     pub(crate) ppu: Ppu,
@@ -50,6 +70,8 @@ pub struct Bus {
     pub(crate) cpu_open_bus: u8,
     pub(crate) ppu_nmi_pending_from_register_write: bool,
     pub(crate) ppu_nmi_suppressed_by_status_read: bool,
+    pub(crate) cpu_step_elapsed_cycles: u64,
+    pub(crate) cpu_step_events: PeripheralTickEvents,
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
 
@@ -76,6 +98,8 @@ impl Bus {
             cpu_open_bus: 0,
             ppu_nmi_pending_from_register_write: false,
             ppu_nmi_suppressed_by_status_read: false,
+            cpu_step_elapsed_cycles: 0,
+            cpu_step_events: PeripheralTickEvents::default(),
             game_genie: NesCheatState::new(),
             palette_mode,
             palette_lut: Self::build_palette_lut(palette_mode),
@@ -103,6 +127,8 @@ impl Bus {
         self.dma_stall_cycles = 0;
         self.ppu_nmi_pending_from_register_write = false;
         self.ppu_nmi_suppressed_by_status_read = false;
+        self.cpu_step_elapsed_cycles = 0;
+        self.cpu_step_events = PeripheralTickEvents::default();
     }
 
     pub fn palette_mode(&self) -> NesPaletteMode {
@@ -135,6 +161,8 @@ impl Bus {
         self.cpu_open_bus = r.read_u8()?;
         self.ppu_nmi_pending_from_register_write = false;
         self.ppu_nmi_suppressed_by_status_read = false;
+        self.cpu_step_elapsed_cycles = 0;
+        self.cpu_step_events = PeripheralTickEvents::default();
         Ok(())
     }
 
@@ -186,6 +214,31 @@ impl Bus {
             }
         }
 
+        events
+    }
+
+    pub(crate) fn begin_cpu_step_timing(&mut self) {
+        self.cpu_step_elapsed_cycles = 0;
+        self.cpu_step_events = PeripheralTickEvents::default();
+    }
+
+    pub(crate) fn advance_cpu_step_timing_to(&mut self, elapsed_cycles: u64) {
+        if elapsed_cycles <= self.cpu_step_elapsed_cycles {
+            return;
+        }
+
+        let delta = elapsed_cycles - self.cpu_step_elapsed_cycles;
+        let events = self.tick_peripherals(delta);
+        self.cpu_step_events
+            .merge_with_offset(events, self.cpu_step_elapsed_cycles);
+        self.cpu_step_elapsed_cycles = elapsed_cycles;
+    }
+
+    pub(crate) fn finish_cpu_step_timing(&mut self, total_cycles: u64) -> PeripheralTickEvents {
+        self.advance_cpu_step_timing_to(total_cycles);
+        let events = self.cpu_step_events;
+        self.cpu_step_events = PeripheralTickEvents::default();
+        self.cpu_step_elapsed_cycles = 0;
         events
     }
 }

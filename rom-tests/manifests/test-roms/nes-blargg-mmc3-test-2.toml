@@ -1,0 +1,70 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/mmc3_test_2/rom_singles"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "mapper", "mmc3", "irq", "timing"]
+notes = "Local-only MMC3 mapper and IRQ timing tests. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "1-clocking"
+archive_path = "nes-test-roms/mmc3_test_2/rom_singles/1-clocking.nes"
+sha256 = "b06d8a97f0ca672be92c841d6af7d1e650696e86e9cc0cf6eeb90d67a6ab499b"
+legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/1-clocking.nes"]
+
+[[test_groups.roms]]
+id = "2-details"
+archive_path = "nes-test-roms/mmc3_test_2/rom_singles/2-details.nes"
+sha256 = "e7af16c764b119e60effb7b1cfeec3dd8e2e657041283693cdbbeedb4081f1e3"
+legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/2-details.nes"]
+
+[[test_groups.roms]]
+id = "3-A12_clocking"
+archive_path = "nes-test-roms/mmc3_test_2/rom_singles/3-A12_clocking.nes"
+sha256 = "b375f15b9f9d372c8084b9c50928be9e41a3ac48be831ce82d203c18891433ad"
+legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/3-A12_clocking.nes"]
+
+[[test_groups.roms]]
+id = "4-scanline_timing"
+archive_path = "nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes"
+sha256 = "14a220b9d1272acc7a820ab38e9762a7cdf2d54c65e753be87f23dfcaf1bb845"
+legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes"]
+expectation = { kind = "known_fail", reason = "Current NES MMC3 scanline IRQ timing fails mmc3_test_2/4-scanline_timing with status=02." }
+
+[[test_groups.roms]]
+id = "5-MMC3"
+archive_path = "nes-test-roms/mmc3_test_2/rom_singles/5-MMC3.nes"
+sha256 = "e0824123d60b83868dac1189b28250f8e10376a01be468a5a74aa59937cb32ca"
+legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/5-MMC3.nes"]
+
+[[test_groups.roms]]
+id = "6-MMC3_alt"
+archive_path = "nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
+sha256 = "56698b6918453d161a8d4e51f66e363d6966b054939c8176c53c401a6b55269b"
+legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes"]
+expectation = { kind = "known_fail", reason = "Current NES MMC3 IRQ reload-to-zero behavior fails mmc3_test_2/6-MMC3_alt with status=02." }

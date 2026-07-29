@@ -18,6 +18,8 @@ mod graphics;
 mod input;
 mod libretro_common;
 mod libretro_metadata;
+#[cfg(not(target_arch = "wasm32"))]
+mod live_control;
 mod mods;
 mod patching;
 mod platform;

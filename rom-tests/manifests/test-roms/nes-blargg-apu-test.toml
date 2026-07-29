@@ -1,0 +1,81 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/apu_test/rom_singles"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "apu", "timing"]
+notes = "Local-only APU timing tests. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "1-len_ctr"
+archive_path = "nes-test-roms/apu_test/rom_singles/1-len_ctr.nes"
+sha256 = "aacf86c1d773badd11392e54506a43a06a3dd0b67a4c255909d1daf770a4a1e2"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/1-len_ctr.nes"]
+
+[[test_groups.roms]]
+id = "2-len_table"
+archive_path = "nes-test-roms/apu_test/rom_singles/2-len_table.nes"
+sha256 = "c002ff1483b4dfb36a6eb004d49739cd58a2dff16e0bac167d5a7c12235caeeb"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/2-len_table.nes"]
+
+[[test_groups.roms]]
+id = "3-irq_flag"
+archive_path = "nes-test-roms/apu_test/rom_singles/3-irq_flag.nes"
+sha256 = "dd888551665937391a2d691b1f96d1858316dbfce4951306146e9e396367f079"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/3-irq_flag.nes"]
+
+[[test_groups.roms]]
+id = "4-jitter"
+archive_path = "nes-test-roms/apu_test/rom_singles/4-jitter.nes"
+sha256 = "bff573d72d0f134fe307f0bb8b968b8d2ffdb85e8aadad9c152839068d6db32a"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/4-jitter.nes"]
+
+[[test_groups.roms]]
+id = "5-len_timing"
+archive_path = "nes-test-roms/apu_test/rom_singles/5-len_timing.nes"
+sha256 = "4d88f8cc0b21303dc151af4d0f4169d79284634a73082d7ea1ae5cfafedd1e46"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/5-len_timing.nes"]
+expectation = { kind = "known_fail", reason = "Current NES APU length-counter frame timing fails blargg apu_test/5-len_timing with status=05." }
+
+[[test_groups.roms]]
+id = "6-irq_flag_timing"
+archive_path = "nes-test-roms/apu_test/rom_singles/6-irq_flag_timing.nes"
+sha256 = "fc1daff82dd1a49c7c1242392ffbf1c6f44fb70156868582117f2a844cc4dffd"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/6-irq_flag_timing.nes"]
+
+[[test_groups.roms]]
+id = "7-dmc_basics"
+archive_path = "nes-test-roms/apu_test/rom_singles/7-dmc_basics.nes"
+sha256 = "547324867ee0ba2aa11401001d8d1288530aa4e0ecaaac1667ce79980a388ec1"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/7-dmc_basics.nes"]
+
+[[test_groups.roms]]
+id = "8-dmc_rates"
+archive_path = "nes-test-roms/apu_test/rom_singles/8-dmc_rates.nes"
+sha256 = "5d9a79a505b37fa277cacc95a362f7e2a56e59ace7a698213d78432cc06a8867"
+legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/8-dmc_rates.nes"]

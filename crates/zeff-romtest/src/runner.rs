@@ -254,8 +254,17 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
     zeff_args.push("--max-frames".to_string());
     zeff_args.push(test.max_frames.to_string());
 
+    if test.artifact.kind == ArtifactKind::TestRom {
+        zeff_args.push("--no-sram".to_string());
+    }
+
     if test.no_apu {
         zeff_args.push("--no-apu".to_string());
+    }
+
+    for input in &test.input {
+        zeff_args.push("--input".to_string());
+        zeff_args.push(input.clone());
     }
 
     if let Some(model) = &test.model
@@ -270,7 +279,8 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
         | PassKind::GbScreenText
         | PassKind::GbMemoryStatus
         | PassKind::Nes6000Status
-        | PassKind::GbaScreenText => {
+        | PassKind::GbaScreenText
+        | PassKind::GbaMgbaSuiteSram => {
             zeff_args.push("--expect-test-pass".to_string());
         }
         PassKind::GbSerialContains => {
@@ -400,5 +410,90 @@ pub(crate) fn test_status_name(status: TestStatus) -> &'static str {
         TestStatus::Missing => "missing",
         TestStatus::HashMismatch => "hash_mismatch",
         TestStatus::DryRun => "dry_run",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Cli;
+
+    fn cli() -> Cli {
+        Cli::parse(["run"].map(Into::into)).unwrap()
+    }
+
+    fn test_case(artifact_kind: ArtifactKind) -> TestCase {
+        TestCase {
+            id: "runner/no-sram".to_string(),
+            core: Core::Gba,
+            tier: Tier::Accuracy,
+            model: None,
+            max_frames: 10,
+            no_apu: false,
+            input: Vec::new(),
+            tags: Vec::new(),
+            notes: None,
+            artifact: Artifact {
+                kind: artifact_kind,
+                license: "test".to_string(),
+                license_confidence: LicenseConfidence::Verified,
+                redistributable: false,
+                source_url: Some("https://example.invalid/test.gba".to_string()),
+                source_version: Some("test".to_string()),
+                source_id: None,
+            },
+            rom: RomSpec {
+                path: PathBuf::from("rom-tests/cache/test.gba"),
+                sha256: None,
+                archive_path: None,
+                legacy_paths: Vec::new(),
+            },
+            pass: PassSpec {
+                kind: PassKind::HeadlessExit,
+                contains: None,
+                screenshot_frame: None,
+                screenshot_sha256: None,
+            },
+            expectation: Expectation::default(),
+        }
+    }
+
+    #[test]
+    fn test_rom_invocations_disable_persistent_sram() {
+        let invocation = build_invocation(&test_case(ArtifactKind::TestRom), &cli())
+            .unwrap()
+            .unwrap();
+
+        assert!(invocation.display_args.contains(&"--no-sram".to_string()));
+    }
+
+    #[test]
+    fn game_rom_invocations_keep_persistent_sram() {
+        let invocation = build_invocation(&test_case(ArtifactKind::GameRom), &cli())
+            .unwrap()
+            .unwrap();
+
+        assert!(!invocation.display_args.contains(&"--no-sram".to_string()));
+    }
+
+    #[test]
+    fn manifest_input_events_are_forwarded_to_headless_cli() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.input = vec!["a@10-12".to_string(), "down@20-22".to_string()];
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(
+            invocation
+                .display_args
+                .windows(2)
+                .any(|pair| pair == ["--input".to_string(), "a@10-12".to_string()])
+        );
+        assert!(
+            invocation
+                .display_args
+                .windows(2)
+                .any(|pair| pair == ["--input".to_string(), "down@20-22".to_string()])
+        );
     }
 }

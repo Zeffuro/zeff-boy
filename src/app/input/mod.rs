@@ -5,6 +5,7 @@ use zeff_gb_core::hardware::joypad::JoypadKey;
 pub(super) struct HostInputState {
     keyboard_pressed: u8,
     gamepad_pressed: u8,
+    remote_pressed: u8,
     gamepad_stick_dpad_pressed: u8,
     tilt_keyboard_pressed: u8,
 }
@@ -20,6 +21,10 @@ impl HostInputState {
 
     pub(super) fn set_gamepad(&mut self, key: JoypadKey, pressed: bool) {
         Self::set_mask_bit(&mut self.gamepad_pressed, key, pressed);
+    }
+
+    pub(super) fn set_remote(&mut self, key: JoypadKey, pressed: bool) {
+        Self::set_mask_bit(&mut self.remote_pressed, key, pressed);
     }
 
     pub(super) fn set_tilt_keyboard(&mut self, key: TiltBindingAction, pressed: bool) {
@@ -96,11 +101,15 @@ impl HostInputState {
     }
 
     pub(super) fn dpad_pressed(&self) -> u8 {
-        (self.keyboard_pressed | self.gamepad_pressed | self.gamepad_stick_dpad_pressed) & 0x0F
+        (self.keyboard_pressed
+            | self.gamepad_pressed
+            | self.remote_pressed
+            | self.gamepad_stick_dpad_pressed)
+            & 0x0F
     }
 
     pub(super) fn buttons_pressed(&self) -> u8 {
-        ((self.keyboard_pressed | self.gamepad_pressed) >> 4) & 0x0F
+        ((self.keyboard_pressed | self.gamepad_pressed | self.remote_pressed) >> 4) & 0x0F
     }
 
     fn set_mask_bit(mask: &mut u8, key: JoypadKey, pressed: bool) {

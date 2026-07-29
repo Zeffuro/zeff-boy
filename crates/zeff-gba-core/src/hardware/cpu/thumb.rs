@@ -104,11 +104,14 @@ impl Cpu {
                 (s2, true, Some((c1 || c2, add_overflow(lhs, rhs, s2))))
             }
             0x6 => {
-                let rhs2 = rhs.wrapping_add(u32::from(!old_carry));
+                let borrow = u32::from(!old_carry);
                 (
-                    lhs.wrapping_sub(rhs2),
+                    lhs.wrapping_sub(rhs).wrapping_sub(borrow),
                     true,
-                    Some((lhs >= rhs2, sub_overflow(lhs, rhs2, lhs.wrapping_sub(rhs2)))),
+                    Some((
+                        u64::from(lhs) >= u64::from(rhs) + u64::from(borrow),
+                        sub_overflow(lhs, rhs, lhs.wrapping_sub(rhs).wrapping_sub(borrow)),
+                    )),
                 )
             }
             0x7 => {

@@ -79,6 +79,36 @@ impl Emulator {
             return;
         }
 
+        if self.bus.ppu_lcdc() & 0x80 == 0 {
+            self.step_frame_by_cycle_budget();
+            return;
+        }
+
+        let max_cycles = Self::cycles_per_frame(self.hardware_mode).saturating_mul(2);
+        let start_cycles = self.cpu.cycles;
+        let mut previous_ly = self.bus.ppu_ly();
+
+        if self.debug.any_active() || self.opcode_log.enabled {
+            while !matches!(self.cpu.running, CpuState::Suspended) {
+                let _ = self.step_instruction();
+                if self.reached_vblank_start(&mut previous_ly)
+                    || self.cpu.cycles.wrapping_sub(start_cycles) >= max_cycles
+                {
+                    break;
+                }
+            }
+        } else {
+            while self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles {
+                self.cpu.step(&mut self.bus);
+                self.hardware_mode = self.bus.hardware_mode;
+                if self.reached_vblank_start(&mut previous_ly) {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn step_frame_by_cycle_budget(&mut self) {
         let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
         let target = self.cpu.cycles.wrapping_add(frame_cycles);
 
@@ -94,11 +124,37 @@ impl Emulator {
         }
     }
 
+    fn reached_vblank_start(&self, previous_ly: &mut u8) -> bool {
+        let ly = self.bus.ppu_ly();
+        let reached = *previous_ly < 144 && ly >= 144;
+        *previous_ly = ly;
+        reached
+    }
+
     pub fn set_mbc7_host_tilt(&mut self, x: f32, y: f32) {
         self.bus.cartridge.set_mbc7_tilt(x, y);
     }
 
     pub fn set_camera_host_frame(&mut self, frame: &[u8]) {
         self.bus.cartridge.set_camera_frame(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::types::hardware_mode::HardwareModePreference;
+
+    #[test]
+    fn step_frame_presents_at_vblank_start() {
+        let rom = vec![0u8; 0x8000];
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto)
+            .expect("test ROM should initialize");
+
+        emu.step_frame();
+        assert_eq!(emu.ppu_ly(), 144);
+
+        emu.step_frame();
+        assert_eq!(emu.ppu_ly(), 144);
     }
 }

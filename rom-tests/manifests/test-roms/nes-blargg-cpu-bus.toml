@@ -1,0 +1,82 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/cpu_dummy_writes"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "bus", "dummy-write"]
+notes = "Local-only CPU dummy-write tests. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "cpu_dummy_writes_oam"
+archive_path = "nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
+sha256 = "7c1d71a38b2e873d0874add8b823ff39b99151bb29f50096d8021787020c566c"
+legacy_paths = ["test-roms/nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes"]
+
+[[test_groups.roms]]
+id = "cpu_dummy_writes_ppumem"
+archive_path = "nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"
+sha256 = "f59ac329f4872277ccbeff9dd595b901d861af8d53e8a43dcca93bb86752a6b3"
+legacy_paths = ["test-roms/nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"]
+
+[[test_groups]]
+id_prefix = "nes/blargg/cpu_exec_space"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "cpu", "bus", "exec-space"]
+notes = "Local-only CPU execution-space tests. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "test_cpu_exec_space_apu"
+archive_path = "nes-test-roms/cpu_exec_space/test_cpu_exec_space_apu.nes"
+sha256 = "9036b3d64b7f4e0ac7d44ed85eafb4b2f93ffd2ca2ddecc19f1e0d2bec3574fe"
+legacy_paths = ["test-roms/nes-test-roms/cpu_exec_space/test_cpu_exec_space_apu.nes"]
+expectation = { kind = "known_fail", reason = "Current NES CPU/APU I/O open-bus execution behavior fails cpu_exec_space_apu with status=02." }
+
+[[test_groups.roms]]
+id = "test_cpu_exec_space_ppuio"
+archive_path = "nes-test-roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes"
+sha256 = "9f7f24d420033e032f5da0e1eb721cce1d843e032b31973acddb0255ef479251"
+legacy_paths = ["test-roms/nes-test-roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes"]
+expectation = { kind = "known_fail", reason = "Current NES CPU dummy-fetch/execution behavior around PPU I/O fails cpu_exec_space_ppuio with status=05." }

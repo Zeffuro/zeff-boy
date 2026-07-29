@@ -133,7 +133,10 @@ impl Cartridge {
         let Some(offset) = gba_rom_offset(addr) else {
             return 0xFF;
         };
-        self.rom.get(offset).copied().unwrap_or(0xFF)
+        self.rom
+            .get(offset)
+            .copied()
+            .unwrap_or_else(|| gamepak_open_bus_read8(addr))
     }
 }
 
@@ -144,6 +147,11 @@ fn gba_rom_offset(addr: u32) -> Option<usize> {
         0x0C00_0000..=0x0DFF_FFFF => Some((addr - 0x0C00_0000) as usize),
         _ => None,
     }
+}
+
+fn gamepak_open_bus_read8(addr: u32) -> u8 {
+    let halfword = ((addr >> 1) & 0xFFFF) as u16;
+    halfword.to_le_bytes()[(addr & 1) as usize]
 }
 
 fn ascii_field(bytes: &[u8]) -> String {
@@ -194,6 +202,16 @@ mod tests {
         let cart = Cartridge::load(&rom).unwrap();
         assert_eq!(cart.backup_kind(), BackupKind::Sram);
         assert_eq!(cart.dump_battery_data().unwrap().len(), SRAM_SIZE);
+    }
+
+    #[test]
+    fn out_of_range_gamepak_rom_reads_address_open_bus_pattern() {
+        let cart = Cartridge::load(&minimal_rom()).unwrap();
+
+        assert_eq!(cart.rom_read8(0x0924_68AC), 0x56);
+        assert_eq!(cart.rom_read8(0x0924_68AD), 0x34);
+        assert_eq!(cart.rom_read8(0x0924_68AE), 0x57);
+        assert_eq!(cart.rom_read8(0x0924_68AF), 0x34);
     }
 
     #[test]

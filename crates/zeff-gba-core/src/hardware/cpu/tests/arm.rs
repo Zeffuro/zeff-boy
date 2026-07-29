@@ -137,6 +137,39 @@ fn arm_adc_overflow_includes_carry_in() {
 }
 
 #[test]
+fn arm_sbc_overflow_uses_original_rhs_not_borrow_adjusted_rhs() {
+    let mut bus = bus_with_rom(&0xE0D0_0001_u32.to_le_bytes()); // sbcs r0, r0, r1
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0;
+    cpu.regs[1] = 0x7FFF_FFFF;
+    cpu.cpsr &= !CPSR_CARRY;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0x8000_0000);
+    assert_ne!(cpu.cpsr & CPSR_NEGATIVE, 0);
+    assert_eq!(cpu.cpsr & CPSR_OVERFLOW, 0);
+    assert_eq!(cpu.cpsr & CPSR_CARRY, 0);
+}
+
+#[test]
+fn arm_sbc_carry_uses_full_borrow_adjusted_subtrahend() {
+    let mut bus = bus_with_rom(&0xE0D0_0001_u32.to_le_bytes()); // sbcs r0, r0, r1
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0;
+    cpu.regs[1] = 0xFFFF_FFFF;
+    cpu.cpsr &= !CPSR_CARRY;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[0], 0);
+    assert_ne!(cpu.cpsr & CPSR_ZERO, 0);
+    assert_eq!(cpu.cpsr & CPSR_CARRY, 0);
+}
+
+#[test]
 fn arm_smull_writes_signed_64_bit_product() {
     let mut bus = bus_with_rom(&0xE0C0_2091_u32.to_le_bytes()); // smull r2, r0, r1, r0
     let mut cpu = Cpu::new();
@@ -164,6 +197,39 @@ fn arm_umlal_accumulates_unsigned_64_bit_product() {
 
     assert_eq!(cpu.regs[2], 1);
     assert_eq!(cpu.regs[3], 6);
+}
+
+#[test]
+fn arm_umulls_sets_arm7tdmi_carry_side_effect() {
+    let mut bus = bus_with_rom(&0xE093_2190_u32.to_le_bytes()); // umulls r2, r3, r0, r1
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0xFFFF_FFFF;
+    cpu.regs[1] = 0xFFFF_FFFF;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[2], 1);
+    assert_eq!(cpu.regs[3], 0xFFFF_FFFE);
+    assert_ne!(cpu.cpsr & CPSR_NEGATIVE, 0);
+    assert_ne!(cpu.cpsr & CPSR_CARRY, 0);
+    assert_eq!(cpu.cpsr & CPSR_ZERO, 0);
+}
+
+#[test]
+fn arm_smulls_zero_result_can_set_arm7tdmi_carry_side_effect() {
+    let mut bus = bus_with_rom(&0xE0D3_2190_u32.to_le_bytes()); // smulls r2, r3, r0, r1
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.regs[0] = 0;
+    cpu.regs[1] = 0x8000_0000;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs[2], 0);
+    assert_eq!(cpu.regs[3], 0);
+    assert_ne!(cpu.cpsr & CPSR_ZERO, 0);
+    assert_ne!(cpu.cpsr & CPSR_CARRY, 0);
 }
 
 #[test]

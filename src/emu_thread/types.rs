@@ -13,6 +13,14 @@ pub(crate) fn new_shared_framebuffer() -> SharedFramebuffer {
     Arc::new(ArcSwapOption::empty())
 }
 
+pub(crate) fn publish_framebuffer(shared_fb: &SharedFramebuffer, framebuffer: &[u8]) {
+    shared_fb.store(Some(Arc::new(framebuffer.to_vec())));
+}
+
+pub(crate) fn publish_owned_framebuffer(shared_fb: &SharedFramebuffer, framebuffer: Vec<u8>) {
+    shared_fb.store(Some(Arc::new(framebuffer)));
+}
+
 pub(crate) struct RenderSettings {
     pub(crate) color_correction: crate::settings::ColorCorrection,
     pub(crate) color_correction_matrix: [f32; 9],
@@ -135,4 +143,31 @@ pub(crate) enum EmuResponse {
     StateCaptureFailed(String),
     SramFlushed(Option<String>),
     ShutdownComplete,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publish_framebuffer_stores_an_owned_snapshot() {
+        let shared_fb = new_shared_framebuffer();
+        let mut source = vec![1, 2, 3, 4];
+
+        publish_framebuffer(&shared_fb, &source);
+        source.fill(0);
+
+        let stored = shared_fb.load_full().expect("framebuffer should be stored");
+        assert_eq!(&**stored, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn publish_owned_framebuffer_stores_the_given_buffer() {
+        let shared_fb = new_shared_framebuffer();
+
+        publish_owned_framebuffer(&shared_fb, vec![5, 6, 7, 8]);
+
+        let stored = shared_fb.load_full().expect("framebuffer should be stored");
+        assert_eq!(&**stored, &[5, 6, 7, 8]);
+    }
 }

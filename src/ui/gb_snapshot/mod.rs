@@ -34,7 +34,7 @@ pub(crate) fn collect_emu_snapshot(
     let cpu_debug = gb_info.as_ref().map(gb_cpu_snapshot);
     let input_debug = gb_info.as_ref().map(gb_input_snapshot);
     let apu_debug = gb_apu_snapshot(emu, req.show_apu_viewer);
-    let (oam_debug, _reusable_oam) = gb_oam_snapshot(emu, req.show_oam_viewer, reusable_oam);
+    let (oam_debug, reusable_oam) = gb_oam_snapshot(emu, req.show_oam_viewer, reusable_oam);
     let palette_debug = gb_palette_snapshot(emu, req.any_viewer_open, req);
 
     let graphics_data = if req.any_vram_viewer_open {
@@ -44,8 +44,13 @@ pub(crate) fn collect_emu_snapshot(
         let mut vram_buf = reusable_vram.unwrap_or_default();
         vram_buf.resize(src.len(), 0);
         vram_buf.copy_from_slice(src);
+        let mut oam_buf = reusable_oam.unwrap_or_default();
+        let oam_src = emu.oam();
+        oam_buf.resize(oam_src.len(), 0);
+        oam_buf.copy_from_slice(oam_src);
         Some(ConsoleGraphicsData::Gb(GbGraphicsData {
             vram: vram_buf,
+            oam: oam_buf,
             ppu,
             cgb_mode,
             bg_palette_ram: emu.ppu_bg_palette_ram_snapshot(),

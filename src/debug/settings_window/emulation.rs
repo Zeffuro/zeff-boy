@@ -28,6 +28,14 @@ pub(super) fn draw(
         egui::Slider::new(&mut settings.emulation.fast_forward_multiplier, 1..=16)
             .text("Fast-forward multiplier"),
     );
+    ui.checkbox(
+        &mut settings.emulation.slow_motion_enabled,
+        "Start in slow-motion mode",
+    );
+    ui.add(
+        egui::Slider::new(&mut settings.emulation.slow_motion_divisor, 2..=16)
+            .text("Slow-motion divisor"),
+    );
     ui.add(
         egui::Slider::new(&mut settings.emulation.uncapped_frames_per_tick, 1..=240)
             .text("Uncapped frames/tick"),

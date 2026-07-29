@@ -24,7 +24,7 @@ build-libretro:
     cargo build --release -p zeff-libretro
 
 # Install the libretro core into RetroArch (Windows)
-# Usage: just install-libretro "C:\RetroArch-Win64"
+# Usage: just install-libretro "/path/to/RetroArch"
 [windows]
 install-libretro retroarch_dir:
     cargo build --release -p zeff-libretro
@@ -68,6 +68,16 @@ romtest-prepare:
 romtest-fetch:
     cargo run -p zeff-romtest -- fetch --exclude-tier local
 
+# Build the mGBA GBA test suite into the ignored ROM cache. Requires Docker Desktop.
+[windows]
+romtest-build-mgba-suite:
+    powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
+
+# Download local-only test ROM sources and extract them into the ignored cache.
+# These may include unclear-license public test collections and stay out of default CI.
+romtest-fetch-local:
+    cargo run -p zeff-romtest -- fetch --tier local
+
 # Run fast emulator accuracy smoke tests from local ignored ROM cache.
 romtest-smoke:
     cargo run -p zeff-romtest -- run --tier smoke --report-json rom-tests/results/smoke.json --report-md rom-tests/results/smoke.md --report-junit rom-tests/results/smoke.junit.xml --report-baseline rom-tests/results/smoke.baseline.json
@@ -104,9 +114,21 @@ romtest-status-local baseline="rom-tests/baselines/local.json":
 romtest-list-compat:
     cargo run -p zeff-romtest -- list --tier compat --include-games
 
+# Generate an ignored local compatibility manifest from a folder of user-owned ROM dumps.
+romtest-generate-compat rom_dir output="rom-tests/manifests/compat-games/local-generated.toml" frames="3600":
+    cargo run -p zeff-romtest -- generate-compat --rom-dir "{{rom_dir}}" --output "{{output}}" --max-frames {{frames}}
+
+# Generate an ignored local compatibility manifest for a specific core. Use this for zipped ROM folders.
+romtest-generate-compat-core rom_dir core output="rom-tests/manifests/compat-games/local-generated.toml" frames="3600":
+    cargo run -p zeff-romtest -- generate-compat --core "{{core}}" --rom-dir "{{rom_dir}}" --output "{{output}}" --max-frames {{frames}}
+
 # Run ignored local user-owned compatibility game entries. Missing paths are reported as skipped.
 romtest-run-compat:
     cargo run -p zeff-romtest -- run --tier compat --include-games --allow-missing --report-json rom-tests/results/compat.json --report-md rom-tests/results/compat.md --report-junit rom-tests/results/compat.junit.xml --report-baseline rom-tests/results/compat.baseline.json
+
+# Run compatibility game entries through a prebuilt emulator exe. Useful while live-control is open.
+romtest-run-compat-exe exe="target/debug/zeff-boy.exe":
+    cargo run -p zeff-romtest -- run --tier compat --include-games --allow-missing --zeff-boy "{{exe}}" --report-json rom-tests/results/compat.json --report-md rom-tests/results/compat.md --report-junit rom-tests/results/compat.junit.xml --report-baseline rom-tests/results/compat.baseline.json
 
 # Print status/coverage/suite tables from the latest local compatibility run.
 romtest-status-compat:
@@ -164,8 +186,8 @@ lint-platform-leaks:
 # Run full CI pipeline locally (fmt + lint + platform check + test + deny)
 ci-local: fmt-check lint-all lint-platform-leaks test-all deny
 
-# Run WASM CI check locally (requires wasm32 target: rustup target add wasm32-unknown-unknown)
-ci-local-wasm: lint-wasm check-wasm
+# Run WASM CI check locally (requires wasm32 target and Trunk)
+ci-local-wasm: lint-wasm check-wasm build-wasm-ghpages
 
 # Check that fuzz targets compile (requires nightly)
 fuzz-check:

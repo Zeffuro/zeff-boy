@@ -113,15 +113,18 @@ impl Bus {
             0x0400_0132 => self.keypad.write_keycnt(value),
             0x0400_0200 => {
                 self.write_io16_raw(offset, value & 0x3FFF);
+                self.test_irq_signal(1);
             }
             0x0400_0202 => {
                 let acknowledged = read_io16(&self.io, IF) & value & 0x3FFF;
                 self.mirror_acknowledged_interrupts_to_bios_flags(acknowledged);
                 let next = read_io16(&self.io, IF) & !value;
                 self.write_io16_raw(offset, next & 0x3FFF);
+                self.test_irq_signal(1);
             }
             0x0400_0208 => {
                 self.write_io16_raw(offset, value & 0x0001);
+                self.test_irq_signal(1);
             }
             0x0400_0060..=0x0400_0080 | 0x0400_0090..=0x0400_009E => {
                 self.write_gba_psg16(addr, value);
@@ -175,6 +178,7 @@ impl Bus {
 
     pub(crate) fn enable_master_interrupts(&mut self) {
         self.write_io16_raw(IME, 1);
+        self.test_irq_signal(1);
     }
 
     pub(crate) fn set_sound_bias_level(&mut self, high: bool) {
@@ -207,6 +211,24 @@ impl Bus {
     pub(crate) fn request_interrupt(&mut self, flags: u16) {
         let next = read_io16(&self.io, IF) | (flags & 0x3FFF);
         self.write_io16_raw(IF, next);
+        self.test_irq_signal(0);
+    }
+
+    pub(crate) fn request_timer_interrupts(&mut self, flags: u16, extra_delays: [u32; 4]) {
+        let timer_flags = flags & 0x0078;
+        if timer_flags == 0 {
+            self.request_interrupt(flags);
+            return;
+        }
+
+        let next = read_io16(&self.io, IF) | (flags & 0x3FFF);
+        self.write_io16_raw(IF, next);
+
+        for (timer, extra_delay) in extra_delays.into_iter().enumerate() {
+            if timer_flags & (1 << (3 + timer)) != 0 {
+                self.test_irq_signal_with_extra_delay(0, extra_delay);
+            }
+        }
     }
 
     fn mirror_acknowledged_interrupts_to_bios_flags(&mut self, flags: u16) {

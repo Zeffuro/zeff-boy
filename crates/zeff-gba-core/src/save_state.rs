@@ -11,7 +11,7 @@ use crate::hardware::dma::{DmaChannel, DmaController};
 use crate::hardware::timer::{Timer, Timers};
 
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
-const VERSION: u32 = 2;
+const VERSION: u32 = 4;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
 const MAX_FIFO_SIZE: usize = 32;
 
@@ -37,6 +37,8 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u32(cpu.last_opcode_pc);
     w.write_bool(cpu.break_after_next_stub);
     w.write_bool(cpu.next_fetch_sequential);
+    w.write_bool(cpu.swi_wait_return_pc.is_some());
+    w.write_u32(cpu.swi_wait_return_pc.unwrap_or_default());
     for value in cpu.banked_sp {
         w.write_u32(value);
     }
@@ -81,6 +83,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
         w.write_u32(ch.active_source);
         w.write_u32(ch.active_destination);
         w.write_u16(ch.active_count);
+        w.write_u32(ch.data_latch);
     }
 
     w.write_vec(&emu.bus.cartridge.dump_battery_data().unwrap_or_default());
@@ -119,7 +122,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         bail!("not a zeff GBA save state");
     }
     let version = r.read_u32()?;
-    if version != VERSION {
+    if !(2..=VERSION).contains(&version) {
         bail!("unsupported GBA save-state version {version}");
     }
 
@@ -138,6 +141,14 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.cpu.last_opcode_pc = r.read_u32()?;
     emu.cpu.break_after_next_stub = r.read_bool()?;
     emu.cpu.next_fetch_sequential = r.read_bool()?;
+    emu.cpu.swi_wait_return_pc = if version >= 4 && r.read_bool()? {
+        Some(r.read_u32()?)
+    } else {
+        if version >= 4 {
+            let _unused = r.read_u32()?;
+        }
+        None
+    };
     for value in &mut emu.cpu.banked_sp {
         *value = r.read_u32()?;
     }
@@ -190,6 +201,9 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         ch.active_source = r.read_u32()?;
         ch.active_destination = r.read_u32()?;
         ch.active_count = r.read_u16()?;
+        if version >= 3 {
+            ch.data_latch = r.read_u32()?;
+        }
     }
     let mut dma = DmaController::default();
     dma.set_channels(channels);
@@ -302,15 +316,15 @@ mod tests {
         let rom = minimal_rom();
         let emu = Emulator::new(&rom, 48_000).unwrap();
         let mut bytes = encode_state(&emu).unwrap();
-        bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&(VERSION + 1).to_le_bytes());
 
         let mut restored = Emulator::new(&rom, 48_000).unwrap();
         let err = decode_state(&mut restored, &bytes).unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("unsupported GBA save-state version 3")
-        );
+        assert!(err.to_string().contains(&format!(
+            "unsupported GBA save-state version {}",
+            VERSION + 1
+        )));
     }
 
     #[test]

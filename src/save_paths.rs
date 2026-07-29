@@ -146,16 +146,16 @@ mod tests {
     #[test]
     fn sram_for_regular_rom_uses_rom_stem() {
         assert_eq!(
-            sram_path_for_rom(Path::new(r"F:\Games\gba\Game.gba")),
-            PathBuf::from(r"F:\Games\gba\Game.sav")
+            sram_path_for_rom(Path::new(r"roms\gba\Game.gba")),
+            PathBuf::from(r"roms\gba\Game.sav")
         );
     }
 
     #[test]
     fn sram_for_zipped_rom_uses_archive_stem() {
         assert_eq!(
-            sram_path_for_rom(Path::new(r"F:\Games\gba\Game.zip\Inner.gba")),
-            PathBuf::from(r"F:\Games\gba\Game.sav")
+            sram_path_for_rom(Path::new(r"roms\gba\Game.zip\Inner.gba")),
+            PathBuf::from(r"roms\gba\Game.sav")
         );
     }
 }

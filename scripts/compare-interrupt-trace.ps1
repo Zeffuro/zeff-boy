@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RomPath,
 
-    [string]$RepoRoot = "F:\Coding\zeff-boy",
+    [string]$RepoRoot,
     [uint64]$MaxFrames = 2400,
     [uint64]$TraceMaxOps = 4000,
     [uint64]$TraceStartT = 0,
@@ -10,10 +10,18 @@ param(
     [string]$TraceOpcode,
     [switch]$TraceWatchInterrupts,
     [switch]$StrictRawCompare,
-    [string]$OutputDir = "F:\Coding\zeff-boy\temp\interrupt-trace"
+    [string]$OutputDir
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
+
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "temp\interrupt-trace"
+}
 
 function Invoke-TraceRun {
     param(

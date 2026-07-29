@@ -1,8 +1,7 @@
-use std::sync::Arc;
-
 use crate::emu_backend::EmuBackend;
 use crate::ui;
 
+use super::types::{publish_framebuffer, publish_owned_framebuffer};
 use super::{EmuResponse, EmuThread, FrameInput, FrameResult, SharedFramebuffer};
 
 impl EmuThread {
@@ -25,10 +24,10 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
-        if input.frames > 0 && backend.is_running() {
+        let stepped_frames = input.frames > 0 && backend.is_running();
+        if stepped_frames {
             Self::step_n_frames(backend, input.frames, cheats);
         }
-
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
             *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
@@ -43,9 +42,10 @@ impl EmuThread {
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
+        publish_framebuffer(shared_fb, backend.framebuffer());
+
         Self::build_frame_result(
             backend,
-            shared_fb,
             reusable_audio,
             ui_data,
             midi_capture_active,
@@ -93,8 +93,7 @@ impl EmuThread {
         match result {
             Ok(()) => {
                 backend.set_input(buttons_pressed, dpad_pressed);
-                let fb = backend.framebuffer().to_vec();
-                shared_fb.store(Some(Arc::new(fb)));
+                publish_framebuffer(shared_fb, backend.framebuffer());
                 EmuResponse::LoadStateOk { path: path_label }
             }
             Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
@@ -121,7 +120,7 @@ impl EmuThread {
                     } else {
                         rewind_frame.framebuffer
                     };
-                    shared_fb.store(Some(Arc::new(fb)));
+                    publish_owned_framebuffer(shared_fb, fb);
                     return EmuResponse::RewindOk;
                 }
                 Err(err) => {
@@ -261,15 +260,11 @@ impl EmuThread {
 
     pub(crate) fn build_frame_result(
         backend: &mut EmuBackend,
-        shared_fb: &SharedFramebuffer,
         reusable_audio: Option<Vec<f32>>,
         ui_data: ui::UiFrameData,
         midi_capture_active: bool,
         rewind_fill: f32,
     ) -> FrameResult {
-        let src = backend.framebuffer();
-        shared_fb.store(Some(Arc::new(src.to_vec())));
-
         let rumble = backend.rumble_active();
         let mut audio_samples = reusable_audio.unwrap_or_default();
         backend.drain_audio_samples_into(&mut audio_samples);

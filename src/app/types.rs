@@ -104,6 +104,7 @@ pub(super) struct SpeedState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum SpeedMode {
     Normal,
+    SlowMotion,
     Uncapped,
     FastForward,
 }

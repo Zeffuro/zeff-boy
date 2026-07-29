@@ -14,15 +14,16 @@ core = "nes"
 tier = "local"
 max_frames = 18000
 tags = ["nes", "blargg", "cpu", "instructions"]
-notes = "Local-only blargg CPU instruction singles. Useful for regression tracking, but not fetch-backed yet."
+notes = "Local-only blargg CPU instruction singles. Useful for regression tracking; source-backed fetch is available, but this stays out of default CI until collection licensing is verified."
 
 [test_groups.artifact]
 kind = "test_rom"
 license = "unknown"
 license_confidence = "unknown"
 redistributable = false
-source_url = "https://www.nesdev.org/wiki/Emulator_tests"
-source_version = "local-cache-pending"
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
 
 [test_groups.pass]
 kind = "nes_6000_status"

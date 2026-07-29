@@ -1,8 +1,8 @@
 manifest_version = 1
 
 [suite]
-id = "gba-public-suite-placeholders"
-name = "GBA public test suite placeholders"
+id = "gba-public-accuracy"
+name = "GBA public accuracy tests"
 core = "gba"
 upstream_url = "https://github.com/jsmolka/gba-tests"
 license = "MIT"
@@ -91,13 +91,75 @@ contains = "All tests passed"
 [tests.expectation]
 kind = "pass"
 
-[[tests]]
-id = "gba/mgba-suite/memory"
+[[test_groups]]
+id_prefix = "gba/jsmolka"
+cache_prefix = "rom-tests/cache/gba/jsmolka"
 core = "gba"
 tier = "accuracy"
 max_frames = 18000
+tags = ["gba", "jsmolka"]
+notes = "Additional built ROMs from jsmolka/gba-tests. These use the same mode-4 pass/fail text convention as the CPU and memory tests."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/jsmolka/gba-tests/archive/a7113b67e63f83a9b321696ddd7042ccfad6c881.zip"
+source_version = "a7113b67e63f83a9b321696ddd7042ccfad6c881 archive"
+source_id = "jsmolka-gba-tests-a7113b67"
+
+[test_groups.pass]
+kind = "gba_screen_text"
+contains = "All tests passed"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "bios"
+archive_path = "bios/bios.gba"
+sha256 = "9d7b369fa1aa661ff03692b3d79c6f644b623d72983d0fc890e6d87a0409a3c9"
+tags = ["bios"]
+
+[[test_groups.roms]]
+id = "nes"
+archive_path = "nes/nes.gba"
+sha256 = "d990df112763087d0415b3785c1b4d31c0237794a704d0446fc5f5e474a44f98"
+tags = ["nes"]
+
+[[test_groups.roms]]
+id = "save_none"
+archive_path = "save/none.gba"
+sha256 = "edb34ba6590d070c8a50cf0f3566b1e3cc679377b978224ff1b872d27f2b1630"
+tags = ["save"]
+
+[[test_groups.roms]]
+id = "save_sram"
+archive_path = "save/sram.gba"
+sha256 = "a37ad99c31e3f805eb05a00e498b65bd78e6f43a0a139cd695bea1f88229af2c"
+tags = ["save", "sram"]
+
+[[test_groups.roms]]
+id = "save_flash64"
+archive_path = "save/flash64.gba"
+sha256 = "7e2aa32e943aedde88bd750eadcdbf55152d3a1ec61385011b7f15cd85b07c02"
+tags = ["save", "flash"]
+
+[[test_groups.roms]]
+id = "save_flash128"
+archive_path = "save/flash128.gba"
+sha256 = "9ac50e51d3ce4209dbdf85e472e70c067d5827e9af1bb3e707f6bd9059d5f0c6"
+tags = ["save", "flash"]
+
+[[tests]]
+id = "gba/mgba-suite/memory"
+core = "gba"
+tier = "local"
+max_frames = 2400
+input = ["a@30-36"]
 tags = ["gba", "mgba-suite", "memory"]
-notes = "Tracked now, skipped until suite build/fetch and its exact pass/fail convention are wired into the runner."
+notes = "mGBA suite is source-backed but built locally with devkitARM/Docker. This entry presses A to run the first suite (Memory) and reads the suite's SRAM log."
 
 [tests.artifact]
 kind = "test_rom"
@@ -105,15 +167,241 @@ license = "MIT"
 license_confidence = "verified"
 redistributable = false
 source_url = "https://github.com/mgba-emu/suite"
-source_version = "fetch-build-pending"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
 
 [tests.rom]
-path = "rom-tests/cache/gba/mgba-suite/memory.gba"
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
 
 [tests.pass]
-kind = "gba_screen_text"
-contains = "PASS"
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/io-read"
+core = "gba"
+tier = "local"
+max_frames = 3000
+input = ["down@30-36", "a@60-66"]
+tags = ["gba", "mgba-suite", "io-read"]
+notes = "mGBA suite entry for I/O readback masks and open-bus behavior."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/timing"
+core = "gba"
+tier = "local"
+max_frames = 7000
+input = ["down@30-36", "down@50-56", "a@90-96"]
+tags = ["gba", "mgba-suite", "timing"]
+notes = "mGBA suite entry for CPU, memory, DMA, and prefetch timing cases."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/timers"
+core = "gba"
+tier = "local"
+max_frames = 7000
+input = ["down@30-36", "down@50-56", "down@70-76", "a@120-126"]
+tags = ["gba", "mgba-suite", "timers"]
+notes = "Currently tracks remaining GBA timer count-up timing work."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
 
 [tests.expectation]
-kind = "skip"
-reason = "mGBA suite fetch/build path and exact pass protocol are not implemented yet."
+kind = "known_fail"
+reason = "Timer count-up suite still has broad IRQ/timer phase failures; first reported failure is currently 16xv 1d 1i as FFFF vs FFFD."
+
+[[tests]]
+id = "gba/mgba-suite/timer-irq"
+core = "gba"
+tier = "local"
+max_frames = 7000
+input = ["down@30-36", "down@50-56", "down@70-76", "down@90-96", "a@150-156"]
+tags = ["gba", "mgba-suite", "timer-irq"]
+notes = "Covers timer IRQ edge timing around start/reload/read sequences."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/shifter"
+core = "gba"
+tier = "local"
+max_frames = 5000
+input = ["down@30-36", "down@50-56", "down@70-76", "down@90-96", "down@110-116", "a@180-186"]
+tags = ["gba", "mgba-suite", "shifter"]
+notes = "mGBA suite entry for ARM shifter and PC operand edge cases."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/carry"
+core = "gba"
+tier = "local"
+max_frames = 5000
+input = ["down@30-36", "down@50-56", "down@70-76", "down@90-96", "down@110-116", "down@130-136", "a@210-216"]
+tags = ["gba", "mgba-suite", "carry"]
+notes = "mGBA suite entry for ADC/SBC/RSC carry and overflow behavior."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/multiply-long"
+core = "gba"
+tier = "local"
+max_frames = 5000
+input = ["down@30-36", "down@50-56", "down@70-76", "down@90-96", "down@110-116", "down@130-136", "down@150-156", "a@240-246"]
+tags = ["gba", "mgba-suite", "multiply-long"]
+notes = "mGBA suite entry for signed/unsigned multiply-long results and ARM7TDMI flag side effects."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/bios-math"
+core = "gba"
+tier = "local"
+max_frames = 5000
+input = ["down@30-36", "down@50-56", "down@70-76", "down@90-96", "down@110-116", "down@130-136", "down@150-156", "down@170-176", "a@270-276"]
+tags = ["gba", "mgba-suite", "bios-math"]
+notes = "Covers BIOS Div, ArcTan, and ArcTan2 arithmetic and scratch register behavior."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"
+
+[[tests]]
+id = "gba/mgba-suite/dma"
+core = "gba"
+tier = "local"
+max_frames = 9000
+input = ["down@30-36", "down@50-56", "down@70-76", "down@90-96", "down@110-116", "down@130-136", "down@150-156", "down@170-176", "down@190-196", "a@300-306"]
+tags = ["gba", "mgba-suite", "dma"]
+notes = "Covers mGBA DMA addressing, latching, source/destination modes, and start timing edge cases."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/mgba-emu/suite"
+source_version = "e6942030d25ffe3ba76c72b73a86da073ec857cc archive"
+source_id = "mgba-suite-e6942030"
+
+[tests.rom]
+path = "rom-tests/cache/gba/mgba-suite/suite.gba"
+sha256 = "534df207e16e3a4d98e4e32ca92fa29dee2a085817d0b549dcb77355de263c30"
+
+[tests.pass]
+kind = "gba_mgba_suite_sram"

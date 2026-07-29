@@ -20,8 +20,9 @@ kind = "test_rom"
 license = "unknown"
 license_confidence = "unknown"
 redistributable = false
-source_url = "https://www.nesdev.org/wiki/Emulator_tests"
-source_version = "local-cache-pending"
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
 
 [tests.rom]
 path = "rom-tests/cache/nes/nes-test-roms/instr_test-v5/official_only.nes"
@@ -47,8 +48,9 @@ kind = "test_rom"
 license = "unknown"
 license_confidence = "unknown"
 redistributable = false
-source_url = "https://www.nesdev.org/wiki/Emulator_tests"
-source_version = "local-cache-pending"
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
 
 [tests.rom]
 path = "rom-tests/cache/nes/nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"

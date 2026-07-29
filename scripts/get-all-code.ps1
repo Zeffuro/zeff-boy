@@ -1,5 +1,6 @@
 $allCode = ""
-Get-ChildItem -Path "F:\Coding\zeff-boy\crates" -Recurse -Filter *.rs |
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Get-ChildItem -Path (Join-Path $repoRoot "crates") -Recurse -Filter *.rs |
 Sort-Object FullName | 
 ForEach-Object {
     $allCode += "`n// ===== $($_.FullName) =====`n"

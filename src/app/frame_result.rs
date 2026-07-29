@@ -94,6 +94,9 @@ impl App {
                 match cached.graphics_data.take() {
                     Some(ConsoleGraphicsData::Gb(gb)) if !gb.vram.is_empty() => {
                         self.recycled.vram = Some(gb.vram);
+                        if !gb.oam.is_empty() {
+                            self.recycled.oam = Some(gb.oam);
+                        }
                     }
                     Some(ConsoleGraphicsData::Nes(nes)) => {
                         if !nes.chr_data.is_empty() {
@@ -122,12 +125,20 @@ impl App {
             if ui_data.rom_debug.is_none() {
                 ui_data.rom_debug = cached.rom_debug.take();
             }
-            if ui_data.memory_page.is_some() {
-                if let Some(old_page) = cached.memory_page.take() {
-                    self.recycled.memory_page = Some(old_page);
+            match ui_data.memory_page.take() {
+                Some(page) if !page.is_empty() => {
+                    if let Some(old_page) = cached.memory_page.take() {
+                        self.recycled.memory_page = Some(old_page);
+                    }
+                    ui_data.memory_page = Some(page);
                 }
-            } else {
-                ui_data.memory_page = cached.memory_page.take();
+                Some(empty_page) => {
+                    self.recycled.memory_page = Some(empty_page);
+                    ui_data.memory_page = cached.memory_page.take();
+                }
+                None => {
+                    ui_data.memory_page = cached.memory_page.take();
+                }
             }
         }
 

@@ -84,6 +84,8 @@ pub(crate) fn expand_manifest_tests(
 
             let mut tags = group.tags.clone();
             tags.extend(rom.tags.clone());
+            let mut input = group.input.clone();
+            input.extend(rom.input.clone());
             let archive_path = rom.archive_path.clone();
             let path = rom
                 .path
@@ -96,6 +98,7 @@ pub(crate) fn expand_manifest_tests(
                 model: group.model.clone(),
                 max_frames: group.max_frames,
                 no_apu: group.no_apu,
+                input,
                 tags,
                 notes: rom.notes.clone().or_else(|| group.notes.clone()),
                 artifact: group.artifact.clone(),
@@ -241,6 +244,15 @@ pub(crate) fn validate_tests(tests: &[LoadedTest]) -> Vec<String> {
 
         if test.rom.path.as_os_str().is_empty() {
             errors.push(format!("{manifest}: test '{}' ROM path is empty", test.id));
+        }
+
+        for input in &test.input {
+            if input.trim().is_empty() {
+                errors.push(format!(
+                    "{manifest}: test '{}' input entries must not be empty",
+                    test.id
+                ));
+            }
         }
 
         if matches!(test.artifact.kind, ArtifactKind::TestRom)

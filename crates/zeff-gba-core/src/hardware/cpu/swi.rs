@@ -11,6 +11,8 @@ impl Cpu {
             0x06 => self.swi_div(),
             0x07 => self.swi_div_arm(),
             0x08 => self.swi_sqrt(),
+            0x09 => self.swi_arc_tan(),
+            0x0A => self.swi_arc_tan2(),
             0x0E => self.swi_bg_affine_set(bus),
             0x0F => self.swi_obj_affine_set(bus),
             0x10 => self.swi_bit_unpack(bus),
@@ -48,29 +50,58 @@ impl Cpu {
         }
 
         bus.enable_master_interrupts();
+        self.swi_wait_return_pc = Some(self.pc());
         self.state = super::CpuState::Halted;
     }
 
     fn swi_div(&mut self) {
-        let numerator = self.regs[0] as i32;
-        let denominator = self.regs[1] as i32;
+        self.swi_div_operands(self.regs[0] as i32, self.regs[1] as i32);
+    }
+
+    fn swi_div_arm(&mut self) {
+        self.swi_div_operands(self.regs[1] as i32, self.regs[0] as i32);
+    }
+
+    fn swi_div_operands(&mut self, numerator: i32, denominator: i32) {
         if denominator == 0 {
+            self.regs[0] = if numerator < 0 { -1i32 } else { 1i32 } as u32;
+            self.regs[1] = numerator as u32;
+            self.regs[3] = 1;
             return;
         }
-        let quotient = numerator.wrapping_div(denominator);
-        let remainder = numerator.wrapping_rem(denominator);
+
+        if numerator == i32::MIN && denominator == -1 {
+            self.regs[0] = i32::MIN as u32;
+            self.regs[1] = 0;
+            self.regs[3] = i32::MIN as u32;
+            return;
+        }
+
+        let quotient = numerator / denominator;
+        let remainder = numerator % denominator;
         self.regs[0] = quotient as u32;
         self.regs[1] = remainder as u32;
         self.regs[3] = quotient.wrapping_abs() as u32;
     }
 
-    fn swi_div_arm(&mut self) {
-        self.regs.swap(0, 1);
-        self.swi_div();
-    }
-
     fn swi_sqrt(&mut self) {
         self.regs[0] = (self.regs[0] as f64).sqrt() as u32;
+    }
+
+    fn swi_arc_tan(&mut self) {
+        let (result, r1, r3) = bios_arc_tan(self.regs[0] as i32);
+        self.regs[0] = i32::from(result) as u32;
+        self.regs[1] = r1 as u32;
+        self.regs[3] = r3 as u32;
+    }
+
+    fn swi_arc_tan2(&mut self) {
+        let (result, r1) = bios_arc_tan2(self.regs[0] as i32, self.regs[1] as i32);
+        self.regs[0] = u32::from(result as u16);
+        if let Some(r1) = r1 {
+            self.regs[1] = r1 as u32;
+        }
+        self.regs[3] = 0x170;
     }
 
     fn swi_cpu_set(&mut self, bus: &mut Bus, fast: bool) {
@@ -81,10 +112,14 @@ impl Cpu {
         let word = fast || mode & (1 << 26) != 0;
         let count = mode & 0x1F_FFFF;
         if word {
-            let fill = bus.read32(src);
+            let fill = cpu_set_read32(bus, src);
             let units = if fast { (count + 7) & !7 } else { count };
             for _ in 0..units {
-                let value = if fixed_source { fill } else { bus.read32(src) };
+                let value = if fixed_source {
+                    fill
+                } else {
+                    cpu_set_read32(bus, src)
+                };
                 bus.write32(dst, value);
                 if !fixed_source {
                     src = src.wrapping_add(4);
@@ -92,9 +127,13 @@ impl Cpu {
                 dst = dst.wrapping_add(4);
             }
         } else {
-            let fill = bus.read16(src);
+            let fill = cpu_set_read16(bus, src);
             for _ in 0..count {
-                let value = if fixed_source { fill } else { bus.read16(src) };
+                let value = if fixed_source {
+                    fill
+                } else {
+                    cpu_set_read16(bus, src)
+                };
                 bus.write16(dst, value);
                 if !fixed_source {
                     src = src.wrapping_add(2);
@@ -440,6 +479,89 @@ fn q8_8_mul(scale: i16, trig: f64) -> i16 {
     (f64::from(scale) * trig)
         .round()
         .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+}
+
+fn bios_arc_tan(input: i32) -> (i16, i32, i32) {
+    let square = input.wrapping_mul(input);
+    let r1 = (square >> 14).wrapping_neg();
+    let mut polynomial = bios_poly_mul_add(0xA9, r1, 0x390);
+    polynomial = bios_poly_mul_add(polynomial, r1, 0x91C);
+    polynomial = bios_poly_mul_add(polynomial, r1, 0xFB6);
+    polynomial = bios_poly_mul_add(polynomial, r1, 0x16AA);
+    polynomial = bios_poly_mul_add(polynomial, r1, 0x2081);
+    polynomial = bios_poly_mul_add(polynomial, r1, 0x3651);
+    polynomial = bios_poly_mul_add(polynomial, r1, 0xA2F9);
+
+    let result = input.wrapping_mul(polynomial) >> 16;
+    (result as i16, r1, polynomial)
+}
+
+fn bios_arc_tan2(x: i32, y: i32) -> (i16, Option<i32>) {
+    if y == 0 {
+        return (if x >= 0 { 0 } else { 0x8000u16 as i16 }, None);
+    }
+    if x == 0 {
+        return (if y >= 0 { 0x4000 } else { 0xC000u16 as i16 }, None);
+    }
+
+    let mut r1 = 0;
+    let result = if y >= 0 {
+        if x >= 0 && x >= y {
+            bios_arc_tan_result(y.wrapping_shl(14).wrapping_div(x), &mut r1)
+        } else if x < 0 && x.wrapping_neg() >= y {
+            bios_arc_tan_result(y.wrapping_shl(14).wrapping_div(x), &mut r1)
+                .wrapping_add(0x8000u16 as i16)
+        } else {
+            (0x4000i16).wrapping_sub(bios_arc_tan_result(
+                x.wrapping_shl(14).wrapping_div(y),
+                &mut r1,
+            ))
+        }
+    } else if x <= 0 && x.wrapping_neg() > y.wrapping_neg() {
+        bios_arc_tan_result(y.wrapping_shl(14).wrapping_div(x), &mut r1)
+            .wrapping_add(0x8000u16 as i16)
+    } else if x > 0 && x >= y.wrapping_neg() {
+        bios_arc_tan_result(y.wrapping_shl(14).wrapping_div(x), &mut r1)
+    } else {
+        (0xC000u16 as i16).wrapping_sub(bios_arc_tan_result(
+            x.wrapping_shl(14).wrapping_div(y),
+            &mut r1,
+        ))
+    };
+
+    (result, Some(r1))
+}
+
+fn bios_arc_tan_result(input: i32, r1: &mut i32) -> i16 {
+    let (result, next_r1, _) = bios_arc_tan(input);
+    *r1 = next_r1;
+    result
+}
+
+fn bios_poly_mul_add(lhs: i32, rhs: i32, add: i32) -> i32 {
+    (lhs.wrapping_mul(rhs) >> 14).wrapping_add(add)
+}
+
+fn cpu_set_read32(bus: &Bus, addr: u32) -> u32 {
+    if cpu_set_zero_read_addr(addr) {
+        0
+    } else {
+        bus.read32(addr)
+    }
+}
+
+fn cpu_set_read16(bus: &Bus, addr: u32) -> u16 {
+    if cpu_set_zero_read_addr(addr) {
+        0
+    } else if addr & 1 == 0 {
+        bus.read16(addr)
+    } else {
+        u16::from(bus.read8(addr))
+    }
+}
+
+fn cpu_set_zero_read_addr(addr: u32) -> bool {
+    matches!(addr, 0x0000_4000..=0x01FF_FFFF | 0x1000_0000..=0xFFFF_FFFF)
 }
 
 fn read_i16(bus: &Bus, addr: u32) -> i16 {

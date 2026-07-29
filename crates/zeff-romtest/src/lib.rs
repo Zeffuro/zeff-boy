@@ -4,6 +4,7 @@ use anyhow::{Context, bail};
 
 mod baseline;
 mod cli;
+mod compat;
 mod fetch;
 mod manifest;
 mod model;
@@ -105,6 +106,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> anyhow::Result<()> {
             }
             Ok(())
         }
+        cli::CommandKind::GenerateCompat => compat::generate_compat_manifest(&cli),
         cli::CommandKind::Summary => {
             if let Some(actual_path) = &cli.actual_json {
                 let report = report::read_json_report(actual_path)?;

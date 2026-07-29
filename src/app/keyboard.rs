@@ -215,6 +215,21 @@ impl App {
             return true;
         }
 
+        if key_code == bindings.get(ShortcutAction::SlowMotion) {
+            if pressed && !key_event.repeat {
+                self.settings.emulation.slow_motion_enabled =
+                    !self.settings.emulation.slow_motion_enabled;
+                self.settings.save();
+                self.toast_manager
+                    .info(if self.settings.emulation.slow_motion_enabled {
+                        "Slow motion enabled"
+                    } else {
+                        "Slow motion disabled"
+                    });
+            }
+            return true;
+        }
+
         if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
             if pressed {
                 self.timing.uncapped_speed = !self.timing.uncapped_speed;

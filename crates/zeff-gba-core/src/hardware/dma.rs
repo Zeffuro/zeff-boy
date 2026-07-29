@@ -7,6 +7,7 @@ pub struct DmaChannel {
     pub active_source: u32,
     pub active_destination: u32,
     pub active_count: u16,
+    pub data_latch: u32,
 }
 
 impl DmaChannel {

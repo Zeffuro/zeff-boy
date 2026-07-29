@@ -1,0 +1,100 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/ppu_read_buffer"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "ppu", "read-buffer"]
+notes = "Local-only PPU read-buffer test. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "test_ppu_read_buffer"
+archive_path = "nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes"
+sha256 = "230a52fc557c098eba163801d1b6bbf9f57fe8c5ff79a3f968c804dedb1290ba"
+legacy_paths = ["test-roms/nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes"]
+expectation = { kind = "skip", reason = "Current NES test detector does not observe a $6000 status signature for this ROM." }
+
+[[test_groups]]
+id_prefix = "nes/blargg/ppu_open_bus"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "ppu", "open-bus"]
+notes = "Local-only PPU open-bus test. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "ppu_open_bus"
+archive_path = "nes-test-roms/ppu_open_bus/ppu_open_bus.nes"
+sha256 = "d4208a3ff6340532dd0fced7f9d408d5b6585853a0ddc9c1f64ee1722ef08e67"
+legacy_paths = ["test-roms/nes-test-roms/ppu_open_bus/ppu_open_bus.nes"]
+expectation = { kind = "known_fail", reason = "Current NES PPU open-bus decay behavior fails ppu_open_bus with status=03." }
+
+[[test_groups]]
+id_prefix = "nes/blargg/oam_read"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "ppu", "oam"]
+notes = "Local-only OAM read test. Kept out of smoke until redistribution/license status is verified."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "oam_read"
+archive_path = "nes-test-roms/oam_read/oam_read.nes"
+sha256 = "f298973dabeb61ca35007445f7a615f77e87703c958c870986af83b1aabde926"
+legacy_paths = ["test-roms/nes-test-roms/oam_read/oam_read.nes"]

@@ -33,6 +33,81 @@ fn build_gba_test_rom() -> Vec<u8> {
     rom
 }
 
+fn build_gb_backend() -> EmuBackend {
+    let rom = build_gb_test_rom();
+    let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
+        &rom,
+        zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::Auto,
+    )
+    .expect("GB emulator should initialize");
+    EmuBackend::from_gb(gb, PathBuf::from("test.gb"))
+}
+
+fn build_nes_backend() -> EmuBackend {
+    let rom = build_nes_test_rom();
+    let nes = zeff_nes_core::emulator::Emulator::new(&rom, 44_100.0)
+        .expect("NES emulator should initialize");
+    EmuBackend::from_nes(nes, PathBuf::from("test.nes"))
+}
+
+fn build_gba_backend() -> EmuBackend {
+    let rom = build_gba_test_rom();
+    let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("GBA emulator should initialize");
+    EmuBackend::from_gba(gba, PathBuf::from("test.gba"))
+}
+
+fn step_frames(backend: &mut EmuBackend, count: usize) {
+    for _ in 0..count {
+        backend.step_frame();
+    }
+}
+
+fn assert_save_state_replay_is_deterministic(
+    mut backend: EmuBackend,
+    frames_before_checkpoint: usize,
+    frames_after_checkpoint: usize,
+) {
+    step_frames(&mut backend, frames_before_checkpoint);
+
+    let checkpoint_framebuffer = backend.framebuffer().to_vec();
+    let checkpoint_state = backend
+        .encode_state_bytes()
+        .expect("backend should encode checkpoint save-state");
+
+    step_frames(&mut backend, frames_after_checkpoint);
+
+    let expected_framebuffer = backend.framebuffer().to_vec();
+    let expected_state = backend
+        .encode_state_bytes()
+        .expect("backend should encode replay target save-state");
+
+    backend
+        .load_state_from_bytes(checkpoint_state)
+        .expect("backend should restore checkpoint save-state");
+
+    assert_eq!(
+        backend.framebuffer(),
+        checkpoint_framebuffer,
+        "loading a save-state should restore the checkpoint framebuffer"
+    );
+
+    step_frames(&mut backend, frames_after_checkpoint);
+
+    assert_eq!(
+        backend.framebuffer(),
+        expected_framebuffer,
+        "replaying from a save-state should reproduce the same framebuffer"
+    );
+    assert_eq!(
+        backend
+            .encode_state_bytes()
+            .expect("backend should encode replayed save-state"),
+        expected_state,
+        "replaying from a save-state should reproduce the same encoded state"
+    );
+}
+
 #[test]
 fn active_system_detects_supported_rom_extensions() {
     assert_eq!(
@@ -60,14 +135,7 @@ fn active_system_detects_supported_rom_extensions() {
 
 #[test]
 fn gb_backend_smoke_roundtrip() {
-    let rom = build_gb_test_rom();
-    let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
-        &rom,
-        zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::Auto,
-    )
-    .expect("GB emulator should initialize");
-
-    let mut backend = EmuBackend::from_gb(gb, PathBuf::from("test.gb"));
+    let mut backend = build_gb_backend();
 
     assert_eq!(backend.system(), ActiveSystem::GameBoy);
     assert_eq!(backend.framebuffer().len(), (160 * 144 * 4) as usize);
@@ -85,11 +153,7 @@ fn gb_backend_smoke_roundtrip() {
 
 #[test]
 fn nes_backend_smoke_roundtrip() {
-    let rom = build_nes_test_rom();
-    let nes = zeff_nes_core::emulator::Emulator::new(&rom, 44_100.0)
-        .expect("NES emulator should initialize");
-
-    let mut backend = EmuBackend::from_nes(nes, PathBuf::from("test.nes"));
+    let mut backend = build_nes_backend();
 
     assert_eq!(backend.system(), ActiveSystem::Nes);
     assert_eq!(backend.framebuffer().len(), (256 * 240 * 4) as usize);
@@ -107,11 +171,7 @@ fn nes_backend_smoke_roundtrip() {
 
 #[test]
 fn gba_backend_smoke_roundtrip() {
-    let rom = build_gba_test_rom();
-    let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
-        .expect("GBA emulator should initialize");
-
-    let mut backend = EmuBackend::from_gba(gba, PathBuf::from("test.gba"));
+    let mut backend = build_gba_backend();
 
     assert_eq!(backend.system(), ActiveSystem::GameBoyAdvance);
     assert_eq!(backend.framebuffer().len(), (240 * 160 * 4) as usize);
@@ -125,6 +185,21 @@ fn gba_backend_smoke_roundtrip() {
     backend
         .load_state_from_bytes(state)
         .expect("GBA backend should load save-state");
+}
+
+#[test]
+fn gb_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_gb_backend(), 1, 2);
+}
+
+#[test]
+fn nes_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_nes_backend(), 1, 2);
+}
+
+#[test]
+fn gba_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_gba_backend(), 1, 2);
 }
 
 #[test]

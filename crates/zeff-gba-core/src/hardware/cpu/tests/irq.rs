@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn reset_enters_post_bios_system_mode_with_interrupts_enabled() {
+    let mut cpu = Cpu::new();
+
+    cpu.reset();
+
+    assert_eq!(cpu.cpsr & CPSR_MODE_MASK, 0x1F);
+    assert_eq!(cpu.cpsr & CPSR_IRQ_DISABLE, 0);
+    assert_eq!(cpu.cpsr & CPSR_FIQ_DISABLE, 0);
+}
+
+#[test]
 fn irq_exception_enters_bios_stub_and_restores_user_sp_lr() {
     let mut rom = vec![0; 0x104];
     rom[0x100..0x104].copy_from_slice(&0xE12F_FF1E_u32.to_le_bytes()); // bx lr

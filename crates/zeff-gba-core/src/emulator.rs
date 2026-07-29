@@ -88,7 +88,12 @@ impl Emulator {
         if self.cpu.is_suspended() {
             return (None, Vec::new());
         }
-        if self.bus.interrupt_pending() && self.bus.irq_handler_installed() {
+        if self.bus.interrupt_ready() && self.bus.irq_handler_installed() {
+            let irq_delay_cycles = self.bus.take_irq_sample_delay_cycles();
+            if irq_delay_cycles != 0 {
+                self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(irq_delay_cycles));
+                self.bus.step_cycles(irq_delay_cycles);
+            }
             self.cpu.try_service_irq(true);
         }
         if self.debug.should_break(self.cpu.pc()) {
@@ -99,7 +104,7 @@ impl Emulator {
             let cycles = self.bus.cycles_until_next_halt_check();
             self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(cycles));
             self.bus.step_cycles(cycles);
-            if self.bus.interrupt_pending() {
+            if self.bus.interrupt_ready() {
                 self.cpu.resume();
             }
             return (None, Vec::new());
@@ -121,6 +126,7 @@ impl Emulator {
             .min(u64::from(u32::MAX));
         let dma_cycles = self.bus.take_pending_dma_cycles();
         self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(dma_cycles));
+        self.bus.timers.begin_step_window(elapsed as u32);
         self.bus
             .step_cycles((elapsed as u32).saturating_add(dma_cycles));
 
@@ -439,6 +445,6 @@ mod tests {
             emu.step_instruction();
         }
 
-        assert_eq!(emu.cpu_cycles(), 1006);
+        assert_eq!(emu.cpu_cycles(), 1013);
     }
 }

@@ -291,6 +291,10 @@ impl UiSettings {
 pub(crate) struct EmulationSettings {
     pub(crate) hardware_mode_preference: HardwareModePreference,
     pub(crate) fast_forward_multiplier: usize,
+    #[serde(default = "default_slow_motion_divisor")]
+    pub(crate) slow_motion_divisor: usize,
+    #[serde(default)]
+    pub(crate) slow_motion_enabled: bool,
     pub(crate) uncapped_frames_per_tick: usize,
     pub(crate) uncapped_speed: bool,
     pub(crate) frame_skip: bool,
@@ -303,6 +307,10 @@ pub(crate) struct EmulationSettings {
     pub(crate) pause_on_unfocus: bool,
 }
 
+fn default_slow_motion_divisor() -> usize {
+    4
+}
+
 fn default_pause_on_unfocus() -> bool {
     true
 }
@@ -312,6 +320,8 @@ impl Default for EmulationSettings {
         Self {
             hardware_mode_preference: HardwareModePreference::Auto,
             fast_forward_multiplier: 4,
+            slow_motion_divisor: default_slow_motion_divisor(),
+            slow_motion_enabled: false,
             uncapped_frames_per_tick: 60,
             uncapped_speed: false,
             frame_skip: false,

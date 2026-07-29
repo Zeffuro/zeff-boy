@@ -45,6 +45,13 @@ impl Emulator {
             bgp: self.bus.ppu_bgp(),
             obp0: self.bus.ppu_obp0(),
             obp1: self.bus.ppu_obp1(),
+            cycles: self.bus.ppu_cycles(),
+            window_line_counter: self.bus.ppu_window_line_counter(),
+            window_y_triggered: self.bus.ppu_window_y_triggered(),
+            window_was_active_this_frame: self.bus.ppu_window_was_active_this_frame(),
+            window_visible_on_current_line: self.bus.ppu_window_visible_on_current_line(),
+            rendered_current_line: self.bus.ppu_rendered_current_line(),
+            draw_dots_for_line: self.bus.ppu_draw_dots_for_line(),
         }
     }
 

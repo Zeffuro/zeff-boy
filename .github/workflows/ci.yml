@@ -208,6 +208,10 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v3-wasm
@@ -217,6 +221,9 @@ jobs:
 
       - name: Check (WASM)
         run: cargo check --target wasm32-unknown-unknown --no-default-features
+
+      - name: Build (Trunk release)
+        run: trunk build --release --public-url /zeff-boy/
 
   fuzz-check:
     name: Fuzz Compile Check

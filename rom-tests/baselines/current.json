@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "selected_count": 119,
+  "selected_count": 124,
   "results": [
     {
       "id": "gb/mooneye/acceptance/reti_timing",
@@ -924,7 +924,7 @@
     },
     {
       "id": "gba/jsmolka/arm",
-      "suite_id": "gba-public-suite-placeholders",
+      "suite_id": "gba-public-accuracy",
       "core": "gba",
       "tier": "accuracy",
       "expectation": "pass",
@@ -932,7 +932,7 @@
     },
     {
       "id": "gba/jsmolka/thumb",
-      "suite_id": "gba-public-suite-placeholders",
+      "suite_id": "gba-public-accuracy",
       "core": "gba",
       "tier": "accuracy",
       "expectation": "pass",
@@ -940,19 +940,59 @@
     },
     {
       "id": "gba/jsmolka/memory",
-      "suite_id": "gba-public-suite-placeholders",
+      "suite_id": "gba-public-accuracy",
       "core": "gba",
       "tier": "accuracy",
       "expectation": "pass",
       "status": "passed"
     },
     {
-      "id": "gba/mgba-suite/memory",
-      "suite_id": "gba-public-suite-placeholders",
+      "id": "gba/jsmolka/bios",
+      "suite_id": "gba-public-accuracy",
       "core": "gba",
       "tier": "accuracy",
-      "expectation": "skip",
-      "status": "skipped"
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/nes",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/save_none",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/save_sram",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/save_flash64",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/jsmolka/save_flash128",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
     }
   ]
 }

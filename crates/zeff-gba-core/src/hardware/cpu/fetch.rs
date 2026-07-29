@@ -13,6 +13,10 @@ impl Cpu {
 
         if self.state == CpuState::Running {
             self.regs[15] = pc.wrapping_add(u32::from(width_bytes));
+            if self.swi_wait_return_pc == Some(pc) {
+                self.bios_protected_read_latch = POST_SWI_BIOS_READ_LATCH;
+                self.swi_wait_return_pc = None;
+            }
             self.track_bios_fetch(fetched);
             self.fill_prefetch_queue(bus, instruction_set, width_bytes);
             self.cycles = self.cycles.wrapping_add(u64::from(fetched.fetch_cycles));

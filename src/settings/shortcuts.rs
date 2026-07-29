@@ -7,6 +7,7 @@ use super::keycode_serde::{keycode_from_string, keycode_to_string};
 pub(crate) enum ShortcutAction {
     Pause,
     Fullscreen,
+    SlowMotion,
     UncappedSpeed,
     MuteToggle,
     Screenshot,
@@ -24,6 +25,7 @@ impl ShortcutAction {
     pub(crate) const ALL: &'static [ShortcutAction] = &[
         Self::Pause,
         Self::Fullscreen,
+        Self::SlowMotion,
         Self::UncappedSpeed,
         Self::MuteToggle,
         Self::Screenshot,
@@ -41,6 +43,7 @@ impl ShortcutAction {
         match self {
             Self::Pause => "Pause / Resume",
             Self::Fullscreen => "Fullscreen",
+            Self::SlowMotion => "Toggle slow motion",
             Self::UncappedSpeed => "Toggle uncapped",
             Self::MuteToggle => "Mute toggle",
             Self::Screenshot => "Screenshot",
@@ -59,6 +62,7 @@ impl ShortcutAction {
         match self {
             Self::Pause => KeyCode::KeyP,
             Self::Fullscreen => KeyCode::F11,
+            Self::SlowMotion => KeyCode::F4,
             Self::UncappedSpeed => KeyCode::F10,
             Self::MuteToggle => KeyCode::KeyM,
             Self::Screenshot => KeyCode::F12,
@@ -79,6 +83,7 @@ impl ShortcutAction {
 pub(crate) struct ShortcutBindings {
     pub(crate) pause: String,
     pub(crate) fullscreen: String,
+    pub(crate) slow_motion: String,
     pub(crate) uncapped_speed: String,
     pub(crate) mute_toggle: String,
     pub(crate) screenshot: String,
@@ -97,6 +102,7 @@ impl Default for ShortcutBindings {
         Self {
             pause: "KeyP".to_string(),
             fullscreen: "F11".to_string(),
+            slow_motion: "F4".to_string(),
             uncapped_speed: "F10".to_string(),
             mute_toggle: "KeyM".to_string(),
             screenshot: "F12".to_string(),
@@ -123,6 +129,7 @@ impl ShortcutBindings {
         match action {
             ShortcutAction::Pause => self.pause = s,
             ShortcutAction::Fullscreen => self.fullscreen = s,
+            ShortcutAction::SlowMotion => self.slow_motion = s,
             ShortcutAction::UncappedSpeed => self.uncapped_speed = s,
             ShortcutAction::MuteToggle => self.mute_toggle = s,
             ShortcutAction::Screenshot => self.screenshot = s,
@@ -141,6 +148,7 @@ impl ShortcutBindings {
         match action {
             ShortcutAction::Pause => &self.pause,
             ShortcutAction::Fullscreen => &self.fullscreen,
+            ShortcutAction::SlowMotion => &self.slow_motion,
             ShortcutAction::UncappedSpeed => &self.uncapped_speed,
             ShortcutAction::MuteToggle => &self.mute_toggle,
             ShortcutAction::Screenshot => &self.screenshot,

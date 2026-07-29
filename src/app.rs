@@ -6,6 +6,7 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::WindowId,
 };
+use zeff_emu_common::address::Address;
 
 use crate::platform::Instant;
 
@@ -31,6 +32,8 @@ mod frame_result;
 mod input;
 mod keyboard;
 mod lifecycle;
+#[cfg(not(target_arch = "wasm32"))]
+mod remote;
 mod render;
 mod shutdown;
 mod state_io;
@@ -159,6 +162,14 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             pending: false,
             backstep_pending: false,
         },
+        remote_debug_frames_remaining: 0,
+        remote_memory_view_start: None,
+        remote_memory_frames_remaining: 0,
+        remote_graphics_frames_remaining: 0,
+        #[cfg(not(target_arch = "wasm32"))]
+        live_control: crate::live_control::LiveControl::from_env(),
+        #[cfg(not(target_arch = "wasm32"))]
+        live_button_releases: Vec::new(),
         egui_wants_keyboard: false,
         game_view_focused: true,
         active_system,
@@ -230,6 +241,14 @@ struct App {
     toast_manager: ToastManager,
     recording: RecordingState,
     rewind: RewindState,
+    remote_debug_frames_remaining: usize,
+    remote_memory_view_start: Option<Address>,
+    remote_memory_frames_remaining: usize,
+    remote_graphics_frames_remaining: usize,
+    #[cfg(not(target_arch = "wasm32"))]
+    live_control: crate::live_control::LiveControl,
+    #[cfg(not(target_arch = "wasm32"))]
+    live_button_releases: Vec<crate::live_control::PendingButtonRelease>,
     egui_wants_keyboard: bool,
     game_view_focused: bool,
     active_system: ActiveSystem,
@@ -244,6 +263,8 @@ impl App {
             SpeedMode::Uncapped
         } else if self.speed.fast_forward_held {
             SpeedMode::FastForward
+        } else if self.settings.emulation.slow_motion_enabled {
+            SpeedMode::SlowMotion
         } else {
             SpeedMode::Normal
         }
@@ -260,6 +281,7 @@ impl App {
         }
         match self.speed_mode() {
             SpeedMode::Normal => "Normal",
+            SpeedMode::SlowMotion => "Slow",
             SpeedMode::Uncapped => "Uncapped (Benchmark)",
             SpeedMode::FastForward => "Fast",
         }
@@ -275,6 +297,10 @@ impl App {
             SpeedMode::FastForward => {
                 let multi = self.settings.emulation.fast_forward_multiplier.max(1) as u32;
                 base / multi
+            }
+            SpeedMode::SlowMotion => {
+                let divisor = self.settings.emulation.slow_motion_divisor.clamp(2, 16) as u32;
+                base.saturating_mul(divisor)
             }
             _ => base,
         }
@@ -387,6 +413,8 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.wasm_poll_hooks(event_loop);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.drain_live_control();
         self.schedule_next_frame(event_loop);
     }
 

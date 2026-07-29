@@ -25,6 +25,11 @@ pub(crate) struct Cli {
     pub(crate) report_baseline: Option<PathBuf>,
     pub(crate) baseline: Option<PathBuf>,
     pub(crate) actual_json: Option<PathBuf>,
+    pub(crate) compat_rom_dir: Option<PathBuf>,
+    pub(crate) compat_output: Option<PathBuf>,
+    pub(crate) compat_max_frames: u64,
+    pub(crate) compat_limit: Option<usize>,
+    pub(crate) compat_name_matches: Vec<String>,
 }
 
 impl Cli {
@@ -38,6 +43,7 @@ impl Cli {
             Some("fetch") => CommandKind::Fetch,
             Some("run") => CommandKind::Run,
             Some("compare") => CommandKind::Compare,
+            Some("generate-compat") => CommandKind::GenerateCompat,
             Some("summary") | Some("status") => CommandKind::Summary,
             Some(other) => bail!("unknown command '{other}'"),
         };
@@ -58,6 +64,11 @@ impl Cli {
             report_baseline: None,
             baseline: None,
             actual_json: None,
+            compat_rom_dir: None,
+            compat_output: None,
+            compat_max_frames: 3600,
+            compat_limit: None,
+            compat_name_matches: Vec::new(),
         };
 
         let rest: Vec<OsString> = args.collect();
@@ -124,6 +135,28 @@ impl Cli {
                 "--actual-json" => {
                     cli.actual_json = Some(next_path(&rest, &mut i, "--actual-json")?);
                 }
+                "--rom-dir" => {
+                    cli.compat_rom_dir = Some(next_path(&rest, &mut i, "--rom-dir")?);
+                }
+                "--output" => {
+                    cli.compat_output = Some(next_path(&rest, &mut i, "--output")?);
+                }
+                "--max-frames" => {
+                    cli.compat_max_frames = next_value(&rest, &mut i, "--max-frames")?
+                        .parse()
+                        .context("--max-frames must be an integer")?;
+                }
+                "--limit" => {
+                    cli.compat_limit = Some(
+                        next_value(&rest, &mut i, "--limit")?
+                            .parse()
+                            .context("--limit must be an integer")?,
+                    );
+                }
+                "--name-match" => {
+                    cli.compat_name_matches
+                        .push(next_value(&rest, &mut i, "--name-match")?);
+                }
                 "--help" | "-h" => {
                     cli.command = CommandKind::Help;
                     i += 1;
@@ -157,6 +190,7 @@ pub(crate) enum CommandKind {
     Fetch,
     Run,
     Compare,
+    GenerateCompat,
     Summary,
 }
 
@@ -181,6 +215,7 @@ Commands:
   fetch                Download pinned source archives and extract selected test ROMs
   run                  Run selected tests through Zeff Boy headless CLI
   compare              Compare a run JSON report against a baseline JSON report
+  generate-compat      Generate an ignored local game compatibility manifest
   summary              Print status/coverage/suite tables from an existing report
   status               Alias for summary
 
@@ -207,6 +242,12 @@ Options:
                         or summary (default: {DEFAULT_BASELINE_PATH})
   --actual-json PATH   Actual run JSON path for compare
                         or summary
+  --rom-dir PATH       ROM directory for generate-compat
+  --output PATH        Output manifest for generate-compat
+                        (default: rom-tests/manifests/compat-games/local-generated.toml)
+  --max-frames N       Max frames per generated compatibility entry (default: 3600)
+  --limit N            Limit generated compatibility entries
+  --name-match TEXT    Only include ROM filenames containing TEXT; may be repeated
 "
     );
 }

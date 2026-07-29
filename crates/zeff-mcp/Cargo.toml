@@ -1,0 +1,12 @@
+[package]
+name = "zeff-mcp"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "MCP control bridge for Zeff Boy."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+anyhow = "1.0.104"
+serde_json = "1.0.151"

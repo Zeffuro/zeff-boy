@@ -5540,6 +5540,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeff-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+]
+
+[[package]]
 name = "zeff-nes-core"
 version = "0.1.0"
 dependencies = [

@@ -20,6 +20,8 @@ pub(crate) struct SourceSpec {
     pub(crate) kind: SourceKind,
     pub(crate) url: String,
     pub(crate) sha256: String,
+    pub(crate) archive_prefix: Option<String>,
+    pub(crate) archive_path_strip_prefix: Option<String>,
     pub(crate) license: String,
     #[serde(default = "crate::model::default_license_confidence")]
     pub(crate) license_confidence: LicenseConfidence,
@@ -59,6 +61,28 @@ pub(crate) fn load_sources(path: &Path) -> anyhow::Result<HashMap<String, Source
         if source.sha256.trim().is_empty() {
             bail!(
                 "{} source '{}' has an empty sha256",
+                path.display(),
+                source.id
+            );
+        }
+        if source
+            .archive_prefix
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            bail!(
+                "{} source '{}' has an empty archive_prefix",
+                path.display(),
+                source.id
+            );
+        }
+        if source
+            .archive_path_strip_prefix
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            bail!(
+                "{} source '{}' has an empty archive_path_strip_prefix",
                 path.display(),
                 source.id
             );

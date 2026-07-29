@@ -30,6 +30,7 @@ const R8_R12_FIQ_BANK: usize = 1;
 const R8_R12_BANKS: usize = 2;
 const PREFETCH_QUEUE_LEN: usize = 2;
 const BIOS_END: u32 = 0x0000_3FFF;
+const POST_BIOS_CPSR: u32 = 0x1F;
 const POST_STARTUP_BIOS_READ_LATCH: u32 = 0xE129_F000;
 const POST_SWI_BIOS_READ_LATCH: u32 = 0xE3A0_2004;
 
@@ -131,6 +132,7 @@ pub struct Cpu {
     pub next_fetch_sequential: bool,
     pub last_fetch: Option<FetchedInstruction>,
     bios_protected_read_latch: u32,
+    pub(crate) swi_wait_return_pc: Option<u32>,
     prefetch_queue: VecDeque<FetchedInstruction>,
     pub(crate) banked_sp: [u32; CPU_BANKS],
     pub(crate) banked_lr: [u32; CPU_BANKS],
@@ -157,6 +159,7 @@ impl Cpu {
             next_fetch_sequential: false,
             last_fetch: None,
             bios_protected_read_latch: POST_STARTUP_BIOS_READ_LATCH,
+            swi_wait_return_pc: None,
             prefetch_queue: VecDeque::with_capacity(PREFETCH_QUEUE_LEN),
             banked_sp: [0; CPU_BANKS],
             banked_lr: [0; CPU_BANKS],
@@ -167,6 +170,7 @@ impl Cpu {
 
     pub fn reset(&mut self) {
         *self = Self::new();
+        self.cpsr = POST_BIOS_CPSR;
         self.regs[15] = RESET_VECTOR;
         self.regs[13] = 0x0300_7F00;
         self.banked_sp[BANK_USER_SYSTEM] = self.regs[13];
@@ -261,8 +265,12 @@ impl Cpu {
         }
 
         let fetched = self.fetch_decode_stub(bus);
+        let condition_passed = self.fetched_condition_passed(fetched);
         self.execute_fetched(bus, fetched);
-        self.cycles = self.cycles.wrapping_add(1);
+        self.cycles = self.cycles.wrapping_add(u64::from(instruction_base_cycles(
+            fetched,
+            condition_passed,
+        )));
         if self.break_after_next_stub {
             self.break_after_next_stub = false;
             self.suspend();
@@ -284,6 +292,15 @@ impl Cpu {
         self.set_pc(0x0000_0018);
         self.next_fetch_sequential = false;
         self.state = CpuState::Running;
+    }
+
+    fn fetched_condition_passed(&self, fetched: FetchedInstruction) -> bool {
+        match fetched.decoded {
+            DecodedInstruction::Arm { condition, .. } => {
+                condition != 0xF && self.condition_passed(condition)
+            }
+            DecodedInstruction::Thumb { .. } => true,
+        }
     }
 
     fn execute_fetched(&mut self, bus: &mut Bus, fetched: FetchedInstruction) {
@@ -456,6 +473,73 @@ impl Cpu {
             _ => false,
         }
     }
+}
+
+fn instruction_base_cycles(fetched: FetchedInstruction, condition_passed: bool) -> u32 {
+    if !condition_passed {
+        return 0;
+    }
+
+    match fetched.decoded {
+        DecodedInstruction::Arm {
+            class: ArmInstructionClass::DataProcessing,
+            ..
+        } => {
+            if fetched.raw & (1 << 25) == 0 && fetched.raw & (1 << 4) != 0 {
+                1
+            } else {
+                0
+            }
+        }
+        DecodedInstruction::Arm {
+            class: ArmInstructionClass::Branch | ArmInstructionClass::BranchExchange,
+            ..
+        } => {
+            if matches!(
+                fetched.decoded,
+                DecodedInstruction::Arm {
+                    class: ArmInstructionClass::BranchExchange,
+                    ..
+                }
+            ) {
+                3
+            } else {
+                2
+            }
+        }
+        DecodedInstruction::Arm {
+            class: ArmInstructionClass::SingleDataTransfer,
+            ..
+        } => {
+            if fetched.raw & (1 << 20) != 0 {
+                let rd = (fetched.raw >> 12) & 0xF;
+                if rd == 15 { 4 } else { 2 }
+            } else {
+                1
+            }
+        }
+        DecodedInstruction::Arm {
+            class: ArmInstructionClass::BlockDataTransfer,
+            ..
+        } => {
+            let register_count = block_transfer_register_count(fetched.raw);
+            if fetched.raw & (1 << 20) != 0 {
+                register_count + 1
+            } else {
+                register_count
+            }
+        }
+        DecodedInstruction::Arm {
+            class: ArmInstructionClass::SingleDataSwap,
+            ..
+        } => 3,
+        _ => 1,
+    }
+}
+
+fn block_transfer_register_count(raw: u32) -> u32 {
+    let count = (raw & 0xFFFF).count_ones();
+    if count == 0 { 16 } else { count }
 }
 
 #[cfg(test)]

@@ -70,6 +70,13 @@ pub struct PpuSnapshot {
     pub bgp: u8,
     pub obp0: u8,
     pub obp1: u8,
+    pub cycles: u64,
+    pub window_line_counter: u8,
+    pub window_y_triggered: bool,
+    pub window_was_active_this_frame: bool,
+    pub window_visible_on_current_line: bool,
+    pub rendered_current_line: bool,
+    pub draw_dots_for_line: u64,
 }
 
 #[derive(Clone)]

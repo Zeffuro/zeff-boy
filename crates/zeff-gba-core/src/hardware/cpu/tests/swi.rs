@@ -47,6 +47,61 @@ fn swi_sound_bias_sets_level_and_preserves_pwm_bits() {
 }
 
 #[test]
+fn swi_div_by_zero_matches_bios_scratch_registers() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0;
+    cpu.regs[1] = 0;
+
+    cpu.execute_software_interrupt(&mut bus, 0x06);
+
+    assert_eq!(cpu.regs[0], 1);
+    assert_eq!(cpu.regs[1], 0);
+    assert_eq!(cpu.regs[3], 1);
+}
+
+#[test]
+fn swi_div_int_min_by_negative_one_matches_bios_scratch_registers() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0x8000_0000;
+    cpu.regs[1] = 0xFFFF_FFFF;
+
+    cpu.execute_software_interrupt(&mut bus, 0x06);
+
+    assert_eq!(cpu.regs[0], 0x8000_0000);
+    assert_eq!(cpu.regs[1], 0);
+    assert_eq!(cpu.regs[3], 0x8000_0000);
+}
+
+#[test]
+fn swi_arc_tan_matches_bios_polynomial_and_scratch_registers() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0x4000;
+
+    cpu.execute_software_interrupt(&mut bus, 0x09);
+
+    assert_eq!(cpu.regs[0], 0x2000);
+    assert_eq!(cpu.regs[1], 0xFFFF_C000);
+    assert_eq!(cpu.regs[3], 0x8000);
+}
+
+#[test]
+fn swi_arc_tan2_matches_bios_quadrants_and_scratch_registers() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0xFFFF_FFFF;
+    cpu.regs[1] = 1;
+
+    cpu.execute_software_interrupt(&mut bus, 0x0A);
+
+    assert_eq!(cpu.regs[0], 0x6000);
+    assert_eq!(cpu.regs[1], 0xFFFF_C000);
+    assert_eq!(cpu.regs[3], 0x170);
+}
+
+#[test]
 fn swi_obj_affine_set_writes_contiguous_identity_params() {
     let mut bus = bus_with_rom(&[]);
     bus.write16(0x0200_0000, 0x0100);
@@ -131,6 +186,63 @@ fn swi_cpu_set_copies_halfwords() {
 
     assert_eq!(bus.read16(0x0300_0000), 0x1234);
     assert_eq!(bus.read16(0x0300_0002), 0x5678);
+}
+
+#[test]
+fn swi_cpu_set_halfword_from_odd_source_copies_zero_extended_odd_bytes() {
+    let mut bus = bus_with_rom(&[]);
+    bus.write32(0x0200_0000, 0xCAFE_BABE);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0x0200_0001;
+    cpu.regs[1] = 0x0300_0000;
+    cpu.regs[2] = 2;
+
+    cpu.execute_software_interrupt(&mut bus, 0x0B);
+
+    assert_eq!(bus.read32(0x0300_0000), 0x00CA_00BA);
+    assert_eq!(cpu.regs[0], 0x0200_0005);
+    assert_eq!(cpu.regs[1], 0x0300_0004);
+}
+
+#[test]
+fn swi_cpu_set_invalid_halfword_source_reads_zero() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0x0100_0000;
+    cpu.regs[1] = 0x0300_0000;
+    cpu.regs[2] = 2;
+
+    cpu.execute_software_interrupt(&mut bus, 0x0B);
+
+    assert_eq!(bus.read32(0x0300_0000), 0);
+}
+
+#[test]
+fn swi_cpu_set_invalid_word_source_reads_zero() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0x0100_0000;
+    cpu.regs[1] = 0x0300_0000;
+    cpu.regs[2] = (1 << 26) | 1;
+
+    cpu.execute_software_interrupt(&mut bus, 0x0B);
+
+    assert_eq!(bus.read32(0x0300_0000), 0);
+}
+
+#[test]
+fn swi_cpu_fast_set_invalid_word_source_reads_zero() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.regs[0] = 0x0100_0000;
+    cpu.regs[1] = 0x0300_0000;
+    cpu.regs[2] = 1;
+
+    cpu.execute_software_interrupt(&mut bus, 0x0C);
+
+    for offset in (0..32).step_by(4) {
+        assert_eq!(bus.read32(0x0300_0000 + offset), 0);
+    }
 }
 
 #[test]
@@ -330,4 +442,26 @@ fn hle_swi_sets_protected_bios_latch_for_following_game_reads() {
 
     assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), POST_SWI_BIOS_READ_LATCH);
     assert_eq!(cpu.cpu_read16(&bus, 0x0000_0002), 0xE3A0);
+}
+
+#[test]
+fn hle_swi_wait_restores_post_swi_latch_at_return_pc_after_irq_path() {
+    let mut bus = bus_with_rom(&[
+        0x05, 0xDF, // swi 5
+        0xC0, 0x46, // nop
+    ]);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB;
+
+    cpu.step(&mut bus);
+    assert_eq!(cpu.state, CpuState::Halted);
+    let return_pc = cpu.swi_wait_return_pc.expect("wait return PC");
+
+    cpu.bios_protected_read_latch = 0xE55E_C002;
+    cpu.set_pc(return_pc);
+    cpu.resume();
+    cpu.fetch_decode_stub(&bus);
+
+    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), POST_SWI_BIOS_READ_LATCH);
 }

@@ -1,7 +1,87 @@
 {
   "schema_version": 1,
-  "selected_count": 36,
+  "selected_count": 77,
   "results": [
+    {
+      "id": "gba/mgba-suite/memory",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/io-read",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/timing",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/timers",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "gba/mgba-suite/timer-irq",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/shifter",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/carry",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/multiply-long",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/bios-math",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "gba/mgba-suite/dma",
+      "suite_id": "gba-public-accuracy",
+      "core": "gba",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
     {
       "id": "nes/blargg/apu_reset/4015_cleared",
       "suite_id": "nes-local-accuracy",
@@ -49,6 +129,102 @@
       "tier": "local",
       "expectation": "pass",
       "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/1-len_ctr",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/2-len_table",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/3-irq_flag",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/4-jitter",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/5-len_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/6-irq_flag_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/7-dmc_basics",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/apu_test/rom_singles/8-dmc_rates",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/cpu_dummy_writes/cpu_dummy_writes_oam",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/cpu_dummy_writes/cpu_dummy_writes_ppumem",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/cpu_exec_space/test_cpu_exec_space_apu",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/cpu_exec_space/test_cpu_exec_space_ppuio",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
     },
     {
       "id": "nes/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk",
@@ -273,6 +449,158 @@
       "tier": "local",
       "expectation": "pass",
       "status": "passed"
+    },
+    {
+      "id": "nes/blargg/mmc3_test_2/rom_singles/1-clocking",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/mmc3_test_2/rom_singles/2-details",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/mmc3_test_2/rom_singles/3-A12_clocking",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/mmc3_test_2/rom_singles/4-scanline_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/mmc3_test_2/rom_singles/5-MMC3",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/mmc3_test_2/rom_singles/6-MMC3_alt",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/ppu_read_buffer/test_ppu_read_buffer",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "skip",
+      "status": "skipped"
+    },
+    {
+      "id": "nes/blargg/ppu_open_bus/ppu_open_bus",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/oam_read/oam_read",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/01-vbl_basics",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/02-vbl_set_time",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/03-vbl_clear_time",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/04-nmi_control",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/05-nmi_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/06-suppression",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/07-nmi_on_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/08-nmi_off_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/09-even_odd_frames",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "nes/blargg/ppu_vbl_nmi/rom_singles/10-even_odd_timing",
+      "suite_id": "nes-local-accuracy",
+      "core": "nes",
+      "tier": "local",
+      "expectation": "known_fail",
+      "status": "expected_fail"
     },
     {
       "id": "nes/blargg/instr_test_v5/official_only",

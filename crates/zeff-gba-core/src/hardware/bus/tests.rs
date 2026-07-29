@@ -11,6 +11,14 @@ fn cartridge() -> Cartridge {
     Cartridge::load(&rom).unwrap()
 }
 
+fn sram_cartridge() -> Cartridge {
+    let mut rom = vec![0; 0xC0];
+    rom[0xB2] = 0x96;
+    rom[0xA0..0xA4].copy_from_slice(b"TEST");
+    rom.extend_from_slice(b"SRAM_V113");
+    Cartridge::load(&rom).unwrap()
+}
+
 fn eeprom_cartridge() -> Cartridge {
     let mut rom = vec![0; 0xC0];
     rom[0xB2] = 0x96;
@@ -90,6 +98,58 @@ fn bytes_from_eeprom_data_bits(bits: &[u8]) -> [u8; 8] {
         }
     }
     bytes
+}
+
+#[test]
+fn backup_region_mirrors_across_0e_and_0f_address_space() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+
+    bus.write8(0x0E00_0020, 0x42);
+
+    assert_eq!(bus.read8(0x0E01_0020), 0x42);
+    assert_eq!(bus.read8(0x0F00_0020), 0x42);
+}
+
+#[test]
+fn backup_halfword_and_word_reads_repeat_selected_byte() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+
+    bus.write8(0x0E00_0040, 0x12);
+    bus.write8(0x0E00_0041, 0x34);
+
+    assert_eq!(bus.read16(0x0E00_0040), 0x1212);
+    assert_eq!(bus.read32(0x0E00_0040), 0x1212_1212);
+    assert_eq!(bus.read16(0x0E00_0041), 0x3434);
+    assert_eq!(bus.read32(0x0E00_0041), 0x3434_3434);
+}
+
+#[test]
+fn backup_halfword_and_word_writes_store_only_selected_byte() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+
+    bus.write16(0x0E00_0060, 0xAABB);
+    assert_eq!(bus.read8(0x0E00_0060), 0xBB);
+    assert_eq!(bus.read8(0x0E00_0061), 0xFF);
+
+    bus.write16(0x0E00_0061, 0xAABB);
+    assert_eq!(bus.read8(0x0E00_0061), 0xAA);
+    assert_eq!(bus.read8(0x0E00_0062), 0xFF);
+
+    bus.write32(0x0E00_0080, 0xAABB_CCDD);
+    assert_eq!(bus.read8(0x0E00_0080), 0xDD);
+    assert_eq!(bus.read8(0x0E00_0081), 0xFF);
+
+    bus.write32(0x0E00_0081, 0xAABB_CCDD);
+    assert_eq!(bus.read8(0x0E00_0081), 0xCC);
+    assert_eq!(bus.read8(0x0E00_0082), 0xFF);
+
+    bus.write32(0x0E00_0082, 0xAABB_CCDD);
+    assert_eq!(bus.read8(0x0E00_0082), 0xBB);
+    assert_eq!(bus.read8(0x0E00_0083), 0xFF);
+
+    bus.write32(0x0E00_0083, 0xAABB_CCDD);
+    assert_eq!(bus.read8(0x0E00_0083), 0xAA);
+    assert_eq!(bus.read8(0x0E00_0084), 0xFF);
 }
 
 #[path = "tests/bg_window.rs"]

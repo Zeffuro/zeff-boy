@@ -13,6 +13,111 @@ fn immediate_dma_copies_words() {
 }
 
 #[test]
+fn immediate_dma_aligns_sram_source_before_reading() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+    bus.write8(0x0E00_0000, b'G');
+    bus.write8(0x0E00_0001, b'a');
+
+    bus.write32(0x0400_00BC, 0x0E00_0001);
+    bus.write32(0x0400_00C0, 0x0300_0000);
+    bus.write16(0x0400_00C4, 1);
+    bus.write16(0x0400_00C6, 0x8000);
+    assert_eq!(bus.read16(0x0300_0000), 0x4747);
+
+    bus.write32(0x0400_00BC, 0x0E00_0001);
+    bus.write32(0x0400_00C0, 0x0300_0004);
+    bus.write16(0x0400_00C4, 1);
+    bus.write16(0x0400_00C6, 0x8400);
+    assert_eq!(bus.read32(0x0300_0004), 0x4747_4747);
+}
+
+#[test]
+fn dma0_to_dma2_do_not_write_gamepak_sram() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+    bus.write8(0x0E00_0000, 0x66);
+    bus.write32(0x0200_0000, 0xA5B6_C7D8);
+
+    bus.write32(0x0400_00BC, 0x0200_0000);
+    bus.write32(0x0400_00C0, 0x0E00_0000);
+    bus.write16(0x0400_00C4, 1);
+    bus.write16(0x0400_00C6, 0x8400);
+
+    assert_eq!(bus.read32(0x0E00_0000), 0x6666_6666);
+}
+
+#[test]
+fn dma3_aligns_gamepak_sram_destination_before_writing() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+    bus.write8(0x0E00_0000, 0x66);
+    bus.write32(0x0200_0000, 0xA5B6_C7D8);
+
+    bus.write32(0x0400_00D4, 0x0200_0000);
+    bus.write32(0x0400_00D8, 0x0E00_0001);
+    bus.write16(0x0400_00DC, 1);
+    bus.write16(0x0400_00DE, 0x8000);
+
+    assert_eq!(bus.read32(0x0E00_0000), 0xD8D8_D8D8);
+}
+
+#[test]
+fn dma_invalid_source_reads_return_channel_data_latch() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    bus.write32(0x0200_0000, 0xFEED_FACE);
+    bus.write32(0x0400_00B0, 0x0200_0000);
+    bus.write32(0x0400_00B4, 0x0300_0000);
+    bus.write16(0x0400_00B8, 1);
+    bus.write16(0x0400_00BA, 0x8400);
+
+    bus.write32(0x0400_00B0, 0x0800_0000);
+    bus.write32(0x0400_00B4, 0x0300_0004);
+    bus.write16(0x0400_00B8, 1);
+    bus.write16(0x0400_00BA, 0x8000);
+    assert_eq!(bus.read16(0x0300_0004), 0xFACE);
+
+    bus.write32(0x0400_00B0, 0x0800_0000);
+    bus.write32(0x0400_00B4, 0x0300_0008);
+    bus.write16(0x0400_00B8, 1);
+    bus.write16(0x0400_00BA, 0x8400);
+
+    assert_eq!(bus.read32(0x0300_0008), 0xFEED_FACE);
+}
+
+#[test]
+fn dma0_source_uses_27_bit_address_width() {
+    let mut bus = Bus::new(sram_cartridge(), 48_000);
+    bus.write8(0x0E00_0000, b'G');
+    bus.write16(0x0600_0000, 0x50D0);
+
+    bus.write32(0x0400_00B0, 0x0E00_0000);
+    bus.write32(0x0400_00B4, 0x0300_0000);
+    bus.write16(0x0400_00B8, 1);
+    bus.write16(0x0400_00BA, 0x8400);
+
+    assert_eq!(bus.read32(0x0300_0000), 0x0000_50D0);
+}
+
+#[test]
+fn dma1_gamepak_rom_source_steps_even_when_source_mode_is_fixed() {
+    let mut rom = vec![0; 0x100];
+    rom[0xA0..0xA4].copy_from_slice(b"TEST");
+    rom[0xB2] = 0x96;
+    rom.extend_from_slice(&[
+        0xEF, 0xBE, 0xAD, 0xDE, // 0xDEADBEEF
+        0xF0, 0xBE, 0xAD, 0xDE, // 0xDEADBEF0
+        0xF1, 0xBE, 0xAD, 0xDE, // 0xDEADBEF1
+        0xF2, 0xBE, 0xAD, 0xDE, // 0xDEADBEF2
+    ]);
+    let mut bus = Bus::new(Cartridge::load(&rom).unwrap(), 48_000);
+
+    bus.write32(0x0400_00BC, 0x0800_0100);
+    bus.write32(0x0400_00C0, 0x0300_0000);
+    bus.write16(0x0400_00C4, 4);
+    bus.write16(0x0400_00C6, 0x8540);
+
+    assert_eq!(bus.read32(0x0300_0000), 0xDEAD_BEF2);
+}
+
+#[test]
 fn immediate_dma_reports_transfer_cycles_once() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.write32(0x0200_0000, 0x1122_3344);

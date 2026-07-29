@@ -10,7 +10,7 @@ impl Bus {
             0x2000..=0x3FFF => self.ppu_read_register(addr & PPU_REG_MIRROR_MASK),
             0x4000..=0x4013 => self.cpu_open_bus,
             OAM_DMA => self.cpu_open_bus,
-            APU_STATUS => self.apu.read_status(),
+            APU_STATUS => self.apu.read_status_with_frame_irq_lookahead(1),
             CONTROLLER1 => self.controller1.read() | self.expansion_device.read_4016(),
             CONTROLLER2 => self.controller2.read() | self.expansion_device.read_4017(),
             0x4018..=0x401F => self.cpu_open_bus,
@@ -29,6 +29,14 @@ impl Bus {
             });
         }
         val
+    }
+
+    #[inline]
+    pub fn cpu_read_after_elapsed_cycles(&mut self, addr: u16, elapsed_cycles: u64) -> u8 {
+        if matches!(addr, 0x2000..=0x3FFF) {
+            self.advance_cpu_step_timing_to(elapsed_cycles);
+        }
+        self.cpu_read(addr)
     }
 
     #[inline]
@@ -95,6 +103,14 @@ impl Bus {
                 self.cartridge.cpu_write(addr, val);
             }
         }
+    }
+
+    #[inline]
+    pub fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, val: u8, elapsed_cycles: u64) {
+        if matches!(addr, 0x2000..=0x3FFF) {
+            self.advance_cpu_step_timing_to(elapsed_cycles);
+        }
+        self.cpu_write(addr, val);
     }
 
     #[inline]

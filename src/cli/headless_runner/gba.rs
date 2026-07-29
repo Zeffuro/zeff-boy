@@ -326,7 +326,9 @@ enum GbaTestResult {
 }
 
 fn read_gba_test_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> {
-    read_gba_memory_test_status(emulator).or_else(|| read_jsmolka_gba_screen_status(emulator))
+    read_gba_memory_test_status(emulator)
+        .or_else(|| read_mgba_suite_sram_status(emulator))
+        .or_else(|| read_jsmolka_gba_screen_status(emulator))
 }
 
 fn read_gba_memory_test_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> {
@@ -363,6 +365,95 @@ fn read_gba_memory_test_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> 
         code: u32::from(code),
         text,
         result,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MgbaSuiteActiveInfo {
+    subtest_id: u16,
+    test_id: u8,
+    suite_id: u8,
+}
+
+impl MgbaSuiteActiveInfo {
+    fn suite_finished(self) -> bool {
+        self.suite_id != u8::MAX && self.test_id == u8::MAX
+    }
+}
+
+fn read_mgba_suite_sram_status(emulator: &GbaEmulator) -> Option<GbaTestStatus> {
+    let backup = emulator.dump_battery_sram()?;
+    let text = mgba_suite_sram_log_text(&backup)?;
+    mgba_suite_status_from_log_and_active_info(&text, read_mgba_suite_active_info(emulator))
+}
+
+fn read_mgba_suite_active_info(emulator: &GbaEmulator) -> Option<MgbaSuiteActiveInfo> {
+    const ACTIVE_INFO_BASE: u32 = 0x0300_00AC;
+
+    let magic = [
+        emulator.cpu_peek8(ACTIVE_INFO_BASE),
+        emulator.cpu_peek8(ACTIVE_INFO_BASE + 1),
+        emulator.cpu_peek8(ACTIVE_INFO_BASE + 2),
+        emulator.cpu_peek8(ACTIVE_INFO_BASE + 3),
+    ];
+    if magic != *b"Info" {
+        return None;
+    }
+
+    let subtest_lo = u16::from(emulator.cpu_peek8(ACTIVE_INFO_BASE + 4));
+    let subtest_hi = u16::from(emulator.cpu_peek8(ACTIVE_INFO_BASE + 5));
+    Some(MgbaSuiteActiveInfo {
+        subtest_id: subtest_lo | (subtest_hi << 8),
+        test_id: emulator.cpu_peek8(ACTIVE_INFO_BASE + 6),
+        suite_id: emulator.cpu_peek8(ACTIVE_INFO_BASE + 7),
+    })
+}
+
+fn mgba_suite_sram_log_text(backup: &[u8]) -> Option<String> {
+    let end = backup
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(backup.len());
+    if end == 0 {
+        return None;
+    }
+
+    Some(String::from_utf8_lossy(&backup[..end]).into_owned())
+}
+
+fn mgba_suite_status_from_log_and_active_info(
+    text: &str,
+    active_info: Option<MgbaSuiteActiveInfo>,
+) -> Option<GbaTestStatus> {
+    const HEADER: &str = "Game Boy Advance Test Suite\n===";
+    if !text.starts_with(HEADER) {
+        return None;
+    }
+
+    if let Some(line) = text.lines().find(|line| line.contains("FAIL")) {
+        return Some(GbaTestStatus {
+            protocol: "mgba_suite_sram_log",
+            code: 1,
+            text: line.to_string(),
+            result: GbaTestResult::Fail,
+        });
+    }
+
+    if active_info.is_some_and(MgbaSuiteActiveInfo::suite_finished) {
+        let suite_id = active_info.map_or(u32::from(u8::MAX), |info| u32::from(info.suite_id));
+        return Some(GbaTestStatus {
+            protocol: "mgba_suite_sram_log",
+            code: suite_id,
+            text: format!("mGBA suite {suite_id} completed without SRAM failure log"),
+            result: GbaTestResult::Pass,
+        });
+    }
+
+    Some(GbaTestStatus {
+        protocol: "mgba_suite_sram_log",
+        code: 0x80,
+        text: "mGBA suite still running or no suite selected".to_string(),
+        result: GbaTestResult::Running,
     })
 }
 
@@ -462,7 +553,10 @@ fn gba_jsmolka_glyph_words(ch: char) -> Option<(u32, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{gba_jsmolka_glyph_words, gba_mode4_vram_matches_text};
+    use super::{
+        GbaTestResult, MgbaSuiteActiveInfo, gba_jsmolka_glyph_words, gba_mode4_vram_matches_text,
+        mgba_suite_status_from_log_and_active_info,
+    };
 
     fn draw_char(vram: &mut [u8], x: usize, y: usize, ch: char) {
         let (upper, lower) = gba_jsmolka_glyph_words(ch).unwrap();
@@ -493,5 +587,67 @@ mod tests {
             "All tests passed"
         ));
         assert!(!gba_mode4_vram_matches_text(&vram, 60, 76, "Failed test "));
+    }
+
+    #[test]
+    fn mgba_suite_sram_log_reports_first_failure() {
+        let status = mgba_suite_status_from_log_and_active_info(
+            "Game Boy Advance Test Suite\n===\nMemory test: ROM load\nDMA0: FAIL\n",
+            Some(MgbaSuiteActiveInfo {
+                subtest_id: u16::MAX,
+                test_id: u8::MAX,
+                suite_id: 0,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(status.protocol, "mgba_suite_sram_log");
+        assert_eq!(status.result, GbaTestResult::Fail);
+        assert_eq!(status.text, "DMA0: FAIL");
+    }
+
+    #[test]
+    fn mgba_suite_sram_log_passes_when_suite_finished_without_failures() {
+        let status = mgba_suite_status_from_log_and_active_info(
+            "Game Boy Advance Test Suite\n===\nMemory test: ROM load\n",
+            Some(MgbaSuiteActiveInfo {
+                subtest_id: u16::MAX,
+                test_id: u8::MAX,
+                suite_id: 0,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(status.result, GbaTestResult::Pass);
+    }
+
+    #[test]
+    fn mgba_suite_sram_log_passes_finished_suite_with_no_per_test_log() {
+        let status = mgba_suite_status_from_log_and_active_info(
+            "Game Boy Advance Test Suite\n===\n",
+            Some(MgbaSuiteActiveInfo {
+                subtest_id: 0,
+                test_id: u8::MAX,
+                suite_id: 1,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(status.result, GbaTestResult::Pass);
+    }
+
+    #[test]
+    fn mgba_suite_sram_log_keeps_running_before_suite_finished() {
+        let status = mgba_suite_status_from_log_and_active_info(
+            "Game Boy Advance Test Suite\n===\nMemory test: ROM load\n",
+            Some(MgbaSuiteActiveInfo {
+                subtest_id: 3,
+                test_id: 1,
+                suite_id: 0,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(status.result, GbaTestResult::Running);
     }
 }

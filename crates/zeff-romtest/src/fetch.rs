@@ -190,7 +190,7 @@ fn fetch_one(
         SourceKind::File => None,
     };
 
-    if matches!(source.license_confidence, LicenseConfidence::Unknown) || source.redistributable {
+    if !source_fetch_allowed_for_test(source, test) {
         return Ok(FetchResult {
             id: test.id.clone(),
             core: test.core,
@@ -260,7 +260,8 @@ fn fetch_one(
             })?;
         }
         SourceKind::Zip => {
-            let extract_result = extract_zip_entry(&archive_file, archive_path.unwrap(), &target);
+            let entry_path = source_archive_entry_path(source, archive_path.unwrap());
+            let extract_result = extract_zip_entry(&archive_file, &entry_path, &target);
             if let Err(err) = extract_result {
                 let message = err.to_string();
                 let status = if message.contains("file not found in archive") {
@@ -306,6 +307,30 @@ fn fetch_one(
                 "extracted ROM sha256 mismatch: expected {expected}, got {actual}"
             )),
         }),
+    }
+}
+
+fn source_fetch_allowed_for_test(source: &SourceSpec, test: &TestCase) -> bool {
+    if source.redistributable {
+        return false;
+    }
+
+    !matches!(source.license_confidence, LicenseConfidence::Unknown) || test.tier == Tier::Local
+}
+
+fn source_archive_entry_path(source: &SourceSpec, archive_path: &str) -> String {
+    let archive_path = archive_path.trim_start_matches('/');
+    let archive_path = match &source.archive_path_strip_prefix {
+        Some(strip_prefix) => archive_path
+            .strip_prefix(strip_prefix.trim_matches('/'))
+            .map(|path| path.trim_start_matches('/'))
+            .unwrap_or(archive_path),
+        None => archive_path,
+    };
+
+    match &source.archive_prefix {
+        Some(prefix) => format!("{}/{}", prefix.trim_matches('/'), archive_path),
+        None => archive_path.to_string(),
     }
 }
 
@@ -440,5 +465,86 @@ fn fetch_status_name(status: FetchStatus) -> &'static str {
         FetchStatus::ExtractFailed => "extract_failed",
         FetchStatus::Skipped => "skipped",
         FetchStatus::DryRun => "dry_run",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(license_confidence: LicenseConfidence) -> SourceSpec {
+        SourceSpec {
+            id: "source".to_string(),
+            kind: SourceKind::Zip,
+            url: "https://example.invalid/source.zip".to_string(),
+            sha256: "0".repeat(64),
+            archive_prefix: Some("archive-root".to_string()),
+            archive_path_strip_prefix: Some("local-cache-root".to_string()),
+            license: "unknown".to_string(),
+            license_confidence,
+            redistributable: false,
+            notes: None,
+        }
+    }
+
+    fn test_case(tier: Tier) -> TestCase {
+        TestCase {
+            id: "nes/test".to_string(),
+            core: Core::Nes,
+            tier,
+            model: None,
+            max_frames: 1,
+            no_apu: false,
+            input: Vec::new(),
+            tags: Vec::new(),
+            notes: None,
+            artifact: Artifact {
+                kind: ArtifactKind::TestRom,
+                license: "unknown".to_string(),
+                license_confidence: LicenseConfidence::Unknown,
+                redistributable: false,
+                source_url: Some("https://example.invalid/source.zip".to_string()),
+                source_version: Some("test".to_string()),
+                source_id: Some("source".to_string()),
+            },
+            rom: RomSpec {
+                path: PathBuf::from("rom-tests/cache/nes/test.nes"),
+                sha256: None,
+                archive_path: Some("nes-test-roms/test.nes".to_string()),
+                legacy_paths: Vec::new(),
+            },
+            pass: PassSpec {
+                kind: PassKind::Nes6000Status,
+                contains: None,
+                screenshot_frame: None,
+                screenshot_sha256: None,
+            },
+            expectation: Expectation::default(),
+        }
+    }
+
+    #[test]
+    fn archive_prefix_is_prepended_to_zip_entry_path() {
+        assert_eq!(
+            source_archive_entry_path(
+                &source(LicenseConfidence::Unknown),
+                "local-cache-root/nes-test-roms/a.nes"
+            ),
+            "archive-root/nes-test-roms/a.nes"
+        );
+    }
+
+    #[test]
+    fn unknown_license_sources_are_allowed_only_for_local_tier() {
+        let source = source(LicenseConfidence::Unknown);
+
+        assert!(source_fetch_allowed_for_test(
+            &source,
+            &test_case(Tier::Local)
+        ));
+        assert!(!source_fetch_allowed_for_test(
+            &source,
+            &test_case(Tier::Accuracy)
+        ));
     }
 }

@@ -126,6 +126,7 @@ pub(crate) enum PassKind {
     #[serde(rename = "nes_6000_status")]
     Nes6000Status,
     GbaScreenText,
+    GbaMgbaSuiteSram,
     GbaScreenshot,
     ScreenshotExact,
     ScreenshotPerceptual,
@@ -142,6 +143,7 @@ impl fmt::Display for PassKind {
             Self::GbMemoryStatus => "gb_memory_status",
             Self::Nes6000Status => "nes_6000_status",
             Self::GbaScreenText => "gba_screen_text",
+            Self::GbaMgbaSuiteSram => "gba_mgba_suite_sram",
             Self::GbaScreenshot => "gba_screenshot",
             Self::ScreenshotExact => "screenshot_exact",
             Self::ScreenshotPerceptual => "screenshot_perceptual",
@@ -204,6 +206,8 @@ pub(crate) struct TestCase {
     #[serde(default)]
     pub(crate) no_apu: bool,
     #[serde(default)]
+    pub(crate) input: Vec<String>,
+    #[serde(default)]
     pub(crate) tags: Vec<String>,
     pub(crate) notes: Option<String>,
     pub(crate) artifact: Artifact,
@@ -230,6 +234,8 @@ pub(crate) struct TestGroup {
     #[serde(default)]
     pub(crate) no_apu: bool,
     #[serde(default)]
+    pub(crate) input: Vec<String>,
+    #[serde(default)]
     pub(crate) tags: Vec<String>,
     pub(crate) notes: Option<String>,
     pub(crate) artifact: Artifact,
@@ -250,6 +256,8 @@ pub(crate) struct TestGroupRom {
     pub(crate) legacy_paths: Vec<PathBuf>,
     #[serde(default)]
     pub(crate) tags: Vec<String>,
+    #[serde(default)]
+    pub(crate) input: Vec<String>,
     pub(crate) notes: Option<String>,
     pub(crate) pass: Option<PassSpec>,
     pub(crate) expectation: Option<Expectation>,

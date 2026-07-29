@@ -53,6 +53,7 @@ fn sample_loaded_test(id: &str, tier: Tier) -> LoadedTest {
             model: None,
             max_frames: 1,
             no_apu: false,
+            input: Vec::new(),
             tags: Vec::new(),
             notes: None,
             artifact: Artifact {
@@ -177,6 +178,7 @@ tier = "accuracy"
 model = "dmg"
 max_frames = 1
 tags = ["gb", "grouped"]
+input = ["a@10-12"]
 
 [test_groups.artifact]
 kind = "test_rom"
@@ -199,6 +201,7 @@ sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 id = "two"
 archive_path = "suite/two.gb"
 sha256 = "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+input = ["down@20-22"]
 "#,
     )
     .unwrap();
@@ -211,6 +214,8 @@ sha256 = "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         PathBuf::from("rom-tests/cache/gb").join("suite/one.gb")
     );
     assert_eq!(tests[1].1.id, "gb/grouped/two");
+    assert_eq!(tests[0].1.input, vec!["a@10-12"]);
+    assert_eq!(tests[1].1.input, vec!["a@10-12", "down@20-22"]);
 }
 
 #[test]
@@ -353,6 +358,7 @@ fn rejects_game_rom_outside_compat_manifest_dir() {
             model: None,
             max_frames: 1,
             no_apu: false,
+            input: Vec::new(),
             tags: Vec::new(),
             notes: None,
             artifact: Artifact {

@@ -1,5 +1,6 @@
 use super::ops::{
-    add_overflow, arm_immediate_operand, rotate_right, shift_operand, sign_extend, sub_overflow,
+    MultiplyCarryKind, add_overflow, arm_immediate_operand, arm7tdmi_multiply_carry, rotate_right,
+    shift_operand, sign_extend, sub_overflow,
 };
 use super::*;
 
@@ -61,13 +62,13 @@ impl Cpu {
                 }
                 0x6 => {
                     let borrow = u32::from(!self.carry());
-                    let rhs = rhs.wrapping_add(borrow);
-                    self.set_nzcv(result, lhs >= rhs, sub_overflow(lhs, rhs, result));
+                    let carry = u64::from(lhs) >= u64::from(rhs) + u64::from(borrow);
+                    self.set_nzcv(result, carry, sub_overflow(lhs, rhs, result));
                 }
                 0x7 => {
                     let borrow = u32::from(!self.carry());
-                    let lhs2 = lhs.wrapping_add(borrow);
-                    self.set_nzcv(result, rhs >= lhs2, sub_overflow(rhs, lhs2, result));
+                    let carry = u64::from(rhs) >= u64::from(lhs) + u64::from(borrow);
+                    self.set_nzcv(result, carry, sub_overflow(rhs, lhs, result));
                 }
                 _ => {}
             }
@@ -169,12 +170,19 @@ impl Cpu {
         let rs = ((raw >> 8) & 0xF) as usize;
         let rm = (raw & 0xF) as usize;
         let mut result = self.regs[rm].wrapping_mul(self.regs[rs]);
+        let accumulator = if accumulate { self.regs[rn] } else { 0 };
         if accumulate {
-            result = result.wrapping_add(self.regs[rn]);
+            result = result.wrapping_add(accumulator);
         }
         self.regs[rd] = result;
         if set_flags {
-            self.set_nz(result);
+            let carry = arm7tdmi_multiply_carry(
+                MultiplyCarryKind::Short,
+                self.regs[rm],
+                self.regs[rs],
+                u64::from(accumulator),
+            );
+            self.set_nzc(result, carry);
         }
     }
 
@@ -194,8 +202,12 @@ impl Cpu {
             u64::from(rm_value).wrapping_mul(u64::from(rs_value))
         };
 
+        let accumulator = if accumulate {
+            (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo])
+        } else {
+            0
+        };
         if accumulate {
-            let accumulator = (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
             result = result.wrapping_add(accumulator);
         }
 
@@ -203,6 +215,16 @@ impl Cpu {
         self.regs[rd_hi] = (result >> 32) as u32;
 
         if set_flags {
+            let carry = arm7tdmi_multiply_carry(
+                if signed {
+                    MultiplyCarryKind::LongSigned
+                } else {
+                    MultiplyCarryKind::LongUnsigned
+                },
+                rm_value,
+                rs_value,
+                accumulator,
+            );
             if result & (1 << 63) != 0 {
                 self.cpsr |= CPSR_NEGATIVE;
             } else {
@@ -212,6 +234,10 @@ impl Cpu {
                 self.cpsr |= CPSR_ZERO;
             } else {
                 self.cpsr &= !CPSR_ZERO;
+            }
+            self.cpsr &= !CPSR_CARRY;
+            if carry {
+                self.cpsr |= CPSR_CARRY;
             }
         }
     }

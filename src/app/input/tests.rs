@@ -26,6 +26,17 @@ fn keyboard_and_gamepad_merge_via_or() {
 }
 
 #[test]
+fn remote_input_merges_with_keyboard_and_gamepad() {
+    let mut state = HostInputState::new();
+    state.set_keyboard(JoypadKey::A, true);
+    state.set_gamepad(JoypadKey::B, true);
+    state.set_remote(JoypadKey::Start, true);
+    state.set_remote(JoypadKey::Right, true);
+    assert_eq!(state.buttons_pressed(), 0x0B);
+    assert_eq!(state.dpad_pressed(), 0x01);
+}
+
+#[test]
 fn release_clears_bit() {
     let mut state = HostInputState::new();
     state.set_keyboard(JoypadKey::A, true);

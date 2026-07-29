@@ -27,7 +27,7 @@ macro_rules! load_all_modes {
         }
         pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute(bus);
-            cpu.regs.$reg = bus.cpu_read(a);
+            cpu.regs.$reg = bus.cpu_read_after_elapsed_cycles(a, 3);
             cpu.regs.set_zn(cpu.regs.$reg);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
@@ -73,7 +73,7 @@ macro_rules! load_all_modes {
         }
         pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute(bus);
-            cpu.regs.$reg = bus.cpu_read(a);
+            cpu.regs.$reg = bus.cpu_read_after_elapsed_cycles(a, 3);
             cpu.regs.set_zn(cpu.regs.$reg);
         }
         pub fn $absalt(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
@@ -98,7 +98,7 @@ macro_rules! store_all_modes {
         }
         pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute(bus);
-            bus.cpu_write(a, cpu.regs.$reg);
+            bus.cpu_write_after_elapsed_cycles(a, cpu.regs.$reg, 3);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute_x_write(bus);
@@ -128,7 +128,7 @@ macro_rules! store_all_modes {
         }
         pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute(bus);
-            bus.cpu_write(a, cpu.regs.$reg);
+            bus.cpu_write_after_elapsed_cycles(a, cpu.regs.$reg, 3);
         }
     };
 }

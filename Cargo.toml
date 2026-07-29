@@ -6,6 +6,7 @@ members = [
     "crates/zeff-nes-core",
     "crates/zeff-libretro",
     "crates/zeff-romtest",
+    "crates/zeff-mcp",
 ]
 exclude = ["fuzz"]
 

@@ -39,3 +39,37 @@ license = "MIT"
 license_confidence = "verified"
 redistributable = false
 notes = "Pinned raw built memory test ROM from jsmolka/gba-tests commit a7113b67e63f83a9b321696ddd7042ccfad6c881."
+
+[[sources]]
+id = "jsmolka-gba-tests-a7113b67"
+kind = "zip"
+url = "https://github.com/jsmolka/gba-tests/archive/a7113b67e63f83a9b321696ddd7042ccfad6c881.zip"
+sha256 = "a3cfa223de6df5460837a37ac4547468a6150d860ecd29e7591f2387f3157c8e"
+archive_prefix = "gba-tests-a7113b67e63f83a9b321696ddd7042ccfad6c881"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned jsmolka/gba-tests source archive for additional built GBA test ROMs."
+
+[[sources]]
+id = "mgba-suite-e6942030"
+kind = "zip"
+url = "https://github.com/mgba-emu/suite/archive/e6942030d25ffe3ba76c72b73a86da073ec857cc.zip"
+sha256 = "4a82b13a84c5a5c904bdb73c1dab4d3a3c78b45e9fa2000e10553ac1ce19a585"
+archive_prefix = "suite-e6942030d25ffe3ba76c72b73a86da073ec857cc"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned mGBA GBA test suite source archive. Build suite.gba into the ignored cache with scripts/build-mgba-suite.ps1."
+
+[[sources]]
+id = "christopherpow-nes-test-roms-95d8f621"
+kind = "zip"
+url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+sha256 = "041a1c752449669b96669d29dda7809c32d0ff02804089840c18f1b8deda6962"
+archive_prefix = "nes-test-roms-95d8f621ae55cee0d09b91519a8989ae0e64753b"
+archive_path_strip_prefix = "nes-test-roms"
+license = "mixed/unknown; no repository-level license found"
+license_confidence = "unknown"
+redistributable = false
+notes = "Pinned GitHub archive of the common NES test ROM collection. Fetch is allowed only for local-tier manifests because the collection does not expose a clear repository-level license."

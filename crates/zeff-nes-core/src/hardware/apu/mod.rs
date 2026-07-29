@@ -39,6 +39,7 @@ pub struct Apu {
     pub frame_cycle: u64,
     pub frame_reset_delay: u8,
     frame_irq_repeat: u8,
+    frame_irq_suppression_ticks: u8,
 
     pub sample_buffer: Vec<f32>,
     pub output_sample_rate: f64,
@@ -66,9 +67,10 @@ impl Apu {
             five_step_mode: false,
             irq_inhibit: false,
             frame_irq: false,
-            frame_cycle: 9,
+            frame_cycle: 8,
             frame_reset_delay: 0,
             frame_irq_repeat: 0,
+            frame_irq_suppression_ticks: 0,
             sample_buffer: Vec::with_capacity(INITIAL_SAMPLE_CAPACITY),
             output_sample_rate,
             sample_accumulator: 0.0,
@@ -110,6 +112,7 @@ impl Apu {
         self.frame_cycle = r.read_u64()?;
         self.frame_reset_delay = 0;
         self.frame_irq_repeat = 0;
+        self.frame_irq_suppression_ticks = 0;
         self.output_sample_rate = r.read_f64()?;
         self.sample_accumulator = r.read_f64()?;
 

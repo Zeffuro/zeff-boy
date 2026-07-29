@@ -241,6 +241,37 @@ impl Bus {
         self.io.ppu.cycles
     }
 
+    pub fn ppu_window_line_counter(&self) -> u8 {
+        self.io.ppu.window_line_counter
+    }
+
+    pub fn ppu_window_y_triggered(&self) -> bool {
+        self.io.ppu.window_y_triggered
+    }
+
+    pub fn ppu_window_was_active_this_frame(&self) -> bool {
+        self.io.ppu.window_was_active_this_frame
+    }
+
+    pub fn ppu_window_visible_on_current_line(&self) -> bool {
+        self.io.ppu.ly < crate::hardware::ppu::SCREEN_H as u8
+            && self
+                .io
+                .ppu
+                .lcdc
+                .contains(crate::hardware::ppu::Lcdc::WINDOW_ENABLE)
+            && self.io.ppu.window_y_triggered
+            && self.io.ppu.wx <= 166
+    }
+
+    pub fn ppu_rendered_current_line(&self) -> bool {
+        self.io.ppu.rendered_current_line
+    }
+
+    pub fn ppu_draw_dots_for_line(&self) -> u64 {
+        self.io.ppu.draw_dots_for_line
+    }
+
     pub fn ppu_cgb_mode(&self) -> bool {
         self.io.ppu.cgb_mode
     }

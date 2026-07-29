@@ -195,7 +195,7 @@ pub(super) fn format_nes_bus_trace_line(
         }
     };
     format!(
-        "[nes-bus] n={} pc={:04X} op={:02X} total_t={} ppu={}:{} ppustat={:02X} ppuctrl={:02X} ppumask={:02X} {}",
+        "[nes-bus] n={} pc={:04X} op={:02X} total_t={} ppu={}:{} ppustat={:02X} ppuctrl={:02X} ppumask={:02X} apu_fc={} apu_frd={} apu_mode={} apu_irq_inh={} apu_status={:02X} {}",
         traced,
         pc,
         op,
@@ -205,6 +205,15 @@ pub(super) fn format_nes_bus_trace_line(
         emulator.ppu_status(),
         emulator.ppu_ctrl(),
         emulator.ppu_mask(),
+        emulator.bus().apu.frame_cycle,
+        emulator.bus().apu.frame_reset_delay,
+        if emulator.bus().apu.five_step_mode {
+            5
+        } else {
+            4
+        },
+        u8::from(emulator.bus().apu.irq_inhibit),
+        emulator.bus().apu.peek_status(),
         access,
     )
 }

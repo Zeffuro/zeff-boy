@@ -26,7 +26,7 @@ macro_rules! bitwise_all_modes {
         }
         pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute(bus);
-            cpu.regs.a $bitop bus.cpu_read(a);
+            cpu.regs.a $bitop bus.cpu_read_after_elapsed_cycles(a, 3);
             cpu.regs.set_zn(cpu.regs.a);
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
@@ -111,7 +111,7 @@ pub fn bit_zp(cpu: &mut Cpu, bus: &mut Bus) {
 
 pub fn bit_abs(cpu: &mut Cpu, bus: &mut Bus) {
     let a = cpu.addr_absolute(bus);
-    cpu.bit_test(bus.cpu_read(a));
+    cpu.bit_test(bus.cpu_read_after_elapsed_cycles(a, 3));
 }
 
 // ASL: 0x0A, 0x06, 0x16, 0x0E, 0x1E
