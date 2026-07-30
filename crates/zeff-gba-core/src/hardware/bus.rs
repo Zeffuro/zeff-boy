@@ -360,7 +360,6 @@ impl Bus {
                     step = step.min(next.max(1));
                 }
             }
-
             self.step_irq_event(step);
             self.ppu.step_cycles(step);
             self.cartridge.step_cycles(step);
@@ -386,13 +385,22 @@ impl Bus {
                 read_io16(&self.io, 0x84),
                 read_io16(&self.io, SOUNDBIAS),
             );
-            let (timer_interrupts, timer_overflows, timer_irq_extra_delays) =
+            let (
+                timer_interrupts,
+                timer_overflows,
+                timer_irq_extra_delays,
+                timer_irq_cycles_late,
+            ) =
                 self.timers.step_with_overflows(step);
             if timer_overflows.iter().any(|&count| count != 0) {
                 self.service_sound_timer_overflows(timer_overflows, soundcnt_h);
             }
             if timer_interrupts != 0 {
-                self.request_timer_interrupts(timer_interrupts, timer_irq_extra_delays);
+                self.request_timer_interrupts(
+                    timer_interrupts,
+                    timer_irq_extra_delays,
+                    timer_irq_cycles_late,
+                );
             }
         }
     }
@@ -431,6 +439,10 @@ impl Bus {
         cycles
     }
 
+    pub(crate) fn clear_irq_sample_event(&mut self) {
+        self.irq_delay_cycles = None;
+    }
+
     pub(crate) fn test_irq_signal(&mut self, cycles_late: u32) {
         self.test_irq_signal_with_extra_delay(cycles_late, 0);
     }
@@ -454,7 +466,7 @@ impl Bus {
     fn step_irq_event(&mut self, cycles: u32) {
         if let Some(delay) = self.irq_delay_cycles {
             let next = delay.saturating_sub(cycles);
-            self.irq_delay_cycles = if next == 0 && !self.irq_line_asserted() {
+            self.irq_delay_cycles = if next == 0 && !self.interrupt_pending() {
                 None
             } else {
                 Some(next)

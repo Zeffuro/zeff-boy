@@ -94,7 +94,9 @@ impl Emulator {
                 self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(irq_delay_cycles));
                 self.bus.step_cycles(irq_delay_cycles);
             }
-            self.cpu.try_service_irq(true);
+            if !self.cpu.try_service_irq(true) {
+                self.bus.clear_irq_sample_event();
+            }
         }
         if self.debug.should_break(self.cpu.pc()) {
             self.cpu.suspend();
