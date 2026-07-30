@@ -5,6 +5,10 @@ I've mainly started this project to help me learn about low level programming an
 
 Oh and I like making cool shit.
 
+
+<img src="images/GBC.png" height="250" alt="GBC"> <img src="images/NES.png" height="250" alt="NES"> <img src="images/GBA.png" height="250" alt="GBA"> <img src="images/GB%20Camera.png" height="250" alt="GB Camera">
+<img src="images/IDE.png" height="700" alt="IDE Mode">
+
 ## License
 
 Licensed under either of:
