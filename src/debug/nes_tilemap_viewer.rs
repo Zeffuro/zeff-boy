@@ -149,7 +149,7 @@ fn render_nes_nametables(image: &mut egui::ColorImage, gfx: &NesGraphicsData) {
                             &gfx.palette_ram,
                             palette_index,
                             color_id,
-                            gfx.palette_mode,
+                            &gfx.palette_lut,
                         );
                         let px = quad_x + tile_col * 8 + col;
                         let py = quad_y + tile_row * 8 + row;

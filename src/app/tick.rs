@@ -9,7 +9,7 @@ use crate::emu_thread::{
     ReusableBuffers, SnapshotRequest,
 };
 use crate::platform::Instant;
-use crate::settings::GamepadAction;
+use crate::settings::{GamepadAction, NesPaletteMode};
 
 fn parse_pending_search(state: &mut impl SearchableState) -> Option<MemorySearchRequest> {
     if !state.search_pending() {
@@ -66,6 +66,17 @@ impl SearchableState for crate::debug::RomViewerState {
     fn search_max_results(&self) -> usize {
         self.search_max_results
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_nes_palette_file(path: &str) -> Result<zeff_nes_core::hardware::ppu::NesPalette, String> {
+    let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+    zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(&bytes).map_err(|err| err.to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_nes_palette_file(_path: &str) -> Result<zeff_nes_core::hardware::ppu::NesPalette, String> {
+    Err("custom NES palette files are not available in browser builds yet".to_string())
 }
 
 fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {
@@ -232,6 +243,7 @@ impl App {
         reqs: &TabDataRequirements,
         want_viewer_update: bool,
     ) -> SnapshotRequest {
+        let nes_custom_palette = self.nes_custom_palette_for_render();
         let remote_wants_debug = if self.remote_debug_frames_remaining > 0 {
             self.remote_debug_frames_remaining -= 1;
             true
@@ -281,9 +293,49 @@ impl App {
                 color_correction_matrix: self.settings.video.gb_color_correction_matrix,
                 dmg_palette_preset: self.settings.video.gb_dmg_palette_preset,
                 nes_palette_mode: self.settings.video.nes_palette_mode,
+                nes_custom_palette,
                 sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
             },
         }
+    }
+
+    fn nes_custom_palette_for_render(
+        &mut self,
+    ) -> Option<zeff_nes_core::hardware::ppu::NesPalette> {
+        if self.settings.video.nes_palette_mode != NesPaletteMode::Custom {
+            return None;
+        }
+
+        let path = self
+            .settings
+            .video
+            .nes_custom_palette_path
+            .trim()
+            .to_string();
+        if path.is_empty() {
+            self.nes_palette_cache.path.clear();
+            self.nes_palette_cache.palette = None;
+            self.nes_palette_cache.error = None;
+            return None;
+        }
+
+        if self.nes_palette_cache.path != path {
+            self.nes_palette_cache.path = path.clone();
+            match load_nes_palette_file(&path) {
+                Ok(palette) => {
+                    log::info!("Loaded NES palette from {path}");
+                    self.nes_palette_cache.palette = Some(palette);
+                    self.nes_palette_cache.error = None;
+                }
+                Err(err) => {
+                    log::warn!("Failed to load NES palette from {path}: {err}");
+                    self.nes_palette_cache.palette = None;
+                    self.nes_palette_cache.error = Some(err);
+                }
+            }
+        }
+
+        self.nes_palette_cache.palette
     }
 
     fn take_reusable_buffers(&mut self) -> ReusableBuffers {

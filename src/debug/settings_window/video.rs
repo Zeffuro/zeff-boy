@@ -194,12 +194,68 @@ fn draw_nes_palette_section(
     super::draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
 
     enum_combo_box(ui, "NES palette mode", &mut settings.video.nes_palette_mode);
-    if settings.video.nes_palette_mode != NesPaletteMode::Raw {
+    if settings.video.nes_palette_mode == NesPaletteMode::Custom {
+        ui.separator();
+        ui.label("Custom NES .pal file:");
+        ui.add(
+            egui::TextEdit::singleline(&mut settings.video.nes_custom_palette_path)
+                .hint_text("Path to 192-byte or 1536-byte binary .pal file")
+                .desired_width(f32::INFINITY),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Load .pal...").clicked()
+                && let Some(path) = crate::platform::FileDialog::new()
+                    .add_filter("NES palette", &["pal"])
+                    .pick_file()
+            {
+                settings.video.nes_custom_palette_path = path.to_string_lossy().to_string();
+            }
+            if ui.button("Clear").clicked() {
+                settings.video.nes_custom_palette_path.clear();
+            }
+        });
+
+        match nes_palette_path_status(&settings.video.nes_custom_palette_path) {
+            Ok(message) => {
+                ui.label(egui::RichText::new(message).weak().small());
+            }
+            Err(message) => {
+                ui.label(
+                    egui::RichText::new(message)
+                        .color(egui::Color32::RED)
+                        .small(),
+                );
+            }
+        }
+    } else if settings.video.nes_palette_mode != NesPaletteMode::Raw {
         ui.label(
             egui::RichText::new("Applies to NES rendering and NES palette debug views.")
                 .weak()
                 .small(),
         );
+    }
+}
+
+fn nes_palette_path_status(path: &str) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(
+            "No custom NES palette file selected; rendering will fall back to raw.".to_string(),
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let bytes =
+            std::fs::read(path).map_err(|err| format!("Could not read .pal file: {err}"))?;
+        zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(&bytes)
+            .map_err(|err| format!("Invalid .pal file: {err}"))?;
+        Ok("Valid binary .pal file. 192-byte files provide the base palette; 1536-byte files also provide emphasis groups.".to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err("Custom NES palette files are not available in browser builds yet.".to_string())
     }
 }
 

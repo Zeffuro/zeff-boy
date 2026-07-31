@@ -187,6 +187,8 @@ impl EmuThread {
         if let Some(nes) = backend.nes_mut() {
             Self::apply_nes_debug_actions(&mut nes.emu, &input.debug_actions);
             nes.emu
+                .set_custom_palette(input.snapshot.render.nes_custom_palette);
+            nes.emu
                 .set_palette_mode(input.snapshot.render.nes_palette_mode);
             nes.emu
                 .set_apu_debug_collection_enabled(input.audio.apu_capture_enabled);

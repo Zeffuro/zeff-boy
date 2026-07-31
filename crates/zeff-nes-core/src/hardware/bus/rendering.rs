@@ -1,6 +1,6 @@
 use super::Bus;
 use crate::hardware::cartridge::ChrFetchKind;
-use crate::hardware::ppu::{NesPaletteMode, PRE_RENDER_SCANLINE, Ppu, apply_nes_emphasis};
+use crate::hardware::ppu::{PRE_RENDER_SCANLINE, Ppu};
 
 impl Bus {
     pub(super) fn ppu_render_dot(&mut self) {
@@ -30,24 +30,10 @@ impl Bus {
         if visible_line && (1..=256).contains(&dot) {
             if rendering {
                 let pal_idx = self.ppu.compose_pixel() as usize;
-                Self::write_pixel(
-                    &mut self.ppu,
-                    dot,
-                    scanline,
-                    pal_idx,
-                    &self.palette_lut,
-                    self.palette_mode,
-                );
+                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, &self.palette_luts);
             } else {
                 let pal_idx = (self.ppu.palette_ram[0] & 0x3F) as usize;
-                Self::write_pixel(
-                    &mut self.ppu,
-                    dot,
-                    scanline,
-                    pal_idx,
-                    &self.palette_lut,
-                    self.palette_mode,
-                );
+                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, &self.palette_luts);
             }
         }
 
@@ -109,16 +95,15 @@ impl Bus {
         dot: u16,
         scanline: u16,
         pal_idx: usize,
-        palette_lut: &[[u8; 4]; 64],
-        palette_mode: NesPaletteMode,
+        palette_luts: &[[[u8; 4]; 64]; 8],
     ) {
         let effective_idx = if ppu.regs.greyscale() {
             pal_idx & 0x30
         } else {
             pal_idx
         };
-        let [r, g, b, _] = palette_lut[effective_idx];
-        let (r, g, b) = apply_nes_emphasis(palette_mode, ppu.regs.mask, (r, g, b));
+        let emphasis = ((ppu.regs.mask >> 5) & 0x07) as usize;
+        let [r, g, b, _] = palette_luts[emphasis][effective_idx];
 
         let x = (dot - 1) as usize;
         let y = scanline as usize;

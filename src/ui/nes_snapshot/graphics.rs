@@ -13,7 +13,7 @@ pub(super) fn nes_graphics_snapshot(
     reusable_chr: Option<Vec<u8>>,
     reusable_nametable: Option<Vec<u8>>,
 ) -> ConsoleGraphicsData {
-    let palette_mode = emu.palette_mode();
+    let palette_lut = emu.palette_lut();
     let palette_ram = *emu.ppu_palette_ram();
     let ctrl = emu.ppu_ctrl();
     let scroll_t = emu.ppu_scroll_t();
@@ -39,7 +39,7 @@ pub(super) fn nes_graphics_snapshot(
         chr_data,
         nametable_data,
         palette_ram,
-        palette_mode,
+        palette_lut,
         ctrl,
         mirroring,
         scroll_t,

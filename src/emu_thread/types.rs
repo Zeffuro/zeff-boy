@@ -26,6 +26,7 @@ pub(crate) struct RenderSettings {
     pub(crate) color_correction_matrix: [f32; 9],
     pub(crate) dmg_palette_preset: crate::settings::DmgPalettePreset,
     pub(crate) nes_palette_mode: crate::settings::NesPaletteMode,
+    pub(crate) nes_custom_palette: Option<zeff_nes_core::hardware::ppu::NesPalette>,
     pub(crate) sgb_border_enabled: bool,
 }
 

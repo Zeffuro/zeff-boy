@@ -1,5 +1,28 @@
 use super::Ppu;
+use anyhow::{bail, ensure};
 use serde::{Deserialize, Serialize};
+
+pub const NES_PALETTE_COLOR_COUNT: usize = 64;
+pub const NES_PALETTE_RGB_BYTES: usize = NES_PALETTE_COLOR_COUNT * 3;
+pub const NES_PALETTE_EMPHASIS_GROUPS: usize = 8;
+pub const NES_PALETTE_EMPHASIS_RGB_BYTES: usize = NES_PALETTE_RGB_BYTES * 8;
+
+pub type NesBasePalette = [(u8, u8, u8); NES_PALETTE_COLOR_COUNT];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NesPalette {
+    Base(NesBasePalette),
+    WithEmphasis([NesBasePalette; NES_PALETTE_EMPHASIS_GROUPS]),
+}
+
+impl NesPalette {
+    pub fn base(self) -> NesBasePalette {
+        match self {
+            Self::Base(palette) => palette,
+            Self::WithEmphasis(palettes) => palettes[0],
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -8,6 +31,7 @@ pub enum NesPaletteMode {
     Raw,
     Ntsc,
     Pal,
+    Custom,
 }
 
 #[inline]
@@ -19,7 +43,7 @@ fn scale_u8(v: u8, num: u16, den: u16) -> u8 {
 pub fn apply_nes_palette_mode(mode: NesPaletteMode, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
     let (r, g, b) = rgb;
     match mode {
-        NesPaletteMode::Raw => (r, g, b),
+        NesPaletteMode::Raw | NesPaletteMode::Custom => (r, g, b),
         NesPaletteMode::Ntsc => {
             let r_out = scale_u8(r, 246, 255);
             let g_out = scale_u8(g, 250, 255);
@@ -35,6 +59,43 @@ pub fn apply_nes_palette_mode(mode: NesPaletteMode, rgb: (u8, u8, u8)) -> (u8, u
     }
 }
 
+pub fn parse_nes_palette_bytes(bytes: &[u8]) -> anyhow::Result<NesPalette> {
+    ensure!(
+        bytes.len() == NES_PALETTE_RGB_BYTES || bytes.len() == NES_PALETTE_EMPHASIS_RGB_BYTES,
+        "NES palette must be {NES_PALETTE_RGB_BYTES} bytes (64 RGB colors) or {NES_PALETTE_EMPHASIS_RGB_BYTES} bytes (64 RGB colors x 8 emphasis groups), got {} bytes",
+        bytes.len()
+    );
+
+    if bytes.len() == NES_PALETTE_RGB_BYTES {
+        return Ok(NesPalette::Base(parse_nes_base_palette(bytes)?));
+    }
+
+    let mut palettes = [[(0u8, 0u8, 0u8); NES_PALETTE_COLOR_COUNT]; NES_PALETTE_EMPHASIS_GROUPS];
+    for (group, palette) in palettes.iter_mut().enumerate() {
+        let offset = group * NES_PALETTE_RGB_BYTES;
+        let Some(raw_palette) = bytes.get(offset..offset + NES_PALETTE_RGB_BYTES) else {
+            bail!("NES palette is missing emphasis group {group}");
+        };
+        *palette = parse_nes_base_palette(raw_palette)?;
+    }
+
+    Ok(NesPalette::WithEmphasis(palettes))
+}
+
+fn parse_nes_base_palette(bytes: &[u8]) -> anyhow::Result<NesBasePalette> {
+    ensure!(
+        bytes.len() == NES_PALETTE_RGB_BYTES,
+        "NES base palette must be {NES_PALETTE_RGB_BYTES} bytes, got {} bytes",
+        bytes.len()
+    );
+
+    let mut palette = [(0u8, 0u8, 0u8); NES_PALETTE_COLOR_COUNT];
+    for (entry, rgb) in palette.iter_mut().zip(bytes.chunks_exact(3)) {
+        *entry = (rgb[0], rgb[1], rgb[2]);
+    }
+    Ok(palette)
+}
+
 #[inline]
 pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
     let emph_bits = mask & 0xE0;
@@ -44,7 +105,7 @@ pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> 
 
     let (red_bit, green_bit) = match mode {
         NesPaletteMode::Pal => (0x40, 0x20),
-        NesPaletteMode::Raw | NesPaletteMode::Ntsc => (0x20, 0x40),
+        NesPaletteMode::Raw | NesPaletteMode::Ntsc | NesPaletteMode::Custom => (0x20, 0x40),
     };
 
     const ATTEN_NUM: u16 = 192;
@@ -159,12 +220,23 @@ impl Ppu {
 
 #[cfg(test)]
 mod tests {
-    use super::{NesPaletteMode, apply_nes_emphasis, apply_nes_palette_mode};
+    use super::{
+        NesPalette, NesPaletteMode, apply_nes_emphasis, apply_nes_palette_mode,
+        parse_nes_palette_bytes,
+    };
 
     #[test]
     fn raw_mode_is_identity() {
         assert_eq!(
             apply_nes_palette_mode(NesPaletteMode::Raw, (100, 150, 200)),
+            (100, 150, 200)
+        );
+    }
+
+    #[test]
+    fn custom_mode_does_not_modify_palette_file_colors() {
+        assert_eq!(
+            apply_nes_palette_mode(NesPaletteMode::Custom, (100, 150, 200)),
             (100, 150, 200)
         );
     }
@@ -177,6 +249,35 @@ mod tests {
         assert_ne!(ntsc, src);
         assert_ne!(pal, src);
         assert_ne!(ntsc, pal);
+    }
+
+    #[test]
+    fn parses_64_color_binary_palette() {
+        let bytes: Vec<u8> = (0..192u16).map(|v| v as u8).collect();
+        let palette = parse_nes_palette_bytes(&bytes).unwrap();
+        let base = palette.base();
+
+        assert_eq!(base[0], (0, 1, 2));
+        assert_eq!(base[63], (189, 190, 191));
+    }
+
+    #[test]
+    fn parses_emphasis_palette_preserving_groups() {
+        let bytes: Vec<u8> = (0..1536u16).map(|v| v as u8).collect();
+        let palette = parse_nes_palette_bytes(&bytes).unwrap();
+
+        let NesPalette::WithEmphasis(groups) = palette else {
+            panic!("1536-byte palette should preserve emphasis groups");
+        };
+        assert_eq!(groups[0][0], (0, 1, 2));
+        assert_eq!(groups[0][63], (189, 190, 191));
+        assert_eq!(groups[1][0], (192, 193, 194));
+    }
+
+    #[test]
+    fn rejects_unrecognized_palette_size() {
+        let err = parse_nes_palette_bytes(&[0u8; 191]).unwrap_err();
+        assert!(err.to_string().contains("192 bytes"));
     }
 
     #[test]

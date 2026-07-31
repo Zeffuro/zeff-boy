@@ -93,18 +93,15 @@ pub(crate) fn nes_palette_rgba(
     palette_ram: &[u8; 32],
     palette_index: u8,
     color_id: u8,
-    palette_mode: zeff_nes_core::hardware::ppu::NesPaletteMode,
+    palette_lut: &[[u8; 4]; 64],
 ) -> [u8; 4] {
-    use zeff_nes_core::hardware::ppu::{NES_PALETTE, apply_nes_palette_mode};
     let pal_addr = (palette_index as usize) * 4 + (color_id as usize);
     let nes_color = if color_id == 0 {
         palette_ram[0] as usize & 0x3F
     } else {
         palette_ram[pal_addr] as usize & 0x3F
     };
-    let (r, g, b) = NES_PALETTE[nes_color];
-    let (r, g, b) = apply_nes_palette_mode(palette_mode, (r, g, b));
-    [r, g, b, 255]
+    palette_lut[nes_color]
 }
 
 pub(super) fn show_viewer_texture(

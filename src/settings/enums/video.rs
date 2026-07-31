@@ -8,11 +8,12 @@ impl crate::debug::ui_helpers::EnumLabel for NesPaletteMode {
             Self::Raw => "Raw (default)",
             Self::Ntsc => "NTSC corrected",
             Self::Pal => "PAL corrected",
+            Self::Custom => "Custom .pal file",
         }
     }
 
     fn all_variants() -> &'static [Self] {
-        &[Self::Raw, Self::Ntsc, Self::Pal]
+        &[Self::Raw, Self::Ntsc, Self::Pal, Self::Custom]
     }
 }
 

@@ -94,6 +94,13 @@ pub(super) struct CachedRomInfo {
     pub(super) rom_hash: Option<[u8; 32]>,
 }
 
+#[derive(Default)]
+pub(super) struct NesPaletteFileCache {
+    pub(super) path: String,
+    pub(super) palette: Option<zeff_nes_core::hardware::ppu::NesPalette>,
+    pub(super) error: Option<String>,
+}
+
 pub(super) struct SpeedState {
     pub(super) paused: bool,
     pub(super) fast_forward_held: bool,

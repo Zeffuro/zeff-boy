@@ -363,9 +363,14 @@ fn dmg_palette_preset_defaults_when_missing() {
 fn nes_palette_mode_serde_roundtrip() {
     let mut s = Settings::default();
     s.video.nes_palette_mode = NesPaletteMode::Pal;
+    s.video.nes_custom_palette_path = "C:/palettes/custom.pal".to_string();
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.video.nes_palette_mode, NesPaletteMode::Pal);
+    assert_eq!(
+        restored.video.nes_custom_palette_path,
+        "C:/palettes/custom.pal"
+    );
 }
 
 #[test]
@@ -373,6 +378,7 @@ fn nes_palette_mode_defaults_to_raw_when_missing() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
     assert_eq!(s.video.nes_palette_mode, NesPaletteMode::Raw);
+    assert!(s.video.nes_custom_palette_path.is_empty());
 }
 
 #[test]

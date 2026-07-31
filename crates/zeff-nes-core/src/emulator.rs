@@ -122,12 +122,20 @@ impl Emulator {
         self.bus.set_palette_mode(mode);
     }
 
+    pub fn set_custom_palette(&mut self, palette: Option<crate::hardware::ppu::NesPalette>) {
+        self.bus.set_custom_palette(palette);
+    }
+
     pub fn palette_mode(&self) -> crate::hardware::ppu::NesPaletteMode {
         self.bus.palette_mode()
     }
 
     pub fn palette_color_rgba(&self, index: u8) -> [u8; 4] {
         self.bus.palette_color_rgba(index)
+    }
+
+    pub fn palette_lut(&self) -> [[u8; 4]; 64] {
+        self.bus.palette_lut()
     }
 
     pub fn apu_channel_snapshot(&self) -> crate::hardware::apu::ApuChannelSnapshot {

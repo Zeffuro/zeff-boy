@@ -7,7 +7,10 @@ use crate::hardware::apu::Apu;
 use crate::hardware::cartridge::Cartridge;
 use crate::hardware::constants::*;
 use crate::hardware::controller::{Controller, ExpansionDevice};
-use crate::hardware::ppu::{NES_PALETTE, NesPaletteMode, Ppu, apply_nes_palette_mode};
+use crate::hardware::ppu::{
+    NES_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, apply_nes_emphasis,
+    apply_nes_palette_mode,
+};
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,8 +77,9 @@ pub struct Bus {
     pub(crate) cpu_step_events: PeripheralTickEvents,
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
+    pub custom_palette: Option<NesPalette>,
 
-    pub(crate) palette_lut: [[u8; 4]; 64],
+    pub(crate) palette_luts: [[[u8; 4]; 64]; 8],
 
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
@@ -102,24 +106,67 @@ impl Bus {
             cpu_step_events: PeripheralTickEvents::default(),
             game_genie: NesCheatState::new(),
             palette_mode,
-            palette_lut: Self::build_palette_lut(palette_mode),
+            custom_palette: None,
+            palette_luts: Self::build_palette_luts(palette_mode, None),
             debug_trace_enabled: false,
             debug_trace_events: Vec::new(),
         }
     }
 
-    fn build_palette_lut(mode: NesPaletteMode) -> [[u8; 4]; 64] {
-        let mut lut = [[0u8; 4]; 64];
+    fn build_palette_luts(
+        mode: NesPaletteMode,
+        custom_palette: Option<&NesPalette>,
+    ) -> [[[u8; 4]; 64]; 8] {
+        let mut luts = [[[0u8; 4]; 64]; 8];
+
+        if mode == NesPaletteMode::Custom
+            && let Some(NesPalette::WithEmphasis(palettes)) = custom_palette
+        {
+            for (group, palette) in palettes.iter().enumerate() {
+                Self::fill_palette_lut(&mut luts[group], palette, None);
+            }
+            return luts;
+        }
+
+        let source_palette = match (mode, custom_palette) {
+            (NesPaletteMode::Custom, Some(palette)) => palette.base(),
+            _ => NES_PALETTE,
+        };
+
+        for (group, lut) in luts.iter_mut().enumerate() {
+            let mask = (group as u8) << 5;
+            Self::fill_palette_lut(lut, &source_palette, Some((mode, mask)));
+        }
+
+        luts
+    }
+
+    fn fill_palette_lut(
+        lut: &mut [[u8; 4]; 64],
+        palette: &NesBasePalette,
+        correction: Option<(NesPaletteMode, u8)>,
+    ) {
         for (i, entry) in lut.iter_mut().enumerate() {
-            let (r, g, b) = apply_nes_palette_mode(mode, NES_PALETTE[i]);
+            let (r, g, b) = match correction {
+                Some((mode, mask)) => {
+                    let rgb = apply_nes_palette_mode(mode, palette[i]);
+                    apply_nes_emphasis(mode, mask, rgb)
+                }
+                None => palette[i],
+            };
             *entry = [r, g, b, 0xFF];
         }
-        lut
     }
 
     pub fn set_palette_mode(&mut self, mode: NesPaletteMode) {
         self.palette_mode = mode;
-        self.palette_lut = Self::build_palette_lut(mode);
+        self.palette_luts = Self::build_palette_luts(mode, self.custom_palette.as_ref());
+    }
+
+    pub fn set_custom_palette(&mut self, palette: Option<NesPalette>) {
+        self.custom_palette = palette;
+        self.palette_luts =
+            Self::build_palette_luts(self.palette_mode, self.custom_palette.as_ref());
     }
 
     pub fn reset(&mut self) {
@@ -136,7 +183,11 @@ impl Bus {
     }
 
     pub fn palette_color_rgba(&self, pal_idx: u8) -> [u8; 4] {
-        self.palette_lut[(pal_idx & 0x3F) as usize]
+        self.palette_luts[0][(pal_idx & 0x3F) as usize]
+    }
+
+    pub fn palette_lut(&self) -> [[u8; 4]; 64] {
+        self.palette_luts[0]
     }
 
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {

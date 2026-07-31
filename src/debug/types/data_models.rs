@@ -109,7 +109,7 @@ pub(crate) struct NesGraphicsData {
     pub(crate) chr_data: Vec<u8>,
     pub(crate) nametable_data: Vec<u8>,
     pub(crate) palette_ram: [u8; 32],
-    pub(crate) palette_mode: zeff_nes_core::hardware::ppu::NesPaletteMode,
+    pub(crate) palette_lut: [[u8; 4]; 64],
     pub(crate) ctrl: u8,
     pub(crate) mirroring: zeff_nes_core::hardware::cartridge::Mirroring,
     pub(crate) scroll_t: u16,
