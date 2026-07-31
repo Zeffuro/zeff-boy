@@ -4,6 +4,7 @@ mod renderer;
 pub use registers::PpuRegisters;
 pub use renderer::NES_PALETTE;
 pub use renderer::NesPaletteMode;
+pub use renderer::apply_nes_emphasis;
 pub use renderer::apply_nes_palette_mode;
 
 use std::fmt;

@@ -35,6 +35,35 @@ pub fn apply_nes_palette_mode(mode: NesPaletteMode, rgb: (u8, u8, u8)) -> (u8, u
     }
 }
 
+#[inline]
+pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+    let emph_bits = mask & 0xE0;
+    if emph_bits == 0 {
+        return rgb;
+    }
+
+    let (red_bit, green_bit) = match mode {
+        NesPaletteMode::Pal => (0x40, 0x20),
+        NesPaletteMode::Raw | NesPaletteMode::Ntsc => (0x20, 0x40),
+    };
+
+    const ATTEN_NUM: u16 = 192;
+    const ATTEN_DEN: u16 = 235;
+
+    let (mut r, mut g, mut b) = rgb;
+    if emph_bits & red_bit == 0 {
+        r = scale_u8(r, ATTEN_NUM, ATTEN_DEN);
+    }
+    if emph_bits & green_bit == 0 {
+        g = scale_u8(g, ATTEN_NUM, ATTEN_DEN);
+    }
+    if emph_bits & 0x80 == 0 {
+        b = scale_u8(b, ATTEN_NUM, ATTEN_DEN);
+    }
+
+    (r, g, b)
+}
+
 #[rustfmt::skip]
 pub static NES_PALETTE: [(u8, u8, u8); 64] = [
     (84,84,84),    (0,30,116),    (8,16,144),    (48,0,136),
@@ -130,7 +159,7 @@ impl Ppu {
 
 #[cfg(test)]
 mod tests {
-    use super::{NesPaletteMode, apply_nes_palette_mode};
+    use super::{NesPaletteMode, apply_nes_emphasis, apply_nes_palette_mode};
 
     #[test]
     fn raw_mode_is_identity() {
@@ -148,5 +177,28 @@ mod tests {
         assert_ne!(ntsc, src);
         assert_ne!(pal, src);
         assert_ne!(ntsc, pal);
+    }
+
+    #[test]
+    fn emphasis_is_identity_when_no_emphasis_bits_are_set() {
+        assert_eq!(
+            apply_nes_emphasis(NesPaletteMode::Ntsc, 0x00, (180, 120, 90)),
+            (180, 120, 90)
+        );
+    }
+
+    #[test]
+    fn pal_emphasis_swaps_red_and_green_bits() {
+        let src = (180, 120, 90);
+
+        let ntsc_bit_5 = apply_nes_emphasis(NesPaletteMode::Ntsc, 0x20, src);
+        assert_eq!(ntsc_bit_5.0, src.0);
+        assert!(ntsc_bit_5.1 < src.1);
+        assert!(ntsc_bit_5.2 < src.2);
+
+        let pal_bit_5 = apply_nes_emphasis(NesPaletteMode::Pal, 0x20, src);
+        assert!(pal_bit_5.0 < src.0);
+        assert_eq!(pal_bit_5.1, src.1);
+        assert!(pal_bit_5.2 < src.2);
     }
 }

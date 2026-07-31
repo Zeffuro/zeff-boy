@@ -1,6 +1,6 @@
 use super::Bus;
 use crate::hardware::cartridge::ChrFetchKind;
-use crate::hardware::ppu::{PRE_RENDER_SCANLINE, Ppu};
+use crate::hardware::ppu::{NesPaletteMode, PRE_RENDER_SCANLINE, Ppu, apply_nes_emphasis};
 
 impl Bus {
     pub(super) fn ppu_render_dot(&mut self) {
@@ -30,10 +30,24 @@ impl Bus {
         if visible_line && (1..=256).contains(&dot) {
             if rendering {
                 let pal_idx = self.ppu.compose_pixel() as usize;
-                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, &self.palette_lut);
+                Self::write_pixel(
+                    &mut self.ppu,
+                    dot,
+                    scanline,
+                    pal_idx,
+                    &self.palette_lut,
+                    self.palette_mode,
+                );
             } else {
                 let pal_idx = (self.ppu.palette_ram[0] & 0x3F) as usize;
-                Self::write_pixel(&mut self.ppu, dot, scanline, pal_idx, &self.palette_lut);
+                Self::write_pixel(
+                    &mut self.ppu,
+                    dot,
+                    scanline,
+                    pal_idx,
+                    &self.palette_lut,
+                    self.palette_mode,
+                );
             }
         }
 
@@ -96,28 +110,15 @@ impl Bus {
         scanline: u16,
         pal_idx: usize,
         palette_lut: &[[u8; 4]; 64],
+        palette_mode: NesPaletteMode,
     ) {
         let effective_idx = if ppu.regs.greyscale() {
             pal_idx & 0x30
         } else {
             pal_idx
         };
-        let [mut r, mut g, mut b, _] = palette_lut[effective_idx];
-
-        let emph_bits = ppu.regs.mask & 0xE0;
-        if emph_bits != 0 {
-            const ATTEN_NUM: u16 = 192;
-            const ATTEN_DEN: u16 = 235;
-            if emph_bits & 0x20 == 0 {
-                r = (r as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
-            }
-            if emph_bits & 0x40 == 0 {
-                g = (g as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
-            }
-            if emph_bits & 0x80 == 0 {
-                b = (b as u16 * ATTEN_NUM / ATTEN_DEN) as u8;
-            }
-        }
+        let [r, g, b, _] = palette_lut[effective_idx];
+        let (r, g, b) = apply_nes_emphasis(palette_mode, ppu.regs.mask, (r, g, b));
 
         let x = (dot - 1) as usize;
         let y = scanline as usize;
