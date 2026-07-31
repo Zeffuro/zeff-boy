@@ -440,8 +440,11 @@ fn hle_swi_sets_protected_bios_latch_for_following_game_reads() {
 
     cpu.execute_software_interrupt(&mut bus, 0x06);
 
-    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), POST_SWI_BIOS_READ_LATCH);
-    assert_eq!(cpu.cpu_read16(&bus, 0x0000_0002), 0xE3A0);
+    assert_eq!(
+        cpu.cpu_read32(&mut bus, 0x0000_0000),
+        POST_SWI_BIOS_READ_LATCH
+    );
+    assert_eq!(cpu.cpu_read16(&mut bus, 0x0000_0002), 0xE3A0);
 }
 
 #[test]
@@ -463,5 +466,8 @@ fn hle_swi_wait_restores_post_swi_latch_at_return_pc_after_irq_path() {
     cpu.resume();
     cpu.fetch_decode_stub(&bus);
 
-    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), POST_SWI_BIOS_READ_LATCH);
+    assert_eq!(
+        cpu.cpu_read32(&mut bus, 0x0000_0000),
+        POST_SWI_BIOS_READ_LATCH
+    );
 }

@@ -5,8 +5,8 @@ use super::ops::{
 use super::*;
 
 impl Cpu {
-    pub(super) fn execute_arm_data_processing(&mut self, pc: u32, raw: u32) {
-        if self.execute_arm_psr_transfer(raw) {
+    pub(super) fn execute_arm_data_processing(&mut self, bus: &mut Bus, pc: u32, raw: u32) {
+        if self.execute_arm_psr_transfer(bus, raw) {
             return;
         }
 
@@ -79,14 +79,14 @@ impl Cpu {
 
         if write_result {
             if set_flags && rd == 15 {
-                self.return_from_exception(result, false);
+                self.return_from_exception(bus, result, false);
             } else {
                 self.write_reg(rd, result, false);
             }
         }
     }
 
-    fn execute_arm_psr_transfer(&mut self, raw: u32) -> bool {
+    fn execute_arm_psr_transfer(&mut self, bus: &mut Bus, raw: u32) -> bool {
         if raw & 0x0FBF_0FFF == 0x010F_0000 {
             let rd = ((raw >> 12) & 0xF) as usize;
             self.regs[rd] = if raw & (1 << 22) != 0 {
@@ -99,20 +99,20 @@ impl Cpu {
 
         if raw & 0x0FB0_FFF0 == 0x0120_F000 {
             let rm = (raw & 0xF) as usize;
-            self.write_psr(raw, self.regs[rm]);
+            self.write_psr(bus, raw, self.regs[rm]);
             return true;
         }
 
         if raw & 0x0FB0_F000 == 0x0320_F000 {
             let (value, _) = arm_immediate_operand(raw, self.carry());
-            self.write_psr(raw, value);
+            self.write_psr(bus, raw, value);
             return true;
         }
 
         false
     }
 
-    fn write_psr(&mut self, raw: u32, value: u32) {
+    fn write_psr(&mut self, bus: &mut Bus, raw: u32, value: u32) {
         let field_mask = (raw >> 16) & 0xF;
         let mut mask = 0u32;
         if field_mask & 0x1 != 0 {
@@ -132,11 +132,13 @@ impl Cpu {
             self.spsr = (self.spsr & !mask) | (value & mask);
         } else {
             self.set_cpsr((self.cpsr & !mask) | (value & mask));
+            bus.test_irq_signal(0);
         }
     }
 
-    fn return_from_exception(&mut self, pc: u32, thumb: bool) {
+    fn return_from_exception(&mut self, bus: &mut Bus, pc: u32, thumb: bool) {
         self.set_cpsr(self.spsr);
+        bus.test_irq_signal(0);
         self.write_reg(15, pc, thumb || self.thumb_state());
     }
 
@@ -350,12 +352,12 @@ impl Cpu {
         }
     }
 
-    pub(super) fn load_arm_unsigned_halfword(&self, bus: &Bus, addr: u32) -> u32 {
+    pub(super) fn load_arm_unsigned_halfword(&self, bus: &mut Bus, addr: u32) -> u32 {
         let value = u32::from(self.cpu_read16(bus, addr));
         rotate_right(value, (addr & 1) * 8)
     }
 
-    pub(super) fn load_arm_signed_halfword(&self, bus: &Bus, addr: u32) -> u32 {
+    pub(super) fn load_arm_signed_halfword(&self, bus: &mut Bus, addr: u32) -> u32 {
         if addr & 1 != 0 {
             sign_extend(u32::from(self.cpu_read8(bus, addr)), 8) as u32
         } else {
@@ -435,7 +437,7 @@ impl Cpu {
         }
 
         if let Some(pc) = exception_return_pc {
-            self.return_from_exception(pc, false);
+            self.return_from_exception(bus, pc, false);
         }
     }
 

@@ -279,9 +279,9 @@ impl Cpu {
         Some(fetched)
     }
 
-    pub(crate) fn try_service_irq(&mut self, interrupt_pending: bool) {
+    pub(crate) fn try_service_irq(&mut self, interrupt_pending: bool) -> bool {
         if !interrupt_pending || self.cpsr & CPSR_IRQ_DISABLE != 0 {
-            return;
+            return false;
         }
 
         let old_cpsr = self.cpsr;
@@ -292,6 +292,7 @@ impl Cpu {
         self.set_pc(0x0000_0018);
         self.next_fetch_sequential = false;
         self.state = CpuState::Running;
+        true
     }
 
     fn fetched_condition_passed(&self, fetched: FetchedInstruction) -> bool {
@@ -322,7 +323,7 @@ impl Cpu {
                         self.execute_arm_single_data_transfer(bus, fetched.pc, fetched.raw)
                     }
                     ArmInstructionClass::DataProcessing => {
-                        self.execute_arm_data_processing(fetched.pc, fetched.raw)
+                        self.execute_arm_data_processing(bus, fetched.pc, fetched.raw)
                     }
                     ArmInstructionClass::Multiply => self.execute_arm_multiply(fetched.raw),
                     ArmInstructionClass::MultiplyLong => {
@@ -485,7 +486,12 @@ fn instruction_base_cycles(fetched: FetchedInstruction, condition_passed: bool) 
             class: ArmInstructionClass::DataProcessing,
             ..
         } => {
-            if fetched.raw & (1 << 25) == 0 && fetched.raw & (1 << 4) != 0 {
+            let opcode = (fetched.raw >> 21) & 0xF;
+            let writes_result = !matches!(opcode, 0x8..=0xB);
+            let rd = (fetched.raw >> 12) & 0xF;
+            if writes_result && rd == 15 {
+                2
+            } else if fetched.raw & (1 << 25) == 0 && fetched.raw & (1 << 4) != 0 {
                 1
             } else {
                 0

@@ -15,14 +15,35 @@ impl Bus {
         }
 
         let aligned = (offset & !1) as usize;
+        let value = self.io_read16_value(aligned);
+        let shift = ((addr & 1) * 8) as u16;
+        (value >> shift) as u8
+    }
+
+    pub(crate) fn cpu_read_io16(&mut self, addr: u32) -> u16 {
+        let aligned_addr = addr & !1;
+        let aligned = (aligned_addr & 0x3FF) as usize;
         let value = match aligned {
             0x100..=0x10F => {
-                let timer = ((offset - 0x100) / 4) as usize;
-                let control = (offset & 0x2) != 0;
+                let timer = ((aligned - 0x100) / 4) as usize;
+                let control = (aligned & 0x2) != 0;
+                self.timers.cpu_read16(timer, control)
+            }
+            _ => self.io_read16_value(aligned),
+        };
+        self.record_read(aligned_addr, u32::from(value), 2);
+        value
+    }
+
+    fn io_read16_value(&self, aligned: usize) -> u16 {
+        match aligned {
+            0x100..=0x10F => {
+                let timer = ((aligned - 0x100) / 4) as usize;
+                let control = (aligned & 0x2) != 0;
                 self.timers.read16(timer, control)
             }
             0x0B0..=0x0DF => {
-                let rel = offset - 0x0B0;
+                let rel = aligned - 0x0B0;
                 self.dma
                     .read16((rel / 12) as usize, ((rel % 12) / 2) as usize)
             }
@@ -52,9 +73,7 @@ impl Bus {
                 self.io.get(aligned).copied().unwrap_or(0),
                 self.io.get(aligned + 1).copied().unwrap_or(0),
             ]),
-        };
-        let shift = ((addr & 1) * 8) as u16;
-        (value >> shift) as u8
+        }
     }
 
     pub(super) fn io_write8(&mut self, addr: u32, value: u8) {
@@ -214,7 +233,12 @@ impl Bus {
         self.test_irq_signal(0);
     }
 
-    pub(crate) fn request_timer_interrupts(&mut self, flags: u16, extra_delays: [u32; 4]) {
+    pub(crate) fn request_timer_interrupts(
+        &mut self,
+        flags: u16,
+        extra_delays: [u32; 4],
+        cycles_late: [u32; 4],
+    ) {
         let timer_flags = flags & 0x0078;
         if timer_flags == 0 {
             self.request_interrupt(flags);
@@ -224,9 +248,13 @@ impl Bus {
         let next = read_io16(&self.io, IF) | (flags & 0x3FFF);
         self.write_io16_raw(IF, next);
 
-        for (timer, extra_delay) in extra_delays.into_iter().enumerate() {
+        for (timer, (extra_delay, cycles_late)) in extra_delays
+            .into_iter()
+            .zip(cycles_late.into_iter())
+            .enumerate()
+        {
             if timer_flags & (1 << (3 + timer)) != 0 {
-                self.test_irq_signal_with_extra_delay(0, extra_delay);
+                self.test_irq_signal_with_extra_delay(cycles_late, extra_delay);
             }
         }
     }

@@ -2,7 +2,7 @@ use super::super::bus::Bus;
 use super::*;
 
 impl Cpu {
-    pub(crate) fn cpu_read8(&self, bus: &Bus, addr: u32) -> u8 {
+    pub(crate) fn cpu_read8(&self, bus: &mut Bus, addr: u32) -> u8 {
         if self.protected_bios_data_read_addr(addr) {
             (self.bios_protected_read_latch >> ((addr & 3) * 8)) as u8
         } else if gba_open_bus_read_addr(addr) {
@@ -14,7 +14,7 @@ impl Cpu {
         }
     }
 
-    pub(crate) fn cpu_read16(&self, bus: &Bus, addr: u32) -> u16 {
+    pub(crate) fn cpu_read16(&self, bus: &mut Bus, addr: u32) -> u16 {
         if self.protected_bios_data_read_addr(addr) {
             (self.bios_protected_read_latch >> ((addr & 2) * 8)) as u16
         } else if gba_open_bus_read_addr(addr) {
@@ -26,7 +26,7 @@ impl Cpu {
         }
     }
 
-    pub(crate) fn cpu_read32(&self, bus: &Bus, addr: u32) -> u32 {
+    pub(crate) fn cpu_read32(&self, bus: &mut Bus, addr: u32) -> u32 {
         if self.protected_bios_data_read_addr(addr) {
             self.bios_protected_read_latch
         } else if gba_open_bus_read_addr(addr) {
@@ -100,7 +100,7 @@ impl Cpu {
         }
     }
 
-    fn cpu_io_read16(&self, bus: &Bus, addr: u32) -> Option<u16> {
+    fn cpu_io_read16(&self, bus: &mut Bus, addr: u32) -> Option<u16> {
         let aligned = addr & !1;
         if !matches!(aligned, 0x0400_0000..=0x0400_03FE) {
             return None;
@@ -110,7 +110,11 @@ impl Cpu {
             return Some((self.open_bus_value(bus) >> ((aligned & 2) * 8)) as u16);
         }
 
-        gba_io_read16_mask(aligned).map(|mask| bus.read16(aligned) & mask)
+        if matches!(aligned & 0x3FF, 0x100..=0x10F) {
+            return Some(bus.cpu_read_io16(aligned));
+        }
+
+        gba_io_read16_mask(aligned).map(|mask| bus.cpu_read_io16(aligned) & mask)
     }
 }
 

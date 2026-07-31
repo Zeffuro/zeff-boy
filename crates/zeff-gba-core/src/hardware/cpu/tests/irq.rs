@@ -50,6 +50,6 @@ fn irq_return_sets_protected_bios_latch_for_following_game_reads() {
     }
     cpu.fetch_decode_stub(&bus);
 
-    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), 0xE55E_C002);
-    assert_eq!(cpu.cpu_read16(&bus, 0x0000_0000), 0xC002);
+    assert_eq!(cpu.cpu_read32(&mut bus, 0x0000_0000), 0xE55E_C002);
+    assert_eq!(cpu.cpu_read16(&mut bus, 0x0000_0000), 0xC002);
 }
