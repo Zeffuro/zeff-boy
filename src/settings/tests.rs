@@ -214,8 +214,7 @@ fn build_gpu_params_includes_color_correction() {
     let params = ShaderParams::default();
     let buf = build_gpu_params(
         &params,
-        ColorCorrection::GbcLcd,
-        default_color_correction_matrix(),
+        effective_gb_color_correction(ColorCorrection::GbcLcd, default_color_correction_matrix()),
         160.0,
         144.0,
     );
@@ -228,13 +227,7 @@ fn build_gpu_params_includes_color_correction() {
 #[test]
 fn build_gpu_params_none_mode_is_identity() {
     let params = ShaderParams::default();
-    let buf = build_gpu_params(
-        &params,
-        ColorCorrection::None,
-        default_color_correction_matrix(),
-        160.0,
-        144.0,
-    );
+    let buf = build_gpu_params(&params, EffectiveColorCorrection::None, 160.0, 144.0);
     let mode = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
     assert_eq!(mode, 0);
     let r00 = f32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]);
@@ -250,19 +243,29 @@ fn rewind_capture_interval_is_4() {
 #[test]
 fn color_correction_serde_roundtrip() {
     let mut s = Settings::default();
-    s.video.color_correction = ColorCorrection::GbcLcd;
+    s.video.gb_color_correction = ColorCorrection::GbcLcd;
+    s.video.gba_color_correction = GbaColorCorrection::LcdResponse;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.video.color_correction, ColorCorrection::GbcLcd);
+    assert_eq!(restored.video.gb_color_correction, ColorCorrection::GbcLcd);
+    assert_eq!(
+        restored.video.gba_color_correction,
+        GbaColorCorrection::LcdResponse
+    );
 }
 
 #[test]
 fn color_correction_defaults_to_none_when_missing() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
-    assert_eq!(s.video.color_correction, ColorCorrection::None);
+    assert_eq!(s.video.gb_color_correction, ColorCorrection::None);
     assert_eq!(
-        s.video.color_correction_matrix,
+        s.video.gb_color_correction_matrix,
+        default_color_correction_matrix()
+    );
+    assert_eq!(s.video.gba_color_correction, GbaColorCorrection::None);
+    assert_eq!(
+        s.video.gba_color_correction_matrix,
         default_color_correction_matrix()
     );
 }
@@ -270,31 +273,90 @@ fn color_correction_defaults_to_none_when_missing() {
 #[test]
 fn custom_color_correction_matrix_roundtrip() {
     let mut s = Settings::default();
-    s.video.color_correction = ColorCorrection::Custom;
-    s.video.color_correction_matrix = [1.0, 0.2, 0.0, 0.1, 0.9, 0.0, 0.0, 0.3, 0.8];
+    s.video.gb_color_correction = ColorCorrection::Custom;
+    s.video.gb_color_correction_matrix = [1.0, 0.2, 0.0, 0.1, 0.9, 0.0, 0.0, 0.3, 0.8];
+    s.video.gba_color_correction = GbaColorCorrection::Custom;
+    s.video.gba_color_correction_matrix = [0.8, 0.1, 0.1, 0.2, 0.7, 0.1, 0.0, 0.2, 0.8];
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.video.color_correction, ColorCorrection::Custom);
+    assert_eq!(restored.video.gb_color_correction, ColorCorrection::Custom);
     assert_eq!(
-        restored.video.color_correction_matrix,
-        s.video.color_correction_matrix
+        restored.video.gba_color_correction,
+        GbaColorCorrection::Custom
+    );
+    assert_eq!(
+        restored.video.gb_color_correction_matrix,
+        s.video.gb_color_correction_matrix
+    );
+    assert_eq!(
+        restored.video.gba_color_correction_matrix,
+        s.video.gba_color_correction_matrix
+    );
+}
+
+#[test]
+fn legacy_color_correction_fields_load_as_game_boy_settings() {
+    let json = r#"{
+        "hardware_mode_preference":"Auto",
+        "fast_forward_multiplier":4,
+        "color_correction":"gbc_lcd",
+        "color_correction_matrix":[1.0,0.2,0.0,0.1,0.9,0.0,0.0,0.3,0.8],
+        "dmg_palette_preset":"mint"
+    }"#;
+    let s: Settings = serde_json::from_str(json).unwrap();
+    assert_eq!(s.video.gb_color_correction, ColorCorrection::GbcLcd);
+    assert_eq!(s.video.gb_dmg_palette_preset, DmgPalettePreset::Mint);
+    assert_eq!(s.video.gba_color_correction, GbaColorCorrection::None);
+}
+
+#[test]
+fn gba_color_correction_uses_dedicated_gpu_modes() {
+    let params = ShaderParams::default();
+    let agb = build_gpu_params(
+        &params,
+        effective_gba_color_correction(
+            GbaColorCorrection::AgbLcd,
+            default_color_correction_matrix(),
+        ),
+        240.0,
+        160.0,
+    );
+    let lcd_response = build_gpu_params(
+        &params,
+        effective_gba_color_correction(
+            GbaColorCorrection::LcdResponse,
+            default_color_correction_matrix(),
+        ),
+        240.0,
+        160.0,
+    );
+
+    assert_eq!(u32::from_le_bytes([agb[32], agb[33], agb[34], agb[35]]), 2);
+    assert_eq!(
+        u32::from_le_bytes([
+            lcd_response[32],
+            lcd_response[33],
+            lcd_response[34],
+            lcd_response[35]
+        ]),
+        3
     );
 }
 
 #[test]
 fn dmg_palette_preset_serde_roundtrip() {
     let mut s = Settings::default();
-    s.video.dmg_palette_preset = DmgPalettePreset::Mint;
+    s.video.gb_dmg_palette_preset = DmgPalettePreset::Mint;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.video.dmg_palette_preset, DmgPalettePreset::Mint);
+    assert_eq!(restored.video.gb_dmg_palette_preset, DmgPalettePreset::Mint);
 }
 
 #[test]
 fn dmg_palette_preset_defaults_when_missing() {
     let json = r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#;
     let s: Settings = serde_json::from_str(json).unwrap();
-    assert_eq!(s.video.dmg_palette_preset, DmgPalettePreset::DmgGreen);
+    assert_eq!(s.video.gb_dmg_palette_preset, DmgPalettePreset::DmgGreen);
 }
 
 #[test]

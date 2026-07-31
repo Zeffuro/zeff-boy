@@ -22,10 +22,38 @@ fn apply_color_correction(c: vec4<f32>) -> vec4<f32> {
     if (params.color_mode == 0u) {
         return c;
     }
+    if (params.color_mode == 2u) {
+        return apply_gba_agb_lcd(c);
+    }
+    if (params.color_mode == 3u) {
+        return apply_gba_lcd_response(c);
+    }
     let r = dot(params.color_matrix_r.xyz, c.rgb);
     let g = dot(params.color_matrix_g.xyz, c.rgb);
     let b = dot(params.color_matrix_b.xyz, c.rgb);
     return vec4<f32>(clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0)), c.a);
+}
+
+fn apply_gba_agb_lcd(c: vec4<f32>) -> vec4<f32> {
+    let source = pow(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(3.2));
+    let mapped = vec3<f32>(
+        0.820 * source.r + 0.125 * source.g + 0.195 * source.b,
+        0.240 * source.r + 0.665 * source.g + 0.075 * source.b,
+       -0.060 * source.r + 0.210 * source.g + 0.730 * source.b
+    );
+    let display = pow(clamp(mapped * 0.94, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
+    return vec4<f32>(display, c.a);
+}
+
+fn apply_gba_lcd_response(c: vec4<f32>) -> vec4<f32> {
+    let source = pow(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(4.0));
+    let mapped = vec3<f32>(
+        1.000 * source.r + 0.196 * source.g,
+        0.039 * source.r + 0.901 * source.g + 0.117 * source.b,
+        0.196 * source.r + 0.039 * source.g + 0.862 * source.b
+    );
+    let display = pow(clamp(mapped, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
+    return vec4<f32>(display, c.a);
 }
 
 struct VSOut {

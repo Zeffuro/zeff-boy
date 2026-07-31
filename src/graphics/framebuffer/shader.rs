@@ -166,20 +166,23 @@ impl FramebufferRenderer {
         );
     }
 
-    pub(crate) fn update_params(&self, queue: &wgpu::Queue, settings: &crate::settings::Settings) {
+    pub(crate) fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        settings: &crate::settings::Settings,
+        active_system: Option<crate::emu_backend::ActiveSystem>,
+    ) {
         let nw = self.screen.native_width as f32;
         let nh = self.screen.native_height as f32;
         let buf = crate::settings::build_gpu_params(
             &settings.video.shader_params,
-            settings.video.color_correction,
-            settings.video.color_correction_matrix,
+            settings.video.effective_color_correction(active_system),
             nw,
             nh,
         );
         let buf_no_cc = crate::settings::build_gpu_params(
             &settings.video.shader_params,
-            crate::settings::ColorCorrection::None,
-            settings.video.color_correction_matrix,
+            crate::settings::EffectiveColorCorrection::None,
             nw,
             nh,
         );

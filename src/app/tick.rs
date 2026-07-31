@@ -277,9 +277,9 @@ impl App {
             memory_search: parse_pending_search(&mut self.debug_windows.memory),
             rom_search: parse_pending_search(&mut self.debug_windows.rom_viewer),
             render: RenderSettings {
-                color_correction: self.settings.video.color_correction,
-                color_correction_matrix: self.settings.video.color_correction_matrix,
-                dmg_palette_preset: self.settings.video.dmg_palette_preset,
+                color_correction: self.settings.video.gb_color_correction,
+                color_correction_matrix: self.settings.video.gb_color_correction_matrix,
+                dmg_palette_preset: self.settings.video.gb_dmg_palette_preset,
                 nes_palette_mode: self.settings.video.nes_palette_mode,
                 sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
             },

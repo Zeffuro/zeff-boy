@@ -9,9 +9,10 @@ mod tilt_bindings;
 
 pub(crate) use binding_actions::{BindingAction, InputBindingAction};
 pub(crate) use enums::{
-    AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset, LeftStickMode,
-    NesPaletteMode, ScalingMode, TiltInputMode, UiThemePreset, VsyncMode, build_gpu_params,
-    default_color_correction_matrix, default_offscreen_scale,
+    AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset,
+    EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode, ScalingMode,
+    TiltInputMode, UiThemePreset, VsyncMode, build_gpu_params, default_color_correction_matrix,
+    default_offscreen_scale, effective_gb_color_correction, effective_gba_color_correction,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
 pub(crate) use keyboard_bindings::KeyBindings;

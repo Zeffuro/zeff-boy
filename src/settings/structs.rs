@@ -4,13 +4,15 @@ use winit::keyboard::KeyCode;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::enums::{
-    AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset, NesPaletteMode,
-    ShaderParams, ShaderPreset, UiThemePreset, VsyncMode,
+    AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset,
+    EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, ShaderParams, ShaderPreset,
+    UiThemePreset, VsyncMode,
 };
 use super::keycode_serde::keycode_from_string;
 use super::tilt_bindings::TiltKeyBindings;
 use super::{
     LeftStickMode, TiltInputMode, default_color_correction_matrix, default_offscreen_scale,
+    effective_gb_color_correction, effective_gba_color_correction,
 };
 
 fn default_camera_gamma() -> f32 {
@@ -189,11 +191,24 @@ pub(crate) struct VideoSettings {
     pub(crate) offscreen_scale: u32,
     pub(crate) shader_params: ShaderParams,
     pub(crate) custom_shader_path: String,
-    pub(crate) color_correction: ColorCorrection,
+
+    #[serde(rename = "gb_color_correction", alias = "color_correction")]
+    pub(crate) gb_color_correction: ColorCorrection,
     #[serde(default = "default_color_correction_matrix")]
-    pub(crate) color_correction_matrix: [f32; 9],
+    #[serde(
+        rename = "gb_color_correction_matrix",
+        alias = "color_correction_matrix"
+    )]
+    pub(crate) gb_color_correction_matrix: [f32; 9],
     #[serde(default)]
-    pub(crate) dmg_palette_preset: DmgPalettePreset,
+    #[serde(rename = "gb_dmg_palette_preset", alias = "dmg_palette_preset")]
+    pub(crate) gb_dmg_palette_preset: DmgPalettePreset,
+
+    #[serde(default)]
+    pub(crate) gba_color_correction: GbaColorCorrection,
+    #[serde(default = "default_color_correction_matrix")]
+    pub(crate) gba_color_correction_matrix: [f32; 9],
+
     #[serde(default)]
     pub(crate) nes_palette_mode: NesPaletteMode,
     pub(crate) vsync_mode: VsyncMode,
@@ -208,9 +223,11 @@ impl Default for VideoSettings {
             offscreen_scale: default_offscreen_scale(),
             shader_params: ShaderParams::default(),
             custom_shader_path: String::new(),
-            color_correction: ColorCorrection::None,
-            color_correction_matrix: default_color_correction_matrix(),
-            dmg_palette_preset: DmgPalettePreset::default(),
+            gb_color_correction: ColorCorrection::None,
+            gb_color_correction_matrix: default_color_correction_matrix(),
+            gb_dmg_palette_preset: DmgPalettePreset::default(),
+            gba_color_correction: GbaColorCorrection::None,
+            gba_color_correction_matrix: default_color_correction_matrix(),
             nes_palette_mode: NesPaletteMode::default(),
             vsync_mode: VsyncMode::default(),
         }
@@ -226,6 +243,25 @@ impl VideoSettings {
             let (scaling, effect) = self.shader_preset.to_scaling_and_effect();
             self.scaling_mode = scaling;
             self.effect_preset = effect;
+        }
+    }
+
+    pub(crate) fn effective_color_correction(
+        &self,
+        active_system: Option<crate::emu_backend::ActiveSystem>,
+    ) -> EffectiveColorCorrection {
+        match active_system {
+            Some(crate::emu_backend::ActiveSystem::GameBoy) => effective_gb_color_correction(
+                self.gb_color_correction,
+                self.gb_color_correction_matrix,
+            ),
+            Some(crate::emu_backend::ActiveSystem::GameBoyAdvance) => {
+                effective_gba_color_correction(
+                    self.gba_color_correction,
+                    self.gba_color_correction_matrix,
+                )
+            }
+            Some(crate::emu_backend::ActiveSystem::Nes) | None => EffectiveColorCorrection::None,
         }
     }
 }

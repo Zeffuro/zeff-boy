@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) use zeff_gb_core::color_correction::ColorCorrection;
-pub(crate) use zeff_gb_core::color_correction::default_color_correction_matrix;
+pub(crate) use zeff_gb_core::color_correction::{default_color_correction_matrix, gbc_lcd_matrix};
 pub(crate) use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 
 impl crate::debug::ui_helpers::EnumLabel for DmgPalettePreset {
@@ -27,6 +27,32 @@ impl crate::debug::ui_helpers::EnumLabel for ColorCorrection {
 
     fn all_variants() -> &'static [Self] {
         &[Self::None, Self::GbcLcd, Self::Custom]
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub(crate) enum GbaColorCorrection {
+    #[default]
+    None,
+    AgbLcd,
+    LcdResponse,
+    Custom,
+}
+
+impl crate::debug::ui_helpers::EnumLabel for GbaColorCorrection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "None (raw RGB)",
+            Self::AgbLcd => "AGB LCD",
+            Self::LcdResponse => "LCD response",
+            Self::Custom => "Custom matrix",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::None, Self::AgbLcd, Self::LcdResponse, Self::Custom]
     }
 }
 
@@ -92,12 +118,60 @@ impl ShaderParams {
     }
 }
 
-pub(crate) use zeff_gb_core::color_correction::gbc_lcd_matrix;
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum EffectiveColorCorrection {
+    None,
+    Matrix([f32; 9]),
+    GbaAgbLcd,
+    GbaLcdResponse,
+}
+
+impl EffectiveColorCorrection {
+    fn mode(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Matrix(..) => 1,
+            Self::GbaAgbLcd => 2,
+            Self::GbaLcdResponse => 3,
+        }
+    }
+
+    fn matrix(self) -> [f32; 9] {
+        match self {
+            Self::None | Self::GbaAgbLcd | Self::GbaLcdResponse => {
+                default_color_correction_matrix()
+            }
+            Self::Matrix(matrix) => matrix,
+        }
+    }
+}
+
+pub(crate) fn effective_gb_color_correction(
+    correction: ColorCorrection,
+    custom_matrix: [f32; 9],
+) -> EffectiveColorCorrection {
+    match correction {
+        ColorCorrection::None => EffectiveColorCorrection::None,
+        ColorCorrection::GbcLcd => EffectiveColorCorrection::Matrix(gbc_lcd_matrix()),
+        ColorCorrection::Custom => EffectiveColorCorrection::Matrix(custom_matrix),
+    }
+}
+
+pub(crate) fn effective_gba_color_correction(
+    correction: GbaColorCorrection,
+    custom_matrix: [f32; 9],
+) -> EffectiveColorCorrection {
+    match correction {
+        GbaColorCorrection::None => EffectiveColorCorrection::None,
+        GbaColorCorrection::AgbLcd => EffectiveColorCorrection::GbaAgbLcd,
+        GbaColorCorrection::LcdResponse => EffectiveColorCorrection::GbaLcdResponse,
+        GbaColorCorrection::Custom => EffectiveColorCorrection::Matrix(custom_matrix),
+    }
+}
 
 pub(crate) fn build_gpu_params(
     params: &ShaderParams,
-    color_correction: ColorCorrection,
-    color_correction_matrix: [f32; 9],
+    color_correction: EffectiveColorCorrection,
     native_width: f32,
     native_height: f32,
 ) -> [u8; 96] {
@@ -111,19 +185,10 @@ pub(crate) fn build_gpu_params(
     buf[24..28].copy_from_slice(&native_width.to_le_bytes());
     buf[28..32].copy_from_slice(&native_height.to_le_bytes());
 
-    let mode: u32 = match color_correction {
-        ColorCorrection::None => 0,
-        ColorCorrection::GbcLcd => 1,
-        ColorCorrection::Custom => 2,
-    };
-    buf[32..36].copy_from_slice(&mode.to_le_bytes());
+    buf[32..36].copy_from_slice(&color_correction.mode().to_le_bytes());
     buf[36..40].copy_from_slice(&0u32.to_le_bytes());
 
-    let matrix = match color_correction {
-        ColorCorrection::None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        ColorCorrection::GbcLcd => gbc_lcd_matrix(),
-        ColorCorrection::Custom => color_correction_matrix,
-    };
+    let matrix = color_correction.matrix();
 
     buf[48..52].copy_from_slice(&matrix[0].to_le_bytes());
     buf[52..56].copy_from_slice(&matrix[1].to_le_bytes());

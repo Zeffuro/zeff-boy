@@ -12,6 +12,7 @@ pub(crate) enum FrameError {
 
 pub(crate) struct RenderContext<'a> {
     pub(crate) data: DebugDataRefs<'a>,
+    pub(crate) active_system: Option<crate::emu_backend::ActiveSystem>,
     pub(crate) debug_windows: &'a mut DebugWindowState,
     pub(crate) settings: &'a mut crate::settings::Settings,
     pub(crate) show_settings_window: &'a mut bool,
@@ -223,7 +224,7 @@ impl Graphics {
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
         self.framebuffer.set_shader(&self.gpu.device, ctx.settings);
         self.framebuffer
-            .update_params(&self.gpu.queue, ctx.settings);
+            .update_params(&self.gpu.queue, ctx.settings, ctx.active_system);
 
         let (frame, view) = self.acquire_surface_frame()?;
 
@@ -285,14 +286,6 @@ impl Graphics {
         );
         let content_bounds = egui::Rect::from_min_size(content_min, content_size);
 
-        let active_system = ctx.data.perf_info.map(|perf| {
-            if perf.platform_name == "Game Boy" {
-                crate::emu_backend::ActiveSystem::GameBoy
-            } else {
-                crate::emu_backend::ActiveSystem::Nes
-            }
-        });
-
         let gb_hardware_mode_label = ctx.data.perf_info.and_then(|perf| {
             if perf.platform_name != "Game Boy" {
                 None
@@ -309,7 +302,7 @@ impl Graphics {
                 ctx.show_settings_window,
                 content_bounds,
                 &debug::SettingsContext {
-                    active_system,
+                    active_system: ctx.active_system,
                     gb_hardware_mode_label,
                     is_pocket_camera: ctx.is_pocket_camera,
                 },

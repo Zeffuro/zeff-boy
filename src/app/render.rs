@@ -40,6 +40,7 @@ impl App {
                 rom_page: ui_frame_data.and_then(|d| d.rom_page.as_deref()),
                 rom_size: ui_frame_data.map_or(0, |d| d.rom_size),
             },
+            active_system: Some(self.active_system),
             debug_windows: &mut self.debug_windows,
             settings: &mut self.settings,
             show_settings_window: &mut self.show_settings_window,
