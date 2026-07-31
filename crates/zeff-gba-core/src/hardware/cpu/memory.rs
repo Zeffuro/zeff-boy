@@ -2,7 +2,7 @@ use super::super::bus::Bus;
 use super::*;
 
 impl Cpu {
-    pub(crate) fn cpu_read8(&self, bus: &mut Bus, addr: u32) -> u8 {
+    pub(crate) fn cpu_read8(&mut self, bus: &mut Bus, addr: u32) -> u8 {
         if self.protected_bios_data_read_addr(addr) {
             (self.bios_protected_read_latch >> ((addr & 3) * 8)) as u8
         } else if gba_open_bus_read_addr(addr) {
@@ -14,7 +14,7 @@ impl Cpu {
         }
     }
 
-    pub(crate) fn cpu_read16(&self, bus: &mut Bus, addr: u32) -> u16 {
+    pub(crate) fn cpu_read16(&mut self, bus: &mut Bus, addr: u32) -> u16 {
         if self.protected_bios_data_read_addr(addr) {
             (self.bios_protected_read_latch >> ((addr & 2) * 8)) as u16
         } else if gba_open_bus_read_addr(addr) {
@@ -26,7 +26,10 @@ impl Cpu {
         }
     }
 
-    pub(crate) fn cpu_read32(&self, bus: &mut Bus, addr: u32) -> u32 {
+    pub(crate) fn cpu_read32(&mut self, bus: &mut Bus, addr: u32) -> u32 {
+        if gba_timer_word_addr(addr) {
+            self.last_timer_word_read_cycle = Some(self.cycles);
+        }
         if self.protected_bios_data_read_addr(addr) {
             self.bios_protected_read_latch
         } else if gba_open_bus_read_addr(addr) {
@@ -43,6 +46,18 @@ impl Cpu {
         } else {
             bus.read32(addr)
         }
+    }
+
+    pub(crate) fn cpu_write8(&mut self, bus: &mut Bus, addr: u32, value: u8) {
+        bus.write8(addr, value);
+    }
+
+    pub(crate) fn cpu_write16(&mut self, bus: &mut Bus, addr: u32, value: u16) {
+        bus.write16(addr, value);
+    }
+
+    pub(crate) fn cpu_write32(&mut self, bus: &mut Bus, addr: u32, value: u32) {
+        bus.write32(addr, value);
     }
 
     fn protected_bios_data_read_addr(&self, addr: u32) -> bool {

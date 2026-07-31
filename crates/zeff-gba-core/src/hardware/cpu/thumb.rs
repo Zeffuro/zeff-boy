@@ -221,9 +221,9 @@ impl Cpu {
             let ro = ((raw >> 6) & 0x7) as usize;
             let addr = self.regs[rb].wrapping_add(self.regs[ro]);
             match (raw >> 9) & 0x7 {
-                0b000 => bus.write32(addr, self.regs[rd]),
-                0b001 => bus.write16(addr, self.regs[rd] as u16),
-                0b010 => bus.write8(addr, self.regs[rd] as u8),
+                0b000 => self.cpu_write32(bus, addr, self.regs[rd]),
+                0b001 => self.cpu_write16(bus, addr, self.regs[rd] as u16),
+                0b010 => self.cpu_write8(bus, addr, self.regs[rd] as u8),
                 0b011 => {
                     self.regs[rd] = sign_extend(u32::from(self.cpu_read8(bus, addr)), 8) as u32
                 }
@@ -245,9 +245,9 @@ impl Cpu {
                     rotate_right(self.cpu_read32(bus, addr), (addr & 3) * 8)
                 };
             } else if byte {
-                bus.write8(addr, self.regs[rd] as u8);
+                self.cpu_write8(bus, addr, self.regs[rd] as u8);
             } else {
-                bus.write32(addr, self.regs[rd]);
+                self.cpu_write32(bus, addr, self.regs[rd]);
             }
         }
     }
@@ -260,7 +260,7 @@ impl Cpu {
         if load {
             self.regs[rd] = self.load_arm_unsigned_halfword(bus, addr);
         } else {
-            bus.write16(addr, self.regs[rd] as u16);
+            self.cpu_write16(bus, addr, self.regs[rd] as u16);
         }
     }
 
@@ -271,7 +271,7 @@ impl Cpu {
         if load {
             self.regs[rd] = rotate_right(self.cpu_read32(bus, addr), (addr & 3) * 8);
         } else {
-            bus.write32(addr, self.regs[rd]);
+            self.cpu_write32(bus, addr, self.regs[rd]);
         }
     }
 
@@ -318,12 +318,12 @@ impl Cpu {
             let mut addr = self.regs[13];
             for reg in 0..8 {
                 if list & (1 << reg) != 0 {
-                    bus.write32(addr, self.regs[reg]);
+                    self.cpu_write32(bus, addr, self.regs[reg]);
                     addr = addr.wrapping_add(4);
                 }
             }
             if extra {
-                bus.write32(addr, self.regs[14]);
+                self.cpu_write32(bus, addr, self.regs[14]);
             }
         }
     }
@@ -335,9 +335,10 @@ impl Cpu {
         let mut addr = self.regs[rb];
         if list == 0 {
             if load {
-                self.write_reg(15, self.cpu_read32(bus, addr), true);
+                let value = self.cpu_read32(bus, addr);
+                self.write_reg(15, value, true);
             } else {
-                bus.write32(addr, self.regs[15].wrapping_add(4));
+                self.cpu_write32(bus, addr, self.regs[15].wrapping_add(4));
             }
             self.regs[rb] = self.regs[rb].wrapping_add(0x40);
             return;
@@ -356,7 +357,7 @@ impl Cpu {
                 } else {
                     self.regs[reg]
                 };
-                bus.write32(addr, value);
+                self.cpu_write32(bus, addr, value);
             }
             addr = addr.wrapping_add(4);
         }

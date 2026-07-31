@@ -21,13 +21,22 @@ impl Bus {
     }
 
     pub(crate) fn cpu_read_io16(&mut self, addr: u32) -> u16 {
+        self.cpu_read_io16_with_timer_late_cycles(addr, 0)
+    }
+
+    pub(crate) fn cpu_read_io16_with_timer_late_cycles(
+        &mut self,
+        addr: u32,
+        timer_late_cycles: u32,
+    ) -> u16 {
         let aligned_addr = addr & !1;
         let aligned = (aligned_addr & 0x3FF) as usize;
         let value = match aligned {
             0x100..=0x10F => {
                 let timer = ((aligned - 0x100) / 4) as usize;
                 let control = (aligned & 0x2) != 0;
-                self.timers.cpu_read16(timer, control)
+                self.timers
+                    .cpu_read16_with_late_cycles(timer, control, timer_late_cycles)
             }
             _ => self.io_read16_value(aligned),
         };
@@ -126,7 +135,27 @@ impl Bus {
                 let offset = addr & 0xF;
                 let timer = (offset / 4) as usize;
                 let control = (offset & 0x2) != 0;
-                self.timers.write16(timer, control, value);
+                let disable_rewind_cycles = u32::from(
+                    control
+                        && value & 0x0080 == 0
+                        && !self.interrupt_pending(),
+                );
+                if std::env::var_os("ZEFF_GBA_TIMER_TRACE").is_some() && control {
+                    eprintln!(
+                        "TIMER WRITE timer={} value={:04X} clock={} phase64={}",
+                        timer,
+                        value,
+                        self.timer_clock,
+                        self.timer_clock % 64
+                    );
+                }
+                self.timers.write16_at_cycle_with_disable_rewind_cycles(
+                    timer,
+                    control,
+                    value,
+                    disable_rewind_cycles,
+                    self.timer_clock,
+                );
             }
             KEYINPUT => {}
             0x0400_0132 => self.keypad.write_keycnt(value),
@@ -248,14 +277,26 @@ impl Bus {
         let next = read_io16(&self.io, IF) | (flags & 0x3FFF);
         self.write_io16_raw(IF, next);
 
+        let mut min_delay = None;
         for (timer, (extra_delay, cycles_late)) in extra_delays
             .into_iter()
             .zip(cycles_late.into_iter())
             .enumerate()
         {
             if timer_flags & (1 << (3 + timer)) != 0 {
-                self.test_irq_signal_with_extra_delay(cycles_late, extra_delay);
+                let delay = IRQ_DELAY_CYCLES
+                    .saturating_add(extra_delay)
+                    .saturating_sub(cycles_late);
+                min_delay = Some(min_delay.map_or(delay, |current: u32| current.min(delay)));
             }
+        }
+        if self.irq_line_asserted()
+            && let Some(delay) = min_delay
+            && self
+                .irq_delay_cycles
+                .is_none_or(|current| delay < current)
+        {
+            self.irq_delay_cycles = Some(delay);
         }
     }
 

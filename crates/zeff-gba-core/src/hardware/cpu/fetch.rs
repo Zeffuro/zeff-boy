@@ -3,6 +3,28 @@ use super::decode::decode_stub;
 use super::*;
 
 impl Cpu {
+    pub(crate) fn peek_decode_stub(&self, bus: &Bus) -> FetchedInstruction {
+        let instruction_set = self.instruction_set();
+        let width_bytes = instruction_set.width_bytes();
+        let pc = align_pc(self.pc(), instruction_set);
+        if let Some(fetched) = self
+            .prefetch_queue
+            .front()
+            .copied()
+            .filter(|fetched| fetched.pc == pc && fetched.instruction_set == instruction_set)
+        {
+            return fetched;
+        }
+
+        fetch_instruction_at(
+            bus,
+            pc,
+            instruction_set,
+            width_bytes,
+            self.next_fetch_sequential,
+        )
+    }
+
     pub(crate) fn fetch_decode_stub(&mut self, bus: &Bus) -> FetchedInstruction {
         let instruction_set = self.instruction_set();
         let width_bytes = instruction_set.width_bytes();

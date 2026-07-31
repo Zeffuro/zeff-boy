@@ -10,6 +10,14 @@ use zeff_emu_common::debug::{
 };
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+const DEFAULT_IRQ_LOOKAHEAD_CYCLES: u32 = 3;
+const TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES: u32 = 6;
+const LARGE_PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES: u32 = 7;
+const LOOSE_PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES: u32 = 8;
+const LARGE_PRESCALED_TIMER_FUTURE_IRQ_LOOKAHEAD_CYCLES: u32 = 9;
+const PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES: u32 = 4;
+const LOOSE_TIMER_WORD_READ_GAP_CYCLES: u64 = 256;
+const PRESCALED_LOOSE_TIMER_WORD_READ_GAP_CYCLES: u64 = 16;
 
 pub struct Emulator {
     pub(crate) cpu: Cpu,
@@ -88,16 +96,60 @@ impl Emulator {
         if self.cpu.is_suspended() {
             return (None, Vec::new());
         }
-        if self.bus.interrupt_ready() && self.bus.irq_handler_installed() {
-            let irq_delay_cycles = self.bus.take_irq_sample_delay_cycles();
-            if irq_delay_cycles != 0 {
-                self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(irq_delay_cycles));
-                self.bus.step_cycles(irq_delay_cycles);
-            }
-            if !self.cpu.try_service_irq(true) {
-                self.bus.clear_irq_sample_event();
-            }
-        }
+        let next_instruction_reads_timer_word =
+            self.cpu.next_instruction_reads_timer_word(&self.bus);
+        let irq_lookahead_cycles = if next_instruction_reads_timer_word
+            && (self.bus.prescaled_loose_timer_interrupt_pending_after_services(3)
+                || self.bus.prescaled_loose_timer_irq_enabled_after_services(3))
+            && self.cpu.cycles_since_last_timer_word_read()
+                >= PRESCALED_LOOSE_TIMER_WORD_READ_GAP_CYCLES
+        {
+            LOOSE_PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if next_instruction_reads_timer_word
+            && self
+                .bus
+                .large_prescaled_loose_timer_irq_enabled_at_service_count(0)
+            && self.cpu.cycles_since_last_timer_word_read()
+                >= PRESCALED_LOOSE_TIMER_WORD_READ_GAP_CYCLES
+        {
+            LOOSE_PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if next_instruction_reads_timer_word
+            && self.bus.large_prescaled_timer_interrupt_pending_after_services(1)
+            && self.cpu.cycles_since_last_timer_word_read()
+                < PRESCALED_LOOSE_TIMER_WORD_READ_GAP_CYCLES
+        {
+            LARGE_PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if next_instruction_reads_timer_word
+            && self
+                .bus
+                .prescaled_timer_interrupt_pending_after_services(1)
+            && self.cpu.cycles_since_last_timer_word_read()
+                < PRESCALED_LOOSE_TIMER_WORD_READ_GAP_CYCLES
+        {
+            TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if next_instruction_reads_timer_word
+            && self.bus.large_prescaled_timer_interrupt_pending()
+            && self.cpu.cycles_since_last_timer_word_read()
+                < PRESCALED_LOOSE_TIMER_WORD_READ_GAP_CYCLES
+        {
+            TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if next_instruction_reads_timer_word && self.bus.prescaled_timer_interrupt_pending()
+        {
+            PRESCALED_TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if next_instruction_reads_timer_word
+            && self.bus.long_period_timer_interrupt_pending_after_services(3)
+            && self.cpu.cycles_since_last_timer_word_read() >= LOOSE_TIMER_WORD_READ_GAP_CYCLES
+        {
+            TIMER_WORD_LOAD_IRQ_LOOKAHEAD_CYCLES
+        } else if self
+            .bus
+            .large_prescaled_timer_irq_enabled_at_service_count(1, 1)
+        {
+            LARGE_PRESCALED_TIMER_FUTURE_IRQ_LOOKAHEAD_CYCLES
+        } else {
+            DEFAULT_IRQ_LOOKAHEAD_CYCLES
+        };
+        self.try_service_ready_irq(irq_lookahead_cycles);
         if self.debug.should_break(self.cpu.pc()) {
             self.cpu.suspend();
             return (None, Vec::new());
@@ -128,7 +180,9 @@ impl Emulator {
             .min(u64::from(u32::MAX));
         let dma_cycles = self.bus.take_pending_dma_cycles();
         self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(dma_cycles));
-        self.bus.timers.begin_step_window(elapsed as u32);
+        self.bus
+            .timers
+            .begin_step_window((elapsed as u32).saturating_add(dma_cycles));
         self.bus
             .step_cycles((elapsed as u32).saturating_add(dma_cycles));
 
@@ -142,6 +196,57 @@ impl Emulator {
         };
 
         (fetched, bus_trace_events)
+    }
+
+    fn try_service_ready_irq(&mut self, lookahead_cycles: u32) {
+        if !self.cpu.irq_enabled() || !self.bus.irq_handler_installed() {
+            return;
+        }
+
+        let irq_delay_cycles =
+            if self.bus.interrupt_ready_with_lookahead(lookahead_cycles) {
+                self.bus
+                    .take_irq_sample_delay_cycles_with_lookahead(lookahead_cycles)
+            } else if let Some(cycles_until_ready) = self
+                .bus
+                .cycles_until_timer_irq_ready()
+                .filter(|&cycles| cycles <= lookahead_cycles)
+            {
+                if std::env::var_os("ZEFF_GBA_TIMER_TRACE").is_some() {
+                    let (reload, counter, control, irq_services) = self.bus.debug_timer0();
+                    eprintln!(
+                        "IRQ FUTURE cyc={} pc={:08X} look={} until={} gap={} r0={:08X} r2={:08X} t0={:04X}/{:04X}/{:04X} svc={}",
+                        self.cpu.cycles,
+                        self.cpu.pc(),
+                        lookahead_cycles,
+                        cycles_until_ready,
+                        self.cpu.cycles_since_last_timer_word_read(),
+                        self.cpu.regs[0],
+                        self.cpu.regs[2],
+                        reload,
+                        counter,
+                        control,
+                        irq_services
+                    );
+                }
+                self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(cycles_until_ready));
+                self.bus.step_cycles(cycles_until_ready);
+                self.bus.take_irq_sample_delay_cycles_with_lookahead(0)
+            } else {
+                return;
+            };
+        if irq_delay_cycles != 0 {
+            self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(irq_delay_cycles));
+            self.bus.step_cycles(irq_delay_cycles);
+        }
+        if self.cpu.try_service_irq(true) {
+            self.bus.note_irq_service(
+                irq_delay_cycles,
+                self.cpu
+                    .cycles_since_last_timer_word_read()
+                    .min(u64::from(u32::MAX)) as u32,
+            );
+        }
     }
 
     pub fn finish_frame(&mut self) {

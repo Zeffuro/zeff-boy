@@ -30,7 +30,14 @@ impl Cpu {
             _ => {}
         }
         self.bios_protected_read_latch = super::POST_SWI_BIOS_READ_LATCH;
-        self.cycles = self.cycles.wrapping_add(4);
+        let cycles = if function == 0x04 {
+            std::env::var_os("ZEFF_GBA_INTR_WAIT_CYCLES")
+                .and_then(|value| value.to_str().and_then(|value| value.parse::<u32>().ok()))
+                .unwrap_or(4)
+        } else {
+            4
+        };
+        self.cycles = self.cycles.wrapping_add(u64::from(cycles));
     }
 
     fn swi_intr_wait(&mut self, bus: &mut Bus, discard_old_flags: bool, mask: u16) {

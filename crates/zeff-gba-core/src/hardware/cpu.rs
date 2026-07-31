@@ -134,6 +134,7 @@ pub struct Cpu {
     bios_protected_read_latch: u32,
     pub(crate) swi_wait_return_pc: Option<u32>,
     prefetch_queue: VecDeque<FetchedInstruction>,
+    last_timer_word_read_cycle: Option<u64>,
     pub(crate) banked_sp: [u32; CPU_BANKS],
     pub(crate) banked_lr: [u32; CPU_BANKS],
     pub(crate) banked_spsr: [u32; CPU_BANKS],
@@ -161,6 +162,7 @@ impl Cpu {
             bios_protected_read_latch: POST_STARTUP_BIOS_READ_LATCH,
             swi_wait_return_pc: None,
             prefetch_queue: VecDeque::with_capacity(PREFETCH_QUEUE_LEN),
+            last_timer_word_read_cycle: None,
             banked_sp: [0; CPU_BANKS],
             banked_lr: [0; CPU_BANKS],
             banked_spsr: [0; CPU_BANKS],
@@ -295,12 +297,120 @@ impl Cpu {
         true
     }
 
+    pub(crate) fn irq_enabled(&self) -> bool {
+        self.cpsr & CPSR_IRQ_DISABLE == 0
+    }
+
+    pub(crate) fn next_instruction_reads_timer_word(&self, bus: &Bus) -> bool {
+        let fetched = self.peek_decode_stub(bus);
+        self.fetched_condition_passed(fetched) && self.fetched_reads_timer_word(fetched)
+    }
+
+    pub(crate) fn cycles_since_last_timer_word_read(&self) -> u64 {
+        self.last_timer_word_read_cycle
+            .map_or(u64::MAX, |cycles| self.cycles.saturating_sub(cycles))
+    }
+
     fn fetched_condition_passed(&self, fetched: FetchedInstruction) -> bool {
         match fetched.decoded {
             DecodedInstruction::Arm { condition, .. } => {
                 condition != 0xF && self.condition_passed(condition)
             }
             DecodedInstruction::Thumb { .. } => true,
+        }
+    }
+
+    fn fetched_reads_timer_word(&self, fetched: FetchedInstruction) -> bool {
+        match fetched.decoded {
+            DecodedInstruction::Arm {
+                class: ArmInstructionClass::SingleDataTransfer,
+                ..
+            } => self
+                .arm_single_data_transfer_word_read_addr(fetched)
+                .is_some_and(gba_timer_word_addr),
+            DecodedInstruction::Thumb {
+                class:
+                    ThumbInstructionClass::PcRelativeLoad
+                    | ThumbInstructionClass::LoadStore
+                    | ThumbInstructionClass::SpRelativeLoad,
+            } => self
+                .thumb_word_read_addr(fetched)
+                .is_some_and(gba_timer_word_addr),
+            _ => false,
+        }
+    }
+
+    fn arm_single_data_transfer_word_read_addr(&self, fetched: FetchedInstruction) -> Option<u32> {
+        let raw = fetched.raw;
+        let halfword_transfer = raw & 0x0E00_0090 == 0x0000_0090 && raw & 0x60 != 0;
+        let load = raw & (1 << 20) != 0;
+        let byte = raw & (1 << 22) != 0;
+        if halfword_transfer || !load || byte {
+            return None;
+        }
+
+        let immediate_register = raw & (1 << 25) != 0;
+        let pre_index = raw & (1 << 24) != 0;
+        let add = raw & (1 << 23) != 0;
+        let rn = ((raw >> 16) & 0xF) as usize;
+        let base = self.reg_read_arm(rn, fetched.pc);
+        let offset = if immediate_register {
+            self.arm_register_operand(raw, fetched.pc).0
+        } else {
+            raw & 0xFFF
+        };
+        let offset_base = if add {
+            base.wrapping_add(offset)
+        } else {
+            base.wrapping_sub(offset)
+        };
+        Some(if pre_index { offset_base } else { base })
+    }
+
+    fn thumb_word_read_addr(&self, fetched: FetchedInstruction) -> Option<u32> {
+        let raw = fetched.raw as u16;
+        match fetched.decoded {
+            DecodedInstruction::Thumb {
+                class: ThumbInstructionClass::PcRelativeLoad,
+            } => {
+                Some((fetched.pc.wrapping_add(4) & !3).wrapping_add(u32::from(raw & 0xFF) << 2))
+            }
+            DecodedInstruction::Thumb {
+                class: ThumbInstructionClass::SpRelativeLoad,
+            } => {
+                let load = raw & (1 << 11) != 0;
+                if load {
+                    Some(self.regs[13].wrapping_add(u32::from(raw & 0xFF) << 2))
+                } else {
+                    None
+                }
+            }
+            DecodedInstruction::Thumb {
+                class: ThumbInstructionClass::LoadStore,
+            } if raw & 0xF000 == 0x5000 => {
+                let op = (raw >> 9) & 0x7;
+                if op == 0b100 {
+                    let rb = ((raw >> 3) & 0x7) as usize;
+                    let ro = ((raw >> 6) & 0x7) as usize;
+                    Some(self.regs[rb].wrapping_add(self.regs[ro]))
+                } else {
+                    None
+                }
+            }
+            DecodedInstruction::Thumb {
+                class: ThumbInstructionClass::LoadStore,
+            } => {
+                let byte = raw & (1 << 12) != 0;
+                let load = raw & (1 << 11) != 0;
+                if load && !byte {
+                    let rb = ((raw >> 3) & 0x7) as usize;
+                    let offset = u32::from((raw >> 6) & 0x1F) << 2;
+                    Some(self.regs[rb].wrapping_add(offset))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
@@ -546,6 +656,13 @@ fn instruction_base_cycles(fetched: FetchedInstruction, condition_passed: bool) 
 fn block_transfer_register_count(raw: u32) -> u32 {
     let count = (raw & 0xFFFF).count_ones();
     if count == 0 { 16 } else { count }
+}
+
+fn gba_timer_word_addr(addr: u32) -> bool {
+    matches!(
+        addr & !3,
+        0x0400_0100 | 0x0400_0104 | 0x0400_0108 | 0x0400_010C
+    )
 }
 
 #[cfg(test)]

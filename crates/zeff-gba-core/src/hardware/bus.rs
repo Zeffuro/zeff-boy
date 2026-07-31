@@ -55,6 +55,7 @@ pub struct Bus {
     pub oam: Vec<u8>,
     pending_dma_cycles: u32,
     irq_delay_cycles: Option<u32>,
+    timer_clock: u64,
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_reads: bool,
     pub(crate) debug_trace_writes: bool,
@@ -78,6 +79,7 @@ impl Bus {
             oam: vec![0; OAM_SIZE],
             pending_dma_cycles: 0,
             irq_delay_cycles: None,
+            timer_clock: 0,
             debug_trace_enabled: false,
             debug_trace_reads: false,
             debug_trace_writes: false,
@@ -402,6 +404,7 @@ impl Bus {
                     timer_irq_cycles_late,
                 );
             }
+            self.timer_clock = self.timer_clock.wrapping_add(u64::from(step));
         }
     }
 
@@ -422,21 +425,332 @@ impl Bus {
     }
 
     pub(crate) fn interrupt_ready(&self) -> bool {
+        self.interrupt_ready_with_lookahead(IRQ_SAMPLE_LOOKAHEAD_CYCLES)
+    }
+
+    pub(crate) fn interrupt_ready_with_lookahead(&self, lookahead_cycles: u32) -> bool {
         self.interrupt_pending()
             && self
                 .irq_delay_cycles
-                .is_some_and(|cycles| cycles <= IRQ_SAMPLE_LOOKAHEAD_CYCLES)
+                .is_some_and(|cycles| cycles <= lookahead_cycles)
     }
 
     pub(crate) fn take_irq_sample_delay_cycles(&mut self) -> u32 {
+        self.take_irq_sample_delay_cycles_with_lookahead(IRQ_SAMPLE_LOOKAHEAD_CYCLES)
+    }
+
+    pub(crate) fn take_irq_sample_delay_cycles_with_lookahead(
+        &mut self,
+        lookahead_cycles: u32,
+    ) -> u32 {
         let Some(cycles) = self.irq_delay_cycles else {
             return 0;
         };
-        if cycles > IRQ_SAMPLE_LOOKAHEAD_CYCLES {
+        if cycles > lookahead_cycles {
             return 0;
         }
         self.irq_delay_cycles = Some(0);
         cycles
+    }
+
+    pub(crate) fn cycles_until_timer_irq_ready(&self) -> Option<u32> {
+        if read_io16(&self.io, IME) & 1 == 0 {
+            return None;
+        }
+
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return None;
+        }
+
+        (0..4)
+            .filter(|&timer| enabled_timer_flags & (1 << (3 + timer)) != 0)
+            .filter_map(|timer| {
+                self.timers
+                    .cycles_until_irq_request(timer)
+                    .map(|cycles| cycles.saturating_add(IRQ_DELAY_CYCLES))
+            })
+            .min()
+    }
+
+    pub(crate) fn note_irq_service(
+        &mut self,
+        sample_delay_cycles: u32,
+        timer_word_read_gap_cycles: u32,
+    ) {
+        self.timers.note_irq_service(
+            self.enabled_interrupt_flags(),
+            sample_delay_cycles,
+            timer_word_read_gap_cycles,
+        );
+    }
+
+    pub(crate) fn debug_irq_delay_cycles(&self) -> Option<u32> {
+        self.irq_delay_cycles
+    }
+
+    pub(crate) fn debug_timer0(&self) -> (u16, u16, u16, u32) {
+        let timer = self.timers.all()[0];
+        (
+            timer.reload,
+            timer.counter,
+            timer.control,
+            self.timers.debug_irq_services_since_enable(0),
+        )
+    }
+
+    pub(crate) fn long_period_timer_interrupt_pending_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        let pending_timer_flags = read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x0078;
+        if pending_timer_flags == 0 {
+            return false;
+        }
+
+        const LONG_TIMER_IRQ_PERIOD_CYCLES: u32 = 128;
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                pending_timer_flags & (1 << (3 + timer)) != 0
+                    && state.control & 0x00C0 == 0x00C0
+                    && 0x1_0000u32 - u32::from(state.reload) >= LONG_TIMER_IRQ_PERIOD_CYCLES
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn prescaled_timer_interrupt_pending(&self) -> bool {
+        self.prescaled_timer_interrupt_pending_after_services(0)
+    }
+
+    pub(crate) fn large_prescaled_timer_interrupt_pending(&self) -> bool {
+        self.large_prescaled_timer_interrupt_pending_after_services(0)
+    }
+
+    pub(crate) fn large_prescaled_timer_interrupt_pending_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        let pending_timer_flags = read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x0078;
+        if pending_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                pending_timer_flags & (1 << (3 + timer)) != 0
+                    && state.control & 0x00C0 == 0x00C0
+                    && matches!(state.control & 0x0003, 2 | 3)
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn large_prescaled_timer_irq_enabled_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                enabled_timer_flags & (1 << (3 + timer)) != 0
+                    && state.control & 0x00C0 == 0x00C0
+                    && matches!(state.control & 0x0003, 2 | 3)
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn large_prescaled_timer_irq_enabled_at_service_count(
+        &self,
+        services_since_enable: u32,
+        first_sample_delay_cycles: u32,
+    ) -> bool {
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                enabled_timer_flags & (1 << (3 + timer)) != 0
+                    && state.control & 0x00C0 == 0x00C0
+                    && matches!(state.control & 0x0003, 2 | 3)
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        == services_since_enable
+                    && self.timers.first_irq_sample_delay_cycles(timer)
+                        == Some(first_sample_delay_cycles)
+            })
+    }
+
+    pub(crate) fn prescaled_timer_interrupt_pending_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        self.prescaled_timer_interrupt_pending_after_services_with_min_cycle_len(
+            min_services_since_enable,
+            1,
+        )
+    }
+
+    pub(crate) fn prescaled_timer_interrupt_pending_after_services_with_min_cycle_len(
+        &self,
+        min_services_since_enable: u32,
+        min_cycle_len: u32,
+    ) -> bool {
+        let pending_timer_flags = read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x0078;
+        if pending_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                pending_timer_flags & (1 << (3 + timer)) != 0
+                    && state.control & 0x00C0 == 0x00C0
+                    && state.control & 0x0003 != 0
+                    && 0x1_0000u32 - u32::from(state.reload) >= min_cycle_len
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn prescaled_loose_timer_interrupt_pending_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        let pending_timer_flags = read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x0078;
+        if pending_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                pending_timer_flags & (1 << (3 + timer)) != 0
+                    && prescaled_loose_timer_candidate(state.control, state.reload)
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn prescaled_timer_irq_enabled_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        self.prescaled_timer_irq_enabled_after_services_with_min_cycle_len(
+            min_services_since_enable,
+            1,
+        )
+    }
+
+    pub(crate) fn prescaled_timer_irq_enabled_after_services_with_min_cycle_len(
+        &self,
+        min_services_since_enable: u32,
+        min_cycle_len: u32,
+    ) -> bool {
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                enabled_timer_flags & (1 << (3 + timer)) != 0
+                    && state.control & 0x00C0 == 0x00C0
+                    && state.control & 0x0003 != 0
+                    && 0x1_0000u32 - u32::from(state.reload) >= min_cycle_len
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn prescaled_loose_timer_irq_enabled_after_services(
+        &self,
+        min_services_since_enable: u32,
+    ) -> bool {
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                enabled_timer_flags & (1 << (3 + timer)) != 0
+                    && prescaled_loose_timer_candidate(state.control, state.reload)
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        >= min_services_since_enable
+            })
+    }
+
+    pub(crate) fn prescaled_loose_timer_irq_enabled_at_service_count(
+        &self,
+        services_since_enable: u32,
+    ) -> bool {
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                enabled_timer_flags & (1 << (3 + timer)) != 0
+                    && prescaled_loose_timer_candidate(state.control, state.reload)
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        == services_since_enable
+            })
+    }
+
+    pub(crate) fn large_prescaled_loose_timer_irq_enabled_at_service_count(
+        &self,
+        services_since_enable: u32,
+    ) -> bool {
+        let enabled_timer_flags = read_io16(&self.io, IE) & 0x0078;
+        if enabled_timer_flags == 0 {
+            return false;
+        }
+
+        self.timers
+            .all()
+            .into_iter()
+            .enumerate()
+            .any(|(timer, state)| {
+                enabled_timer_flags & (1 << (3 + timer)) != 0
+                    && prescaled_loose_timer_candidate(state.control, state.reload)
+                    && matches!(state.control & 0x0003, 2 | 3)
+                    && 0x1_0000u32 - u32::from(state.reload) == 18
+                    && self.timers.debug_irq_services_since_enable(timer)
+                        == services_since_enable
+            })
     }
 
     pub(crate) fn clear_irq_sample_event(&mut self) {
@@ -599,6 +913,20 @@ fn is_sound_fifo_register(addr: u32) -> bool {
 
 fn is_backup_addr(addr: u32) -> bool {
     matches!(addr, 0x0E00_0000..=0x0FFF_FFFF)
+}
+
+fn prescaled_loose_timer_candidate(control: u16, reload: u16) -> bool {
+    if control & 0x00C0 != 0x00C0 || control & 0x0003 == 0 {
+        return false;
+    }
+
+    let cycle_len = 0x1_0000u32 - u32::from(reload);
+    let period = match control & 0x0003 {
+        1 => 64,
+        2 => 256,
+        _ => 1024,
+    };
+    (period >= 256 && cycle_len <= 18) || (period == 64 && cycle_len >= 19)
 }
 
 fn write_repeated_video_byte(memory: &mut [u8], addr: usize, value: u8) {

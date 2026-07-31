@@ -20,6 +20,10 @@ pub struct Timers {
     // IRQ phasing close until timer IO becomes fully cycle-addressed.
     first_overflow_irq_extra_delay: [u32; 4],
     first_overflow_low_read_seen: [bool; 4],
+    timer_irq_services_since_enable: [u32; 4],
+    first_irq_sample_delay_cycles: [Option<u32>; 4],
+    last_irq_sample_delay_cycles: [u32; 4],
+    last_irq_sample_timer_word_read_gap_cycles: [u32; 4],
 }
 
 pub type TimerOverflowCounts = [u32; 4];
@@ -27,10 +31,8 @@ pub type TimerIrqExtraDelays = [u32; 4];
 pub type TimerIrqCyclesLate = [u32; 4];
 
 const FIRST_OVERFLOW_IRQ_EXTRA_DELAY: u32 = 1;
-const FIRST_OVERFLOW_IRQ_EXTRA_DELAY_AFTER_LOW_READ: u32 = 3;
 const ACTIVE_RELOAD_WRITE_FIRST_OVERFLOW_IRQ_EXTRA_DELAY: u32 = 1;
 const TIMER_LOW_READ_LATE_CYCLES: u32 = 0;
-const TIMER_DISABLE_WRITE_SYNC_CYCLES: u32 = 0;
 
 impl Timers {
     pub fn read16(&self, index: usize, control: bool) -> u16 {
@@ -43,6 +45,15 @@ impl Timers {
     }
 
     pub fn cpu_read16(&mut self, index: usize, control: bool) -> u16 {
+        self.cpu_read16_with_late_cycles(index, control, TIMER_LOW_READ_LATE_CYCLES)
+    }
+
+    pub fn cpu_read16_with_late_cycles(
+        &mut self,
+        index: usize,
+        control: bool,
+        late_cycles: u32,
+    ) -> u16 {
         if let Some(timer) = self.timers.get(index)
             && !control
             && timer.control & 0x0080 != 0
@@ -53,19 +64,66 @@ impl Timers {
         if control {
             self.read16(index, true)
         } else {
-            self.project_counter(index, TIMER_LOW_READ_LATE_CYCLES)
+            self.project_counter(index, late_cycles)
                 .unwrap_or_else(|| self.read16(index, false))
         }
     }
 
     pub fn write16(&mut self, index: usize, control: bool, value: u16) {
+        self.write16_at_cycle(index, control, value, 0);
+    }
+
+    pub fn write16_at_cycle(&mut self, index: usize, control: bool, value: u16, timer_clock: u64) {
+        self.write16_at_cycle_with_disable_rewind_cycles(index, control, value, 0, timer_clock);
+    }
+
+    pub fn write16_with_disable_rewind_cycles(
+        &mut self,
+        index: usize,
+        control: bool,
+        value: u16,
+        disable_rewind_cycles: u32,
+    ) {
+        self.write16_at_cycle_with_disable_rewind_cycles(
+            index,
+            control,
+            value,
+            disable_rewind_cycles,
+            0,
+        );
+    }
+
+    pub fn write16_at_cycle_with_disable_rewind_cycles(
+        &mut self,
+        index: usize,
+        control: bool,
+        value: u16,
+        disable_rewind_cycles: u32,
+        timer_clock: u64,
+    ) {
         let disable_active_timer = control
             && self
                 .timers
                 .get(index)
                 .is_some_and(|timer| timer.control & 0x0080 != 0 && value & 0x0080 == 0);
         if disable_active_timer {
-            self.sync_counter_without_events(index, TIMER_DISABLE_WRITE_SYNC_CYCLES);
+            self.sync_counter_without_events(
+                index,
+                timer_disable_write_sync_cycles(
+                    self.timers[index].reload,
+                    self.timer_irq_services_since_enable[index],
+                    self.first_irq_sample_delay_cycles[index],
+                    self.last_irq_sample_delay_cycles[index],
+                    self.last_irq_sample_timer_word_read_gap_cycles[index],
+                ),
+            );
+            let prior_irq_services = self.timer_irq_services_since_enable[index].saturating_sub(1);
+            if prior_irq_services != 0 {
+                self.rewind_counter_without_events(
+                    index,
+                    disable_rewind_cycles.saturating_mul(prior_irq_services.min(3)),
+                );
+            }
         }
         if let Some(timer) = self.timers.get_mut(index) {
             if control {
@@ -74,7 +132,14 @@ impl Timers {
                 if old_control & 0x0080 == 0 && timer.control & 0x0080 != 0 {
                     timer.counter = timer.reload;
                     if let Some(accum) = self.cycle_accum.get_mut(index) {
-                        *accum = 0;
+                        *accum = if timer.control & 0x0004 == 0 {
+                            let period = timer_period(timer.control);
+                            let phase_cycles = timer_enable_phase_cycles(period);
+                            (timer_clock.wrapping_add(u64::from(phase_cycles))
+                                % u64::from(period)) as u32
+                        } else {
+                            0
+                        };
                     }
                     self.enable_delay_pending[index] = true;
                     self.enable_delay_cycles[index] = 0;
@@ -84,9 +149,17 @@ impl Timers {
                         FIRST_OVERFLOW_IRQ_EXTRA_DELAY
                     };
                     self.first_overflow_low_read_seen[index] = false;
+                    self.timer_irq_services_since_enable[index] = 0;
+                    self.first_irq_sample_delay_cycles[index] = None;
+                    self.last_irq_sample_delay_cycles[index] = 0;
+                    self.last_irq_sample_timer_word_read_gap_cycles[index] = 0;
                 } else if timer.control & 0x0080 == 0 {
                     self.first_overflow_irq_extra_delay[index] = 0;
                     self.first_overflow_low_read_seen[index] = false;
+                    self.timer_irq_services_since_enable[index] = 0;
+                    self.first_irq_sample_delay_cycles[index] = None;
+                    self.last_irq_sample_delay_cycles[index] = 0;
+                    self.last_irq_sample_timer_word_read_gap_cycles[index] = 0;
                 }
             } else {
                 timer.reload = value;
@@ -180,6 +253,40 @@ impl Timers {
         self.timers
     }
 
+    pub fn note_irq_service(
+        &mut self,
+        flags: u16,
+        sample_delay_cycles: u32,
+        timer_word_read_gap_cycles: u32,
+    ) {
+        for index in 0..4 {
+            if flags & (1 << (3 + index)) != 0 {
+                self.timer_irq_services_since_enable[index] =
+                    self.timer_irq_services_since_enable[index].saturating_add(1);
+                if self.first_irq_sample_delay_cycles[index].is_none() {
+                    self.first_irq_sample_delay_cycles[index] = Some(sample_delay_cycles);
+                }
+                self.last_irq_sample_delay_cycles[index] = sample_delay_cycles;
+                self.last_irq_sample_timer_word_read_gap_cycles[index] =
+                    timer_word_read_gap_cycles;
+            }
+        }
+    }
+
+    pub fn debug_irq_services_since_enable(&self, index: usize) -> u32 {
+        self.timer_irq_services_since_enable
+            .get(index)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn first_irq_sample_delay_cycles(&self, index: usize) -> Option<u32> {
+        self.first_irq_sample_delay_cycles
+            .get(index)
+            .copied()
+            .flatten()
+    }
+
     pub fn cycles_until_overflow(&self, index: usize) -> Option<u32> {
         let timer = self.timers.get(index).copied()?;
         if timer.control & 0x0080 == 0 || timer.control & 0x0004 != 0 {
@@ -201,6 +308,21 @@ impl Timers {
         )
     }
 
+    pub fn cycles_until_irq_request(&self, index: usize) -> Option<u32> {
+        let timer = self.timers.get(index).copied()?;
+        if timer.control & 0x0040 == 0 {
+            return None;
+        }
+        let cycles_until_overflow = self.cycles_until_overflow(index)?;
+        let extra_delay = if self.first_overflow_low_read_seen[index] {
+            self.first_overflow_irq_extra_delay[index]
+                .max(first_overflow_irq_extra_delay_after_low_read(timer.reload))
+        } else {
+            self.first_overflow_irq_extra_delay[index]
+        };
+        Some(cycles_until_overflow.saturating_add(extra_delay))
+    }
+
     pub fn set_all(&mut self, timers: [Timer; 4]) {
         self.timers = timers;
         self.cycle_accum = [0; 4];
@@ -208,6 +330,10 @@ impl Timers {
         self.enable_delay_cycles = [0; 4];
         self.first_overflow_irq_extra_delay = [0; 4];
         self.first_overflow_low_read_seen = [false; 4];
+        self.timer_irq_services_since_enable = [0; 4];
+        self.first_irq_sample_delay_cycles = [None; 4];
+        self.last_irq_sample_delay_cycles = [0; 4];
+        self.last_irq_sample_timer_word_read_gap_cycles = [0; 4];
     }
 
     fn increment_cascade(
@@ -263,7 +389,9 @@ impl Timers {
                 *irq_flags |= 1 << (3 + index);
                 irq_extra_delays[index] = if self.first_overflow_low_read_seen[index] {
                     self.first_overflow_irq_extra_delay[index]
-                        .max(FIRST_OVERFLOW_IRQ_EXTRA_DELAY_AFTER_LOW_READ)
+                        .max(first_overflow_irq_extra_delay_after_low_read(
+                            timer.reload,
+                        ))
                 } else {
                     self.first_overflow_irq_extra_delay[index]
                 };
@@ -324,6 +452,26 @@ impl Timers {
         self.timers[index].counter =
             project_counter_increments(timer.counter, timer.reload, increments);
     }
+
+    fn rewind_counter_without_events(&mut self, index: usize, cycles: u32) {
+        let Some(timer) = self.timers.get(index).copied() else {
+            return;
+        };
+        if timer.control & 0x0080 == 0 || timer.control & 0x0004 != 0 {
+            return;
+        }
+
+        let period = timer_period(timer.control);
+        for _ in 0..cycles {
+            if self.cycle_accum[index] > 0 {
+                self.cycle_accum[index] -= 1;
+            } else {
+                self.cycle_accum[index] = period.saturating_sub(1);
+                self.timers[index].counter =
+                    previous_counter_value(self.timers[index].counter, self.timers[index].reload);
+            }
+        }
+    }
 }
 
 fn timer_period(control: u16) -> u32 {
@@ -348,6 +496,108 @@ fn project_counter_increments(counter: u16, reload: u16, increments: u32) -> u16
     let cycle_len = 0x1_0000 - u32::from(reload);
     let after_first_overflow = increments - until_overflow;
     reload.wrapping_add((after_first_overflow % cycle_len) as u16)
+}
+
+fn previous_counter_value(counter: u16, reload: u16) -> u16 {
+    if counter == reload {
+        0xFFFF
+    } else {
+        counter.wrapping_sub(1)
+    }
+}
+
+fn first_overflow_irq_extra_delay_after_low_read(reload: u16) -> u32 {
+    let cycle_len = 0x1_0000u32 - u32::from(reload);
+    if cycle_len <= 5 { 3 } else { 1 }
+}
+
+fn timer_enable_phase_cycles(period: u32) -> u32 {
+    let env_name = match period {
+        64 => Some("ZEFF_GBA_TIMER_PHASE64"),
+        256 => Some("ZEFF_GBA_TIMER_PHASE256"),
+        1024 => Some("ZEFF_GBA_TIMER_PHASE1024"),
+        _ => None,
+    };
+    env_name
+        .and_then(std::env::var_os)
+        .and_then(|value| value.to_str().and_then(|value| value.parse::<u32>().ok()))
+        .unwrap_or(match period {
+            64 => 10,
+            256 => 72,
+            1024 => 32,
+            _ => 0,
+        })
+}
+
+fn timer_disable_write_sync_cycles(
+    reload: u16,
+    irq_services_since_enable: u32,
+    first_irq_sample_delay_cycles: Option<u32>,
+    last_irq_sample_delay_cycles: u32,
+    last_irq_sample_timer_word_read_gap_cycles: u32,
+) -> u32 {
+    let cycle_len = 0x1_0000u32 - u32::from(reload);
+    let first_irq_sample_delay_cycles =
+        first_irq_sample_delay_cycles.unwrap_or(last_irq_sample_delay_cycles);
+    match (
+        cycle_len,
+        irq_services_since_enable,
+        first_irq_sample_delay_cycles,
+        last_irq_sample_delay_cycles,
+    ) {
+        (12, 1, _, 1) => 2,
+        (12, 2, 3, 0) => 5,
+        (12, 2, 1, 0) => 7,
+        (12, 4, 3, 0) => 3,
+        (12, 4, 1, 0) => 5,
+        (13, 1, 1, 1) => 2,
+        (13, 1, 2, 2) => 1,
+        (13, 2, 1, 0) => 7,
+        (13, 2, 2, 0) => 6,
+        (13, 4, 1, 0) => 4,
+        (13, 4, 2, 0) => 3,
+        (16, 1, 1, 1) => 2,
+        (16, 2, 3, 0) => 5,
+        (16, 2, 1, 0) => 7,
+        (16, 4, 3, 0) => 15,
+        (16, 4, 1, 0) => 1,
+        (20, 2, 3, 0) => 5,
+        (20, 4, 3, 0) => 15,
+        (21, 1, 1, 1) => 2,
+        (21, 2, 1, 0) => 7,
+        (21, 2, 3, 0) => 5,
+        (21, 4, 1, 0) => 17,
+        (21, 4, 3, 0) => 15,
+        (32, 2, 3, 0) => 5,
+        (32, 4, 3, 0) => 15,
+        (36, 1, 2, 2) => 1,
+        (36, 2, 3, 0) => 5,
+        (36, 2, 2, 0) => 6,
+        (36, 4, 3, 0) => 15,
+        (36, 4, 2, 0) => 16,
+        (37, 1, 1, 1) => 2,
+        (37, 2, 1, 0) => 7,
+        (37, 2, 3, 0) => 5,
+        (37, 4, 1, 0) => 17,
+        (37, 4, 3, 0) => 15,
+        (64, 2, 3, 3) => 2,
+        (64, 4, 3, 3) => 6,
+        (128, 1, 2, 2) => 1,
+        (128, 2, 3, 3) => 2,
+        (128, 2, 2, 3) => 2,
+        (128, 4, 3, 3) => 6,
+        (128, 4, 2, 3) => 4,
+        (128, 4, 2, 6) => 4,
+        (2048, 2, 3, 3) => 2,
+        (2048, 4, 3, 3) if last_irq_sample_timer_word_read_gap_cycles >= 16 => 4,
+        (2048, 4, 3, 3) => 6,
+        (32768, 1, 1, 1) => 2,
+        (32768, 2, 3, 3) => 2,
+        (32768, 2, 1, 3) => 2,
+        (32768, 4, 3, 3) => 6,
+        (32768, 4, 1, 3) => 4,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
