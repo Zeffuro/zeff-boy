@@ -67,6 +67,7 @@ pub(crate) trait Mapper: Send {
 pub struct Cartridge {
     header: RomHeader,
     mapper: MapperImpl,
+    rom_crc32: u32,
     effective_mapper_label: Option<&'static str>,
 }
 
@@ -507,12 +508,17 @@ impl Cartridge {
         Ok(Self {
             header,
             mapper,
+            rom_crc32,
             effective_mapper_label,
         })
     }
 
     pub fn header(&self) -> &RomHeader {
         &self.header
+    }
+
+    pub fn rom_crc32(&self) -> u32 {
+        self.rom_crc32
     }
 
     pub fn effective_mapper_label(&self) -> String {

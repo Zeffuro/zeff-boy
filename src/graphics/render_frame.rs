@@ -177,19 +177,23 @@ impl Graphics {
                 multiview_mask: None,
             });
 
-            if render_framebuffer_directly
-                && let Some((x, y, w, h)) = {
-                    let (gw, gh) = self.framebuffer.native_size();
-                    calculate_viewport(
-                        self.aspect_ratio_mode,
-                        self.gpu.config.width,
-                        self.gpu.config.height,
-                        gw,
-                        gh,
-                        menu_bar_height,
-                    )
-                }
-            {
+            let direct_viewport = if render_framebuffer_directly {
+                let (gw, gh) = self.framebuffer.native_size();
+                calculate_viewport(
+                    self.aspect_ratio_mode,
+                    self.gpu.config.width,
+                    self.gpu.config.height,
+                    gw,
+                    gh,
+                    menu_bar_height,
+                )
+                .map(|(x, y, w, h)| (x, y, w, h, gw, gh))
+            } else {
+                None
+            };
+            self.last_direct_game_viewport = direct_viewport;
+
+            if let Some((x, y, w, h, _, _)) = direct_viewport {
                 self.framebuffer.draw(&mut pass, x, y, w, h);
             }
         }
@@ -376,7 +380,13 @@ impl Graphics {
 
         let egui_wants_keyboard = self.egui.context().egui_wants_keyboard_input();
 
-        let game_view_focused = if has_any_emu_data {
+        let has_game_view_in_dock =
+            has_any_emu_data && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
+        let render_framebuffer_directly = has_any_emu_data && !has_game_view_in_dock;
+
+        let game_view_focused = if render_framebuffer_directly {
+            true
+        } else if has_any_emu_data {
             ctx.dock_state
                 .focused_leaf()
                 .and_then(|path| ctx.dock_state.leaf(path).ok())
@@ -389,11 +399,6 @@ impl Graphics {
         let full_output = self.egui.end_frame(&self.window);
         let menu_bar_height =
             menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
-
-        let has_game_view_in_dock =
-            has_any_emu_data && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
-        let render_framebuffer_directly =
-            has_any_emu_data && !debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
 
         self.submit_gpu_passes(
             &view,

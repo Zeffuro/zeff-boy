@@ -63,7 +63,24 @@ pub(in crate::cli::headless_runner) fn nes_debug_state(
     screenshot: Option<&PathBuf>,
 ) -> serde_json::Value {
     let palette = emulator.ppu_palette_ram().to_vec();
-    let nametable = emulator.ppu_nametable_ram();
+    let oam = emulator.ppu_oam().to_vec();
+    let active_oam = oam
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, sprite)| sprite[0] < 0xEF)
+        .map(|(index, sprite)| {
+            serde_json::json!({
+                "index": index,
+                "y": sprite[0],
+                "tile": sprite[1],
+                "tile_hex": format!("{:02X}", sprite[1]),
+                "attr": sprite[2],
+                "attr_hex": format!("{:02X}", sprite[2]),
+                "x": sprite[3],
+            })
+        })
+        .collect::<Vec<_>>();
+    let nametable = emulator.ppu_nametable_ram().to_vec();
     let nametable_nonzero = nametable.iter().filter(|&&byte| byte != 0).count();
     let nametable_sample = nametable.iter().take(128).copied().collect::<Vec<_>>();
     let chr = emulator.chr_ram_snapshot();
@@ -168,10 +185,14 @@ pub(in crate::cli::headless_runner) fn nes_debug_state(
             "fine_x": emulator.ppu_fine_x(),
             "tall_sprites": emulator.ppu_tall_sprites(),
             "palette_ram": palette,
+            "oam": oam,
+            "active_oam": active_oam,
             "nametable_nonzero_bytes": nametable_nonzero,
             "nametable_sample": nametable_sample,
+            "nametable": nametable,
             "chr_visible_nonzero_bytes": chr_nonzero,
             "chr_visible_sample": chr_sample,
+            "chr_visible": chr,
         },
         "input": input_json(input),
         "input_schedule": input_schedule_json(opts),

@@ -32,6 +32,7 @@ pub(crate) struct Graphics {
     aspect_ratio_mode: AspectRatioMode,
     game_egui_texture_id: Option<egui::TextureId>,
     game_view_pixel_size: Option<(u32, u32)>,
+    last_direct_game_viewport: Option<(f32, f32, f32, f32, u32, u32)>,
 }
 
 impl Graphics {
@@ -96,6 +97,7 @@ impl Graphics {
             aspect_ratio_mode: AspectRatioMode::IntegerScale,
             game_egui_texture_id: None,
             game_view_pixel_size: None,
+            last_direct_game_viewport: None,
         })
     }
 
@@ -138,5 +140,19 @@ impl Graphics {
     pub(crate) fn set_native_size(&mut self, width: u32, height: u32) {
         self.framebuffer
             .set_native_size(&self.gpu.device, width, height);
+    }
+
+    pub(crate) fn game_pixel_at_window_pos(&self, x: f32, y: f32) -> Option<(u32, u32)> {
+        let (vx, vy, vw, vh, native_w, native_h) = self.last_direct_game_viewport?;
+        if vw <= 0.0 || vh <= 0.0 || x < vx || y < vy || x >= vx + vw || y >= vy + vh {
+            return None;
+        }
+
+        let px = ((x - vx) * native_w as f32 / vw).floor() as u32;
+        let py = ((y - vy) * native_h as f32 / vh).floor() as u32;
+        Some((
+            px.min(native_w.saturating_sub(1)),
+            py.min(native_h.saturating_sub(1)),
+        ))
     }
 }

@@ -73,6 +73,7 @@ impl App {
                 "buffers": {
                     "chr": buffer_summary_json(&nes.chr_data),
                     "nametable": buffer_summary_json(&nes.nametable_data),
+                    "oam": buffer_summary_json(&nes.oam),
                     "palette": buffer_summary_json(&nes.palette_ram),
                 },
             }),

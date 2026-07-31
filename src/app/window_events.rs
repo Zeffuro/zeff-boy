@@ -1,6 +1,10 @@
 use super::App;
 use crate::platform::Instant;
-use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::WindowId};
+use winit::{
+    event::{ElementState, MouseButton, WindowEvent},
+    event_loop::ActiveEventLoop,
+    window::WindowId,
+};
 
 impl App {
     pub(super) fn handle_window_event(
@@ -23,6 +27,7 @@ impl App {
             _ => None,
         };
         let event_consumed_by_egui = self.gfx_handles_event(&event);
+        self.handle_mouse_input_for_zapper(&event, event_consumed_by_egui);
 
         if let Some(key_event) = keyboard_event {
             self.handle_keyboard_input(key_event, event_consumed_by_egui);
@@ -42,12 +47,45 @@ impl App {
             }
             WindowEvent::CursorLeft { .. } => {
                 self.cursor_pos = None;
+                self.mouse_left_pressed = false;
             }
             WindowEvent::Resized(size) => {
                 self.window_size = (size.width as f32, size.height as f32);
             }
             _ => {}
         }
+    }
+
+    fn handle_mouse_input_for_zapper(&mut self, event: &WindowEvent, event_consumed_by_egui: bool) {
+        let WindowEvent::MouseInput {
+            state,
+            button: MouseButton::Left,
+            ..
+        } = event
+        else {
+            return;
+        };
+
+        match state {
+            ElementState::Pressed => {
+                let pointer_over_direct_game = self.pointer_over_direct_game_view();
+                self.mouse_left_pressed =
+                    self.game_view_focused && (!event_consumed_by_egui || pointer_over_direct_game);
+            }
+            ElementState::Released => {
+                self.mouse_left_pressed = false;
+            }
+        }
+    }
+
+    fn pointer_over_direct_game_view(&self) -> bool {
+        let Some((x, y)) = self.cursor_pos else {
+            return false;
+        };
+        self.gfx
+            .as_ref()
+            .and_then(|gfx| gfx.game_pixel_at_window_pos(x, y))
+            .is_some()
     }
 
     fn gfx_handles_event(&mut self, event: &WindowEvent) -> bool {

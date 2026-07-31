@@ -20,13 +20,6 @@ impl Bus {
             }
         }
 
-        if rendering && visible_line && dot == 0 {
-            self.evaluate_sprites_for_scanline(scanline);
-        }
-        if rendering && pre_render && dot == 0 {
-            self.evaluate_sprites_for_scanline(0);
-        }
-
         if visible_line && (1..=256).contains(&dot) {
             if rendering {
                 let pal_idx = self.ppu.compose_pixel() as usize;
@@ -38,7 +31,7 @@ impl Bus {
         }
 
         if rendering && render_line {
-            let in_bg_range = (1..=256).contains(&dot) || (321..=336).contains(&dot);
+            let in_bg_range = (1..=256).contains(&dot) || (321..=337).contains(&dot);
 
             if in_bg_range {
                 self.ppu.update_shifters();
@@ -81,6 +74,11 @@ impl Bus {
 
             if dot == 257 {
                 self.ppu.copy_horizontal_bits();
+                if visible_line && scanline < 239 {
+                    self.evaluate_sprites_for_scanline(scanline + 1);
+                } else if pre_render {
+                    self.evaluate_sprites_for_scanline(0);
+                }
             }
 
             if pre_render && (280..=304).contains(&dot) {
@@ -195,5 +193,73 @@ impl Bus {
         }
 
         self.ppu.sprite_count = count;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::cartridge::Cartridge;
+
+    fn test_bus() -> Bus {
+        let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[5] = 1;
+
+        let cart = Cartridge::load(&rom).expect("test ROM should load");
+        Bus::new(cart, 44_100.0)
+    }
+
+    #[test]
+    fn sprite_evaluation_prepares_next_visible_scanline_at_dot_257() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.oam = [0xFF; 256];
+        bus.ppu.oam[0] = 4;
+        bus.ppu.oam[1] = 0x12;
+        bus.ppu.oam[2] = 0x01;
+        bus.ppu.oam[3] = 24;
+
+        bus.ppu.scanline = 5;
+        bus.ppu.dot = 0;
+        bus.ppu_render_dot();
+        assert_eq!(bus.ppu.sprite_count, 0);
+
+        bus.ppu.scanline = 4;
+        bus.ppu.dot = 257;
+        bus.ppu_render_dot();
+        assert_eq!(bus.ppu.sprite_count, 1);
+        assert_eq!(bus.ppu.sprite_attribs[0], 0x01);
+        assert_eq!(bus.ppu.sprite_x_counters[0], 24);
+
+        bus.ppu.dot = 321;
+        bus.ppu_render_dot();
+        assert_eq!(bus.ppu.sprite_x_counters[0], 24);
+    }
+
+    #[test]
+    fn background_prefetch_dot_337_aligns_first_visible_pixel() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x0A;
+        bus.ppu.palette_ram[0] = 0x0F;
+        bus.ppu.palette_ram[1] = 0x12;
+        bus.ppu.scanline = PRE_RENDER_SCANLINE;
+        bus.ppu.dot = 337;
+        bus.ppu.bg_shift_pattern_lo = 0x4000;
+        bus.ppu.bg_shift_pattern_hi = 0;
+        bus.ppu.bg_shift_attrib_lo = 0;
+        bus.ppu.bg_shift_attrib_hi = 0;
+        bus.ppu.bg_next_tile_lo = 0;
+        bus.ppu.bg_next_tile_hi = 0;
+        bus.ppu.bg_next_tile_attrib = 0;
+
+        bus.ppu_render_dot();
+
+        bus.ppu.scanline = 0;
+        bus.ppu.dot = 1;
+        bus.ppu_render_dot();
+
+        assert_eq!(&bus.ppu.framebuffer[0..4], &[48, 50, 236, 0xFF]);
     }
 }

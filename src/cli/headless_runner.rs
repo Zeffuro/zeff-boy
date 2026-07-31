@@ -91,6 +91,10 @@ struct InputMasks {
     buttons: u8,
     dpad: u8,
     reset: bool,
+    zapper_enabled: bool,
+    zapper_trigger: bool,
+    zapper_hit: bool,
+    zapper_screen_pos: Option<(u16, u16)>,
 }
 
 impl StuckTracker {
@@ -292,7 +296,11 @@ fn observe_stuck(
 }
 
 fn input_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
-    let mut input = InputMasks::default();
+    let mut input = InputMasks {
+        zapper_enabled: !opts.zapper_events.is_empty(),
+        zapper_screen_pos: opts.zapper_events.first().map(|event| (event.x, event.y)),
+        ..InputMasks::default()
+    };
     for event in &opts.input_events {
         if (event.start_frame..=event.end_frame).contains(&frame) {
             input.buttons |= event.buttons;
@@ -300,6 +308,14 @@ fn input_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
         }
         if event.reset && frame == event.start_frame {
             input.reset = true;
+        }
+    }
+    for event in &opts.zapper_events {
+        if (event.start_frame..=event.end_frame).contains(&frame) {
+            input.zapper_enabled = true;
+            input.zapper_trigger |= event.trigger;
+            input.zapper_hit |= event.hit;
+            input.zapper_screen_pos = Some((event.x, event.y));
         }
     }
     input

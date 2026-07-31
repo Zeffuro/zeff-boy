@@ -15,6 +15,7 @@ pub(super) fn nes_graphics_snapshot(
 ) -> ConsoleGraphicsData {
     let palette_lut = emu.palette_lut();
     let palette_ram = *emu.ppu_palette_ram();
+    let oam = *emu.ppu_oam();
     let ctrl = emu.ppu_ctrl();
     let scroll_t = emu.ppu_scroll_t();
     let fine_x = emu.ppu_fine_x();
@@ -38,6 +39,7 @@ pub(super) fn nes_graphics_snapshot(
     ConsoleGraphicsData::Nes(NesGraphicsData {
         chr_data,
         nametable_data,
+        oam,
         palette_ram,
         palette_lut,
         ctrl,

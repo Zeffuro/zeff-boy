@@ -99,6 +99,24 @@ impl App {
                 });
                 LiveReply::ok(self.live_input_json())
             }
+            LiveCommand::Zapper {
+                enabled,
+                trigger,
+                hit,
+                screen_pos,
+            } => {
+                self.remote_zapper = if enabled {
+                    Some(crate::emu_thread::ZapperInput {
+                        enabled,
+                        trigger,
+                        hit,
+                        screen_pos,
+                    })
+                } else {
+                    None
+                };
+                LiveReply::ok(self.live_input_json())
+            }
             LiveCommand::Screenshot { path } => match self.write_live_screenshot(path) {
                 Ok(result) => LiveReply::ok(result),
                 Err(err) => LiveReply::error(err.to_string()),
@@ -171,6 +189,12 @@ impl App {
         json!({
             "buttons": self.host_input.buttons_pressed(),
             "dpad": self.host_input.dpad_pressed(),
+            "zapper": self.remote_zapper.map(|zapper| json!({
+                "enabled": zapper.enabled,
+                "trigger": zapper.trigger,
+                "hit": zapper.hit,
+                "screen_pos": zapper.screen_pos.map(|(x, y)| json!({ "x": x, "y": y })),
+            })),
         })
     }
 }

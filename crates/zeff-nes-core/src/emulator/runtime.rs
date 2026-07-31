@@ -115,6 +115,8 @@ impl Emulator {
                 self.tick_peripherals_after_cpu_step(total_cycles);
             }
         }
+
+        self.bus.finish_vs_system_input_frame();
     }
 
     fn tick_peripherals_after_cpu_step(&mut self, total_cycles: u64) {

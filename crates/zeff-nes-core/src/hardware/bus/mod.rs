@@ -4,14 +4,19 @@ mod rendering;
 
 use crate::cheats::NesCheatState;
 use crate::hardware::apu::Apu;
-use crate::hardware::cartridge::Cartridge;
+use crate::hardware::cartridge::{Cartridge, NesMapper};
 use crate::hardware::constants::*;
 use crate::hardware::controller::{Controller, ExpansionDevice};
 use crate::hardware::ppu::{
-    NES_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, apply_nes_emphasis,
-    apply_nes_palette_mode,
+    NES_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, SCREEN_H, SCREEN_W,
+    VBLANK_SCANLINE, apply_nes_emphasis, apply_nes_palette_mode,
 };
 use std::fmt;
+
+const VS_DUCK_HUNT_SET_E_INES_CRC32: u32 = 0x9C41_0648;
+const VS_DUCK_HUNT_DEFAULT_DIP_SWITCH: u8 = 0x28;
+const ZAPPER_SENSOR_DECAY_SCANLINES: u16 = 24;
+const ZAPPER_SENSOR_SAMPLE_RADIUS: i32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DebugTraceEvent {
@@ -83,15 +88,24 @@ pub struct Bus {
 
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
+    pub(crate) vs_credit_pressed: bool,
+    pub(crate) vs_coin_pulse_frames: u8,
+    pub(crate) zapper_screen_pos: Option<(u16, u16)>,
+    pub(crate) zapper_fallback_hit: bool,
 }
 
 impl Bus {
     pub fn new(cartridge: Cartridge, sample_rate: f64) -> Self {
         let palette_mode = NesPaletteMode::default();
+        let mut apu = Apu::new(sample_rate);
+        if Self::mapper_is_vs_system(cartridge.header().mapper_kind()) {
+            apu.set_tonal_noise_supported(false);
+        }
+
         Self {
             ram: [0; RAM_SIZE],
             ppu: Ppu::new(),
-            apu: Apu::new(sample_rate),
+            apu,
             cartridge,
             controller1: Controller::new(),
             controller2: Controller::new(),
@@ -110,6 +124,10 @@ impl Bus {
             palette_luts: Self::build_palette_luts(palette_mode, None),
             debug_trace_enabled: false,
             debug_trace_events: Vec::new(),
+            vs_credit_pressed: false,
+            vs_coin_pulse_frames: 0,
+            zapper_screen_pos: None,
+            zapper_fallback_hit: false,
         }
     }
 
@@ -176,6 +194,125 @@ impl Bus {
         self.ppu_nmi_suppressed_by_status_read = false;
         self.cpu_step_elapsed_cycles = 0;
         self.cpu_step_events = PeripheralTickEvents::default();
+        self.vs_credit_pressed = false;
+        self.vs_coin_pulse_frames = 0;
+        self.zapper_screen_pos = None;
+        self.zapper_fallback_hit = false;
+    }
+
+    pub(crate) fn set_zapper_light_sensor(
+        &mut self,
+        screen_pos: Option<(u16, u16)>,
+        fallback_hit: bool,
+    ) {
+        self.zapper_screen_pos =
+            screen_pos.filter(|&(x, y)| usize::from(x) < SCREEN_W && usize::from(y) < SCREEN_H);
+        self.zapper_fallback_hit = fallback_hit;
+    }
+
+    pub(crate) fn current_zapper_light_detected(&self) -> bool {
+        let Some((x, y)) = self.zapper_screen_pos else {
+            return self.zapper_fallback_hit;
+        };
+
+        if self.ppu.scanline >= VBLANK_SCANLINE || self.ppu.scanline < y {
+            return false;
+        }
+        if self.ppu.scanline == y && self.ppu.dot <= x.saturating_add(1) {
+            return false;
+        }
+        if self.ppu.scanline.saturating_sub(y) > ZAPPER_SENSOR_DECAY_SCANLINES {
+            return false;
+        }
+
+        self.zapper_framebuffer_region_is_bright(x, y)
+    }
+
+    fn zapper_framebuffer_region_is_bright(&self, x: u16, y: u16) -> bool {
+        let center_x = i32::from(x);
+        let center_y = i32::from(y);
+
+        for sample_y in (center_y - ZAPPER_SENSOR_SAMPLE_RADIUS).max(0)
+            ..=(center_y + ZAPPER_SENSOR_SAMPLE_RADIUS).min((SCREEN_H - 1) as i32)
+        {
+            for sample_x in (center_x - ZAPPER_SENSOR_SAMPLE_RADIUS).max(0)
+                ..=(center_x + ZAPPER_SENSOR_SAMPLE_RADIUS).min((SCREEN_W - 1) as i32)
+            {
+                let idx = ((sample_y as usize * SCREEN_W + sample_x as usize) * 4)
+                    .min(self.ppu.framebuffer.len().saturating_sub(4));
+                let r = self.ppu.framebuffer[idx];
+                let g = self.ppu.framebuffer[idx + 1];
+                let b = self.ppu.framebuffer[idx + 2];
+                if Self::zapper_pixel_is_bright(r, g, b) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn zapper_pixel_is_bright(r: u8, g: u8, b: u8) -> bool {
+        let min_component = r.min(g).min(b);
+        let luma = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+        min_component >= 160 && luma >= 190.0
+    }
+
+    pub(crate) fn is_vs_system_mapper(&self) -> bool {
+        Self::mapper_is_vs_system(self.cartridge.header().mapper_kind())
+    }
+
+    fn mapper_is_vs_system(mapper: NesMapper) -> bool {
+        matches!(
+            mapper,
+            NesMapper::VsSystem | NesMapper::Vrc1VsSystem | NesMapper::LegacyVsVrc1
+        )
+    }
+
+    pub(crate) fn set_vs_system_credit_input(&mut self, pressed: bool) {
+        if !self.is_vs_system_mapper() {
+            self.vs_credit_pressed = false;
+            self.vs_coin_pulse_frames = 0;
+            return;
+        }
+
+        if pressed && !self.vs_credit_pressed {
+            self.vs_coin_pulse_frames = 4;
+        }
+        self.vs_credit_pressed = pressed;
+    }
+
+    pub(crate) fn finish_vs_system_input_frame(&mut self) {
+        self.vs_coin_pulse_frames = self.vs_coin_pulse_frames.saturating_sub(1);
+    }
+
+    pub(crate) fn vs_system_4016_bits(&self) -> u8 {
+        if !self.is_vs_system_mapper() {
+            return 0;
+        }
+
+        let coin_inserted = if self.vs_coin_pulse_frames > 0 {
+            0x20
+        } else {
+            0
+        };
+        let dip_low_bits = (self.vs_system_dip_switch() & 0x03) << 3;
+        coin_inserted | dip_low_bits
+    }
+
+    pub(crate) fn vs_system_4017_bits(&self) -> u8 {
+        self.vs_system_dip_switch() & !0x03
+    }
+
+    fn vs_system_dip_switch(&self) -> u8 {
+        if !self.is_vs_system_mapper() {
+            return 0;
+        }
+
+        match self.cartridge.rom_crc32() {
+            VS_DUCK_HUNT_SET_E_INES_CRC32 => VS_DUCK_HUNT_DEFAULT_DIP_SWITCH,
+            _ => 0,
+        }
     }
 
     pub fn palette_mode(&self) -> NesPaletteMode {

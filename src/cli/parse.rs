@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
+use super::types::HeadlessZapperEvent;
 use super::types::{
     CliArgs, HeadlessBusTraceAccess, HeadlessBusTraceFilter, HeadlessInputEvent,
     HeadlessMemoryDump, HeadlessOptions,
@@ -316,6 +317,66 @@ fn parse_input_event_arg(value: &str, flag: &str) -> anyhow::Result<Vec<Headless
     Ok(events)
 }
 
+fn parse_zapper_event_arg(value: &str, flag: &str) -> anyhow::Result<Vec<HeadlessZapperEvent>> {
+    let mut events = Vec::new();
+    for raw_event in value.split(';') {
+        let event = raw_event.trim();
+        if event.is_empty() {
+            continue;
+        }
+
+        let (range_raw, pos_raw, mode_raw) = if let Some((left, pos)) = event.split_once(':') {
+            if let Some((mode, range)) = left.split_once('@') {
+                (range.trim(), pos.trim(), mode.trim())
+            } else {
+                (left.trim(), pos.trim(), "hit")
+            }
+        } else {
+            anyhow::bail!(
+                "{flag} event must be start-end:x,y or mode@start-end:x,y; separate multiple events with semicolons; modes: hit, miss, trigger"
+            );
+        };
+
+        let separator = pos_raw
+            .find(|ch| matches!(ch, ',' | 'x' | 'X' | ';' | '/'))
+            .ok_or_else(|| anyhow::anyhow!("{flag} zapper position must be x,y"))?;
+        let (x_raw, y_with_sep) = pos_raw.split_at(separator);
+        let y_raw = &y_with_sep[1..];
+        let x = parse_u64_arg(x_raw.trim(), flag)?;
+        let y = parse_u64_arg(y_raw.trim(), flag)?;
+        if x > u16::MAX as u64 || y > u16::MAX as u64 {
+            anyhow::bail!("{flag} zapper coordinates must fit in u16");
+        }
+
+        let mode = mode_raw.to_ascii_lowercase().replace(['_', '-'], "");
+        let (trigger, hit) = match mode.as_str() {
+            "hit" | "fire" | "triggerhit" => (true, true),
+            "miss" | "triggermiss" => (true, false),
+            "trigger" | "light" | "sense" => (true, true),
+            "aim" | "idle" => (false, false),
+            _ => anyhow::bail!(
+                "{flag} unknown zapper mode {mode_raw:?}; expected hit, miss, trigger, or aim"
+            ),
+        };
+
+        let (start_frame, end_frame) = parse_frame_range_arg(range_raw, flag)?;
+        events.push(HeadlessZapperEvent {
+            start_frame,
+            end_frame,
+            x: x as u16,
+            y: y as u16,
+            trigger,
+            hit,
+        });
+    }
+
+    if events.is_empty() {
+        anyhow::bail!("{flag} did not contain any zapper events");
+    }
+
+    Ok(events)
+}
+
 fn parse_input_script(path: &str) -> anyhow::Result<Vec<HeadlessInputEvent>> {
     let contents = std::fs::read_to_string(path)
         .map_err(|err| anyhow::anyhow!("failed to read --input-script '{}': {}", path, err))?;
@@ -539,6 +600,15 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.input_events.extend(parse_input_script(value)?);
                 i += 2;
             }
+            "--zapper" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--zapper requires an event spec");
+                };
+                headless
+                    .zapper_events
+                    .extend(parse_zapper_event_arg(value, "--zapper")?);
+                i += 2;
+            }
             "--load-state" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--load-state requires a file path");
@@ -645,4 +715,28 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
             None
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_zapper_event_arg;
+
+    #[test]
+    fn zapper_events_accept_comma_coordinates_and_semicolon_separation() {
+        let events =
+            parse_zapper_event_arg("hit@240-242:128,96;miss@300:12x34", "--zapper").unwrap();
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].start_frame, 240);
+        assert_eq!(events[0].end_frame, 242);
+        assert_eq!((events[0].x, events[0].y), (128, 96));
+        assert!(events[0].trigger);
+        assert!(events[0].hit);
+
+        assert_eq!(events[1].start_frame, 300);
+        assert_eq!(events[1].end_frame, 300);
+        assert_eq!((events[1].x, events[1].y), (12, 34));
+        assert!(events[1].trigger);
+        assert!(!events[1].hit);
+    }
 }

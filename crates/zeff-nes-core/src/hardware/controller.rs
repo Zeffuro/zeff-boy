@@ -12,9 +12,11 @@ pub enum Button {
     Right,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerType {
     Standard,
     Zapper { trigger: bool, hit: bool },
+    VsZapper { trigger: bool, hit: bool },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,6 +60,20 @@ impl Controller {
         self.controller_type = controller_type;
     }
 
+    pub fn set_zapper_hit(&mut self, hit: bool) {
+        match &mut self.controller_type {
+            ControllerType::Zapper {
+                hit: current_hit, ..
+            }
+            | ControllerType::VsZapper {
+                hit: current_hit, ..
+            } => {
+                *current_hit = hit;
+            }
+            ControllerType::Standard => {}
+        }
+    }
+
     pub fn set_buttons(&mut self, state: u8) {
         self.buttons = state;
     }
@@ -73,7 +89,7 @@ impl Controller {
     pub fn write(&mut self, val: u8) {
         let new_strobe = val & 0x01 != 0;
         if self.strobe && !new_strobe {
-            self.shift_register = self.buttons;
+            self.shift_register = self.serial_report();
         }
         self.strobe = new_strobe;
     }
@@ -81,13 +97,18 @@ impl Controller {
     pub fn read(&mut self) -> u8 {
         match &self.controller_type {
             ControllerType::Standard => self.read_standard(),
-            ControllerType::Zapper { trigger, hit } => self.read_zapper(*trigger, *hit),
+            ControllerType::Zapper { trigger, hit } => Self::read_zapper(*trigger, *hit),
+            ControllerType::VsZapper { trigger, hit } => self.read_vs_zapper(*trigger, *hit),
         }
     }
 
     fn read_standard(&mut self) -> u8 {
+        self.read_serial(self.buttons)
+    }
+
+    fn read_serial(&mut self, serial_report: u8) -> u8 {
         if self.strobe {
-            return self.buttons & 0x01;
+            return serial_report & 0x01;
         }
         let bit = self.shift_register & 0x01;
         self.shift_register >>= 1;
@@ -95,21 +116,38 @@ impl Controller {
         bit
     }
 
-    fn read_zapper(&mut self, trigger: bool, hit: bool) -> u8 {
+    fn read_zapper(trigger: bool, hit: bool) -> u8 {
+        let no_light_reflected = if hit { 0 } else { 0x08 };
+        let trigger = if trigger { 0x10 } else { 0 };
+        no_light_reflected | trigger
+    }
+
+    fn read_vs_zapper(&mut self, trigger: bool, hit: bool) -> u8 {
+        self.read_serial_zero_fill(Self::vs_zapper_serial_report(trigger, hit))
+    }
+
+    fn serial_report(&self) -> u8 {
+        match self.controller_type {
+            ControllerType::Standard | ControllerType::Zapper { .. } => self.buttons,
+            ControllerType::VsZapper { trigger, hit } => {
+                Self::vs_zapper_serial_report(trigger, hit)
+            }
+        }
+    }
+
+    fn vs_zapper_serial_report(trigger: bool, hit: bool) -> u8 {
+        let up_always_pressed = 0x10;
+        let light_sensed = if hit { 0x40 } else { 0 };
+        let trigger = if trigger { 0x80 } else { 0 };
+        up_always_pressed | light_sensed | trigger
+    }
+
+    fn read_serial_zero_fill(&mut self, serial_report: u8) -> u8 {
         if self.strobe {
-            let mut result = self.buttons & 0x01;
-            if trigger {
-                result |= 0x02;
-            }
-            if !hit {
-                result |= 0x04;
-            }
-            result |= 0x08;
-            return result;
+            return serial_report & 0x01;
         }
         let bit = self.shift_register & 0x01;
         self.shift_register >>= 1;
-        self.shift_register |= 0x80;
         bit
     }
 
@@ -139,6 +177,11 @@ impl Controller {
                 w.write_bool(*trigger);
                 w.write_bool(*hit);
             }
+            ControllerType::VsZapper { trigger, hit } => {
+                w.write_u8(2);
+                w.write_bool(*trigger);
+                w.write_bool(*hit);
+            }
         }
     }
 
@@ -153,6 +196,11 @@ impl Controller {
                 let trigger = r.read_bool()?;
                 let hit = r.read_bool()?;
                 self.controller_type = ControllerType::Zapper { trigger, hit };
+            }
+            2 => {
+                let trigger = r.read_bool()?;
+                let hit = r.read_bool()?;
+                self.controller_type = ControllerType::VsZapper { trigger, hit };
             }
             _ => self.controller_type = ControllerType::Standard,
         }
@@ -298,5 +346,76 @@ mod tests {
         assert_eq!(device.read_4016(), 0);
         assert_eq!(device.read_4016(), 0);
         assert_eq!(device.read_4016(), 0x02);
+    }
+
+    #[test]
+    fn zapper_outputs_light_and_trigger_bits_on_4017() {
+        let mut controller = Controller::new();
+
+        controller.set_type(ControllerType::Zapper {
+            trigger: false,
+            hit: false,
+        });
+        assert_eq!(controller.read(), 0x08);
+
+        controller.set_type(ControllerType::Zapper {
+            trigger: true,
+            hit: false,
+        });
+        assert_eq!(controller.read(), 0x18);
+
+        controller.set_type(ControllerType::Zapper {
+            trigger: true,
+            hit: true,
+        });
+        assert_eq!(controller.read(), 0x10);
+    }
+
+    #[test]
+    fn zapper_read_does_not_shift_serial_controller_state() {
+        let mut controller = Controller::new();
+        controller.set_buttons(Controller::button_mask(Button::A));
+        controller.write(1);
+        controller.write(0);
+
+        controller.set_type(ControllerType::Zapper {
+            trigger: false,
+            hit: false,
+        });
+        assert_eq!(controller.read(), 0x08);
+        assert_eq!(controller.read(), 0x08);
+    }
+
+    #[test]
+    fn vs_zapper_outputs_serial_report_on_bit_zero() {
+        let mut controller = Controller::new();
+        controller.set_type(ControllerType::VsZapper {
+            trigger: true,
+            hit: true,
+        });
+
+        controller.write(1);
+        controller.write(0);
+
+        let bits: Vec<u8> = (0..8).map(|_| controller.read() & 0x01).collect();
+
+        assert_eq!(bits, [0, 0, 0, 0, 1, 0, 1, 1]);
+        assert_eq!(controller.read() & 0x01, 0);
+    }
+
+    #[test]
+    fn vs_zapper_light_bit_is_clear_when_not_detecting() {
+        let mut controller = Controller::new();
+        controller.set_type(ControllerType::VsZapper {
+            trigger: false,
+            hit: false,
+        });
+
+        controller.write(1);
+        controller.write(0);
+
+        let bits: Vec<u8> = (0..8).map(|_| controller.read() & 0x01).collect();
+
+        assert_eq!(bits, [0, 0, 0, 0, 1, 0, 0, 0]);
     }
 }

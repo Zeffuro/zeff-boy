@@ -108,6 +108,7 @@ pub(crate) struct GbaGraphicsData {
 pub(crate) struct NesGraphicsData {
     pub(crate) chr_data: Vec<u8>,
     pub(crate) nametable_data: Vec<u8>,
+    pub(crate) oam: [u8; 256],
     pub(crate) palette_ram: [u8; 32],
     pub(crate) palette_lut: [[u8; 4]; 64],
     pub(crate) ctrl: u8,

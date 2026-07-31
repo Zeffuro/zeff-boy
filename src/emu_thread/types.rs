@@ -70,6 +70,14 @@ pub(crate) struct JoypadInput {
     pub(crate) dpad_p2: u8,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ZapperInput {
+    pub(crate) enabled: bool,
+    pub(crate) trigger: bool,
+    pub(crate) hit: bool,
+    pub(crate) screen_pos: Option<(u16, u16)>,
+}
+
 pub(crate) struct AudioConfig {
     pub(crate) apu_capture_enabled: bool,
     pub(crate) skip_audio: bool,
@@ -81,6 +89,7 @@ pub(crate) struct FrameInput {
     pub(crate) host_tilt: (f32, f32),
     pub(crate) host_camera_frame: Option<Vec<u8>>,
     pub(crate) joypad: JoypadInput,
+    pub(crate) zapper: ZapperInput,
     pub(crate) debug_step: bool,
     pub(crate) debug_continue: bool,
     pub(crate) audio: AudioConfig,

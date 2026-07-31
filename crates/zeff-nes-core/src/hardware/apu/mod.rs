@@ -1,10 +1,12 @@
 mod dmc;
+mod filter;
 mod mixing;
 mod noise;
 mod pulse;
 mod runtime;
 mod triangle;
 
+use filter::NesOutputFilter;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -45,6 +47,7 @@ pub struct Apu {
     pub output_sample_rate: f64,
     sample_accumulator: f64,
     sample_generation_enabled: bool,
+    output_filter: NesOutputFilter,
     debug_collection_enabled: bool,
     channel_mutes: [bool; 5],
 
@@ -75,6 +78,7 @@ impl Apu {
             output_sample_rate,
             sample_accumulator: 0.0,
             sample_generation_enabled: true,
+            output_filter: NesOutputFilter::new(output_sample_rate),
             debug_collection_enabled: true,
             channel_mutes: [false; 5],
             expansion_audio: 0.0,
@@ -115,6 +119,7 @@ impl Apu {
         self.frame_irq_suppression_ticks = 0;
         self.output_sample_rate = r.read_f64()?;
         self.sample_accumulator = r.read_f64()?;
+        self.output_filter = NesOutputFilter::new(self.output_sample_rate);
 
         self.sample_buffer.clear();
         self.master_debug_samples.clear();

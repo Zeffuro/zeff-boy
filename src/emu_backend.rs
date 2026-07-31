@@ -251,6 +251,17 @@ impl EmuBackend {
         dispatch!(self, set_input(buttons_pressed, dpad_pressed))
     }
 
+    #[inline]
+    pub(crate) fn set_zapper_state(
+        &mut self,
+        enabled: bool,
+        trigger: bool,
+        hit: bool,
+        screen_pos: Option<(u16, u16)>,
+    ) {
+        dispatch!(self, set_zapper_state(enabled, trigger, hit, screen_pos))
+    }
+
     pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         dispatch!(self, set_input_p2(buttons_pressed, dpad_pressed))
     }

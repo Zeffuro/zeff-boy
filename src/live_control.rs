@@ -48,6 +48,12 @@ pub(crate) enum LiveCommand {
         key: JoypadKey,
         frames: usize,
     },
+    Zapper {
+        enabled: bool,
+        trigger: bool,
+        hit: bool,
+        screen_pos: Option<(u16, u16)>,
+    },
     Screenshot {
         path: Option<PathBuf>,
     },
@@ -289,6 +295,12 @@ struct WireRequest {
     start: Option<Value>,
     address: Option<Value>,
     length: Option<usize>,
+    x: Option<Value>,
+    y: Option<Value>,
+    screen_x: Option<Value>,
+    screen_y: Option<Value>,
+    trigger: Option<bool>,
+    hit: Option<bool>,
 }
 
 fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String> {
@@ -327,6 +339,14 @@ fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String> {
             key: required_button(&request)?,
             frames: request.frames.unwrap_or(4).clamp(1, 60),
         },
+        "zapper" | "set_zapper" | "setzapper" | "lightgun" | "set_lightgun" | "setlightgun" => {
+            LiveCommand::Zapper {
+                enabled: request.enabled.unwrap_or(true),
+                trigger: request.trigger.unwrap_or(false),
+                hit: request.hit.unwrap_or(false),
+                screen_pos: optional_screen_pos(&request),
+            }
+        }
         "screenshot" => LiveCommand::Screenshot {
             path: request.path.map(PathBuf::from),
         },
@@ -364,6 +384,16 @@ fn optional_u32(value: &Option<Value>) -> Option<u32> {
         Value::String(text) => parse_u32_text(text).ok(),
         _ => None,
     }
+}
+
+fn optional_u16(value: &Option<Value>) -> Option<u16> {
+    optional_u32(value).and_then(|value| u16::try_from(value).ok())
+}
+
+fn optional_screen_pos(request: &WireRequest) -> Option<(u16, u16)> {
+    let x = optional_u16(&request.x).or_else(|| optional_u16(&request.screen_x))?;
+    let y = optional_u16(&request.y).or_else(|| optional_u16(&request.screen_y))?;
+    Some((x, y))
 }
 
 fn parse_u32_text(text: &str) -> Result<u32, std::num::ParseIntError> {
@@ -463,6 +493,23 @@ mod tests {
                 start: 0x1800,
                 length: 32
             } if space == "vram"
+        ));
+    }
+
+    #[test]
+    fn parses_zapper_command_with_screen_position() {
+        let parsed = parse_wire_request(
+            r#"{"command":"zapper","enabled":true,"trigger":true,"hit":true,"screen_x":128,"screen_y":96}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            LiveCommand::Zapper {
+                enabled: true,
+                trigger: true,
+                hit: true,
+                screen_pos: Some((128, 96))
+            }
         ));
     }
 }

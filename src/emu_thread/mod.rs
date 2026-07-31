@@ -22,6 +22,7 @@ pub(crate) use wasm::EmuThread;
 pub(crate) use types::{
     AudioConfig, EmuCommand, EmuResponse, FrameInput, FrameResult, JoypadInput,
     MemorySearchRequest, RenderSettings, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
+    ZapperInput,
 };
 
 pub(crate) const DEFAULT_REWIND_SECONDS: usize = 10;

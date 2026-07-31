@@ -96,6 +96,17 @@ impl EmulatorCore for NesBackend {
     }
 
     #[inline]
+    fn set_zapper_state(
+        &mut self,
+        enabled: bool,
+        trigger: bool,
+        hit: bool,
+        screen_pos: Option<(u16, u16)>,
+    ) {
+        self.emu.set_zapper_state(enabled, trigger, hit, screen_pos);
+    }
+
+    #[inline]
     fn is_suspended(&self) -> bool {
         self.emu.is_cpu_suspended()
     }

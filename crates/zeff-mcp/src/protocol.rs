@@ -73,6 +73,34 @@ pub(crate) fn tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "zeff_zapper",
+            "description": "Set NES Zapper/lightgun state for live-control automation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean", "default": true },
+                    "trigger": { "type": "boolean", "default": false },
+                    "hit": { "type": "boolean", "default": false },
+                    "x": {
+                        "type": "integer",
+                        "description": "NES screen X coordinate, 0-255"
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "NES screen Y coordinate, 0-239"
+                    },
+                    "screen_x": {
+                        "type": "integer",
+                        "description": "Alias for x"
+                    },
+                    "screen_y": {
+                        "type": "integer",
+                        "description": "Alias for y"
+                    }
+                }
+            }
+        }),
+        json!({
             "name": "zeff_pause",
             "description": "Pause, resume, toggle pause, or advance one frame.",
             "inputSchema": {
@@ -185,9 +213,15 @@ pub(crate) fn tools() -> Vec<Value> {
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "description": "wait, tap, press, release, screenshot, save_state, load_state, memory, graphics, status, debug_info, pause, resume, frame_advance, speed"
+                                    "description": "wait, tap, press, release, zapper, screenshot, save_state, load_state, memory, graphics, status, debug_info, pause, resume, frame_advance, speed"
                                 },
                                 "button": { "type": "string" },
+                                "trigger": { "type": "boolean" },
+                                "hit": { "type": "boolean" },
+                                "x": { "type": "integer" },
+                                "y": { "type": "integer" },
+                                "screen_x": { "type": "integer" },
+                                "screen_y": { "type": "integer" },
                                 "frames": { "type": "integer" },
                                 "ms": { "type": "integer" },
                                 "seconds": { "type": "integer" },

@@ -83,6 +83,12 @@ fn input_json(input: InputMasks) -> serde_json::Value {
         "reset": input.reset,
         "buttons_hex": format!("{:02X}", input.buttons),
         "dpad_hex": format!("{:02X}", input.dpad),
+        "zapper": {
+            "enabled": input.zapper_enabled,
+            "trigger": input.zapper_trigger,
+            "hit": input.zapper_hit,
+            "screen_pos": input.zapper_screen_pos.map(|(x, y)| serde_json::json!({ "x": x, "y": y })),
+        },
     })
 }
 
@@ -102,10 +108,26 @@ fn input_schedule_json(opts: &HeadlessOptions) -> serde_json::Value {
             })
         })
         .collect::<Vec<_>>();
+    let zapper_events = opts
+        .zapper_events
+        .iter()
+        .map(|event| {
+            serde_json::json!({
+                "start_frame": event.start_frame,
+                "end_frame": event.end_frame,
+                "x": event.x,
+                "y": event.y,
+                "trigger": event.trigger,
+                "hit": event.hit,
+            })
+        })
+        .collect::<Vec<_>>();
 
     serde_json::json!({
         "event_count": events.len(),
         "events": events,
+        "zapper_event_count": zapper_events.len(),
+        "zapper_events": zapper_events,
     })
 }
 

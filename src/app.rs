@@ -115,6 +115,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         modifiers: ModifierKeys::default(),
         host_input: HostInputState::new(),
         cursor_pos: None,
+        mouse_left_pressed: false,
         window_size: (160.0, 144.0),
         tilt: TiltState {
             smoothed: (0.0, 0.0),
@@ -169,6 +170,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         remote_memory_view_start: None,
         remote_memory_frames_remaining: 0,
         remote_graphics_frames_remaining: 0,
+        remote_zapper: None,
         #[cfg(not(target_arch = "wasm32"))]
         live_control: crate::live_control::LiveControl::from_env(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -228,6 +230,7 @@ struct App {
     modifiers: ModifierKeys,
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
+    mouse_left_pressed: bool,
     window_size: (f32, f32),
     tilt: TiltState,
     camera: CameraState,
@@ -251,6 +254,7 @@ struct App {
     remote_memory_view_start: Option<Address>,
     remote_memory_frames_remaining: usize,
     remote_graphics_frames_remaining: usize,
+    remote_zapper: Option<crate::emu_thread::ZapperInput>,
     #[cfg(not(target_arch = "wasm32"))]
     live_control: crate::live_control::LiveControl,
     #[cfg(not(target_arch = "wasm32"))]

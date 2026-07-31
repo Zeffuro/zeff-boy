@@ -25,6 +25,15 @@ pub(crate) trait EmulatorCore {
     fn set_apu_sample_generation_enabled(&mut self, enabled: bool);
     fn set_apu_channel_mutes(&mut self, mutes: &[bool]);
     fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8);
+    #[inline]
+    fn set_zapper_state(
+        &mut self,
+        _enabled: bool,
+        _trigger: bool,
+        _hit: bool,
+        _screen_pos: Option<(u16, u16)>,
+    ) {
+    }
     fn is_suspended(&self) -> bool;
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>>;
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>>;

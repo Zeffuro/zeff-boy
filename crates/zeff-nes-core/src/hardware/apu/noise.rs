@@ -9,6 +9,7 @@ pub struct Noise {
     envelope_volume: u8,
 
     mode: bool,
+    tonal_mode_supported: bool,
     timer_period: u16,
     timer_counter: u16,
 
@@ -34,6 +35,7 @@ impl Noise {
             constant_volume: false,
             envelope_volume: 0,
             mode: false,
+            tonal_mode_supported: true,
             timer_period: 0,
             timer_counter: 0,
             shift_register: 1, // must be nonzero
@@ -51,7 +53,7 @@ impl Noise {
                 self.envelope_volume = val & 0x0F;
             }
             2 => {
-                self.mode = val & 0x80 != 0;
+                self.mode = self.tonal_mode_supported && val & 0x80 != 0;
                 self.timer_period = NOISE_PERIOD_TABLE[(val & 0x0F) as usize];
             }
             3 => {
@@ -61,6 +63,13 @@ impl Noise {
                 self.envelope_start = true;
             }
             _ => {}
+        }
+    }
+
+    pub fn set_tonal_mode_supported(&mut self, supported: bool) {
+        self.tonal_mode_supported = supported;
+        if !supported {
+            self.mode = false;
         }
     }
 
@@ -159,5 +168,29 @@ impl Noise {
         self.envelope_divider = r.read_u8()?;
         self.envelope_decay = r.read_u8()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Noise;
+
+    #[test]
+    fn tonal_mode_can_be_disabled_for_vs_system_cpu() {
+        let mut noise = Noise::new();
+        noise.set_tonal_mode_supported(false);
+
+        noise.write(2, 0x80);
+
+        assert!(!noise.mode);
+    }
+
+    #[test]
+    fn tonal_mode_defaults_to_supported_for_nes_cpu() {
+        let mut noise = Noise::new();
+
+        noise.write(2, 0x80);
+
+        assert!(noise.mode);
     }
 }

@@ -99,7 +99,7 @@ impl Emulator {
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
-        self.bus.apu.output_sample_rate = rate as f64;
+        self.bus.apu.set_output_sample_rate(rate as f64);
     }
 
     pub fn drain_audio_into_stereo(&mut self, buf: &mut Vec<f32>) {
@@ -143,6 +143,7 @@ impl Emulator {
     }
 
     pub fn set_input_p1(&mut self, buttons: u8) {
+        self.bus.set_vs_system_credit_input(buttons & 0x04 != 0);
         self.bus.controller1.set_buttons(buttons);
     }
 
@@ -150,11 +151,35 @@ impl Emulator {
         self.bus.controller2.set_buttons(buttons);
     }
 
-    pub fn set_zapper_state(&mut self, trigger: bool, hit: bool) {
+    pub fn set_zapper_state(
+        &mut self,
+        enabled: bool,
+        trigger: bool,
+        hit: bool,
+        screen_pos: Option<(u16, u16)>,
+    ) {
+        use crate::hardware::cartridge::NesMapper;
         use crate::hardware::controller::ControllerType;
-        self.bus
-            .controller2
-            .set_type(ControllerType::Zapper { trigger, hit });
+        self.bus.set_zapper_light_sensor(screen_pos, hit);
+        if !enabled {
+            self.bus.controller1.set_type(ControllerType::Standard);
+            self.bus.controller2.set_type(ControllerType::Standard);
+            return;
+        }
+
+        match self.bus.cartridge.header().mapper_kind() {
+            NesMapper::VsSystem | NesMapper::Vrc1VsSystem | NesMapper::LegacyVsVrc1 => {
+                self.bus
+                    .controller1
+                    .set_type(ControllerType::VsZapper { trigger, hit });
+                self.bus.controller2.set_type(ControllerType::Standard);
+            }
+            _ => {
+                self.bus
+                    .controller2
+                    .set_type(ControllerType::Zapper { trigger, hit });
+            }
+        }
     }
 
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
@@ -402,6 +427,20 @@ mod tests {
         rom
     }
 
+    fn build_vs_system_test_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 0x8000 + 0x4000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2;
+        rom[5] = 2;
+        rom[6] = 0x30;
+        rom[7] = 0x60;
+        let prg = 16;
+        rom[prg] = 0xEA;
+        rom[prg + 0x7FFC] = 0x00;
+        rom[prg + 0x7FFD] = 0x80;
+        rom
+    }
+
     #[test]
     fn new_uses_power_on_reset_without_stack_adjust() {
         let emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
@@ -437,5 +476,48 @@ mod tests {
         assert_eq!(emu.bus.ram[0x110], 0xBC);
         assert_eq!(emu.bus.ram[0x111], 0x9A);
         assert_eq!(emu.bus.ram[0x112], 0xFB);
+    }
+
+    #[test]
+    fn mapper_99_zapper_uses_vs_serial_protocol_on_4016() {
+        let mut emu =
+            Emulator::new(&build_vs_system_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+        emu.set_zapper_state(true, true, true, None);
+
+        emu.cpu_write(0x4016, 1);
+        emu.cpu_write(0x4016, 0);
+
+        let port_1_bits: Vec<u8> = (0..8)
+            .map(|_| emu.bus_mut().cpu_read(0x4016) & 0x01)
+            .collect();
+
+        assert_eq!(port_1_bits, [0, 0, 0, 0, 1, 0, 1, 1]);
+    }
+
+    #[test]
+    fn mapper_99_select_exposes_one_vs_coin_pulse() {
+        let mut emu =
+            Emulator::new(&build_vs_system_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+
+        emu.set_input_p1(0x04);
+        assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x24, 0x20);
+
+        emu.set_input_p1(0);
+        assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x04, 0);
+        assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x20, 0x20);
+
+        for _ in 0..4 {
+            emu.bus.finish_vs_system_input_frame();
+        }
+        assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x20, 0);
+    }
+
+    #[test]
+    fn nrom_select_does_not_expose_vs_credit_bits() {
+        let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+
+        emu.set_input_p1(0x04);
+
+        assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x24, 0);
     }
 }

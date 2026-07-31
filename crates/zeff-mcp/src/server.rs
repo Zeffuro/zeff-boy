@@ -114,6 +114,7 @@ impl Server {
             "zeff_status" => self.call_live(json!({ "command": "status" })),
             "zeff_debug_info" => self.call_live(json!({ "command": "debug_info" })),
             "zeff_button" => self.tool_button(args),
+            "zeff_zapper" => self.tool_zapper(args),
             "zeff_pause" => self.tool_pause(args),
             "zeff_speed" => self.tool_speed(args),
             "zeff_screenshot" => self.tool_screenshot(args),
@@ -221,6 +222,23 @@ impl Server {
         });
         if let Some(frames) = optional_u64(args, "frames") {
             request["frames"] = json!(frames);
+        }
+        self.call_live(request)
+    }
+
+    fn tool_zapper(&self, args: &Value) -> anyhow::Result<Value> {
+        let mut request = json!({
+            "command": "zapper",
+            "enabled": optional_bool(args, "enabled").unwrap_or(true),
+            "trigger": optional_bool(args, "trigger").unwrap_or(false),
+            "hit": optional_bool(args, "hit").unwrap_or(false),
+        });
+        if let (Some(x), Some(y)) = (
+            optional_u64(args, "x").or_else(|| optional_u64(args, "screen_x")),
+            optional_u64(args, "y").or_else(|| optional_u64(args, "screen_y")),
+        ) {
+            request["x"] = json!(x);
+            request["y"] = json!(y);
         }
         self.call_live(request)
     }

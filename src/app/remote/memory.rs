@@ -112,6 +112,9 @@ impl App {
                 "nametable" | "nametableram" => {
                     slice_memory_json(space, start, length, &nes.nametable_data)
                 }
+                "oam" | "spriteoam" | "spriteattribute" | "spriteattributememory" => {
+                    slice_memory_json(space, start, length, &nes.oam)
+                }
                 "palette" | "paletteram" => {
                     slice_memory_json(space, start, length, &nes.palette_ram)
                 }

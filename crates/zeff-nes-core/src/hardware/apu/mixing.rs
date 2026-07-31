@@ -40,7 +40,10 @@ impl Apu {
                 0.0
             };
 
-            let sample = pulse_out + tnd_out + self.expansion_audio;
+            let sample = self.output_filter.process(
+                pulse_out + tnd_out + self.expansion_audio,
+                self.output_sample_rate,
+            );
             self.sample_buffer.push(sample);
 
             if self.debug_collection_enabled {
@@ -109,6 +112,12 @@ impl Apu {
         self.sample_generation_enabled = enabled;
     }
 
+    pub fn set_output_sample_rate(&mut self, sample_rate: f64) {
+        self.output_sample_rate = sample_rate;
+        self.output_filter.configure(sample_rate);
+        self.output_filter.reset();
+    }
+
     pub fn set_debug_collection_enabled(&mut self, enabled: bool) {
         self.debug_collection_enabled = enabled;
     }
@@ -123,6 +132,10 @@ impl Apu {
 
     pub fn channel_mutes(&self) -> [bool; 5] {
         self.channel_mutes
+    }
+
+    pub fn set_tonal_noise_supported(&mut self, supported: bool) {
+        self.noise.set_tonal_mode_supported(supported);
     }
 
     pub fn master_debug_samples_ordered(&self) -> Vec<f32> {

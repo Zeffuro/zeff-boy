@@ -318,7 +318,7 @@ impl Ppu {
             self.bg_shift_attrib_lo <<= 1;
             self.bg_shift_attrib_hi <<= 1;
         }
-        if self.regs.show_sprites() {
+        if self.regs.show_sprites() && (1..=256).contains(&self.dot) {
             for i in 0..self.sprite_count as usize {
                 if self.sprite_x_counters[i] > 0 {
                     self.sprite_x_counters[i] -= 1;

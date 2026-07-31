@@ -11,6 +11,16 @@ pub(crate) struct HeadlessInputEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HeadlessZapperEvent {
+    pub(crate) start_frame: u64,
+    pub(crate) end_frame: u64,
+    pub(crate) x: u16,
+    pub(crate) y: u16,
+    pub(crate) trigger: bool,
+    pub(crate) hit: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeadlessBusTraceAccess {
     Read,
     Write,
@@ -51,6 +61,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) stuck_pc_threshold: usize,
     pub(crate) fail_on_stuck: bool,
     pub(crate) input_events: Vec<HeadlessInputEvent>,
+    pub(crate) zapper_events: Vec<HeadlessZapperEvent>,
     pub(crate) load_state_path: Option<std::path::PathBuf>,
     pub(crate) screenshot_path: Option<std::path::PathBuf>,
     pub(crate) screenshot_frame: Option<u64>,
@@ -89,6 +100,7 @@ impl Default for HeadlessOptions {
             stuck_pc_threshold: 8,
             fail_on_stuck: false,
             input_events: Vec::new(),
+            zapper_events: Vec::new(),
             load_state_path: None,
             screenshot_path: None,
             screenshot_frame: None,

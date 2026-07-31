@@ -69,6 +69,12 @@ pub(super) fn run_nes_headless(
             current_input.buttons,
             current_input.dpad,
         ));
+        emulator.set_zapper_state(
+            current_input.zapper_enabled,
+            current_input.zapper_trigger,
+            current_input.zapper_hit,
+            current_input.zapper_screen_pos,
+        );
 
         if opts.trace_opcodes || bus_trace_active {
             emulator.clear_frame_ready();

@@ -11,8 +11,20 @@ impl Bus {
             0x4000..=0x4013 => self.cpu_open_bus,
             OAM_DMA => self.cpu_open_bus,
             APU_STATUS => self.apu.read_status_with_frame_irq_lookahead(1),
-            CONTROLLER1 => self.controller1.read() | self.expansion_device.read_4016(),
-            CONTROLLER2 => self.controller2.read() | self.expansion_device.read_4017(),
+            CONTROLLER1 => {
+                let zapper_hit = self.current_zapper_light_detected();
+                self.controller1.set_zapper_hit(zapper_hit);
+                self.controller1.read()
+                    | self.expansion_device.read_4016()
+                    | self.vs_system_4016_bits()
+            }
+            CONTROLLER2 => {
+                let zapper_hit = self.current_zapper_light_detected();
+                self.controller2.set_zapper_hit(zapper_hit);
+                self.controller2.read()
+                    | self.expansion_device.read_4017()
+                    | self.vs_system_4017_bits()
+            }
             0x4018..=0x401F => self.cpu_open_bus,
             0x4020..=0x7FFF => self.cartridge.cpu_read(addr),
             0x8000..=0xFFFF => {
@@ -33,7 +45,7 @@ impl Bus {
 
     #[inline]
     pub fn cpu_read_after_elapsed_cycles(&mut self, addr: u16, elapsed_cycles: u64) -> u8 {
-        if matches!(addr, 0x2000..=0x3FFF) {
+        if Self::cpu_read_needs_elapsed_timing(addr) {
             self.advance_cpu_step_timing_to(elapsed_cycles);
         }
         self.cpu_read(addr)
@@ -109,10 +121,20 @@ impl Bus {
 
     #[inline]
     pub fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, val: u8, elapsed_cycles: u64) {
-        if matches!(addr, 0x2000..=0x3FFF) {
+        if Self::cpu_write_needs_elapsed_timing(addr) {
             self.advance_cpu_step_timing_to(elapsed_cycles);
         }
         self.cpu_write(addr, val);
+    }
+
+    #[inline]
+    fn cpu_read_needs_elapsed_timing(addr: u16) -> bool {
+        matches!(addr, 0x2000..=0x3FFF | CONTROLLER1 | CONTROLLER2)
+    }
+
+    #[inline]
+    fn cpu_write_needs_elapsed_timing(addr: u16) -> bool {
+        matches!(addr, 0x2000..=0x3FFF | OAM_DMA | CONTROLLER1)
     }
 
     #[inline]

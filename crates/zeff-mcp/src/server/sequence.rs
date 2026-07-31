@@ -80,6 +80,7 @@ impl Server {
                 self.sequence_speed(action, step)
             }
             "button" | "tap" | "press" | "release" => self.sequence_button(action, step),
+            "zapper" | "lightgun" => self.tool_zapper(step),
             other => bail!("unknown sequence action: {other}"),
         }
     }

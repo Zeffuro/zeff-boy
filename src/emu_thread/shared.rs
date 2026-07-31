@@ -19,6 +19,12 @@ impl EmuThread {
 
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_zapper_state(
+            input.zapper.enabled,
+            input.zapper.trigger,
+            input.zapper.hit,
+            input.zapper.screen_pos,
+        );
 
         if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
             backend.set_apu_channel_mutes(mutes);
