@@ -43,6 +43,8 @@ impl App {
             active_system: Some(self.active_system),
             debug_windows: &mut self.debug_windows,
             settings: &mut self.settings,
+            #[cfg(target_arch = "wasm32")]
+            nes_palette_file_slot: self.pending_nes_palette_load.clone(),
             show_settings_window: &mut self.show_settings_window,
             dock_state: &mut self.debug_dock,
             toast_manager: &mut self.toast_manager,

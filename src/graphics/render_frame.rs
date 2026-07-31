@@ -15,6 +15,8 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) active_system: Option<crate::emu_backend::ActiveSystem>,
     pub(crate) debug_windows: &'a mut DebugWindowState,
     pub(crate) settings: &'a mut crate::settings::Settings,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) nes_palette_file_slot: crate::platform::FileDataSlot,
     pub(crate) show_settings_window: &'a mut bool,
     pub(crate) dock_state: &'a mut egui_dock::DockState<DebugTab>,
     pub(crate) toast_manager: &'a mut ToastManager,
@@ -305,6 +307,8 @@ impl Graphics {
                     active_system: ctx.active_system,
                     gb_hardware_mode_label,
                     is_pocket_camera: ctx.is_pocket_camera,
+                    #[cfg(target_arch = "wasm32")]
+                    nes_palette_file_slot: ctx.nes_palette_file_slot.clone(),
                 },
             );
         }

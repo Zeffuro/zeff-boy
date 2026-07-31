@@ -206,6 +206,7 @@ impl App {
         self.check_pending_gfx();
         self.check_pending_rom();
         self.check_pending_state_load();
+        self.check_pending_nes_palette_load();
         self.check_tab_visibility();
         if self.gfx.is_none() && self.pending_gfx.is_some() {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);

@@ -13,6 +13,8 @@ pub(crate) struct SettingsContext<'a> {
     pub active_system: Option<ActiveSystem>,
     pub gb_hardware_mode_label: Option<&'a str>,
     pub is_pocket_camera: bool,
+    #[cfg(target_arch = "wasm32")]
+    pub nes_palette_file_slot: crate::platform::FileDataSlot,
 }
 
 pub(crate) fn draw_settings_window(
@@ -60,6 +62,8 @@ pub(crate) fn draw_settings_window(
                             active_system,
                             gb_hardware_mode_label,
                             is_pocket_camera,
+                            #[cfg(target_arch = "wasm32")]
+                            emu.nes_palette_file_slot.clone(),
                         ),
                         4 => ui::draw(ui, settings),
                         5 => camera::draw(ui, settings, state),

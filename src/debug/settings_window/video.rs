@@ -8,6 +8,7 @@ pub(super) fn draw(
     active_system: Option<ActiveSystem>,
     gb_hardware_mode_label: Option<&str>,
     is_pocket_camera: bool,
+    #[cfg(target_arch = "wasm32")] nes_palette_file_slot: crate::platform::FileDataSlot,
 ) {
     ui.heading("Video");
     enum_combo_box(ui, "VSync", &mut settings.video.vsync_mode);
@@ -61,7 +62,13 @@ pub(super) fn draw(
     draw_gba_display_section(ui, settings, active_system);
 
     ui.separator();
-    draw_nes_palette_section(ui, settings, active_system);
+    draw_nes_palette_section(
+        ui,
+        settings,
+        active_system,
+        #[cfg(target_arch = "wasm32")]
+        nes_palette_file_slot,
+    );
 }
 
 fn draw_gb_palette_section(
@@ -188,6 +195,7 @@ fn draw_nes_palette_section(
     ui: &mut egui::Ui,
     settings: &mut Settings,
     active_system: Option<ActiveSystem>,
+    #[cfg(target_arch = "wasm32")] nes_palette_file_slot: crate::platform::FileDataSlot,
 ) {
     use crate::settings::NesPaletteMode;
 
@@ -197,25 +205,43 @@ fn draw_nes_palette_section(
     if settings.video.nes_palette_mode == NesPaletteMode::Custom {
         ui.separator();
         ui.label("Custom NES .pal file:");
+        #[cfg(not(target_arch = "wasm32"))]
         ui.add(
             egui::TextEdit::singleline(&mut settings.video.nes_custom_palette_path)
                 .hint_text("Path to 192-byte or 1536-byte binary .pal file")
                 .desired_width(f32::INFINITY),
         );
+        #[cfg(target_arch = "wasm32")]
+        if settings.video.nes_custom_palette_name.is_empty() {
+            ui.monospace("(not uploaded)");
+        } else {
+            ui.monospace(&settings.video.nes_custom_palette_name);
+        }
         ui.horizontal(|ui| {
+            #[cfg(not(target_arch = "wasm32"))]
             if ui.button("Load .pal...").clicked()
                 && let Some(path) = crate::platform::FileDialog::new()
                     .add_filter("NES palette", &["pal"])
                     .pick_file()
             {
                 settings.video.nes_custom_palette_path = path.to_string_lossy().to_string();
+                settings.video.nes_custom_palette_name.clear();
+                settings.video.nes_custom_palette_bytes.clear();
+            }
+            #[cfg(target_arch = "wasm32")]
+            if ui.button("Load .pal...").clicked() {
+                crate::platform::FileDialog::new()
+                    .add_filter("NES palette", &["pal"])
+                    .pick_file_web(nes_palette_file_slot.clone());
             }
             if ui.button("Clear").clicked() {
                 settings.video.nes_custom_palette_path.clear();
+                settings.video.nes_custom_palette_name.clear();
+                settings.video.nes_custom_palette_bytes.clear();
             }
         });
 
-        match nes_palette_path_status(&settings.video.nes_custom_palette_path) {
+        match nes_palette_status(settings) {
             Ok(message) => {
                 ui.label(egui::RichText::new(message).weak().small());
             }
@@ -236,16 +262,15 @@ fn draw_nes_palette_section(
     }
 }
 
-fn nes_palette_path_status(path: &str) -> Result<String, String> {
-    let path = path.trim();
-    if path.is_empty() {
-        return Err(
-            "No custom NES palette file selected; rendering will fall back to raw.".to_string(),
-        );
-    }
-
+fn nes_palette_status(settings: &Settings) -> Result<String, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let path = settings.video.nes_custom_palette_path.trim();
+        if path.is_empty() {
+            return Err(
+                "No custom NES palette file selected; rendering will fall back to raw.".to_string(),
+            );
+        }
         let bytes =
             std::fs::read(path).map_err(|err| format!("Could not read .pal file: {err}"))?;
         zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(&bytes)
@@ -255,7 +280,23 @@ fn nes_palette_path_status(path: &str) -> Result<String, String> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        Err("Custom NES palette files are not available in browser builds yet.".to_string())
+        if settings.video.nes_custom_palette_bytes.is_empty() {
+            return Err(
+                "No custom NES palette uploaded; rendering will fall back to raw.".to_string(),
+            );
+        }
+        zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(
+            &settings.video.nes_custom_palette_bytes,
+        )
+        .map_err(|err| format!("Invalid uploaded .pal file: {err}"))?;
+        let name = if settings.video.nes_custom_palette_name.is_empty() {
+            "uploaded .pal file"
+        } else {
+            &settings.video.nes_custom_palette_name
+        };
+        Ok(format!(
+            "Using {name}. Browser builds store the uploaded palette bytes in settings."
+        ))
     }
 }
 

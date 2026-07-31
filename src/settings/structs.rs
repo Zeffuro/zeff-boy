@@ -213,6 +213,10 @@ pub(crate) struct VideoSettings {
     pub(crate) nes_palette_mode: NesPaletteMode,
     #[serde(default)]
     pub(crate) nes_custom_palette_path: String,
+    #[serde(default)]
+    pub(crate) nes_custom_palette_name: String,
+    #[serde(default)]
+    pub(crate) nes_custom_palette_bytes: Vec<u8>,
     pub(crate) vsync_mode: VsyncMode,
 }
 
@@ -232,6 +236,8 @@ impl Default for VideoSettings {
             gba_color_correction_matrix: default_color_correction_matrix(),
             nes_palette_mode: NesPaletteMode::default(),
             nes_custom_palette_path: String::new(),
+            nes_custom_palette_name: String::new(),
+            nes_custom_palette_bytes: Vec::new(),
             vsync_mode: VsyncMode::default(),
         }
     }

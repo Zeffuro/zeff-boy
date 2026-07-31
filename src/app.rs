@@ -83,6 +83,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         #[cfg(target_arch = "wasm32")]
         pending_state_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
         #[cfg(target_arch = "wasm32")]
+        pending_nes_palette_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+        #[cfg(target_arch = "wasm32")]
         wasm_tab_visible: std::rc::Rc::new(std::cell::Cell::new(true)),
         #[cfg(target_arch = "wasm32")]
         wasm_tab_was_visible: true,
@@ -208,6 +210,8 @@ struct App {
     pending_rom_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
     pending_state_load: crate::platform::FileDataSlot,
+    #[cfg(target_arch = "wasm32")]
+    pending_nes_palette_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
     wasm_tab_visible: std::rc::Rc<std::cell::Cell<bool>>,
     #[cfg(target_arch = "wasm32")]

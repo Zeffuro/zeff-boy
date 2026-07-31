@@ -13,6 +13,31 @@ impl App {
     }
 
     #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn check_pending_nes_palette_load(&mut self) {
+        let data = self.pending_nes_palette_load.borrow_mut().take();
+        if let Some((name, bytes)) = data {
+            match zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(&bytes) {
+                Ok(_) => {
+                    self.settings.video.nes_custom_palette_name = name.clone();
+                    self.settings.video.nes_custom_palette_path = name.clone();
+                    self.settings.video.nes_custom_palette_bytes = bytes;
+                    self.settings.video.nes_palette_mode = crate::settings::NesPaletteMode::Custom;
+                    self.nes_palette_cache.path.clear();
+                    self.nes_palette_cache.palette = None;
+                    self.nes_palette_cache.error = None;
+                    self.settings.save();
+                    self.toast_manager
+                        .info(format!("Loaded NES palette {name}"));
+                }
+                Err(err) => {
+                    self.toast_manager
+                        .error(format!("Invalid NES palette: {err}"));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn load_rom_from_bytes(&mut self, name: String, data: Vec<u8>) {
         self.stop_emu_thread();
         self.stop_camera_capture();
