@@ -67,7 +67,6 @@ id = "ppu_open_bus"
 archive_path = "nes-test-roms/ppu_open_bus/ppu_open_bus.nes"
 sha256 = "d4208a3ff6340532dd0fced7f9d408d5b6585853a0ddc9c1f64ee1722ef08e67"
 legacy_paths = ["test-roms/nes-test-roms/ppu_open_bus/ppu_open_bus.nes"]
-expectation = { kind = "known_fail", reason = "Current NES PPU open-bus decay behavior fails ppu_open_bus with status=03." }
 
 [[test_groups]]
 id_prefix = "nes/blargg/oam_read"

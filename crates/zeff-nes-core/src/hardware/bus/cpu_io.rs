@@ -43,7 +43,9 @@ impl Bus {
     pub fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
-            0x2000..=0x3FFF => self.ppu.peek_register(addr & PPU_REG_MIRROR_MASK),
+            0x2000..=0x3FFF => self
+                .ppu
+                .peek_register_at(addr & PPU_REG_MIRROR_MASK, self.ppu_cycles),
             0x4000..=0x4013 => 0,
             OAM_DMA => 0,
             APU_STATUS => self.apu.peek_status(),

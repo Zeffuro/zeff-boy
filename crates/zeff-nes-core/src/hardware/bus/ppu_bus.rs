@@ -5,9 +5,11 @@ use crate::hardware::ppu::VBLANK_SCANLINE;
 
 impl Bus {
     pub(super) fn ppu_read_register(&mut self, addr: u16) -> u8 {
-        let result = match addr {
+        let ppu_cycles = self.ppu_cycles;
+        let latch = self.ppu.io_latch_value_at(ppu_cycles);
+        let (result, refresh_mask) = match addr {
             0x2002 => {
-                let status = (self.ppu.regs.status & 0xE0) | (self.ppu.io_latch & 0x1F);
+                let status = (self.ppu.regs.status & 0xE0) | (latch & 0x1F);
                 if self.ppu.scanline == VBLANK_SCANLINE && (1..=3).contains(&self.ppu.dot) {
                     self.ppu_nmi_suppressed_by_status_read = true;
                     if self.ppu.dot == 1 {
@@ -17,16 +19,24 @@ impl Bus {
                 self.ppu.regs.clear_vblank();
                 self.ppu.nmi_output = false;
                 self.ppu.w = false;
-                status
+                (status, 0xE0)
             }
-            0x2004 => self.ppu.oam[self.ppu.oam_addr as usize],
+            0x2004 => {
+                let mut data = self.ppu.oam[self.ppu.oam_addr as usize];
+                if self.ppu.oam_addr & 0x03 == 0x02 {
+                    data &= !0x1C;
+                }
+                (data, 0xFF)
+            }
             0x2007 => {
                 let addr = self.ppu.v & 0x3FFF;
                 let old_v = self.ppu.v;
                 let mut data = self.ppu.read_buffer;
+                let mut refresh_mask = 0xFF;
 
                 if addr >= 0x3F00 {
-                    data = self.ppu_bus_read(addr);
+                    data = (self.ppu_bus_read(addr) & 0x3F) | (latch & 0xC0);
+                    refresh_mask = 0x3F;
                     self.ppu.read_buffer =
                         self.ppu_bus_read_with_kind(addr - 0x1000, ChrFetchKind::CpuData);
                 } else {
@@ -37,16 +47,22 @@ impl Bus {
                 if old_v & 0x1000 != self.ppu.v & 0x1000 {
                     self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
                 }
-                data
+                (data, refresh_mask)
             }
-            _ => self.ppu.io_latch,
+            _ => (latch, 0x00),
         };
-        self.ppu.io_latch = result;
+
+        if refresh_mask == 0 {
+            self.ppu.decay_io_latch_at(ppu_cycles);
+        } else {
+            self.ppu
+                .refresh_io_latch_bits(result, refresh_mask, ppu_cycles);
+        }
         result
     }
 
     pub(super) fn ppu_write_register(&mut self, addr: u16, val: u8) {
-        self.ppu.io_latch = val;
+        self.ppu.refresh_io_latch_bits(val, 0xFF, self.ppu_cycles);
         match addr {
             0x2000 => {
                 let old_nmi_output = self.ppu.nmi_output;
@@ -196,6 +212,7 @@ mod tests {
     use super::*;
     use crate::hardware::cartridge::Cartridge;
     use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
+    use crate::hardware::ppu::PPU_IO_LATCH_DECAY_PPU_CYCLES;
 
     fn test_bus() -> Bus {
         let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -278,5 +295,68 @@ mod tests {
         assert_eq!(bus.ppu.regs.status & STATUS_VBLANK, 0);
         assert!(bus.ppu_nmi_suppressed_by_status_read);
         assert!(!bus.ppu.suppress_vblank_edge);
+    }
+
+    #[test]
+    fn ppu_io_latch_decays_to_zero() {
+        let mut bus = test_bus();
+
+        bus.ppu_write_register(0x2000, 0xFF);
+        bus.ppu_cycles = PPU_IO_LATCH_DECAY_PPU_CYCLES;
+
+        assert_eq!(bus.ppu_read_register(0x2000), 0x00);
+    }
+
+    #[test]
+    fn reading_write_only_ppu_register_does_not_refresh_io_latch() {
+        let mut bus = test_bus();
+
+        bus.ppu_write_register(0x2000, 0xFF);
+        bus.ppu_cycles = PPU_IO_LATCH_DECAY_PPU_CYCLES - 1;
+        assert_eq!(bus.ppu_read_register(0x2000), 0xFF);
+
+        bus.ppu_cycles = PPU_IO_LATCH_DECAY_PPU_CYCLES;
+        assert_eq!(bus.ppu_read_register(0x2000), 0x00);
+    }
+
+    #[test]
+    fn reading_ppustatus_refreshes_only_high_status_bits() {
+        let mut bus = test_bus();
+
+        bus.ppu_write_register(0x2000, 0x1F);
+        bus.ppu_cycles = PPU_IO_LATCH_DECAY_PPU_CYCLES - 1;
+        bus.ppu.regs.status = 0xE0;
+        assert_eq!(bus.ppu_read_register(0x2002), 0xFF);
+
+        bus.ppu_cycles = PPU_IO_LATCH_DECAY_PPU_CYCLES;
+
+        assert_eq!(bus.ppu_read_register(0x2000), 0xE0);
+    }
+
+    #[test]
+    fn palette_data_read_uses_io_latch_for_high_bits() {
+        let mut bus = test_bus();
+
+        bus.ppu_write_register(0x2000, 0xC0);
+        bus.ppu.v = 0x3F00;
+        bus.ppu.palette_ram[0] = 0x15;
+
+        assert_eq!(bus.ppu_read_register(0x2007), 0xD5);
+
+        bus.ppu_cycles = PPU_IO_LATCH_DECAY_PPU_CYCLES;
+        bus.ppu.v = 0x3F00;
+
+        assert_eq!(bus.ppu_read_register(0x2007), 0x15);
+    }
+
+    #[test]
+    fn oam_attribute_read_clears_unused_bits_and_refreshes_io_latch() {
+        let mut bus = test_bus();
+
+        bus.ppu.oam_addr = 0x02;
+        bus.ppu.oam[0x02] = 0xFF;
+
+        assert_eq!(bus.ppu_read_register(0x2004), 0xE3);
+        assert_eq!(bus.ppu_read_register(0x2000), 0xE3);
     }
 }

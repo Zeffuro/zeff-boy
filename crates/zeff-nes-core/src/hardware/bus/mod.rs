@@ -148,6 +148,9 @@ impl Bus {
         self.controller2.write_state(w);
         w.write_u64(self.ppu_cycles);
         w.write_u8(self.cpu_open_bus);
+        for decay_at in self.ppu.io_latch_decay_at_ppu_cycle {
+            w.write_u64(decay_at);
+        }
     }
 
     pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
@@ -159,6 +162,14 @@ impl Bus {
         self.controller2.read_state(r)?;
         self.ppu_cycles = r.read_u64()?;
         self.cpu_open_bus = r.read_u8()?;
+        if r.is_exhausted() {
+            self.ppu
+                .refresh_io_latch_bits(self.ppu.io_latch, 0xFF, self.ppu_cycles);
+        } else {
+            for decay_at in &mut self.ppu.io_latch_decay_at_ppu_cycle {
+                *decay_at = r.read_u64()?;
+            }
+        }
         self.ppu_nmi_pending_from_register_write = false;
         self.ppu_nmi_suppressed_by_status_read = false;
         self.cpu_step_elapsed_cycles = 0;

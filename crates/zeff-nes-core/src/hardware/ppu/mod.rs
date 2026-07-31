@@ -12,6 +12,12 @@ pub const SCREEN_W: usize = 256;
 pub const SCREEN_H: usize = 240;
 pub const FRAMEBUFFER_SIZE: usize = SCREEN_W * SCREEN_H * 4;
 
+// blargg's ppu_open_bus test documents the PPU I/O latch as a per-bit
+// dynamic latch where bits that are not refreshed with a 1 decay to 0 after
+// roughly 600 ms. At NTSC timing this is approximately 36 frames.
+pub(crate) const PPU_IO_LATCH_DECAY_PPU_CYCLES: u64 =
+    crate::hardware::constants::CPU_CYCLES_PER_FRAME * 3 * 36;
+
 pub const SCANLINES_PER_FRAME: u16 = 262;
 pub const DOTS_PER_SCANLINE: u16 = 341;
 pub const VBLANK_SCANLINE: u16 = 241;
@@ -50,6 +56,7 @@ pub struct Ppu {
     pub(crate) read_buffer: u8,
 
     pub(crate) io_latch: u8,
+    pub(crate) io_latch_decay_at_ppu_cycle: [u64; 8],
     pub(crate) framebuffer: Box<[u8; FRAMEBUFFER_SIZE]>,
     pub(crate) frame_ready: bool,
     pub(crate) frame_count: u64,
@@ -100,6 +107,7 @@ impl Ppu {
             w: false,
             read_buffer: 0,
             io_latch: 0,
+            io_latch_decay_at_ppu_cycle: [0; 8],
             framebuffer: Box::new([0u8; FRAMEBUFFER_SIZE]),
             frame_ready: false,
             frame_count: 0,
@@ -121,19 +129,57 @@ impl Ppu {
         }
     }
 
-    pub fn peek_register(&self, addr: u16) -> u8 {
+    #[inline]
+    pub(crate) fn io_latch_value_at(&self, ppu_cycles: u64) -> u8 {
+        let mut value = self.io_latch;
+        for bit in 0..8 {
+            let mask = 1u8 << bit;
+            if value & mask != 0 && ppu_cycles >= self.io_latch_decay_at_ppu_cycle[bit] {
+                value &= !mask;
+            }
+        }
+        value
+    }
+
+    #[inline]
+    pub(crate) fn decay_io_latch_at(&mut self, ppu_cycles: u64) {
+        self.io_latch = self.io_latch_value_at(ppu_cycles);
+    }
+
+    #[inline]
+    pub(crate) fn refresh_io_latch_bits(&mut self, value: u8, mask: u8, ppu_cycles: u64) {
+        let mut latch = self.io_latch_value_at(ppu_cycles);
+        latch = (latch & !mask) | (value & mask);
+        self.io_latch = latch;
+
+        let decay_at = ppu_cycles.saturating_add(PPU_IO_LATCH_DECAY_PPU_CYCLES);
+        for bit in 0..8 {
+            if mask & (1u8 << bit) != 0 {
+                self.io_latch_decay_at_ppu_cycle[bit] = decay_at;
+            }
+        }
+    }
+
+    pub fn peek_register_at(&self, addr: u16, ppu_cycles: u64) -> u8 {
+        let latch = self.io_latch_value_at(ppu_cycles);
         match addr {
-            0x2002 => (self.regs.status & 0xE0) | (self.io_latch & 0x1F),
-            0x2004 => self.oam[self.oam_addr as usize],
+            0x2002 => (self.regs.status & 0xE0) | (latch & 0x1F),
+            0x2004 => {
+                let mut data = self.oam[self.oam_addr as usize];
+                if self.oam_addr & 0x03 == 0x02 {
+                    data &= !0x1C;
+                }
+                data
+            }
             0x2007 => {
                 let ppu_addr = self.v & 0x3FFF;
                 if ppu_addr >= 0x3F00 {
-                    self.palette_ram[(ppu_addr as usize - 0x3F00) & 0x1F]
+                    (self.palette_ram[(ppu_addr as usize - 0x3F00) & 0x1F] & 0x3F) | (latch & 0xC0)
                 } else {
                     self.read_buffer
                 }
             }
-            _ => self.io_latch,
+            _ => latch,
         }
     }
 
