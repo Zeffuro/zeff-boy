@@ -122,6 +122,9 @@ impl Bus {
                 self.write_io16_raw(offset, next & 0x3FFF);
                 self.test_irq_signal(1);
             }
+            0x0400_0204 => {
+                self.write_io16_raw(offset, value & 0x7FFF);
+            }
             0x0400_0208 => {
                 self.write_io16_raw(offset, value & 0x0001);
                 self.test_irq_signal(1);

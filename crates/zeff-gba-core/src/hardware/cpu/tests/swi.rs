@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn swi_soft_reset_clears_top_iwram_and_jumps_to_rom_by_default() {
+    let mut bus = bus_with_rom(&[]);
+    bus.write32(0x0300_7E00, 0xA5A5_A5A5);
+    bus.write32(0x0300_7FFA, 0);
+    bus.write32(0x0300_7FFC, 0xDEAD_BEEF);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB | 0x80;
+    cpu.regs[0] = 0x1234_5678;
+    cpu.regs[13] = 0x0300_7E00;
+    cpu.regs[14] = 0x0800_1235;
+
+    cpu.execute_software_interrupt(&mut bus, 0x00);
+
+    assert_eq!(bus.read32(0x0300_7E00), 0);
+    assert_eq!(bus.read32(0x0300_7FFC), 0);
+    assert_eq!(cpu.pc(), RESET_VECTOR);
+    assert_eq!(cpu.cpsr & (CPSR_MODE_MASK | CPSR_THUMB | 0x80), 0x1F);
+    assert_eq!(cpu.regs[0], 0);
+    assert_eq!(cpu.regs[13], 0x0300_7F00);
+    cpu.set_cpsr(0x12);
+    assert_eq!(cpu.regs[13], 0x0300_7FA0);
+}
+
+#[test]
+fn swi_soft_reset_jumps_to_wram_when_return_flag_is_set() {
+    let mut bus = bus_with_rom(&[]);
+    bus.write8(0x0300_7FFA, 1);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr |= CPSR_THUMB;
+
+    cpu.execute_software_interrupt(&mut bus, 0x00);
+
+    assert_eq!(cpu.pc(), 0x0200_0000);
+    assert_eq!(cpu.cpsr & CPSR_THUMB, 0);
+}
+
+#[test]
 fn swi_vblank_intr_wait_returns_if_vblank_already_pending() {
     let mut bus = bus_with_rom(&0xDF05_u16.to_le_bytes()); // swi 5
     bus.write16(0x0400_0200, 1);

@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn post_boot_io_defaults_include_affine_bg_identity_matrices() {
+    let bus = Bus::new(cartridge(), 48_000);
+
+    assert_eq!(bus.read16(0x0400_0020), 0x0100);
+    assert_eq!(bus.read16(0x0400_0022), 0);
+    assert_eq!(bus.read16(0x0400_0024), 0);
+    assert_eq!(bus.read16(0x0400_0026), 0x0100);
+    assert_eq!(bus.read16(0x0400_0030), 0x0100);
+    assert_eq!(bus.read16(0x0400_0032), 0);
+    assert_eq!(bus.read16(0x0400_0034), 0);
+    assert_eq!(bus.read16(0x0400_0036), 0x0100);
+    assert_eq!(bus.read16(0x0400_0088), 0x0200);
+}
+
+#[test]
 fn register_ram_reset_clears_requested_regions_and_forces_blank() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.write8(0x0200_0000, 0x12);

@@ -93,7 +93,8 @@ fn fetch_instruction_at(
         InstructionSet::Arm => bus.read32(pc),
         InstructionSet::Thumb => u32::from(bus.read16(pc)),
     };
-    let fetch_cycles = timing::instruction_fetch_cycles(pc, width_bytes, sequential);
+    let fetch_cycles =
+        timing::instruction_fetch_cycles_with_waitcnt(pc, width_bytes, sequential, bus.waitcnt());
 
     FetchedInstruction {
         pc,

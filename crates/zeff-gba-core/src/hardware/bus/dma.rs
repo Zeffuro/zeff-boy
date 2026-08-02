@@ -1,6 +1,6 @@
 use super::super::dma::DmaChannel;
 use super::super::timer::TimerOverflowCounts;
-use super::super::timing::{AccessType, access_cycles};
+use super::super::timing::{AccessType, access_cycles_with_waitcnt};
 use super::*;
 
 const INT_DMA0: u16 = 1 << 8;
@@ -58,16 +58,25 @@ impl Bus {
             let src_mode = (ch.control >> 7) & 0x3;
             let mut src = ch.active_source;
             let mut transfer_cycles = 0u32;
+            let waitcnt = self.waitcnt();
             for index in 0..4 {
                 let access_type = if index == 0 {
                     AccessType::NonSequential
                 } else {
                     AccessType::Sequential
                 };
-                transfer_cycles =
-                    transfer_cycles.saturating_add(access_cycles(src, 4, access_type));
-                transfer_cycles =
-                    transfer_cycles.saturating_add(access_cycles(fifo_addr, 4, access_type));
+                transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                    src,
+                    4,
+                    access_type,
+                    waitcnt,
+                ));
+                transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                    fifo_addr,
+                    4,
+                    access_type,
+                    waitcnt,
+                ));
                 let value = self.read32(src);
                 self.write32(fifo_addr, value);
                 src = step_dma_addr(src, src_mode, 4);
@@ -139,16 +148,25 @@ impl Bus {
         let mut transfer_cycles = 0u32;
         if channel == 3 && !word && self.cartridge.is_eeprom_access_addr(dst) {
             let mut bits = Vec::with_capacity(count as usize);
+            let waitcnt = self.waitcnt();
             for index in 0..count {
                 let access_type = if index == 0 {
                     AccessType::NonSequential
                 } else {
                     AccessType::Sequential
                 };
-                transfer_cycles =
-                    transfer_cycles.saturating_add(access_cycles(src, width, access_type));
-                transfer_cycles =
-                    transfer_cycles.saturating_add(access_cycles(dst, width, access_type));
+                transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                    src,
+                    width,
+                    access_type,
+                    waitcnt,
+                ));
+                transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                    dst,
+                    width,
+                    access_type,
+                    waitcnt,
+                ));
 
                 let value = self.read16(src);
                 bits.push((value & 1) as u8);
@@ -167,16 +185,25 @@ impl Bus {
             return;
         }
         if channel == 3 && !word && self.cartridge.is_eeprom_access_addr(src) {
+            let waitcnt = self.waitcnt();
             for index in 0..count {
                 let access_type = if index == 0 {
                     AccessType::NonSequential
                 } else {
                     AccessType::Sequential
                 };
-                transfer_cycles =
-                    transfer_cycles.saturating_add(access_cycles(src, width, access_type));
-                transfer_cycles =
-                    transfer_cycles.saturating_add(access_cycles(dst, width, access_type));
+                transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                    src,
+                    width,
+                    access_type,
+                    waitcnt,
+                ));
+                transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                    dst,
+                    width,
+                    access_type,
+                    waitcnt,
+                ));
 
                 let value = self.cartridge.eeprom_read16(src);
                 self.record_read(src, u32::from(value), 2);
@@ -192,16 +219,25 @@ impl Bus {
             ch.active_count = 0;
             return;
         }
+        let waitcnt = self.waitcnt();
         for index in 0..count {
             let access_type = if index == 0 {
                 AccessType::NonSequential
             } else {
                 AccessType::Sequential
             };
-            transfer_cycles =
-                transfer_cycles.saturating_add(access_cycles(src, width, access_type));
-            transfer_cycles =
-                transfer_cycles.saturating_add(access_cycles(dst, width, access_type));
+            transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                src,
+                width,
+                access_type,
+                waitcnt,
+            ));
+            transfer_cycles = transfer_cycles.saturating_add(access_cycles_with_waitcnt(
+                dst,
+                width,
+                access_type,
+                waitcnt,
+            ));
 
             let read_addr = dma_source_addr(channel, src) & !(unit - 1);
             let write_addr = dma_destination_addr(channel, dst) & !(unit - 1);

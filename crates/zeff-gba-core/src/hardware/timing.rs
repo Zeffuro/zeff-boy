@@ -38,26 +38,41 @@ pub fn region_for_addr(addr: u32) -> BusRegion {
 }
 
 pub fn access_cycles(addr: u32, width_bytes: u8, access: AccessType) -> u32 {
+    access_cycles_with_waitcnt(addr, width_bytes, access, 0)
+}
+
+pub fn access_cycles_with_waitcnt(
+    addr: u32,
+    width_bytes: u8,
+    access: AccessType,
+    waitcnt: u16,
+) -> u32 {
     let base = match (region_for_addr(addr), access) {
         (BusRegion::Bios, _) => 1,
         (BusRegion::Ewram, _) => 3,
         (BusRegion::Iwram, _) => 1,
         (BusRegion::Io, _) => 1,
         (BusRegion::PaletteRam | BusRegion::Vram | BusRegion::Oam, _) => 1,
-        (BusRegion::GamePak0, AccessType::NonSequential) => 5,
-        (BusRegion::GamePak0, AccessType::Sequential) => 3,
-        (BusRegion::GamePak1, AccessType::NonSequential) => 5,
-        (BusRegion::GamePak1, AccessType::Sequential) => 3,
-        (BusRegion::GamePak2, AccessType::NonSequential) => 9,
-        (BusRegion::GamePak2, AccessType::Sequential) => 3,
-        (BusRegion::Sram, _) => 5,
+        (BusRegion::GamePak0, AccessType::NonSequential) => gamepak_first_access_cycles(waitcnt, 2),
+        (BusRegion::GamePak0, AccessType::Sequential) => {
+            gamepak_second_access_cycles(waitcnt, 4, [3, 2])
+        }
+        (BusRegion::GamePak1, AccessType::NonSequential) => gamepak_first_access_cycles(waitcnt, 5),
+        (BusRegion::GamePak1, AccessType::Sequential) => {
+            gamepak_second_access_cycles(waitcnt, 7, [5, 2])
+        }
+        (BusRegion::GamePak2, AccessType::NonSequential) => gamepak_first_access_cycles(waitcnt, 8),
+        (BusRegion::GamePak2, AccessType::Sequential) => {
+            gamepak_second_access_cycles(waitcnt, 10, [9, 2])
+        }
+        (BusRegion::Sram, _) => sram_access_cycles(waitcnt),
         (BusRegion::Unused, _) => 1,
     };
 
     if width_bytes >= 4 {
         match region_for_addr(addr) {
             BusRegion::GamePak0 | BusRegion::GamePak1 | BusRegion::GamePak2 => {
-                base + sequential_cycles(addr + 2)
+                base + sequential_cycles_with_waitcnt(addr + 2, waitcnt)
             }
             _ => base,
         }
@@ -67,7 +82,16 @@ pub fn access_cycles(addr: u32, width_bytes: u8, access: AccessType) -> u32 {
 }
 
 pub fn instruction_fetch_cycles(addr: u32, width_bytes: u8, sequential: bool) -> u32 {
-    access_cycles(
+    instruction_fetch_cycles_with_waitcnt(addr, width_bytes, sequential, 0)
+}
+
+pub fn instruction_fetch_cycles_with_waitcnt(
+    addr: u32,
+    width_bytes: u8,
+    sequential: bool,
+    waitcnt: u16,
+) -> u32 {
+    access_cycles_with_waitcnt(
         addr,
         width_bytes,
         if sequential {
@@ -75,11 +99,26 @@ pub fn instruction_fetch_cycles(addr: u32, width_bytes: u8, sequential: bool) ->
         } else {
             AccessType::NonSequential
         },
+        waitcnt,
     )
 }
 
-fn sequential_cycles(addr: u32) -> u32 {
-    access_cycles(addr, 2, AccessType::Sequential)
+fn sequential_cycles_with_waitcnt(addr: u32, waitcnt: u16) -> u32 {
+    access_cycles_with_waitcnt(addr, 2, AccessType::Sequential, waitcnt)
+}
+
+fn gamepak_first_access_cycles(waitcnt: u16, shift: u16) -> u32 {
+    const FIRST_ACCESS_CYCLES: [u32; 4] = [5, 4, 3, 9];
+    FIRST_ACCESS_CYCLES[((waitcnt >> shift) & 0x3) as usize]
+}
+
+fn gamepak_second_access_cycles(waitcnt: u16, shift: u16, cycles: [u32; 2]) -> u32 {
+    cycles[((waitcnt >> shift) & 1) as usize]
+}
+
+fn sram_access_cycles(waitcnt: u16) -> u32 {
+    const SRAM_ACCESS_CYCLES: [u32; 4] = [5, 4, 3, 9];
+    SRAM_ACCESS_CYCLES[(waitcnt & 0x3) as usize]
 }
 
 #[cfg(test)]
@@ -99,6 +138,49 @@ mod tests {
         assert!(
             instruction_fetch_cycles(0x0800_0000, 2, true)
                 < instruction_fetch_cycles(0x0800_0000, 2, false)
+        );
+    }
+
+    #[test]
+    fn waitcnt_controls_gamepak0_waitstates() {
+        let waitcnt = 0b10 << 2 | 1 << 4;
+        assert_eq!(
+            instruction_fetch_cycles_with_waitcnt(0x0800_0000, 2, false, waitcnt),
+            3
+        );
+        assert_eq!(
+            instruction_fetch_cycles_with_waitcnt(0x0800_0002, 2, true, waitcnt),
+            2
+        );
+    }
+
+    #[test]
+    fn waitcnt_controls_gamepak_mirror_waitstates() {
+        let waitcnt = (0b01 << 5) | (1 << 7) | (0b11 << 8);
+        assert_eq!(
+            instruction_fetch_cycles_with_waitcnt(0x0A00_0000, 2, false, waitcnt),
+            4
+        );
+        assert_eq!(
+            instruction_fetch_cycles_with_waitcnt(0x0A00_0002, 2, true, waitcnt),
+            2
+        );
+        assert_eq!(
+            instruction_fetch_cycles_with_waitcnt(0x0C00_0000, 2, false, waitcnt),
+            9
+        );
+        assert_eq!(
+            instruction_fetch_cycles_with_waitcnt(0x0C00_0002, 2, true, waitcnt),
+            9
+        );
+    }
+
+    #[test]
+    fn word_gamepak_access_adds_sequential_halfword() {
+        let waitcnt = (0b10 << 2) | (1 << 4);
+        assert_eq!(
+            access_cycles_with_waitcnt(0x0800_0000, 4, AccessType::NonSequential, waitcnt),
+            5
         );
     }
 }

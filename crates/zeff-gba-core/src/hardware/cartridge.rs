@@ -205,6 +205,15 @@ mod tests {
     }
 
     #[test]
+    fn detects_sram_f_marker() {
+        let mut rom = minimal_rom();
+        rom.extend_from_slice(b"SRAM_F_V102");
+        let cart = Cartridge::load(&rom).unwrap();
+        assert_eq!(cart.backup_kind(), BackupKind::Sram);
+        assert_eq!(cart.dump_battery_data().unwrap().len(), SRAM_SIZE);
+    }
+
+    #[test]
     fn out_of_range_gamepak_rom_reads_address_open_bus_pattern() {
         let cart = Cartridge::load(&minimal_rom()).unwrap();
 

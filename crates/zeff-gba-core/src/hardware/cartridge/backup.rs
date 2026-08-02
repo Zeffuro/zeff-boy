@@ -336,7 +336,7 @@ pub(super) fn detect_backup_kind(rom: &[u8]) -> BackupKind {
         if window.starts_with(b"FLASH512") || window.starts_with(b"FLASH_V") {
             return BackupKind::Flash512;
         }
-        if window.starts_with(b"SRAM_V") {
+        if window.starts_with(b"SRAM_V") || window.starts_with(b"SRAM_F") {
             return BackupKind::Sram;
         }
         if window.starts_with(b"EEPROM_V") {

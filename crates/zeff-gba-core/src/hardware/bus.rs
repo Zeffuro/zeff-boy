@@ -12,9 +12,14 @@ mod io;
 
 const DISPSTAT: usize = 0x004;
 const VCOUNT: usize = 0x006;
+const BG2PA: usize = 0x020;
+const BG2PD: usize = 0x026;
+const BG3PA: usize = 0x030;
+const BG3PD: usize = 0x036;
 const SOUNDBIAS: usize = 0x088;
 const IE: usize = 0x200;
 const IF: usize = 0x202;
+const WAITCNT: usize = 0x204;
 const IME: usize = 0x208;
 const BIOS_IRQ_FLAGS: u32 = 0x0300_7FF8;
 
@@ -83,8 +88,16 @@ impl Bus {
             debug_trace_writes: false,
             debug_trace_events: RefCell::new(Vec::new()),
         };
-        bus.write_io16_raw(SOUNDBIAS, 0x0200);
+        bus.initialize_post_boot_io_defaults();
         bus
+    }
+
+    fn initialize_post_boot_io_defaults(&mut self) {
+        self.write_io16_raw(BG2PA, 0x0100);
+        self.write_io16_raw(BG2PD, 0x0100);
+        self.write_io16_raw(BG3PA, 0x0100);
+        self.write_io16_raw(BG3PD, 0x0100);
+        self.write_io16_raw(SOUNDBIAS, 0x0200);
     }
 
     pub fn read8(&self, addr: u32) -> u8 {
@@ -418,6 +431,10 @@ impl Bus {
             && self
                 .irq_delay_cycles
                 .is_some_and(|cycles| cycles <= IRQ_SAMPLE_LOOKAHEAD_CYCLES)
+    }
+
+    pub(crate) fn waitcnt(&self) -> u16 {
+        read_io16(&self.io, WAITCNT)
     }
 
     pub(crate) fn take_irq_sample_delay_cycles(&mut self) -> u32 {

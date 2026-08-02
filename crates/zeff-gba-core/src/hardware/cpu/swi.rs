@@ -4,6 +4,7 @@ use crate::hardware::bus::Bus;
 impl Cpu {
     pub(super) fn execute_software_interrupt(&mut self, bus: &mut Bus, function: u32) {
         match function {
+            0x00 => self.swi_soft_reset(bus),
             0x01 => bus.register_ram_reset(self.regs[0] as u8),
             0x02 => self.state = super::CpuState::Halted,
             0x04 => self.swi_intr_wait(bus, self.regs[0] != 0, self.regs[1] as u16),
@@ -31,6 +32,33 @@ impl Cpu {
         }
         self.bios_protected_read_latch = super::POST_SWI_BIOS_READ_LATCH;
         self.cycles = self.cycles.wrapping_add(4);
+    }
+
+    fn swi_soft_reset(&mut self, bus: &mut Bus) {
+        let return_to_wram = bus.read8(0x0300_7FFA) != 0;
+
+        bus.iwram[0x7E00..0x8000].fill(0);
+
+        self.regs = [0; 16];
+        self.banked_r8_r12 = [[0; 5]; super::R8_R12_BANKS];
+        self.banked_lr = [0; super::CPU_BANKS];
+        self.banked_spsr = [0; super::CPU_BANKS];
+        self.banked_sp = [0; super::CPU_BANKS];
+        self.banked_sp[super::BANK_USER_SYSTEM] = 0x0300_7F00;
+        self.banked_sp[super::BANK_IRQ] = 0x0300_7FA0;
+        self.banked_sp[super::BANK_SUPERVISOR] = 0x0300_7FE0;
+        self.cpsr = super::POST_BIOS_CPSR;
+        self.spsr = 0;
+        self.regs[13] = 0x0300_7F00;
+        self.regs[15] = if return_to_wram {
+            0x0200_0000
+        } else {
+            super::RESET_VECTOR
+        };
+        self.state = super::CpuState::Running;
+        self.swi_wait_return_pc = None;
+        self.next_fetch_sequential = false;
+        self.flush_prefetch_queue();
     }
 
     fn swi_intr_wait(&mut self, bus: &mut Bus, discard_old_flags: bool, mask: u16) {
