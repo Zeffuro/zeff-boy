@@ -8,6 +8,7 @@ use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_gba_core::emulator::Emulator as GbaEmulator;
 use zeff_gba_core::hardware::constants::CYCLES_PER_FRAME as GBA_CYCLES_PER_FRAME;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
+use zeff_ws_core::emulator::Emulator as WsEmulator;
 
 use crate::emu_backend::ActiveSystem;
 
@@ -23,6 +24,7 @@ use gba::run_gba_headless;
 use nes::run_nes_headless;
 use screenshots::*;
 use trace::*;
+use ws::run_ws_headless;
 
 mod debug_state;
 mod gb;
@@ -30,6 +32,7 @@ mod gba;
 mod nes;
 mod screenshots;
 mod trace;
+mod ws;
 
 #[derive(Clone)]
 struct StuckReport {
@@ -178,6 +181,7 @@ pub(crate) fn run_headless(
         ActiveSystem::GameBoy => run_gb_headless(&rom_path, &rom_data, mode_preference, opts),
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
         ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, opts),
+        ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
     }
 }
 

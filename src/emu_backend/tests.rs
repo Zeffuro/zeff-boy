@@ -33,6 +33,18 @@ fn build_gba_test_rom() -> Vec<u8> {
     rom
 }
 
+fn build_ws_test_rom() -> Vec<u8> {
+    let mut rom = vec![0xFF; 0x10000];
+    rom[0] = 0xF4;
+    let reset = rom.len() - 16;
+    rom[reset..reset + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+    let footer = rom.len() - 10;
+    rom[footer + 4] = 0x01;
+    let checksum = zeff_ws_core::hardware::cartridge::compute_footer_checksum(&rom);
+    rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+    rom
+}
+
 fn build_gb_backend() -> EmuBackend {
     let rom = build_gb_test_rom();
     let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
@@ -55,6 +67,13 @@ fn build_gba_backend() -> EmuBackend {
     let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
         .expect("GBA emulator should initialize");
     EmuBackend::from_gba(gba, PathBuf::from("test.gba"))
+}
+
+fn build_ws_backend() -> EmuBackend {
+    let rom = build_ws_test_rom();
+    let ws = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("WonderSwan emulator should initialize");
+    EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
 }
 
 fn step_frames(backend: &mut EmuBackend, count: usize) {
@@ -130,6 +149,14 @@ fn active_system_detects_supported_rom_extensions() {
         ActiveSystem::from_path(&PathBuf::from("game.nes")),
         Some(ActiveSystem::Nes)
     );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.ws")),
+        Some(ActiveSystem::WonderSwan)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.wsc")),
+        Some(ActiveSystem::WonderSwan)
+    );
     assert_eq!(ActiveSystem::from_path(&PathBuf::from("game.7z")), None);
 }
 
@@ -188,6 +215,24 @@ fn gba_backend_smoke_roundtrip() {
 }
 
 #[test]
+fn ws_backend_smoke_roundtrip() {
+    let mut backend = build_ws_backend();
+
+    assert_eq!(backend.system(), ActiveSystem::WonderSwan);
+    assert_eq!(backend.framebuffer().len(), (224 * 144 * 4) as usize);
+    assert!(backend.is_running());
+
+    backend.step_frame();
+
+    let state = backend
+        .encode_state_bytes()
+        .expect("WonderSwan backend should encode save-state");
+    backend
+        .load_state_from_bytes(state)
+        .expect("WonderSwan backend should load save-state");
+}
+
+#[test]
 fn gb_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_gb_backend(), 1, 2);
 }
@@ -200,6 +245,11 @@ fn nes_backend_replays_save_state_deterministically() {
 #[test]
 fn gba_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_gba_backend(), 1, 2);
+}
+
+#[test]
+fn ws_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_ws_backend(), 1, 2);
 }
 
 #[test]

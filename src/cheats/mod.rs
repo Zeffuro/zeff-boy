@@ -29,7 +29,7 @@ fn try_parse_single_for_system(
         ActiveSystem::Nes => parse_cheat(input)
             .ok()
             .or_else(|| try_parse_nes_game_genie(input)),
-        ActiveSystem::GameBoyAdvance => None,
+        ActiveSystem::GameBoyAdvance | ActiveSystem::WonderSwan => None,
     }
 }
 

@@ -52,10 +52,18 @@ impl MemoryAddressSpace {
         addr_width: 8,
     };
 
+    pub(crate) const WS: Self = Self {
+        min: 0,
+        max_start: 0x0F_FF00,
+        default_start: 0,
+        addr_width: 6,
+    };
+
     pub(crate) fn for_system(system: ActiveSystem) -> Self {
         match system {
             ActiveSystem::GameBoy | ActiveSystem::Nes => Self::GB_NES,
             ActiveSystem::GameBoyAdvance => Self::GBA,
+            ActiveSystem::WonderSwan => Self::WS,
         }
     }
 

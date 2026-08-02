@@ -270,7 +270,9 @@ impl VideoSettings {
                     self.gba_color_correction_matrix,
                 )
             }
-            Some(crate::emu_backend::ActiveSystem::Nes) | None => EffectiveColorCorrection::None,
+            Some(crate::emu_backend::ActiveSystem::Nes)
+            | Some(crate::emu_backend::ActiveSystem::WonderSwan)
+            | None => EffectiveColorCorrection::None,
         }
     }
 }

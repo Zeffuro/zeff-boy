@@ -132,6 +132,22 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
                 ))
             }
         }
+        ActiveSystem::WonderSwan => {
+            let mut emu = zeff_ws_core::emulator::Emulator::new(
+                &rom_data,
+                zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE,
+            )?;
+            log_sram_result(emu_backend::ws::try_load_battery_sram(&mut emu, &rom_path));
+            if path == rom_path {
+                Ok(EmuBackend::from_ws(emu, rom_path))
+            } else {
+                Ok(EmuBackend::from_ws_with_source(
+                    emu,
+                    rom_path,
+                    path.to_path_buf(),
+                ))
+            }
+        }
     }
 }
 

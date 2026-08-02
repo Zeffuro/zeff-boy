@@ -221,6 +221,14 @@ impl EmuThread {
                 }
             }
         }
+
+        if let Some(ws) = backend.ws_mut() {
+            Self::apply_ws_debug_actions(&mut ws.emu, &input.debug_actions);
+            if !uncapped_mode {
+                ws.emu
+                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
+            }
+        }
     }
 
     pub(crate) fn step_n_frames(
@@ -263,6 +271,7 @@ impl EmuThread {
                 buffers.memory_page,
             ),
             EmuBackend::Gba(gba) => ui::collect_gba_snapshot(&gba.emu, snapshot, buffers),
+            EmuBackend::Ws(_) => ui::UiFrameData::default(),
         }
     }
 

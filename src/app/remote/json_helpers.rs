@@ -8,6 +8,7 @@ pub(super) fn live_system_name(system: crate::emu_backend::ActiveSystem) -> &'st
         crate::emu_backend::ActiveSystem::GameBoy => "gb",
         crate::emu_backend::ActiveSystem::GameBoyAdvance => "gba",
         crate::emu_backend::ActiveSystem::Nes => "nes",
+        crate::emu_backend::ActiveSystem::WonderSwan => "ws",
     }
 }
 
@@ -78,12 +79,14 @@ pub(super) fn live_frame_size(
     const GBA_FRAME_LEN: usize = 240 * 160 * 4;
     const SGB_FRAME_LEN: usize = 256 * 224 * 4;
     const NES_FRAME_LEN: usize = 256 * 240 * 4;
+    const WS_FRAME_LEN: usize = 224 * 144 * 4;
 
     match (system, frame_len) {
         (crate::emu_backend::ActiveSystem::GameBoy, GB_FRAME_LEN) => Some((160, 144)),
         (crate::emu_backend::ActiveSystem::GameBoy, SGB_FRAME_LEN) => Some((256, 224)),
         (crate::emu_backend::ActiveSystem::GameBoyAdvance, GBA_FRAME_LEN) => Some((240, 160)),
         (crate::emu_backend::ActiveSystem::Nes, NES_FRAME_LEN) => Some((256, 240)),
+        (crate::emu_backend::ActiveSystem::WonderSwan, WS_FRAME_LEN) => Some((224, 144)),
         _ => None,
     }
 }

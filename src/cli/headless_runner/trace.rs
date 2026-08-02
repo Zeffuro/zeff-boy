@@ -44,6 +44,17 @@ pub(super) fn gba_bad_state_reason(
     emulator: &GbaEmulator,
     fetched: GbaFetchedInstruction,
 ) -> Option<&'static str> {
+    if matches!(fetched.pc, 0x0000_0000..=0x0000_3FFF)
+        && !matches!(fetched.pc, 0x0000_0128..=0x0000_013F)
+        && emulator.cpu_mode() != CpuMode::Irq
+    {
+        return Some("unexpected-bios-fetch");
+    }
+
+    if !gba_executable_region(fetched.pc) {
+        return Some("invalid-pc-fetch");
+    }
+
     if fetched.instruction_set != InstructionSet::Thumb || emulator.cpu_mode() != CpuMode::Irq {
         return None;
     }
@@ -68,8 +79,31 @@ fn gba_executable_region(pc: u32) -> bool {
         pc,
         0x0000_0000..=0x0000_3FFF
             | 0x0200_0000..=0x03FF_FFFF
+            | 0x0500_0000..=0x07FF_FFFF
             | 0x0800_0000..=0x0DFF_FFFF
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gba_executable_region_allows_valid_code_areas() {
+        assert!(gba_executable_region(0x0000_0000));
+        assert!(gba_executable_region(0x0200_0000));
+        assert!(gba_executable_region(0x0300_0000));
+        assert!(gba_executable_region(0x0600_0000));
+        assert!(gba_executable_region(0x0800_0000));
+        assert!(gba_executable_region(0x0DFF_FFFE));
+    }
+
+    #[test]
+    fn gba_executable_region_rejects_backup_and_open_bus_areas() {
+        assert!(!gba_executable_region(0x0400_0000));
+        assert!(!gba_executable_region(0x0E00_0000));
+        assert!(!gba_executable_region(0x8328_9B90));
+    }
 }
 
 pub(super) fn should_trace_nes_bus_event(opts: &HeadlessOptions, event: NesBusTraceEvent) -> bool {
@@ -316,9 +350,10 @@ fn format_gba_op_fields(
     let raw_width = if fetched.width_bytes == 2 { 4 } else { 8 };
     let ie = emulator.cpu_peek16(0x0400_0200);
     let if_reg = emulator.cpu_peek16(0x0400_0202);
+    let waitcnt = emulator.cpu_peek16(0x0400_0204);
     let ime = emulator.cpu_peek16(0x0400_0208);
     format!(
-        "pc={:08X} raw={:0raw_width$X} set={:?} step_t={} total_t={} cpsr={:08X} mode={:?} ie={:04X} if={:04X} ime={:04X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r4={:08X} r5={:08X} r6={:08X} r7={:08X} r8={:08X} r9={:08X} r10={:08X} r11={:08X} r12={:08X} sp={:08X} lr={:08X} next_pc={:08X} decoded={:?}",
+        "pc={:08X} raw={:0raw_width$X} set={:?} step_t={} total_t={} cpsr={:08X} mode={:?} ie={:04X} if={:04X} waitcnt={:04X} ime={:04X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r4={:08X} r5={:08X} r6={:08X} r7={:08X} r8={:08X} r9={:08X} r10={:08X} r11={:08X} r12={:08X} sp={:08X} lr={:08X} next_pc={:08X} decoded={:?}",
         fetched.pc,
         fetched.raw,
         fetched.instruction_set,
@@ -328,6 +363,7 @@ fn format_gba_op_fields(
         emulator.cpu_mode(),
         ie,
         if_reg,
+        waitcnt,
         ime,
         regs[0],
         regs[1],

@@ -86,4 +86,11 @@ impl EmuThread {
             emu.set_ppu_debug_bg_layers(layers);
         }
     }
+
+    pub(crate) fn apply_ws_debug_actions(
+        emu: &mut zeff_ws_core::emulator::Emulator,
+        actions: &DebugUiActions,
+    ) {
+        apply_debug_actions_to(emu, actions);
+    }
 }

@@ -4,6 +4,7 @@ members = [
     "crates/zeff-gb-core",
     "crates/zeff-gba-core",
     "crates/zeff-nes-core",
+    "crates/zeff-ws-core",
     "crates/zeff-libretro",
     "crates/zeff-romtest",
     "crates/zeff-mcp",
@@ -22,7 +23,7 @@ version = "0.1.3"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
-description = "A Game Boy, Game Boy Color, Game Boy Advance (experimental) and NES emulator written in Rust."
+description = "A Game Boy, Game Boy Color, Game Boy Advance (experimental), NES and WonderSwan emulator written in Rust."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
@@ -30,6 +31,7 @@ zeff-emu-common = { path = "crates/zeff-emu-common" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }
+zeff-ws-core = { path = "crates/zeff-ws-core" }
 anyhow = "1.0.104"
 log = "0.4.33"
 wgpu = "29.0.4"

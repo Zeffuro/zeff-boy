@@ -179,6 +179,8 @@ pub(in crate::cli::headless_runner) fn gba_debug_state(
         "ie_hex": format!("{:04X}", read_io(0x0400_0200)),
         "if": read_io(0x0400_0202),
         "if_hex": format!("{:04X}", read_io(0x0400_0202)),
+        "waitcnt": read_io(0x0400_0204),
+        "waitcnt_hex": format!("{:04X}", read_io(0x0400_0204)),
         "ime": read_io(0x0400_0208),
         "ime_hex": format!("{:04X}", read_io(0x0400_0208)),
         "keyinput": read_io(0x0400_0130),

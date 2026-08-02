@@ -125,7 +125,7 @@ impl CoreState {
 
     pub fn set_zapper_state(&mut self, trigger: bool, hit: bool) {
         if let ActiveCore::Nes(emu) = &mut self.core {
-            emu.set_zapper_state(trigger, hit);
+            emu.set_zapper_state(true, trigger, hit, None);
         }
     }
 

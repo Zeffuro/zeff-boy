@@ -100,7 +100,7 @@ pub(super) fn run_gba_headless(
         }
         emulator.set_input(current_input.buttons, current_input.dpad);
 
-        if opts.trace_opcodes || bus_trace_active {
+        if opts.trace_opcodes || bus_trace_active || opts.break_on_gba_bad_state {
             emulator.clear_frame_ready();
             let guard = emulator
                 .cpu_cycles()

@@ -184,6 +184,42 @@ impl App {
                     (backend, original_crc)
                 })
             }
+            ActiveSystem::WonderSwan => {
+                let mut rom_data = match preloaded_data {
+                    Some(data) => data,
+                    None => std::fs::read(path).context("Failed to read WonderSwan ROM")?,
+                };
+                let original_crc = apply_mods_if_any(system, &mut rom_data);
+                let sample_rate = self
+                    .audio
+                    .as_ref()
+                    .map(|a| a.sample_rate())
+                    .unwrap_or(zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE);
+                zeff_ws_core::emulator::Emulator::new(&rom_data, sample_rate).map(|mut emu| {
+                    let buttons = self.host_input.buttons_pressed();
+                    let dpad = self.host_input.dpad_pressed();
+                    emu.set_input(buttons, dpad);
+                    if let Some(sram_path) =
+                        crate::emu_backend::ws::try_load_battery_sram(&mut emu, rom_path)
+                            .unwrap_or_else(|e| {
+                                log::warn!("Failed to load battery save: {e}");
+                                None
+                            })
+                    {
+                        log::info!("Loaded battery save from {}", sram_path);
+                    }
+                    let backend = if path == rom_path {
+                        EmuBackend::from_ws(emu, rom_path.to_path_buf())
+                    } else {
+                        EmuBackend::from_ws_with_source(
+                            emu,
+                            rom_path.to_path_buf(),
+                            path.to_path_buf(),
+                        )
+                    };
+                    (backend, original_crc)
+                })
+            }
         }
     }
 

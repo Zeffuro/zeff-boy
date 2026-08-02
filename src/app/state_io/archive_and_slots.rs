@@ -107,6 +107,7 @@ pub(crate) fn build_slot_info(rom_hash: Option<[u8; 32]>, system: ActiveSystem) 
             ActiveSystem::Nes => ("nes", "nstate"),
             ActiveSystem::GameBoy => ("gbc", "gbstate"),
             ActiveSystem::GameBoyAdvance => ("gba", "gbastate"),
+            ActiveSystem::WonderSwan => ("ws", "wsstate"),
         };
         let Ok(path) = crate::save_paths::slot_path(subdir, ext, hash, slot) else {
             labels[i] = format!("Slot {slot}  (empty)");

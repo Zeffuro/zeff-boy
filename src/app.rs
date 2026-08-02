@@ -302,6 +302,7 @@ impl App {
             ActiveSystem::GameBoy => GB_FRAME_DURATION,
             ActiveSystem::GameBoyAdvance => GBA_FRAME_DURATION,
             ActiveSystem::Nes => NES_FRAME_DURATION,
+            ActiveSystem::WonderSwan => WS_FRAME_DURATION,
         };
         match self.speed_mode() {
             SpeedMode::FastForward => {

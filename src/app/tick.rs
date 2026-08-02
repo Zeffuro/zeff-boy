@@ -100,12 +100,14 @@ fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32,
     const GBA_FRAME_LEN: usize = 240 * 160 * 4;
     const SGB_FRAME_LEN: usize = 256 * 224 * 4;
     const NES_FRAME_LEN: usize = 256 * 240 * 4;
+    const WS_FRAME_LEN: usize = 224 * 144 * 4;
 
     match (system, frame_len) {
         (ActiveSystem::GameBoy, GB_FRAME_LEN) => Some((160, 144)),
         (ActiveSystem::GameBoy, SGB_FRAME_LEN) => Some((256, 224)),
         (ActiveSystem::GameBoyAdvance, GBA_FRAME_LEN) => Some((240, 160)),
         (ActiveSystem::Nes, NES_FRAME_LEN) => Some((256, 240)),
+        (ActiveSystem::WonderSwan, WS_FRAME_LEN) => Some((224, 144)),
         _ => None,
     }
 }

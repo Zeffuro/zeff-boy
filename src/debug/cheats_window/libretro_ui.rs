@@ -188,6 +188,9 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             ActiveSystem::GameBoyAdvance => {
                 ui.label("GBA");
             }
+            ActiveSystem::WonderSwan => {
+                ui.label("WonderSwan");
+            }
         }
         ui.separator();
         if ui

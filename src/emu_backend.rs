@@ -5,21 +5,25 @@ use anyhow::Context;
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::nes::NesBackend;
+pub(crate) use self::ws::WsBackend;
 
 use crate::emu_core_trait::EmulatorCore;
 
 pub(crate) mod gb;
 pub(crate) mod gba;
 pub(crate) mod nes;
+pub(crate) mod ws;
 
-pub(crate) const ROM_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "gba", "nes"];
-pub(crate) const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "gba", "nes", "zip"];
+pub(crate) const ROM_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "gba", "nes", "ws", "wsc"];
+pub(crate) const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] =
+    &["gb", "gbc", "sgb", "gba", "nes", "ws", "wsc", "zip"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ActiveSystem {
     GameBoy,
     GameBoyAdvance,
     Nes,
+    WonderSwan,
 }
 
 impl ActiveSystem {
@@ -28,6 +32,7 @@ impl ActiveSystem {
             Self::GameBoy => "gbc",
             Self::GameBoyAdvance => "gba",
             Self::Nes => "nes",
+            Self::WonderSwan => "ws",
         }
     }
 
@@ -36,6 +41,7 @@ impl ActiveSystem {
             Self::GameBoy => (160, 144),
             Self::GameBoyAdvance => (240, 160),
             Self::Nes => (256, 240),
+            Self::WonderSwan => (224, 144),
         }
     }
 
@@ -45,12 +51,13 @@ impl ActiveSystem {
             "gb" | "gbc" | "sgb" => Some(Self::GameBoy),
             "gba" => Some(Self::GameBoyAdvance),
             "nes" => Some(Self::Nes),
+            "ws" | "wsc" => Some(Self::WonderSwan),
             _ => None,
         }
     }
 
     pub(crate) fn supported_extensions() -> &'static str {
-        ".gb, .gbc, .sgb, .gba, .nes, .zip"
+        ".gb, .gbc, .sgb, .gba, .nes, .ws, .wsc, .zip"
     }
 }
 
@@ -58,6 +65,7 @@ pub(crate) enum EmuBackend {
     Gb(Box<GbBackend>),
     Gba(Box<GbaBackend>),
     Nes(Box<NesBackend>),
+    Ws(Box<WsBackend>),
 }
 
 macro_rules! dispatch {
@@ -66,6 +74,7 @@ macro_rules! dispatch {
             EmuBackend::Gb(b) => b.$method($($arg),*),
             EmuBackend::Gba(b) => b.$method($($arg),*),
             EmuBackend::Nes(b) => b.$method($($arg),*),
+            EmuBackend::Ws(b) => b.$method($($arg),*),
         }
     };
 }
@@ -119,11 +128,28 @@ impl EmuBackend {
         )))
     }
 
+    pub(crate) fn from_ws(emu: zeff_ws_core::emulator::Emulator, rom_path: PathBuf) -> Self {
+        Self::Ws(Box::new(WsBackend::new(emu, rom_path)))
+    }
+
+    pub(crate) fn from_ws_with_source(
+        emu: zeff_ws_core::emulator::Emulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::Ws(Box::new(WsBackend::with_source_path(
+            emu,
+            rom_path,
+            source_path,
+        )))
+    }
+
     pub(crate) fn system(&self) -> ActiveSystem {
         match self {
             Self::Gb(..) => ActiveSystem::GameBoy,
             Self::Gba(..) => ActiveSystem::GameBoyAdvance,
             Self::Nes(..) => ActiveSystem::Nes,
+            Self::Ws(..) => ActiveSystem::WonderSwan,
         }
     }
 
@@ -132,6 +158,7 @@ impl EmuBackend {
             Self::Gb(..) => "gbstate",
             Self::Gba(..) => "gbastate",
             Self::Nes(..) => "nstate",
+            Self::Ws(..) => "wsstate",
         }
     }
 
@@ -173,6 +200,13 @@ impl EmuBackend {
     pub(crate) fn nes(&self) -> Option<&NesBackend> {
         match self {
             Self::Nes(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn ws_mut(&mut self) -> Option<&mut WsBackend> {
+        match self {
+            Self::Ws(b) => Some(b),
             _ => None,
         }
     }
