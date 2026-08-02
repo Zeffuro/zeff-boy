@@ -50,7 +50,28 @@ impl Mmc5 {
         prg_ram_size: usize,
         has_battery: bool,
     ) -> Self {
-        let ram_len = if prg_ram_size == 0 {
+        Self::new_inner(prg_rom, chr, mirroring, prg_ram_size, has_battery, true)
+    }
+
+    pub fn new_exact_prg_ram(
+        prg_rom: Vec<u8>,
+        chr: Vec<u8>,
+        mirroring: Mirroring,
+        prg_ram_size: usize,
+        has_battery: bool,
+    ) -> Self {
+        Self::new_inner(prg_rom, chr, mirroring, prg_ram_size, has_battery, false)
+    }
+
+    fn new_inner(
+        prg_rom: Vec<u8>,
+        chr: Vec<u8>,
+        mirroring: Mirroring,
+        prg_ram_size: usize,
+        has_battery: bool,
+        default_prg_ram: bool,
+    ) -> Self {
+        let ram_len = if prg_ram_size == 0 && default_prg_ram {
             0x2000
         } else {
             prg_ram_size
@@ -142,6 +163,15 @@ impl Mmc5 {
         (self.nametable_mode >> (table * 2)) & 0x03
     }
 
+    fn encode_chr_bank_register_value(&self, val: u8) -> u16 {
+        match self.chr_mode & 0x03 {
+            0 => u16::from(val & 0x7F) << 3,
+            1 => u16::from(val) << 2,
+            2 => (u16::from(self.upper_chr_bank_bits & 0x01) << 9) | (u16::from(val) << 1),
+            _ => (u16::from(self.upper_chr_bank_bits & 0x03) << 8) | u16::from(val),
+        }
+    }
+
     fn write_register(&mut self, addr: u16, val: u8) {
         match addr {
             0x5100 => self.prg_mode = val & 0x03,
@@ -159,9 +189,7 @@ impl Mmc5 {
             0x5117 => self.prg_banks[3] = val | 0x80,
             0x5120..=0x512B => {
                 let index = (addr - 0x5120) as usize;
-                let bank = (((self.upper_chr_bank_bits as u16) << 8) | val as u16)
-                    % self.chr_bank_count_1k() as u16;
-                self.chr_banks[index] = bank;
+                self.chr_banks[index] = self.encode_chr_bank_register_value(val);
             }
             0x5130 => self.upper_chr_bank_bits = val & 0x03,
             0x5203 => self.irq_line_compare = val,

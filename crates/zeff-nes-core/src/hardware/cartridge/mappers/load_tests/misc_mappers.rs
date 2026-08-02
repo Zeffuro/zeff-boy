@@ -165,7 +165,7 @@ fn load_mapper67_32k_16k_bad_header_uses_cnrom() {
     );
 
     assert_eq!(cart.chr_read(0x0000), 0);
-    cart.cpu_write(0x8000, 0xFF);
+    cart.cpu_write(0xC000, 0xFF);
     assert_eq!(cart.chr_read(0x0000), 1);
 }
 
@@ -176,6 +176,7 @@ fn bad_mapper33_sweet_home_translation_uses_mmc1_override() {
 
     apply_bad_header_mapper_overrides(
         SWEET_HOME_TRANSLATION_BAD_MAPPER33_CRC32,
+        None,
         &mut mapper_kind,
         &mut effective_mapper_label,
     );
@@ -194,12 +195,167 @@ fn bad_mapper64_smb_extreme_uses_nrom_override() {
 
     apply_bad_header_mapper_overrides(
         SMB_EXTREME_BAD_MAPPER64_CRC32,
+        None,
         &mut mapper_kind,
         &mut effective_mapper_label,
     );
 
     assert_eq!(mapper_kind, NesMapper::Nrom);
     assert_eq!(effective_mapper_label, Some("NROM (bad mapper 64 header)"));
+}
+
+#[test]
+fn bad_header_mapper3_crc_uses_gxrom_override() {
+    let mut mapper_kind = NesMapper::CnRom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER3_TO_GXROM_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::GxRom);
+    assert_eq!(effective_mapper_label, Some("GxROM (bad mapper 3 header)"));
+}
+
+#[test]
+fn mapper3_crc_override_disables_bus_conflicts() {
+    for &crc in MAPPER3_NO_BUS_CONFLICT_PRG_CRC32S {
+        assert!(!mapper3_has_bus_conflicts(0, Some(crc)));
+    }
+    assert!(mapper3_has_bus_conflicts(0, Some(0)));
+    assert!(!mapper3_has_bus_conflicts(1, None));
+    assert!(mapper3_has_bus_conflicts(2, None));
+}
+
+#[test]
+fn bad_header_false_four_screen_crc_uses_horizontal_mirroring() {
+    let mut mirroring = Mirroring::FourScreen;
+    apply_bad_header_mirroring_overrides(
+        Some(BAD_HEADER_FALSE_FOUR_SCREEN_PRG_CRC32),
+        &mut mirroring,
+    );
+    assert_eq!(mirroring, Mirroring::Horizontal);
+
+    let mut mirroring = Mirroring::FourScreen;
+    apply_bad_header_mirroring_overrides(None, &mut mirroring);
+    assert_eq!(mirroring, Mirroring::FourScreen);
+}
+
+#[test]
+fn bad_header_mapper0_crc_uses_mapper16_override() {
+    let mut mapper_kind = NesMapper::Nrom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER0_TO_16_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::BandaiEprom24C02);
+    assert_eq!(
+        effective_mapper_label,
+        Some("Bandai mapper 16 (bad mapper 0 header)")
+    );
+}
+
+#[test]
+fn bad_header_mapper0_crc_uses_mapper32_override() {
+    let mut mapper_kind = NesMapper::Nrom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER0_TO_32_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::IremG101);
+    assert_eq!(
+        effective_mapper_label,
+        Some("Irem G-101 / mapper 32 (bad mapper 0 header)")
+    );
+}
+
+#[test]
+fn bad_header_mapper1_crc_uses_mmc5_override() {
+    let mut mapper_kind = NesMapper::SxRom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER1_TO_MMC5_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::ExRom);
+    assert_eq!(
+        effective_mapper_label,
+        Some("ExROM / MMC5 (bad mapper 1 header)")
+    );
+}
+
+#[test]
+fn bad_header_mapper2_crc_uses_mmc1_override() {
+    let mut mapper_kind = NesMapper::UxRom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER2_TO_MMC1_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::SxRom);
+    assert_eq!(
+        effective_mapper_label,
+        Some("SxROM / MMC1 (bad mapper 2 header)")
+    );
+}
+
+#[test]
+fn bad_header_mapper7_crc_uses_mapper34_override() {
+    let mut mapper_kind = NesMapper::AxRom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER7_TO_34_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::BnRom);
+    assert_eq!(
+        effective_mapper_label,
+        Some("BNROM / mapper 34 (bad mapper 7 header)")
+    );
+}
+
+#[test]
+fn bad_header_mapper7_crc_uses_mapper71_override() {
+    let mut mapper_kind = NesMapper::AxRom;
+    let mut effective_mapper_label = None;
+
+    apply_bad_header_mapper_overrides(
+        0,
+        Some(BAD_HEADER_MAPPER7_TO_71_PRG_CRC32),
+        &mut mapper_kind,
+        &mut effective_mapper_label,
+    );
+
+    assert_eq!(mapper_kind, NesMapper::CamericaCodemasters);
+    assert_eq!(
+        effective_mapper_label,
+        Some("Camerica / Codemasters mapper 71 (bad mapper 7 header)")
+    );
 }
 
 #[test]

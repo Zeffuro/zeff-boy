@@ -137,6 +137,21 @@ fn audio_output_nonzero_when_channel_active() {
 }
 
 #[test]
+fn audio_channel_counter_clamps_when_channel_count_shrinks() {
+    let mut m = make_test_mapper();
+    m.audio.ram[0x7F] = 0x70;
+
+    for _ in 0..(15 * 7) {
+        m.audio.tick();
+    }
+
+    m.audio.ram[0x7F] = 0x00;
+    for _ in 0..15 {
+        m.audio.tick();
+    }
+}
+
+#[test]
 fn audio_silent_when_disabled() {
     let mut m = make_test_mapper();
     m.cpu_write(0xE000, 0x40);

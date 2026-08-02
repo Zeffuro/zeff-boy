@@ -162,7 +162,7 @@ impl Mmc5 {
             }
             1 => {
                 let slot = (addr >> 12) & 0x01;
-                let base = if slot == 0 {
+                let base = if matches!(kind, ChrFetchKind::Sprite) && slot == 0 {
                     (self.chr_banks[r3] as usize) & !0x03
                 } else {
                     (self.chr_banks[r7] as usize) & !0x03
@@ -171,11 +171,17 @@ impl Mmc5 {
             }
             2 => {
                 let slot = (addr >> 11) & 0x03;
-                let base = match slot {
-                    0 => (self.chr_banks[r1] as usize) & !0x01,
-                    1 => (self.chr_banks[r3] as usize) & !0x01,
-                    2 => (self.chr_banks[r5] as usize) & !0x01,
-                    _ => (self.chr_banks[r7] as usize) & !0x01,
+                let base = if matches!(kind, ChrFetchKind::Sprite) {
+                    match slot {
+                        0 => (self.chr_banks[r1] as usize) & !0x01,
+                        1 => (self.chr_banks[r3] as usize) & !0x01,
+                        2 => (self.chr_banks[r5] as usize) & !0x01,
+                        _ => (self.chr_banks[r7] as usize) & !0x01,
+                    }
+                } else if slot & 0x01 == 0 {
+                    (self.chr_banks[r3] as usize) & !0x01
+                } else {
+                    (self.chr_banks[r7] as usize) & !0x01
                 };
                 base + ((addr >> 10) & 0x01)
             }

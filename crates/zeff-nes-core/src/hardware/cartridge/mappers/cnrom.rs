@@ -5,21 +5,27 @@ pub struct Cnrom {
     chr: Vec<u8>,
     mirroring: Mirroring,
     chr_bank_select: u8,
+    bus_conflicts: bool,
 }
 
 impl Cnrom {
-    pub fn new(prg_rom: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring, bus_conflicts: bool) -> Self {
         Self {
             prg_rom,
             chr,
             mirroring,
             chr_bank_select: 0,
+            bus_conflicts,
         }
     }
 
     fn chr_index(&self, addr: u16) -> usize {
         let bank = self.chr_bank_select as usize;
         (bank * 0x2000 + addr as usize) % self.chr.len()
+    }
+
+    fn bank_mask(&self) -> u8 {
+        if self.chr.len() > 0x8000 { 0x0F } else { 0x03 }
     }
 }
 
@@ -36,7 +42,12 @@ impl Mapper for Cnrom {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
-            self.chr_bank_select = val & 0x03;
+            let effective_val = if self.bus_conflicts {
+                val & self.cpu_peek(addr)
+            } else {
+                val
+            };
+            self.chr_bank_select = effective_val & self.bank_mask();
         }
     }
 
@@ -68,5 +79,86 @@ impl Mapper for Cnrom {
         self.chr_bank_select = r.read_u8()?;
         crate::save_state::read_chr_state(r, &mut self.chr, "CNROM")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prg(fill: u8) -> Vec<u8> {
+        vec![fill; 0x8000]
+    }
+
+    fn chr_banks(values: &[u8]) -> Vec<u8> {
+        let mut chr = Vec::new();
+        for &value in values {
+            chr.extend(vec![value; 0x2000]);
+        }
+        chr
+    }
+
+    #[test]
+    fn switches_chr_bank_with_bus_conflict_safe_write() {
+        let mut prg = prg(0xFF);
+        prg[0x1234] = 0x02;
+        let mut mapper = Cnrom::new(
+            prg,
+            chr_banks(&[0x00, 0x11, 0x22, 0x33]),
+            Mirroring::Vertical,
+            true,
+        );
+
+        mapper.cpu_write(0x9234, 0x02);
+
+        assert_eq!(mapper.chr_read(0x0000), 0x22);
+    }
+
+    #[test]
+    fn bus_conflict_ands_write_with_rom_byte() {
+        let mut prg = prg(0xFF);
+        prg[0] = 0x01;
+        let mut mapper = Cnrom::new(
+            prg,
+            chr_banks(&[0x00, 0x11, 0x22, 0x33]),
+            Mirroring::Horizontal,
+            true,
+        );
+
+        mapper.cpu_write(0x8000, 0x03);
+
+        assert_eq!(mapper.chr_bank_select, 0x01);
+        assert_eq!(mapper.chr_read(0x0000), 0x11);
+    }
+
+    #[test]
+    fn no_bus_conflict_mode_uses_written_value_directly() {
+        let mut prg = prg(0xFF);
+        prg[0] = 0x78;
+        let mut mapper = Cnrom::new(
+            prg,
+            chr_banks(&[0x00, 0x11, 0x22, 0x33]),
+            Mirroring::Horizontal,
+            false,
+        );
+
+        mapper.cpu_write(0x8000, 0x01);
+
+        assert_eq!(mapper.chr_bank_select, 0x01);
+        assert_eq!(mapper.chr_read(0x1000), 0x11);
+    }
+
+    #[test]
+    fn oversize_chr_uses_low_nibble_bank_select() {
+        let mut mapper = Cnrom::new(
+            prg(0xFF),
+            chr_banks(&[0x00, 0x11, 0x22, 0x33, 0x44]),
+            Mirroring::Horizontal,
+            false,
+        );
+
+        mapper.cpu_write(0x8000, 0x04);
+
+        assert_eq!(mapper.chr_read(0x0000), 0x44);
     }
 }

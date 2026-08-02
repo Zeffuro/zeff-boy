@@ -130,6 +130,9 @@ impl N163Audio {
         self.prescaler = 0;
 
         let n = self.num_channels();
+        if self.channel_counter >= n {
+            self.channel_counter = 0;
+        }
         let ch = 8 - n + self.channel_counter;
         let sample = self.update_channel(ch);
 
@@ -158,6 +161,9 @@ impl N163Audio {
         self.addr = r.read_u8()? & 0x7F;
         self.auto_increment = r.read_bool()?;
         self.channel_counter = r.read_u8()?;
+        if self.channel_counter >= self.num_channels() {
+            self.channel_counter = 0;
+        }
         self.prescaler = r.read_u8()?;
         self.output = 0.0;
         Ok(())

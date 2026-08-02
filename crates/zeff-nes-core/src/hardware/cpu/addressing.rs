@@ -39,7 +39,7 @@ impl Cpu {
         let base = self.fetch16(bus);
         let addr = base.wrapping_add(self.regs.x as u16);
         let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
-        let _ = bus.cpu_read(dummy_addr);
+        let _ = bus.cpu_read_after_elapsed_cycles(dummy_addr, 3);
         addr
     }
 
@@ -58,7 +58,7 @@ impl Cpu {
         let base = self.fetch16(bus);
         let addr = base.wrapping_add(self.regs.y as u16);
         let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
-        let _ = bus.cpu_read(dummy_addr);
+        let _ = bus.cpu_read_after_elapsed_cycles(dummy_addr, 3);
         addr
     }
 
@@ -90,7 +90,7 @@ impl Cpu {
         let base = (hi << 8) | lo;
         let addr = base.wrapping_add(self.regs.y as u16);
         let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
-        let _ = bus.cpu_read(dummy_addr);
+        let _ = bus.cpu_read_after_elapsed_cycles(dummy_addr, 4);
         addr
     }
 

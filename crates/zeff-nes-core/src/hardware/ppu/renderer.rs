@@ -125,8 +125,29 @@ pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> 
     (r, g, b)
 }
 
+#[inline]
+pub fn apply_rgb_ppu_emphasis(mask: u8, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+    let emph_bits = mask & 0xE0;
+    if emph_bits == 0 {
+        return rgb;
+    }
+
+    let (mut r, mut g, mut b) = rgb;
+    if emph_bits & 0x20 != 0 {
+        r = 0xFF;
+    }
+    if emph_bits & 0x40 != 0 {
+        g = 0xFF;
+    }
+    if emph_bits & 0x80 != 0 {
+        b = 0xFF;
+    }
+
+    (r, g, b)
+}
+
 #[rustfmt::skip]
-pub static NES_PALETTE: [(u8, u8, u8); 64] = [
+pub static NES_PALETTE: NesBasePalette = [
     (84,84,84),    (0,30,116),    (8,16,144),    (48,0,136),
     (68,0,100),    (92,0,48),     (84,4,0),      (60,24,0),
     (32,42,0),     (8,58,0),      (0,64,0),      (0,60,0),
@@ -148,6 +169,41 @@ pub static NES_PALETTE: [(u8, u8, u8); 64] = [
     (160,214,228), (160,162,160), (0,0,0),       (0,0,0),
 ];
 
+const fn rgb_ppu_channel(dac: u16) -> u8 {
+    ((dac * 255 + 3) / 7) as u8
+}
+
+const fn rgb_ppu_color(rgb: u16) -> (u8, u8, u8) {
+    (
+        rgb_ppu_channel((rgb >> 8) & 0x0F),
+        rgb_ppu_channel((rgb >> 4) & 0x0F),
+        rgb_ppu_channel(rgb & 0x0F),
+    )
+}
+
+#[rustfmt::skip]
+pub static NES_RGB_2C03_PALETTE: NesBasePalette = [
+    rgb_ppu_color(0x333), rgb_ppu_color(0x014), rgb_ppu_color(0x006), rgb_ppu_color(0x326),
+    rgb_ppu_color(0x403), rgb_ppu_color(0x503), rgb_ppu_color(0x510), rgb_ppu_color(0x420),
+    rgb_ppu_color(0x320), rgb_ppu_color(0x120), rgb_ppu_color(0x031), rgb_ppu_color(0x040),
+    rgb_ppu_color(0x022), rgb_ppu_color(0x000), rgb_ppu_color(0x000), rgb_ppu_color(0x000),
+
+    rgb_ppu_color(0x555), rgb_ppu_color(0x036), rgb_ppu_color(0x027), rgb_ppu_color(0x407),
+    rgb_ppu_color(0x507), rgb_ppu_color(0x704), rgb_ppu_color(0x700), rgb_ppu_color(0x630),
+    rgb_ppu_color(0x430), rgb_ppu_color(0x140), rgb_ppu_color(0x040), rgb_ppu_color(0x053),
+    rgb_ppu_color(0x044), rgb_ppu_color(0x000), rgb_ppu_color(0x000), rgb_ppu_color(0x000),
+
+    rgb_ppu_color(0x777), rgb_ppu_color(0x357), rgb_ppu_color(0x447), rgb_ppu_color(0x637),
+    rgb_ppu_color(0x707), rgb_ppu_color(0x737), rgb_ppu_color(0x740), rgb_ppu_color(0x750),
+    rgb_ppu_color(0x660), rgb_ppu_color(0x360), rgb_ppu_color(0x070), rgb_ppu_color(0x276),
+    rgb_ppu_color(0x077), rgb_ppu_color(0x000), rgb_ppu_color(0x000), rgb_ppu_color(0x000),
+
+    rgb_ppu_color(0x777), rgb_ppu_color(0x567), rgb_ppu_color(0x657), rgb_ppu_color(0x757),
+    rgb_ppu_color(0x747), rgb_ppu_color(0x755), rgb_ppu_color(0x764), rgb_ppu_color(0x772),
+    rgb_ppu_color(0x773), rgb_ppu_color(0x572), rgb_ppu_color(0x473), rgb_ppu_color(0x276),
+    rgb_ppu_color(0x467), rgb_ppu_color(0x000), rgb_ppu_color(0x000), rgb_ppu_color(0x000),
+];
+
 impl Ppu {
     #[inline]
     pub fn compose_pixel(&mut self) -> u8 {
@@ -156,7 +212,7 @@ impl Ppu {
         let mut bg_pixel: u8 = 0;
         let mut bg_palette: u8 = 0;
 
-        if self.regs.show_bg() && (x >= 8 || self.regs.show_bg_left8()) {
+        if self.show_bg() && (x >= 8 || self.show_bg_left8()) {
             let mux = 0x8000u16 >> self.fine_x;
             let p0 = ((self.bg_shift_pattern_lo & mux) != 0) as u8;
             let p1 = ((self.bg_shift_pattern_hi & mux) != 0) as u8;
@@ -172,7 +228,7 @@ impl Ppu {
         let mut spr_priority = false;
         let mut sprite_zero_hit = false;
 
-        if self.regs.show_sprites() && (x >= 8 || self.regs.show_sprites_left8()) {
+        if self.show_sprites() && (x >= 8 || self.show_sprites_left8()) {
             for i in 0..self.sprite_count as usize {
                 if self.sprite_x_counters[i] == 0 {
                     let p0 = ((self.sprite_patterns_lo[i] & 0x80) != 0) as u8;
@@ -221,8 +277,8 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::{
-        NesPalette, NesPaletteMode, apply_nes_emphasis, apply_nes_palette_mode,
-        parse_nes_palette_bytes,
+        NES_RGB_2C03_PALETTE, NesPalette, NesPaletteMode, apply_nes_emphasis,
+        apply_nes_palette_mode, apply_rgb_ppu_emphasis, parse_nes_palette_bytes,
     };
 
     #[test]
@@ -301,5 +357,25 @@ mod tests {
         assert!(pal_bit_5.0 < src.0);
         assert_eq!(pal_bit_5.1, src.1);
         assert!(pal_bit_5.2 < src.2);
+    }
+
+    #[test]
+    fn rgb_2c03_palette_uses_rgb_dac_values() {
+        assert_eq!(NES_RGB_2C03_PALETTE[0x21], (109, 182, 255));
+        assert_eq!(NES_RGB_2C03_PALETTE[0x29], (109, 219, 0));
+        assert_eq!(NES_RGB_2C03_PALETTE[0x30], (255, 255, 255));
+        assert_eq!(NES_RGB_2C03_PALETTE[0x0F], (0, 0, 0));
+    }
+
+    #[test]
+    fn rgb_ppu_emphasis_sets_selected_channels_to_full_scale() {
+        assert_eq!(
+            apply_rgb_ppu_emphasis(0x20, (10, 20, 30)),
+            (255, 20, 30)
+        );
+        assert_eq!(
+            apply_rgb_ppu_emphasis(0xC0, (10, 20, 30)),
+            (10, 255, 255)
+        );
     }
 }

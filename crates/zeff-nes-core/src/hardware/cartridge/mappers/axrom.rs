@@ -34,6 +34,13 @@ impl Mapper for Axrom {
         }
     }
 
+    fn cpu_read_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x4020..=0x7FFF => open_bus,
+            _ => self.cpu_read(addr),
+        }
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             self.prg_bank = val & 0x07;
@@ -74,5 +81,35 @@ impl Mapper for Axrom {
         self.mirroring = crate::save_state::decode_mirroring(r.read_u8()?)?;
         crate::save_state::read_chr_state(r, &mut self.chr_ram, "AxROM")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prg_banks(bytes: &[u8]) -> Vec<u8> {
+        let mut prg = vec![0; bytes.len() * 0x8000];
+        for (bank, byte) in bytes.iter().enumerate() {
+            prg[bank * 0x8000..(bank + 1) * 0x8000].fill(*byte);
+        }
+        prg
+    }
+
+    #[test]
+    fn unmapped_lower_cart_reads_return_cpu_open_bus() {
+        let mut mapper = Axrom::new(prg_banks(&[0x11, 0x22]), vec![0; 0x2000], Mirroring::Horizontal);
+
+        assert_eq!(mapper.cpu_read_open_bus(0x6000, 0x60), 0x60);
+        assert_eq!(mapper.cpu_read_open_bus(0x7FFF, 0x7F), 0x7F);
+    }
+
+    #[test]
+    fn prg_reads_ignore_cpu_open_bus() {
+        let mut mapper = Axrom::new(prg_banks(&[0x11, 0x22]), vec![0; 0x2000], Mirroring::Horizontal);
+
+        assert_eq!(mapper.cpu_read_open_bus(0x8000, 0x60), 0x11);
+        mapper.cpu_write(0x8000, 0x01);
+        assert_eq!(mapper.cpu_read_open_bus(0x8000, 0x60), 0x22);
     }
 }

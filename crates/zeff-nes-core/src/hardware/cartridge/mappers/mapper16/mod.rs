@@ -314,6 +314,7 @@ impl Mapper for BandaiFcg16 {
             other => anyhow::bail!("invalid mapper16 EEPROM read phase tag: {other}"),
         };
         self.eeprom.read_bit = r.read_u8()?;
+        self.eeprom.clear_transient_bus_phase();
 
         crate::save_state::read_chr_state(r, &mut self.chr, "Mapper16")?;
         Ok(())
@@ -334,7 +335,7 @@ impl Mapper for BandaiFcg16 {
         let copy_len = self.eeprom.data.len().min(bytes.len());
         self.eeprom.data[..copy_len].copy_from_slice(&bytes[..copy_len]);
         if copy_len < self.eeprom.data.len() {
-            self.eeprom.data[copy_len..].fill(0);
+            self.eeprom.data[copy_len..].fill(0xFF);
         }
         Ok(())
     }

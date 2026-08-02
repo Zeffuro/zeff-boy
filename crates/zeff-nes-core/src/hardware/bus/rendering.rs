@@ -6,7 +6,7 @@ impl Bus {
     pub(super) fn ppu_render_dot(&mut self) {
         let scanline = self.ppu.scanline;
         let dot = self.ppu.dot;
-        let rendering = self.ppu.regs.rendering_enabled();
+        let rendering = self.ppu.rendering_enabled();
         let visible_line = scanline < 240;
         let pre_render = scanline == PRE_RENDER_SCANLINE;
         let render_line = visible_line || pre_render;
@@ -34,11 +34,16 @@ impl Bus {
             let in_bg_range = (1..=256).contains(&dot) || (321..=337).contains(&dot);
 
             if in_bg_range {
-                self.ppu.update_shifters();
+                let bg_reload_dot = (dot - 1) % 8 == 0;
+                if bg_reload_dot {
+                    self.ppu.load_bg_shifters();
+                }
+
+                self.ppu.update_background_shifters();
+                self.ppu.update_sprite_shifters();
 
                 match (dot - 1) % 8 {
                     0 => {
-                        self.ppu.load_bg_shifters();
                         let addr = 0x2000 | (self.ppu.v & 0x0FFF);
                         self.ppu.bg_next_tile_id = self.ppu_bus_read(addr);
                     }
@@ -261,5 +266,30 @@ mod tests {
         bus.ppu_render_dot();
 
         assert_eq!(&bus.ppu.framebuffer[0..4], &[48, 50, 236, 0xFF]);
+    }
+
+    #[test]
+    fn background_reload_dot_aligns_loaded_tile_left_edge() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x0A;
+        bus.ppu.palette_ram[0] = 0x0F;
+        bus.ppu.palette_ram[1] = 0x12;
+        bus.ppu.scanline = 0;
+        bus.ppu.bg_next_tile_lo = 0x80;
+        bus.ppu.bg_next_tile_hi = 0;
+        bus.ppu.bg_next_tile_attrib = 0;
+
+        for dot in 121..=129 {
+            bus.ppu.dot = dot;
+            bus.ppu_render_dot();
+        }
+
+        let pixel_127 = 127 * 4;
+        let pixel_128 = 128 * 4;
+        assert_eq!(&bus.ppu.framebuffer[pixel_127..pixel_127 + 4], &[0, 0, 0, 0xFF]);
+        assert_eq!(
+            &bus.ppu.framebuffer[pixel_128..pixel_128 + 4],
+            &[48, 50, 236, 0xFF]
+        );
     }
 }

@@ -70,6 +70,22 @@ fn load_valid_minimal_nrom_succeeds() {
 }
 
 #[test]
+fn load_tracks_prg_rom_crc_separately_from_file_crc() {
+    let h = make_header(1, 1, 0x00, 0x00, [0; 8]);
+    let prg_rom: Vec<u8> = (0..PRG_ROM_BANK_SIZE).map(|i| i as u8).collect();
+    let chr_rom = vec![0u8; CHR_ROM_BANK_SIZE];
+    let mut rom = h.to_vec();
+    rom.extend_from_slice(&prg_rom);
+    rom.extend_from_slice(&chr_rom);
+
+    let cart = Cartridge::load(&rom).unwrap();
+
+    assert_eq!(cart.prg_crc32(), crc32fast::hash(&prg_rom));
+    assert_eq!(cart.rom_crc32(), crc32fast::hash(&rom));
+    assert_ne!(cart.prg_crc32(), cart.rom_crc32());
+}
+
+#[test]
 fn load_all_zeros_returns_error() {
     assert!(Cartridge::load(&[0u8; 16]).is_err());
 }

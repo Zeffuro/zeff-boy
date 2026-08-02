@@ -15,11 +15,24 @@ const SAMURAI_SPIRITS_2_BAD_MAPPER90_CRC32: u32 = 0xBB64_D4A1;
 const MORTAL_KOMBAT_3_SPECIAL_BAD_HEADER_CRC32: u32 = 0x4088_6623;
 const SWEET_HOME_TRANSLATION_BAD_MAPPER33_CRC32: u32 = 0x74CE_0ADA;
 const SMB_EXTREME_BAD_MAPPER64_CRC32: u32 = 0xD76A_E771;
+const BAD_HEADER_MAPPER0_TO_16_PRG_CRC32: u32 = 0xAB30_62CF;
+const BAD_HEADER_MAPPER0_TO_32_PRG_CRC32: u32 = 0xC0FE_D437;
+const BAD_HEADER_MAPPER1_TO_MMC5_PRG_CRC32: u32 = 0xCD9A_CF43;
+const BAD_HEADER_MMC5_NO_PRG_RAM_PRG_CRC32: u32 = 0xCD9A_CF43;
+const BAD_HEADER_MAPPER2_TO_MMC1_PRG_CRC32: u32 = 0x57DD_23D1;
+const BAD_HEADER_MAPPER3_TO_GXROM_PRG_CRC32: u32 = 0xDABA_9E8E;
+const BAD_HEADER_MAPPER7_TO_34_PRG_CRC32: u32 = 0x5030_BCA8;
+const BAD_HEADER_MAPPER7_TO_71_PRG_CRC32: u32 = 0xE62E_3382;
+const BAD_HEADER_FALSE_FOUR_SCREEN_PRG_CRC32: u32 = 0x5913_64C9;
+const MAPPER3_NO_BUS_CONFLICT_PRG_CRC32S: &[u32] = &[0xF2A9_F64D, 0xE366_4231];
 
 pub(crate) trait Mapper: Send {
     fn cpu_peek(&self, addr: u16) -> u8;
     fn cpu_read(&mut self, addr: u16) -> u8 {
         self.cpu_peek(addr)
+    }
+    fn cpu_read_open_bus(&mut self, addr: u16, _open_bus: u8) -> u8 {
+        self.cpu_read(addr)
     }
     fn cpu_write(&mut self, addr: u16, val: u8);
     fn chr_read(&mut self, addr: u16) -> u8;
@@ -68,13 +81,13 @@ pub struct Cartridge {
     header: RomHeader,
     mapper: MapperImpl,
     rom_crc32: u32,
+    prg_crc32: u32,
     effective_mapper_label: Option<&'static str>,
 }
 
 impl Cartridge {
     pub fn load(rom_data: &[u8]) -> Result<Self> {
-        let header = RomHeader::parse(rom_data)?;
-        header.display_info();
+        let mut header = RomHeader::parse(rom_data)?;
 
         if header.prg_rom_size == 0 {
             bail!(
@@ -85,9 +98,20 @@ impl Cartridge {
         let trainer_offset = if header.has_trainer { TRAINER_SIZE } else { 0 };
         let prg_start = HEADER_SIZE + trainer_offset;
         let rom_crc32 = crc32fast::hash(rom_data);
+        let header_prg_size = header.prg_rom_size;
+        let header_prg_crc32 = rom_data
+            .get(prg_start..prg_start.saturating_add(header_prg_size))
+            .map(crc32fast::hash);
         let mut mapper_kind = header.mapper_kind();
         let mut effective_mapper_label = None;
-        apply_bad_header_mapper_overrides(rom_crc32, &mut mapper_kind, &mut effective_mapper_label);
+        apply_bad_header_mapper_overrides(
+            rom_crc32,
+            header_prg_crc32,
+            &mut mapper_kind,
+            &mut effective_mapper_label,
+        );
+        apply_bad_header_mirroring_overrides(header_prg_crc32, &mut header.mirroring);
+        header.display_info();
         let prg_size = header.prg_rom_size;
         let mut chr_size = header.chr_rom_size;
         if matches!(mapper_kind, NesMapper::Mapper251) && chr_size == 0 {
@@ -110,6 +134,7 @@ impl Cartridge {
         }
 
         let prg_rom = rom_data[prg_start..prg_start + prg_size].to_vec();
+        let prg_crc32 = crc32fast::hash(&prg_rom);
         let chr_rom = if chr_size > 0 {
             rom_data[chr_start..chr_start + chr_size].to_vec()
         } else {
@@ -130,7 +155,17 @@ impl Cartridge {
                 MapperImpl::Uxrom(mappers::Uxrom::new(prg_rom, chr_rom, header.mirroring))
             }
             NesMapper::CnRom => {
-                MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring))
+                let bus_conflicts =
+                    mapper3_has_bus_conflicts(header.submapper_id, header_prg_crc32);
+                if !bus_conflicts && header.submapper_id == 0 {
+                    effective_mapper_label = Some("CNROM (no bus conflicts)");
+                }
+                MapperImpl::Cnrom(mappers::Cnrom::new(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    bus_conflicts,
+                ))
             }
             NesMapper::CnRomWithProtectionDiodes => MapperImpl::Cnrom185(mappers::Cnrom185::new(
                 prg_rom,
@@ -166,13 +201,26 @@ impl Cartridge {
             NesMapper::TxRom => {
                 MapperImpl::Mmc3(mappers::Mmc3::new(prg_rom, chr_rom, header.mirroring))
             }
-            NesMapper::ExRom => MapperImpl::Mmc5(mappers::Mmc5::new(
-                prg_rom,
-                chr_rom,
-                header.mirroring,
-                header.prg_ram_size + header.prg_nvram_size,
-                header.has_battery || header.prg_nvram_size > 0,
-            )),
+            NesMapper::ExRom => {
+                let prg_ram_size = header.prg_ram_size + header.prg_nvram_size;
+                if prg_crc32 == BAD_HEADER_MMC5_NO_PRG_RAM_PRG_CRC32 {
+                    MapperImpl::Mmc5(mappers::Mmc5::new_exact_prg_ram(
+                        prg_rom,
+                        chr_rom,
+                        header.mirroring,
+                        0,
+                        false,
+                    ))
+                } else {
+                    MapperImpl::Mmc5(mappers::Mmc5::new(
+                        prg_rom,
+                        chr_rom,
+                        header.mirroring,
+                        prg_ram_size,
+                        header.has_battery || header.prg_nvram_size > 0,
+                    ))
+                }
+            }
             NesMapper::FfeMapper6 => {
                 MapperImpl::SuperMagicCard(mappers::SuperMagicCard::new_mapper6(
                     prg_rom,
@@ -247,7 +295,12 @@ impl Cartridge {
                 // Wrong Size)": the header says mapper 67, but the program writes
                 // $8000 as a CNROM CHR bank register.
                 effective_mapper_label = Some("CNROM (bad mapper 67 header)");
-                MapperImpl::Cnrom(mappers::Cnrom::new(prg_rom, chr_rom, header.mirroring))
+                MapperImpl::Cnrom(mappers::Cnrom::new(
+                    prg_rom,
+                    chr_rom,
+                    header.mirroring,
+                    true,
+                ))
             }
             NesMapper::Sunsoft3 => {
                 MapperImpl::Sunsoft3(mappers::Sunsoft3::new(prg_rom, chr_rom, header.mirroring))
@@ -509,6 +562,7 @@ impl Cartridge {
             header,
             mapper,
             rom_crc32,
+            prg_crc32,
             effective_mapper_label,
         })
     }
@@ -519,6 +573,10 @@ impl Cartridge {
 
     pub fn rom_crc32(&self) -> u32 {
         self.rom_crc32
+    }
+
+    pub fn prg_crc32(&self) -> u32 {
+        self.prg_crc32
     }
 
     pub fn effective_mapper_label(&self) -> String {
@@ -534,6 +592,10 @@ impl Cartridge {
     #[inline]
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         self.mapper.cpu_read(addr)
+    }
+
+    pub fn cpu_read_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
+        self.mapper.cpu_read_open_bus(addr, open_bus)
     }
 
     #[inline]
@@ -610,8 +672,23 @@ impl Cartridge {
     }
 }
 
+fn mapper3_has_bus_conflicts(submapper_id: u8, prg_crc32: Option<u32>) -> bool {
+    match submapper_id {
+        1 => false,
+        2 => true,
+        _ => !prg_crc32.is_some_and(|crc| MAPPER3_NO_BUS_CONFLICT_PRG_CRC32S.contains(&crc)),
+    }
+}
+
+fn apply_bad_header_mirroring_overrides(prg_crc32: Option<u32>, mirroring: &mut Mirroring) {
+    if prg_crc32 == Some(BAD_HEADER_FALSE_FOUR_SCREEN_PRG_CRC32) {
+        *mirroring = Mirroring::Horizontal;
+    }
+}
+
 fn apply_bad_header_mapper_overrides(
     rom_crc32: u32,
+    prg_crc32: Option<u32>,
     mapper_kind: &mut NesMapper,
     effective_mapper_label: &mut Option<&'static str>,
 ) {
@@ -629,6 +706,55 @@ fn apply_bad_header_mapper_overrides(
             *effective_mapper_label = Some("NROM (bad mapper 64 header)");
         }
         _ => {}
+    }
+
+    if matches!(*mapper_kind, NesMapper::AxRom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER7_TO_34_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::BnRom;
+        *effective_mapper_label = Some("BNROM / mapper 34 (bad mapper 7 header)");
+    }
+
+    if matches!(*mapper_kind, NesMapper::AxRom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER7_TO_71_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::CamericaCodemasters;
+        *effective_mapper_label = Some("Camerica / Codemasters mapper 71 (bad mapper 7 header)");
+    }
+
+    if matches!(*mapper_kind, NesMapper::CnRom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER3_TO_GXROM_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::GxRom;
+        *effective_mapper_label = Some("GxROM (bad mapper 3 header)");
+    }
+
+    if matches!(*mapper_kind, NesMapper::Nrom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER0_TO_16_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::BandaiEprom24C02;
+        *effective_mapper_label = Some("Bandai mapper 16 (bad mapper 0 header)");
+    }
+
+    if matches!(*mapper_kind, NesMapper::Nrom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER0_TO_32_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::IremG101;
+        *effective_mapper_label = Some("Irem G-101 / mapper 32 (bad mapper 0 header)");
+    }
+
+    if matches!(*mapper_kind, NesMapper::SxRom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER1_TO_MMC5_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::ExRom;
+        *effective_mapper_label = Some("ExROM / MMC5 (bad mapper 1 header)");
+    }
+
+    if matches!(*mapper_kind, NesMapper::UxRom)
+        && prg_crc32 == Some(BAD_HEADER_MAPPER2_TO_MMC1_PRG_CRC32)
+    {
+        *mapper_kind = NesMapper::SxRom;
+        *effective_mapper_label = Some("SxROM / MMC1 (bad mapper 2 header)");
     }
 }
 

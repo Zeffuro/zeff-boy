@@ -13,6 +13,13 @@ pub(super) enum EepromReadPhase {
     AwaitMasterAck,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EepromAckPhase {
+    None,
+    Pending,
+    Clocked,
+}
+
 pub(super) struct Eeprom {
     pub(super) data: [u8; 256],
     pub(super) scl: bool,
@@ -25,12 +32,14 @@ pub(super) struct Eeprom {
     pub(super) address_latched: bool,
     pub(super) read_phase: EepromReadPhase,
     pub(super) read_bit: u8,
+    read_clocked: bool,
+    ack_phase: EepromAckPhase,
 }
 
 impl Eeprom {
     pub(super) fn new() -> Self {
         Self {
-            data: [0; 256],
+            data: [0xFF; 256],
             scl: true,
             sda_in: true,
             read_enable: false,
@@ -41,7 +50,14 @@ impl Eeprom {
             address_latched: false,
             read_phase: EepromReadPhase::OutputBits,
             read_bit: 0,
+            read_clocked: false,
+            ack_phase: EepromAckPhase::None,
         }
+    }
+
+    pub(super) fn clear_transient_bus_phase(&mut self) {
+        self.ack_phase = EepromAckPhase::None;
+        self.read_clocked = false;
     }
 
     fn begin_receive_byte(&mut self, next_state: EepromState) {
@@ -53,12 +69,19 @@ impl Eeprom {
     fn start_condition(&mut self) {
         self.begin_receive_byte(EepromState::ReceiveControl);
         self.address_latched = false;
+        self.ack_phase = EepromAckPhase::None;
     }
 
     fn stop_condition(&mut self) {
         self.state = EepromState::Standby;
         self.read_phase = EepromReadPhase::OutputBits;
         self.bits = 0;
+        self.read_clocked = false;
+        self.ack_phase = EepromAckPhase::None;
+    }
+
+    fn ack_next_clock(&mut self) {
+        self.ack_phase = EepromAckPhase::Pending;
     }
 
     fn receive_byte_bit(&mut self, sda: bool) {
@@ -80,10 +103,12 @@ impl Eeprom {
                     self.state = EepromState::Standby;
                     return;
                 }
+                self.ack_next_clock();
                 if read {
                     self.state = EepromState::SendReadData;
                     self.read_phase = EepromReadPhase::OutputBits;
                     self.read_bit = 0;
+                    self.read_clocked = false;
                 } else if self.address_latched {
                     self.state = EepromState::ReceiveWriteData;
                 } else {
@@ -94,23 +119,27 @@ impl Eeprom {
                 self.pointer = byte;
                 self.address_latched = true;
                 self.state = EepromState::ReceiveWriteData;
+                self.ack_next_clock();
             }
             EepromState::ReceiveWriteData => {
                 self.data[self.pointer as usize] = byte;
                 self.pointer = self.pointer.wrapping_add(1);
+                self.ack_next_clock();
             }
             _ => {}
         }
     }
 
     fn clock_rising_edge(&mut self, sda: bool) {
+        if self.ack_phase == EepromAckPhase::Pending {
+            self.ack_phase = EepromAckPhase::Clocked;
+            return;
+        }
+
         match self.state {
             EepromState::SendReadData => match self.read_phase {
                 EepromReadPhase::OutputBits => {
-                    self.read_bit = self.read_bit.saturating_add(1);
-                    if self.read_bit >= 8 {
-                        self.read_phase = EepromReadPhase::AwaitMasterAck;
-                    }
+                    self.read_clocked = true;
                 }
                 EepromReadPhase::AwaitMasterAck => {
                     if sda {
@@ -119,6 +148,7 @@ impl Eeprom {
                         self.pointer = self.pointer.wrapping_add(1);
                         self.read_phase = EepromReadPhase::OutputBits;
                         self.read_bit = 0;
+                        self.read_clocked = false;
                     }
                 }
             },
@@ -130,9 +160,9 @@ impl Eeprom {
     }
 
     pub(super) fn handle_control_write(&mut self, val: u8) {
-        let scl = val & 0x80 != 0;
+        let scl = val & 0x20 != 0;
         let sda_in = val & 0x40 != 0;
-        self.read_enable = val & 0x20 != 0;
+        self.read_enable = val & 0x80 != 0;
 
         let prev_scl = self.scl;
         let prev_sda = self.sda_in;
@@ -149,6 +179,23 @@ impl Eeprom {
             self.clock_rising_edge(sda_in);
         }
 
+        if prev_scl && !scl && self.ack_phase == EepromAckPhase::Clocked {
+            self.ack_phase = EepromAckPhase::None;
+        }
+
+        if prev_scl
+            && !scl
+            && self.state == EepromState::SendReadData
+            && self.read_phase == EepromReadPhase::OutputBits
+            && self.read_clocked
+        {
+            self.read_clocked = false;
+            self.read_bit = self.read_bit.saturating_add(1);
+            if self.read_bit >= 8 {
+                self.read_phase = EepromReadPhase::AwaitMasterAck;
+            }
+        }
+
         self.scl = scl;
         self.sda_in = sda_in;
     }
@@ -156,6 +203,10 @@ impl Eeprom {
     pub(super) fn data_out(&self) -> bool {
         if !self.read_enable {
             return true;
+        }
+
+        if self.ack_phase != EepromAckPhase::None {
+            return false;
         }
 
         match self.state {

@@ -94,10 +94,10 @@ impl Apu {
             status |= 0x80;
         }
         self.frame_irq = false;
-        if visible_future_frame_irq_ticks > 0
-            && visible_frame_irq_ticks_through_next == visible_future_frame_irq_ticks
-        {
-            self.frame_irq_suppression_ticks = self.frame_irq_suppression_ticks.max(1);
+        if visible_future_frame_irq_ticks > 0 {
+            self.frame_irq_suppression_ticks = self
+                .frame_irq_suppression_ticks
+                .max(visible_frame_irq_ticks_through_next);
         }
         status
     }

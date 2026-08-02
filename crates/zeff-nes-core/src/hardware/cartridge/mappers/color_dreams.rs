@@ -18,11 +18,11 @@ impl ColorDreams {
     }
 
     fn prg_bank(&self) -> usize {
-        usize::from((self.bank_select >> 4) & 0x03)
+        usize::from(self.bank_select & 0x03)
     }
 
     fn chr_bank(&self) -> usize {
-        usize::from(self.bank_select & 0x0F)
+        usize::from(self.bank_select >> 4)
     }
 
     fn prg_bank_count(&self) -> usize {
@@ -55,7 +55,7 @@ impl Mapper for ColorDreams {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
-            self.bank_select = val;
+            self.bank_select = val & self.cpu_peek(addr);
         }
     }
 
@@ -114,31 +114,31 @@ mod tests {
     #[test]
     fn switches_32k_prg_and_8k_chr_with_four_chr_bits() {
         let mut prg = prg_banks(&[0x00, 0x22, 0x44, 0x66]);
-        prg[0] = 0x1E;
+        prg[0] = 0x31;
         let mut chr_values = [0u8; 16];
-        chr_values[14] = 0xEE;
+        chr_values[3] = 0xEE;
         let chr = chr_banks(&chr_values);
 
         let mut mapper = ColorDreams::new(prg, chr, Mirroring::Horizontal);
 
-        mapper.cpu_write(0x8000, 0x1E);
+        mapper.cpu_write(0x8000, 0x31);
         assert_eq!(mapper.cpu_peek(0x8000), 0x22);
         assert_eq!(mapper.chr_read(0x0000), 0xEE);
     }
 
     #[test]
-    fn writes_are_not_subject_to_bus_conflicts() {
+    fn writes_are_subject_to_bus_conflicts() {
         let mut prg = prg_banks(&[0x00, 0x22, 0x44, 0x66]);
         prg[0] = 0x3F;
         let chr = chr_banks(&[0x00; 16]);
 
         let mut mapper = ColorDreams::new(prg, chr, Mirroring::Horizontal);
 
-        mapper.cpu_write(0x8000, 0x1E);
-        assert_eq!(mapper.bank_select, 0x1E);
+        mapper.cpu_write(0x8000, 0x31);
+        assert_eq!(mapper.bank_select, 0x31);
 
         mapper.cpu_write(0x8000, 0x33);
-        assert_eq!(mapper.bank_select, 0x33);
+        assert_eq!(mapper.bank_select, 0x33 & 0x22);
     }
 
     #[test]

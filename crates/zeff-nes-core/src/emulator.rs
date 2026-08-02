@@ -413,18 +413,24 @@ impl fmt::Debug for Emulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4};
+    use crate::hardware::bus::DebugTraceEvent;
     use crate::hardware::cpu::StatusFlags;
 
-    fn build_test_rom() -> Vec<u8> {
+    fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {
         let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
         rom[0..4].copy_from_slice(b"NES\x1A");
         rom[4] = 1;
         rom[5] = 1;
         let prg = 16;
-        rom[prg] = 0xEA;
+        rom[prg..prg + program.len()].copy_from_slice(program);
         rom[prg + 0x3FFC] = 0x00;
         rom[prg + 0x3FFD] = 0x80;
         rom
+    }
+
+    fn build_test_rom() -> Vec<u8> {
+        build_test_rom_with_program(&[0xEA])
     }
 
     fn build_vs_system_test_rom() -> Vec<u8> {
@@ -519,5 +525,36 @@ mod tests {
         emu.set_input_p1(0x04);
 
         assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x24, 0);
+    }
+
+    #[test]
+    fn indexed_store_dummy_read_can_ack_frame_irq_edge() {
+        let rom = build_test_rom_with_program(&[
+            0xA2, 0x15, // LDX #$15
+            0xA9, 0x00, // LDA #$00
+            0x9D, 0x00, 0x40, // STA $4000,X
+            0xEA, // NOP
+        ]);
+        let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("test ROM");
+
+        emu.step_instruction();
+        emu.step_instruction();
+
+        emu.bus.apu.five_step_mode = false;
+        emu.bus.apu.irq_inhibit = false;
+        emu.bus.apu.frame_irq = false;
+        emu.bus.apu.frame_cycle = FRAME_STEP_4 - 3;
+        emu.bus.apu.frame_reset_delay = 0;
+
+        let (_, _, _, events) = emu.step_instruction_with_bus_trace();
+
+        let status_read = events.iter().find_map(|event| match event {
+            DebugTraceEvent::Read { addr, value, .. } if *addr == APU_STATUS => Some(*value),
+            _ => None,
+        });
+
+        assert_eq!(status_read.map(|value| value & 0x40), Some(0x40));
+        assert!(!emu.bus.apu.irq_pending());
+        assert!(!emu.cpu.irq_line);
     }
 }

@@ -144,7 +144,7 @@ fn load_mapper11_uses_color_dreams() {
     let h = make_header(8, 16, 0xB0, 0x00, [0; 8]);
     let mut rom = h.to_vec();
     let mut prg = vec![0x00; 0x8000];
-    prg[0] = 0x1E;
+    prg[0] = 0x31;
     rom.extend(prg);
     rom.extend(vec![0x22; 0x8000]);
     rom.extend(vec![0x44; 0x8000]);
@@ -156,9 +156,9 @@ fn load_mapper11_uses_color_dreams() {
     let mut cart = Cartridge::load(&rom).unwrap();
     assert_eq!(cart.header().mapper_id, 11);
 
-    cart.cpu_write(0x8000, 0x1E);
+    cart.cpu_write(0x8000, 0x31);
     assert_eq!(cart.cpu_read(0x8000), 0x22);
-    assert_eq!(cart.chr_read(0x0000), 14);
+    assert_eq!(cart.chr_read(0x0000), 3);
 }
 
 #[test]

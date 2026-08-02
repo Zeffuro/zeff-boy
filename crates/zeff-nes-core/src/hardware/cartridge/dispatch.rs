@@ -153,6 +153,11 @@ impl MapperImpl {
     }
 
     #[inline]
+    pub(super) fn cpu_read_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
+        dispatch_mapper!(self, cpu_read_open_bus, addr, open_bus)
+    }
+
+    #[inline]
     pub(super) fn cpu_write(&mut self, addr: u16, val: u8) {
         dispatch_mapper!(self, cpu_write, addr, val)
     }

@@ -102,11 +102,11 @@ macro_rules! store_all_modes {
         }
         pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute_x_write(bus);
-            bus.cpu_write(a, cpu.regs.$reg);
+            bus.cpu_write_after_elapsed_cycles(a, cpu.regs.$reg, 4);
         }
         pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_absolute_y_write(bus);
-            bus.cpu_write(a, cpu.regs.$reg);
+            bus.cpu_write_after_elapsed_cycles(a, cpu.regs.$reg, 4);
         }
         pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_indirect_x(bus);
@@ -114,7 +114,7 @@ macro_rules! store_all_modes {
         }
         pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) {
             let a = cpu.addr_indirect_y_write(bus);
-            bus.cpu_write(a, cpu.regs.$reg);
+            bus.cpu_write_after_elapsed_cycles(a, cpu.regs.$reg, 5);
         }
     };
     ($reg:ident, $zp:ident, $zpalt:ident, $abs:ident; alt = $alt_addr:ident) => {

@@ -1,7 +1,7 @@
 use super::Bus;
 use crate::hardware::cartridge::{ChrFetchKind, Mirroring};
 use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
-use crate::hardware::ppu::VBLANK_SCANLINE;
+use crate::hardware::ppu::{PRE_RENDER_SCANLINE, VBLANK_SCANLINE};
 
 impl Bus {
     pub(super) fn ppu_read_register(&mut self, addr: u16) -> u8 {
@@ -43,7 +43,7 @@ impl Bus {
                     self.ppu.read_buffer = self.ppu_bus_read_with_kind(addr, ChrFetchKind::CpuData);
                 }
 
-                self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
+                self.increment_v_after_ppudata_access();
                 if old_v & 0x1000 != self.ppu.v & 0x1000 {
                     self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
                 }
@@ -75,14 +75,13 @@ impl Bus {
                 }
             }
             0x2001 => {
-                self.ppu.regs.mask = val;
+                self.ppu.write_mask(val);
             }
             0x2003 => {
                 self.ppu.oam_addr = val;
             }
             0x2004 => {
-                self.ppu.oam[self.ppu.oam_addr as usize] = val;
-                self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(1);
+                self.write_oam_data(val);
             }
             0x2005 => {
                 if !self.ppu.w {
@@ -112,12 +111,38 @@ impl Bus {
                 let addr = self.ppu.v & 0x3FFF;
                 let old_v = self.ppu.v;
                 self.ppu_bus_write(addr, val);
-                self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
+                self.increment_v_after_ppudata_access();
                 if old_v & 0x1000 != self.ppu.v & 0x1000 {
                     self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
                 }
             }
             _ => {}
+        }
+    }
+
+    #[inline]
+    fn rendering_active_scanline(&self) -> bool {
+        self.ppu.rendering_enabled()
+            && (self.ppu.scanline < 240 || self.ppu.scanline == PRE_RENDER_SCANLINE)
+    }
+
+    #[inline]
+    pub(super) fn write_oam_data(&mut self, val: u8) {
+        if self.rendering_active_scanline() {
+            return;
+        }
+
+        self.ppu.oam[self.ppu.oam_addr as usize] = val;
+        self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(1);
+    }
+
+    #[inline]
+    fn increment_v_after_ppudata_access(&mut self) {
+        if self.rendering_active_scanline() {
+            self.ppu.increment_scroll_x();
+            self.ppu.increment_scroll_y();
+        } else {
+            self.ppu.v = self.ppu.v.wrapping_add(self.ppu.regs.vram_increment());
         }
     }
 
@@ -211,7 +236,7 @@ impl Bus {
 mod tests {
     use super::*;
     use crate::hardware::cartridge::Cartridge;
-    use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
+    use crate::hardware::constants::{CTRL_NMI_ENABLE, OAM_DMA, STATUS_VBLANK};
     use crate::hardware::ppu::PPU_IO_LATCH_DECAY_PPU_CYCLES;
 
     fn test_bus() -> Bus {
@@ -358,5 +383,90 @@ mod tests {
 
         assert_eq!(bus.ppu_read_register(0x2004), 0xE3);
         assert_eq!(bus.ppu_read_register(0x2000), 0xE3);
+    }
+
+    #[test]
+    fn ppudata_access_during_rendering_increments_x_and_y_scroll() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.regs.ctrl = 0x04;
+        bus.ppu.scanline = 12;
+        bus.ppu.dot = 120;
+        bus.ppu.v = 0x0001;
+
+        let _ = bus.ppu_read_register(0x2007);
+
+        assert_eq!(bus.ppu.v, 0x1002);
+    }
+
+    #[test]
+    fn ppudata_access_during_rendering_uses_scroll_wrapping_rules() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.scanline = 12;
+        bus.ppu.dot = 120;
+        bus.ppu.v = 0x7000 | (29 << 5) | 31;
+
+        bus.ppu_write_register(0x2007, 0x55);
+
+        assert_eq!(bus.ppu.v, 0x0C00);
+    }
+
+    #[test]
+    fn ppudata_access_outside_rendering_uses_ppuctrl_increment() {
+        let mut bus = test_bus();
+        bus.ppu.regs.ctrl = 0x04;
+        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.dot = 10;
+        bus.ppu.v = 0x2000;
+
+        bus.ppu_write_register(0x2007, 0x55);
+
+        assert_eq!(bus.ppu.v, 0x2020);
+    }
+
+    #[test]
+    fn oamdata_write_during_rendering_is_ignored() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.scanline = 20;
+        bus.ppu.dot = 100;
+        bus.ppu.oam_addr = 0x02;
+        bus.ppu.oam[0x02] = 0x11;
+
+        bus.ppu_write_register(0x2004, 0xFF);
+
+        assert_eq!(bus.ppu.oam[0x02], 0x11);
+        assert_eq!(bus.ppu.oam_addr, 0x02);
+    }
+
+    #[test]
+    fn oamdata_write_outside_rendering_still_writes_and_increments() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.dot = 10;
+        bus.ppu.oam_addr = 0x02;
+
+        bus.ppu_write_register(0x2004, 0x77);
+
+        assert_eq!(bus.ppu.oam[0x02], 0x77);
+        assert_eq!(bus.ppu.oam_addr, 0x03);
+    }
+
+    #[test]
+    fn oam_dma_during_rendering_does_not_replace_oam() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.scanline = 20;
+        bus.ppu.dot = 100;
+        bus.ppu.oam_addr = 0x00;
+        bus.ppu.oam = [0x11; 256];
+        bus.ram.fill(0x77);
+
+        bus.cpu_write(OAM_DMA, 0x00);
+
+        assert_eq!(bus.ppu.oam, [0x11; 256]);
+        assert_eq!(bus.ppu.oam_addr, 0x00);
     }
 }

@@ -8,15 +8,20 @@ use crate::hardware::cartridge::{Cartridge, NesMapper};
 use crate::hardware::constants::*;
 use crate::hardware::controller::{Controller, ExpansionDevice};
 use crate::hardware::ppu::{
-    NES_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, SCREEN_H, SCREEN_W,
-    VBLANK_SCANLINE, apply_nes_emphasis, apply_nes_palette_mode,
+    NES_PALETTE, NES_RGB_2C03_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, SCREEN_H,
+    SCREEN_W, VBLANK_SCANLINE, apply_nes_emphasis, apply_nes_palette_mode, apply_rgb_ppu_emphasis,
 };
 use std::fmt;
 
-const VS_DUCK_HUNT_SET_E_INES_CRC32: u32 = 0x9C41_0648;
-const VS_DUCK_HUNT_DEFAULT_DIP_SWITCH: u8 = 0x28;
+const VS_RGB_ZAPPER_SET_E_INES_CRC32: u32 = 0x9C41_0648;
+const VS_RGB_ZAPPER_PRG_CRC32: u32 = 0xED58_8F00;
+const VS_RGB_ZAPPER_DEFAULT_DIP_SWITCH: u8 = 0x28;
 const ZAPPER_SENSOR_DECAY_SCANLINES: u16 = 24;
 const ZAPPER_SENSOR_SAMPLE_RADIUS: i32 = 4;
+
+fn power_on_internal_ram() -> [u8; RAM_SIZE] {
+    [0xFF; RAM_SIZE]
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DebugTraceEvent {
@@ -83,6 +88,8 @@ pub struct Bus {
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
     pub custom_palette: Option<NesPalette>,
+    base_palette: NesBasePalette,
+    rgb_ppu_emphasis: bool,
 
     pub(crate) palette_luts: [[[u8; 4]; 64]; 8],
 
@@ -97,14 +104,22 @@ pub struct Bus {
 impl Bus {
     pub fn new(cartridge: Cartridge, sample_rate: f64) -> Self {
         let palette_mode = NesPaletteMode::default();
+        let rgb_ppu_emphasis = Self::uses_rgb_2c03_palette(&cartridge);
+        let base_palette = if rgb_ppu_emphasis {
+            NES_RGB_2C03_PALETTE
+        } else {
+            NES_PALETTE
+        };
+        let mut ppu = Ppu::new();
+        ppu.set_odd_frame_dot_skip_enabled(!rgb_ppu_emphasis);
         let mut apu = Apu::new(sample_rate);
         if Self::mapper_is_vs_system(cartridge.header().mapper_kind()) {
             apu.set_tonal_noise_supported(false);
         }
 
         Self {
-            ram: [0; RAM_SIZE],
-            ppu: Ppu::new(),
+            ram: power_on_internal_ram(),
+            ppu,
             apu,
             cartridge,
             controller1: Controller::new(),
@@ -121,7 +136,14 @@ impl Bus {
             game_genie: NesCheatState::new(),
             palette_mode,
             custom_palette: None,
-            palette_luts: Self::build_palette_luts(palette_mode, None),
+            base_palette,
+            rgb_ppu_emphasis,
+            palette_luts: Self::build_palette_luts(
+                palette_mode,
+                None,
+                &base_palette,
+                rgb_ppu_emphasis,
+            ),
             debug_trace_enabled: false,
             debug_trace_events: Vec::new(),
             vs_credit_pressed: false,
@@ -134,6 +156,8 @@ impl Bus {
     fn build_palette_luts(
         mode: NesPaletteMode,
         custom_palette: Option<&NesPalette>,
+        base_palette: &NesBasePalette,
+        rgb_ppu_emphasis: bool,
     ) -> [[[u8; 4]; 64]; 8] {
         let mut luts = [[[0u8; 4]; 64]; 8];
 
@@ -148,12 +172,16 @@ impl Bus {
 
         let source_palette = match (mode, custom_palette) {
             (NesPaletteMode::Custom, Some(palette)) => palette.base(),
-            _ => NES_PALETTE,
+            _ => *base_palette,
         };
 
         for (group, lut) in luts.iter_mut().enumerate() {
             let mask = (group as u8) << 5;
-            Self::fill_palette_lut(lut, &source_palette, Some((mode, mask)));
+            Self::fill_palette_lut(
+                lut,
+                &source_palette,
+                Some((mode, mask, rgb_ppu_emphasis)),
+            );
         }
 
         luts
@@ -162,13 +190,17 @@ impl Bus {
     fn fill_palette_lut(
         lut: &mut [[u8; 4]; 64],
         palette: &NesBasePalette,
-        correction: Option<(NesPaletteMode, u8)>,
+        correction: Option<(NesPaletteMode, u8, bool)>,
     ) {
         for (i, entry) in lut.iter_mut().enumerate() {
             let (r, g, b) = match correction {
-                Some((mode, mask)) => {
+                Some((mode, mask, rgb_ppu_emphasis)) => {
                     let rgb = apply_nes_palette_mode(mode, palette[i]);
-                    apply_nes_emphasis(mode, mask, rgb)
+                    if rgb_ppu_emphasis {
+                        apply_rgb_ppu_emphasis(mask, rgb)
+                    } else {
+                        apply_nes_emphasis(mode, mask, rgb)
+                    }
                 }
                 None => palette[i],
             };
@@ -178,13 +210,22 @@ impl Bus {
 
     pub fn set_palette_mode(&mut self, mode: NesPaletteMode) {
         self.palette_mode = mode;
-        self.palette_luts = Self::build_palette_luts(mode, self.custom_palette.as_ref());
+        self.palette_luts = Self::build_palette_luts(
+            mode,
+            self.custom_palette.as_ref(),
+            &self.base_palette,
+            self.rgb_ppu_emphasis,
+        );
     }
 
     pub fn set_custom_palette(&mut self, palette: Option<NesPalette>) {
         self.custom_palette = palette;
-        self.palette_luts =
-            Self::build_palette_luts(self.palette_mode, self.custom_palette.as_ref());
+        self.palette_luts = Self::build_palette_luts(
+            self.palette_mode,
+            self.custom_palette.as_ref(),
+            &self.base_palette,
+            self.rgb_ppu_emphasis,
+        );
     }
 
     pub fn reset(&mut self) {
@@ -269,6 +310,16 @@ impl Bus {
         )
     }
 
+    fn matches_vs_rgb_zapper_profile(cartridge: &Cartridge) -> bool {
+        Self::mapper_is_vs_system(cartridge.header().mapper_kind())
+            && (cartridge.rom_crc32() == VS_RGB_ZAPPER_SET_E_INES_CRC32
+                || cartridge.prg_crc32() == VS_RGB_ZAPPER_PRG_CRC32)
+    }
+
+    fn uses_rgb_2c03_palette(cartridge: &Cartridge) -> bool {
+        Self::matches_vs_rgb_zapper_profile(cartridge)
+    }
+
     pub(crate) fn set_vs_system_credit_input(&mut self, pressed: bool) {
         if !self.is_vs_system_mapper() {
             self.vs_credit_pressed = false;
@@ -309,9 +360,10 @@ impl Bus {
             return 0;
         }
 
-        match self.cartridge.rom_crc32() {
-            VS_DUCK_HUNT_SET_E_INES_CRC32 => VS_DUCK_HUNT_DEFAULT_DIP_SWITCH,
-            _ => 0,
+        if Self::matches_vs_rgb_zapper_profile(&self.cartridge) {
+            VS_RGB_ZAPPER_DEFAULT_DIP_SWITCH
+        } else {
+            0
         }
     }
 
@@ -449,5 +501,16 @@ impl fmt::Debug for Bus {
             .field("apu", &self.apu)
             .field("mirroring", &self.cartridge.mirroring())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn power_on_internal_ram_is_deterministic_nonzero() {
+        let ram = power_on_internal_ram();
+        assert!(ram.iter().all(|&byte| byte == 0xFF));
     }
 }

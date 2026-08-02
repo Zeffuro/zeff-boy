@@ -471,6 +471,8 @@ fn shy_abs_x_page_cross_writes_wrapped_address_with_base_high_mask() {
     let (mut cpu, mut bus) = setup(&[0x9C, 0xFE, 0x02]);
     cpu.regs.x = 0x02;
     cpu.regs.y = 0xFF;
+    bus.ram[0x0200] = 0;
+    bus.ram[0x0300] = 0;
     bus.debug_trace_enabled = true;
     bus.debug_trace_events.clear();
 
@@ -500,6 +502,8 @@ fn shx_abs_y_page_cross_writes_wrapped_address_with_base_high_mask() {
     let (mut cpu, mut bus) = setup(&[0x9E, 0xFE, 0x02]);
     cpu.regs.x = 0xFF;
     cpu.regs.y = 0x02;
+    bus.ram[0x0200] = 0;
+    bus.ram[0x0300] = 0;
     bus.debug_trace_enabled = true;
     bus.debug_trace_events.clear();
 
@@ -719,6 +723,7 @@ fn absolute_x_read_page_cross_performs_wrapped_dummy_read() {
 #[test]
 fn absolute_x_store_performs_wrapped_dummy_read_before_write() {
     let (mut cpu, mut bus) = setup(&[0xA2, 0x01, 0xA9, 0x7E, 0x9D, 0xFF, 0x02]);
+    bus.ram[0x0200] = 0;
     cpu.step(&mut bus);
     cpu.step(&mut bus);
 

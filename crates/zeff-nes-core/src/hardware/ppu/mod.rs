@@ -3,14 +3,20 @@ mod renderer;
 
 pub use registers::PpuRegisters;
 pub use renderer::NES_PALETTE;
+pub use renderer::NES_RGB_2C03_PALETTE;
 pub use renderer::NesBasePalette;
 pub use renderer::NesPalette;
 pub use renderer::NesPaletteMode;
 pub use renderer::apply_nes_emphasis;
 pub use renderer::apply_nes_palette_mode;
+pub use renderer::apply_rgb_ppu_emphasis;
 pub use renderer::parse_nes_palette_bytes;
 
 use std::fmt;
+
+use crate::hardware::constants::{
+    MASK_SHOW_BG, MASK_SHOW_BG_LEFT8, MASK_SHOW_SPRITES, MASK_SHOW_SPRITES_LEFT8,
+};
 
 pub const SCREEN_W: usize = 256;
 pub const SCREEN_H: usize = 240;
@@ -34,6 +40,8 @@ const NAMETABLE_Y_BIT: u16 = 0x0800;
 const COARSE_Y_MASK: u16 = 0x03E0;
 const SCROLL_HORIZONTAL_MASK: u16 = 0x041F;
 const SCROLL_VERTICAL_MASK: u16 = 0x7BE0;
+const PPUMASK_RENDERING_BITS: u8 = MASK_SHOW_BG | MASK_SHOW_SPRITES;
+const PPUMASK_RENDERING_DELAY_DOTS: u8 = 4;
 
 pub struct Ppu {
     pub(crate) regs: PpuRegisters,
@@ -61,9 +69,12 @@ pub struct Ppu {
 
     pub(crate) io_latch: u8,
     pub(crate) io_latch_decay_at_ppu_cycle: [u64; 8],
+    rendering_mask_delay: u8,
+    rendering_mask_latched_bits: u8,
     pub(crate) framebuffer: Box<[u8; FRAMEBUFFER_SIZE]>,
     pub(crate) frame_ready: bool,
     pub(crate) frame_count: u64,
+    pub(crate) odd_frame_dot_skip_enabled: bool,
 
     pub(crate) bg_shift_pattern_lo: u16,
     pub(crate) bg_shift_pattern_hi: u16,
@@ -112,9 +123,12 @@ impl Ppu {
             read_buffer: 0,
             io_latch: 0,
             io_latch_decay_at_ppu_cycle: [0; 8],
+            rendering_mask_delay: 0,
+            rendering_mask_latched_bits: 0,
             framebuffer: Box::new([0u8; FRAMEBUFFER_SIZE]),
             frame_ready: false,
             frame_count: 0,
+            odd_frame_dot_skip_enabled: true,
             bg_shift_pattern_lo: 0,
             bg_shift_pattern_hi: 0,
             bg_shift_attrib_lo: 0,
@@ -131,6 +145,69 @@ impl Ppu {
             sprite_zero_rendering: false,
             overflow_bug_m: 0,
         }
+    }
+
+    #[inline]
+    fn effective_mask(&self) -> u8 {
+        if self.rendering_mask_delay > 0 {
+            (self.regs.mask & !PPUMASK_RENDERING_BITS) | self.rendering_mask_latched_bits
+        } else {
+            self.regs.mask
+        }
+    }
+
+    #[inline]
+    pub(crate) fn write_mask(&mut self, val: u8) {
+        let old_rendering_bits = self.effective_mask() & PPUMASK_RENDERING_BITS;
+        let new_rendering_bits = val & PPUMASK_RENDERING_BITS;
+        self.regs.mask = val;
+
+        if old_rendering_bits != new_rendering_bits {
+            self.rendering_mask_latched_bits = old_rendering_bits;
+            self.rendering_mask_delay = PPUMASK_RENDERING_DELAY_DOTS;
+        } else {
+            self.rendering_mask_delay = 0;
+            self.rendering_mask_latched_bits = new_rendering_bits;
+        }
+    }
+
+    #[inline]
+    fn tick_rendering_mask_delay(&mut self) {
+        if self.rendering_mask_delay > 0 {
+            self.rendering_mask_delay -= 1;
+            if self.rendering_mask_delay == 0 {
+                self.rendering_mask_latched_bits = self.regs.mask & PPUMASK_RENDERING_BITS;
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn show_bg(&self) -> bool {
+        self.effective_mask() & MASK_SHOW_BG != 0
+    }
+
+    #[inline]
+    pub(crate) fn show_sprites(&self) -> bool {
+        self.effective_mask() & MASK_SHOW_SPRITES != 0
+    }
+
+    #[inline]
+    pub(crate) fn rendering_enabled(&self) -> bool {
+        self.show_bg() || self.show_sprites()
+    }
+
+    #[inline]
+    pub(crate) fn show_bg_left8(&self) -> bool {
+        self.effective_mask() & MASK_SHOW_BG_LEFT8 != 0
+    }
+
+    #[inline]
+    pub(crate) fn show_sprites_left8(&self) -> bool {
+        self.effective_mask() & MASK_SHOW_SPRITES_LEFT8 != 0
+    }
+
+    pub(crate) fn set_odd_frame_dot_skip_enabled(&mut self, enabled: bool) {
+        self.odd_frame_dot_skip_enabled = enabled;
     }
 
     #[inline]
@@ -216,14 +293,21 @@ impl Ppu {
                 self.regs.clear_sprite_overflow();
             }
 
-            if self.dot == 339 && self.odd_frame && self.regs.rendering_enabled() {
+            if self.odd_frame_dot_skip_enabled
+                && self.dot == 339
+                && self.odd_frame
+                && self.rendering_enabled()
+            {
                 self.dot = 0;
                 self.scanline = 0;
                 self.odd_frame = !self.odd_frame;
                 self.frame_count += 1;
+                self.tick_rendering_mask_delay();
                 return raise_nmi;
             }
         }
+
+        self.tick_rendering_mask_delay();
 
         self.dot += 1;
         if self.dot > 340 {
@@ -241,7 +325,7 @@ impl Ppu {
 
     #[inline]
     pub fn increment_scroll_x(&mut self) {
-        if !self.regs.rendering_enabled() {
+        if !self.rendering_enabled() {
             return;
         }
         if (self.v & COARSE_X_MASK) == 31 {
@@ -254,7 +338,7 @@ impl Ppu {
 
     #[inline]
     pub fn increment_scroll_y(&mut self) {
-        if !self.regs.rendering_enabled() {
+        if !self.rendering_enabled() {
             return;
         }
         if (self.v & FINE_Y_MASK) != FINE_Y_MASK {
@@ -276,7 +360,7 @@ impl Ppu {
 
     #[inline]
     pub fn copy_horizontal_bits(&mut self) {
-        if !self.regs.rendering_enabled() {
+        if !self.rendering_enabled() {
             return;
         }
         self.v = (self.v & !SCROLL_HORIZONTAL_MASK) | (self.t & SCROLL_HORIZONTAL_MASK);
@@ -284,7 +368,7 @@ impl Ppu {
 
     #[inline]
     pub fn copy_vertical_bits(&mut self) {
-        if !self.regs.rendering_enabled() {
+        if !self.rendering_enabled() {
             return;
         }
         self.v = (self.v & !SCROLL_VERTICAL_MASK) | (self.t & SCROLL_VERTICAL_MASK);
@@ -311,14 +395,18 @@ impl Ppu {
     }
 
     #[inline]
-    pub fn update_shifters(&mut self) {
-        if self.regs.show_bg() {
+    pub fn update_background_shifters(&mut self) {
+        if self.show_bg() {
             self.bg_shift_pattern_lo <<= 1;
             self.bg_shift_pattern_hi <<= 1;
             self.bg_shift_attrib_lo <<= 1;
             self.bg_shift_attrib_hi <<= 1;
         }
-        if self.regs.show_sprites() && (1..=256).contains(&self.dot) {
+    }
+
+    #[inline]
+    pub fn update_sprite_shifters(&mut self) {
+        if self.show_sprites() && (1..=256).contains(&self.dot) {
             for i in 0..self.sprite_count as usize {
                 if self.sprite_x_counters[i] > 0 {
                     self.sprite_x_counters[i] -= 1;
@@ -328,6 +416,12 @@ impl Ppu {
                 }
             }
         }
+    }
+
+    #[inline]
+    pub fn update_shifters(&mut self) {
+        self.update_background_shifters();
+        self.update_sprite_shifters();
     }
 
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
@@ -419,6 +513,8 @@ impl Ppu {
 
         self.frame_ready = false;
         self.suppress_vblank_edge = false;
+        self.rendering_mask_delay = 0;
+        self.rendering_mask_latched_bits = self.regs.mask & PPUMASK_RENDERING_BITS;
 
         Ok(())
     }
@@ -435,5 +531,72 @@ impl fmt::Debug for Ppu {
             .field("in_vblank", &self.in_vblank)
             .field("frame_count", &self.frame_count)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PRE_RENDER_SCANLINE, Ppu};
+
+    #[test]
+    fn odd_frame_dot_skip_is_enabled_by_default() {
+        let mut ppu = Ppu::new();
+        ppu.regs.mask = 0x18;
+        ppu.scanline = PRE_RENDER_SCANLINE;
+        ppu.dot = 339;
+        ppu.odd_frame = true;
+
+        ppu.tick();
+
+        assert_eq!(ppu.scanline, 0);
+        assert_eq!(ppu.dot, 0);
+        assert!(!ppu.odd_frame);
+    }
+
+    #[test]
+    fn odd_frame_dot_skip_can_be_disabled_for_rgb_ppu() {
+        let mut ppu = Ppu::new();
+        ppu.set_odd_frame_dot_skip_enabled(false);
+        ppu.regs.mask = 0x18;
+        ppu.scanline = PRE_RENDER_SCANLINE;
+        ppu.dot = 339;
+        ppu.odd_frame = true;
+
+        ppu.tick();
+
+        assert_eq!(ppu.scanline, PRE_RENDER_SCANLINE);
+        assert_eq!(ppu.dot, 340);
+        assert!(ppu.odd_frame);
+    }
+
+    #[test]
+    fn ppumask_rendering_enable_is_delayed_four_dots() {
+        let mut ppu = Ppu::new();
+
+        ppu.write_mask(0x18);
+
+        assert!(!ppu.rendering_enabled());
+        for _ in 0..3 {
+            ppu.tick();
+            assert!(!ppu.rendering_enabled());
+        }
+        ppu.tick();
+        assert!(ppu.rendering_enabled());
+    }
+
+    #[test]
+    fn ppumask_rendering_disable_is_delayed_four_dots() {
+        let mut ppu = Ppu::new();
+        ppu.regs.mask = 0x18;
+
+        ppu.write_mask(0x00);
+
+        assert!(ppu.rendering_enabled());
+        for _ in 0..3 {
+            ppu.tick();
+            assert!(ppu.rendering_enabled());
+        }
+        ppu.tick();
+        assert!(!ppu.rendering_enabled());
     }
 }

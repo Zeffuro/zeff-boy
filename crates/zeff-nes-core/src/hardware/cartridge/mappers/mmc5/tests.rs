@@ -56,6 +56,36 @@ fn mmc5_separates_bg_and_sprite_chr_banks() {
 }
 
 #[test]
+fn mmc5_chr_large_bank_modes_use_selected_bank_size() {
+    let prg = vec![0u8; 4 * 0x2000];
+    let mut chr = vec![0u8; 64 * 0x0400];
+    for bank in 0..64usize {
+        chr[bank * 0x0400] = bank as u8;
+    }
+
+    let mut mapper = Mmc5::new(prg, chr, Mirroring::Horizontal, 0x2000, false);
+
+    mapper.cpu_write(0x5101, 1);
+    mapper.cpu_write(0x512B, 3);
+    assert_eq!(mapper.chr_read_kind(0x0000, ChrFetchKind::Background), 12);
+    assert_eq!(mapper.chr_read_kind(0x0400, ChrFetchKind::Background), 13);
+    assert_eq!(mapper.chr_read_kind(0x1000, ChrFetchKind::Background), 12);
+
+    mapper.cpu_write(0x5101, 2);
+    mapper.cpu_write(0x5129, 5);
+    mapper.cpu_write(0x512B, 6);
+    assert_eq!(mapper.chr_read_kind(0x0000, ChrFetchKind::Background), 10);
+    assert_eq!(mapper.chr_read_kind(0x0400, ChrFetchKind::Background), 11);
+    assert_eq!(mapper.chr_read_kind(0x0800, ChrFetchKind::Background), 12);
+    assert_eq!(mapper.chr_read_kind(0x1000, ChrFetchKind::Background), 10);
+
+    mapper.cpu_write(0x5101, 0);
+    mapper.cpu_write(0x512B, 4);
+    assert_eq!(mapper.chr_read_kind(0x0000, ChrFetchKind::Background), 32);
+    assert_eq!(mapper.chr_read_kind(0x1C00, ChrFetchKind::Background), 39);
+}
+
+#[test]
 fn mmc5_status_read_acknowledges_irq_pending() {
     let prg = vec![0u8; 4 * 0x2000];
     let chr = vec![0u8; 0x2000];

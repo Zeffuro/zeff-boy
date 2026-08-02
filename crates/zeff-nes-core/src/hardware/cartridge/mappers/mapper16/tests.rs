@@ -4,13 +4,13 @@ use crate::hardware::cartridge::Mirroring;
 fn write_ctrl(m: &mut BandaiFcg16, scl: bool, sda: bool, read_en: bool) {
     let mut v = 0u8;
     if scl {
-        v |= 0x80;
+        v |= 0x20;
     }
     if sda {
         v |= 0x40;
     }
     if read_en {
-        v |= 0x20;
+        v |= 0x80;
     }
     m.cpu_write(0x800D, v);
 }
@@ -36,6 +36,19 @@ fn i2c_write_byte(m: &mut BandaiFcg16, b: u8) {
     write_ctrl(m, false, true, false);
     write_ctrl(m, true, true, false);
     write_ctrl(m, false, true, false);
+}
+
+fn i2c_write_byte_read_ack(m: &mut BandaiFcg16, b: u8) -> bool {
+    for bit in (0..8).rev() {
+        let sda = (b >> bit) & 1 != 0;
+        write_ctrl(m, false, sda, false);
+        write_ctrl(m, true, sda, false);
+    }
+    write_ctrl(m, false, true, true);
+    write_ctrl(m, true, true, true);
+    let ack = m.cpu_read(0x6000) & 0x10 == 0;
+    write_ctrl(m, false, true, false);
+    ack
 }
 
 fn i2c_read_byte_nack(m: &mut BandaiFcg16) -> u8 {
@@ -86,4 +99,41 @@ fn mapper16_eeprom_write_then_read_random_access() {
     i2c_stop(&mut mapper, true);
 
     assert_eq!(read_back, 0xAB);
+}
+
+#[test]
+fn mapper16_eeprom_acknowledges_received_bytes() {
+    let prg = vec![0u8; 2 * 0x4000];
+    let chr = vec![0u8; 0x2000];
+    let mut mapper = BandaiFcg16::new(prg, chr, Mirroring::Horizontal, 5, true);
+
+    i2c_start(&mut mapper, false);
+
+    assert!(i2c_write_byte_read_ack(&mut mapper, 0xA0));
+    assert!(i2c_write_byte_read_ack(&mut mapper, 0x12));
+    assert!(i2c_write_byte_read_ack(&mut mapper, 0xAB));
+
+    assert_eq!(mapper.dump_battery_data().unwrap()[0x12], 0xAB);
+}
+
+#[test]
+fn mapper16_eeprom_powers_on_erased() {
+    let prg = vec![0u8; 2 * 0x4000];
+    let chr = vec![0u8; 0x2000];
+    let mapper = BandaiFcg16::new(prg, chr, Mirroring::Horizontal, 5, true);
+
+    assert_eq!(mapper.dump_battery_data().unwrap(), vec![0xFF; 256]);
+}
+
+#[test]
+fn mapper16_short_eeprom_save_keeps_missing_bytes_erased() {
+    let prg = vec![0u8; 2 * 0x4000];
+    let chr = vec![0u8; 0x2000];
+    let mut mapper = BandaiFcg16::new(prg, chr, Mirroring::Horizontal, 5, true);
+
+    mapper.load_battery_data(&[0x12, 0x34]).unwrap();
+    let data = mapper.dump_battery_data().unwrap();
+
+    assert_eq!(&data[..4], &[0x12, 0x34, 0xFF, 0xFF]);
+    assert!(data[2..].iter().all(|&byte| byte == 0xFF));
 }
