@@ -1,4 +1,4 @@
-use super::{App, SpeedMode};
+use super::{App, SpeedMode, UI_RENDER_INTERVAL};
 use crate::{
     audio::AudioOutput,
     emu_thread::{EmuCommand, EmuThread},
@@ -149,6 +149,10 @@ impl App {
         }
 
         self.gfx = Some(gfx);
+        let (native_w, native_h) = self.active_display_size();
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.set_native_size(native_w, native_h);
+        }
 
         #[cfg(target_arch = "wasm32")]
         crate::platform::hide_boot_screen();
@@ -243,7 +247,9 @@ impl App {
                 {
                     let effective = self.effective_frame_duration();
                     let now = Instant::now();
-                    let next_frame_time = self.timing.last_frame_time + effective;
+                    let next_emu_frame_time = self.timing.last_frame_time + effective;
+                    let next_ui_frame_time = self.timing.last_render_time + UI_RENDER_INTERVAL;
+                    let next_frame_time = next_emu_frame_time.max(next_ui_frame_time);
                     if now >= next_frame_time {
                         event_loop.set_control_flow(ControlFlow::Poll);
                     } else {

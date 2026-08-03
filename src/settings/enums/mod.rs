@@ -10,8 +10,9 @@ pub(crate) use display::VsyncMode;
 pub(crate) use input::{LeftStickMode, TiltInputMode};
 pub(crate) use shader::{
     ColorCorrection, DmgPalettePreset, EffectiveColorCorrection, GbaColorCorrection, ShaderParams,
-    build_gpu_params, default_color_correction_matrix, effective_gb_color_correction,
-    effective_gba_color_correction,
+    WonderSwanColorCorrection, build_gpu_params, default_color_correction_matrix,
+    effective_gb_color_correction, effective_gba_color_correction,
+    effective_wonderswan_color_correction,
 };
 pub(crate) use theme::UiThemePreset;
 pub(crate) use video::{

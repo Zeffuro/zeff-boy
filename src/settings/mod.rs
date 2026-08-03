@@ -7,15 +7,16 @@ mod shortcuts;
 mod structs;
 mod tilt_bindings;
 
-pub(crate) use binding_actions::{BindingAction, InputBindingAction};
+pub(crate) use binding_actions::{BindingAction, InputBindingAction, WonderSwanButton};
 pub(crate) use enums::{
     AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset,
     EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode, ScalingMode,
-    TiltInputMode, UiThemePreset, VsyncMode, build_gpu_params, default_color_correction_matrix,
-    default_offscreen_scale, effective_gb_color_correction, effective_gba_color_correction,
+    TiltInputMode, UiThemePreset, VsyncMode, WonderSwanColorCorrection, build_gpu_params,
+    default_color_correction_matrix, default_offscreen_scale, effective_gb_color_correction,
+    effective_gba_color_correction, effective_wonderswan_color_correction,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
-pub(crate) use keyboard_bindings::KeyBindings;
+pub(crate) use keyboard_bindings::{KeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
@@ -41,6 +42,8 @@ pub(crate) struct Settings {
     #[serde(flatten)]
     pub(crate) ui: UiSettings,
     pub(crate) key_bindings: KeyBindings,
+    #[serde(default)]
+    pub(crate) ws_key_bindings: WonderSwanKeyBindings,
     #[serde(flatten)]
     pub(crate) tilt: TiltSettings,
     #[serde(flatten)]
@@ -65,6 +68,7 @@ impl Default for Settings {
             emulation: EmulationSettings::default(),
             ui: UiSettings::default(),
             key_bindings: KeyBindings::default(),
+            ws_key_bindings: WonderSwanKeyBindings::default(),
             tilt: TiltSettings::default(),
             audio: AudioSettings::default(),
             recent_roms: Vec::new(),
@@ -113,6 +117,7 @@ impl Settings {
             && let Ok(mut settings) = serde_json::from_str::<Self>(&json)
         {
             settings.video.migrate_shader_preset();
+            settings.gamepad_bindings.migrate_wonderswan_defaults();
             return settings;
         }
         Settings {

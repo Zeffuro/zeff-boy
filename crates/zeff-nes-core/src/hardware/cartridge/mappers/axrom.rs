@@ -98,7 +98,11 @@ mod tests {
 
     #[test]
     fn unmapped_lower_cart_reads_return_cpu_open_bus() {
-        let mut mapper = Axrom::new(prg_banks(&[0x11, 0x22]), vec![0; 0x2000], Mirroring::Horizontal);
+        let mut mapper = Axrom::new(
+            prg_banks(&[0x11, 0x22]),
+            vec![0; 0x2000],
+            Mirroring::Horizontal,
+        );
 
         assert_eq!(mapper.cpu_read_open_bus(0x6000, 0x60), 0x60);
         assert_eq!(mapper.cpu_read_open_bus(0x7FFF, 0x7F), 0x7F);
@@ -106,7 +110,11 @@ mod tests {
 
     #[test]
     fn prg_reads_ignore_cpu_open_bus() {
-        let mut mapper = Axrom::new(prg_banks(&[0x11, 0x22]), vec![0; 0x2000], Mirroring::Horizontal);
+        let mut mapper = Axrom::new(
+            prg_banks(&[0x11, 0x22]),
+            vec![0; 0x2000],
+            Mirroring::Horizontal,
+        );
 
         assert_eq!(mapper.cpu_read_open_bus(0x8000, 0x60), 0x11);
         mapper.cpu_write(0x8000, 0x01);

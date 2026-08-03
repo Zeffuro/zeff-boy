@@ -121,6 +121,7 @@ impl TileViewerState {
 
 pub(crate) struct PerfInfo {
     pub(crate) fps: f64,
+    pub(crate) target_fps: f64,
     pub(crate) speed_mode_label: &'static str,
     pub(crate) frames_in_flight: usize,
     pub(crate) cycles: u64,

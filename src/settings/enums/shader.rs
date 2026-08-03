@@ -56,6 +56,32 @@ impl crate::debug::ui_helpers::EnumLabel for GbaColorCorrection {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub(crate) enum WonderSwanColorCorrection {
+    #[default]
+    None,
+    ColorLcd,
+    MonoLcd,
+    Custom,
+}
+
+impl crate::debug::ui_helpers::EnumLabel for WonderSwanColorCorrection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "None (raw RGB)",
+            Self::ColorLcd => "WSC/SwanCrystal LCD",
+            Self::MonoLcd => "Original WS LCD",
+            Self::Custom => "Custom matrix",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::None, Self::ColorLcd, Self::MonoLcd, Self::Custom]
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ShaderParams {
     #[serde(default = "default_scanline_intensity")]
@@ -124,6 +150,7 @@ pub(crate) enum EffectiveColorCorrection {
     Matrix([f32; 9]),
     GbaAgbLcd,
     GbaLcdResponse,
+    WonderSwanMonoLcd,
 }
 
 impl EffectiveColorCorrection {
@@ -133,12 +160,13 @@ impl EffectiveColorCorrection {
             Self::Matrix(..) => 1,
             Self::GbaAgbLcd => 2,
             Self::GbaLcdResponse => 3,
+            Self::WonderSwanMonoLcd => 4,
         }
     }
 
     fn matrix(self) -> [f32; 9] {
         match self {
-            Self::None | Self::GbaAgbLcd | Self::GbaLcdResponse => {
+            Self::None | Self::GbaAgbLcd | Self::GbaLcdResponse | Self::WonderSwanMonoLcd => {
                 default_color_correction_matrix()
             }
             Self::Matrix(matrix) => matrix,
@@ -166,6 +194,34 @@ pub(crate) fn effective_gba_color_correction(
         GbaColorCorrection::AgbLcd => EffectiveColorCorrection::GbaAgbLcd,
         GbaColorCorrection::LcdResponse => EffectiveColorCorrection::GbaLcdResponse,
         GbaColorCorrection::Custom => EffectiveColorCorrection::Matrix(custom_matrix),
+    }
+}
+
+pub(crate) fn wonderswan_color_lcd_matrix() -> [f32; 9] {
+    [
+        26.0 / 32.0,
+        4.0 / 32.0,
+        2.0 / 32.0,
+        0.0,
+        24.0 / 32.0,
+        8.0 / 32.0,
+        6.0 / 32.0,
+        4.0 / 32.0,
+        22.0 / 32.0,
+    ]
+}
+
+pub(crate) fn effective_wonderswan_color_correction(
+    correction: WonderSwanColorCorrection,
+    custom_matrix: [f32; 9],
+) -> EffectiveColorCorrection {
+    match correction {
+        WonderSwanColorCorrection::None => EffectiveColorCorrection::None,
+        WonderSwanColorCorrection::ColorLcd => {
+            EffectiveColorCorrection::Matrix(wonderswan_color_lcd_matrix())
+        }
+        WonderSwanColorCorrection::MonoLcd => EffectiveColorCorrection::WonderSwanMonoLcd,
+        WonderSwanColorCorrection::Custom => EffectiveColorCorrection::Matrix(custom_matrix),
     }
 }
 

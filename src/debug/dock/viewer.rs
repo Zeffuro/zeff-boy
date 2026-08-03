@@ -30,6 +30,7 @@ pub(crate) struct DebugTabViewer<'a> {
     pub(crate) window_state: &'a mut DebugWindowState,
     pub(crate) actions: DebugUiActions,
     pub(crate) game_texture_id: Option<egui::TextureId>,
+    pub(crate) game_native_size: (u32, u32),
     pub(crate) aspect_ratio_mode: AspectRatioMode,
     pub(crate) game_view_pixel_size: Option<(u32, u32)>,
 }
@@ -46,8 +47,8 @@ impl TabViewer for DebugTabViewer<'_> {
             DebugTab::GameView => {
                 if let Some(tex_id) = self.game_texture_id {
                     let available = ui.available_size();
-                    let game_w = 160.0_f32;
-                    let game_h = 144.0_f32;
+                    let game_w = self.game_native_size.0.max(1) as f32;
+                    let game_h = self.game_native_size.1.max(1) as f32;
 
                     let (w, h) = match self.aspect_ratio_mode {
                         AspectRatioMode::Stretch => (available.x, available.y),
@@ -65,8 +66,8 @@ impl TabViewer for DebugTabViewer<'_> {
 
                     let ppp = ui.ctx().pixels_per_point();
                     self.game_view_pixel_size = Some((
-                        (w * ppp).round().max(160.0) as u32,
-                        (h * ppp).round().max(144.0) as u32,
+                        (w * ppp).round().max(game_w) as u32,
+                        (h * ppp).round().max(game_h) as u32,
                     ));
 
                     let rect = ui.available_rect_before_wrap();

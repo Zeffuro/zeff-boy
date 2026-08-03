@@ -27,6 +27,8 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                     if ui.button(key_label).clicked() {
                         state.rebinding_speedup = true;
                         state.rebinding_action = None;
+                        state.rebinding_gamepad = None;
+                        state.rebinding_ws_gamepad = None;
                         state.rebinding_shortcut = None;
                         state.rebinding_rewind = false;
                     }
@@ -41,6 +43,8 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                     if ui.button(rewind_label).clicked() {
                         state.rebinding_rewind = true;
                         state.rebinding_action = None;
+                        state.rebinding_gamepad = None;
+                        state.rebinding_ws_gamepad = None;
                         state.rebinding_shortcut = None;
                         state.rebinding_speedup = false;
                     }
@@ -57,6 +61,8 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         if ui.button(capture_label).clicked() {
                             state.rebinding_shortcut = Some(action);
                             state.rebinding_action = None;
+                            state.rebinding_gamepad = None;
+                            state.rebinding_ws_gamepad = None;
                             state.rebinding_speedup = false;
                             state.rebinding_rewind = false;
                         }

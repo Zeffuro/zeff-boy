@@ -30,6 +30,7 @@ pub(crate) fn collect_nes_snapshot(
     if snapshot.want_perf_info {
         data.perf_info = Some(crate::debug::PerfInfo {
             fps: 0.0,
+            target_fps: 1_000_000_000.0 / 16_639_267.0,
             speed_mode_label: "1×",
             frames_in_flight: 0,
             cycles: emu.cpu_cycles(),

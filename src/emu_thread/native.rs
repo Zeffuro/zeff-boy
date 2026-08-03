@@ -26,6 +26,7 @@ impl EmuThread {
         let drain_rx = frame_rx.clone();
 
         let shared_fb = types::new_shared_framebuffer();
+        types::publish_framebuffer(&shared_fb, backend.framebuffer());
         let emu_fb = shared_fb.clone();
 
         let join = thread::spawn(move || {

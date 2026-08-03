@@ -34,6 +34,21 @@ pub(crate) struct TabDataRequirements {
     pub(crate) needs_rom_page: bool,
 }
 
+impl TabDataRequirements {
+    fn include(&mut self, other: Self) {
+        self.needs_debug_info |= other.needs_debug_info;
+        self.needs_perf_info |= other.needs_perf_info;
+        self.needs_viewer_data |= other.needs_viewer_data;
+        self.needs_vram |= other.needs_vram;
+        self.needs_oam |= other.needs_oam;
+        self.needs_apu |= other.needs_apu;
+        self.needs_disassembly |= other.needs_disassembly;
+        self.needs_rom_info |= other.needs_rom_info;
+        self.needs_memory_page |= other.needs_memory_page;
+        self.needs_rom_page |= other.needs_rom_page;
+    }
+}
+
 impl DebugTab {
     pub(crate) fn requirements(self) -> TabDataRequirements {
         match self {
@@ -102,18 +117,13 @@ impl DebugTab {
 
 pub(crate) fn compute_tab_requirements(dock: &DockState<DebugTab>) -> TabDataRequirements {
     let mut reqs = TabDataRequirements::default();
-    for (_, tab) in dock.iter_all_tabs() {
-        let r = tab.requirements();
-        reqs.needs_debug_info |= r.needs_debug_info;
-        reqs.needs_perf_info |= r.needs_perf_info;
-        reqs.needs_viewer_data |= r.needs_viewer_data;
-        reqs.needs_vram |= r.needs_vram;
-        reqs.needs_oam |= r.needs_oam;
-        reqs.needs_apu |= r.needs_apu;
-        reqs.needs_disassembly |= r.needs_disassembly;
-        reqs.needs_rom_info |= r.needs_rom_info;
-        reqs.needs_memory_page |= r.needs_memory_page;
-        reqs.needs_rom_page |= r.needs_rom_page;
+    for (_, leaf) in dock.iter_leaves() {
+        if leaf.collapsed {
+            continue;
+        }
+        if let Some(tab) = leaf.tabs.get(leaf.active.0) {
+            reqs.include(tab.requirements());
+        }
     }
     reqs
 }
@@ -159,5 +169,58 @@ impl DebugTab {
             .iter()
             .find(|(_, _, n)| *n == name)
             .map(|(tab, _, _)| *tab)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_dock::{NodeIndex, SurfaceIndex, TabIndex, TabPath};
+
+    #[test]
+    fn requirements_ignore_inactive_tabs_in_same_stack() {
+        let dock = DockState::new(vec![
+            DebugTab::GameView,
+            DebugTab::CpuDebug,
+            DebugTab::ApuViewer,
+        ]);
+
+        let reqs = compute_tab_requirements(&dock);
+
+        assert!(!reqs.needs_debug_info);
+        assert!(!reqs.needs_apu);
+        assert!(!reqs.needs_viewer_data);
+    }
+
+    #[test]
+    fn requirements_follow_active_tab_in_stack() {
+        let mut dock = DockState::new(vec![
+            DebugTab::GameView,
+            DebugTab::CpuDebug,
+            DebugTab::ApuViewer,
+        ]);
+        dock.set_active_tab(TabPath::new(
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(1),
+        ))
+        .unwrap();
+
+        let reqs = compute_tab_requirements(&dock);
+
+        assert!(reqs.needs_debug_info);
+        assert!(!reqs.needs_apu);
+        assert!(!reqs.needs_viewer_data);
+    }
+
+    #[test]
+    fn requirements_include_active_tabs_from_multiple_leaves() {
+        let mut dock = DockState::new(vec![DebugTab::GameView]);
+        dock.main_surface_mut()
+            .split_left(NodeIndex::root(), 0.5, vec![DebugTab::CpuDebug]);
+
+        let reqs = compute_tab_requirements(&dock);
+
+        assert!(reqs.needs_debug_info);
     }
 }

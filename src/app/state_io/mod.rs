@@ -34,6 +34,9 @@ impl App {
 
     pub(super) fn spawn_emu_thread(&mut self, backend: EmuBackend) {
         self.emu_thread = Some(EmuThread::spawn(backend));
+        if let Some(thread) = &self.emu_thread {
+            self.latest_frame = thread.shared_framebuffer().load_full();
+        }
         self.fps_tracker = FpsTracker::new();
         self.timing.last_frame_time = Instant::now();
 

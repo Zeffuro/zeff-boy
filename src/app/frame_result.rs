@@ -85,7 +85,9 @@ impl App {
                 recorder.write_apu_snapshot(snapshot);
             }
         }
-        self.recycled.audio = Some(result.audio_samples);
+        let mut reusable_audio = result.audio_samples;
+        reusable_audio.clear();
+        self.recycled.audio = Some(reusable_audio);
 
         let mut ui_data = result.ui_data;
 

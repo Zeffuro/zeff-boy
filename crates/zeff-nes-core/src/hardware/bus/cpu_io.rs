@@ -131,7 +131,10 @@ impl Bus {
 
     #[inline]
     fn cpu_read_needs_elapsed_timing(addr: u16) -> bool {
-        matches!(addr, 0x2000..=0x3FFF | APU_STATUS | CONTROLLER1 | CONTROLLER2)
+        matches!(
+            addr,
+            0x2000..=0x3FFF | APU_STATUS | CONTROLLER1 | CONTROLLER2
+        )
     }
 
     #[inline]

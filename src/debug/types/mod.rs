@@ -37,7 +37,7 @@ pub(crate) struct DebugDataRefs<'a> {
     pub(crate) rom_size: u32,
 }
 
-use crate::settings::{BindingAction, InputBindingAction, ShortcutAction};
+use crate::settings::{BindingAction, InputBindingAction, ShortcutAction, WonderSwanButton};
 
 pub(crate) struct DebugWindowState {
     pub(crate) memory: MemoryViewerState,
@@ -45,6 +45,7 @@ pub(crate) struct DebugWindowState {
     pub(crate) rebinding_action: Option<InputBindingAction>,
     pub(crate) rebinding_shortcut: Option<ShortcutAction>,
     pub(crate) rebinding_gamepad: Option<BindingAction>,
+    pub(crate) rebinding_ws_gamepad: Option<WonderSwanButton>,
     pub(crate) rebinding_gamepad_action: Option<crate::settings::GamepadAction>,
     pub(crate) rebinding_speedup: bool,
     pub(crate) rebinding_rewind: bool,
@@ -75,6 +76,7 @@ impl DebugWindowState {
             rebinding_action: None,
             rebinding_shortcut: None,
             rebinding_gamepad: None,
+            rebinding_ws_gamepad: None,
             rebinding_gamepad_action: None,
             rebinding_speedup: false,
             rebinding_rewind: false,

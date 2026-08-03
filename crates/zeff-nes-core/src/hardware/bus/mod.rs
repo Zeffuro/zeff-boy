@@ -177,11 +177,7 @@ impl Bus {
 
         for (group, lut) in luts.iter_mut().enumerate() {
             let mask = (group as u8) << 5;
-            Self::fill_palette_lut(
-                lut,
-                &source_palette,
-                Some((mode, mask, rgb_ppu_emphasis)),
-            );
+            Self::fill_palette_lut(lut, &source_palette, Some((mode, mask, rgb_ppu_emphasis)));
         }
 
         luts

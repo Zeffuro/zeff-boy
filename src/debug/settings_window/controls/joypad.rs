@@ -9,6 +9,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                 let label = match action {
                     InputBindingAction::Joypad(a) => joypad_label(a),
                     InputBindingAction::Tilt(a) => super::tilt::tilt_label(a),
+                    InputBindingAction::WonderSwan(a) => a.label(),
                 };
                 ui.label(
                     egui::RichText::new(format!("Press a key for {}...", label))
@@ -52,6 +53,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         if ui.button(kb_label).clicked() {
                             state.rebinding_action = Some(InputBindingAction::Joypad(action));
                             state.rebinding_gamepad = None;
+                            state.rebinding_ws_gamepad = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
                             state.rebinding_rewind = false;
@@ -65,6 +67,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         };
                         if ui.button(gp_label).clicked() {
                             state.rebinding_gamepad = Some(action);
+                            state.rebinding_ws_gamepad = None;
                             state.rebinding_action = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
@@ -77,6 +80,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             if ui.button("Reset gamepad to defaults").clicked() {
                 settings.gamepad_bindings = crate::settings::GamepadBindings::default();
                 state.rebinding_gamepad = None;
+                state.rebinding_ws_gamepad = None;
                 state.rebinding_gamepad_action = None;
             }
         });

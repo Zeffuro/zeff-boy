@@ -325,6 +325,7 @@ pub(super) fn run_gb_headless(
             u64::from(emulator.cpu_pc()),
             emulator.framebuffer(),
             None,
+            None,
             false,
             &mut stuck_active,
         );

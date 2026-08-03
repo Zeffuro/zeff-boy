@@ -22,22 +22,28 @@ impl Keypad {
         }
     }
 
-    pub fn set_host_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+    pub fn set_host_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
+        let was_pressed = self.any_pressed();
         self.x_buttons = dpad_pressed & 0x0F;
-        self.ab_start = buttons_pressed & 0x07;
+        self.ab_start = map_host_buttons_to_ws_row(buttons_pressed);
         self.y_buttons = (buttons_pressed >> 4) & 0x0F;
+        !was_pressed && self.any_pressed()
+    }
+
+    pub fn any_pressed(&self) -> bool {
+        (self.x_buttons | self.y_buttons | self.ab_start) != 0
     }
 
     pub fn read(&self) -> u8 {
-        let mut value = 0x0F;
+        let mut value = 0;
         if self.select & 0x10 != 0 {
-            value &= !self.y_buttons;
+            value |= self.y_buttons;
         }
         if self.select & 0x20 != 0 {
-            value &= !self.x_buttons;
+            value |= self.x_buttons;
         }
         if self.select & 0x40 != 0 {
-            value &= !self.ab_start;
+            value |= self.ab_start;
         }
         (self.select & 0x70) | (value & 0x0F)
     }
@@ -47,19 +53,41 @@ impl Keypad {
     }
 }
 
+fn map_host_buttons_to_ws_row(buttons_pressed: u8) -> u8 {
+    let mut row = 0u8;
+    if buttons_pressed & (1 << 0) != 0 {
+        row |= 1 << 2;
+    }
+    if buttons_pressed & (1 << 1) != 0 {
+        row |= 1 << 3;
+    }
+    if buttons_pressed & (1 << 3) != 0 {
+        row |= 1 << 1;
+    }
+    row
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn selected_rows_read_as_active_low_nibbles() {
+    fn selected_rows_read_as_active_high_nibbles() {
         let mut keypad = Keypad::new();
         keypad.set_host_input(0b0011_0011, 0b0101);
         keypad.write(0x20);
-        assert_eq!(keypad.read() & 0x0F, 0b1010);
+        assert_eq!(keypad.read() & 0x0F, 0b0101);
         keypad.write(0x40);
         assert_eq!(keypad.read() & 0x0F, 0b1100);
         keypad.write(0x10);
-        assert_eq!(keypad.read() & 0x0F, 0b1100);
+        assert_eq!(keypad.read() & 0x0F, 0b0011);
+    }
+
+    #[test]
+    fn maps_generic_a_b_start_to_wonderswan_button_row_bits() {
+        let mut keypad = Keypad::new();
+        keypad.set_host_input(0b0000_1011, 0);
+        keypad.write(0x40);
+        assert_eq!(keypad.read() & 0x0F, 0b1110);
     }
 }

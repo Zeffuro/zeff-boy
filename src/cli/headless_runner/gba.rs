@@ -219,6 +219,7 @@ pub(super) fn run_gba_headless(
             frames_run,
             u64::from(emulator.cpu_pc()),
             emulator.framebuffer(),
+            None,
             wait_classification,
             wait_classification.is_some(),
             &mut stuck_active,

@@ -6,13 +6,14 @@ use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use super::enums::{
     AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset,
     EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, ShaderParams, ShaderPreset,
-    UiThemePreset, VsyncMode,
+    UiThemePreset, VsyncMode, WonderSwanColorCorrection,
 };
 use super::keycode_serde::keycode_from_string;
 use super::tilt_bindings::TiltKeyBindings;
 use super::{
     LeftStickMode, TiltInputMode, default_color_correction_matrix, default_offscreen_scale,
     effective_gb_color_correction, effective_gba_color_correction,
+    effective_wonderswan_color_correction,
 };
 
 fn default_camera_gamma() -> f32 {
@@ -210,6 +211,11 @@ pub(crate) struct VideoSettings {
     pub(crate) gba_color_correction_matrix: [f32; 9],
 
     #[serde(default)]
+    pub(crate) ws_color_correction: WonderSwanColorCorrection,
+    #[serde(default = "default_color_correction_matrix")]
+    pub(crate) ws_color_correction_matrix: [f32; 9],
+
+    #[serde(default)]
     pub(crate) nes_palette_mode: NesPaletteMode,
     #[serde(default)]
     pub(crate) nes_custom_palette_path: String,
@@ -234,6 +240,8 @@ impl Default for VideoSettings {
             gb_dmg_palette_preset: DmgPalettePreset::default(),
             gba_color_correction: GbaColorCorrection::None,
             gba_color_correction_matrix: default_color_correction_matrix(),
+            ws_color_correction: WonderSwanColorCorrection::None,
+            ws_color_correction_matrix: default_color_correction_matrix(),
             nes_palette_mode: NesPaletteMode::default(),
             nes_custom_palette_path: String::new(),
             nes_custom_palette_name: String::new(),
@@ -270,9 +278,13 @@ impl VideoSettings {
                     self.gba_color_correction_matrix,
                 )
             }
-            Some(crate::emu_backend::ActiveSystem::Nes)
-            | Some(crate::emu_backend::ActiveSystem::WonderSwan)
-            | None => EffectiveColorCorrection::None,
+            Some(crate::emu_backend::ActiveSystem::WonderSwan) => {
+                effective_wonderswan_color_correction(
+                    self.ws_color_correction,
+                    self.ws_color_correction_matrix,
+                )
+            }
+            Some(crate::emu_backend::ActiveSystem::Nes) | None => EffectiveColorCorrection::None,
         }
     }
 }

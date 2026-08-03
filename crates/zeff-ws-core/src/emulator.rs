@@ -1,5 +1,5 @@
 use crate::hardware::bus::{Bus, DebugTraceEvent};
-use crate::hardware::cartridge::{Cartridge, RomFooter};
+use crate::hardware::cartridge::{Cartridge, MinimumSystem, RomFooter, RomOrientation};
 use crate::hardware::constants::CYCLES_PER_FRAME;
 use crate::hardware::cpu::{Cpu, CpuState, CpuTrap, FetchedInstruction};
 use sha2::{Digest, Sha256};
@@ -13,8 +13,6 @@ pub struct Emulator {
     pub(crate) rom_hash: [u8; 32],
     pub(crate) rom_crc32: u32,
     pub(crate) frame_count: u64,
-    sample_rate: u32,
-    apu_sample_generation_enabled: bool,
 }
 
 impl Emulator {
@@ -22,14 +20,14 @@ impl Emulator {
         let cartridge = Cartridge::load(rom_data)?;
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let rom_crc32 = crc32fast::hash(rom_data);
+        let mut bus = Bus::new(cartridge);
+        bus.apu.set_sample_rate(sample_rate);
         let mut emu = Self {
             cpu: Cpu::new(),
-            bus: Bus::new(cartridge),
+            bus,
             rom_hash,
             rom_crc32,
             frame_count: 0,
-            sample_rate,
-            apu_sample_generation_enabled: true,
         };
         emu.reset();
         Ok(emu)
@@ -41,7 +39,9 @@ impl Emulator {
 
     pub fn reset(&mut self) {
         self.bus.reset();
-        self.cpu.reset();
+        self.cpu.apply_cartridge_start_state(
+            self.bus.cartridge.minimum_system() != MinimumSystem::WonderSwan,
+        );
         self.frame_count = 0;
     }
 
@@ -85,6 +85,9 @@ impl Emulator {
         }
 
         let fetched = self.cpu.step(&mut self.bus);
+        if fetched.is_some() {
+            self.bus.retire_instruction();
+        }
         let events = if collect_bus_trace {
             self.bus.debug_trace_enabled = false;
             self.bus.take_debug_trace_events()
@@ -117,30 +120,38 @@ impl Emulator {
         self.bus.ppu.frame_ready = false;
     }
 
-    pub fn drain_audio_samples_into(&mut self, _buf: &mut Vec<f32>) {}
+    pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.bus.apu.drain_audio_samples_into(buf);
+    }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
-        self.sample_rate = rate;
+        self.bus.apu.set_sample_rate(rate);
     }
 
     pub fn sample_rate(&self) -> u32 {
-        self.sample_rate
+        self.bus.apu.sample_rate()
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
-        self.apu_sample_generation_enabled = enabled;
+        self.bus.apu.set_sample_generation_enabled(enabled);
     }
 
     pub fn apu_sample_generation_enabled(&self) -> bool {
-        self.apu_sample_generation_enabled
+        self.bus.apu.sample_generation_enabled()
     }
 
-    pub fn set_apu_channel_mutes(&mut self, _mutes: [bool; 1]) {}
+    pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 4]) {
+        self.bus.apu.set_channel_mutes(mutes);
+    }
 
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.bus
+        if self
+            .bus
             .keypad
-            .set_host_input(buttons_pressed, dpad_pressed);
+            .set_host_input(buttons_pressed, dpad_pressed)
+        {
+            self.bus.raise_keypad_interrupt();
+        }
     }
 
     pub fn has_battery(&self) -> bool {
@@ -175,8 +186,16 @@ impl Emulator {
         self.rom_crc32
     }
 
+    pub fn cartridge_rom_bytes(&self) -> &[u8] {
+        self.bus.cartridge.rom()
+    }
+
     pub fn footer(&self) -> &RomFooter {
         self.bus.cartridge.footer()
+    }
+
+    pub fn preferred_orientation(&self) -> RomOrientation {
+        self.footer().orientation()
     }
 
     pub fn is_cpu_suspended(&self) -> bool {
@@ -245,6 +264,10 @@ impl Emulator {
 
     pub fn ppu_debug_snapshot(&self) -> crate::hardware::ppu::PpuDebugSnapshot {
         self.bus.ppu_debug_snapshot()
+    }
+
+    pub fn apu_debug_snapshot(&self) -> crate::hardware::apu::ApuDebugSnapshot {
+        self.bus.apu_debug_snapshot()
     }
 }
 
@@ -317,5 +340,17 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn input_press_raises_enabled_keypad_interrupt() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut emu = Emulator::from_rom_data(&rom).unwrap();
+        emu.io_write8(0xB0, 0x20);
+        emu.io_write8(0xB2, 0x02);
+
+        emu.set_input(0x01, 0x00);
+
+        assert_eq!(emu.io_peek8(0xB4) & 0x02, 0x02);
     }
 }

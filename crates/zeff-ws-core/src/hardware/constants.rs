@@ -10,7 +10,8 @@ pub const CYCLES_PER_FRAME: u32 = CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME as u
 pub const WS_FRAME_DURATION_NS: u64 = 13_250_298;
 
 pub const ADDRESS_MASK: u32 = 0x000F_FFFF;
-pub const INTERNAL_RAM_SIZE: usize = 0x1_0000;
+pub const WS_INTERNAL_RAM_SIZE: usize = 0x4000;
+pub const WSC_INTERNAL_RAM_SIZE: usize = 0x1_0000;
 pub const IO_PORT_COUNT: usize = 0x1_0000;
 pub const ROM_BANK_SIZE: usize = 0x1_0000;
 pub const LINEAR_ROM_WINDOW_SIZE: usize = 0xC_0000;

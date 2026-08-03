@@ -45,6 +45,9 @@ impl App {
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
         self.recycled.clear();
+        self.latest_frame = None;
+        self.last_core_frame = None;
+        self.last_displayed_frame = None;
         self.debug_windows.last_disasm_pc = None;
         self.undo_load_state = None;
 

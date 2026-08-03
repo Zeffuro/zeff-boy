@@ -25,6 +25,8 @@ pub(crate) struct EmuThread {
 
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
+        let shared_framebuffer = types::new_shared_framebuffer();
+        types::publish_framebuffer(&shared_framebuffer, backend.framebuffer());
         Self {
             inner: RefCell::new(Inner {
                 backend,
@@ -38,7 +40,7 @@ impl EmuThread {
                 rewind_seconds: DEFAULT_REWIND_SECONDS,
                 last_cheats: Vec::new(),
             }),
-            shared_framebuffer: types::new_shared_framebuffer(),
+            shared_framebuffer,
         }
     }
 

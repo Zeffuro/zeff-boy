@@ -3,26 +3,23 @@ use serde_json::{Value, json};
 use crate::app::App;
 use crate::emu_thread::{EmuCommand, EmuResponse};
 
-use super::json_helpers::live_frame_size;
-
 impl App {
     pub(super) fn write_live_screenshot(
         &self,
         requested_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<Value> {
         let frame = self
-            .latest_frame
-            .as_ref()
-            .or(self.last_displayed_frame.as_ref())
+            .latest_display_frame_snapshot()
             .ok_or_else(|| anyhow::anyhow!("no framebuffer is available yet"))?;
-        let (width, height) = live_frame_size(self.active_system, frame.len())
+        let (width, height) = self
+            .display_size_for_frame_len(frame.len())
             .ok_or_else(|| anyhow::anyhow!("unexpected framebuffer size: {} bytes", frame.len()))?;
 
         let path = resolve_screenshot_path(requested_path)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        write_rgba_png(&path, width, height, frame)?;
+        write_rgba_png(&path, width, height, &frame)?;
 
         Ok(json!({
             "path": path.display().to_string(),
@@ -66,10 +63,11 @@ impl App {
 
         let path = resolve_state_path(Some(requested_path))?;
         if let Some(thread) = &self.emu_thread {
+            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
             thread.send(EmuCommand::LoadStateFromPath {
                 path: path.clone(),
-                buttons_pressed: self.host_input.buttons_pressed(),
-                dpad_pressed: self.host_input.dpad_pressed(),
+                buttons_pressed,
+                dpad_pressed,
             });
         }
 

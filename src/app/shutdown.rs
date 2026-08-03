@@ -44,5 +44,7 @@ impl App {
         self.audio = None;
         self.window_id = None;
         self.latest_frame = None;
+        self.last_core_frame = None;
+        self.last_displayed_frame = None;
     }
 }

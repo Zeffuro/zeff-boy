@@ -28,6 +28,7 @@ pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
 
 mod bindings;
 mod camera_host;
+mod display;
 mod frame_result;
 mod input;
 mod keyboard;
@@ -62,6 +63,9 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
     let cached_source_path = backend.as_ref().map(|b| b.source_path().to_path_buf());
+    let initial_ws_display_rotated = backend.as_ref().and_then(|b| b.ws()).is_some_and(|ws| {
+        ws.preferred_orientation() == zeff_ws_core::hardware::cartridge::RomOrientation::Vertical
+    });
     let active_system = backend
         .as_ref()
         .map(|b| b.system())
@@ -131,6 +135,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         debug_requests: DebugRequests::default(),
         active_save_slot: 0,
         latest_frame: None,
+        last_core_frame: None,
         last_displayed_frame: None,
         recycled: RecycledBuffers {
             audio: None,
@@ -178,6 +183,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         egui_wants_keyboard: false,
         game_view_focused: true,
         active_system,
+        ws_display_rotated: initial_ws_display_rotated,
         cached_slot_info: state_io::SlotInfo {
             labels: std::array::from_fn(|i| format!("Slot {i}  (empty)")),
             occupied: [false; 10],
@@ -239,6 +245,7 @@ struct App {
     debug_requests: DebugRequests,
     active_save_slot: u8,
     latest_frame: Option<Arc<Vec<u8>>>,
+    last_core_frame: Option<Arc<Vec<u8>>>,
     last_displayed_frame: Option<Arc<Vec<u8>>>,
     recycled: RecycledBuffers,
     frames_in_flight: usize,
@@ -262,6 +269,7 @@ struct App {
     egui_wants_keyboard: bool,
     game_view_focused: bool,
     active_system: ActiveSystem,
+    ws_display_rotated: bool,
     cached_slot_info: state_io::SlotInfo,
     undo_load_state: Option<Vec<u8>>,
     paused_by_unfocus: bool,

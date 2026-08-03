@@ -35,6 +35,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         if ui.button(capture_label).clicked() {
                             state.rebinding_gamepad_action = Some(action);
                             state.rebinding_gamepad = None;
+                            state.rebinding_ws_gamepad = None;
                             state.rebinding_action = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;

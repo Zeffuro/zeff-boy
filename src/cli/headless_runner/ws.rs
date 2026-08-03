@@ -7,12 +7,8 @@ pub(super) fn run_ws_headless(
 ) -> anyhow::Result<()> {
     ensure_system_headless_options("ws", opts)?;
     ensure_no_reset_events("ws", opts)?;
-    if opts.trace_opcodes
-        || !opts.trace_bus_filters.is_empty()
-        || !opts.trace_opcode_filter.is_empty()
-        || opts.trace_watch_interrupts
-    {
-        anyhow::bail!("WonderSwan headless tracing is not implemented yet");
+    if opts.trace_watch_interrupts {
+        anyhow::bail!("WonderSwan --trace-watch-interrupts is not implemented yet");
     }
     if opts.expect_test_pass {
         anyhow::bail!("--expect-test-pass is not implemented for WonderSwan headless runs yet");
@@ -44,8 +40,15 @@ pub(super) fn run_ws_headless(
     let mut stuck = StuckTracker::from_options(opts);
     let mut stuck_active = false;
     let mut screenshot_written = false;
+    let mut traced = 0u64;
+    let mut bus_traced = 0u64;
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(64);
+    let bus_trace_active = !opts.trace_bus_filters.is_empty();
     let start = Instant::now();
     let mut frames_run = 0u64;
+    let mut audio_scratch: Vec<f32> = Vec::new();
+    let mut audio_dump: Vec<f32> = Vec::new();
+    let mut audio_stats = AudioStats::default();
     write_screenshot_if_requested(
         opts,
         0,
@@ -59,7 +62,75 @@ pub(super) fn run_ws_headless(
         let frame_number = frame + 1;
         let input = input_for_frame(opts, frame_number);
         emulator.set_input(input.buttons, input.dpad);
-        emulator.step_frame();
+
+        if opts.trace_opcodes || bus_trace_active {
+            emulator.clear_frame_ready();
+            let guard = emulator
+                .cpu_cycles()
+                .wrapping_add(u64::from(zeff_ws_core::hardware::constants::CYCLES_PER_FRAME) * 2);
+            while !emulator.frame_ready()
+                && emulator.cpu_cycles() < guard
+                && !emulator.is_cpu_suspended()
+            {
+                let before_cycles = emulator.cpu_cycles();
+                let bus_trace_collecting = bus_trace_active
+                    && (opts.trace_bus_limit == 0 || bus_traced < opts.trace_bus_limit);
+                let (fetched, bus_events) = if bus_trace_collecting {
+                    emulator.step_instruction_with_bus_trace()
+                } else {
+                    (emulator.step_instruction(), Vec::new())
+                };
+                let step_cycles = emulator.cpu_cycles().wrapping_sub(before_cycles);
+
+                if let Some(fetched) = fetched {
+                    if opts.trace_opcodes && emulator.cpu_cycles() >= opts.trace_start_t {
+                        let tail_line = format_ws_op_tail_line(&emulator, fetched, step_cycles);
+                        if tail.len() == 64 {
+                            tail.pop_front();
+                        }
+                        tail.push_back(tail_line);
+                    }
+                    if opts.trace_opcodes
+                        && (opts.trace_opcode_limit == 0 || traced < opts.trace_opcode_limit)
+                        && should_trace_ws_op(
+                            opts,
+                            fetched.pc,
+                            fetched.opcode,
+                            emulator.cpu_cycles(),
+                        )
+                    {
+                        println!(
+                            "{}",
+                            format_ws_op_line(traced, &emulator, fetched, step_cycles)
+                        );
+                        traced = traced.wrapping_add(1);
+                    }
+                }
+
+                if bus_trace_collecting && emulator.cpu_cycles() >= opts.trace_start_t {
+                    for event in bus_events {
+                        if opts.trace_bus_limit != 0 && bus_traced >= opts.trace_bus_limit {
+                            break;
+                        }
+                        if should_trace_ws_bus_event(opts, event) {
+                            println!(
+                                "{}",
+                                format_ws_bus_trace_line(
+                                    bus_traced,
+                                    &emulator,
+                                    fetched.or_else(|| emulator.last_fetch()),
+                                    event,
+                                )
+                            );
+                            bus_traced = bus_traced.wrapping_add(1);
+                        }
+                    }
+                }
+            }
+            emulator.finish_frame();
+        } else {
+            emulator.step_frame();
+        }
         frames_run = frame_number;
 
         write_screenshot_if_requested(
@@ -76,6 +147,7 @@ pub(super) fn run_ws_headless(
             dimensions,
         )?;
 
+        let wait_classification = ws_wait_classification(&emulator);
         observe_stuck(
             &mut stuck,
             "ws",
@@ -83,10 +155,19 @@ pub(super) fn run_ws_headless(
             frames_run,
             u64::from(emulator.cpu_pc()),
             emulator.framebuffer(),
-            None,
-            false,
+            ws_progress_marker(&emulator),
+            wait_classification,
+            wait_classification.is_some(),
             &mut stuck_active,
         );
+        if !opts.no_apu {
+            emulator.drain_audio_samples_into(&mut audio_scratch);
+            audio_stats.observe(&audio_scratch);
+            if opts.audio_dump_path.is_some() {
+                audio_dump.extend_from_slice(&audio_scratch);
+            }
+            audio_scratch.clear();
+        }
         if emulator.is_cpu_suspended() {
             println!(
                 "[headless] ws cpu-suspended frame={} pc={:06X} trap={:?}",
@@ -95,6 +176,13 @@ pub(super) fn run_ws_headless(
                 emulator.last_trap()
             );
             break;
+        }
+    }
+
+    if opts.trace_opcodes {
+        println!("[ws-op-tail] ---- last {} ops ----", tail.len());
+        for line in tail {
+            println!("{}", line);
         }
     }
 
@@ -115,7 +203,92 @@ pub(super) fn run_ws_headless(
     if !opts.no_sram {
         flush_battery(path, emulator.dump_battery_sram());
     }
+    if let Some(path) = &opts.audio_dump_path {
+        write_audio_dump_f32le(path, &audio_dump, emulator.apu_debug_snapshot().sample_rate)?;
+        println!(
+            "[headless] ws-audio drained_samples={} drained_frames={} nonzero_samples={} peak_abs={:.6} mean_abs={:.6}",
+            audio_stats.sample_count,
+            audio_stats.frames_with_samples,
+            audio_stats.nonzero_samples,
+            audio_stats.peak_abs,
+            audio_stats.mean_abs()
+        );
+    }
+    print_ws_memory_dumps(&emulator, opts);
     fail_on_stuck_if_needed("ws", stuck.as_ref(), opts)?;
 
     Ok(())
+}
+
+fn print_ws_memory_dumps(emulator: &WsEmulator, opts: &HeadlessOptions) {
+    for dump in &opts.memory_dumps {
+        let start = u32::from(dump.start_addr);
+        let len = u32::from(dump.len);
+        println!("[mem] start={start:05X} len={len}");
+        let mut offset = 0u32;
+        while offset < len {
+            let line_len = (len - offset).min(16);
+            let addr = start.wrapping_add(offset);
+            let bytes = (0..line_len)
+                .map(|i| format!("{:02X}", emulator.cpu_peek8(addr.wrapping_add(i))))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("[mem] {addr:05X}: {bytes}");
+            offset += line_len;
+        }
+    }
+}
+
+fn ws_wait_classification(emulator: &WsEmulator) -> Option<&'static str> {
+    if emulator.cpu_state() == zeff_ws_core::hardware::cpu::CpuState::Halted
+        && emulator.io_peek8(0xB2) != 0
+    {
+        Some("ws-halt-idle")
+    } else if ws_framebuffer_has_visible_content(emulator.framebuffer()) {
+        Some("ws-static-visible-frame")
+    } else {
+        None
+    }
+}
+
+fn ws_framebuffer_has_visible_content(framebuffer: &[u8]) -> bool {
+    let mut chunks = framebuffer.chunks_exact(4);
+    let Some(first) = chunks.next() else {
+        return false;
+    };
+    chunks.any(|pixel| pixel[..3] != first[..3])
+}
+
+fn ws_progress_marker(emulator: &WsEmulator) -> Option<u64> {
+    let fetched = emulator.last_fetch()?;
+    if fetched.pc != emulator.cpu_pc() || !ws_string_opcode(fetched.opcode) {
+        return None;
+    }
+
+    let regs = emulator.cpu_registers();
+    let segments = emulator.cpu_segments();
+    let mut marker = 0xCBF2_9CE4_8422_2325u64;
+    for value in [
+        fetched.pc as u64,
+        fetched.opcode as u64,
+        regs[0] as u64,
+        regs[1] as u64,
+        regs[2] as u64,
+        regs[6] as u64,
+        regs[7] as u64,
+        segments[0] as u64,
+        segments[3] as u64,
+        emulator.cpu_flags() as u64,
+    ] {
+        marker ^= value;
+        marker = marker.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    Some(marker)
+}
+
+fn ws_string_opcode(opcode: u8) -> bool {
+    matches!(
+        opcode,
+        0x6C..=0x6F | 0xA4..=0xA7 | 0xAA..=0xAF
+    )
 }

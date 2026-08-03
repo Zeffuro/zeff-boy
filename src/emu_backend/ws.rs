@@ -45,6 +45,12 @@ impl WsBackend {
     pub(crate) fn source_path(&self) -> &Path {
         &self.source_path
     }
+
+    pub(crate) fn preferred_orientation(
+        &self,
+    ) -> zeff_ws_core::hardware::cartridge::RomOrientation {
+        self.emu.preferred_orientation()
+    }
 }
 
 impl EmulatorCore for WsBackend {
@@ -72,7 +78,7 @@ impl EmulatorCore for WsBackend {
     }
 
     fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
-        let arr: [bool; 1] = std::array::from_fn(|i| mutes.get(i).copied().unwrap_or(false));
+        let arr: [bool; 4] = std::array::from_fn(|i| mutes.get(i).copied().unwrap_or(false));
         self.emu.set_apu_channel_mutes(arr);
     }
 

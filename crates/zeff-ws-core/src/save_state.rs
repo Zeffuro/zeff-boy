@@ -1,10 +1,11 @@
 use anyhow::{Context, bail};
 
 use crate::emulator::Emulator;
+use crate::hardware::apu::ApuSaveState;
 use crate::hardware::cpu::CpuState;
 
 const MAGIC: &[u8; 8] = b"ZEFFWS1\0";
-const VERSION: u8 = 1;
+const VERSION: u8 = 5;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::new();
@@ -30,8 +31,10 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u64(emu.bus.cycles);
     w.vec(&emu.bus.ram)?;
     w.vec(&emu.bus.io)?;
+    w.vec(&emu.bus.internal_eeprom)?;
     w.u16(emu.bus.cartridge.bank0());
     w.u16(emu.bus.cartridge.bank1());
+    w.u8(emu.bus.cartridge.ram_bank());
     w.u8(emu.bus.cartridge.linear_bank());
     w.vec(emu.bus.cartridge.save_data())?;
 
@@ -39,6 +42,40 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u16(ppu.vcount);
     w.u32(ppu.line_cycles);
     w.u8(u8::from(ppu.frame_ready));
+    let (sprite_table, sprite_start, sprite_count) = emu.bus.ppu.sprite_cache_state();
+    w.bytes(sprite_table);
+    w.u8(sprite_start);
+    w.u8(sprite_count);
+    let apu = emu.bus.apu.save_state();
+    for period in apu.period {
+        w.u16(period);
+    }
+    for volume in apu.volume {
+        w.u8(volume);
+    }
+    w.u8(apu.voice_volume);
+    w.u8(apu.sweep_step);
+    w.u8(apu.sweep_value);
+    w.u8(apu.noise_control);
+    w.u8(apu.control);
+    w.u8(apu.output_control);
+    w.u8(apu.sample_ram_pos);
+    w.i32(apu.sweep_8192_divider);
+    w.u8(apu.sweep_counter);
+    for counter in apu.period_counter {
+        w.i32(counter);
+    }
+    for pos in apu.sample_pos {
+        w.u8(pos);
+    }
+    w.u16(apu.nreg);
+    w.u8(apu.hyper_voice_sample);
+    w.u8(apu.hyper_voice_control);
+    w.u8(apu.hyper_voice_channel_control);
+    w.u32(apu.sample_cycle_accumulator);
+    for muted in apu.channel_mutes {
+        w.u8(u8::from(muted));
+    }
     Ok(w.finish())
 }
 
@@ -46,7 +83,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     let mut r = StateReader::new(data);
     r.expect_bytes(MAGIC)?;
     let version = r.u8()?;
-    if version != VERSION {
+    if !(2..=VERSION).contains(&version) {
         bail!("unsupported WonderSwan save-state version: {version}");
     }
     let mut rom_hash = [0u8; 32];
@@ -76,8 +113,12 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.bus.cycles = r.u64()?;
     r.vec_into(&mut emu.bus.ram)?;
     r.vec_into(&mut emu.bus.io)?;
+    if version >= 3 {
+        r.vec_into(&mut emu.bus.internal_eeprom)?;
+    }
     emu.bus.cartridge.set_bank0(r.u16()? as u8);
     emu.bus.cartridge.set_bank1(r.u16()? as u8);
+    emu.bus.cartridge.set_ram_bank(r.u8()?);
     emu.bus.cartridge.set_linear_bank(r.u8()?);
     r.slice_into(emu.bus.cartridge.save_data_mut())?;
 
@@ -87,6 +128,78 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.bus
         .ppu
         .set_timing_state(vcount, line_cycles, frame_ready);
+    if version >= 4 {
+        let mut sprite_table = [0; 512];
+        r.read_exact(&mut sprite_table)?;
+        let sprite_start = r.u8()?;
+        let sprite_count = r.u8()?;
+        emu.bus
+            .ppu
+            .set_sprite_cache_state(sprite_table, sprite_start, sprite_count);
+    } else {
+        emu.bus
+            .ppu
+            .cache_sprites_for_frame(&emu.bus.ram, &emu.bus.io);
+    }
+    if version >= 5 {
+        let mut period = [0; 4];
+        for value in &mut period {
+            *value = r.u16()?;
+        }
+        let mut volume = [0; 4];
+        for value in &mut volume {
+            *value = r.u8()?;
+        }
+        let voice_volume = r.u8()?;
+        let sweep_step = r.u8()?;
+        let sweep_value = r.u8()?;
+        let noise_control = r.u8()?;
+        let control = r.u8()?;
+        let output_control = r.u8()?;
+        let sample_ram_pos = r.u8()?;
+        let sweep_8192_divider = r.i32()?;
+        let sweep_counter = r.u8()?;
+        let mut period_counter = [0; 4];
+        for value in &mut period_counter {
+            *value = r.i32()?;
+        }
+        let mut sample_pos = [0; 4];
+        for value in &mut sample_pos {
+            *value = r.u8()?;
+        }
+        let nreg = r.u16()?;
+        let hyper_voice_sample = r.u8()?;
+        let hyper_voice_control = r.u8()?;
+        let hyper_voice_channel_control = r.u8()?;
+        let sample_cycle_accumulator = r.u32()?;
+        let mut channel_mutes = [false; 4];
+        for muted in &mut channel_mutes {
+            *muted = r.u8()? != 0;
+        }
+        emu.bus.apu.load_state(ApuSaveState {
+            period,
+            volume,
+            voice_volume,
+            sweep_step,
+            sweep_value,
+            noise_control,
+            control,
+            output_control,
+            sample_ram_pos,
+            sweep_8192_divider,
+            sweep_counter,
+            period_counter,
+            sample_pos,
+            nreg,
+            hyper_voice_sample,
+            hyper_voice_control,
+            hyper_voice_channel_control,
+            sample_cycle_accumulator,
+            channel_mutes,
+        });
+    } else {
+        emu.bus.apu.reset();
+    }
     r.finish()?;
     Ok(())
 }
@@ -134,6 +247,10 @@ impl StateWriter {
     }
 
     fn u32(&mut self, value: u32) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn i32(&mut self, value: i32) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
@@ -212,6 +329,12 @@ impl<'a> StateReader<'a> {
         Ok(u32::from_le_bytes(bytes))
     }
 
+    fn i32(&mut self) -> anyhow::Result<i32> {
+        let mut bytes = [0; 4];
+        self.read_exact(&mut bytes)?;
+        Ok(i32::from_le_bytes(bytes))
+    }
+
     fn u64(&mut self) -> anyhow::Result<u64> {
         let mut bytes = [0; 8];
         self.read_exact(&mut bytes)?;
@@ -268,6 +391,14 @@ mod tests {
         let mut emu = Emulator::from_rom_data(&rom).unwrap();
         emu.cpu_write8(0x1234, 0x56);
         emu.io_write8(0x0001, 0x02);
+        emu.io_write8(0x00BC, 3);
+        emu.io_write8(0x00BA, 0x78);
+        emu.io_write8(0x00BB, 0x56);
+        emu.io_write8(0x00BE, 0x20);
+        emu.io_write8(0x0080, 0x34);
+        emu.io_write8(0x0081, 0x02);
+        emu.io_write8(0x0088, 0xF8);
+        emu.io_write8(0x0090, 0x01);
         emu.step_instruction();
         emu.step_instruction();
         emu.step_frame();
@@ -278,6 +409,15 @@ mod tests {
         assert_eq!(restored.cpu_registers(), emu.cpu_registers());
         assert_eq!(restored.cpu_peek8(0x1234), 0x56);
         assert_eq!(restored.io_peek8(0x0001), 0x02);
+        restored.io_write8(0x00BA, 0);
+        restored.io_write8(0x00BB, 0);
+        restored.io_write8(0x00BE, 0x10);
+        assert_eq!(restored.io_peek8(0x00BA), 0x78);
+        assert_eq!(restored.io_peek8(0x00BB), 0x56);
         assert_eq!(restored.ppu_debug_snapshot(), emu.ppu_debug_snapshot());
+        assert_eq!(restored.io_peek8(0x0080), 0x34);
+        assert_eq!(restored.io_peek8(0x0081), 0x02);
+        assert_eq!(restored.io_peek8(0x0088), 0xF8);
+        assert_eq!(restored.io_peek8(0x0090), 0x01);
     }
 }

@@ -6,6 +6,7 @@ mod view_menu;
 
 use crate::debug::DebugWindowState;
 use crate::debug::dock::DebugTab;
+use crate::emu_backend::ActiveSystem;
 use crate::graphics::AspectRatioMode;
 use crate::settings::Settings;
 use egui_dock::DockState;
@@ -34,6 +35,7 @@ pub(crate) enum MenuAction {
     StopReplayRecording,
     LoadReplay,
     TakeScreenshot,
+    ToggleWsRotation,
     SetLayerToggles(bool, bool, bool),
     SetGbaBgLayerToggles([bool; 4]),
 }
@@ -59,6 +61,8 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) is_recording_replay: bool,
     pub(crate) is_playing_replay: bool,
     pub(crate) is_paused: bool,
+    pub(crate) active_system: ActiveSystem,
+    pub(crate) ws_display_rotated: bool,
     pub(crate) slot_labels: &'a [String; 10],
     pub(crate) slot_occupied: &'a [bool; 10],
     pub(crate) active_save_slot: u8,
@@ -133,6 +137,8 @@ pub(crate) fn draw_menu_bar(
                                 &mut actions,
                                 settings,
                                 mb.is_paused,
+                                mb.active_system,
+                                mb.ws_display_rotated,
                                 mb.speed_mode_label,
                                 mb.active_save_slot,
                             );

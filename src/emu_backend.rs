@@ -210,6 +210,13 @@ impl EmuBackend {
             _ => None,
         }
     }
+
+    pub(crate) fn ws(&self) -> Option<&WsBackend> {
+        match self {
+            Self::Ws(b) => Some(b),
+            _ => None,
+        }
+    }
 }
 
 impl EmuBackend {

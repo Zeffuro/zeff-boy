@@ -4,6 +4,7 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 use zeff_gb_core::emulator::Emulator;
+use zeff_ws_core::hardware::cartridge::RomOrientation;
 
 fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
     let crc = crc32fast::hash(rom_data);
@@ -86,8 +87,7 @@ impl App {
                         if let Some(audio) = &self.audio {
                             emu.set_sample_rate(audio.sample_rate());
                         }
-                        let buttons = self.host_input.buttons_pressed();
-                        let dpad = self.host_input.dpad_pressed();
+                        let (buttons, dpad) = self.host_joypad_input_for_system(system);
                         emu.set_input(buttons, dpad);
                         if let Some(sram_path) =
                             crate::emu_backend::gb::try_load_battery_sram(&mut emu, rom_path)
@@ -160,8 +160,7 @@ impl App {
                     .map(|a| a.sample_rate())
                     .unwrap_or(zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE);
                 zeff_gba_core::emulator::Emulator::new(&rom_data, sample_rate).map(|mut emu| {
-                    let buttons = self.host_input.buttons_pressed();
-                    let dpad = self.host_input.dpad_pressed();
+                    let (buttons, dpad) = self.host_joypad_input_for_system(system);
                     emu.set_input(buttons, dpad);
                     if let Some(sram_path) =
                         crate::emu_backend::gba::try_load_battery_sram(&mut emu, rom_path)
@@ -196,8 +195,7 @@ impl App {
                     .map(|a| a.sample_rate())
                     .unwrap_or(zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE);
                 zeff_ws_core::emulator::Emulator::new(&rom_data, sample_rate).map(|mut emu| {
-                    let buttons = self.host_input.buttons_pressed();
-                    let dpad = self.host_input.dpad_pressed();
+                    let (buttons, dpad) = self.host_joypad_input_for_system(system);
                     emu.set_input(buttons, dpad);
                     if let Some(sram_path) =
                         crate::emu_backend::ws::try_load_battery_sram(&mut emu, rom_path)
@@ -230,6 +228,9 @@ impl App {
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
         self.recycled.clear();
+        self.latest_frame = None;
+        self.last_core_frame = None;
+        self.last_displayed_frame = None;
         self.debug_windows.last_disasm_pc = None;
         self.undo_load_state = None;
 
@@ -278,9 +279,10 @@ impl App {
 
         if auto_load_state && self.settings.emulation.auto_save_state {
             if let Some(thread) = &self.emu_thread {
+                let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
                 thread.send(EmuCommand::AutoLoadState {
-                    buttons_pressed: self.host_input.buttons_pressed(),
-                    dpad_pressed: self.host_input.dpad_pressed(),
+                    buttons_pressed,
+                    dpad_pressed,
                 });
             }
             match self.recv_cold_response() {
@@ -331,6 +333,7 @@ impl App {
         self.cached_ui_data = None;
         self.recycled.clear();
         self.latest_frame = None;
+        self.last_core_frame = None;
         self.last_displayed_frame = None;
         self.undo_load_state = None;
         self.rom_info.rom_path = None;
@@ -360,6 +363,7 @@ impl App {
 
         self.debug_windows.mod_state.clear();
 
+        self.ws_display_rotated = false;
         self.toast_manager.set_paused(false);
         self.toast_manager.success("Stopped emulation");
         self.refresh_slot_info();
@@ -410,9 +414,22 @@ impl App {
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.active_system = system;
+        self.ws_display_rotated = backend
+            .ws()
+            .is_some_and(|ws| ws.preferred_orientation() == RomOrientation::Vertical);
+        if system == ActiveSystem::WonderSwan {
+            log::info!(
+                "WonderSwan display orientation: {}",
+                if self.ws_display_rotated {
+                    "vertical"
+                } else {
+                    "horizontal"
+                }
+            );
+        }
         self.debug_windows.memory.configure_for_system(system);
 
-        let (native_w, native_h) = system.screen_size();
+        let (native_w, native_h) = self.active_display_size();
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.set_native_size(native_w, native_h);
         }

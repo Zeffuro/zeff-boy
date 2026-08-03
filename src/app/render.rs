@@ -55,6 +55,7 @@ impl App {
             is_rewinding,
             rewind_seconds_back,
             is_paused: self.speed.paused,
+            ws_display_rotated: self.ws_display_rotated,
             is_pocket_camera: self.rom_info.is_pocket_camera,
             autohide_menu_bar,
             cursor_y,
@@ -98,6 +99,7 @@ impl App {
                         MenuAction::StopReplayRecording => self.stop_replay_recording(),
                         MenuAction::LoadReplay => self.load_and_play_replay(),
                         MenuAction::TakeScreenshot => self.take_screenshot(),
+                        MenuAction::ToggleWsRotation => self.toggle_ws_rotation(),
                         MenuAction::ToolbarSettingsChanged => settings_dirty = true,
                         MenuAction::SetLayerToggles(bg, win, sprites) => {
                             self.pending_debug_actions.layer_toggles = Some((*bg, *win, *sprites));
@@ -122,6 +124,7 @@ impl App {
                     self.debug_windows.rebinding_action = None;
                     self.debug_windows.rebinding_shortcut = None;
                     self.debug_windows.rebinding_gamepad = None;
+                    self.debug_windows.rebinding_ws_gamepad = None;
                     self.debug_windows.rebinding_gamepad_action = None;
                     self.debug_windows.rebinding_speedup = false;
                     self.debug_windows.rebinding_rewind = false;

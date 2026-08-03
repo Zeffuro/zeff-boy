@@ -62,6 +62,9 @@ pub(super) fn draw(
     draw_gba_display_section(ui, settings, active_system);
 
     ui.separator();
+    draw_wonderswan_display_section(ui, settings, active_system);
+
+    ui.separator();
     draw_nes_palette_section(
         ui,
         settings,
@@ -92,7 +95,7 @@ fn draw_gb_palette_section(
             ui,
             "gb_color_correction_matrix",
             &mut settings.video.gb_color_correction_matrix,
-            true,
+            Some("Load GBC matrix"),
         );
     }
     ui.label(
@@ -179,12 +182,43 @@ fn draw_gba_display_section(
             ui,
             "gba_color_correction_matrix",
             &mut settings.video.gba_color_correction_matrix,
-            false,
+            None,
         );
     }
     ui.label(
         egui::RichText::new(
             "Applies as a shader post-process to raw GBA RGB555 output. AGB LCD is a punchier handheld-screen simulation; LCD response is the stronger handheld LCD-response model.",
+        )
+        .weak()
+        .small(),
+    );
+}
+
+fn draw_wonderswan_display_section(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    active_system: Option<ActiveSystem>,
+) {
+    use crate::settings::WonderSwanColorCorrection;
+
+    super::draw_console_section_header(ui, "WonderSwan", active_system, ActiveSystem::WonderSwan);
+
+    enum_combo_box(
+        ui,
+        "WS color correction",
+        &mut settings.video.ws_color_correction,
+    );
+    if settings.video.ws_color_correction == WonderSwanColorCorrection::Custom {
+        draw_custom_color_matrix(
+            ui,
+            "ws_color_correction_matrix",
+            &mut settings.video.ws_color_correction_matrix,
+            Some("Load WSC LCD matrix"),
+        );
+    }
+    ui.label(
+        egui::RichText::new(
+            "Applies as a shader post-process to WonderSwan output. WSC/SwanCrystal LCD uses the cross-channel handheld LCD mix; Original WS LCD is intended for monochrome WS output.",
         )
         .weak()
         .small(),
@@ -304,7 +338,7 @@ fn draw_custom_color_matrix(
     ui: &mut egui::Ui,
     grid_id: &'static str,
     matrix: &mut [f32; 9],
-    include_gbc_preset: bool,
+    preset_button_label: Option<&'static str>,
 ) {
     ui.separator();
     ui.label("Custom 3x3 matrix (input RGB -> output RGB)");
@@ -369,7 +403,9 @@ fn draw_custom_color_matrix(
         if ui.button("Identity").clicked() {
             *matrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         }
-        if include_gbc_preset && ui.button("Load GBC matrix").clicked() {
+        if let Some(label) = preset_button_label
+            && ui.button(label).clicked()
+        {
             *matrix = [
                 26.0 / 32.0,
                 4.0 / 32.0,

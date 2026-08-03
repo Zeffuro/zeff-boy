@@ -1,4 +1,5 @@
 use super::*;
+use crate::settings::WonderSwanButton;
 use zeff_gb_core::hardware::joypad::JoypadKey;
 
 #[test]
@@ -58,6 +59,62 @@ fn all_buttons_and_dpad() {
     state.set_keyboard(JoypadKey::Right, true);
     assert_eq!(state.buttons_pressed(), 0x0F);
     assert_eq!(state.dpad_pressed(), 0x0F);
+}
+
+#[test]
+fn wonderswan_keyboard_packs_exact_x_y_and_button_rows() {
+    let mut state = HostInputState::new();
+    state.set_ws_keyboard(WonderSwanButton::X1, true);
+    state.set_ws_keyboard(WonderSwanButton::X4, true);
+    state.set_ws_keyboard(WonderSwanButton::Y2, true);
+    state.set_ws_keyboard(WonderSwanButton::Y3, true);
+    state.set_ws_keyboard(WonderSwanButton::A, true);
+    state.set_ws_keyboard(WonderSwanButton::B, true);
+    state.set_ws_keyboard(WonderSwanButton::Start, true);
+
+    assert_eq!(state.ws_dpad_pressed(false), 0b1001);
+    assert_eq!(state.ws_buttons_pressed(false), 0b0110_1011);
+}
+
+#[test]
+fn wonderswan_direct_gamepad_packs_separately_from_keyboard() {
+    let mut state = HostInputState::new();
+    state.set_ws_keyboard(WonderSwanButton::X1, true);
+    state.set_ws_gamepad(WonderSwanButton::X4, true);
+    state.set_ws_gamepad(WonderSwanButton::Y2, true);
+    state.set_ws_gamepad(WonderSwanButton::A, true);
+
+    assert_eq!(state.ws_dpad_pressed(false), 0b1001);
+    assert_eq!(state.ws_buttons_pressed(false), 0b0010_0001);
+
+    state.set_ws_gamepad(WonderSwanButton::X4, false);
+
+    assert_eq!(
+        state.ws_dpad_pressed(false) & 0b0001,
+        0b0001,
+        "keyboard-held X1 must survive gamepad X4 release"
+    );
+    assert_eq!(state.ws_dpad_pressed(false) & 0b1000, 0);
+}
+
+#[test]
+fn wonderswan_generic_dpad_follows_x_buttons_when_horizontal() {
+    let mut state = HostInputState::new();
+    state.set_gamepad(JoypadKey::Up, true);
+    state.set_gamepad(JoypadKey::Right, true);
+
+    assert_eq!(state.ws_dpad_pressed(false), 0b0011);
+    assert_eq!(state.ws_buttons_pressed(false) >> 4, 0);
+}
+
+#[test]
+fn wonderswan_generic_dpad_follows_y_buttons_when_rotated() {
+    let mut state = HostInputState::new();
+    state.set_gamepad(JoypadKey::Down, true);
+    state.set_gamepad(JoypadKey::Left, true);
+
+    assert_eq!(state.ws_dpad_pressed(true), 0);
+    assert_eq!(state.ws_buttons_pressed(true) >> 4, 0b1100);
 }
 
 #[test]

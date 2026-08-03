@@ -140,11 +140,11 @@ impl App {
 
     fn live_status_json(&self) -> Value {
         let framebuffer_bytes = self
-            .latest_frame
+            .last_displayed_frame
             .as_ref()
-            .or(self.last_displayed_frame.as_ref())
+            .or(self.latest_frame.as_ref())
             .map_or(0, |frame| frame.len());
-        let (screen_width, screen_height) = self.active_system.screen_size();
+        let (screen_width, screen_height) = self.active_display_size();
         json!({
             "enabled": self.live_control.is_enabled(),
             "addr": self.live_control.addr().map(|addr| addr.to_string()),
@@ -186,9 +186,10 @@ impl App {
     }
 
     fn live_input_json(&self) -> Value {
+        let (buttons, dpad) = self.current_host_joypad_input();
         json!({
-            "buttons": self.host_input.buttons_pressed(),
-            "dpad": self.host_input.dpad_pressed(),
+            "buttons": buttons,
+            "dpad": dpad,
             "zapper": self.remote_zapper.map(|zapper| json!({
                 "enabled": zapper.enabled,
                 "trigger": zapper.trigger,

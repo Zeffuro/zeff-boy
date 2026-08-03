@@ -271,7 +271,7 @@ impl EmuThread {
                 buffers.memory_page,
             ),
             EmuBackend::Gba(gba) => ui::collect_gba_snapshot(&gba.emu, snapshot, buffers),
-            EmuBackend::Ws(_) => ui::UiFrameData::default(),
+            EmuBackend::Ws(ws) => ui::collect_ws_snapshot(&ws.emu, snapshot, buffers),
         }
     }
 
@@ -284,6 +284,7 @@ impl EmuThread {
     ) -> FrameResult {
         let rumble = backend.rumble_active();
         let mut audio_samples = reusable_audio.unwrap_or_default();
+        audio_samples.clear();
         backend.drain_audio_samples_into(&mut audio_samples);
         let is_mbc7 = backend.is_mbc7();
         let is_pocket_camera = backend.is_pocket_camera();
@@ -303,5 +304,47 @@ impl EmuThread {
             rewind_fill,
             apu_snapshot,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use zeff_ws_core::hardware::cartridge::compute_footer_checksum;
+
+    fn minimal_ws_rom() -> Vec<u8> {
+        let mut rom = vec![0xFF; 0x10000];
+        let reset_vector = rom.len() - 16;
+        rom[reset_vector..reset_vector + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+        rom[0] = 0xF4;
+        let footer = rom.len() - 10;
+        rom[footer] = 0x01;
+        rom[footer + 1] = 0x00;
+        rom[footer + 2] = 0x23;
+        rom[footer + 4] = 0x01;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        rom
+    }
+
+    #[test]
+    fn build_frame_result_does_not_republish_stale_recycled_audio() {
+        let rom = minimal_ws_rom();
+        let emu = zeff_ws_core::emulator::Emulator::from_rom_data(&rom).unwrap();
+        let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.wsc"));
+
+        let result = EmuThread::build_frame_result(
+            &mut backend,
+            Some(vec![0.25, -0.25, 0.5, -0.5]),
+            ui::UiFrameData::default(),
+            false,
+            0.0,
+        );
+
+        assert!(
+            result.audio_samples.is_empty(),
+            "stale recycled audio samples must be cleared before draining new core audio"
+        );
     }
 }

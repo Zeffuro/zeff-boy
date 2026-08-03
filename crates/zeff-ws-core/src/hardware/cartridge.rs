@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 
-use super::constants::{LINEAR_ROM_WINDOW_SIZE, ROM_BANK_SIZE};
+use super::constants::ROM_BANK_SIZE;
 
 const FOOTER_SIZE: usize = 10;
 const DEFAULT_OPEN_BUS: u8 = 0xFF;
@@ -25,10 +25,11 @@ impl MinimumSystem {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveKind {
     None,
-    Sram8K,
+    Sram32KId1,
     Sram32K,
     Sram128K,
     Sram256K,
+    Sram512K,
     Eeprom128,
     Eeprom1K,
     Eeprom2K,
@@ -39,10 +40,11 @@ impl SaveKind {
     pub fn from_byte(value: u8) -> Self {
         match value {
             0x00 => Self::None,
-            0x01 => Self::Sram8K,
+            0x01 => Self::Sram32KId1,
             0x02 => Self::Sram32K,
             0x03 => Self::Sram128K,
             0x04 => Self::Sram256K,
+            0x05 => Self::Sram512K,
             0x10 => Self::Eeprom128,
             0x20 => Self::Eeprom1K,
             0x50 => Self::Eeprom2K,
@@ -53,19 +55,36 @@ impl SaveKind {
     pub fn size(self) -> usize {
         match self {
             Self::None | Self::Unknown(_) => 0,
-            Self::Sram8K => 8 * 1024,
-            Self::Sram32K => 32 * 1024,
+            Self::Sram32KId1 | Self::Sram32K => 32 * 1024,
             Self::Sram128K => 128 * 1024,
             Self::Sram256K => 256 * 1024,
+            Self::Sram512K => 512 * 1024,
             Self::Eeprom128 => 128,
             Self::Eeprom1K => 1024,
             Self::Eeprom2K => 2 * 1024,
         }
     }
 
+    pub fn is_sram(self) -> bool {
+        matches!(
+            self,
+            Self::Sram32KId1 | Self::Sram32K | Self::Sram128K | Self::Sram256K | Self::Sram512K
+        )
+    }
+
+    pub fn is_eeprom(self) -> bool {
+        matches!(self, Self::Eeprom128 | Self::Eeprom1K | Self::Eeprom2K)
+    }
+
     pub fn has_battery(self) -> bool {
         self.size() != 0
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RomOrientation {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +151,14 @@ impl RomFooter {
             checksum_valid: checksum == computed_checksum,
         })
     }
+
+    pub fn orientation(&self) -> RomOrientation {
+        if self.flags & 0x01 != 0 {
+            RomOrientation::Vertical
+        } else {
+            RomOrientation::Horizontal
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +168,7 @@ pub struct Cartridge {
     save_data: Vec<u8>,
     bank0: u16,
     bank1: u16,
+    ram_bank: u8,
     linear_bank: u8,
 }
 
@@ -154,6 +182,7 @@ impl Cartridge {
             save_data,
             bank0: 0,
             bank1: 0,
+            ram_bank: 0,
             linear_bank: 0,
         };
         cart.reset_banks();
@@ -162,6 +191,14 @@ impl Cartridge {
 
     pub fn footer(&self) -> &RomFooter {
         &self.footer
+    }
+
+    pub fn minimum_system(&self) -> MinimumSystem {
+        self.footer.minimum_system
+    }
+
+    pub fn save_kind(&self) -> SaveKind {
+        self.footer.save_kind
     }
 
     pub fn rom(&self) -> &[u8] {
@@ -192,9 +229,9 @@ impl Cartridge {
     }
 
     pub fn reset_banks(&mut self) {
-        let banks = self.rom_bank_count().max(1);
-        self.bank0 = banks.saturating_sub(2) as u16;
-        self.bank1 = banks.saturating_sub(1) as u16;
+        self.bank0 = 0xFF;
+        self.bank1 = 0xFF;
+        self.ram_bank = 0;
         self.linear_bank = self.last_linear_bank();
     }
 
@@ -207,7 +244,11 @@ impl Cartridge {
     }
 
     pub fn set_linear_bank(&mut self, value: u8) {
-        self.linear_bank = value;
+        self.linear_bank = value & 0x0F;
+    }
+
+    pub fn set_ram_bank(&mut self, value: u8) {
+        self.ram_bank = value;
     }
 
     pub fn bank0(&self) -> u16 {
@@ -222,12 +263,49 @@ impl Cartridge {
         self.linear_bank
     }
 
+    pub fn ram_bank(&self) -> u8 {
+        self.ram_bank
+    }
+
     pub fn save_data(&self) -> &[u8] {
         &self.save_data
     }
 
     pub(crate) fn save_data_mut(&mut self) -> &mut [u8] {
         &mut self.save_data
+    }
+
+    pub(crate) fn eeprom_read_word(&self, word_addr: usize) -> u16 {
+        if !self.footer.save_kind.is_eeprom() || self.save_data.is_empty() {
+            return 0xFFFF;
+        }
+        let byte_addr = (word_addr * 2) % self.save_data.len();
+        u16::from_le_bytes([
+            self.save_data[byte_addr],
+            self.save_data[(byte_addr + 1) % self.save_data.len()],
+        ])
+    }
+
+    pub(crate) fn eeprom_write_word(&mut self, word_addr: usize, value: u16) {
+        if !self.footer.save_kind.is_eeprom() || self.save_data.is_empty() {
+            return;
+        }
+        let byte_addr = (word_addr * 2) % self.save_data.len();
+        let [lo, hi] = value.to_le_bytes();
+        self.save_data[byte_addr] = lo;
+        let hi_index = (byte_addr + 1) % self.save_data.len();
+        self.save_data[hi_index] = hi;
+    }
+
+    pub(crate) fn eeprom_fill_words(&mut self, value: u16) {
+        if !self.footer.save_kind.is_eeprom() {
+            return;
+        }
+        let [lo, hi] = value.to_le_bytes();
+        for word in self.save_data.chunks_exact_mut(2) {
+            word[0] = lo;
+            word[1] = hi;
+        }
     }
 
     pub fn rom_read8(&self, addr: u32) -> u8 {
@@ -253,53 +331,52 @@ impl Cartridge {
     }
 
     fn last_linear_bank(&self) -> u8 {
-        if self.rom.len() <= LINEAR_ROM_WINDOW_SIZE {
+        let banks = self.rom_bank_count();
+        if banks <= 16 {
             return 0;
         }
-        ((self.rom.len() - LINEAR_ROM_WINDOW_SIZE) / (1024 * 1024)).min(u8::MAX as usize) as u8
+        ((banks - 1) >> 4).min(0x0F) as u8
     }
 
     fn read_rom_bank(&self, bank: u16, offset: usize) -> u8 {
-        let rom_offset = usize::from(bank) * ROM_BANK_SIZE + offset;
+        let bank = self.effective_rom_bank(bank);
+        let rom_offset = bank * ROM_BANK_SIZE + offset;
         self.rom
             .get(rom_offset)
             .copied()
             .unwrap_or(DEFAULT_OPEN_BUS)
     }
 
+    fn effective_rom_bank(&self, bank: u16) -> usize {
+        let banks = self.rom_bank_count().max(1);
+        usize::from(bank) % banks
+    }
+
     fn read_linear_window(&self, offset: usize) -> u8 {
-        let preferred_base = usize::from(self.linear_bank) * 1024 * 1024;
-        if let Some(value) = self.rom.get(preferred_base + 0x40000 + offset).copied() {
-            return value;
-        }
-
-        if self.rom.len() >= LINEAR_ROM_WINDOW_SIZE {
-            let base = self.rom.len() - LINEAR_ROM_WINDOW_SIZE;
-            return self.rom.get(base + offset).copied().unwrap_or(DEFAULT_OPEN_BUS);
-        }
-
-        let leading_open_bus = LINEAR_ROM_WINDOW_SIZE - self.rom.len();
-        if offset < leading_open_bus {
-            DEFAULT_OPEN_BUS
-        } else {
-            self.rom
-                .get(offset - leading_open_bus)
-                .copied()
-                .unwrap_or(DEFAULT_OPEN_BUS)
-        }
+        let banks = self.rom_bank_count().max(1);
+        let physical_bank = 4 + (offset / ROM_BANK_SIZE);
+        let selected_bank =
+            (((usize::from(self.linear_bank) & 0x0F) << 4) | (physical_bank & 0x0F)) % banks;
+        let rom_offset = selected_bank * ROM_BANK_SIZE + (offset & (ROM_BANK_SIZE - 1));
+        self.rom
+            .get(rom_offset)
+            .copied()
+            .unwrap_or(DEFAULT_OPEN_BUS)
     }
 
     fn save_read8(&self, offset: usize) -> u8 {
-        if self.save_data.is_empty() {
+        if !self.footer.save_kind.is_sram() || self.save_data.is_empty() {
             return DEFAULT_OPEN_BUS;
         }
+        let offset = usize::from(self.ram_bank) * ROM_BANK_SIZE + offset;
         self.save_data[offset % self.save_data.len()]
     }
 
     fn save_write8(&mut self, offset: usize, value: u8) {
-        if self.save_data.is_empty() {
+        if !self.footer.save_kind.is_sram() || self.save_data.is_empty() {
             return;
         }
+        let offset = usize::from(self.ram_bank) * ROM_BANK_SIZE + offset;
         let index = offset % self.save_data.len();
         self.save_data[index] = value;
     }
@@ -335,6 +412,22 @@ mod tests {
         rom
     }
 
+    fn sized_test_rom(size: usize) -> Vec<u8> {
+        let mut rom = vec![0xFF; size];
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer] = 0x01;
+        rom[footer + 1] = 0x01;
+        rom[footer + 2] = 0x23;
+        rom[footer + 3] = 0x00;
+        rom[footer + 4] = 0x08;
+        rom[footer + 5] = 0x00;
+        rom[footer + 6] = 0x00;
+        rom[footer + 7] = 0x00;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        rom
+    }
+
     #[test]
     fn parses_footer_from_end_of_rom() {
         let footer = RomFooter::parse(&test_rom()).unwrap();
@@ -342,15 +435,29 @@ mod tests {
         assert_eq!(footer.minimum_system, MinimumSystem::WonderSwan);
         assert_eq!(footer.cartridge_id, 0x23);
         assert_eq!(footer.rom_size.declared_bytes, Some(128 * 1024));
-        assert_eq!(footer.save_kind, SaveKind::Sram8K);
+        assert_eq!(footer.save_kind, SaveKind::Sram32KId1);
+        assert_eq!(footer.orientation(), RomOrientation::Horizontal);
+        assert!(footer.checksum_valid);
+    }
+
+    #[test]
+    fn parses_vertical_orientation_from_footer_flags() {
+        let mut rom = test_rom();
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 6] = 0x01;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+
+        let footer = RomFooter::parse(&rom).unwrap();
+        assert_eq!(footer.orientation(), RomOrientation::Vertical);
         assert!(footer.checksum_valid);
     }
 
     #[test]
     fn loads_battery_save_with_declared_size() {
         let mut cart = Cartridge::load(&test_rom()).unwrap();
-        assert_eq!(cart.dump_battery_data().unwrap().len(), 8 * 1024);
-        assert!(cart.load_battery_data(&vec![0x11; 8 * 1024]).is_ok());
+        assert_eq!(cart.dump_battery_data().unwrap().len(), 32 * 1024);
+        assert!(cart.load_battery_data(&vec![0x11; 32 * 1024]).is_ok());
         assert!(cart.load_battery_data(&[0x11]).is_err());
     }
 
@@ -375,5 +482,107 @@ mod tests {
         assert_eq!(cart.rom_read8(0x30000), 0x34);
         cart.set_bank0(2);
         assert_eq!(cart.rom_read8(0x20000), 0x56);
+    }
+
+    #[test]
+    fn bank_registers_reset_to_ff_and_wrap_to_available_rom() {
+        let mut rom = test_rom();
+        rom.resize(0x20000, 0xFF);
+        rom[0x10000] = 0x77;
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 1] = 0x00;
+        rom[footer + 4] = 0x01;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        let cart = Cartridge::load(&rom).unwrap();
+        assert_eq!(cart.bank0(), 0xFF);
+        assert_eq!(cart.bank1(), 0xFF);
+        assert_eq!(cart.rom_read8(0x30000), 0x77);
+    }
+
+    #[test]
+    fn linear_bank_is_four_bits() {
+        let mut cart = Cartridge::load(&test_rom()).unwrap();
+        cart.set_linear_bank(0xFF);
+        assert_eq!(cart.linear_bank(), 0x0F);
+    }
+
+    #[test]
+    fn reset_fetch_uses_top_linear_bank_for_large_roms() {
+        let mut rom = sized_test_rom(4 * 1024 * 1024);
+        rom[0x3F_FFF0] = 0xEA;
+        let checksum = compute_footer_checksum(&rom);
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+
+        let cart = Cartridge::load(&rom).unwrap();
+
+        assert_eq!(cart.linear_bank(), 0x03);
+        assert_eq!(cart.rom_read8(0xF_FFF0), 0xEA);
+    }
+
+    #[test]
+    fn linear_window_wraps_selector_by_rom_bank_count() {
+        let mut rom = sized_test_rom(8 * 1024 * 1024);
+        rom[0x68_D000] = 0x42;
+        let checksum = compute_footer_checksum(&rom);
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+
+        let mut cart = Cartridge::load(&rom).unwrap();
+        cart.set_linear_bank(0x0E);
+
+        assert_eq!(cart.rom_read8(0x8_D000), 0x42);
+    }
+
+    #[test]
+    fn ram_bank_selects_64k_save_window() {
+        let mut rom = test_rom();
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 5] = 0x03;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+
+        let mut cart = Cartridge::load(&rom).unwrap();
+        cart.rom_write8(0x10000, 0x12);
+        cart.set_ram_bank(1);
+        cart.rom_write8(0x10000, 0x34);
+        cart.set_ram_bank(0);
+        assert_eq!(cart.rom_read8(0x10000), 0x12);
+        cart.set_ram_bank(1);
+        assert_eq!(cart.rom_read8(0x10000), 0x34);
+    }
+
+    #[test]
+    fn parses_512k_sram_and_eeprom_save_kinds() {
+        let mut rom = test_rom();
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 5] = 0x05;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        let cart = Cartridge::load(&rom).unwrap();
+        assert_eq!(cart.save_kind(), SaveKind::Sram512K);
+        assert_eq!(cart.dump_battery_data().unwrap().len(), 512 * 1024);
+
+        rom[footer + 5] = 0x10;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        let cart = Cartridge::load(&rom).unwrap();
+        assert_eq!(cart.save_kind(), SaveKind::Eeprom128);
+        assert_eq!(cart.dump_battery_data().unwrap().len(), 128);
+    }
+
+    #[test]
+    fn eeprom_save_is_not_memory_mapped_sram() {
+        let mut rom = test_rom();
+        let footer = rom.len() - FOOTER_SIZE;
+        rom[footer + 5] = 0x10;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        let mut cart = Cartridge::load(&rom).unwrap();
+
+        cart.rom_write8(0x10000, 0x12);
+
+        assert_eq!(cart.rom_read8(0x10000), DEFAULT_OPEN_BUS);
     }
 }

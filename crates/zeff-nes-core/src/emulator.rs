@@ -413,8 +413,8 @@ impl fmt::Debug for Emulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4};
     use crate::hardware::bus::DebugTraceEvent;
+    use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4};
     use crate::hardware::cpu::StatusFlags;
 
     fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {

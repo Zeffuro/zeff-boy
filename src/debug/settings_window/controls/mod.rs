@@ -2,6 +2,7 @@ mod gamepad_actions;
 mod joypad;
 mod shortcuts;
 pub(super) mod tilt;
+mod wonderswan;
 
 use crate::debug::DebugWindowState;
 use crate::emu_backend::ActiveSystem;
@@ -39,4 +40,8 @@ pub(super) fn draw(
         .weak()
         .small(),
     );
+
+    ui.separator();
+    super::draw_console_section_header(ui, "WonderSwan", active_system, ActiveSystem::WonderSwan);
+    wonderswan::draw(ui, settings, state);
 }

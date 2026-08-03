@@ -34,6 +34,7 @@ impl GamepadHandler {
 
     pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
         let mut events = Vec::with_capacity(4);
+        let mut ws_events = Vec::with_capacity(4);
         let mut action_events = Vec::with_capacity(4);
         let mut raw_pressed = Vec::with_capacity(4);
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
@@ -48,6 +49,9 @@ impl GamepadHandler {
                     if let Some(action) = bindings.map_action_button_name(name) {
                         action_events.push((action, true));
                     }
+                    if let Some(button) = bindings.map_ws_button_name(name) {
+                        ws_events.push((button, true));
+                    }
                 }
                 EventType::ButtonReleased(button, _) => {
                     let name = button_name(button);
@@ -56,6 +60,9 @@ impl GamepadHandler {
                     }
                     if let Some(action) = bindings.map_action_button_name(name) {
                         action_events.push((action, false));
+                    }
+                    if let Some(button) = bindings.map_ws_button_name(name) {
+                        ws_events.push((button, false));
                     }
                 }
                 EventType::Disconnected if self.active_gamepad == Some(id) => {
@@ -81,6 +88,7 @@ impl GamepadHandler {
 
         GamepadPoll {
             events,
+            ws_events,
             action_events,
             left_stick,
             raw_pressed,

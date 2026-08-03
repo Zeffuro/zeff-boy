@@ -27,6 +27,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) is_rewinding: bool,
     pub(crate) rewind_seconds_back: f32,
     pub(crate) is_paused: bool,
+    pub(crate) ws_display_rotated: bool,
     pub(crate) is_pocket_camera: bool,
     pub(crate) autohide_menu_bar: bool,
     pub(crate) cursor_y: Option<f32>,
@@ -261,6 +262,10 @@ impl Graphics {
                     is_recording_replay: ctx.is_recording_replay,
                     is_playing_replay: ctx.is_playing_replay,
                     is_paused: ctx.is_paused,
+                    active_system: ctx
+                        .active_system
+                        .unwrap_or(crate::emu_backend::ActiveSystem::GameBoy),
+                    ws_display_rotated: ctx.ws_display_rotated,
                     slot_labels: ctx.slot_labels,
                     slot_occupied: &ctx.slot_occupied,
                     active_save_slot: ctx.active_save_slot,
@@ -318,7 +323,8 @@ impl Graphics {
         }
 
         let debug_actions;
-        let has_any_emu_data = ctx.data.cpu_debug.is_some()
+        let has_any_emu_data = ctx.active_system.is_some()
+            || ctx.data.cpu_debug.is_some()
             || ctx.data.perf_info.is_some()
             || ctx.data.memory_page.is_some()
             || ctx.data.rom_page.is_some();
@@ -333,6 +339,7 @@ impl Graphics {
                 window_state: ctx.debug_windows,
                 actions: DebugUiActions::none(),
                 game_texture_id,
+                game_native_size: self.framebuffer.native_size(),
                 aspect_ratio_mode: self.aspect_ratio_mode,
                 game_view_pixel_size: None,
             };

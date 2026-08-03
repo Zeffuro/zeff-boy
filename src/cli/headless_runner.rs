@@ -51,6 +51,7 @@ struct StuckTracker {
     pc_threshold: usize,
     pcs: VecDeque<u64>,
     framebuffer_hashes: VecDeque<u64>,
+    progress_markers: VecDeque<Option<u64>>,
     current_report: Option<StuckReport>,
 }
 
@@ -111,6 +112,7 @@ impl StuckTracker {
             pc_threshold: opts.stuck_pc_threshold,
             pcs: VecDeque::new(),
             framebuffer_hashes: VecDeque::new(),
+            progress_markers: VecDeque::new(),
             current_report: None,
         })
     }
@@ -120,18 +122,23 @@ impl StuckTracker {
         frame: u64,
         pc: u64,
         framebuffer: &[u8],
+        progress_marker: Option<u64>,
         classification: Option<&str>,
         expected_wait: bool,
     ) -> Option<&StuckReport> {
         self.pcs.push_back(pc);
         self.framebuffer_hashes
             .push_back(framebuffer_fingerprint(framebuffer));
+        self.progress_markers.push_back(progress_marker);
 
         while self.pcs.len() > self.window_frames {
             self.pcs.pop_front();
         }
         while self.framebuffer_hashes.len() > self.window_frames {
             self.framebuffer_hashes.pop_front();
+        }
+        while self.progress_markers.len() > self.window_frames {
+            self.progress_markers.pop_front();
         }
 
         if self.pcs.len() < self.window_frames {
@@ -146,8 +153,16 @@ impl StuckTracker {
             .collect::<HashSet<_>>()
             .len()
             > 1;
+        let progress_marker_changed = self
+            .progress_markers
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len()
+            > 1;
 
-        if unique_pcs <= self.pc_threshold && !framebuffer_changed {
+        if unique_pcs <= self.pc_threshold && !framebuffer_changed && !progress_marker_changed {
             self.current_report = Some(StuckReport {
                 frame,
                 window_frames: self.window_frames,
@@ -198,8 +213,8 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     if opts.expect_serial.is_some() {
         anyhow::bail!("--expect-serial is only supported for GB/GBC headless runs");
     }
-    if !opts.memory_dumps.is_empty() {
-        anyhow::bail!("--dump-mem is only supported for GB/GBC headless runs");
+    if !opts.memory_dumps.is_empty() && system != "ws" {
+        anyhow::bail!("--dump-mem is only supported for GB/GBC and WonderSwan headless runs");
     }
     if opts.break_at.is_some() {
         anyhow::bail!("--break-at is only supported for GB/GBC headless runs");
@@ -230,8 +245,10 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     if system != "gba" && opts.gba_audio_mutes.iter().any(|&muted| muted) {
         anyhow::bail!("--gba-mute-audio is only supported for GBA headless runs");
     }
-    if system != "gba" && opts.audio_dump_path.is_some() {
-        anyhow::bail!("--audio-dump is currently only supported for GBA headless runs");
+    if !matches!(system, "gba" | "ws") && opts.audio_dump_path.is_some() {
+        anyhow::bail!(
+            "--audio-dump is currently only supported for GBA and WonderSwan headless runs"
+        );
     }
     if opts.gb_dmg_palette_preset.is_some() {
         anyhow::bail!("--gb-dmg-palette/--dmg-palette is only supported for GB/GBC headless runs");
@@ -278,6 +295,7 @@ fn observe_stuck(
     frame: u64,
     pc: u64,
     framebuffer: &[u8],
+    progress_marker: Option<u64>,
     classification: Option<&str>,
     expected_wait: bool,
     stuck_active: &mut bool,
@@ -286,7 +304,14 @@ fn observe_stuck(
         return;
     };
 
-    match tracker.observe(frame, pc, framebuffer, classification, expected_wait) {
+    match tracker.observe(
+        frame,
+        pc,
+        framebuffer,
+        progress_marker,
+        classification,
+        expected_wait,
+    ) {
         Some(report) if !*stuck_active => {
             println!("{}", format_stuck_report(system, report, pc_width));
             *stuck_active = true;
@@ -447,6 +472,54 @@ mod tests {
         assert_eq!(stats.nonzero_samples, 2);
         assert_eq!(stats.peak_abs, 0.5);
         assert!(stats.mean_abs() > 0.18);
+    }
+
+    #[test]
+    fn stuck_tracker_ignores_low_pc_windows_with_progress_markers() {
+        let mut tracker = StuckTracker::from_options(&HeadlessOptions {
+            stuck_window_frames: 3,
+            stuck_pc_threshold: 1,
+            ..HeadlessOptions::default()
+        })
+        .unwrap();
+        let framebuffer = [0u8; 16];
+
+        assert!(
+            tracker
+                .observe(1, 0x40032, &framebuffer, Some(1), None, false)
+                .is_none()
+        );
+        assert!(
+            tracker
+                .observe(2, 0x40032, &framebuffer, Some(2), None, false)
+                .is_none()
+        );
+        assert!(
+            tracker
+                .observe(3, 0x40032, &framebuffer, Some(3), None, false)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stuck_tracker_flags_low_pc_windows_without_marker_progress() {
+        let mut tracker = StuckTracker::from_options(&HeadlessOptions {
+            stuck_window_frames: 3,
+            stuck_pc_threshold: 1,
+            ..HeadlessOptions::default()
+        })
+        .unwrap();
+        let framebuffer = [0u8; 16];
+
+        tracker.observe(1, 0x40032, &framebuffer, Some(9), None, false);
+        tracker.observe(2, 0x40032, &framebuffer, Some(9), None, false);
+        let report = tracker
+            .observe(3, 0x40032, &framebuffer, Some(9), None, false)
+            .unwrap();
+
+        assert_eq!(report.unique_pcs, 1);
+        assert!(!report.framebuffer_changed);
+        assert!(!report.expected_wait);
     }
 
     #[test]

@@ -95,23 +95,6 @@ fn load_nes_palette_source(
     zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(&bytes).map_err(|err| err.to_string())
 }
 
-fn native_size_for_frame(system: ActiveSystem, frame_len: usize) -> Option<(u32, u32)> {
-    const GB_FRAME_LEN: usize = 160 * 144 * 4;
-    const GBA_FRAME_LEN: usize = 240 * 160 * 4;
-    const SGB_FRAME_LEN: usize = 256 * 224 * 4;
-    const NES_FRAME_LEN: usize = 256 * 240 * 4;
-    const WS_FRAME_LEN: usize = 224 * 144 * 4;
-
-    match (system, frame_len) {
-        (ActiveSystem::GameBoy, GB_FRAME_LEN) => Some((160, 144)),
-        (ActiveSystem::GameBoy, SGB_FRAME_LEN) => Some((256, 224)),
-        (ActiveSystem::GameBoyAdvance, GBA_FRAME_LEN) => Some((240, 160)),
-        (ActiveSystem::Nes, NES_FRAME_LEN) => Some((256, 240)),
-        (ActiveSystem::WonderSwan, WS_FRAME_LEN) => Some((224, 144)),
-        _ => None,
-    }
-}
-
 impl App {
     fn nes_zapper_input(&self) -> ZapperInput {
         if self.active_system != ActiveSystem::Nes {
@@ -152,7 +135,7 @@ impl App {
         let Some(frame) = self.latest_frame.as_ref() else {
             return false;
         };
-        if native_size_for_frame(ActiveSystem::Nes, frame.len()) != Some((256, 240)) {
+        if frame.len() != 256 * 240 * 4 {
             return false;
         }
 
@@ -209,6 +192,11 @@ impl App {
                     self.settings.gamepad_bindings.set(action, button_name);
                     self.debug_windows.rebinding_gamepad = None;
                 }
+            } else if let Some(button) = self.debug_windows.rebinding_ws_gamepad {
+                if let Some(button_name) = poll.raw_pressed.first() {
+                    self.settings.gamepad_bindings.set_ws(button, button_name);
+                    self.debug_windows.rebinding_ws_gamepad = None;
+                }
             } else if let Some(action) = self.debug_windows.rebinding_gamepad_action {
                 if let Some(button_name) = poll.raw_pressed.first() {
                     self.settings
@@ -219,6 +207,9 @@ impl App {
             } else {
                 for (key, pressed) in poll.events {
                     self.host_input.set_gamepad(key, pressed);
+                }
+                for (button, pressed) in poll.ws_events {
+                    self.host_input.set_ws_gamepad(button, pressed);
                 }
                 for (action, pressed) in poll.action_events {
                     match action {
@@ -293,16 +284,10 @@ impl App {
             } else {
                 self.toast_manager.info("Replay finished");
                 self.recording.replay_player = None;
-                (
-                    self.host_input.buttons_pressed(),
-                    self.host_input.dpad_pressed(),
-                )
+                self.current_host_joypad_input()
             }
         } else {
-            (
-                self.host_input.buttons_pressed(),
-                self.host_input.dpad_pressed(),
-            )
+            self.current_host_joypad_input()
         };
 
         if self.speed.turbo_held {
@@ -353,9 +338,7 @@ impl App {
         };
 
         SnapshotRequest {
-            want_debug_info: reqs.needs_debug_info
-                || self.settings.ui.show_fps
-                || remote_wants_debug,
+            want_debug_info: reqs.needs_debug_info || remote_wants_debug,
             want_perf_info: reqs.needs_perf_info || self.settings.ui.show_fps || remote_wants_debug,
             any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
             any_vram_viewer_open: (reqs.needs_vram && want_viewer_update) || remote_wants_graphics,
@@ -602,7 +585,7 @@ impl App {
                     }
 
                     if frames_to_step > 0 {
-                        self.fps_tracker.tick();
+                        self.fps_tracker.tick_n(frames_to_step);
                     }
                 }
             }
@@ -624,26 +607,35 @@ impl App {
         if !should_render {
             return;
         }
+        self.timing.last_render_time = Instant::now();
 
         self.update_debug_cache_edges();
 
         if let Some(frame) = self.latest_frame.take() {
+            self.last_core_frame = Some(frame.clone());
+            let Some(display_frame) = self.display_frame_for_upload(frame) else {
+                log::warn!(
+                    "Skipping frame upload with unexpected WonderSwan size for {:?}",
+                    self.active_system
+                );
+                return;
+            };
+
+            let Some((native_w, native_h)) = self.display_size_for_frame_len(display_frame.len())
+            else {
+                log::warn!(
+                    "Skipping frame upload with unexpected size: {} bytes for {:?}",
+                    display_frame.len(),
+                    self.active_system
+                );
+                return;
+            };
+
             if let Some(gfx) = self.gfx.as_mut() {
-                if let Some((native_w, native_h)) =
-                    native_size_for_frame(self.active_system, frame.len())
-                {
-                    gfx.set_native_size(native_w, native_h);
-                } else {
-                    log::warn!(
-                        "Skipping frame upload with unexpected size: {} bytes for {:?}",
-                        frame.len(),
-                        self.active_system
-                    );
-                    return;
-                }
-                gfx.upload_framebuffer(&frame);
+                gfx.set_native_size(native_w, native_h);
+                gfx.upload_framebuffer(&display_frame);
             }
-            self.last_displayed_frame = Some(frame);
+            self.last_displayed_frame = Some(display_frame);
         }
 
         self.debug_windows.memory.enable_editing = self.settings.ui.enable_memory_editing;

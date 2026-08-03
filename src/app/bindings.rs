@@ -1,5 +1,5 @@
 use super::App;
-use crate::settings::TiltBindingAction;
+use crate::settings::{TiltBindingAction, WonderSwanButton};
 use winit::keyboard::KeyCode;
 use zeff_gb_core::hardware::joypad::JoypadKey;
 
@@ -28,5 +28,13 @@ impl App {
             (tb.down, TiltBindingAction::Down),
         ];
         bindings.iter().find(|(k, _)| *k == key).map(|(_, a)| *a)
+    }
+
+    pub(super) fn map_ws_key(&self, key: KeyCode) -> Option<WonderSwanButton> {
+        let kb = &self.settings.ws_key_bindings;
+        WonderSwanButton::ALL
+            .iter()
+            .copied()
+            .find(|&action| kb.get(action) == key)
     }
 }

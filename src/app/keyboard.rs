@@ -1,4 +1,5 @@
 use super::App;
+use crate::emu_backend::ActiveSystem;
 use crate::emu_thread::EmuCommand;
 use crate::settings::{InputBindingAction, ShortcutAction};
 use winit::{
@@ -49,6 +50,10 @@ impl App {
             return;
         }
 
+        if self.handle_ws_key(key_event, key_code) {
+            return;
+        }
+
         self.handle_joypad_key(key_event, key_code);
         self.handle_tilt_key(key_event, key_code);
     }
@@ -73,6 +78,10 @@ impl App {
 
         if let Some(gb_key) = self.map_key(key_code) {
             self.host_input.set_keyboard(gb_key, false);
+        }
+
+        if let Some(ws_key) = self.map_ws_key(key_code) {
+            self.host_input.set_ws_keyboard(ws_key, false);
         }
 
         if let Some(tilt_key) = self.map_tilt_key(key_code) {
@@ -115,6 +124,7 @@ impl App {
             match action {
                 InputBindingAction::Joypad(a) => self.settings.key_bindings.set(a, key_code),
                 InputBindingAction::Tilt(a) => self.settings.tilt.key_bindings.set(a, key_code),
+                InputBindingAction::WonderSwan(a) => self.settings.ws_key_bindings.set(a, key_code),
             }
             self.debug_windows.rebinding_action = None;
         }
@@ -311,6 +321,15 @@ impl App {
             return true;
         }
 
+        if key_code == bindings.get(ShortcutAction::RotateWs)
+            && self.active_system == ActiveSystem::WonderSwan
+        {
+            if pressed {
+                self.toggle_ws_rotation();
+            }
+            return true;
+        }
+
         if key_code == bindings.get(ShortcutAction::DebugContinue) {
             if pressed {
                 self.debug_requests.continue_ = true;
@@ -342,6 +361,31 @@ impl App {
             }
             ElementState::Released => {
                 self.host_input.set_keyboard(gb_key, false);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn handle_ws_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
+        if self.active_system != ActiveSystem::WonderSwan {
+            return false;
+        }
+
+        let Some(ws_key) = self.map_ws_key(key_code) else {
+            return false;
+        };
+
+        match key_event.state {
+            ElementState::Pressed => {
+                if !key_event.repeat {
+                    self.host_input.set_ws_keyboard(ws_key, true);
+                    return true;
+                }
+            }
+            ElementState::Released => {
+                self.host_input.set_ws_keyboard(ws_key, false);
                 return true;
             }
         }

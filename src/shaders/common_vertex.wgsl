@@ -28,6 +28,9 @@ fn apply_color_correction(c: vec4<f32>) -> vec4<f32> {
     if (params.color_mode == 3u) {
         return apply_gba_lcd_response(c);
     }
+    if (params.color_mode == 4u) {
+        return apply_wonderswan_mono_lcd(c);
+    }
     let r = dot(params.color_matrix_r.xyz, c.rgb);
     let g = dot(params.color_matrix_g.xyz, c.rgb);
     let b = dot(params.color_matrix_b.xyz, c.rgb);
@@ -54,6 +57,15 @@ fn apply_gba_lcd_response(c: vec4<f32>) -> vec4<f32> {
     );
     let display = pow(clamp(mapped, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
     return vec4<f32>(display, c.a);
+}
+
+fn apply_wonderswan_mono_lcd(c: vec4<f32>) -> vec4<f32> {
+    let source = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let luma = dot(source, vec3<f32>(0.299, 0.587, 0.114));
+    let display = pow(luma, 1.0 / 2.2);
+    let dark = vec3<f32>(43.0 / 255.0, 43.0 / 255.0, 38.0 / 255.0);
+    let light = vec3<f32>(224.0 / 255.0, 219.0 / 255.0, 205.0 / 255.0);
+    return vec4<f32>(mix(dark, light, display), c.a);
 }
 
 struct VSOut {

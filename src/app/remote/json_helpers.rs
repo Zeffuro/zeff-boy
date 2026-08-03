@@ -71,26 +71,6 @@ pub(super) fn gb_ppu_json(ppu: zeff_gb_core::debug::PpuSnapshot) -> Value {
     })
 }
 
-pub(super) fn live_frame_size(
-    system: crate::emu_backend::ActiveSystem,
-    frame_len: usize,
-) -> Option<(u32, u32)> {
-    const GB_FRAME_LEN: usize = 160 * 144 * 4;
-    const GBA_FRAME_LEN: usize = 240 * 160 * 4;
-    const SGB_FRAME_LEN: usize = 256 * 224 * 4;
-    const NES_FRAME_LEN: usize = 256 * 240 * 4;
-    const WS_FRAME_LEN: usize = 224 * 144 * 4;
-
-    match (system, frame_len) {
-        (crate::emu_backend::ActiveSystem::GameBoy, GB_FRAME_LEN) => Some((160, 144)),
-        (crate::emu_backend::ActiveSystem::GameBoy, SGB_FRAME_LEN) => Some((256, 224)),
-        (crate::emu_backend::ActiveSystem::GameBoyAdvance, GBA_FRAME_LEN) => Some((240, 160)),
-        (crate::emu_backend::ActiveSystem::Nes, NES_FRAME_LEN) => Some((256, 240)),
-        (crate::emu_backend::ActiveSystem::WonderSwan, WS_FRAME_LEN) => Some((224, 144)),
-        _ => None,
-    }
-}
-
 fn fold_bytes(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for &byte in bytes {

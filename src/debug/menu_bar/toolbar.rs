@@ -1,4 +1,5 @@
 use super::MenuAction;
+use crate::emu_backend::ActiveSystem;
 use crate::settings::Settings;
 
 pub(super) fn draw(
@@ -6,6 +7,8 @@ pub(super) fn draw(
     actions: &mut Vec<MenuAction>,
     settings: &mut Settings,
     is_paused: bool,
+    active_system: ActiveSystem,
+    ws_display_rotated: bool,
     speed_mode_label: Option<&str>,
     active_save_slot: u8,
 ) {
@@ -61,6 +64,18 @@ pub(super) fn draw(
                 .small()
                 .color(egui::Color32::LIGHT_GRAY),
         );
+        ui.separator();
+    }
+
+    if active_system == ActiveSystem::WonderSwan {
+        let label = if ws_display_rotated { "Rot V" } else { "Rot H" };
+        if ui
+            .small_button(label)
+            .on_hover_text("Rotate WonderSwan display")
+            .clicked()
+        {
+            actions.push(MenuAction::ToggleWsRotation);
+        }
         ui.separator();
     }
 

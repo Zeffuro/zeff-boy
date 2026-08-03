@@ -286,7 +286,10 @@ mod tests {
 
         let pixel_127 = 127 * 4;
         let pixel_128 = 128 * 4;
-        assert_eq!(&bus.ppu.framebuffer[pixel_127..pixel_127 + 4], &[0, 0, 0, 0xFF]);
+        assert_eq!(
+            &bus.ppu.framebuffer[pixel_127..pixel_127 + 4],
+            &[0, 0, 0, 0xFF]
+        );
         assert_eq!(
             &bus.ppu.framebuffer[pixel_128..pixel_128 + 4],
             &[48, 50, 236, 0xFF]

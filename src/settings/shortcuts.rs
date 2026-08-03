@@ -17,6 +17,7 @@ pub(crate) enum ShortcutAction {
     QuickLoad,
     SlotNext,
     SlotPrev,
+    RotateWs,
     DebugContinue,
     DebugStep,
 }
@@ -35,6 +36,7 @@ impl ShortcutAction {
         Self::QuickLoad,
         Self::SlotNext,
         Self::SlotPrev,
+        Self::RotateWs,
         Self::DebugContinue,
         Self::DebugStep,
     ];
@@ -53,6 +55,7 @@ impl ShortcutAction {
             Self::QuickLoad => "Quick load",
             Self::SlotNext => "Next save slot",
             Self::SlotPrev => "Prev save slot",
+            Self::RotateWs => "Rotate WonderSwan",
             Self::DebugContinue => "Run (debug)",
             Self::DebugStep => "Step (debug)",
         }
@@ -72,6 +75,7 @@ impl ShortcutAction {
             Self::QuickLoad => KeyCode::F8,
             Self::SlotNext => KeyCode::BracketRight,
             Self::SlotPrev => KeyCode::BracketLeft,
+            Self::RotateWs => KeyCode::KeyO,
             Self::DebugContinue => KeyCode::F9,
             Self::DebugStep => KeyCode::F7,
         }
@@ -93,6 +97,7 @@ pub(crate) struct ShortcutBindings {
     pub(crate) quick_load: String,
     pub(crate) slot_next: String,
     pub(crate) slot_prev: String,
+    pub(crate) rotate_ws: String,
     pub(crate) debug_continue: String,
     pub(crate) debug_step: String,
 }
@@ -112,6 +117,7 @@ impl Default for ShortcutBindings {
             quick_load: "F8".to_string(),
             slot_next: "BracketRight".to_string(),
             slot_prev: "BracketLeft".to_string(),
+            rotate_ws: "KeyO".to_string(),
             debug_continue: "F9".to_string(),
             debug_step: "F7".to_string(),
         }
@@ -139,6 +145,7 @@ impl ShortcutBindings {
             ShortcutAction::QuickLoad => self.quick_load = s,
             ShortcutAction::SlotNext => self.slot_next = s,
             ShortcutAction::SlotPrev => self.slot_prev = s,
+            ShortcutAction::RotateWs => self.rotate_ws = s,
             ShortcutAction::DebugContinue => self.debug_continue = s,
             ShortcutAction::DebugStep => self.debug_step = s,
         }
@@ -158,6 +165,7 @@ impl ShortcutBindings {
             ShortcutAction::QuickLoad => &self.quick_load,
             ShortcutAction::SlotNext => &self.slot_next,
             ShortcutAction::SlotPrev => &self.slot_prev,
+            ShortcutAction::RotateWs => &self.rotate_ws,
             ShortcutAction::DebugContinue => &self.debug_continue,
             ShortcutAction::DebugStep => &self.debug_step,
         }

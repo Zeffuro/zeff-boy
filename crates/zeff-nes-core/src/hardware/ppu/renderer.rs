@@ -369,13 +369,7 @@ mod tests {
 
     #[test]
     fn rgb_ppu_emphasis_sets_selected_channels_to_full_scale() {
-        assert_eq!(
-            apply_rgb_ppu_emphasis(0x20, (10, 20, 30)),
-            (255, 20, 30)
-        );
-        assert_eq!(
-            apply_rgb_ppu_emphasis(0xC0, (10, 20, 30)),
-            (10, 255, 255)
-        );
+        assert_eq!(apply_rgb_ppu_emphasis(0x20, (10, 20, 30)), (255, 20, 30));
+        assert_eq!(apply_rgb_ppu_emphasis(0xC0, (10, 20, 30)), (10, 255, 255));
     }
 }

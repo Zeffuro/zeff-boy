@@ -38,10 +38,11 @@ impl App {
         let redo_state = self.capture_current_state_for_undo();
         let state_bytes_for_retry = state_bytes.clone();
         if let Some(thread) = &self.emu_thread {
+            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
             thread.send(EmuCommand::LoadStateBytes {
                 state_bytes,
-                buttons_pressed: self.host_input.buttons_pressed(),
-                dpad_pressed: self.host_input.dpad_pressed(),
+                buttons_pressed,
+                dpad_pressed,
             });
         }
         match self.recv_cold_response() {
@@ -90,10 +91,11 @@ impl App {
         }
         let undo_state = self.capture_current_state_for_undo();
         if let Some(thread) = &self.emu_thread {
+            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
             thread.send(EmuCommand::LoadStateSlot {
                 slot,
-                buttons_pressed: self.host_input.buttons_pressed(),
-                dpad_pressed: self.host_input.dpad_pressed(),
+                buttons_pressed,
+                dpad_pressed,
             });
         }
         match self.recv_cold_response() {
@@ -227,10 +229,11 @@ impl App {
             let undo_state = self.capture_current_state_for_undo();
 
             if let Some(thread) = &self.emu_thread {
+                let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
                 thread.send(EmuCommand::LoadStateFromPath {
                     path: path.clone(),
-                    buttons_pressed: self.host_input.buttons_pressed(),
-                    dpad_pressed: self.host_input.dpad_pressed(),
+                    buttons_pressed,
+                    dpad_pressed,
                 });
             }
             match self.recv_cold_response() {
@@ -269,10 +272,11 @@ impl App {
             }
             let undo_state = self.capture_current_state_for_undo();
             if let Some(thread) = &self.emu_thread {
+                let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
                 thread.send(EmuCommand::LoadStateBytes {
                     state_bytes: bytes,
-                    buttons_pressed: self.host_input.buttons_pressed(),
-                    dpad_pressed: self.host_input.dpad_pressed(),
+                    buttons_pressed,
+                    dpad_pressed,
                 });
             }
             match self.recv_cold_response() {

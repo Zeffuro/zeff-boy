@@ -36,7 +36,7 @@ pub(super) fn draw_performance_content(
     } else {
         0.0
     };
-    let target_fps = 59.7;
+    let target_fps = info.target_fps;
     let target_ms = 1000.0 / target_fps;
 
     ui.monospace(format!("FPS:        {:.1}", info.fps));

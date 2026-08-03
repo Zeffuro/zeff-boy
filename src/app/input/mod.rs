@@ -1,4 +1,5 @@
-use crate::settings::TiltBindingAction;
+use crate::emu_backend::ActiveSystem;
+use crate::settings::{TiltBindingAction, WonderSwanButton};
 use zeff_gb_core::hardware::joypad::JoypadKey;
 
 #[derive(Default)]
@@ -8,6 +9,12 @@ pub(super) struct HostInputState {
     remote_pressed: u8,
     gamepad_stick_dpad_pressed: u8,
     tilt_keyboard_pressed: u8,
+    ws_keyboard_x_pressed: u8,
+    ws_keyboard_y_pressed: u8,
+    ws_keyboard_button_pressed: u8,
+    ws_gamepad_x_pressed: u8,
+    ws_gamepad_y_pressed: u8,
+    ws_gamepad_button_pressed: u8,
 }
 
 impl HostInputState {
@@ -38,6 +45,54 @@ impl HostInputState {
             self.tilt_keyboard_pressed |= bit;
         } else {
             self.tilt_keyboard_pressed &= !bit;
+        }
+    }
+
+    pub(super) fn set_ws_keyboard(&mut self, key: WonderSwanButton, pressed: bool) {
+        Self::set_ws_button_masks(
+            &mut self.ws_keyboard_x_pressed,
+            &mut self.ws_keyboard_y_pressed,
+            &mut self.ws_keyboard_button_pressed,
+            key,
+            pressed,
+        );
+    }
+
+    pub(super) fn set_ws_gamepad(&mut self, key: WonderSwanButton, pressed: bool) {
+        Self::set_ws_button_masks(
+            &mut self.ws_gamepad_x_pressed,
+            &mut self.ws_gamepad_y_pressed,
+            &mut self.ws_gamepad_button_pressed,
+            key,
+            pressed,
+        );
+    }
+
+    fn set_ws_button_masks(
+        x_pressed: &mut u8,
+        y_pressed: &mut u8,
+        button_pressed: &mut u8,
+        key: WonderSwanButton,
+        pressed: bool,
+    ) {
+        let (mask, bit) = match key {
+            WonderSwanButton::X1 => (x_pressed, 1 << 0),
+            WonderSwanButton::X2 => (x_pressed, 1 << 1),
+            WonderSwanButton::X3 => (x_pressed, 1 << 2),
+            WonderSwanButton::X4 => (x_pressed, 1 << 3),
+            WonderSwanButton::Y1 => (y_pressed, 1 << 0),
+            WonderSwanButton::Y2 => (y_pressed, 1 << 1),
+            WonderSwanButton::Y3 => (y_pressed, 1 << 2),
+            WonderSwanButton::Y4 => (y_pressed, 1 << 3),
+            WonderSwanButton::A => (button_pressed, 1 << 0),
+            WonderSwanButton::B => (button_pressed, 1 << 1),
+            WonderSwanButton::Start => (button_pressed, 1 << 3),
+        };
+
+        if pressed {
+            *mask |= bit;
+        } else {
+            *mask &= !bit;
         }
     }
 
@@ -112,6 +167,27 @@ impl HostInputState {
         ((self.keyboard_pressed | self.gamepad_pressed | self.remote_pressed) >> 4) & 0x0F
     }
 
+    pub(super) fn ws_buttons_pressed(&self, display_rotated: bool) -> u8 {
+        let mut y_buttons = (self.ws_keyboard_y_pressed | self.ws_gamepad_y_pressed) & 0x0F;
+        if display_rotated {
+            y_buttons |= host_dpad_to_ws_diamond(self.dpad_pressed());
+        }
+
+        (self.ws_keyboard_button_pressed
+            | self.ws_gamepad_button_pressed
+            | self.buttons_pressed()
+            | (y_buttons << 4))
+            & 0xFF
+    }
+
+    pub(super) fn ws_dpad_pressed(&self, display_rotated: bool) -> u8 {
+        let mut x_buttons = (self.ws_keyboard_x_pressed | self.ws_gamepad_x_pressed) & 0x0F;
+        if !display_rotated {
+            x_buttons |= host_dpad_to_ws_diamond(self.dpad_pressed());
+        }
+        x_buttons & 0x0F
+    }
+
     fn set_mask_bit(mask: &mut u8, key: JoypadKey, pressed: bool) {
         let bit = joypad_host_bit(key);
         if pressed {
@@ -120,6 +196,23 @@ impl HostInputState {
             *mask &= !bit;
         }
     }
+}
+
+fn host_dpad_to_ws_diamond(mask: u8) -> u8 {
+    let mut ws = 0u8;
+    if mask & (1 << 2) != 0 {
+        ws |= 1 << 0;
+    }
+    if mask & (1 << 0) != 0 {
+        ws |= 1 << 1;
+    }
+    if mask & (1 << 3) != 0 {
+        ws |= 1 << 2;
+    }
+    if mask & (1 << 1) != 0 {
+        ws |= 1 << 3;
+    }
+    ws
 }
 
 fn joypad_host_bit(key: JoypadKey) -> u8 {
@@ -132,6 +225,26 @@ fn joypad_host_bit(key: JoypadKey) -> u8 {
         JoypadKey::B => 1 << 5,
         JoypadKey::Select => 1 << 6,
         JoypadKey::Start => 1 << 7,
+    }
+}
+
+impl super::App {
+    pub(super) fn current_host_joypad_input(&self) -> (u8, u8) {
+        self.host_joypad_input_for_system(self.active_system)
+    }
+
+    pub(super) fn host_joypad_input_for_system(&self, system: ActiveSystem) -> (u8, u8) {
+        if system == ActiveSystem::WonderSwan {
+            (
+                self.host_input.ws_buttons_pressed(self.ws_display_rotated),
+                self.host_input.ws_dpad_pressed(self.ws_display_rotated),
+            )
+        } else {
+            (
+                self.host_input.buttons_pressed(),
+                self.host_input.dpad_pressed(),
+            )
+        }
     }
 }
 

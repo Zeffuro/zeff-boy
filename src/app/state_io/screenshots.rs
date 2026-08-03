@@ -2,7 +2,7 @@ use super::App;
 
 impl App {
     pub(in crate::app) fn take_screenshot(&mut self) {
-        let (native_w, native_h) = self.active_system.screen_size();
+        let (native_w, native_h) = self.active_display_size();
         let expected_len = (native_w * native_h * 4) as usize;
         let fb = match &self.last_displayed_frame {
             Some(fb) if fb.len() == expected_len => fb,

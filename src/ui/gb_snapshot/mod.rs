@@ -25,7 +25,7 @@ pub(crate) fn collect_emu_snapshot(
     reusable_oam: Option<Vec<u8>>,
     reusable_memory_page: Option<Vec<(Address, u8)>>,
 ) -> UiFrameData {
-    let gb_info = if req.want_debug_info {
+    let gb_info = if req.want_debug_info || req.want_perf_info {
         Some(emu.snapshot())
     } else {
         None
@@ -97,6 +97,7 @@ pub(crate) fn collect_emu_snapshot(
 
     let perf_info = gb_info.as_ref().map(|di| PerfInfo {
         fps: di.fps,
+        target_fps: 1_000_000_000.0 / 16_742_706.0,
         speed_mode_label: di.speed_mode_label,
         frames_in_flight: di.frames_in_flight,
         cycles: di.cycles,

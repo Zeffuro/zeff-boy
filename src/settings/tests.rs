@@ -65,6 +65,27 @@ fn key_bindings_deserialize_unknown_falls_back_to_defaults() {
 }
 
 #[test]
+fn wonderswan_key_bindings_serde_roundtrip() {
+    let bindings = WonderSwanKeyBindings {
+        x1: KeyCode::KeyI,
+        y4: KeyCode::KeyJ,
+        ..WonderSwanKeyBindings::default()
+    };
+
+    let json = serde_json::to_string(&bindings).unwrap();
+    let restored: WonderSwanKeyBindings = serde_json::from_str(&json).unwrap();
+    assert_eq!(bindings, restored);
+}
+
+#[test]
+fn wonderswan_key_bindings_deserialize_unknown_falls_back_to_defaults() {
+    let json = r#"{"x1":"UNKNOWN_KEY","x2":"KeyD","x3":"KeyS","x4":"KeyA","y1":"ArrowUp","y2":"ArrowRight","y3":"ArrowDown","y4":"ArrowLeft","a":"KeyX","b":"KeyZ","start":"Enter"}"#;
+    let bindings: WonderSwanKeyBindings = serde_json::from_str(json).unwrap();
+    assert_eq!(bindings.x1, KeyCode::KeyW);
+    assert_eq!(bindings.y4, KeyCode::ArrowLeft);
+}
+
+#[test]
 fn shortcut_bindings_get_returns_default_for_unknown_string() {
     let bindings = ShortcutBindings {
         fullscreen: "NONSENSE".to_string(),
@@ -93,10 +114,67 @@ fn shortcut_bindings_set_and_get() {
 fn gamepad_bindings_roundtrip() {
     let mut gb = GamepadBindings::default();
     gb.set(BindingAction::A, "West");
+    gb.set_ws(WonderSwanButton::Y4, "RightTrigger");
     let json = serde_json::to_string(&gb).unwrap();
     let restored: GamepadBindings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.get(BindingAction::A), "West");
     assert_eq!(restored.get(BindingAction::B), "East");
+    assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
+    assert_eq!(restored.get_ws(WonderSwanButton::B), "East");
+    assert_eq!(restored.get_ws(WonderSwanButton::Start), "Start");
+    assert_eq!(restored.get_ws(WonderSwanButton::Y4), "RightTrigger");
+    assert_eq!(
+        restored.map_ws_button_name("RightTrigger"),
+        Some(WonderSwanButton::Y4)
+    );
+    assert_eq!(
+        restored.map_ws_button_name("South"),
+        Some(WonderSwanButton::A)
+    );
+}
+
+#[test]
+fn gamepad_bindings_deserialize_missing_ws_buttons_to_defaults() {
+    let json = r#"{
+        "a":"South",
+        "b":"East",
+        "start":"Start",
+        "select":"Select",
+        "up":"DPadUp",
+        "down":"DPadDown",
+        "left":"DPadLeft",
+        "right":"DPadRight"
+    }"#;
+    let restored: GamepadBindings = serde_json::from_str(json).unwrap();
+    assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
+    assert_eq!(restored.get_ws(WonderSwanButton::B), "East");
+    assert_eq!(restored.get_ws(WonderSwanButton::Start), "Start");
+    assert_eq!(restored.get_ws(WonderSwanButton::X1), "");
+}
+
+#[test]
+fn gamepad_bindings_migrate_old_empty_wonderswan_defaults_once() {
+    let mut bindings = GamepadBindings {
+        ws_a: String::new(),
+        ws_b: String::new(),
+        ws_start: String::new(),
+        wonderswan_defaults_initialized: false,
+        ..GamepadBindings::default()
+    };
+
+    bindings.migrate_wonderswan_defaults();
+
+    assert_eq!(bindings.get_ws(WonderSwanButton::A), "South");
+    assert_eq!(bindings.get_ws(WonderSwanButton::B), "East");
+    assert_eq!(bindings.get_ws(WonderSwanButton::Start), "Start");
+    assert!(bindings.wonderswan_defaults_initialized);
+
+    bindings.clear_wonderswan_direct_bindings();
+    bindings.migrate_wonderswan_defaults();
+
+    assert_eq!(bindings.get_ws(WonderSwanButton::A), "");
+    assert_eq!(bindings.get_ws(WonderSwanButton::B), "");
+    assert_eq!(bindings.get_ws(WonderSwanButton::Start), "");
 }
 
 #[test]
@@ -245,12 +323,17 @@ fn color_correction_serde_roundtrip() {
     let mut s = Settings::default();
     s.video.gb_color_correction = ColorCorrection::GbcLcd;
     s.video.gba_color_correction = GbaColorCorrection::LcdResponse;
+    s.video.ws_color_correction = WonderSwanColorCorrection::MonoLcd;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.video.gb_color_correction, ColorCorrection::GbcLcd);
     assert_eq!(
         restored.video.gba_color_correction,
         GbaColorCorrection::LcdResponse
+    );
+    assert_eq!(
+        restored.video.ws_color_correction,
+        WonderSwanColorCorrection::MonoLcd
     );
 }
 
@@ -268,6 +351,11 @@ fn color_correction_defaults_to_none_when_missing() {
         s.video.gba_color_correction_matrix,
         default_color_correction_matrix()
     );
+    assert_eq!(s.video.ws_color_correction, WonderSwanColorCorrection::None);
+    assert_eq!(
+        s.video.ws_color_correction_matrix,
+        default_color_correction_matrix()
+    );
 }
 
 #[test]
@@ -277,6 +365,8 @@ fn custom_color_correction_matrix_roundtrip() {
     s.video.gb_color_correction_matrix = [1.0, 0.2, 0.0, 0.1, 0.9, 0.0, 0.0, 0.3, 0.8];
     s.video.gba_color_correction = GbaColorCorrection::Custom;
     s.video.gba_color_correction_matrix = [0.8, 0.1, 0.1, 0.2, 0.7, 0.1, 0.0, 0.2, 0.8];
+    s.video.ws_color_correction = WonderSwanColorCorrection::Custom;
+    s.video.ws_color_correction_matrix = [0.7, 0.2, 0.1, 0.1, 0.8, 0.1, 0.2, 0.1, 0.7];
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.video.gb_color_correction, ColorCorrection::Custom);
@@ -291,6 +381,14 @@ fn custom_color_correction_matrix_roundtrip() {
     assert_eq!(
         restored.video.gba_color_correction_matrix,
         s.video.gba_color_correction_matrix
+    );
+    assert_eq!(
+        restored.video.ws_color_correction,
+        WonderSwanColorCorrection::Custom
+    );
+    assert_eq!(
+        restored.video.ws_color_correction_matrix,
+        s.video.ws_color_correction_matrix
     );
 }
 
@@ -340,6 +438,40 @@ fn gba_color_correction_uses_dedicated_gpu_modes() {
             lcd_response[35]
         ]),
         3
+    );
+}
+
+#[test]
+fn wonderswan_color_correction_uses_lcd_modes() {
+    let params = ShaderParams::default();
+    let color_lcd = build_gpu_params(
+        &params,
+        effective_wonderswan_color_correction(
+            WonderSwanColorCorrection::ColorLcd,
+            default_color_correction_matrix(),
+        ),
+        224.0,
+        144.0,
+    );
+    let mono_lcd = build_gpu_params(
+        &params,
+        effective_wonderswan_color_correction(
+            WonderSwanColorCorrection::MonoLcd,
+            default_color_correction_matrix(),
+        ),
+        224.0,
+        144.0,
+    );
+
+    assert_eq!(
+        u32::from_le_bytes([color_lcd[32], color_lcd[33], color_lcd[34], color_lcd[35]]),
+        1
+    );
+    let r00 = f32::from_le_bytes([color_lcd[48], color_lcd[49], color_lcd[50], color_lcd[51]]);
+    assert!((r00 - 26.0 / 32.0).abs() < f32::EPSILON);
+    assert_eq!(
+        u32::from_le_bytes([mono_lcd[32], mono_lcd[33], mono_lcd[34], mono_lcd[35]]),
+        4
     );
 }
 
