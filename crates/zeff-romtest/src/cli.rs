@@ -204,6 +204,7 @@ pub(crate) struct TestFilter {
 }
 
 pub(crate) fn print_help() {
+    let core_values = Core::supported_values();
     println!(
         "\
 zeff-romtest <command> [options]
@@ -224,7 +225,7 @@ Options:
   --sources PATH       Source catalog path (default: {DEFAULT_SOURCES_PATH})
   --source-cache-dir PATH
                         Download cache for source archives (default: {DEFAULT_SOURCE_CACHE_DIR})
-  --core gb|gba|nes    Filter by core
+  --core {core_values} Filter by core
   --tier TIER          Filter by tier: smoke|accuracy|visual|local|compat
   --exclude-tier TIER  Exclude a tier; may be repeated
   --id TEXT            Filter by id substring

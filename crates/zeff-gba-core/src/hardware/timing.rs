@@ -20,19 +20,57 @@ pub enum BusRegion {
     Unused,
 }
 
+const BIOS_START: u32 = 0x0000_0000;
+const BIOS_END: u32 = 0x0000_3FFF;
+const EWRAM_START: u32 = 0x0200_0000;
+const EWRAM_END: u32 = 0x02FF_FFFF;
+const IWRAM_START: u32 = 0x0300_0000;
+const IWRAM_END: u32 = 0x03FF_FFFF;
+const IO_START: u32 = 0x0400_0000;
+const IO_END: u32 = 0x0400_03FF;
+const PALETTE_RAM_START: u32 = 0x0500_0000;
+const PALETTE_RAM_END: u32 = 0x05FF_FFFF;
+const VRAM_START: u32 = 0x0600_0000;
+const VRAM_END: u32 = 0x06FF_FFFF;
+const OAM_START: u32 = 0x0700_0000;
+const OAM_END: u32 = 0x07FF_FFFF;
+const GAMEPAK0_START: u32 = 0x0800_0000;
+const GAMEPAK0_END: u32 = 0x09FF_FFFF;
+const GAMEPAK1_START: u32 = 0x0A00_0000;
+const GAMEPAK1_END: u32 = 0x0BFF_FFFF;
+const GAMEPAK2_START: u32 = 0x0C00_0000;
+const GAMEPAK2_END: u32 = 0x0DFF_FFFF;
+const SRAM_START: u32 = 0x0E00_0000;
+const SRAM_END: u32 = 0x0E00_FFFF;
+const HALFWORD_BYTES: u32 = 2;
+const WORD_BYTES: u8 = 4;
+const WAITCNT_MASK_2BIT: u16 = 0x03;
+const WAITCNT_MASK_1BIT: u16 = 0x01;
+const WAITCNT_SRAM_SHIFT: u16 = 0;
+const WAITCNT_GAMEPAK0_FIRST_SHIFT: u16 = 2;
+const WAITCNT_GAMEPAK0_SECOND_SHIFT: u16 = 4;
+const WAITCNT_GAMEPAK1_FIRST_SHIFT: u16 = 5;
+const WAITCNT_GAMEPAK1_SECOND_SHIFT: u16 = 7;
+const WAITCNT_GAMEPAK2_FIRST_SHIFT: u16 = 8;
+const WAITCNT_GAMEPAK2_SECOND_SHIFT: u16 = 10;
+const GAMEPAK0_SECOND_CYCLES: [u32; 2] = [3, 2];
+const GAMEPAK1_SECOND_CYCLES: [u32; 2] = [5, 2];
+const GAMEPAK2_SECOND_CYCLES: [u32; 2] = [9, 2];
+const ACCESS_CYCLE_TABLE: [u32; 4] = [5, 4, 3, 9];
+
 pub fn region_for_addr(addr: u32) -> BusRegion {
     match addr {
-        0x0000_0000..=0x0000_3FFF => BusRegion::Bios,
-        0x0200_0000..=0x02FF_FFFF => BusRegion::Ewram,
-        0x0300_0000..=0x03FF_FFFF => BusRegion::Iwram,
-        0x0400_0000..=0x0400_03FF => BusRegion::Io,
-        0x0500_0000..=0x05FF_FFFF => BusRegion::PaletteRam,
-        0x0600_0000..=0x06FF_FFFF => BusRegion::Vram,
-        0x0700_0000..=0x07FF_FFFF => BusRegion::Oam,
-        0x0800_0000..=0x09FF_FFFF => BusRegion::GamePak0,
-        0x0A00_0000..=0x0BFF_FFFF => BusRegion::GamePak1,
-        0x0C00_0000..=0x0DFF_FFFF => BusRegion::GamePak2,
-        0x0E00_0000..=0x0E00_FFFF => BusRegion::Sram,
+        BIOS_START..=BIOS_END => BusRegion::Bios,
+        EWRAM_START..=EWRAM_END => BusRegion::Ewram,
+        IWRAM_START..=IWRAM_END => BusRegion::Iwram,
+        IO_START..=IO_END => BusRegion::Io,
+        PALETTE_RAM_START..=PALETTE_RAM_END => BusRegion::PaletteRam,
+        VRAM_START..=VRAM_END => BusRegion::Vram,
+        OAM_START..=OAM_END => BusRegion::Oam,
+        GAMEPAK0_START..=GAMEPAK0_END => BusRegion::GamePak0,
+        GAMEPAK1_START..=GAMEPAK1_END => BusRegion::GamePak1,
+        GAMEPAK2_START..=GAMEPAK2_END => BusRegion::GamePak2,
+        SRAM_START..=SRAM_END => BusRegion::Sram,
         _ => BusRegion::Unused,
     }
 }
@@ -53,26 +91,38 @@ pub fn access_cycles_with_waitcnt(
         (BusRegion::Iwram, _) => 1,
         (BusRegion::Io, _) => 1,
         (BusRegion::PaletteRam | BusRegion::Vram | BusRegion::Oam, _) => 1,
-        (BusRegion::GamePak0, AccessType::NonSequential) => gamepak_first_access_cycles(waitcnt, 2),
-        (BusRegion::GamePak0, AccessType::Sequential) => {
-            gamepak_second_access_cycles(waitcnt, 4, [3, 2])
+        (BusRegion::GamePak0, AccessType::NonSequential) => {
+            gamepak_first_access_cycles(waitcnt, WAITCNT_GAMEPAK0_FIRST_SHIFT)
         }
-        (BusRegion::GamePak1, AccessType::NonSequential) => gamepak_first_access_cycles(waitcnt, 5),
-        (BusRegion::GamePak1, AccessType::Sequential) => {
-            gamepak_second_access_cycles(waitcnt, 7, [5, 2])
+        (BusRegion::GamePak0, AccessType::Sequential) => gamepak_second_access_cycles(
+            waitcnt,
+            WAITCNT_GAMEPAK0_SECOND_SHIFT,
+            GAMEPAK0_SECOND_CYCLES,
+        ),
+        (BusRegion::GamePak1, AccessType::NonSequential) => {
+            gamepak_first_access_cycles(waitcnt, WAITCNT_GAMEPAK1_FIRST_SHIFT)
         }
-        (BusRegion::GamePak2, AccessType::NonSequential) => gamepak_first_access_cycles(waitcnt, 8),
-        (BusRegion::GamePak2, AccessType::Sequential) => {
-            gamepak_second_access_cycles(waitcnt, 10, [9, 2])
+        (BusRegion::GamePak1, AccessType::Sequential) => gamepak_second_access_cycles(
+            waitcnt,
+            WAITCNT_GAMEPAK1_SECOND_SHIFT,
+            GAMEPAK1_SECOND_CYCLES,
+        ),
+        (BusRegion::GamePak2, AccessType::NonSequential) => {
+            gamepak_first_access_cycles(waitcnt, WAITCNT_GAMEPAK2_FIRST_SHIFT)
         }
+        (BusRegion::GamePak2, AccessType::Sequential) => gamepak_second_access_cycles(
+            waitcnt,
+            WAITCNT_GAMEPAK2_SECOND_SHIFT,
+            GAMEPAK2_SECOND_CYCLES,
+        ),
         (BusRegion::Sram, _) => sram_access_cycles(waitcnt),
         (BusRegion::Unused, _) => 1,
     };
 
-    if width_bytes >= 4 {
+    if width_bytes >= WORD_BYTES {
         match region_for_addr(addr) {
             BusRegion::GamePak0 | BusRegion::GamePak1 | BusRegion::GamePak2 => {
-                base + sequential_cycles_with_waitcnt(addr + 2, waitcnt)
+                base + sequential_cycles_with_waitcnt(addr + HALFWORD_BYTES, waitcnt)
             }
             _ => base,
         }
@@ -104,21 +154,19 @@ pub fn instruction_fetch_cycles_with_waitcnt(
 }
 
 fn sequential_cycles_with_waitcnt(addr: u32, waitcnt: u16) -> u32 {
-    access_cycles_with_waitcnt(addr, 2, AccessType::Sequential, waitcnt)
+    access_cycles_with_waitcnt(addr, HALFWORD_BYTES as u8, AccessType::Sequential, waitcnt)
 }
 
 fn gamepak_first_access_cycles(waitcnt: u16, shift: u16) -> u32 {
-    const FIRST_ACCESS_CYCLES: [u32; 4] = [5, 4, 3, 9];
-    FIRST_ACCESS_CYCLES[((waitcnt >> shift) & 0x3) as usize]
+    ACCESS_CYCLE_TABLE[((waitcnt >> shift) & WAITCNT_MASK_2BIT) as usize]
 }
 
 fn gamepak_second_access_cycles(waitcnt: u16, shift: u16, cycles: [u32; 2]) -> u32 {
-    cycles[((waitcnt >> shift) & 1) as usize]
+    cycles[((waitcnt >> shift) & WAITCNT_MASK_1BIT) as usize]
 }
 
 fn sram_access_cycles(waitcnt: u16) -> u32 {
-    const SRAM_ACCESS_CYCLES: [u32; 4] = [5, 4, 3, 9];
-    SRAM_ACCESS_CYCLES[(waitcnt & 0x3) as usize]
+    ACCESS_CYCLE_TABLE[((waitcnt >> WAITCNT_SRAM_SHIFT) & WAITCNT_MASK_2BIT) as usize]
 }
 
 #[cfg(test)]

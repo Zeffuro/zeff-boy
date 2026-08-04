@@ -22,12 +22,18 @@ pub(crate) struct SourceSpec {
     pub(crate) sha256: String,
     pub(crate) archive_prefix: Option<String>,
     pub(crate) archive_path_strip_prefix: Option<String>,
+    #[serde(default = "default_contains_built_roms")]
+    pub(crate) contains_built_roms: bool,
     pub(crate) license: String,
     #[serde(default = "crate::model::default_license_confidence")]
     pub(crate) license_confidence: LicenseConfidence,
     #[serde(default)]
     pub(crate) redistributable: bool,
     pub(crate) notes: Option<String>,
+}
+
+fn default_contains_built_roms() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]

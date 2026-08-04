@@ -25,14 +25,26 @@ const VBLANK_TIMER_COUNT_HI_PORT: u16 = 0x00AB;
 const SYSTEM_CONTROL_PORT: u16 = 0x00A0;
 const LCD_CONTROL_PORT: u16 = 0x0014;
 const LCD_VTOTAL_PORT: u16 = 0x0016;
+const MONO_PALETTE_PORT_START: u16 = 0x0020;
+const MONO_PALETTE_PORT_END: u16 = 0x003F;
 const DMA_SOURCE_LO_PORT: u16 = 0x0040;
 const DMA_SOURCE_HI_PORT: u16 = 0x0041;
 const DMA_SOURCE_SEGMENT_PORT: u16 = 0x0042;
+const DMA_SOURCE_SEGMENT_HIGH_PORT: u16 = 0x0043;
 const DMA_DESTINATION_LO_PORT: u16 = 0x0044;
 const DMA_DESTINATION_HI_PORT: u16 = 0x0045;
 const DMA_LENGTH_LO_PORT: u16 = 0x0046;
 const DMA_LENGTH_HI_PORT: u16 = 0x0047;
 const DMA_CONTROL_PORT: u16 = 0x0048;
+const SOUND_DMA_SOURCE_LO_PORT: u16 = 0x004A;
+const SOUND_DMA_SOURCE_HI_PORT: u16 = 0x004B;
+const SOUND_DMA_SOURCE_SEGMENT_PORT: u16 = 0x004C;
+const SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT: u16 = 0x004D;
+const SOUND_DMA_LENGTH_LO_PORT: u16 = 0x004E;
+const SOUND_DMA_LENGTH_HI_PORT: u16 = 0x004F;
+const SOUND_DMA_LENGTH_SEGMENT_PORT: u16 = 0x0050;
+const SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT: u16 = 0x0051;
+const SOUND_DMA_CONTROL_PORT: u16 = 0x0052;
 const INTERNAL_EEPROM_DATA_LO_PORT: u16 = 0x00BA;
 const INTERNAL_EEPROM_DATA_HI_PORT: u16 = 0x00BB;
 const INTERNAL_EEPROM_ADDR_LO_PORT: u16 = 0x00BC;
@@ -54,10 +66,22 @@ const WS_INTERNAL_EEPROM_SIZE: usize = 0x80;
 const WSC_INTERNAL_EEPROM_SIZE: usize = 0x800;
 const EEPROM_STATUS_READ_DONE: u8 = 0x01;
 const EEPROM_STATUS_READY: u8 = 0x02;
+const EEPROM_STATUS_PROTECTED: u8 = 0x80;
+const INTERNAL_EEPROM_COMMAND_HIGH_PORT: u16 = 0x00BF;
 const RTC_READY: u8 = 0x80;
+const RTC_ACTIVE: u8 = 0x10;
 const RTC_COMMAND_MASK: u8 = 0x1F;
 const RTC_WRITE_DATETIME_COMMAND: u8 = 0x14;
 const RTC_READ_DATETIME_COMMAND: u8 = 0x15;
+const RTC_READY_DELAY_READS: u8 = 2;
+const SYSTEM_CTRL1_ROM_WAIT: u8 = 0x08;
+const SOUND_DMA_ENABLE: u8 = 0x80;
+const SOUND_DMA_HOLD: u8 = 0x04;
+const SOUND_DMA_REPEAT: u8 = 0x08;
+const SOUND_DMA_TARGET_HYPERVOICE: u8 = 0x10;
+const SOUND_DMA_CONTROL_MASK: u8 = 0x9F;
+const SOUND_VOLUME_CHANNEL2_PORT: u16 = 0x0089;
+const IRQ_SERIAL_TX: u8 = 0x01;
 const IRQ_KEYPAD: u8 = 0x02;
 const IRQ_LINE_COMPARE: u8 = 0x10;
 const IRQ_VBLANK_TIMER: u8 = 0x20;
@@ -95,6 +119,11 @@ pub struct Bus {
     pub io: Vec<u8>,
     pub internal_eeprom: Vec<u8>,
     rtc: Rtc,
+    sound_dma: SoundDma,
+    internal_eeprom_write_enabled: bool,
+    internal_eeprom_protected: bool,
+    internal_eeprom_done_delay_reads: u8,
+    cartridge_eeprom_write_enabled: bool,
     pending_linear_bank: Option<DeferredLinearBank>,
     pub cycles: u64,
     pub(crate) debug_trace_enabled: bool,
@@ -105,6 +134,13 @@ pub struct Bus {
 struct DeferredLinearBank {
     value: u8,
     remaining_instruction_retires: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SoundDma {
+    reload_source: u32,
+    reload_length: u32,
+    cycle_accumulator: u32,
 }
 
 impl Bus {
@@ -120,6 +156,11 @@ impl Bus {
             io: vec![0; IO_PORT_COUNT],
             internal_eeprom,
             rtc: Rtc::new(),
+            sound_dma: SoundDma::default(),
+            internal_eeprom_write_enabled: true,
+            internal_eeprom_protected: false,
+            internal_eeprom_done_delay_reads: 0,
+            cartridge_eeprom_write_enabled: false,
             pending_linear_bank: None,
             cycles: 0,
             debug_trace_enabled: false,
@@ -132,6 +173,11 @@ impl Bus {
         self.io.fill(0);
         self.internal_eeprom = internal_eeprom_for_cartridge(&self.cartridge);
         self.rtc.reset();
+        self.sound_dma = SoundDma::default();
+        self.internal_eeprom_write_enabled = true;
+        self.internal_eeprom_protected = false;
+        self.internal_eeprom_done_delay_reads = 0;
+        self.cartridge_eeprom_write_enabled = false;
         self.pending_linear_bank = None;
         self.cycles = 0;
         self.cartridge.reset_banks();
@@ -139,6 +185,10 @@ impl Bus {
         self.apu.reset();
         self.keypad = Keypad::new();
         self.apply_cartridge_start_state();
+    }
+
+    pub(crate) fn is_color_model(&self) -> bool {
+        self.cartridge.minimum_system() != super::cartridge::MinimumSystem::WonderSwan
     }
 
     pub fn read8(&mut self, addr: u32) -> u8 {
@@ -200,12 +250,16 @@ impl Bus {
                 let count = self.vblank_timer_count();
                 count.to_le_bytes()[usize::from(port - VBLANK_TIMER_COUNT_LO_PORT)]
             }
+            DMA_SOURCE_SEGMENT_HIGH_PORT
+            | SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT
+            | SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT => 0,
             SYSTEM_CONTROL_PORT => self.system_control_read(),
             INTERNAL_EEPROM_DATA_LO_PORT
             | INTERNAL_EEPROM_DATA_HI_PORT
             | INTERNAL_EEPROM_ADDR_LO_PORT
-            | INTERNAL_EEPROM_ADDR_HI_PORT
-            | INTERNAL_EEPROM_COMMAND_PORT => self.io[usize::from(port)],
+            | INTERNAL_EEPROM_ADDR_HI_PORT => self.io[usize::from(port)],
+            INTERNAL_EEPROM_COMMAND_PORT => self.internal_eeprom_status_read(),
+            INTERNAL_EEPROM_COMMAND_HIGH_PORT => 0,
             IRQ_VECTOR_BASE_PORT => self.interrupt_base_read(),
             IRQ_ENABLE_PORT => self.io[usize::from(IRQ_ENABLE_PORT)],
             SERIAL_DATA_PORT => self.io[usize::from(SERIAL_DATA_PORT)],
@@ -248,12 +302,16 @@ impl Bus {
                 let count = self.vblank_timer_count();
                 count.to_le_bytes()[usize::from(port - VBLANK_TIMER_COUNT_LO_PORT)]
             }
+            DMA_SOURCE_SEGMENT_HIGH_PORT
+            | SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT
+            | SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT => 0,
             SYSTEM_CONTROL_PORT => self.system_control_read(),
             INTERNAL_EEPROM_DATA_LO_PORT
             | INTERNAL_EEPROM_DATA_HI_PORT
             | INTERNAL_EEPROM_ADDR_LO_PORT
-            | INTERNAL_EEPROM_ADDR_HI_PORT
-            | INTERNAL_EEPROM_COMMAND_PORT => self.io[usize::from(port)],
+            | INTERNAL_EEPROM_ADDR_HI_PORT => self.io[usize::from(port)],
+            INTERNAL_EEPROM_COMMAND_PORT => self.internal_eeprom_status_peek(),
+            INTERNAL_EEPROM_COMMAND_HIGH_PORT => 0,
             IRQ_VECTOR_BASE_PORT => self.interrupt_base_read(),
             IRQ_ENABLE_PORT => self.io[usize::from(IRQ_ENABLE_PORT)],
             SERIAL_DATA_PORT => self.io[usize::from(SERIAL_DATA_PORT)],
@@ -298,17 +356,21 @@ impl Bus {
             VBLANK_TIMER_COUNT_LO_PORT | VBLANK_TIMER_COUNT_HI_PORT => {
                 self.io[usize::from(port)] = value;
             }
-            DMA_SOURCE_LO_PORT
-            | DMA_SOURCE_HI_PORT
-            | DMA_SOURCE_SEGMENT_PORT
-            | DMA_DESTINATION_LO_PORT
-            | DMA_DESTINATION_HI_PORT
-            | DMA_LENGTH_LO_PORT
-            | DMA_LENGTH_HI_PORT => {
+            MONO_PALETTE_PORT_START..=MONO_PALETTE_PORT_END if !self.is_color_model() => {
+                self.write_mono_palette_port(port, value);
+            }
+            DMA_SOURCE_LO_PORT | DMA_DESTINATION_LO_PORT | DMA_LENGTH_LO_PORT => {
+                self.io[usize::from(port)] = value & !1;
+            }
+            DMA_SOURCE_HI_PORT | DMA_DESTINATION_HI_PORT | DMA_LENGTH_HI_PORT => {
                 self.io[usize::from(port)] = value;
-                if port == DMA_SOURCE_SEGMENT_PORT {
-                    self.io[usize::from(port)] &= 0x0F;
-                }
+            }
+            DMA_SOURCE_SEGMENT_PORT => {
+                self.io[usize::from(DMA_SOURCE_SEGMENT_PORT)] = value & 0x0F;
+                self.io[usize::from(DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
+            }
+            DMA_SOURCE_SEGMENT_HIGH_PORT => {
+                self.io[usize::from(DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
             }
             DMA_CONTROL_PORT => {
                 self.io[usize::from(DMA_CONTROL_PORT)] = value;
@@ -316,6 +378,27 @@ impl Bus {
                     self.run_dma_transfer(value);
                 }
             }
+            SOUND_DMA_SOURCE_LO_PORT
+            | SOUND_DMA_SOURCE_HI_PORT
+            | SOUND_DMA_LENGTH_LO_PORT
+            | SOUND_DMA_LENGTH_HI_PORT => {
+                self.io[usize::from(port)] = value;
+            }
+            SOUND_DMA_SOURCE_SEGMENT_PORT => {
+                self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_PORT)] = value & 0x0F;
+                self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
+            }
+            SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT => {
+                self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
+            }
+            SOUND_DMA_LENGTH_SEGMENT_PORT => {
+                self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_PORT)] = value & 0x0F;
+                self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT)] = 0;
+            }
+            SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT => {
+                self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT)] = 0;
+            }
+            SOUND_DMA_CONTROL_PORT => self.write_sound_dma_control(value),
             SYSTEM_CONTROL_PORT => {
                 let color_bit = u8::from(
                     self.cartridge.minimum_system() != super::cartridge::MinimumSystem::WonderSwan,
@@ -329,18 +412,24 @@ impl Bus {
                 self.io[usize::from(port)] = value;
             }
             INTERNAL_EEPROM_COMMAND_PORT => self.write_internal_eeprom_command(value),
+            INTERNAL_EEPROM_COMMAND_HIGH_PORT => {}
             IRQ_VECTOR_BASE_PORT => self.io[usize::from(IRQ_VECTOR_BASE_PORT)] = value & 0xF8,
             IRQ_ENABLE_PORT => {
                 self.io[usize::from(IRQ_ENABLE_PORT)] = value;
+                self.refresh_level_interrupts();
             }
             SERIAL_DATA_PORT => {
                 self.io[usize::from(SERIAL_DATA_PORT)] = value;
             }
             SERIAL_CONTROL_PORT => {
                 self.io[usize::from(SERIAL_CONTROL_PORT)] = value & 0xC0;
+                self.refresh_level_interrupts();
             }
             KEYPAD_PORT => self.keypad.write(value),
-            IRQ_ACK_PORT => self.io[usize::from(IRQ_STATUS_PORT)] &= !value,
+            IRQ_ACK_PORT => {
+                self.io[usize::from(IRQ_STATUS_PORT)] &= !value;
+                self.refresh_level_interrupts();
+            }
             ROM_LINEAR_BANK_PORT => self.defer_linear_bank(value),
             ROM_RAM_BANK_PORT => self.cartridge.set_ram_bank(value),
             ROM_BANK0_PORT => self.cartridge.set_bank0(value),
@@ -352,7 +441,8 @@ impl Bus {
             CART_EEPROM_CONTROL_STATUS_LO_PORT => self.write_cartridge_eeprom_control(value),
             CART_EEPROM_CONTROL_STATUS_HI_PORT => {}
             RTC_COMMAND_STATUS_PORT => {
-                self.rtc.write_command(value);
+                self.rtc
+                    .write_command(value, self.io[usize::from(RTC_PAYLOAD_PORT)]);
                 self.io[usize::from(RTC_COMMAND_STATUS_PORT)] = value;
             }
             RTC_PAYLOAD_PORT => {
@@ -378,6 +468,7 @@ impl Bus {
     pub fn step_cycles(&mut self, cycles: u32) {
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
         self.apu.step_cycles(cycles, &self.ram);
+        self.step_sound_dma(cycles);
         let ppu_events = self.ppu.step_cycles(cycles, &self.ram, &self.io);
         self.step_hblank_timer(ppu_events.completed_scanlines);
         if ppu_events.vblank_started {
@@ -478,6 +569,14 @@ impl Bus {
     fn raise_interrupt(&mut self, mask: u8) {
         if self.io[usize::from(IRQ_ENABLE_PORT)] & mask != 0 {
             self.io[usize::from(IRQ_STATUS_PORT)] |= mask;
+        }
+    }
+
+    fn refresh_level_interrupts(&mut self) {
+        if self.io[usize::from(SERIAL_CONTROL_PORT)] & 0x80 != 0
+            && self.io[usize::from(IRQ_ENABLE_PORT)] & IRQ_SERIAL_TX != 0
+        {
+            self.io[usize::from(IRQ_STATUS_PORT)] |= IRQ_SERIAL_TX;
         }
     }
 
@@ -600,6 +699,15 @@ impl Bus {
         });
     }
 
+    fn write_mono_palette_port(&mut self, port: u16, value: u8) {
+        let palette_index = (port - MONO_PALETTE_PORT_START) / 2;
+        let mut masked = value & 0x77;
+        if palette_index & 0x04 != 0 && port & 1 == 0 {
+            masked &= 0x70;
+        }
+        self.io[usize::from(port)] = masked;
+    }
+
     fn internal_eeprom_data(&self) -> u16 {
         u16::from_le_bytes([
             self.io[usize::from(INTERNAL_EEPROM_DATA_LO_PORT)],
@@ -611,6 +719,30 @@ impl Bus {
         let [lo, hi] = value.to_le_bytes();
         self.io[usize::from(INTERNAL_EEPROM_DATA_LO_PORT)] = lo;
         self.io[usize::from(INTERNAL_EEPROM_DATA_HI_PORT)] = hi;
+    }
+
+    fn internal_eeprom_status_peek(&self) -> u8 {
+        let mut status = EEPROM_STATUS_READY;
+        if self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] & EEPROM_STATUS_READ_DONE != 0
+            && self.internal_eeprom_done_delay_reads == 0
+        {
+            status |= EEPROM_STATUS_READ_DONE;
+        }
+        if self.internal_eeprom_protected {
+            status |= EEPROM_STATUS_PROTECTED;
+        }
+        status
+    }
+
+    fn internal_eeprom_status_read(&mut self) -> u8 {
+        let status = self.internal_eeprom_status_peek();
+        if self.internal_eeprom_done_delay_reads > 0 {
+            self.internal_eeprom_done_delay_reads -= 1;
+            if self.internal_eeprom_done_delay_reads == 0 {
+                self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] |= EEPROM_STATUS_READ_DONE;
+            }
+        }
+        status
     }
 
     fn internal_eeprom_address(&self) -> usize {
@@ -627,23 +759,91 @@ impl Bus {
     }
 
     fn write_internal_eeprom_command(&mut self, value: u8) {
-        let mut command = value & 0xFC;
-        if command & 0x20 != 0 {
-            let address = self.internal_eeprom_address();
+        self.internal_eeprom_done_delay_reads = 0;
+        if value & EEPROM_STATUS_PROTECTED != 0 {
+            self.internal_eeprom_protected = true;
+            self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] = EEPROM_STATUS_READY;
+            return;
+        }
+
+        match value & 0x70 {
+            0x10 => self.read_internal_eeprom_word(),
+            0x20 => self.write_internal_eeprom_word(),
+            0x40 => self.write_internal_eeprom_short_command(),
+            _ => {
+                self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] = EEPROM_STATUS_READY;
+            }
+        }
+    }
+
+    fn read_internal_eeprom_word(&mut self) {
+        let address = self.internal_eeprom_address();
+        let lo = self.internal_eeprom.get(address).copied().unwrap_or(0xFF);
+        let hi = self
+            .internal_eeprom
+            .get(address + 1)
+            .copied()
+            .unwrap_or(0xFF);
+        self.set_internal_eeprom_data(u16::from_le_bytes([lo, hi]));
+        self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] = EEPROM_STATUS_READY;
+        self.internal_eeprom_done_delay_reads = 1;
+    }
+
+    fn write_internal_eeprom_word(&mut self) {
+        let address = self.internal_eeprom_address();
+        let previous = self.internal_eeprom_word_at(address);
+        if self.internal_eeprom_write_enabled && !self.internal_eeprom_address_protected(address) {
             let data = self.internal_eeprom_data().to_le_bytes();
             if address + 1 < self.internal_eeprom.len() {
                 self.internal_eeprom[address] = data[0];
                 self.internal_eeprom[address + 1] = data[1];
             }
-            command |= 0x02;
-        } else if command & 0x10 != 0 {
-            let address = self.internal_eeprom_address();
-            let lo = self.internal_eeprom.get(address).copied().unwrap_or(0);
-            let hi = self.internal_eeprom.get(address + 1).copied().unwrap_or(0);
-            self.set_internal_eeprom_data(u16::from_le_bytes([lo, hi]));
-            command |= 0x01;
         }
-        self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] = command;
+        self.set_internal_eeprom_data(previous);
+        self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] = EEPROM_STATUS_READY;
+    }
+
+    fn write_internal_eeprom_short_command(&mut self) {
+        match decode_eeprom_command(
+            super::cartridge::SaveKind::Eeprom128,
+            self.internal_eeprom_command(),
+        ) {
+            EepromCommand::WriteDisable => self.internal_eeprom_write_enabled = false,
+            EepromCommand::WriteEnable => self.internal_eeprom_write_enabled = true,
+            EepromCommand::Erase { address } => {
+                let byte_address = address * 2;
+                if self.internal_eeprom_write_enabled
+                    && !self.internal_eeprom_address_protected(byte_address)
+                    && byte_address + 1 < self.internal_eeprom.len()
+                {
+                    self.internal_eeprom[byte_address] = 0xFF;
+                    self.internal_eeprom[byte_address + 1] = 0xFF;
+                }
+            }
+            _ => {}
+        }
+        self.io[usize::from(INTERNAL_EEPROM_COMMAND_PORT)] = EEPROM_STATUS_READY;
+    }
+
+    fn internal_eeprom_command(&self) -> u16 {
+        u16::from_le_bytes([
+            self.io[usize::from(INTERNAL_EEPROM_ADDR_LO_PORT)],
+            self.io[usize::from(INTERNAL_EEPROM_ADDR_HI_PORT)],
+        ])
+    }
+
+    fn internal_eeprom_word_at(&self, address: usize) -> u16 {
+        u16::from_le_bytes([
+            self.internal_eeprom.get(address).copied().unwrap_or(0xFF),
+            self.internal_eeprom
+                .get(address + 1)
+                .copied()
+                .unwrap_or(0xFF),
+        ])
+    }
+
+    fn internal_eeprom_address_protected(&self, address: usize) -> bool {
+        self.internal_eeprom_protected && address >= 0x60
     }
 
     fn cartridge_eeprom_data(&self) -> u16 {
@@ -690,42 +890,52 @@ impl Bus {
             return;
         }
 
-        let operation = value & 0x07;
-        let invalid = value & 0x80 != 0 || !matches!(operation, 0x01 | 0x02 | 0x04);
-        if invalid {
-            self.io[usize::from(CART_EEPROM_CONTROL_STATUS_LO_PORT)] = EEPROM_STATUS_READY;
-            return;
-        }
-
         let command =
             decode_eeprom_command(self.cartridge.save_kind(), self.cartridge_eeprom_command());
-        match (operation, command) {
-            (0x01, EepromCommand::Read { address }) => {
+        match (value & 0xF0, command) {
+            (0x10, EepromCommand::Read { address }) => {
                 let value = self.cartridge.eeprom_read_word(address);
                 self.set_cartridge_eeprom_data(value);
                 self.set_cartridge_eeprom_read_done(true);
             }
-            (0x02, EepromCommand::Write { address }) => {
-                self.cartridge
-                    .eeprom_write_word(address, self.cartridge_eeprom_data());
+            (0x10, _) => {
+                self.set_cartridge_eeprom_read_done(true);
+            }
+            (0x20, EepromCommand::Write { address }) => {
+                if self.cartridge_eeprom_write_enabled {
+                    self.cartridge
+                        .eeprom_write_word(address, self.cartridge_eeprom_data());
+                }
                 self.set_cartridge_eeprom_read_done(false);
             }
-            (0x02, EepromCommand::WriteAll) => {
-                self.cartridge
-                    .eeprom_fill_words(self.cartridge_eeprom_data());
+            (0x20, EepromCommand::WriteAll) => {
+                if self.cartridge_eeprom_write_enabled {
+                    self.cartridge
+                        .eeprom_fill_words(self.cartridge_eeprom_data());
+                }
                 self.set_cartridge_eeprom_read_done(false);
             }
-            (0x04, EepromCommand::Erase { address }) => {
-                self.cartridge.eeprom_write_word(address, 0xFFFF);
+            (0x40, EepromCommand::Erase { address }) => {
+                if self.cartridge_eeprom_write_enabled {
+                    self.cartridge.eeprom_write_word(address, 0xFFFF);
+                }
                 self.set_cartridge_eeprom_read_done(false);
             }
-            (0x04, EepromCommand::EraseAll) => {
-                self.cartridge.eeprom_fill_words(0xFFFF);
+            (0x40, EepromCommand::EraseAll) => {
+                if self.cartridge_eeprom_write_enabled {
+                    self.cartridge.eeprom_fill_words(0xFFFF);
+                }
                 self.set_cartridge_eeprom_read_done(false);
             }
-            (0x04, EepromCommand::WriteDisable | EepromCommand::WriteEnable) => {
+            (0x40, EepromCommand::WriteDisable) => {
+                self.cartridge_eeprom_write_enabled = false;
                 self.set_cartridge_eeprom_read_done(false);
             }
+            (0x40, EepromCommand::WriteEnable) => {
+                self.cartridge_eeprom_write_enabled = true;
+                self.set_cartridge_eeprom_read_done(false);
+            }
+            (0x80, _) => self.set_cartridge_eeprom_read_done(true),
             _ => {
                 self.io[usize::from(CART_EEPROM_CONTROL_STATUS_LO_PORT)] = EEPROM_STATUS_READY;
             }
@@ -751,7 +961,7 @@ impl Bus {
 
     fn set_dma_source_segment(&mut self, value: u16) {
         self.io[usize::from(DMA_SOURCE_SEGMENT_PORT)] = (value & 0x0F) as u8;
-        self.io[usize::from(DMA_SOURCE_SEGMENT_PORT + 1)] = 0;
+        self.io[usize::from(DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
     }
 
     fn dma_destination(&self) -> u16 {
@@ -787,6 +997,16 @@ impl Bus {
         let mut remaining = self.dma_length();
         let decrement = control & 0x40 != 0;
 
+        if !self.gdma_source_accessible(source) {
+            return;
+        }
+
+        let transfer_cycles = if remaining == 0 {
+            0
+        } else {
+            5 + u32::from(remaining)
+        };
+
         while remaining > 0 {
             let lo = self.peek8(source);
             let hi = self.peek8(source.wrapping_add(1));
@@ -807,6 +1027,167 @@ impl Bus {
         self.set_dma_destination(destination as u16);
         self.set_dma_length(0);
         self.io[usize::from(DMA_CONTROL_PORT)] = control & 0x7F;
+        self.step_cycles(transfer_cycles);
+    }
+
+    fn gdma_source_accessible(&self, source: u32) -> bool {
+        match source & ADDRESS_MASK {
+            0x00000..=0x0FFFF => true,
+            0x10000..=0x1FFFF => false,
+            0x20000..=0x7FFFF => true,
+            0x80000..=0xFFFFF => {
+                self.io[usize::from(SYSTEM_CONTROL_PORT)] & SYSTEM_CTRL1_ROM_WAIT == 0
+            }
+            _ => false,
+        }
+    }
+
+    fn sound_dma_source(&self) -> u32 {
+        u32::from(u16::from_le_bytes([
+            self.io[usize::from(SOUND_DMA_SOURCE_LO_PORT)],
+            self.io[usize::from(SOUND_DMA_SOURCE_HI_PORT)],
+        ])) | (u32::from(self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_PORT)] & 0x0F) << 16)
+    }
+
+    fn set_sound_dma_source(&mut self, value: u32) {
+        let value = value & ADDRESS_MASK;
+        let [lo, hi, segment, _] = value.to_le_bytes();
+        self.io[usize::from(SOUND_DMA_SOURCE_LO_PORT)] = lo;
+        self.io[usize::from(SOUND_DMA_SOURCE_HI_PORT)] = hi;
+        self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_PORT)] = segment & 0x0F;
+        self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
+    }
+
+    fn sound_dma_length(&self) -> u32 {
+        u32::from(u16::from_le_bytes([
+            self.io[usize::from(SOUND_DMA_LENGTH_LO_PORT)],
+            self.io[usize::from(SOUND_DMA_LENGTH_HI_PORT)],
+        ])) | (u32::from(self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_PORT)] & 0x0F) << 16)
+    }
+
+    fn set_sound_dma_length(&mut self, value: u32) {
+        let value = value & ADDRESS_MASK;
+        let [lo, hi, segment, _] = value.to_le_bytes();
+        self.io[usize::from(SOUND_DMA_LENGTH_LO_PORT)] = lo;
+        self.io[usize::from(SOUND_DMA_LENGTH_HI_PORT)] = hi;
+        self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_PORT)] = segment & 0x0F;
+        self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT)] = 0;
+    }
+
+    fn write_sound_dma_control(&mut self, value: u8) {
+        let old_control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
+        let control = value & SOUND_DMA_CONTROL_MASK;
+        self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control;
+
+        let was_enabled = old_control & SOUND_DMA_ENABLE != 0;
+        let is_enabled = control & SOUND_DMA_ENABLE != 0;
+        if is_enabled && !was_enabled {
+            self.sound_dma.reload_source = self.sound_dma_source();
+            self.sound_dma.reload_length = self.sound_dma_length();
+            self.sound_dma.cycle_accumulator = 0;
+        }
+        if is_enabled && old_control & SOUND_DMA_HOLD == 0 && control & SOUND_DMA_HOLD != 0 {
+            self.write_sound_dma_target(control, 0);
+        }
+        if !is_enabled {
+            self.sound_dma.cycle_accumulator = 0;
+        }
+    }
+
+    fn step_sound_dma(&mut self, cycles: u32) {
+        let control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
+        if control & SOUND_DMA_ENABLE == 0 || control & SOUND_DMA_HOLD != 0 {
+            return;
+        }
+
+        let period = sound_dma_cycle_period(control);
+        let mut available = self.sound_dma.cycle_accumulator.saturating_add(cycles);
+        while available >= period {
+            available -= period;
+            if !self.transfer_sound_dma_byte(control) {
+                available = 0;
+                break;
+            }
+            if self.io[usize::from(SOUND_DMA_CONTROL_PORT)] & SOUND_DMA_ENABLE == 0 {
+                available = 0;
+                break;
+            }
+        }
+        self.sound_dma.cycle_accumulator = available;
+    }
+
+    fn transfer_sound_dma_byte(&mut self, control: u8) -> bool {
+        let mut length = self.sound_dma_length();
+        if length == 0 {
+            if control & SOUND_DMA_REPEAT == 0 || self.sound_dma.reload_length == 0 {
+                self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control & !SOUND_DMA_ENABLE;
+                return false;
+            }
+            self.set_sound_dma_source(self.sound_dma.reload_source);
+            self.set_sound_dma_length(self.sound_dma.reload_length);
+            length = self.sound_dma.reload_length;
+        }
+
+        let source = self.sound_dma_source();
+        let value = self.peek8(source);
+        self.write_sound_dma_target(control, value);
+        self.set_sound_dma_source(source.wrapping_add(1) & ADDRESS_MASK);
+        let next_length = length - 1;
+        self.set_sound_dma_length(next_length);
+        if next_length == 0 && control & SOUND_DMA_REPEAT == 0 {
+            self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control & !SOUND_DMA_ENABLE;
+        }
+        true
+    }
+
+    fn write_sound_dma_target(&mut self, control: u8, value: u8) {
+        if control & SOUND_DMA_TARGET_HYPERVOICE != 0 {
+            self.apu.write_hyper_voice_sample(value);
+        } else {
+            self.apu.write8(SOUND_VOLUME_CHANNEL2_PORT, value);
+        }
+    }
+
+    pub(crate) fn sound_dma_save_values(&self) -> (u32, u32, u32) {
+        (
+            self.sound_dma.reload_source,
+            self.sound_dma.reload_length,
+            self.sound_dma.cycle_accumulator,
+        )
+    }
+
+    pub(crate) fn load_sound_dma_save_values(
+        &mut self,
+        reload_source: u32,
+        reload_length: u32,
+        cycle_accumulator: u32,
+    ) {
+        self.sound_dma.reload_source = reload_source & ADDRESS_MASK;
+        self.sound_dma.reload_length = reload_length & ADDRESS_MASK;
+        self.sound_dma.cycle_accumulator = cycle_accumulator;
+    }
+
+    pub(crate) fn eeprom_save_values(&self) -> (u8, u8) {
+        let flags = u8::from(self.internal_eeprom_write_enabled)
+            | (u8::from(self.internal_eeprom_protected) << 1)
+            | (u8::from(self.cartridge_eeprom_write_enabled) << 2);
+        (flags, self.internal_eeprom_done_delay_reads)
+    }
+
+    pub(crate) fn load_eeprom_save_values(&mut self, flags: u8, internal_done_delay_reads: u8) {
+        self.internal_eeprom_write_enabled = flags & 0x01 != 0;
+        self.internal_eeprom_protected = flags & 0x02 != 0;
+        self.cartridge_eeprom_write_enabled = flags & 0x04 != 0;
+        self.internal_eeprom_done_delay_reads = internal_done_delay_reads;
+    }
+}
+
+fn sound_dma_cycle_period(control: u8) -> u32 {
+    match control & 0x03 {
+        0x00 => 768,
+        0x01 => 512,
+        0x02 => 256,
+        _ => 128,
     }
 }
 
@@ -917,6 +1298,8 @@ struct Rtc {
     payload: [u8; 7],
     payload_index: usize,
     payload_len: usize,
+    ready_delay_reads: u8,
+    invalid_command: bool,
 }
 
 impl Rtc {
@@ -926,6 +1309,8 @@ impl Rtc {
             payload: default_rtc_payload(),
             payload_index: 0,
             payload_len: 0,
+            ready_delay_reads: 0,
+            invalid_command: false,
         }
     }
 
@@ -934,41 +1319,73 @@ impl Rtc {
         self.payload = default_rtc_payload();
         self.payload_index = 0;
         self.payload_len = 0;
+        self.ready_delay_reads = 0;
+        self.invalid_command = false;
     }
 
-    fn write_command(&mut self, value: u8) {
+    fn write_command(&mut self, value: u8, initial_payload: u8) {
         self.command = value & RTC_COMMAND_MASK;
-        self.payload_index = 0;
-        self.payload_len = match self.command {
-            RTC_WRITE_DATETIME_COMMAND | RTC_READ_DATETIME_COMMAND => self.payload.len(),
-            _ => 0,
+        self.payload_len = rtc_command_length(self.command);
+        self.invalid_command = !matches!(self.command, 0x10..=0x1B);
+        if self.command == RTC_WRITE_DATETIME_COMMAND && self.payload_len > 0 {
+            self.payload[0] = initial_payload;
+        }
+        self.payload_index = if self.is_write_command() {
+            self.payload_len.min(1)
+        } else {
+            0
         };
+        self.ready_delay_reads = RTC_READY_DELAY_READS;
     }
 
     fn write_payload(&mut self, value: u8) {
-        if self.command != RTC_WRITE_DATETIME_COMMAND || self.payload_index >= self.payload_len {
+        if !self.is_write_command() || self.payload_index >= self.payload_len {
             return;
         }
-        self.payload[self.payload_index] = value;
+        if self.command == RTC_WRITE_DATETIME_COMMAND {
+            self.payload[self.payload_index] = value;
+        }
         self.payload_index += 1;
     }
 
-    fn read_status(&self) -> u8 {
-        self.peek_status()
+    fn read_status(&mut self) -> u8 {
+        let status = self.peek_status();
+        if self.ready_delay_reads > 0 {
+            self.ready_delay_reads -= 1;
+        }
+        status
     }
 
     fn peek_status(&self) -> u8 {
-        self.command | RTC_READY
+        if self.invalid_command {
+            return RTC_ACTIVE;
+        }
+        if self.ready_delay_reads > 0 {
+            return RTC_ACTIVE;
+        }
+
+        let remaining = self.payload_len.saturating_sub(self.payload_index);
+        if self.is_write_command() {
+            RTC_READY | (u8::from(remaining > 0) * RTC_ACTIVE)
+        } else if remaining == 0 {
+            0
+        } else {
+            RTC_READY | (u8::from(remaining > 1) * RTC_ACTIVE)
+        }
     }
 
     fn read_payload(&mut self) -> u8 {
-        if self.command == RTC_READ_DATETIME_COMMAND && self.payload_index < self.payload_len {
-            let value = self.payload[self.payload_index];
-            self.payload_index += 1;
-            value
-        } else {
-            RTC_READY
+        if !self.is_read_command() || self.payload_index >= self.payload_len {
+            return RTC_READY;
         }
+
+        let value = if self.command == RTC_READ_DATETIME_COMMAND {
+            self.payload[self.payload_index]
+        } else {
+            0
+        };
+        self.payload_index += 1;
+        value
     }
 
     fn peek_payload(&self) -> u8 {
@@ -977,6 +1394,24 @@ impl Rtc {
         } else {
             RTC_READY
         }
+    }
+
+    fn is_read_command(&self) -> bool {
+        self.command & 1 != 0 && !self.invalid_command
+    }
+
+    fn is_write_command(&self) -> bool {
+        self.command & 1 == 0 && !self.invalid_command
+    }
+}
+
+fn rtc_command_length(command: u8) -> usize {
+    match command {
+        0x10..=0x13 => 1,
+        0x14..=0x15 => 7,
+        0x16..=0x17 => 3,
+        0x18..=0x1B => 2,
+        _ => 0,
     }
 }
 
@@ -1087,7 +1522,10 @@ mod tests {
         assert_eq!(bus.io_read8(LCD_VTOTAL_PORT), 0x9E);
         assert_eq!(bus.io_read8(0x0060), 0x0A);
         assert_eq!(bus.io_read8(0x009E), 0x03);
-        assert_eq!(bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT), 0x80);
+        assert_eq!(
+            bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT),
+            EEPROM_STATUS_READY
+        );
         assert_eq!(bus.io_read8(KEYPAD_PORT), 0x40);
         assert_eq!(bus.io_read8(IRQ_STATUS_PORT), 0x00);
         assert_eq!(bus.io_peek8(IRQ_ACK_PORT), 0x00);
@@ -1135,6 +1573,24 @@ mod tests {
         bus.io_write8(SERIAL_CONTROL_PORT, 0xC4);
 
         assert_eq!(bus.io_read8(SERIAL_CONTROL_PORT), 0xC4);
+    }
+
+    #[test]
+    fn serial_tx_interrupt_is_level_sensitive_to_uart_and_irq_enable() {
+        let mut bus = Bus::new(minimal_cart());
+
+        bus.io_write8(SERIAL_CONTROL_PORT, 0x80);
+        assert_eq!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_TX, 0);
+
+        bus.io_write8(IRQ_ENABLE_PORT, IRQ_SERIAL_TX);
+        assert_ne!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_TX, 0);
+
+        bus.io_write8(IRQ_ACK_PORT, IRQ_SERIAL_TX);
+        assert_ne!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_TX, 0);
+
+        bus.io_write8(SERIAL_CONTROL_PORT, 0x00);
+        bus.io_write8(IRQ_ACK_PORT, IRQ_SERIAL_TX);
+        assert_eq!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_TX, 0);
     }
 
     #[test]
@@ -1312,15 +1768,57 @@ mod tests {
 
         bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x20);
 
-        assert_eq!(bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT) & 0x02, 0x02);
+        assert_eq!(bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT) & 0x7E, 0x02);
 
         bus.io_write8(INTERNAL_EEPROM_DATA_LO_PORT, 0x00);
         bus.io_write8(INTERNAL_EEPROM_DATA_HI_PORT, 0x00);
         bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x10);
 
+        assert_eq!(bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT) & 0x01, 0x00);
         assert_eq!(bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT) & 0x01, 0x01);
         assert_eq!(bus.io_read8(INTERNAL_EEPROM_DATA_LO_PORT), 0x34);
         assert_eq!(bus.io_read8(INTERNAL_EEPROM_DATA_HI_PORT), 0x12);
+    }
+
+    #[test]
+    fn internal_eeprom_lock_unlock_and_protect_affect_writes() {
+        let mut bus = Bus::new(minimal_cart());
+
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0100);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x40);
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0140);
+        bus.io_write16(INTERNAL_EEPROM_DATA_LO_PORT, 0x1234);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x20);
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0180);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x10);
+        bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT);
+        bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT);
+        assert_ne!(bus.io_read16(INTERNAL_EEPROM_DATA_LO_PORT), 0x1234);
+
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0130);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x40);
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0140);
+        bus.io_write16(INTERNAL_EEPROM_DATA_LO_PORT, 0x1234);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x20);
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0180);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x10);
+        bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT);
+        bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT);
+        assert_eq!(bus.io_read16(INTERNAL_EEPROM_DATA_LO_PORT), 0x1234);
+
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, EEPROM_STATUS_PROTECTED);
+        assert_ne!(
+            bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT) & EEPROM_STATUS_PROTECTED,
+            0
+        );
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x0170);
+        bus.io_write16(INTERNAL_EEPROM_DATA_LO_PORT, 0x5678);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x20);
+        bus.io_write16(INTERNAL_EEPROM_ADDR_LO_PORT, 0x01B0);
+        bus.io_write8(INTERNAL_EEPROM_COMMAND_PORT, 0x10);
+        bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT);
+        bus.io_read8(INTERNAL_EEPROM_COMMAND_PORT);
+        assert_ne!(bus.io_read16(INTERNAL_EEPROM_DATA_LO_PORT), 0x5678);
     }
 
     #[test]
@@ -1330,6 +1828,30 @@ mod tests {
 
         assert_eq!(mono.io_read8(SYSTEM_CONTROL_PORT) & 0x82, 0x80);
         assert_eq!(color.io_read8(SYSTEM_CONTROL_PORT) & 0x82, 0x82);
+    }
+
+    #[test]
+    fn mono_palette_registers_mask_to_hardware_writable_bits() {
+        let mut bus = Bus::new(minimal_cart());
+
+        bus.io_write16(0x20, 0xFFFF);
+        bus.io_write16(0x28, 0xFFFF);
+        bus.io_write16(0x30, 0x4321);
+        bus.io_write16(0x38, 0x4321);
+
+        assert_eq!(bus.io_read16(0x20), 0x7777);
+        assert_eq!(bus.io_read16(0x28), 0x7770);
+        assert_eq!(bus.io_read16(0x30), 0x4321);
+        assert_eq!(bus.io_read16(0x38), 0x4320);
+    }
+
+    #[test]
+    fn color_model_keeps_mono_palette_io_byte_writes_unmasked() {
+        let mut bus = Bus::new(color_cart());
+
+        bus.io_write16(0x28, 0xFFFF);
+
+        assert_eq!(bus.io_read16(0x28), 0xFFFF);
     }
 
     #[test]
@@ -1359,16 +1881,88 @@ mod tests {
     }
 
     #[test]
+    fn dma_registers_mask_alignment_and_source_high_word() {
+        let mut bus = Bus::new(color_cart());
+
+        bus.io_write16(DMA_SOURCE_LO_PORT, 0xB001);
+        bus.io_write16(DMA_SOURCE_SEGMENT_PORT, 0xFFFF);
+        bus.io_write16(DMA_DESTINATION_LO_PORT, 0x7001);
+        bus.io_write16(DMA_LENGTH_LO_PORT, 0xFFFF);
+
+        assert_eq!(bus.io_read16(DMA_SOURCE_LO_PORT), 0xB000);
+        assert_eq!(bus.io_read16(DMA_SOURCE_SEGMENT_PORT), 0x000F);
+        assert_eq!(bus.io_read16(DMA_DESTINATION_LO_PORT), 0x7000);
+        assert_eq!(bus.io_read16(DMA_LENGTH_LO_PORT), 0xFFFE);
+    }
+
+    #[test]
+    fn dma_rejects_sram_and_slow_rom_sources_without_consuming_length() {
+        let mut bus = Bus::new(color_cart());
+
+        bus.io_write16(DMA_SOURCE_SEGMENT_PORT, 0x0001);
+        bus.io_write16(DMA_SOURCE_LO_PORT, 0x0000);
+        bus.io_write16(DMA_DESTINATION_LO_PORT, 0x7000);
+        bus.io_write16(DMA_LENGTH_LO_PORT, 0x1000);
+        bus.io_write8(DMA_CONTROL_PORT, 0x80);
+        assert_eq!(bus.io_read16(DMA_LENGTH_LO_PORT), 0x1000);
+
+        bus.io_write16(DMA_SOURCE_SEGMENT_PORT, 0x0008);
+        bus.io_write16(DMA_SOURCE_LO_PORT, 0x0000);
+        bus.io_write16(DMA_DESTINATION_LO_PORT, 0x7000);
+        bus.io_write16(DMA_LENGTH_LO_PORT, 0x1000);
+        let slow_rom_control = bus.io_read8(SYSTEM_CONTROL_PORT) | SYSTEM_CTRL1_ROM_WAIT;
+        bus.io_write8(SYSTEM_CONTROL_PORT, slow_rom_control);
+        bus.io_write8(DMA_CONTROL_PORT, 0x80);
+        assert_eq!(bus.io_read16(DMA_LENGTH_LO_PORT), 0x1000);
+
+        let fast_rom_control = bus.io_read8(SYSTEM_CONTROL_PORT) & !SYSTEM_CTRL1_ROM_WAIT;
+        bus.io_write8(SYSTEM_CONTROL_PORT, fast_rom_control);
+        bus.io_write8(DMA_CONTROL_PORT, 0x80);
+        assert_eq!(bus.io_read16(DMA_LENGTH_LO_PORT), 0x0000);
+    }
+
+    #[test]
+    fn sound_dma_registers_are_twenty_bit_and_transfer_to_channel_2_volume() {
+        let mut bus = Bus::new(color_cart());
+
+        bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x5555);
+        bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x5555);
+        bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0xFFFF);
+        bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0xFFFF);
+
+        assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_LO_PORT), 0x5555);
+        assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_SEGMENT_PORT), 0x000F);
+        assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x5555);
+        assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_SEGMENT_PORT), 0x000F);
+
+        bus.write8(0x1234, 0x5A);
+        bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x1234);
+        bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0x0000);
+        bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0001);
+        bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+        bus.io_write8(SOUND_DMA_CONTROL_PORT, SOUND_DMA_ENABLE | 0x03);
+        bus.step_cycles(128);
+
+        assert_eq!(bus.io_read8(SOUND_VOLUME_CHANNEL2_PORT), 0x5A);
+        assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_LO_PORT), 0x1235);
+        assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0000);
+        assert_eq!(bus.io_read8(SOUND_DMA_CONTROL_PORT), 0x03);
+    }
+
+    #[test]
     fn cartridge_eeprom_ports_read_back_written_word() {
         let mut bus = Bus::new(eeprom_cart(0x10));
+        bus.io_write16(CART_EEPROM_COMMAND_LO_PORT, 0x0130);
+        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x40);
+
         let write_command = 0x0100 | 0x0040 | 3;
         bus.io_write16(CART_EEPROM_COMMAND_LO_PORT, write_command);
         bus.io_write16(CART_EEPROM_DATA_LO_PORT, 0x1234);
-        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x02);
+        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x20);
 
         let read_command = 0x0100 | 0x0080 | 3;
         bus.io_write16(CART_EEPROM_COMMAND_LO_PORT, read_command);
-        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x01);
+        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x10);
 
         assert_eq!(bus.io_read16(CART_EEPROM_DATA_LO_PORT), 0x1234);
         assert_eq!(
@@ -1381,19 +1975,22 @@ mod tests {
     #[test]
     fn cartridge_eeprom_16kbit_command_uses_extended_address() {
         let mut bus = Bus::new(eeprom_cart(0x20));
+        bus.io_write16(CART_EEPROM_COMMAND_LO_PORT, 0x1300);
+        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x40);
+
         let address = 0x02A5;
         bus.io_write16(
             CART_EEPROM_COMMAND_LO_PORT,
             0x1000 | 0x0400 | address as u16,
         );
         bus.io_write16(CART_EEPROM_DATA_LO_PORT, 0xBEEF);
-        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x02);
+        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x20);
 
         bus.io_write16(
             CART_EEPROM_COMMAND_LO_PORT,
             0x1000 | 0x0800 | address as u16,
         );
-        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x01);
+        bus.io_write8(CART_EEPROM_CONTROL_STATUS_LO_PORT, 0x10);
 
         assert_eq!(bus.io_read16(CART_EEPROM_DATA_LO_PORT), 0xBEEF);
     }
@@ -1404,10 +2001,9 @@ mod tests {
 
         bus.io_write8(RTC_COMMAND_STATUS_PORT, 0x13);
 
-        assert_eq!(
-            bus.io_read8(RTC_COMMAND_STATUS_PORT),
-            RTC_READY | (0x13 & RTC_COMMAND_MASK)
-        );
+        assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
+        assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
+        assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_READY);
     }
 
     #[test]
@@ -1415,12 +2011,15 @@ mod tests {
         let mut bus = Bus::new(color_cart());
         let payload = [0x26, 0x08, 0x02, 0x00, 0x19, 0x45, 0x30];
 
+        bus.io_write8(RTC_PAYLOAD_PORT, payload[0]);
         bus.io_write8(RTC_COMMAND_STATUS_PORT, RTC_WRITE_DATETIME_COMMAND);
-        for value in payload {
+        for &value in &payload[1..] {
             bus.io_write8(RTC_PAYLOAD_PORT, value);
         }
 
         bus.io_write8(RTC_COMMAND_STATUS_PORT, RTC_READ_DATETIME_COMMAND);
+        assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
+        assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
         let mut read_back = [0; 7];
         for value in &mut read_back {
             *value = bus.io_read8(RTC_PAYLOAD_PORT);

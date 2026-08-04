@@ -20,14 +20,18 @@ const REG_SI: u8 = 6;
 const REG_DI: u8 = 7;
 
 const FLAG_CF: u16 = 0x0001;
-const FLAG_FIXED: u16 = 0x0002;
+const FLAG_FIXED: u16 = 0xF002;
 const FLAG_PF: u16 = 0x0004;
 const FLAG_AF: u16 = 0x0010;
 const FLAG_ZF: u16 = 0x0040;
 const FLAG_SF: u16 = 0x0080;
+const FLAG_BRK: u16 = 0x0100;
 const FLAG_IF: u16 = 0x0200;
 const FLAG_DF: u16 = 0x0400;
 const FLAG_OF: u16 = 0x0800;
+const FLAG_RESERVED_LOW: u16 = 0x0028;
+const FLAG_POPF_WRITABLE: u16 =
+    FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_BRK | FLAG_IF | FLAG_OF;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RepeatPrefix {
@@ -147,6 +151,9 @@ pub struct Cpu {
     pub last_fetch: Option<FetchedInstruction>,
     pub last_opcode: u8,
     pub last_trap: Option<CpuTrap>,
+    pub(crate) interrupt_shadow: u8,
+    pub(crate) brk_shadow: u8,
+    last_mul_overflow: bool,
 }
 
 impl Default for Cpu {
@@ -167,6 +174,9 @@ impl Cpu {
             last_fetch: None,
             last_opcode: 0,
             last_trap: None,
+            interrupt_shadow: 0,
+            brk_shadow: 0,
+            last_mul_overflow: false,
         };
         cpu.reset();
         cpu
@@ -183,6 +193,9 @@ impl Cpu {
         self.last_fetch = None;
         self.last_opcode = 0;
         self.last_trap = None;
+        self.interrupt_shadow = 0;
+        self.brk_shadow = 0;
+        self.last_mul_overflow = false;
     }
 
     pub fn apply_cartridge_start_state(&mut self, color: bool) {
@@ -217,12 +230,16 @@ impl Cpu {
         self.physical_address(SegmentRegister::Cs, self.ip)
     }
 
+    fn normalize_popped_flags(value: u16) -> u16 {
+        (value & FLAG_POPF_WRITABLE) | FLAG_FIXED
+    }
+
     pub fn step(&mut self, bus: &mut Bus) -> Option<FetchedInstruction> {
         if self.state == CpuState::Suspended {
             return None;
         }
 
-        if self.service_pending_interrupt(bus) {
+        if self.service_pending_interrupt_or_brk(bus) {
             return None;
         }
 
@@ -292,21 +309,28 @@ impl Cpu {
         Some(fetched)
     }
 
-    fn service_pending_interrupt(&mut self, bus: &mut Bus) -> bool {
+    fn service_pending_interrupt_or_brk(&mut self, bus: &mut Bus) -> bool {
         if self.state == CpuState::Halted && bus.has_pending_interrupt_signal() {
             self.state = CpuState::Running;
         }
 
-        if self.flags & FLAG_IF == 0 {
-            return false;
+        let hardware_suppressed = self.consume_interrupt_shadow();
+        let brk_suppressed = self.consume_brk_shadow();
+
+        if !brk_suppressed && self.flags & FLAG_BRK != 0 {
+            self.enter_interrupt(1, 32, bus);
+            return true;
         }
 
-        let Some(vector) = bus.pending_interrupt_vector() else {
-            return false;
-        };
+        if !hardware_suppressed
+            && self.flags & FLAG_IF != 0
+            && let Some(vector) = bus.pending_interrupt_vector()
+        {
+            self.enter_interrupt(vector, 32, bus);
+            return true;
+        }
 
-        self.enter_interrupt(vector, 32, bus);
-        true
+        false
     }
 
     pub(super) fn enter_interrupt(&mut self, vector: u8, cycles: u32, bus: &mut Bus) {
@@ -314,12 +338,57 @@ impl Cpu {
         self.push16(self.flags | FLAG_FIXED, bus);
         self.push16(self.segments[SegmentRegister::Cs.index()], bus);
         self.push16(self.ip, bus);
-        self.flags &= !FLAG_IF;
+        self.flags &= !(FLAG_BRK | FLAG_IF);
         self.flags |= FLAG_FIXED;
+        self.interrupt_shadow = 0;
+        self.brk_shadow = 0;
         let vector_addr = u32::from(vector) * 4;
         self.ip = bus.read16(vector_addr);
         self.segments[SegmentRegister::Cs.index()] = bus.read16(vector_addr + 2);
         self.add_cycles(bus, cycles);
+    }
+
+    pub(super) fn set_popped_flags(&mut self, value: u16) {
+        let previous = self.flags;
+        self.flags = Self::normalize_popped_flags(value);
+        self.defer_enabled_flag_transitions(previous);
+    }
+
+    pub(super) fn enable_interrupt_flag(&mut self) {
+        if self.flags & FLAG_IF == 0 {
+            self.interrupt_shadow = 1;
+        }
+        self.flags |= FLAG_IF | FLAG_FIXED;
+    }
+
+    pub(super) fn defer_after_ss_load(&mut self) {
+        self.interrupt_shadow = 1;
+        self.brk_shadow = 1;
+    }
+
+    fn defer_enabled_flag_transitions(&mut self, previous: u16) {
+        if previous & FLAG_IF == 0 && self.flags & FLAG_IF != 0 {
+            self.interrupt_shadow = 1;
+        }
+        if previous & FLAG_BRK == 0 && self.flags & FLAG_BRK != 0 {
+            self.brk_shadow = 1;
+        }
+    }
+
+    fn consume_interrupt_shadow(&mut self) -> bool {
+        if self.interrupt_shadow == 0 {
+            return false;
+        }
+        self.interrupt_shadow -= 1;
+        true
+    }
+
+    fn consume_brk_shadow(&mut self) -> bool {
+        if self.brk_shadow == 0 {
+            return false;
+        }
+        self.brk_shadow -= 1;
+        true
     }
 
     fn should_resume_repeated_string(

@@ -17,6 +17,39 @@ fn bus_with_code(code: &[u8]) -> Bus {
     Bus::new(Cartridge::load(&rom_with_reset_code(code)).unwrap())
 }
 
+fn cpu_at_test_code() -> Cpu {
+    let mut cpu = Cpu::new();
+    cpu.segments[SegmentRegister::Cs.index()] = 0xF000;
+    cpu.segments[SegmentRegister::Ss.index()] = 0x0000;
+    cpu.ip = 0x0000;
+    cpu.regs[REG_SP as usize] = 0x2000;
+    cpu.flags = FLAG_FIXED;
+    cpu
+}
+
+fn enable_serial_tx_irq(bus: &mut Bus, handler_ip: u16) {
+    bus.write16(0x20, handler_ip);
+    bus.write16(0x22, 0xF000);
+    bus.io_write8(0xB0, 0x08);
+    bus.io_write8(0xB3, 0x80);
+    bus.io_write8(0xB2, 0x01);
+}
+
+fn set_brk_vector(bus: &mut Bus, handler_ip: u16) {
+    bus.write16(0x04, handler_ip);
+    bus.write16(0x06, 0xF000);
+}
+
+fn assert_interrupt_service_pushes_ip(cpu: &mut Cpu, bus: &mut Bus, expected_ip: u16) {
+    assert!(cpu.step(bus).is_none());
+    assert_eq!(cpu.segments[SegmentRegister::Cs.index()], 0xF000);
+    assert_eq!(cpu.ip, 0x1234);
+    assert_eq!(
+        bus.read16(cpu.physical_address(SegmentRegister::Ss, cpu.get_reg16(REG_SP))),
+        expected_ip
+    );
+}
+
 #[test]
 fn reset_fetches_from_x86_reset_vector() {
     let mut cpu = Cpu::new();
@@ -30,6 +63,45 @@ fn reset_fetches_from_x86_reset_vector() {
     assert_eq!(fetched.opcode, 0x90);
     cpu.step(&mut bus);
     assert_eq!(cpu.state, CpuState::Halted);
+}
+
+#[test]
+fn wstiming_base_loop_primitives_use_v30mz_fast_path_cycles() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0x90, // nop
+        0x90, // nop
+        0x90, // nop
+        0xEC, // in al, dx
+        0x49, // dec cx
+        0x75, 0xF9, // jnz $-7
+        0xF4, // hlt
+    ]);
+    cpu.regs[REG_CX as usize] = 2;
+
+    let cycles = (0..12)
+        .map(|_| cpu.step(&mut bus).unwrap().cycles)
+        .collect::<Vec<_>>();
+
+    assert_eq!(cycles, [1, 1, 1, 5, 1, 5, 1, 1, 1, 5, 1, 3]);
+}
+
+#[test]
+fn taken_short_branch_to_odd_target_adds_one_cycle() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0x90, // align padding
+        0x90, // odd target
+        0x49, // dec cx
+        0x75, 0xFC, // jnz $-4
+        0xF4,
+    ]);
+    cpu.ip = 1;
+    cpu.regs[REG_CX as usize] = 2;
+
+    assert_eq!(cpu.step(&mut bus).unwrap().cycles, 1);
+    assert_eq!(cpu.step(&mut bus).unwrap().cycles, 1);
+    assert_eq!(cpu.step(&mut bus).unwrap().cycles, 6);
 }
 
 #[test]
@@ -74,6 +146,154 @@ fn hardware_interrupt_vectors_when_enabled() {
     assert_eq!(bus.read16(0x1FFC), 0x8000);
     assert_eq!(bus.read16(0x1FFE), FLAG_FIXED | FLAG_IF);
     assert_eq!(cpu.flags & FLAG_IF, 0);
+}
+
+#[test]
+fn sti_defers_pending_hardware_interrupt_for_one_instruction() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0xFB, // sti
+        0x90, // nop
+        0xF4, // hlt
+    ]);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x90);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0002);
+}
+
+#[test]
+fn repeated_sti_does_not_extend_pending_hardware_interrupt_deferral() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0xFB, // sti
+        0xFB, // sti
+        0xF4, // hlt
+    ]);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0002);
+}
+
+#[test]
+fn popf_defers_pending_hardware_interrupt_when_enabling_if() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0x9D, // popf
+        0x90, // nop
+        0xF4, // hlt
+    ]);
+    bus.write16(0x2000, FLAG_FIXED | FLAG_IF);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x9D);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x90);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0002);
+}
+
+#[test]
+fn iret_defers_pending_hardware_interrupt_when_enabling_if() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0xCF, // iret
+        0x90, // nop
+        0xF4, // hlt
+    ]);
+    bus.write16(0x2000, 0x0001);
+    bus.write16(0x2002, 0xF000);
+    bus.write16(0x2004, FLAG_FIXED | FLAG_IF);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xCF);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x90);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0002);
+}
+
+#[test]
+fn pop_ss_defers_pending_hardware_interrupt_for_following_instruction() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0xFB, // sti
+        0x17, // pop ss
+        0x90, // nop
+        0xF4, // hlt
+    ]);
+    bus.write16(0x2000, 0x0000);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x17);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x90);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0003);
+}
+
+#[test]
+fn mov_ss_defers_pending_hardware_interrupt_for_following_instruction() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0x31, 0xC0, // xor ax,ax
+        0xFB, // sti
+        0x8E, 0xD0, // mov ss,ax
+        0x90, // nop
+        0xF4, // hlt
+    ]);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x31);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x8E);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x90);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0006);
+}
+
+#[test]
+fn mov_from_ss_does_not_extend_pending_hardware_interrupt_deferral() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0xFB, // sti
+        0x8C, 0xD0, // mov ax,ss
+        0xF4, // hlt
+    ]);
+    enable_serial_tx_irq(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x8C);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0003);
+}
+
+#[test]
+fn brk_enabled_by_popf_is_deferred_for_one_instruction() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0x9D, // popf
+        0x90, // nop
+        0xF4, // hlt
+    ]);
+    bus.write16(0x2000, FLAG_FIXED | FLAG_BRK);
+    set_brk_vector(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x9D);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x90);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0002);
+}
+
+#[test]
+fn sti_does_not_extend_brk_deferral_from_popf() {
+    let mut cpu = cpu_at_test_code();
+    let mut bus = bus_with_code(&[
+        0x9D, // popf
+        0xFB, // sti
+        0xF4, // hlt
+    ]);
+    bus.write16(0x2000, FLAG_FIXED | FLAG_BRK);
+    set_brk_vector(&mut bus, 0x1234);
+
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0x9D);
+    assert_eq!(cpu.step(&mut bus).unwrap().opcode, 0xFB);
+    assert_interrupt_service_pushes_ip(&mut cpu, &mut bus, 0x0002);
 }
 
 #[test]
@@ -371,7 +591,7 @@ fn xlat_loads_al_from_bx_plus_al_and_honors_segment_override() {
 }
 
 #[test]
-fn aam_zero_base_traps_as_divide_error() {
+fn aam_zero_base_enters_divide_error_vector() {
     let mut cpu = Cpu::new();
     let mut bus = bus_with_code(&[
         0xB0, 0x19, // mov al,25
@@ -383,16 +603,10 @@ fn aam_zero_base_traps_as_divide_error() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.state, CpuState::Suspended);
-    assert_eq!(
-        cpu.last_trap,
-        Some(CpuTrap::DivideError {
-            cs: 0xF000,
-            ip: 0x0002,
-            opcode: 0xD4,
-            modrm: 0x00,
-        })
-    );
+    assert_eq!(cpu.state, CpuState::Running);
+    assert_eq!(cpu.segments[SegmentRegister::Cs.index()], 0x0000);
+    assert_eq!(cpu.ip, 0x0000);
+    assert_eq!(cpu.last_trap, None);
 }
 
 #[test]
@@ -467,7 +681,7 @@ fn rep_movsw_runs_one_iteration_per_step_until_count_exhausted() {
 }
 
 #[test]
-fn group_f7_divide_error_suspends_at_current_instruction() {
+fn group_f7_divide_error_enters_exception_vector() {
     let mut cpu = Cpu::new();
     let mut bus = bus_with_code(&[
         0xB8, 0x01, 0x00, // mov ax,0001
@@ -478,16 +692,10 @@ fn group_f7_divide_error_suspends_at_current_instruction() {
     for _ in 0..4 {
         cpu.step(&mut bus);
     }
-    assert_eq!(cpu.state, CpuState::Suspended);
-    assert_eq!(
-        cpu.last_trap,
-        Some(CpuTrap::DivideError {
-            cs: 0xF000,
-            ip: 0x0005,
-            opcode: 0xF7,
-            modrm: 0xF3,
-        })
-    );
+    assert_eq!(cpu.state, CpuState::Running);
+    assert_eq!(cpu.segments[SegmentRegister::Cs.index()], 0x0000);
+    assert_eq!(cpu.ip, 0x0000);
+    assert_eq!(cpu.last_trap, None);
 }
 
 #[test]

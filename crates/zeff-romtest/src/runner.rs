@@ -302,6 +302,18 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
             }
             screenshot_path = Some(path);
         }
+        PassKind::WsScreenText => {
+            let contains = test
+                .pass
+                .contains
+                .clone()
+                .context("ws_screen_text requires pass.contains")?;
+            zeff_args.push("--expect-ws-text".to_string());
+            zeff_args.push(contains);
+        }
+        PassKind::WsPassFailTiles => {
+            zeff_args.push("--expect-ws-pass-fail-tiles".to_string());
+        }
         PassKind::HeadlessExit => {}
         PassKind::ScreenshotPerceptual | PassKind::Manual => return Ok(None),
     }
@@ -494,6 +506,49 @@ mod tests {
                 .display_args
                 .windows(2)
                 .any(|pair| pair == ["--input".to_string(), "down@20-22".to_string()])
+        );
+    }
+
+    #[test]
+    fn ws_screen_text_invocations_forward_expected_text() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.core = Core::Ws;
+        test.rom.path = PathBuf::from("rom-tests/cache/test.ws");
+        test.pass = PassSpec {
+            kind: PassKind::WsScreenText,
+            contains: Some("00 ADD".to_string()),
+            screenshot_frame: None,
+            screenshot_sha256: None,
+        };
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(
+            invocation
+                .display_args
+                .windows(2)
+                .any(|pair| pair == ["--expect-ws-text".to_string(), "00 ADD".to_string()])
+        );
+    }
+
+    #[test]
+    fn ws_pass_fail_tile_invocations_forward_expected_flag() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.core = Core::Ws;
+        test.rom.path = PathBuf::from("rom-tests/cache/test.ws");
+        test.pass = PassSpec {
+            kind: PassKind::WsPassFailTiles,
+            contains: None,
+            screenshot_frame: None,
+            screenshot_sha256: None,
+        };
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(
+            invocation
+                .display_args
+                .contains(&"--expect-ws-pass-fail-tiles".to_string())
         );
     }
 }

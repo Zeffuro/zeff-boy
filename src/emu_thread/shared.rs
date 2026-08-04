@@ -193,7 +193,7 @@ impl EmuThread {
         if let Some(nes) = backend.nes_mut() {
             Self::apply_nes_debug_actions(&mut nes.emu, &input.debug_actions);
             nes.emu
-                .set_custom_palette(input.snapshot.render.nes_custom_palette);
+                .set_custom_palette(input.snapshot.render.nes_custom_palette.clone());
             nes.emu
                 .set_palette_mode(input.snapshot.render.nes_palette_mode);
             nes.emu

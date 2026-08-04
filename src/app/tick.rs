@@ -395,7 +395,7 @@ impl App {
             }
         }
 
-        self.nes_palette_cache.palette
+        self.nes_palette_cache.palette.clone()
     }
 
     fn nes_custom_palette_source(&self) -> Option<NesPaletteSource> {
@@ -403,13 +403,14 @@ impl App {
         {
             let path = self.settings.video.nes_custom_palette_path.trim();
             if path.is_empty() {
-                return None;
+                None
+            } else {
+                Some(NesPaletteSource {
+                    key: path.to_string(),
+                    label: path.to_string(),
+                    kind: NesPaletteSourceKind::Path(path.to_string()),
+                })
             }
-            return Some(NesPaletteSource {
-                key: path.to_string(),
-                label: path.to_string(),
-                kind: NesPaletteSourceKind::Path(path.to_string()),
-            });
         }
 
         #[cfg(target_arch = "wasm32")]

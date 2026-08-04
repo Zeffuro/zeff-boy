@@ -43,6 +43,8 @@ pub(crate) struct HeadlessMemoryDump {
 pub(crate) struct HeadlessOptions {
     pub(crate) max_frames: u64,
     pub(crate) expect_serial: Option<String>,
+    pub(crate) expect_ws_text: Option<String>,
+    pub(crate) expect_ws_pass_fail_tiles: bool,
     pub(crate) expect_test_pass: bool,
     pub(crate) trace_opcodes: bool,
     pub(crate) trace_opcode_limit: u64,
@@ -82,6 +84,8 @@ impl Default for HeadlessOptions {
         Self {
             max_frames: 600,
             expect_serial: None,
+            expect_ws_text: None,
+            expect_ws_pass_fail_tiles: false,
             expect_test_pass: false,
             trace_opcodes: false,
             trace_opcode_limit: 512,

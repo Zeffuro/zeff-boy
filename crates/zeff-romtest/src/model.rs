@@ -10,28 +10,97 @@ pub(crate) enum Core {
     Gb,
     Gba,
     Nes,
+    Ws,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CoreSpec {
+    pub(crate) core: Core,
+    pub(crate) code: &'static str,
+    pub(crate) rom_extensions: &'static [&'static str],
+}
+
+const GB_ROM_EXTENSIONS: [&str; 2] = ["gb", "gbc"];
+const GBA_ROM_EXTENSIONS: [&str; 1] = ["gba"];
+const NES_ROM_EXTENSIONS: [&str; 1] = ["nes"];
+const WS_ROM_EXTENSIONS: [&str; 2] = ["ws", "wsc"];
+const SUPPORTED_CORE_VALUES: &str = "gb|gba|nes|ws";
+
+const CORE_SPECS: &[CoreSpec] = &[
+    CoreSpec {
+        core: Core::Gb,
+        code: "gb",
+        rom_extensions: &GB_ROM_EXTENSIONS,
+    },
+    CoreSpec {
+        core: Core::Gba,
+        code: "gba",
+        rom_extensions: &GBA_ROM_EXTENSIONS,
+    },
+    CoreSpec {
+        core: Core::Nes,
+        code: "nes",
+        rom_extensions: &NES_ROM_EXTENSIONS,
+    },
+    CoreSpec {
+        core: Core::Ws,
+        code: "ws",
+        rom_extensions: &WS_ROM_EXTENSIONS,
+    },
+];
+
+impl Core {
+    pub(crate) fn specs() -> &'static [CoreSpec] {
+        CORE_SPECS
+    }
+
+    pub(crate) fn code(self) -> &'static str {
+        self.spec().code
+    }
+
+    pub(crate) fn supported_values() -> &'static str {
+        SUPPORTED_CORE_VALUES
+    }
+
+    pub(crate) fn from_extension(ext: &str) -> Option<Self> {
+        let ext = ext.trim_start_matches('.').to_ascii_lowercase();
+        Self::specs()
+            .iter()
+            .find(|spec| spec.rom_extensions.contains(&ext.as_str()))
+            .map(|spec| spec.core)
+    }
+
+    fn from_code(value: &str) -> Option<Self> {
+        Self::specs()
+            .iter()
+            .find(|spec| spec.code == value)
+            .map(|spec| spec.core)
+    }
+
+    fn spec(self) -> &'static CoreSpec {
+        Self::specs()
+            .iter()
+            .find(|spec| spec.core == self)
+            .expect("Core must have a CoreSpec")
+    }
 }
 
 impl std::str::FromStr for Core {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "gb" => Ok(Self::Gb),
-            "gba" => Ok(Self::Gba),
-            "nes" => Ok(Self::Nes),
-            _ => bail!("invalid core '{value}', expected gb|gba|nes"),
-        }
+        Self::from_code(value).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid core '{value}', expected {}",
+                Self::supported_values()
+            )
+        })
     }
 }
 
 impl fmt::Display for Core {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Gb => "gb",
-            Self::Gba => "gba",
-            Self::Nes => "nes",
-        })
+        f.write_str(self.code())
     }
 }
 
@@ -128,6 +197,8 @@ pub(crate) enum PassKind {
     GbaScreenText,
     GbaMgbaSuiteSram,
     GbaScreenshot,
+    WsScreenText,
+    WsPassFailTiles,
     ScreenshotExact,
     ScreenshotPerceptual,
     HeadlessExit,
@@ -145,6 +216,8 @@ impl fmt::Display for PassKind {
             Self::GbaScreenText => "gba_screen_text",
             Self::GbaMgbaSuiteSram => "gba_mgba_suite_sram",
             Self::GbaScreenshot => "gba_screenshot",
+            Self::WsScreenText => "ws_screen_text",
+            Self::WsPassFailTiles => "ws_pass_fail_tiles",
             Self::ScreenshotExact => "screenshot_exact",
             Self::ScreenshotPerceptual => "screenshot_perceptual",
             Self::HeadlessExit => "headless_exit",

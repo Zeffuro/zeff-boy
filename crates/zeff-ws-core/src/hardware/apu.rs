@@ -17,9 +17,29 @@ const OUTPUT_CONTROL_PORT: u16 = 0x0091;
 const NOISE_LFSR_LO_PORT: u16 = 0x0092;
 const NOISE_LFSR_HI_PORT: u16 = 0x0093;
 const VOICE_VOLUME_PORT: u16 = 0x0094;
-const HYPER_VOICE_SAMPLE_PORT: u16 = 0x0095;
+const SOUND_TEST_PORT: u16 = 0x0095;
+const CHANNEL_OUTPUT_RIGHT_PORT: u16 = 0x0096;
+const CHANNEL_OUTPUT_RIGHT_HI_PORT: u16 = 0x0097;
+const CHANNEL_OUTPUT_LEFT_PORT: u16 = 0x0098;
+const CHANNEL_OUTPUT_LEFT_HI_PORT: u16 = 0x0099;
+const CHANNEL_OUTPUT_LEFT_RIGHT_PORT: u16 = 0x009A;
+const CHANNEL_OUTPUT_LEFT_RIGHT_HI_PORT: u16 = 0x009B;
+const CHANNEL_OUTPUT_END_PORT: u16 = 0x009B;
 const SWEEP_CLOCK_PERIOD: i32 = 8192;
+const CHANNEL_2_VOICE: u8 = 0x20;
+const CHANNEL_3_SWEEP: u8 = 0x40;
+const CHANNEL_4_NOISE: u8 = 0x80;
+const NOISE_ENABLE: u8 = 0x10;
+const SOUND_TEST_FAST_SWEEP: u8 = 0x02;
+const SOUND_TEST_READ_MASK: u8 = 0xE3;
 const NOISE_TAPS: [u8; 8] = [14, 10, 13, 4, 8, 6, 9, 11];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputSide {
+    Left,
+    Right,
+    LeftRight,
+}
 
 #[derive(Clone, Debug)]
 pub struct Apu {
@@ -38,6 +58,7 @@ pub struct Apu {
     sample_pos: [u8; CHANNEL_COUNT],
     nreg: u16,
     hyper_voice_sample: u8,
+    sound_test: u8,
     hyper_voice_control: u8,
     hyper_voice_channel_control: u8,
     sample_rate: u32,
@@ -64,6 +85,7 @@ pub struct ApuDebugSnapshot {
     pub sample_pos: [u8; CHANNEL_COUNT],
     pub nreg: u16,
     pub hyper_voice_sample: u8,
+    pub sound_test: u8,
     pub hyper_voice_control: u8,
     pub hyper_voice_channel_control: u8,
     pub channel_mutes: [bool; CHANNEL_COUNT],
@@ -86,6 +108,7 @@ pub(crate) struct ApuSaveState {
     pub(crate) sample_pos: [u8; CHANNEL_COUNT],
     pub(crate) nreg: u16,
     pub(crate) hyper_voice_sample: u8,
+    pub(crate) sound_test: u8,
     pub(crate) hyper_voice_control: u8,
     pub(crate) hyper_voice_channel_control: u8,
     pub(crate) sample_cycle_accumulator: u32,
@@ -110,6 +133,7 @@ impl Apu {
             sample_pos: [0; CHANNEL_COUNT],
             nreg: 0,
             hyper_voice_sample: 0,
+            sound_test: 0,
             hyper_voice_control: 0,
             hyper_voice_channel_control: 0,
             sample_rate: sample_rate.max(1),
@@ -140,6 +164,7 @@ impl Apu {
         self.sample_pos = [0; CHANNEL_COUNT];
         self.nreg = 0;
         self.hyper_voice_sample = 0;
+        self.sound_test = 0;
         self.hyper_voice_control = 0;
         self.hyper_voice_channel_control = 0;
         self.sample_cycle_accumulator = 0;
@@ -150,7 +175,7 @@ impl Apu {
         matches!(
             port,
             HYPER_VOICE_CONTROL_PORT | HYPER_VOICE_CHANNEL_CONTROL_PORT | PERIOD_PORT_START
-                ..=HYPER_VOICE_SAMPLE_PORT
+                ..=CHANNEL_OUTPUT_END_PORT
         )
     }
 
@@ -158,10 +183,11 @@ impl Apu {
         match port {
             PERIOD_PORT_START..=PERIOD_PORT_END => {
                 let channel = usize::from((port - PERIOD_PORT_START) >> 1);
+                let period = self.read_period(channel);
                 if port & 1 == 0 {
-                    self.period[channel] as u8
+                    period as u8
                 } else {
-                    (self.period[channel] >> 8) as u8
+                    (period >> 8) as u8
                 }
             }
             VOLUME_PORT_START..=VOLUME_PORT_END => {
@@ -176,6 +202,16 @@ impl Apu {
             NOISE_LFSR_LO_PORT => self.nreg as u8,
             NOISE_LFSR_HI_PORT => (self.nreg >> 8) as u8,
             VOICE_VOLUME_PORT => self.voice_volume,
+            SOUND_TEST_PORT => self.sound_test,
+            CHANNEL_OUTPUT_RIGHT_PORT | CHANNEL_OUTPUT_RIGHT_HI_PORT => self
+                .channel_output_word(OutputSide::Right)
+                .to_le_bytes()[usize::from(port - CHANNEL_OUTPUT_RIGHT_PORT)],
+            CHANNEL_OUTPUT_LEFT_PORT | CHANNEL_OUTPUT_LEFT_HI_PORT => self
+                .channel_output_word(OutputSide::Left)
+                .to_le_bytes()[usize::from(port - CHANNEL_OUTPUT_LEFT_PORT)],
+            CHANNEL_OUTPUT_LEFT_RIGHT_PORT | CHANNEL_OUTPUT_LEFT_RIGHT_HI_PORT => self
+                .channel_output_word(OutputSide::LeftRight)
+                .to_le_bytes()[usize::from(port - CHANNEL_OUTPUT_LEFT_RIGHT_PORT)],
             HYPER_VOICE_CONTROL_PORT => self.hyper_voice_control,
             HYPER_VOICE_CHANNEL_CONTROL_PORT => self.hyper_voice_channel_control,
             _ => 0,
@@ -209,27 +245,22 @@ impl Apu {
                 self.noise_control = value & 0x17;
             }
             SAMPLE_RAM_POS_PORT => self.sample_ram_pos = value,
-            CONTROL_PORT => {
-                for channel in 0..CHANNEL_COUNT {
-                    let bit = 1 << channel;
-                    if self.control & bit == 0 && value & bit != 0 {
-                        self.period_counter[channel] = 1;
-                        self.sample_pos[channel] = 0x1F;
-                    }
-                }
-                self.control = value;
-            }
+            CONTROL_PORT => self.control = value,
             OUTPUT_CONTROL_PORT => self.output_control = value & 0x0F,
             NOISE_LFSR_LO_PORT => self.nreg = (self.nreg & 0x7F00) | u16::from(value),
             NOISE_LFSR_HI_PORT => {
                 self.nreg = (self.nreg & 0x00FF) | (u16::from(value & 0x7F) << 8);
             }
             VOICE_VOLUME_PORT => self.voice_volume = value & 0x0F,
+            SOUND_TEST_PORT => self.sound_test = value & SOUND_TEST_READ_MASK,
             HYPER_VOICE_CONTROL_PORT => self.hyper_voice_control = value,
             HYPER_VOICE_CHANNEL_CONTROL_PORT => self.hyper_voice_channel_control = value & 0x6F,
-            HYPER_VOICE_SAMPLE_PORT => self.hyper_voice_sample = value,
             _ => {}
         }
+    }
+
+    pub(crate) fn write_hyper_voice_sample(&mut self, value: u8) {
+        self.hyper_voice_sample = value;
     }
 
     pub fn step_cycles(&mut self, cycles: u32, ram: &[u8]) {
@@ -296,6 +327,7 @@ impl Apu {
             sample_pos: self.sample_pos,
             nreg: self.nreg,
             hyper_voice_sample: self.hyper_voice_sample,
+            sound_test: self.sound_test,
             hyper_voice_control: self.hyper_voice_control,
             hyper_voice_channel_control: self.hyper_voice_channel_control,
             channel_mutes: self.channel_mutes,
@@ -319,6 +351,7 @@ impl Apu {
             sample_pos: self.sample_pos,
             nreg: self.nreg,
             hyper_voice_sample: self.hyper_voice_sample,
+            sound_test: self.sound_test,
             hyper_voice_control: self.hyper_voice_control,
             hyper_voice_channel_control: self.hyper_voice_channel_control,
             sample_cycle_accumulator: self.sample_cycle_accumulator,
@@ -342,6 +375,7 @@ impl Apu {
         self.sample_pos = state.sample_pos.map(|pos| pos & 0x1F);
         self.nreg = state.nreg & 0x7FFF;
         self.hyper_voice_sample = state.hyper_voice_sample;
+        self.sound_test = state.sound_test & SOUND_TEST_READ_MASK;
         self.hyper_voice_control = state.hyper_voice_control;
         self.hyper_voice_channel_control = state.hyper_voice_channel_control & 0x6F;
         self.sample_cycle_accumulator = state.sample_cycle_accumulator % CPU_CLOCK_HZ;
@@ -352,7 +386,19 @@ impl Apu {
     fn clocks_until_next_sample(&self) -> u32 {
         let remaining = u64::from(CPU_CLOCK_HZ - self.sample_cycle_accumulator);
         let rate = u64::from(self.sample_rate);
-        ((remaining + rate - 1) / rate).min(u64::from(u32::MAX)) as u32
+        remaining.div_ceil(rate).min(u64::from(u32::MAX)) as u32
+    }
+
+    fn read_period(&self, channel: usize) -> u16 {
+        let period = self.period[channel];
+        if channel == 2
+            && self.sound_test & SOUND_TEST_FAST_SWEEP != 0
+            && self.control & CHANNEL_3_SWEEP != 0
+        {
+            period.wrapping_sub(1) & 0x07FF
+        } else {
+            period
+        }
     }
 
     fn advance_sample_clock(&mut self, cycles: u32, ram: &[u8]) {
@@ -371,17 +417,17 @@ impl Apu {
 
     fn advance_sound_generators(&mut self, cycles: u32) {
         for channel in 0..CHANNEL_COUNT {
-            if self.control & (1 << channel) == 0 {
+            let channel_enable = 1 << channel;
+            if self.control & channel_enable == 0 {
                 continue;
             }
 
-            if channel == 1 && self.control & 0x20 != 0 {
-                continue;
-            }
-
-            if channel == 2 && self.control & 0x40 != 0 && self.sweep_value != 0 {
+            if channel == 2 && self.control & CHANNEL_3_SWEEP != 0 && self.sweep_value != 0 {
                 self.advance_sweep_channel(cycles);
-            } else if channel == 3 && self.control & 0x80 != 0 && self.noise_control & 0x10 != 0 {
+            } else if channel == 3
+                && self.control & CHANNEL_4_NOISE != 0
+                && self.noise_control & NOISE_ENABLE != 0
+            {
                 self.advance_noise_channel(cycles);
             } else {
                 self.advance_wave_channel(channel, cycles);
@@ -401,6 +447,14 @@ impl Apu {
     }
 
     fn advance_sweep_channel(&mut self, cycles: u32) {
+        if self.sound_test & SOUND_TEST_FAST_SWEEP != 0 {
+            for _ in 0..cycles {
+                self.advance_wave_channel(2, 1);
+                self.tick_sweep();
+            }
+            return;
+        }
+
         let mut remaining = cycles;
         while remaining > 0 {
             let divider = self.sweep_8192_divider.max(1) as u32;
@@ -444,6 +498,51 @@ impl Apu {
         self.nreg = ((self.nreg << 1) | feedback) & 0x7FFF;
     }
 
+    fn channel_output_word(&self, side: OutputSide) -> u16 {
+        let left = self.channel_output_side(OutputSide::Left);
+        let right = self.channel_output_side(OutputSide::Right);
+        match side {
+            OutputSide::Left => u16::from(left),
+            OutputSide::Right => u16::from(right),
+            OutputSide::LeftRight => u16::from(left) + u16::from(right),
+        }
+    }
+
+    fn channel_output_side(&self, side: OutputSide) -> u8 {
+        let mut output = 0u16;
+        for channel in 0..CHANNEL_COUNT {
+            output += u16::from(self.channel_output(channel, side));
+        }
+        output.min(u16::from(u8::MAX)) as u8
+    }
+
+    fn channel_output(&self, channel: usize, side: OutputSide) -> u8 {
+        let side_volume = match side {
+            OutputSide::Left | OutputSide::LeftRight => self.volume[channel] >> 4,
+            OutputSide::Right => self.volume[channel] & 0x0F,
+        };
+        if side_volume == 0 {
+            return 0;
+        }
+
+        if channel == 1 && self.control & CHANNEL_2_VOICE != 0 {
+            return self.volume[channel];
+        }
+
+        if self.control & (1 << channel) == 0 {
+            return 0;
+        }
+
+        if channel == 3 && self.control & CHANNEL_4_NOISE != 0 {
+            if self.noise_control & NOISE_ENABLE == 0 {
+                return 0;
+            }
+            return if self.nreg & 1 != 0 { side_volume } else { 0 };
+        }
+
+        self.sample_pos[channel] & 0x0F
+    }
+
     fn mix_current_sample(&self, ram: &[u8]) -> (f32, f32) {
         let mut left = 0.0;
         let mut right = 0.0;
@@ -453,13 +552,17 @@ impl Apu {
                 continue;
             }
 
-            let (channel_left, channel_right) = if channel == 1 && self.control & 0x20 != 0 {
-                self.mix_voice_channel(channel)
-            } else if channel == 3 && self.control & 0x80 != 0 && self.noise_control & 0x10 != 0 {
-                self.mix_noise_channel(channel)
-            } else {
-                self.mix_wave_channel(channel, ram)
-            };
+            let (channel_left, channel_right) =
+                if channel == 1 && self.control & CHANNEL_2_VOICE != 0 {
+                    self.mix_voice_channel(channel)
+                } else if channel == 3
+                    && self.control & CHANNEL_4_NOISE != 0
+                    && self.noise_control & NOISE_ENABLE != 0
+                {
+                    self.mix_noise_channel(channel)
+                } else {
+                    self.mix_wave_channel(channel, ram)
+                };
             left += channel_left;
             right += channel_right;
         }

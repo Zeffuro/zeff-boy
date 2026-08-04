@@ -237,6 +237,21 @@ struct TilePixel {
     value: u8,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RenderContext<'a> {
+    ram: &'a [u8],
+    io: &'a [u8],
+    mode: VideoMode,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TileLayerParams {
+    map_base: usize,
+    scroll_x: u8,
+    scroll_y: u8,
+    window: WindowMode,
+}
+
 fn render_scanline(
     framebuffer: &mut [u8],
     y: usize,
@@ -245,7 +260,8 @@ fn render_scanline(
     mode: VideoMode,
     sprite_cache: &SpriteCache,
 ) {
-    let display_control = io.get(0x00).copied().unwrap_or(0);
+    let context = RenderContext { ram, io, mode };
+    let display_control = io.first().copied().unwrap_or(0);
     if io.get(0x14).copied().unwrap_or(0) & 0x01 == 0 {
         let color = if mode.color_vdp && mode.color_mode {
             [0, 0, 0, 0xFF]
@@ -259,16 +275,16 @@ fn render_scanline(
     fill_scanline(framebuffer, y, background_color(ram, io, mode));
 
     if display_control & 0x01 != 0 {
-        render_background(framebuffer, y, ram, io, mode);
+        render_background(framebuffer, y, context);
     }
     if display_control & 0x04 != 0 {
-        render_sprites(framebuffer, y, ram, io, mode, sprite_cache, false);
+        render_sprites(framebuffer, y, context, sprite_cache, false);
     }
     if display_control & 0x02 != 0 {
-        render_foreground(framebuffer, y, ram, io, mode);
+        render_foreground(framebuffer, y, context);
     }
     if display_control & 0x04 != 0 {
-        render_sprites(framebuffer, y, ram, io, mode, sprite_cache, true);
+        render_sprites(framebuffer, y, context, sprite_cache, true);
     }
 }
 
@@ -279,45 +295,45 @@ fn fill_scanline(framebuffer: &mut [u8], y: usize, color: [u8; 4]) {
     }
 }
 
-fn render_background(framebuffer: &mut [u8], y: usize, ram: &[u8], io: &[u8], mode: VideoMode) {
-    let map_base = background_map_base(io, mode);
-    let scroll_x = io.get(0x10).copied().unwrap_or(0);
-    let scroll_y = io.get(0x11).copied().unwrap_or(0);
+fn render_background(framebuffer: &mut [u8], y: usize, context: RenderContext<'_>) {
+    let map_base = background_map_base(context.io, context.mode);
+    let scroll_x = context.io.get(0x10).copied().unwrap_or(0);
+    let scroll_y = context.io.get(0x11).copied().unwrap_or(0);
     render_tile_layer(
         framebuffer,
         y,
-        ram,
-        io,
-        mode,
-        map_base,
-        scroll_x,
-        scroll_y,
-        WindowMode::All,
+        context,
+        TileLayerParams {
+            map_base,
+            scroll_x,
+            scroll_y,
+            window: WindowMode::All,
+        },
     );
 }
 
-fn render_foreground(framebuffer: &mut [u8], y: usize, ram: &[u8], io: &[u8], mode: VideoMode) {
-    let window_mode = match (io.get(0x00).copied().unwrap_or(0) >> 4) & 0x03 {
-        2 if line_inside_window(y, io, 0x08) => WindowMode::Inside(0x08),
+fn render_foreground(framebuffer: &mut [u8], y: usize, context: RenderContext<'_>) {
+    let window_mode = match (context.io.first().copied().unwrap_or(0) >> 4) & 0x03 {
+        2 if line_inside_window(y, context.io, 0x08) => WindowMode::Inside(0x08),
         2 => return,
-        3 if line_inside_window(y, io, 0x08) => WindowMode::Outside(0x08),
+        3 if line_inside_window(y, context.io, 0x08) => WindowMode::Outside(0x08),
         3 => WindowMode::All,
         1 => return,
         _ => WindowMode::All,
     };
-    let map_base = foreground_map_base(io, mode);
-    let scroll_x = io.get(0x12).copied().unwrap_or(0);
-    let scroll_y = io.get(0x13).copied().unwrap_or(0);
+    let map_base = foreground_map_base(context.io, context.mode);
+    let scroll_x = context.io.get(0x12).copied().unwrap_or(0);
+    let scroll_y = context.io.get(0x13).copied().unwrap_or(0);
     render_tile_layer(
         framebuffer,
         y,
-        ram,
-        io,
-        mode,
-        map_base,
-        scroll_x,
-        scroll_y,
-        window_mode,
+        context,
+        TileLayerParams {
+            map_base,
+            scroll_x,
+            scroll_y,
+            window: window_mode,
+        },
     );
 }
 
@@ -331,14 +347,16 @@ enum WindowMode {
 fn render_tile_layer(
     framebuffer: &mut [u8],
     y: usize,
-    ram: &[u8],
-    io: &[u8],
-    mode: VideoMode,
-    map_base: usize,
-    scroll_x: u8,
-    scroll_y: u8,
-    window: WindowMode,
+    context: RenderContext<'_>,
+    params: TileLayerParams,
 ) {
+    let RenderContext { ram, io, mode } = context;
+    let TileLayerParams {
+        map_base,
+        scroll_x,
+        scroll_y,
+        window,
+    } = params;
     let map_row = ((y.wrapping_add(usize::from(scroll_y))) & 0xF8) << 2;
     let map_mask = if mode.color_mode { 0x3FFF } else { 0x1FFF };
     let start_column = usize::from(scroll_x >> 3);
@@ -362,16 +380,7 @@ fn render_tile_layer(
             if x_offset >= SCREEN_WIDTH || !window_contains_x(window, x_offset, io) {
                 continue;
             }
-            draw_pixel(
-                framebuffer,
-                y,
-                x_offset,
-                ram,
-                io,
-                mode,
-                tile_palette,
-                pixel.value,
-            );
+            draw_pixel(framebuffer, y, x_offset, context, tile_palette, pixel.value);
         }
     }
 }
@@ -379,18 +388,17 @@ fn render_tile_layer(
 fn render_sprites(
     framebuffer: &mut [u8],
     y: usize,
-    ram: &[u8],
-    io: &[u8],
-    mode: VideoMode,
+    context: RenderContext<'_>,
     sprite_cache: &SpriteCache,
     front_priority: bool,
 ) {
+    let RenderContext { ram, io, mode } = context;
     let first = usize::from(sprite_cache.start);
     let count = usize::from(sprite_cache.count);
     if count == 0 {
         return;
     }
-    let window_enabled = io.get(0x00).copied().unwrap_or(0) & 0x08 != 0;
+    let window_enabled = io.first().copied().unwrap_or(0) & 0x08 != 0;
 
     for sprite in (first..first.saturating_add(count)).rev() {
         let entry = sprite * 4;
@@ -428,16 +436,7 @@ fn render_sprites(
             if window_enabled && !sprite_pixel_visible(x_offset, io, clips_inside_window) {
                 continue;
             }
-            draw_pixel(
-                framebuffer,
-                y,
-                x_offset,
-                ram,
-                io,
-                mode,
-                tile_palette,
-                pixel.value,
-            );
+            draw_pixel(framebuffer, y, x_offset, context, tile_palette, pixel.value);
         }
     }
 }
@@ -529,12 +528,11 @@ fn draw_pixel(
     framebuffer: &mut [u8],
     y: usize,
     x: usize,
-    ram: &[u8],
-    io: &[u8],
-    mode: VideoMode,
+    context: RenderContext<'_>,
     tile_palette: u8,
     value: u8,
 ) {
+    let RenderContext { ram, io, mode } = context;
     if mode.colors_16 {
         if value == 0 {
             return;

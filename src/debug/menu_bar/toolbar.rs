@@ -2,16 +2,28 @@ use super::MenuAction;
 use crate::emu_backend::ActiveSystem;
 use crate::settings::Settings;
 
+pub(super) struct ToolbarState<'a> {
+    pub(super) is_paused: bool,
+    pub(super) active_system: ActiveSystem,
+    pub(super) ws_display_rotated: bool,
+    pub(super) speed_mode_label: Option<&'a str>,
+    pub(super) active_save_slot: u8,
+}
+
 pub(super) fn draw(
     ui: &mut egui::Ui,
     actions: &mut Vec<MenuAction>,
     settings: &mut Settings,
-    is_paused: bool,
-    active_system: ActiveSystem,
-    ws_display_rotated: bool,
-    speed_mode_label: Option<&str>,
-    active_save_slot: u8,
+    state: ToolbarState<'_>,
 ) {
+    let ToolbarState {
+        is_paused,
+        active_system,
+        ws_display_rotated,
+        speed_mode_label,
+        active_save_slot,
+    } = state;
+
     ui.label(
         egui::RichText::new(format!("Slot {active_save_slot}"))
             .small()

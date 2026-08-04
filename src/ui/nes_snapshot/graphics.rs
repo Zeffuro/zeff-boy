@@ -36,7 +36,7 @@ pub(super) fn nes_graphics_snapshot(
         nametable_data[offset as usize] = bus.ppu_bus_read(addr);
     }
 
-    ConsoleGraphicsData::Nes(NesGraphicsData {
+    ConsoleGraphicsData::Nes(Box::new(NesGraphicsData {
         chr_data,
         nametable_data,
         oam,
@@ -46,5 +46,5 @@ pub(super) fn nes_graphics_snapshot(
         mirroring,
         scroll_t,
         fine_x,
-    })
+    }))
 }

@@ -4,12 +4,7 @@ use crate::app::SpeedMode;
 use crate::debug::CpuDebugSnapshot;
 
 pub(super) fn live_system_name(system: crate::emu_backend::ActiveSystem) -> &'static str {
-    match system {
-        crate::emu_backend::ActiveSystem::GameBoy => "gb",
-        crate::emu_backend::ActiveSystem::GameBoyAdvance => "gba",
-        crate::emu_backend::ActiveSystem::Nes => "nes",
-        crate::emu_backend::ActiveSystem::WonderSwan => "ws",
-    }
+    system.short_code()
 }
 
 pub(super) fn live_speed_mode_name(speed_mode: SpeedMode) -> &'static str {

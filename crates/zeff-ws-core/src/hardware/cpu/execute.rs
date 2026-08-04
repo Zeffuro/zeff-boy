@@ -18,14 +18,14 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::Add, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x05 => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::Add, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x06 => self.push_segment(SegmentRegister::Es, bus),
             0x07 => self.pop_segment(SegmentRegister::Es, bus),
@@ -38,16 +38,17 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::Or, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x0D => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::Or, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x0E => self.push_segment(SegmentRegister::Cs, bus),
+            0x0F => self.add_cycles(bus, 3),
             0x10 => self.alu_rm_reg8(AluOp::Adc, segment_override, bus),
             0x11 => self.alu_rm_reg16(AluOp::Adc, segment_override, bus),
             0x12 => self.alu_reg_rm8(AluOp::Adc, segment_override, bus),
@@ -57,14 +58,14 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::Adc, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x15 => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::Adc, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x16 => self.push_segment(SegmentRegister::Ss, bus),
             0x17 => self.pop_segment(SegmentRegister::Ss, bus),
@@ -77,14 +78,14 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::Sbb, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x1D => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::Sbb, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x1E => self.push_segment(SegmentRegister::Ds, bus),
             0x1F => self.pop_segment(SegmentRegister::Ds, bus),
@@ -97,14 +98,14 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::And, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x25 => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::And, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x27 => self.daa(bus),
             0x28 => self.alu_rm_reg8(AluOp::Sub, segment_override, bus),
@@ -116,14 +117,14 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::Sub, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x2D => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::Sub, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x2F => self.das(bus),
             0x30 => self.alu_rm_reg8(AluOp::Xor, segment_override, bus),
@@ -135,15 +136,16 @@ impl Cpu {
                 let lhs = self.get_reg8(REG_AX);
                 let result = self.alu8(AluOp::Xor, lhs, rhs);
                 self.set_reg8(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x35 => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 let result = self.alu16(AluOp::Xor, lhs, rhs);
                 self.set_reg16(REG_AX, result);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
+            0x37 => self.aaa(bus),
             0x38 => self.alu_rm_reg8(AluOp::Cmp, segment_override, bus),
             0x39 => self.alu_rm_reg16(AluOp::Cmp, segment_override, bus),
             0x3A => self.alu_reg_rm8(AluOp::Cmp, segment_override, bus),
@@ -152,30 +154,37 @@ impl Cpu {
                 let rhs = self.fetch8(bus);
                 let lhs = self.get_reg8(REG_AX);
                 self.alu8(AluOp::Cmp, lhs, rhs);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0x3D => {
                 let rhs = self.fetch16(bus);
                 let lhs = self.get_reg16(REG_AX);
                 self.alu16(AluOp::Cmp, lhs, rhs);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
+            0x3F => self.aas(bus),
             0x40..=0x47 => {
                 let reg = opcode - 0x40;
                 let value = self.get_reg16(reg).wrapping_add(1);
                 self.set_inc_dec_flags16(value, false);
                 self.set_reg16(reg, value);
-                self.add_cycles(bus, 3);
+                self.add_cycles(bus, 1);
             }
             0x48..=0x4F => {
                 let reg = opcode - 0x48;
                 let value = self.get_reg16(reg).wrapping_sub(1);
                 self.set_inc_dec_flags16(value, true);
                 self.set_reg16(reg, value);
-                self.add_cycles(bus, 3);
+                self.add_cycles(bus, 1);
             }
             0x50..=0x57 => {
-                self.push16(self.get_reg16(opcode - 0x50), bus);
+                let reg = opcode - 0x50;
+                let value = if reg == REG_SP {
+                    self.get_reg16(REG_SP).wrapping_sub(2)
+                } else {
+                    self.get_reg16(reg)
+                };
+                self.push16(value, bus);
                 self.add_cycles(bus, 1);
             }
             0x58..=0x5F => {
@@ -208,6 +217,8 @@ impl Cpu {
                 }
                 self.add_cycles(bus, 8);
             }
+            0x62 => self.bound_reg_mem16(segment_override, bus),
+            0x63..=0x67 => self.add_cycles(bus, 1),
             0x68 => {
                 let value = self.fetch16(bus);
                 self.push16(value, bus);
@@ -226,10 +237,11 @@ impl Cpu {
             0x6F => self.outs16(segment_override, repeat_prefix, bus),
             0x70..=0x7F => {
                 let rel = self.fetch8(bus) as i8;
-                if self.condition(opcode & 0x0F) {
+                let taken = self.condition(opcode & 0x0F);
+                if taken {
                     self.ip = self.ip.wrapping_add_signed(i16::from(rel));
                 }
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, if taken { 5 + u32::from(self.ip & 1) } else { 3 });
             }
             0x80 => self.alu_rm_imm8(false, segment_override, bus),
             0x81 => self.alu_rm_imm16(false, segment_override, bus),
@@ -247,7 +259,7 @@ impl Cpu {
             0x8D => self.lea_reg_m(segment_override, bus),
             0x8E => self.mov_sreg_rm(segment_override, bus),
             0x8F => self.pop_rm16(segment_override, bus),
-            0x90 => self.add_cycles(bus, 3),
+            0x90 => self.add_cycles(bus, 1),
             0x91..=0x97 => {
                 let reg = opcode - 0x90;
                 let ax = self.get_reg16(REG_AX);
@@ -259,7 +271,7 @@ impl Cpu {
             0x98 => {
                 let al = self.get_reg8(REG_AX) as i8 as i16 as u16;
                 self.set_reg16(REG_AX, al);
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 1);
             }
             0x99 => {
                 let dx = if self.get_reg16(REG_AX) & 0x8000 != 0 {
@@ -268,7 +280,7 @@ impl Cpu {
                     0
                 };
                 self.set_reg16(REG_DX, dx);
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 1);
             }
             0x9A => {
                 let ip = self.fetch16(bus);
@@ -285,13 +297,14 @@ impl Cpu {
                 self.add_cycles(bus, 8);
             }
             0x9D => {
-                self.flags = self.pop16(bus) | FLAG_FIXED;
+                let flags = self.pop16(bus);
+                self.set_popped_flags(flags);
                 self.add_cycles(bus, 8);
             }
             0x9E => {
                 let ah = u16::from(self.get_reg8(REG_AX | 0x04));
                 let mask = FLAG_SF | FLAG_ZF | FLAG_AF | FLAG_PF | FLAG_CF;
-                self.flags = (self.flags & !mask) | (ah & mask) | FLAG_FIXED;
+                self.flags = (self.flags & !(mask | FLAG_RESERVED_LOW)) | (ah & mask) | FLAG_FIXED;
                 self.add_cycles(bus, 2);
             }
             0x9F => {
@@ -309,12 +322,12 @@ impl Cpu {
             0xA8 => {
                 let rhs = self.fetch8(bus);
                 self.alu8(AluOp::And, self.get_reg8(REG_AX), rhs);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0xA9 => {
                 let rhs = self.fetch16(bus);
                 self.alu16(AluOp::And, self.get_reg16(REG_AX), rhs);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0xAA => self.stos8(repeat_prefix, bus),
             0xAB => self.stos16(repeat_prefix, bus),
@@ -326,13 +339,13 @@ impl Cpu {
                 let offset = self.fetch16(bus);
                 let value = bus.read8(self.overridden_address(segment_override, offset));
                 self.set_reg8(REG_AX, value);
-                self.add_cycles(bus, 10);
+                self.add_cycles(bus, 1);
             }
             0xA1 => {
                 let offset = self.fetch16(bus);
                 let value = bus.read16(self.overridden_address(segment_override, offset));
                 self.set_reg16(REG_AX, value);
-                self.add_cycles(bus, 10);
+                self.add_cycles(bus, 1);
             }
             0xA2 => {
                 let offset = self.fetch16(bus);
@@ -340,7 +353,7 @@ impl Cpu {
                     self.overridden_address(segment_override, offset),
                     self.get_reg8(REG_AX),
                 );
-                self.add_cycles(bus, 10);
+                self.add_cycles(bus, 1);
             }
             0xA3 => {
                 let offset = self.fetch16(bus);
@@ -348,17 +361,17 @@ impl Cpu {
                     self.overridden_address(segment_override, offset),
                     self.get_reg16(REG_AX),
                 );
-                self.add_cycles(bus, 10);
+                self.add_cycles(bus, 1);
             }
             0xB0..=0xB7 => {
                 let value = self.fetch8(bus);
                 self.set_reg8(opcode - 0xB0, value);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0xB8..=0xBF => {
                 let value = self.fetch16(bus);
                 self.set_reg16(opcode - 0xB8, value);
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, 1);
             }
             0xC2 => {
                 let add = self.fetch16(bus);
@@ -370,13 +383,23 @@ impl Cpu {
                 let modrm = self.fetch_modrm(bus);
                 let operand = self.decode_rm_operand(modrm, segment_override, bus);
                 let count = self.fetch8(bus);
-                self.shift_rotate_operand8(modrm, operand, count, bus);
+                if modrm.byte == 0xF0 {
+                    self.set_reg8(REG_AX, 0);
+                    self.add_cycles(bus, 4);
+                } else {
+                    self.shift_rotate_operand8(modrm, operand, count, bus);
+                }
             }
             0xC1 => {
                 let modrm = self.fetch_modrm(bus);
                 let operand = self.decode_rm_operand(modrm, segment_override, bus);
                 let count = self.fetch8(bus);
-                self.shift_rotate_operand16(modrm, operand, count, bus);
+                if modrm.byte == 0xF0 {
+                    self.set_reg16(REG_AX, 0);
+                    self.add_cycles(bus, 4);
+                } else {
+                    self.shift_rotate_operand16(modrm, operand, count, bus);
+                }
             }
             0xC3 => {
                 self.ip = self.pop16(bus);
@@ -416,11 +439,19 @@ impl Cpu {
                 let vector = self.fetch8(bus);
                 self.software_interrupt(vector, 10, bus);
             }
+            0xCE => {
+                if self.flags & FLAG_OF != 0 {
+                    self.software_interrupt(4, 10, bus);
+                } else {
+                    self.add_cycles(bus, 3);
+                }
+            }
             0xCF => {
                 self.ip = self.pop16(bus);
                 let cs = self.pop16(bus);
                 self.segments[SegmentRegister::Cs.index()] = cs;
-                self.flags = self.pop16(bus) | FLAG_FIXED;
+                let flags = self.pop16(bus);
+                self.set_popped_flags(flags);
                 self.add_cycles(bus, 10);
             }
             0xD0 => {
@@ -443,22 +474,26 @@ impl Cpu {
                 let base = self.fetch8(bus);
                 let al = self.get_reg8(REG_AX);
                 if base == 0 {
-                    self.divide_error(0xD4, base);
+                    self.set_divide_error_flags_from_last_mul(al & 0xC0 == 0);
+                    self.divide_error(bus);
                     return;
                 }
                 self.set_reg8(REG_AX + 4, al / base);
                 self.set_reg8(REG_AX, al % base);
                 self.set_logic_flags8(self.get_reg8(REG_AX));
+                self.flags &= !(FLAG_CF | FLAG_AF | FLAG_OF);
+                self.flags |= FLAG_FIXED;
                 self.add_cycles(bus, 16);
             }
             0xD5 => {
                 let base = self.fetch8(bus);
                 let al = self.get_reg8(REG_AX);
                 let ah = self.get_reg8(REG_AX + 4);
-                let result = ah.wrapping_mul(base).wrapping_add(al);
+                let product = ah.wrapping_mul(base);
+                let result = product.wrapping_add(al);
                 self.set_reg8(REG_AX, result);
                 self.set_reg8(REG_AX + 4, 0);
-                self.set_logic_flags8(result);
+                self.set_add_flags8(product, al, result);
                 self.add_cycles(bus, 4);
             }
             0xD6 => {
@@ -466,37 +501,42 @@ impl Cpu {
                 self.add_cycles(bus, 2);
             }
             0xD7 => self.xlat(segment_override, bus),
+            0xD8..=0xDF => {
+                let _ = self.fetch8(bus);
+                self.add_cycles(bus, 3);
+            }
             0xE0 => self.loop_rel8(false, bus),
             0xE1 => self.loop_rel8(true, bus),
             0xE2 => self.loop_rel8_any(bus),
             0xE3 => {
                 let rel = self.fetch8(bus) as i8;
-                if self.get_reg16(REG_CX) == 0 {
+                let taken = self.get_reg16(REG_CX) == 0;
+                if taken {
                     self.ip = self.ip.wrapping_add_signed(i16::from(rel));
                 }
-                self.add_cycles(bus, 4);
+                self.add_cycles(bus, if taken { 4 + u32::from(self.ip & 1) } else { 3 });
             }
             0xE4 => {
                 let port = u16::from(self.fetch8(bus));
                 let value = bus.io_read8(port);
                 self.set_reg8(REG_AX, value);
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 7);
             }
             0xE5 => {
                 let port = u16::from(self.fetch8(bus));
                 let value = bus.io_read16(port);
                 self.set_reg16(REG_AX, value);
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 7);
             }
             0xE6 => {
                 let port = u16::from(self.fetch8(bus));
                 bus.io_write8(port, self.get_reg8(REG_AX));
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 7);
             }
             0xE7 => {
                 let port = u16::from(self.fetch8(bus));
                 bus.io_write16(port, self.get_reg16(REG_AX));
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 7);
             }
             0xE8 => {
                 let rel = self.fetch16(bus) as i16;
@@ -524,20 +564,20 @@ impl Cpu {
             0xEC => {
                 let value = bus.io_read8(self.get_reg16(REG_DX));
                 self.set_reg8(REG_AX, value);
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 5);
             }
             0xED => {
                 let value = bus.io_read16(self.get_reg16(REG_DX));
                 self.set_reg16(REG_AX, value);
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 5);
             }
             0xEE => {
                 bus.io_write8(self.get_reg16(REG_DX), self.get_reg8(REG_AX));
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 5);
             }
             0xEF => {
                 bus.io_write16(self.get_reg16(REG_DX), self.get_reg16(REG_AX));
-                self.add_cycles(bus, 8);
+                self.add_cycles(bus, 5);
             }
             0xF4 => {
                 self.state = CpuState::Halted;
@@ -548,34 +588,34 @@ impl Cpu {
             0xF5 => {
                 self.flags ^= FLAG_CF;
                 self.flags |= FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 4);
             }
             0xF8 => {
                 self.flags &= !FLAG_CF;
                 self.flags |= FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 4);
             }
             0xF9 => {
                 self.flags |= FLAG_CF | FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 4);
             }
             0xFA => {
                 self.flags &= !FLAG_IF;
                 self.flags |= FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 4);
             }
             0xFB => {
-                self.flags |= FLAG_IF | FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.enable_interrupt_flag();
+                self.add_cycles(bus, 4);
             }
             0xFC => {
                 self.flags &= !FLAG_DF;
                 self.flags |= FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 4);
             }
             0xFD => {
                 self.flags |= FLAG_DF | FLAG_FIXED;
-                self.add_cycles(bus, 2);
+                self.add_cycles(bus, 4);
             }
             0xFE => self.group_fe(segment_override, bus),
             0xFF => self.group_ff(segment_override, bus),

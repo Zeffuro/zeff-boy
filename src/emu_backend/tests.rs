@@ -1,4 +1,5 @@
-use super::{ActiveSystem, EmuBackend};
+use super::{ActiveSystem, EmuBackend, ROM_EXTENSIONS, system_specs};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 fn build_gb_test_rom() -> Vec<u8> {
@@ -158,6 +159,26 @@ fn active_system_detects_supported_rom_extensions() {
         Some(ActiveSystem::WonderSwan)
     );
     assert_eq!(ActiveSystem::from_path(&PathBuf::from("game.7z")), None);
+}
+
+#[test]
+fn system_specs_cover_supported_rom_extensions() {
+    let from_specs = system_specs()
+        .iter()
+        .flat_map(|spec| spec.rom_extensions.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let from_constant = ROM_EXTENSIONS.iter().copied().collect::<BTreeSet<_>>();
+
+    assert_eq!(from_specs, from_constant);
+    for spec in system_specs() {
+        assert_eq!(
+            ActiveSystem::from_extension(spec.short_code),
+            Some(spec.system)
+        );
+        assert!(!spec.storage_subdir.is_empty());
+        assert!(!spec.state_extension.is_empty());
+        assert!(!spec.file_dialog_filter_name.is_empty());
+    }
 }
 
 #[test]

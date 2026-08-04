@@ -136,11 +136,13 @@ pub(crate) fn draw_menu_bar(
                                 ui,
                                 &mut actions,
                                 settings,
-                                mb.is_paused,
-                                mb.active_system,
-                                mb.ws_display_rotated,
-                                mb.speed_mode_label,
-                                mb.active_save_slot,
+                                toolbar::ToolbarState {
+                                    is_paused: mb.is_paused,
+                                    active_system: mb.active_system,
+                                    ws_display_rotated: mb.ws_display_rotated,
+                                    speed_mode_label: mb.speed_mode_label,
+                                    active_save_slot: mb.active_save_slot,
+                                },
                             );
                         });
                     });

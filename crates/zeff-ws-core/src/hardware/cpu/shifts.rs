@@ -19,8 +19,15 @@ impl Cpu {
         count: u8,
         bus: &mut Bus,
     ) {
-        let count = count & 0x1F;
+        let raw_count = count;
+        let count = raw_count & 0x1F;
         if count == 0 {
+            let value = self.read_operand8(operand, bus);
+            if modrm.reg <= 3 {
+                self.update_masked_zero_rotate_flags8(modrm.reg, value);
+            } else {
+                self.update_masked_zero_shift_flags8(modrm.reg, value);
+            }
             self.add_cycles(bus, 2);
             return;
         }
@@ -51,8 +58,15 @@ impl Cpu {
         count: u8,
         bus: &mut Bus,
     ) {
-        let count = count & 0x1F;
+        let raw_count = count;
+        let count = raw_count & 0x1F;
         if count == 0 {
+            let value = self.read_operand16(operand, bus);
+            if modrm.reg <= 3 {
+                self.update_masked_zero_rotate_flags16(modrm.reg, value);
+            } else {
+                self.update_masked_zero_shift_flags16(modrm.reg, value);
+            }
             self.add_cycles(bus, 2);
             return;
         }
@@ -74,9 +88,7 @@ impl Cpu {
                     result = result.rotate_left(1);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 7) & 1) != u8::from(self.carry_set()));
-                }
+                self.set_overflow(((result >> 7) & 1) != u8::from(self.carry_set()));
             }
             1 => {
                 for _ in 0..count {
@@ -84,9 +96,7 @@ impl Cpu {
                     result = result.rotate_right(1);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 7) ^ (result >> 6)) & 1 != 0);
-                }
+                self.set_overflow(((result >> 7) ^ (result >> 6)) & 1 != 0);
             }
             2 => {
                 for _ in 0..count {
@@ -95,9 +105,7 @@ impl Cpu {
                     result = (result << 1) | u8::from(old_cf);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 7) & 1) != u8::from(self.carry_set()));
-                }
+                self.set_overflow(((result >> 7) & 1) != u8::from(self.carry_set()));
             }
             3 => {
                 for _ in 0..count {
@@ -106,9 +114,7 @@ impl Cpu {
                     result = (result >> 1) | (u8::from(old_cf) << 7);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 7) ^ (result >> 6)) & 1 != 0);
-                }
+                self.set_overflow(((result >> 7) ^ (result >> 6)) & 1 != 0);
             }
             4 | 6 => {
                 for _ in 0..count {
@@ -119,12 +125,9 @@ impl Cpu {
                 let carry = self.carry_set();
                 self.set_logic_flags8(result);
                 self.set_carry(carry);
-                if count == 1 {
-                    self.set_overflow(((result >> 7) & 1) != u8::from(self.carry_set()));
-                }
+                self.set_overflow(((result >> 7) & 1) != u8::from(self.carry_set()));
             }
             5 => {
-                let old_msb = result & 0x80 != 0;
                 for _ in 0..count {
                     let carry = result & 0x01 != 0;
                     result >>= 1;
@@ -133,9 +136,7 @@ impl Cpu {
                 let carry = self.carry_set();
                 self.set_logic_flags8(result);
                 self.set_carry(carry);
-                if count == 1 {
-                    self.set_overflow(old_msb);
-                }
+                self.set_overflow(((result >> 7) ^ (result >> 6)) & 1 != 0);
             }
             7 => {
                 for _ in 0..count {
@@ -146,14 +147,44 @@ impl Cpu {
                 let carry = self.carry_set();
                 self.set_logic_flags8(result);
                 self.set_carry(carry);
-                if count == 1 {
-                    self.set_overflow(false);
-                }
+                self.set_overflow(((result >> 7) ^ (result >> 6)) & 1 != 0);
             }
             _ => return None,
         }
         self.flags |= FLAG_FIXED;
         Some(result)
+    }
+
+    fn update_masked_zero_rotate_flags8(&mut self, op: u8, value: u8) {
+        match op {
+            0 | 2 => self.set_overflow(((value >> 7) & 1) != u8::from(self.carry_set())),
+            1 | 3 => self.set_overflow(((value >> 7) ^ (value >> 6)) & 1 != 0),
+            _ => {}
+        }
+        self.flags |= FLAG_FIXED;
+    }
+
+    fn update_masked_zero_shift_flags8(&mut self, op: u8, value: u8) {
+        let carry = self.carry_set();
+        match op {
+            4 | 6 => {
+                self.set_logic_flags8(value);
+                self.set_carry(carry);
+                self.set_overflow(((value >> 7) & 1) != u8::from(carry));
+            }
+            5 => {
+                self.set_logic_flags8(value);
+                self.set_carry(carry);
+                self.set_overflow(((value >> 7) ^ (value >> 6)) & 1 != 0);
+            }
+            7 => {
+                self.set_logic_flags8(value);
+                self.set_carry(carry);
+                self.set_overflow(((value >> 7) ^ (value >> 6)) & 1 != 0);
+            }
+            _ => {}
+        }
+        self.flags |= FLAG_FIXED;
     }
 
     pub(super) fn shift_rotate16(&mut self, op: u8, value: u16, count: u8) -> Option<u16> {
@@ -165,9 +196,7 @@ impl Cpu {
                     result = result.rotate_left(1);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 15) & 1) != u16::from(self.carry_set()));
-                }
+                self.set_overflow(((result >> 15) & 1) != u16::from(self.carry_set()));
             }
             1 => {
                 for _ in 0..count {
@@ -175,9 +204,7 @@ impl Cpu {
                     result = result.rotate_right(1);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 15) ^ (result >> 14)) & 1 != 0);
-                }
+                self.set_overflow(((result >> 15) ^ (result >> 14)) & 1 != 0);
             }
             2 => {
                 for _ in 0..count {
@@ -186,9 +213,7 @@ impl Cpu {
                     result = (result << 1) | u16::from(old_cf);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 15) & 1) != u16::from(self.carry_set()));
-                }
+                self.set_overflow(((result >> 15) & 1) != u16::from(self.carry_set()));
             }
             3 => {
                 for _ in 0..count {
@@ -197,9 +222,7 @@ impl Cpu {
                     result = (result >> 1) | (u16::from(old_cf) << 15);
                     self.set_carry(carry);
                 }
-                if count == 1 {
-                    self.set_overflow(((result >> 15) ^ (result >> 14)) & 1 != 0);
-                }
+                self.set_overflow(((result >> 15) ^ (result >> 14)) & 1 != 0);
             }
             4 | 6 => {
                 for _ in 0..count {
@@ -210,12 +233,9 @@ impl Cpu {
                 let carry = self.carry_set();
                 self.set_logic_flags16(result);
                 self.set_carry(carry);
-                if count == 1 {
-                    self.set_overflow(((result >> 15) & 1) != u16::from(self.carry_set()));
-                }
+                self.set_overflow(((result >> 15) & 1) != u16::from(self.carry_set()));
             }
             5 => {
-                let old_msb = result & 0x8000 != 0;
                 for _ in 0..count {
                     let carry = result & 0x0001 != 0;
                     result >>= 1;
@@ -224,9 +244,7 @@ impl Cpu {
                 let carry = self.carry_set();
                 self.set_logic_flags16(result);
                 self.set_carry(carry);
-                if count == 1 {
-                    self.set_overflow(old_msb);
-                }
+                self.set_overflow(((result >> 15) ^ (result >> 14)) & 1 != 0);
             }
             7 => {
                 for _ in 0..count {
@@ -237,13 +255,43 @@ impl Cpu {
                 let carry = self.carry_set();
                 self.set_logic_flags16(result);
                 self.set_carry(carry);
-                if count == 1 {
-                    self.set_overflow(false);
-                }
+                self.set_overflow(((result >> 15) ^ (result >> 14)) & 1 != 0);
             }
             _ => return None,
         }
         self.flags |= FLAG_FIXED;
         Some(result)
+    }
+
+    fn update_masked_zero_rotate_flags16(&mut self, op: u8, value: u16) {
+        match op {
+            0 | 2 => self.set_overflow(((value >> 15) & 1) != u16::from(self.carry_set())),
+            1 | 3 => self.set_overflow(((value >> 15) ^ (value >> 14)) & 1 != 0),
+            _ => {}
+        }
+        self.flags |= FLAG_FIXED;
+    }
+
+    fn update_masked_zero_shift_flags16(&mut self, op: u8, value: u16) {
+        let carry = self.carry_set();
+        match op {
+            4 | 6 => {
+                self.set_logic_flags16(value);
+                self.set_carry(carry);
+                self.set_overflow(((value >> 15) & 1) != u16::from(carry));
+            }
+            5 => {
+                self.set_logic_flags16(value);
+                self.set_carry(carry);
+                self.set_overflow(((value >> 15) ^ (value >> 14)) & 1 != 0);
+            }
+            7 => {
+                self.set_logic_flags16(value);
+                self.set_carry(carry);
+                self.set_overflow(((value >> 15) ^ (value >> 14)) & 1 != 0);
+            }
+            _ => {}
+        }
+        self.flags |= FLAG_FIXED;
     }
 }

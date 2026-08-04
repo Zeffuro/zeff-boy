@@ -160,6 +160,80 @@ kind = "headless_exit"
 }
 
 #[test]
+fn parses_ws_screen_text_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "ws-sample"
+name = "WS Sample"
+core = "ws"
+
+[[tests]]
+id = "ws/sample/text"
+core = "ws"
+tier = "local"
+max_frames = 60
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+
+[tests.rom]
+path = "rom-tests/cache/ws/sample.ws"
+
+[tests.pass]
+kind = "ws_screen_text"
+contains = "Ok"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].core, Core::Ws);
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::WsScreenText);
+    assert_eq!(manifest.tests[0].pass.contains.as_deref(), Some("Ok"));
+}
+
+#[test]
+fn parses_ws_pass_fail_tiles_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "ws-sample"
+name = "WS Sample"
+core = "ws"
+
+[[tests]]
+id = "ws/sample/pass-fail"
+core = "ws"
+tier = "local"
+max_frames = 60
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+
+[tests.rom]
+path = "rom-tests/cache/ws/sample.ws"
+
+[tests.pass]
+kind = "ws_pass_fail_tiles"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].core, Core::Ws);
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::WsPassFailTiles);
+}
+
+#[test]
 fn expands_grouped_manifest_entries() {
     let manifest: Manifest = toml::from_str(
         r#"

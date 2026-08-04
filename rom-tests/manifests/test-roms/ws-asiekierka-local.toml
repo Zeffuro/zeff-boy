@@ -1,0 +1,160 @@
+manifest_version = 1
+
+[suite]
+id = "ws-asiekierka-local"
+name = "WonderSwan asiekierka ws-test-suite local builds"
+core = "ws"
+upstream_url = "https://github.com/asiekierka/ws-test-suite"
+license = "MIT"
+
+[[test_groups]]
+id_prefix = "ws/asiekierka"
+cache_prefix = "rom-tests/cache/ws/asiekierka/ws-test-suite"
+core = "ws"
+tier = "local"
+max_frames = 1800
+no_apu = true
+tags = ["ws", "asiekierka", "ws-test-suite", "pass-fail-tiles", "local-only"]
+notes = "Source-only MIT suite. Build locally with Wonderful Toolchain, then copy upstream build/roms/* into rom-tests/cache/ws/asiekierka/ws-test-suite/."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/asiekierka/ws-test-suite"
+source_version = "7dfa0e2e869d08386b685d6a56df0bcfaf181b47 source archive; TARGET=wswan/small build outputs"
+source_id = "asiekierka-ws-test-suite-7dfa0e2e"
+
+[test_groups.pass]
+kind = "ws_pass_fail_tiles"
+
+[[test_groups.roms]]
+id = "mono/cpu/80186-quirks"
+archive_path = "mono/cpu/80186_quirks.ws"
+tags = ["mono", "cpu", "80186-quirks"]
+
+[[test_groups.roms]]
+id = "mono/cpu/interrupt-timing"
+archive_path = "mono/cpu/interrupt_timing.ws"
+tags = ["mono", "cpu", "interrupt-timing"]
+
+[[test_groups.roms]]
+id = "mono/cpu/prefixes"
+archive_path = "mono/cpu/prefixes.ws"
+tags = ["mono", "cpu", "prefixes"]
+
+[[test_groups.roms]]
+id = "mono/display/mono-palettes-writemask"
+archive_path = "mono/display/mono_palettes_writemask.ws"
+tags = ["mono", "display", "mono-palettes-writemask"]
+
+[[test_groups.roms]]
+id = "mono/eeprom/internal"
+archive_path = "mono/eeprom/internal.ws"
+tags = ["mono", "eeprom", "internal"]
+
+[[test_groups.roms]]
+id = "mono/eeprom/cartridge-1kbit"
+archive_path = "mono/eeprom/cartridge_1kbit.ws"
+tags = ["mono", "eeprom", "cartridge-1kbit"]
+
+[[test_groups.roms]]
+id = "mono/eeprom/cartridge-16kbit"
+archive_path = "mono/eeprom/cartridge_16kbit.ws"
+tags = ["mono", "eeprom", "cartridge-16kbit"]
+
+[[test_groups.roms]]
+id = "mono/rtc/mapper"
+archive_path = "mono/rtc/mapper.ws"
+tags = ["mono", "rtc", "mapper"]
+
+[[test_groups.roms]]
+id = "mono/soc/interrupts"
+archive_path = "mono/soc/interrupts.ws"
+tags = ["mono", "soc", "interrupts"]
+
+[[test_groups.roms]]
+id = "mono/sound/quirks"
+archive_path = "mono/sound/quirks.ws"
+tags = ["mono", "sound", "quirks"]
+
+[[test_groups.roms]]
+id = "color/dma/alignment-access"
+archive_path = "color/dma/alignment_access.wsc"
+tags = ["color", "dma", "alignment-access"]
+
+[[test_groups.roms]]
+id = "color/dma/gdma-timing"
+archive_path = "color/dma/gdma_timing.wsc"
+tags = ["color", "dma", "gdma-timing"]
+
+[[test_groups.roms]]
+id = "color/dma/sound-dma"
+archive_path = "color/dma/sound_dma.wsc"
+tags = ["color", "dma", "sound-dma"]
+
+[[test_groups.roms]]
+id = "wonderful/benchmark/dma"
+archive_path = "wonderful/benchmark/dma.ws"
+tags = ["wonderful", "benchmark", "dma"]
+notes = "Benchmark-only ROM: automated as a smoke check for its stable table header."
+
+[test_groups.roms.pass]
+kind = "ws_screen_text"
+contains = "length dma_p"
+
+[[test_groups.roms]]
+id = "wonderful/libc/initfini"
+archive_path = "wonderful/libc/initfini.ws"
+tags = ["wonderful", "libc", "initfini"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/malloc"
+archive_path = "wonderful/libc/malloc.ws"
+tags = ["wonderful", "libc", "malloc"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/memccpy"
+archive_path = "wonderful/libc/memccpy.ws"
+tags = ["wonderful", "libc", "memccpy"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/memcmp"
+archive_path = "wonderful/libc/memcmp.ws"
+tags = ["wonderful", "libc", "memcmp"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/memcpy"
+archive_path = "wonderful/libc/memcpy.ws"
+tags = ["wonderful", "libc", "memcpy"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/memset"
+archive_path = "wonderful/libc/memset.ws"
+tags = ["wonderful", "libc", "memset"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/sbrk"
+archive_path = "wonderful/libc/sbrk.ws"
+tags = ["wonderful", "libc", "sbrk"]
+notes = "Diagnostic ROM: automated as a smoke check for its stable sbrk output prefix."
+
+[test_groups.roms.pass]
+kind = "ws_screen_text"
+contains = "sbrk"
+
+[[test_groups.roms]]
+id = "wonderful/libc/setjmp"
+archive_path = "wonderful/libc/setjmp.ws"
+tags = ["wonderful", "libc", "setjmp"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/strchr"
+archive_path = "wonderful/libc/strchr.ws"
+tags = ["wonderful", "libc", "strchr"]
+
+[[test_groups.roms]]
+id = "wonderful/libc/strlen"
+archive_path = "wonderful/libc/strlen.ws"
+tags = ["wonderful", "libc", "strlen"]

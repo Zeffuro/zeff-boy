@@ -1,0 +1,61 @@
+manifest_version = 1
+
+[suite]
+id = "ws-flubba-local"
+name = "WonderSwan Flubba local test ROMs"
+core = "ws"
+upstream_url = "https://github.com/WonderfulToolchain/awesome-wsdev"
+license = "unknown"
+
+[[tests]]
+id = "ws/flubba/wstiming/first-op-table"
+core = "ws"
+tier = "local"
+max_frames = 3000
+no_apu = true
+tags = ["ws", "timing", "screen-text", "local-only"]
+notes = "Built locally from FluBBaOfWard/WSTimingTest. The manifest intentionally does not redistribute the ROM binary."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/FluBBaOfWard/WSTimingTest"
+source_version = "025e606fc3b6615160ffdae485d992ffcad0c024"
+
+[tests.rom]
+path = "rom-tests/cache/ws/flubba/timingtest.ws"
+sha256 = "30d1a618536ee6c62d907a40948521792c5f16b65f64cf5100a885ed34ce7009"
+legacy_paths = ["test-roms/ws/flubba/timingtest.ws"]
+
+[tests.pass]
+kind = "ws_screen_text"
+contains = "AX<MEM ES:   58    58   o"
+
+[[tests]]
+id = "ws/flubba/wscputest/aam-progress"
+core = "ws"
+tier = "local"
+max_frames = 220000
+no_apu = true
+input = ["a@30-45"]
+tags = ["ws", "cpu", "screen-text", "local-only"]
+notes = "Built locally from FluBBaOfWard/WSCpuTest. This is a progress regression that reaches the AAM/CVTBD division test without an earlier failure."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/FluBBaOfWard/WSCpuTest"
+source_version = "71d9d302685cb69c0cd47edbfcc1fa53e397ed5a"
+
+[tests.rom]
+path = "rom-tests/cache/ws/flubba/WSCpuTest.wsc"
+sha256 = "7fcfcc1fa38628c680acd40761a754df5415e5ce798ee7bba8ad061135799397"
+legacy_paths = ["test-roms/ws/flubba/WSCpuTest.wsc"]
+
+[tests.pass]
+kind = "ws_screen_text"
+contains = "AAM/CVTBD"

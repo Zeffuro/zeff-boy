@@ -6,6 +6,8 @@ pub const TITLE_START: usize = 0x134;
 pub const TITLE_END_CGB: usize = 0x13F;
 pub const TITLE_END_NEW: usize = 0x143;
 pub const TITLE_END_OLD: usize = 0x144;
+pub const HEADER_CHECKSUM_START: usize = TITLE_START;
+pub const HEADER_CHECKSUM_END_INCLUSIVE: usize = GAME_VERSION_IDX;
 pub const CGB_FLAG_IDX: usize = 0x143;
 pub const NEW_LICENSEE_CODE_START: usize = 0x144;
 pub const NEW_LICENSEE_CODE_END: usize = 0x146;
@@ -19,6 +21,7 @@ pub const GAME_VERSION_IDX: usize = 0x14C;
 pub const HEADER_CHECKSUM_IDX: usize = 0x14D;
 pub const GLOBAL_CHECKSUM_START: usize = 0x14E;
 pub const GLOBAL_CHECKSUM_END: usize = 0x150;
+pub const GLOBAL_CHECKSUM_BYTE_COUNT: usize = GLOBAL_CHECKSUM_END - GLOBAL_CHECKSUM_START;
 
 pub const CGB_FLAG_COMPATIBLE: u8 = 0x80;
 pub const CGB_FLAG_EXCLUSIVE: u8 = 0xC0;

@@ -173,11 +173,10 @@ impl HostInputState {
             y_buttons |= host_dpad_to_ws_diamond(self.dpad_pressed());
         }
 
-        (self.ws_keyboard_button_pressed
+        self.ws_keyboard_button_pressed
             | self.ws_gamepad_button_pressed
             | self.buttons_pressed()
-            | (y_buttons << 4))
-            & 0xFF
+            | (y_buttons << 4)
     }
 
     pub(super) fn ws_dpad_pressed(&self, display_rotated: bool) -> u8 {

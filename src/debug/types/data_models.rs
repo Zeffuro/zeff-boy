@@ -95,7 +95,7 @@ pub(crate) struct InputDebugInfo {
 pub(crate) enum ConsoleGraphicsData {
     Gb(GbGraphicsData),
     Gba(GbaGraphicsData),
-    Nes(NesGraphicsData),
+    Nes(Box<NesGraphicsData>),
 }
 
 pub(crate) struct GbaGraphicsData {

@@ -338,7 +338,7 @@ fn parse_zapper_event_arg(value: &str, flag: &str) -> anyhow::Result<Vec<Headles
         };
 
         let separator = pos_raw
-            .find(|ch| matches!(ch, ',' | 'x' | 'X' | ';' | '/'))
+            .find([',', 'x', 'X', ';', '/'])
             .ok_or_else(|| anyhow::anyhow!("{flag} zapper position must be x,y"))?;
         let (x_raw, y_with_sep) = pos_raw.split_at(separator);
         let y_raw = &y_with_sep[1..];
@@ -433,6 +433,17 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 };
                 headless.expect_serial = Some(value.to_string());
                 i += 2;
+            }
+            "--expect-ws-text" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--expect-ws-text requires a string value");
+                };
+                headless.expect_ws_text = Some(value.to_string());
+                i += 2;
+            }
+            "--expect-ws-pass-fail-tiles" => {
+                headless.expect_ws_pass_fail_tiles = true;
+                i += 1;
             }
             "--expect-test-pass" => {
                 headless.expect_test_pass = true;

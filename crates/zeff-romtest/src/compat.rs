@@ -33,9 +33,10 @@ pub(crate) fn generate_compat_manifest(cli: &Cli) -> anyhow::Result<()> {
     .with_context(|| format!("failed to scan {}", rom_dir.display()))?;
 
     if entries.is_empty() {
+        let supported_extensions = supported_rom_extension_label();
         bail!(
-            "no supported ROM files found under {}; supported extensions: .gb, .gbc, .gba, .nes; .zip is supported when --core is set",
-            rom_dir.display()
+            "no supported ROM files found under {}; supported extensions: {supported_extensions}; .zip is supported when --core is set",
+            rom_dir.display(),
         );
     }
 
@@ -146,13 +147,20 @@ fn file_name_matches(path: &Path, name_matches: &[String]) -> bool {
 
 fn infer_core_from_path(path: &Path, core_filter: Option<Core>) -> Option<Core> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
-    match ext.as_str() {
-        "gb" | "gbc" => Some(Core::Gb),
-        "gba" => Some(Core::Gba),
-        "nes" => Some(Core::Nes),
-        "zip" => core_filter,
-        _ => None,
+    if ext == "zip" {
+        core_filter
+    } else {
+        Core::from_extension(&ext)
     }
+}
+
+fn supported_rom_extension_label() -> String {
+    Core::specs()
+        .iter()
+        .flat_map(|spec| spec.rom_extensions.iter())
+        .map(|ext| format!(".{ext}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(crate) fn render_compat_manifest(
@@ -289,6 +297,14 @@ mod tests {
         assert_eq!(
             infer_core_from_path(Path::new("foo.nes"), None),
             Some(Core::Nes)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.ws"), None),
+            Some(Core::Ws)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.wsc"), None),
+            Some(Core::Ws)
         );
         assert_eq!(infer_core_from_path(Path::new("foo.sfc"), None), None);
         assert_eq!(infer_core_from_path(Path::new("foo.zip"), None), None);

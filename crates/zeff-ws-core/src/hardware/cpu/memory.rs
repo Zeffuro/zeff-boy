@@ -80,6 +80,43 @@ impl Cpu {
         (offset, default_segment)
     }
 
+    pub(super) fn decode_v30mz_register_mode_offset(&self, rm: u8) -> (u16, SegmentRegister) {
+        match rm & 0x07 {
+            0 => (
+                self.get_reg16(REG_BX).wrapping_add(self.get_reg16(REG_AX)),
+                SegmentRegister::Ds,
+            ),
+            1 => (
+                self.get_reg16(REG_BX).wrapping_add(self.get_reg16(REG_CX)),
+                SegmentRegister::Ds,
+            ),
+            2 => (
+                self.get_reg16(REG_BP).wrapping_add(self.get_reg16(REG_DX)),
+                SegmentRegister::Ss,
+            ),
+            3 => (
+                self.get_reg16(REG_BP).wrapping_add(self.get_reg16(REG_BX)),
+                SegmentRegister::Ss,
+            ),
+            4 => (
+                self.get_reg16(REG_SI).wrapping_add(self.get_reg16(REG_SP)),
+                SegmentRegister::Ds,
+            ),
+            5 => (
+                self.get_reg16(REG_DI).wrapping_add(self.get_reg16(REG_BP)),
+                SegmentRegister::Ds,
+            ),
+            6 => (
+                self.get_reg16(REG_BP).wrapping_add(self.get_reg16(REG_SI)),
+                SegmentRegister::Ss,
+            ),
+            _ => (
+                self.get_reg16(REG_BX).wrapping_add(self.get_reg16(REG_DI)),
+                SegmentRegister::Ds,
+            ),
+        }
+    }
+
     pub(super) fn read_operand8(&mut self, operand: Operand, bus: &mut Bus) -> u8 {
         match operand {
             Operand::Register(reg) => self.get_reg8(reg),

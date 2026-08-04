@@ -4,14 +4,36 @@ use super::*;
 impl Cpu {
     pub(super) fn lea_reg_m(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
         let modrm = self.fetch_modrm(bus);
-        if modrm.mode == 0b11 {
-            self.unsupported_form(0x8D, modrm.byte);
-            return;
-        }
-        let (offset, _) = self.decode_rm_effective_offset(modrm, bus);
+        let offset = if modrm.mode == 0b11 {
+            self.decode_v30mz_register_mode_offset(modrm.rm).0
+        } else {
+            self.decode_rm_effective_offset(modrm, bus).0
+        };
         let _ = segment_override;
         self.set_reg16(modrm.reg, offset);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
+    }
+
+    pub(super) fn far_pointer_operand_addr(
+        &mut self,
+        opcode: u8,
+        modrm: ModRm,
+        segment_override: Option<SegmentRegister>,
+        bus: &mut Bus,
+    ) -> Option<u32> {
+        if modrm.mode == 0b11 {
+            let (offset, default_segment) = self.decode_v30mz_register_mode_offset(modrm.rm);
+            return Some(
+                self.overridden_address(segment_override.or(Some(default_segment)), offset),
+            );
+        }
+
+        let operand = self.decode_rm_operand(modrm, segment_override, bus);
+        let Operand::Memory(addr) = operand else {
+            self.unsupported_form(opcode, modrm.byte);
+            return None;
+        };
+        Some(addr)
     }
 
     pub(super) fn pop_rm16(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
@@ -23,7 +45,14 @@ impl Cpu {
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         let value = self.pop16(bus);
         self.write_operand16(operand, value, bus);
-        self.add_cycles(bus, 8);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                3
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn imul_reg_rm_imm16(
@@ -42,8 +71,35 @@ impl Cpu {
         };
         let result = lhs.wrapping_mul(rhs);
         self.set_reg16(modrm.reg, result as u16);
-        self.set_mul_flags(result < i32::from(i16::MIN) || result > i32::from(i16::MAX));
+        self.set_mul_flags(
+            result < i32::from(i16::MIN) || result > i32::from(i16::MAX),
+            true,
+        );
         self.add_cycles(bus, 16);
+    }
+
+    pub(super) fn bound_reg_mem16(
+        &mut self,
+        segment_override: Option<SegmentRegister>,
+        bus: &mut Bus,
+    ) {
+        let modrm = self.fetch_modrm(bus);
+        if modrm.mode == 0b11 {
+            self.unsupported_form(0x62, modrm.byte);
+            return;
+        }
+
+        let (offset, default_segment) = self.decode_rm_effective_offset(modrm, bus);
+        let addr = self.overridden_address(segment_override.or(Some(default_segment)), offset);
+        let lower = bus.read16(addr) as i16;
+        let upper = bus.read16(addr.wrapping_add(2)) as i16;
+        let value = self.get_reg16(modrm.reg) as i16;
+
+        if value < lower || value > upper {
+            self.enter_interrupt(5, 14, bus);
+        } else {
+            self.add_cycles(bus, 14);
+        }
     }
 
     pub(super) fn enter(&mut self, frame_size: u16, nesting: u8, bus: &mut Bus) {
@@ -71,20 +127,13 @@ impl Cpu {
         bus: &mut Bus,
     ) {
         let modrm = self.fetch_modrm(bus);
-        if modrm.mode == 0b11 {
-            self.unsupported_form(
-                if segment == SegmentRegister::Es {
-                    0xC4
-                } else {
-                    0xC5
-                },
-                modrm.byte,
-            );
+        let opcode = if segment == SegmentRegister::Es {
+            0xC4
+        } else {
+            0xC5
+        };
+        let Some(addr) = self.far_pointer_operand_addr(opcode, modrm, segment_override, bus) else {
             return;
-        }
-        let operand = self.decode_rm_operand(modrm, segment_override, bus);
-        let Operand::Memory(addr) = operand else {
-            unreachable!("register form rejected above");
         };
         let offset = bus.read16(addr);
         let seg_value = bus.read16(addr.wrapping_add(2));
@@ -104,6 +153,11 @@ impl Cpu {
 
     pub(super) fn group_f6(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
         let modrm = self.fetch_modrm(bus);
+        if modrm.byte == 0xC8 {
+            let _ = self.fetch8(bus);
+            self.add_cycles(bus, 4);
+            return;
+        }
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         match modrm.reg {
             0 | 1 => {
@@ -129,7 +183,7 @@ impl Cpu {
                 let rhs = u16::from(self.read_operand8(operand, bus));
                 let result = u16::from(self.get_reg8(REG_AX)) * rhs;
                 self.set_reg16(REG_AX, result);
-                self.set_mul_flags(result > 0x00FF);
+                self.set_mul_flags(result > 0x00FF, bus.is_color_model());
                 self.add_cycles(bus, 20);
             }
             5 => {
@@ -137,46 +191,62 @@ impl Cpu {
                 let rhs = i16::from(self.read_operand8(operand, bus) as i8);
                 let result = lhs.wrapping_mul(rhs);
                 self.set_reg16(REG_AX, result as u16);
-                self.set_mul_flags(result < i16::from(i8::MIN) || result > i16::from(i8::MAX));
+                self.set_mul_flags(
+                    result < i16::from(i8::MIN) || result > i16::from(i8::MAX),
+                    true,
+                );
                 self.add_cycles(bus, 20);
             }
             6 => {
                 let divisor = self.read_operand8(operand, bus);
                 if divisor == 0 {
-                    self.divide_error(0xF6, modrm.byte);
+                    self.set_divide_error_flags_from_last_mul(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let dividend = self.get_reg16(REG_AX);
                 let quotient = dividend / u16::from(divisor);
                 if quotient > 0x00FF {
-                    self.divide_error(0xF6, modrm.byte);
+                    self.set_divide_error_flags_from_last_mul(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let remainder = dividend % u16::from(divisor);
                 self.set_reg8(REG_AX, quotient as u8);
                 self.set_reg8(REG_AX | 0x04, remainder as u8);
+                self.set_div8_unsigned_flags(quotient as u8, remainder as u8);
                 self.add_cycles(bus, 24);
             }
             7 => {
                 let divisor = self.read_operand8(operand, bus) as i8;
                 if divisor == 0 {
-                    self.divide_error(0xF6, modrm.byte);
+                    if self.get_reg16(REG_AX) == 0x8000 {
+                        self.set_reg16(REG_AX, 0x0081);
+                        self.set_idiv8_flags(0x81);
+                        self.add_cycles(bus, 24);
+                    } else {
+                        self.set_divide_error_flags_from_last_mul(false);
+                        self.divide_error(bus);
+                    }
                     return;
                 }
                 let dividend = self.get_reg16(REG_AX) as i16;
                 let divisor = i16::from(divisor);
                 if dividend == i16::MIN && divisor == -1 {
-                    self.divide_error(0xF6, modrm.byte);
+                    self.set_divide_error_flags_from_last_mul(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let quotient = dividend / divisor;
                 if quotient < i16::from(i8::MIN) || quotient > i16::from(i8::MAX) {
-                    self.divide_error(0xF6, modrm.byte);
+                    self.set_divide_error_flags_from_last_mul(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let remainder = dividend % divisor;
                 self.set_reg8(REG_AX, quotient as i8 as u8);
                 self.set_reg8(REG_AX | 0x04, remainder as i8 as u8);
+                self.set_idiv8_flags(quotient as i8 as u8);
                 self.add_cycles(bus, 24);
             }
             _ => self.unsupported_form(0xF6, modrm.byte),
@@ -185,6 +255,11 @@ impl Cpu {
 
     pub(super) fn group_f7(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
         let modrm = self.fetch_modrm(bus);
+        if modrm.byte == 0xC8 {
+            let _ = self.fetch16(bus);
+            self.add_cycles(bus, 4);
+            return;
+        }
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         match modrm.reg {
             0 | 1 => {
@@ -212,7 +287,7 @@ impl Cpu {
                 let result = lhs * rhs;
                 self.set_reg16(REG_AX, result as u16);
                 self.set_reg16(REG_DX, (result >> 16) as u16);
-                self.set_mul_flags((result >> 16) != 0);
+                self.set_mul_flags((result >> 16) != 0, bus.is_color_model());
                 self.add_cycles(bus, 28);
             }
             5 => {
@@ -221,48 +296,67 @@ impl Cpu {
                 let result = lhs.wrapping_mul(rhs);
                 self.set_reg16(REG_AX, result as u16);
                 self.set_reg16(REG_DX, (result >> 16) as u16);
-                self.set_mul_flags(result < i32::from(i16::MIN) || result > i32::from(i16::MAX));
+                self.set_mul_flags(
+                    result < i32::from(i16::MIN) || result > i32::from(i16::MAX),
+                    true,
+                );
                 self.add_cycles(bus, 28);
             }
             6 => {
                 let divisor = self.read_operand16(operand, bus);
                 if divisor == 0 {
-                    self.divide_error(0xF7, modrm.byte);
+                    self.set_divide_error_flags_clear_cv(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let dividend =
                     (u32::from(self.get_reg16(REG_DX)) << 16) | u32::from(self.get_reg16(REG_AX));
                 let quotient = dividend / u32::from(divisor);
                 if quotient > 0xFFFF {
-                    self.divide_error(0xF7, modrm.byte);
+                    self.set_divide_error_flags_clear_cv(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let remainder = dividend % u32::from(divisor);
                 self.set_reg16(REG_AX, quotient as u16);
                 self.set_reg16(REG_DX, remainder as u16);
+                self.set_div16_flags(quotient as u16, remainder as u16);
                 self.add_cycles(bus, 32);
             }
             7 => {
                 let divisor = self.read_operand16(operand, bus) as i16;
                 if divisor == 0 {
-                    self.divide_error(0xF7, modrm.byte);
+                    let dividend = (u32::from(self.get_reg16(REG_DX)) << 16)
+                        | u32::from(self.get_reg16(REG_AX));
+                    if dividend == 0x8000_0000 {
+                        self.set_reg16(REG_AX, 0x8001);
+                        self.set_reg16(REG_DX, 0x0000);
+                        self.set_div16_flags(0x8001, 0);
+                        self.add_cycles(bus, 32);
+                    } else {
+                        self.set_divide_error_flags_clear_cv(false);
+                        self.divide_error(bus);
+                    }
                     return;
                 }
                 let dividend = ((i32::from(self.get_reg16(REG_DX) as i16)) << 16)
                     | i32::from(self.get_reg16(REG_AX));
                 let divisor = i32::from(divisor);
                 if dividend == i32::MIN && divisor == -1 {
-                    self.divide_error(0xF7, modrm.byte);
+                    self.set_divide_error_flags_clear_cv(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let quotient = dividend / divisor;
                 if quotient < i32::from(i16::MIN) || quotient > i32::from(i16::MAX) {
-                    self.divide_error(0xF7, modrm.byte);
+                    self.set_divide_error_flags_clear_cv(false);
+                    self.divide_error(bus);
                     return;
                 }
                 let remainder = dividend % divisor;
                 self.set_reg16(REG_AX, quotient as i16 as u16);
                 self.set_reg16(REG_DX, remainder as i16 as u16);
+                self.set_div16_flags(quotient as i16 as u16, remainder as i16 as u16);
                 self.add_cycles(bus, 32);
             }
             _ => self.unsupported_form(0xF7, modrm.byte),
@@ -271,47 +365,39 @@ impl Cpu {
 
     pub(super) fn group_fe(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
         let modrm = self.fetch_modrm(bus);
-        let operand = self.decode_rm_operand(modrm, segment_override, bus);
-        let value = self.read_operand8(operand, bus);
-        let result = match modrm.reg {
-            0 => {
-                let result = value.wrapping_add(1);
-                self.set_inc_dec_flags8(result, false);
-                result
-            }
-            1 => {
-                let result = value.wrapping_sub(1);
-                self.set_inc_dec_flags8(result, true);
-                result
-            }
-            _ => {
-                self.unsupported_form(0xFE, modrm.byte);
-                return;
-            }
-        };
-        self.write_operand8(operand, result, bus);
-        self.add_cycles(bus, 4);
-    }
-
-    pub(super) fn group_ff(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
-        let modrm = self.fetch_modrm(bus);
-        let operand = self.decode_rm_operand(modrm, segment_override, bus);
         match modrm.reg {
             0 => {
-                let value = self.read_operand16(operand, bus);
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                let value = self.read_operand8(operand, bus);
                 let result = value.wrapping_add(1);
-                self.set_inc_dec_flags16(result, false);
-                self.write_operand16(operand, result, bus);
-                self.add_cycles(bus, 4);
+                self.set_inc_dec_flags8(result, false);
+                self.write_operand8(operand, result, bus);
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        3
+                    } else {
+                        1
+                    },
+                );
             }
             1 => {
-                let value = self.read_operand16(operand, bus);
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                let value = self.read_operand8(operand, bus);
                 let result = value.wrapping_sub(1);
-                self.set_inc_dec_flags16(result, true);
-                self.write_operand16(operand, result, bus);
-                self.add_cycles(bus, 4);
+                self.set_inc_dec_flags8(result, true);
+                self.write_operand8(operand, result, bus);
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        3
+                    } else {
+                        1
+                    },
+                );
             }
             2 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
                 let target = self.read_operand16(operand, bus);
                 self.push16(self.ip, bus);
                 self.ip = target;
@@ -325,19 +411,22 @@ impl Cpu {
                 );
             }
             3 => {
-                let Operand::Memory(addr) = operand else {
-                    self.unsupported_form(0xFF, modrm.byte);
+                let Some(addr) = self.far_pointer_operand_addr(0xFE, modrm, segment_override, bus)
+                else {
                     return;
                 };
+                let return_cs = self.segments[SegmentRegister::Cs.index()];
+                let return_ip = self.ip;
+                self.push16(return_cs, bus);
+                self.push16(return_ip, bus);
                 let ip = bus.read16(addr);
                 let cs = bus.read16(addr.wrapping_add(2));
-                self.push16(self.segments[SegmentRegister::Cs.index()], bus);
-                self.push16(self.ip, bus);
                 self.ip = ip;
                 self.segments[SegmentRegister::Cs.index()] = cs;
                 self.add_cycles(bus, 12);
             }
             4 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
                 self.ip = self.read_operand16(operand, bus);
                 self.add_cycles(
                     bus,
@@ -349,8 +438,8 @@ impl Cpu {
                 );
             }
             5 => {
-                let Operand::Memory(addr) = operand else {
-                    self.unsupported_form(0xFF, modrm.byte);
+                let Some(addr) = self.far_pointer_operand_addr(0xFE, modrm, segment_override, bus)
+                else {
                     return;
                 };
                 let ip = bus.read16(addr);
@@ -360,6 +449,7 @@ impl Cpu {
                 self.add_cycles(bus, 10);
             }
             6 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
                 let value = self.read_operand16(operand, bus);
                 self.push16(value, bus);
                 self.add_cycles(
@@ -371,6 +461,109 @@ impl Cpu {
                     },
                 );
             }
+            _ => self.unsupported_form(0xFE, modrm.byte),
+        }
+    }
+
+    pub(super) fn group_ff(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
+        let modrm = self.fetch_modrm(bus);
+        match modrm.reg {
+            0 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                let value = self.read_operand16(operand, bus);
+                let result = value.wrapping_add(1);
+                self.set_inc_dec_flags16(result, false);
+                self.write_operand16(operand, result, bus);
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        3
+                    } else {
+                        1
+                    },
+                );
+            }
+            1 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                let value = self.read_operand16(operand, bus);
+                let result = value.wrapping_sub(1);
+                self.set_inc_dec_flags16(result, true);
+                self.write_operand16(operand, result, bus);
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        3
+                    } else {
+                        1
+                    },
+                );
+            }
+            2 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                let target = self.read_operand16(operand, bus);
+                self.push16(self.ip, bus);
+                self.ip = target;
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        6
+                    } else {
+                        5
+                    },
+                );
+            }
+            3 => {
+                let Some(addr) = self.far_pointer_operand_addr(0xFF, modrm, segment_override, bus)
+                else {
+                    return;
+                };
+                let return_cs = self.segments[SegmentRegister::Cs.index()];
+                let return_ip = self.ip;
+                self.push16(return_cs, bus);
+                self.push16(return_ip, bus);
+                let ip = bus.read16(addr);
+                let cs = bus.read16(addr.wrapping_add(2));
+                self.ip = ip;
+                self.segments[SegmentRegister::Cs.index()] = cs;
+                self.add_cycles(bus, 12);
+            }
+            4 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                self.ip = self.read_operand16(operand, bus);
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        5
+                    } else {
+                        4
+                    },
+                );
+            }
+            5 => {
+                let Some(addr) = self.far_pointer_operand_addr(0xFF, modrm, segment_override, bus)
+                else {
+                    return;
+                };
+                let ip = bus.read16(addr);
+                let cs = bus.read16(addr.wrapping_add(2));
+                self.ip = ip;
+                self.segments[SegmentRegister::Cs.index()] = cs;
+                self.add_cycles(bus, 10);
+            }
+            6 => {
+                let operand = self.decode_rm_operand(modrm, segment_override, bus);
+                let value = self.read_operand16(operand, bus);
+                self.push16(value, bus);
+                self.add_cycles(
+                    bus,
+                    if matches!(operand, Operand::Memory(_)) {
+                        2
+                    } else {
+                        1
+                    },
+                );
+            }
+            7 if modrm.mode == 0b11 => self.add_cycles(bus, 3),
             _ => self.unsupported_form(0xFF, modrm.byte),
         }
     }
@@ -383,20 +576,22 @@ impl Cpu {
         let cx = self.get_reg16(REG_CX).wrapping_sub(1);
         self.set_reg16(REG_CX, cx);
         let zf = self.flags & FLAG_ZF != 0;
-        if cx != 0 && zf == loop_if_zero {
+        let taken = cx != 0 && zf == loop_if_zero;
+        if taken {
             self.ip = self.ip.wrapping_add_signed(i16::from(rel));
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, if taken { 7 + u32::from(self.ip & 1) } else { 3 });
     }
 
     pub(super) fn loop_rel8_any(&mut self, bus: &mut Bus) {
         let rel = self.fetch8(bus) as i8;
         let cx = self.get_reg16(REG_CX).wrapping_sub(1);
         self.set_reg16(REG_CX, cx);
-        if cx != 0 {
+        let taken = cx != 0;
+        if taken {
             self.ip = self.ip.wrapping_add_signed(i16::from(rel));
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, if taken { 6 + u32::from(self.ip & 1) } else { 3 });
     }
 
     pub(super) fn test_rm_reg8(
@@ -409,7 +604,14 @@ impl Cpu {
         let lhs = self.read_operand8(operand, bus);
         let rhs = self.get_reg8(modrm.reg);
         self.alu8(AluOp::And, lhs, rhs);
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                2
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn test_rm_reg16(
@@ -422,7 +624,14 @@ impl Cpu {
         let lhs = self.read_operand16(operand, bus);
         let rhs = self.get_reg16(modrm.reg);
         self.alu16(AluOp::And, lhs, rhs);
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                2
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn xchg_rm_reg8(
@@ -436,7 +645,14 @@ impl Cpu {
         let rhs = self.get_reg8(modrm.reg);
         self.write_operand8(operand, rhs, bus);
         self.set_reg8(modrm.reg, lhs);
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                5
+            } else {
+                3
+            },
+        );
     }
 
     pub(super) fn xchg_rm_reg16(
@@ -450,14 +666,21 @@ impl Cpu {
         let rhs = self.get_reg16(modrm.reg);
         self.write_operand16(operand, rhs, bus);
         self.set_reg16(modrm.reg, lhs);
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                5
+            } else {
+                3
+            },
+        );
     }
 
     pub(super) fn mov_rm_reg8(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
         let modrm = self.fetch_modrm(bus);
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         self.write_operand8(operand, self.get_reg8(modrm.reg), bus);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn mov_rm_reg16(
@@ -468,7 +691,7 @@ impl Cpu {
         let modrm = self.fetch_modrm(bus);
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         self.write_operand16(operand, self.get_reg16(modrm.reg), bus);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn mov_reg_rm8(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
@@ -476,7 +699,7 @@ impl Cpu {
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         let value = self.read_operand8(operand, bus);
         self.set_reg8(modrm.reg, value);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn mov_reg_rm16(
@@ -488,7 +711,7 @@ impl Cpu {
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         let value = self.read_operand16(operand, bus);
         self.set_reg16(modrm.reg, value);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn mov_rm_sreg(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
@@ -496,7 +719,7 @@ impl Cpu {
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         let segment = SegmentRegister::from_modrm_reg(modrm.reg);
         self.write_operand16(operand, self.segments[segment.index()], bus);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn mov_sreg_rm(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
@@ -505,7 +728,17 @@ impl Cpu {
         let segment = SegmentRegister::from_modrm_reg(modrm.reg);
         let value = self.read_operand16(operand, bus);
         self.segments[segment.index()] = value;
-        self.add_cycles(bus, 4);
+        if segment == SegmentRegister::Ss {
+            self.defer_after_ss_load();
+        }
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                3
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn mov_rm_imm8(&mut self, segment_override: Option<SegmentRegister>, bus: &mut Bus) {
@@ -517,7 +750,7 @@ impl Cpu {
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         let value = self.fetch8(bus);
         self.write_operand8(operand, value, bus);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn mov_rm_imm16(
@@ -533,7 +766,7 @@ impl Cpu {
         let operand = self.decode_rm_operand(modrm, segment_override, bus);
         let value = self.fetch16(bus);
         self.write_operand16(operand, value, bus);
-        self.add_cycles(bus, 4);
+        self.add_cycles(bus, 1);
     }
 
     pub(super) fn alu_rm_reg8(
@@ -550,7 +783,14 @@ impl Cpu {
         if op != AluOp::Cmp {
             self.write_operand8(operand, result, bus);
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                3
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn alu_rm_reg16(
@@ -567,7 +807,14 @@ impl Cpu {
         if op != AluOp::Cmp {
             self.write_operand16(operand, result, bus);
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                3
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn alu_reg_rm8(
@@ -584,7 +831,14 @@ impl Cpu {
         if op != AluOp::Cmp {
             self.set_reg8(modrm.reg, result);
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                2
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn alu_reg_rm16(
@@ -601,7 +855,14 @@ impl Cpu {
         if op != AluOp::Cmp {
             self.set_reg16(modrm.reg, result);
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                2
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn alu_rm_imm8(
@@ -633,7 +894,14 @@ impl Cpu {
         if op != AluOp::Cmp {
             self.write_operand8(operand, result, bus);
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                3
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn alu_rm_imm16(
@@ -659,17 +927,27 @@ impl Cpu {
         if op != AluOp::Cmp {
             self.write_operand16(operand, result, bus);
         }
-        self.add_cycles(bus, 4);
+        self.add_cycles(
+            bus,
+            if matches!(operand, Operand::Memory(_)) {
+                3
+            } else {
+                1
+            },
+        );
     }
 
     pub(super) fn push_segment(&mut self, segment: SegmentRegister, bus: &mut Bus) {
         self.push16(self.segments[segment.index()], bus);
-        self.add_cycles(bus, 2);
+        self.add_cycles(bus, 3);
     }
 
     pub(super) fn pop_segment(&mut self, segment: SegmentRegister, bus: &mut Bus) {
         let value = self.pop16(bus);
         self.segments[segment.index()] = value;
-        self.add_cycles(bus, 3);
+        if segment == SegmentRegister::Ss {
+            self.defer_after_ss_load();
+        }
+        self.add_cycles(bus, 4);
     }
 }

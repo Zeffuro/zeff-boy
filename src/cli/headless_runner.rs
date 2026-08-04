@@ -101,6 +101,15 @@ struct InputMasks {
     zapper_screen_pos: Option<(u16, u16)>,
 }
 
+struct StuckObservation<'a> {
+    frame: u64,
+    pc: u64,
+    framebuffer: &'a [u8],
+    progress_marker: Option<u64>,
+    classification: Option<&'a str>,
+    expected_wait: bool,
+}
+
 impl StuckTracker {
     fn from_options(opts: &HeadlessOptions) -> Option<Self> {
         if opts.stuck_window_frames == 0 {
@@ -117,15 +126,15 @@ impl StuckTracker {
         })
     }
 
-    fn observe(
-        &mut self,
-        frame: u64,
-        pc: u64,
-        framebuffer: &[u8],
-        progress_marker: Option<u64>,
-        classification: Option<&str>,
-        expected_wait: bool,
-    ) -> Option<&StuckReport> {
+    fn observe(&mut self, observation: StuckObservation<'_>) -> Option<&StuckReport> {
+        let StuckObservation {
+            frame,
+            pc,
+            framebuffer,
+            progress_marker,
+            classification,
+            expected_wait,
+        } = observation;
         self.pcs.push_back(pc);
         self.framebuffer_hashes
             .push_back(framebuffer_fingerprint(framebuffer));
@@ -212,6 +221,12 @@ fn load_headless_rom(path: &Path) -> anyhow::Result<(PathBuf, Vec<u8>, ActiveSys
 fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyhow::Result<()> {
     if opts.expect_serial.is_some() {
         anyhow::bail!("--expect-serial is only supported for GB/GBC headless runs");
+    }
+    if opts.expect_ws_text.is_some() && system != "ws" {
+        anyhow::bail!("--expect-ws-text is only supported for WonderSwan headless runs");
+    }
+    if opts.expect_ws_pass_fail_tiles && system != "ws" {
+        anyhow::bail!("--expect-ws-pass-fail-tiles is only supported for WonderSwan headless runs");
     }
     if !opts.memory_dumps.is_empty() && system != "ws" {
         anyhow::bail!("--dump-mem is only supported for GB/GBC and WonderSwan headless runs");
@@ -304,14 +319,14 @@ fn observe_stuck(
         return;
     };
 
-    match tracker.observe(
+    match tracker.observe(StuckObservation {
         frame,
         pc,
         framebuffer,
         progress_marker,
         classification,
         expected_wait,
-    ) {
+    }) {
         Some(report) if !*stuck_active => {
             println!("{}", format_stuck_report(system, report, pc_width));
             *stuck_active = true;
@@ -474,6 +489,22 @@ mod tests {
         assert!(stats.mean_abs() > 0.18);
     }
 
+    fn stuck_observation<'a>(
+        frame: u64,
+        pc: u64,
+        framebuffer: &'a [u8],
+        progress_marker: Option<u64>,
+    ) -> StuckObservation<'a> {
+        StuckObservation {
+            frame,
+            pc,
+            framebuffer,
+            progress_marker,
+            classification: None,
+            expected_wait: false,
+        }
+    }
+
     #[test]
     fn stuck_tracker_ignores_low_pc_windows_with_progress_markers() {
         let mut tracker = StuckTracker::from_options(&HeadlessOptions {
@@ -486,17 +517,17 @@ mod tests {
 
         assert!(
             tracker
-                .observe(1, 0x40032, &framebuffer, Some(1), None, false)
+                .observe(stuck_observation(1, 0x40032, &framebuffer, Some(1)))
                 .is_none()
         );
         assert!(
             tracker
-                .observe(2, 0x40032, &framebuffer, Some(2), None, false)
+                .observe(stuck_observation(2, 0x40032, &framebuffer, Some(2)))
                 .is_none()
         );
         assert!(
             tracker
-                .observe(3, 0x40032, &framebuffer, Some(3), None, false)
+                .observe(stuck_observation(3, 0x40032, &framebuffer, Some(3)))
                 .is_none()
         );
     }
@@ -511,10 +542,10 @@ mod tests {
         .unwrap();
         let framebuffer = [0u8; 16];
 
-        tracker.observe(1, 0x40032, &framebuffer, Some(9), None, false);
-        tracker.observe(2, 0x40032, &framebuffer, Some(9), None, false);
+        tracker.observe(stuck_observation(1, 0x40032, &framebuffer, Some(9)));
+        tracker.observe(stuck_observation(2, 0x40032, &framebuffer, Some(9)));
         let report = tracker
-            .observe(3, 0x40032, &framebuffer, Some(9), None, false)
+            .observe(stuck_observation(3, 0x40032, &framebuffer, Some(9)))
             .unwrap();
 
         assert_eq!(report.unique_pcs, 1);

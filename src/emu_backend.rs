@@ -5,6 +5,9 @@ use anyhow::Context;
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::nes::NesBackend;
+pub(crate) use self::system::{
+    ActiveSystem, ROM_AND_ARCHIVE_EXTENSIONS, ROM_EXTENSIONS, archive_extensions, system_specs,
+};
 pub(crate) use self::ws::WsBackend;
 
 use crate::emu_core_trait::EmulatorCore;
@@ -12,54 +15,8 @@ use crate::emu_core_trait::EmulatorCore;
 pub(crate) mod gb;
 pub(crate) mod gba;
 pub(crate) mod nes;
+pub(crate) mod system;
 pub(crate) mod ws;
-
-pub(crate) const ROM_EXTENSIONS: &[&str] = &["gb", "gbc", "sgb", "gba", "nes", "ws", "wsc"];
-pub(crate) const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] =
-    &["gb", "gbc", "sgb", "gba", "nes", "ws", "wsc", "zip"];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ActiveSystem {
-    GameBoy,
-    GameBoyAdvance,
-    Nes,
-    WonderSwan,
-}
-
-impl ActiveSystem {
-    pub(crate) fn storage_subdir(self) -> &'static str {
-        match self {
-            Self::GameBoy => "gbc",
-            Self::GameBoyAdvance => "gba",
-            Self::Nes => "nes",
-            Self::WonderSwan => "ws",
-        }
-    }
-
-    pub(crate) fn screen_size(self) -> (u32, u32) {
-        match self {
-            Self::GameBoy => (160, 144),
-            Self::GameBoyAdvance => (240, 160),
-            Self::Nes => (256, 240),
-            Self::WonderSwan => (224, 144),
-        }
-    }
-
-    pub(crate) fn from_path(path: &Path) -> Option<Self> {
-        let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-        match ext.as_str() {
-            "gb" | "gbc" | "sgb" => Some(Self::GameBoy),
-            "gba" => Some(Self::GameBoyAdvance),
-            "nes" => Some(Self::Nes),
-            "ws" | "wsc" => Some(Self::WonderSwan),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn supported_extensions() -> &'static str {
-        ".gb, .gbc, .sgb, .gba, .nes, .ws, .wsc, .zip"
-    }
-}
 
 pub(crate) enum EmuBackend {
     Gb(Box<GbBackend>),
@@ -154,12 +111,7 @@ impl EmuBackend {
     }
 
     fn state_extension(&self) -> &'static str {
-        match self {
-            Self::Gb(..) => "gbstate",
-            Self::Gba(..) => "gbastate",
-            Self::Nes(..) => "nstate",
-            Self::Ws(..) => "wsstate",
-        }
+        self.system().state_extension()
     }
 
     pub(crate) fn gb(&self) -> Option<&GbBackend> {

@@ -144,8 +144,11 @@ impl RomHeader {
         let global_checksum_bytes = rom
             .get(header_constants::GLOBAL_CHECKSUM_START..header_constants::GLOBAL_CHECKSUM_END)
             .ok_or_else(|| anyhow!("global_checksum missing"))?;
-        let global_checksum =
-            u16::from_be_bytes([global_checksum_bytes[0], global_checksum_bytes[1]]);
+        let global_checksum_bytes: [u8; header_constants::GLOBAL_CHECKSUM_BYTE_COUNT] =
+            global_checksum_bytes
+                .try_into()
+                .map_err(|_| anyhow!("global_checksum bytes incorrect length"))?;
+        let global_checksum = u16::from_be_bytes(global_checksum_bytes);
 
         Ok(Self {
             logo,
@@ -218,7 +221,9 @@ impl RomHeader {
 
     pub fn verify_header_checksum(&self, rom: &[u8]) -> bool {
         let mut checksum: u8 = 0;
-        for addr in 0x0134..=0x014C {
+        for addr in header_constants::HEADER_CHECKSUM_START
+            ..=header_constants::HEADER_CHECKSUM_END_INCLUSIVE
+        {
             let byte = rom.get(addr).copied().unwrap_or(0);
             checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
         }
@@ -228,7 +233,9 @@ impl RomHeader {
     pub fn verify_global_checksum(&self, rom: &[u8]) -> bool {
         let mut checksum: u16 = 0;
         for (i, &byte) in rom.iter().enumerate() {
-            if i != 0x014E && i != 0x014F {
+            if !(header_constants::GLOBAL_CHECKSUM_START..header_constants::GLOBAL_CHECKSUM_END)
+                .contains(&i)
+            {
                 checksum = checksum.wrapping_add(byte as u16);
             }
         }

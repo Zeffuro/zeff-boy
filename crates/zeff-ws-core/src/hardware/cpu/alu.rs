@@ -86,28 +86,30 @@ impl Cpu {
     }
 
     pub(super) fn set_logic_flags8(&mut self, result: u8) {
-        self.flags &= !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF);
+        self.flags &=
+            !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | FLAG_RESERVED_LOW);
         if result == 0 {
             self.flags |= FLAG_ZF;
         }
         if result & 0x80 != 0 {
             self.flags |= FLAG_SF;
         }
-        if result.count_ones() % 2 == 0 {
+        if result.count_ones().is_multiple_of(2) {
             self.flags |= FLAG_PF;
         }
         self.flags |= FLAG_FIXED;
     }
 
     pub(super) fn set_logic_flags16(&mut self, result: u16) {
-        self.flags &= !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF);
+        self.flags &=
+            !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | FLAG_RESERVED_LOW);
         if result == 0 {
             self.flags |= FLAG_ZF;
         }
         if result & 0x8000 != 0 {
             self.flags |= FLAG_SF;
         }
-        if (result as u8).count_ones() % 2 == 0 {
+        if (result as u8).count_ones().is_multiple_of(2) {
             self.flags |= FLAG_PF;
         }
         self.flags |= FLAG_FIXED;
@@ -126,15 +128,6 @@ impl Cpu {
         self.flags |= FLAG_FIXED;
     }
 
-    pub(super) fn set_auxiliary_carry(&mut self, set: bool) {
-        if set {
-            self.flags |= FLAG_AF;
-        } else {
-            self.flags &= !FLAG_AF;
-        }
-        self.flags |= FLAG_FIXED;
-    }
-
     pub(super) fn set_overflow(&mut self, set: bool) {
         if set {
             self.flags |= FLAG_OF;
@@ -144,10 +137,58 @@ impl Cpu {
         self.flags |= FLAG_FIXED;
     }
 
-    pub(super) fn set_mul_flags(&mut self, overflow: bool) {
-        self.flags &= !(FLAG_CF | FLAG_OF);
+    pub(super) fn set_mul_flags(&mut self, overflow: bool, zero: bool) {
+        self.last_mul_overflow = overflow;
+        self.flags &=
+            !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | FLAG_RESERVED_LOW);
+        if zero {
+            self.flags |= FLAG_ZF;
+        }
         if overflow {
             self.flags |= FLAG_CF | FLAG_OF;
+        }
+        self.flags |= FLAG_FIXED;
+    }
+
+    pub(super) fn set_div8_unsigned_flags(&mut self, quotient: u8, remainder: u8) {
+        self.set_div_flags_from_last_mul(remainder == 0 && quotient & 0x01 != 0);
+    }
+
+    pub(super) fn set_div16_flags(&mut self, quotient: u16, remainder: u16) {
+        self.set_div_flags_clear_cv(remainder == 0 && quotient & 0x0001 != 0);
+    }
+
+    pub(super) fn set_idiv8_flags(&mut self, quotient: u8) {
+        self.set_logic_flags8(quotient);
+        self.flags &= !(FLAG_CF | FLAG_AF | FLAG_OF);
+        self.flags |= FLAG_FIXED;
+    }
+
+    pub(super) fn set_divide_error_flags_from_last_mul(&mut self, zero: bool) {
+        self.set_div_flags_from_last_mul(zero);
+    }
+
+    pub(super) fn set_divide_error_flags_clear_cv(&mut self, zero: bool) {
+        self.set_div_flags_clear_cv(zero);
+    }
+
+    fn set_div_flags_from_last_mul(&mut self, zero: bool) {
+        self.flags &=
+            !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | FLAG_RESERVED_LOW);
+        if zero {
+            self.flags |= FLAG_ZF;
+        }
+        if self.last_mul_overflow {
+            self.flags |= FLAG_CF | FLAG_OF;
+        }
+        self.flags |= FLAG_FIXED;
+    }
+
+    fn set_div_flags_clear_cv(&mut self, zero: bool) {
+        self.flags &=
+            !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF | FLAG_RESERVED_LOW);
+        if zero {
+            self.flags |= FLAG_ZF;
         }
         self.flags |= FLAG_FIXED;
     }
@@ -326,18 +367,8 @@ impl Cpu {
         self.state = CpuState::Suspended;
     }
 
-    pub(super) fn divide_error(&mut self, opcode: u8, modrm: u8) {
-        let (cs, ip) = self
-            .last_fetch
-            .map(|fetch| (fetch.cs, fetch.ip))
-            .unwrap_or((self.segments[SegmentRegister::Cs.index()], self.ip));
-        self.last_trap = Some(CpuTrap::DivideError {
-            cs,
-            ip,
-            opcode,
-            modrm,
-        });
-        self.state = CpuState::Suspended;
+    pub(super) fn divide_error(&mut self, bus: &mut Bus) {
+        self.enter_interrupt(0, 10, bus);
     }
 }
 

@@ -57,10 +57,23 @@ kind = "zip"
 url = "https://github.com/mgba-emu/suite/archive/e6942030d25ffe3ba76c72b73a86da073ec857cc.zip"
 sha256 = "4a82b13a84c5a5c904bdb73c1dab4d3a3c78b45e9fa2000e10553ac1ce19a585"
 archive_prefix = "suite-e6942030d25ffe3ba76c72b73a86da073ec857cc"
+contains_built_roms = false
 license = "MIT"
 license_confidence = "verified"
 redistributable = false
 notes = "Pinned mGBA GBA test suite source archive. Build suite.gba into the ignored cache with scripts/build-mgba-suite.ps1."
+
+[[sources]]
+id = "asiekierka-ws-test-suite-7dfa0e2e"
+kind = "zip"
+url = "https://github.com/asiekierka/ws-test-suite/archive/7dfa0e2e869d08386b685d6a56df0bcfaf181b47.zip"
+sha256 = "5e9e3f10acc45fcdf6567cc7e2fe540889589e87e27e6025e66d81bf3ee58d88"
+archive_prefix = "ws-test-suite-7dfa0e2e869d08386b685d6a56df0bcfaf181b47"
+contains_built_roms = false
+license = "MIT"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned asiekierka/ws-test-suite source archive. Build .ws/.wsc outputs into rom-tests/cache/ws/asiekierka/ws-test-suite/ with scripts/build-ws-test-suite.ps1."
 
 [[sources]]
 id = "christopherpow-nes-test-roms-95d8f621"

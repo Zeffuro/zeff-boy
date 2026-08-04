@@ -3,22 +3,32 @@ use anyhow::{bail, ensure};
 use serde::{Deserialize, Serialize};
 
 pub const NES_PALETTE_COLOR_COUNT: usize = 64;
-pub const NES_PALETTE_RGB_BYTES: usize = NES_PALETTE_COLOR_COUNT * 3;
+pub const RGB_CHANNELS: usize = 3;
+pub const NES_PALETTE_RGB_BYTES: usize = NES_PALETTE_COLOR_COUNT * RGB_CHANNELS;
 pub const NES_PALETTE_EMPHASIS_GROUPS: usize = 8;
-pub const NES_PALETTE_EMPHASIS_RGB_BYTES: usize = NES_PALETTE_RGB_BYTES * 8;
+pub const NES_PALETTE_EMPHASIS_RGB_BYTES: usize =
+    NES_PALETTE_RGB_BYTES * NES_PALETTE_EMPHASIS_GROUPS;
+const CHANNEL_MAX: u8 = 0xFF;
+const CHANNEL_MAX_U16: u16 = 0x00FF;
+const EMPHASIS_MASK: u8 = 0xE0;
+const EMPHASIS_RED_NTSC_RGB: u8 = 0x20;
+const EMPHASIS_GREEN_NTSC_RGB: u8 = 0x40;
+const EMPHASIS_BLUE: u8 = 0x80;
+const DAC_4BIT_MASK: u16 = 0x0F;
+const RGB_PPU_DAC_MAX: u16 = 7;
 
 pub type NesBasePalette = [(u8, u8, u8); NES_PALETTE_COLOR_COUNT];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NesPalette {
     Base(NesBasePalette),
-    WithEmphasis([NesBasePalette; NES_PALETTE_EMPHASIS_GROUPS]),
+    WithEmphasis(Box<[NesBasePalette; NES_PALETTE_EMPHASIS_GROUPS]>),
 }
 
 impl NesPalette {
-    pub fn base(self) -> NesBasePalette {
+    pub fn base(&self) -> NesBasePalette {
         match self {
-            Self::Base(palette) => palette,
+            Self::Base(palette) => *palette,
             Self::WithEmphasis(palettes) => palettes[0],
         }
     }
@@ -36,7 +46,7 @@ pub enum NesPaletteMode {
 
 #[inline]
 fn scale_u8(v: u8, num: u16, den: u16) -> u8 {
-    ((u16::from(v) * num) / den).min(255) as u8
+    ((u16::from(v) * num) / den).min(CHANNEL_MAX_U16) as u8
 }
 
 #[inline]
@@ -79,7 +89,7 @@ pub fn parse_nes_palette_bytes(bytes: &[u8]) -> anyhow::Result<NesPalette> {
         *palette = parse_nes_base_palette(raw_palette)?;
     }
 
-    Ok(NesPalette::WithEmphasis(palettes))
+    Ok(NesPalette::WithEmphasis(Box::new(palettes)))
 }
 
 fn parse_nes_base_palette(bytes: &[u8]) -> anyhow::Result<NesBasePalette> {
@@ -90,7 +100,7 @@ fn parse_nes_base_palette(bytes: &[u8]) -> anyhow::Result<NesBasePalette> {
     );
 
     let mut palette = [(0u8, 0u8, 0u8); NES_PALETTE_COLOR_COUNT];
-    for (entry, rgb) in palette.iter_mut().zip(bytes.chunks_exact(3)) {
+    for (entry, rgb) in palette.iter_mut().zip(bytes.chunks_exact(RGB_CHANNELS)) {
         *entry = (rgb[0], rgb[1], rgb[2]);
     }
     Ok(palette)
@@ -98,14 +108,16 @@ fn parse_nes_base_palette(bytes: &[u8]) -> anyhow::Result<NesBasePalette> {
 
 #[inline]
 pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
-    let emph_bits = mask & 0xE0;
+    let emph_bits = mask & EMPHASIS_MASK;
     if emph_bits == 0 {
         return rgb;
     }
 
     let (red_bit, green_bit) = match mode {
-        NesPaletteMode::Pal => (0x40, 0x20),
-        NesPaletteMode::Raw | NesPaletteMode::Ntsc | NesPaletteMode::Custom => (0x20, 0x40),
+        NesPaletteMode::Pal => (EMPHASIS_GREEN_NTSC_RGB, EMPHASIS_RED_NTSC_RGB),
+        NesPaletteMode::Raw | NesPaletteMode::Ntsc | NesPaletteMode::Custom => {
+            (EMPHASIS_RED_NTSC_RGB, EMPHASIS_GREEN_NTSC_RGB)
+        }
     };
 
     const ATTEN_NUM: u16 = 192;
@@ -118,7 +130,7 @@ pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> 
     if emph_bits & green_bit == 0 {
         g = scale_u8(g, ATTEN_NUM, ATTEN_DEN);
     }
-    if emph_bits & 0x80 == 0 {
+    if emph_bits & EMPHASIS_BLUE == 0 {
         b = scale_u8(b, ATTEN_NUM, ATTEN_DEN);
     }
 
@@ -127,20 +139,20 @@ pub fn apply_nes_emphasis(mode: NesPaletteMode, mask: u8, rgb: (u8, u8, u8)) -> 
 
 #[inline]
 pub fn apply_rgb_ppu_emphasis(mask: u8, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
-    let emph_bits = mask & 0xE0;
+    let emph_bits = mask & EMPHASIS_MASK;
     if emph_bits == 0 {
         return rgb;
     }
 
     let (mut r, mut g, mut b) = rgb;
-    if emph_bits & 0x20 != 0 {
-        r = 0xFF;
+    if emph_bits & EMPHASIS_RED_NTSC_RGB != 0 {
+        r = CHANNEL_MAX;
     }
-    if emph_bits & 0x40 != 0 {
-        g = 0xFF;
+    if emph_bits & EMPHASIS_GREEN_NTSC_RGB != 0 {
+        g = CHANNEL_MAX;
     }
-    if emph_bits & 0x80 != 0 {
-        b = 0xFF;
+    if emph_bits & EMPHASIS_BLUE != 0 {
+        b = CHANNEL_MAX;
     }
 
     (r, g, b)
@@ -170,14 +182,14 @@ pub static NES_PALETTE: NesBasePalette = [
 ];
 
 const fn rgb_ppu_channel(dac: u16) -> u8 {
-    ((dac * 255 + 3) / 7) as u8
+    ((dac * CHANNEL_MAX_U16 + RGB_PPU_DAC_MAX / 2) / RGB_PPU_DAC_MAX) as u8
 }
 
 const fn rgb_ppu_color(rgb: u16) -> (u8, u8, u8) {
     (
-        rgb_ppu_channel((rgb >> 8) & 0x0F),
-        rgb_ppu_channel((rgb >> 4) & 0x0F),
-        rgb_ppu_channel(rgb & 0x0F),
+        rgb_ppu_channel((rgb >> 8) & DAC_4BIT_MASK),
+        rgb_ppu_channel((rgb >> 4) & DAC_4BIT_MASK),
+        rgb_ppu_channel(rgb & DAC_4BIT_MASK),
     )
 }
 

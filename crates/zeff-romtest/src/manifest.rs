@@ -373,10 +373,14 @@ pub(crate) fn validate_tests(tests: &[LoadedTest]) -> Vec<String> {
             ));
         }
 
-        if matches!(test.pass.kind, PassKind::GbSerialContains) && test.pass.contains.is_none() {
+        if matches!(
+            test.pass.kind,
+            PassKind::GbSerialContains | PassKind::WsScreenText
+        ) && test.pass.contains.is_none()
+        {
             errors.push(format!(
-                "{manifest}: test '{}' uses gb_serial_contains but has no pass.contains",
-                test.id
+                "{manifest}: test '{}' uses {} but has no pass.contains",
+                test.id, test.pass.kind
             ));
         }
 

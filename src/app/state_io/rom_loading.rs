@@ -1,5 +1,7 @@
 use super::App;
-use crate::emu_backend::{ActiveSystem, EmuBackend, ROM_AND_ARCHIVE_EXTENSIONS};
+use crate::emu_backend::{
+    ActiveSystem, EmuBackend, ROM_AND_ARCHIVE_EXTENSIONS, archive_extensions, system_specs,
+};
 use crate::emu_thread::{EmuCommand, EmuResponse};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -373,12 +375,13 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let was_paused = self.pause_for_dialog();
-            let file = crate::platform::FileDialog::new()
-                .add_filter("ROMs", ROM_AND_ARCHIVE_EXTENSIONS)
-                .add_filter("Game Boy ROMs", &["gb", "gbc", "sgb"])
-                .add_filter("Game Boy Advance ROMs", &["gba"])
-                .add_filter("NES ROMs", &["nes"])
-                .add_filter("ZIP Archives", &["zip"])
+            let mut dialog =
+                crate::platform::FileDialog::new().add_filter("ROMs", ROM_AND_ARCHIVE_EXTENSIONS);
+            for spec in system_specs() {
+                dialog = dialog.add_filter(spec.file_dialog_filter_name, spec.rom_extensions);
+            }
+            let file = dialog
+                .add_filter("ZIP Archives", archive_extensions())
                 .add_filter("All files", &["*"])
                 .set_title("Open ROM")
                 .pick_file();

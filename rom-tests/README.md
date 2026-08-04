@@ -23,4 +23,20 @@ just romtest-status-compat
 `manifests/compat-games` is for local game compatibility notes. Copy `example.toml` to an ignored `local*.toml` file before adding real game paths or names.
 `cache` and `results` are ignored.
 
+Some local-tier suites are source-only. Build them into the ignored cache before running the
+corresponding local tests:
+
+```powershell
+just romtest-build-ws-suite
+just romtest-run-local-ws
+```
+
+`scripts/build-ws-test-suite.ps1` downloads the pinned MIT-licensed
+`asiekierka/ws-test-suite` source archive, verifies its SHA-256, builds upstream's default
+`TARGET=wswan/small`, and copies generated `.ws`/`.wsc` files from `build/roms/*` into
+`rom-tests/cache/ws/asiekierka/ws-test-suite/`. It uses Docker by default when Docker is available;
+run it from a Wonderful Toolchain shell with `-Builder local` if you prefer a local toolchain.
+Generated ROMs remain out of git. If you redistribute them elsewhere, include the upstream MIT
+license notice copied into the cache as `LICENSE.ws-test-suite.txt`.
+
 Do not commit commercial games or random ROM dumps.

@@ -105,28 +105,6 @@ fn gba_executable_region(pc: u32) -> bool {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gba_executable_region_allows_valid_code_areas() {
-        assert!(gba_executable_region(0x0000_0000));
-        assert!(gba_executable_region(0x0200_0000));
-        assert!(gba_executable_region(0x0300_0000));
-        assert!(gba_executable_region(0x0600_0000));
-        assert!(gba_executable_region(0x0800_0000));
-        assert!(gba_executable_region(0x0DFF_FFFE));
-    }
-
-    #[test]
-    fn gba_executable_region_rejects_backup_and_open_bus_areas() {
-        assert!(!gba_executable_region(0x0400_0000));
-        assert!(!gba_executable_region(0x0E00_0000));
-        assert!(!gba_executable_region(0x8328_9B90));
-    }
-}
-
 pub(super) fn should_trace_nes_bus_event(opts: &HeadlessOptions, event: NesBusTraceEvent) -> bool {
     let (addr, is_read) = match event {
         NesBusTraceEvent::Read { addr, .. } => (addr, true),
@@ -530,4 +508,26 @@ fn format_gba_op_fields(
         emulator.cpu_pc(),
         fetched.decoded
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gba_executable_region_allows_valid_code_areas() {
+        assert!(gba_executable_region(0x0000_0000));
+        assert!(gba_executable_region(0x0200_0000));
+        assert!(gba_executable_region(0x0300_0000));
+        assert!(gba_executable_region(0x0600_0000));
+        assert!(gba_executable_region(0x0800_0000));
+        assert!(gba_executable_region(0x0DFF_FFFE));
+    }
+
+    #[test]
+    fn gba_executable_region_rejects_backup_and_open_bus_areas() {
+        assert!(!gba_executable_region(0x0400_0000));
+        assert!(!gba_executable_region(0x0E00_0000));
+        assert!(!gba_executable_region(0x8328_9B90));
+    }
 }

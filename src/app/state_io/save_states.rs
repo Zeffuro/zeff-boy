@@ -1,7 +1,17 @@
 use super::App;
-use crate::emu_backend::ActiveSystem;
+use crate::emu_backend::{ActiveSystem, system_specs};
 use crate::emu_thread::{EmuCommand, EmuResponse};
 use std::path::PathBuf;
+
+fn all_state_file_extensions() -> Vec<&'static str> {
+    let mut extensions = vec!["state"];
+    for spec in system_specs() {
+        if !extensions.contains(&spec.state_extension) {
+            extensions.push(spec.state_extension);
+        }
+    }
+    extensions
+}
 
 impl App {
     fn refresh_framebuffer_after_load(&mut self) {
@@ -157,10 +167,11 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let was_paused = self.pause_for_dialog();
+            let state_extensions = all_state_file_extensions();
             let file = crate::platform::FileDialog::new()
                 .set_title("Save State As")
                 .set_directory(self.state_dialog_dir())
-                .add_filter("Zeff Boy Save State", &["state"])
+                .add_filter("Zeff Boy Save State", &state_extensions)
                 .set_file_name(&self.default_state_file_name())
                 .save_file();
 
@@ -214,10 +225,11 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let was_paused = self.pause_for_dialog();
+            let state_extensions = all_state_file_extensions();
             let file = crate::platform::FileDialog::new()
                 .set_title("Load State")
                 .set_directory(self.state_dialog_dir())
-                .add_filter("Zeff Boy Save State", &["state"])
+                .add_filter("Zeff Boy Save State", &state_extensions)
                 .pick_file();
 
             self.resume_after_dialog(was_paused);
@@ -253,8 +265,9 @@ impl App {
 
         #[cfg(target_arch = "wasm32")]
         {
+            let state_extensions = all_state_file_extensions();
             crate::platform::FileDialog::new()
-                .add_filter("Save States", &["state", "gbstate", "nstate"])
+                .add_filter("Save States", &state_extensions)
                 .set_title("Load State")
                 .pick_file_web(self.pending_state_load.clone());
         }
@@ -293,6 +306,25 @@ impl App {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_file_filters_cover_registered_system_state_extensions() {
+        let extensions = all_state_file_extensions();
+
+        assert!(extensions.contains(&"state"));
+        for spec in system_specs() {
+            assert!(
+                extensions.contains(&spec.state_extension),
+                "missing state extension for {}",
+                spec.short_code
+            );
         }
     }
 }

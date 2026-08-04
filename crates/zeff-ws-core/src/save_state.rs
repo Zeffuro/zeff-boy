@@ -5,7 +5,7 @@ use crate::hardware::apu::ApuSaveState;
 use crate::hardware::cpu::CpuState;
 
 const MAGIC: &[u8; 8] = b"ZEFFWS1\0";
-const VERSION: u8 = 5;
+const VERSION: u8 = 8;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::new();
@@ -27,10 +27,20 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u64(emu.cpu.cycles);
     w.u8(cpu_state_to_byte(emu.cpu.state));
     w.u8(emu.cpu.last_opcode);
+    w.u8(emu.cpu.interrupt_shadow);
+    w.u8(emu.cpu.brk_shadow);
 
     w.u64(emu.bus.cycles);
     w.vec(&emu.bus.ram)?;
     w.vec(&emu.bus.io)?;
+    let (sound_dma_reload_source, sound_dma_reload_length, sound_dma_cycle_accumulator) =
+        emu.bus.sound_dma_save_values();
+    w.u32(sound_dma_reload_source);
+    w.u32(sound_dma_reload_length);
+    w.u32(sound_dma_cycle_accumulator);
+    let (eeprom_flags, internal_eeprom_done_delay_reads) = emu.bus.eeprom_save_values();
+    w.u8(eeprom_flags);
+    w.u8(internal_eeprom_done_delay_reads);
     w.vec(&emu.bus.internal_eeprom)?;
     w.u16(emu.bus.cartridge.bank0());
     w.u16(emu.bus.cartridge.bank1());
@@ -70,6 +80,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     }
     w.u16(apu.nreg);
     w.u8(apu.hyper_voice_sample);
+    w.u8(apu.sound_test);
     w.u8(apu.hyper_voice_control);
     w.u8(apu.hyper_voice_channel_control);
     w.u32(apu.sample_cycle_accumulator);
@@ -107,12 +118,36 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.cpu.cycles = r.u64()?;
     emu.cpu.state = byte_to_cpu_state(r.u8()?)?;
     emu.cpu.last_opcode = r.u8()?;
+    if version >= 8 {
+        emu.cpu.interrupt_shadow = r.u8()?;
+        emu.cpu.brk_shadow = r.u8()?;
+    } else {
+        emu.cpu.interrupt_shadow = 0;
+        emu.cpu.brk_shadow = 0;
+    }
     emu.cpu.last_fetch = None;
     emu.cpu.last_trap = None;
 
     emu.bus.cycles = r.u64()?;
     r.vec_into(&mut emu.bus.ram)?;
     r.vec_into(&mut emu.bus.io)?;
+    if version >= 6 {
+        let sound_dma_reload_source = r.u32()?;
+        let sound_dma_reload_length = r.u32()?;
+        let sound_dma_cycle_accumulator = r.u32()?;
+        emu.bus.load_sound_dma_save_values(
+            sound_dma_reload_source,
+            sound_dma_reload_length,
+            sound_dma_cycle_accumulator,
+        );
+        let eeprom_flags = r.u8()?;
+        let internal_eeprom_done_delay_reads = r.u8()?;
+        emu.bus
+            .load_eeprom_save_values(eeprom_flags, internal_eeprom_done_delay_reads);
+    } else {
+        emu.bus.load_sound_dma_save_values(0, 0, 0);
+        emu.bus.load_eeprom_save_values(0x01, 0);
+    }
     if version >= 3 {
         r.vec_into(&mut emu.bus.internal_eeprom)?;
     }
@@ -169,6 +204,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         }
         let nreg = r.u16()?;
         let hyper_voice_sample = r.u8()?;
+        let sound_test = if version >= 7 { r.u8()? } else { 0 };
         let hyper_voice_control = r.u8()?;
         let hyper_voice_channel_control = r.u8()?;
         let sample_cycle_accumulator = r.u32()?;
@@ -192,6 +228,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
             sample_pos,
             nreg,
             hyper_voice_sample,
+            sound_test,
             hyper_voice_control,
             hyper_voice_channel_control,
             sample_cycle_accumulator,
@@ -341,7 +378,7 @@ impl<'a> StateReader<'a> {
         Ok(u64::from_le_bytes(bytes))
     }
 
-    fn vec_into(&mut self, out: &mut Vec<u8>) -> anyhow::Result<()> {
+    fn vec_into(&mut self, out: &mut [u8]) -> anyhow::Result<()> {
         let len = self.u32()? as usize;
         if len != out.len() {
             bail!(

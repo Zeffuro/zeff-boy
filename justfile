@@ -73,6 +73,23 @@ romtest-fetch:
 romtest-build-mgba-suite:
     powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
 
+# Build the asiekierka WonderSwan test suite into the ignored ROM cache.
+# Requires Docker Desktop, or pass -Builder local from a Wonderful Toolchain shell.
+[windows]
+romtest-build-ws-suite:
+    powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
+
+# Validate the asiekierka WonderSwan test-suite build plan without downloading/building.
+[windows]
+romtest-build-ws-suite-dry-run:
+    powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1 -DryRun
+
+# Build all source-only local test suites into the ignored ROM cache.
+[windows]
+romtest-build-local-suites:
+    powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
+    powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
+
 # Download local-only test ROM sources and extract them into the ignored cache.
 # These may include unclear-license public test collections and stay out of default CI.
 romtest-fetch-local:
@@ -93,6 +110,10 @@ romtest-baseline:
 # Run local-only ROM tests from ignored local caches.
 romtest-run-local:
     cargo run -p zeff-romtest -- run --tier local --report-json rom-tests/results/local.json --report-md rom-tests/results/local.md --report-junit rom-tests/results/local.junit.xml --report-baseline rom-tests/results/local.baseline.json
+
+# Run local-only WonderSwan ROM tests. Missing optional local artifacts are skipped.
+romtest-run-local-ws:
+    cargo run -p zeff-romtest -- run --tier local --core ws --allow-missing --report-json rom-tests/results/local-ws.json --report-md rom-tests/results/local-ws.md --report-junit rom-tests/results/local-ws.junit.xml --report-baseline rom-tests/results/local-ws.baseline.json
 
 # Regenerate the committed local-only ROM test baseline. Requires local ROM cache.
 romtest-baseline-local:

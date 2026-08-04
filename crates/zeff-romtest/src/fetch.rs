@@ -168,6 +168,16 @@ fn fetch_one(
         });
     };
 
+    if matches!(source.kind, SourceKind::Zip) && !source.contains_built_roms {
+        let mut reason =
+            "source archive is build-only and does not contain built ROM artifacts".to_string();
+        if let Some(notes) = &source.notes {
+            reason.push_str("; ");
+            reason.push_str(notes);
+        }
+        return Ok(fetch_skipped(test, &reason));
+    }
+
     let archive_path = match source.kind {
         SourceKind::Zip => match &test.rom.archive_path {
             Some(path) => Some(path),
@@ -480,6 +490,7 @@ mod tests {
             sha256: "0".repeat(64),
             archive_prefix: Some("archive-root".to_string()),
             archive_path_strip_prefix: Some("local-cache-root".to_string()),
+            contains_built_roms: true,
             license: "unknown".to_string(),
             license_confidence,
             redistributable: false,
