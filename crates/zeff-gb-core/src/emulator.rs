@@ -56,6 +56,8 @@ impl fmt::Debug for Emulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debug::WatchType;
+    use zeff_emu_common::save_ram::SaveRamKind;
 
     #[test]
     fn public_api_parity_wrappers_load_step_and_roundtrip_state() {
@@ -64,7 +66,32 @@ mod tests {
 
         assert_eq!(emulator.framebuffer_dimensions(), (160, 144));
         assert_eq!(emulator.frame_count(), 0);
+        assert_eq!(emulator.save_ram_kind(), SaveRamKind::none());
         assert!(!emulator.has_battery());
+        assert_eq!(emulator.system_ram().len(), emulator.wram_snapshot().len());
+        assert_eq!(
+            emulator.video_ram_snapshot().len(),
+            emulator.vram_snapshot().len()
+        );
+        assert!(emulator.iter_breakpoints().next().is_none());
+
+        emulator.add_breakpoint(emulator.cpu_pc());
+        assert_eq!(
+            emulator.iter_breakpoints().collect::<Vec<_>>(),
+            vec![emulator.cpu_pc()]
+        );
+        assert_eq!(emulator.debug_hit_breakpoint(), None);
+
+        emulator.add_watchpoint(0xC000, WatchType::Write);
+        assert_eq!(emulator.debug_watchpoints().len(), 1);
+        emulator.cpu_write8(0xC000, 0x5A);
+        assert_eq!(emulator.cpu_peek8(0xC000), 0x5A);
+        assert_eq!(
+            emulator.debug_hit_watchpoint().map(|hit| hit.new_value),
+            Some(0x5A)
+        );
+        emulator.remove_breakpoint(emulator.cpu_pc());
+        emulator.debug_continue();
 
         emulator.set_input(0x01, 0x01);
         emulator.step_frame();

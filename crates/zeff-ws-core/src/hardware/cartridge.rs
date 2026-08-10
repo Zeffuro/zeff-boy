@@ -1,4 +1,5 @@
 use anyhow::{Context, bail};
+use zeff_emu_common::save_ram::SaveRamKind;
 
 use super::constants::ROM_BANK_SIZE;
 
@@ -77,7 +78,16 @@ impl SaveKind {
     }
 
     pub fn has_battery(self) -> bool {
-        self.size() != 0
+        self.save_ram_kind().is_battery_backed()
+    }
+
+    pub fn save_ram_kind(self) -> SaveRamKind {
+        let size = self.size();
+        if size == 0 {
+            SaveRamKind::none()
+        } else {
+            SaveRamKind::known_battery_backed(size)
+        }
     }
 }
 
@@ -206,7 +216,11 @@ impl Cartridge {
     }
 
     pub fn has_battery(&self) -> bool {
-        self.footer.save_kind.has_battery()
+        self.save_ram_kind().is_battery_backed()
+    }
+
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        self.footer.save_kind.save_ram_kind()
     }
 
     pub fn dump_battery_data(&self) -> Option<Vec<u8>> {
@@ -456,9 +470,24 @@ mod tests {
     #[test]
     fn loads_battery_save_with_declared_size() {
         let mut cart = Cartridge::load(&test_rom()).unwrap();
+        assert_eq!(
+            cart.save_ram_kind(),
+            SaveRamKind::known_battery_backed(32 * 1024)
+        );
         assert_eq!(cart.dump_battery_data().unwrap().len(), 32 * 1024);
         assert!(cart.load_battery_data(&vec![0x11; 32 * 1024]).is_ok());
         assert!(cart.load_battery_data(&[0x11]).is_err());
+    }
+
+    #[test]
+    fn no_save_kind_reports_no_save_ram() {
+        let rom = sized_test_rom(128 * 1024);
+        let cart = Cartridge::load(&rom).unwrap();
+
+        assert_eq!(cart.save_kind(), SaveKind::None);
+        assert_eq!(cart.save_ram_kind(), SaveRamKind::none());
+        assert!(!cart.has_battery());
+        assert_eq!(cart.dump_battery_data(), None);
     }
 
     #[test]

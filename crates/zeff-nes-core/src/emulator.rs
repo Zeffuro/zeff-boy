@@ -3,6 +3,7 @@ use crate::hardware::cartridge::Cartridge;
 use crate::hardware::cpu::{Cpu, CpuState};
 use sha2::{Digest, Sha256};
 use std::fmt;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 mod runtime;
 
@@ -60,15 +61,25 @@ impl Emulator {
         )
     }
 
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        self.bus
+            .cartridge
+            .dump_battery_data()
+            .filter(|data| !data.is_empty())
+            .map_or(SaveRamKind::none(), |data| {
+                SaveRamKind::known_battery_backed(data.len())
+            })
+    }
+
     pub fn has_battery(&self) -> bool {
-        self.bus.cartridge.header().has_battery
+        self.save_ram_kind().is_battery_backed()
     }
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
-        if !self.bus.cartridge.header().has_battery {
-            return None;
-        }
-        self.bus.cartridge.dump_battery_data()
+        self.bus
+            .cartridge
+            .dump_battery_data()
+            .filter(|data| !data.is_empty())
     }
 
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
@@ -209,6 +220,10 @@ impl Emulator {
         self.opcode_log.set_enabled(enabled);
     }
 
+    pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8)> {
+        self.opcode_log.recent(n)
+    }
+
     pub fn cpu_pc(&self) -> u16 {
         self.cpu.pc
     }
@@ -325,6 +340,22 @@ impl Emulator {
         self.bus.cpu_peek(addr)
     }
 
+    pub fn cpu_peek8(&self, addr: u16) -> u8 {
+        self.cpu_peek(addr)
+    }
+
+    pub fn cpu_read8_debuggable(&mut self, addr: u16) -> u8 {
+        let value = self.bus.cpu_peek(addr);
+        self.debug.check_watch_read(addr, value);
+        value
+    }
+
+    pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        let old = self.bus.cpu_peek(addr);
+        self.bus.cpu_write(addr, value);
+        self.debug.check_watch_write(addr, old, value);
+    }
+
     pub fn cartridge_header(&self) -> &crate::hardware::cartridge::RomHeader {
         self.bus.cartridge.header()
     }
@@ -420,6 +451,10 @@ impl Emulator {
         }
         buf
     }
+
+    pub fn video_ram_snapshot(&mut self) -> Vec<u8> {
+        self.chr_ram_snapshot()
+    }
 }
 
 fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
@@ -498,6 +533,28 @@ mod tests {
         assert_eq!(emu.framebuffer_dimensions(), (256, 240));
         assert_eq!(emu.framebuffer().len(), 256 * 240 * 4);
         assert_eq!(emu.frame_count(), 0);
+        assert_eq!(emu.save_ram_kind(), SaveRamKind::none());
+        assert_eq!(emu.system_ram().len(), 0x800);
+        assert_eq!(emu.video_ram_snapshot().len(), 0x2000);
+        assert!(emu.iter_breakpoints().next().is_none());
+
+        emu.add_breakpoint(emu.cpu_pc());
+        assert_eq!(
+            emu.iter_breakpoints().collect::<Vec<_>>(),
+            vec![emu.cpu_pc()]
+        );
+        assert_eq!(emu.debug_hit_breakpoint(), None);
+        emu.remove_breakpoint(emu.cpu_pc());
+
+        emu.add_watchpoint(0x0000, crate::debug::WatchType::Write);
+        assert_eq!(emu.debug_watchpoints().len(), 1);
+        emu.cpu_write8(0x0000, 0x5A);
+        assert_eq!(emu.cpu_peek8(0x0000), 0x5A);
+        assert_eq!(
+            emu.debug_hit_watchpoint().map(|hit| hit.new_value),
+            Some(0x5A)
+        );
+        emu.debug_continue();
 
         emu.set_input(0x01, 0x01);
         emu.step_frame();

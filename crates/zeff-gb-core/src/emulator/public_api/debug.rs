@@ -1,5 +1,5 @@
 use super::super::Emulator;
-use crate::debug::WatchType;
+use crate::debug::{WatchHit, WatchType, Watchpoint};
 use crate::hardware::types::CpuState;
 
 impl Emulator {
@@ -37,5 +37,37 @@ impl Emulator {
 
     pub fn iter_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
         self.debug.iter_breakpoints()
+    }
+
+    pub fn debug_watchpoints(&self) -> &[Watchpoint] {
+        &self.debug.watchpoints
+    }
+
+    pub fn debug_hit_breakpoint(&self) -> Option<u16> {
+        self.debug.hit_breakpoint
+    }
+
+    pub fn debug_hit_watchpoint(&self) -> Option<&WatchHit> {
+        self.debug.hit_watchpoint.as_ref()
+    }
+
+    pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8, bool)> {
+        self.opcode_log.recent(n)
+    }
+
+    pub fn cpu_peek8(&self, addr: u16) -> u8 {
+        self.bus.read_byte(addr)
+    }
+
+    pub fn cpu_read8_debuggable(&mut self, addr: u16) -> u8 {
+        let value = self.bus.read_byte(addr);
+        self.debug.check_watch_read(addr, value);
+        value
+    }
+
+    pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        let old = self.bus.read_byte_raw(addr);
+        self.bus.write_byte(addr, value);
+        self.debug.check_watch_write(addr, old, value);
     }
 }

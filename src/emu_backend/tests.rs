@@ -1,147 +1,17 @@
-use super::{ActiveSystem, EmuBackend, ROM_EXTENSIONS, system_specs};
+use super::{
+    ActiveSystem, BackendLoadConfig, EmuBackend, ROM_EXTENSIONS, load_backend_from_rom_source,
+    system_specs,
+};
+use crate::debug::DebugUiActions;
+use crate::emu_thread::EmuThread;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use zeff_emu_common::debug::WatchType;
+use zeff_emu_common::save_ram::SaveRamKind;
 
-fn build_gb_test_rom() -> Vec<u8> {
-    vec![0u8; 0x8000]
-}
+mod fixtures;
 
-fn build_nes_test_rom() -> Vec<u8> {
-    let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
-    rom[0..4].copy_from_slice(b"NES\x1A");
-    rom[4] = 1;
-    rom[5] = 1;
-
-    let prg = 16;
-    rom[prg] = 0xA9;
-    rom[prg + 1] = 0x42;
-    rom[prg + 2] = 0x85;
-    rom[prg + 3] = 0x00;
-    rom[prg + 4] = 0xEA;
-    rom[prg + 5] = 0xEA;
-
-    rom[prg + 0x3FFC] = 0x00;
-    rom[prg + 0x3FFD] = 0x80;
-    rom
-}
-
-fn build_gba_test_rom() -> Vec<u8> {
-    let mut rom = vec![0u8; 0xC0];
-    rom[0xA0..0xA4].copy_from_slice(b"TEST");
-    rom[0xAC..0xB0].copy_from_slice(b"ABCD");
-    rom[0xB0..0xB2].copy_from_slice(b"01");
-    rom[0xB2] = 0x96;
-    rom
-}
-
-fn build_ws_test_rom() -> Vec<u8> {
-    let mut rom = vec![0xFF; 0x10000];
-    rom[0] = 0xF4;
-    let reset = rom.len() - 16;
-    rom[reset..reset + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
-    let footer = rom.len() - 10;
-    rom[footer + 4] = 0x01;
-    let checksum = zeff_ws_core::hardware::cartridge::compute_footer_checksum(&rom);
-    rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
-    rom
-}
-
-fn build_sms_test_rom() -> Vec<u8> {
-    vec![0x76]
-}
-
-fn build_gb_backend() -> EmuBackend {
-    let rom = build_gb_test_rom();
-    let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
-        &rom,
-        zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::Auto,
-    )
-    .expect("GB emulator should initialize");
-    EmuBackend::from_gb(gb, PathBuf::from("test.gb"))
-}
-
-fn build_nes_backend() -> EmuBackend {
-    let rom = build_nes_test_rom();
-    let nes = zeff_nes_core::emulator::Emulator::new(&rom, 44_100.0)
-        .expect("NES emulator should initialize");
-    EmuBackend::from_nes(nes, PathBuf::from("test.nes"))
-}
-
-fn build_gba_backend() -> EmuBackend {
-    let rom = build_gba_test_rom();
-    let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
-        .expect("GBA emulator should initialize");
-    EmuBackend::from_gba(gba, PathBuf::from("test.gba"))
-}
-
-fn build_ws_backend() -> EmuBackend {
-    let rom = build_ws_test_rom();
-    let ws = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
-        .expect("WonderSwan emulator should initialize");
-    EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
-}
-
-fn build_sms_backend() -> EmuBackend {
-    let rom = build_sms_test_rom();
-    let sms = zeff_sega8_core::emulator::Emulator::new_with_hint(
-        &rom,
-        44_100,
-        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
-    )
-    .expect("SMS emulator should initialize");
-    EmuBackend::from_sega8(sms, PathBuf::from("test.sms"))
-}
-
-fn step_frames(backend: &mut EmuBackend, count: usize) {
-    for _ in 0..count {
-        backend.step_frame();
-    }
-}
-
-fn assert_save_state_replay_is_deterministic(
-    mut backend: EmuBackend,
-    frames_before_checkpoint: usize,
-    frames_after_checkpoint: usize,
-) {
-    step_frames(&mut backend, frames_before_checkpoint);
-
-    let checkpoint_framebuffer = backend.framebuffer().to_vec();
-    let checkpoint_state = backend
-        .encode_state_bytes()
-        .expect("backend should encode checkpoint save-state");
-
-    step_frames(&mut backend, frames_after_checkpoint);
-
-    let expected_framebuffer = backend.framebuffer().to_vec();
-    let expected_state = backend
-        .encode_state_bytes()
-        .expect("backend should encode replay target save-state");
-
-    backend
-        .load_state_from_bytes(checkpoint_state)
-        .expect("backend should restore checkpoint save-state");
-
-    assert_eq!(
-        backend.framebuffer(),
-        checkpoint_framebuffer,
-        "loading a save-state should restore the checkpoint framebuffer"
-    );
-
-    step_frames(&mut backend, frames_after_checkpoint);
-
-    assert_eq!(
-        backend.framebuffer(),
-        expected_framebuffer,
-        "replaying from a save-state should reproduce the same framebuffer"
-    );
-    assert_eq!(
-        backend
-            .encode_state_bytes()
-            .expect("backend should encode replayed save-state"),
-        expected_state,
-        "replaying from a save-state should reproduce the same encoded state"
-    );
-}
+use fixtures::*;
 
 #[test]
 fn active_system_detects_supported_rom_extensions() {
@@ -210,6 +80,165 @@ fn system_specs_cover_supported_rom_extensions() {
         assert!(!spec.state_extension.is_empty());
         assert!(!spec.file_dialog_filter_name.is_empty());
     }
+}
+
+#[test]
+fn shared_backend_loader_covers_every_supported_core() {
+    let cases = [
+        (
+            ActiveSystem::GameBoy,
+            "test.gb",
+            build_gb_test_rom(),
+            ActiveSystem::GameBoy,
+        ),
+        (
+            ActiveSystem::GameBoyAdvance,
+            "test.gba",
+            build_gba_test_rom(),
+            ActiveSystem::GameBoyAdvance,
+        ),
+        (
+            ActiveSystem::Nes,
+            "test.nes",
+            build_nes_test_rom(),
+            ActiveSystem::Nes,
+        ),
+        (
+            ActiveSystem::WonderSwan,
+            "test.ws",
+            build_ws_test_rom(),
+            ActiveSystem::WonderSwan,
+        ),
+        (
+            ActiveSystem::MasterSystem,
+            "test.sms",
+            build_sms_test_rom(),
+            ActiveSystem::MasterSystem,
+        ),
+    ];
+
+    for (system, rom_name, rom, expected_backend_system) in cases {
+        let backend = load_test_backend_with_shared_loader(system, rom_name, rom);
+        assert_eq!(backend.system(), expected_backend_system);
+        assert_eq!(backend.rom_path(), PathBuf::from(rom_name));
+        assert_eq!(backend.source_path(), PathBuf::from(rom_name));
+        assert!(!backend.framebuffer().is_empty());
+    }
+}
+
+#[test]
+fn shared_backend_loader_preserves_archive_source_path() {
+    let rom = build_gba_test_rom();
+    let original_crc = crc32fast::hash(&rom);
+    let source_path = PathBuf::from("archive.zip");
+    let rom_path = PathBuf::from("inside_archive.gba");
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::GameBoyAdvance,
+        &source_path,
+        &rom_path,
+        Some(rom),
+        BackendLoadConfig::default(),
+    )
+    .expect("shared backend loader should initialize archived test ROM");
+
+    assert_eq!(loaded.original_crc32, original_crc);
+    assert_eq!(loaded.backend.rom_path(), rom_path);
+    assert_eq!(loaded.backend.source_path(), source_path);
+}
+
+#[test]
+fn backend_feature_contract_covers_every_supported_core() {
+    assert_backend_feature_contract(
+        build_gb_backend(),
+        ActiveSystem::GameBoy,
+        SaveRamKind::none(),
+        zeff_gb_core::hardware::types::constants::WRAM_SIZE * 8,
+        zeff_gb_core::hardware::types::constants::VRAM_SIZE * 2,
+    );
+    assert_backend_feature_contract(
+        build_gba_backend(),
+        ActiveSystem::GameBoyAdvance,
+        SaveRamKind::none(),
+        zeff_gba_core::hardware::constants::EWRAM_SIZE
+            + zeff_gba_core::hardware::constants::IWRAM_SIZE,
+        zeff_gba_core::hardware::constants::VRAM_SIZE,
+    );
+    assert_backend_feature_contract(
+        build_nes_backend(),
+        ActiveSystem::Nes,
+        SaveRamKind::none(),
+        0x800,
+        0x2000,
+    );
+    assert_backend_feature_contract(
+        build_ws_backend(),
+        ActiveSystem::WonderSwan,
+        SaveRamKind::none(),
+        zeff_ws_core::hardware::constants::WS_INTERNAL_RAM_SIZE,
+        zeff_ws_core::hardware::constants::WS_INTERNAL_RAM_SIZE,
+    );
+    assert_backend_feature_contract(
+        build_sms_backend(),
+        ActiveSystem::MasterSystem,
+        SaveRamKind::mapper_ram_unknown(
+            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
+        ),
+        zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
+        zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
+}
+
+#[test]
+fn app_ui_snapshot_reports_core_features_for_every_supported_core() {
+    assert_app_snapshot_core_features(
+        build_gb_backend(),
+        SaveRamKind::none(),
+        zeff_gb_core::hardware::types::constants::WRAM_SIZE * 8,
+        zeff_gb_core::hardware::types::constants::VRAM_SIZE * 2,
+    );
+    assert_app_snapshot_core_features(
+        build_gba_backend(),
+        SaveRamKind::none(),
+        zeff_gba_core::hardware::constants::EWRAM_SIZE
+            + zeff_gba_core::hardware::constants::IWRAM_SIZE,
+        zeff_gba_core::hardware::constants::VRAM_SIZE,
+    );
+    assert_app_snapshot_core_features(build_nes_backend(), SaveRamKind::none(), 0x800, 0x2000);
+    assert_app_snapshot_core_features(
+        build_ws_backend(),
+        SaveRamKind::none(),
+        zeff_ws_core::hardware::constants::WS_INTERNAL_RAM_SIZE,
+        zeff_ws_core::hardware::constants::WS_INTERNAL_RAM_SIZE,
+    );
+    assert_app_snapshot_core_features(
+        build_sms_backend(),
+        SaveRamKind::mapper_ram_unknown(
+            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
+        ),
+        zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
+        zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
+}
+
+#[test]
+fn ws_backend_debug_actions_update_core_debug_state() {
+    let rom = build_ws_test_rom();
+    let mut emu = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("WonderSwan emulator should initialize");
+    let mut actions = DebugUiActions::none();
+    actions.add_breakpoint = Some(0xF0000);
+    actions.add_watchpoint = Some((0x0000, WatchType::Write));
+    actions.memory_writes.push((0x0000, 0x5A));
+
+    EmuThread::apply_ws_debug_actions(&mut emu, &actions);
+
+    assert_eq!(emu.iter_breakpoints().collect::<Vec<_>>(), vec![0xF0000]);
+    assert_eq!(emu.debug_watchpoints().len(), 1);
+    assert_eq!(
+        emu.debug_hit_watchpoint()
+            .map(|hit| (hit.address, hit.new_value)),
+        Some((0x0000, 0x5A))
+    );
 }
 
 #[test]

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::audio_recorder::MidiApuSnapshot;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(crate) trait DebuggableEmulator {
     fn add_breakpoint(&mut self, addr: Address);
@@ -9,6 +10,11 @@ pub(crate) trait DebuggableEmulator {
     fn remove_breakpoint(&mut self, addr: Address);
     fn toggle_breakpoint(&mut self, addr: Address);
     fn debug_write(&mut self, addr: Address, val: u8);
+    fn is_cpu_suspended(&self) -> bool;
+    fn debug_continue(&mut self);
+    fn debug_step(&mut self);
+    #[inline]
+    fn set_opcode_log_enabled(&mut self, _enabled: bool) {}
 }
 
 pub(crate) trait EmulatorCore {
@@ -40,6 +46,26 @@ pub(crate) trait EmulatorCore {
     fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()>;
     fn rom_path(&self) -> &Path;
     fn rom_hash(&self) -> [u8; 32];
+
+    #[inline]
+    fn save_ram_kind(&self) -> SaveRamKind {
+        SaveRamKind::none()
+    }
+
+    #[inline]
+    fn system_ram_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn video_ram_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn supports_debugger(&self) -> bool {
+        false
+    }
 
     #[inline]
     fn set_input_p2(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}

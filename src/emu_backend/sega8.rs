@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use zeff_emu_common::address::Address;
+use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
 use zeff_sega8_core::hardware::cartridge::{Sega8System, SystemHint};
 
@@ -26,6 +27,18 @@ impl crate::emu_core_trait::DebuggableEmulator for Sega8Emulator {
 
     fn debug_write(&mut self, addr: Address, val: u8) {
         self.debug_write(addr, val);
+    }
+    fn is_cpu_suspended(&self) -> bool {
+        self.is_cpu_suspended()
+    }
+    fn debug_continue(&mut self) {
+        self.debug_continue()
+    }
+    fn debug_step(&mut self) {
+        self.debug_step()
+    }
+    fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.set_opcode_log_enabled(enabled)
     }
 }
 
@@ -119,6 +132,22 @@ impl EmulatorCore for Sega8Backend {
 
     fn rom_hash(&self) -> [u8; 32] {
         self.emu.rom_hash()
+    }
+
+    fn save_ram_kind(&self) -> SaveRamKind {
+        self.emu.save_ram_kind()
+    }
+
+    fn system_ram_len(&self) -> usize {
+        self.emu.system_ram().len()
+    }
+
+    fn video_ram_len(&self) -> usize {
+        self.emu.video_ram_snapshot().len()
+    }
+
+    fn supports_debugger(&self) -> bool {
+        true
     }
 }
 

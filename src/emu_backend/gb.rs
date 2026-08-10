@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use zeff_emu_common::address::{Address, narrow_u16};
+use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 
 use crate::audio_recorder::MidiApuSnapshot;
@@ -20,7 +21,19 @@ impl crate::emu_core_trait::DebuggableEmulator for GbEmulator {
         self.toggle_breakpoint(narrow_u16(addr))
     }
     fn debug_write(&mut self, addr: Address, val: u8) {
-        self.write_byte(narrow_u16(addr), val)
+        self.cpu_write8(narrow_u16(addr), val)
+    }
+    fn is_cpu_suspended(&self) -> bool {
+        self.is_cpu_suspended()
+    }
+    fn debug_continue(&mut self) {
+        self.debug_continue()
+    }
+    fn debug_step(&mut self) {
+        self.debug_step()
+    }
+    fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.set_opcode_log_enabled(enabled)
     }
 }
 
@@ -112,6 +125,22 @@ impl EmulatorCore for GbBackend {
         self.emu.rom_hash()
     }
 
+    fn save_ram_kind(&self) -> SaveRamKind {
+        self.emu.save_ram_kind()
+    }
+
+    fn system_ram_len(&self) -> usize {
+        self.emu.system_ram().len()
+    }
+
+    fn video_ram_len(&self) -> usize {
+        self.emu.video_ram_snapshot().len()
+    }
+
+    fn supports_debugger(&self) -> bool {
+        true
+    }
+
     #[inline]
     fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
         Some(MidiApuSnapshot::Gb(self.emu.apu_channel_snapshot()))
@@ -137,7 +166,7 @@ pub(crate) fn try_load_battery_sram(
     emu: &mut GbEmulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
-    crate::save_paths::try_load_battery_sram(rom_path, "GB", emu.is_battery_backed(), |bytes| {
+    crate::save_paths::try_load_battery_sram(rom_path, "GB", emu.has_battery(), |bytes| {
         emu.load_battery_sram(bytes)
     })
 }

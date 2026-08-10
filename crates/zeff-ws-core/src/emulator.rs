@@ -4,6 +4,11 @@ use crate::hardware::constants::CYCLES_PER_FRAME;
 use crate::hardware::cpu::{Cpu, CpuState, CpuTrap, FetchedInstruction};
 use sha2::{Digest, Sha256};
 use std::fmt;
+use zeff_emu_common::address::Address;
+use zeff_emu_common::debug::{
+    AddressDebugController, AddressWatchHit, AddressWatchpoint, WatchType,
+};
+use zeff_emu_common::save_ram::SaveRamKind;
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
@@ -13,6 +18,7 @@ pub struct Emulator {
     pub(crate) rom_hash: [u8; 32],
     pub(crate) rom_crc32: u32,
     pub(crate) frame_count: u64,
+    pub(crate) debug: AddressDebugController,
 }
 
 impl Emulator {
@@ -28,6 +34,7 @@ impl Emulator {
             rom_hash,
             rom_crc32,
             frame_count: 0,
+            debug: AddressDebugController::new(),
         };
         emu.reset();
         Ok(emu)
@@ -43,6 +50,7 @@ impl Emulator {
             self.bus.cartridge.minimum_system() != MinimumSystem::WonderSwan,
         );
         self.frame_count = 0;
+        self.debug.clear_hits();
     }
 
     pub fn step_frame(&mut self) {
@@ -63,24 +71,34 @@ impl Emulator {
     }
 
     pub fn step_instruction(&mut self) -> Option<FetchedInstruction> {
-        self.step_instruction_inner(false).0
+        self.step_instruction_inner(false, false).0
     }
 
     pub fn step_instruction_with_bus_trace(
         &mut self,
     ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
-        self.step_instruction_inner(true)
+        self.step_instruction_inner(false, true)
     }
 
     fn step_instruction_inner(
         &mut self,
+        skip_breakpoint_check: bool,
         collect_bus_trace: bool,
     ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
         if self.cpu.is_suspended() {
             return (None, Vec::new());
         }
-        self.bus.debug_trace_enabled = collect_bus_trace;
-        if collect_bus_trace {
+
+        let pc = Address::from(self.cpu.pc());
+        if !skip_breakpoint_check && self.debug.should_break(pc) {
+            self.cpu.suspend();
+            return (None, Vec::new());
+        }
+
+        let watch_active = !self.debug.watchpoints.is_empty();
+        let trace_active = watch_active || collect_bus_trace;
+        self.bus.debug_trace_enabled = trace_active;
+        if trace_active {
             self.bus.debug_trace_events.clear();
         }
 
@@ -88,13 +106,41 @@ impl Emulator {
         if fetched.is_some() {
             self.bus.retire_instruction();
         }
-        let events = if collect_bus_trace {
+        let events = if trace_active {
             self.bus.debug_trace_enabled = false;
             self.bus.take_debug_trace_events()
         } else {
             Vec::new()
         };
-        (fetched, events)
+
+        if watch_active {
+            for event in &events {
+                match *event {
+                    DebugTraceEvent::Read { addr, value } => {
+                        self.debug.check_watch_read(Address::from(addr), value);
+                    }
+                    DebugTraceEvent::Write {
+                        addr,
+                        old_value,
+                        new_value,
+                    } => {
+                        self.debug
+                            .check_watch_write(Address::from(addr), old_value, new_value);
+                    }
+                    DebugTraceEvent::IoRead { .. } | DebugTraceEvent::IoWrite { .. } => {}
+                }
+            }
+            if self.debug.hit_watchpoint.is_some() {
+                self.cpu.suspend();
+            }
+        }
+
+        let bus_trace_events = if collect_bus_trace {
+            events
+        } else {
+            Vec::new()
+        };
+        (fetched, bus_trace_events)
     }
 
     pub fn finish_frame(&mut self) {
@@ -114,6 +160,14 @@ impl Emulator {
 
     pub fn system_ram(&self) -> &[u8] {
         &self.bus.ram
+    }
+
+    pub fn vram_snapshot(&self) -> &[u8] {
+        &self.bus.ram
+    }
+
+    pub fn video_ram_snapshot(&self) -> &[u8] {
+        self.vram_snapshot()
     }
 
     pub fn frame_ready(&self) -> bool {
@@ -160,6 +214,10 @@ impl Emulator {
 
     pub fn has_battery(&self) -> bool {
         self.bus.cartridge.has_battery()
+    }
+
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        self.bus.cartridge.save_ram_kind()
     }
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
@@ -254,12 +312,21 @@ impl Emulator {
         self.bus.peek8(addr)
     }
 
+    pub fn cpu_read8_debuggable(&mut self, addr: u32) -> u8 {
+        let value = self.bus.peek8(addr);
+        self.debug.check_watch_read(Address::from(addr), value);
+        value
+    }
+
     pub fn cpu_peek16(&self, addr: u32) -> u16 {
         self.bus.peek16(addr)
     }
 
     pub fn cpu_write8(&mut self, addr: u32, value: u8) {
+        let old = self.bus.peek8(addr);
         self.bus.write8(addr, value);
+        self.debug
+            .check_watch_write(Address::from(addr), old, value);
     }
 
     pub fn io_peek8(&self, port: u16) -> u8 {
@@ -277,6 +344,52 @@ impl Emulator {
     pub fn apu_debug_snapshot(&self) -> crate::hardware::apu::ApuDebugSnapshot {
         self.bus.apu_debug_snapshot()
     }
+
+    pub fn debug_continue(&mut self) {
+        self.debug.clear_hits();
+        self.debug.break_on_next = false;
+        self.cpu.resume();
+    }
+
+    pub fn debug_step(&mut self) {
+        self.debug.clear_hits();
+        self.debug.break_on_next = false;
+        self.cpu.resume();
+        let _ = self.step_instruction_inner(true, false);
+        self.cpu.suspend();
+    }
+
+    pub fn add_breakpoint(&mut self, addr: Address) {
+        self.debug.add_breakpoint(addr);
+    }
+
+    pub fn remove_breakpoint(&mut self, addr: Address) {
+        self.debug.remove_breakpoint(addr);
+    }
+
+    pub fn toggle_breakpoint(&mut self, addr: Address) {
+        self.debug.toggle_breakpoint(addr);
+    }
+
+    pub fn add_watchpoint(&mut self, addr: Address, watch_type: WatchType) {
+        self.debug.add_watchpoint(addr, watch_type);
+    }
+
+    pub fn iter_breakpoints(&self) -> impl Iterator<Item = Address> + '_ {
+        self.debug.iter_breakpoints()
+    }
+
+    pub fn debug_watchpoints(&self) -> &[AddressWatchpoint] {
+        &self.debug.watchpoints
+    }
+
+    pub fn debug_hit_breakpoint(&self) -> Option<Address> {
+        self.debug.hit_breakpoint
+    }
+
+    pub fn debug_hit_watchpoint(&self) -> Option<&AddressWatchHit> {
+        self.debug.hit_watchpoint.as_ref()
+    }
 }
 
 impl fmt::Debug for Emulator {
@@ -287,6 +400,7 @@ impl fmt::Debug for Emulator {
             .field("cycles", &self.cpu.cycles)
             .field("frame_count", &self.frame_count)
             .field("rom_crc32", &format_args!("{:#010X}", self.rom_crc32))
+            .field("debug", &self.debug)
             .field("footer", &self.bus.cartridge.footer())
             .finish_non_exhaustive()
     }
@@ -331,6 +445,8 @@ mod tests {
             emu.framebuffer().len(),
             crate::hardware::constants::FRAMEBUFFER_LEN
         );
+        assert_eq!(emu.system_ram().len(), emu.video_ram_snapshot().len());
+        assert_eq!(emu.save_ram_kind(), SaveRamKind::none());
         assert_eq!(emu.frame_count, 1);
     }
 
@@ -351,6 +467,58 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn breakpoints_suspend_and_debug_step_executes_one_instruction() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut emu = Emulator::from_rom_data(&rom).unwrap();
+        let start_pc = emu.cpu_pc();
+
+        emu.add_breakpoint(start_pc);
+
+        assert_eq!(emu.step_instruction(), None);
+        assert!(emu.is_cpu_suspended());
+        assert_eq!(emu.debug_hit_breakpoint(), Some(start_pc));
+
+        emu.debug_step();
+
+        assert!(emu.is_cpu_suspended());
+        assert_eq!(emu.debug_hit_breakpoint(), None);
+        assert_ne!(emu.cpu_pc(), start_pc);
+
+        emu.debug_continue();
+
+        assert!(!emu.is_cpu_suspended());
+    }
+
+    #[test]
+    fn watchpoints_record_debuggable_reads_and_writes() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut emu = Emulator::from_rom_data(&rom).unwrap();
+
+        emu.add_watchpoint(0x0000, WatchType::Write);
+        assert_eq!(emu.debug_watchpoints().len(), 1);
+
+        emu.cpu_write8(0x0000, 0x5A);
+
+        let hit = emu
+            .debug_hit_watchpoint()
+            .expect("write watchpoint should hit");
+        assert_eq!(hit.address, 0x0000);
+        assert_eq!(hit.new_value, 0x5A);
+        assert_eq!(hit.watch_type, WatchType::Write);
+
+        emu.debug_continue();
+        emu.add_watchpoint(0x0000, WatchType::Read);
+        assert_eq!(emu.cpu_read8_debuggable(0x0000), 0x5A);
+
+        let hit = emu
+            .debug_hit_watchpoint()
+            .expect("read watchpoint should hit");
+        assert_eq!(hit.address, 0x0000);
+        assert_eq!(hit.new_value, 0x5A);
+        assert_eq!(hit.watch_type, WatchType::Read);
     }
 
     #[test]

@@ -7,18 +7,32 @@ use crate::save_state::{
     validate_compatibility,
 };
 use anyhow::{Result as AnyResult, bail};
+use zeff_emu_common::save_ram::SaveRamKind;
 
 impl Emulator {
     pub fn is_battery_backed(&self) -> bool {
         self.header.cartridge_type.is_battery_backed()
     }
 
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        if !self.is_battery_backed() {
+            return SaveRamKind::none();
+        }
+
+        let size = self.bus.cartridge.sram_len();
+        if size == 0 {
+            SaveRamKind::none()
+        } else {
+            SaveRamKind::known_battery_backed(size)
+        }
+    }
+
     pub fn has_battery(&self) -> bool {
-        self.is_battery_backed()
+        self.save_ram_kind().is_battery_backed()
     }
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
-        if !self.header.cartridge_type.is_battery_backed() {
+        if !self.has_battery() {
             return None;
         }
 

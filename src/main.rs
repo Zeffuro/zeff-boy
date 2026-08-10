@@ -28,7 +28,7 @@ mod settings;
 mod ui;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::emu_backend::{ActiveSystem, EmuBackend};
+use crate::emu_backend::{BackendLoadConfig, EmuBackend, load_backend_from_rom_source};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::settings::Settings;
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,109 +67,20 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn log_sram_result(result: anyhow::Result<Option<String>>) {
-    match result {
-        Ok(Some(path)) => log::info!("Loaded battery save from {path}"),
-        Ok(None) => {}
-        Err(e) => log::warn!("Failed to load battery save: {e}"),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<EmuBackend> {
     let path = Path::new(rom_path_arg);
     let (rom_path, preloaded_data, system) = app::detect_and_extract_rom(path)?;
-
-    let rom_data =
-        preloaded_data.map_or_else(|| std::fs::read(path).context("Failed to read ROM"), Ok)?;
-
-    match system {
-        ActiveSystem::GameBoy => {
-            let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
-                &rom_data,
-                settings.emulation.hardware_mode_preference,
-            )?;
-            log_sram_result(emu_backend::gb::try_load_battery_sram(&mut emu, &rom_path));
-            if path == rom_path {
-                Ok(EmuBackend::from_gb(emu, rom_path))
-            } else {
-                Ok(EmuBackend::from_gb_with_source(
-                    emu,
-                    rom_path,
-                    path.to_path_buf(),
-                ))
-            }
-        }
-        ActiveSystem::Nes => {
-            let mut emu = zeff_nes_core::emulator::Emulator::new(
-                &rom_data,
-                zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE,
-            )?;
-            log_sram_result(emu_backend::nes::try_load_battery_sram(&mut emu, &rom_path));
-            if path == rom_path {
-                Ok(EmuBackend::from_nes(emu, rom_path))
-            } else {
-                Ok(EmuBackend::from_nes_with_source(
-                    emu,
-                    rom_path,
-                    path.to_path_buf(),
-                ))
-            }
-        }
-        ActiveSystem::GameBoyAdvance => {
-            let mut emu = zeff_gba_core::emulator::Emulator::new(
-                &rom_data,
-                zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE,
-            )?;
-            log_sram_result(emu_backend::gba::try_load_battery_sram(&mut emu, &rom_path));
-            if path == rom_path {
-                Ok(EmuBackend::from_gba(emu, rom_path))
-            } else {
-                Ok(EmuBackend::from_gba_with_source(
-                    emu,
-                    rom_path,
-                    path.to_path_buf(),
-                ))
-            }
-        }
-        ActiveSystem::WonderSwan => {
-            let mut emu = zeff_ws_core::emulator::Emulator::new(
-                &rom_data,
-                zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE,
-            )?;
-            log_sram_result(emu_backend::ws::try_load_battery_sram(&mut emu, &rom_path));
-            if path == rom_path {
-                Ok(EmuBackend::from_ws(emu, rom_path))
-            } else {
-                Ok(EmuBackend::from_ws_with_source(
-                    emu,
-                    rom_path,
-                    path.to_path_buf(),
-                ))
-            }
-        }
-        ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
-            let hint = emu_backend::sega8::hint_for_active_system(system)
-                .expect("Sega 8-bit systems must have a core hint");
-            let mut emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
-                &rom_data,
-                zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE,
-                hint,
-            )?;
-            log_sram_result(emu_backend::sega8::try_load_battery_sram(
-                &mut emu, &rom_path,
-            ));
-            if path == rom_path {
-                Ok(EmuBackend::from_sega8(emu, rom_path))
-            } else {
-                Ok(EmuBackend::from_sega8_with_source(
-                    emu,
-                    rom_path,
-                    path.to_path_buf(),
-                ))
-            }
-        }
-    }
+    let loaded = load_backend_from_rom_source(
+        system,
+        path,
+        &rom_path,
+        preloaded_data,
+        BackendLoadConfig {
+            gb_hardware_mode_preference: settings.emulation.hardware_mode_preference,
+            ..BackendLoadConfig::default()
+        },
+    )?;
+    Ok(loaded.backend)
 }
 
 #[cfg(target_arch = "wasm32")]

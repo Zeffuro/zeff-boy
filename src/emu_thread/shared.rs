@@ -178,16 +178,12 @@ impl EmuThread {
                 gb.emu
                     .set_apu_sample_generation_enabled(!input.audio.skip_audio);
             }
-            gb.emu
-                .set_opcode_log_enabled(input.snapshot.want_debug_info);
-
-            if gb.emu.is_cpu_suspended() {
-                if input.debug_continue {
-                    gb.emu.debug_continue();
-                } else if input.debug_step {
-                    gb.emu.debug_step();
-                }
-            }
+            Self::apply_debug_controls(
+                &mut gb.emu,
+                input.snapshot.want_debug_info,
+                input.debug_continue,
+                input.debug_step,
+            );
         }
 
         if let Some(nes) = backend.nes_mut() {
@@ -198,13 +194,12 @@ impl EmuThread {
                 .set_palette_mode(input.snapshot.render.nes_palette_mode);
             nes.emu
                 .set_apu_debug_collection_enabled(input.audio.apu_capture_enabled);
-            if nes.emu.is_cpu_suspended() {
-                if input.debug_continue {
-                    nes.emu.debug_continue();
-                } else if input.debug_step {
-                    nes.emu.debug_step();
-                }
-            }
+            Self::apply_debug_controls(
+                &mut nes.emu,
+                input.snapshot.want_debug_info,
+                input.debug_continue,
+                input.debug_step,
+            );
         }
 
         if let Some(gba) = backend.gba_mut() {
@@ -213,13 +208,12 @@ impl EmuThread {
                 gba.emu
                     .set_apu_sample_generation_enabled(!input.audio.skip_audio);
             }
-            if gba.emu.is_cpu_suspended() {
-                if input.debug_continue {
-                    gba.emu.debug_continue();
-                } else if input.debug_step {
-                    gba.emu.debug_step();
-                }
-            }
+            Self::apply_debug_controls(
+                &mut gba.emu,
+                input.snapshot.want_debug_info,
+                input.debug_continue,
+                input.debug_step,
+            );
         }
 
         if let Some(ws) = backend.ws_mut() {
@@ -228,6 +222,12 @@ impl EmuThread {
                 ws.emu
                     .set_apu_sample_generation_enabled(!input.audio.skip_audio);
             }
+            Self::apply_debug_controls(
+                &mut ws.emu,
+                input.snapshot.want_debug_info,
+                input.debug_continue,
+                input.debug_step,
+            );
         }
 
         if let Some(sega8) = backend.sega8_mut() {
@@ -237,16 +237,12 @@ impl EmuThread {
                     .emu
                     .set_apu_sample_generation_enabled(!input.audio.skip_audio);
             }
-            sega8
-                .emu
-                .set_opcode_log_enabled(input.snapshot.want_debug_info);
-            if sega8.emu.is_suspended() {
-                if input.debug_continue {
-                    sega8.emu.debug_continue();
-                } else if input.debug_step {
-                    sega8.emu.debug_step();
-                }
-            }
+            Self::apply_debug_controls(
+                &mut sega8.emu,
+                input.snapshot.want_debug_info,
+                input.debug_continue,
+                input.debug_step,
+            );
         }
     }
 
@@ -274,7 +270,7 @@ impl EmuThread {
         snapshot: &super::SnapshotRequest,
         buffers: super::ReusableBuffers,
     ) -> ui::UiFrameData {
-        match backend {
+        let mut data = match backend {
             EmuBackend::Gb(gb) => ui::collect_emu_snapshot(
                 &gb.emu,
                 snapshot,
@@ -292,7 +288,17 @@ impl EmuThread {
             EmuBackend::Gba(gba) => ui::collect_gba_snapshot(&gba.emu, snapshot, buffers),
             EmuBackend::Ws(ws) => ui::collect_ws_snapshot(&ws.emu, snapshot, buffers),
             EmuBackend::Sega8(sega8) => ui::collect_sega8_snapshot(&sega8.emu, snapshot, buffers),
-        }
+        };
+        data.core_features = Some(ui::CoreFeatureInfo {
+            save_ram_kind: backend.save_ram_kind(),
+            has_battery: backend.has_battery(),
+            system_ram_len: backend.system_ram_len(),
+            video_ram_len: backend.video_ram_len(),
+            supports_save_states: true,
+            supports_rewind: true,
+            supports_debugger: backend.supports_debugger(),
+        });
+        data
     }
 
     pub(crate) fn build_frame_result(

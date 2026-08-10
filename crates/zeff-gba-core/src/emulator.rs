@@ -8,6 +8,7 @@ use zeff_emu_common::address::Address;
 use zeff_emu_common::debug::{
     AddressDebugController, AddressWatchHit, AddressWatchpoint, WatchType,
 };
+use zeff_emu_common::save_ram::SaveRamKind;
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
@@ -287,6 +288,10 @@ impl Emulator {
         self.bus.cartridge.backup_kind()
     }
 
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        self.bus.cartridge.save_ram_kind()
+    }
+
     pub fn has_battery(&self) -> bool {
         self.bus.cartridge.has_battery()
     }
@@ -325,6 +330,10 @@ impl Emulator {
 
     pub fn vram_snapshot(&self) -> &[u8] {
         &self.bus.vram
+    }
+
+    pub fn video_ram_snapshot(&self) -> &[u8] {
+        self.vram_snapshot()
     }
 
     pub fn palette_ram_snapshot(&self) -> &[u8] {
@@ -416,6 +425,13 @@ mod tests {
         let rom = minimal_rom();
         let mut emu = Emulator::new(&rom, 48_000).unwrap();
         emu.add_breakpoint(0x0800_0000);
+        assert_eq!(emu.save_ram_kind(), SaveRamKind::none());
+        assert_eq!(emu.video_ram_snapshot().len(), emu.vram_snapshot().len());
+        let (ewram, iwram) = emu.system_ram();
+        assert_eq!(
+            ewram.len() + iwram.len(),
+            crate::hardware::constants::EWRAM_SIZE + crate::hardware::constants::IWRAM_SIZE
+        );
         emu.step_frame();
         assert!(emu.is_cpu_suspended());
         assert_eq!(emu.debug_hit_breakpoint(), Some(0x0800_0000));

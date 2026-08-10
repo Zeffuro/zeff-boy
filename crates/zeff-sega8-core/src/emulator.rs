@@ -184,6 +184,18 @@ impl Emulator {
         self.frame_count
     }
 
+    pub fn system_ram(&self) -> &[u8] {
+        self.bus.work_ram()
+    }
+
+    pub fn vram_snapshot(&self) -> &[u8] {
+        self.bus.vdp().vram()
+    }
+
+    pub fn video_ram_snapshot(&self) -> &[u8] {
+        self.vram_snapshot()
+    }
+
     pub fn system(&self) -> Sega8System {
         self.bus.cartridge.system()
     }
@@ -303,6 +315,10 @@ impl Emulator {
         self.cpu.is_suspended()
     }
 
+    pub fn is_cpu_suspended(&self) -> bool {
+        self.is_suspended()
+    }
+
     pub fn suspend(&mut self) {
         self.cpu.suspend();
     }
@@ -351,6 +367,23 @@ impl Emulator {
 
     pub fn debug_hit_watchpoint(&self) -> Option<&AddressWatchHit> {
         self.debug.hit_watchpoint.as_ref()
+    }
+
+    pub fn cpu_peek8(&self, addr: u16) -> u8 {
+        self.bus.cpu_read(addr)
+    }
+
+    pub fn cpu_read8_debuggable(&mut self, addr: u16) -> u8 {
+        let value = self.bus.cpu_read(addr);
+        self.debug.check_watch_read(Address::from(addr), value);
+        value
+    }
+
+    pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        let old = self.bus.cpu_read(addr);
+        self.bus.cpu_write(addr, value);
+        self.debug
+            .check_watch_write(Address::from(addr), old, value);
     }
 
     pub fn debug_write(&mut self, addr: Address, val: u8) {
@@ -602,6 +635,23 @@ mod tests {
         assert!(!emu.has_battery());
         assert_eq!(emu.dump_battery_sram(), None);
         assert!(emu.load_battery_sram(&[0; 1]).is_err());
+        assert_eq!(
+            emu.system_ram().len(),
+            crate::hardware::constants::SMS_WORK_RAM_SIZE
+        );
+        assert_eq!(
+            emu.video_ram_snapshot().len(),
+            crate::hardware::constants::SMS_VRAM_SIZE
+        );
+        assert!(!emu.is_cpu_suspended());
+        emu.add_watchpoint(0xC000, WatchType::Write);
+        emu.cpu_write8(0xC000, 0x5A);
+        assert_eq!(emu.cpu_peek8(0xC000), 0x5A);
+        assert_eq!(
+            emu.debug_hit_watchpoint().map(|hit| hit.new_value),
+            Some(0x5A)
+        );
+        emu.debug_continue();
 
         emu.bus_mut().cpu_write(
             crate::hardware::constants::MAPPER_FRAME_CONTROL,

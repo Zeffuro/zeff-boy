@@ -1,3 +1,4 @@
+use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_nes_core::hardware::ppu::NesPaletteMode;
@@ -119,7 +120,7 @@ impl CoreState {
                 emu.drain_audio_samples_into(&mut self.audio_buf);
             }
             ActiveCore::Nes(emu) => {
-                emu.drain_audio_into_stereo(&mut self.audio_buf);
+                emu.drain_audio_samples_into(&mut self.audio_buf);
             }
             ActiveCore::Sega8(emu) => {
                 emu.drain_audio_samples_into(&mut self.audio_buf);
@@ -134,9 +135,7 @@ impl CoreState {
         match &mut self.core {
             ActiveCore::Gb(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Gba(emu) => emu.set_input(buttons, dpad),
-            ActiveCore::Nes(emu) => {
-                emu.set_input_p1(map_host_to_nes_byte(buttons, dpad));
-            }
+            ActiveCore::Nes(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Sega8(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Ws(emu) => emu.set_input(buttons, dpad),
         }
@@ -206,7 +205,7 @@ impl CoreState {
 
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {
         match &self.core {
-            ActiveCore::Gb(emu) => emu.encode_state_bytes(),
+            ActiveCore::Gb(emu) => emu.encode_state(),
             ActiveCore::Gba(emu) => emu.encode_state(),
             ActiveCore::Nes(emu) => emu.encode_state(),
             ActiveCore::Sega8(emu) => emu.encode_state(),
@@ -216,7 +215,7 @@ impl CoreState {
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         match &mut self.core {
-            ActiveCore::Gb(emu) => emu.load_state_from_bytes(data.to_vec()),
+            ActiveCore::Gb(emu) => emu.load_state(data),
             ActiveCore::Gba(emu) => emu.load_state(data),
             ActiveCore::Nes(emu) => emu.load_state(data),
             ActiveCore::Sega8(emu) => emu.load_state(data),
@@ -236,6 +235,16 @@ impl CoreState {
             ActiveCore::Nes(emu) => emu.dump_battery_sram(),
             ActiveCore::Sega8(emu) => emu.dump_battery_sram(),
             ActiveCore::Ws(emu) => emu.dump_battery_sram(),
+        }
+    }
+
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        match &self.core {
+            ActiveCore::Gb(emu) => emu.save_ram_kind(),
+            ActiveCore::Gba(emu) => emu.save_ram_kind(),
+            ActiveCore::Nes(emu) => emu.save_ram_kind(),
+            ActiveCore::Sega8(emu) => emu.save_ram_kind(),
+            ActiveCore::Ws(emu) => emu.save_ram_kind(),
         }
     }
 
@@ -319,7 +328,12 @@ impl CoreState {
     }
 
     pub fn sram_size(&self) -> usize {
-        self.battery_sram().map_or(0, |s| s.len())
+        let kind = self.save_ram_kind();
+        if kind.is_battery_backed() {
+            kind.size()
+        } else {
+            0
+        }
     }
 
     pub fn set_dmg_palette(&mut self, preset: DmgPalettePreset) {
@@ -404,7 +418,7 @@ impl CoreState {
     pub fn refresh_system_ram(&mut self) {
         match &self.core {
             ActiveCore::Gb(emu) => {
-                let wram = emu.wram_snapshot();
+                let wram = emu.system_ram();
                 self.system_ram_buf.resize(wram.len(), 0);
                 self.system_ram_buf.copy_from_slice(wram);
             }
@@ -420,7 +434,7 @@ impl CoreState {
                 self.system_ram_buf.copy_from_slice(ram);
             }
             ActiveCore::Sega8(emu) => {
-                let ram = emu.bus().work_ram();
+                let ram = emu.system_ram();
                 self.system_ram_buf.resize(ram.len(), 0);
                 self.system_ram_buf.copy_from_slice(ram);
             }
@@ -435,48 +449,50 @@ impl CoreState {
     pub fn refresh_video_ram(&mut self) {
         match &mut self.core {
             ActiveCore::Gb(emu) => {
-                let vram = emu.vram_snapshot();
+                let vram = emu.video_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(vram);
             }
             ActiveCore::Gba(emu) => {
-                let vram = emu.vram_snapshot();
+                let vram = emu.video_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(vram);
             }
             ActiveCore::Nes(emu) => {
-                let vram = emu.chr_ram_snapshot();
+                let vram = emu.video_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(&vram);
             }
             ActiveCore::Sega8(emu) => {
-                let vram = emu.bus().vdp().vram();
+                let vram = emu.video_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(vram);
             }
-            ActiveCore::Ws(_) => {
-                self.video_ram_buf.clear();
+            ActiveCore::Ws(emu) => {
+                let vram = emu.video_ram_snapshot();
+                self.video_ram_buf.resize(vram.len(), 0);
+                self.video_ram_buf.copy_from_slice(vram);
             }
         }
     }
 
     pub fn system_ram_size(&self) -> usize {
         match &self.core {
-            ActiveCore::Gb(emu) => emu.wram_snapshot().len(),
+            ActiveCore::Gb(emu) => emu.system_ram().len(),
             ActiveCore::Gba(_) => 0x48000,
             ActiveCore::Nes(_) => 0x800, // 2 KiB
-            ActiveCore::Sega8(emu) => emu.bus().work_ram().len(),
+            ActiveCore::Sega8(emu) => emu.system_ram().len(),
             ActiveCore::Ws(emu) => emu.system_ram().len(),
         }
     }
 
     pub fn video_ram_size(&self) -> usize {
         match &self.core {
-            ActiveCore::Gb(emu) => emu.vram_snapshot().len(),
-            ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::VRAM_SIZE,
+            ActiveCore::Gb(emu) => emu.video_ram_snapshot().len(),
+            ActiveCore::Gba(emu) => emu.video_ram_snapshot().len(),
             ActiveCore::Nes(_) => 0x2000,
-            ActiveCore::Sega8(emu) => emu.bus().vdp().vram().len(),
-            ActiveCore::Ws(_) => 0,
+            ActiveCore::Sega8(emu) => emu.video_ram_snapshot().len(),
+            ActiveCore::Ws(emu) => emu.video_ram_snapshot().len(),
         }
     }
 }
@@ -555,13 +571,17 @@ mod tests {
     fn wonderswan_extensions_select_ws_core() {
         let rom = ws_rom();
         for ext in ["ws", "wsc"] {
-            let state = CoreState::from_rom(&rom, &format!("test.{ext}"))
+            let mut state = CoreState::from_rom(&rom, &format!("test.{ext}"))
                 .expect("WonderSwan ROM should load");
 
             assert!(matches!(state.core, ActiveCore::Ws(_)));
             assert_eq!(state.system_label(), "WonderSwan");
             assert_eq!(state.native_width(), 224);
             assert_eq!(state.native_height(), 144);
+            assert_eq!(state.video_ram_size(), state.system_ram_size());
+            assert!(state.video_ram_size() > 0);
+            state.refresh_video_ram();
+            assert_eq!(state.video_ram_buf.len(), state.video_ram_size());
             assert!(state.encode_state().is_ok());
         }
     }

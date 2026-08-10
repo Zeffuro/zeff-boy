@@ -5,6 +5,7 @@ use crate::debug::{
 };
 use crate::emu_thread::MemorySearchRequest;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 mod gb_snapshot;
 mod gba_snapshot;
@@ -177,6 +178,7 @@ fn build_libretro_section(
 
 #[derive(Default)]
 pub(crate) struct UiFrameData {
+    pub(crate) core_features: Option<CoreFeatureInfo>,
     pub(crate) cpu_debug: Option<CpuDebugSnapshot>,
     pub(crate) perf_info: Option<PerfInfo>,
     pub(crate) apu_debug: Option<ApuDebugInfo>,
@@ -191,6 +193,17 @@ pub(crate) struct UiFrameData {
     pub(crate) rom_page: Option<Vec<(u32, u8)>>,
     pub(crate) rom_size: u32,
     pub(crate) rom_search_results: Option<Vec<RomSearchResult>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CoreFeatureInfo {
+    pub(crate) save_ram_kind: SaveRamKind,
+    pub(crate) has_battery: bool,
+    pub(crate) system_ram_len: usize,
+    pub(crate) video_ram_len: usize,
+    pub(crate) supports_save_states: bool,
+    pub(crate) supports_rewind: bool,
+    pub(crate) supports_debugger: bool,
 }
 
 pub(crate) fn apply_debug_actions(

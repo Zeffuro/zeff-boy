@@ -1,0 +1,257 @@
+use std::path::PathBuf;
+
+use crate::emu_backend::{
+    ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
+};
+use crate::emu_thread::{EmuThread, RenderSettings, ReusableBuffers, SnapshotRequest};
+use crate::settings::{ColorCorrection, DmgPalettePreset, NesPaletteMode};
+use zeff_emu_common::save_ram::SaveRamKind;
+
+pub(super) fn build_gb_test_rom() -> Vec<u8> {
+    vec![0u8; 0x8000]
+}
+
+pub(super) fn build_nes_test_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+
+    let prg = 16;
+    rom[prg] = 0xA9;
+    rom[prg + 1] = 0x42;
+    rom[prg + 2] = 0x85;
+    rom[prg + 3] = 0x00;
+    rom[prg + 4] = 0xEA;
+    rom[prg + 5] = 0xEA;
+
+    rom[prg + 0x3FFC] = 0x00;
+    rom[prg + 0x3FFD] = 0x80;
+    rom
+}
+
+pub(super) fn build_gba_test_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0xC0];
+    rom[0xA0..0xA4].copy_from_slice(b"TEST");
+    rom[0xAC..0xB0].copy_from_slice(b"ABCD");
+    rom[0xB0..0xB2].copy_from_slice(b"01");
+    rom[0xB2] = 0x96;
+    rom
+}
+
+pub(super) fn build_ws_test_rom() -> Vec<u8> {
+    let mut rom = vec![0xFF; 0x10000];
+    rom[0] = 0xF4;
+    let reset = rom.len() - 16;
+    rom[reset..reset + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+    let footer = rom.len() - 10;
+    rom[footer + 1] = 0x00;
+    rom[footer + 4] = 0x01;
+    let checksum = zeff_ws_core::hardware::cartridge::compute_footer_checksum(&rom);
+    rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+    rom
+}
+
+pub(super) fn build_sms_test_rom() -> Vec<u8> {
+    vec![0x76]
+}
+
+pub(super) fn build_gb_backend() -> EmuBackend {
+    let rom = build_gb_test_rom();
+    let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
+        &rom,
+        zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::Auto,
+    )
+    .expect("GB emulator should initialize");
+    EmuBackend::from_gb(gb, PathBuf::from("test.gb"))
+}
+
+pub(super) fn build_nes_backend() -> EmuBackend {
+    let rom = build_nes_test_rom();
+    let nes = zeff_nes_core::emulator::Emulator::new(&rom, 44_100.0)
+        .expect("NES emulator should initialize");
+    EmuBackend::from_nes(nes, PathBuf::from("test.nes"))
+}
+
+pub(super) fn build_gba_backend() -> EmuBackend {
+    let rom = build_gba_test_rom();
+    let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("GBA emulator should initialize");
+    EmuBackend::from_gba(gba, PathBuf::from("test.gba"))
+}
+
+pub(super) fn build_ws_backend() -> EmuBackend {
+    let rom = build_ws_test_rom();
+    let ws = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
+        .expect("WonderSwan emulator should initialize");
+    EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
+}
+
+pub(super) fn build_sms_backend() -> EmuBackend {
+    let rom = build_sms_test_rom();
+    let sms = zeff_sega8_core::emulator::Emulator::new_with_hint(
+        &rom,
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+    )
+    .expect("SMS emulator should initialize");
+    EmuBackend::from_sega8(sms, PathBuf::from("test.sms"))
+}
+
+pub(super) fn load_test_backend_with_shared_loader(
+    system: ActiveSystem,
+    rom_name: &str,
+    rom: Vec<u8>,
+) -> EmuBackend {
+    let rom_path = PathBuf::from(rom_name);
+    let loaded = load_backend_from_rom_source(
+        system,
+        &rom_path,
+        &rom_path,
+        Some(rom),
+        BackendLoadConfig {
+            sample_rate: Some(44_100),
+            initial_input: Some((0x01, 0x02)),
+            ..BackendLoadConfig::default()
+        },
+    )
+    .expect("shared backend loader should initialize test ROM");
+    loaded.backend
+}
+
+pub(super) fn assert_save_state_replay_is_deterministic(
+    mut backend: EmuBackend,
+    frames_before_checkpoint: usize,
+    frames_after_checkpoint: usize,
+) {
+    step_frames(&mut backend, frames_before_checkpoint);
+
+    let checkpoint_framebuffer = backend.framebuffer().to_vec();
+    let checkpoint_state = backend
+        .encode_state_bytes()
+        .expect("backend should encode checkpoint save-state");
+
+    step_frames(&mut backend, frames_after_checkpoint);
+
+    let expected_framebuffer = backend.framebuffer().to_vec();
+    let expected_state = backend
+        .encode_state_bytes()
+        .expect("backend should encode replay target save-state");
+
+    backend
+        .load_state_from_bytes(checkpoint_state)
+        .expect("backend should restore checkpoint save-state");
+
+    assert_eq!(
+        backend.framebuffer(),
+        checkpoint_framebuffer,
+        "loading a save-state should restore the checkpoint framebuffer"
+    );
+
+    step_frames(&mut backend, frames_after_checkpoint);
+
+    assert_eq!(
+        backend.framebuffer(),
+        expected_framebuffer,
+        "replaying from a save-state should reproduce the same framebuffer"
+    );
+    assert_eq!(
+        backend
+            .encode_state_bytes()
+            .expect("backend should encode replayed save-state"),
+        expected_state,
+        "replaying from a save-state should reproduce the same encoded state"
+    );
+}
+
+pub(super) fn assert_backend_feature_contract(
+    backend: EmuBackend,
+    system: ActiveSystem,
+    expected_save_ram_kind: SaveRamKind,
+    expected_system_ram_len: usize,
+    expected_video_ram_len: usize,
+) {
+    assert_eq!(backend.system(), system);
+    assert_eq!(backend.save_ram_kind(), expected_save_ram_kind);
+    assert_eq!(
+        backend.has_battery(),
+        expected_save_ram_kind.is_battery_backed()
+    );
+    assert_eq!(backend.system_ram_len(), expected_system_ram_len);
+    assert_eq!(backend.video_ram_len(), expected_video_ram_len);
+    assert!(backend.supports_debugger());
+    assert!(
+        !backend
+            .encode_state_bytes()
+            .expect("backend should encode save-state")
+            .is_empty()
+    );
+}
+
+pub(super) fn assert_app_snapshot_core_features(
+    mut backend: EmuBackend,
+    expected_save_ram_kind: SaveRamKind,
+    expected_system_ram_len: usize,
+    expected_video_ram_len: usize,
+) {
+    let data =
+        EmuThread::collect_ui_snapshot(&mut backend, &snapshot_request(), reusable_buffers());
+    let features = data
+        .core_features
+        .expect("app snapshot should expose core features");
+    assert_eq!(features.save_ram_kind, expected_save_ram_kind);
+    assert_eq!(
+        features.has_battery,
+        expected_save_ram_kind.is_battery_backed()
+    );
+    assert_eq!(features.system_ram_len, expected_system_ram_len);
+    assert_eq!(features.video_ram_len, expected_video_ram_len);
+    assert!(features.supports_save_states);
+    assert!(features.supports_rewind);
+    assert!(features.supports_debugger);
+}
+
+fn step_frames(backend: &mut EmuBackend, count: usize) {
+    for _ in 0..count {
+        backend.step_frame();
+    }
+}
+
+fn snapshot_request() -> SnapshotRequest {
+    SnapshotRequest {
+        want_debug_info: false,
+        want_perf_info: false,
+        any_viewer_open: false,
+        any_vram_viewer_open: false,
+        show_oam_viewer: false,
+        show_apu_viewer: false,
+        show_disassembler: false,
+        show_rom_info: false,
+        show_memory_viewer: false,
+        memory_view_start: 0,
+        show_rom_viewer: false,
+        rom_view_start: 0,
+        last_disasm_pc: None,
+        memory_search: None,
+        rom_search: None,
+        render: RenderSettings {
+            color_correction: ColorCorrection::None,
+            color_correction_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            dmg_palette_preset: DmgPalettePreset::default(),
+            nes_palette_mode: NesPaletteMode::default(),
+            nes_custom_palette: None,
+            sgb_border_enabled: false,
+        },
+    }
+}
+
+fn reusable_buffers() -> ReusableBuffers {
+    ReusableBuffers {
+        audio: None,
+        vram: None,
+        oam: None,
+        memory_page: None,
+        nes_chr: None,
+        nes_nametable: None,
+    }
+}

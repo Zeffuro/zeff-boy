@@ -4,6 +4,8 @@ use zeff_gb_core::hardware::joypad::JoypadKey;
 use super::App;
 use crate::emu_thread::EmuCommand;
 use crate::live_control::{LiveCommand, LiveReply, PendingButtonRelease};
+use crate::ui::CoreFeatureInfo;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 mod artifacts;
 mod graphics;
@@ -163,6 +165,9 @@ impl App {
                 "screen_height": screen_height,
             },
             "debug_info_cached": self.cached_ui_data.as_ref().and_then(|data| data.cpu_debug.as_ref()).is_some(),
+            "core_features": self.cached_ui_data.as_ref().and_then(|data| {
+                data.core_features.as_ref().map(core_features_json)
+            }),
         })
     }
 
@@ -197,6 +202,35 @@ impl App {
                 "screen_pos": zapper.screen_pos.map(|(x, y)| json!({ "x": x, "y": y })),
             })),
         })
+    }
+}
+
+fn core_features_json(features: &CoreFeatureInfo) -> Value {
+    json!({
+        "save_ram": save_ram_kind_json(features.save_ram_kind),
+        "has_battery": features.has_battery,
+        "system_ram_len": features.system_ram_len,
+        "video_ram_len": features.video_ram_len,
+        "supports_save_states": features.supports_save_states,
+        "supports_rewind": features.supports_rewind,
+        "supports_debugger": features.supports_debugger,
+    })
+}
+
+fn save_ram_kind_json(kind: SaveRamKind) -> Value {
+    match kind {
+        SaveRamKind::None => json!({
+            "kind": "none",
+            "size": 0,
+        }),
+        SaveRamKind::KnownBatteryBacked { size } => json!({
+            "kind": "known_battery_backed",
+            "size": size,
+        }),
+        SaveRamKind::MapperRamUnknown { size } => json!({
+            "kind": "mapper_ram_unknown",
+            "size": size,
+        }),
     }
 }
 

@@ -59,7 +59,15 @@ impl Emulator {
         &self.bus.wram
     }
 
+    pub fn system_ram(&self) -> &[u8] {
+        self.wram_snapshot()
+    }
+
     pub fn vram_snapshot(&self) -> &[u8] {
         &self.bus.vram
+    }
+
+    pub fn video_ram_snapshot(&self) -> &[u8] {
+        self.vram_snapshot()
     }
 }

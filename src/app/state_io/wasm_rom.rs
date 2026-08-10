@@ -106,7 +106,12 @@ impl App {
             .to_string();
         log::info!("Loaded ROM: {}", name);
 
-        self.finalize_rom_load(&backend, system, rom_path.clone(), rom_path);
+        self.finalize_rom_load(
+            &backend,
+            system,
+            backend.rom_path().to_path_buf(),
+            backend.source_path().to_path_buf(),
+        );
 
         self.spawn_emu_thread(backend);
 

@@ -56,7 +56,32 @@ fn apply_debug_actions_to(emu: &mut impl DebuggableEmulator, actions: &DebugUiAc
     }
 }
 
+fn apply_debug_controls_to(
+    emu: &mut impl DebuggableEmulator,
+    opcode_log_enabled: bool,
+    debug_continue: bool,
+    debug_step: bool,
+) {
+    emu.set_opcode_log_enabled(opcode_log_enabled);
+    if emu.is_cpu_suspended() {
+        if debug_continue {
+            emu.debug_continue();
+        } else if debug_step {
+            emu.debug_step();
+        }
+    }
+}
+
 impl EmuThread {
+    pub(crate) fn apply_debug_controls(
+        emu: &mut impl DebuggableEmulator,
+        opcode_log_enabled: bool,
+        debug_continue: bool,
+        debug_step: bool,
+    ) {
+        apply_debug_controls_to(emu, opcode_log_enabled, debug_continue, debug_step);
+    }
+
     pub(crate) fn apply_debug_actions(
         emu: &mut zeff_gb_core::emulator::Emulator,
         actions: &DebugUiActions,

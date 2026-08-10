@@ -107,6 +107,7 @@ pub(crate) fn collect_emu_snapshot(
     });
 
     UiFrameData {
+        core_features: None,
         cpu_debug,
         perf_info,
         apu_debug,

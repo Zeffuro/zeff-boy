@@ -221,7 +221,7 @@ impl Cpu {
     }
 
     pub fn resume(&mut self) {
-        if self.state != CpuState::Suspended {
+        if self.state == CpuState::Suspended {
             self.state = CpuState::Running;
         }
     }

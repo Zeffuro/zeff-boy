@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use zeff_emu_common::address::{Address, narrow_u16};
+use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
 use crate::audio_recorder::MidiApuSnapshot;
@@ -20,7 +21,19 @@ impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
         self.toggle_breakpoint(narrow_u16(addr))
     }
     fn debug_write(&mut self, addr: Address, val: u8) {
-        self.cpu_write(narrow_u16(addr), val)
+        self.cpu_write8(narrow_u16(addr), val)
+    }
+    fn is_cpu_suspended(&self) -> bool {
+        self.is_cpu_suspended()
+    }
+    fn debug_continue(&mut self) {
+        self.debug_continue()
+    }
+    fn debug_step(&mut self) {
+        self.debug_step()
+    }
+    fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.set_opcode_log_enabled(enabled)
     }
 }
 
@@ -73,7 +86,7 @@ impl EmulatorCore for NesBackend {
 
     #[inline]
     fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
-        self.emu.drain_audio_into_stereo(buf);
+        self.emu.drain_audio_samples_into(buf);
     }
 
     fn set_sample_rate(&mut self, rate: u32) {
@@ -91,8 +104,7 @@ impl EmulatorCore for NesBackend {
 
     #[inline]
     fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.emu
-            .set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+        self.emu.set_input(buttons_pressed, dpad_pressed);
     }
 
     #[inline]
@@ -129,6 +141,22 @@ impl EmulatorCore for NesBackend {
 
     fn rom_hash(&self) -> [u8; 32] {
         self.emu.rom_hash()
+    }
+
+    fn save_ram_kind(&self) -> SaveRamKind {
+        self.emu.save_ram_kind()
+    }
+
+    fn system_ram_len(&self) -> usize {
+        self.emu.system_ram().len()
+    }
+
+    fn video_ram_len(&self) -> usize {
+        0x2000
+    }
+
+    fn supports_debugger(&self) -> bool {
+        true
     }
 
     #[inline]

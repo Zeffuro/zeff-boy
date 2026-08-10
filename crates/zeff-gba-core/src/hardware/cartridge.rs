@@ -1,5 +1,6 @@
 use anyhow::{Context, bail};
 use std::cell::RefCell;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 use super::constants::{EEPROM_SIZE, FLASH_1M_SIZE, SRAM_SIZE};
 
@@ -32,6 +33,15 @@ impl BackupKind {
             Self::Sram | Self::Flash512 => SRAM_SIZE,
             Self::Flash1M => FLASH_1M_SIZE,
             Self::Eeprom => EEPROM_SIZE,
+        }
+    }
+
+    pub fn save_ram_kind(self) -> SaveRamKind {
+        let size = self.size();
+        if size == 0 {
+            SaveRamKind::none()
+        } else {
+            SaveRamKind::known_battery_backed(size)
         }
     }
 }
@@ -107,7 +117,11 @@ impl Cartridge {
     }
 
     pub fn has_battery(&self) -> bool {
-        self.backup_kind != BackupKind::None
+        self.save_ram_kind().is_battery_backed()
+    }
+
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        self.backup_kind.save_ram_kind()
     }
 
     pub fn dump_battery_data(&self) -> Option<Vec<u8>> {
@@ -201,7 +215,21 @@ mod tests {
         rom.extend_from_slice(b"SRAM_V113");
         let cart = Cartridge::load(&rom).unwrap();
         assert_eq!(cart.backup_kind(), BackupKind::Sram);
+        assert_eq!(
+            cart.save_ram_kind(),
+            SaveRamKind::known_battery_backed(SRAM_SIZE)
+        );
         assert_eq!(cart.dump_battery_data().unwrap().len(), SRAM_SIZE);
+    }
+
+    #[test]
+    fn no_backup_marker_reports_no_save_ram() {
+        let cart = Cartridge::load(&minimal_rom()).unwrap();
+
+        assert_eq!(cart.backup_kind(), BackupKind::None);
+        assert_eq!(cart.save_ram_kind(), SaveRamKind::none());
+        assert!(!cart.has_battery());
+        assert_eq!(cart.dump_battery_data(), None);
     }
 
     #[test]

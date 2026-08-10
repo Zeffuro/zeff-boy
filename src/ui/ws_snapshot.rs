@@ -1,6 +1,6 @@
 use crate::debug::{
     ApuChannelDebug, ApuDebugInfo, CpuDebugSnapshot, DebugSection, InputDebugInfo, PerfInfo,
-    RomDebugInfo, RomInfoSection,
+    RomDebugInfo, RomInfoSection, WatchHitDisplay, WatchpointDisplay,
 };
 use crate::emu_thread::{ReusableBuffers, SnapshotRequest};
 use std::borrow::Cow;
@@ -196,6 +196,20 @@ fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
         let addr = pc.wrapping_add(i as u32);
         (addr, emu.cpu_peek8(addr))
     });
+    let watchpoints = emu
+        .debug_watchpoints()
+        .iter()
+        .map(|watch| WatchpointDisplay {
+            address: watch.address,
+            watch_type: watch.watch_type,
+        })
+        .collect();
+    let hit_watchpoint = emu.debug_hit_watchpoint().map(|hit| WatchHitDisplay {
+        address: hit.address,
+        old_value: hit.old_value,
+        new_value: hit.new_value,
+        watch_type: hit.watch_type,
+    });
 
     CpuDebugSnapshot {
         register_lines: vec![
@@ -292,10 +306,10 @@ fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
         ],
         mem_around_pc,
         recent_op_lines: Vec::new(),
-        breakpoints: Vec::new(),
-        watchpoints: Vec::new(),
-        hit_breakpoint: None,
-        hit_watchpoint: None,
+        breakpoints: emu.iter_breakpoints().collect(),
+        watchpoints,
+        hit_breakpoint: emu.debug_hit_breakpoint(),
+        hit_watchpoint,
     }
 }
 
@@ -453,7 +467,10 @@ mod tests {
     #[test]
     fn wonder_swan_snapshot_exposes_data_for_app_rendering() {
         let rom = minimal_ws_rom();
-        let emu = Emulator::from_rom_data(&rom).unwrap();
+        let mut emu = Emulator::from_rom_data(&rom).unwrap();
+        emu.add_breakpoint(0xF0000);
+        emu.add_watchpoint(0x0000, zeff_emu_common::debug::WatchType::Write);
+        emu.cpu_write8(0x0000, 0x5A);
         let data = collect_ws_snapshot(
             &emu,
             &snapshot_request(),
@@ -468,7 +485,15 @@ mod tests {
         );
 
         assert!(data.perf_info.is_some());
-        assert!(data.cpu_debug.is_some());
+        let cpu = data.cpu_debug.expect("WS CPU debug should be populated");
+        assert_eq!(cpu.breakpoints, vec![0xF0000]);
+        assert_eq!(cpu.watchpoints.len(), 1);
+        assert_eq!(
+            cpu.hit_watchpoint
+                .as_ref()
+                .map(|hit| (hit.address, hit.new_value)),
+            Some((0x0000, 0x5A))
+        );
         assert!(data.rom_debug.is_some());
         assert!(data.memory_page.is_some());
         assert!(data.rom_page.is_some());

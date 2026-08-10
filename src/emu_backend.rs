@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
+pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
 pub(crate) use self::nes::NesBackend;
 pub(crate) use self::sega8::Sega8Backend;
 pub(crate) use self::system::{
@@ -15,6 +17,7 @@ use crate::emu_core_trait::EmulatorCore;
 
 pub(crate) mod gb;
 pub(crate) mod gba;
+pub(crate) mod loader;
 pub(crate) mod nes;
 pub(crate) mod sega8;
 pub(crate) mod system;
@@ -224,6 +227,26 @@ impl EmuBackend {
 
     pub(crate) fn rom_hash(&self) -> [u8; 32] {
         dispatch!(self, rom_hash())
+    }
+
+    pub(crate) fn save_ram_kind(&self) -> SaveRamKind {
+        dispatch!(self, save_ram_kind())
+    }
+
+    pub(crate) fn has_battery(&self) -> bool {
+        self.save_ram_kind().is_battery_backed()
+    }
+
+    pub(crate) fn system_ram_len(&self) -> usize {
+        dispatch!(self, system_ram_len())
+    }
+
+    pub(crate) fn video_ram_len(&self) -> usize {
+        dispatch!(self, video_ram_len())
+    }
+
+    pub(crate) fn supports_debugger(&self) -> bool {
+        dispatch!(self, supports_debugger())
     }
 
     #[inline]

@@ -1,30 +1,12 @@
 use super::App;
 use crate::emu_backend::{
-    ActiveSystem, EmuBackend, ROM_AND_ARCHIVE_EXTENSIONS, archive_extensions, system_specs,
+    ActiveSystem, BackendLoadConfig, EmuBackend, ROM_AND_ARCHIVE_EXTENSIONS, archive_extensions,
+    load_backend_from_rom_source, system_specs,
 };
 use crate::emu_thread::{EmuCommand, EmuResponse};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
-use zeff_gb_core::emulator::Emulator;
 use zeff_ws_core::hardware::cartridge::RomOrientation;
-
-fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
-    let crc = crc32fast::hash(rom_data);
-    let dir = crate::mods::mods_dir_for_rom(system, crc);
-    let mods = crate::mods::load_mod_config(&dir);
-    let enabled = mods.iter().filter(|m| m.enabled).count();
-    if enabled > 0 {
-        let warnings = crate::mods::apply_enabled_mods(rom_data, &dir, &mods);
-        for w in &warnings {
-            log::warn!("Mod warning: {w}");
-        }
-        log::info!(
-            "Applied {enabled} mod(s) to ROM ({} warnings)",
-            warnings.len()
-        );
-    }
-    crc
-}
 
 pub(crate) fn detect_and_extract_rom(
     path: &Path,
@@ -77,188 +59,19 @@ impl App {
         rom_path: &Path,
         preloaded_data: Option<Vec<u8>>,
     ) -> anyhow::Result<(EmuBackend, u32)> {
-        match system {
-            ActiveSystem::GameBoy => {
-                let mut rom_data = match preloaded_data {
-                    Some(data) => data,
-                    None => std::fs::read(path).context("Failed to read GB ROM")?,
-                };
-                let original_crc = apply_mods_if_any(system, &mut rom_data);
-                Emulator::from_rom_data(&rom_data, self.settings.emulation.hardware_mode_preference)
-                    .map(|mut emu| {
-                        if let Some(audio) = &self.audio {
-                            emu.set_sample_rate(audio.sample_rate());
-                        }
-                        let (buttons, dpad) = self.host_joypad_input_for_system(system);
-                        emu.set_input(buttons, dpad);
-                        if let Some(sram_path) =
-                            crate::emu_backend::gb::try_load_battery_sram(&mut emu, rom_path)
-                                .unwrap_or_else(|e| {
-                                    log::warn!("Failed to load battery save: {e}");
-                                    None
-                                })
-                        {
-                            log::info!("Loaded battery save from {}", sram_path);
-                        }
-                        let backend = if path == rom_path {
-                            EmuBackend::from_gb(emu, rom_path.to_path_buf())
-                        } else {
-                            EmuBackend::from_gb_with_source(
-                                emu,
-                                rom_path.to_path_buf(),
-                                path.to_path_buf(),
-                            )
-                        };
-                        (backend, original_crc)
-                    })
-            }
-            ActiveSystem::Nes => {
-                let rom_data = match preloaded_data {
-                    Some(data) => Ok(data),
-                    None => std::fs::read(path).context("Failed to read NES ROM"),
-                };
-                match rom_data {
-                    Ok(mut data) => {
-                        let original_crc = apply_mods_if_any(system, &mut data);
-                        let sample_rate = self
-                            .audio
-                            .as_ref()
-                            .map(|a| a.sample_rate() as f64)
-                            .unwrap_or(zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE);
-                        zeff_nes_core::emulator::Emulator::new(&data, sample_rate).map(|mut emu| {
-                            if let Some(sram_path) =
-                                crate::emu_backend::nes::try_load_battery_sram(&mut emu, rom_path)
-                                    .unwrap_or_else(|e| {
-                                        log::warn!("Failed to load battery save: {e}");
-                                        None
-                                    })
-                            {
-                                log::info!("Loaded battery save from {}", sram_path);
-                            }
-                            let backend = if path == rom_path {
-                                EmuBackend::from_nes(emu, rom_path.to_path_buf())
-                            } else {
-                                EmuBackend::from_nes_with_source(
-                                    emu,
-                                    rom_path.to_path_buf(),
-                                    path.to_path_buf(),
-                                )
-                            };
-                            (backend, original_crc)
-                        })
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-            ActiveSystem::GameBoyAdvance => {
-                let mut rom_data = match preloaded_data {
-                    Some(data) => data,
-                    None => std::fs::read(path).context("Failed to read GBA ROM")?,
-                };
-                let original_crc = apply_mods_if_any(system, &mut rom_data);
-                let sample_rate = self
-                    .audio
-                    .as_ref()
-                    .map(|a| a.sample_rate())
-                    .unwrap_or(zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE);
-                zeff_gba_core::emulator::Emulator::new(&rom_data, sample_rate).map(|mut emu| {
-                    let (buttons, dpad) = self.host_joypad_input_for_system(system);
-                    emu.set_input(buttons, dpad);
-                    if let Some(sram_path) =
-                        crate::emu_backend::gba::try_load_battery_sram(&mut emu, rom_path)
-                            .unwrap_or_else(|e| {
-                                log::warn!("Failed to load battery save: {e}");
-                                None
-                            })
-                    {
-                        log::info!("Loaded battery save from {}", sram_path);
-                    }
-                    let backend = if path == rom_path {
-                        EmuBackend::from_gba(emu, rom_path.to_path_buf())
-                    } else {
-                        EmuBackend::from_gba_with_source(
-                            emu,
-                            rom_path.to_path_buf(),
-                            path.to_path_buf(),
-                        )
-                    };
-                    (backend, original_crc)
-                })
-            }
-            ActiveSystem::WonderSwan => {
-                let mut rom_data = match preloaded_data {
-                    Some(data) => data,
-                    None => std::fs::read(path).context("Failed to read WonderSwan ROM")?,
-                };
-                let original_crc = apply_mods_if_any(system, &mut rom_data);
-                let sample_rate = self
-                    .audio
-                    .as_ref()
-                    .map(|a| a.sample_rate())
-                    .unwrap_or(zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE);
-                zeff_ws_core::emulator::Emulator::new(&rom_data, sample_rate).map(|mut emu| {
-                    let (buttons, dpad) = self.host_joypad_input_for_system(system);
-                    emu.set_input(buttons, dpad);
-                    if let Some(sram_path) =
-                        crate::emu_backend::ws::try_load_battery_sram(&mut emu, rom_path)
-                            .unwrap_or_else(|e| {
-                                log::warn!("Failed to load battery save: {e}");
-                                None
-                            })
-                    {
-                        log::info!("Loaded battery save from {}", sram_path);
-                    }
-                    let backend = if path == rom_path {
-                        EmuBackend::from_ws(emu, rom_path.to_path_buf())
-                    } else {
-                        EmuBackend::from_ws_with_source(
-                            emu,
-                            rom_path.to_path_buf(),
-                            path.to_path_buf(),
-                        )
-                    };
-                    (backend, original_crc)
-                })
-            }
-            ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
-                let mut rom_data = match preloaded_data {
-                    Some(data) => data,
-                    None => std::fs::read(path).context("Failed to read Sega 8-bit ROM")?,
-                };
-                let original_crc = apply_mods_if_any(system, &mut rom_data);
-                let sample_rate = self
-                    .audio
-                    .as_ref()
-                    .map(|a| a.sample_rate())
-                    .unwrap_or(zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE);
-                let hint = crate::emu_backend::sega8::hint_for_active_system(system)
-                    .expect("Sega 8-bit systems must have a core hint");
-                zeff_sega8_core::emulator::Emulator::new_with_hint(&rom_data, sample_rate, hint)
-                    .map(|mut emu| {
-                        let (buttons, dpad) = self.host_joypad_input_for_system(system);
-                        emu.set_input(buttons, dpad);
-                        if let Some(sram_path) =
-                            crate::emu_backend::sega8::try_load_battery_sram(&mut emu, rom_path)
-                                .unwrap_or_else(|e| {
-                                    log::warn!("Failed to load battery save: {e}");
-                                    None
-                                })
-                        {
-                            log::info!("Loaded battery save from {}", sram_path);
-                        }
-                        let backend = if path == rom_path {
-                            EmuBackend::from_sega8(emu, rom_path.to_path_buf())
-                        } else {
-                            EmuBackend::from_sega8_with_source(
-                                emu,
-                                rom_path.to_path_buf(),
-                                path.to_path_buf(),
-                            )
-                        };
-                        (backend, original_crc)
-                    })
-            }
-        }
+        let loaded = load_backend_from_rom_source(
+            system,
+            path,
+            rom_path,
+            preloaded_data,
+            BackendLoadConfig {
+                gb_hardware_mode_preference: self.settings.emulation.hardware_mode_preference,
+                sample_rate: self.audio.as_ref().map(|audio| audio.sample_rate()),
+                apply_mods: true,
+                initial_input: Some(self.host_joypad_input_for_system(system)),
+            },
+        )?;
+        Ok((loaded.backend, loaded.original_crc32))
     }
 
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
