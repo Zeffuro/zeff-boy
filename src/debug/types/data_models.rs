@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use crate::debug::common::WatchType;
+use crate::debug::common::format_addr;
 use crate::settings::{ColorCorrection, DmgPalettePreset};
 use zeff_emu_common::address::Address;
 
@@ -16,6 +17,35 @@ pub(crate) struct WatchHitDisplay {
     pub(crate) old_value: u8,
     pub(crate) new_value: u8,
     pub(crate) watch_type: WatchType,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RecentOpcodeDisplay {
+    pub(crate) address: Address,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) detail: Option<String>,
+    pub(crate) repeat_count: usize,
+}
+
+impl RecentOpcodeDisplay {
+    pub(crate) fn line(&self) -> String {
+        let bytes = self
+            .bytes
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut line = format!("{}: {bytes}", format_addr(self.address));
+        if let Some(detail) = &self.detail {
+            line.push_str(" (");
+            line.push_str(detail);
+            line.push(')');
+        }
+        if self.repeat_count > 1 {
+            line.push_str(&format!(" (x{})", self.repeat_count));
+        }
+        line
+    }
 }
 
 pub(crate) struct DebugSection {
@@ -34,7 +64,7 @@ pub(crate) struct CpuDebugSnapshot {
     pub(crate) last_opcode_line: String,
     pub(crate) sections: Vec<DebugSection>,
     pub(crate) mem_around_pc: [(Address, u8); 32],
-    pub(crate) recent_op_lines: Vec<String>,
+    pub(crate) recent_opcodes: Vec<RecentOpcodeDisplay>,
 
     pub(crate) breakpoints: Vec<Address>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
@@ -152,4 +182,33 @@ pub(crate) struct GbGraphicsData {
     pub(crate) color_correction: ColorCorrection,
     pub(crate) color_correction_matrix: [f32; 9],
     pub(crate) dmg_palette_preset: DmgPalettePreset,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecentOpcodeDisplay;
+
+    #[test]
+    fn recent_opcode_line_formats_bytes_details_and_repeats() {
+        let display = RecentOpcodeDisplay {
+            address: 0x1234,
+            bytes: vec![0xCB, 0x7C],
+            detail: Some("CB prefix".into()),
+            repeat_count: 3,
+        };
+
+        assert_eq!(display.line(), "1234: CB 7C (CB prefix) (x3)");
+    }
+
+    #[test]
+    fn recent_opcode_line_omits_optional_parts() {
+        let display = RecentOpcodeDisplay {
+            address: 0x00AF,
+            bytes: vec![0xEA],
+            detail: None,
+            repeat_count: 1,
+        };
+
+        assert_eq!(display.line(), "00AF: EA");
+    }
 }

@@ -3,7 +3,8 @@ use std::path::Path;
 use crate::audio_recorder::MidiApuSnapshot;
 use zeff_emu_common::address::Address;
 use zeff_emu_common::memory::{
-    ExtendedMemoryRegionSizes, MemoryRegionDescriptor, standard_memory_regions_with_extended,
+    ExtendedMemoryRegionSizes, MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region,
+    standard_memory_regions_with_extended,
 };
 use zeff_emu_common::save_ram::SaveRamKind;
 
@@ -16,6 +17,10 @@ pub(crate) trait DebuggableEmulator {
     fn is_cpu_suspended(&self) -> bool;
     fn debug_continue(&mut self);
     fn debug_step(&mut self);
+    #[inline]
+    fn supports_opcode_history(&self) -> bool {
+        false
+    }
     #[inline]
     fn set_opcode_log_enabled(&mut self, _enabled: bool) {}
 }
@@ -86,6 +91,11 @@ pub(crate) trait EmulatorCore {
     }
 
     #[inline]
+    fn supports_opcode_history(&self) -> bool {
+        false
+    }
+
+    #[inline]
     fn cpu_address_bits(&self) -> u8 {
         16
     }
@@ -103,6 +113,32 @@ pub(crate) trait EmulatorCore {
                 io_registers_len: self.io_registers_len(),
             },
         )
+    }
+
+    #[allow(dead_code)]
+    fn copy_memory_region(
+        &mut self,
+        id_or_alias: &str,
+        out: &mut Vec<u8>,
+    ) -> anyhow::Result<MemoryRegionDescriptor> {
+        let regions = self.memory_regions();
+        let region = resolve_memory_region(&regions, id_or_alias).ok_or_else(|| {
+            anyhow::anyhow!("unknown memory region '{id_or_alias}' for this core")
+        })?;
+
+        match region.kind {
+            MemoryRegionKind::Framebuffer => {
+                copy_slice_to_vec(out, self.framebuffer());
+                Ok(region)
+            }
+            MemoryRegionKind::CpuAddressSpace => Err(anyhow::anyhow!(
+                "CPU address space is debugger-addressable, not copyable as a finite memory region"
+            )),
+            _ => Err(anyhow::anyhow!(
+                "memory region '{}' is not copyable for this core yet",
+                region.id
+            )),
+        }
     }
 
     #[inline]
@@ -123,4 +159,21 @@ pub(crate) trait EmulatorCore {
     fn is_pocket_camera(&self) -> bool {
         false
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn copy_slice_to_vec(out: &mut Vec<u8>, data: &[u8]) {
+    out.clear();
+    out.extend_from_slice(data);
+}
+
+#[allow(dead_code)]
+pub(crate) fn copy_optional_region_to_vec(
+    out: &mut Vec<u8>,
+    data: Option<Vec<u8>>,
+    region_id: &str,
+) -> anyhow::Result<()> {
+    let data = data.ok_or_else(|| anyhow::anyhow!("memory region '{region_id}' is unavailable"))?;
+    copy_slice_to_vec(out, &data);
+    Ok(())
 }

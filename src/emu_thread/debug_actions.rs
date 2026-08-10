@@ -62,7 +62,9 @@ fn apply_debug_controls_to(
     debug_continue: bool,
     debug_step: bool,
 ) {
-    emu.set_opcode_log_enabled(opcode_log_enabled);
+    if emu.supports_opcode_history() {
+        emu.set_opcode_log_enabled(opcode_log_enabled);
+    }
     if emu.is_cpu_suspended() {
         if debug_continue {
             emu.debug_continue();

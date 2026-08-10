@@ -1,9 +1,9 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Cartridge;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, FetchedInstruction, InstructionSet};
 use sha2::{Digest, Sha256};
 use std::fmt;
-use zeff_emu_common::debug::AddressDebugController;
+use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
 mod public_api;
 mod runtime;
@@ -14,12 +14,46 @@ mod tests;
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GbaOpcodeRecord {
+    pub pc: u32,
+    pub raw: u32,
+    pub instruction_set: InstructionSet,
+    pub width_bytes: u8,
+    pub fetch_cycles: u32,
+}
+
+impl Default for GbaOpcodeRecord {
+    fn default() -> Self {
+        Self {
+            pc: 0,
+            raw: 0,
+            instruction_set: InstructionSet::Arm,
+            width_bytes: 4,
+            fetch_cycles: 0,
+        }
+    }
+}
+
+impl From<FetchedInstruction> for GbaOpcodeRecord {
+    fn from(fetched: FetchedInstruction) -> Self {
+        Self {
+            pc: fetched.pc,
+            raw: fetched.raw,
+            instruction_set: fetched.instruction_set,
+            width_bytes: fetched.width_bytes,
+            fetch_cycles: fetched.fetch_cycles,
+        }
+    }
+}
+
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
     pub(crate) rom_hash: [u8; 32],
     pub(crate) frame_count: u64,
     pub(crate) debug: AddressDebugController,
+    pub(crate) opcode_log: OpcodeLog<GbaOpcodeRecord>,
 }
 
 impl Emulator {
@@ -32,6 +66,7 @@ impl Emulator {
             rom_hash,
             frame_count: 0,
             debug: AddressDebugController::new(),
+            opcode_log: OpcodeLog::new(),
         };
         emu.reset();
         Ok(emu)
@@ -45,6 +80,7 @@ impl Emulator {
         self.cpu.reset();
         self.frame_count = 0;
         self.debug.clear_hits();
+        self.opcode_log.clear();
     }
 }
 

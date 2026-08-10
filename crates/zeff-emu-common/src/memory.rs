@@ -140,8 +140,32 @@ impl MemoryRegionDescriptor {
     }
 
     pub fn matches_id_or_alias(self, value: &str) -> bool {
-        self.id == value || self.aliases.contains(&value)
+        let normalized = normalize_memory_region_name(value);
+        normalized == normalize_memory_region_name(self.id)
+            || self
+                .aliases
+                .iter()
+                .any(|alias| normalized == normalize_memory_region_name(alias))
     }
+}
+
+pub fn normalize_memory_region_name(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | '_' | ' ' | '.'))
+        .collect()
+}
+
+pub fn resolve_memory_region(
+    regions: &[MemoryRegionDescriptor],
+    id_or_alias: &str,
+) -> Option<MemoryRegionDescriptor> {
+    regions
+        .iter()
+        .copied()
+        .find(|region| region.matches_id_or_alias(id_or_alias))
 }
 
 pub fn standard_memory_regions(
@@ -216,6 +240,7 @@ mod tests {
         assert_eq!(region.address_bits, Some(32));
         assert!(region.writable);
         assert!(region.matches_id_or_alias("memory"));
+        assert!(region.matches_id_or_alias("CPU"));
     }
 
     #[test]
@@ -226,6 +251,7 @@ mod tests {
         assert_eq!(region.size, Some(0x2000));
         assert!(region.matches_id_or_alias("vram"));
         assert!(region.matches_id_or_alias("chr"));
+        assert!(region.matches_id_or_alias("video-ram"));
     }
 
     #[test]
@@ -245,6 +271,32 @@ mod tests {
         assert_eq!(io.kind, MemoryRegionKind::IoRegisters);
         assert_eq!(io.size, Some(0x40));
         assert!(io.matches_id_or_alias("io"));
+    }
+
+    #[test]
+    fn resolves_region_by_normalized_id_or_alias() {
+        let regions = standard_memory_regions_with_extended(
+            16,
+            0x2000,
+            0x4000,
+            crate::save_ram::SaveRamKind::none(),
+            160 * 144 * 4,
+            ExtendedMemoryRegionSizes {
+                palette_ram_len: 0x40,
+                oam_len: 0x100,
+                io_registers_len: 0,
+            },
+        );
+
+        assert_eq!(
+            resolve_memory_region(&regions, "video ram").map(|region| region.id),
+            Some("video_ram")
+        );
+        assert_eq!(
+            resolve_memory_region(&regions, "CRAM").map(|region| region.id),
+            Some("palette_ram")
+        );
+        assert_eq!(resolve_memory_region(&regions, "missing"), None);
     }
 
     #[test]

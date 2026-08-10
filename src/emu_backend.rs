@@ -21,6 +21,7 @@ pub(crate) mod gb;
 pub(crate) mod gba;
 pub(crate) mod loader;
 pub(crate) mod nes;
+pub(crate) mod paths;
 pub(crate) mod sega8;
 pub(crate) mod system;
 pub(crate) mod ws;
@@ -255,8 +256,21 @@ impl EmuBackend {
         dispatch!(self, supports_debugger())
     }
 
+    pub(crate) fn supports_opcode_history(&self) -> bool {
+        dispatch!(self, supports_opcode_history())
+    }
+
     pub(crate) fn memory_regions(&self) -> Vec<MemoryRegionDescriptor> {
         dispatch!(self, memory_regions())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn copy_memory_region(
+        &mut self,
+        id_or_alias: &str,
+        out: &mut Vec<u8>,
+    ) -> anyhow::Result<MemoryRegionDescriptor> {
+        dispatch!(self, copy_memory_region(id_or_alias, out))
     }
 
     #[inline]

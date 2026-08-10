@@ -56,16 +56,20 @@ impl Emulator {
         self.bus.apu.channel_snapshot()
     }
 
-    pub fn set_input_p1(&mut self, buttons: u8) {
+    pub fn set_input_p1_raw(&mut self, buttons: u8) {
         self.bus.set_vs_system_credit_input(buttons & 0x04 != 0);
         self.bus.controller1.set_buttons(buttons);
     }
 
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+        self.set_input_p1_raw(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
-    pub fn set_input_p2(&mut self, buttons: u8) {
+    pub fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.set_input_p2_raw(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+    }
+
+    pub fn set_input_p2_raw(&mut self, buttons: u8) {
         self.bus.controller2.set_buttons(buttons);
     }
 

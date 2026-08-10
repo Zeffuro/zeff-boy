@@ -38,6 +38,27 @@ fn watchpoint_hits_on_debug_write() {
 }
 
 #[test]
+fn opcode_history_records_executed_instructions_when_enabled() {
+    let rom = minimal_rom();
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    emu.set_opcode_log_enabled(true);
+
+    let fetched = emu
+        .step_instruction()
+        .expect("stub CPU should fetch one instruction");
+    let recent = emu.recent_opcodes(4);
+
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].pc, fetched.pc);
+    assert_eq!(recent[0].raw, fetched.raw);
+    assert_eq!(recent[0].instruction_set, fetched.instruction_set);
+    assert_eq!(recent[0].width_bytes, fetched.width_bytes);
+
+    emu.reset();
+    assert!(emu.recent_opcodes(4).is_empty());
+}
+
+#[test]
 fn halted_cpu_wakes_on_exact_hblank_interrupt_cycle() {
     let rom = minimal_rom();
     let mut emu = Emulator::new(&rom, 48_000).unwrap();

@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use zeff_emu_common::address::Address;
+use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_ws_core::emulator::Emulator as WsEmulator;
 
-use crate::emu_core_trait::EmulatorCore;
+use crate::emu_backend::paths::BackendPaths;
+use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
 impl crate::emu_core_trait::DebuggableEmulator for WsEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -35,17 +37,25 @@ impl crate::emu_core_trait::DebuggableEmulator for WsEmulator {
     fn debug_step(&mut self) {
         self.debug_step()
     }
+    fn supports_opcode_history(&self) -> bool {
+        true
+    }
+    fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.set_opcode_log_enabled(enabled)
+    }
 }
 
 pub(crate) struct WsBackend {
     pub(crate) emu: WsEmulator,
-    rom_path: PathBuf,
-    source_path: PathBuf,
+    paths: BackendPaths,
 }
 
 impl WsBackend {
     pub(crate) fn new(emu: WsEmulator, rom_path: PathBuf) -> Self {
-        Self::with_source_path(emu, rom_path.clone(), rom_path)
+        Self {
+            emu,
+            paths: BackendPaths::new(rom_path),
+        }
     }
 
     pub(crate) fn with_source_path(
@@ -55,13 +65,12 @@ impl WsBackend {
     ) -> Self {
         Self {
             emu,
-            rom_path,
-            source_path,
+            paths: BackendPaths::with_source_path(rom_path, source_path),
         }
     }
 
     pub(crate) fn source_path(&self) -> &Path {
-        &self.source_path
+        self.paths.source_path()
     }
 
     pub(crate) fn preferred_orientation(
@@ -111,7 +120,7 @@ impl EmulatorCore for WsBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        crate::save_paths::flush_battery_sram(&self.rom_path, self.emu.dump_battery_sram())
+        crate::save_paths::flush_battery_sram(self.paths.rom_path(), self.emu.dump_battery_sram())
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -123,7 +132,7 @@ impl EmulatorCore for WsBackend {
     }
 
     fn rom_path(&self) -> &Path {
-        &self.rom_path
+        self.paths.rom_path()
     }
 
     fn rom_hash(&self) -> [u8; 32] {
@@ -146,8 +155,47 @@ impl EmulatorCore for WsBackend {
         true
     }
 
+    fn supports_opcode_history(&self) -> bool {
+        true
+    }
+
     fn cpu_address_bits(&self) -> u8 {
         20
+    }
+
+    fn copy_memory_region(
+        &mut self,
+        id_or_alias: &str,
+        out: &mut Vec<u8>,
+    ) -> anyhow::Result<MemoryRegionDescriptor> {
+        let regions = self.memory_regions();
+        let region = resolve_memory_region(&regions, id_or_alias).ok_or_else(|| {
+            anyhow::anyhow!("unknown memory region '{id_or_alias}' for WonderSwan")
+        })?;
+
+        match region.kind {
+            MemoryRegionKind::SystemRam => copy_slice_to_vec(out, self.emu.system_ram()),
+            MemoryRegionKind::VideoRam => copy_slice_to_vec(out, self.emu.video_ram_snapshot()),
+            MemoryRegionKind::SaveRam => {
+                copy_optional_region_to_vec(out, self.emu.dump_battery_sram(), region.id)?
+            }
+            MemoryRegionKind::Framebuffer => copy_slice_to_vec(out, self.emu.framebuffer()),
+            MemoryRegionKind::CpuAddressSpace => {
+                return Err(anyhow::anyhow!(
+                    "WonderSwan CPU address space is not copyable as a finite memory region"
+                ));
+            }
+            MemoryRegionKind::PaletteRam
+            | MemoryRegionKind::Oam
+            | MemoryRegionKind::IoRegisters => {
+                return Err(anyhow::anyhow!(
+                    "WonderSwan memory region '{}' is not exposed as a copyable region",
+                    region.id
+                ));
+            }
+        }
+
+        Ok(region)
     }
 }
 

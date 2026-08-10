@@ -36,11 +36,3 @@ pub(super) fn input_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks 
     }
     input
 }
-
-pub(super) fn map_host_to_nes_byte(buttons: u8, dpad: u8) -> u8 {
-    (buttons & 0x0F)
-        | ((dpad & 0x04) << 2)
-        | ((dpad & 0x08) << 2)
-        | ((dpad & 0x02) << 5)
-        | ((dpad & 0x01) << 7)
-}

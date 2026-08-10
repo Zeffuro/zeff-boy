@@ -7,7 +7,7 @@ pub(super) fn ws_perf_snapshot(emu: &Emulator) -> PerfInfo {
     PerfInfo {
         fps: 0.0,
         target_fps: zeff_emu_common::system::System::WonderSwan.target_fps(),
-        speed_mode_label: "1x",
+        speed_mode_label: super::super::normal_speed_mode_label(),
         frames_in_flight: 0,
         cycles: emu.cpu_cycles(),
         platform_name: "WonderSwan",

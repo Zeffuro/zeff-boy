@@ -31,7 +31,7 @@ pub(crate) fn collect_nes_snapshot(
         data.perf_info = Some(crate::debug::PerfInfo {
             fps: 0.0,
             target_fps: zeff_emu_common::system::System::Nes.target_fps(),
-            speed_mode_label: "1×",
+            speed_mode_label: super::normal_speed_mode_label(),
             frames_in_flight: 0,
             cycles: emu.cpu_cycles(),
             platform_name: "NES",

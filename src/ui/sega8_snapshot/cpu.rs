@@ -1,5 +1,5 @@
 use super::{on_off, sega8_system_label};
-use crate::debug::{CpuDebugSnapshot, DebugSection};
+use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
 use zeff_emu_common::address::Address;
 use zeff_sega8_core::emulator::Emulator;
 use zeff_sega8_core::hardware::constants::{
@@ -21,11 +21,16 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
         let addr = pc.wrapping_add(i as u16);
         (Address::from(addr), emu.bus().cpu_read(addr))
     });
-    let recent_op_lines = emu
-        .recent_opcodes(RECENT_OPCODE_LINE_COUNT)
-        .into_iter()
-        .map(|(pc, opcode, cycles)| format!("{pc:04X}: {opcode:02X} ({cycles} cyc)"))
-        .collect();
+    let recent_opcodes = super::super::build_recent_opcode_display(
+        emu.recent_opcodes(RECENT_OPCODE_LINE_COUNT),
+        RECENT_OPCODE_LINE_COUNT,
+        |(pc, opcode, cycles), repeat_count| RecentOpcodeDisplay {
+            address: Address::from(pc),
+            bytes: vec![opcode],
+            detail: Some(format!("{cycles} cyc")),
+            repeat_count,
+        },
+    );
     let debug_controls = super::super::build_debug_control_snapshot(
         emu.iter_breakpoints(),
         emu.debug_watchpoints()
@@ -196,7 +201,7 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
             },
         ],
         mem_around_pc,
-        recent_op_lines,
+        recent_opcodes,
         breakpoints: debug_controls.breakpoints,
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,

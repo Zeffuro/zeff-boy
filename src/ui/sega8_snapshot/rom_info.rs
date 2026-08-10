@@ -8,7 +8,7 @@ pub(super) fn sega8_perf_snapshot(emu: &Emulator) -> PerfInfo {
     PerfInfo {
         fps: 0.0,
         target_fps: system.target_fps(),
-        speed_mode_label: "1Ã—",
+        speed_mode_label: super::super::normal_speed_mode_label(),
         frames_in_flight: 0,
         cycles: emu.cpu().cycles(),
         platform_name: "Sega 8-bit",

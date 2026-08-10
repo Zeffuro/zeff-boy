@@ -21,7 +21,7 @@ use audio::AudioStats;
 use debug_state::*;
 use gb::run_gb_headless;
 use gba::run_gba_headless;
-use input::{InputMasks, input_for_frame, map_host_to_nes_byte};
+use input::{InputMasks, input_for_frame};
 use nes::run_nes_headless;
 use screenshots::*;
 use sega8::run_sega8_headless;

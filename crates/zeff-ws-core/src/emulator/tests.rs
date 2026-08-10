@@ -30,6 +30,28 @@ fn loads_and_steps_minimal_rom() {
 }
 
 #[test]
+fn opcode_history_records_executed_instructions_when_enabled() {
+    let rom = rom_with_reset_code(&[0x90, 0xF4]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.set_opcode_log_enabled(true);
+
+    let fetched = emu
+        .step_instruction()
+        .expect("WonderSwan CPU should fetch one instruction");
+    let recent = emu.recent_opcodes(4);
+
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].pc, fetched.pc);
+    assert_eq!(recent[0].cs, fetched.cs);
+    assert_eq!(recent[0].ip, fetched.ip);
+    assert_eq!(recent[0].opcode, fetched.opcode);
+    assert_eq!(recent[0].cycles, fetched.cycles);
+
+    emu.reset();
+    assert!(emu.recent_opcodes(4).is_empty());
+}
+
+#[test]
 fn step_frame_produces_framebuffer() {
     let rom = rom_with_reset_code(&[0xF4]);
     let mut emu = Emulator::from_rom_data(&rom).unwrap();

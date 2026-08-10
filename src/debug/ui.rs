@@ -100,11 +100,11 @@ pub(super) fn draw_cpu_debug_content(
         ui.monospace(&line);
     }
 
-    if !info.recent_op_lines.is_empty() {
+    if !info.recent_opcodes.is_empty() {
         ui.separator();
         ui.heading("Recent Opcodes");
-        for op_line in &info.recent_op_lines {
-            ui.monospace(op_line);
+        for opcode in &info.recent_opcodes {
+            ui.monospace(opcode.line());
         }
     }
 

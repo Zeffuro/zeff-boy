@@ -1,7 +1,8 @@
 use crate::debug::{
     ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugUiActions, DisassemblyView,
-    InputDebugInfo, MemorySearchResult, OamDebugInfo, PaletteDebugInfo, PerfInfo, RomDebugInfo,
-    RomInfoSection, RomSearchResult, WatchHitDisplay, WatchpointDisplay,
+    InputDebugInfo, MemorySearchResult, OamDebugInfo, PaletteDebugInfo, PerfInfo,
+    RecentOpcodeDisplay, RomDebugInfo, RomInfoSection, RomSearchResult, WatchHitDisplay,
+    WatchpointDisplay,
 };
 use crate::emu_thread::MemorySearchRequest;
 use zeff_emu_common::address::Address;
@@ -116,6 +117,29 @@ fn build_debug_control_snapshot(
             }
         }),
     }
+}
+
+fn build_recent_opcode_display<E: Copy + Eq>(
+    entries: impl IntoIterator<Item = E>,
+    limit: usize,
+    build: impl Fn(E, usize) -> RecentOpcodeDisplay,
+) -> Vec<RecentOpcodeDisplay> {
+    let mut seen: Vec<(E, usize)> = Vec::new();
+    for entry in entries {
+        if let Some(slot) = seen.iter_mut().find(|slot| slot.0 == entry) {
+            slot.1 += 1;
+        } else {
+            seen.push((entry, 1));
+        }
+    }
+    seen.into_iter()
+        .take(limit)
+        .map(|(entry, repeat_count)| build(entry, repeat_count))
+        .collect()
+}
+
+fn normal_speed_mode_label() -> &'static str {
+    "1×"
 }
 
 fn build_memory_search(
@@ -246,6 +270,7 @@ pub(crate) struct CoreFeatureInfo {
     pub(crate) supports_save_states: bool,
     pub(crate) supports_rewind: bool,
     pub(crate) supports_debugger: bool,
+    pub(crate) supports_opcode_history: bool,
 }
 
 pub(crate) fn apply_debug_actions(

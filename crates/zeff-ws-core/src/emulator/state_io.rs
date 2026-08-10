@@ -23,7 +23,9 @@ impl Emulator {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
-        crate::save_state::decode_state(self, data)
+        crate::save_state::decode_state(self, data)?;
+        self.opcode_log.clear();
+        Ok(())
     }
 
     pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {

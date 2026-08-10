@@ -93,6 +93,23 @@ fn public_api_parity_wrappers_load_step_and_roundtrip_state() {
 }
 
 #[test]
+fn host_input_mapping_is_owned_by_nes_core_for_both_ports() {
+    let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+
+    emu.set_input(0x05, 0x05);
+    assert_eq!(
+        read_standard_controller_bits(&mut emu, 0x4016),
+        [1, 0, 1, 0, 1, 0, 0, 1]
+    );
+
+    emu.set_input_p2(0x0A, 0x0A);
+    assert_eq!(
+        read_standard_controller_bits(&mut emu, 0x4017),
+        [0, 1, 0, 1, 0, 1, 1, 0]
+    );
+}
+
+#[test]
 fn reset_preserves_cpu_registers_and_decrements_stack() {
     let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
     emu.cpu.regs.a = 0x34;
@@ -138,10 +155,10 @@ fn mapper_99_select_exposes_one_vs_coin_pulse() {
     let mut emu =
         Emulator::new(&build_vs_system_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
 
-    emu.set_input_p1(0x04);
+    emu.set_input(0x04, 0);
     assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x24, 0x20);
 
-    emu.set_input_p1(0);
+    emu.set_input(0, 0);
     assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x04, 0);
     assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x20, 0x20);
 
@@ -155,7 +172,7 @@ fn mapper_99_select_exposes_one_vs_coin_pulse() {
 fn nrom_select_does_not_expose_vs_credit_bits() {
     let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
 
-    emu.set_input_p1(0x04);
+    emu.set_input(0x04, 0);
 
     assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x24, 0);
 }
@@ -189,4 +206,10 @@ fn indexed_store_dummy_read_can_ack_frame_irq_edge() {
     assert_eq!(status_read.map(|value| value & 0x40), Some(0x40));
     assert!(!emu.bus.apu.irq_pending());
     assert!(!emu.cpu.irq_line);
+}
+
+fn read_standard_controller_bits(emu: &mut Emulator, port: u16) -> [u8; 8] {
+    emu.cpu_write(0x4016, 1);
+    emu.cpu_write(0x4016, 0);
+    std::array::from_fn(|_| emu.bus_mut().cpu_read(port) & 0x01)
 }

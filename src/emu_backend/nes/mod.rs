@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use zeff_emu_common::address::{Address, narrow_u16};
+use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
 use crate::audio_recorder::MidiApuSnapshot;
-use crate::emu_core_trait::EmulatorCore;
+use crate::emu_backend::paths::BackendPaths;
+use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
 impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -32,6 +34,9 @@ impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
     fn debug_step(&mut self) {
         self.debug_step()
     }
+    fn supports_opcode_history(&self) -> bool {
+        true
+    }
     fn set_opcode_log_enabled(&mut self, enabled: bool) {
         self.set_opcode_log_enabled(enabled)
     }
@@ -39,13 +44,15 @@ impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
 
 pub(crate) struct NesBackend {
     pub(crate) emu: NesEmulator,
-    rom_path: PathBuf,
-    source_path: PathBuf,
+    paths: BackendPaths,
 }
 
 impl NesBackend {
     pub(crate) fn new(emu: NesEmulator, rom_path: PathBuf) -> Self {
-        Self::with_source_path(emu, rom_path.clone(), rom_path)
+        Self {
+            emu,
+            paths: BackendPaths::new(rom_path),
+        }
     }
 
     pub(crate) fn with_source_path(
@@ -55,22 +62,13 @@ impl NesBackend {
     ) -> Self {
         Self {
             emu,
-            rom_path,
-            source_path,
+            paths: BackendPaths::with_source_path(rom_path, source_path),
         }
     }
 
     pub(crate) fn source_path(&self) -> &Path {
-        &self.source_path
+        self.paths.source_path()
     }
-}
-
-fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
-    (buttons_pressed & 0x0F)
-        | ((dpad_pressed & 0x04) << 2) // Up
-        | ((dpad_pressed & 0x08) << 2) // Down
-        | ((dpad_pressed & 0x02) << 5) // Left
-        | ((dpad_pressed & 0x01) << 7) // Right
 }
 
 impl EmulatorCore for NesBackend {
@@ -124,7 +122,7 @@ impl EmulatorCore for NesBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        crate::save_paths::flush_battery_sram(&self.rom_path, self.emu.dump_battery_sram())
+        crate::save_paths::flush_battery_sram(self.paths.rom_path(), self.emu.dump_battery_sram())
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -136,7 +134,7 @@ impl EmulatorCore for NesBackend {
     }
 
     fn rom_path(&self) -> &Path {
-        &self.rom_path
+        self.paths.rom_path()
     }
 
     fn rom_hash(&self) -> [u8; 32] {
@@ -167,14 +165,54 @@ impl EmulatorCore for NesBackend {
         true
     }
 
+    fn supports_opcode_history(&self) -> bool {
+        true
+    }
+
     #[inline]
     fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        self.emu
-            .set_input_p2(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
+        self.emu.set_input_p2(buttons_pressed, dpad_pressed);
     }
 
     fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
         Some(MidiApuSnapshot::Nes(self.emu.apu_channel_snapshot()))
+    }
+
+    fn copy_memory_region(
+        &mut self,
+        id_or_alias: &str,
+        out: &mut Vec<u8>,
+    ) -> anyhow::Result<MemoryRegionDescriptor> {
+        let regions = self.memory_regions();
+        let region = resolve_memory_region(&regions, id_or_alias)
+            .ok_or_else(|| anyhow::anyhow!("unknown memory region '{id_or_alias}' for NES"))?;
+
+        match region.kind {
+            MemoryRegionKind::SystemRam => copy_slice_to_vec(out, self.emu.system_ram()),
+            MemoryRegionKind::VideoRam => {
+                let video_ram = self.emu.video_ram_snapshot();
+                copy_slice_to_vec(out, &video_ram);
+            }
+            MemoryRegionKind::PaletteRam => copy_slice_to_vec(out, self.emu.ppu_palette_ram()),
+            MemoryRegionKind::Oam => copy_slice_to_vec(out, self.emu.ppu_oam()),
+            MemoryRegionKind::SaveRam => {
+                copy_optional_region_to_vec(out, self.emu.dump_battery_sram(), region.id)?
+            }
+            MemoryRegionKind::Framebuffer => copy_slice_to_vec(out, self.emu.framebuffer()),
+            MemoryRegionKind::CpuAddressSpace => {
+                return Err(anyhow::anyhow!(
+                    "NES CPU address space is not copyable as a finite memory region"
+                ));
+            }
+            MemoryRegionKind::IoRegisters => {
+                return Err(anyhow::anyhow!(
+                    "NES memory region '{}' is not exposed as a copyable region",
+                    region.id
+                ));
+            }
+        }
+
+        Ok(region)
     }
 }
 
@@ -186,6 +224,3 @@ pub(crate) fn try_load_battery_sram(
         emu.load_battery_sram(bytes)
     })
 }
-
-#[cfg(test)]
-mod tests;

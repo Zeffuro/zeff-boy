@@ -44,7 +44,7 @@ impl CoreState {
 
     pub fn set_input_p2(&mut self, buttons: u8, dpad: u8) {
         if let ActiveCore::Nes(emu) = &mut self.core {
-            emu.set_input_p2(map_host_to_nes_byte(buttons, dpad));
+            emu.set_input_p2(buttons, dpad);
         }
     }
 
@@ -90,12 +90,4 @@ impl CoreState {
     pub fn serialize_size(&self) -> usize {
         self.encode_state().map_or(0, |v| v.len())
     }
-}
-
-fn map_host_to_nes_byte(buttons: u8, dpad: u8) -> u8 {
-    (buttons & 0x0F)
-        | ((dpad & 0x04) << 2)
-        | ((dpad & 0x08) << 2)
-        | ((dpad & 0x02) << 5)
-        | ((dpad & 0x01) << 7)
 }

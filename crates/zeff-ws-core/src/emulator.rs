@@ -1,9 +1,9 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::{Cartridge, MinimumSystem};
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, FetchedInstruction};
 use sha2::{Digest, Sha256};
 use std::fmt;
-use zeff_emu_common::debug::AddressDebugController;
+use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
 mod public_api;
 mod runtime;
@@ -14,6 +14,27 @@ mod tests;
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsOpcodeRecord {
+    pub cs: u16,
+    pub ip: u16,
+    pub pc: u32,
+    pub opcode: u8,
+    pub cycles: u32,
+}
+
+impl From<FetchedInstruction> for WsOpcodeRecord {
+    fn from(fetched: FetchedInstruction) -> Self {
+        Self {
+            cs: fetched.cs,
+            ip: fetched.ip,
+            pc: fetched.pc,
+            opcode: fetched.opcode,
+            cycles: fetched.cycles,
+        }
+    }
+}
+
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
@@ -21,6 +42,7 @@ pub struct Emulator {
     pub(crate) rom_crc32: u32,
     pub(crate) frame_count: u64,
     pub(crate) debug: AddressDebugController,
+    pub(crate) opcode_log: OpcodeLog<WsOpcodeRecord>,
 }
 
 impl Emulator {
@@ -37,6 +59,7 @@ impl Emulator {
             rom_crc32,
             frame_count: 0,
             debug: AddressDebugController::new(),
+            opcode_log: OpcodeLog::new(),
         };
         emu.reset();
         Ok(emu)
@@ -53,6 +76,7 @@ impl Emulator {
         );
         self.frame_count = 0;
         self.debug.clear_hits();
+        self.opcode_log.clear();
     }
 }
 

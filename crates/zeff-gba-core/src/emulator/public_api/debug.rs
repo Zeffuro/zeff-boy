@@ -1,4 +1,5 @@
 use crate::emulator::Emulator;
+use crate::emulator::GbaOpcodeRecord;
 use zeff_emu_common::address::Address;
 use zeff_emu_common::debug::{AddressWatchHit, AddressWatchpoint, WatchType};
 
@@ -81,5 +82,13 @@ impl Emulator {
 
     pub fn debug_hit_watchpoint(&self) -> Option<&AddressWatchHit> {
         self.debug.hit_watchpoint.as_ref()
+    }
+
+    pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.opcode_log.set_enabled(enabled);
+    }
+
+    pub fn recent_opcodes(&self, n: usize) -> Vec<GbaOpcodeRecord> {
+        self.opcode_log.recent(n)
     }
 }

@@ -299,6 +299,7 @@ impl EmuThread {
             supports_save_states: true,
             supports_rewind: true,
             supports_debugger: backend.supports_debugger(),
+            supports_opcode_history: backend.supports_opcode_history(),
         });
         data
     }

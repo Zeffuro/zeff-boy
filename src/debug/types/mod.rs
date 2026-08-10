@@ -8,8 +8,8 @@ pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
 pub(crate) use data_models::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
     GbGraphicsData, GbaGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo,
-    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection,
-    Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
+    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RecentOpcodeDisplay, RomDebugInfo,
+    RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use memory::{
     MemoryBookmark, MemoryByteDiff, MemorySearchMode, MemorySearchResult, MemoryViewerState,

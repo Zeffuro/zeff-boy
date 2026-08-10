@@ -28,7 +28,7 @@ pub(super) fn cpu_debug_json(cpu: &CpuDebugSnapshot) -> Value {
         "state": cpu.cpu_state,
         "cycles": cpu.cycles,
         "last_opcode": cpu.last_opcode_line,
-        "recent_opcodes": cpu.recent_op_lines,
+        "recent_opcodes": cpu.recent_opcodes.iter().map(|opcode| opcode.line()).collect::<Vec<_>>(),
         "breakpoints": cpu.breakpoints.iter().map(|addr| json!({
             "address": addr,
             "address_hex": format_addr(*addr),
@@ -97,7 +97,7 @@ fn fold_bytes(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::debug::common::WatchType;
-    use crate::debug::{DebugSection, WatchHitDisplay, WatchpointDisplay};
+    use crate::debug::{DebugSection, RecentOpcodeDisplay, WatchHitDisplay, WatchpointDisplay};
 
     #[test]
     fn cpu_debug_json_exposes_debug_control_state() {
@@ -113,7 +113,12 @@ mod tests {
                 lines: vec!["ok".into()],
             }],
             mem_around_pc: [(0, 0); 32],
-            recent_op_lines: vec!["1234: 00 (4 cyc)".into()],
+            recent_opcodes: vec![RecentOpcodeDisplay {
+                address: 0x1234,
+                bytes: vec![0x00],
+                detail: Some("4 cyc".into()),
+                repeat_count: 1,
+            }],
             breakpoints: vec![0x1234],
             watchpoints: vec![WatchpointDisplay {
                 address: 0xC000,

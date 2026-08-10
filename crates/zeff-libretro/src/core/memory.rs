@@ -1,6 +1,6 @@
 use super::{ActiveCore, CoreState};
 use zeff_emu_common::memory::{
-    ExtendedMemoryRegionSizes, MemoryRegionDescriptor, MemoryRegionKind,
+    ExtendedMemoryRegionSizes, MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region,
     standard_memory_regions_with_extended,
 };
 use zeff_emu_common::save_ram::SaveRamKind;
@@ -91,6 +91,126 @@ impl CoreState {
             .find(|region| region.kind == kind)
             .and_then(|region| region.size)
             .unwrap_or(0)
+    }
+
+    #[allow(dead_code)]
+    pub fn copy_memory_region(
+        &mut self,
+        id_or_alias: &str,
+        out: &mut Vec<u8>,
+    ) -> anyhow::Result<MemoryRegionDescriptor> {
+        let regions = self.memory_regions();
+        let region = resolve_memory_region(&regions, id_or_alias)
+            .ok_or_else(|| anyhow::anyhow!("unknown libretro memory region '{id_or_alias}'"))?;
+
+        match (&mut self.core, region.kind) {
+            (_, MemoryRegionKind::CpuAddressSpace) => Err(anyhow::anyhow!(
+                "CPU address space is debugger-addressable, not copyable as a finite memory region"
+            )),
+            (ActiveCore::Gb(emu), MemoryRegionKind::SystemRam) => {
+                copy_slice_to_vec(out, emu.system_ram());
+                Ok(region)
+            }
+            (ActiveCore::Gb(emu), MemoryRegionKind::VideoRam) => {
+                copy_slice_to_vec(out, emu.video_ram_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Gb(emu), MemoryRegionKind::SaveRam) => {
+                copy_optional_region(out, emu.dump_battery_sram(), region.id)?;
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::SystemRam) => {
+                let (ewram, iwram) = emu.system_ram();
+                out.clear();
+                out.extend_from_slice(ewram);
+                out.extend_from_slice(iwram);
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::VideoRam) => {
+                copy_slice_to_vec(out, emu.video_ram_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::PaletteRam) => {
+                copy_slice_to_vec(out, emu.palette_ram_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::Oam) => {
+                copy_slice_to_vec(out, emu.oam_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::IoRegisters) => {
+                copy_slice_to_vec(out, emu.io_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::SaveRam) => {
+                copy_optional_region(out, emu.dump_battery_sram(), region.id)?;
+                Ok(region)
+            }
+            (ActiveCore::Nes(emu), MemoryRegionKind::SystemRam) => {
+                copy_slice_to_vec(out, emu.system_ram());
+                Ok(region)
+            }
+            (ActiveCore::Nes(emu), MemoryRegionKind::VideoRam) => {
+                let video_ram = emu.video_ram_snapshot();
+                copy_slice_to_vec(out, &video_ram);
+                Ok(region)
+            }
+            (ActiveCore::Nes(emu), MemoryRegionKind::PaletteRam) => {
+                copy_slice_to_vec(out, emu.ppu_palette_ram());
+                Ok(region)
+            }
+            (ActiveCore::Nes(emu), MemoryRegionKind::Oam) => {
+                copy_slice_to_vec(out, emu.ppu_oam());
+                Ok(region)
+            }
+            (ActiveCore::Nes(emu), MemoryRegionKind::SaveRam) => {
+                copy_optional_region(out, emu.dump_battery_sram(), region.id)?;
+                Ok(region)
+            }
+            (ActiveCore::Sega8(emu), MemoryRegionKind::SystemRam) => {
+                copy_slice_to_vec(out, emu.system_ram());
+                Ok(region)
+            }
+            (ActiveCore::Sega8(emu), MemoryRegionKind::VideoRam) => {
+                copy_slice_to_vec(out, emu.video_ram_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Sega8(emu), MemoryRegionKind::PaletteRam) => {
+                copy_slice_to_vec(out, emu.palette_ram_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Sega8(emu), MemoryRegionKind::SaveRam) => {
+                copy_slice_to_vec(out, emu.bus().cartridge_ram());
+                Ok(region)
+            }
+            (ActiveCore::Ws(emu), MemoryRegionKind::SystemRam) => {
+                copy_slice_to_vec(out, emu.system_ram());
+                Ok(region)
+            }
+            (ActiveCore::Ws(emu), MemoryRegionKind::VideoRam) => {
+                copy_slice_to_vec(out, emu.video_ram_snapshot());
+                Ok(region)
+            }
+            (ActiveCore::Ws(emu), MemoryRegionKind::SaveRam) => {
+                copy_optional_region(out, emu.dump_battery_sram(), region.id)?;
+                Ok(region)
+            }
+            (core, MemoryRegionKind::Framebuffer) => {
+                let framebuffer = match core {
+                    ActiveCore::Gb(emu) => emu.framebuffer(),
+                    ActiveCore::Gba(emu) => emu.framebuffer(),
+                    ActiveCore::Nes(emu) => emu.framebuffer(),
+                    ActiveCore::Sega8(emu) => emu.framebuffer(),
+                    ActiveCore::Ws(emu) => emu.framebuffer(),
+                };
+                copy_slice_to_vec(out, framebuffer);
+                Ok(region)
+            }
+            _ => Err(anyhow::anyhow!(
+                "memory region '{}' is not copyable for this libretro core",
+                region.id
+            )),
+        }
     }
 
     pub fn refresh_system_ram(&mut self) {
@@ -221,4 +341,21 @@ impl CoreState {
             ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
         }
     }
+}
+
+#[allow(dead_code)]
+fn copy_slice_to_vec(out: &mut Vec<u8>, data: &[u8]) {
+    out.clear();
+    out.extend_from_slice(data);
+}
+
+#[allow(dead_code)]
+fn copy_optional_region(
+    out: &mut Vec<u8>,
+    data: Option<Vec<u8>>,
+    region_id: &str,
+) -> anyhow::Result<()> {
+    let data = data.ok_or_else(|| anyhow::anyhow!("memory region '{region_id}' is unavailable"))?;
+    copy_slice_to_vec(out, &data);
+    Ok(())
 }

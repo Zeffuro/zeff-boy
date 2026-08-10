@@ -218,6 +218,7 @@ fn core_features_json(features: &CoreFeatureInfo) -> Value {
         "supports_save_states": features.supports_save_states,
         "supports_rewind": features.supports_rewind,
         "supports_debugger": features.supports_debugger,
+        "supports_opcode_history": features.supports_opcode_history,
     })
 }
 
@@ -275,4 +276,31 @@ fn save_ram_kind_json(kind: SaveRamKind) -> Value {
 
 fn same_joypad_key(a: JoypadKey, b: JoypadKey) -> bool {
     std::mem::discriminant(&a) == std::mem::discriminant(&b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_features_json_exposes_opcode_history_support() {
+        let features = CoreFeatureInfo {
+            core_family: CoreFamily::Sega8,
+            save_ram_kind: SaveRamKind::MapperRamUnknown { size: 0x8000 },
+            has_battery: false,
+            system_ram_len: 0x2000,
+            video_ram_len: 0x4000,
+            memory_regions: Vec::new(),
+            supports_save_states: true,
+            supports_rewind: true,
+            supports_debugger: true,
+            supports_opcode_history: true,
+        };
+
+        let json = core_features_json(&features);
+
+        assert_eq!(json["core_family"], "sega8");
+        assert_eq!(json["supports_debugger"], true);
+        assert_eq!(json["supports_opcode_history"], true);
+    }
 }

@@ -65,10 +65,7 @@ pub(super) fn run_nes_headless(
             reset_at_frame = None;
             println!("[headless] nes-test scripted-reset frame={frame_number}");
         }
-        emulator.set_input_p1(map_host_to_nes_byte(
-            current_input.buttons,
-            current_input.dpad,
-        ));
+        emulator.set_input(current_input.buttons, current_input.dpad);
         emulator.set_zapper_state(
             current_input.zapper_enabled,
             current_input.zapper_trigger,

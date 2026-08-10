@@ -1,4 +1,4 @@
-use crate::debug::{CpuDebugSnapshot, DebugSection};
+use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
 use zeff_emu_common::address::Address;
 
 pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDebugSnapshot {
@@ -52,24 +52,16 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         },
     ];
 
-    let mut recent_op_lines = Vec::new();
-    let ops = &snap.recent_ops;
-    let mut seen: Vec<((u16, u8), usize)> = Vec::new();
-    for &(pc, op) in ops {
-        if let Some(entry) = seen.iter_mut().find(|e| e.0 == (pc, op)) {
-            entry.1 += 1;
-        } else {
-            seen.push(((pc, op), 1));
-        }
-    }
-    for ((pc, op), count) in seen.into_iter().take(16) {
-        let line = if count > 1 {
-            format!("{:04X}: {:02X} (x{})", pc, op, count)
-        } else {
-            format!("{:04X}: {:02X}", pc, op)
-        };
-        recent_op_lines.push(line);
-    }
+    let recent_opcodes = super::super::build_recent_opcode_display(
+        snap.recent_ops.iter().copied(),
+        16,
+        |(pc, opcode), repeat_count| RecentOpcodeDisplay {
+            address: Address::from(pc),
+            bytes: vec![opcode],
+            detail: None,
+            repeat_count,
+        },
+    );
 
     let debug_controls = super::super::build_debug_control_snapshot(
         emu.iter_breakpoints().map(Address::from),
@@ -96,7 +88,7 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         last_opcode_line: format!("@ {:04X} = {:02X}", snap.last_opcode_pc, snap.last_opcode),
         sections,
         mem_around_pc: snap.mem_around_pc.map(|(addr, value)| (addr.into(), value)),
-        recent_op_lines,
+        recent_opcodes,
         breakpoints: debug_controls.breakpoints,
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,

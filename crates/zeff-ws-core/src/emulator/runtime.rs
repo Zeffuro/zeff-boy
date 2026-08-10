@@ -58,6 +58,9 @@ impl Emulator {
         if fetched.is_some() {
             self.bus.retire_instruction();
         }
+        if let Some(instruction) = fetched {
+            self.opcode_log.push(instruction.into());
+        }
         let events = if trace_active {
             self.bus.debug_trace_enabled = false;
             self.bus.take_debug_trace_events()

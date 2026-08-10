@@ -46,8 +46,8 @@ pub(crate) use toast::ToastManager;
 pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
     GbGraphicsData, GbaGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo,
-    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection,
-    Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
+    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RecentOpcodeDisplay, RomDebugInfo,
+    RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use types::{
     BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,

@@ -73,6 +73,9 @@ impl Emulator {
 
         let before_cycles = self.cpu.cycles;
         let fetched = self.cpu.step(&mut self.bus);
+        if let Some(instruction) = fetched {
+            self.opcode_log.push(instruction.into());
+        }
         let elapsed = self
             .cpu
             .cycles

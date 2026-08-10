@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
@@ -168,11 +168,13 @@ fn wrap_gb_backend(
     source_path: &Path,
     rom_path: &Path,
 ) -> EmuBackend {
-    if source_path == rom_path {
-        EmuBackend::from_gb(emu, rom_path.to_path_buf())
-    } else {
-        EmuBackend::from_gb_with_source(emu, rom_path.to_path_buf(), source_path.to_path_buf())
-    }
+    wrap_backend_paths(
+        emu,
+        source_path,
+        rom_path,
+        EmuBackend::from_gb,
+        EmuBackend::from_gb_with_source,
+    )
 }
 
 fn wrap_nes_backend(
@@ -180,11 +182,13 @@ fn wrap_nes_backend(
     source_path: &Path,
     rom_path: &Path,
 ) -> EmuBackend {
-    if source_path == rom_path {
-        EmuBackend::from_nes(emu, rom_path.to_path_buf())
-    } else {
-        EmuBackend::from_nes_with_source(emu, rom_path.to_path_buf(), source_path.to_path_buf())
-    }
+    wrap_backend_paths(
+        emu,
+        source_path,
+        rom_path,
+        EmuBackend::from_nes,
+        EmuBackend::from_nes_with_source,
+    )
 }
 
 fn wrap_gba_backend(
@@ -192,11 +196,13 @@ fn wrap_gba_backend(
     source_path: &Path,
     rom_path: &Path,
 ) -> EmuBackend {
-    if source_path == rom_path {
-        EmuBackend::from_gba(emu, rom_path.to_path_buf())
-    } else {
-        EmuBackend::from_gba_with_source(emu, rom_path.to_path_buf(), source_path.to_path_buf())
-    }
+    wrap_backend_paths(
+        emu,
+        source_path,
+        rom_path,
+        EmuBackend::from_gba,
+        EmuBackend::from_gba_with_source,
+    )
 }
 
 fn wrap_ws_backend(
@@ -204,11 +210,13 @@ fn wrap_ws_backend(
     source_path: &Path,
     rom_path: &Path,
 ) -> EmuBackend {
-    if source_path == rom_path {
-        EmuBackend::from_ws(emu, rom_path.to_path_buf())
-    } else {
-        EmuBackend::from_ws_with_source(emu, rom_path.to_path_buf(), source_path.to_path_buf())
-    }
+    wrap_backend_paths(
+        emu,
+        source_path,
+        rom_path,
+        EmuBackend::from_ws,
+        EmuBackend::from_ws_with_source,
+    )
 }
 
 fn wrap_sega8_backend(
@@ -216,10 +224,26 @@ fn wrap_sega8_backend(
     source_path: &Path,
     rom_path: &Path,
 ) -> EmuBackend {
+    wrap_backend_paths(
+        emu,
+        source_path,
+        rom_path,
+        EmuBackend::from_sega8,
+        EmuBackend::from_sega8_with_source,
+    )
+}
+
+fn wrap_backend_paths<T>(
+    emu: T,
+    source_path: &Path,
+    rom_path: &Path,
+    from_rom_path: fn(T, PathBuf) -> EmuBackend,
+    from_source_path: fn(T, PathBuf, PathBuf) -> EmuBackend,
+) -> EmuBackend {
     if source_path == rom_path {
-        EmuBackend::from_sega8(emu, rom_path.to_path_buf())
+        from_rom_path(emu, rom_path.to_path_buf())
     } else {
-        EmuBackend::from_sega8_with_source(emu, rom_path.to_path_buf(), source_path.to_path_buf())
+        from_source_path(emu, rom_path.to_path_buf(), source_path.to_path_buf())
     }
 }
 

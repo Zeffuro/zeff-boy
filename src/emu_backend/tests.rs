@@ -127,6 +127,39 @@ fn shared_backend_loader_covers_every_supported_core() {
 }
 
 #[test]
+fn system_specs_map_to_shared_backend_loader() {
+    for spec in system_specs() {
+        for extension in spec.rom_extensions {
+            let rom = test_rom_for_system(spec.system);
+            let rom_name = format!("matrix.{extension}");
+            let rom_path = PathBuf::from(&rom_name);
+            let loaded = load_backend_from_rom_source(
+                spec.system,
+                &rom_path,
+                &rom_path,
+                Some(rom),
+                BackendLoadConfig {
+                    sample_rate: Some(44_100),
+                    ..BackendLoadConfig::default()
+                },
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "shared backend loader should initialize {} ROM {rom_name}: {err}",
+                    spec.code
+                )
+            });
+
+            assert_eq!(loaded.backend.system(), spec.system);
+            assert_eq!(loaded.backend.core_family(), spec.core_family);
+            assert_eq!(loaded.backend.rom_path(), rom_path);
+            assert_eq!(loaded.backend.source_path(), rom_path);
+            assert_eq!(loaded.backend.framebuffer().len(), spec.framebuffer_len());
+        }
+    }
+}
+
+#[test]
 fn shared_backend_loader_preserves_archive_source_path() {
     let rom = build_gba_test_rom();
     let original_crc = crc32fast::hash(&rom);
@@ -144,6 +177,18 @@ fn shared_backend_loader_preserves_archive_source_path() {
     assert_eq!(loaded.original_crc32, original_crc);
     assert_eq!(loaded.backend.rom_path(), rom_path);
     assert_eq!(loaded.backend.source_path(), source_path);
+}
+
+fn test_rom_for_system(system: ActiveSystem) -> Vec<u8> {
+    match system {
+        ActiveSystem::GameBoy => build_gb_test_rom(),
+        ActiveSystem::GameBoyAdvance => build_gba_test_rom(),
+        ActiveSystem::Nes => build_nes_test_rom(),
+        ActiveSystem::WonderSwan => build_ws_test_rom(),
+        ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
+            build_sms_test_rom()
+        }
+    }
 }
 
 #[test]

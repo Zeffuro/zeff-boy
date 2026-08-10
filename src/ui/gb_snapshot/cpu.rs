@@ -1,4 +1,4 @@
-use crate::debug::{CpuDebugSnapshot, DebugSection};
+use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
 use zeff_emu_common::address::Address;
 
 pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
@@ -109,30 +109,23 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         },
     ];
 
-    let mut recent_op_lines = Vec::new();
-    let ops = &info.recent_ops;
-    let mut seen: Vec<((u16, u8, bool), usize)> = Vec::new();
-    for &entry in ops {
-        if let Some(slot) = seen.iter_mut().find(|e| e.0 == entry) {
-            slot.1 += 1;
-        } else {
-            seen.push((entry, 1));
-        }
-    }
-    for ((pc, op, is_cb), count) in seen.into_iter().take(16) {
-        let line = if is_cb {
-            if count > 1 {
-                format!("{:04X}: CB {:02X} (x{})", pc, op, count)
-            } else {
-                format!("{:04X}: CB {:02X}", pc, op)
+    let recent_opcodes = super::super::build_recent_opcode_display(
+        info.recent_ops.iter().copied(),
+        16,
+        |entry, repeat_count| {
+            let (pc, opcode, cb_prefix) = entry;
+            RecentOpcodeDisplay {
+                address: Address::from(pc),
+                bytes: if cb_prefix {
+                    vec![0xCB, opcode]
+                } else {
+                    vec![opcode]
+                },
+                detail: None,
+                repeat_count,
             }
-        } else if count > 1 {
-            format!("{:04X}: {:02X} (x{})", pc, op, count)
-        } else {
-            format!("{:04X}: {:02X}", pc, op)
-        };
-        recent_op_lines.push(line);
-    }
+        },
+    );
 
     let debug_controls = super::super::build_debug_control_snapshot(
         info.breakpoints.iter().copied().map(Address::from),
@@ -159,7 +152,7 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         last_opcode_line: format!("@ {:04X} = {:02X}", info.last_opcode_pc, info.last_opcode),
         sections,
         mem_around_pc: info.mem_around_pc.map(|(addr, value)| (addr.into(), value)),
-        recent_op_lines,
+        recent_opcodes,
         breakpoints: debug_controls.breakpoints,
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,

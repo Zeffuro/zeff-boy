@@ -166,7 +166,7 @@ pub(super) fn assert_save_state_replay_is_deterministic(
 }
 
 pub(super) fn assert_backend_feature_contract(
-    backend: EmuBackend,
+    mut backend: EmuBackend,
     system: ActiveSystem,
     expected_save_ram_kind: SaveRamKind,
     expected_system_ram_len: usize,
@@ -188,7 +188,12 @@ pub(super) fn assert_backend_feature_contract(
         expected_video_ram_len,
         backend.framebuffer().len(),
     );
+    assert_copyable_memory_regions(&mut backend);
     assert!(backend.supports_debugger());
+    assert_eq!(
+        backend.supports_opcode_history(),
+        expected_opcode_history_support(system)
+    );
     assert!(
         !backend
             .encode_state_bytes()
@@ -230,6 +235,23 @@ pub(super) fn assert_app_snapshot_core_features(
     assert!(features.supports_save_states);
     assert!(features.supports_rewind);
     assert!(features.supports_debugger);
+    assert_eq!(
+        features.supports_opcode_history,
+        expected_opcode_history_support(expected_system)
+    );
+}
+
+fn expected_opcode_history_support(system: ActiveSystem) -> bool {
+    matches!(
+        system,
+        ActiveSystem::Gb
+            | ActiveSystem::Gba
+            | ActiveSystem::Nes
+            | ActiveSystem::Ws
+            | ActiveSystem::Sms
+            | ActiveSystem::Gg
+            | ActiveSystem::Sg
+    )
 }
 
 fn assert_memory_regions(
@@ -361,6 +383,46 @@ fn assert_no_region_kind(regions: &[MemoryRegionDescriptor], kind: MemoryRegionK
     assert!(
         !regions.iter().any(|region| region.kind == kind),
         "unexpected memory region kind: {kind:?}"
+    );
+}
+
+fn assert_copyable_memory_regions(backend: &mut EmuBackend) {
+    let regions = backend.memory_regions();
+    let mut copied = Vec::new();
+
+    for region in regions {
+        if region.kind == MemoryRegionKind::CpuAddressSpace {
+            assert!(
+                backend.copy_memory_region(region.id, &mut copied).is_err(),
+                "CPU address spaces should not be copied as finite memory regions"
+            );
+            continue;
+        }
+
+        let copied_region = backend
+            .copy_memory_region(region.id, &mut copied)
+            .unwrap_or_else(|err| panic!("copying memory region '{}' failed: {err}", region.id));
+        assert_eq!(copied_region, region);
+        assert_eq!(copied.len(), region.size.unwrap_or_default());
+
+        if let Some(alias) = region.aliases.first() {
+            let alias_region = backend
+                .copy_memory_region(alias, &mut copied)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "copying memory region '{}' through alias '{}' failed: {err}",
+                        region.id, alias
+                    )
+                });
+            assert_eq!(alias_region, region);
+            assert_eq!(copied.len(), region.size.unwrap_or_default());
+        }
+    }
+
+    assert!(
+        backend
+            .copy_memory_region("missing-region", &mut copied)
+            .is_err()
     );
 }
 

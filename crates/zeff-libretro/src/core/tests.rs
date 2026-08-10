@@ -1,5 +1,6 @@
 use super::*;
 use zeff_emu_common::memory::MemoryRegionKind;
+use zeff_emu_common::system::{CoreFamily, System};
 
 fn load_sega8(ext: &str) -> CoreState {
     CoreState::from_rom(&[0x76], &format!("test.{ext}")).expect("Sega 8-bit ROM should load")
@@ -44,9 +45,13 @@ fn nes_rom() -> Vec<u8> {
     rom
 }
 
+fn gb_rom() -> Vec<u8> {
+    vec![0u8; 0x8000]
+}
+
 #[test]
 fn sega8_extensions_select_expected_systems() {
-    let sms = load_sega8("sms");
+    let mut sms = load_sega8("sms");
     assert!(matches!(sms.core, ActiveCore::Sega8(_)));
     assert_eq!(sms.system_label(), "SMS");
     assert_eq!(sms.native_width(), 256);
@@ -56,8 +61,9 @@ fn sega8_extensions_select_expected_systems() {
         sms.memory_region_size(MemoryRegionKind::PaletteRam),
         zeff_sega8_core::hardware::constants::SMS_CRAM_SIZE
     );
+    assert_copyable_regions(&mut sms);
 
-    let gg = load_sega8("gg");
+    let mut gg = load_sega8("gg");
     assert!(matches!(gg.core, ActiveCore::Sega8(_)));
     assert_eq!(gg.system_label(), "Game Gear");
     assert_eq!(gg.native_width(), 160);
@@ -67,22 +73,24 @@ fn sega8_extensions_select_expected_systems() {
         gg.memory_region_size(MemoryRegionKind::PaletteRam),
         zeff_sega8_core::hardware::constants::SMS_CRAM_SIZE
     );
+    assert_copyable_regions(&mut gg);
 
     for ext in ["sg", "sc"] {
-        let sg = load_sega8(ext);
+        let mut sg = load_sega8(ext);
         assert!(matches!(sg.core, ActiveCore::Sega8(_)));
         assert_eq!(sg.system_label(), "SG-1000/SC-3000");
         assert_eq!(sg.native_width(), 256);
         assert_eq!(sg.native_height(), 192);
         assert_eq!(sg.sram_size(), 0);
         assert_eq!(sg.memory_region_size(MemoryRegionKind::PaletteRam), 0);
+        assert_copyable_regions(&mut sg);
     }
 }
 
 #[test]
 fn gba_memory_regions_include_debuggable_video_side_regions() {
     let rom = gba_rom();
-    let state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
     let regions = state.memory_regions();
 
     assert_eq!(
@@ -100,16 +108,28 @@ fn gba_memory_regions_include_debuggable_video_side_regions() {
     assert!(regions.iter().any(|region| region.id == "palette_ram"));
     assert!(regions.iter().any(|region| region.id == "oam"));
     assert!(regions.iter().any(|region| region.id == "io_registers"));
+    assert_copyable_regions(&mut state);
 }
 
 #[test]
 fn nes_memory_regions_include_ppu_palette_and_oam() {
     let rom = nes_rom();
-    let state = CoreState::from_rom(&rom, "test.nes").expect("NES ROM should load");
+    let mut state = CoreState::from_rom(&rom, "test.nes").expect("NES ROM should load");
 
     assert_eq!(state.memory_region_size(MemoryRegionKind::PaletteRam), 32);
     assert_eq!(state.memory_region_size(MemoryRegionKind::Oam), 256);
     assert_eq!(state.memory_region_size(MemoryRegionKind::IoRegisters), 0);
+    assert_copyable_regions(&mut state);
+}
+
+#[test]
+fn gb_memory_regions_are_copyable_by_descriptor() {
+    let rom = gb_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gb").expect("GB ROM should load");
+
+    assert!(state.memory_region_size(MemoryRegionKind::SystemRam) > 0);
+    assert!(state.memory_region_size(MemoryRegionKind::VideoRam) > 0);
+    assert_copyable_regions(&mut state);
 }
 
 #[test]
@@ -119,12 +139,42 @@ fn libretro_valid_extensions_include_gba_and_sega8() {
         .expect("valid extensions should be UTF-8");
 
     for ext in [
-        "gb", "gbc", "gba", "nes", "ws", "wsc", "sms", "gg", "sg", "sc",
+        "gb", "gbc", "sgb", "gba", "nes", "ws", "wsc", "sms", "gg", "sg", "sc",
     ] {
         assert!(
             extensions.split('|').any(|entry| entry == ext),
             "missing extension: {ext}"
         );
+    }
+}
+
+#[test]
+fn system_specs_map_to_libretro_core_state() {
+    let valid_extensions = crate::callbacks::VALID_EXTENSIONS
+        .to_str()
+        .expect("valid extensions should be UTF-8");
+
+    for spec in System::specs() {
+        for extension in spec.rom_extensions {
+            assert!(
+                valid_extensions.split('|').any(|entry| entry == *extension),
+                "libretro valid extension list is missing {extension}"
+            );
+
+            let rom = rom_for_system(spec.system);
+            let path = format!("matrix.{extension}");
+            let state = CoreState::from_rom(&rom, &path).unwrap_or_else(|err| {
+                panic!(
+                    "libretro core should initialize {} ROM {path}: {err}",
+                    spec.code
+                )
+            });
+
+            assert_eq!(active_core_family(&state), spec.core_family);
+            assert_eq!(state.native_width(), spec.screen_size.0);
+            assert_eq!(state.native_height(), spec.screen_size.1);
+            assert_eq!(state.system_label(), expected_system_label(spec.system));
+        }
     }
 }
 
@@ -154,6 +204,78 @@ fn wonderswan_extensions_select_ws_core() {
         }));
         state.refresh_video_ram();
         assert_eq!(state.video_ram_buf.len(), state.video_ram_size());
+        assert_copyable_regions(&mut state);
         assert!(state.encode_state().is_ok());
+    }
+}
+
+fn rom_for_system(system: System) -> Vec<u8> {
+    match system {
+        System::Gb => gb_rom(),
+        System::Gba => gba_rom(),
+        System::Nes => nes_rom(),
+        System::Ws => ws_rom(),
+        System::Sms | System::Gg | System::Sg => vec![0x76],
+    }
+}
+
+fn active_core_family(state: &CoreState) -> CoreFamily {
+    match &state.core {
+        ActiveCore::Gb(_) => CoreFamily::GameBoy,
+        ActiveCore::Gba(_) => CoreFamily::GameBoyAdvance,
+        ActiveCore::Nes(_) => CoreFamily::Nes,
+        ActiveCore::Sega8(_) => CoreFamily::Sega8,
+        ActiveCore::Ws(_) => CoreFamily::WonderSwan,
+    }
+}
+
+fn expected_system_label(system: System) -> &'static str {
+    match system {
+        System::Gb => "GB/GBC",
+        System::Gba => "GBA",
+        System::Nes => "NES",
+        System::Ws => "WonderSwan",
+        System::Sms => "SMS",
+        System::Gg => "Game Gear",
+        System::Sg => "SG-1000/SC-3000",
+    }
+}
+
+fn assert_copyable_regions(state: &mut CoreState) {
+    let regions = state.memory_regions();
+    let mut copied = Vec::new();
+
+    for region in regions {
+        if region.kind == MemoryRegionKind::CpuAddressSpace {
+            assert!(
+                state.copy_memory_region(region.id, &mut copied).is_err(),
+                "CPU address spaces should not be copied as finite memory regions"
+            );
+            continue;
+        }
+
+        let copied_region = state
+            .copy_memory_region(region.id, &mut copied)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "copying libretro memory region '{}' failed: {err}",
+                    region.id
+                )
+            });
+        assert_eq!(copied_region, region);
+        assert_eq!(copied.len(), region.size.unwrap_or_default());
+
+        if let Some(alias) = region.aliases.first() {
+            let alias_region = state
+                .copy_memory_region(alias, &mut copied)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "copying libretro memory region '{}' through alias '{}' failed: {err}",
+                        region.id, alias
+                    )
+                });
+            assert_eq!(alias_region, region);
+            assert_eq!(copied.len(), region.size.unwrap_or_default());
+        }
     }
 }
