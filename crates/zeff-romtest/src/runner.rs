@@ -314,6 +314,18 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
         PassKind::WsPassFailTiles => {
             zeff_args.push("--expect-ws-pass-fail-tiles".to_string());
         }
+        PassKind::Sega8SdscContains => {
+            let contains = test
+                .pass
+                .contains
+                .clone()
+                .context("sega8_sdsc_contains requires pass.contains")?;
+            zeff_args.push("--expect-sega8-sdsc".to_string());
+            zeff_args.push(contains);
+        }
+        PassKind::Sega8AudioNonzero => {
+            zeff_args.push("--expect-sega8-audio".to_string());
+        }
         PassKind::HeadlessExit => {}
         PassKind::ScreenshotPerceptual | PassKind::Manual => return Ok(None),
     }
@@ -549,6 +561,48 @@ mod tests {
             invocation
                 .display_args
                 .contains(&"--expect-ws-pass-fail-tiles".to_string())
+        );
+    }
+
+    #[test]
+    fn sega8_sdsc_invocations_forward_expected_text() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.core = Core::Sms;
+        test.rom.path = PathBuf::from("rom-tests/cache/test.sms");
+        test.pass = PassSpec {
+            kind: PassKind::Sega8SdscContains,
+            contains: Some("Tests complete".to_string()),
+            screenshot_frame: None,
+            screenshot_sha256: None,
+        };
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(invocation.display_args.windows(2).any(|pair| pair
+            == [
+                "--expect-sega8-sdsc".to_string(),
+                "Tests complete".to_string()
+            ]));
+    }
+
+    #[test]
+    fn sega8_audio_invocations_forward_expected_flag() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.core = Core::Gg;
+        test.rom.path = PathBuf::from("rom-tests/cache/test.gg");
+        test.pass = PassSpec {
+            kind: PassKind::Sega8AudioNonzero,
+            contains: None,
+            screenshot_frame: None,
+            screenshot_sha256: None,
+        };
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(
+            invocation
+                .display_args
+                .contains(&"--expect-sega8-audio".to_string())
         );
     }
 }

@@ -3,6 +3,12 @@ use super::cartridge::Cartridge;
 use super::constants::{ADDRESS_MASK, IO_PORT_COUNT, WS_INTERNAL_RAM_SIZE, WSC_INTERNAL_RAM_SIZE};
 use super::keypad::Keypad;
 use super::ppu::{Ppu, PpuDebugSnapshot};
+mod dma;
+use dma::SoundDma;
+mod eeprom;
+use eeprom::{EepromCommand, decode_eeprom_command};
+mod rtc;
+use rtc::Rtc;
 
 const KEYPAD_PORT: u16 = 0x00B5;
 const IRQ_VECTOR_BASE_PORT: u16 = 0x00B0;
@@ -134,13 +140,6 @@ pub struct Bus {
 struct DeferredLinearBank {
     value: u8,
     remaining_instruction_retires: u8,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct SoundDma {
-    reload_source: u32,
-    reload_length: u32,
-    cycle_accumulator: u32,
 }
 
 impl Bus {
@@ -1042,131 +1041,6 @@ impl Bus {
         }
     }
 
-    fn sound_dma_source(&self) -> u32 {
-        u32::from(u16::from_le_bytes([
-            self.io[usize::from(SOUND_DMA_SOURCE_LO_PORT)],
-            self.io[usize::from(SOUND_DMA_SOURCE_HI_PORT)],
-        ])) | (u32::from(self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_PORT)] & 0x0F) << 16)
-    }
-
-    fn set_sound_dma_source(&mut self, value: u32) {
-        let value = value & ADDRESS_MASK;
-        let [lo, hi, segment, _] = value.to_le_bytes();
-        self.io[usize::from(SOUND_DMA_SOURCE_LO_PORT)] = lo;
-        self.io[usize::from(SOUND_DMA_SOURCE_HI_PORT)] = hi;
-        self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_PORT)] = segment & 0x0F;
-        self.io[usize::from(SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
-    }
-
-    fn sound_dma_length(&self) -> u32 {
-        u32::from(u16::from_le_bytes([
-            self.io[usize::from(SOUND_DMA_LENGTH_LO_PORT)],
-            self.io[usize::from(SOUND_DMA_LENGTH_HI_PORT)],
-        ])) | (u32::from(self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_PORT)] & 0x0F) << 16)
-    }
-
-    fn set_sound_dma_length(&mut self, value: u32) {
-        let value = value & ADDRESS_MASK;
-        let [lo, hi, segment, _] = value.to_le_bytes();
-        self.io[usize::from(SOUND_DMA_LENGTH_LO_PORT)] = lo;
-        self.io[usize::from(SOUND_DMA_LENGTH_HI_PORT)] = hi;
-        self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_PORT)] = segment & 0x0F;
-        self.io[usize::from(SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT)] = 0;
-    }
-
-    fn write_sound_dma_control(&mut self, value: u8) {
-        let old_control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
-        let control = value & SOUND_DMA_CONTROL_MASK;
-        self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control;
-
-        let was_enabled = old_control & SOUND_DMA_ENABLE != 0;
-        let is_enabled = control & SOUND_DMA_ENABLE != 0;
-        if is_enabled && !was_enabled {
-            self.sound_dma.reload_source = self.sound_dma_source();
-            self.sound_dma.reload_length = self.sound_dma_length();
-            self.sound_dma.cycle_accumulator = 0;
-        }
-        if is_enabled && old_control & SOUND_DMA_HOLD == 0 && control & SOUND_DMA_HOLD != 0 {
-            self.write_sound_dma_target(control, 0);
-        }
-        if !is_enabled {
-            self.sound_dma.cycle_accumulator = 0;
-        }
-    }
-
-    fn step_sound_dma(&mut self, cycles: u32) {
-        let control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
-        if control & SOUND_DMA_ENABLE == 0 || control & SOUND_DMA_HOLD != 0 {
-            return;
-        }
-
-        let period = sound_dma_cycle_period(control);
-        let mut available = self.sound_dma.cycle_accumulator.saturating_add(cycles);
-        while available >= period {
-            available -= period;
-            if !self.transfer_sound_dma_byte(control) {
-                available = 0;
-                break;
-            }
-            if self.io[usize::from(SOUND_DMA_CONTROL_PORT)] & SOUND_DMA_ENABLE == 0 {
-                available = 0;
-                break;
-            }
-        }
-        self.sound_dma.cycle_accumulator = available;
-    }
-
-    fn transfer_sound_dma_byte(&mut self, control: u8) -> bool {
-        let mut length = self.sound_dma_length();
-        if length == 0 {
-            if control & SOUND_DMA_REPEAT == 0 || self.sound_dma.reload_length == 0 {
-                self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control & !SOUND_DMA_ENABLE;
-                return false;
-            }
-            self.set_sound_dma_source(self.sound_dma.reload_source);
-            self.set_sound_dma_length(self.sound_dma.reload_length);
-            length = self.sound_dma.reload_length;
-        }
-
-        let source = self.sound_dma_source();
-        let value = self.peek8(source);
-        self.write_sound_dma_target(control, value);
-        self.set_sound_dma_source(source.wrapping_add(1) & ADDRESS_MASK);
-        let next_length = length - 1;
-        self.set_sound_dma_length(next_length);
-        if next_length == 0 && control & SOUND_DMA_REPEAT == 0 {
-            self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control & !SOUND_DMA_ENABLE;
-        }
-        true
-    }
-
-    fn write_sound_dma_target(&mut self, control: u8, value: u8) {
-        if control & SOUND_DMA_TARGET_HYPERVOICE != 0 {
-            self.apu.write_hyper_voice_sample(value);
-        } else {
-            self.apu.write8(SOUND_VOLUME_CHANNEL2_PORT, value);
-        }
-    }
-
-    pub(crate) fn sound_dma_save_values(&self) -> (u32, u32, u32) {
-        (
-            self.sound_dma.reload_source,
-            self.sound_dma.reload_length,
-            self.sound_dma.cycle_accumulator,
-        )
-    }
-
-    pub(crate) fn load_sound_dma_save_values(
-        &mut self,
-        reload_source: u32,
-        reload_length: u32,
-        cycle_accumulator: u32,
-    ) {
-        self.sound_dma.reload_source = reload_source & ADDRESS_MASK;
-        self.sound_dma.reload_length = reload_length & ADDRESS_MASK;
-        self.sound_dma.cycle_accumulator = cycle_accumulator;
-    }
-
     pub(crate) fn eeprom_save_values(&self) -> (u8, u8) {
         let flags = u8::from(self.internal_eeprom_write_enabled)
             | (u8::from(self.internal_eeprom_protected) << 1)
@@ -1179,15 +1053,6 @@ impl Bus {
         self.internal_eeprom_protected = flags & 0x02 != 0;
         self.cartridge_eeprom_write_enabled = flags & 0x04 != 0;
         self.internal_eeprom_done_delay_reads = internal_done_delay_reads;
-    }
-}
-
-fn sound_dma_cycle_period(control: u8) -> u32 {
-    match control & 0x03 {
-        0x00 => 768,
-        0x01 => 512,
-        0x02 => 256,
-        _ => 128,
     }
 }
 
@@ -1224,207 +1089,6 @@ fn internal_ram_write(ram: &mut [u8], addr: u32, value: u8) {
 
 fn highest_interrupt_id(pending: u8) -> Option<u8> {
     (pending != 0).then(|| 7 - pending.leading_zeros() as u8)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EepromCommand {
-    Read { address: usize },
-    Write { address: usize },
-    Erase { address: usize },
-    WriteDisable,
-    WriteAll,
-    EraseAll,
-    WriteEnable,
-    Invalid,
-}
-
-fn decode_eeprom_command(save_kind: super::cartridge::SaveKind, command: u16) -> EepromCommand {
-    let Some(address_bits) = eeprom_address_bits(save_kind) else {
-        return EepromCommand::Invalid;
-    };
-    let address_mask = (1usize << address_bits) - 1;
-    if address_bits <= 6 {
-        if command & 0xFF00 != 0x0100 {
-            return EepromCommand::Invalid;
-        }
-        let op = ((command >> 6) & 0x03) as u8;
-        if op != 0 {
-            return decode_eeprom_address_command(op, usize::from(command & 0x003F));
-        }
-        return decode_eeprom_short_command(((command >> 4) & 0x03) as u8);
-    }
-
-    if command & 0xF000 != 0x1000 {
-        return EepromCommand::Invalid;
-    }
-    let op = ((command >> 10) & 0x03) as u8;
-    if op != 0 {
-        return decode_eeprom_address_command(op, usize::from(command) & address_mask);
-    }
-    decode_eeprom_short_command(((command >> 8) & 0x03) as u8)
-}
-
-fn eeprom_address_bits(save_kind: super::cartridge::SaveKind) -> Option<usize> {
-    match save_kind {
-        super::cartridge::SaveKind::Eeprom128 => Some(6),
-        super::cartridge::SaveKind::Eeprom1K => Some(9),
-        super::cartridge::SaveKind::Eeprom2K => Some(10),
-        _ => None,
-    }
-}
-
-fn decode_eeprom_address_command(op: u8, address: usize) -> EepromCommand {
-    match op {
-        0x01 => EepromCommand::Write { address },
-        0x02 => EepromCommand::Read { address },
-        0x03 => EepromCommand::Erase { address },
-        _ => EepromCommand::Invalid,
-    }
-}
-
-fn decode_eeprom_short_command(sub_op: u8) -> EepromCommand {
-    match sub_op {
-        0x00 => EepromCommand::WriteDisable,
-        0x01 => EepromCommand::WriteAll,
-        0x02 => EepromCommand::EraseAll,
-        0x03 => EepromCommand::WriteEnable,
-        _ => EepromCommand::Invalid,
-    }
-}
-
-#[derive(Clone, Debug)]
-struct Rtc {
-    command: u8,
-    payload: [u8; 7],
-    payload_index: usize,
-    payload_len: usize,
-    ready_delay_reads: u8,
-    invalid_command: bool,
-}
-
-impl Rtc {
-    fn new() -> Self {
-        Self {
-            command: 0,
-            payload: default_rtc_payload(),
-            payload_index: 0,
-            payload_len: 0,
-            ready_delay_reads: 0,
-            invalid_command: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.command = 0;
-        self.payload = default_rtc_payload();
-        self.payload_index = 0;
-        self.payload_len = 0;
-        self.ready_delay_reads = 0;
-        self.invalid_command = false;
-    }
-
-    fn write_command(&mut self, value: u8, initial_payload: u8) {
-        self.command = value & RTC_COMMAND_MASK;
-        self.payload_len = rtc_command_length(self.command);
-        self.invalid_command = !matches!(self.command, 0x10..=0x1B);
-        if self.command == RTC_WRITE_DATETIME_COMMAND && self.payload_len > 0 {
-            self.payload[0] = initial_payload;
-        }
-        self.payload_index = if self.is_write_command() {
-            self.payload_len.min(1)
-        } else {
-            0
-        };
-        self.ready_delay_reads = RTC_READY_DELAY_READS;
-    }
-
-    fn write_payload(&mut self, value: u8) {
-        if !self.is_write_command() || self.payload_index >= self.payload_len {
-            return;
-        }
-        if self.command == RTC_WRITE_DATETIME_COMMAND {
-            self.payload[self.payload_index] = value;
-        }
-        self.payload_index += 1;
-    }
-
-    fn read_status(&mut self) -> u8 {
-        let status = self.peek_status();
-        if self.ready_delay_reads > 0 {
-            self.ready_delay_reads -= 1;
-        }
-        status
-    }
-
-    fn peek_status(&self) -> u8 {
-        if self.invalid_command {
-            return RTC_ACTIVE;
-        }
-        if self.ready_delay_reads > 0 {
-            return RTC_ACTIVE;
-        }
-
-        let remaining = self.payload_len.saturating_sub(self.payload_index);
-        if self.is_write_command() {
-            RTC_READY | (u8::from(remaining > 0) * RTC_ACTIVE)
-        } else if remaining == 0 {
-            0
-        } else {
-            RTC_READY | (u8::from(remaining > 1) * RTC_ACTIVE)
-        }
-    }
-
-    fn read_payload(&mut self) -> u8 {
-        if !self.is_read_command() || self.payload_index >= self.payload_len {
-            return RTC_READY;
-        }
-
-        let value = if self.command == RTC_READ_DATETIME_COMMAND {
-            self.payload[self.payload_index]
-        } else {
-            0
-        };
-        self.payload_index += 1;
-        value
-    }
-
-    fn peek_payload(&self) -> u8 {
-        if self.command == RTC_READ_DATETIME_COMMAND && self.payload_index < self.payload_len {
-            self.payload[self.payload_index]
-        } else {
-            RTC_READY
-        }
-    }
-
-    fn is_read_command(&self) -> bool {
-        self.command & 1 != 0 && !self.invalid_command
-    }
-
-    fn is_write_command(&self) -> bool {
-        self.command & 1 == 0 && !self.invalid_command
-    }
-}
-
-fn rtc_command_length(command: u8) -> usize {
-    match command {
-        0x10..=0x13 => 1,
-        0x14..=0x15 => 7,
-        0x16..=0x17 => 3,
-        0x18..=0x1B => 2,
-        _ => 0,
-    }
-}
-
-fn default_rtc_payload() -> [u8; 7] {
-    [
-        0x00, // year
-        0x01, // month
-        0x01, // day of month
-        0x00, // day of week
-        0x00, // hour
-        0x00, // minute
-        0x00, // second
-    ]
 }
 
 #[cfg(test)]

@@ -86,3 +86,69 @@ license = "mixed/unknown; no repository-level license found"
 license_confidence = "unknown"
 redistributable = false
 notes = "Pinned GitHub archive of the common NES test ROM collection. Fetch is allowed only for local-tier manifests because the collection does not expose a clear repository-level license."
+
+[[sources]]
+id = "maxim-zhao-zexall-sms-0.20"
+kind = "zip"
+url = "https://www.smspower.org/uploads/Homebrew/ZEXALL-SMS-0.20.zip"
+sha256 = "acf1b84561523e0410ae01e507c3ddf8932025d92deae34e67d93922739318e2"
+contains_built_roms = true
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned ZEXALL-SMS 0.20 source/binary ZIP from SMS Power. The archive includes GPLv2 license text, source/zexall.sms.asm, and built zexall.sms/zexdoc.sms ROMs."
+
+[[sources]]
+id = "smspower-sms-vdp-test-1.31"
+kind = "zip"
+url = "https://www.smspower.org/uploads/Homebrew/SMSVDPTest-SMS-1.31.zip"
+sha256 = "6b8f113e54c084d542ae2f87951451724b4dfa85eae95f3b9a5121e6b1bd1179"
+contains_built_roms = true
+license = "unknown; no top-level license found in source ZIP"
+license_confidence = "unknown"
+redistributable = false
+notes = "Pinned SMS Power VDP test source/binary ZIP. Local-tier only because no clear top-level license was found in the archive."
+
+[[sources]]
+id = "smspower-sms-64-color-palette-test-1.00"
+kind = "zip"
+url = "https://www.smspower.org/uploads/Homebrew/64ColorPaletteTestProgram-SMS-1.00.zip"
+sha256 = "c5f8001f337439aa7503523cea4144d55387151ee18126ba24d141729b77615d"
+contains_built_roms = true
+license = "unknown; no top-level license found in source ZIP"
+license_confidence = "unknown"
+redistributable = false
+notes = "Pinned SMS Power 64 Color Palette Test source/binary ZIP. Local-tier only because no clear top-level license was found in the archive."
+
+[[sources]]
+id = "joppyfurr-sn76489-testrom-sms-1.00"
+kind = "zip"
+url = "https://www.smspower.org/uploads/Homebrew/SN76489TestRom-SMS-1.00.zip"
+sha256 = "7b92df368b417b2834f5c1cff2f4eb769cdb05d6044fbdb5e052409520eced3b"
+contains_built_roms = true
+license = "unknown; bundled tools include their own notices but no top-level test ROM license was found"
+license_confidence = "unknown"
+redistributable = false
+notes = "Pinned SMS Power SN76489 TestRom source/binary ZIP for Master System. Local-tier only because no clear top-level test ROM license was found."
+
+[[sources]]
+id = "joppyfurr-sn76489-testrom-gg-1.00"
+kind = "zip"
+url = "https://www.smspower.org/uploads/Homebrew/SN76489TestRom-GG-1.00.zip"
+sha256 = "ffac96623c60d9a410767c8b47f4d2c8e53cb47facecf5ff75567e4034a8b9f8"
+contains_built_roms = true
+license = "unknown; bundled tools include their own notices but no top-level test ROM license was found"
+license_confidence = "unknown"
+redistributable = false
+notes = "Pinned SMS Power SN76489 TestRom source/binary ZIP for Game Gear. Local-tier only because no clear top-level test ROM license was found."
+
+[[sources]]
+id = "joppyfurr-sn76489-testrom-sg-1.00"
+kind = "zip"
+url = "https://www.smspower.org/uploads/Homebrew/SN76489TestRom-SG-1.00.zip"
+sha256 = "35f103ec7063657b9dd71b1339cafcabd480f8f035b65829c28a247b21898fdb"
+contains_built_roms = true
+license = "unknown; bundled tools include their own notices but no top-level test ROM license was found"
+license_confidence = "unknown"
+redistributable = false
+notes = "Pinned SMS Power SN76489 TestRom source/binary ZIP for SG-1000. Local-tier only because no clear top-level test ROM license was found."

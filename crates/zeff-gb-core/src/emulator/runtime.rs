@@ -81,6 +81,9 @@ impl Emulator {
 
         if self.bus.ppu_lcdc() & 0x80 == 0 {
             self.step_frame_by_cycle_budget();
+            if !matches!(self.cpu.running, CpuState::Suspended) {
+                self.frame_count = self.frame_count.wrapping_add(1);
+            }
             return;
         }
 
@@ -105,6 +108,10 @@ impl Emulator {
                     break;
                 }
             }
+        }
+
+        if !matches!(self.cpu.running, CpuState::Suspended) {
+            self.frame_count = self.frame_count.wrapping_add(1);
         }
     }
 

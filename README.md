@@ -1,6 +1,6 @@
 # Zeff-Boy
 
-**Zeff-Boy** is a Game Boy, Game Boy Color, Game Boy Advance (experimental), and NES emulator written in Rust.
+**Zeff-Boy** is a Game Boy, Game Boy Color, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust.
 I've mainly started this project to help me learn about low level programming and emulation.
 
 Oh and I like making cool shit.

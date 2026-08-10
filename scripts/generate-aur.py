@@ -20,7 +20,7 @@ def main():
 pkgname=zeff-boy-bin
 pkgver={version}
 pkgrel=1
-pkgdesc="A Game Boy, Game Boy Color, and NES emulator written in Rust"
+pkgdesc="A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust"
 arch=('x86_64')
 url="https://github.com/Zeffuro/zeff-boy"
 license=('MIT' 'Apache-2.0')
@@ -41,7 +41,7 @@ package() {{
 
     srcinfo = f"""\
 pkgbase = zeff-boy-bin
-\tpkgdesc = A Game Boy, Game Boy Color, and NES emulator written in Rust
+\tpkgdesc = A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust
 \tpkgver = {version}
 \tpkgrel = 1
 \turl = https://github.com/Zeffuro/zeff-boy

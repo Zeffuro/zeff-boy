@@ -12,6 +12,12 @@ impl Emulator {
         }
     }
 
+    pub fn new(rom: &[u8], sample_rate: u32) -> anyhow::Result<Self> {
+        let mut emulator = Self::from_rom_data(rom, HardwareModePreference::Auto)?;
+        emulator.set_sample_rate(sample_rate);
+        Ok(emulator)
+    }
+
     pub fn from_rom_data(
         rom: &[u8],
         mode_preference: HardwareModePreference,
@@ -39,6 +45,7 @@ impl Emulator {
             hardware_mode_preference: mode_preference,
             hardware_mode,
             cycle_count: 0,
+            frame_count: 0,
             opcode_log: OpcodeLog::new(),
             last_opcode: 0,
             last_opcode_pc: 0,
@@ -49,6 +56,22 @@ impl Emulator {
         let mut emulator = emulator;
         emulator.apply_post_boot_state();
         Ok(emulator)
+    }
+
+    pub fn reset(&mut self) {
+        let rom = self.bus.cartridge.rom_bytes().to_vec();
+        let sample_rate = self.bus.apu_sample_rate();
+        let mode_preference = self.hardware_mode_preference;
+
+        match Self::from_rom_data(&rom, mode_preference) {
+            Ok(mut emulator) => {
+                emulator.set_sample_rate(sample_rate);
+                *self = emulator;
+            }
+            Err(err) => {
+                log::warn!("failed to reset GB emulator from loaded ROM bytes: {err}");
+            }
+        }
     }
 
     fn compute_rom_hash(rom: &[u8]) -> [u8; 32] {

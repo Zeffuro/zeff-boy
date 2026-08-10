@@ -116,12 +116,7 @@ pub(super) enum SpeedMode {
     FastForward,
 }
 
-pub(super) const GB_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
-pub(super) const GBA_FRAME_DURATION: Duration = Duration::from_nanos(16_742_706);
-pub(super) const WS_FRAME_DURATION: Duration =
-    Duration::from_nanos(zeff_ws_core::hardware::constants::WS_FRAME_DURATION_NS);
 pub(super) const MAX_IN_FLIGHT: usize = 2;
 pub(super) const MAX_FRAMES_PER_TICK: usize = 10;
 pub(super) const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 pub(super) const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33);
-pub(super) const NES_FRAME_DURATION: Duration = Duration::from_nanos(16_639_267);

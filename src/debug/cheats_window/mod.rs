@@ -17,6 +17,9 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
         }
         crate::emu_backend::ActiveSystem::GameBoyAdvance => "GBA cheats are not implemented yet",
         crate::emu_backend::ActiveSystem::WonderSwan => "WonderSwan cheats are not implemented yet",
+        crate::emu_backend::ActiveSystem::MasterSystem
+        | crate::emu_backend::ActiveSystem::GameGear
+        | crate::emu_backend::ActiveSystem::Sg1000 => "Sega 8-bit cheats are not implemented yet",
     };
     ui.label(help_text);
 

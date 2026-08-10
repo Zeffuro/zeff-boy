@@ -2,13 +2,13 @@
 <component type="desktop-application">
   <id>com.github.zeffuro.zeff-boy</id>
   <name>zeff-boy</name>
-  <summary>A Game Boy, Game Boy Color, and NES emulator</summary>
+  <summary>A Game Boy, NES, WonderSwan, and Sega 8-bit emulator</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
 
   <description>
     <p>
-      zeff-boy is a Game Boy, Game Boy Color, and NES emulator written in Rust.
+      zeff-boy is a Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust.
       It features save states, cheats, a libretro core,
       and runs on Windows, macOS, Linux, and the web.
     </p>

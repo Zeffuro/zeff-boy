@@ -93,4 +93,11 @@ impl EmuThread {
     ) {
         apply_debug_actions_to(emu, actions);
     }
+
+    pub(crate) fn apply_sega8_debug_actions(
+        emu: &mut zeff_sega8_core::emulator::Emulator,
+        actions: &DebugUiActions,
+    ) {
+        apply_debug_actions_to(emu, actions);
+    }
 }

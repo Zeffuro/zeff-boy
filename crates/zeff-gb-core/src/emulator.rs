@@ -24,6 +24,7 @@ pub struct Emulator {
     pub(crate) hardware_mode_preference: HardwareModePreference,
     pub(crate) hardware_mode: HardwareMode,
     pub(crate) cycle_count: u64,
+    pub(crate) frame_count: u64,
     pub(crate) opcode_log: OpcodeLog,
     pub(crate) last_opcode: u8,
     pub(crate) last_opcode_pc: u16,
@@ -39,6 +40,7 @@ impl fmt::Debug for Emulator {
             .field("hardware_mode", &self.hardware_mode)
             .field("hardware_mode_preference", &self.hardware_mode_preference)
             .field("cycle_count", &self.cycle_count)
+            .field("frame_count", &self.frame_count)
             .field("last_opcode", &format_args!("{:#04X}", self.last_opcode))
             .field(
                 "last_opcode_pc",
@@ -48,5 +50,32 @@ impl fmt::Debug for Emulator {
             .field("debug", &self.debug)
             .field("title", &self.header.title)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_api_parity_wrappers_load_step_and_roundtrip_state() {
+        let rom = vec![0u8; 0x8000];
+        let mut emulator = Emulator::new(&rom, 44_100).expect("GB emulator should initialize");
+
+        assert_eq!(emulator.framebuffer_dimensions(), (160, 144));
+        assert_eq!(emulator.frame_count(), 0);
+        assert!(!emulator.has_battery());
+
+        emulator.set_input(0x01, 0x01);
+        emulator.step_frame();
+
+        assert_eq!(emulator.frame_count(), 1);
+
+        let state = emulator
+            .encode_state()
+            .expect("GB emulator should encode state");
+        emulator
+            .load_state(&state)
+            .expect("GB emulator should load state");
     }
 }

@@ -176,8 +176,7 @@ fn ws_apu_wave_ram_lines(emu: &Emulator, sample_ram_pos: u8) -> Vec<String> {
 fn ws_perf_snapshot(emu: &Emulator) -> PerfInfo {
     PerfInfo {
         fps: 0.0,
-        target_fps: 1_000_000_000.0
-            / zeff_ws_core::hardware::constants::WS_FRAME_DURATION_NS as f64,
+        target_fps: zeff_emu_common::system::System::WonderSwan.target_fps(),
         speed_mode_label: "1x",
         frames_in_flight: 0,
         cycles: emu.cpu_cycles(),

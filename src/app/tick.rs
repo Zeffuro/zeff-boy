@@ -10,6 +10,7 @@ use crate::emu_thread::{
 };
 use crate::platform::Instant;
 use crate::settings::{GamepadAction, NesPaletteMode};
+use zeff_emu_common::system::{NES_SCREEN_SIZE, RGBA_BYTES_PER_PIXEL, rgba_framebuffer_len};
 
 fn parse_pending_search(state: &mut impl SearchableState) -> Option<MemorySearchRequest> {
     if !state.search_pending() {
@@ -121,7 +122,8 @@ impl App {
         let (cursor_x, cursor_y) = self.cursor_pos?;
         let gfx = self.gfx.as_ref()?;
         let (pixel_x, pixel_y) = gfx.game_pixel_at_window_pos(cursor_x, cursor_y)?;
-        if pixel_x < 256 && pixel_y < 240 {
+        let (nes_width, nes_height) = NES_SCREEN_SIZE;
+        if pixel_x < nes_width && pixel_y < nes_height {
             Some((pixel_x as u16, pixel_y as u16))
         } else {
             None
@@ -135,17 +137,21 @@ impl App {
         let Some(frame) = self.latest_frame.as_ref() else {
             return false;
         };
-        if frame.len() != 256 * 240 * 4 {
+        if frame.len() != rgba_framebuffer_len(NES_SCREEN_SIZE) {
             return false;
         }
 
         const SAMPLE_RADIUS: i32 = 4;
+        let (nes_width, nes_height) = NES_SCREEN_SIZE;
+        let max_x = nes_width as i32 - 1;
+        let max_y = nes_height as i32 - 1;
         let center_x = pixel_x as i32;
         let center_y = pixel_y as i32;
 
-        for y in (center_y - SAMPLE_RADIUS).max(0)..=(center_y + SAMPLE_RADIUS).min(239) {
-            for x in (center_x - SAMPLE_RADIUS).max(0)..=(center_x + SAMPLE_RADIUS).min(255) {
-                let idx = ((y as usize * 256 + x as usize) * 4).min(frame.len() - 4);
+        for y in (center_y - SAMPLE_RADIUS).max(0)..=(center_y + SAMPLE_RADIUS).min(max_y) {
+            for x in (center_x - SAMPLE_RADIUS).max(0)..=(center_x + SAMPLE_RADIUS).min(max_x) {
+                let idx = ((y as usize * nes_width as usize + x as usize) * RGBA_BYTES_PER_PIXEL)
+                    .min(frame.len() - RGBA_BYTES_PER_PIXEL);
                 if Self::nes_zapper_pixel_is_bright(frame[idx], frame[idx + 1], frame[idx + 2]) {
                     return true;
                 }

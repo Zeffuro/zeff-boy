@@ -8,6 +8,10 @@ impl Emulator {
         self.rom_hash
     }
 
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
+    }
+
     pub fn dmg_palette_preset(&self) -> crate::hardware::ppu::DmgPalettePreset {
         self.bus.ppu_dmg_palette_preset()
     }

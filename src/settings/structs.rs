@@ -284,7 +284,13 @@ impl VideoSettings {
                     self.ws_color_correction_matrix,
                 )
             }
-            Some(crate::emu_backend::ActiveSystem::Nes) | None => EffectiveColorCorrection::None,
+            Some(
+                crate::emu_backend::ActiveSystem::Nes
+                | crate::emu_backend::ActiveSystem::MasterSystem
+                | crate::emu_backend::ActiveSystem::GameGear
+                | crate::emu_backend::ActiveSystem::Sg1000,
+            )
+            | None => EffectiveColorCorrection::None,
         }
     }
 }

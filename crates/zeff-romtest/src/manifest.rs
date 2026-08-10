@@ -375,7 +375,7 @@ pub(crate) fn validate_tests(tests: &[LoadedTest]) -> Vec<String> {
 
         if matches!(
             test.pass.kind,
-            PassKind::GbSerialContains | PassKind::WsScreenText
+            PassKind::GbSerialContains | PassKind::WsScreenText | PassKind::Sega8SdscContains
         ) && test.pass.contains.is_none()
         {
             errors.push(format!(

@@ -112,6 +112,10 @@ impl Emulator {
         self.bus.ppu.dimensions()
     }
 
+    pub fn system_ram(&self) -> &[u8] {
+        &self.bus.ram
+    }
+
     pub fn frame_ready(&self) -> bool {
         self.bus.ppu.frame_ready
     }
@@ -180,6 +184,10 @@ impl Emulator {
 
     pub fn rom_hash(&self) -> [u8; 32] {
         self.rom_hash
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
     }
 
     pub fn rom_crc32(&self) -> u32 {
@@ -319,7 +327,10 @@ mod tests {
         let mut emu = Emulator::from_rom_data(&rom).unwrap();
         emu.step_frame();
         assert!(emu.frame_ready());
-        assert_eq!(emu.framebuffer().len(), 224 * 144 * 4);
+        assert_eq!(
+            emu.framebuffer().len(),
+            crate::hardware::constants::FRAMEBUFFER_LEN
+        );
         assert_eq!(emu.frame_count, 1);
     }
 

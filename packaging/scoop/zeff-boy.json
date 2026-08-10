@@ -1,6 +1,6 @@
 {
     "version": "0.1.0",
-    "description": "A Game Boy, Game Boy Color, and NES emulator written in Rust",
+    "description": "A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust",
     "homepage": "https://github.com/Zeffuro/zeff-boy",
     "license": {
         "identifier": "MIT|Apache-2.0",

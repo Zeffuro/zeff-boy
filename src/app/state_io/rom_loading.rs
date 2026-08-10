@@ -220,6 +220,44 @@ impl App {
                     (backend, original_crc)
                 })
             }
+            ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
+                let mut rom_data = match preloaded_data {
+                    Some(data) => data,
+                    None => std::fs::read(path).context("Failed to read Sega 8-bit ROM")?,
+                };
+                let original_crc = apply_mods_if_any(system, &mut rom_data);
+                let sample_rate = self
+                    .audio
+                    .as_ref()
+                    .map(|a| a.sample_rate())
+                    .unwrap_or(zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE);
+                let hint = crate::emu_backend::sega8::hint_for_active_system(system)
+                    .expect("Sega 8-bit systems must have a core hint");
+                zeff_sega8_core::emulator::Emulator::new_with_hint(&rom_data, sample_rate, hint)
+                    .map(|mut emu| {
+                        let (buttons, dpad) = self.host_joypad_input_for_system(system);
+                        emu.set_input(buttons, dpad);
+                        if let Some(sram_path) =
+                            crate::emu_backend::sega8::try_load_battery_sram(&mut emu, rom_path)
+                                .unwrap_or_else(|e| {
+                                    log::warn!("Failed to load battery save: {e}");
+                                    None
+                                })
+                        {
+                            log::info!("Loaded battery save from {}", sram_path);
+                        }
+                        let backend = if path == rom_path {
+                            EmuBackend::from_sega8(emu, rom_path.to_path_buf())
+                        } else {
+                            EmuBackend::from_sega8_with_source(
+                                emu,
+                                rom_path.to_path_buf(),
+                                path.to_path_buf(),
+                            )
+                        };
+                        (backend, original_crc)
+                    })
+            }
         }
     }
 

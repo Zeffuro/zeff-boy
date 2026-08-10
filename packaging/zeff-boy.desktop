@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
 Name=zeff-boy
-GenericName=Game Boy / NES Emulator
-Comment=A Game Boy, Game Boy Color, and NES emulator written in Rust
+GenericName=Multi-system Emulator
+Comment=A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust
 Exec=zeff-boy %f
 Icon=zeff-boy
 Terminal=false
 Categories=Game;Emulator;
 MimeType=application/x-gameboy-rom;application/x-gameboy-color-rom;application/x-nes-rom;
-Keywords=emulator;gameboy;nes;nintendo;
+Keywords=emulator;gameboy;nes;nintendo;wonderswan;sega;mastersystem;gamegear;sg1000;
 StartupNotify=true
 

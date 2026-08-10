@@ -9,10 +9,12 @@ use super::{InputMasks, StuckReport};
 mod gb;
 mod gba;
 mod nes;
+mod sega8;
 
 pub(super) use gb::gb_debug_state;
 pub(super) use gba::{dump_gba_memory_snapshots, gba_debug_state, gba_wait_classification};
 pub(super) use nes::nes_debug_state;
+pub(super) use sega8::{Sega8DebugStateRequest, sega8_debug_state};
 pub(super) fn emit_debug_state(
     opts: &HeadlessOptions,
     value: serde_json::Value,

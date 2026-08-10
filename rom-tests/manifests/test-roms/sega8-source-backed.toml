@@ -1,0 +1,179 @@
+manifest_version = 1
+
+[suite]
+id = "sega8-source-backed"
+name = "Source-backed Sega 8-bit public test ROMs"
+upstream_url = "https://www.smspower.org/Homebrew/"
+license = "mixed; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "sega8/zexall-sms-0.20"
+cache_prefix = "rom-tests/cache/sega8/maxim-zhao/zexall-sms-0.20"
+core = "sms"
+tier = "accuracy"
+max_frames = 60
+tags = ["sega8", "sms", "source-backed", "z80", "cpu", "sdsc"]
+notes = "Short SDSC boot/output check for ZEXALL-SMS 0.20. This validates the upstream source-backed ROM boots and emits SDSC debug-console text; full 'Tests complete' runs are intentionally not in default CI because ZEXALL is long-running."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://www.smspower.org/uploads/Homebrew/ZEXALL-SMS-0.20.zip"
+source_version = "0.20"
+source_id = "maxim-zhao-zexall-sms-0.20"
+
+[test_groups.pass]
+kind = "sega8_sdsc_contains"
+contains = "* SDSC Debug Console"
+
+[[test_groups.roms]]
+id = "zexall-sdsc-boot"
+archive_path = "zexall.sms"
+sha256 = "25e205207745781a556003a800e60d9ec52330fb1cec1639dcf554a06e622e66"
+
+[[test_groups.roms]]
+id = "zexdoc-sdsc-boot"
+archive_path = "zexdoc.sms"
+sha256 = "684cab8d256d474fdd34fc21ef942c4767cb355cbc47588926cd49ef4375ef30"
+
+[[tests]]
+id = "sega8/smspower/sms-vdp-test-1.31/boot"
+core = "sms"
+tier = "local"
+max_frames = 180
+tags = ["sega8", "sms", "source-backed", "local-only", "vdp"]
+notes = "SMS VDP Test 1.31 source/binary ZIP from SMS Power. Local-only because no clear top-level license was found in the archive."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.smspower.org/uploads/Homebrew/SMSVDPTest-SMS-1.31.zip"
+source_version = "1.31"
+source_id = "smspower-sms-vdp-test-1.31"
+
+[tests.rom]
+path = "rom-tests/cache/sega8/smspower/sms-vdp-test-1.31/VDPTEST.sms"
+archive_path = "VDPTEST.sms"
+sha256 = "2b64b55ded7406aecf60a85547639dd4a0ab9f9c212a04676b79e15e8711f3a0"
+
+[tests.pass]
+kind = "headless_exit"
+
+[[tests]]
+id = "sega8/smspower/sms-64-color-palette-test-1.00/boot"
+core = "sms"
+tier = "local"
+max_frames = 60
+tags = ["sega8", "sms", "source-backed", "local-only", "palette", "vdp"]
+notes = "64 Color Palette Test source/binary ZIP from SMS Power. Local-only because no clear top-level license was found in the archive."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.smspower.org/uploads/Homebrew/64ColorPaletteTestProgram-SMS-1.00.zip"
+source_version = "1.00"
+source_id = "smspower-sms-64-color-palette-test-1.00"
+
+[tests.rom]
+path = "rom-tests/cache/sega8/smspower/sms-64-color-palette-test-1.00/TEST.SMS"
+archive_path = "TEST.SMS"
+sha256 = "7b9058becf83cb01a60f7fcdc57c89db1e8806d00af4ffcd35ba42e8498db79f"
+
+[tests.pass]
+kind = "headless_exit"
+
+[[test_groups]]
+id_prefix = "sega8/joppyfurr/sn76489-testrom-sms-1.00"
+cache_prefix = "rom-tests/cache/sega8/joppyfurr/sn76489-testrom-sms-1.00"
+core = "sms"
+tier = "local"
+max_frames = 180
+input = ["right@30-32,right@50-52,a@70-120"]
+tags = ["sega8", "sms", "source-backed", "local-only", "audio", "psg", "sn76489"]
+notes = "JoppyFurr SN76489 TestRom for SMS. Local-only because no clear top-level test ROM license was found in the archive."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.smspower.org/uploads/Homebrew/SN76489TestRom-SMS-1.00.zip"
+source_version = "1.00"
+source_id = "joppyfurr-sn76489-testrom-sms-1.00"
+
+[test_groups.pass]
+kind = "sega8_audio_nonzero"
+
+[[test_groups.roms]]
+id = "ntsc-audio"
+archive_path = "SN76489_TestRom_NTSC.sms"
+sha256 = "ba941a0edf9f55e1b94c3c629b64b4aa7591d1bc98d556f09d91f7fe991b0a6a"
+
+[[test_groups.roms]]
+id = "pal-audio"
+archive_path = "SN76489_TestRom_PAL.sms"
+sha256 = "c760d1e707ef138263ac93e01f018c6778955d108b220f9a574ddd655c0dd960"
+
+[[tests]]
+id = "sega8/joppyfurr/sn76489-testrom-gg-1.00/audio"
+core = "gg"
+tier = "local"
+max_frames = 180
+input = ["down@30-32,down@50-52,down@70-72,down@90-92,right@110-112,right@130-132,a@150-170"]
+tags = ["sega8", "gg", "source-backed", "local-only", "audio", "psg", "sn76489"]
+notes = "JoppyFurr SN76489 TestRom for Game Gear. Local-only because no clear top-level test ROM license was found in the archive."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.smspower.org/uploads/Homebrew/SN76489TestRom-GG-1.00.zip"
+source_version = "1.00"
+source_id = "joppyfurr-sn76489-testrom-gg-1.00"
+
+[tests.rom]
+path = "rom-tests/cache/sega8/joppyfurr/sn76489-testrom-gg-1.00/SN76489_TestRom.gg"
+archive_path = "SN76489_TestRom.gg"
+sha256 = "82cb6e83ffbbd0178c5fd40842ec39f933bc4e3ab485738813b3a31fa6fb1122"
+
+[tests.pass]
+kind = "sega8_audio_nonzero"
+
+[[test_groups]]
+id_prefix = "sega8/joppyfurr/sn76489-testrom-sg-1.00"
+cache_prefix = "rom-tests/cache/sega8/joppyfurr/sn76489-testrom-sg-1.00"
+core = "sg"
+tier = "local"
+max_frames = 180
+input = ["right@30-32,right@50-52,a@70-120"]
+tags = ["sega8", "sg", "sc", "source-backed", "local-only", "audio", "psg", "sn76489"]
+notes = "JoppyFurr SN76489 TestRom for SG-1000. The upstream ZIP also includes SC-3000 cassette WAVs; Zeff Boy currently tracks cartridge-style .sg/.sc through the SG core."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://www.smspower.org/uploads/Homebrew/SN76489TestRom-SG-1.00.zip"
+source_version = "1.00"
+source_id = "joppyfurr-sn76489-testrom-sg-1.00"
+
+[test_groups.pass]
+kind = "sega8_audio_nonzero"
+
+[[test_groups.roms]]
+id = "ntsc-audio"
+archive_path = "SN76489_TestRom_NTSC.sg"
+sha256 = "f1327a27f2b3e72739f7c735c423d708d1bc093c289c6154d3a20f510bc02db4"
+
+[[test_groups.roms]]
+id = "pal-audio"
+archive_path = "SN76489_TestRom_PAL.sg"
+sha256 = "f127769e6565c2bc9e27a6597d1b805a6646e1b532509c10693a17e7909123f2"

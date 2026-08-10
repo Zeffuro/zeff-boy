@@ -61,7 +61,11 @@ impl MemoryAddressSpace {
 
     pub(crate) fn for_system(system: ActiveSystem) -> Self {
         match system {
-            ActiveSystem::GameBoy | ActiveSystem::Nes => Self::GB_NES,
+            ActiveSystem::GameBoy
+            | ActiveSystem::Nes
+            | ActiveSystem::MasterSystem
+            | ActiveSystem::GameGear
+            | ActiveSystem::Sg1000 => Self::GB_NES,
             ActiveSystem::GameBoyAdvance => Self::GBA,
             ActiveSystem::WonderSwan => Self::WS,
         }

@@ -5,6 +5,7 @@ use anyhow::Context;
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::nes::NesBackend;
+pub(crate) use self::sega8::Sega8Backend;
 pub(crate) use self::system::{
     ActiveSystem, ROM_AND_ARCHIVE_EXTENSIONS, ROM_EXTENSIONS, archive_extensions, system_specs,
 };
@@ -15,6 +16,7 @@ use crate::emu_core_trait::EmulatorCore;
 pub(crate) mod gb;
 pub(crate) mod gba;
 pub(crate) mod nes;
+pub(crate) mod sega8;
 pub(crate) mod system;
 pub(crate) mod ws;
 
@@ -22,6 +24,7 @@ pub(crate) enum EmuBackend {
     Gb(Box<GbBackend>),
     Gba(Box<GbaBackend>),
     Nes(Box<NesBackend>),
+    Sega8(Box<Sega8Backend>),
     Ws(Box<WsBackend>),
 }
 
@@ -31,6 +34,7 @@ macro_rules! dispatch {
             EmuBackend::Gb(b) => b.$method($($arg),*),
             EmuBackend::Gba(b) => b.$method($($arg),*),
             EmuBackend::Nes(b) => b.$method($($arg),*),
+            EmuBackend::Sega8(b) => b.$method($($arg),*),
             EmuBackend::Ws(b) => b.$method($($arg),*),
         }
     };
@@ -85,6 +89,22 @@ impl EmuBackend {
         )))
     }
 
+    pub(crate) fn from_sega8(emu: zeff_sega8_core::emulator::Emulator, rom_path: PathBuf) -> Self {
+        Self::Sega8(Box::new(Sega8Backend::new(emu, rom_path)))
+    }
+
+    pub(crate) fn from_sega8_with_source(
+        emu: zeff_sega8_core::emulator::Emulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+    ) -> Self {
+        Self::Sega8(Box::new(Sega8Backend::with_source_path(
+            emu,
+            rom_path,
+            source_path,
+        )))
+    }
+
     pub(crate) fn from_ws(emu: zeff_ws_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Ws(Box::new(WsBackend::new(emu, rom_path)))
     }
@@ -106,6 +126,7 @@ impl EmuBackend {
             Self::Gb(..) => ActiveSystem::GameBoy,
             Self::Gba(..) => ActiveSystem::GameBoyAdvance,
             Self::Nes(..) => ActiveSystem::Nes,
+            Self::Sega8(b) => b.system(),
             Self::Ws(..) => ActiveSystem::WonderSwan,
         }
     }
@@ -152,6 +173,13 @@ impl EmuBackend {
     pub(crate) fn nes(&self) -> Option<&NesBackend> {
         match self {
             Self::Nes(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn sega8_mut(&mut self) -> Option<&mut Sega8Backend> {
+        match self {
+            Self::Sega8(b) => Some(b),
             _ => None,
         }
     }

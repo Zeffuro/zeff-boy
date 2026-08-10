@@ -96,6 +96,7 @@ pub(crate) enum ConsoleGraphicsData {
     Gb(GbGraphicsData),
     Gba(GbaGraphicsData),
     Nes(Box<NesGraphicsData>),
+    Sega8(Box<Sega8GraphicsData>),
 }
 
 pub(crate) struct GbaGraphicsData {
@@ -115,6 +116,30 @@ pub(crate) struct NesGraphicsData {
     pub(crate) mirroring: zeff_nes_core::hardware::cartridge::Mirroring,
     pub(crate) scroll_t: u16,
     pub(crate) fine_x: u8,
+}
+
+pub(crate) struct Sega8GraphicsData {
+    pub(crate) system: zeff_sega8_core::hardware::cartridge::Sega8System,
+    pub(crate) vram: Vec<u8>,
+    pub(crate) cram: Vec<u8>,
+    pub(crate) oam: Vec<u8>,
+    pub(crate) registers: [u8; 16],
+    pub(crate) status: u8,
+    pub(crate) address: u16,
+    pub(crate) code: u8,
+    pub(crate) v_counter: u8,
+    pub(crate) h_counter: u8,
+    pub(crate) scanline: u16,
+    pub(crate) scanline_cycle: u32,
+    pub(crate) line_counter: u8,
+    pub(crate) frame_interrupt_enabled: bool,
+    pub(crate) line_interrupt_enabled: bool,
+    pub(crate) interrupt_pending: bool,
+    pub(crate) line_interrupt_pending: bool,
+    pub(crate) display_enabled: bool,
+    pub(crate) tms9918_mode: String,
+    pub(crate) sprite_table_base: usize,
+    pub(crate) mode4: zeff_sega8_core::hardware::vdp::Mode4VdpDebugSnapshot,
 }
 
 pub(crate) struct GbGraphicsData {

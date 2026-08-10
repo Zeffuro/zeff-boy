@@ -23,6 +23,7 @@ use gb::run_gb_headless;
 use gba::run_gba_headless;
 use nes::run_nes_headless;
 use screenshots::*;
+use sega8::run_sega8_headless;
 use trace::*;
 use ws::run_ws_headless;
 
@@ -31,6 +32,7 @@ mod gb;
 mod gba;
 mod nes;
 mod screenshots;
+mod sega8;
 mod trace;
 mod ws;
 
@@ -206,6 +208,9 @@ pub(crate) fn run_headless(
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
         ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, opts),
         ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
+        ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
+            run_sega8_headless(&rom_path, &rom_data, system, opts)
+        }
     }
 }
 
@@ -227,6 +232,12 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     }
     if opts.expect_ws_pass_fail_tiles && system != "ws" {
         anyhow::bail!("--expect-ws-pass-fail-tiles is only supported for WonderSwan headless runs");
+    }
+    if opts.expect_sega8_sdsc.is_some() && !matches!(system, "sms" | "gg" | "sg") {
+        anyhow::bail!("--expect-sega8-sdsc is only supported for Sega 8-bit headless runs");
+    }
+    if opts.expect_sega8_audio && !matches!(system, "sms" | "gg" | "sg") {
+        anyhow::bail!("--expect-sega8-audio is only supported for Sega 8-bit headless runs");
     }
     if !opts.memory_dumps.is_empty() && system != "ws" {
         anyhow::bail!("--dump-mem is only supported for GB/GBC and WonderSwan headless runs");
@@ -260,9 +271,9 @@ fn ensure_system_headless_options(system: &str, opts: &HeadlessOptions) -> anyho
     if system != "gba" && opts.gba_audio_mutes.iter().any(|&muted| muted) {
         anyhow::bail!("--gba-mute-audio is only supported for GBA headless runs");
     }
-    if !matches!(system, "gba" | "ws") && opts.audio_dump_path.is_some() {
+    if !matches!(system, "gba" | "ws" | "sms" | "gg" | "sg") && opts.audio_dump_path.is_some() {
         anyhow::bail!(
-            "--audio-dump is currently only supported for GBA and WonderSwan headless runs"
+            "--audio-dump is currently only supported for GBA, WonderSwan, and Sega 8-bit headless runs"
         );
     }
     if opts.gb_dmg_palette_preset.is_some() {

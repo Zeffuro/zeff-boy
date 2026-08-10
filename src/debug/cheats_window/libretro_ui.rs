@@ -191,6 +191,9 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             ActiveSystem::WonderSwan => {
                 ui.label("WonderSwan");
             }
+            ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
+                ui.label("Sega 8-bit");
+            }
         }
         ui.separator();
         if ui

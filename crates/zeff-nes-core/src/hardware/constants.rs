@@ -72,4 +72,4 @@ pub const FRAME_STEP_4_RESET: u64 = 29829;
 pub const FRAME_STEP_5_RESET: u64 = 37281;
 
 pub const CPU_CYCLES_PER_FRAME: u64 = 29781;
-pub const NES_FRAME_DURATION_NS: u64 = 16_639_267;
+pub const NES_FRAME_DURATION_NS: u64 = zeff_emu_common::system::NES_FRAME_DURATION_NS;

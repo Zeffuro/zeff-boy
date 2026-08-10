@@ -234,6 +234,87 @@ kind = "ws_pass_fail_tiles"
 }
 
 #[test]
+fn parses_sega8_sdsc_contains_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "sega8-sample"
+name = "Sega8 Sample"
+core = "sms"
+
+[[tests]]
+id = "sega8/sample/sdsc"
+core = "sms"
+tier = "local"
+max_frames = 60
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://example.invalid"
+source_version = "test"
+
+[tests.rom]
+path = "rom-tests/cache/sega8/sample.sms"
+
+[tests.pass]
+kind = "sega8_sdsc_contains"
+contains = "Tests complete"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].core, Core::Sms);
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::Sega8SdscContains);
+    assert_eq!(
+        manifest.tests[0].pass.contains.as_deref(),
+        Some("Tests complete")
+    );
+}
+
+#[test]
+fn parses_sega8_audio_nonzero_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "sega8-audio"
+name = "Sega8 Audio"
+core = "gg"
+
+[[tests]]
+id = "sega8/sample/audio"
+core = "gg"
+tier = "local"
+max_frames = 60
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://example.invalid"
+source_version = "test"
+
+[tests.rom]
+path = "rom-tests/cache/sega8/sample.gg"
+
+[tests.pass]
+kind = "sega8_audio_nonzero"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].core, Core::Gg);
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::Sega8AudioNonzero);
+}
+
+#[test]
 fn expands_grouped_manifest_entries() {
     let manifest: Manifest = toml::from_str(
         r#"

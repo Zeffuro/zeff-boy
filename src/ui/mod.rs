@@ -9,11 +9,13 @@ use zeff_emu_common::address::Address;
 mod gb_snapshot;
 mod gba_snapshot;
 mod nes_snapshot;
+mod sega8_snapshot;
 mod ws_snapshot;
 
 pub(crate) use gb_snapshot::collect_emu_snapshot;
 pub(crate) use gba_snapshot::collect_gba_snapshot;
 pub(crate) use nes_snapshot::collect_nes_snapshot;
+pub(crate) use sega8_snapshot::collect_sega8_snapshot;
 pub(crate) use ws_snapshot::collect_ws_snapshot;
 
 fn build_memory_page(

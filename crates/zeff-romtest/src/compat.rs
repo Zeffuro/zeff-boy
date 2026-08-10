@@ -185,10 +185,7 @@ pub(crate) fn render_compat_manifest(
         out.push_str(&format!("core = \"{}\"\n", entry.core));
         out.push_str("tier = \"compat\"\n");
         out.push_str(&format!("max_frames = {max_frames}\n"));
-        out.push_str(&format!(
-            "tags = [\"compat\", \"{}\", \"local-only\", \"generated\"]\n",
-            entry.core
-        ));
+        out.push_str(&format!("tags = {}\n", compat_tags_toml(entry.core)));
         out.push_str("notes = \"Generated local-only compatibility entry. Do not commit this manifest or reports derived from commercial ROMs.\"\n\n");
         out.push_str("[tests.artifact]\n");
         out.push_str("kind = \"game_rom\"\n");
@@ -209,6 +206,29 @@ pub(crate) fn render_compat_manifest(
     }
 
     out
+}
+
+fn compat_tags_toml(core: Core) -> String {
+    let mut tags = vec![
+        "compat".to_string(),
+        core.to_string(),
+        "local-only".to_string(),
+        "generated".to_string(),
+    ];
+    if is_sega8_core(core) {
+        tags.push("sega8".to_string());
+    }
+    format!(
+        "[{}]",
+        tags.iter()
+            .map(|tag| format!("\"{}\"", toml_escape(tag)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn is_sega8_core(core: Core) -> bool {
+    matches!(core, Core::Sms | Core::Gg | Core::Sg)
 }
 
 fn compat_id(manifest_slug: &str, index: usize, entry: &CompatEntry) -> String {
@@ -281,6 +301,23 @@ mod tests {
     }
 
     #[test]
+    fn render_compat_manifest_tags_sega8_entries_by_family() {
+        let manifest = render_compat_manifest(
+            &[CompatEntry {
+                core: Core::Sms,
+                path: PathBuf::from(r"user-owned\sms\Test Game.sms"),
+            }],
+            123,
+            "local-generated",
+        );
+
+        assert!(
+            manifest.contains(r#"tags = ["compat", "sms", "local-only", "generated", "sega8"]"#)
+        );
+        assert!(manifest.contains("compat/local/sms/local-generated/0001-test-game"));
+    }
+
+    #[test]
     fn infer_core_from_supported_extensions() {
         assert_eq!(
             infer_core_from_path(Path::new("foo.gb"), None),
@@ -288,6 +325,10 @@ mod tests {
         );
         assert_eq!(
             infer_core_from_path(Path::new("foo.gbc"), None),
+            Some(Core::Gb)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.sgb"), None),
             Some(Core::Gb)
         );
         assert_eq!(
@@ -305,6 +346,22 @@ mod tests {
         assert_eq!(
             infer_core_from_path(Path::new("foo.wsc"), None),
             Some(Core::Ws)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.sms"), None),
+            Some(Core::Sms)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.gg"), None),
+            Some(Core::Gg)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.sg"), None),
+            Some(Core::Sg)
+        );
+        assert_eq!(
+            infer_core_from_path(Path::new("foo.sc"), None),
+            Some(Core::Sg)
         );
         assert_eq!(infer_core_from_path(Path::new("foo.sfc"), None), None);
         assert_eq!(infer_core_from_path(Path::new("foo.zip"), None), None);

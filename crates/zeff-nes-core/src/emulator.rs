@@ -38,6 +38,10 @@ impl Emulator {
         Ok(emu)
     }
 
+    pub fn from_rom_data(rom_data: &[u8]) -> anyhow::Result<Self> {
+        Self::new(rom_data, DEFAULT_SAMPLE_RATE)
+    }
+
     pub fn reset(&mut self) {
         self.bus.reset();
         self.cpu.reset(&mut self.bus);
@@ -47,6 +51,13 @@ impl Emulator {
 
     pub fn framebuffer(&self) -> &[u8] {
         &self.bus.ppu.framebuffer[..]
+    }
+
+    pub fn framebuffer_dimensions(&self) -> (usize, usize) {
+        (
+            crate::hardware::ppu::SCREEN_W,
+            crate::hardware::ppu::SCREEN_H,
+        )
     }
 
     pub fn has_battery(&self) -> bool {
@@ -76,6 +87,10 @@ impl Emulator {
         self.bus.apu.drain_samples()
     }
 
+    pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.drain_audio_into_stereo(buf);
+    }
+
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {
         crate::save_state::encode_state(self)
     }
@@ -96,6 +111,10 @@ impl Emulator {
 
     pub fn rom_crc32(&self) -> u32 {
         self.rom_crc32
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        self.bus.ppu.frame_count + u64::from(self.bus.ppu.frame_ready)
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
@@ -145,6 +164,10 @@ impl Emulator {
     pub fn set_input_p1(&mut self, buttons: u8) {
         self.bus.set_vs_system_credit_input(buttons & 0x04 != 0);
         self.bus.controller1.set_buttons(buttons);
+    }
+
+    pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.set_input_p1(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
     pub fn set_input_p2(&mut self, buttons: u8) {
@@ -399,6 +422,14 @@ impl Emulator {
     }
 }
 
+fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {
+    (buttons_pressed & 0x0F)
+        | ((dpad_pressed & 0x04) << 2)
+        | ((dpad_pressed & 0x08) << 2)
+        | ((dpad_pressed & 0x02) << 5)
+        | ((dpad_pressed & 0x01) << 7)
+}
+
 impl fmt::Debug for Emulator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NES Emulator")
@@ -457,6 +488,30 @@ mod tests {
         assert_eq!(emu.cpu.regs.x, 0);
         assert_eq!(emu.cpu.regs.y, 0);
         assert_eq!(emu.cpu.regs.p.bits(), 0x24);
+    }
+
+    #[test]
+    fn public_api_parity_wrappers_load_step_and_roundtrip_state() {
+        let rom = build_test_rom_with_program(&[0x4C, 0x00, 0x80]);
+        let mut emu = Emulator::from_rom_data(&rom).expect("test ROM");
+
+        assert_eq!(emu.framebuffer_dimensions(), (256, 240));
+        assert_eq!(emu.framebuffer().len(), 256 * 240 * 4);
+        assert_eq!(emu.frame_count(), 0);
+
+        emu.set_input(0x01, 0x01);
+        emu.step_frame();
+
+        assert!(emu.frame_count() > 0);
+
+        let mut audio = Vec::new();
+        emu.drain_audio_samples_into(&mut audio);
+
+        let state = emu
+            .encode_state()
+            .expect("NES emulator should encode state");
+        emu.load_state(&state)
+            .expect("NES emulator should load state");
     }
 
     #[test]

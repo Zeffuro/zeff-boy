@@ -13,6 +13,10 @@ impl Emulator {
         self.header.cartridge_type.is_battery_backed()
     }
 
+    pub fn has_battery(&self) -> bool {
+        self.is_battery_backed()
+    }
+
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
         if !self.header.cartridge_type.is_battery_backed() {
             return None;
@@ -64,6 +68,14 @@ impl Emulator {
         crate::save_state::encode_state_bytes(&self.as_save_state_ref())
     }
 
+    pub fn encode_state(&self) -> AnyResult<Vec<u8>> {
+        self.encode_state_bytes()
+    }
+
+    pub fn load_state(&mut self, bytes: &[u8]) -> AnyResult<()> {
+        self.load_state_from_bytes(bytes.to_vec())
+    }
+
     pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<()> {
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {
             match crate::save_state::decode_on_thread(bytes.clone()) {
@@ -84,6 +96,7 @@ impl Emulator {
                     self.hardware_mode_preference = state.hardware_mode_preference;
                     self.hardware_mode = state.hardware_mode;
                     self.cycle_count = state.cycle_count;
+                    self.frame_count = self.cpu.cycles / Self::cycles_per_frame(self.hardware_mode);
                     self.last_opcode = state.last_opcode;
                     self.last_opcode_pc = state.last_opcode_pc;
 
@@ -111,6 +124,7 @@ impl Emulator {
             *self.bus = restored_bus;
             self.hardware_mode = import.hardware_mode;
             self.cycle_count = 0;
+            self.frame_count = self.cpu.cycles / Self::cycles_per_frame(self.hardware_mode);
             self.last_opcode = 0;
             self.last_opcode_pc = self.cpu.pc;
 

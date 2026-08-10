@@ -148,6 +148,27 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
                 ))
             }
         }
+        ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
+            let hint = emu_backend::sega8::hint_for_active_system(system)
+                .expect("Sega 8-bit systems must have a core hint");
+            let mut emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
+                &rom_data,
+                zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE,
+                hint,
+            )?;
+            log_sram_result(emu_backend::sega8::try_load_battery_sram(
+                &mut emu, &rom_path,
+            ));
+            if path == rom_path {
+                Ok(EmuBackend::from_sega8(emu, rom_path))
+            } else {
+                Ok(EmuBackend::from_sega8_with_source(
+                    emu,
+                    rom_path,
+                    path.to_path_buf(),
+                ))
+            }
+        }
     }
 }
 

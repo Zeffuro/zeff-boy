@@ -108,6 +108,14 @@ impl App {
                             self.recycled.nes_nametable = Some(nes.nametable_data);
                         }
                     }
+                    Some(ConsoleGraphicsData::Sega8(sega8)) => {
+                        if !sega8.vram.is_empty() {
+                            self.recycled.vram = Some(sega8.vram);
+                        }
+                        if !sega8.oam.is_empty() {
+                            self.recycled.oam = Some(sega8.oam);
+                        }
+                    }
                     _ => {}
                 }
             } else {
@@ -172,7 +180,9 @@ impl App {
                     self.debug_windows.tilemap.update_dirty_inputs(gb_data);
                 }
             }
-            Some(ConsoleGraphicsData::Gba(_)) | Some(ConsoleGraphicsData::Nes(_)) => {
+            Some(ConsoleGraphicsData::Gba(_))
+            | Some(ConsoleGraphicsData::Nes(_))
+            | Some(ConsoleGraphicsData::Sega8(_)) => {
                 if is_tab_open(&self.debug_dock, DebugTab::TileViewer) {
                     self.debug_windows.tiles.invalidate_cache();
                 }

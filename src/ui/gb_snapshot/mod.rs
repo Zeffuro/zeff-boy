@@ -97,7 +97,7 @@ pub(crate) fn collect_emu_snapshot(
 
     let perf_info = gb_info.as_ref().map(|di| PerfInfo {
         fps: di.fps,
-        target_fps: 1_000_000_000.0 / 16_742_706.0,
+        target_fps: zeff_emu_common::system::System::GameBoy.target_fps(),
         speed_mode_label: di.speed_mode_label,
         frames_in_flight: di.frames_in_flight,
         cycles: di.cycles,

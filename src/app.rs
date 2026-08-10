@@ -306,12 +306,7 @@ impl App {
     }
 
     fn effective_frame_duration(&self) -> std::time::Duration {
-        let base = match self.active_system {
-            ActiveSystem::GameBoy => GB_FRAME_DURATION,
-            ActiveSystem::GameBoyAdvance => GBA_FRAME_DURATION,
-            ActiveSystem::Nes => NES_FRAME_DURATION,
-            ActiveSystem::WonderSwan => WS_FRAME_DURATION,
-        };
+        let base = std::time::Duration::from_nanos(self.active_system.frame_duration_ns());
         match self.speed_mode() {
             SpeedMode::FastForward => {
                 let multi = self.settings.emulation.fast_forward_multiplier.max(1) as u32;

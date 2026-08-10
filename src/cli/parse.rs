@@ -445,6 +445,17 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.expect_ws_pass_fail_tiles = true;
                 i += 1;
             }
+            "--expect-sega8-sdsc" | "--expect-sdsc" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires a string value", args[i]);
+                };
+                headless.expect_sega8_sdsc = Some(value.to_string());
+                i += 2;
+            }
+            "--expect-sega8-audio" => {
+                headless.expect_sega8_audio = true;
+                i += 1;
+            }
             "--expect-test-pass" => {
                 headless.expect_test_pass = true;
                 i += 1;

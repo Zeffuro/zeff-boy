@@ -229,6 +229,25 @@ impl EmuThread {
                     .set_apu_sample_generation_enabled(!input.audio.skip_audio);
             }
         }
+
+        if let Some(sega8) = backend.sega8_mut() {
+            Self::apply_sega8_debug_actions(&mut sega8.emu, &input.debug_actions);
+            if !uncapped_mode {
+                sega8
+                    .emu
+                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
+            }
+            sega8
+                .emu
+                .set_opcode_log_enabled(input.snapshot.want_debug_info);
+            if sega8.emu.is_suspended() {
+                if input.debug_continue {
+                    sega8.emu.debug_continue();
+                } else if input.debug_step {
+                    sega8.emu.debug_step();
+                }
+            }
+        }
     }
 
     pub(crate) fn step_n_frames(
@@ -272,6 +291,7 @@ impl EmuThread {
             ),
             EmuBackend::Gba(gba) => ui::collect_gba_snapshot(&gba.emu, snapshot, buffers),
             EmuBackend::Ws(ws) => ui::collect_ws_snapshot(&ws.emu, snapshot, buffers),
+            EmuBackend::Sega8(sega8) => ui::collect_sega8_snapshot(&sega8.emu, snapshot, buffers),
         }
     }
 

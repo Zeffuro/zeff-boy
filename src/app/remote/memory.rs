@@ -125,6 +125,21 @@ impl App {
                     "unsupported NES memory space",
                 ),
             },
+            ConsoleGraphicsData::Sega8(sega8) => match space {
+                "vram" => slice_memory_json(space, start, length, &sega8.vram),
+                "cram" | "palette" | "paletteram" => {
+                    slice_memory_json(space, start, length, &sega8.cram)
+                }
+                "oam" | "sat" | "spriteattribute" | "spriteattributetable" => {
+                    slice_memory_json(space, start, length, &sega8.oam)
+                }
+                _ => memory_not_ready_json(
+                    space,
+                    start as u32,
+                    length,
+                    "unsupported Sega 8-bit memory space",
+                ),
+            },
         }
     }
 }

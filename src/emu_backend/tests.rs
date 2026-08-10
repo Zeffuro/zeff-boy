@@ -46,6 +46,10 @@ fn build_ws_test_rom() -> Vec<u8> {
     rom
 }
 
+fn build_sms_test_rom() -> Vec<u8> {
+    vec![0x76]
+}
+
 fn build_gb_backend() -> EmuBackend {
     let rom = build_gb_test_rom();
     let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
@@ -75,6 +79,17 @@ fn build_ws_backend() -> EmuBackend {
     let ws = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
         .expect("WonderSwan emulator should initialize");
     EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
+}
+
+fn build_sms_backend() -> EmuBackend {
+    let rom = build_sms_test_rom();
+    let sms = zeff_sega8_core::emulator::Emulator::new_with_hint(
+        &rom,
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+    )
+    .expect("SMS emulator should initialize");
+    EmuBackend::from_sega8(sms, PathBuf::from("test.sms"))
 }
 
 fn step_frames(backend: &mut EmuBackend, count: usize) {
@@ -158,6 +173,22 @@ fn active_system_detects_supported_rom_extensions() {
         ActiveSystem::from_path(&PathBuf::from("game.wsc")),
         Some(ActiveSystem::WonderSwan)
     );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.sms")),
+        Some(ActiveSystem::MasterSystem)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.gg")),
+        Some(ActiveSystem::GameGear)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.sg")),
+        Some(ActiveSystem::Sg1000)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.sc")),
+        Some(ActiveSystem::Sg1000)
+    );
     assert_eq!(ActiveSystem::from_path(&PathBuf::from("game.7z")), None);
 }
 
@@ -186,7 +217,10 @@ fn gb_backend_smoke_roundtrip() {
     let mut backend = build_gb_backend();
 
     assert_eq!(backend.system(), ActiveSystem::GameBoy);
-    assert_eq!(backend.framebuffer().len(), (160 * 144 * 4) as usize);
+    assert_eq!(
+        backend.framebuffer().len(),
+        ActiveSystem::GameBoy.framebuffer_len()
+    );
     assert!(backend.is_running());
 
     backend.step_frame();
@@ -204,7 +238,10 @@ fn nes_backend_smoke_roundtrip() {
     let mut backend = build_nes_backend();
 
     assert_eq!(backend.system(), ActiveSystem::Nes);
-    assert_eq!(backend.framebuffer().len(), (256 * 240 * 4) as usize);
+    assert_eq!(
+        backend.framebuffer().len(),
+        ActiveSystem::Nes.framebuffer_len()
+    );
     assert!(backend.is_running());
 
     backend.step_frame();
@@ -222,7 +259,10 @@ fn gba_backend_smoke_roundtrip() {
     let mut backend = build_gba_backend();
 
     assert_eq!(backend.system(), ActiveSystem::GameBoyAdvance);
-    assert_eq!(backend.framebuffer().len(), (240 * 160 * 4) as usize);
+    assert_eq!(
+        backend.framebuffer().len(),
+        ActiveSystem::GameBoyAdvance.framebuffer_len()
+    );
     assert!(backend.is_running());
 
     backend.step_frame();
@@ -240,7 +280,10 @@ fn ws_backend_smoke_roundtrip() {
     let mut backend = build_ws_backend();
 
     assert_eq!(backend.system(), ActiveSystem::WonderSwan);
-    assert_eq!(backend.framebuffer().len(), (224 * 144 * 4) as usize);
+    assert_eq!(
+        backend.framebuffer().len(),
+        ActiveSystem::WonderSwan.framebuffer_len()
+    );
     assert!(backend.is_running());
 
     backend.step_frame();
@@ -251,6 +294,27 @@ fn ws_backend_smoke_roundtrip() {
     backend
         .load_state_from_bytes(state)
         .expect("WonderSwan backend should load save-state");
+}
+
+#[test]
+fn sega8_backend_smoke_roundtrip() {
+    let mut backend = build_sms_backend();
+
+    assert_eq!(backend.system(), ActiveSystem::MasterSystem);
+    assert_eq!(
+        backend.framebuffer().len(),
+        ActiveSystem::MasterSystem.framebuffer_len()
+    );
+    assert!(backend.is_running());
+
+    backend.step_frame();
+
+    let state = backend
+        .encode_state_bytes()
+        .expect("Sega 8-bit backend should encode save-state");
+    backend
+        .load_state_from_bytes(state)
+        .expect("Sega 8-bit backend should load save-state");
 }
 
 #[test]
@@ -271,6 +335,11 @@ fn gba_backend_replays_save_state_deterministically() {
 #[test]
 fn ws_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_ws_backend(), 1, 2);
+}
+
+#[test]
+fn sega8_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_sms_backend(), 1, 2);
 }
 
 #[test]

@@ -5488,6 +5488,7 @@ dependencies = [
  "zeff-gb-core",
  "zeff-gba-core",
  "zeff-nes-core",
+ "zeff-sega8-core",
  "zeff-ws-core",
  "zip",
 ]
@@ -5499,6 +5500,7 @@ dependencies = [
  "anyhow",
  "log",
  "lz4_flex",
+ "serde",
 ]
 
 [[package]]
@@ -5538,6 +5540,8 @@ dependencies = [
  "zeff-gb-core",
  "zeff-gba-core",
  "zeff-nes-core",
+ "zeff-sega8-core",
+ "zeff-ws-core",
 ]
 
 [[package]]
@@ -5574,6 +5578,17 @@ dependencies = [
  "sha2",
  "toml",
  "ureq",
+ "zeff-emu-common",
+ "zip",
+]
+
+[[package]]
+name = "zeff-sega8-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sha2",
+ "zeff-emu-common",
  "zip",
 ]
 

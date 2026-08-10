@@ -1,0 +1,16 @@
+[package]
+name = "zeff-sega8-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "Sega Master System, Game Gear, and SG-1000 emulation core library."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+anyhow = "1.0.104"
+sha2 = "0.11.0"
+zeff-emu-common = { path = "../zeff-emu-common" }
+
+[dev-dependencies]
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

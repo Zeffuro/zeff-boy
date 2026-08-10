@@ -846,8 +846,8 @@ mod tests {
     #[test]
     fn framebuffer_has_ws_dimensions() {
         let ppu = Ppu::new();
-        assert_eq!(ppu.dimensions(), (224, 144));
-        assert_eq!(ppu.framebuffer().len(), 224 * 144 * 4);
+        assert_eq!(ppu.dimensions(), (SCREEN_WIDTH, SCREEN_HEIGHT));
+        assert_eq!(ppu.framebuffer().len(), FRAMEBUFFER_LEN);
     }
 
     #[test]

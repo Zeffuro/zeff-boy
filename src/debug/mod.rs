@@ -34,6 +34,7 @@ pub(crate) mod ui_helpers;
 
 pub(crate) use disassembler::{
     DisassembledLine, DisassemblyView, disassemble_around, nes_disassemble_around,
+    z80_disassemble_around,
 };
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, compute_tab_requirements, create_default_dock_state,
@@ -46,7 +47,7 @@ pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
     GbGraphicsData, GbaGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo,
     PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RomDebugInfo, RomInfoSection,
-    WatchHitDisplay, WatchpointDisplay,
+    Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use types::{
     BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,

@@ -79,6 +79,11 @@ romtest-build-mgba-suite:
 romtest-build-ws-suite:
     powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
 
+# Build tiny generated Sega 8-bit smoke ROMs into the ignored ROM cache.
+[windows]
+romtest-build-sega8-smoke:
+    powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
+
 # Validate the asiekierka WonderSwan test-suite build plan without downloading/building.
 [windows]
 romtest-build-ws-suite-dry-run:
@@ -89,11 +94,16 @@ romtest-build-ws-suite-dry-run:
 romtest-build-local-suites:
     powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
     powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
+    powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
 
 # Download local-only test ROM sources and extract them into the ignored cache.
 # These may include unclear-license public test collections and stay out of default CI.
 romtest-fetch-local:
     cargo run -p zeff-romtest -- fetch --tier local
+
+# Download/fetch all Sega 8-bit test ROM artifacts, including source-backed local suites.
+romtest-fetch-sega8:
+    cargo run -p zeff-romtest -- fetch --tag sega8 --allow-missing
 
 # Run fast emulator accuracy smoke tests from local ignored ROM cache.
 romtest-smoke:
@@ -114,6 +124,14 @@ romtest-run-local:
 # Run local-only WonderSwan ROM tests. Missing optional local artifacts are skipped.
 romtest-run-local-ws:
     cargo run -p zeff-romtest -- run --tier local --core ws --allow-missing --report-json rom-tests/results/local-ws.json --report-md rom-tests/results/local-ws.md --report-junit rom-tests/results/local-ws.junit.xml --report-baseline rom-tests/results/local-ws.baseline.json
+
+# Run generated local Sega 8-bit ROM tests.
+romtest-run-local-sega8:
+    cargo run -p zeff-romtest -- run --tier local --tag sega8 --report-json rom-tests/results/local-sega8.json --report-md rom-tests/results/local-sega8.md --report-junit rom-tests/results/local-sega8.junit.xml --report-baseline rom-tests/results/local-sega8.baseline.json
+
+# Run all Sega 8-bit ROM tests, including source-backed accuracy and local suites.
+romtest-run-sega8:
+    cargo run -p zeff-romtest -- run --tag sega8 --report-json rom-tests/results/sega8.json --report-md rom-tests/results/sega8.md --report-junit rom-tests/results/sega8.junit.xml --report-baseline rom-tests/results/sega8.baseline.json
 
 # Regenerate the committed local-only ROM test baseline. Requires local ROM cache.
 romtest-baseline-local:
@@ -146,6 +164,10 @@ romtest-generate-compat-core rom_dir core output="rom-tests/manifests/compat-gam
 # Run ignored local user-owned compatibility game entries. Missing paths are reported as skipped.
 romtest-run-compat:
     cargo run -p zeff-romtest -- run --tier compat --include-games --allow-missing --report-json rom-tests/results/compat.json --report-md rom-tests/results/compat.md --report-junit rom-tests/results/compat.junit.xml --report-baseline rom-tests/results/compat.baseline.json
+
+# Run ignored local user-owned Sega 8-bit compatibility game entries generated with the sega8 tag.
+romtest-run-compat-sega8:
+    cargo run -p zeff-romtest -- run --tier compat --tag sega8 --include-games --allow-missing --report-json rom-tests/results/compat-sega8.json --report-md rom-tests/results/compat-sega8.md --report-junit rom-tests/results/compat-sega8.junit.xml --report-baseline rom-tests/results/compat-sega8.baseline.json
 
 # Run compatibility game entries through a prebuilt emulator exe. Useful while live-control is open.
 romtest-run-compat-exe exe="target/debug/zeff-boy.exe":

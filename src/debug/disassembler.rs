@@ -1,5 +1,5 @@
 pub(crate) type Mnemonic = arrayvec::ArrayString<32>;
-pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 3>;
+pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 4>;
 use zeff_emu_common::address::Address;
 
 macro_rules! mn {
@@ -26,6 +26,7 @@ pub(crate) struct DisassemblyView {
 
 mod gb;
 mod nes;
+mod z80;
 
 pub(crate) fn disassemble_around(
     bus_read: impl Fn(u16) -> u8,
@@ -51,6 +52,21 @@ pub(crate) fn nes_disassemble_around(
     disassemble_around_with(
         |addr| nes::instruction_len(&bus_read, addr),
         |addr| nes::decode_instruction(&bus_read, addr),
+        pc,
+        lines_before_pc,
+        total_lines,
+    )
+}
+
+pub(crate) fn z80_disassemble_around(
+    bus_read: impl Fn(u16) -> u8,
+    pc: u16,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    disassemble_around_with(
+        |addr| z80::instruction_len(&bus_read, addr),
+        |addr| z80::decode_instruction(&bus_read, addr),
         pc,
         lines_before_pc,
         total_lines,

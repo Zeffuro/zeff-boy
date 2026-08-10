@@ -9,6 +9,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 anyhow = "1.0.104"
+zeff-emu-common = { path = "../zeff-emu-common", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"

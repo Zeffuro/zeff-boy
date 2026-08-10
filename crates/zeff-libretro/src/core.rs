@@ -1,11 +1,14 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_nes_core::hardware::ppu::NesPaletteMode;
+use zeff_sega8_core::hardware::cartridge::{Sega8System, SystemHint};
 
 pub(crate) enum ActiveCore {
     Gb(Box<zeff_gb_core::emulator::Emulator>),
     Gba(Box<zeff_gba_core::emulator::Emulator>),
     Nes(Box<zeff_nes_core::emulator::Emulator>),
+    Sega8(Box<zeff_sega8_core::emulator::Emulator>),
+    Ws(Box<zeff_ws_core::emulator::Emulator>),
 }
 
 pub(crate) struct CoreState {
@@ -38,6 +41,16 @@ impl CoreState {
             "nes" => {
                 let emu = zeff_nes_core::emulator::Emulator::new(data, sample_rate as f64)?;
                 ActiveCore::Nes(Box::new(emu))
+            }
+            "ws" | "wsc" => {
+                let emu = zeff_ws_core::emulator::Emulator::new(data, sample_rate)?;
+                ActiveCore::Ws(Box::new(emu))
+            }
+            ext if SystemHint::from_extension(ext).is_some() => {
+                let hint = SystemHint::from_extension(ext).unwrap_or(SystemHint::Auto);
+                let emu =
+                    zeff_sega8_core::emulator::Emulator::new_with_hint(data, sample_rate, hint)?;
+                ActiveCore::Sega8(Box::new(emu))
             }
             _ => {
                 let pref = HardwareModePreference::Auto;
@@ -81,6 +94,8 @@ impl CoreState {
                 }
             }
             ActiveCore::Nes(emu) => emu.reset(),
+            ActiveCore::Sega8(emu) => emu.reset(),
+            ActiveCore::Ws(emu) => emu.reset(),
         }
     }
 
@@ -89,6 +104,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.step_frame(),
             ActiveCore::Gba(emu) => emu.step_frame(),
             ActiveCore::Nes(emu) => emu.step_frame(),
+            ActiveCore::Sega8(emu) => emu.step_frame(),
+            ActiveCore::Ws(emu) => emu.step_frame(),
         }
     }
 
@@ -104,6 +121,12 @@ impl CoreState {
             ActiveCore::Nes(emu) => {
                 emu.drain_audio_into_stereo(&mut self.audio_buf);
             }
+            ActiveCore::Sega8(emu) => {
+                emu.drain_audio_samples_into(&mut self.audio_buf);
+            }
+            ActiveCore::Ws(emu) => {
+                emu.drain_audio_samples_into(&mut self.audio_buf);
+            }
         }
     }
 
@@ -114,6 +137,8 @@ impl CoreState {
             ActiveCore::Nes(emu) => {
                 emu.set_input_p1(map_host_to_nes_byte(buttons, dpad));
             }
+            ActiveCore::Sega8(emu) => emu.set_input(buttons, dpad),
+            ActiveCore::Ws(emu) => emu.set_input(buttons, dpad),
         }
     }
 
@@ -137,6 +162,14 @@ impl CoreState {
             }
             ActiveCore::Gba(_) => 240,
             ActiveCore::Nes(_) => 256,
+            ActiveCore::Sega8(emu) => {
+                let (w, _) = emu.framebuffer_dimensions();
+                w as u32
+            }
+            ActiveCore::Ws(emu) => {
+                let (w, _) = emu.framebuffer_dimensions();
+                w as u32
+            }
         }
     }
 
@@ -148,6 +181,14 @@ impl CoreState {
             }
             ActiveCore::Gba(_) => 160,
             ActiveCore::Nes(_) => 240,
+            ActiveCore::Sega8(emu) => {
+                let (_, h) = emu.framebuffer_dimensions();
+                h as u32
+            }
+            ActiveCore::Ws(emu) => {
+                let (_, h) = emu.framebuffer_dimensions();
+                h as u32
+            }
         }
     }
 
@@ -156,6 +197,10 @@ impl CoreState {
             ActiveCore::Gb(_) => 59.7275,
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::FPS,
             ActiveCore::Nes(_) => 60.0988,
+            ActiveCore::Sega8(_) => {
+                zeff_sega8_core::hardware::constants::SEGA8_NTSC_FRAME_RATE_APPROX as f64
+            }
+            ActiveCore::Ws(_) => zeff_ws_core::hardware::constants::FPS,
         }
     }
 
@@ -164,6 +209,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.encode_state_bytes(),
             ActiveCore::Gba(emu) => emu.encode_state(),
             ActiveCore::Nes(emu) => emu.encode_state(),
+            ActiveCore::Sega8(emu) => emu.encode_state(),
+            ActiveCore::Ws(emu) => emu.encode_state(),
         }
     }
 
@@ -172,6 +219,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.load_state_from_bytes(data.to_vec()),
             ActiveCore::Gba(emu) => emu.load_state(data),
             ActiveCore::Nes(emu) => emu.load_state(data),
+            ActiveCore::Sega8(emu) => emu.load_state(data),
+            ActiveCore::Ws(emu) => emu.load_state(data),
         }
     }
 
@@ -185,6 +234,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.dump_battery_sram(),
             ActiveCore::Gba(emu) => emu.dump_battery_sram(),
             ActiveCore::Nes(emu) => emu.dump_battery_sram(),
+            ActiveCore::Sega8(emu) => emu.dump_battery_sram(),
+            ActiveCore::Ws(emu) => emu.dump_battery_sram(),
         }
     }
 
@@ -200,6 +251,12 @@ impl CoreState {
             ActiveCore::Nes(emu) => {
                 let _ = emu.load_battery_sram(data);
             }
+            ActiveCore::Sega8(emu) => {
+                let _ = emu.load_battery_sram(data);
+            }
+            ActiveCore::Ws(emu) => {
+                let _ = emu.load_battery_sram(data);
+            }
         }
     }
 
@@ -208,6 +265,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
+            ActiveCore::Sega8(emu) => emu.framebuffer(),
+            ActiveCore::Ws(emu) => emu.framebuffer(),
         };
         self.xrgb_buf.resize(fb.len(), 0);
         for (i, chunk) in fb.chunks_exact(4).enumerate() {
@@ -228,6 +287,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
+            ActiveCore::Sega8(emu) => emu.framebuffer(),
+            ActiveCore::Ws(emu) => emu.framebuffer(),
         };
         let pixel_count = fb.len() / 4;
         self.rgb565_buf.resize(pixel_count * 2, 0);
@@ -296,8 +357,18 @@ impl CoreState {
         matches!(self.core, ActiveCore::Nes(_))
     }
 
-    pub fn is_gba(&self) -> bool {
-        matches!(self.core, ActiveCore::Gba(_))
+    pub fn system_label(&self) -> &'static str {
+        match &self.core {
+            ActiveCore::Gb(_) => "GB/GBC",
+            ActiveCore::Gba(_) => "GBA",
+            ActiveCore::Nes(_) => "NES",
+            ActiveCore::Sega8(emu) => match emu.system() {
+                Sega8System::MasterSystem => "SMS",
+                Sega8System::GameGear => "Game Gear",
+                Sega8System::Sg1000 => "SG-1000/SC-3000",
+            },
+            ActiveCore::Ws(_) => "WonderSwan",
+        }
     }
 
     pub fn cheat_reset(&mut self) {
@@ -305,6 +376,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.clear_rom_patches(),
             ActiveCore::Gba(_) => {}
             ActiveCore::Nes(emu) => emu.clear_game_genie(),
+            ActiveCore::Sega8(_) => {}
+            ActiveCore::Ws(_) => {}
         }
     }
 
@@ -323,6 +396,8 @@ impl CoreState {
                     emu.add_game_genie_patch(patch);
                 }
             }
+            ActiveCore::Sega8(_) => {}
+            ActiveCore::Ws(_) => {}
         }
     }
 
@@ -340,6 +415,16 @@ impl CoreState {
                 self.system_ram_buf.extend_from_slice(iwram);
             }
             ActiveCore::Nes(emu) => {
+                let ram = emu.system_ram();
+                self.system_ram_buf.resize(ram.len(), 0);
+                self.system_ram_buf.copy_from_slice(ram);
+            }
+            ActiveCore::Sega8(emu) => {
+                let ram = emu.bus().work_ram();
+                self.system_ram_buf.resize(ram.len(), 0);
+                self.system_ram_buf.copy_from_slice(ram);
+            }
+            ActiveCore::Ws(emu) => {
                 let ram = emu.system_ram();
                 self.system_ram_buf.resize(ram.len(), 0);
                 self.system_ram_buf.copy_from_slice(ram);
@@ -364,6 +449,14 @@ impl CoreState {
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(&vram);
             }
+            ActiveCore::Sega8(emu) => {
+                let vram = emu.bus().vdp().vram();
+                self.video_ram_buf.resize(vram.len(), 0);
+                self.video_ram_buf.copy_from_slice(vram);
+            }
+            ActiveCore::Ws(_) => {
+                self.video_ram_buf.clear();
+            }
         }
     }
 
@@ -372,6 +465,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.wram_snapshot().len(),
             ActiveCore::Gba(_) => 0x48000,
             ActiveCore::Nes(_) => 0x800, // 2 KiB
+            ActiveCore::Sega8(emu) => emu.bus().work_ram().len(),
+            ActiveCore::Ws(emu) => emu.system_ram().len(),
         }
     }
 
@@ -380,6 +475,8 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.vram_snapshot().len(),
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::VRAM_SIZE,
             ActiveCore::Nes(_) => 0x2000,
+            ActiveCore::Sega8(emu) => emu.bus().vdp().vram().len(),
+            ActiveCore::Ws(_) => 0,
         }
     }
 }
@@ -390,4 +487,82 @@ fn map_host_to_nes_byte(buttons: u8, dpad: u8) -> u8 {
         | ((dpad & 0x08) << 2)
         | ((dpad & 0x02) << 5)
         | ((dpad & 0x01) << 7)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_sega8(ext: &str) -> CoreState {
+        CoreState::from_rom(&[0x76], &format!("test.{ext}")).expect("Sega 8-bit ROM should load")
+    }
+
+    fn ws_rom() -> Vec<u8> {
+        let mut rom = vec![0xFF; 0x10000];
+        rom[0..2].copy_from_slice(&[0x90, 0xF4]);
+        let reset = rom.len() - 16;
+        rom[reset..reset + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+        let footer = rom.len() - 10;
+        rom[footer + 4] = 0x01;
+        let checksum = zeff_ws_core::hardware::cartridge::compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        rom
+    }
+
+    #[test]
+    fn sega8_extensions_select_expected_systems() {
+        let sms = load_sega8("sms");
+        assert!(matches!(sms.core, ActiveCore::Sega8(_)));
+        assert_eq!(sms.system_label(), "SMS");
+        assert_eq!(sms.native_width(), 256);
+        assert_eq!(sms.native_height(), 192);
+        assert_eq!(sms.sram_size(), 0);
+
+        let gg = load_sega8("gg");
+        assert!(matches!(gg.core, ActiveCore::Sega8(_)));
+        assert_eq!(gg.system_label(), "Game Gear");
+        assert_eq!(gg.native_width(), 160);
+        assert_eq!(gg.native_height(), 144);
+        assert_eq!(gg.sram_size(), 0);
+
+        for ext in ["sg", "sc"] {
+            let sg = load_sega8(ext);
+            assert!(matches!(sg.core, ActiveCore::Sega8(_)));
+            assert_eq!(sg.system_label(), "SG-1000/SC-3000");
+            assert_eq!(sg.native_width(), 256);
+            assert_eq!(sg.native_height(), 192);
+            assert_eq!(sg.sram_size(), 0);
+        }
+    }
+
+    #[test]
+    fn libretro_valid_extensions_include_gba_and_sega8() {
+        let extensions = crate::callbacks::VALID_EXTENSIONS
+            .to_str()
+            .expect("valid extensions should be UTF-8");
+
+        for ext in [
+            "gb", "gbc", "gba", "nes", "ws", "wsc", "sms", "gg", "sg", "sc",
+        ] {
+            assert!(
+                extensions.split('|').any(|entry| entry == ext),
+                "missing extension: {ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn wonderswan_extensions_select_ws_core() {
+        let rom = ws_rom();
+        for ext in ["ws", "wsc"] {
+            let state = CoreState::from_rom(&rom, &format!("test.{ext}"))
+                .expect("WonderSwan ROM should load");
+
+            assert!(matches!(state.core, ActiveCore::Ws(_)));
+            assert_eq!(state.system_label(), "WonderSwan");
+            assert_eq!(state.native_width(), 224);
+            assert_eq!(state.native_height(), 144);
+            assert!(state.encode_state().is_ok());
+        }
+    }
 }

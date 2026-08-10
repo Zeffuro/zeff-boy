@@ -2,7 +2,7 @@
 pkgname=zeff-boy-bin
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="A Game Boy, Game Boy Color, and NES emulator written in Rust"
+pkgdesc="A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust"
 arch=('x86_64')
 url="https://github.com/Zeffuro/zeff-boy"
 license=('MIT' 'Apache-2.0')
