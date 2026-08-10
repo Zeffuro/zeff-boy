@@ -146,6 +146,15 @@ impl EmulatorCore for Sega8Backend {
         self.emu.video_ram_snapshot().len()
     }
 
+    fn palette_ram_len(&self) -> usize {
+        match self.emu.system() {
+            Sega8System::MasterSystem | Sega8System::GameGear => {
+                self.emu.palette_ram_snapshot().len()
+            }
+            Sega8System::Sg1000 => 0,
+        }
+    }
+
     fn supports_debugger(&self) -> bool {
         true
     }

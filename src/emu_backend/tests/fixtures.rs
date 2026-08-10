@@ -5,6 +5,7 @@ use crate::emu_backend::{
 };
 use crate::emu_thread::{EmuThread, RenderSettings, ReusableBuffers, SnapshotRequest};
 use crate::settings::{ColorCorrection, DmgPalettePreset, NesPaletteMode};
+use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind};
 use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(super) fn build_gb_test_rom() -> Vec<u8> {
@@ -179,6 +180,14 @@ pub(super) fn assert_backend_feature_contract(
     );
     assert_eq!(backend.system_ram_len(), expected_system_ram_len);
     assert_eq!(backend.video_ram_len(), expected_video_ram_len);
+    assert_memory_regions(
+        &backend.memory_regions(),
+        system,
+        expected_save_ram_kind,
+        expected_system_ram_len,
+        expected_video_ram_len,
+        backend.framebuffer().len(),
+    );
     assert!(backend.supports_debugger());
     assert!(
         !backend
@@ -194,11 +203,15 @@ pub(super) fn assert_app_snapshot_core_features(
     expected_system_ram_len: usize,
     expected_video_ram_len: usize,
 ) {
+    let expected_system = backend.system();
+    let expected_core_family = backend.core_family();
+    let expected_framebuffer_len = backend.framebuffer().len();
     let data =
         EmuThread::collect_ui_snapshot(&mut backend, &snapshot_request(), reusable_buffers());
     let features = data
         .core_features
         .expect("app snapshot should expose core features");
+    assert_eq!(features.core_family, expected_core_family);
     assert_eq!(features.save_ram_kind, expected_save_ram_kind);
     assert_eq!(
         features.has_battery,
@@ -206,9 +219,157 @@ pub(super) fn assert_app_snapshot_core_features(
     );
     assert_eq!(features.system_ram_len, expected_system_ram_len);
     assert_eq!(features.video_ram_len, expected_video_ram_len);
+    assert_memory_regions(
+        &features.memory_regions,
+        expected_system,
+        expected_save_ram_kind,
+        expected_system_ram_len,
+        expected_video_ram_len,
+        expected_framebuffer_len,
+    );
     assert!(features.supports_save_states);
     assert!(features.supports_rewind);
     assert!(features.supports_debugger);
+}
+
+fn assert_memory_regions(
+    regions: &[MemoryRegionDescriptor],
+    system: ActiveSystem,
+    save_ram_kind: SaveRamKind,
+    expected_system_ram_len: usize,
+    expected_video_ram_len: usize,
+    expected_framebuffer_len: usize,
+) {
+    assert_region(
+        regions,
+        "cpu",
+        MemoryRegionKind::CpuAddressSpace,
+        None,
+        Some(expected_cpu_address_bits(system)),
+    );
+    assert_region(
+        regions,
+        "system_ram",
+        MemoryRegionKind::SystemRam,
+        Some(expected_system_ram_len),
+        None,
+    );
+    assert_region(
+        regions,
+        "video_ram",
+        MemoryRegionKind::VideoRam,
+        Some(expected_video_ram_len),
+        None,
+    );
+    assert_region(
+        regions,
+        "framebuffer",
+        MemoryRegionKind::Framebuffer,
+        Some(expected_framebuffer_len),
+        None,
+    );
+    assert_eq!(
+        regions.iter().any(|region| region.id == "save_ram"),
+        save_ram_kind.has_ram()
+    );
+    if save_ram_kind.has_ram() {
+        assert_region(
+            regions,
+            "save_ram",
+            MemoryRegionKind::SaveRam,
+            Some(save_ram_kind.size()),
+            None,
+        );
+    }
+
+    assert_extended_memory_regions(regions, system);
+}
+
+fn assert_extended_memory_regions(regions: &[MemoryRegionDescriptor], system: ActiveSystem) {
+    match system {
+        ActiveSystem::GameBoyAdvance => {
+            assert_region(
+                regions,
+                "palette_ram",
+                MemoryRegionKind::PaletteRam,
+                Some(zeff_gba_core::hardware::constants::PALETTE_RAM_SIZE),
+                None,
+            );
+            assert_region(
+                regions,
+                "oam",
+                MemoryRegionKind::Oam,
+                Some(zeff_gba_core::hardware::constants::OAM_SIZE),
+                None,
+            );
+            assert_region(
+                regions,
+                "io_registers",
+                MemoryRegionKind::IoRegisters,
+                Some(zeff_gba_core::hardware::constants::IO_SIZE),
+                None,
+            );
+        }
+        ActiveSystem::Nes => {
+            assert_region(
+                regions,
+                "palette_ram",
+                MemoryRegionKind::PaletteRam,
+                Some(32),
+                None,
+            );
+            assert_region(regions, "oam", MemoryRegionKind::Oam, Some(256), None);
+            assert_no_region_kind(regions, MemoryRegionKind::IoRegisters);
+        }
+        ActiveSystem::MasterSystem | ActiveSystem::GameGear => {
+            assert_region(
+                regions,
+                "palette_ram",
+                MemoryRegionKind::PaletteRam,
+                Some(zeff_sega8_core::hardware::constants::SMS_CRAM_SIZE),
+                None,
+            );
+            assert_no_region_kind(regions, MemoryRegionKind::Oam);
+            assert_no_region_kind(regions, MemoryRegionKind::IoRegisters);
+        }
+        _ => {
+            assert_no_region_kind(regions, MemoryRegionKind::PaletteRam);
+            assert_no_region_kind(regions, MemoryRegionKind::Oam);
+            assert_no_region_kind(regions, MemoryRegionKind::IoRegisters);
+        }
+    }
+}
+
+fn assert_region(
+    regions: &[MemoryRegionDescriptor],
+    id: &str,
+    kind: MemoryRegionKind,
+    size: Option<usize>,
+    address_bits: Option<u8>,
+) {
+    let region = regions
+        .iter()
+        .find(|region| region.id == id)
+        .unwrap_or_else(|| panic!("missing memory region: {id}"));
+
+    assert_eq!(region.kind, kind);
+    assert_eq!(region.size, size);
+    assert_eq!(region.address_bits, address_bits);
+}
+
+fn assert_no_region_kind(regions: &[MemoryRegionDescriptor], kind: MemoryRegionKind) {
+    assert!(
+        !regions.iter().any(|region| region.kind == kind),
+        "unexpected memory region kind: {kind:?}"
+    );
+}
+
+fn expected_cpu_address_bits(system: ActiveSystem) -> u8 {
+    match system {
+        ActiveSystem::GameBoyAdvance => 32,
+        ActiveSystem::WonderSwan => 20,
+        _ => 16,
+    }
 }
 
 fn step_frames(backend: &mut EmuBackend, count: usize) {

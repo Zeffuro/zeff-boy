@@ -2,74 +2,22 @@ use std::path::Path;
 use std::{collections::VecDeque, time::Instant};
 
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
-use zeff_sega8_core::hardware::bus::CpuAccessTraceEvent as Sega8BusTraceEvent;
-use zeff_sega8_core::hardware::constants::SMS_Z80_CYCLES_PER_FRAME;
-use zeff_sega8_core::hardware::cpu::FetchedInstruction as Sega8FetchedInstruction;
 
-use crate::cli::types::{HeadlessBusTraceAccess, HeadlessOptions};
+use crate::cli::types::HeadlessOptions;
 use crate::emu_backend::ActiveSystem;
 
+use self::sdsc::Sega8SdscCapture;
+use self::trace::{Sega8FrameTraceConfig, Sega8FrameTraceState, step_sega8_frame_with_trace};
 use super::{
     AudioStats, Sega8DebugStateRequest, StuckTracker, emit_debug_state, ensure_no_reset_events,
-    ensure_system_headless_options, fail_on_stuck_if_needed, flush_battery, format_pc,
-    input_for_frame, observe_stuck, print_perf, read_headless_state_if_requested,
-    screenshot_path_if_written, sega8_debug_state, write_audio_dump_f32le,
-    write_final_screenshot_if_needed, write_screenshot_if_requested,
-    write_screenshot_sequence_if_requested,
+    ensure_system_headless_options, fail_on_stuck_if_needed, flush_battery, input_for_frame,
+    observe_stuck, print_perf, read_headless_state_if_requested, screenshot_path_if_written,
+    sega8_debug_state, write_audio_dump_f32le, write_final_screenshot_if_needed,
+    write_screenshot_if_requested, write_screenshot_sequence_if_requested,
 };
 
-const SDSC_DEBUG_CONSOLE_COMMAND_PORT: u8 = 0xFC;
-const SDSC_DEBUG_CONSOLE_DATA_PORT: u8 = 0xFD;
-const SDSC_DEBUG_CONSOLE_SUSPEND_COMMAND: u8 = 0x01;
-const SDSC_DEBUG_CONSOLE_CLEAR_SCREEN_COMMAND: u8 = 0x02;
-const SDSC_TEXT_PREVIEW_MAX_CHARS: usize = 512;
-
-#[derive(Default)]
-struct Sega8SdscCapture {
-    text: String,
-    command_count: u64,
-    suspend_seen: bool,
-}
-
-impl Sega8SdscCapture {
-    fn record_bus_event(&mut self, event: Sega8BusTraceEvent) {
-        let Sega8BusTraceEvent::IoWrite { port, value } = event else {
-            return;
-        };
-
-        match port {
-            SDSC_DEBUG_CONSOLE_DATA_PORT => self.text.push(char::from(value)),
-            SDSC_DEBUG_CONSOLE_COMMAND_PORT => {
-                self.command_count = self.command_count.wrapping_add(1);
-                match value {
-                    SDSC_DEBUG_CONSOLE_SUSPEND_COMMAND => self.suspend_seen = true,
-                    SDSC_DEBUG_CONSOLE_CLEAR_SCREEN_COMMAND => self.text.clear(),
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn text(&self) -> &str {
-        &self.text
-    }
-
-    fn preview(&self) -> String {
-        let mut preview = String::new();
-        for ch in self.text.chars().take(SDSC_TEXT_PREVIEW_MAX_CHARS) {
-            if ch.is_control() && !matches!(ch, '\n' | '\r' | '\t') {
-                preview.push(' ');
-            } else {
-                preview.push(ch);
-            }
-        }
-        if self.text.chars().count() > SDSC_TEXT_PREVIEW_MAX_CHARS {
-            preview.push_str("...");
-        }
-        preview
-    }
-}
+mod sdsc;
+mod trace;
 
 pub(super) fn run_sega8_headless(
     rom_path: &Path,
@@ -187,6 +135,7 @@ pub(super) fn run_sega8_headless(
             dimensions,
         )?;
 
+        let wait_classification = sega8_wait_classification(&emulator);
         observe_stuck(
             &mut stuck,
             system.code(),
@@ -195,8 +144,8 @@ pub(super) fn run_sega8_headless(
             u64::from(emulator.cpu().regs().pc),
             emulator.framebuffer(),
             None,
-            sega8_wait_classification(&emulator),
-            sega8_wait_classification(&emulator).is_some(),
+            wait_classification,
+            wait_classification.is_some(),
             &mut stuck_active,
         );
 
@@ -311,236 +260,6 @@ fn ensure_sega8_headless_options(opts: &HeadlessOptions) -> anyhow::Result<()> {
     Ok(())
 }
 
-struct Sega8FrameTraceConfig<'a> {
-    bus_trace_active: bool,
-    sdsc_capture_active: bool,
-    expected_sdsc_text: Option<&'a str>,
-}
-
-struct Sega8FrameTraceState<'a> {
-    traced: &'a mut u64,
-    bus_traced: &'a mut u64,
-    tail: &'a mut VecDeque<String>,
-    sdsc_capture: &'a mut Sega8SdscCapture,
-}
-
-fn step_sega8_frame_with_trace(
-    opts: &HeadlessOptions,
-    emulator: &mut Sega8Emulator,
-    config: Sega8FrameTraceConfig<'_>,
-    state: &mut Sega8FrameTraceState<'_>,
-) -> bool {
-    let mut expected_sdsc_seen = false;
-    let target_cycles = emulator
-        .cpu()
-        .cycles()
-        .wrapping_add(u64::from(SMS_Z80_CYCLES_PER_FRAME));
-    while emulator.cpu().cycles() < target_cycles && !emulator.is_suspended() {
-        let before_cycles = emulator.cpu().cycles();
-        let bus_trace_printing = !opts.trace_bus_filters.is_empty()
-            && (opts.trace_bus_limit == 0 || *state.bus_traced < opts.trace_bus_limit);
-        let bus_trace_collecting =
-            config.bus_trace_active && (config.sdsc_capture_active || bus_trace_printing);
-        let (fetched, bus_events) = if bus_trace_collecting {
-            emulator.step_instruction_with_bus_trace()
-        } else {
-            (emulator.step_instruction(), Vec::new())
-        };
-        let Some(fetched) = fetched else {
-            break;
-        };
-        let step_cycles = emulator.cpu().cycles().wrapping_sub(before_cycles);
-        if opts.trace_opcodes && emulator.cpu().cycles() >= opts.trace_start_t {
-            let tail_line = format_sega8_op_tail_line(emulator, fetched, step_cycles);
-            if state.tail.len() == 64 {
-                state.tail.pop_front();
-            }
-            state.tail.push_back(tail_line);
-        }
-        if opts.trace_opcodes
-            && should_trace_sega8_op(opts, fetched, emulator.cpu().cycles())
-            && (opts.trace_opcode_limit == 0 || *state.traced < opts.trace_opcode_limit)
-        {
-            println!(
-                "{}",
-                format_sega8_op_line(*state.traced, emulator, fetched, step_cycles)
-            );
-            *state.traced = state.traced.wrapping_add(1);
-        }
-        if bus_trace_collecting {
-            for event in bus_events {
-                if config.sdsc_capture_active {
-                    state.sdsc_capture.record_bus_event(event);
-                    if config.expected_sdsc_text.is_some_and(|expected| {
-                        !expected.is_empty() && state.sdsc_capture.text().contains(expected)
-                    }) {
-                        expected_sdsc_seen = true;
-                    }
-                }
-
-                if bus_trace_printing
-                    && emulator.cpu().cycles() >= opts.trace_start_t
-                    && should_trace_sega8_bus_event(opts, event)
-                    && (opts.trace_bus_limit == 0 || *state.bus_traced < opts.trace_bus_limit)
-                {
-                    println!(
-                        "{}",
-                        format_sega8_bus_trace_line(*state.bus_traced, emulator, fetched, event)
-                    );
-                    *state.bus_traced = state.bus_traced.wrapping_add(1);
-                }
-            }
-        }
-        if expected_sdsc_seen {
-            break;
-        }
-    }
-    emulator.finish_frame();
-    expected_sdsc_seen
-}
-
-fn should_trace_sega8_op(
-    opts: &HeadlessOptions,
-    fetched: Sega8FetchedInstruction,
-    cycles: u64,
-) -> bool {
-    if cycles < opts.trace_start_t {
-        return false;
-    }
-    if let Some((start, end)) = opts.trace_pc_range
-        && !(start..=end).contains(&u64::from(fetched.pc))
-    {
-        return false;
-    }
-    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&fetched.opcode) {
-        return false;
-    }
-    true
-}
-
-fn format_sega8_op_line(
-    index: u64,
-    emulator: &Sega8Emulator,
-    fetched: Sega8FetchedInstruction,
-    step_cycles: u64,
-) -> String {
-    format!(
-        "[sega8-op] #{index} t={} pc={} op={} op1={} op2={} step={} {}",
-        emulator.cpu().cycles(),
-        format_pc(u64::from(fetched.pc), 4),
-        format_pc(u64::from(fetched.opcode), 2),
-        format_pc(
-            u64::from(emulator.bus().cpu_read(fetched.pc.wrapping_add(1))),
-            2
-        ),
-        format_pc(
-            u64::from(emulator.bus().cpu_read(fetched.pc.wrapping_add(2))),
-            2
-        ),
-        step_cycles,
-        sega8_cpu_trace_suffix(emulator),
-    )
-}
-
-fn format_sega8_op_tail_line(
-    emulator: &Sega8Emulator,
-    fetched: Sega8FetchedInstruction,
-    step_cycles: u64,
-) -> String {
-    format_sega8_op_line(0, emulator, fetched, step_cycles).replacen(
-        "[sega8-op] #0",
-        "[sega8-op-tail]",
-        1,
-    )
-}
-
-fn should_trace_sega8_bus_event(opts: &HeadlessOptions, event: Sega8BusTraceEvent) -> bool {
-    let (addr, is_read) = match event {
-        Sega8BusTraceEvent::Read { addr, .. } => (u64::from(addr), true),
-        Sega8BusTraceEvent::Write { addr, .. } => (u64::from(addr), false),
-        Sega8BusTraceEvent::IoRead { port, .. } => (u64::from(port), true),
-        Sega8BusTraceEvent::IoWrite { port, .. } => (u64::from(port), false),
-    };
-
-    opts.trace_bus_filters.iter().any(|filter| {
-        addr >= filter.start_addr
-            && addr <= filter.end_addr
-            && matches!(
-                (filter.access, is_read),
-                (HeadlessBusTraceAccess::ReadWrite, _)
-                    | (HeadlessBusTraceAccess::Read, true)
-                    | (HeadlessBusTraceAccess::Write, false)
-            )
-    })
-}
-
-fn format_sega8_bus_trace_line(
-    traced: u64,
-    emulator: &Sega8Emulator,
-    fetched: Sega8FetchedInstruction,
-    event: Sega8BusTraceEvent,
-) -> String {
-    let access = match event {
-        Sega8BusTraceEvent::Read { addr, value } => {
-            format!("read addr={addr:04X} value={value:02X}")
-        }
-        Sega8BusTraceEvent::Write {
-            addr,
-            old_value,
-            new_value,
-        } => {
-            format!("write addr={addr:04X} old={old_value:02X} new={new_value:02X}")
-        }
-        Sega8BusTraceEvent::IoRead { port, value } => {
-            format!("ioread port={port:02X} value={value:02X}")
-        }
-        Sega8BusTraceEvent::IoWrite { port, value } => {
-            format!("iowrite port={port:02X} value={value:02X}")
-        }
-    };
-
-    format!(
-        "[sega8-bus] n={} t={} pc={} op={} {} {}",
-        traced,
-        emulator.cpu().cycles(),
-        format_pc(u64::from(fetched.pc), 4),
-        format_pc(u64::from(fetched.opcode), 2),
-        access,
-        sega8_cpu_trace_suffix(emulator),
-    )
-}
-
-fn sega8_cpu_trace_suffix(emulator: &Sega8Emulator) -> String {
-    let regs = emulator.cpu().regs();
-    let vdp = emulator.bus().vdp();
-    let mapper = emulator.bus().mapper();
-    format!(
-        "a={} f={} bc={} de={} hl={} ix={} iy={} sp={} i={} r={} iff={} im={:?} v={} h={} status={} line={} mapper={} banks={:02X},{:02X},{:02X} cart_ram={} cart_ram_bank={}",
-        format_pc(u64::from(regs.a), 2),
-        format_pc(u64::from(regs.f), 2),
-        format_pc(u64::from(regs.bc()), 4),
-        format_pc(u64::from(regs.de()), 4),
-        format_pc(u64::from(regs.hl()), 4),
-        format_pc(u64::from(regs.ix), 4),
-        format_pc(u64::from(regs.iy), 4),
-        format_pc(u64::from(regs.sp), 4),
-        format_pc(u64::from(regs.i), 2),
-        format_pc(u64::from(regs.r), 2),
-        u8::from(emulator.cpu().interrupts_enabled()),
-        emulator.cpu().interrupt_mode(),
-        vdp.v_counter(),
-        vdp.h_counter(),
-        format_pc(u64::from(vdp.status()), 2),
-        vdp.line_counter(),
-        mapper.kind_label(),
-        mapper.slot_banks()[0],
-        mapper.slot_banks()[1],
-        mapper.slot_banks()[2],
-        u8::from(mapper.slot2_cartridge_ram_enabled()),
-        mapper.cartridge_ram_bank(),
-    )
-}
-
 fn sega8_wait_classification(emulator: &Sega8Emulator) -> Option<&'static str> {
     if emulator.cpu().is_halted() && emulator.bus().vdp().frame_interrupt_enabled() {
         Some("sega8-halt-waiting-for-vblank")
@@ -557,109 +276,4 @@ fn sega8_framebuffer_has_visible_content(framebuffer: &[u8]) -> bool {
         return false;
     };
     chunks.any(|pixel| pixel[..3] != first[..3])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cli::types::HeadlessBusTraceFilter;
-    use zeff_sega8_core::hardware::cartridge::SystemHint;
-
-    #[test]
-    fn sega8_bus_trace_filter_honors_access_type_for_memory_and_io() {
-        let mut opts = HeadlessOptions::default();
-        opts.trace_bus_filters.push(HeadlessBusTraceFilter {
-            start_addr: 0x7F,
-            end_addr: 0x7F,
-            access: HeadlessBusTraceAccess::Write,
-        });
-
-        assert!(should_trace_sega8_bus_event(
-            &opts,
-            Sega8BusTraceEvent::IoWrite {
-                port: 0x7F,
-                value: 0x90
-            }
-        ));
-        assert!(!should_trace_sega8_bus_event(
-            &opts,
-            Sega8BusTraceEvent::IoRead {
-                port: 0x7F,
-                value: 0xFF
-            }
-        ));
-        assert!(!should_trace_sega8_bus_event(
-            &opts,
-            Sega8BusTraceEvent::Write {
-                addr: 0xC000,
-                old_value: 0,
-                new_value: 1
-            }
-        ));
-    }
-
-    #[test]
-    fn sega8_bus_trace_line_labels_io_events() {
-        let emulator = Sega8Emulator::new_with_hint(&[0x76], 48_000, SystemHint::MasterSystem)
-            .expect("emulator should initialize");
-        let fetched = Sega8FetchedInstruction {
-            pc: 0x0002,
-            opcode: 0xD3,
-            cycles: 11,
-        };
-
-        let line = format_sega8_bus_trace_line(
-            3,
-            &emulator,
-            fetched,
-            Sega8BusTraceEvent::IoWrite {
-                port: 0x7F,
-                value: 0x90,
-            },
-        );
-
-        assert!(line.contains("[sega8-bus] n=3"));
-        assert!(line.contains("pc=0002"));
-        assert!(line.contains("op=D3"));
-        assert!(line.contains("iowrite port=7F value=90"));
-    }
-
-    #[test]
-    fn sega8_sdsc_capture_collects_text_and_commands() {
-        let mut capture = Sega8SdscCapture::default();
-
-        for value in b"OK" {
-            capture.record_bus_event(Sega8BusTraceEvent::IoWrite {
-                port: SDSC_DEBUG_CONSOLE_DATA_PORT,
-                value: *value,
-            });
-        }
-        capture.record_bus_event(Sega8BusTraceEvent::IoWrite {
-            port: SDSC_DEBUG_CONSOLE_COMMAND_PORT,
-            value: SDSC_DEBUG_CONSOLE_SUSPEND_COMMAND,
-        });
-
-        assert_eq!(capture.text(), "OK");
-        assert_eq!(capture.command_count, 1);
-        assert!(capture.suspend_seen);
-    }
-
-    #[test]
-    fn sega8_sdsc_clear_screen_command_clears_captured_text() {
-        let mut capture = Sega8SdscCapture::default();
-        capture.record_bus_event(Sega8BusTraceEvent::IoWrite {
-            port: SDSC_DEBUG_CONSOLE_DATA_PORT,
-            value: b'X',
-        });
-        capture.record_bus_event(Sega8BusTraceEvent::IoWrite {
-            port: SDSC_DEBUG_CONSOLE_COMMAND_PORT,
-            value: SDSC_DEBUG_CONSOLE_CLEAR_SCREEN_COMMAND,
-        });
-        capture.record_bus_event(Sega8BusTraceEvent::IoWrite {
-            port: SDSC_DEBUG_CONSOLE_DATA_PORT,
-            value: b'Y',
-        });
-
-        assert_eq!(capture.text(), "Y");
-    }
 }

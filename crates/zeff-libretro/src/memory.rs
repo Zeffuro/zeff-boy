@@ -1,6 +1,7 @@
 use crate::api::*;
 use crate::callbacks::*;
 use std::os::raw::{c_uint, c_void};
+use zeff_emu_common::memory::MemoryRegionKind;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_memory_data(id: c_uint) -> *mut c_void {
@@ -39,8 +40,12 @@ pub extern "C" fn retro_get_memory_data(id: c_uint) -> *mut c_void {
 pub extern "C" fn retro_get_memory_size(id: c_uint) -> usize {
     match id {
         RETRO_MEMORY_SAVE_RAM => lock(&SRAM_BUF).len(),
-        RETRO_MEMORY_SYSTEM_RAM => lock(&CORE).as_ref().map_or(0, |s| s.system_ram_size()),
-        RETRO_MEMORY_VIDEO_RAM => lock(&CORE).as_ref().map_or(0, |s| s.video_ram_size()),
+        RETRO_MEMORY_SYSTEM_RAM => lock(&CORE)
+            .as_ref()
+            .map_or(0, |s| s.memory_region_size(MemoryRegionKind::SystemRam)),
+        RETRO_MEMORY_VIDEO_RAM => lock(&CORE)
+            .as_ref()
+            .map_or(0, |s| s.memory_region_size(MemoryRegionKind::VideoRam)),
         _ => 0,
     }
 }

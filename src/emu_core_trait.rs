@@ -2,6 +2,9 @@ use std::path::Path;
 
 use crate::audio_recorder::MidiApuSnapshot;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::memory::{
+    ExtendedMemoryRegionSizes, MemoryRegionDescriptor, standard_memory_regions_with_extended,
+};
 use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(crate) trait DebuggableEmulator {
@@ -63,8 +66,43 @@ pub(crate) trait EmulatorCore {
     }
 
     #[inline]
+    fn palette_ram_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn oam_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn io_registers_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
     fn supports_debugger(&self) -> bool {
         false
+    }
+
+    #[inline]
+    fn cpu_address_bits(&self) -> u8 {
+        16
+    }
+
+    fn memory_regions(&self) -> Vec<MemoryRegionDescriptor> {
+        standard_memory_regions_with_extended(
+            self.cpu_address_bits(),
+            self.system_ram_len(),
+            self.video_ram_len(),
+            self.save_ram_kind(),
+            self.framebuffer().len(),
+            ExtendedMemoryRegionSizes {
+                palette_ram_len: self.palette_ram_len(),
+                oam_len: self.oam_len(),
+                io_registers_len: self.io_registers_len(),
+            },
+        )
     }
 
     #[inline]

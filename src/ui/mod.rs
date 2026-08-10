@@ -1,11 +1,14 @@
 use crate::debug::{
     ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugUiActions, DisassemblyView,
     InputDebugInfo, MemorySearchResult, OamDebugInfo, PaletteDebugInfo, PerfInfo, RomDebugInfo,
-    RomInfoSection, RomSearchResult,
+    RomInfoSection, RomSearchResult, WatchHitDisplay, WatchpointDisplay,
 };
 use crate::emu_thread::MemorySearchRequest;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::debug::WatchType;
+use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::system::CoreFamily;
 
 mod gb_snapshot;
 mod gba_snapshot;
@@ -76,6 +79,43 @@ fn build_disassembly_view(
         lines: disassemble(),
         breakpoints,
     })
+}
+
+struct DebugControlSnapshot {
+    breakpoints: Vec<Address>,
+    watchpoints: Vec<WatchpointDisplay>,
+    hit_breakpoint: Option<Address>,
+    hit_watchpoint: Option<WatchHitDisplay>,
+}
+
+fn build_debug_control_snapshot(
+    breakpoints: impl IntoIterator<Item = Address>,
+    watchpoints: impl IntoIterator<Item = (Address, WatchType)>,
+    hit_breakpoint: Option<Address>,
+    hit_watchpoint: Option<(Address, u8, u8, WatchType)>,
+) -> DebugControlSnapshot {
+    let mut breakpoints: Vec<Address> = breakpoints.into_iter().collect();
+    breakpoints.sort_unstable();
+
+    DebugControlSnapshot {
+        breakpoints,
+        watchpoints: watchpoints
+            .into_iter()
+            .map(|(address, watch_type)| WatchpointDisplay {
+                address,
+                watch_type,
+            })
+            .collect(),
+        hit_breakpoint,
+        hit_watchpoint: hit_watchpoint.map(|(address, old_value, new_value, watch_type)| {
+            WatchHitDisplay {
+                address,
+                old_value,
+                new_value,
+                watch_type,
+            }
+        }),
+    }
 }
 
 fn build_memory_search(
@@ -195,12 +235,14 @@ pub(crate) struct UiFrameData {
     pub(crate) rom_search_results: Option<Vec<RomSearchResult>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CoreFeatureInfo {
+    pub(crate) core_family: CoreFamily,
     pub(crate) save_ram_kind: SaveRamKind,
     pub(crate) has_battery: bool,
     pub(crate) system_ram_len: usize,
     pub(crate) video_ram_len: usize,
+    pub(crate) memory_regions: Vec<MemoryRegionDescriptor>,
     pub(crate) supports_save_states: bool,
     pub(crate) supports_rewind: bool,
     pub(crate) supports_debugger: bool,

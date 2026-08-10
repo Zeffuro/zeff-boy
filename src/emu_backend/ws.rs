@@ -145,6 +145,10 @@ impl EmulatorCore for WsBackend {
     fn supports_debugger(&self) -> bool {
         true
     }
+
+    fn cpu_address_bits(&self) -> u8 {
+        20
+    }
 }
 
 pub(crate) fn try_load_battery_sram(

@@ -327,6 +327,15 @@ fn gba_cpu_snapshot(emu: &zeff_gba_core::emulator::Emulator) -> crate::debug::Cp
         let addr = pc.wrapping_add(i as u32);
         (addr, emu.cpu_peek8(addr))
     });
+    let debug_controls = super::build_debug_control_snapshot(
+        emu.iter_breakpoints(),
+        emu.debug_watchpoints()
+            .iter()
+            .map(|watch| (watch.address, watch.watch_type)),
+        emu.debug_hit_breakpoint(),
+        emu.debug_hit_watchpoint()
+            .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
+    );
 
     crate::debug::CpuDebugSnapshot {
         register_lines: vec![
@@ -423,24 +432,10 @@ fn gba_cpu_snapshot(emu: &zeff_gba_core::emulator::Emulator) -> crate::debug::Cp
         ],
         mem_around_pc,
         recent_op_lines: Vec::new(),
-        breakpoints: emu.iter_breakpoints().collect(),
-        watchpoints: emu
-            .debug_watchpoints()
-            .iter()
-            .map(|w| crate::debug::WatchpointDisplay {
-                address: w.address,
-                watch_type: w.watch_type,
-            })
-            .collect(),
-        hit_breakpoint: emu.debug_hit_breakpoint(),
-        hit_watchpoint: emu
-            .debug_hit_watchpoint()
-            .map(|h| crate::debug::WatchHitDisplay {
-                address: h.address,
-                old_value: h.old_value,
-                new_value: h.new_value,
-                watch_type: h.watch_type,
-            }),
+        breakpoints: debug_controls.breakpoints,
+        watchpoints: debug_controls.watchpoints,
+        hit_breakpoint: debug_controls.hit_breakpoint,
+        hit_watchpoint: debug_controls.hit_watchpoint,
     }
 }
 

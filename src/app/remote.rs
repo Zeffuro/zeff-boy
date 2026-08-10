@@ -5,7 +5,9 @@ use super::App;
 use crate::emu_thread::EmuCommand;
 use crate::live_control::{LiveCommand, LiveReply, PendingButtonRelease};
 use crate::ui::CoreFeatureInfo;
+use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::system::CoreFamily;
 
 mod artifacts;
 mod graphics;
@@ -207,14 +209,51 @@ impl App {
 
 fn core_features_json(features: &CoreFeatureInfo) -> Value {
     json!({
+        "core_family": core_family_label(features.core_family),
         "save_ram": save_ram_kind_json(features.save_ram_kind),
         "has_battery": features.has_battery,
         "system_ram_len": features.system_ram_len,
         "video_ram_len": features.video_ram_len,
+        "memory_regions": features.memory_regions.iter().map(memory_region_json).collect::<Vec<_>>(),
         "supports_save_states": features.supports_save_states,
         "supports_rewind": features.supports_rewind,
         "supports_debugger": features.supports_debugger,
     })
+}
+
+fn core_family_label(family: CoreFamily) -> &'static str {
+    match family {
+        CoreFamily::GameBoy => "game_boy",
+        CoreFamily::GameBoyAdvance => "game_boy_advance",
+        CoreFamily::Nes => "nes",
+        CoreFamily::WonderSwan => "wonder_swan",
+        CoreFamily::Sega8 => "sega8",
+    }
+}
+
+fn memory_region_json(region: &MemoryRegionDescriptor) -> Value {
+    json!({
+        "id": region.id,
+        "label": region.label,
+        "kind": memory_region_kind_label(region.kind),
+        "size": region.size,
+        "address_bits": region.address_bits,
+        "writable": region.writable,
+        "aliases": region.aliases,
+    })
+}
+
+fn memory_region_kind_label(kind: MemoryRegionKind) -> &'static str {
+    match kind {
+        MemoryRegionKind::CpuAddressSpace => "cpu_address_space",
+        MemoryRegionKind::SystemRam => "system_ram",
+        MemoryRegionKind::VideoRam => "video_ram",
+        MemoryRegionKind::PaletteRam => "palette_ram",
+        MemoryRegionKind::Oam => "oam",
+        MemoryRegionKind::IoRegisters => "io_registers",
+        MemoryRegionKind::SaveRam => "save_ram",
+        MemoryRegionKind::Framebuffer => "framebuffer",
+    }
 }
 
 fn save_ram_kind_json(kind: SaveRamKind) -> Value {

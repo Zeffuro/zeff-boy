@@ -80,6 +80,20 @@ pub enum System {
     Sg,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(rename_all = "snake_case")
+)]
+pub enum CoreFamily {
+    GameBoy,
+    GameBoyAdvance,
+    Nes,
+    WonderSwan,
+    Sega8,
+}
+
 #[allow(non_upper_case_globals)]
 impl System {
     pub const GameBoy: Self = Self::Gb;
@@ -93,6 +107,7 @@ impl System {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SystemSpec {
     pub system: System,
+    pub core_family: CoreFamily,
     pub file_dialog_filter_name: &'static str,
     pub code: &'static str,
     pub short_code: &'static str,
@@ -106,6 +121,7 @@ pub struct SystemSpec {
 const SYSTEM_SPECS: &[SystemSpec] = &[
     SystemSpec {
         system: System::Gb,
+        core_family: CoreFamily::GameBoy,
         file_dialog_filter_name: "Game Boy ROMs",
         code: "gb",
         short_code: "gb",
@@ -117,6 +133,7 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
     },
     SystemSpec {
         system: System::Gba,
+        core_family: CoreFamily::GameBoyAdvance,
         file_dialog_filter_name: "Game Boy Advance ROMs",
         code: "gba",
         short_code: "gba",
@@ -128,6 +145,7 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
     },
     SystemSpec {
         system: System::Nes,
+        core_family: CoreFamily::Nes,
         file_dialog_filter_name: "NES ROMs",
         code: "nes",
         short_code: "nes",
@@ -139,6 +157,7 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
     },
     SystemSpec {
         system: System::Ws,
+        core_family: CoreFamily::WonderSwan,
         file_dialog_filter_name: "WonderSwan ROMs",
         code: "ws",
         short_code: "ws",
@@ -150,6 +169,7 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
     },
     SystemSpec {
         system: System::Sms,
+        core_family: CoreFamily::Sega8,
         file_dialog_filter_name: "Sega Master System ROMs",
         code: "sms",
         short_code: "sms",
@@ -161,6 +181,7 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
     },
     SystemSpec {
         system: System::Gg,
+        core_family: CoreFamily::Sega8,
         file_dialog_filter_name: "Game Gear ROMs",
         code: "gg",
         short_code: "gg",
@@ -172,6 +193,7 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
     },
     SystemSpec {
         system: System::Sg,
+        core_family: CoreFamily::Sega8,
         file_dialog_filter_name: "SG-1000 ROMs",
         code: "sg",
         short_code: "sg",
@@ -219,6 +241,10 @@ impl System {
 
     pub fn state_extension(self) -> &'static str {
         self.spec().state_extension
+    }
+
+    pub fn core_family(self) -> CoreFamily {
+        self.spec().core_family
     }
 
     pub fn screen_size(self) -> (u32, u32) {
@@ -380,5 +406,16 @@ mod tests {
         assert_eq!(System::MasterSystem, System::Sms);
         assert_eq!(System::GameGear, System::Gg);
         assert_eq!(System::Sg1000, System::Sg);
+    }
+
+    #[test]
+    fn systems_map_to_expected_core_families() {
+        assert_eq!(System::Gb.core_family(), CoreFamily::GameBoy);
+        assert_eq!(System::Gba.core_family(), CoreFamily::GameBoyAdvance);
+        assert_eq!(System::Nes.core_family(), CoreFamily::Nes);
+        assert_eq!(System::Ws.core_family(), CoreFamily::WonderSwan);
+        assert_eq!(System::Sms.core_family(), CoreFamily::Sega8);
+        assert_eq!(System::Gg.core_family(), CoreFamily::Sega8);
+        assert_eq!(System::Sg.core_family(), CoreFamily::Sega8);
     }
 }

@@ -1,4 +1,4 @@
-use crate::debug::{CpuDebugSnapshot, DebugSection, WatchHitDisplay, WatchpointDisplay};
+use crate::debug::{CpuDebugSnapshot, DebugSection};
 use zeff_emu_common::address::Address;
 
 pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
@@ -134,6 +134,22 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         recent_op_lines.push(line);
     }
 
+    let debug_controls = super::super::build_debug_control_snapshot(
+        info.breakpoints.iter().copied().map(Address::from),
+        info.watchpoints
+            .iter()
+            .map(|watch| (Address::from(watch.address), watch.watch_type)),
+        info.hit_breakpoint.map(Address::from),
+        info.hit_watchpoint.as_ref().map(|hit| {
+            (
+                Address::from(hit.address),
+                hit.old_value,
+                hit.new_value,
+                hit.watch_type,
+            )
+        }),
+    );
+
     CpuDebugSnapshot {
         register_lines,
         flags,
@@ -144,26 +160,9 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         sections,
         mem_around_pc: info.mem_around_pc.map(|(addr, value)| (addr.into(), value)),
         recent_op_lines,
-        breakpoints: info
-            .breakpoints
-            .iter()
-            .copied()
-            .map(Address::from)
-            .collect(),
-        watchpoints: info
-            .watchpoints
-            .iter()
-            .map(|w| WatchpointDisplay {
-                address: w.address.into(),
-                watch_type: w.watch_type,
-            })
-            .collect(),
-        hit_breakpoint: info.hit_breakpoint.map(Address::from),
-        hit_watchpoint: info.hit_watchpoint.as_ref().map(|h| WatchHitDisplay {
-            address: h.address.into(),
-            old_value: h.old_value,
-            new_value: h.new_value,
-            watch_type: h.watch_type,
-        }),
+        breakpoints: debug_controls.breakpoints,
+        watchpoints: debug_controls.watchpoints,
+        hit_breakpoint: debug_controls.hit_breakpoint,
+        hit_watchpoint: debug_controls.hit_watchpoint,
     }
 }

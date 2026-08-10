@@ -155,6 +155,14 @@ impl EmulatorCore for NesBackend {
         0x2000
     }
 
+    fn palette_ram_len(&self) -> usize {
+        self.emu.ppu_palette_ram().len()
+    }
+
+    fn oam_len(&self) -> usize {
+        self.emu.ppu_oam().len()
+    }
+
     fn supports_debugger(&self) -> bool {
         true
     }

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::system::CoreFamily;
 
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
@@ -134,6 +136,10 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn core_family(&self) -> CoreFamily {
+        self.system().core_family()
+    }
+
     fn state_extension(&self) -> &'static str {
         self.system().state_extension()
     }
@@ -247,6 +253,10 @@ impl EmuBackend {
 
     pub(crate) fn supports_debugger(&self) -> bool {
         dispatch!(self, supports_debugger())
+    }
+
+    pub(crate) fn memory_regions(&self) -> Vec<MemoryRegionDescriptor> {
+        dispatch!(self, memory_regions())
     }
 
     #[inline]

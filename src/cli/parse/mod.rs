@@ -1,0 +1,366 @@
+use std::path::PathBuf;
+
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+
+use self::bus::parse_addr_range_list_arg;
+use self::input::{parse_input_event_arg, parse_input_script, parse_zapper_event_arg};
+use self::numbers::{
+    parse_pc_range_arg, parse_u8_arg, parse_u16_arg, parse_u64_arg, parse_usize_arg,
+};
+use self::values::{
+    parse_dmg_palette_arg, parse_gba_audio_mute_list_arg, parse_gba_bg_layer_list_arg,
+    parse_memory_dump_arg,
+};
+use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
+
+mod bus;
+mod input;
+mod numbers;
+#[cfg(test)]
+mod tests;
+mod values;
+
+pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut mode_override: Option<HardwareModePreference> = None;
+    let mut rom_path: Option<String> = None;
+    let mut headless_enabled = false;
+    let mut headless = HeadlessOptions::default();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--mode" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--mode requires one of: auto|dmg|cgb");
+                };
+                mode_override = Some(match value.as_str() {
+                    "auto" => HardwareModePreference::Auto,
+                    "dmg" => HardwareModePreference::ForceDmg,
+                    "cgb" => HardwareModePreference::ForceCgb,
+                    _ => anyhow::bail!("invalid --mode value; expected auto|dmg|cgb"),
+                });
+                i += 2;
+            }
+            "--headless" => {
+                headless_enabled = true;
+                i += 1;
+            }
+            "--max-frames" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--max-frames requires a numeric value");
+                };
+                headless.max_frames = parse_u64_arg(value, "--max-frames")?;
+                i += 2;
+            }
+            "--expect-serial" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--expect-serial requires a string value");
+                };
+                headless.expect_serial = Some(value.to_string());
+                i += 2;
+            }
+            "--expect-ws-text" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--expect-ws-text requires a string value");
+                };
+                headless.expect_ws_text = Some(value.to_string());
+                i += 2;
+            }
+            "--expect-ws-pass-fail-tiles" => {
+                headless.expect_ws_pass_fail_tiles = true;
+                i += 1;
+            }
+            "--expect-sega8-sdsc" | "--expect-sdsc" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires a string value", args[i]);
+                };
+                headless.expect_sega8_sdsc = Some(value.to_string());
+                i += 2;
+            }
+            "--expect-sega8-audio" => {
+                headless.expect_sega8_audio = true;
+                i += 1;
+            }
+            "--expect-test-pass" => {
+                headless.expect_test_pass = true;
+                i += 1;
+            }
+            "--trace-opcodes" => {
+                headless.trace_opcodes = true;
+                i += 1;
+            }
+            "--trace-opcode-limit" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-opcode-limit requires a numeric value");
+                };
+                headless.trace_opcode_limit = parse_u64_arg(value, "--trace-opcode-limit")?;
+                i += 2;
+            }
+            "--trace-max-ops" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-max-ops requires a numeric value");
+                };
+                headless.trace_opcode_limit = parse_u64_arg(value, "--trace-max-ops")?;
+                i += 2;
+            }
+            "--trace-start-t" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-start-t requires a numeric value");
+                };
+                headless.trace_start_t = parse_u64_arg(value, "--trace-start-t")?;
+                i += 2;
+            }
+            "--trace-pc-range" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-pc-range requires start-end");
+                };
+                headless.trace_pc_range = Some(parse_pc_range_arg(value)?);
+                i += 2;
+            }
+            "--trace-opcode" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-opcode requires a value");
+                };
+                for raw in value.split(',') {
+                    let opcode = parse_u8_arg(raw, "--trace-opcode")?;
+                    if !headless.trace_opcode_filter.contains(&opcode) {
+                        headless.trace_opcode_filter.push(opcode);
+                    }
+                }
+                i += 2;
+            }
+            "--trace-watch-interrupts" => {
+                headless.trace_watch_interrupts = true;
+                i += 1;
+            }
+            "--trace-bus" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-bus requires address ranges");
+                };
+                headless.trace_bus_filters.extend(parse_addr_range_list_arg(
+                    value,
+                    "--trace-bus",
+                    HeadlessBusTraceAccess::ReadWrite,
+                )?);
+                i += 2;
+            }
+            "--trace-bus-read" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-bus-read requires address ranges");
+                };
+                headless.trace_bus_filters.extend(parse_addr_range_list_arg(
+                    value,
+                    "--trace-bus-read",
+                    HeadlessBusTraceAccess::Read,
+                )?);
+                i += 2;
+            }
+            "--trace-bus-write" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-bus-write requires address ranges");
+                };
+                headless.trace_bus_filters.extend(parse_addr_range_list_arg(
+                    value,
+                    "--trace-bus-write",
+                    HeadlessBusTraceAccess::Write,
+                )?);
+                i += 2;
+            }
+            "--trace-bus-limit" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--trace-bus-limit requires a numeric value");
+                };
+                headless.trace_bus_limit = parse_u64_arg(value, "--trace-bus-limit")?;
+                i += 2;
+            }
+            "--dump-mem" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--dump-mem requires addr:len");
+                };
+                headless
+                    .memory_dumps
+                    .push(parse_memory_dump_arg(value, "--dump-mem")?);
+                i += 2;
+            }
+            "--break-at" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--break-at requires an address value");
+                };
+                headless.break_at = Some(parse_u16_arg(value, "--break-at")?);
+                i += 2;
+            }
+            "--no-apu" => {
+                headless.no_apu = true;
+                i += 1;
+            }
+            "--no-sram" | "--no-battery" => {
+                headless.no_sram = true;
+                i += 1;
+            }
+            "--gb-dmg-palette" | "--dmg-palette" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!(
+                        "{} requires one of: gray|dmg-green|pocket|mint|chocolate",
+                        args[i]
+                    );
+                };
+                headless.gb_dmg_palette_preset = Some(parse_dmg_palette_arg(value, &args[i])?);
+                i += 2;
+            }
+            "--detect-stuck" => {
+                if headless.stuck_window_frames == 0 {
+                    headless.stuck_window_frames = 120;
+                }
+                i += 1;
+            }
+            "--stuck-window" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--stuck-window requires a numeric value");
+                };
+                headless.stuck_window_frames = parse_u64_arg(value, "--stuck-window")?;
+                i += 2;
+            }
+            "--stuck-pc-threshold" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--stuck-pc-threshold requires a numeric value");
+                };
+                headless.stuck_pc_threshold = parse_usize_arg(value, "--stuck-pc-threshold")?;
+                i += 2;
+            }
+            "--fail-on-stuck" => {
+                headless.fail_on_stuck = true;
+                i += 1;
+            }
+            "--press" | "--input" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires an input spec", args[i]);
+                };
+                headless
+                    .input_events
+                    .extend(parse_input_event_arg(value, args[i].as_str())?);
+                i += 2;
+            }
+            "--input-script" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--input-script requires a file path");
+                };
+                headless.input_events.extend(parse_input_script(value)?);
+                i += 2;
+            }
+            "--zapper" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--zapper requires an event spec");
+                };
+                headless
+                    .zapper_events
+                    .extend(parse_zapper_event_arg(value, "--zapper")?);
+                i += 2;
+            }
+            "--load-state" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--load-state requires a file path");
+                };
+                headless.load_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--screenshot" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--screenshot requires a file path");
+                };
+                headless.screenshot_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--screenshot-frame" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--screenshot-frame requires a numeric value");
+                };
+                headless.screenshot_frame = Some(parse_u64_arg(value, "--screenshot-frame")?);
+                i += 2;
+            }
+            "--screenshot-dir" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--screenshot-dir requires a directory path");
+                };
+                headless.screenshot_dir = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--screenshot-every" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--screenshot-every requires a numeric frame interval");
+                };
+                headless.screenshot_every = parse_u64_arg(value, "--screenshot-every")?;
+                i += 2;
+            }
+            "--debug-state" => {
+                headless.print_debug_state = true;
+                i += 1;
+            }
+            "--debug-state-out" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--debug-state-out requires a file path");
+                };
+                headless.debug_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--audio-dump" | "--audio-out" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires a file path", args[i]);
+                };
+                headless.audio_dump_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--break-on-gba-bad-state" => {
+                headless.break_on_gba_bad_state = true;
+                i += 1;
+            }
+            "--gba-mute-audio" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--gba-mute-audio requires a comma-separated channel list");
+                };
+                let mutes = parse_gba_audio_mute_list_arg(value, "--gba-mute-audio")?;
+                for (dst, src) in headless.gba_audio_mutes.iter_mut().zip(mutes) {
+                    *dst |= src;
+                }
+                i += 2;
+            }
+            "--gba-hide-bg" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--gba-hide-bg requires a comma-separated BG layer list");
+                };
+                let hidden = parse_gba_bg_layer_list_arg(value, "--gba-hide-bg")?;
+                for (dst, src) in headless.gba_hidden_bg_layers.iter_mut().zip(hidden) {
+                    *dst |= src;
+                }
+                i += 2;
+            }
+            "--gba-hide-sprites" => {
+                headless.gba_hide_sprites = true;
+                i += 1;
+            }
+            "--gba-dump-memory" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--gba-dump-memory requires a directory path");
+                };
+                headless.gba_dump_memory_dir = Some(PathBuf::from(value));
+                i += 2;
+            }
+            other => {
+                if rom_path.is_none() {
+                    rom_path = Some(other.to_string());
+                }
+                i += 1;
+            }
+        }
+    }
+
+    Ok(CliArgs {
+        rom_path,
+        mode_override,
+        headless: if headless_enabled {
+            Some(headless)
+        } else {
+            None
+        },
+    })
+}

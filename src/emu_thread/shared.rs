@@ -290,10 +290,12 @@ impl EmuThread {
             EmuBackend::Sega8(sega8) => ui::collect_sega8_snapshot(&sega8.emu, snapshot, buffers),
         };
         data.core_features = Some(ui::CoreFeatureInfo {
+            core_family: backend.core_family(),
             save_ram_kind: backend.save_ram_kind(),
             has_battery: backend.has_battery(),
             system_ram_len: backend.system_ram_len(),
             video_ram_len: backend.video_ram_len(),
+            memory_regions: backend.memory_regions(),
             supports_save_states: true,
             supports_rewind: true,
             supports_debugger: backend.supports_debugger(),

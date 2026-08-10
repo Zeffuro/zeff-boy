@@ -1,0 +1,133 @@
+use anyhow::{Context, bail};
+use zeff_emu_common::save_ram::SaveRamKind;
+
+use super::constants::{COPIER_HEADER_SIZE, ROM_BANK_SIZE, SMS_CARTRIDGE_RAM_SIZE};
+
+mod header;
+
+#[cfg(test)]
+mod tests;
+
+pub use header::{
+    CodemastersHeader, HeaderLocation, Region, RomHeader, Sega8MapperKind, Sega8System, SystemHint,
+};
+
+#[derive(Clone, Debug)]
+pub struct Cartridge {
+    rom: Vec<u8>,
+    raw_len: usize,
+    copier_header_stripped: bool,
+    header: Option<RomHeader>,
+    codemasters_header: Option<CodemastersHeader>,
+    system: Sega8System,
+    mapper_kind: Sega8MapperKind,
+}
+
+impl Cartridge {
+    pub fn load(rom_data: &[u8]) -> anyhow::Result<Self> {
+        Self::load_with_hint(rom_data, SystemHint::Auto)
+    }
+
+    pub fn load_with_path_hint(rom_data: &[u8], path: &std::path::Path) -> anyhow::Result<Self> {
+        let hint = SystemHint::from_path(path).unwrap_or(SystemHint::Auto);
+        Self::load_with_hint(rom_data, hint)
+    }
+
+    pub fn load_with_hint(rom_data: &[u8], hint: SystemHint) -> anyhow::Result<Self> {
+        if rom_data.is_empty() {
+            bail!("Sega 8-bit ROM is empty");
+        }
+
+        let raw_len = rom_data.len();
+        let (rom, copier_header_stripped) = normalized_rom_data(rom_data)?;
+        let header = header::find_header(&rom);
+        let codemasters_header = header::find_codemasters_header(&rom);
+        let system = hint.resolve(header.as_ref());
+        let mapper_kind = if codemasters_header.is_some() {
+            Sega8MapperKind::Codemasters
+        } else {
+            Sega8MapperKind::Sega
+        };
+
+        Ok(Self {
+            rom,
+            raw_len,
+            copier_header_stripped,
+            header,
+            codemasters_header,
+            system,
+            mapper_kind,
+        })
+    }
+
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
+    pub fn raw_len(&self) -> usize {
+        self.raw_len
+    }
+
+    pub fn normalized_len(&self) -> usize {
+        self.rom.len()
+    }
+
+    pub fn copier_header_stripped(&self) -> bool {
+        self.copier_header_stripped
+    }
+
+    pub fn header(&self) -> Option<RomHeader> {
+        self.header
+    }
+
+    pub fn codemasters_header(&self) -> Option<CodemastersHeader> {
+        self.codemasters_header
+    }
+
+    pub fn system(&self) -> Sega8System {
+        self.system
+    }
+
+    pub fn mapper_kind(&self) -> Sega8MapperKind {
+        self.mapper_kind
+    }
+
+    pub fn save_ram_kind(&self) -> SaveRamKind {
+        match self.mapper_kind {
+            Sega8MapperKind::Sega => SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE),
+            Sega8MapperKind::Codemasters => SaveRamKind::none(),
+        }
+    }
+
+    pub fn rom_bank_count(&self) -> usize {
+        self.rom.len().div_ceil(ROM_BANK_SIZE)
+    }
+
+    pub fn read_flat(&self, addr: usize) -> u8 {
+        self.rom[addr % self.rom.len()]
+    }
+
+    pub fn read_bank(&self, bank: u8, offset: u16) -> u8 {
+        let addr = usize::from(bank) * ROM_BANK_SIZE + usize::from(offset);
+        self.read_flat(addr)
+    }
+}
+
+fn normalized_rom_data(rom_data: &[u8]) -> anyhow::Result<(Vec<u8>, bool)> {
+    if should_strip_copier_header(rom_data) {
+        let rom = rom_data
+            .get(COPIER_HEADER_SIZE..)
+            .context("copier header strip exceeded ROM length")?
+            .to_vec();
+        if rom.is_empty() {
+            bail!("Sega 8-bit ROM has no data after copier header");
+        }
+        Ok((rom, true))
+    } else {
+        Ok((rom_data.to_vec(), false))
+    }
+}
+
+fn should_strip_copier_header(rom_data: &[u8]) -> bool {
+    rom_data.len() > COPIER_HEADER_SIZE && rom_data.len() % ROM_BANK_SIZE == COPIER_HEADER_SIZE
+}

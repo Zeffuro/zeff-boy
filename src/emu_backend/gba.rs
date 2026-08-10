@@ -133,8 +133,24 @@ impl EmulatorCore for GbaBackend {
         self.emu.video_ram_snapshot().len()
     }
 
+    fn palette_ram_len(&self) -> usize {
+        self.emu.palette_ram_snapshot().len()
+    }
+
+    fn oam_len(&self) -> usize {
+        self.emu.oam_snapshot().len()
+    }
+
+    fn io_registers_len(&self) -> usize {
+        self.emu.io_snapshot().len()
+    }
+
     fn supports_debugger(&self) -> bool {
         true
+    }
+
+    fn cpu_address_bits(&self) -> u8 {
+        32
     }
 }
 
