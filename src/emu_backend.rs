@@ -10,6 +10,7 @@ pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
 pub(crate) use self::nes::NesBackend;
+pub(crate) use self::runtime::BackendRuntimeConfig;
 pub(crate) use self::sega8::Sega8Backend;
 pub(crate) use self::system::{
     ActiveSystem, ROM_AND_ARCHIVE_EXTENSIONS, ROM_EXTENSIONS, archive_extensions, system_specs,
@@ -25,6 +26,7 @@ pub(crate) mod gba;
 pub(crate) mod loader;
 pub(crate) mod nes;
 pub(crate) mod paths;
+pub(crate) mod runtime;
 pub(crate) mod sega8;
 pub(crate) mod system;
 pub(crate) mod ws;
@@ -155,27 +157,6 @@ impl EmuBackend {
         }
     }
 
-    pub(crate) fn gb_mut(&mut self) -> Option<&mut GbBackend> {
-        match self {
-            Self::Gb(b) => Some(b),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn nes_mut(&mut self) -> Option<&mut NesBackend> {
-        match self {
-            Self::Nes(b) => Some(b),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn gba_mut(&mut self) -> Option<&mut GbaBackend> {
-        match self {
-            Self::Gba(b) => Some(b),
-            _ => None,
-        }
-    }
-
     pub(crate) fn gba(&self) -> Option<&GbaBackend> {
         match self {
             Self::Gba(b) => Some(b),
@@ -190,23 +171,9 @@ impl EmuBackend {
         }
     }
 
-    pub(crate) fn sega8_mut(&mut self) -> Option<&mut Sega8Backend> {
-        match self {
-            Self::Sega8(b) => Some(b),
-            _ => None,
-        }
-    }
-
     pub(crate) fn sega8(&self) -> Option<&Sega8Backend> {
         match self {
             Self::Sega8(b) => Some(b),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn ws_mut(&mut self) -> Option<&mut WsBackend> {
-        match self {
-            Self::Ws(b) => Some(b),
             _ => None,
         }
     }

@@ -1,7 +1,5 @@
 use zeff_emu_common::address::Address;
 
-const RECENT_OPCODE_LINE_COUNT: usize = 16;
-
 pub(super) fn gba_cpu_snapshot(
     emu: &zeff_gba_core::emulator::Emulator,
 ) -> crate::debug::CpuDebugSnapshot {
@@ -22,18 +20,8 @@ pub(super) fn gba_cpu_snapshot(
         emu.debug_hit_watchpoint()
             .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
     );
-    let recent_opcodes = super::super::build_recent_opcode_display(
-        emu.recent_opcodes(RECENT_OPCODE_LINE_COUNT),
-        RECENT_OPCODE_LINE_COUNT,
-        |record, repeat_count| crate::debug::RecentOpcodeDisplay {
-            address: Address::from(record.pc),
-            bytes: gba_opcode_bytes(record.raw, record.width_bytes),
-            detail: Some(format!(
-                "{:?} fetch={}c",
-                record.instruction_set, record.fetch_cycles
-            )),
-            repeat_count,
-        },
+    let recent_opcodes = super::super::opcodes::gba_recent_opcode_display(
+        emu.recent_opcodes(super::super::opcodes::RECENT_OPCODE_LINE_COUNT),
     );
 
     crate::debug::CpuDebugSnapshot {
@@ -136,9 +124,4 @@ pub(super) fn gba_cpu_snapshot(
         hit_breakpoint: debug_controls.hit_breakpoint,
         hit_watchpoint: debug_controls.hit_watchpoint,
     }
-}
-
-fn gba_opcode_bytes(raw: u32, width_bytes: u8) -> Vec<u8> {
-    let bytes = raw.to_le_bytes();
-    bytes[..usize::from(width_bytes).min(bytes.len())].to_vec()
 }

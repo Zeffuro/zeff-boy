@@ -38,6 +38,18 @@ fn watchpoint_hits_on_debug_write() {
 }
 
 #[test]
+fn public_cpu_peek_does_not_enter_bus_trace() {
+    let rom = minimal_rom();
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+
+    emu.bus.debug_trace_enabled = true;
+    emu.bus.debug_trace_reads = true;
+    assert_eq!(emu.cpu_peek8(0x0200_0000), 0x00);
+
+    assert!(emu.bus.debug_trace_events.borrow().is_empty());
+}
+
+#[test]
 fn opcode_history_records_executed_instructions_when_enabled() {
     let rom = minimal_rom();
     let mut emu = Emulator::new(&rom, 48_000).unwrap();

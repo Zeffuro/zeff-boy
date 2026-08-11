@@ -110,4 +110,8 @@ impl Emulator {
     pub fn apu_debug_snapshot(&self) -> crate::hardware::apu::ApuDebugSnapshot {
         self.bus.apu_debug_snapshot()
     }
+
+    pub fn uart_debug_snapshot(&self) -> crate::hardware::bus::UartDebugSnapshot {
+        self.bus.uart_debug_snapshot()
+    }
 }

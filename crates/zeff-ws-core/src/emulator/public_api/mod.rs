@@ -4,6 +4,10 @@ mod debug;
 mod queries;
 
 impl Emulator {
+    pub fn sync_wonder_swan_link_peer(&mut self, peer: &mut Emulator) {
+        self.bus.sync_wonder_swan_link_peer(&mut peer.bus);
+    }
+
     pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         self.bus.apu.drain_audio_samples_into(buf);
     }

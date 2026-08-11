@@ -162,7 +162,7 @@ fn apply_gamma_in_place(frame: &mut [u8], gamma: f32) {
     }
 }
 
-#[cfg(feature = "camera")]
+#[cfg(all(feature = "camera", not(target_arch = "wasm32")))]
 pub(super) fn decode_compressed_to_grayscale_nearest(
     compressed: &[u8],
     dst_w: usize,

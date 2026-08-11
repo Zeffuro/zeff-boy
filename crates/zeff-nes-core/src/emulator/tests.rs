@@ -93,6 +93,37 @@ fn public_api_parity_wrappers_load_step_and_roundtrip_state() {
 }
 
 #[test]
+fn public_cpu_peek_does_not_mutate_controller_or_trace() {
+    let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+
+    emu.set_input(0x01, 0);
+    emu.cpu_write(0x4016, 1);
+    emu.cpu_write(0x4016, 0);
+    emu.bus.debug_trace_enabled = true;
+    assert_eq!(emu.cpu_peek8(0x4016), 0);
+
+    assert!(emu.bus.debug_trace_events.is_empty());
+    assert_eq!(emu.bus_mut().cpu_read(0x4016) & 0x01, 1);
+}
+
+#[test]
+fn public_cpu_peek_applies_game_genie_without_trace() {
+    let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
+    emu.add_game_genie_patch(crate::cheats::NesGameGeniePatch {
+        address: 0x8000,
+        value: 0x42,
+        compare: Some(0xEA),
+    });
+    emu.bus.debug_trace_enabled = true;
+
+    assert_eq!(emu.cpu_peek8(0x8000), 0x42);
+    assert!(emu.bus.debug_trace_events.is_empty());
+
+    emu.clear_game_genie();
+    assert_eq!(emu.cpu_peek8(0x8000), 0xEA);
+}
+
+#[test]
 fn host_input_mapping_is_owned_by_nes_core_for_both_ports() {
     let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
 

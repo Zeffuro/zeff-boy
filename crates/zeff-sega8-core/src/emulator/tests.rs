@@ -9,7 +9,7 @@ use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_SERIAL_CONTROL,
     IO_PORT_GG_SERIAL_RX, IO_PORT_GG_SERIAL_TX, IO_PORT_GG_START, IO_PORT_VDP_CONTROL,
     IO_PORT_VDP_DATA, RGBA_CHANNELS, SEGA_HEADER_MAGIC, SEGA_HEADER_SIZE, SMS_MODE4_TILE_BYTES,
-    SMS_SCREEN_H, SMS_SCREEN_W, VDP_CONTROL_REGISTER_WRITE_VALUE,
+    SMS_SCREEN_H, SMS_SCREEN_W, VDP_CONTROL_REGISTER_WRITE_VALUE, VDP_REG0_MODE4,
 };
 use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
@@ -272,10 +272,64 @@ fn step_frame_renders_sg1000_tms9918_background_from_vdp_state() {
 }
 
 #[test]
+fn step_frame_renders_sms_tms9918_background_when_mode4_is_disabled() {
+    let mut emu = Emulator::new_with_hint(&[0x00, 0x76], 48_000, SystemHint::MasterSystem)
+        .expect("SMS emulator should initialize");
+
+    set_vdp_register(&mut emu, 1, 0x40);
+    set_vdp_register(&mut emu, 2, 0x0E);
+    set_vdp_register(&mut emu, 3, 0x20);
+    set_vdp_register(&mut emu, 4, 0x00);
+    set_vdp_register(&mut emu, 7, 0x01);
+    set_vdp_write_address(&mut emu, 8);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 0x80);
+    set_vdp_write_address(&mut emu, 0x0800);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 0x60);
+    set_vdp_write_address(&mut emu, 0x3800);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 1);
+
+    emu.step_frame();
+
+    assert_eq!(
+        &emu.framebuffer()[..RGBA_CHANNELS],
+        &[0xD4, 0x52, 0x4D, 0xFF]
+    );
+}
+
+#[test]
+fn step_frame_renders_game_gear_tms9918_background_from_cropped_cram_palette() {
+    let mut emu = Emulator::new_with_hint(&[0x00, 0x76], 48_000, SystemHint::GameGear)
+        .expect("GG emulator should initialize");
+
+    set_vdp_register(&mut emu, 1, 0x40);
+    set_vdp_register(&mut emu, 2, 0x0E);
+    set_vdp_register(&mut emu, 3, 0x20);
+    set_vdp_register(&mut emu, 4, 0x00);
+    set_vdp_register(&mut emu, 7, 0x01);
+    set_vdp_write_address(&mut emu, 8);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 0x80);
+    set_vdp_write_address(&mut emu, 0x0800);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 0x60);
+    set_vdp_write_address(&mut emu, 0x3800 + 3 * 32 + 6);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 1);
+    set_vdp_cram_write_address(&mut emu, 44);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 0x0F);
+    emu.bus_mut().io_write(IO_PORT_VDP_DATA, 0x00);
+
+    emu.step_frame();
+
+    assert_eq!(
+        &emu.framebuffer()[..RGBA_CHANNELS],
+        &[0xFF, 0x00, 0x00, 0xFF]
+    );
+}
+
+#[test]
 fn step_frame_renders_sms_mode4_background_from_vdp_state() {
     let mut emu = Emulator::new_with_hint(&[0x76], 48_000, SystemHint::MasterSystem)
         .expect("SMS emulator should initialize");
 
+    set_vdp_register(&mut emu, 0, VDP_REG0_MODE4);
     set_vdp_register(&mut emu, 2, 0x0E);
     set_vdp_register(&mut emu, 1, 0x40);
     set_vdp_write_address(&mut emu, SMS_MODE4_TILE_BYTES as u16);
@@ -619,6 +673,17 @@ fn bus_trace_records_cpu_reads_and_writes_for_instruction() {
             new_value: 0x5A
         }
     )));
+}
+
+#[test]
+fn public_cpu_peek_does_not_enter_bus_trace() {
+    let mut emu = Emulator::new_with_hint(&[0x3E, 0x5A, 0x76], 48_000, SystemHint::MasterSystem)
+        .expect("emulator should initialize");
+
+    emu.bus_mut().begin_cpu_access_trace();
+    assert_eq!(emu.cpu_peek8(0x0000), 0x3E);
+
+    assert!(emu.bus_mut().drain_cpu_access_trace().is_empty());
 }
 
 #[test]

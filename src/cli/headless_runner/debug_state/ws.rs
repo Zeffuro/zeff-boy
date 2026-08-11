@@ -26,6 +26,7 @@ pub(in crate::cli::headless_runner) fn ws_debug_state(
     let footer = emulator.footer();
     let ppu = emulator.ppu_debug_snapshot();
     let apu = emulator.apu_debug_snapshot();
+    let uart = emulator.uart_debug_snapshot();
     let ram_sample = emulator
         .system_ram()
         .iter()
@@ -53,6 +54,56 @@ pub(in crate::cli::headless_runner) fn ws_debug_state(
             "new_value": hit.new_value,
             "type": format!("{:?}", hit.watch_type),
         })
+    });
+    let apu_json = serde_json::json!({
+        "sample_rate": apu.sample_rate,
+        "sample_generation_enabled": apu.sample_generation_enabled,
+        "buffered_samples": apu.buffered_samples,
+        "drained_samples": request.audio_stats.sample_count,
+        "drained_frames": request.audio_stats.frames_with_samples,
+        "drained_nonzero_samples": request.audio_stats.nonzero_samples,
+        "drained_peak_abs": request.audio_stats.peak_abs,
+        "drained_mean_abs": request.audio_stats.mean_abs(),
+        "period": apu.period,
+        "volume": apu.volume,
+        "voice_volume": apu.voice_volume,
+        "sweep_step": apu.sweep_step,
+        "sweep_value": apu.sweep_value,
+        "noise_control": apu.noise_control,
+        "control": apu.control,
+        "output_control": apu.output_control,
+        "sample_ram_pos": apu.sample_ram_pos,
+        "sample_pos": apu.sample_pos,
+        "nreg": apu.nreg,
+        "hyper_voice_sample": apu.hyper_voice_sample,
+        "hyper_voice_left_output": apu.hyper_voice_left_output,
+        "hyper_voice_right_output": apu.hyper_voice_right_output,
+        "hyper_voice_next_left": apu.hyper_voice_next_left,
+        "sound_test": apu.sound_test,
+        "hyper_voice_control": apu.hyper_voice_control,
+        "hyper_voice_channel_control": apu.hyper_voice_channel_control,
+        "channel_mutes": apu.channel_mutes,
+    });
+    let uart_json = serde_json::json!({
+        "rx_data": uart.rx_data,
+        "rx_data_hex": format!("{:02X}", uart.rx_data),
+        "tx_data": uart.tx_data,
+        "tx_data_hex": format!("{:02X}", uart.tx_data),
+        "control": uart.control,
+        "control_hex": format!("{:02X}", uart.control),
+        "status": uart.status,
+        "status_hex": format!("{:02X}", uart.status),
+        "baud_bps": uart.baud_bps,
+        "tx_cycles_remaining": uart.tx_cycles_remaining,
+        "completed_tx": uart.completed_tx,
+        "completed_tx_hex": uart.completed_tx.map(|value| format!("{value:02X}")),
+        "flags": {
+            "enabled": uart.control & 0x80 != 0,
+            "fast_baud": uart.control & 0x40 != 0,
+            "tx_empty": uart.status & 0x04 != 0,
+            "rx_ready": uart.status & 0x01 != 0,
+            "overrun": uart.status & 0x02 != 0,
+        },
     });
 
     serde_json::json!({
@@ -156,32 +207,8 @@ pub(in crate::cli::headless_runner) fn ws_debug_state(
             "in_vblank": ppu.in_vblank,
             "frame_ready": ppu.frame_ready,
         },
-        "apu": {
-            "sample_rate": apu.sample_rate,
-            "sample_generation_enabled": apu.sample_generation_enabled,
-            "buffered_samples": apu.buffered_samples,
-            "drained_samples": request.audio_stats.sample_count,
-            "drained_frames": request.audio_stats.frames_with_samples,
-            "drained_nonzero_samples": request.audio_stats.nonzero_samples,
-            "drained_peak_abs": request.audio_stats.peak_abs,
-            "drained_mean_abs": request.audio_stats.mean_abs(),
-            "period": apu.period,
-            "volume": apu.volume,
-            "voice_volume": apu.voice_volume,
-            "sweep_step": apu.sweep_step,
-            "sweep_value": apu.sweep_value,
-            "noise_control": apu.noise_control,
-            "control": apu.control,
-            "output_control": apu.output_control,
-            "sample_ram_pos": apu.sample_ram_pos,
-            "sample_pos": apu.sample_pos,
-            "nreg": apu.nreg,
-            "hyper_voice_sample": apu.hyper_voice_sample,
-            "sound_test": apu.sound_test,
-            "hyper_voice_control": apu.hyper_voice_control,
-            "hyper_voice_channel_control": apu.hyper_voice_channel_control,
-            "channel_mutes": apu.channel_mutes,
-        },
+        "apu": apu_json,
+        "uart": uart_json,
         "input": input_json(request.input),
         "input_schedule": input_schedule_json(request.opts),
         "stuck": stuck_report_json(request.stuck),

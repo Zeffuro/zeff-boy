@@ -1,4 +1,3 @@
-mod debug_actions;
 #[cfg(not(target_arch = "wasm32"))]
 mod emu_loop;
 #[cfg(not(target_arch = "wasm32"))]

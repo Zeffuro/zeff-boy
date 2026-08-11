@@ -13,6 +13,10 @@ mod ports;
 use ports::*;
 mod rtc;
 use rtc::Rtc;
+mod serial;
+use serial::Uart;
+pub use serial::UartDebugSnapshot;
+pub(crate) use serial::UartSaveState;
 mod timers;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +51,7 @@ pub struct Bus {
     pub io: Vec<u8>,
     pub internal_eeprom: Vec<u8>,
     rtc: Rtc,
+    uart: Uart,
     sound_dma: SoundDma,
     internal_eeprom_write_enabled: bool,
     internal_eeprom_protected: bool,
@@ -77,6 +82,7 @@ impl Bus {
             io: vec![0; IO_PORT_COUNT],
             internal_eeprom,
             rtc: Rtc::new(),
+            uart: Uart::default(),
             sound_dma: SoundDma::default(),
             internal_eeprom_write_enabled: true,
             internal_eeprom_protected: false,
@@ -94,6 +100,7 @@ impl Bus {
         self.io.fill(0);
         self.internal_eeprom = internal_eeprom_for_cartridge(&self.cartridge);
         self.rtc.reset();
+        self.uart.reset();
         self.sound_dma = SoundDma::default();
         self.internal_eeprom_write_enabled = true;
         self.internal_eeprom_protected = false;
@@ -160,6 +167,9 @@ impl Bus {
 
     pub fn step_cycles(&mut self, cycles: u32) {
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+        let serial_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
+        self.uart.step_cycles(cycles, serial_control);
+        self.refresh_level_interrupts();
         self.apu.step_cycles(cycles, &self.ram);
         self.step_sound_dma(cycles);
         let ppu_events = self.ppu.step_cycles(cycles, &self.ram, &self.io);
@@ -249,7 +259,27 @@ impl Bus {
     }
 
     fn serial_control_read(&self) -> u8 {
-        (self.io[usize::from(SERIAL_CONTROL_PORT)] & 0xC0) | 0x04
+        self.uart.status(self.io[usize::from(SERIAL_CONTROL_PORT)])
+    }
+
+    pub fn uart_debug_snapshot(&self) -> UartDebugSnapshot {
+        self.uart
+            .debug_snapshot(self.io[usize::from(SERIAL_CONTROL_PORT)])
+    }
+
+    pub fn sync_wonder_swan_link_peer(&mut self, peer: &mut Bus) {
+        let self_tx = self.uart.take_completed_tx();
+        let peer_tx = peer.uart.take_completed_tx();
+        let self_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
+        let peer_control = peer.io[usize::from(SERIAL_CONTROL_PORT)];
+        if let Some(value) = self_tx {
+            peer.uart.receive_byte(value, peer_control);
+        }
+        if let Some(value) = peer_tx {
+            self.uart.receive_byte(value, self_control);
+        }
+        self.refresh_level_interrupts();
+        peer.refresh_level_interrupts();
     }
 
     fn linear_bank_read(&self) -> u8 {
@@ -621,6 +651,15 @@ impl Bus {
         self.cartridge_eeprom_write_enabled = flags & 0x04 != 0;
         self.internal_eeprom_done_delay_reads = internal_done_delay_reads;
     }
+
+    pub(crate) fn uart_save_state(&self) -> UartSaveState {
+        self.uart.save_state()
+    }
+
+    pub(crate) fn load_uart_save_state(&mut self, state: UartSaveState) {
+        self.uart.load_state(state);
+        self.refresh_level_interrupts();
+    }
 }
 
 fn internal_ram_size_for_cartridge(cartridge: &Cartridge) -> usize {
@@ -818,6 +857,132 @@ mod tests {
         bus.io_write8(SERIAL_CONTROL_PORT, 0x00);
         bus.io_write8(IRQ_ACK_PORT, IRQ_SERIAL_TX);
         assert_eq!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_TX, 0);
+    }
+
+    #[test]
+    fn serial_tx_completes_after_selected_byte_time_and_syncs_to_peer() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+
+        left.io_write8(SERIAL_DATA_PORT, 0x5A);
+        assert_eq!(
+            left.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_TX_EMPTY,
+            0
+        );
+
+        left.step_cycles(3_199);
+        left.sync_wonder_swan_link_peer(&mut right);
+        assert_eq!(
+            left.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_TX_EMPTY,
+            0
+        );
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_RX_READY,
+            0
+        );
+
+        left.step_cycles(1);
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(
+            left.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_TX_EMPTY,
+            SERIAL_STATUS_TX_EMPTY
+        );
+        assert_eq!(
+            right.io_peek8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_RX_READY,
+            SERIAL_STATUS_RX_READY
+        );
+        assert_eq!(right.io_peek8(SERIAL_DATA_PORT), 0x5A);
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x5A);
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_RX_READY,
+            0
+        );
+    }
+
+    #[test]
+    fn serial_fast_baud_completes_in_shorter_byte_time() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(
+            SERIAL_CONTROL_PORT,
+            SERIAL_CONTROL_ENABLE | SERIAL_CONTROL_FAST_BAUD,
+        );
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+
+        left.io_write8(SERIAL_DATA_PORT, 0xA5);
+        left.step_cycles(799);
+        left.sync_wonder_swan_link_peer(&mut right);
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_RX_READY,
+            0
+        );
+
+        left.step_cycles(1);
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0xA5);
+    }
+
+    #[test]
+    fn serial_rx_interrupt_is_level_sensitive_to_uart_and_irq_enable() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+        right.io_write8(IRQ_ENABLE_PORT, IRQ_SERIAL_RX);
+
+        left.io_write8(SERIAL_DATA_PORT, 0x42);
+        left.step_cycles(3_200);
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(
+            right.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_RX,
+            IRQ_SERIAL_RX
+        );
+        right.io_write8(IRQ_ACK_PORT, IRQ_SERIAL_RX);
+        assert_eq!(
+            right.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_RX,
+            IRQ_SERIAL_RX
+        );
+
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x42);
+        right.io_write8(IRQ_ACK_PORT, IRQ_SERIAL_RX);
+
+        assert_eq!(right.io_read8(IRQ_STATUS_PORT) & IRQ_SERIAL_RX, 0);
+    }
+
+    #[test]
+    fn serial_receive_overrun_preserves_buffer_until_reset() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+
+        left.io_write8(SERIAL_DATA_PORT, 0x11);
+        left.step_cycles(3_200);
+        left.sync_wonder_swan_link_peer(&mut right);
+        left.io_write8(SERIAL_DATA_PORT, 0x22);
+        left.step_cycles(3_200);
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_OVERRUN,
+            SERIAL_STATUS_OVERRUN
+        );
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x11);
+
+        right.io_write8(
+            SERIAL_CONTROL_PORT,
+            SERIAL_CONTROL_ENABLE | SERIAL_CONTROL_RESET_OVERRUN,
+        );
+
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_OVERRUN,
+            0
+        );
     }
 
     #[test]
@@ -1082,6 +1247,46 @@ mod tests {
     }
 
     #[test]
+    fn mono_model_hides_color_dma_ports() {
+        let mut bus = Bus::new(minimal_cart());
+        bus.write8(0x0000, 0x12);
+        bus.io_write16(DMA_SOURCE_LO_PORT, 0x0000);
+        bus.io_write16(DMA_SOURCE_SEGMENT_PORT, 0x0000);
+        bus.io_write16(DMA_DESTINATION_LO_PORT, 0x0100);
+        bus.io_write16(DMA_LENGTH_LO_PORT, 0x0002);
+        bus.io_write8(DMA_CONTROL_PORT, 0x80);
+
+        assert_eq!(bus.io_read8(DMA_SOURCE_LO_PORT), 0x90);
+        assert_eq!(bus.io_read8(DMA_CONTROL_PORT), 0x90);
+        assert_eq!(bus.read8(0x0100), 0x00);
+    }
+
+    #[test]
+    fn mono_model_hides_hyper_voice_control_ports() {
+        let mut bus = Bus::new(minimal_cart());
+
+        bus.io_write8(0x006A, 0xFF);
+        bus.io_write8(0x006B, 0xFF);
+
+        assert_eq!(bus.io_read8(0x006A), 0x90);
+        assert_eq!(bus.io_read8(0x006B), 0x90);
+        let apu = bus.apu_debug_snapshot();
+        assert_eq!(apu.hyper_voice_control, 0);
+        assert_eq!(apu.hyper_voice_channel_control, 0);
+    }
+
+    #[test]
+    fn color_model_exposes_hyper_voice_control_ports() {
+        let mut bus = Bus::new(color_cart());
+
+        bus.io_write8(0x006A, 0x8F);
+        bus.io_write8(0x006B, 0xFF);
+
+        assert_eq!(bus.io_read8(0x006A), 0x8F);
+        assert_eq!(bus.io_read8(0x006B), 0x70);
+    }
+
+    #[test]
     fn dma_control_start_copies_words_and_clears_start_bit() {
         let mut bus = Bus::new(color_cart());
         bus.write8(0x0000, 0x12);
@@ -1174,6 +1379,86 @@ mod tests {
         assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_LO_PORT), 0x1235);
         assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0000);
         assert_eq!(bus.io_read8(SOUND_DMA_CONTROL_PORT), 0x03);
+    }
+
+    #[test]
+    fn sound_dma_zero_length_enable_fails() {
+        let mut bus = Bus::new(color_cart());
+        bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0000);
+        bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+
+        bus.io_write8(SOUND_DMA_CONTROL_PORT, SOUND_DMA_ENABLE | 0x03);
+
+        assert_eq!(bus.io_read8(SOUND_DMA_CONTROL_PORT) & SOUND_DMA_ENABLE, 0);
+    }
+
+    #[test]
+    fn sound_dma_hold_writes_zero_without_consuming_length() {
+        let mut bus = Bus::new(color_cart());
+        bus.write8(0x1234, 0x7F);
+        bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x1234);
+        bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0x0000);
+        bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0001);
+        bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+        bus.apu.write_hyper_voice_dma_sample(0x55);
+        bus.io_write8(
+            SOUND_DMA_CONTROL_PORT,
+            SOUND_DMA_ENABLE | SOUND_DMA_HOLD | SOUND_DMA_TARGET_HYPERVOICE | 0x03,
+        );
+
+        bus.step_cycles(128);
+
+        assert_eq!(bus.apu_debug_snapshot().hyper_voice_sample, 0x00);
+        assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0001);
+        assert_eq!(
+            bus.io_read8(SOUND_DMA_CONTROL_PORT) & SOUND_DMA_ENABLE,
+            SOUND_DMA_ENABLE
+        );
+    }
+
+    #[test]
+    fn sound_dma_decrement_direction_reads_source_backwards() {
+        let mut bus = Bus::new(color_cart());
+        bus.write8(0x1234, 0x22);
+        bus.write8(0x1235, 0x11);
+        bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x1235);
+        bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0x0000);
+        bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0002);
+        bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+        bus.io_write8(
+            SOUND_DMA_CONTROL_PORT,
+            SOUND_DMA_ENABLE | SOUND_DMA_DECREMENT | 0x03,
+        );
+
+        bus.step_cycles(128);
+        assert_eq!(bus.io_read8(SOUND_VOLUME_CHANNEL2_PORT), 0x11);
+        assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_LO_PORT), 0x1234);
+        assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0001);
+
+        bus.step_cycles(128);
+        assert_eq!(bus.io_read8(SOUND_VOLUME_CHANNEL2_PORT), 0x22);
+        assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_LO_PORT), 0x1233);
+        assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0000);
+        assert_eq!(bus.io_read8(SOUND_DMA_CONTROL_PORT) & SOUND_DMA_ENABLE, 0);
+    }
+
+    #[test]
+    fn sound_dma_can_target_hyper_voice_sample() {
+        let mut bus = Bus::new(color_cart());
+        bus.write8(0x1234, 0x6A);
+        bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x1234);
+        bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0x0000);
+        bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0001);
+        bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+        bus.io_write8(
+            SOUND_DMA_CONTROL_PORT,
+            SOUND_DMA_ENABLE | SOUND_DMA_TARGET_HYPERVOICE | 0x03,
+        );
+
+        bus.step_cycles(128);
+
+        assert_eq!(bus.apu_debug_snapshot().hyper_voice_sample, 0x6A);
+        assert_eq!(bus.io_read8(SOUND_DMA_CONTROL_PORT) & SOUND_DMA_ENABLE, 0);
     }
 
     #[test]

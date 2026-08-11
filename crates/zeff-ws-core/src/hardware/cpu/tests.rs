@@ -320,7 +320,7 @@ fn pending_interrupt_wakes_halt_even_when_if_is_clear() {
 }
 
 #[test]
-fn mov_immediate_and_out_port_update_bank_register() {
+fn mov_immediate_and_out_port_update_bank0_register() {
     let mut cpu = Cpu::new();
     let mut bus = bus_with_code(&[0xB0, 0x07, 0xE6, 0xC2, 0xF4]);
     cpu.step(&mut bus);

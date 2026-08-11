@@ -4,6 +4,7 @@ impl Bus {
     pub fn io_read8(&mut self, port: u16) -> u8 {
         let value = match port {
             CURRENT_LINE_PORT => self.ppu.vcount() as u8,
+            port if !self.is_color_model() && color_only_port(port) => self.io_open_bus(),
             port if Apu::handles_port(port) => self.apu.read8(port),
             LINE_COMPARE_PORT => self.io[usize::from(LINE_COMPARE_PORT)],
             HBLANK_TIMER_COUNT_LO_PORT | HBLANK_TIMER_COUNT_HI_PORT => {
@@ -26,7 +27,11 @@ impl Bus {
             INTERNAL_EEPROM_COMMAND_HIGH_PORT => 0,
             IRQ_VECTOR_BASE_PORT => self.interrupt_base_read(),
             IRQ_ENABLE_PORT => self.io[usize::from(IRQ_ENABLE_PORT)],
-            SERIAL_DATA_PORT => self.io[usize::from(SERIAL_DATA_PORT)],
+            SERIAL_DATA_PORT => {
+                let value = self.uart.read_data();
+                self.io[usize::from(SERIAL_DATA_PORT)] = value;
+                value
+            }
             SERIAL_CONTROL_PORT => self.serial_control_read(),
             KEYPAD_PORT => self.keypad.read(),
             IRQ_STATUS_PORT => self.io[usize::from(IRQ_STATUS_PORT)],
@@ -56,6 +61,7 @@ impl Bus {
     pub fn io_peek8(&self, port: u16) -> u8 {
         match port {
             CURRENT_LINE_PORT => self.ppu.vcount() as u8,
+            port if !self.is_color_model() && color_only_port(port) => self.io_open_bus(),
             port if Apu::handles_port(port) => self.apu.read8(port),
             LINE_COMPARE_PORT => self.io[usize::from(LINE_COMPARE_PORT)],
             HBLANK_TIMER_COUNT_LO_PORT | HBLANK_TIMER_COUNT_HI_PORT => {
@@ -78,7 +84,7 @@ impl Bus {
             INTERNAL_EEPROM_COMMAND_HIGH_PORT => 0,
             IRQ_VECTOR_BASE_PORT => self.interrupt_base_read(),
             IRQ_ENABLE_PORT => self.io[usize::from(IRQ_ENABLE_PORT)],
-            SERIAL_DATA_PORT => self.io[usize::from(SERIAL_DATA_PORT)],
+            SERIAL_DATA_PORT => self.uart.peek_data(),
             SERIAL_CONTROL_PORT => self.serial_control_read(),
             KEYPAD_PORT => self.keypad.read(),
             IRQ_STATUS_PORT => self.io[usize::from(IRQ_STATUS_PORT)],
@@ -103,6 +109,7 @@ impl Bus {
         let old_value = self.io_peek8(port);
         match port {
             CURRENT_LINE_PORT => {}
+            port if !self.is_color_model() && color_only_port(port) => {}
             port if Apu::handles_port(port) => self.apu.write8(port, value),
             LINE_COMPARE_PORT => self.io[usize::from(LINE_COMPARE_PORT)] = value,
             TIMER_CONTROL_PORT => self.io[usize::from(TIMER_CONTROL_PORT)] = value & 0x0F,
@@ -185,9 +192,11 @@ impl Bus {
             }
             SERIAL_DATA_PORT => {
                 self.io[usize::from(SERIAL_DATA_PORT)] = value;
+                self.uart
+                    .write_data(value, self.io[usize::from(SERIAL_CONTROL_PORT)]);
             }
             SERIAL_CONTROL_PORT => {
-                self.io[usize::from(SERIAL_CONTROL_PORT)] = value & 0xC0;
+                self.io[usize::from(SERIAL_CONTROL_PORT)] = self.uart.write_control(value);
                 self.refresh_level_interrupts();
             }
             KEYPAD_PORT => self.keypad.write(value),
@@ -229,4 +238,29 @@ impl Bus {
         self.io_write8(port, lo);
         self.io_write8(port.wrapping_add(1), hi);
     }
+}
+
+fn color_only_port(port: u16) -> bool {
+    Apu::handles_color_only_port(port)
+        || matches!(
+            port,
+            DMA_SOURCE_LO_PORT
+                | DMA_SOURCE_HI_PORT
+                | DMA_SOURCE_SEGMENT_PORT
+                | DMA_SOURCE_SEGMENT_HIGH_PORT
+                | DMA_DESTINATION_LO_PORT
+                | DMA_DESTINATION_HI_PORT
+                | DMA_LENGTH_LO_PORT
+                | DMA_LENGTH_HI_PORT
+                | DMA_CONTROL_PORT
+                | SOUND_DMA_SOURCE_LO_PORT
+                | SOUND_DMA_SOURCE_HI_PORT
+                | SOUND_DMA_SOURCE_SEGMENT_PORT
+                | SOUND_DMA_SOURCE_SEGMENT_HIGH_PORT
+                | SOUND_DMA_LENGTH_LO_PORT
+                | SOUND_DMA_LENGTH_HI_PORT
+                | SOUND_DMA_LENGTH_SEGMENT_PORT
+                | SOUND_DMA_LENGTH_SEGMENT_HIGH_PORT
+                | SOUND_DMA_CONTROL_PORT
+        )
 }

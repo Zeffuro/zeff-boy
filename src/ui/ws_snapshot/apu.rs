@@ -56,11 +56,18 @@ pub(super) fn ws_apu_snapshot(emu: &Emulator) -> ApuDebugInfo {
                 apu.sample_rate, apu.noise_control, apu.nreg, apu.sweep_value, apu.sweep_step
             ),
             format!(
-                "voice_volume={:02X} hyper_sample={:02X} hyper_ctrl={:02X} hyper_ch={:02X}",
+                "voice_volume={:02X} hyper_sample={:02X} hyper_ctrl={:02X} hyper_ch={:02X} hyper_L={} hyper_R={} next={}",
                 apu.voice_volume,
                 apu.hyper_voice_sample,
                 apu.hyper_voice_control,
-                apu.hyper_voice_channel_control
+                apu.hyper_voice_channel_control,
+                apu.hyper_voice_left_output,
+                apu.hyper_voice_right_output,
+                if apu.hyper_voice_next_left {
+                    "left"
+                } else {
+                    "right"
+                }
             ),
         ],
         master_waveform: Vec::new(),

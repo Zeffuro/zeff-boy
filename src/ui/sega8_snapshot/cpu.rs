@@ -1,13 +1,11 @@
 use super::{on_off, sega8_system_label};
-use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
+use crate::debug::{CpuDebugSnapshot, DebugSection};
 use zeff_emu_common::address::Address;
 use zeff_sega8_core::emulator::Emulator;
 use zeff_sega8_core::hardware::constants::{
     SMS_VISIBLE_SCANLINES, Z80_FLAG_BIT_3, Z80_FLAG_BIT_5, Z80_FLAG_CARRY, Z80_FLAG_HALF_CARRY,
     Z80_FLAG_PARITY_OVERFLOW, Z80_FLAG_SIGN, Z80_FLAG_SUBTRACT, Z80_FLAG_ZERO,
 };
-
-const RECENT_OPCODE_LINE_COUNT: usize = 16;
 
 pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
     let cpu = emu.cpu();
@@ -19,17 +17,10 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
     let mapper = emu.bus().mapper();
     let mem_around_pc: [(Address, u8); 32] = std::array::from_fn(|i| {
         let addr = pc.wrapping_add(i as u16);
-        (Address::from(addr), emu.bus().cpu_read(addr))
+        (Address::from(addr), emu.cpu_peek8(addr))
     });
-    let recent_opcodes = super::super::build_recent_opcode_display(
-        emu.recent_opcodes(RECENT_OPCODE_LINE_COUNT),
-        RECENT_OPCODE_LINE_COUNT,
-        |(pc, opcode, cycles), repeat_count| RecentOpcodeDisplay {
-            address: Address::from(pc),
-            bytes: vec![opcode],
-            detail: Some(format!("{cycles} cyc")),
-            repeat_count,
-        },
+    let recent_opcodes = super::super::opcodes::sega8_recent_opcode_display(
+        emu.recent_opcodes(super::super::opcodes::RECENT_OPCODE_LINE_COUNT),
     );
     let debug_controls = super::super::build_debug_control_snapshot(
         emu.iter_breakpoints(),

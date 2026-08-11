@@ -38,12 +38,12 @@ pub(crate) fn collect_sega8_snapshot(
             snapshot.show_memory_viewer,
             snapshot.memory_view_start,
             buffers.memory_page.take(),
-            |addr| emu.bus().cpu_read(narrow_u16(addr)),
+            |addr| emu.cpu_peek8(narrow_u16(addr)),
         ),
         memory_search_results: super::build_memory_search_ranges(
             snapshot.memory_search.as_ref(),
             SEGA8_SEARCH_RANGES,
-            |addr| emu.bus().cpu_read(narrow_u16(addr)),
+            |addr| emu.cpu_peek8(narrow_u16(addr)),
         ),
         ..Default::default()
     };
@@ -57,7 +57,7 @@ pub(crate) fn collect_sega8_snapshot(
         snapshot.show_disassembler,
         snapshot.last_disasm_pc,
         Address::from(emu.cpu().regs().pc),
-        || z80_disassemble_around(|addr| emu.bus().cpu_read(addr), emu.cpu().regs().pc, 12, 26),
+        || z80_disassemble_around(|addr| emu.cpu_peek8(addr), emu.cpu().regs().pc, 12, 26),
         emu.iter_breakpoints(),
     );
 

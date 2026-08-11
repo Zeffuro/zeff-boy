@@ -2,6 +2,11 @@ use super::constants::CPU_CLOCK_HZ;
 
 const CHANNEL_COUNT: usize = 4;
 const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+const HYPER_VOICE_LEFT_LO_PORT: u16 = 0x0064;
+const HYPER_VOICE_LEFT_HI_PORT: u16 = 0x0065;
+const HYPER_VOICE_RIGHT_LO_PORT: u16 = 0x0066;
+const HYPER_VOICE_RIGHT_HI_PORT: u16 = 0x0067;
+const HYPER_VOICE_INPUT_PORT: u16 = 0x0069;
 const HYPER_VOICE_CONTROL_PORT: u16 = 0x006A;
 const HYPER_VOICE_CHANNEL_CONTROL_PORT: u16 = 0x006B;
 const PERIOD_PORT_START: u16 = 0x0080;
@@ -32,6 +37,9 @@ const CHANNEL_4_NOISE: u8 = 0x80;
 const NOISE_ENABLE: u8 = 0x10;
 const SOUND_TEST_FAST_SWEEP: u8 = 0x02;
 const SOUND_TEST_READ_MASK: u8 = 0xE3;
+const HYPER_VOICE_ENABLE: u8 = 0x80;
+const HYPER_VOICE_TARGET_MASK: u8 = 0x60;
+const HYPER_VOICE_RESET_NEXT_LEFT: u8 = 0x10;
 const NOISE_TAPS: [u8; 8] = [14, 10, 13, 4, 8, 6, 9, 11];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +66,9 @@ pub struct Apu {
     sample_pos: [u8; CHANNEL_COUNT],
     nreg: u16,
     hyper_voice_sample: u8,
+    hyper_voice_left_output: i16,
+    hyper_voice_right_output: i16,
+    hyper_voice_next_left: bool,
     sound_test: u8,
     hyper_voice_control: u8,
     hyper_voice_channel_control: u8,
@@ -85,6 +96,9 @@ pub struct ApuDebugSnapshot {
     pub sample_pos: [u8; CHANNEL_COUNT],
     pub nreg: u16,
     pub hyper_voice_sample: u8,
+    pub hyper_voice_left_output: i16,
+    pub hyper_voice_right_output: i16,
+    pub hyper_voice_next_left: bool,
     pub sound_test: u8,
     pub hyper_voice_control: u8,
     pub hyper_voice_channel_control: u8,
@@ -108,6 +122,9 @@ pub(crate) struct ApuSaveState {
     pub(crate) sample_pos: [u8; CHANNEL_COUNT],
     pub(crate) nreg: u16,
     pub(crate) hyper_voice_sample: u8,
+    pub(crate) hyper_voice_left_output: i16,
+    pub(crate) hyper_voice_right_output: i16,
+    pub(crate) hyper_voice_next_left: bool,
     pub(crate) sound_test: u8,
     pub(crate) hyper_voice_control: u8,
     pub(crate) hyper_voice_channel_control: u8,
@@ -133,6 +150,9 @@ impl Apu {
             sample_pos: [0; CHANNEL_COUNT],
             nreg: 0,
             hyper_voice_sample: 0,
+            hyper_voice_left_output: 0,
+            hyper_voice_right_output: 0,
+            hyper_voice_next_left: true,
             sound_test: 0,
             hyper_voice_control: 0,
             hyper_voice_channel_control: 0,
@@ -164,6 +184,9 @@ impl Apu {
         self.sample_pos = [0; CHANNEL_COUNT];
         self.nreg = 0;
         self.hyper_voice_sample = 0;
+        self.hyper_voice_left_output = 0;
+        self.hyper_voice_right_output = 0;
+        self.hyper_voice_next_left = true;
         self.sound_test = 0;
         self.hyper_voice_control = 0;
         self.hyper_voice_channel_control = 0;
@@ -174,8 +197,15 @@ impl Apu {
     pub fn handles_port(port: u16) -> bool {
         matches!(
             port,
-            HYPER_VOICE_CONTROL_PORT | HYPER_VOICE_CHANNEL_CONTROL_PORT | PERIOD_PORT_START
-                ..=CHANNEL_OUTPUT_END_PORT
+            HYPER_VOICE_LEFT_LO_PORT..=HYPER_VOICE_CHANNEL_CONTROL_PORT
+                | PERIOD_PORT_START..=CHANNEL_OUTPUT_END_PORT
+        )
+    }
+
+    pub fn handles_color_only_port(port: u16) -> bool {
+        matches!(
+            port,
+            HYPER_VOICE_LEFT_LO_PORT..=HYPER_VOICE_CHANNEL_CONTROL_PORT
         )
     }
 
@@ -212,6 +242,11 @@ impl Apu {
             CHANNEL_OUTPUT_LEFT_RIGHT_PORT | CHANNEL_OUTPUT_LEFT_RIGHT_HI_PORT => self
                 .channel_output_word(OutputSide::LeftRight)
                 .to_le_bytes()[usize::from(port - CHANNEL_OUTPUT_LEFT_RIGHT_PORT)],
+            HYPER_VOICE_LEFT_LO_PORT => self.hyper_voice_left_output as u8,
+            HYPER_VOICE_LEFT_HI_PORT => (self.hyper_voice_left_output >> 8) as u8,
+            HYPER_VOICE_RIGHT_LO_PORT => self.hyper_voice_right_output as u8,
+            HYPER_VOICE_RIGHT_HI_PORT => (self.hyper_voice_right_output >> 8) as u8,
+            HYPER_VOICE_INPUT_PORT => self.hyper_voice_sample,
             HYPER_VOICE_CONTROL_PORT => self.hyper_voice_control,
             HYPER_VOICE_CHANNEL_CONTROL_PORT => self.hyper_voice_channel_control,
             _ => 0,
@@ -253,14 +288,62 @@ impl Apu {
             }
             VOICE_VOLUME_PORT => self.voice_volume = value & 0x0F,
             SOUND_TEST_PORT => self.sound_test = value & SOUND_TEST_READ_MASK,
+            HYPER_VOICE_LEFT_LO_PORT => {
+                self.hyper_voice_left_output =
+                    (self.hyper_voice_left_output & !0x00FFi16) | i16::from(value);
+            }
+            HYPER_VOICE_LEFT_HI_PORT => {
+                self.hyper_voice_left_output =
+                    (self.hyper_voice_left_output & 0x00FF) | (i16::from(value) << 8);
+            }
+            HYPER_VOICE_RIGHT_LO_PORT => {
+                self.hyper_voice_right_output =
+                    (self.hyper_voice_right_output & !0x00FFi16) | i16::from(value);
+            }
+            HYPER_VOICE_RIGHT_HI_PORT => {
+                self.hyper_voice_right_output =
+                    (self.hyper_voice_right_output & 0x00FF) | (i16::from(value) << 8);
+            }
+            HYPER_VOICE_INPUT_PORT => self.write_hyper_voice_manual_sample(value),
             HYPER_VOICE_CONTROL_PORT => self.hyper_voice_control = value,
-            HYPER_VOICE_CHANNEL_CONTROL_PORT => self.hyper_voice_channel_control = value & 0x6F,
+            HYPER_VOICE_CHANNEL_CONTROL_PORT => {
+                self.hyper_voice_channel_control =
+                    value & (HYPER_VOICE_TARGET_MASK | HYPER_VOICE_RESET_NEXT_LEFT);
+                if value & HYPER_VOICE_RESET_NEXT_LEFT != 0 {
+                    self.hyper_voice_next_left = true;
+                }
+            }
             _ => {}
         }
     }
 
-    pub(crate) fn write_hyper_voice_sample(&mut self, value: u8) {
+    pub(crate) fn write_hyper_voice_dma_sample(&mut self, value: u8) {
         self.hyper_voice_sample = value;
+        let sample = self.hyper_voice_output_sample(value);
+        match self.hyper_voice_channel_control & HYPER_VOICE_TARGET_MASK {
+            0x00 => self.write_next_hyper_voice_stereo_sample(sample),
+            0x20 => self.hyper_voice_left_output = sample,
+            0x40 => self.hyper_voice_right_output = sample,
+            _ => {
+                self.hyper_voice_left_output = sample;
+                self.hyper_voice_right_output = sample;
+            }
+        }
+    }
+
+    fn write_hyper_voice_manual_sample(&mut self, value: u8) {
+        self.hyper_voice_sample = value;
+        let sample = self.hyper_voice_output_sample(value);
+        self.write_next_hyper_voice_stereo_sample(sample);
+    }
+
+    fn write_next_hyper_voice_stereo_sample(&mut self, sample: i16) {
+        if self.hyper_voice_next_left {
+            self.hyper_voice_left_output = sample;
+        } else {
+            self.hyper_voice_right_output = sample;
+        }
+        self.hyper_voice_next_left = !self.hyper_voice_next_left;
     }
 
     pub fn step_cycles(&mut self, cycles: u32, ram: &[u8]) {
@@ -327,6 +410,9 @@ impl Apu {
             sample_pos: self.sample_pos,
             nreg: self.nreg,
             hyper_voice_sample: self.hyper_voice_sample,
+            hyper_voice_left_output: self.hyper_voice_left_output,
+            hyper_voice_right_output: self.hyper_voice_right_output,
+            hyper_voice_next_left: self.hyper_voice_next_left,
             sound_test: self.sound_test,
             hyper_voice_control: self.hyper_voice_control,
             hyper_voice_channel_control: self.hyper_voice_channel_control,
@@ -351,6 +437,9 @@ impl Apu {
             sample_pos: self.sample_pos,
             nreg: self.nreg,
             hyper_voice_sample: self.hyper_voice_sample,
+            hyper_voice_left_output: self.hyper_voice_left_output,
+            hyper_voice_right_output: self.hyper_voice_right_output,
+            hyper_voice_next_left: self.hyper_voice_next_left,
             sound_test: self.sound_test,
             hyper_voice_control: self.hyper_voice_control,
             hyper_voice_channel_control: self.hyper_voice_channel_control,
@@ -375,9 +464,13 @@ impl Apu {
         self.sample_pos = state.sample_pos.map(|pos| pos & 0x1F);
         self.nreg = state.nreg & 0x7FFF;
         self.hyper_voice_sample = state.hyper_voice_sample;
+        self.hyper_voice_left_output = state.hyper_voice_left_output;
+        self.hyper_voice_right_output = state.hyper_voice_right_output;
+        self.hyper_voice_next_left = state.hyper_voice_next_left;
         self.sound_test = state.sound_test & SOUND_TEST_READ_MASK;
         self.hyper_voice_control = state.hyper_voice_control;
-        self.hyper_voice_channel_control = state.hyper_voice_channel_control & 0x6F;
+        self.hyper_voice_channel_control = state.hyper_voice_channel_control
+            & (HYPER_VOICE_TARGET_MASK | HYPER_VOICE_RESET_NEXT_LEFT);
         self.sample_cycle_accumulator = state.sample_cycle_accumulator % CPU_CLOCK_HZ;
         self.channel_mutes = state.channel_mutes;
         self.sample_buffer.clear();
@@ -567,14 +660,9 @@ impl Apu {
             right += channel_right;
         }
 
-        if self.hyper_voice_control & 0x80 != 0 {
-            let sample = f32::from(self.hyper_voice_output_sample()) / 1024.0;
-            if self.hyper_voice_channel_control & 0x40 != 0 {
-                left += sample;
-            }
-            if self.hyper_voice_channel_control & 0x20 != 0 {
-                right += sample;
-            }
+        if self.hyper_voice_control & HYPER_VOICE_ENABLE != 0 {
+            left += f32::from(self.hyper_voice_left_output) / 32768.0;
+            right += f32::from(self.hyper_voice_right_output) / 32768.0;
         }
 
         (
@@ -634,15 +722,19 @@ impl Apu {
         }
     }
 
-    fn hyper_voice_output_sample(&self) -> i16 {
-        let shift = u32::from(8 - (self.hyper_voice_control & 0x03));
+    fn hyper_voice_output_sample(&self, value: u8) -> i16 {
+        let shift = u32::from(self.hyper_voice_control & 0x03);
         let sample = match self.hyper_voice_control & 0x0C {
-            0x00 => (u16::from(self.hyper_voice_sample) << shift) as i16,
-            0x04 => (i16::from(self.hyper_voice_sample) | !0x00FF) << shift,
-            0x08 => (self.hyper_voice_sample as i8 as i16) << shift,
-            _ => (u16::from(self.hyper_voice_sample) << 8) as i16,
+            0x00 => (u16::from(value) << 8) as i16,
+            0x04 => (i16::from(value) | !0x00FFi16) << 8,
+            0x08 => (value as i8 as i16) << 8,
+            _ => (u16::from(value) << 8) as i16,
         };
-        sample >> 5
+        if self.hyper_voice_control & 0x0C == 0x0C {
+            sample
+        } else {
+            sample >> shift
+        }
     }
 }
 
@@ -713,6 +805,74 @@ mod tests {
     }
 
     #[test]
+    fn hyper_voice_sample_generates_selected_stereo_output() {
+        let mut apu = Apu::new(48_000);
+        let ram = vec![0; 0x10000];
+        apu.write8(0x6A, 0x80);
+        apu.write8(0x6B, 0x60);
+        apu.write_hyper_voice_dma_sample(0x7F);
+
+        apu.step_cycles(64, &ram);
+
+        let mut samples = Vec::new();
+        apu.drain_audio_samples_into(&mut samples);
+        assert!(samples.len() >= 2);
+        assert!(samples[0] > 0.1);
+        assert!(samples[1] > 0.1);
+    }
+
+    #[test]
+    fn hyper_voice_signed_mode_can_generate_negative_output() {
+        let mut apu = Apu::new(48_000);
+        let ram = vec![0; 0x10000];
+        apu.write8(0x6A, 0x88);
+        apu.write8(0x6B, 0x40);
+        apu.write_hyper_voice_dma_sample(0x80);
+
+        apu.step_cycles(64, &ram);
+
+        let mut samples = Vec::new();
+        apu.drain_audio_samples_into(&mut samples);
+        assert!(samples.len() >= 2);
+        assert!(samples[0].abs() <= f32::EPSILON);
+        assert!(samples[1] < -0.1);
+    }
+
+    #[test]
+    fn hyper_voice_direct_output_ports_feed_mixer() {
+        let mut apu = Apu::new(48_000);
+        let ram = vec![0; 0x10000];
+        apu.write8(0x64, 0x00);
+        apu.write8(0x65, 0x40);
+        apu.write8(0x66, 0x00);
+        apu.write8(0x67, 0xC0);
+        apu.write8(0x6A, 0x80);
+
+        apu.step_cycles(64, &ram);
+
+        let mut samples = Vec::new();
+        apu.drain_audio_samples_into(&mut samples);
+        assert!(samples.len() >= 2);
+        assert!(samples[0] > 0.1);
+        assert!(samples[1] < -0.1);
+    }
+
+    #[test]
+    fn hyper_voice_manual_input_alternates_stereo_channels() {
+        let mut apu = Apu::new(48_000);
+        apu.write8(0x6A, 0x88);
+        apu.write8(0x6B, 0x10);
+
+        apu.write8(0x69, 0x80);
+        apu.write8(0x69, 0x7F);
+
+        let debug = apu.debug_snapshot();
+        assert!(debug.hyper_voice_left_output < 0);
+        assert!(debug.hyper_voice_right_output > 0);
+        assert!(debug.hyper_voice_next_left);
+    }
+
+    #[test]
     fn sound_port_masks_match_hardware_behavior() {
         let mut apu = Apu::new(48_000);
 
@@ -728,6 +888,6 @@ mod tests {
         assert_eq!(apu.read8(0x91), 0x8F);
         assert_eq!(apu.read8(0x93), 0x7F);
         assert_eq!(apu.read8(0x94), 0x0F);
-        assert_eq!(apu.read8(0x6B), 0x6F);
+        assert_eq!(apu.read8(0x6B), 0x70);
     }
 }

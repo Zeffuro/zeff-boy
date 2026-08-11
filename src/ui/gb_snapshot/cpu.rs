@@ -1,4 +1,4 @@
-use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
+use crate::debug::{CpuDebugSnapshot, DebugSection};
 use zeff_emu_common::address::Address;
 
 pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebugSnapshot {
@@ -109,23 +109,8 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         },
     ];
 
-    let recent_opcodes = super::super::build_recent_opcode_display(
-        info.recent_ops.iter().copied(),
-        16,
-        |entry, repeat_count| {
-            let (pc, opcode, cb_prefix) = entry;
-            RecentOpcodeDisplay {
-                address: Address::from(pc),
-                bytes: if cb_prefix {
-                    vec![0xCB, opcode]
-                } else {
-                    vec![opcode]
-                },
-                detail: None,
-                repeat_count,
-            }
-        },
-    );
+    let recent_opcodes =
+        super::super::opcodes::gb_recent_opcode_display(info.recent_ops.iter().copied());
 
     let debug_controls = super::super::build_debug_control_snapshot(
         info.breakpoints.iter().copied().map(Address::from),

@@ -1,4 +1,4 @@
-use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
+use crate::debug::{CpuDebugSnapshot, DebugSection};
 use zeff_emu_common::address::Address;
 
 pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDebugSnapshot {
@@ -52,16 +52,8 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         },
     ];
 
-    let recent_opcodes = super::super::build_recent_opcode_display(
-        snap.recent_ops.iter().copied(),
-        16,
-        |(pc, opcode), repeat_count| RecentOpcodeDisplay {
-            address: Address::from(pc),
-            bytes: vec![opcode],
-            detail: None,
-            repeat_count,
-        },
-    );
+    let recent_opcodes =
+        super::super::opcodes::nes_recent_opcode_display(snap.recent_ops.iter().copied());
 
     let debug_controls = super::super::build_debug_control_snapshot(
         emu.iter_breakpoints().map(Address::from),

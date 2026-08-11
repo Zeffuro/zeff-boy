@@ -20,7 +20,7 @@ impl CoreState {
         match &mut self.core {
             ActiveCore::Gb(emu) => {
                 if let Ok((patches, _)) = zeff_gb_core::cheats::parse_cheat(code) {
-                    for patch in patches {
+                    for patch in patches.into_iter().map(resolve_libretro_patch_parameter) {
                         if patch.is_rom_patch() {
                             emu.add_rom_patch(patch);
                         } else if matches!(
@@ -46,7 +46,7 @@ impl CoreState {
             }
             ActiveCore::Sega8(emu) => {
                 if let Ok((patches, _)) = zeff_sega8_core::cheats::parse_cheat(code) {
-                    for patch in patches {
+                    for patch in patches.into_iter().map(resolve_libretro_patch_parameter) {
                         if patch.is_rom_patch() {
                             emu.add_rom_patch(patch);
                         } else if matches!(
@@ -84,5 +84,13 @@ impl CoreState {
                 apply_wide_ram_cheats(emu.as_mut(), cheats);
             }
         }
+    }
+}
+
+fn resolve_libretro_patch_parameter(patch: CheatPatch) -> CheatPatch {
+    if patch.has_user_parameter() {
+        patch.resolve_user_parameter(patch.default_user_value().unwrap_or(0))
+    } else {
+        patch
     }
 }

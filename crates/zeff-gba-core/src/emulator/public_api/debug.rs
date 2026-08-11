@@ -10,17 +10,17 @@ impl Emulator {
     }
 
     pub fn cpu_write8(&mut self, addr: u32, value: u8) {
-        let old = self.bus.read8(addr);
+        let old = self.bus.peek8(addr);
         self.bus.write8(addr, value);
         self.debug.check_watch_write(addr, old, value);
     }
 
     pub fn cpu_peek8(&self, addr: u32) -> u8 {
-        self.bus.read8(addr)
+        self.bus.peek8(addr)
     }
 
     pub fn cpu_read8_debuggable(&mut self, addr: u32) -> u8 {
-        let value = self.bus.read8(addr);
+        let value = self.bus.peek8(addr);
         self.debug.check_watch_read(addr, value);
         value
     }
@@ -30,7 +30,7 @@ impl Emulator {
     }
 
     pub fn cpu_peek16(&self, addr: u32) -> u16 {
-        self.bus.read16(addr)
+        self.bus.peek16(addr)
     }
 
     pub fn cpu_write32(&mut self, addr: u32, value: u32) {
@@ -38,7 +38,7 @@ impl Emulator {
     }
 
     pub fn cpu_peek32(&self, addr: u32) -> u32 {
-        self.bus.read32(addr)
+        self.bus.peek32(addr)
     }
 
     pub fn debug_continue(&mut self) {

@@ -63,17 +63,17 @@ impl Emulator {
     }
 
     pub fn cpu_peek8(&self, addr: u16) -> u8 {
-        self.bus.cpu_read(addr)
+        self.bus.cpu_peek(addr)
     }
 
     pub fn cpu_read8_debuggable(&mut self, addr: u16) -> u8 {
-        let value = self.bus.cpu_read(addr);
+        let value = self.bus.cpu_peek(addr);
         self.debug.check_watch_read(Address::from(addr), value);
         value
     }
 
     pub fn cpu_write8(&mut self, addr: u16, value: u8) {
-        let old = self.bus.cpu_read(addr);
+        let old = self.bus.cpu_peek(addr);
         self.bus.cpu_write(addr, value);
         self.debug
             .check_watch_write(Address::from(addr), old, value);
@@ -81,7 +81,7 @@ impl Emulator {
 
     pub fn debug_write(&mut self, addr: Address, val: u8) {
         let addr16 = addr as u16;
-        let old_value = self.bus.cpu_read(addr16);
+        let old_value = self.bus.cpu_peek(addr16);
         self.bus.cpu_write(addr16, val);
         self.debug
             .check_watch_write(Address::from(addr16), old_value, val);

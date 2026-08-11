@@ -100,6 +100,18 @@ impl Bus {
         self.write_io16_raw(SOUNDBIAS, 0x0200);
     }
 
+    pub fn peek8(&self, addr: u32) -> u8 {
+        self.read8_raw(addr)
+    }
+
+    pub fn peek16(&self, addr: u32) -> u16 {
+        self.read16_raw(addr)
+    }
+
+    pub fn peek32(&self, addr: u32) -> u32 {
+        self.read32_raw(addr)
+    }
+
     pub fn read8(&self, addr: u32) -> u8 {
         let value = self.read8_raw(addr);
         self.record_read(addr, u32::from(value), 1);

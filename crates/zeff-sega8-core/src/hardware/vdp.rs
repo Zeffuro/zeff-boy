@@ -121,6 +121,12 @@ pub enum Mode4ColorMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tms9918ColorMode {
+    Palette,
+    GameGearCram,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mode4RenderArea {
     pub width: usize,
     pub height: usize,
@@ -154,11 +160,12 @@ struct Mode4SpriteRenderContext {
 
 #[derive(Clone, Copy)]
 struct TmsSpriteRenderContext {
-    width: usize,
+    area: Mode4RenderArea,
     pattern_base: usize,
     sprite_size: usize,
     magnified: bool,
     backdrop: [u8; RGBA_CHANNELS],
+    color_mode: Tms9918ColorMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -450,7 +457,20 @@ impl Vdp {
     }
 
     pub fn render_tms9918_frame_rgba(&self, framebuffer: &mut [u8], width: usize, height: usize) {
-        render::render_tms9918_frame_rgba(self, framebuffer, width, height);
+        self.render_tms9918_area_rgba(
+            framebuffer,
+            Mode4RenderArea::new(width, height, 0, 0),
+            Tms9918ColorMode::Palette,
+        );
+    }
+
+    pub fn render_tms9918_area_rgba(
+        &self,
+        framebuffer: &mut [u8],
+        area: Mode4RenderArea,
+        color_mode: Tms9918ColorMode,
+    ) {
+        render::render_tms9918_frame_rgba(self, framebuffer, area, color_mode);
     }
 
     pub fn tms9918_mode(&self) -> Tms9918Mode {
@@ -578,16 +598,14 @@ impl Vdp {
     fn tms_sprite(&self, attr_base: usize, index: usize) -> Option<TmsSprite> {
         let offset = attr_base + index * TMS_SPRITE_ATTRIBUTE_BYTES;
         let y_raw = self.vram[offset % self.vram.len()];
-        if y_raw == TMS_SPRITE_TERMINATOR_Y {
-            return None;
-        }
+        let y = tms_sprite_y_position(y_raw)?;
         let x_raw = self.vram[(offset + 1) % self.vram.len()];
         let pattern = self.vram[(offset + 2) % self.vram.len()];
         let tag = self.vram[(offset + 3) % self.vram.len()];
         let early_clock = tag & TMS_SPRITE_EARLY_CLOCK != 0;
         Some(TmsSprite {
             x: isize::from(x_raw) - if early_clock { 32 } else { 0 },
-            y: isize::from(y_raw.wrapping_add(1)),
+            y,
             pattern,
             color: tag & 0x0F,
         })
@@ -629,15 +647,38 @@ impl Vdp {
         usize::from(self.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] & 0x07) << 11
     }
 
-    fn tms_backdrop_color(&self) -> [u8; RGBA_CHANNELS] {
-        TMS9918_PALETTE[usize::from(self.registers[TMS_REGISTER_TEXT_BACKDROP] & 0x0F)]
+    fn tms_palette_color_rgba(
+        &self,
+        color: u8,
+        color_mode: Tms9918ColorMode,
+    ) -> [u8; RGBA_CHANNELS] {
+        let color = color & 0x0F;
+        match color_mode {
+            Tms9918ColorMode::Palette => TMS9918_PALETTE[usize::from(color)],
+            Tms9918ColorMode::GameGearCram => self.mode4_color_rgba(
+                MODE4_PALETTE_COLOR_OFFSET + usize::from(color),
+                Mode4ColorMode::GameGear,
+            ),
+        }
     }
 
-    fn tms_color_rgba(&self, color: u8, backdrop: [u8; RGBA_CHANNELS]) -> [u8; RGBA_CHANNELS] {
+    fn tms_backdrop_color(&self, color_mode: Tms9918ColorMode) -> [u8; RGBA_CHANNELS] {
+        self.tms_palette_color_rgba(
+            self.registers[TMS_REGISTER_TEXT_BACKDROP] & 0x0F,
+            color_mode,
+        )
+    }
+
+    fn tms_color_rgba(
+        &self,
+        color: u8,
+        backdrop: [u8; RGBA_CHANNELS],
+        color_mode: Tms9918ColorMode,
+    ) -> [u8; RGBA_CHANNELS] {
         if color & 0x0F == TMS_COLOR_TRANSPARENT {
             backdrop
         } else {
-            TMS9918_PALETTE[usize::from(color & 0x0F)]
+            self.tms_palette_color_rgba(color, color_mode)
         }
     }
 
@@ -799,7 +840,7 @@ impl Vdp {
             + usize::from(self.registers[VDP_REGISTER_BACKDROP_COLOR] & MODE4_BACKDROP_COLOR_MASK)
     }
 
-    fn mode4_enabled(&self) -> bool {
+    pub fn mode4_enabled(&self) -> bool {
         self.registers[VDP_REGISTER_MODE_CONTROL_1] & VDP_REG0_MODE4 != 0
     }
 
@@ -1034,10 +1075,6 @@ impl Vdp {
                 break;
             }
 
-            if sprite.color == TMS_COLOR_TRANSPARENT {
-                continue;
-            }
-
             let pattern_y = ((screen_y - sprite.y) as usize / scale).min(sprite_size - 1);
             for dest_col in 0..display_size {
                 let screen_x = sprite.x + dest_col as isize;
@@ -1088,6 +1125,14 @@ fn mode4_sprite_row_for_line(
 
 fn tms_sprite_intersects_line(sprite: TmsSprite, display_size: usize, screen_y: isize) -> bool {
     (sprite.y..sprite.y + display_size as isize).contains(&screen_y)
+}
+
+fn tms_sprite_y_position(raw: u8) -> Option<isize> {
+    if raw == TMS_SPRITE_TERMINATOR_Y {
+        None
+    } else {
+        Some(isize::from(raw as i8) + 1)
+    }
 }
 
 fn read_fixed_vec(
@@ -1197,7 +1242,7 @@ mod tests {
         vdp.vram[base] = (y as u8).wrapping_sub(1);
         vdp.vram[base + 1] = x;
         vdp.vram[base + 2] = pattern;
-        vdp.vram[base + 3] = color & 0x0F;
+        vdp.vram[base + 3] = color;
     }
 
     #[test]
@@ -1369,6 +1414,98 @@ mod tests {
         assert_eq!(vdp.read_status() & VDP_STATUS_VBLANK, 0);
         assert!(!vdp.line_interrupt_pending());
         assert!(!vdp.interrupt_pending());
+    }
+
+    #[test]
+    fn line_counter_register_write_waits_until_counter_reload() {
+        let mut vdp = Vdp::new();
+        vdp.line_counter = 3;
+        vdp.registers[VDP_REGISTER_LINE_COUNTER] = 7;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+        assert_eq!(vdp.line_counter(), 2);
+        vdp.registers[VDP_REGISTER_LINE_COUNTER] = 1;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+        assert_eq!(vdp.line_counter(), 1);
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+        assert_eq!(vdp.line_counter(), 0);
+        assert!(!vdp.line_interrupt_pending());
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+        assert_eq!(vdp.line_counter(), 1);
+        assert!(vdp.line_interrupt_pending());
+    }
+
+    #[test]
+    fn line_interrupt_pending_survives_enable_toggles_until_status_read() {
+        let mut vdp = Vdp::new();
+        vdp.registers[VDP_REGISTER_LINE_COUNTER] = 0;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert!(vdp.line_interrupt_pending());
+        assert!(!vdp.interrupt_pending());
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = VDP_REG0_LINE_IRQ_ENABLE;
+        assert!(vdp.interrupt_pending());
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = 0;
+        assert!(!vdp.interrupt_pending());
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = VDP_REG0_LINE_IRQ_ENABLE;
+        assert!(vdp.interrupt_pending());
+
+        let _ = vdp.read_status();
+        assert!(!vdp.line_interrupt_pending());
+        assert!(!vdp.interrupt_pending());
+    }
+
+    #[test]
+    fn line_counter_ticks_extra_visible_edge_then_reloads_during_blanking() {
+        let mut vdp = Vdp::new();
+        vdp.scanline = Sega8DisplayHeight::Lines192.lines();
+        vdp.registers[VDP_REGISTER_LINE_COUNTER] = 7;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(
+            vdp.scanline(),
+            Sega8DisplayHeight::Lines192.frame_interrupt_scanline()
+        );
+        assert_eq!(vdp.line_counter(), 7);
+        assert!(vdp.line_interrupt_pending());
+
+        let _ = vdp.read_status();
+        vdp.line_counter = 3;
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(vdp.line_counter(), 7);
+        assert!(!vdp.line_interrupt_pending());
+    }
+
+    #[test]
+    fn line_counter_uses_extended_mode_visible_edge() {
+        let mut vdp = Vdp::new();
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = VDP_REG0_MODE4;
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] =
+            VDP_REG1_MODE4_224_LINE | VDP_REG1_MODE4_240_LINE;
+        vdp.scanline = Sega8DisplayHeight::Lines224.lines();
+        vdp.registers[VDP_REGISTER_LINE_COUNTER] = 5;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(
+            vdp.scanline(),
+            Sega8DisplayHeight::Lines224.frame_interrupt_scanline()
+        );
+        assert_eq!(vdp.line_counter(), 5);
+        assert!(vdp.line_interrupt_pending());
+
+        let _ = vdp.read_status();
+        vdp.line_counter = 2;
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(vdp.line_counter(), 5);
+        assert!(!vdp.line_interrupt_pending());
     }
 
     #[test]
@@ -2002,6 +2139,140 @@ mod tests {
             VDP_STATUS_SPRITE_OVERFLOW
         );
         assert_eq!(vdp.status() & 0x1F, 4);
+    }
+
+    #[test]
+    fn tms9918_transparent_sprite_pixels_still_collide() {
+        let mut vdp = Vdp::new();
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+        vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x01;
+        let pattern_base = vdp.tms_sprite_pattern_table_base();
+        set_tms_pattern_row(&mut vdp, pattern_base, 0, 0, 0x80);
+        set_tms_pattern_row(&mut vdp, pattern_base, 1, 0, 0x80);
+        set_tms_sprite(&mut vdp, 0, 0, 0, 0, 0);
+        set_tms_sprite(&mut vdp, 1, 0, 0, 1, 2);
+        vdp.vram[2 * TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(
+            vdp.status() & VDP_STATUS_SPRITE_COLLISION,
+            VDP_STATUS_SPRITE_COLLISION
+        );
+    }
+
+    #[test]
+    fn tms9918_transparent_sprites_count_for_fifth_sprite_status() {
+        let mut vdp = Vdp::new();
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+        vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x01;
+        let pattern_base = vdp.tms_sprite_pattern_table_base();
+        for pattern in 0..5usize {
+            set_tms_pattern_row(&mut vdp, pattern_base, pattern as u8, 0, 0x80);
+            set_tms_sprite(&mut vdp, pattern, 0, pattern as u8 * 8, pattern as u8, 0);
+        }
+        vdp.vram[5 * TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(
+            vdp.status() & VDP_STATUS_SPRITE_OVERFLOW,
+            VDP_STATUS_SPRITE_OVERFLOW
+        );
+        assert_eq!(vdp.status() & 0x1F, 4);
+    }
+
+    #[test]
+    fn tms9918_sprite_terminator_stops_status_scan() {
+        let mut vdp = Vdp::new();
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+        vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x01;
+        let pattern_base = vdp.tms_sprite_pattern_table_base();
+        for pattern in 0..6 {
+            set_tms_pattern_row(&mut vdp, pattern_base, pattern, 0, 0x80);
+        }
+        set_tms_sprite(&mut vdp, 0, 0, 0, 0, 2);
+        vdp.vram[TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+        for sprite in 2..6 {
+            set_tms_sprite(&mut vdp, sprite, 0, sprite as u8 * 8, sprite as u8, 2);
+        }
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(vdp.status() & VDP_STATUS_SPRITE_OVERFLOW, 0);
+        assert_eq!(vdp.status() & VDP_STATUS_SPRITE_COLLISION, 0);
+    }
+
+    #[test]
+    fn tms9918_sprite_status_is_disabled_in_text_mode() {
+        let mut vdp = Vdp::new();
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE | TMS_REG1_MODE_TEXT;
+        vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+        vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x01;
+        let pattern_base = vdp.tms_sprite_pattern_table_base();
+        set_tms_pattern_row(&mut vdp, pattern_base, 0, 0, 0x80);
+        set_tms_pattern_row(&mut vdp, pattern_base, 1, 0, 0x80);
+        set_tms_sprite(&mut vdp, 0, 0, 0, 0, 2);
+        set_tms_sprite(&mut vdp, 1, 0, 0, 1, 3);
+        vdp.vram[2 * TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(
+            vdp.status() & (VDP_STATUS_SPRITE_COLLISION | VDP_STATUS_SPRITE_OVERFLOW),
+            0
+        );
+    }
+
+    #[test]
+    fn tms9918_sprite_y_values_above_terminator_wrap_above_screen() {
+        let mut vdp = Vdp::new();
+        let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+        vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x01;
+        let pattern_base = vdp.tms_sprite_pattern_table_base();
+        set_tms_pattern_row(&mut vdp, pattern_base, 4, 0, 0x00);
+        set_tms_pattern_row(&mut vdp, pattern_base, 4, 1, 0x80);
+        set_tms_sprite(&mut vdp, 0, -1, 0, 4, 6);
+        vdp.vram[TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+
+        vdp.render_tms9918_frame_rgba(&mut framebuffer, SMS_TILE_SIZE, SMS_TILE_SIZE);
+
+        assert_eq!(&framebuffer[0..RGBA_CHANNELS], &[0xD4, 0x52, 0x4D, 0xFF]);
+    }
+
+    #[test]
+    fn tms9918_early_clock_sprites_render_and_collide_left_of_raw_x() {
+        let mut vdp = Vdp::new();
+        let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+        vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x01;
+        let pattern_base = vdp.tms_sprite_pattern_table_base();
+        set_tms_pattern_row(&mut vdp, pattern_base, 0, 0, 0x80);
+        set_tms_pattern_row(&mut vdp, pattern_base, 1, 0, 0x80);
+        set_tms_sprite(&mut vdp, 0, 0, 32, 0, 6 | TMS_SPRITE_EARLY_CLOCK);
+        set_tms_sprite(&mut vdp, 1, 0, 0, 1, 5);
+        vdp.vram[2 * TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+        vdp.render_tms9918_frame_rgba(&mut framebuffer, SMS_TILE_SIZE, SMS_TILE_SIZE);
+
+        assert_eq!(
+            vdp.status() & VDP_STATUS_SPRITE_COLLISION,
+            VDP_STATUS_SPRITE_COLLISION
+        );
+        assert_eq!(&framebuffer[0..RGBA_CHANNELS], &[0xD4, 0x52, 0x4D, 0xFF]);
     }
 
     #[test]

@@ -23,8 +23,8 @@ pub(super) fn render_mode4_frame_rgba(
 pub(super) fn render_tms9918_frame_rgba(
     vdp: &Vdp,
     framebuffer: &mut [u8],
-    width: usize,
-    height: usize,
+    area: Mode4RenderArea,
+    color_mode: Tms9918ColorMode,
 ) {
-    tms9918::render_frame_rgba(vdp, framebuffer, width, height);
+    tms9918::render_frame_rgba(vdp, framebuffer, area, color_mode);
 }

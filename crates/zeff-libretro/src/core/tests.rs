@@ -211,6 +211,57 @@ fn gb_libretro_cheat_set_applies_ram_cheats_each_frame() {
 }
 
 #[test]
+fn gb_libretro_parameterized_ram_cheats_use_default_value() {
+    let rom = gb_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gb").expect("GB ROM should load");
+
+    {
+        let ActiveCore::Gb(emu) = &mut state.core else {
+            panic!("expected GB core");
+        };
+        emu.write_byte(0xC6A5, 0x7E);
+    }
+
+    state.cheat_set("01??A5C6");
+    state.step_frame();
+
+    let ActiveCore::Gb(emu) = &state.core else {
+        panic!("expected GB core");
+    };
+    assert_eq!(emu.peek_byte_raw(0xC6A5), 0x00);
+}
+
+#[test]
+fn gb_libretro_cheat_set_installs_compare_gated_rom_patches() {
+    let (patches, _) =
+        zeff_gb_core::cheats::parse_cheat("006-CEB-3BE").expect("GB Game Genie should parse");
+    let CheatPatch::RomWriteIfEquals {
+        address,
+        value: CheatValue::Constant(value),
+        compare: CheatValue::Constant(compare),
+    } = patches[0]
+    else {
+        panic!("expected compare-gated ROM patch");
+    };
+    let mut rom = gb_rom();
+    rom[usize::from(address)] = compare;
+    let mut state = CoreState::from_rom(&rom, "test.gb").expect("GB ROM should load");
+
+    state.cheat_set("006-CEB-3BE");
+
+    let ActiveCore::Gb(emu) = &state.core else {
+        panic!("expected GB core");
+    };
+    assert_eq!(emu.cpu_peek8(address), value);
+
+    state.cheat_reset();
+    let ActiveCore::Gb(emu) = &state.core else {
+        panic!("expected GB core");
+    };
+    assert_eq!(emu.cpu_peek8(address), compare);
+}
+
+#[test]
 fn nes_libretro_cheat_set_applies_raw_ram_cheats_each_frame() {
     let rom = nes_rom();
     let mut state = CoreState::from_rom(&rom, "test.nes").expect("NES ROM should load");
@@ -225,6 +276,29 @@ fn nes_libretro_cheat_set_applies_raw_ram_cheats_each_frame() {
 }
 
 #[test]
+fn nes_libretro_cheat_set_installs_compare_gated_rom_patches() {
+    let patch = zeff_nes_core::cheats::decode_nes_game_genie("AAEAAGAE")
+        .expect("NES Game Genie should parse");
+    let mut rom = nes_rom();
+    let prg_offset = 16 + usize::from(patch.address - 0x8000);
+    rom[prg_offset] = patch.compare.expect("code should include compare byte");
+    let mut state = CoreState::from_rom(&rom, "test.nes").expect("NES ROM should load");
+
+    state.cheat_set("AAEAAGAE");
+
+    let ActiveCore::Nes(emu) = &state.core else {
+        panic!("expected NES core");
+    };
+    assert_eq!(emu.cpu_peek(patch.address), patch.value);
+
+    state.cheat_reset();
+    let ActiveCore::Nes(emu) = &state.core else {
+        panic!("expected NES core");
+    };
+    assert_eq!(emu.cpu_peek(patch.address), patch.compare.unwrap());
+}
+
+#[test]
 fn sega8_libretro_cheat_set_applies_ram_cheats_each_frame() {
     let mut state = load_sega8("sms");
 
@@ -235,6 +309,26 @@ fn sega8_libretro_cheat_set_applies_ram_cheats_each_frame() {
         panic!("expected Sega8 core");
     };
     assert_eq!(emu.cpu_peek8(0xC000), 0x42);
+}
+
+#[test]
+fn sega8_libretro_cheat_set_installs_compare_gated_rom_patches() {
+    let mut rom = vec![0; zeff_sega8_core::hardware::constants::ROM_BANK_SIZE * 2];
+    rom[0x0646] = 0x04;
+    let mut state = CoreState::from_rom(&rom, "test.gg").expect("Sega 8-bit ROM should load");
+
+    state.cheat_set("006-46F-F7A");
+
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0646), 0x00);
+
+    state.cheat_reset();
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0646), 0x04);
 }
 
 #[test]

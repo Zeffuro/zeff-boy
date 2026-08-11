@@ -1,4 +1,4 @@
-use crate::emu_backend::EmuBackend;
+use crate::emu_backend::{BackendRuntimeConfig, EmuBackend};
 use crate::ui;
 
 use super::types::{publish_framebuffer, publish_owned_framebuffer};
@@ -161,91 +161,22 @@ impl EmuThread {
         input: &FrameInput,
         uncapped_mode: bool,
     ) {
-        if let Some(gb) = backend.gb_mut() {
-            Self::apply_debug_actions(&mut gb.emu, &input.debug_actions);
-            gb.emu
-                .set_mbc7_host_tilt(input.host_tilt.0, input.host_tilt.1);
-            gb.emu
-                .set_dmg_palette_preset(input.snapshot.render.dmg_palette_preset);
-            gb.emu
-                .set_sgb_border_enabled(input.snapshot.render.sgb_border_enabled);
-            if let Some(ref frame) = input.host_camera_frame {
-                gb.emu.set_camera_host_frame(frame);
-            }
-            gb.emu
-                .set_apu_debug_capture_enabled(input.audio.apu_capture_enabled);
-            if !uncapped_mode {
-                gb.emu
-                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
-            }
-            Self::apply_debug_controls(
-                &mut gb.emu,
-                input.snapshot.want_debug_info,
-                input.debug_continue,
-                input.debug_step,
-            );
-        }
-
-        if let Some(nes) = backend.nes_mut() {
-            Self::apply_nes_debug_actions(&mut nes.emu, &input.debug_actions);
-            nes.emu
-                .set_custom_palette(input.snapshot.render.nes_custom_palette.clone());
-            nes.emu
-                .set_palette_mode(input.snapshot.render.nes_palette_mode);
-            nes.emu
-                .set_apu_debug_collection_enabled(input.audio.apu_capture_enabled);
-            Self::apply_debug_controls(
-                &mut nes.emu,
-                input.snapshot.want_debug_info,
-                input.debug_continue,
-                input.debug_step,
-            );
-        }
-
-        if let Some(gba) = backend.gba_mut() {
-            Self::apply_gba_debug_actions(&mut gba.emu, &input.debug_actions);
-            gba.emu
-                .set_apu_debug_capture_enabled(input.audio.apu_capture_enabled);
-            if !uncapped_mode {
-                gba.emu
-                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
-            }
-            Self::apply_debug_controls(
-                &mut gba.emu,
-                input.snapshot.want_debug_info,
-                input.debug_continue,
-                input.debug_step,
-            );
-        }
-
-        if let Some(ws) = backend.ws_mut() {
-            Self::apply_ws_debug_actions(&mut ws.emu, &input.debug_actions);
-            if !uncapped_mode {
-                ws.emu
-                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
-            }
-            Self::apply_debug_controls(
-                &mut ws.emu,
-                input.snapshot.want_debug_info,
-                input.debug_continue,
-                input.debug_step,
-            );
-        }
-
-        if let Some(sega8) = backend.sega8_mut() {
-            Self::apply_sega8_debug_actions(&mut sega8.emu, &input.debug_actions);
-            if !uncapped_mode {
-                sega8
-                    .emu
-                    .set_apu_sample_generation_enabled(!input.audio.skip_audio);
-            }
-            Self::apply_debug_controls(
-                &mut sega8.emu,
-                input.snapshot.want_debug_info,
-                input.debug_continue,
-                input.debug_step,
-            );
-        }
+        let runtime_config = BackendRuntimeConfig {
+            opcode_log_enabled: input.snapshot.want_debug_info,
+            debug_continue: input.debug_continue,
+            debug_step: input.debug_step,
+            uncapped_mode,
+            apu_capture_enabled: input.audio.apu_capture_enabled,
+            skip_audio: input.audio.skip_audio,
+            host_tilt: input.host_tilt,
+            host_camera_frame: input.host_camera_frame.as_deref(),
+            dmg_palette_preset: input.snapshot.render.dmg_palette_preset,
+            sgb_border_enabled: input.snapshot.render.sgb_border_enabled,
+            nes_palette_mode: input.snapshot.render.nes_palette_mode,
+            nes_custom_palette: input.snapshot.render.nes_custom_palette.as_ref(),
+            ..BackendRuntimeConfig::new(&input.debug_actions)
+        };
+        backend.apply_runtime_config(runtime_config);
     }
 
     pub(crate) fn step_n_frames(
@@ -267,27 +198,7 @@ impl EmuThread {
         snapshot: &super::SnapshotRequest,
         buffers: super::ReusableBuffers,
     ) -> ui::UiFrameData {
-        let mut data = match backend {
-            EmuBackend::Gb(gb) => ui::collect_emu_snapshot(
-                &gb.emu,
-                snapshot,
-                buffers.vram,
-                buffers.oam,
-                buffers.memory_page,
-            ),
-            EmuBackend::Nes(nes) => ui::collect_nes_snapshot(
-                &mut nes.emu,
-                snapshot,
-                buffers.nes_chr,
-                buffers.nes_nametable,
-                buffers.memory_page,
-            ),
-            EmuBackend::Gba(gba) => ui::collect_gba_snapshot(&gba.emu, snapshot, buffers),
-            EmuBackend::Ws(ws) => ui::collect_ws_snapshot(&ws.emu, snapshot, buffers),
-            EmuBackend::Sega8(sega8) => ui::collect_sega8_snapshot(&sega8.emu, snapshot, buffers),
-        };
-        data.core_features = Some(backend.capabilities());
-        data
+        ui::collect_backend_snapshot(backend, snapshot, buffers)
     }
 
     pub(crate) fn build_frame_result(

@@ -105,4 +105,22 @@ mod tests {
             .load_state(&state)
             .expect("GB emulator should load state");
     }
+
+    #[test]
+    fn public_cpu_peek_does_not_enter_cpu_access_trace() {
+        let rom = vec![0u8; 0x8000];
+        let mut emulator = Emulator::new(&rom, 44_100).expect("GB emulator should initialize");
+
+        emulator.bus.trace_cpu_accesses = true;
+        emulator.bus.begin_cpu_access_trace();
+        assert_eq!(emulator.cpu_peek8(0x0000), 0x00);
+
+        let mut events = Vec::new();
+        emulator
+            .bus
+            .drain_cpu_access_trace(|event| events.push(event));
+        emulator.bus.trace_cpu_accesses = false;
+
+        assert!(events.is_empty());
+    }
 }

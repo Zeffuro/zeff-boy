@@ -87,6 +87,15 @@ fn wonder_swan_snapshot_exposes_data_for_app_rendering() {
     assert!(data.memory_page.is_some());
     assert!(data.rom_page.is_some());
     assert_eq!(data.rom_size, rom.len() as u32);
+    let input = data
+        .input_debug
+        .expect("WS input debug should be populated");
+    assert!(
+        input
+            .sections
+            .iter()
+            .any(|section| section.heading == "WonderSwan UART")
+    );
 }
 
 #[test]

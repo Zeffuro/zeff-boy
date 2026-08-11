@@ -2,10 +2,11 @@ use anyhow::{Context, bail};
 
 use crate::emulator::Emulator;
 use crate::hardware::apu::ApuSaveState;
+use crate::hardware::bus::UartSaveState;
 use crate::hardware::cpu::CpuState;
 
 const MAGIC: &[u8; 8] = b"ZEFFWS1\0";
-const VERSION: u8 = 8;
+const VERSION: u8 = 10;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::new();
@@ -33,6 +34,15 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u64(emu.bus.cycles);
     w.vec(&emu.bus.ram)?;
     w.vec(&emu.bus.io)?;
+    let uart = emu.bus.uart_save_state();
+    w.u8(uart.rx_data);
+    w.u8(u8::from(uart.rx_ready));
+    w.u8(u8::from(uart.overrun));
+    w.u8(uart.tx_data);
+    w.u8(u8::from(uart.tx_pending));
+    w.u32(uart.tx_cycles_remaining);
+    w.u8(u8::from(uart.completed_tx.is_some()));
+    w.u8(uart.completed_tx.unwrap_or(0));
     let (sound_dma_reload_source, sound_dma_reload_length, sound_dma_cycle_accumulator) =
         emu.bus.sound_dma_save_values();
     w.u32(sound_dma_reload_source);
@@ -80,6 +90,9 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     }
     w.u16(apu.nreg);
     w.u8(apu.hyper_voice_sample);
+    w.i16(apu.hyper_voice_left_output);
+    w.i16(apu.hyper_voice_right_output);
+    w.u8(u8::from(apu.hyper_voice_next_left));
     w.u8(apu.sound_test);
     w.u8(apu.hyper_voice_control);
     w.u8(apu.hyper_voice_channel_control);
@@ -131,6 +144,27 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.bus.cycles = r.u64()?;
     r.vec_into(&mut emu.bus.ram)?;
     r.vec_into(&mut emu.bus.io)?;
+    if version >= 9 {
+        let rx_data = r.u8()?;
+        let rx_ready = r.u8()? != 0;
+        let overrun = r.u8()? != 0;
+        let tx_data = r.u8()?;
+        let tx_pending = r.u8()? != 0;
+        let tx_cycles_remaining = r.u32()?;
+        let completed_tx_present = r.u8()? != 0;
+        let completed_tx_value = r.u8()?;
+        emu.bus.load_uart_save_state(UartSaveState {
+            rx_data,
+            rx_ready,
+            overrun,
+            tx_data,
+            tx_pending,
+            tx_cycles_remaining,
+            completed_tx: completed_tx_present.then_some(completed_tx_value),
+        });
+    } else {
+        emu.bus.load_uart_save_state(UartSaveState::default());
+    }
     if version >= 6 {
         let sound_dma_reload_source = r.u32()?;
         let sound_dma_reload_length = r.u32()?;
@@ -204,6 +238,12 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         }
         let nreg = r.u16()?;
         let hyper_voice_sample = r.u8()?;
+        let (hyper_voice_left_output, hyper_voice_right_output, hyper_voice_next_left) =
+            if version >= 10 {
+                (r.i16()?, r.i16()?, r.u8()? != 0)
+            } else {
+                (0, 0, true)
+            };
         let sound_test = if version >= 7 { r.u8()? } else { 0 };
         let hyper_voice_control = r.u8()?;
         let hyper_voice_channel_control = r.u8()?;
@@ -228,6 +268,9 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
             sample_pos,
             nreg,
             hyper_voice_sample,
+            hyper_voice_left_output,
+            hyper_voice_right_output,
+            hyper_voice_next_left,
             sound_test,
             hyper_voice_control,
             hyper_voice_channel_control,
@@ -280,6 +323,10 @@ impl StateWriter {
     }
 
     fn u16(&mut self, value: u16) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn i16(&mut self, value: i16) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
@@ -358,6 +405,12 @@ impl<'a> StateReader<'a> {
         let mut bytes = [0; 2];
         self.read_exact(&mut bytes)?;
         Ok(u16::from_le_bytes(bytes))
+    }
+
+    fn i16(&mut self) -> anyhow::Result<i16> {
+        let mut bytes = [0; 2];
+        self.read_exact(&mut bytes)?;
+        Ok(i16::from_le_bytes(bytes))
     }
 
     fn u32(&mut self) -> anyhow::Result<u32> {
@@ -456,5 +509,41 @@ mod tests {
         assert_eq!(restored.io_peek8(0x0081), 0x02);
         assert_eq!(restored.io_peek8(0x0088), 0xF8);
         assert_eq!(restored.io_peek8(0x0090), 0x01);
+    }
+
+    #[test]
+    fn restores_uart_transfer_state() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut emu = Emulator::from_rom_data(&rom).unwrap();
+        emu.io_write8(0x00B3, 0x80);
+        emu.io_write8(0x00B1, 0x5A);
+        emu.bus.step_cycles(123);
+        let before = emu.uart_debug_snapshot();
+        let state = encode_state(&emu).unwrap();
+
+        let mut restored = Emulator::from_rom_data(&rom).unwrap();
+        decode_state(&mut restored, &state).unwrap();
+
+        assert_eq!(restored.uart_debug_snapshot(), before);
+    }
+
+    #[test]
+    fn restores_uart_completed_tx_for_later_peer_sync() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut left = Emulator::from_rom_data(&rom).unwrap();
+        left.io_write8(0x00B3, 0x80);
+        left.io_write8(0x00B1, 0xA5);
+        left.bus.step_cycles(3_200);
+        let state = encode_state(&left).unwrap();
+
+        let mut restored_left = Emulator::from_rom_data(&rom).unwrap();
+        let mut right = Emulator::from_rom_data(&rom).unwrap();
+        right.io_write8(0x00B3, 0x80);
+        decode_state(&mut restored_left, &state).unwrap();
+
+        restored_left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(right.io_peek8(0x00B3) & 0x01, 0x01);
+        assert_eq!(right.io_peek8(0x00B1), 0xA5);
     }
 }

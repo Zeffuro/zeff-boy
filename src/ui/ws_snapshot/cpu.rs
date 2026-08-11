@@ -1,8 +1,6 @@
-use crate::debug::{CpuDebugSnapshot, DebugSection, RecentOpcodeDisplay};
+use crate::debug::{CpuDebugSnapshot, DebugSection};
 use zeff_emu_common::address::Address;
 use zeff_ws_core::emulator::Emulator;
-
-const RECENT_OPCODE_LINE_COUNT: usize = 16;
 
 pub(super) fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
     let regs = emu.cpu_registers();
@@ -23,18 +21,8 @@ pub(super) fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
         emu.debug_hit_watchpoint()
             .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
     );
-    let recent_opcodes = super::super::build_recent_opcode_display(
-        emu.recent_opcodes(RECENT_OPCODE_LINE_COUNT),
-        RECENT_OPCODE_LINE_COUNT,
-        |record, repeat_count| RecentOpcodeDisplay {
-            address: Address::from(record.pc),
-            bytes: vec![record.opcode],
-            detail: Some(format!(
-                "CS:IP={:04X}:{:04X} {} cyc",
-                record.cs, record.ip, record.cycles
-            )),
-            repeat_count,
-        },
+    let recent_opcodes = super::super::opcodes::ws_recent_opcode_display(
+        emu.recent_opcodes(super::super::opcodes::RECENT_OPCODE_LINE_COUNT),
     );
 
     CpuDebugSnapshot {

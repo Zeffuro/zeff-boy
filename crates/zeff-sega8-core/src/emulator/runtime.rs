@@ -5,7 +5,7 @@ use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, GG_VIEWPORT_X, GG_VIEWPORT_Y, SMS_SCREEN_H, SMS_SCREEN_W,
 };
 use crate::hardware::cpu::FetchedInstruction;
-use crate::hardware::vdp::{Mode4ColorMode, Mode4RenderArea};
+use crate::hardware::vdp::{Mode4ColorMode, Mode4RenderArea, Tms9918ColorMode};
 use zeff_emu_common::address::Address;
 
 impl Emulator {
@@ -110,24 +110,43 @@ impl Emulator {
     fn render_frame(&mut self) {
         match self.system() {
             Sega8System::MasterSystem => {
-                self.bus.vdp().render_mode4_frame_rgba(
-                    &mut self.framebuffer,
-                    Mode4RenderArea::new(SMS_SCREEN_W, SMS_SCREEN_H, 0, 0),
-                    Mode4ColorMode::Sms,
-                );
+                let area = Mode4RenderArea::new(SMS_SCREEN_W, SMS_SCREEN_H, 0, 0);
+                if self.bus.vdp().mode4_enabled() {
+                    self.bus.vdp().render_mode4_frame_rgba(
+                        &mut self.framebuffer,
+                        area,
+                        Mode4ColorMode::Sms,
+                    );
+                } else {
+                    self.bus.vdp().render_tms9918_area_rgba(
+                        &mut self.framebuffer,
+                        area,
+                        Tms9918ColorMode::Palette,
+                    );
+                }
             }
             Sega8System::GameGear => {
-                self.bus.vdp().render_mode4_frame_rgba(
-                    &mut self.framebuffer,
-                    Mode4RenderArea::new(GG_SCREEN_W, GG_SCREEN_H, GG_VIEWPORT_X, GG_VIEWPORT_Y),
-                    Mode4ColorMode::GameGear,
-                );
+                let area =
+                    Mode4RenderArea::new(GG_SCREEN_W, GG_SCREEN_H, GG_VIEWPORT_X, GG_VIEWPORT_Y);
+                if self.bus.vdp().mode4_enabled() {
+                    self.bus.vdp().render_mode4_frame_rgba(
+                        &mut self.framebuffer,
+                        area,
+                        Mode4ColorMode::GameGear,
+                    );
+                } else {
+                    self.bus.vdp().render_tms9918_area_rgba(
+                        &mut self.framebuffer,
+                        area,
+                        Tms9918ColorMode::GameGearCram,
+                    );
+                }
             }
             Sega8System::Sg1000 => {
-                self.bus.vdp().render_tms9918_frame_rgba(
+                self.bus.vdp().render_tms9918_area_rgba(
                     &mut self.framebuffer,
-                    SMS_SCREEN_W,
-                    SMS_SCREEN_H,
+                    Mode4RenderArea::new(SMS_SCREEN_W, SMS_SCREEN_H, 0, 0),
+                    Tms9918ColorMode::Palette,
                 );
             }
         }

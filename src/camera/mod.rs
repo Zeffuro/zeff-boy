@@ -22,10 +22,10 @@ pub(crate) struct CameraDeviceInfo {
 }
 
 pub(crate) fn host_camera_supported() -> bool {
-    cfg!(feature = "camera")
+    cfg!(all(feature = "camera", not(target_arch = "wasm32")))
 }
 
-#[cfg(feature = "camera")]
+#[cfg(all(feature = "camera", not(target_arch = "wasm32")))]
 pub(crate) fn query_host_cameras() -> anyhow::Result<Vec<CameraDeviceInfo>> {
     use nokhwa::{
         query,
@@ -50,11 +50,9 @@ pub(crate) fn query_host_cameras() -> anyhow::Result<Vec<CameraDeviceInfo>> {
     Ok(devices)
 }
 
-#[cfg(not(feature = "camera"))]
+#[cfg(any(not(feature = "camera"), target_arch = "wasm32"))]
 pub(crate) fn query_host_cameras() -> anyhow::Result<Vec<CameraDeviceInfo>> {
-    anyhow::bail!(
-        "This build was compiled without host camera support (feature `camera` disabled)."
-    )
+    anyhow::bail!("This build was compiled without host camera support on this platform.")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

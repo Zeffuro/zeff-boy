@@ -93,7 +93,11 @@ impl Bus {
             CONTROLLER1 => 0,
             CONTROLLER2 => 0,
             CPU_TEST_IO_START..=CPU_TEST_IO_END => 0,
-            CARTRIDGE_EXPANSION_START..=CPU_ADDR_END => self.cartridge.cpu_peek(addr),
+            CARTRIDGE_EXPANSION_START..=CARTRIDGE_RAM_END => self.cartridge.cpu_peek(addr),
+            CARTRIDGE_ROM_START..=CPU_ADDR_END => {
+                let rom_val = self.cartridge.cpu_peek(addr);
+                self.game_genie.intercept(addr, rom_val).unwrap_or(rom_val)
+            }
         }
     }
 

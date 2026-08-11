@@ -26,10 +26,20 @@ impl Bus {
     }
 
     pub(super) fn refresh_level_interrupts(&mut self) {
-        if self.io[usize::from(SERIAL_CONTROL_PORT)] & 0x80 != 0
-            && self.io[usize::from(IRQ_ENABLE_PORT)] & IRQ_SERIAL_TX != 0
+        let serial_status = self.serial_control_read();
+        let serial_enabled = serial_status & SERIAL_CONTROL_ENABLE != 0;
+        let irq_enable = self.io[usize::from(IRQ_ENABLE_PORT)];
+        if serial_enabled
+            && serial_status & SERIAL_STATUS_TX_EMPTY != 0
+            && irq_enable & IRQ_SERIAL_TX != 0
         {
             self.io[usize::from(IRQ_STATUS_PORT)] |= IRQ_SERIAL_TX;
+        }
+        if serial_enabled
+            && serial_status & SERIAL_STATUS_RX_READY != 0
+            && irq_enable & IRQ_SERIAL_RX != 0
+        {
+            self.io[usize::from(IRQ_STATUS_PORT)] |= IRQ_SERIAL_RX;
         }
     }
 }

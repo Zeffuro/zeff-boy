@@ -42,7 +42,10 @@ impl Bus {
 
     pub(super) fn write_sound_dma_control(&mut self, value: u8) {
         let old_control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
-        let control = value & SOUND_DMA_CONTROL_MASK;
+        let mut control = value & SOUND_DMA_CONTROL_MASK;
+        if control & SOUND_DMA_ENABLE != 0 && self.sound_dma_length() == 0 {
+            control &= !SOUND_DMA_ENABLE;
+        }
         self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control;
 
         let was_enabled = old_control & SOUND_DMA_ENABLE != 0;
@@ -52,9 +55,6 @@ impl Bus {
             self.sound_dma.reload_length = self.sound_dma_length();
             self.sound_dma.cycle_accumulator = 0;
         }
-        if is_enabled && old_control & SOUND_DMA_HOLD == 0 && control & SOUND_DMA_HOLD != 0 {
-            self.write_sound_dma_target(control, 0);
-        }
         if !is_enabled {
             self.sound_dma.cycle_accumulator = 0;
         }
@@ -62,7 +62,7 @@ impl Bus {
 
     pub(super) fn step_sound_dma(&mut self, cycles: u32) {
         let control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
-        if control & SOUND_DMA_ENABLE == 0 || control & SOUND_DMA_HOLD != 0 {
+        if control & SOUND_DMA_ENABLE == 0 {
             return;
         }
 
@@ -70,13 +70,17 @@ impl Bus {
         let mut available = self.sound_dma.cycle_accumulator.saturating_add(cycles);
         while available >= period {
             available -= period;
-            if !self.transfer_sound_dma_byte(control) {
-                available = 0;
-                break;
-            }
-            if self.io[usize::from(SOUND_DMA_CONTROL_PORT)] & SOUND_DMA_ENABLE == 0 {
-                available = 0;
-                break;
+            if control & SOUND_DMA_HOLD != 0 {
+                self.write_sound_dma_target(control, 0);
+            } else {
+                if !self.transfer_sound_dma_byte(control) {
+                    available = 0;
+                    break;
+                }
+                if self.io[usize::from(SOUND_DMA_CONTROL_PORT)] & SOUND_DMA_ENABLE == 0 {
+                    available = 0;
+                    break;
+                }
             }
         }
         self.sound_dma.cycle_accumulator = available;
@@ -97,7 +101,12 @@ impl Bus {
         let source = self.sound_dma_source();
         let value = self.peek8(source);
         self.write_sound_dma_target(control, value);
-        self.set_sound_dma_source(source.wrapping_add(1) & ADDRESS_MASK);
+        let next_source = if control & SOUND_DMA_DECREMENT != 0 {
+            source.wrapping_sub(1)
+        } else {
+            source.wrapping_add(1)
+        };
+        self.set_sound_dma_source(next_source & ADDRESS_MASK);
         let next_length = length - 1;
         self.set_sound_dma_length(next_length);
         if next_length == 0 && control & SOUND_DMA_REPEAT == 0 {
@@ -108,7 +117,7 @@ impl Bus {
 
     fn write_sound_dma_target(&mut self, control: u8, value: u8) {
         if control & SOUND_DMA_TARGET_HYPERVOICE != 0 {
-            self.apu.write_hyper_voice_sample(value);
+            self.apu.write_hyper_voice_dma_sample(value);
         } else {
             self.apu.write8(SOUND_VOLUME_CHANNEL2_PORT, value);
         }

@@ -1,10 +1,9 @@
 use super::{
-    ActiveSystem, BackendLoadConfig, EmuBackend, ROM_EXTENSIONS, load_backend_from_rom_source,
-    system_specs,
+    ActiveSystem, BackendLoadConfig, BackendRuntimeConfig, EmuBackend, ROM_EXTENSIONS,
+    load_backend_from_rom_source, system_specs,
 };
 use crate::debug::DebugUiActions;
 use crate::emu_core_trait::DebuggableEmulator;
-use crate::emu_thread::EmuThread;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use zeff_emu_common::debug::WatchType;
@@ -368,19 +367,24 @@ fn assert_debuggable_cpu_byte_access(
 #[test]
 fn ws_backend_debug_actions_update_core_debug_state() {
     let rom = build_ws_test_rom();
-    let mut emu = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
+    let emu = zeff_ws_core::emulator::Emulator::new(&rom, 44_100)
         .expect("WonderSwan emulator should initialize");
+    let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.ws"));
     let mut actions = DebugUiActions::none();
     actions.add_breakpoint = Some(0xF0000);
     actions.add_watchpoint = Some((0x0000, WatchType::Write));
     actions.memory_writes.push((0x0000, 0x5A));
 
-    EmuThread::apply_ws_debug_actions(&mut emu, &actions);
+    backend.apply_runtime_config(BackendRuntimeConfig::new(&actions));
 
-    assert_eq!(emu.iter_breakpoints().collect::<Vec<_>>(), vec![0xF0000]);
-    assert_eq!(emu.debug_watchpoints().len(), 1);
+    let ws = backend
+        .ws()
+        .expect("backend should remain WonderSwan after debug actions");
+    assert_eq!(ws.emu.iter_breakpoints().collect::<Vec<_>>(), vec![0xF0000]);
+    assert_eq!(ws.emu.debug_watchpoints().len(), 1);
     assert_eq!(
-        emu.debug_hit_watchpoint()
+        ws.emu
+            .debug_hit_watchpoint()
             .map(|hit| (hit.address, hit.new_value)),
         Some((0x0000, 0x5A))
     );

@@ -375,10 +375,14 @@ impl Bus {
     }
 
     pub fn cpu_read(&self, addr: u16) -> u8 {
-        let raw = self.cpu_read_raw(addr);
-        let value = self.apply_rom_patch(addr, raw);
+        let value = self.cpu_peek(addr);
         self.record_cpu_read(addr, value);
         value
+    }
+
+    pub fn cpu_peek(&self, addr: u16) -> u8 {
+        let raw = self.cpu_read_raw(addr);
+        self.apply_rom_patch(addr, raw)
     }
 
     fn cpu_read_raw(&self, addr: u16) -> u8 {
