@@ -4,6 +4,7 @@ use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_sega8_core::emulator::Emulator;
 use zeff_sega8_core::hardware::cartridge::Sega8System;
 
+mod apu;
 mod cpu;
 mod graphics;
 mod input;
@@ -76,19 +77,15 @@ pub(crate) fn collect_sega8_snapshot(
         data.oam_debug = Some(graphics::sega8_oam_snapshot(emu));
     }
 
+    if snapshot.show_apu_viewer {
+        data.apu_debug = Some(apu::sega8_apu_snapshot(emu));
+    }
+
     if snapshot.any_viewer_open {
         data.palette_debug = Some(graphics::sega8_palette_snapshot(emu));
     }
 
     data
-}
-
-pub(super) fn common_system_for_sega8(system: Sega8System) -> zeff_emu_common::system::System {
-    match system {
-        Sega8System::MasterSystem => zeff_emu_common::system::System::MasterSystem,
-        Sega8System::GameGear => zeff_emu_common::system::System::GameGear,
-        Sega8System::Sg1000 => zeff_emu_common::system::System::Sg1000,
-    }
 }
 
 pub(super) fn sega8_system_label(system: Sega8System) -> &'static str {

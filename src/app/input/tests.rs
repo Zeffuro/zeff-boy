@@ -38,6 +38,21 @@ fn remote_input_merges_with_keyboard_and_gamepad() {
 }
 
 #[test]
+fn remote_player_two_input_is_kept_separate_from_player_one() {
+    let mut state = HostInputState::new();
+    state.set_keyboard(JoypadKey::A, true);
+    state.set_keyboard_p2(JoypadKey::A, true);
+    state.set_gamepad_p2(JoypadKey::Right, true);
+    state.set_remote_p2(JoypadKey::B, true);
+    state.set_remote_p2(JoypadKey::Left, true);
+
+    assert_eq!(state.buttons_pressed(), 0x01);
+    assert_eq!(state.dpad_pressed(), 0x00);
+    assert_eq!(state.buttons_p2_pressed(), 0x03);
+    assert_eq!(state.dpad_p2_pressed(), 0x03);
+}
+
+#[test]
 fn release_clears_bit() {
     let mut state = HostInputState::new();
     state.set_keyboard(JoypadKey::A, true);

@@ -257,7 +257,12 @@ pub extern "C" fn retro_run() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_region() -> c_uint {
-    RETRO_REGION_NTSC
+    let core = lock(&CORE);
+    if core.as_ref().is_some_and(|state| state.is_pal_region()) {
+        RETRO_REGION_PAL
+    } else {
+        RETRO_REGION_NTSC
+    }
 }
 
 #[unsafe(no_mangle)]

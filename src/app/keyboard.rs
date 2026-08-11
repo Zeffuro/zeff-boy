@@ -79,6 +79,9 @@ impl App {
         if let Some(gb_key) = self.map_key(key_code) {
             self.host_input.set_keyboard(gb_key, false);
         }
+        if let Some(gb_key) = self.map_key_p2(key_code) {
+            self.host_input.set_keyboard_p2(gb_key, false);
+        }
 
         if let Some(ws_key) = self.map_ws_key(key_code) {
             self.host_input.set_ws_keyboard(ws_key, false);
@@ -123,6 +126,7 @@ impl App {
         if key_event.state == ElementState::Pressed && !key_event.repeat {
             match action {
                 InputBindingAction::Joypad(a) => self.settings.key_bindings.set(a, key_code),
+                InputBindingAction::JoypadP2(a) => self.settings.key_bindings_p2.set(a, key_code),
                 InputBindingAction::Tilt(a) => self.settings.tilt.key_bindings.set(a, key_code),
                 InputBindingAction::WonderSwan(a) => self.settings.ws_key_bindings.set(a, key_code),
             }
@@ -348,19 +352,34 @@ impl App {
     }
 
     fn handle_joypad_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
-        let Some(gb_key) = self.map_key(key_code) else {
-            return false;
+        let gb_key = self.map_key(key_code);
+        let gb_key_p2 = if self.active_system == ActiveSystem::WonderSwan {
+            None
+        } else {
+            self.map_key_p2(key_code)
         };
-
+        if gb_key.is_none() && gb_key_p2.is_none() {
+            return false;
+        }
         match key_event.state {
             ElementState::Pressed => {
                 if !key_event.repeat {
-                    self.host_input.set_keyboard(gb_key, true);
+                    if let Some(gb_key) = gb_key {
+                        self.host_input.set_keyboard(gb_key, true);
+                    }
+                    if let Some(gb_key) = gb_key_p2 {
+                        self.host_input.set_keyboard_p2(gb_key, true);
+                    }
                     return true;
                 }
             }
             ElementState::Released => {
-                self.host_input.set_keyboard(gb_key, false);
+                if let Some(gb_key) = gb_key {
+                    self.host_input.set_keyboard(gb_key, false);
+                }
+                if let Some(gb_key) = gb_key_p2 {
+                    self.host_input.set_keyboard_p2(gb_key, false);
+                }
                 return true;
             }
         }

@@ -26,9 +26,11 @@ impl CoreState {
                 ActiveCore::Ws(Box::new(emu))
             }
             ext if SystemHint::from_extension(ext).is_some() => {
-                let hint = SystemHint::from_extension(ext).unwrap_or(SystemHint::Auto);
-                let emu =
-                    zeff_sega8_core::emulator::Emulator::new_with_hint(data, sample_rate, hint)?;
+                let emu = zeff_sega8_core::emulator::Emulator::new_with_path_hint(
+                    data,
+                    sample_rate,
+                    std::path::Path::new(path),
+                )?;
                 ActiveCore::Sega8(Box::new(emu))
             }
             _ => {
@@ -43,6 +45,7 @@ impl CoreState {
         Ok(Self {
             core,
             rom_data: data.to_vec(),
+            ram_cheats: Vec::new(),
             audio_buf: Vec::with_capacity(4096),
             sample_rate,
             xrgb_buf: Vec::new(),

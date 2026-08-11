@@ -1,19 +1,23 @@
-use super::{common_system_for_sega8, sega8_system_label};
+use super::sega8_system_label;
 use crate::debug::{PerfInfo, RomDebugInfo, RomInfoSection};
 use zeff_sega8_core::emulator::Emulator;
 use zeff_sega8_core::hardware::cartridge::{CodemastersHeader, RomHeader};
 
 pub(super) fn sega8_perf_snapshot(emu: &Emulator) -> PerfInfo {
-    let system = common_system_for_sega8(emu.system());
     PerfInfo {
         fps: 0.0,
-        target_fps: system.target_fps(),
+        target_fps: f64::from(emu.video_standard().frame_rate_approx()),
         speed_mode_label: super::super::normal_speed_mode_label(),
         frames_in_flight: 0,
         cycles: emu.cpu().cycles(),
         platform_name: "Sega 8-bit",
         hardware_label: sega8_system_label(emu.system()).into(),
-        hardware_pref_label: "Auto".into(),
+        hardware_pref_label: format!(
+            "{}/{}",
+            emu.video_standard().display_label(),
+            emu.console_region().display_label()
+        )
+        .into(),
     }
 }
 
@@ -23,6 +27,18 @@ pub(super) fn sega8_rom_info(emu: &Emulator) -> RomDebugInfo {
         heading: "Sega 8-bit Cartridge",
         fields: vec![
             ("System", sega8_system_label(cart.system()).into()),
+            (
+                "Video Standard",
+                format!(
+                    "{} ({} scanlines/frame)",
+                    emu.video_standard().display_label(),
+                    emu.bus().vdp().total_scanlines()
+                ),
+            ),
+            (
+                "Console Region",
+                emu.console_region().display_label().into(),
+            ),
             ("Mapper", cart.mapper_kind().label().into()),
             ("Raw Size", format!("{} bytes", cart.raw_len())),
             (

@@ -38,6 +38,23 @@ fn parse_dat_entries_nes() {
 }
 
 #[test]
+fn parse_dat_entries_master_system() {
+    let dat = r#"
+        game (
+            name "Sonic The Hedgehog (USA, Europe)"
+            rom ( name "Sonic The Hedgehog (USA, Europe).sms" size 262144 crc B519E833 md5 0 sha1 0 )
+        )
+    "#;
+
+    let entries = parse_dat_entries(dat, LibretroPlatform::MasterSystem);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].crc32, 0xB519E833);
+    assert_eq!(entries[0].title, "Sonic The Hedgehog (USA, Europe)");
+    assert_eq!(entries[0].rom_name, "Sonic The Hedgehog (USA, Europe).sms");
+    assert_eq!(entries[0].platform, LibretroPlatform::MasterSystem);
+}
+
+#[test]
 fn build_cheat_search_hints_prefers_metadata_aliases() {
     let meta = RomMetadata {
         crc32: 0,
@@ -79,11 +96,23 @@ fn serialize_roundtrip_preserves_entries() {
             rom_name: "NES Test.nes".to_string(),
             platform: LibretroPlatform::Nes,
         },
+        RomMetadata {
+            crc32: 0xB519E833,
+            title: "Sonic The Hedgehog".to_string(),
+            rom_name: "Sonic The Hedgehog.sms".to_string(),
+            platform: LibretroPlatform::MasterSystem,
+        },
+        RomMetadata {
+            crc32: 0xCAFEBABE,
+            title: "Game Gear Test".to_string(),
+            rom_name: "Game Gear Test.gg".to_string(),
+            platform: LibretroPlatform::GameGear,
+        },
     ];
 
     let bytes = serialize_entries(&entries).unwrap();
     let parsed = deserialize_entries(&bytes).unwrap();
-    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed.len(), 4);
     assert_eq!(parsed[0].crc32, 0x1234ABCD);
     assert_eq!(parsed[0].title, "Test Game");
     assert_eq!(parsed[0].rom_name, "Test Game.gb");
@@ -92,6 +121,8 @@ fn serialize_roundtrip_preserves_entries() {
     assert_eq!(parsed[1].title, "NES Test");
     assert_eq!(parsed[1].rom_name, "NES Test.nes");
     assert_eq!(parsed[1].platform, LibretroPlatform::Nes);
+    assert_eq!(parsed[2].platform, LibretroPlatform::MasterSystem);
+    assert_eq!(parsed[3].platform, LibretroPlatform::GameGear);
 }
 
 #[test]

@@ -19,10 +19,30 @@ fn parses_tap_button_with_default_frames() {
     assert!(matches!(
         parsed.command,
         LiveCommand::Tap {
+            player: 1,
             key: JoypadKey::Start,
             frames: 4
         }
     ));
+}
+
+#[test]
+fn parses_player_two_button_command() {
+    let parsed = parse_wire_request(r#"{"command":"press","button":"a","player":2}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::Button {
+            player: 2,
+            key: JoypadKey::A,
+            pressed: true,
+        }
+    ));
+}
+
+#[test]
+fn rejects_invalid_player_number() {
+    let err = parse_wire_request(r#"{"command":"press","button":"a","player":3}"#).unwrap_err();
+    assert!(err.contains("player must be 1 or 2"));
 }
 
 #[test]

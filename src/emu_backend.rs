@@ -194,6 +194,13 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn sega8(&self) -> Option<&Sega8Backend> {
+        match self {
+            Self::Sega8(b) => Some(b),
+            _ => None,
+        }
+    }
+
     pub(crate) fn ws_mut(&mut self) -> Option<&mut WsBackend> {
         match self {
             Self::Ws(b) => Some(b),

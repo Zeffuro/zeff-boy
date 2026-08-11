@@ -20,8 +20,9 @@ pub(crate) use keyboard_bindings::{KeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
-    AudioSettings, CameraSettings, EmulationSettings, RecentRomEntry, RewindSettings, TiltSettings,
-    UiSettings, VideoSettings,
+    AudioSettings, CameraSettings, EmulationSettings, RecentRomEntry, RewindSettings,
+    Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, TiltSettings, UiSettings,
+    VideoSettings,
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 
@@ -42,6 +43,8 @@ pub(crate) struct Settings {
     #[serde(flatten)]
     pub(crate) ui: UiSettings,
     pub(crate) key_bindings: KeyBindings,
+    #[serde(default = "default_p2_key_bindings")]
+    pub(crate) key_bindings_p2: KeyBindings,
     #[serde(default)]
     pub(crate) ws_key_bindings: WonderSwanKeyBindings,
     #[serde(flatten)]
@@ -68,6 +71,7 @@ impl Default for Settings {
             emulation: EmulationSettings::default(),
             ui: UiSettings::default(),
             key_bindings: KeyBindings::default(),
+            key_bindings_p2: default_p2_key_bindings(),
             ws_key_bindings: WonderSwanKeyBindings::default(),
             tilt: TiltSettings::default(),
             audio: AudioSettings::default(),
@@ -80,6 +84,10 @@ impl Default for Settings {
             camera: CameraSettings::default(),
         }
     }
+}
+
+fn default_p2_key_bindings() -> KeyBindings {
+    KeyBindings::player_two_defaults()
 }
 
 impl Settings {

@@ -66,7 +66,24 @@ fn gba_snapshot_exposes_live_debug_graphics_apu_and_perf_data() {
     assert!(data.rom_page.is_some());
     assert!(data.oam_debug.is_some());
     assert!(data.palette_debug.is_some());
-    assert!(data.apu_debug.is_some());
+    let apu = data
+        .apu_debug
+        .as_ref()
+        .expect("GBA snapshot should include APU debug data");
+    assert_eq!(apu.channels.len(), 6);
+    assert_eq!(apu.master_waveform.len(), 512);
+    assert_eq!(apu.channels[0].waveform.len(), 512);
+    assert_eq!(apu.channels[4].waveform.len(), 512);
+    assert!(
+        apu.master_lines
+            .iter()
+            .any(|line| line.contains("SOUNDCNT_L="))
+    );
+    assert!(
+        apu.extra_sections
+            .iter()
+            .any(|section| section.heading == "PSG Wave RAM")
+    );
     assert_eq!(data.rom_size, rom.len() as u32);
 
     let ConsoleGraphicsData::Gba(gfx) = data

@@ -1,6 +1,6 @@
 use crate::debug::ui_helpers::{EnumLabel, enum_combo_box};
 use crate::emu_backend::ActiveSystem;
-use crate::settings::Settings;
+use crate::settings::{Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 impl EnumLabel for HardwareModePreference {
@@ -15,6 +15,40 @@ impl EnumLabel for HardwareModePreference {
 
     fn all_variants() -> &'static [Self] {
         &[Self::Auto, Self::ForceDmg, Self::ForceSgb, Self::ForceCgb]
+    }
+}
+
+impl EnumLabel for Sega8VideoStandardPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Ntsc => "NTSC",
+            Self::Pal => "PAL",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::Ntsc, Self::Pal]
+    }
+}
+
+impl EnumLabel for Sega8ConsoleRegionPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Export => "Export",
+            Self::Japanese => "Japanese",
+            Self::JapanesePowerBaseConverter => "Japanese PBC",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[
+            Self::Auto,
+            Self::Export,
+            Self::Japanese,
+            Self::JapanesePowerBaseConverter,
+        ]
     }
 }
 
@@ -124,5 +158,42 @@ pub(super) fn draw(
     .on_hover_text(
         "When enabled, replaces Player 2 controller with a Zapper light gun. \
          Click the game screen to fire. Only works with NES games that support the Zapper.",
+    );
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.heading("Sega 8-bit");
+        if matches!(
+            active_system,
+            Some(ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000)
+        ) {
+            ui.label(egui::RichText::new("(active)").weak().italics().small());
+        }
+    });
+    enum_combo_box(
+        ui,
+        "Video standard",
+        &mut settings.emulation.sega8_video_standard,
+    );
+    ui.label(
+        egui::RichText::new(
+            "Auto uses common filename region tags such as (Europe), [E], PAL, USA, Japan, or NTSC. \
+             Force PAL for untagged PAL-only Master System ROMs.",
+        )
+        .weak()
+        .small(),
+    );
+    enum_combo_box(
+        ui,
+        "Console region",
+        &mut settings.emulation.sega8_console_region,
+    );
+    ui.label(
+        egui::RichText::new(
+            "Controls export, real Japanese SMS/GG, or Japanese Power Base Converter behavior used \
+             by region-detection code. Auto uses header first, then filename hints, and defaults to export.",
+        )
+        .weak()
+        .small(),
     );
 }

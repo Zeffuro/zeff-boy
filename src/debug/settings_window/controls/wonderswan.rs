@@ -41,6 +41,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         if ui.button(label).clicked() {
                             state.rebinding_action = Some(InputBindingAction::WonderSwan(action));
                             state.rebinding_gamepad = None;
+                            state.rebinding_gamepad_p2 = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
@@ -62,6 +63,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                             state.rebinding_ws_gamepad = Some(action);
                             state.rebinding_action = None;
                             state.rebinding_gamepad = None;
+                            state.rebinding_gamepad_p2 = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
                             state.rebinding_rewind = false;

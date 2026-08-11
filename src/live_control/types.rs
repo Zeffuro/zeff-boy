@@ -16,10 +16,12 @@ pub(crate) enum LiveCommand {
     SetFastForward(bool),
     SetUncapped(bool),
     Button {
+        player: u8,
         key: JoypadKey,
         pressed: bool,
     },
     Tap {
+        player: u8,
         key: JoypadKey,
         frames: usize,
     },
@@ -58,6 +60,7 @@ pub(crate) struct LiveRequest {
 
 #[derive(Clone, Copy)]
 pub(crate) struct PendingButtonRelease {
+    pub(crate) player: u8,
     pub(crate) key: JoypadKey,
     pub(crate) frames_remaining: usize,
 }

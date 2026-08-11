@@ -5,18 +5,11 @@ use zeff_gb_core::hardware::joypad::JoypadKey;
 
 impl App {
     pub(super) fn map_key(&self, key: KeyCode) -> Option<JoypadKey> {
-        let kb = &self.settings.key_bindings;
-        let bindings: [(KeyCode, JoypadKey); 8] = [
-            (kb.right, JoypadKey::Right),
-            (kb.left, JoypadKey::Left),
-            (kb.up, JoypadKey::Up),
-            (kb.down, JoypadKey::Down),
-            (kb.a, JoypadKey::A),
-            (kb.b, JoypadKey::B),
-            (kb.start, JoypadKey::Start),
-            (kb.select, JoypadKey::Select),
-        ];
-        bindings.iter().find(|(k, _)| *k == key).map(|(_, j)| *j)
+        map_key_bindings(&self.settings.key_bindings, key)
+    }
+
+    pub(super) fn map_key_p2(&self, key: KeyCode) -> Option<JoypadKey> {
+        map_key_bindings(&self.settings.key_bindings_p2, key)
     }
 
     pub(super) fn map_tilt_key(&self, key: KeyCode) -> Option<TiltBindingAction> {
@@ -37,4 +30,18 @@ impl App {
             .copied()
             .find(|&action| kb.get(action) == key)
     }
+}
+
+fn map_key_bindings(kb: &crate::settings::KeyBindings, key: KeyCode) -> Option<JoypadKey> {
+    let bindings: [(KeyCode, JoypadKey); 8] = [
+        (kb.right, JoypadKey::Right),
+        (kb.left, JoypadKey::Left),
+        (kb.up, JoypadKey::Up),
+        (kb.down, JoypadKey::Down),
+        (kb.a, JoypadKey::A),
+        (kb.b, JoypadKey::B),
+        (kb.start, JoypadKey::Start),
+        (kb.select, JoypadKey::Select),
+    ];
+    bindings.iter().find(|(k, _)| *k == key).map(|(_, j)| *j)
 }

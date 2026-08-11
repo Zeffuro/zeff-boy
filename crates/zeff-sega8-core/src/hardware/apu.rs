@@ -353,6 +353,11 @@ impl Psg {
     }
 
     fn clamp_tone_counter(&mut self, channel: usize) {
+        if self.tone_period[channel] <= 1 {
+            self.tone_output_high[channel] = true;
+            self.tone_counter_cycles[channel] = TONE_CLOCK_DIVIDER;
+            return;
+        }
         let reload = self.tone_reload_cycles(channel);
         self.tone_counter_cycles[channel] = self.tone_counter_cycles[channel].clamp(1, reload);
     }
@@ -380,6 +385,11 @@ impl Psg {
     fn advance_generators(&mut self, cycles: u32) {
         let cycles = cycles as i32;
         for channel in 0..PSG_TONE_CHANNEL_COUNT {
+            if self.tone_period[channel] <= 1 {
+                self.tone_output_high[channel] = true;
+                self.tone_counter_cycles[channel] = TONE_CLOCK_DIVIDER;
+                continue;
+            }
             self.tone_counter_cycles[channel] -= cycles;
             let reload = self.tone_reload_cycles(channel);
             while self.tone_counter_cycles[channel] <= 0 {
@@ -598,6 +608,27 @@ mod tests {
         );
         assert!(peak(&samples) > 0.05);
         assert!(psg.buffered_sample_count() == 0);
+    }
+
+    #[test]
+    fn tone_period_zero_or_one_outputs_constant_high() {
+        for period in [0u8, 1] {
+            let mut psg = Psg::new_with_sample_rate(48_000);
+            psg.write_data(0x80 | period);
+            psg.write_data(0x90);
+
+            psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME / 4);
+            let mut samples = Vec::new();
+            psg.drain_audio_samples_into(&mut samples);
+
+            assert!(!samples.is_empty());
+            assert!(psg.tone_output_high[0]);
+            assert!(
+                samples
+                    .iter()
+                    .all(|sample| (*sample - MIX_GAIN).abs() < f32::EPSILON)
+            );
+        }
     }
 
     #[test]

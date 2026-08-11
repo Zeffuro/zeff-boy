@@ -128,12 +128,14 @@ fn poll_async_results(state: &mut CheatState) {
                         );
                 }
                 state.libretro_status = Some(format!(
-                    "Metadata refreshed: {} total (GB {}, GBC {}, GBA {}, NES {})",
+                    "Metadata refreshed: {} total (GB {}, GBC {}, GBA {}, NES {}, SMS {}, GG {})",
                     stats.total_entries,
                     stats.gb_entries,
                     stats.gbc_entries,
                     stats.gba_entries,
-                    stats.nes_entries
+                    stats.nes_entries,
+                    stats.master_system_entries,
+                    stats.game_gear_entries
                 ));
             }
             LibretroAsyncResult::MetadataRefreshed(Err(e)) => {
@@ -191,8 +193,14 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             ActiveSystem::WonderSwan => {
                 ui.label("WonderSwan");
             }
-            ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
-                ui.label("Sega 8-bit");
+            ActiveSystem::MasterSystem => {
+                ui.label("Master System / Mark III");
+            }
+            ActiveSystem::GameGear => {
+                ui.label("Game Gear");
+            }
+            ActiveSystem::Sg1000 => {
+                ui.label("SG-1000");
             }
         }
         ui.separator();
@@ -208,7 +216,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
         if ui
             .add_enabled(can_refresh, egui::Button::new("⬇ Refresh metadata").small())
             .on_hover_text(
-                "Download/compile local metadata cache from libretro dat files (GB+GBC+GBA+NES)",
+                "Download/compile local metadata cache from libretro dat files (GB+GBC+GBA+NES+SMS+GG)",
             )
             .clicked()
         {

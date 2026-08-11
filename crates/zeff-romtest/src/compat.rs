@@ -232,10 +232,7 @@ fn is_sega8_core(core: Core) -> bool {
 }
 
 fn compat_id(manifest_slug: &str, index: usize, entry: &CompatEntry) -> String {
-    let stem = entry
-        .path
-        .file_stem()
-        .and_then(|s| s.to_str())
+    let stem = compat_file_stem(&entry.path)
         .map(sanitize_id_part)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "game".to_string());
@@ -245,6 +242,15 @@ fn compat_id(manifest_slug: &str, index: usize, entry: &CompatEntry) -> String {
         manifest_slug,
         index + 1
     )
+}
+
+fn compat_file_stem(path: &Path) -> Option<&str> {
+    let path = path.to_str()?;
+    let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    (!stem.is_empty()).then_some(stem)
 }
 
 fn sanitize_id_part(value: &str) -> String {

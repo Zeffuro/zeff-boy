@@ -37,7 +37,7 @@ impl Apu {
         self.mix_dac_samples(dac_samples, soundcnt_h, soundcnt_x);
 
         let output_pairs = advance_phase(&mut self.output_phase, cycles, self.sample_rate);
-        self.emit_host_samples(output_pairs);
+        self.emit_host_samples(output_pairs, soundcnt_h, soundcnt_x);
     }
 
     pub(crate) fn on_timer_overflow(&mut self, timer: usize, soundcnt_h: u16) -> FifoDmaRequests {
@@ -91,7 +91,7 @@ impl Apu {
         }
     }
 
-    fn emit_host_samples(&mut self, pairs: usize) {
+    fn emit_host_samples(&mut self, pairs: usize, soundcnt_h: u16, soundcnt_x: u16) {
         if pairs == 0 {
             return;
         }
@@ -115,9 +115,46 @@ impl Apu {
             let alpha = output_low_pass_alpha(self.sample_rate);
             self.output_filter_left += alpha * (left - self.output_filter_left);
             self.output_filter_right += alpha * (right - self.output_filter_right);
+            if self.debug_capture_enabled {
+                self.capture_debug_samples(soundcnt_h, soundcnt_x);
+            }
             self.sample_buffer.push(self.output_filter_left);
             self.sample_buffer.push(self.output_filter_right);
         }
+    }
+
+    fn capture_debug_samples(&mut self, soundcnt_h: u16, soundcnt_x: u16) {
+        let direct_a = self.direct_channel_debug_sample(0, soundcnt_h, soundcnt_x);
+        let direct_b = self.direct_channel_debug_sample(1, soundcnt_h, soundcnt_x);
+        self.direct_debug_history[0].push(direct_a);
+        self.direct_debug_history[1].push(direct_b);
+        self.master_debug_history
+            .push((self.output_filter_left + self.output_filter_right) * 0.5);
+    }
+
+    fn direct_channel_debug_sample(&self, fifo: usize, soundcnt_h: u16, soundcnt_x: u16) -> f32 {
+        if soundcnt_x & 0x0080 == 0 {
+            return 0.0;
+        }
+
+        let (right_bit, left_bit, volume_bit, mute_index, current) = if fifo == 0 {
+            (8, 9, 2, 4, self.current_a)
+        } else {
+            (12, 13, 3, 5, self.current_b)
+        };
+        if self.channel_mutes[mute_index] {
+            return 0.0;
+        }
+        if soundcnt_h & ((1 << right_bit) | (1 << left_bit)) == 0 {
+            return 0.0;
+        }
+
+        let volume = if soundcnt_h & (1 << volume_bit) != 0 {
+            1.0
+        } else {
+            0.5
+        };
+        f32::from(current) / 128.0 * volume
     }
 
     fn write_fifo_byte(&mut self, fifo: usize, value: u8) {

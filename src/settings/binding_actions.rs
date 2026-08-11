@@ -62,6 +62,7 @@ impl WonderSwanButton {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputBindingAction {
     Joypad(BindingAction),
+    JoypadP2(BindingAction),
     Tilt(TiltBindingAction),
     WonderSwan(WonderSwanButton),
 }

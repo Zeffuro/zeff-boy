@@ -15,6 +15,8 @@ pub(crate) struct MetadataRefreshStats {
     pub(crate) gbc_entries: usize,
     pub(crate) gba_entries: usize,
     pub(crate) nes_entries: usize,
+    pub(crate) master_system_entries: usize,
+    pub(crate) game_gear_entries: usize,
 }
 
 #[cfg(not(target_arch = "wasm32"))]

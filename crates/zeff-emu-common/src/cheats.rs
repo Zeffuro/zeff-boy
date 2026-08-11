@@ -1,7 +1,10 @@
+use crate::address::Address;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheatType {
     GameShark,
     GameGenie,
+    ActionReplay,
     XPloder, // Also known as CodeBreaker overseas
     Raw,
 }
@@ -130,6 +133,10 @@ pub enum CheatPatch {
         address: u16,
         value: CheatValue,
     },
+    WideRamWrite {
+        address: Address,
+        value: CheatValue,
+    },
     RomWrite {
         address: u16,
         value: CheatValue,
@@ -144,16 +151,22 @@ pub enum CheatPatch {
         value: CheatValue,
         compare: CheatValue,
     },
+    WideRamWriteIfEquals {
+        address: Address,
+        value: CheatValue,
+        compare: CheatValue,
+    },
 }
 
 impl CheatPatch {
     pub fn has_user_parameter(self) -> bool {
         match self {
-            Self::RamWrite { value, .. } | Self::RomWrite { value, .. } => {
-                value.has_user_parameter()
-            }
+            Self::RamWrite { value, .. }
+            | Self::WideRamWrite { value, .. }
+            | Self::RomWrite { value, .. } => value.has_user_parameter(),
             Self::RomWriteIfEquals { value, compare, .. }
-            | Self::RamWriteIfEquals { value, compare, .. } => {
+            | Self::RamWriteIfEquals { value, compare, .. }
+            | Self::WideRamWriteIfEquals { value, compare, .. } => {
                 value.has_user_parameter() || compare.has_user_parameter()
             }
         }
@@ -161,11 +174,12 @@ impl CheatPatch {
 
     pub fn default_user_value(self) -> Option<u8> {
         match self {
-            Self::RamWrite { value, .. } | Self::RomWrite { value, .. } => {
-                value.default_user_value()
-            }
+            Self::RamWrite { value, .. }
+            | Self::WideRamWrite { value, .. }
+            | Self::RomWrite { value, .. } => value.default_user_value(),
             Self::RomWriteIfEquals { value, compare, .. }
-            | Self::RamWriteIfEquals { value, compare, .. } => value
+            | Self::RamWriteIfEquals { value, compare, .. }
+            | Self::WideRamWriteIfEquals { value, compare, .. } => value
                 .default_user_value()
                 .or_else(|| compare.default_user_value()),
         }
@@ -174,6 +188,10 @@ impl CheatPatch {
     pub fn resolve_user_parameter(self, user_value: u8) -> Self {
         match self {
             Self::RamWrite { address, value } => Self::RamWrite {
+                address,
+                value: value.resolve_user_parameter(user_value),
+            },
+            Self::WideRamWrite { address, value } => Self::WideRamWrite {
                 address,
                 value: value.resolve_user_parameter(user_value),
             },
@@ -195,6 +213,15 @@ impl CheatPatch {
                 value,
                 compare,
             } => Self::RamWriteIfEquals {
+                address,
+                value: value.resolve_user_parameter(user_value),
+                compare: compare.resolve_user_parameter(user_value),
+            },
+            Self::WideRamWriteIfEquals {
+                address,
+                value,
+                compare,
+            } => Self::WideRamWriteIfEquals {
                 address,
                 value: value.resolve_user_parameter(user_value),
                 compare: compare.resolve_user_parameter(user_value),

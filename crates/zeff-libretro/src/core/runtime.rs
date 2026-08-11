@@ -9,6 +9,7 @@ impl CoreState {
             ActiveCore::Sega8(emu) => emu.step_frame(),
             ActiveCore::Ws(emu) => emu.step_frame(),
         }
+        self.apply_ram_cheats();
     }
 
     pub fn drain_audio(&mut self) {
@@ -43,8 +44,10 @@ impl CoreState {
     }
 
     pub fn set_input_p2(&mut self, buttons: u8, dpad: u8) {
-        if let ActiveCore::Nes(emu) = &mut self.core {
-            emu.set_input_p2(buttons, dpad);
+        match &mut self.core {
+            ActiveCore::Nes(emu) => emu.set_input_p2(buttons, dpad),
+            ActiveCore::Sega8(emu) => emu.set_input_p2(buttons, dpad),
+            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Ws(_) => {}
         }
     }
 
@@ -59,11 +62,18 @@ impl CoreState {
             ActiveCore::Gb(_) => 59.7275,
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::FPS,
             ActiveCore::Nes(_) => 60.0988,
-            ActiveCore::Sega8(_) => {
-                zeff_sega8_core::hardware::constants::SEGA8_NTSC_FRAME_RATE_APPROX as f64
-            }
+            ActiveCore::Sega8(emu) => emu.video_standard().frame_rate_approx() as f64,
             ActiveCore::Ws(_) => zeff_ws_core::hardware::constants::FPS,
         }
+    }
+
+    pub fn is_pal_region(&self) -> bool {
+        matches!(
+            &self.core,
+            ActiveCore::Sega8(emu)
+                if emu.video_standard()
+                    == zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal
+        )
     }
 
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {

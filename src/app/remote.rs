@@ -29,7 +29,7 @@ impl App {
         for release in &mut self.live_button_releases {
             release.frames_remaining = release.frames_remaining.saturating_sub(1);
             if release.frames_remaining == 0 {
-                self.host_input.set_remote(release.key, false);
+                set_remote_player(&mut self.host_input, release.player, release.key, false);
             }
         }
         self.live_button_releases
@@ -85,19 +85,28 @@ impl App {
                 }
                 LiveReply::ok(self.live_status_json())
             }
-            LiveCommand::Button { key, pressed } => {
-                self.host_input.set_remote(key, pressed);
+            LiveCommand::Button {
+                player,
+                key,
+                pressed,
+            } => {
+                set_remote_player(&mut self.host_input, player, key, pressed);
                 if !pressed {
                     self.live_button_releases
-                        .retain(|release| !same_joypad_key(release.key, key));
+                        .retain(|release| !same_pending_button(release, player, key));
                 }
                 LiveReply::ok(self.live_input_json())
             }
-            LiveCommand::Tap { key, frames } => {
-                self.host_input.set_remote(key, true);
+            LiveCommand::Tap {
+                player,
+                key,
+                frames,
+            } => {
+                set_remote_player(&mut self.host_input, player, key, true);
                 self.live_button_releases
-                    .retain(|release| !same_joypad_key(release.key, key));
+                    .retain(|release| !same_pending_button(release, player, key));
                 self.live_button_releases.push(PendingButtonRelease {
+                    player,
                     key,
                     frames_remaining: frames,
                 });
@@ -194,9 +203,22 @@ impl App {
 
     fn live_input_json(&self) -> Value {
         let (buttons, dpad) = self.current_host_joypad_input();
+        let (buttons_p2, dpad_p2) = self.current_host_joypad_p2_input();
         json!({
             "buttons": buttons,
             "dpad": dpad,
+            "buttons_p2": buttons_p2,
+            "dpad_p2": dpad_p2,
+            "players": {
+                "1": {
+                    "buttons": buttons,
+                    "dpad": dpad,
+                },
+                "2": {
+                    "buttons": buttons_p2,
+                    "dpad": dpad_p2,
+                },
+            },
             "zapper": self.remote_zapper.map(|zapper| json!({
                 "enabled": zapper.enabled,
                 "trigger": zapper.trigger,
@@ -215,10 +237,21 @@ fn core_features_json(features: &CoreFeatureInfo) -> Value {
         "system_ram_len": features.system_ram_len,
         "video_ram_len": features.video_ram_len,
         "memory_regions": features.memory_regions.iter().map(memory_region_json).collect::<Vec<_>>(),
+        "cheats": cheat_features_json(&features.cheat_features),
         "supports_save_states": features.supports_save_states,
         "supports_rewind": features.supports_rewind,
         "supports_debugger": features.supports_debugger,
         "supports_opcode_history": features.supports_opcode_history,
+    })
+}
+
+fn cheat_features_json(features: &crate::ui::CheatFeatureInfo) -> Value {
+    json!({
+        "supports_user_cheats": features.supports_user_cheats,
+        "supports_libretro_database": features.supports_libretro_database,
+        "supports_ram_writes": features.supports_ram_writes,
+        "supports_rom_patches": features.supports_rom_patches,
+        "formats": features.formats,
     })
 }
 
@@ -274,6 +307,23 @@ fn save_ram_kind_json(kind: SaveRamKind) -> Value {
     }
 }
 
+fn set_remote_player(
+    host_input: &mut crate::app::input::HostInputState,
+    player: u8,
+    key: JoypadKey,
+    pressed: bool,
+) {
+    if player == 2 {
+        host_input.set_remote_p2(key, pressed);
+    } else {
+        host_input.set_remote(key, pressed);
+    }
+}
+
+fn same_pending_button(release: &PendingButtonRelease, player: u8, key: JoypadKey) -> bool {
+    release.player == player && same_joypad_key(release.key, key)
+}
+
 fn same_joypad_key(a: JoypadKey, b: JoypadKey) -> bool {
     std::mem::discriminant(&a) == std::mem::discriminant(&b)
 }
@@ -291,6 +341,9 @@ mod tests {
             system_ram_len: 0x2000,
             video_ram_len: 0x4000,
             memory_regions: Vec::new(),
+            cheat_features: crate::ui::CheatFeatureInfo::for_system(
+                crate::emu_backend::ActiveSystem::MasterSystem,
+            ),
             supports_save_states: true,
             supports_rewind: true,
             supports_debugger: true,
@@ -302,5 +355,8 @@ mod tests {
         assert_eq!(json["core_family"], "sega8");
         assert_eq!(json["supports_debugger"], true);
         assert_eq!(json["supports_opcode_history"], true);
+        assert_eq!(json["cheats"]["supports_user_cheats"], true);
+        assert_eq!(json["cheats"]["supports_rom_patches"], true);
+        assert_eq!(json["cheats"]["formats"][1], "Action Replay");
     }
 }

@@ -11,9 +11,10 @@ use self::trace::{Sega8FrameTraceConfig, Sega8FrameTraceState, step_sega8_frame_
 use super::{
     AudioStats, Sega8DebugStateRequest, StuckTracker, emit_debug_state, ensure_no_reset_events,
     ensure_system_headless_options, fail_on_stuck_if_needed, flush_battery, input_for_frame,
-    observe_stuck, print_perf, read_headless_state_if_requested, screenshot_path_if_written,
-    sega8_debug_state, write_audio_dump_f32le, write_final_screenshot_if_needed,
-    write_screenshot_if_requested, write_screenshot_sequence_if_requested,
+    input_p2_for_frame, observe_stuck, print_perf, read_headless_state_if_requested,
+    screenshot_path_if_written, sega8_debug_state, write_audio_dump_f32le,
+    write_final_screenshot_if_needed, write_screenshot_if_requested,
+    write_screenshot_sequence_if_requested,
 };
 
 mod sdsc;
@@ -31,10 +32,19 @@ pub(super) fn run_sega8_headless(
 
     let hint = crate::emu_backend::sega8::hint_for_active_system(system)
         .expect("Sega 8-bit systems must have a core hint");
-    let mut emulator = Sega8Emulator::new_with_hint(
+    let video_standard = opts
+        .sega8_video_standard
+        .or_else(|| crate::emu_backend::sega8::video_standard_from_paths(rom_path, rom_path))
+        .unwrap_or_default();
+    let console_region_fallback =
+        crate::emu_backend::sega8::console_region_from_paths(rom_path, rom_path);
+    let mut emulator = Sega8Emulator::new_with_hint_video_standard_region_fallback(
         rom_data,
         zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE,
         hint,
+        video_standard,
+        opts.sega8_console_region,
+        console_region_fallback,
     )?;
     if !opts.no_sram
         && let Some(sram_path) =
@@ -58,6 +68,7 @@ pub(super) fn run_sega8_headless(
     let mut stuck_active = false;
     let mut screenshot_written = false;
     let mut current_input = Default::default();
+    let mut current_input_p2 = Default::default();
     let start = Instant::now();
     let mut frames_run = 0u64;
     let mut traced = 0u64;
@@ -92,7 +103,9 @@ pub(super) fn run_sega8_headless(
     for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
         current_input = input_for_frame(opts, frame_number);
+        current_input_p2 = input_p2_for_frame(opts, frame_number);
         emulator.set_input(current_input.buttons, current_input.dpad);
+        emulator.set_input_p2(current_input_p2.buttons, current_input_p2.dpad);
         let mut sdsc_expected_seen = false;
         if opts.trace_opcodes || bus_trace_active {
             let config = Sega8FrameTraceConfig {
@@ -221,6 +234,7 @@ pub(super) fn run_sega8_headless(
             frames_run,
             opts,
             input: current_input,
+            input_p2: current_input_p2,
             stuck: stuck.as_ref().and_then(StuckTracker::current_report),
             screenshot: screenshot_path_if_written(opts, screenshot_written),
             audio_stats,

@@ -41,6 +41,44 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert!(!s.ui.autohide_menu_bar);
     assert_eq!(s.emulation.slow_motion_divisor, 4);
     assert!(!s.emulation.slow_motion_enabled);
+    assert_eq!(
+        s.emulation.sega8_video_standard,
+        Sega8VideoStandardPreference::Auto
+    );
+    assert_eq!(
+        s.emulation.sega8_console_region,
+        Sega8ConsoleRegionPreference::Auto
+    );
+    assert_eq!(s.key_bindings_p2.up, KeyCode::Numpad8);
+    assert_eq!(s.gamepad_bindings.get_p2(BindingAction::A), "South");
+}
+
+#[test]
+fn sega8_video_standard_preference_serde_roundtrip() {
+    let mut s = Settings::default();
+    s.emulation.sega8_video_standard = Sega8VideoStandardPreference::Pal;
+
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        restored.emulation.sega8_video_standard,
+        Sega8VideoStandardPreference::Pal
+    );
+}
+
+#[test]
+fn sega8_console_region_preference_serde_roundtrip() {
+    let mut s = Settings::default();
+    s.emulation.sega8_console_region = Sega8ConsoleRegionPreference::JapanesePowerBaseConverter;
+
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        restored.emulation.sega8_console_region,
+        Sega8ConsoleRegionPreference::JapanesePowerBaseConverter
+    );
 }
 
 #[test]
@@ -62,6 +100,19 @@ fn key_bindings_deserialize_unknown_falls_back_to_defaults() {
     let bindings: KeyBindings = serde_json::from_str(json).unwrap();
     assert_eq!(bindings.left, KeyCode::ArrowLeft);
     assert_eq!(bindings.up, KeyCode::ArrowUp);
+}
+
+#[test]
+fn player_two_key_bindings_use_numpad_defaults() {
+    let bindings = KeyBindings::player_two_defaults();
+    assert_eq!(bindings.up, KeyCode::Numpad8);
+    assert_eq!(bindings.down, KeyCode::Numpad5);
+    assert_eq!(bindings.left, KeyCode::Numpad4);
+    assert_eq!(bindings.right, KeyCode::Numpad6);
+    assert_eq!(bindings.a, KeyCode::Numpad1);
+    assert_eq!(bindings.b, KeyCode::Numpad2);
+    assert_eq!(bindings.start, KeyCode::NumpadEnter);
+    assert_eq!(bindings.select, KeyCode::Numpad0);
 }
 
 #[test]
@@ -114,11 +165,18 @@ fn shortcut_bindings_set_and_get() {
 fn gamepad_bindings_roundtrip() {
     let mut gb = GamepadBindings::default();
     gb.set(BindingAction::A, "West");
+    gb.set_p2(BindingAction::B, "North");
     gb.set_ws(WonderSwanButton::Y4, "RightTrigger");
     let json = serde_json::to_string(&gb).unwrap();
     let restored: GamepadBindings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.get(BindingAction::A), "West");
     assert_eq!(restored.get(BindingAction::B), "East");
+    assert_eq!(restored.get_p2(BindingAction::A), "South");
+    assert_eq!(restored.get_p2(BindingAction::B), "North");
+    assert!(matches!(
+        restored.map_button_name_p2("North"),
+        Some(zeff_gb_core::hardware::joypad::JoypadKey::B)
+    ));
     assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
     assert_eq!(restored.get_ws(WonderSwanButton::B), "East");
     assert_eq!(restored.get_ws(WonderSwanButton::Start), "Start");
@@ -146,6 +204,9 @@ fn gamepad_bindings_deserialize_missing_ws_buttons_to_defaults() {
         "right":"DPadRight"
     }"#;
     let restored: GamepadBindings = serde_json::from_str(json).unwrap();
+    assert_eq!(restored.get_p2(BindingAction::A), "South");
+    assert_eq!(restored.get_p2(BindingAction::B), "East");
+    assert_eq!(restored.get_p2(BindingAction::Up), "DPadUp");
     assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
     assert_eq!(restored.get_ws(WonderSwanButton::B), "East");
     assert_eq!(restored.get_ws(WonderSwanButton::Start), "Start");

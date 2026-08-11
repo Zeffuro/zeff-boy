@@ -29,6 +29,7 @@ pub(super) fn draw_cheat_section(
             let type_label = match cheat.code_type {
                 crate::cheats::CheatType::GameShark => "GS",
                 crate::cheats::CheatType::GameGenie => "GG",
+                crate::cheats::CheatType::ActionReplay => "AR",
                 crate::cheats::CheatType::XPloder => "XP",
                 crate::cheats::CheatType::Raw => "Raw",
             };

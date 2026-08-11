@@ -5,4 +5,7 @@ pub mod constants;
 pub mod cpu;
 pub mod input;
 pub mod psg;
+pub mod region;
+pub mod serial;
+pub mod timing;
 pub mod vdp;

@@ -40,6 +40,10 @@ impl Psg {
         self.sample_rate = sample_rate.max(8_000);
     }
 
+    pub(in crate::hardware::apu) fn set_debug_capture_enabled(&mut self, enabled: bool) {
+        self.debug_capture_enabled = enabled;
+    }
+
     pub(in crate::hardware::apu) fn mix_current_sample(&self) -> (f32, f32) {
         self.mix_sample()
     }
@@ -200,6 +204,31 @@ impl Psg {
 
     pub(in crate::hardware::apu) fn set_channel_mutes(&mut self, mutes: [bool; 4]) {
         self.channel_muted = mutes;
+    }
+
+    pub(in crate::hardware::apu) fn regs_snapshot(&self) -> [u8; 0x17] {
+        self.regs
+    }
+
+    pub(in crate::hardware::apu) fn wave_ram_snapshot(&self) -> [u8; 0x10] {
+        self.wave_ram
+    }
+
+    pub(in crate::hardware::apu) fn nr52_raw(&self) -> u8 {
+        self.nr52
+    }
+
+    pub(in crate::hardware::apu) fn channel_debug_samples_ordered(
+        &self,
+        channel: usize,
+    ) -> [f32; DEBUG_SAMPLE_HISTORY_LEN] {
+        self.channel_debug_history[channel.min(3)].ordered()
+    }
+
+    pub(in crate::hardware::apu) fn master_debug_samples_ordered(
+        &self,
+    ) -> [f32; DEBUG_SAMPLE_HISTORY_LEN] {
+        self.master_debug_history.ordered()
     }
 
     pub(super) fn square_period_t_cycles(&self, freq: u16) -> u64 {

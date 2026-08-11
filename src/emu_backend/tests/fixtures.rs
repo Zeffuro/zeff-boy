@@ -239,6 +239,10 @@ pub(super) fn assert_app_snapshot_core_features(
         features.supports_opcode_history,
         expected_opcode_history_support(expected_system)
     );
+    assert_eq!(
+        features.cheat_features,
+        crate::ui::CheatFeatureInfo::for_system(expected_system)
+    );
 }
 
 fn expected_opcode_history_support(system: ActiveSystem) -> bool {

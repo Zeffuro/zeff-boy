@@ -7,6 +7,9 @@ pub(super) struct HostInputState {
     keyboard_pressed: u8,
     gamepad_pressed: u8,
     remote_pressed: u8,
+    keyboard_p2_pressed: u8,
+    gamepad_p2_pressed: u8,
+    remote_p2_pressed: u8,
     gamepad_stick_dpad_pressed: u8,
     tilt_keyboard_pressed: u8,
     ws_keyboard_x_pressed: u8,
@@ -26,12 +29,24 @@ impl HostInputState {
         Self::set_mask_bit(&mut self.keyboard_pressed, key, pressed);
     }
 
+    pub(super) fn set_keyboard_p2(&mut self, key: JoypadKey, pressed: bool) {
+        Self::set_mask_bit(&mut self.keyboard_p2_pressed, key, pressed);
+    }
+
     pub(super) fn set_gamepad(&mut self, key: JoypadKey, pressed: bool) {
         Self::set_mask_bit(&mut self.gamepad_pressed, key, pressed);
     }
 
+    pub(super) fn set_gamepad_p2(&mut self, key: JoypadKey, pressed: bool) {
+        Self::set_mask_bit(&mut self.gamepad_p2_pressed, key, pressed);
+    }
+
     pub(super) fn set_remote(&mut self, key: JoypadKey, pressed: bool) {
         Self::set_mask_bit(&mut self.remote_pressed, key, pressed);
+    }
+
+    pub(super) fn set_remote_p2(&mut self, key: JoypadKey, pressed: bool) {
+        Self::set_mask_bit(&mut self.remote_p2_pressed, key, pressed);
     }
 
     pub(super) fn set_tilt_keyboard(&mut self, key: TiltBindingAction, pressed: bool) {
@@ -167,6 +182,14 @@ impl HostInputState {
         ((self.keyboard_pressed | self.gamepad_pressed | self.remote_pressed) >> 4) & 0x0F
     }
 
+    pub(super) fn dpad_p2_pressed(&self) -> u8 {
+        (self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) & 0x0F
+    }
+
+    pub(super) fn buttons_p2_pressed(&self) -> u8 {
+        ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) >> 4) & 0x0F
+    }
+
     pub(super) fn ws_buttons_pressed(&self, display_rotated: bool) -> u8 {
         let mut y_buttons = (self.ws_keyboard_y_pressed | self.ws_gamepad_y_pressed) & 0x0F;
         if display_rotated {
@@ -232,6 +255,10 @@ impl super::App {
         self.host_joypad_input_for_system(self.active_system)
     }
 
+    pub(super) fn current_host_joypad_p2_input(&self) -> (u8, u8) {
+        self.host_joypad_p2_input_for_system(self.active_system)
+    }
+
     pub(super) fn host_joypad_input_for_system(&self, system: ActiveSystem) -> (u8, u8) {
         if system == ActiveSystem::WonderSwan {
             (
@@ -242,6 +269,17 @@ impl super::App {
             (
                 self.host_input.buttons_pressed(),
                 self.host_input.dpad_pressed(),
+            )
+        }
+    }
+
+    pub(super) fn host_joypad_p2_input_for_system(&self, system: ActiveSystem) -> (u8, u8) {
+        if system == ActiveSystem::WonderSwan {
+            (0, 0)
+        } else {
+            (
+                self.host_input.buttons_p2_pressed(),
+                self.host_input.dpad_p2_pressed(),
             )
         }
     }

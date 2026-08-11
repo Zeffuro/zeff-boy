@@ -12,6 +12,7 @@ const RUMBLE_MAGNITUDE: u16 = 40_000;
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
     active_gamepad: Option<GamepadId>,
+    player_gamepads: [Option<GamepadId>; 2],
     #[cfg(not(target_arch = "wasm32"))]
     rumble_effect: Option<ff::Effect>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -25,6 +26,7 @@ impl GamepadHandler {
         Ok(Self {
             gilrs,
             active_gamepad: None,
+            player_gamepads: [None, None],
             #[cfg(not(target_arch = "wasm32"))]
             rumble_effect: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -34,40 +36,55 @@ impl GamepadHandler {
 
     pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
         let mut events = Vec::with_capacity(4);
+        let mut events_p2 = Vec::with_capacity(4);
         let mut ws_events = Vec::with_capacity(4);
         let mut action_events = Vec::with_capacity(4);
         let mut raw_pressed = Vec::with_capacity(4);
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
-            self.active_gamepad = Some(id);
+            let player = self.player_for_gamepad(id);
             match event {
                 EventType::ButtonPressed(button, _) => {
                     let name = button_name(button);
                     raw_pressed.push(name);
-                    if let Some(key) = bindings.map_button_name(name) {
+                    if player == 2 {
+                        if let Some(key) = bindings.map_button_name_p2(name) {
+                            events_p2.push((key, true));
+                        }
+                    } else if let Some(key) = bindings.map_button_name(name) {
                         events.push((key, true));
                     }
-                    if let Some(action) = bindings.map_action_button_name(name) {
-                        action_events.push((action, true));
-                    }
-                    if let Some(button) = bindings.map_ws_button_name(name) {
-                        ws_events.push((button, true));
+                    if player == 1 {
+                        if let Some(action) = bindings.map_action_button_name(name) {
+                            action_events.push((action, true));
+                        }
+                        if let Some(button) = bindings.map_ws_button_name(name) {
+                            ws_events.push((button, true));
+                        }
                     }
                 }
                 EventType::ButtonReleased(button, _) => {
                     let name = button_name(button);
-                    if let Some(key) = bindings.map_button_name(name) {
+                    if player == 2 {
+                        if let Some(key) = bindings.map_button_name_p2(name) {
+                            events_p2.push((key, false));
+                        }
+                    } else if let Some(key) = bindings.map_button_name(name) {
                         events.push((key, false));
                     }
-                    if let Some(action) = bindings.map_action_button_name(name) {
-                        action_events.push((action, false));
-                    }
-                    if let Some(button) = bindings.map_ws_button_name(name) {
-                        ws_events.push((button, false));
+                    if player == 1 {
+                        if let Some(action) = bindings.map_action_button_name(name) {
+                            action_events.push((action, false));
+                        }
+                        if let Some(button) = bindings.map_ws_button_name(name) {
+                            ws_events.push((button, false));
+                        }
                     }
                 }
-                EventType::Disconnected if self.active_gamepad == Some(id) => {
+                EventType::Disconnected => {
+                    let was_active_gamepad = self.active_gamepad == Some(id);
+                    self.release_gamepad(id);
                     #[cfg(not(target_arch = "wasm32"))]
-                    {
+                    if was_active_gamepad {
                         self.rumble_effect = None;
                         self.rumble_playing = false;
                     }
@@ -88,6 +105,7 @@ impl GamepadHandler {
 
         GamepadPoll {
             events,
+            events_p2,
             ws_events,
             action_events,
             left_stick,
@@ -142,6 +160,37 @@ impl GamepadHandler {
 
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn set_rumble(&mut self, _active: bool) {}
+
+    fn player_for_gamepad(&mut self, id: GamepadId) -> u8 {
+        if self.player_gamepads[0] == Some(id) {
+            self.active_gamepad = Some(id);
+            return 1;
+        }
+        if self.player_gamepads[1] == Some(id) {
+            return 2;
+        }
+        if self.player_gamepads[0].is_none() {
+            self.player_gamepads[0] = Some(id);
+            self.active_gamepad = Some(id);
+            return 1;
+        }
+        if self.player_gamepads[1].is_none() {
+            self.player_gamepads[1] = Some(id);
+            return 2;
+        }
+        1
+    }
+
+    fn release_gamepad(&mut self, id: GamepadId) {
+        for slot in &mut self.player_gamepads {
+            if *slot == Some(id) {
+                *slot = None;
+            }
+        }
+        if self.active_gamepad == Some(id) {
+            self.active_gamepad = self.player_gamepads[0];
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

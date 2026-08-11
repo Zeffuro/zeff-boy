@@ -18,6 +18,8 @@ struct WireRequest {
     #[serde(alias = "method")]
     command: String,
     button: Option<String>,
+    #[serde(alias = "controller", alias = "port")]
+    player: Option<u8>,
     pressed: Option<bool>,
     enabled: Option<bool>,
     frames: Option<usize>,
@@ -55,18 +57,22 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
             LiveCommand::SetUncapped(required_enabled(&request)?)
         }
         "press" => LiveCommand::Button {
+            player: optional_player(&request)?,
             key: required_button(&request)?,
             pressed: true,
         },
         "release" => LiveCommand::Button {
+            player: optional_player(&request)?,
             key: required_button(&request)?,
             pressed: false,
         },
         "button" | "set_button" | "setbutton" => LiveCommand::Button {
+            player: optional_player(&request)?,
             key: required_button(&request)?,
             pressed: request.pressed.unwrap_or(true),
         },
         "tap" => LiveCommand::Tap {
+            player: optional_player(&request)?,
             key: required_button(&request)?,
             frames: request.frames.unwrap_or(4).clamp(1, 60),
         },
@@ -144,6 +150,15 @@ fn required_enabled(request: &WireRequest) -> Result<bool, String> {
     request
         .enabled
         .ok_or_else(|| "missing required boolean field: enabled".to_string())
+}
+
+fn optional_player(request: &WireRequest) -> Result<u8, String> {
+    let player = request.player.unwrap_or(1);
+    if matches!(player, 1 | 2) {
+        Ok(player)
+    } else {
+        Err("player must be 1 or 2".to_string())
+    }
 }
 
 fn required_button(request: &WireRequest) -> Result<JoypadKey, String> {

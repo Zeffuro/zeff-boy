@@ -75,6 +75,7 @@ pub(crate) fn draw_settings_window(
                         *settings = Settings::default();
                         state.rebinding_action = None;
                         state.rebinding_gamepad = None;
+                        state.rebinding_gamepad_p2 = None;
                         state.rebinding_ws_gamepad = None;
                         state.rebinding_gamepad_action = None;
                     }

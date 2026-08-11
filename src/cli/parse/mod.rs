@@ -9,7 +9,7 @@ use self::numbers::{
 };
 use self::values::{
     parse_dmg_palette_arg, parse_gba_audio_mute_list_arg, parse_gba_bg_layer_list_arg,
-    parse_memory_dump_arg,
+    parse_memory_dump_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
 };
 use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 
@@ -208,6 +208,31 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.gb_dmg_palette_preset = Some(parse_dmg_palette_arg(value, &args[i])?);
                 i += 2;
             }
+            "--sega8-video-standard" | "--sega8-region" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires one of: auto|ntsc|pal|60hz|50hz", args[i]);
+                };
+                headless.sega8_video_standard = if value.eq_ignore_ascii_case("auto") {
+                    None
+                } else {
+                    Some(parse_sega8_video_standard_arg(value, &args[i])?)
+                };
+                i += 2;
+            }
+            "--sega8-console-region" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!(
+                        "{} requires one of: auto|export|international|japanese|japan|pbc|power-base",
+                        args[i]
+                    );
+                };
+                headless.sega8_console_region = if value.eq_ignore_ascii_case("auto") {
+                    None
+                } else {
+                    Some(parse_sega8_console_region_arg(value, &args[i])?)
+                };
+                i += 2;
+            }
             "--detect-stuck" => {
                 if headless.stuck_window_frames == 0 {
                     headless.stuck_window_frames = 120;
@@ -241,11 +266,27 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                     .extend(parse_input_event_arg(value, args[i].as_str())?);
                 i += 2;
             }
+            "--press-p2" | "--input-p2" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires an input spec", args[i]);
+                };
+                headless
+                    .input_events_p2
+                    .extend(parse_input_event_arg(value, args[i].as_str())?);
+                i += 2;
+            }
             "--input-script" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--input-script requires a file path");
                 };
                 headless.input_events.extend(parse_input_script(value)?);
+                i += 2;
+            }
+            "--input-script-p2" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--input-script-p2 requires a file path");
+                };
+                headless.input_events_p2.extend(parse_input_script(value)?);
                 i += 2;
             }
             "--zapper" => {

@@ -1,3 +1,5 @@
+use crate::cli::types::HeadlessInputEvent;
+
 use super::HeadlessOptions;
 
 #[derive(Clone, Copy, Default)]
@@ -17,15 +19,7 @@ pub(super) fn input_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks 
         zapper_screen_pos: opts.zapper_events.first().map(|event| (event.x, event.y)),
         ..InputMasks::default()
     };
-    for event in &opts.input_events {
-        if (event.start_frame..=event.end_frame).contains(&frame) {
-            input.buttons |= event.buttons;
-            input.dpad |= event.dpad;
-        }
-        if event.reset && frame == event.start_frame {
-            input.reset = true;
-        }
-    }
+    apply_input_events(&mut input, &opts.input_events, frame);
     for event in &opts.zapper_events {
         if (event.start_frame..=event.end_frame).contains(&frame) {
             input.zapper_enabled = true;
@@ -35,4 +29,22 @@ pub(super) fn input_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks 
         }
     }
     input
+}
+
+pub(super) fn input_p2_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
+    let mut input = InputMasks::default();
+    apply_input_events(&mut input, &opts.input_events_p2, frame);
+    input
+}
+
+fn apply_input_events(input: &mut InputMasks, events: &[HeadlessInputEvent], frame: u64) {
+    for event in events {
+        if (event.start_frame..=event.end_frame).contains(&frame) {
+            input.buttons |= event.buttons;
+            input.dpad |= event.dpad;
+        }
+        if event.reset && frame == event.start_frame {
+            input.reset = true;
+        }
+    }
 }

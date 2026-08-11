@@ -3,7 +3,6 @@ use crate::hardware::bus::CpuAccessTraceEvent;
 use crate::hardware::cartridge::Sega8System;
 use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, GG_VIEWPORT_X, GG_VIEWPORT_Y, SMS_SCREEN_H, SMS_SCREEN_W,
-    SMS_Z80_CYCLES_PER_FRAME,
 };
 use crate::hardware::cpu::FetchedInstruction;
 use crate::hardware::vdp::{Mode4ColorMode, Mode4RenderArea};
@@ -17,7 +16,7 @@ impl Emulator {
         let target_cycles = self
             .cpu
             .cycles()
-            .wrapping_add(u64::from(SMS_Z80_CYCLES_PER_FRAME));
+            .wrapping_add(u64::from(self.video_standard.cycles_per_frame()));
         while self.cpu.cycles() < target_cycles {
             if self.step_instruction().is_none() || self.cpu.is_suspended() {
                 return;

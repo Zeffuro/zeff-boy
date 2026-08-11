@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_sega8_core::hardware::region::Sega8Region;
+use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 use super::{ActiveSystem, EmuBackend};
 
@@ -11,6 +13,8 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) sample_rate: Option<u32>,
     pub(crate) apply_mods: bool,
     pub(crate) initial_input: Option<(u8, u8)>,
+    pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
+    pub(crate) sega8_console_region: Option<Sega8Region>,
 }
 
 impl Default for BackendLoadConfig {
@@ -20,6 +24,8 @@ impl Default for BackendLoadConfig {
             sample_rate: None,
             apply_mods: false,
             initial_input: None,
+            sega8_video_standard: None,
+            sega8_console_region: None,
         }
     }
 }
@@ -158,7 +164,20 @@ fn load_sega8_backend(
         .unwrap_or(zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE);
     let hint =
         super::sega8::hint_for_active_system(system).expect("Sega 8-bit systems must have a hint");
-    let mut emu = zeff_sega8_core::emulator::Emulator::new_with_hint(rom_data, sample_rate, hint)?;
+    let video_standard = config
+        .sega8_video_standard
+        .or_else(|| super::sega8::video_standard_from_paths(source_path, rom_path))
+        .unwrap_or_default();
+    let console_region_fallback = super::sega8::console_region_from_paths(source_path, rom_path);
+    let mut emu =
+        zeff_sega8_core::emulator::Emulator::new_with_hint_video_standard_region_fallback(
+            rom_data,
+            sample_rate,
+            hint,
+            video_standard,
+            config.sega8_console_region,
+            console_region_fallback,
+        )?;
     log_sram_result(super::sega8::try_load_battery_sram(&mut emu, rom_path));
     Ok(wrap_sega8_backend(emu, source_path, rom_path))
 }

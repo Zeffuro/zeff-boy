@@ -126,6 +126,14 @@ impl ChannelDebugSamples {
         self.samples = [0.0; DEBUG_SAMPLE_HISTORY_LEN];
         self.write_pos = 0;
     }
+
+    fn ordered(&self) -> [f32; DEBUG_SAMPLE_HISTORY_LEN] {
+        let mut out = [0.0; DEBUG_SAMPLE_HISTORY_LEN];
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = self.samples[(self.write_pos + i) % DEBUG_SAMPLE_HISTORY_LEN];
+        }
+        out
+    }
 }
 
 #[derive(Clone)]

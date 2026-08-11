@@ -105,6 +105,7 @@ impl App {
 
                     let host_camera_frame = self.camera_frame();
                     let (buttons_pressed, dpad_pressed) = self.gather_joypad_input();
+                    let (buttons_pressed_p2, dpad_pressed_p2) = self.current_host_joypad_p2_input();
                     let zapper = self.nes_zapper_input();
                     let reqs = debug::compute_tab_requirements(&self.debug_dock);
                     let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
@@ -117,8 +118,8 @@ impl App {
                         joypad: JoypadInput {
                             buttons: buttons_pressed,
                             dpad: dpad_pressed,
-                            buttons_p2: 0,
-                            dpad_p2: 0,
+                            buttons_p2: buttons_pressed_p2,
+                            dpad_p2: dpad_pressed_p2,
                         },
                         zapper,
                         debug_step: std::mem::take(&mut self.debug_requests.step),

@@ -80,23 +80,24 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         {
             if self.settings.video.nes_custom_palette_bytes.is_empty() {
-                return None;
-            }
-            let name = if self.settings.video.nes_custom_palette_name.is_empty() {
-                "uploaded .pal"
+                None
             } else {
-                &self.settings.video.nes_custom_palette_name
-            };
-            return Some(NesPaletteSource {
-                key: format!(
-                    "embedded:{name}:{}",
-                    self.settings.video.nes_custom_palette_bytes.len()
-                ),
-                label: name.to_string(),
-                kind: NesPaletteSourceKind::Bytes(
-                    self.settings.video.nes_custom_palette_bytes.clone(),
-                ),
-            });
+                let name = if self.settings.video.nes_custom_palette_name.is_empty() {
+                    "uploaded .pal"
+                } else {
+                    &self.settings.video.nes_custom_palette_name
+                };
+                Some(NesPaletteSource {
+                    key: format!(
+                        "embedded:{name}:{}",
+                        self.settings.video.nes_custom_palette_bytes.len()
+                    ),
+                    label: name.to_string(),
+                    kind: NesPaletteSourceKind::Bytes(
+                        self.settings.video.nes_custom_palette_bytes.clone(),
+                    ),
+                })
+            }
         }
     }
 }

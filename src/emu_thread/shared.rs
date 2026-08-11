@@ -204,6 +204,8 @@ impl EmuThread {
 
         if let Some(gba) = backend.gba_mut() {
             Self::apply_gba_debug_actions(&mut gba.emu, &input.debug_actions);
+            gba.emu
+                .set_apu_debug_capture_enabled(input.audio.apu_capture_enabled);
             if !uncapped_mode {
                 gba.emu
                     .set_apu_sample_generation_enabled(!input.audio.skip_audio);
@@ -259,6 +261,15 @@ impl EmuThread {
             if let Some(nes) = backend.nes_mut() {
                 Self::apply_nes_ram_cheats(&mut nes.emu, cheats);
             }
+            if let Some(gba) = backend.gba_mut() {
+                Self::apply_gba_ram_cheats(&mut gba.emu, cheats);
+            }
+            if let Some(sega8) = backend.sega8_mut() {
+                Self::apply_sega8_ram_cheats(&mut sega8.emu, cheats);
+            }
+            if let Some(ws) = backend.ws_mut() {
+                Self::apply_ws_ram_cheats(&mut ws.emu, cheats);
+            }
             if backend.is_suspended() {
                 break;
             }
@@ -296,6 +307,7 @@ impl EmuThread {
             system_ram_len: backend.system_ram_len(),
             video_ram_len: backend.video_ram_len(),
             memory_regions: backend.memory_regions(),
+            cheat_features: ui::CheatFeatureInfo::for_system(backend.system()),
             supports_save_states: true,
             supports_rewind: true,
             supports_debugger: backend.supports_debugger(),

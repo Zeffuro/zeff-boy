@@ -7,9 +7,10 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         .show(ui, |ui| {
             if let Some(action) = state.rebinding_action {
                 let label = match action {
-                    InputBindingAction::Joypad(a) => joypad_label(a),
-                    InputBindingAction::Tilt(a) => super::tilt::tilt_label(a),
-                    InputBindingAction::WonderSwan(a) => a.label(),
+                    InputBindingAction::Joypad(a) => joypad_label_for_player(1, a),
+                    InputBindingAction::JoypadP2(a) => joypad_label_for_player(2, a),
+                    InputBindingAction::Tilt(a) => super::tilt::tilt_label(a).to_string(),
+                    InputBindingAction::WonderSwan(a) => a.label().to_string(),
                 };
                 ui.label(
                     egui::RichText::new(format!("Press a key for {}...", label))
@@ -18,17 +19,26 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             }
             if state.rebinding_gamepad.is_some() {
                 ui.label(
-                    egui::RichText::new("Press a gamepad button...").color(egui::Color32::YELLOW),
+                    egui::RichText::new("Press a P1 gamepad button...")
+                        .color(egui::Color32::YELLOW),
+                );
+            }
+            if state.rebinding_gamepad_p2.is_some() {
+                ui.label(
+                    egui::RichText::new("Press a P2 gamepad button...")
+                        .color(egui::Color32::YELLOW),
                 );
             }
             egui::Grid::new("joypad_combined")
-                .num_columns(3)
+                .num_columns(5)
                 .spacing([12.0, 4.0])
                 .striped(true)
                 .show(ui, |ui| {
                     ui.strong("Button");
-                    ui.strong("Keyboard");
-                    ui.strong("Gamepad");
+                    ui.strong("Keyboard P1");
+                    ui.strong("Gamepad P1");
+                    ui.strong("Keyboard P2");
+                    ui.strong("Gamepad P2");
                     ui.end_row();
 
                     for action in [
@@ -53,6 +63,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         if ui.button(kb_label).clicked() {
                             state.rebinding_action = Some(InputBindingAction::Joypad(action));
                             state.rebinding_gamepad = None;
+                            state.rebinding_gamepad_p2 = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
@@ -67,6 +78,41 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         };
                         if ui.button(gp_label).clicked() {
                             state.rebinding_gamepad = Some(action);
+                            state.rebinding_gamepad_p2 = None;
+                            state.rebinding_ws_gamepad = None;
+                            state.rebinding_action = None;
+                            state.rebinding_shortcut = None;
+                            state.rebinding_speedup = false;
+                            state.rebinding_rewind = false;
+                        }
+
+                        let key_name_p2 = format!("{:?}", settings.key_bindings_p2.get(action));
+                        let kb_label_p2 = if state.rebinding_action
+                            == Some(InputBindingAction::JoypadP2(action))
+                        {
+                            format!("Press key... ({key_name_p2})")
+                        } else {
+                            key_name_p2
+                        };
+                        if ui.button(kb_label_p2).clicked() {
+                            state.rebinding_action = Some(InputBindingAction::JoypadP2(action));
+                            state.rebinding_gamepad = None;
+                            state.rebinding_gamepad_p2 = None;
+                            state.rebinding_ws_gamepad = None;
+                            state.rebinding_shortcut = None;
+                            state.rebinding_speedup = false;
+                            state.rebinding_rewind = false;
+                        }
+
+                        let button_name_p2 = settings.gamepad_bindings.get_p2(action).to_owned();
+                        let gp_label_p2 = if state.rebinding_gamepad_p2 == Some(action) {
+                            format!("Press btn... ({button_name_p2})")
+                        } else {
+                            button_name_p2
+                        };
+                        if ui.button(gp_label_p2).clicked() {
+                            state.rebinding_gamepad_p2 = Some(action);
+                            state.rebinding_gamepad = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_action = None;
                             state.rebinding_shortcut = None;
@@ -80,10 +126,15 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             if ui.button("Reset gamepad to defaults").clicked() {
                 settings.gamepad_bindings = crate::settings::GamepadBindings::default();
                 state.rebinding_gamepad = None;
+                state.rebinding_gamepad_p2 = None;
                 state.rebinding_ws_gamepad = None;
                 state.rebinding_gamepad_action = None;
             }
         });
+}
+
+fn joypad_label_for_player(player: u8, action: BindingAction) -> String {
+    format!("P{player} {}", joypad_label(action))
 }
 
 fn joypad_label(action: BindingAction) -> &'static str {

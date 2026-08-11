@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::types::HeadlessOptions;
+use crate::cli::types::{HeadlessInputEvent, HeadlessOptions};
 
 use super::{InputMasks, StuckReport};
 
@@ -13,7 +13,7 @@ mod sega8;
 
 pub(super) use gb::gb_debug_state;
 pub(super) use gba::{dump_gba_memory_snapshots, gba_debug_state, gba_wait_classification};
-pub(super) use nes::nes_debug_state;
+pub(super) use nes::{NesDebugStateRequest, nes_debug_state};
 pub(super) use sega8::{Sega8DebugStateRequest, sega8_debug_state};
 pub(super) fn emit_debug_state(
     opts: &HeadlessOptions,
@@ -95,21 +95,8 @@ fn input_json(input: InputMasks) -> serde_json::Value {
 }
 
 fn input_schedule_json(opts: &HeadlessOptions) -> serde_json::Value {
-    let events = opts
-        .input_events
-        .iter()
-        .map(|event| {
-            serde_json::json!({
-                "start_frame": event.start_frame,
-                "end_frame": event.end_frame,
-                "buttons": event.buttons,
-                "dpad": event.dpad,
-                "reset": event.reset,
-                "buttons_hex": format!("{:02X}", event.buttons),
-                "dpad_hex": format!("{:02X}", event.dpad),
-            })
-        })
-        .collect::<Vec<_>>();
+    let events = input_events_json(&opts.input_events);
+    let p2_events = input_events_json(&opts.input_events_p2);
     let zapper_events = opts
         .zapper_events
         .iter()
@@ -127,10 +114,31 @@ fn input_schedule_json(opts: &HeadlessOptions) -> serde_json::Value {
 
     serde_json::json!({
         "event_count": events.len(),
-        "events": events,
+        "events": events.clone(),
+        "p1_event_count": events.len(),
+        "p1_events": events,
+        "p2_event_count": p2_events.len(),
+        "p2_events": p2_events,
         "zapper_event_count": zapper_events.len(),
         "zapper_events": zapper_events,
     })
+}
+
+fn input_events_json(events: &[HeadlessInputEvent]) -> Vec<serde_json::Value> {
+    events
+        .iter()
+        .map(|event| {
+            serde_json::json!({
+                "start_frame": event.start_frame,
+                "end_frame": event.end_frame,
+                "buttons": event.buttons,
+                "dpad": event.dpad,
+                "reset": event.reset,
+                "buttons_hex": format!("{:02X}", event.buttons),
+                "dpad_hex": format!("{:02X}", event.dpad),
+            })
+        })
+        .collect()
 }
 
 fn screenshot_json(path: Option<&PathBuf>) -> serde_json::Value {

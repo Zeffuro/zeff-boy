@@ -88,6 +88,146 @@ fn sega8_extensions_select_expected_systems() {
 }
 
 #[test]
+fn sega8_libretro_uses_path_region_for_video_standard_and_fps() {
+    let state =
+        CoreState::from_rom(&[0x76], "Example (Europe).sms").expect("Sega 8-bit ROM should load");
+
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert_eq!(
+        emu.video_standard(),
+        zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal
+    );
+    assert_eq!(
+        emu.console_region(),
+        zeff_sega8_core::hardware::region::Sega8Region::Export
+    );
+    assert_eq!(state.fps(), 50.0);
+    assert!(state.is_pal_region());
+}
+
+#[test]
+fn sega8_libretro_forwards_player_two_input() {
+    let mut state = load_sega8("sms");
+
+    state.set_input_p2(0x01, 0x04);
+
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    let raw = emu
+        .bus()
+        .input()
+        .read_controller(zeff_sega8_core::hardware::input::ControllerPort::Two);
+    assert_eq!(raw & (1 << 4), 0, "host A should map to SMS button 1 on P2");
+    assert_eq!(raw & (1 << 0), 0, "host Up should map to SMS up on P2");
+    assert_ne!(raw & (1 << 5), 0);
+}
+
+#[test]
+fn sega8_libretro_cheat_set_installs_rom_patches() {
+    let mut state = load_sega8("gg");
+
+    state.cheat_set("006-46F");
+
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert_eq!(emu.rom_patches().len(), 1);
+    assert_eq!(emu.cpu_peek8(0x0646), 0x00);
+
+    state.cheat_reset();
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert!(emu.rom_patches().is_empty());
+    assert_eq!(emu.cpu_peek8(0x0646), 0x76);
+}
+
+#[test]
+fn gb_libretro_cheat_set_applies_ram_cheats_each_frame() {
+    let rom = gb_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gb").expect("GB ROM should load");
+
+    state.cheat_set("C000:42");
+    state.step_frame();
+
+    let ActiveCore::Gb(emu) = &state.core else {
+        panic!("expected GB core");
+    };
+    assert_eq!(emu.peek_byte_raw(0xC000), 0x42);
+
+    state.cheat_reset();
+    let ActiveCore::Gb(emu) = &mut state.core else {
+        panic!("expected GB core");
+    };
+    emu.write_byte(0xC000, 0x11);
+
+    state.step_frame();
+
+    let ActiveCore::Gb(emu) = &state.core else {
+        panic!("expected GB core");
+    };
+    assert_eq!(emu.peek_byte_raw(0xC000), 0x11);
+}
+
+#[test]
+fn nes_libretro_cheat_set_applies_raw_ram_cheats_each_frame() {
+    let rom = nes_rom();
+    let mut state = CoreState::from_rom(&rom, "test.nes").expect("NES ROM should load");
+
+    state.cheat_set("0000:66");
+    state.step_frame();
+
+    let ActiveCore::Nes(emu) = &state.core else {
+        panic!("expected NES core");
+    };
+    assert_eq!(emu.cpu_peek(0x0000), 0x66);
+}
+
+#[test]
+fn sega8_libretro_cheat_set_applies_ram_cheats_each_frame() {
+    let mut state = load_sega8("sms");
+
+    state.cheat_set("C000:42");
+    state.step_frame();
+
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert_eq!(emu.cpu_peek8(0xC000), 0x42);
+}
+
+#[test]
+fn gba_libretro_cheat_set_applies_wide_raw_ram_cheats_each_frame() {
+    let rom = gba_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+
+    state.cheat_set("02000000:42");
+    state.step_frame();
+
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_0000), 0x42);
+}
+
+#[test]
+fn ws_libretro_cheat_set_applies_wide_raw_ram_cheats_each_frame() {
+    let rom = ws_rom();
+    let mut state = CoreState::from_rom(&rom, "test.ws").expect("WonderSwan ROM should load");
+
+    state.cheat_set("00001234:56");
+    state.step_frame();
+
+    let ActiveCore::Ws(emu) = &state.core else {
+        panic!("expected WS core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0000_1234), 0x56);
+}
+
+#[test]
 fn gba_memory_regions_include_debuggable_video_side_regions() {
     let rom = gba_rom();
     let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");

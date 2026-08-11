@@ -5,6 +5,8 @@ use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
 use zeff_sega8_core::hardware::cartridge::{Sega8System, SystemHint};
+use zeff_sega8_core::hardware::region::Sega8Region;
+use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 use crate::emu_backend::ActiveSystem;
 use crate::emu_backend::paths::BackendPaths;
@@ -116,6 +118,11 @@ impl EmulatorCore for Sega8Backend {
     }
 
     #[inline]
+    fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.emu.set_input_p2(buttons_pressed, dpad_pressed);
+    }
+
+    #[inline]
     fn is_suspended(&self) -> bool {
         self.emu.is_suspended()
     }
@@ -209,6 +216,20 @@ pub(crate) fn hint_for_active_system(system: ActiveSystem) -> Option<SystemHint>
         ActiveSystem::Sg1000 => Some(SystemHint::Sg1000),
         _ => None,
     }
+}
+
+pub(crate) fn video_standard_from_paths(
+    source_path: &Path,
+    rom_path: &Path,
+) -> Option<Sega8VideoStandard> {
+    Sega8VideoStandard::from_path(rom_path).or_else(|| Sega8VideoStandard::from_path(source_path))
+}
+
+pub(crate) fn console_region_from_paths(
+    source_path: &Path,
+    rom_path: &Path,
+) -> Option<Sega8Region> {
+    Sega8Region::from_path(rom_path).or_else(|| Sega8Region::from_path(source_path))
 }
 
 fn active_system_for_sega8(system: Sega8System) -> ActiveSystem {

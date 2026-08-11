@@ -1,4 +1,6 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
+use zeff_sega8_core::hardware::region::Sega8Region;
+use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 use super::super::types::HeadlessMemoryDump;
 use super::numbers::{parse_addr_arg, parse_u64_arg, parse_usize_arg};
@@ -61,6 +63,25 @@ pub(super) fn parse_dmg_palette_arg(value: &str, flag: &str) -> anyhow::Result<D
             "{flag} has unknown palette {value:?}; expected gray, dmg-green, pocket, mint, or chocolate"
         ),
     }
+}
+
+pub(super) fn parse_sega8_video_standard_arg(
+    value: &str,
+    flag: &str,
+) -> anyhow::Result<Sega8VideoStandard> {
+    Sega8VideoStandard::parse(value)
+        .ok_or_else(|| anyhow::anyhow!("{flag} requires one of: auto|ntsc|pal|60hz|50hz"))
+}
+
+pub(super) fn parse_sega8_console_region_arg(
+    value: &str,
+    flag: &str,
+) -> anyhow::Result<Sega8Region> {
+    Sega8Region::parse(value).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{flag} requires one of: auto|export|international|japanese|japan|pbc|power-base"
+        )
+    })
 }
 
 pub(super) fn parse_gba_audio_mute_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool; 6]> {

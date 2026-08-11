@@ -69,6 +69,12 @@ impl App {
                 sample_rate: self.audio.as_ref().map(|audio| audio.sample_rate()),
                 apply_mods: true,
                 initial_input: Some(self.host_joypad_input_for_system(system)),
+                sega8_video_standard: self
+                    .settings
+                    .emulation
+                    .sega8_video_standard
+                    .forced_standard(),
+                sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
             },
         )?;
         Ok((loaded.backend, loaded.original_crc32))

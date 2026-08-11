@@ -10,11 +10,19 @@ impl App {
                 if let Some(button_name) = poll.raw_pressed.first() {
                     self.settings.gamepad_bindings.set(action, button_name);
                     self.debug_windows.rebinding_gamepad = None;
+                    self.debug_windows.rebinding_gamepad_p2 = None;
+                }
+            } else if let Some(action) = self.debug_windows.rebinding_gamepad_p2 {
+                if let Some(button_name) = poll.raw_pressed.first() {
+                    self.settings.gamepad_bindings.set_p2(action, button_name);
+                    self.debug_windows.rebinding_gamepad = None;
+                    self.debug_windows.rebinding_gamepad_p2 = None;
                 }
             } else if let Some(button) = self.debug_windows.rebinding_ws_gamepad {
                 if let Some(button_name) = poll.raw_pressed.first() {
                     self.settings.gamepad_bindings.set_ws(button, button_name);
                     self.debug_windows.rebinding_ws_gamepad = None;
+                    self.debug_windows.rebinding_gamepad_p2 = None;
                 }
             } else if let Some(action) = self.debug_windows.rebinding_gamepad_action {
                 if let Some(button_name) = poll.raw_pressed.first() {
@@ -22,10 +30,14 @@ impl App {
                         .gamepad_bindings
                         .set_action(action, button_name);
                     self.debug_windows.rebinding_gamepad_action = None;
+                    self.debug_windows.rebinding_gamepad_p2 = None;
                 }
             } else {
                 for (key, pressed) in poll.events {
                     self.host_input.set_gamepad(key, pressed);
+                }
+                for (key, pressed) in poll.events_p2 {
+                    self.host_input.set_gamepad_p2(key, pressed);
                 }
                 for (button, pressed) in poll.ws_events {
                     self.host_input.set_ws_gamepad(button, pressed);

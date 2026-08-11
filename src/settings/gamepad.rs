@@ -14,6 +14,38 @@ fn default_ws_start() -> String {
     "Start".to_string()
 }
 
+fn default_gp_a() -> String {
+    "South".to_string()
+}
+
+fn default_gp_b() -> String {
+    "East".to_string()
+}
+
+fn default_gp_start() -> String {
+    "Start".to_string()
+}
+
+fn default_gp_select() -> String {
+    "Select".to_string()
+}
+
+fn default_gp_up() -> String {
+    "DPadUp".to_string()
+}
+
+fn default_gp_down() -> String {
+    "DPadDown".to_string()
+}
+
+fn default_gp_left() -> String {
+    "DPadLeft".to_string()
+}
+
+fn default_gp_right() -> String {
+    "DPadRight".to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GamepadAction {
     SpeedUp,
@@ -33,6 +65,22 @@ pub(crate) struct GamepadBindings {
     pub(crate) down: String,
     pub(crate) left: String,
     pub(crate) right: String,
+    #[serde(default = "default_gp_a")]
+    pub(crate) p2_a: String,
+    #[serde(default = "default_gp_b")]
+    pub(crate) p2_b: String,
+    #[serde(default = "default_gp_start")]
+    pub(crate) p2_start: String,
+    #[serde(default = "default_gp_select")]
+    pub(crate) p2_select: String,
+    #[serde(default = "default_gp_up")]
+    pub(crate) p2_up: String,
+    #[serde(default = "default_gp_down")]
+    pub(crate) p2_down: String,
+    #[serde(default = "default_gp_left")]
+    pub(crate) p2_left: String,
+    #[serde(default = "default_gp_right")]
+    pub(crate) p2_right: String,
     #[serde(default)]
     pub(crate) speedup: String,
     #[serde(default)]
@@ -70,14 +118,22 @@ pub(crate) struct GamepadBindings {
 impl Default for GamepadBindings {
     fn default() -> Self {
         Self {
-            a: "South".to_string(),
-            b: "East".to_string(),
-            start: "Start".to_string(),
-            select: "Select".to_string(),
-            up: "DPadUp".to_string(),
-            down: "DPadDown".to_string(),
-            left: "DPadLeft".to_string(),
-            right: "DPadRight".to_string(),
+            a: default_gp_a(),
+            b: default_gp_b(),
+            start: default_gp_start(),
+            select: default_gp_select(),
+            up: default_gp_up(),
+            down: default_gp_down(),
+            left: default_gp_left(),
+            right: default_gp_right(),
+            p2_a: default_gp_a(),
+            p2_b: default_gp_b(),
+            p2_start: default_gp_start(),
+            p2_select: default_gp_select(),
+            p2_up: default_gp_up(),
+            p2_down: default_gp_down(),
+            p2_left: default_gp_left(),
+            p2_right: default_gp_right(),
             speedup: String::new(),
             rewind: String::new(),
             pause: String::new(),
@@ -154,29 +210,44 @@ impl GamepadBindings {
         &self,
         name: &str,
     ) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
+        self.map_button_name_for_player(name, 1)
+    }
+
+    pub(crate) fn map_button_name_p2(
+        &self,
+        name: &str,
+    ) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
+        self.map_button_name_for_player(name, 2)
+    }
+
+    fn map_button_name_for_player(
+        &self,
+        name: &str,
+        player: u8,
+    ) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
         use zeff_gb_core::hardware::joypad::JoypadKey;
-        if name == self.a {
+        if name == self.get_for_player(BindingAction::A, player) {
             return Some(JoypadKey::A);
         }
-        if name == self.b {
+        if name == self.get_for_player(BindingAction::B, player) {
             return Some(JoypadKey::B);
         }
-        if name == self.start {
+        if name == self.get_for_player(BindingAction::Start, player) {
             return Some(JoypadKey::Start);
         }
-        if name == self.select {
+        if name == self.get_for_player(BindingAction::Select, player) {
             return Some(JoypadKey::Select);
         }
-        if name == self.up {
+        if name == self.get_for_player(BindingAction::Up, player) {
             return Some(JoypadKey::Up);
         }
-        if name == self.down {
+        if name == self.get_for_player(BindingAction::Down, player) {
             return Some(JoypadKey::Down);
         }
-        if name == self.left {
+        if name == self.get_for_player(BindingAction::Left, player) {
             return Some(JoypadKey::Left);
         }
-        if name == self.right {
+        if name == self.get_for_player(BindingAction::Right, player) {
             return Some(JoypadKey::Right);
         }
         None
@@ -209,6 +280,27 @@ impl GamepadBindings {
     }
 
     pub(crate) fn get(&self, action: BindingAction) -> &str {
+        self.get_for_player(action, 1)
+    }
+
+    pub(crate) fn get_p2(&self, action: BindingAction) -> &str {
+        self.get_for_player(action, 2)
+    }
+
+    fn get_for_player(&self, action: BindingAction, player: u8) -> &str {
+        if player == 2 {
+            return match action {
+                BindingAction::A => &self.p2_a,
+                BindingAction::B => &self.p2_b,
+                BindingAction::Start => &self.p2_start,
+                BindingAction::Select => &self.p2_select,
+                BindingAction::Up => &self.p2_up,
+                BindingAction::Down => &self.p2_down,
+                BindingAction::Left => &self.p2_left,
+                BindingAction::Right => &self.p2_right,
+            };
+        }
+
         match action {
             BindingAction::A => &self.a,
             BindingAction::B => &self.b,
@@ -232,6 +324,20 @@ impl GamepadBindings {
             BindingAction::Down => self.down = s,
             BindingAction::Left => self.left = s,
             BindingAction::Right => self.right = s,
+        }
+    }
+
+    pub(crate) fn set_p2(&mut self, action: BindingAction, button_name: &str) {
+        let s = button_name.to_string();
+        match action {
+            BindingAction::A => self.p2_a = s,
+            BindingAction::B => self.p2_b = s,
+            BindingAction::Start => self.p2_start = s,
+            BindingAction::Select => self.p2_select = s,
+            BindingAction::Up => self.p2_up = s,
+            BindingAction::Down => self.p2_down = s,
+            BindingAction::Left => self.p2_left = s,
+            BindingAction::Right => self.p2_right = s,
         }
     }
 

@@ -3,13 +3,14 @@ use super::constants::{
     MODE4_SPRITE_TABLE_SHIFT, MODE4_SPRITE_TERMINATOR_Y, MODE4_SPRITE_X_TILE_TABLE_OFFSET,
     RGBA_CHANNELS, SMS_COLOR_CHANNEL_SCALE_2BIT, SMS_CRAM_SIZE, SMS_GG_COLOR_INDEX_MASK,
     SMS_MODE4_TILE_BYTES, SMS_NAME_TABLE_COLUMNS, SMS_NAME_TABLE_ENTRY_BYTES, SMS_NAME_TABLE_ROWS,
-    SMS_SCANLINE_Z80_CYCLES, SMS_TILE_SIZE, SMS_TOTAL_SCANLINES, SMS_VDP_REGISTER_COUNT,
-    SMS_VISIBLE_SCANLINES, SMS_VRAM_SIZE, VDP_ADDRESS_MASK, VDP_CONTROL_CODE_SHIFT,
-    VDP_CONTROL_REGISTER_WRITE_MASK, VDP_CONTROL_REGISTER_WRITE_VALUE, VDP_REG0_MODE4,
-    VDP_REG1_DISPLAY_ENABLE, VDP_REG1_FRAME_IRQ_ENABLE, VDP_REG1_SPRITE_8X16,
+    SMS_SCANLINE_Z80_CYCLES, SMS_TILE_SIZE, SMS_VDP_REGISTER_COUNT, SMS_VISIBLE_SCANLINES,
+    SMS_VRAM_SIZE, VDP_ADDRESS_MASK, VDP_CONTROL_CODE_SHIFT, VDP_CONTROL_REGISTER_WRITE_MASK,
+    VDP_CONTROL_REGISTER_WRITE_VALUE, VDP_REG0_MODE4, VDP_REG1_DISPLAY_ENABLE,
+    VDP_REG1_FRAME_IRQ_ENABLE, VDP_REG1_SPRITE_8X16, VDP_REG1_SPRITE_MAGNIFY,
     VDP_REGISTER_INDEX_MASK, VDP_REGISTER_MODE_CONTROL_2, VDP_STATUS_CLEAR_MASK,
     VDP_STATUS_SPRITE_COLLISION, VDP_STATUS_SPRITE_OVERFLOW, VDP_STATUS_VBLANK,
 };
+use super::timing::Sega8VideoStandard;
 
 const VDP_CODE_VRAM_READ: u8 = 0;
 const VDP_CODE_VRAM_WRITE: u8 = 1;
@@ -41,6 +42,9 @@ const VDP_REG0_LINE_IRQ_ENABLE: u8 = 0x10;
 const VDP_REG0_SPRITE_SHIFT_LEFT: u8 = 0x08;
 const MODE4_SPRITE_COUNT: usize = 64;
 const MODE4_MAX_SPRITES_PER_LINE: usize = 8;
+const MODE4_SPRITE_PATTERN_TABLE_REGISTER: usize = 6;
+const MODE4_SPRITE_PATTERN_BASE_SELECT: u8 = 0x04;
+const MODE4_SPRITE_PATTERN_BASE_HIGH: usize = 0x2000;
 const TMS_REGISTER_NAME_TABLE: usize = 2;
 const TMS_REGISTER_COLOR_TABLE: usize = 3;
 const TMS_REGISTER_PATTERN_TABLE: usize = 4;
@@ -136,6 +140,8 @@ impl Mode4RenderArea {
 struct Mode4SpriteRenderContext {
     area: Mode4RenderArea,
     name_table_base: usize,
+    sprite_pattern_base: usize,
+    sprite_scale: usize,
     color_mode: Mode4ColorMode,
 }
 
@@ -162,19 +168,23 @@ pub struct Mode4VdpDebugSnapshot {
     pub enabled: bool,
     pub name_table_base: usize,
     pub sprite_table_base: usize,
+    pub sprite_pattern_base: usize,
     pub horizontal_scroll: u8,
     pub vertical_scroll: u8,
     pub backdrop_color_index: usize,
     pub sprite_height: usize,
+    pub sprite_width: usize,
     pub max_sprites_per_line: usize,
     pub horizontal_scroll_lock: bool,
     pub vertical_scroll_lock: bool,
     pub hide_left_column: bool,
     pub sprite_shift_left: bool,
+    pub sprite_magnified: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vdp {
+    video_standard: Sega8VideoStandard,
     vram: [u8; SMS_VRAM_SIZE],
     cram: [u8; SMS_CRAM_SIZE],
     registers: [u8; SMS_VDP_REGISTER_COUNT],
@@ -193,7 +203,12 @@ pub struct Vdp {
 
 impl Vdp {
     pub fn new() -> Self {
+        Self::new_with_video_standard(Sega8VideoStandard::default())
+    }
+
+    pub fn new_with_video_standard(video_standard: Sega8VideoStandard) -> Self {
         Self {
+            video_standard,
             vram: [0; SMS_VRAM_SIZE],
             cram: [0; SMS_CRAM_SIZE],
             registers: [0; SMS_VDP_REGISTER_COUNT],
@@ -212,7 +227,22 @@ impl Vdp {
     }
 
     pub fn reset(&mut self) {
-        *self = Self::new();
+        let video_standard = self.video_standard;
+        *self = Self::new_with_video_standard(video_standard);
+    }
+
+    pub fn video_standard(&self) -> Sega8VideoStandard {
+        self.video_standard
+    }
+
+    pub fn total_scanlines(&self) -> u16 {
+        self.video_standard.total_scanlines()
+    }
+
+    pub fn set_video_standard(&mut self, video_standard: Sega8VideoStandard) {
+        self.video_standard = video_standard;
+        self.scanline %= self.total_scanlines();
+        self.update_v_counter();
     }
 
     pub fn write_data(&mut self, value: u8) {
@@ -371,7 +401,7 @@ impl Vdp {
         self.status = r.read_u8()?;
         self.v_counter = r.read_u8()?;
         self.h_counter = r.read_u8()?;
-        self.scanline = r.read_u16()? % SMS_TOTAL_SCANLINES;
+        self.scanline = r.read_u16()? % self.total_scanlines();
         self.scanline_cycle = r.read_u32()? % SMS_SCANLINE_Z80_CYCLES;
         self.line_counter = r.read_u8()?;
         self.line_interrupt_pending = r.read_bool()?;
@@ -440,10 +470,12 @@ impl Vdp {
             enabled: self.mode4_enabled(),
             name_table_base: self.mode4_name_table_base(),
             sprite_table_base: self.mode4_sprite_table_base(),
+            sprite_pattern_base: self.mode4_sprite_pattern_base(),
             horizontal_scroll: self.registers[VDP_REGISTER_HORIZONTAL_SCROLL],
             vertical_scroll: self.registers[VDP_REGISTER_VERTICAL_SCROLL],
             backdrop_color_index: self.mode4_backdrop_color_index(),
             sprite_height: self.mode4_sprite_height(),
+            sprite_width: self.mode4_sprite_width(),
             max_sprites_per_line: MODE4_MAX_SPRITES_PER_LINE,
             horizontal_scroll_lock: self.registers[VDP_REGISTER_MODE_CONTROL_1]
                 & VDP_REG0_HORIZONTAL_SCROLL_LOCK
@@ -457,6 +489,7 @@ impl Vdp {
             sprite_shift_left: self.registers[VDP_REGISTER_MODE_CONTROL_1]
                 & VDP_REG0_SPRITE_SHIFT_LEFT
                 != 0,
+            sprite_magnified: self.mode4_sprite_magnified(),
         }
     }
 
@@ -923,6 +956,16 @@ impl Vdp {
             << MODE4_SPRITE_TABLE_SHIFT
     }
 
+    fn mode4_sprite_pattern_base(&self) -> usize {
+        if self.registers[MODE4_SPRITE_PATTERN_TABLE_REGISTER] & MODE4_SPRITE_PATTERN_BASE_SELECT
+            != 0
+        {
+            MODE4_SPRITE_PATTERN_BASE_HIGH
+        } else {
+            0
+        }
+    }
+
     fn mode4_name_table_entry(&self, name_table_base: usize, tile_x: usize, tile_y: usize) -> u16 {
         let offset = name_table_base
             + ((tile_y * SMS_NAME_TABLE_COLUMNS + tile_x) * SMS_NAME_TABLE_ENTRY_BYTES);
@@ -1029,20 +1072,26 @@ impl Vdp {
 
         let table_base = self.mode4_sprite_table_base();
         let name_table_base = self.mode4_name_table_base();
-        let sprite_height = self.mode4_sprite_height();
+        let sprite_pattern_base = self.mode4_sprite_pattern_base();
+        let sprite_base_height = self.mode4_sprite_base_height();
+        let sprite_scale = self.mode4_sprite_scale();
+        let sprite_height = sprite_base_height * sprite_scale;
         let x_shift = self.mode4_sprite_x_shift();
         let context = Mode4SpriteRenderContext {
             area,
             name_table_base,
+            sprite_pattern_base,
+            sprite_scale,
             color_mode,
         };
 
         for dest_y in 0..area.height {
             let screen_y = (area.source_y + dest_y) as isize;
             let mut sprites_on_line = 0usize;
+            let mut sprites = [None; MODE4_MAX_SPRITES_PER_LINE];
             for sprite_index in 0..MODE4_SPRITE_COUNT {
                 let Some(sprite) =
-                    self.mode4_sprite(table_base, sprite_height, x_shift, sprite_index)
+                    self.mode4_sprite(table_base, sprite_base_height, x_shift, sprite_index)
                 else {
                     break;
                 };
@@ -1052,8 +1101,11 @@ impl Vdp {
                 if sprites_on_line >= MODE4_MAX_SPRITES_PER_LINE {
                     break;
                 }
+                sprites[sprites_on_line] = Some((sprite, row));
                 sprites_on_line += 1;
+            }
 
+            for (sprite, row) in sprites[..sprites_on_line].iter().rev().flatten().copied() {
                 self.render_mode4_sprite_row_rgba(framebuffer, context, dest_y, sprite, row);
             }
         }
@@ -1068,17 +1120,25 @@ impl Vdp {
         row: usize,
     ) {
         let area = context.area;
-        let pattern_row = row % SMS_TILE_SIZE;
-        let pattern_tile = usize::from(sprite.tile_index) + row / SMS_TILE_SIZE;
+        let sprite_scale = context.sprite_scale;
+        let pattern_y = row / sprite_scale;
+        let pattern_row = pattern_y % SMS_TILE_SIZE;
+        let pattern_tile = usize::from(sprite.tile_index) + pattern_y / SMS_TILE_SIZE;
 
-        for col in 0..SMS_TILE_SIZE {
-            let screen_x = sprite.x + col as isize;
+        for dest_col in 0..SMS_TILE_SIZE * sprite_scale {
+            let screen_x = sprite.x + dest_col as isize;
             let dest_x = screen_x - area.source_x as isize;
             if !(0..area.width as isize).contains(&dest_x) {
                 continue;
             }
 
-            let color = self.mode4_sprite_color(pattern_tile, col, pattern_row);
+            let col = dest_col / sprite_scale;
+            let color = self.mode4_sprite_color(
+                context.sprite_pattern_base,
+                pattern_tile,
+                col,
+                pattern_row,
+            );
             if color == 0 {
                 continue;
             }
@@ -1098,11 +1158,31 @@ impl Vdp {
     }
 
     fn mode4_sprite_height(&self) -> usize {
-        if self.registers[VDP_REGISTER_MODE_CONTROL_2] & VDP_REG1_SPRITE_8X16 != 0 {
+        self.mode4_sprite_base_height() * self.mode4_sprite_scale()
+    }
+
+    fn mode4_sprite_width(&self) -> usize {
+        SMS_TILE_SIZE * self.mode4_sprite_scale()
+    }
+
+    fn mode4_sprite_base_height(&self) -> usize {
+        if self.mode4_sprite_8x16() {
             SMS_TILE_SIZE * 2
         } else {
             SMS_TILE_SIZE
         }
+    }
+
+    fn mode4_sprite_scale(&self) -> usize {
+        if self.mode4_sprite_magnified() { 2 } else { 1 }
+    }
+
+    fn mode4_sprite_magnified(&self) -> bool {
+        self.registers[VDP_REGISTER_MODE_CONTROL_2] & VDP_REG1_SPRITE_MAGNIFY != 0
+    }
+
+    fn mode4_sprite_8x16(&self) -> bool {
+        self.registers[VDP_REGISTER_MODE_CONTROL_2] & VDP_REG1_SPRITE_8X16 != 0
     }
 
     fn mode4_sprite_x_shift(&self) -> isize {
@@ -1116,7 +1196,7 @@ impl Vdp {
     fn mode4_sprite(
         &self,
         table_base: usize,
-        sprite_height: usize,
+        sprite_base_height: usize,
         x_shift: isize,
         index: usize,
     ) -> Option<Mode4Sprite> {
@@ -1126,7 +1206,7 @@ impl Vdp {
         }
         let x_tile_offset = table_base + MODE4_SPRITE_X_TILE_TABLE_OFFSET + index * 2;
         let mut tile_index = self.vram[(x_tile_offset + 1) % self.vram.len()];
-        if sprite_height == SMS_TILE_SIZE * 2 {
+        if sprite_base_height == SMS_TILE_SIZE * 2 {
             tile_index &= !1;
         }
         Some(Mode4Sprite {
@@ -1136,8 +1216,14 @@ impl Vdp {
         })
     }
 
-    fn mode4_sprite_color(&self, tile_index: usize, col: usize, row: usize) -> usize {
-        let pattern_base = tile_index * SMS_MODE4_TILE_BYTES + row * 4;
+    fn mode4_sprite_color(
+        &self,
+        sprite_pattern_base: usize,
+        tile_index: usize,
+        col: usize,
+        row: usize,
+    ) -> usize {
+        let pattern_base = sprite_pattern_base + tile_index * SMS_MODE4_TILE_BYTES + row * 4;
         let bit = MODE4_PATTERN_LEFT_PIXEL_MASK >> col;
         let mut color = MODE4_TRANSPARENT_COLOR;
         for plane in 0..MODE4_PATTERN_PLANES {
@@ -1157,13 +1243,19 @@ impl Vdp {
         self.scanline += 1;
         if self.scanline == SMS_VISIBLE_SCANLINES {
             self.status |= VDP_STATUS_VBLANK;
-        } else if self.scanline >= SMS_TOTAL_SCANLINES {
+        } else if self.scanline >= self.total_scanlines() {
             self.scanline = 0;
             self.status &= !VDP_STATUS_VBLANK;
             self.line_counter = self.registers[VDP_REGISTER_LINE_COUNTER];
         }
         self.step_line_counter();
-        self.v_counter = self.scanline as u8;
+        self.update_v_counter();
+    }
+
+    fn update_v_counter(&mut self) {
+        self.v_counter = self
+            .video_standard
+            .v_counter_for_192_line_scanline(self.scanline);
     }
 
     fn step_line_counter(&mut self) {
@@ -1186,14 +1278,18 @@ impl Vdp {
         }
 
         let table_base = self.mode4_sprite_table_base();
-        let sprite_height = self.mode4_sprite_height();
+        let sprite_pattern_base = self.mode4_sprite_pattern_base();
+        let sprite_base_height = self.mode4_sprite_base_height();
+        let sprite_scale = self.mode4_sprite_scale();
+        let sprite_height = sprite_base_height * sprite_scale;
         let x_shift = self.mode4_sprite_x_shift();
         let mut sprites_on_line = 0usize;
         let mut occupied = [false; 256];
         let screen_y = isize::from(scanline as i16);
 
         for sprite_index in 0..MODE4_SPRITE_COUNT {
-            let Some(sprite) = self.mode4_sprite(table_base, sprite_height, x_shift, sprite_index)
+            let Some(sprite) =
+                self.mode4_sprite(table_base, sprite_base_height, x_shift, sprite_index)
             else {
                 break;
             };
@@ -1207,14 +1303,17 @@ impl Vdp {
                 break;
             }
 
-            let pattern_row = row % SMS_TILE_SIZE;
-            let pattern_tile = usize::from(sprite.tile_index) + row / SMS_TILE_SIZE;
-            for col in 0..SMS_TILE_SIZE {
-                let screen_x = sprite.x + col as isize;
+            let pattern_y = row / sprite_scale;
+            let pattern_row = pattern_y % SMS_TILE_SIZE;
+            let pattern_tile = usize::from(sprite.tile_index) + pattern_y / SMS_TILE_SIZE;
+            for dest_col in 0..SMS_TILE_SIZE * sprite_scale {
+                let screen_x = sprite.x + dest_col as isize;
                 if !(0..256).contains(&screen_x) {
                     continue;
                 }
-                if self.mode4_sprite_color(pattern_tile, col, pattern_row) == 0 {
+                let col = dest_col / sprite_scale;
+                if self.mode4_sprite_color(sprite_pattern_base, pattern_tile, col, pattern_row) == 0
+                {
                     continue;
                 }
                 let x = screen_x as usize;
@@ -1352,6 +1451,17 @@ mod tests {
 
     fn set_tile_row(vdp: &mut Vdp, tile_index: usize, row: usize, planes: [u8; 4]) {
         let base = tile_index * SMS_MODE4_TILE_BYTES + row * 4;
+        vdp.vram[base..base + 4].copy_from_slice(&planes);
+    }
+
+    fn set_tile_row_at(
+        vdp: &mut Vdp,
+        pattern_base: usize,
+        tile_index: usize,
+        row: usize,
+        planes: [u8; 4],
+    ) {
+        let base = pattern_base + tile_index * SMS_MODE4_TILE_BYTES + row * 4;
         vdp.vram[base..base + 4].copy_from_slice(&planes);
     }
 
@@ -1527,6 +1637,7 @@ mod tests {
         vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_SPRITE_8X16;
         vdp.registers[MODE4_NAME_TABLE_REGISTER] = MODE4_NAME_TABLE_MASK;
         vdp.registers[MODE4_SPRITE_TABLE_REGISTER] = MODE4_TEST_SPRITE_TABLE_REGISTER;
+        vdp.registers[MODE4_SPRITE_PATTERN_TABLE_REGISTER] = MODE4_SPRITE_PATTERN_BASE_SELECT;
         vdp.registers[VDP_REGISTER_HORIZONTAL_SCROLL] = 13;
         vdp.registers[VDP_REGISTER_VERTICAL_SCROLL] = 21;
         vdp.registers[VDP_REGISTER_BACKDROP_COLOR] = 5;
@@ -1543,6 +1654,7 @@ mod tests {
             usize::from(MODE4_TEST_SPRITE_TABLE_REGISTER & MODE4_SPRITE_TABLE_MASK)
                 << MODE4_SPRITE_TABLE_SHIFT
         );
+        assert_eq!(snapshot.sprite_pattern_base, MODE4_SPRITE_PATTERN_BASE_HIGH);
         assert_eq!(snapshot.horizontal_scroll, 13);
         assert_eq!(snapshot.vertical_scroll, 21);
         assert_eq!(
@@ -1550,11 +1662,13 @@ mod tests {
             MODE4_PALETTE_COLOR_OFFSET + 5
         );
         assert_eq!(snapshot.sprite_height, SMS_TILE_SIZE * 2);
+        assert_eq!(snapshot.sprite_width, SMS_TILE_SIZE);
         assert_eq!(snapshot.max_sprites_per_line, MODE4_MAX_SPRITES_PER_LINE);
         assert!(snapshot.horizontal_scroll_lock);
         assert!(snapshot.vertical_scroll_lock);
         assert!(snapshot.hide_left_column);
         assert!(snapshot.sprite_shift_left);
+        assert!(!snapshot.sprite_magnified);
     }
 
     #[test]
@@ -1709,6 +1823,113 @@ mod tests {
     }
 
     #[test]
+    fn mode4_frame_renderer_uses_sprite_pattern_table_base_register() {
+        let mut vdp = Vdp::new();
+        let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[MODE4_SPRITE_PATTERN_TABLE_REGISTER] = MODE4_SPRITE_PATTERN_BASE_SELECT;
+        set_tile_row_at(
+            &mut vdp,
+            MODE4_SPRITE_PATTERN_BASE_HIGH,
+            4,
+            0,
+            [MODE4_PATTERN_LEFT_PIXEL_MASK, 0, 0, 0],
+        );
+        let sprite_table = use_mode4_test_sprite_table(&mut vdp);
+        set_mode4_sprite(&mut vdp, sprite_table, 0, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 4);
+        terminate_mode4_sprites(&mut vdp, sprite_table, 1);
+        vdp.cram[MODE4_PALETTE_COLOR_OFFSET + 1] = SMS_RED;
+
+        vdp.render_mode4_frame_rgba(
+            &mut framebuffer,
+            render_area(SMS_TILE_SIZE, SMS_TILE_SIZE, 0, 0),
+            Mode4ColorMode::Sms,
+        );
+
+        assert_eq!(&framebuffer[0..RGBA_CHANNELS], &SMS_RED_RGBA);
+    }
+
+    #[test]
+    fn mode4_frame_renderer_prioritizes_lower_sprite_indices() {
+        let mut vdp = Vdp::new();
+        let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        set_tile_row(&mut vdp, 4, 0, [MODE4_PATTERN_LEFT_PIXEL_MASK, 0, 0, 0]);
+        set_tile_row(&mut vdp, 5, 0, [0, MODE4_PATTERN_LEFT_PIXEL_MASK, 0, 0]);
+        let sprite_table = use_mode4_test_sprite_table(&mut vdp);
+        set_mode4_sprite(&mut vdp, sprite_table, 0, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 4);
+        set_mode4_sprite(&mut vdp, sprite_table, 1, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 5);
+        terminate_mode4_sprites(&mut vdp, sprite_table, 2);
+        vdp.cram[MODE4_PALETTE_COLOR_OFFSET + 1] = SMS_RED;
+        vdp.cram[MODE4_PALETTE_COLOR_OFFSET + 2] = SMS_GREEN;
+
+        vdp.render_mode4_frame_rgba(
+            &mut framebuffer,
+            render_area(SMS_TILE_SIZE, SMS_TILE_SIZE, 0, 0),
+            Mode4ColorMode::Sms,
+        );
+
+        assert_eq!(&framebuffer[0..RGBA_CHANNELS], &SMS_RED_RGBA);
+    }
+
+    #[test]
+    fn mode4_frame_renderer_honors_sprite_magnification() {
+        let mut vdp = Vdp::new();
+        let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] =
+            VDP_REG1_DISPLAY_ENABLE | VDP_REG1_SPRITE_MAGNIFY;
+        set_tile_row(&mut vdp, 4, 0, [MODE4_PATTERN_LEFT_PIXEL_MASK, 0, 0, 0]);
+        let sprite_table = use_mode4_test_sprite_table(&mut vdp);
+        set_mode4_sprite(&mut vdp, sprite_table, 0, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 4);
+        terminate_mode4_sprites(&mut vdp, sprite_table, 1);
+        vdp.cram[MODE4_PALETTE_COLOR_OFFSET + 1] = SMS_RED;
+
+        vdp.render_mode4_frame_rgba(
+            &mut framebuffer,
+            render_area(SMS_TILE_SIZE, SMS_TILE_SIZE, 0, 0),
+            Mode4ColorMode::Sms,
+        );
+
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * SMS_TILE_SIZE + x) * RGBA_CHANNELS;
+            &framebuffer[offset..offset + RGBA_CHANNELS]
+        };
+        assert_eq!(pixel(0, 0), &SMS_RED_RGBA);
+        assert_eq!(pixel(1, 0), &SMS_RED_RGBA);
+        assert_eq!(pixel(0, 1), &SMS_RED_RGBA);
+        assert_eq!(pixel(1, 1), &SMS_RED_RGBA);
+        assert_eq!(pixel(2, 0), &[0x00, 0x00, 0x00, 0xFF]);
+    }
+
+    #[test]
+    fn mode4_8x16_sprite_index_mask_is_independent_of_magnification() {
+        let mut vdp = Vdp::new();
+        let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] =
+            VDP_REG1_DISPLAY_ENABLE | VDP_REG1_SPRITE_8X16 | VDP_REG1_SPRITE_MAGNIFY;
+        set_tile_row(&mut vdp, 6, 0, [MODE4_PATTERN_LEFT_PIXEL_MASK, 0, 0, 0]);
+        let sprite_table = use_mode4_test_sprite_table(&mut vdp);
+        set_mode4_sprite(&mut vdp, sprite_table, 0, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 7);
+        terminate_mode4_sprites(&mut vdp, sprite_table, 1);
+        vdp.cram[MODE4_PALETTE_COLOR_OFFSET + 1] = SMS_RED;
+
+        vdp.render_mode4_frame_rgba(
+            &mut framebuffer,
+            render_area(SMS_TILE_SIZE, SMS_TILE_SIZE, 0, 0),
+            Mode4ColorMode::Sms,
+        );
+
+        assert_eq!(&framebuffer[0..RGBA_CHANNELS], &SMS_RED_RGBA);
+        assert_eq!(vdp.mode4_debug_snapshot().sprite_height, SMS_TILE_SIZE * 4);
+        assert_eq!(vdp.mode4_debug_snapshot().sprite_width, SMS_TILE_SIZE * 2);
+        assert!(vdp.mode4_debug_snapshot().sprite_magnified);
+    }
+
+    #[test]
     fn mode4_frame_renderer_honors_priority_background_pixels_over_sprites() {
         let mut vdp = Vdp::new();
         let mut framebuffer = vec![0; SMS_TILE_SIZE * SMS_TILE_SIZE * RGBA_CHANNELS];
@@ -1831,6 +2052,33 @@ mod tests {
         assert_eq!(
             vdp.status() & VDP_STATUS_SPRITE_OVERFLOW,
             VDP_STATUS_SPRITE_OVERFLOW
+        );
+    }
+
+    #[test]
+    fn mode4_sprite_status_uses_sprite_pattern_table_base_register() {
+        let mut vdp = Vdp::new();
+
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = VDP_REG0_MODE4;
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+        vdp.registers[MODE4_SPRITE_PATTERN_TABLE_REGISTER] = MODE4_SPRITE_PATTERN_BASE_SELECT;
+        let sprite_table = use_mode4_test_sprite_table(&mut vdp);
+        set_tile_row_at(
+            &mut vdp,
+            MODE4_SPRITE_PATTERN_BASE_HIGH,
+            4,
+            0,
+            [MODE4_PATTERN_LEFT_PIXEL_MASK, 0, 0, 0],
+        );
+        set_mode4_sprite(&mut vdp, sprite_table, 0, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 4);
+        set_mode4_sprite(&mut vdp, sprite_table, 1, MODE4_TOP_SCANLINE_SPRITE_Y, 0, 4);
+        terminate_mode4_sprites(&mut vdp, sprite_table, 2);
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+        assert_eq!(
+            vdp.status() & VDP_STATUS_SPRITE_COLLISION,
+            VDP_STATUS_SPRITE_COLLISION
         );
     }
 
@@ -2006,8 +2254,43 @@ mod tests {
         assert_eq!(vdp.status() & VDP_STATUS_VBLANK, 0);
 
         vdp.step_cycles(
-            SMS_SCANLINE_Z80_CYCLES * u32::from(SMS_TOTAL_SCANLINES - SMS_VISIBLE_SCANLINES),
+            SMS_SCANLINE_Z80_CYCLES * u32::from(vdp.total_scanlines() - SMS_VISIBLE_SCANLINES),
         );
         assert_eq!(vdp.scanline(), 0);
+    }
+
+    #[test]
+    fn pal_video_standard_uses_313_scanline_frames() {
+        let mut vdp = Vdp::new_with_video_standard(Sega8VideoStandard::Pal);
+
+        assert_eq!(vdp.total_scanlines(), 313);
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES * u32::from(SMS_VISIBLE_SCANLINES));
+        assert_eq!(vdp.scanline(), SMS_VISIBLE_SCANLINES);
+        assert_eq!(vdp.status() & VDP_STATUS_VBLANK, VDP_STATUS_VBLANK);
+        vdp.read_status();
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES * u32::from(313 - SMS_VISIBLE_SCANLINES - 1));
+        assert_eq!(vdp.scanline(), 312);
+        assert_eq!(vdp.status() & VDP_STATUS_VBLANK, 0);
+
+        vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+        assert_eq!(vdp.scanline(), 0);
+
+        vdp.reset();
+        assert_eq!(vdp.video_standard(), Sega8VideoStandard::Pal);
+        assert_eq!(vdp.total_scanlines(), 313);
+    }
+
+    #[test]
+    fn v_counter_uses_192_line_sms_tv_detection_sequences() {
+        let mut ntsc = Vdp::new_with_video_standard(Sega8VideoStandard::Ntsc);
+        ntsc.step_cycles(SMS_SCANLINE_Z80_CYCLES * 0xDB);
+        assert_eq!(ntsc.scanline(), 0xDB);
+        assert_eq!(ntsc.v_counter(), 0xD5);
+
+        let mut pal = Vdp::new_with_video_standard(Sega8VideoStandard::Pal);
+        pal.step_cycles(SMS_SCANLINE_Z80_CYCLES * 0xF3);
+        assert_eq!(pal.scanline(), 0xF3);
+        assert_eq!(pal.v_counter(), 0xBA);
     }
 }

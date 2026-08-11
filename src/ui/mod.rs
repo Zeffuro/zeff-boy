@@ -4,6 +4,7 @@ use crate::debug::{
     RecentOpcodeDisplay, RomDebugInfo, RomInfoSection, RomSearchResult, WatchHitDisplay,
     WatchpointDisplay,
 };
+use crate::emu_backend::ActiveSystem;
 use crate::emu_thread::MemorySearchRequest;
 use zeff_emu_common::address::Address;
 use zeff_emu_common::debug::WatchType;
@@ -267,10 +268,62 @@ pub(crate) struct CoreFeatureInfo {
     pub(crate) system_ram_len: usize,
     pub(crate) video_ram_len: usize,
     pub(crate) memory_regions: Vec<MemoryRegionDescriptor>,
+    pub(crate) cheat_features: CheatFeatureInfo,
     pub(crate) supports_save_states: bool,
     pub(crate) supports_rewind: bool,
     pub(crate) supports_debugger: bool,
     pub(crate) supports_opcode_history: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheatFeatureInfo {
+    pub(crate) supports_user_cheats: bool,
+    pub(crate) supports_libretro_database: bool,
+    pub(crate) supports_ram_writes: bool,
+    pub(crate) supports_rom_patches: bool,
+    pub(crate) formats: &'static [&'static str],
+}
+
+impl CheatFeatureInfo {
+    pub(crate) fn for_system(system: ActiveSystem) -> Self {
+        match system {
+            ActiveSystem::GameBoy => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: true,
+                supports_ram_writes: true,
+                supports_rom_patches: true,
+                formats: &["GameShark", "Game Genie", "XPloder", "Raw"],
+            },
+            ActiveSystem::Nes => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: true,
+                supports_ram_writes: true,
+                supports_rom_patches: true,
+                formats: &["Game Genie", "GameShark", "Raw"],
+            },
+            ActiveSystem::MasterSystem | ActiveSystem::GameGear => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: true,
+                supports_ram_writes: true,
+                supports_rom_patches: true,
+                formats: &["Raw", "Action Replay", "Game Genie"],
+            },
+            ActiveSystem::Sg1000 => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: false,
+                supports_ram_writes: true,
+                supports_rom_patches: true,
+                formats: &["Raw", "Action Replay", "Game Genie"],
+            },
+            ActiveSystem::GameBoyAdvance | ActiveSystem::WonderSwan => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: false,
+                supports_ram_writes: true,
+                supports_rom_patches: false,
+                formats: &["Raw"],
+            },
+        }
+    }
 }
 
 pub(crate) fn apply_debug_actions(

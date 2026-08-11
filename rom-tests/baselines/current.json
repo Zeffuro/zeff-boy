@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "selected_count": 124,
+  "selected_count": 126,
   "results": [
     {
       "id": "gb/mooneye/acceptance/reti_timing",
@@ -990,6 +990,22 @@
       "id": "gba/jsmolka/save_flash128",
       "suite_id": "gba-public-accuracy",
       "core": "gba",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "sega8/zexall-sms-0.20/zexall-sdsc-boot",
+      "suite_id": "sega8-source-backed",
+      "core": "sms",
+      "tier": "accuracy",
+      "expectation": "pass",
+      "status": "passed"
+    },
+    {
+      "id": "sega8/zexall-sms-0.20/zexdoc-sdsc-boot",
+      "suite_id": "sega8-source-backed",
+      "core": "sms",
       "tier": "accuracy",
       "expectation": "pass",
       "status": "passed"

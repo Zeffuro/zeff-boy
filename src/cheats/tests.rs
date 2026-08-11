@@ -112,6 +112,112 @@ fn parse_cheat_for_system_nes_raw() {
 }
 
 #[test]
+fn parse_cheat_for_system_sega8_raw() {
+    let result = parse_cheat_for_system("C123:42", ActiveSystem::MasterSystem);
+    let (patches, ty) = result.expect("Sega 8-bit raw cheat should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert_eq!(patches.len(), 1);
+    match patches[0] {
+        CheatPatch::RamWrite { address, value } => {
+            assert_eq!(address, 0xC123);
+            assert_eq!(value, CheatValue::Constant(0x42));
+        }
+        _ => panic!("expected RAM write"),
+    }
+}
+
+#[test]
+fn parse_cheat_for_system_sega8_raw_multi_code() {
+    let result = parse_cheat_for_system("$C000:01+0xD000=02", ActiveSystem::GameGear);
+    let (patches, ty) = result.expect("Sega 8-bit raw multi-code should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert_eq!(patches.len(), 2);
+    assert!(matches!(
+        patches[0],
+        CheatPatch::RamWrite {
+            address: 0xC000,
+            value: CheatValue::Constant(0x01),
+        }
+    ));
+    assert!(matches!(
+        patches[1],
+        CheatPatch::RamWrite {
+            address: 0xD000,
+            value: CheatValue::Constant(0x02),
+        }
+    ));
+}
+
+#[test]
+fn parse_cheat_for_system_sega8_raw_requires_full_width() {
+    assert!(parse_cheat_for_system("C00:01", ActiveSystem::MasterSystem).is_err());
+    assert!(parse_cheat_for_system("C000:1", ActiveSystem::MasterSystem).is_err());
+}
+
+#[test]
+fn parse_cheat_for_system_sega8_action_replay() {
+    let result = parse_cheat_for_system("00D2-AA98", ActiveSystem::MasterSystem);
+    let (patches, ty) = result.expect("Sega 8-bit Action Replay cheat should parse");
+    assert_eq!(ty, CheatType::ActionReplay);
+    assert!(matches!(
+        patches.as_slice(),
+        [CheatPatch::RamWrite {
+            address: 0xD2AA,
+            value: CheatValue::Constant(0x98)
+        }]
+    ));
+}
+
+#[test]
+fn parse_cheat_for_system_sega8_game_genie() {
+    let result = parse_cheat_for_system("006-46F-F7A", ActiveSystem::GameGear);
+    let (patches, ty) = result.expect("Sega 8-bit Game Genie cheat should parse");
+    assert_eq!(ty, CheatType::GameGenie);
+    assert!(matches!(
+        patches.as_slice(),
+        [CheatPatch::RomWriteIfEquals {
+            address: 0x0646,
+            value: CheatValue::Constant(0x00),
+            compare: CheatValue::Constant(0x04)
+        }]
+    ));
+}
+
+#[test]
+fn parse_cheat_for_system_gba_raw_wide() {
+    let result = parse_cheat_for_system("02000000:42", ActiveSystem::GameBoyAdvance);
+    let (patches, ty) = result.expect("GBA raw wide cheat should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert!(matches!(
+        patches.as_slice(),
+        [CheatPatch::WideRamWrite {
+            address: 0x0200_0000,
+            value: CheatValue::Constant(0x42)
+        }]
+    ));
+}
+
+#[test]
+fn parse_cheat_for_system_ws_raw_wide() {
+    let result = parse_cheat_for_system("00001234=56", ActiveSystem::WonderSwan);
+    let (patches, ty) = result.expect("WS raw wide cheat should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert!(matches!(
+        patches.as_slice(),
+        [CheatPatch::WideRamWrite {
+            address: 0x0000_1234,
+            value: CheatValue::Constant(0x56)
+        }]
+    ));
+}
+
+#[test]
+fn parse_cheat_for_system_wide_raw_requires_full_width() {
+    assert!(parse_cheat_for_system("2000000:42", ActiveSystem::GameBoyAdvance).is_err());
+    assert!(parse_cheat_for_system("02000000:4", ActiveSystem::GameBoyAdvance).is_err());
+}
+
+#[test]
 fn parse_cheat_for_system_gb_xploder() {
     let result = parse_cheat_for_system("$0D61C82A", ActiveSystem::GameBoy);
     assert!(result.is_ok());
@@ -194,4 +300,85 @@ cheat1_enable = false
     let cheats = parse_cht_file_for_system(content, ActiveSystem::Nes);
     assert_eq!(cheats.len(), 1);
     assert_eq!(cheats[0].name, "Has Weapons");
+}
+
+#[test]
+fn parse_cht_file_for_system_sega8_raw() {
+    let content = r#"cheats = 1
+
+cheat0_desc = "Infinite Lives"
+cheat0_code = "C123:09"
+cheat0_enable = true
+"#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::MasterSystem);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "Infinite Lives");
+    assert_eq!(cheats[0].code_type, CheatType::Raw);
+    assert!(cheats[0].enabled);
+}
+
+#[test]
+fn parse_cht_file_for_system_sega8_action_replay() {
+    let content = r#"cheats = 2
+
+cheat0_desc = "Infinite Rings"
+cheat0_code = "00D2-AA98"
+cheat0_enable = false
+
+cheat1_desc = "Level Modifier"
+cheat1_code = "00D2-3EXX"
+cheat1_enable = true
+"#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::MasterSystem);
+    assert_eq!(cheats.len(), 2);
+    assert_eq!(cheats[0].name, "Infinite Rings");
+    assert_eq!(cheats[0].code_type, CheatType::ActionReplay);
+    assert!(!cheats[0].enabled);
+    assert_eq!(cheats[1].parameter_value, Some(0));
+    assert_eq!(cheats[1].code_type, CheatType::ActionReplay);
+    assert!(cheats[1].enabled);
+}
+
+#[test]
+fn parse_cht_file_for_system_sega8_game_genie() {
+    let content = r#"cheats = 1
+
+cheat0_desc = "Immune To Everything"
+cheat0_code = "006-46F-F7A"
+cheat0_enable = false
+"#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::GameGear);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "Immune To Everything");
+    assert_eq!(cheats[0].code_type, CheatType::GameGenie);
+}
+
+#[test]
+fn parse_cht_file_for_system_gba_raw_wide() {
+    let content = r#"cheats = 1
+
+cheat0_desc = "Test GBA RAM"
+cheat0_code = "02000000:42"
+cheat0_enable = true
+"#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::GameBoyAdvance);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "Test GBA RAM");
+    assert_eq!(cheats[0].code_type, CheatType::Raw);
+    assert!(cheats[0].enabled);
+}
+
+#[test]
+fn parse_cht_file_for_system_ws_raw_wide() {
+    let content = r#"cheats = 1
+
+cheat0_desc = "Test WS RAM"
+cheat0_code = "00001234:56"
+cheat0_enable = true
+"#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::WonderSwan);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "Test WS RAM");
+    assert_eq!(cheats[0].code_type, CheatType::Raw);
+    assert!(cheats[0].enabled);
 }

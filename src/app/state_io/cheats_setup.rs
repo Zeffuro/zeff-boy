@@ -75,6 +75,28 @@ impl App {
                 rom_crc32,
                 crate::libretro_common::LibretroPlatform::Gba,
             );
+        } else if let Some(sega8) = backend.sega8() {
+            let rom_title = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Sega 8-bit ROM")
+                .to_string();
+            let rom_crc32 = Some(crc32fast::hash(sega8.emu.bus().cartridge.rom()));
+            match sega8_libretro_platform(system) {
+                Some(platform) => apply_cheat_rom_info(
+                    &mut self.debug_windows.cheat,
+                    system,
+                    rom_title,
+                    rom_crc32,
+                    platform,
+                ),
+                None => apply_local_cheat_rom_info(
+                    &mut self.debug_windows.cheat,
+                    system,
+                    rom_title,
+                    rom_crc32,
+                ),
+            }
         } else {
             self.debug_windows.cheat.rom_title = None;
             self.debug_windows.cheat.rom_crc32 = None;
@@ -102,6 +124,14 @@ impl App {
     }
 }
 
+fn sega8_libretro_platform(system: ActiveSystem) -> Option<LibretroPlatform> {
+    match system {
+        ActiveSystem::MasterSystem => Some(LibretroPlatform::MasterSystem),
+        ActiveSystem::GameGear => Some(LibretroPlatform::GameGear),
+        _ => None,
+    }
+}
+
 fn apply_cheat_rom_info(
     cheat: &mut CheatState,
     system: ActiveSystem,
@@ -125,6 +155,25 @@ fn apply_cheat_rom_info(
         .first()
         .cloned()
         .unwrap_or(rom_title);
+
+    let (user, libretro) =
+        crate::cheats::load_game_cheats(system, cheat.rom_title.as_deref(), rom_crc32);
+    cheat.user_codes = user;
+    cheat.libretro_codes = libretro;
+}
+
+fn apply_local_cheat_rom_info(
+    cheat: &mut CheatState,
+    system: ActiveSystem,
+    rom_title: String,
+    rom_crc32: Option<u32>,
+) {
+    cheat.rom_title = Some(rom_title.clone());
+    cheat.rom_crc32 = rom_crc32;
+    cheat.rom_metadata_title = None;
+    cheat.rom_metadata_rom_name = None;
+    cheat.libretro_search_hints.clear();
+    cheat.libretro_search = rom_title;
 
     let (user, libretro) =
         crate::cheats::load_game_cheats(system, cheat.rom_title.as_deref(), rom_crc32);

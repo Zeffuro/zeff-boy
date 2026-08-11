@@ -34,6 +34,19 @@ impl Default for KeyBindings {
 }
 
 impl KeyBindings {
+    pub(crate) fn player_two_defaults() -> Self {
+        Self {
+            up: KeyCode::Numpad8,
+            down: KeyCode::Numpad5,
+            left: KeyCode::Numpad4,
+            right: KeyCode::Numpad6,
+            a: KeyCode::Numpad1,
+            b: KeyCode::Numpad2,
+            start: KeyCode::NumpadEnter,
+            select: KeyCode::Numpad0,
+        }
+    }
+
     pub(crate) fn get(&self, action: BindingAction) -> KeyCode {
         match action {
             BindingAction::Up => self.up,

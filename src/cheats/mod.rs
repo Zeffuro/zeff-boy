@@ -20,6 +20,51 @@ pub(crate) fn try_parse_nes_game_genie(input: &str) -> Option<(Vec<CheatPatch>, 
     Some((vec![cheat_patch], CheatType::GameGenie))
 }
 
+fn try_parse_wide_raw(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
+    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let (address_text, value_text) = cleaned
+        .split_once(':')
+        .or_else(|| cleaned.split_once('='))?;
+    let address = parse_hex_u32_exact(address_text)?;
+    let value = parse_hex_u8_exact(value_text)?;
+    Some((
+        vec![CheatPatch::WideRamWrite {
+            address,
+            value: CheatValue::constant(value),
+        }],
+        CheatType::Raw,
+    ))
+}
+
+fn parse_hex_u32_exact(input: &str) -> Option<u32> {
+    let token = normalize_hex_token(input)?;
+    if token.len() != 8 {
+        return None;
+    }
+    u32::from_str_radix(token, 16).ok()
+}
+
+fn parse_hex_u8_exact(input: &str) -> Option<u8> {
+    let token = normalize_hex_token(input)?;
+    if token.len() != 2 {
+        return None;
+    }
+    u8::from_str_radix(token, 16).ok()
+}
+
+fn normalize_hex_token(input: &str) -> Option<&str> {
+    let trimmed = input.trim();
+    let token = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .or_else(|| trimmed.strip_prefix('$'))
+        .unwrap_or(trimmed);
+    if token.is_empty() || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(token)
+}
+
 fn try_parse_single_for_system(
     input: &str,
     system: ActiveSystem,
@@ -29,11 +74,10 @@ fn try_parse_single_for_system(
         ActiveSystem::Nes => parse_cheat(input)
             .ok()
             .or_else(|| try_parse_nes_game_genie(input)),
-        ActiveSystem::GameBoyAdvance
-        | ActiveSystem::WonderSwan
-        | ActiveSystem::MasterSystem
-        | ActiveSystem::GameGear
-        | ActiveSystem::Sg1000 => None,
+        ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
+            zeff_sega8_core::cheats::parse_cheat(input).ok()
+        }
+        ActiveSystem::GameBoyAdvance | ActiveSystem::WonderSwan => try_parse_wide_raw(input),
     }
 }
 
@@ -65,7 +109,7 @@ pub(crate) fn parse_cheat_for_system(
                 all_patches.extend(patches);
             } else {
                 return Err(
-                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV)",
+                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA/WS: raw (AAAAAAAA:VV)",
                 );
             }
         }
@@ -78,7 +122,7 @@ pub(crate) fn parse_cheat_for_system(
     }
 
     Err(
-        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV)",
+        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA/WS: raw (AAAAAAAA:VV)",
     )
 }
 

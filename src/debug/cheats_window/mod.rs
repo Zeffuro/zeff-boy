@@ -15,11 +15,13 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
         crate::emu_backend::ActiveSystem::GameBoy => {
             "GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)"
         }
-        crate::emu_backend::ActiveSystem::GameBoyAdvance => "GBA cheats are not implemented yet",
-        crate::emu_backend::ActiveSystem::WonderSwan => "WonderSwan cheats are not implemented yet",
+        crate::emu_backend::ActiveSystem::GameBoyAdvance => "GBA raw RAM cheats (AAAAAAAA:VV)",
+        crate::emu_backend::ActiveSystem::WonderSwan => "WonderSwan raw RAM cheats (AAAAAAAA:VV)",
         crate::emu_backend::ActiveSystem::MasterSystem
-        | crate::emu_backend::ActiveSystem::GameGear
-        | crate::emu_backend::ActiveSystem::Sg1000 => "Sega 8-bit cheats are not implemented yet",
+        | crate::emu_backend::ActiveSystem::GameGear => {
+            "Sega 8-bit raw RAM (AAAA:VV), Action Replay (00AA-AAVV), or Game Genie (XXX-XXX-XXX)"
+        }
+        crate::emu_backend::ActiveSystem::Sg1000 => "SG-1000 raw RAM cheats (AAAA:VV)",
     };
     ui.label(help_text);
 
@@ -81,7 +83,15 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
 
     ui.separator();
 
-    libretro_ui::draw_libretro_section(ui, state);
+    if libretro_database_supported(state.active_system) {
+        libretro_ui::draw_libretro_section(ui, state);
+    } else {
+        ui.label(
+            egui::RichText::new("libretro cheat database import is not wired for this system yet.")
+                .weak()
+                .small(),
+        );
+    }
 
     ui.separator();
 
@@ -100,6 +110,16 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     if changed {
         state.cheats_dirty = true;
     }
+}
+
+fn libretro_database_supported(system: crate::emu_backend::ActiveSystem) -> bool {
+    matches!(
+        system,
+        crate::emu_backend::ActiveSystem::GameBoy
+            | crate::emu_backend::ActiveSystem::Nes
+            | crate::emu_backend::ActiveSystem::MasterSystem
+            | crate::emu_backend::ActiveSystem::GameGear
+    )
 }
 
 fn draw_import_export(ui: &mut egui::Ui, state: &mut CheatState, changed: &mut bool) {
@@ -160,6 +180,9 @@ pub(super) fn patches_summary(patches: &[CheatPatch]) -> String {
             CheatPatch::RamWrite { address, value } => {
                 format!("{address:04X}={}", value.display())
             }
+            CheatPatch::WideRamWrite { address, value } => {
+                format!("{address:08X}={}", value.display())
+            }
             CheatPatch::RomWrite { address, value } => {
                 format!("ROM {address:04X}={}", value.display())
             }
@@ -180,6 +203,13 @@ pub(super) fn patches_summary(patches: &[CheatPatch]) -> String {
                 compare,
             } => {
                 format!("{address:04X}={}?{}", value.display(), compare.display())
+            }
+            CheatPatch::WideRamWriteIfEquals {
+                address,
+                value,
+                compare,
+            } => {
+                format!("{address:08X}={}?{}", value.display(), compare.display())
             }
         })
         .collect::<Vec<_>>()

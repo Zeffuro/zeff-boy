@@ -33,6 +33,7 @@ pub(super) fn run_nes_headless(
     let mut stuck_active = false;
     let mut screenshot_written = false;
     let mut current_input = InputMasks::default();
+    let mut current_input_p2 = InputMasks::default();
     let start = Instant::now();
     let mut frames_run = 0u64;
     let mut traced = 0u64;
@@ -57,6 +58,7 @@ pub(super) fn run_nes_headless(
     'frames: for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
         current_input = input_for_frame(opts, frame_number);
+        current_input_p2 = input_p2_for_frame(opts, frame_number);
         if current_input.reset {
             emulator.reset();
         }
@@ -66,6 +68,7 @@ pub(super) fn run_nes_headless(
             println!("[headless] nes-test scripted-reset frame={frame_number}");
         }
         emulator.set_input(current_input.buttons, current_input.dpad);
+        emulator.set_input_p2(current_input_p2.buttons, current_input_p2.dpad);
         emulator.set_zapper_state(
             current_input.zapper_enabled,
             current_input.zapper_trigger,
@@ -231,14 +234,15 @@ pub(super) fn run_nes_headless(
     )?;
     emit_debug_state(
         opts,
-        nes_debug_state(
-            &mut emulator,
+        nes_debug_state(NesDebugStateRequest {
+            emulator: &mut emulator,
             frames_run,
             opts,
-            current_input,
-            stuck.as_ref().and_then(StuckTracker::current_report),
-            screenshot_path_if_written(opts, screenshot_written),
-        ),
+            input: current_input,
+            input_p2: current_input_p2,
+            stuck: stuck.as_ref().and_then(StuckTracker::current_report),
+            screenshot: screenshot_path_if_written(opts, screenshot_written),
+        }),
     )?;
     if opts.expect_test_pass && !test_pass_seen {
         if test_status_seen {

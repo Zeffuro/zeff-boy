@@ -9,6 +9,8 @@ use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, RGBA_CHANNELS, SMS_SCREEN_H, SMS_SCREEN_W,
 };
 use crate::hardware::cpu::Cpu;
+use crate::hardware::region::Sega8Region;
+use crate::hardware::timing::Sega8VideoStandard;
 
 mod public_api;
 mod runtime;
@@ -24,6 +26,7 @@ const HOST_DPAD_UP: u8 = 1 << 2;
 const HOST_DPAD_DOWN: u8 = 1 << 3;
 const HOST_BUTTON_1: u8 = 1 << 0;
 const HOST_BUTTON_2: u8 = 1 << 1;
+const HOST_BUTTON_START: u8 = 1 << 3;
 const SMS_PAD_UP: u8 = 1 << 0;
 const SMS_PAD_DOWN: u8 = 1 << 1;
 const SMS_PAD_LEFT: u8 = 1 << 2;
@@ -39,6 +42,8 @@ pub struct Emulator {
     pub(crate) frame_count: u64,
     pub(crate) framebuffer: Vec<u8>,
     pub(crate) sample_rate: u32,
+    pub(crate) video_standard: Sega8VideoStandard,
+    pub(crate) console_region: Sega8Region,
     pub(crate) debug: AddressDebugController,
     pub(crate) opcode_log: OpcodeLog<(u16, u8, u32)>,
 }
@@ -54,7 +59,16 @@ impl Emulator {
         path: &Path,
     ) -> anyhow::Result<Self> {
         let hint = SystemHint::from_path(path).unwrap_or(SystemHint::Auto);
-        Self::new_with_hint(rom_data, sample_rate, hint)
+        let video_standard = Sega8VideoStandard::from_path(path).unwrap_or_default();
+        let console_region_fallback = Sega8Region::from_path(path);
+        Self::new_with_hint_video_standard_region_fallback(
+            rom_data,
+            sample_rate,
+            hint,
+            video_standard,
+            None,
+            console_region_fallback,
+        )
     }
 
     pub fn new_with_hint(
@@ -62,21 +76,84 @@ impl Emulator {
         sample_rate: u32,
         hint: SystemHint,
     ) -> anyhow::Result<Self> {
+        Self::new_with_hint_and_video_standard(
+            rom_data,
+            sample_rate,
+            hint,
+            Sega8VideoStandard::default(),
+        )
+    }
+
+    pub fn new_with_hint_and_video_standard(
+        rom_data: &[u8],
+        sample_rate: u32,
+        hint: SystemHint,
+        video_standard: Sega8VideoStandard,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_hint_video_standard_and_region(
+            rom_data,
+            sample_rate,
+            hint,
+            video_standard,
+            None,
+        )
+    }
+
+    pub fn new_with_hint_video_standard_and_region(
+        rom_data: &[u8],
+        sample_rate: u32,
+        hint: SystemHint,
+        video_standard: Sega8VideoStandard,
+        console_region: Option<Sega8Region>,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_hint_video_standard_region_fallback(
+            rom_data,
+            sample_rate,
+            hint,
+            video_standard,
+            console_region,
+            None,
+        )
+    }
+
+    pub fn new_with_hint_video_standard_region_fallback(
+        rom_data: &[u8],
+        sample_rate: u32,
+        hint: SystemHint,
+        video_standard: Sega8VideoStandard,
+        console_region: Option<Sega8Region>,
+        console_region_fallback: Option<Sega8Region>,
+    ) -> anyhow::Result<Self> {
         let sample_rate = if sample_rate == 0 {
             DEFAULT_SAMPLE_RATE
         } else {
             sample_rate
         };
         let cartridge = Cartridge::load_with_hint(rom_data, hint)?;
+        let console_region = console_region
+            .or_else(|| {
+                cartridge
+                    .header()
+                    .and_then(|header| Sega8Region::from_header_region(header.region))
+            })
+            .or(console_region_fallback)
+            .unwrap_or_default();
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let framebuffer = vec![0; framebuffer_len(cartridge.system())];
         Ok(Self {
             cpu: Cpu::new(),
-            bus: Bus::new_with_sample_rate(cartridge, sample_rate),
+            bus: Bus::new_with_sample_rate_video_standard_and_region(
+                cartridge,
+                sample_rate,
+                video_standard,
+                console_region,
+            ),
             rom_hash,
             frame_count: 0,
             framebuffer,
             sample_rate,
+            video_standard,
+            console_region,
             debug: AddressDebugController::new(),
             opcode_log: OpcodeLog::new(),
         })

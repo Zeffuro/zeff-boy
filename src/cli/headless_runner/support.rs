@@ -34,6 +34,19 @@ pub(super) fn ensure_system_headless_options(
     if opts.expect_sega8_audio && !matches!(system, "sms" | "gg" | "sg") {
         anyhow::bail!("--expect-sega8-audio is only supported for Sega 8-bit headless runs");
     }
+    if opts.sega8_video_standard.is_some() && !matches!(system, "sms" | "gg" | "sg") {
+        anyhow::bail!(
+            "--sega8-video-standard/--sega8-region is only supported for Sega 8-bit headless runs"
+        );
+    }
+    if opts.sega8_console_region.is_some() && !matches!(system, "sms" | "gg" | "sg") {
+        anyhow::bail!("--sega8-console-region is only supported for Sega 8-bit headless runs");
+    }
+    if !opts.input_events_p2.is_empty() && !matches!(system, "nes" | "sms" | "gg" | "sg") {
+        anyhow::bail!(
+            "--press-p2/--input-p2 is only supported for NES and Sega 8-bit headless runs"
+        );
+    }
     if !opts.memory_dumps.is_empty() && system != "ws" {
         anyhow::bail!("--dump-mem is only supported for GB/GBC and WonderSwan headless runs");
     }
@@ -91,7 +104,9 @@ pub(super) fn read_headless_state_if_requested(
 }
 
 pub(super) fn ensure_no_reset_events(system: &str, opts: &HeadlessOptions) -> anyhow::Result<()> {
-    if opts.input_events.iter().any(|event| event.reset) {
+    if opts.input_events.iter().any(|event| event.reset)
+        || opts.input_events_p2.iter().any(|event| event.reset)
+    {
         anyhow::bail!("reset input events are not supported for {system} headless runs yet");
     }
     Ok(())

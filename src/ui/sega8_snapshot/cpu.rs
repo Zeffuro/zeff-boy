@@ -191,6 +191,13 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
                 lines: vec![
                     format!("system={}", sega8_system_label(emu.system())),
                     format!(
+                        "video_standard={} console_region={} scanlines={} cycles/frame={}",
+                        emu.video_standard().display_label(),
+                        emu.console_region().display_label(),
+                        emu.bus().vdp().total_scanlines(),
+                        emu.video_standard().cycles_per_frame()
+                    ),
+                    format!(
                         "raw={} normalized={} banks={} copier_header_stripped={}",
                         emu.bus().cartridge.raw_len(),
                         emu.bus().cartridge.normalized_len(),

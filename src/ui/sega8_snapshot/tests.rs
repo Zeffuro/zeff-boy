@@ -12,7 +12,7 @@ fn snapshot_request() -> SnapshotRequest {
         any_viewer_open: true,
         any_vram_viewer_open: true,
         show_oam_viewer: true,
-        show_apu_viewer: false,
+        show_apu_viewer: true,
         show_disassembler: false,
         show_rom_info: true,
         show_memory_viewer: true,
@@ -57,6 +57,12 @@ fn sega8_snapshot_exposes_live_debug_and_graphics_data() {
     assert!(data.rom_page.is_some());
     assert!(data.oam_debug.is_some());
     assert!(data.palette_debug.is_some());
+    let apu = data
+        .apu_debug
+        .as_ref()
+        .expect("Sega8 snapshot should include APU debug data");
+    assert_eq!(apu.channels.len(), 4);
+    assert!(apu.master_lines.iter().any(|line| line.contains("stereo=")));
     let ConsoleGraphicsData::Sega8(gfx) = data
         .graphics_data
         .as_ref()

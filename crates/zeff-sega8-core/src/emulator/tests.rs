@@ -1,14 +1,19 @@
 use super::{
-    Emulator, HOST_BUTTON_1, HOST_DPAD_RIGHT, HOST_DPAD_UP, SMS_PAD_BUTTON_1, SMS_PAD_BUTTON_2,
-    SMS_PAD_DOWN, SMS_PAD_LEFT, SMS_PAD_RIGHT, SMS_PAD_UP,
+    Emulator, HOST_BUTTON_1, HOST_BUTTON_2, HOST_BUTTON_START, HOST_DPAD_LEFT, HOST_DPAD_RIGHT,
+    HOST_DPAD_UP, SMS_PAD_BUTTON_1, SMS_PAD_BUTTON_2, SMS_PAD_DOWN, SMS_PAD_LEFT, SMS_PAD_RIGHT,
+    SMS_PAD_UP,
 };
 use crate::hardware::bus::CpuAccessTraceEvent;
 use crate::hardware::cartridge::{HeaderLocation, Sega8System, SystemHint};
 use crate::hardware::constants::{
-    GG_SCREEN_H, GG_SCREEN_W, IO_PORT_VDP_CONTROL, IO_PORT_VDP_DATA, RGBA_CHANNELS,
-    SEGA_HEADER_MAGIC, SEGA_HEADER_SIZE, SMS_MODE4_TILE_BYTES, SMS_SCREEN_H, SMS_SCREEN_W,
-    VDP_CONTROL_REGISTER_WRITE_VALUE,
+    GG_SCREEN_H, GG_SCREEN_W, IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_SERIAL_CONTROL,
+    IO_PORT_GG_SERIAL_RX, IO_PORT_GG_SERIAL_TX, IO_PORT_GG_START, IO_PORT_VDP_CONTROL,
+    IO_PORT_VDP_DATA, RGBA_CHANNELS, SEGA_HEADER_MAGIC, SEGA_HEADER_SIZE, SMS_MODE4_TILE_BYTES,
+    SMS_SCREEN_H, SMS_SCREEN_W, VDP_CONTROL_REGISTER_WRITE_VALUE,
 };
+use crate::hardware::region::Sega8Region;
+use crate::hardware::timing::Sega8VideoStandard;
+use zeff_emu_common::cheats::{CheatPatch, CheatValue};
 use zeff_emu_common::debug::WatchType;
 use zeff_emu_common::save_ram::SaveRamKind;
 
@@ -73,6 +78,57 @@ fn path_hint_selects_sg1000_for_headerless_sg_rom() {
 
     assert_eq!(emu.system(), Sega8System::Sg1000);
     assert_eq!(emu.framebuffer_dimensions(), (SMS_SCREEN_W, SMS_SCREEN_H));
+}
+
+#[test]
+fn path_hint_selects_pal_video_standard_from_region_tag() {
+    let emu = Emulator::new_with_path_hint(
+        &[0x00, 0x76],
+        48_000,
+        std::path::Path::new("Example (Europe).sms"),
+    )
+    .expect("SMS emulator should initialize from path hint");
+
+    assert_eq!(emu.video_standard(), Sega8VideoStandard::Pal);
+    assert_eq!(emu.bus().vdp().total_scanlines(), 313);
+}
+
+#[test]
+fn path_hint_selects_japanese_console_region_from_region_tag() {
+    let emu = Emulator::new_with_path_hint(
+        &[0x00, 0x76],
+        48_000,
+        std::path::Path::new("Example (Japan).gg"),
+    )
+    .expect("GG emulator should initialize from path hint");
+
+    assert_eq!(emu.console_region(), Sega8Region::Japanese);
+    assert_eq!(emu.bus().console_region(), Sega8Region::Japanese);
+}
+
+#[test]
+fn header_region_can_select_japanese_console_region() {
+    let emu = Emulator::new_with_hint(
+        &rom_with_header(HeaderLocation::Offset0x7ff0, 0x30),
+        48_000,
+        SystemHint::MasterSystem,
+    )
+    .expect("SMS emulator should initialize from header");
+
+    assert_eq!(emu.console_region(), Sega8Region::Japanese);
+}
+
+#[test]
+fn header_console_region_takes_precedence_over_path_tag() {
+    let emu = Emulator::new_with_path_hint(
+        &rom_with_header(HeaderLocation::Offset0x7ff0, 0x30),
+        48_000,
+        std::path::Path::new("Example [E].sms"),
+    )
+    .expect("SMS emulator should initialize from header and path hint");
+
+    assert_eq!(emu.video_standard(), Sega8VideoStandard::Pal);
+    assert_eq!(emu.console_region(), Sega8Region::Japanese);
 }
 
 #[test]
@@ -149,6 +205,97 @@ fn set_input_maps_host_masks_to_active_low_sms_controller_bits() {
 }
 
 #[test]
+fn set_input_maps_start_to_game_gear_start_port_only() {
+    let mut gg = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::GameGear)
+        .expect("GG emulator should initialize");
+    gg.set_input(HOST_BUTTON_START, 0);
+
+    assert!(gg.bus().input().game_gear_start_pressed());
+    assert_eq!(gg.bus_mut().io_read(IO_PORT_GG_START), 0x7F);
+
+    let mut sms = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::MasterSystem)
+        .expect("SMS emulator should initialize");
+    sms.set_input(HOST_BUTTON_START, 0);
+
+    assert!(sms.bus().input().game_gear_start_pressed());
+    assert_eq!(sms.bus_mut().io_read(IO_PORT_GG_START), 0xFF);
+}
+
+#[test]
+fn set_input_p2_maps_host_masks_to_second_controller_bits() {
+    let mut emu = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::MasterSystem)
+        .expect("emulator should initialize");
+
+    emu.set_input_p2(
+        HOST_BUTTON_2 | HOST_BUTTON_START,
+        HOST_DPAD_LEFT | HOST_DPAD_UP,
+    );
+
+    let raw = emu
+        .bus()
+        .input()
+        .read_controller(crate::hardware::input::ControllerPort::Two);
+    assert_eq!(raw & SMS_PAD_BUTTON_2, 0);
+    assert_eq!(raw & SMS_PAD_LEFT, 0);
+    assert_eq!(raw & SMS_PAD_UP, 0);
+    assert_ne!(raw & SMS_PAD_BUTTON_1, 0);
+    assert_ne!(raw & SMS_PAD_RIGHT, 0);
+    assert_ne!(raw & SMS_PAD_DOWN, 0);
+    assert!(
+        !emu.bus().input().game_gear_start_pressed(),
+        "host Start is a Game Gear system button and must not affect P2"
+    );
+}
+
+#[test]
+fn game_gear_link_peer_sync_transfers_serial_bytes_between_emulators() {
+    let mut left = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::GameGear)
+        .expect("left GG emulator should initialize");
+    let mut right = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::GameGear)
+        .expect("right GG emulator should initialize");
+
+    left.bus_mut().io_write(IO_PORT_GG_SERIAL_CONTROL, 0x30);
+    right.bus_mut().io_write(IO_PORT_GG_SERIAL_CONTROL, 0x30);
+    left.bus_mut().io_write(IO_PORT_GG_SERIAL_TX, 0x5A);
+
+    left.sync_game_gear_link_peer(&mut right);
+
+    assert_eq!(left.bus_mut().io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x05, 0);
+    assert_ne!(right.bus_mut().io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
+    assert_eq!(right.bus_mut().io_read(IO_PORT_GG_SERIAL_RX), 0x5A);
+}
+
+#[test]
+fn sms_region_detector_observes_export_th_loopback() {
+    let mut emu = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::MasterSystem)
+        .expect("SMS emulator should initialize");
+
+    emu.bus_mut().io_write(IO_PORT_CONTROL, 0xF5);
+    assert_eq!(emu.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0, 0xC0);
+
+    emu.bus_mut().io_write(IO_PORT_CONTROL, 0x55);
+    assert_eq!(emu.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0, 0x00);
+}
+
+#[test]
+fn sms_region_detector_observes_japanese_pbc_inverted_th_loopback() {
+    let mut emu = Emulator::new_with_hint_video_standard_and_region(
+        &[0x00],
+        48_000,
+        SystemHint::MasterSystem,
+        Sega8VideoStandard::Ntsc,
+        Some(Sega8Region::JapanesePowerBaseConverter),
+    )
+    .expect("SMS emulator should initialize");
+
+    emu.bus_mut().io_write(IO_PORT_CONTROL, 0xF5);
+    assert_eq!(emu.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0, 0x00);
+
+    emu.bus_mut().io_write(IO_PORT_CONTROL, 0x55);
+    assert_eq!(emu.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0, 0xC0);
+}
+
+#[test]
 fn suspended_emulator_does_not_advance() {
     let mut emu = Emulator::new_with_hint(&[0x00], 48_000, SystemHint::MasterSystem)
         .expect("emulator should initialize");
@@ -202,6 +349,27 @@ fn standard_mapper_ram_is_not_blindly_exposed_as_battery_sram() {
 
     assert_eq!(emu.bus().cartridge_ram()[0], 0x5A);
     assert_eq!(emu.dump_battery_sram(), None);
+}
+
+#[test]
+fn public_rom_patch_api_matches_cpu_read_path() {
+    let mut rom = vec![0; crate::hardware::constants::ROM_BANK_SIZE * 2];
+    rom[0x1234] = 0x56;
+    let mut emu = Emulator::new_with_hint(&rom, 48_000, SystemHint::MasterSystem)
+        .expect("emulator should initialize");
+
+    emu.add_rom_patch(CheatPatch::RomWriteIfEquals {
+        address: 0x1234,
+        value: CheatValue::Constant(0x9A),
+        compare: CheatValue::Constant(0x56),
+    });
+
+    assert_eq!(emu.rom_patches().len(), 1);
+    assert_eq!(emu.cpu_peek8(0x1234), 0x9A);
+
+    emu.clear_rom_patches();
+    assert!(emu.rom_patches().is_empty());
+    assert_eq!(emu.cpu_peek8(0x1234), 0x56);
 }
 
 #[test]

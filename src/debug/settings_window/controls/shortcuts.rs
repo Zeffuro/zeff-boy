@@ -28,6 +28,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         state.rebinding_speedup = true;
                         state.rebinding_action = None;
                         state.rebinding_gamepad = None;
+                        state.rebinding_gamepad_p2 = None;
                         state.rebinding_ws_gamepad = None;
                         state.rebinding_shortcut = None;
                         state.rebinding_rewind = false;
@@ -44,6 +45,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         state.rebinding_rewind = true;
                         state.rebinding_action = None;
                         state.rebinding_gamepad = None;
+                        state.rebinding_gamepad_p2 = None;
                         state.rebinding_ws_gamepad = None;
                         state.rebinding_shortcut = None;
                         state.rebinding_speedup = false;
@@ -62,6 +64,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                             state.rebinding_shortcut = Some(action);
                             state.rebinding_action = None;
                             state.rebinding_gamepad = None;
+                            state.rebinding_gamepad_p2 = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_speedup = false;
                             state.rebinding_rewind = false;

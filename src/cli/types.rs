@@ -1,5 +1,7 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_sega8_core::hardware::region::Sega8Region;
+use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HeadlessInputEvent {
@@ -65,6 +67,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) stuck_pc_threshold: usize,
     pub(crate) fail_on_stuck: bool,
     pub(crate) input_events: Vec<HeadlessInputEvent>,
+    pub(crate) input_events_p2: Vec<HeadlessInputEvent>,
     pub(crate) zapper_events: Vec<HeadlessZapperEvent>,
     pub(crate) load_state_path: Option<std::path::PathBuf>,
     pub(crate) screenshot_path: Option<std::path::PathBuf>,
@@ -79,6 +82,8 @@ pub(crate) struct HeadlessOptions {
     pub(crate) gba_hidden_bg_layers: [bool; 4],
     pub(crate) gba_hide_sprites: bool,
     pub(crate) gba_dump_memory_dir: Option<std::path::PathBuf>,
+    pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
+    pub(crate) sega8_console_region: Option<Sega8Region>,
 }
 
 impl Default for HeadlessOptions {
@@ -108,6 +113,7 @@ impl Default for HeadlessOptions {
             stuck_pc_threshold: 8,
             fail_on_stuck: false,
             input_events: Vec::new(),
+            input_events_p2: Vec::new(),
             zapper_events: Vec::new(),
             load_state_path: None,
             screenshot_path: None,
@@ -122,6 +128,8 @@ impl Default for HeadlessOptions {
             gba_hidden_bg_layers: [false; 4],
             gba_hide_sprites: false,
             gba_dump_memory_dir: None,
+            sega8_video_standard: None,
+            sega8_console_region: None,
         }
     }
 }

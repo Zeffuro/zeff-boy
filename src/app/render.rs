@@ -124,6 +124,7 @@ impl App {
                     self.debug_windows.rebinding_action = None;
                     self.debug_windows.rebinding_shortcut = None;
                     self.debug_windows.rebinding_gamepad = None;
+                    self.debug_windows.rebinding_gamepad_p2 = None;
                     self.debug_windows.rebinding_ws_gamepad = None;
                     self.debug_windows.rebinding_gamepad_action = None;
                     self.debug_windows.rebinding_speedup = false;

@@ -7,6 +7,37 @@ use psg::Psg;
 
 const GBA_CPU_HZ: f64 = 16_777_216.0;
 const FIFO_CAPACITY: usize = 32;
+const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
+
+#[derive(Clone, Copy, Debug)]
+struct DebugSamples {
+    samples: [f32; DEBUG_SAMPLE_HISTORY_LEN],
+    write_pos: usize,
+}
+
+impl Default for DebugSamples {
+    fn default() -> Self {
+        Self {
+            samples: [0.0; DEBUG_SAMPLE_HISTORY_LEN],
+            write_pos: 0,
+        }
+    }
+}
+
+impl DebugSamples {
+    fn push(&mut self, sample: f32) {
+        self.samples[self.write_pos] = sample;
+        self.write_pos = (self.write_pos + 1) % DEBUG_SAMPLE_HISTORY_LEN;
+    }
+
+    fn ordered(&self) -> [f32; DEBUG_SAMPLE_HISTORY_LEN] {
+        let mut out = [0.0; DEBUG_SAMPLE_HISTORY_LEN];
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = self.samples[(self.write_pos + i) % DEBUG_SAMPLE_HISTORY_LEN];
+        }
+        out
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Apu {
@@ -32,6 +63,9 @@ pub struct Apu {
     output_pairs_generated: u64,
     direct_pairs_generated: u64,
     psg_pairs_generated: u64,
+    debug_capture_enabled: bool,
+    direct_debug_history: [DebugSamples; 2],
+    master_debug_history: DebugSamples,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +73,7 @@ pub struct ApuDebugSnapshot {
     pub sample_rate: u32,
     pub psg_sample_rate: u32,
     pub sample_generation_enabled: bool,
+    pub debug_capture_enabled: bool,
     pub sample_buffer_len: usize,
     pub fifo_len: [usize; 2],
     pub current_sample: [i8; 2],
@@ -103,6 +138,9 @@ impl Apu {
             output_pairs_generated: 0,
             direct_pairs_generated: 0,
             psg_pairs_generated: 0,
+            debug_capture_enabled: false,
+            direct_debug_history: [DebugSamples::default(); 2],
+            master_debug_history: DebugSamples::default(),
         }
     }
 
@@ -125,6 +163,11 @@ impl Apu {
     pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
         self.sample_generation_enabled = enabled;
         self.psg.disable_host_sample_generation();
+    }
+
+    pub fn set_debug_capture_enabled(&mut self, enabled: bool) {
+        self.debug_capture_enabled = enabled;
+        self.psg.set_debug_capture_enabled(enabled);
     }
 
     pub fn set_channel_mutes(&mut self, mutes: [bool; 6]) {
@@ -155,12 +198,41 @@ impl Apu {
         self.channel_mutes
     }
 
+    pub fn psg_regs_snapshot(&self) -> [u8; 0x17] {
+        self.psg.regs_snapshot()
+    }
+
+    pub fn psg_wave_ram_snapshot(&self) -> [u8; 0x10] {
+        self.psg.wave_ram_snapshot()
+    }
+
+    pub fn psg_nr52_raw(&self) -> u8 {
+        self.psg.nr52_raw()
+    }
+
+    pub fn psg_channel_debug_samples_ordered(&self, channel: usize) -> [f32; 512] {
+        self.psg.channel_debug_samples_ordered(channel)
+    }
+
+    pub fn psg_master_debug_samples_ordered(&self) -> [f32; 512] {
+        self.psg.master_debug_samples_ordered()
+    }
+
+    pub fn direct_debug_samples_ordered(&self, fifo: usize) -> [f32; 512] {
+        self.direct_debug_history[fifo.min(1)].ordered()
+    }
+
+    pub fn master_debug_samples_ordered(&self) -> [f32; 512] {
+        self.master_debug_history.ordered()
+    }
+
     pub fn debug_snapshot(&self) -> ApuDebugSnapshot {
         let psg = self.psg.channel_snapshot();
         ApuDebugSnapshot {
             sample_rate: self.sample_rate,
             psg_sample_rate: self.psg.sample_rate(),
             sample_generation_enabled: self.sample_generation_enabled,
+            debug_capture_enabled: self.debug_capture_enabled,
             sample_buffer_len: self.sample_buffer.len(),
             fifo_len: [self.fifo_a.len(), self.fifo_b.len()],
             current_sample: [self.current_a, self.current_b],
@@ -293,6 +365,32 @@ mod tests {
 
         assert!(!apu.sample_buffer.is_empty());
         assert!(apu.sample_buffer.iter().any(|&sample| sample > 0.0));
+    }
+
+    #[test]
+    fn debug_capture_records_direct_and_master_waveforms() {
+        let mut apu = Apu::new(48_000);
+        apu.current_a = 64;
+        apu.set_debug_capture_enabled(true);
+        apu.step_output(
+            CYCLES_PER_FRAME,
+            (1 << 2) | (1 << 8) | (1 << 9),
+            0x0080,
+            0x0200,
+        );
+
+        let snapshot = apu.debug_snapshot();
+        assert!(snapshot.debug_capture_enabled);
+        assert!(
+            apu.direct_debug_samples_ordered(0)
+                .iter()
+                .any(|sample| *sample > 0.0)
+        );
+        assert!(
+            apu.master_debug_samples_ordered()
+                .iter()
+                .any(|sample| *sample > 0.0)
+        );
     }
 
     #[test]

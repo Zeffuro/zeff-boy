@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
+use zeff_sega8_core::hardware::region::Sega8Region;
+use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -351,10 +353,52 @@ impl UiSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum Sega8VideoStandardPreference {
+    #[default]
+    Auto,
+    Ntsc,
+    Pal,
+}
+
+impl Sega8VideoStandardPreference {
+    pub(crate) fn forced_standard(self) -> Option<Sega8VideoStandard> {
+        match self {
+            Self::Auto => None,
+            Self::Ntsc => Some(Sega8VideoStandard::Ntsc),
+            Self::Pal => Some(Sega8VideoStandard::Pal),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum Sega8ConsoleRegionPreference {
+    #[default]
+    Auto,
+    Export,
+    Japanese,
+    JapanesePowerBaseConverter,
+}
+
+impl Sega8ConsoleRegionPreference {
+    pub(crate) fn forced_region(self) -> Option<Sega8Region> {
+        match self {
+            Self::Auto => None,
+            Self::Export => Some(Sega8Region::Export),
+            Self::Japanese => Some(Sega8Region::Japanese),
+            Self::JapanesePowerBaseConverter => Some(Sega8Region::JapanesePowerBaseConverter),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct EmulationSettings {
     pub(crate) hardware_mode_preference: HardwareModePreference,
+    #[serde(default)]
+    pub(crate) sega8_video_standard: Sega8VideoStandardPreference,
+    #[serde(default)]
+    pub(crate) sega8_console_region: Sega8ConsoleRegionPreference,
     pub(crate) fast_forward_multiplier: usize,
     #[serde(default = "default_slow_motion_divisor")]
     pub(crate) slow_motion_divisor: usize,
@@ -384,6 +428,8 @@ impl Default for EmulationSettings {
     fn default() -> Self {
         Self {
             hardware_mode_preference: HardwareModePreference::Auto,
+            sega8_video_standard: Sega8VideoStandardPreference::Auto,
+            sega8_console_region: Sega8ConsoleRegionPreference::Auto,
             fast_forward_multiplier: 4,
             slow_motion_divisor: default_slow_motion_divisor(),
             slow_motion_enabled: false,

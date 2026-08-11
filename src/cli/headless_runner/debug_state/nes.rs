@@ -54,14 +54,20 @@ fn nes_blargg_output_json(emulator: &NesEmulator) -> serde_json::Value {
     })
 }
 
+pub(in crate::cli::headless_runner) struct NesDebugStateRequest<'a> {
+    pub(in crate::cli::headless_runner) emulator: &'a mut NesEmulator,
+    pub(in crate::cli::headless_runner) frames_run: u64,
+    pub(in crate::cli::headless_runner) opts: &'a HeadlessOptions,
+    pub(in crate::cli::headless_runner) input: InputMasks,
+    pub(in crate::cli::headless_runner) input_p2: InputMasks,
+    pub(in crate::cli::headless_runner) stuck: Option<&'a StuckReport>,
+    pub(in crate::cli::headless_runner) screenshot: Option<&'a PathBuf>,
+}
+
 pub(in crate::cli::headless_runner) fn nes_debug_state(
-    emulator: &mut NesEmulator,
-    frames_run: u64,
-    opts: &HeadlessOptions,
-    input: InputMasks,
-    stuck: Option<&StuckReport>,
-    screenshot: Option<&PathBuf>,
+    request: NesDebugStateRequest<'_>,
 ) -> serde_json::Value {
+    let emulator = request.emulator;
     let palette = emulator.ppu_palette_ram().to_vec();
     let oam = emulator.ppu_oam().to_vec();
     let active_oam = oam
@@ -97,7 +103,7 @@ pub(in crate::cli::headless_runner) fn nes_debug_state(
 
     serde_json::json!({
         "system": "nes",
-        "frames": frames_run,
+        "frames": request.frames_run,
         "cycles": emulator.cpu_cycles(),
         "pc": emulator.cpu_pc(),
         "pc_hex": format!("{:04X}", emulator.cpu_pc()),
@@ -194,10 +200,11 @@ pub(in crate::cli::headless_runner) fn nes_debug_state(
             "chr_visible_sample": chr_sample,
             "chr_visible": chr,
         },
-        "input": input_json(input),
-        "input_schedule": input_schedule_json(opts),
-        "stuck": stuck_report_json(stuck),
-        "screenshot": screenshot_json(screenshot),
+        "input": input_json(request.input),
+        "input_p2": input_json(request.input_p2),
+        "input_schedule": input_schedule_json(request.opts),
+        "stuck": stuck_report_json(request.stuck),
+        "screenshot": screenshot_json(request.screenshot),
         "framebuffer_hash": framebuffer_fingerprint(emulator.framebuffer()),
     })
 }
