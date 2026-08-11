@@ -1,4 +1,6 @@
+use super::storage::{cheat_system_dir, read_cheat_file, storage_key};
 use super::*;
+use crate::emu_backend::ActiveSystem;
 
 #[test]
 fn storage_key_prefers_crc32() {
@@ -74,6 +76,55 @@ fn load_uses_legacy_paths_when_new_paths_are_empty() {
     assert_eq!(libretro.len(), 1);
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn collect_enabled_patches_resolves_user_parameter_values() {
+    let cheat = CheatCode {
+        name: "Parameterized".to_string(),
+        code_text: "01??C000".to_string(),
+        enabled: true,
+        parameter_value: Some(0xA0),
+        code_type: CheatType::GameShark,
+        patches: vec![CheatPatch::RamWrite {
+            address: 0xC000,
+            value: CheatValue::from_mask_base_user(0xF0, 0x05),
+        }],
+    };
+
+    let patches = collect_enabled_patches(&[cheat], &[]);
+
+    assert_eq!(
+        patches,
+        vec![CheatPatch::RamWrite {
+            address: 0xC000,
+            value: CheatValue::constant(0xA5),
+        }]
+    );
+}
+
+#[test]
+fn export_cht_file_roundtrips_through_system_parser() {
+    let original = vec![CheatCode {
+        name: "Sega raw".to_string(),
+        code_text: "C123:42".to_string(),
+        enabled: true,
+        parameter_value: None,
+        code_type: CheatType::Raw,
+        patches: vec![CheatPatch::RamWrite {
+            address: 0xC123,
+            value: CheatValue::constant(0x42),
+        }],
+    }];
+
+    let exported = export_cht_file(&original);
+    let imported = parse_cht_file_for_system(&exported, ActiveSystem::MasterSystem);
+
+    assert_eq!(imported.len(), 1);
+    assert_eq!(imported[0].name, "Sega raw");
+    assert!(imported[0].enabled);
+    assert_eq!(imported[0].code_type, CheatType::Raw);
+    assert_eq!(imported[0].patches, original[0].patches);
 }
 
 #[test]
@@ -194,6 +245,31 @@ fn parse_cheat_for_system_gba_raw_wide() {
             address: 0x0200_0000,
             value: CheatValue::Constant(0x42)
         }]
+    ));
+}
+
+#[test]
+fn parse_cheat_for_system_gba_raw_wide_multi_code() {
+    let result = parse_cheat_for_system(
+        "$02000000:42 + 0x02000001 = 43",
+        ActiveSystem::GameBoyAdvance,
+    );
+    let (patches, ty) = result.expect("GBA raw wide multi-code should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert_eq!(patches.len(), 2);
+    assert!(matches!(
+        patches[0],
+        CheatPatch::WideRamWrite {
+            address: 0x0200_0000,
+            value: CheatValue::Constant(0x42)
+        }
+    ));
+    assert!(matches!(
+        patches[1],
+        CheatPatch::WideRamWrite {
+            address: 0x0200_0001,
+            value: CheatValue::Constant(0x43)
+        }
     ));
 }
 

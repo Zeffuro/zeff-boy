@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
+use crate::input::HostButton;
 use serde_json::Value;
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
 #[derive(Debug)]
 pub(crate) enum LiveCommand {
@@ -17,12 +17,12 @@ pub(crate) enum LiveCommand {
     SetUncapped(bool),
     Button {
         player: u8,
-        key: JoypadKey,
+        key: HostButton,
         pressed: bool,
     },
     Tap {
         player: u8,
-        key: JoypadKey,
+        key: HostButton,
         frames: usize,
     },
     Zapper {
@@ -41,11 +41,46 @@ pub(crate) enum LiveCommand {
         path: PathBuf,
     },
     MemoryRead {
-        space: String,
+        space: LiveMemorySpace,
         start: u32,
         length: usize,
     },
     GraphicsInfo,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LiveMemorySpace {
+    #[default]
+    Cpu,
+    Region(String),
+}
+
+impl LiveMemorySpace {
+    pub(crate) fn from_wire(value: impl Into<String>) -> Self {
+        let value = value.into();
+        if is_cpu_space(&value) {
+            Self::Cpu
+        } else {
+            Self::Region(value)
+        }
+    }
+
+    pub(crate) fn request_name(&self) -> &str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Region(space) => space,
+        }
+    }
+}
+
+fn is_cpu_space(value: &str) -> bool {
+    let normalized = value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | '_' | ' ' | '.'))
+        .collect::<String>();
+    matches!(normalized.as_str(), "cpu" | "memory" | "ram")
 }
 
 pub(crate) enum LiveReply {
@@ -61,7 +96,7 @@ pub(crate) struct LiveRequest {
 #[derive(Clone, Copy)]
 pub(crate) struct PendingButtonRelease {
     pub(crate) player: u8,
-    pub(crate) key: JoypadKey,
+    pub(crate) key: HostButton,
     pub(crate) frames_remaining: usize,
 }
 

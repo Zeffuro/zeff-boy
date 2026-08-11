@@ -147,6 +147,8 @@ pub(in crate::cli::headless_runner) fn sega8_debug_state(
         "kind_debug": format!("{:?}", mapper.kind()),
         "frame_control": mapper.frame_control(),
         "frame_control_hex": format!("{:02X}", mapper.frame_control()),
+        "memory_control": emulator.bus().memory_control(),
+        "memory_control_hex": format!("{:02X}", emulator.bus().memory_control()),
         "slot_banks": mapper.slot_banks(),
         "slot2_cartridge_ram_enabled": mapper.slot2_cartridge_ram_enabled(),
         "cartridge_ram_bank": mapper.cartridge_ram_bank(),
@@ -163,6 +165,8 @@ pub(in crate::cli::headless_runner) fn sega8_debug_state(
         "mapper_kind_debug": format!("{:?}", cartridge.mapper_kind()),
         "raw_len": cartridge.raw_len(),
         "normalized_len": cartridge.normalized_len(),
+        "normalized_crc32": cartridge.normalized_crc32(),
+        "normalized_crc32_hex": format!("{:08X}", cartridge.normalized_crc32()),
         "copier_header_stripped": cartridge.copier_header_stripped(),
         "rom_bank_count": cartridge.rom_bank_count(),
         "header": header,
@@ -232,10 +236,14 @@ pub(in crate::cli::headless_runner) fn sega8_debug_state(
         "control_hex": format!("{:02X}", gg_serial.control),
         "status": gg_serial.status,
         "status_hex": format!("{:02X}", gg_serial.status),
+        "baud_bps": gg_serial.baud_bps,
+        "tx_cycles_remaining": gg_serial.tx_cycles_remaining,
+        "rx_nmi_pending": gg_serial.rx_nmi_pending,
         "flags": {
             "tx_full": gg_serial.status & 0x01 != 0,
             "rx_ready": gg_serial.status & 0x02 != 0,
             "error": gg_serial.status & 0x04 != 0,
+            "rx_nmi_pending": gg_serial.rx_nmi_pending,
         },
     });
 

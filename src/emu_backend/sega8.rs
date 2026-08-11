@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use zeff_emu_common::address::Address;
+use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
-use zeff_sega8_core::hardware::cartridge::{Sega8System, SystemHint};
+use zeff_sega8_core::hardware::cartridge::{Sega8MapperKind, Sega8System, SystemHint};
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -29,8 +29,12 @@ impl crate::emu_core_trait::DebuggableEmulator for Sega8Emulator {
         self.toggle_breakpoint(addr);
     }
 
-    fn debug_write(&mut self, addr: Address, val: u8) {
-        self.debug_write(addr, val);
+    fn cpu_peek8(&self, addr: Address) -> u8 {
+        self.cpu_peek8(narrow_u16(addr))
+    }
+
+    fn cpu_write8(&mut self, addr: Address, val: u8) {
+        self.cpu_write8(narrow_u16(addr), val);
     }
     fn is_cpu_suspended(&self) -> bool {
         self.is_cpu_suspended()
@@ -190,14 +194,19 @@ impl EmulatorCore for Sega8Backend {
             MemoryRegionKind::SystemRam => copy_slice_to_vec(out, self.emu.system_ram()),
             MemoryRegionKind::VideoRam => copy_slice_to_vec(out, self.emu.video_ram_snapshot()),
             MemoryRegionKind::PaletteRam => copy_slice_to_vec(out, self.emu.palette_ram_snapshot()),
-            MemoryRegionKind::SaveRam => copy_slice_to_vec(out, self.emu.bus().cartridge_ram()),
+            MemoryRegionKind::SaveRam => {
+                copy_slice_to_vec(out, self.emu.bus().cartridge_ram_visible())
+            }
             MemoryRegionKind::Framebuffer => copy_slice_to_vec(out, self.emu.framebuffer()),
             MemoryRegionKind::CpuAddressSpace => {
                 return Err(anyhow::anyhow!(
                     "Sega 8-bit CPU address space is not copyable as a finite memory region"
                 ));
             }
-            MemoryRegionKind::Oam | MemoryRegionKind::IoRegisters => {
+            MemoryRegionKind::Oam
+            | MemoryRegionKind::IoRegisters
+            | MemoryRegionKind::ExternalWorkRam
+            | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(
                     "Sega 8-bit memory region '{}' is not exposed as a copyable region",
                     region.id
@@ -230,6 +239,13 @@ pub(crate) fn console_region_from_paths(
     rom_path: &Path,
 ) -> Option<Sega8Region> {
     Sega8Region::from_path(rom_path).or_else(|| Sega8Region::from_path(source_path))
+}
+
+pub(crate) fn mapper_kind_from_paths(
+    source_path: &Path,
+    rom_path: &Path,
+) -> Option<Sega8MapperKind> {
+    Sega8MapperKind::from_path(rom_path).or_else(|| Sega8MapperKind::from_path(source_path))
 }
 
 fn active_system_for_sega8(system: Sega8System) -> ActiveSystem {

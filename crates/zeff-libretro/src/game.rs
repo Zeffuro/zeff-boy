@@ -56,7 +56,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
         match crate::core::CoreState::from_rom(data, path_str) {
             Ok(mut state) => {
                 let sram_size = state.sram_size();
-                let is_nes = state.is_nes();
+                let input_descriptor_config = state.input_descriptor_config();
                 let system_label = state.system_label();
                 retro_log_info(&format!(
                     "retro_load_game OK: {}x{} @ {:.2} Hz, sample_rate={}, sram_size={}, system={}",
@@ -81,7 +81,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
                 *lock(&FRAME_COUNTER) = 0;
                 *lock(&MAX_SERIALIZE_SIZE) = 0;
 
-                crate::input::set_input_descriptors(is_nes);
+                crate::input::set_input_descriptors(input_descriptor_config);
 
                 true
             }

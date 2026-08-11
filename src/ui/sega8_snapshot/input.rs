@@ -34,12 +34,15 @@ pub(super) fn sega8_input_snapshot(emu: &Emulator) -> InputDebugInfo {
                         gg_serial.rx_data
                     ),
                     format!(
-                        "CTRL={:02X} STATUS={:02X} (tx_full={} rx_ready={} error={})",
+                        "CTRL={:02X} STATUS={:02X} baud={}bps tx_cycles={} (tx_full={} rx_ready={} error={} rx_nmi={})",
                         gg_serial.control,
                         gg_serial.status,
+                        gg_serial.baud_bps,
+                        gg_serial.tx_cycles_remaining,
                         super::on_off(gg_serial.status & 0x01 != 0),
                         super::on_off(gg_serial.status & 0x02 != 0),
-                        super::on_off(gg_serial.status & 0x04 != 0)
+                        super::on_off(gg_serial.status & 0x04 != 0),
+                        super::on_off(gg_serial.rx_nmi_pending)
                     ),
                 ],
             },

@@ -48,6 +48,10 @@ pub enum Sega8MapperKind {
     #[default]
     Sega,
     Codemasters,
+    Korean,
+    Msx,
+    Nemesis,
+    Janggun,
 }
 
 impl Sega8MapperKind {
@@ -55,6 +59,56 @@ impl Sega8MapperKind {
         match self {
             Self::Sega => "sega",
             Self::Codemasters => "codemasters",
+            Self::Korean => "korean",
+            Self::Msx => "msx",
+            Self::Nemesis => "nemesis",
+            Self::Janggun => "janggun",
+        }
+    }
+
+    pub fn from_path(path: &Path) -> Option<Self> {
+        let text = path.file_name()?.to_str()?;
+        Self::from_explicit_tag(text)
+    }
+
+    pub fn from_explicit_tag(text: &str) -> Option<Self> {
+        let normalized = text
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>();
+        let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+
+        for window in tokens.windows(2) {
+            if window[0] == "mapper"
+                && let Some(kind) = Self::from_label(window[1])
+            {
+                return Some(kind);
+            }
+            if window[1] == "mapper"
+                && let Some(kind) = Self::from_label(window[0])
+            {
+                return Some(kind);
+            }
+        }
+
+        None
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label.trim().to_ascii_lowercase().as_str() {
+            "sega" => Some(Self::Sega),
+            "codemasters" => Some(Self::Codemasters),
+            "korean" => Some(Self::Korean),
+            "msx" => Some(Self::Msx),
+            "nemesis" => Some(Self::Nemesis),
+            "janggun" => Some(Self::Janggun),
+            _ => None,
         }
     }
 }

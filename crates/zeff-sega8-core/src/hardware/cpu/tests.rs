@@ -2,13 +2,21 @@ use super::flags::szp_flags;
 use super::*;
 use crate::hardware::cartridge::{Cartridge, SystemHint};
 use crate::hardware::constants::{
-    IO_PORT_CONTROLLER_1, IO_PORT_PSG, IO_PORT_VDP_CONTROL, VDP_CONTROL_REGISTER_WRITE_VALUE,
-    VDP_REG1_FRAME_IRQ_ENABLE, VDP_REGISTER_MODE_CONTROL_2, VDP_STATUS_VBLANK,
+    IO_PORT_CONTROLLER_1, IO_PORT_GG_SERIAL_CONTROL, IO_PORT_GG_SERIAL_RX, IO_PORT_PSG,
+    IO_PORT_VDP_CONTROL, VDP_CONTROL_REGISTER_WRITE_VALUE, VDP_REG1_FRAME_IRQ_ENABLE,
+    VDP_REGISTER_MODE_CONTROL_2, VDP_STATUS_VBLANK, Z80_INTERRUPT_VECTOR_NMI,
 };
 use crate::hardware::input::ControllerPort;
+use crate::hardware::serial::GameGearSerial;
 
 fn cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
     let cart = Cartridge::load_with_hint(program, SystemHint::MasterSystem)
+        .expect("test cartridge should load");
+    (Cpu::new(), Bus::new(cart))
+}
+
+fn game_gear_cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
+    let cart = Cartridge::load_with_hint(program, SystemHint::GameGear)
         .expect("test cartridge should load");
     (Cpu::new(), Bus::new(cart))
 }
@@ -20,6 +28,18 @@ fn enable_vdp_frame_interrupt(bus: &mut Bus) {
         VDP_CONTROL_REGISTER_WRITE_VALUE | VDP_REGISTER_MODE_CONTROL_2 as u8,
     );
     bus.vdp_mut().set_status_bits(VDP_STATUS_VBLANK);
+}
+
+fn deliver_game_gear_serial_byte(bus: &mut Bus, value: u8, nmi_enabled: bool) {
+    let clock_hz = bus.video_standard().clock_hz_approx();
+    let local_control = if nmi_enabled { 0x38 } else { 0x30 };
+    let mut peer = GameGearSerial::new();
+    peer.write_control(0x30);
+    peer.write_tx_data(value);
+    peer.step_cycles(20_000, clock_hz);
+    bus.game_gear_serial_mut().write_control(local_control);
+    bus.game_gear_serial_mut()
+        .exchange_with_peer(&mut peer, clock_hz);
 }
 
 #[test]
@@ -139,6 +159,48 @@ fn enabled_vblank_interrupt_pushes_pc_and_vectors_to_0038() {
     assert_eq!(bus.cpu_read(0xCFFE), 0x05);
     assert_eq!(bus.cpu_read(0xCFFF), 0x00);
     assert!(!cpu.interrupts_enabled());
+}
+
+#[test]
+fn game_gear_serial_rx_nmi_pushes_pc_and_vectors_to_0066() {
+    let (mut cpu, mut bus) = game_gear_cpu_and_bus(&[
+        0x31, 0x00, 0xD0, // LD SP,$D000
+        0xF3, // DI
+        0x00, // should be interrupted before executing
+    ]);
+
+    cpu.step(&mut bus);
+    cpu.step(&mut bus);
+    assert!(!cpu.interrupts_enabled());
+    deliver_game_gear_serial_byte(&mut bus, 0x5A, true);
+    assert!(bus.non_maskable_interrupt_pending());
+
+    let interrupt = cpu.step(&mut bus).expect("NMI should be serviced");
+
+    assert_eq!(interrupt.opcode, Z80_INTERRUPT_ACK_OPCODE);
+    assert_eq!(interrupt.cycles, CYCLES_NMI_ACK);
+    assert_eq!(cpu.regs().pc, Z80_INTERRUPT_VECTOR_NMI);
+    assert_eq!(cpu.regs().sp, 0xCFFE);
+    assert_eq!(bus.cpu_read(0xCFFE), 0x04);
+    assert_eq!(bus.cpu_read(0xCFFF), 0x00);
+    assert!(!bus.non_maskable_interrupt_pending());
+    assert_ne!(bus.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
+    assert_eq!(bus.io_read(IO_PORT_GG_SERIAL_RX), 0x5A);
+}
+
+#[test]
+fn game_gear_serial_rx_does_not_nmi_when_control_bit_is_clear() {
+    let (mut cpu, mut bus) = game_gear_cpu_and_bus(&[0x00]);
+
+    deliver_game_gear_serial_byte(&mut bus, 0x5A, false);
+    assert!(!bus.non_maskable_interrupt_pending());
+
+    let fetched = cpu.step(&mut bus).expect("NOP should execute");
+
+    assert_eq!(fetched.opcode, 0x00);
+    assert_eq!(cpu.regs().pc, 0x0001);
+    assert_ne!(bus.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
+    assert_eq!(bus.io_read(IO_PORT_GG_SERIAL_RX), 0x5A);
 }
 
 #[test]

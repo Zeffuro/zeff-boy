@@ -1,10 +1,10 @@
 use super::{
     Emulator, HOST_BUTTON_1, HOST_BUTTON_2, HOST_BUTTON_START, HOST_DPAD_LEFT, HOST_DPAD_RIGHT,
     HOST_DPAD_UP, SMS_PAD_BUTTON_1, SMS_PAD_BUTTON_2, SMS_PAD_DOWN, SMS_PAD_LEFT, SMS_PAD_RIGHT,
-    SMS_PAD_UP,
+    SMS_PAD_UP, Sega8LoadConfig,
 };
 use crate::hardware::bus::CpuAccessTraceEvent;
-use crate::hardware::cartridge::{HeaderLocation, Sega8System, SystemHint};
+use crate::hardware::cartridge::{HeaderLocation, Sega8MapperKind, Sega8System, SystemHint};
 use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_SERIAL_CONTROL,
     IO_PORT_GG_SERIAL_RX, IO_PORT_GG_SERIAL_TX, IO_PORT_GG_START, IO_PORT_VDP_CONTROL,
@@ -129,6 +129,117 @@ fn header_console_region_takes_precedence_over_path_tag() {
 
     assert_eq!(emu.video_standard(), Sega8VideoStandard::Pal);
     assert_eq!(emu.console_region(), Sega8Region::Japanese);
+}
+
+#[test]
+fn load_config_matches_explicit_system_hint_constructors() {
+    let rom = [0x00, 0x76];
+    for (hint, expected_system, expected_dimensions) in [
+        (
+            SystemHint::MasterSystem,
+            Sega8System::MasterSystem,
+            (SMS_SCREEN_W, SMS_SCREEN_H),
+        ),
+        (
+            SystemHint::GameGear,
+            Sega8System::GameGear,
+            (GG_SCREEN_W, GG_SCREEN_H),
+        ),
+        (
+            SystemHint::Sg1000,
+            Sega8System::Sg1000,
+            (SMS_SCREEN_W, SMS_SCREEN_H),
+        ),
+    ] {
+        let legacy = Emulator::new_with_hint(&rom, 44_100, hint)
+            .expect("legacy constructor should initialize");
+        let configured =
+            Emulator::new_with_config(&rom, Sega8LoadConfig::new(44_100).with_system_hint(hint))
+                .expect("config constructor should initialize");
+
+        assert_eq!(configured.system(), expected_system);
+        assert_eq!(configured.system(), legacy.system());
+        assert_eq!(configured.framebuffer_dimensions(), expected_dimensions);
+        assert_eq!(
+            configured.framebuffer_dimensions(),
+            legacy.framebuffer_dimensions()
+        );
+        assert_eq!(configured.sample_rate(), legacy.sample_rate());
+    }
+}
+
+#[test]
+fn load_config_path_helper_matches_path_hint_constructor() {
+    let path = std::path::Path::new("Example (Europe).gg");
+    let legacy = Emulator::new_with_path_hint(&[0x00, 0x76], 48_000, path)
+        .expect("legacy path constructor should initialize");
+    let configured =
+        Emulator::new_with_config(&[0x00, 0x76], Sega8LoadConfig::from_path(48_000, path))
+            .expect("config path helper should initialize");
+
+    assert_eq!(configured.system(), legacy.system());
+    assert_eq!(configured.video_standard(), Sega8VideoStandard::Pal);
+    assert_eq!(configured.video_standard(), legacy.video_standard());
+    assert_eq!(configured.console_region(), Sega8Region::Export);
+    assert_eq!(configured.console_region(), legacy.console_region());
+}
+
+#[test]
+fn load_config_path_helper_applies_explicit_mapper_tag() {
+    let path = std::path::Path::new("Example [mapper=janggun].sms");
+    let configured =
+        Emulator::new_with_config(&[0x00, 0x76], Sega8LoadConfig::from_path(48_000, path))
+            .expect("config path helper should initialize");
+
+    assert_eq!(configured.system(), Sega8System::MasterSystem);
+    assert_eq!(configured.bus().mapper().kind(), Sega8MapperKind::Janggun);
+}
+
+#[test]
+fn load_config_matches_video_region_and_sample_rate_constructor() {
+    let rom = rom_with_header(HeaderLocation::Offset0x7ff0, 0x30);
+    let legacy = Emulator::new_with_hint_video_standard_region_fallback(
+        &rom,
+        0,
+        SystemHint::MasterSystem,
+        Sega8VideoStandard::Pal,
+        Some(Sega8Region::Export),
+        Some(Sega8Region::Japanese),
+    )
+    .expect("legacy full constructor should initialize");
+    let configured = Emulator::new_with_config(
+        &rom,
+        Sega8LoadConfig::new(0)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_video_standard(Sega8VideoStandard::Pal)
+            .with_console_region(Some(Sega8Region::Export))
+            .with_console_region_fallback(Some(Sega8Region::Japanese)),
+    )
+    .expect("config full constructor should initialize");
+
+    assert_eq!(configured.system(), legacy.system());
+    assert_eq!(configured.video_standard(), Sega8VideoStandard::Pal);
+    assert_eq!(configured.video_standard(), legacy.video_standard());
+    assert_eq!(configured.console_region(), Sega8Region::Export);
+    assert_eq!(configured.console_region(), legacy.console_region());
+    assert_eq!(configured.sample_rate(), super::DEFAULT_SAMPLE_RATE);
+    assert_eq!(configured.sample_rate(), legacy.sample_rate());
+}
+
+#[test]
+fn load_config_can_force_mapper_kind_without_changing_system_hint() {
+    let rom = vec![0; crate::hardware::constants::ROM_BANK_SIZE * 4];
+    let emu = Emulator::new_with_config(
+        &rom,
+        Sega8LoadConfig::new(48_000)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_mapper_kind(Some(Sega8MapperKind::Korean)),
+    )
+    .expect("config should initialize with forced mapper");
+
+    assert_eq!(emu.system(), Sega8System::MasterSystem);
+    assert_eq!(emu.bus().cartridge.mapper_kind(), Sega8MapperKind::Korean);
+    assert_eq!(emu.bus().mapper().kind(), Sega8MapperKind::Korean);
 }
 
 #[test]
@@ -258,6 +369,13 @@ fn game_gear_link_peer_sync_transfers_serial_bytes_between_emulators() {
     right.bus_mut().io_write(IO_PORT_GG_SERIAL_CONTROL, 0x30);
     left.bus_mut().io_write(IO_PORT_GG_SERIAL_TX, 0x5A);
 
+    left.sync_game_gear_link_peer(&mut right);
+
+    assert_ne!(left.bus_mut().io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x01, 0);
+    assert_eq!(right.bus_mut().io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
+
+    left.bus_mut().step_cycles(20_000);
+    right.bus_mut().step_cycles(20_000);
     left.sync_game_gear_link_peer(&mut right);
 
     assert_eq!(left.bus_mut().io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x05, 0);

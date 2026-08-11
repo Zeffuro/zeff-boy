@@ -5,6 +5,7 @@ use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::system::CoreFamily;
 
+pub(crate) use self::capabilities::{CheatCapabilities, CoreCapabilities, InputCapabilities};
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
@@ -17,6 +18,8 @@ pub(crate) use self::ws::WsBackend;
 
 use crate::emu_core_trait::EmulatorCore;
 
+pub(crate) mod capabilities;
+pub(crate) mod cheats;
 pub(crate) mod gb;
 pub(crate) mod gba;
 pub(crate) mod loader;
@@ -265,6 +268,23 @@ impl EmuBackend {
 
     pub(crate) fn supports_opcode_history(&self) -> bool {
         dispatch!(self, supports_opcode_history())
+    }
+
+    pub(crate) fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            core_family: self.core_family(),
+            save_ram_kind: self.save_ram_kind(),
+            has_battery: self.has_battery(),
+            system_ram_len: self.system_ram_len(),
+            video_ram_len: self.video_ram_len(),
+            memory_regions: self.memory_regions(),
+            input_features: capabilities::InputCapabilities::for_system(self.system()),
+            cheat_features: CheatCapabilities::for_system(self.system()),
+            supports_save_states: true,
+            supports_rewind: true,
+            supports_debugger: self.supports_debugger(),
+            supports_opcode_history: self.supports_opcode_history(),
+        }
     }
 
     pub(crate) fn memory_regions(&self) -> Vec<MemoryRegionDescriptor> {

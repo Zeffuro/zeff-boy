@@ -232,6 +232,10 @@ pub(super) fn assert_app_snapshot_core_features(
         expected_video_ram_len,
         expected_framebuffer_len,
     );
+    assert_eq!(
+        features.input_features,
+        crate::emu_backend::InputCapabilities::for_system(expected_system)
+    );
     assert!(features.supports_save_states);
     assert!(features.supports_rewind);
     assert!(features.supports_debugger);
@@ -241,7 +245,7 @@ pub(super) fn assert_app_snapshot_core_features(
     );
     assert_eq!(
         features.cheat_features,
-        crate::ui::CheatFeatureInfo::for_system(expected_system)
+        crate::emu_backend::CheatCapabilities::for_system(expected_system)
     );
 }
 
@@ -314,6 +318,20 @@ fn assert_memory_regions(
 fn assert_extended_memory_regions(regions: &[MemoryRegionDescriptor], system: ActiveSystem) {
     match system {
         ActiveSystem::GameBoyAdvance => {
+            assert_region(
+                regions,
+                "ewram",
+                MemoryRegionKind::ExternalWorkRam,
+                Some(zeff_gba_core::hardware::constants::EWRAM_SIZE),
+                None,
+            );
+            assert_region(
+                regions,
+                "iwram",
+                MemoryRegionKind::InternalWorkRam,
+                Some(zeff_gba_core::hardware::constants::IWRAM_SIZE),
+                None,
+            );
             assert_region(
                 regions,
                 "palette_ram",
@@ -396,6 +414,7 @@ fn assert_copyable_memory_regions(backend: &mut EmuBackend) {
 
     for region in regions {
         if region.kind == MemoryRegionKind::CpuAddressSpace {
+            assert!(!region.copyable);
             assert!(
                 backend.copy_memory_region(region.id, &mut copied).is_err(),
                 "CPU address spaces should not be copied as finite memory regions"
@@ -403,6 +422,11 @@ fn assert_copyable_memory_regions(backend: &mut EmuBackend) {
             continue;
         }
 
+        assert!(
+            region.copyable,
+            "finite memory region '{}' should be marked copyable",
+            region.id
+        );
         let copied_region = backend
             .copy_memory_region(region.id, &mut copied)
             .unwrap_or_else(|err| panic!("copying memory region '{}' failed: {err}", region.id));

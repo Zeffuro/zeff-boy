@@ -88,7 +88,7 @@ impl EmuLoop {
 
             EmuCommand::UpdateCheats(cheats) => {
                 self.last_cheats = cheats;
-                EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
+                self.backend.install_rom_patches(&self.last_cheats);
             }
 
             EmuCommand::StepFrames(input) => {
@@ -226,7 +226,7 @@ impl EmuLoop {
                     &self.shared_framebuffer,
                 );
                 if matches!(&resp, EmuResponse::RewindOk) {
-                    EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
+                    self.backend.install_rom_patches(&self.last_cheats);
                 }
                 if !self.send_resp(resp) {
                     return false;
@@ -267,7 +267,7 @@ impl EmuLoop {
         );
         if loaded {
             self.rewind_buffer.clear();
-            EmuThread::install_rom_patches(&mut self.backend, &self.last_cheats);
+            self.backend.install_rom_patches(&self.last_cheats);
         }
         self.send_resp(resp)
     }

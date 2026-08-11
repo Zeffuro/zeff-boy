@@ -4,6 +4,7 @@ pub mod cartridge;
 pub mod constants;
 pub mod cpu;
 pub mod input;
+pub mod mapper;
 pub mod psg;
 pub mod region;
 pub mod serial;

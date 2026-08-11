@@ -117,10 +117,6 @@ impl CoreState {
         matches!(self.core, ActiveCore::Gb(_))
     }
 
-    pub fn is_nes(&self) -> bool {
-        matches!(self.core, ActiveCore::Nes(_))
-    }
-
     pub fn system_label(&self) -> &'static str {
         match &self.core {
             ActiveCore::Gb(_) => "GB/GBC",

@@ -1,5 +1,6 @@
 use super::{ActiveCore, CoreState};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_sega8_core::emulator::Sega8LoadConfig;
 use zeff_sega8_core::hardware::cartridge::SystemHint;
 
 impl CoreState {
@@ -26,11 +27,8 @@ impl CoreState {
                 ActiveCore::Ws(Box::new(emu))
             }
             ext if SystemHint::from_extension(ext).is_some() => {
-                let emu = zeff_sega8_core::emulator::Emulator::new_with_path_hint(
-                    data,
-                    sample_rate,
-                    std::path::Path::new(path),
-                )?;
+                let config = Sega8LoadConfig::from_path(sample_rate, std::path::Path::new(path));
+                let emu = zeff_sega8_core::emulator::Emulator::new_with_config(data, config)?;
                 ActiveCore::Sega8(Box::new(emu))
             }
             _ => {

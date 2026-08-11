@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 
+use crate::input::HostButton;
 use serde_json::json;
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
 use super::parse::parse_wire_request;
-use super::types::LiveCommand;
+use super::types::{LiveCommand, LiveMemorySpace};
 
 #[test]
 fn parses_status_command() {
@@ -20,7 +20,7 @@ fn parses_tap_button_with_default_frames() {
         parsed.command,
         LiveCommand::Tap {
             player: 1,
-            key: JoypadKey::Start,
+            key: HostButton::Start,
             frames: 4
         }
     ));
@@ -33,8 +33,31 @@ fn parses_player_two_button_command() {
         parsed.command,
         LiveCommand::Button {
             player: 2,
-            key: JoypadKey::A,
+            key: HostButton::A,
             pressed: true,
+        }
+    ));
+}
+
+#[test]
+fn parses_shoulder_button_aliases() {
+    let parsed = parse_wire_request(r#"{"command":"press","button":"left shoulder"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::Button {
+            player: 1,
+            key: HostButton::L,
+            pressed: true,
+        }
+    ));
+
+    let parsed = parse_wire_request(r#"{"command":"release","button":"R1"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::Button {
+            player: 1,
+            key: HostButton::R,
+            pressed: false,
         }
     ));
 }
@@ -68,7 +91,7 @@ fn parses_memory_command_with_hex_start() {
             ref space,
             start: 0x1800,
             length: 32
-        } if space == "vram"
+        } if space == &LiveMemorySpace::Region("vram".to_string())
     ));
 }
 

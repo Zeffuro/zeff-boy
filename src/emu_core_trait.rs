@@ -13,7 +13,9 @@ pub(crate) trait DebuggableEmulator {
     fn add_watchpoint(&mut self, addr: Address, wt: zeff_emu_common::debug::WatchType);
     fn remove_breakpoint(&mut self, addr: Address);
     fn toggle_breakpoint(&mut self, addr: Address);
-    fn debug_write(&mut self, addr: Address, val: u8);
+    #[allow(dead_code)]
+    fn cpu_peek8(&self, addr: Address) -> u8;
+    fn cpu_write8(&mut self, addr: Address, val: u8);
     fn is_cpu_suspended(&self) -> bool;
     fn debug_continue(&mut self);
     fn debug_step(&mut self);
@@ -86,6 +88,16 @@ pub(crate) trait EmulatorCore {
     }
 
     #[inline]
+    fn external_work_ram_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn internal_work_ram_len(&self) -> usize {
+        0
+    }
+
+    #[inline]
     fn supports_debugger(&self) -> bool {
         false
     }
@@ -108,6 +120,8 @@ pub(crate) trait EmulatorCore {
             self.save_ram_kind(),
             self.framebuffer().len(),
             ExtendedMemoryRegionSizes {
+                external_work_ram_len: self.external_work_ram_len(),
+                internal_work_ram_len: self.internal_work_ram_len(),
                 palette_ram_len: self.palette_ram_len(),
                 oam_len: self.oam_len(),
                 io_registers_len: self.io_registers_len(),

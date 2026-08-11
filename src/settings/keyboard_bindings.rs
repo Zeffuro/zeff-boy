@@ -14,6 +14,8 @@ pub(crate) struct KeyBindings {
     pub(crate) right: KeyCode,
     pub(crate) a: KeyCode,
     pub(crate) b: KeyCode,
+    pub(crate) l: KeyCode,
+    pub(crate) r: KeyCode,
     pub(crate) start: KeyCode,
     pub(crate) select: KeyCode,
 }
@@ -27,6 +29,8 @@ impl Default for KeyBindings {
             right: KeyCode::ArrowRight,
             a: KeyCode::KeyX,
             b: KeyCode::KeyZ,
+            l: KeyCode::KeyA,
+            r: KeyCode::KeyS,
             start: KeyCode::Enter,
             select: KeyCode::ShiftRight,
         }
@@ -42,6 +46,8 @@ impl KeyBindings {
             right: KeyCode::Numpad6,
             a: KeyCode::Numpad1,
             b: KeyCode::Numpad2,
+            l: KeyCode::Numpad7,
+            r: KeyCode::Numpad9,
             start: KeyCode::NumpadEnter,
             select: KeyCode::Numpad0,
         }
@@ -55,6 +61,8 @@ impl KeyBindings {
             BindingAction::Right => self.right,
             BindingAction::A => self.a,
             BindingAction::B => self.b,
+            BindingAction::L => self.l,
+            BindingAction::R => self.r,
             BindingAction::Start => self.start,
             BindingAction::Select => self.select,
         }
@@ -68,6 +76,8 @@ impl KeyBindings {
             BindingAction::Right => self.right = key,
             BindingAction::A => self.a = key,
             BindingAction::B => self.b = key,
+            BindingAction::L => self.l = key,
+            BindingAction::R => self.r = key,
             BindingAction::Start => self.start = key,
             BindingAction::Select => self.select = key,
         }
@@ -79,13 +89,15 @@ impl Serialize for KeyBindings {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("KeyBindings", 8)?;
+        let mut state = serializer.serialize_struct("KeyBindings", 10)?;
         state.serialize_field("up", &keycode_to_string(self.up))?;
         state.serialize_field("down", &keycode_to_string(self.down))?;
         state.serialize_field("left", &keycode_to_string(self.left))?;
         state.serialize_field("right", &keycode_to_string(self.right))?;
         state.serialize_field("a", &keycode_to_string(self.a))?;
         state.serialize_field("b", &keycode_to_string(self.b))?;
+        state.serialize_field("l", &keycode_to_string(self.l))?;
+        state.serialize_field("r", &keycode_to_string(self.r))?;
         state.serialize_field("start", &keycode_to_string(self.start))?;
         state.serialize_field("select", &keycode_to_string(self.select))?;
         state.end()
@@ -105,6 +117,8 @@ impl<'de> Deserialize<'de> for KeyBindings {
             right: Option<String>,
             a: Option<String>,
             b: Option<String>,
+            l: Option<String>,
+            r: Option<String>,
             start: Option<String>,
             select: Option<String>,
         }
@@ -118,6 +132,8 @@ impl<'de> Deserialize<'de> for KeyBindings {
             right: parse_key_or_default(raw.right.as_deref(), d.right),
             a: parse_key_or_default(raw.a.as_deref(), d.a),
             b: parse_key_or_default(raw.b.as_deref(), d.b),
+            l: parse_key_or_default(raw.l.as_deref(), d.l),
+            r: parse_key_or_default(raw.r.as_deref(), d.r),
             start: parse_key_or_default(raw.start.as_deref(), d.start),
             select: parse_key_or_default(raw.select.as_deref(), d.select),
         })

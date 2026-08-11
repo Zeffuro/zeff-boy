@@ -1,14 +1,14 @@
 use super::App;
+use crate::input::HostButton;
 use crate::settings::{TiltBindingAction, WonderSwanButton};
 use winit::keyboard::KeyCode;
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
 impl App {
-    pub(super) fn map_key(&self, key: KeyCode) -> Option<JoypadKey> {
+    pub(super) fn map_key(&self, key: KeyCode) -> Option<HostButton> {
         map_key_bindings(&self.settings.key_bindings, key)
     }
 
-    pub(super) fn map_key_p2(&self, key: KeyCode) -> Option<JoypadKey> {
+    pub(super) fn map_key_p2(&self, key: KeyCode) -> Option<HostButton> {
         map_key_bindings(&self.settings.key_bindings_p2, key)
     }
 
@@ -32,16 +32,18 @@ impl App {
     }
 }
 
-fn map_key_bindings(kb: &crate::settings::KeyBindings, key: KeyCode) -> Option<JoypadKey> {
-    let bindings: [(KeyCode, JoypadKey); 8] = [
-        (kb.right, JoypadKey::Right),
-        (kb.left, JoypadKey::Left),
-        (kb.up, JoypadKey::Up),
-        (kb.down, JoypadKey::Down),
-        (kb.a, JoypadKey::A),
-        (kb.b, JoypadKey::B),
-        (kb.start, JoypadKey::Start),
-        (kb.select, JoypadKey::Select),
+fn map_key_bindings(kb: &crate::settings::KeyBindings, key: KeyCode) -> Option<HostButton> {
+    let bindings: [(KeyCode, HostButton); 10] = [
+        (kb.right, HostButton::Right),
+        (kb.left, HostButton::Left),
+        (kb.up, HostButton::Up),
+        (kb.down, HostButton::Down),
+        (kb.a, HostButton::A),
+        (kb.b, HostButton::B),
+        (kb.l, HostButton::L),
+        (kb.r, HostButton::R),
+        (kb.start, HostButton::Start),
+        (kb.select, HostButton::Select),
     ];
     bindings.iter().find(|(k, _)| *k == key).map(|(_, j)| *j)
 }

@@ -3,6 +3,7 @@ use super::{
     system_specs,
 };
 use crate::debug::DebugUiActions;
+use crate::emu_core_trait::DebuggableEmulator;
 use crate::emu_thread::EmuThread;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -179,6 +180,28 @@ fn shared_backend_loader_preserves_archive_source_path() {
     assert_eq!(loaded.backend.source_path(), source_path);
 }
 
+#[test]
+fn shared_backend_loader_applies_explicit_sega8_mapper_tag_from_paths() {
+    let rom = build_sms_test_rom();
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::MasterSystem,
+        &PathBuf::from("archive [mapper=janggun].zip"),
+        &PathBuf::from("inside.sms"),
+        Some(rom),
+        BackendLoadConfig::default(),
+    )
+    .expect("shared backend loader should initialize tagged Sega 8-bit ROM");
+
+    let sega8 = loaded
+        .backend
+        .sega8()
+        .expect("loaded backend should be Sega 8-bit");
+    assert_eq!(
+        sega8.emu.bus().mapper().kind(),
+        zeff_sega8_core::hardware::cartridge::Sega8MapperKind::Janggun
+    );
+}
+
 fn test_rom_for_system(system: ActiveSystem) -> Vec<u8> {
     match system {
         ActiveSystem::GameBoy => build_gb_test_rom(),
@@ -231,6 +254,15 @@ fn backend_feature_contract_covers_every_supported_core() {
         zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
+    assert_backend_feature_contract(
+        load_test_backend_with_shared_loader(ActiveSystem::Sg1000, "test.sg", build_sms_test_rom()),
+        ActiveSystem::Sg1000,
+        SaveRamKind::mapper_ram_unknown(
+            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
+        ),
+        zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
+        zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
 }
 
 #[test]
@@ -263,6 +295,74 @@ fn app_ui_snapshot_reports_core_features_for_every_supported_core() {
         zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
+    assert_app_snapshot_core_features(
+        load_test_backend_with_shared_loader(ActiveSystem::Sg1000, "test.sg", build_sms_test_rom()),
+        SaveRamKind::mapper_ram_unknown(
+            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
+        ),
+        zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
+        zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
+}
+
+#[test]
+fn backend_state_decode_smoke_covers_every_supported_core() {
+    assert_backend_state_decode_smoke(build_gb_backend());
+    assert_backend_state_decode_smoke(build_gba_backend());
+    assert_backend_state_decode_smoke(build_nes_backend());
+    assert_backend_state_decode_smoke(build_ws_backend());
+    assert_backend_state_decode_smoke(build_sms_backend());
+}
+
+fn assert_backend_state_decode_smoke(mut backend: EmuBackend) {
+    let state = backend
+        .encode_state_bytes()
+        .expect("backend should encode state");
+    backend.step_frame();
+    backend
+        .load_state_from_bytes(state)
+        .expect("backend should decode its own state");
+    backend.step_frame();
+    assert!(!backend.framebuffer().is_empty());
+}
+
+#[test]
+fn debuggable_adapter_exposes_uniform_cpu_peek_write() {
+    let mut gb = zeff_gb_core::emulator::Emulator::from_rom_data(
+        &build_gb_test_rom(),
+        zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::Auto,
+    )
+    .expect("Game Boy emulator should initialize");
+    assert_debuggable_cpu_byte_access(&mut gb, 0xC000, 0x12);
+
+    let mut gba = zeff_gba_core::emulator::Emulator::new(&build_gba_test_rom(), 44_100)
+        .expect("GBA emulator should initialize");
+    assert_debuggable_cpu_byte_access(&mut gba, 0x0200_0000, 0x34);
+
+    let mut nes = zeff_nes_core::emulator::Emulator::new(&build_nes_test_rom(), 44_100.0)
+        .expect("NES emulator should initialize");
+    assert_debuggable_cpu_byte_access(&mut nes, 0x0000, 0x56);
+
+    let mut ws = zeff_ws_core::emulator::Emulator::new(&build_ws_test_rom(), 44_100)
+        .expect("WonderSwan emulator should initialize");
+    assert_debuggable_cpu_byte_access(&mut ws, 0x0000_1234, 0x78);
+
+    let mut sega8 = zeff_sega8_core::emulator::Emulator::new_with_hint(
+        &build_sms_test_rom(),
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+    )
+    .expect("Sega 8-bit emulator should initialize");
+    assert_debuggable_cpu_byte_access(&mut sega8, 0xC123, 0x9A);
+}
+
+fn assert_debuggable_cpu_byte_access(
+    emu: &mut impl DebuggableEmulator,
+    address: zeff_emu_common::address::Address,
+    value: u8,
+) {
+    emu.cpu_write8(address, value);
+    assert_eq!(emu.cpu_peek8(address), value);
 }
 
 #[test]

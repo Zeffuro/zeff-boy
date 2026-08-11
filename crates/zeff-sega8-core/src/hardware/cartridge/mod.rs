@@ -1,8 +1,12 @@
 use anyhow::{Context, bail};
 use zeff_emu_common::save_ram::SaveRamKind;
 
-use super::constants::{COPIER_HEADER_SIZE, ROM_BANK_SIZE, SMS_CARTRIDGE_RAM_SIZE};
+use super::constants::{
+    CODEMASTERS_CARTRIDGE_RAM_SIZE, COPIER_HEADER_SIZE, ROM_BANK_SIZE, ROM_PAGE_8K_SIZE,
+    SMS_CARTRIDGE_RAM_SIZE,
+};
 
+mod compat;
 mod header;
 
 #[cfg(test)]
@@ -21,6 +25,7 @@ pub struct Cartridge {
     codemasters_header: Option<CodemastersHeader>,
     system: Sega8System,
     mapper_kind: Sega8MapperKind,
+    normalized_crc32: u32,
 }
 
 impl Cartridge {
@@ -34,20 +39,27 @@ impl Cartridge {
     }
 
     pub fn load_with_hint(rom_data: &[u8], hint: SystemHint) -> anyhow::Result<Self> {
+        Self::load_with_hint_and_mapper_kind(rom_data, hint, None)
+    }
+
+    pub fn load_with_hint_and_mapper_kind(
+        rom_data: &[u8],
+        hint: SystemHint,
+        mapper_kind_override: Option<Sega8MapperKind>,
+    ) -> anyhow::Result<Self> {
         if rom_data.is_empty() {
             bail!("Sega 8-bit ROM is empty");
         }
 
         let raw_len = rom_data.len();
         let (rom, copier_header_stripped) = normalized_rom_data(rom_data)?;
+        let normalized_crc32 = crc32fast::hash(&rom);
         let header = header::find_header(&rom);
         let codemasters_header = header::find_codemasters_header(&rom);
         let system = hint.resolve(header.as_ref());
-        let mapper_kind = if codemasters_header.is_some() {
-            Sega8MapperKind::Codemasters
-        } else {
-            Sega8MapperKind::Sega
-        };
+        let mapper_kind = mapper_kind_override
+            .or_else(|| compat::mapper_kind_for_crc32(normalized_crc32))
+            .unwrap_or_else(|| detect_mapper_kind(codemasters_header.as_ref()));
 
         Ok(Self {
             rom,
@@ -57,6 +69,7 @@ impl Cartridge {
             codemasters_header,
             system,
             mapper_kind,
+            normalized_crc32,
         })
     }
 
@@ -92,15 +105,29 @@ impl Cartridge {
         self.mapper_kind
     }
 
+    pub fn normalized_crc32(&self) -> u32 {
+        self.normalized_crc32
+    }
+
     pub fn save_ram_kind(&self) -> SaveRamKind {
         match self.mapper_kind {
             Sega8MapperKind::Sega => SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE),
-            Sega8MapperKind::Codemasters => SaveRamKind::none(),
+            Sega8MapperKind::Codemasters => {
+                SaveRamKind::mapper_ram_unknown(CODEMASTERS_CARTRIDGE_RAM_SIZE)
+            }
+            Sega8MapperKind::Korean
+            | Sega8MapperKind::Msx
+            | Sega8MapperKind::Nemesis
+            | Sega8MapperKind::Janggun => SaveRamKind::none(),
         }
     }
 
     pub fn rom_bank_count(&self) -> usize {
         self.rom.len().div_ceil(ROM_BANK_SIZE)
+    }
+
+    pub fn rom_page_8k_count(&self) -> usize {
+        self.rom.len().div_ceil(ROM_PAGE_8K_SIZE)
     }
 
     pub fn read_flat(&self, addr: usize) -> u8 {
@@ -110,6 +137,19 @@ impl Cartridge {
     pub fn read_bank(&self, bank: u8, offset: u16) -> u8 {
         let addr = usize::from(bank) * ROM_BANK_SIZE + usize::from(offset);
         self.read_flat(addr)
+    }
+
+    pub fn read_page_8k(&self, page: u8, offset: u16) -> u8 {
+        let addr = usize::from(page) * ROM_PAGE_8K_SIZE + usize::from(offset);
+        self.read_flat(addr)
+    }
+}
+
+fn detect_mapper_kind(codemasters_header: Option<&CodemastersHeader>) -> Sega8MapperKind {
+    if codemasters_header.is_some() {
+        Sega8MapperKind::Codemasters
+    } else {
+        Sega8MapperKind::Sega
     }
 }
 

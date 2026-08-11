@@ -1,15 +1,15 @@
 use crate::emu_backend::ActiveSystem;
+use crate::input::HostButton;
 use crate::settings::{TiltBindingAction, WonderSwanButton};
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
 #[derive(Default)]
 pub(super) struct HostInputState {
-    keyboard_pressed: u8,
-    gamepad_pressed: u8,
-    remote_pressed: u8,
-    keyboard_p2_pressed: u8,
-    gamepad_p2_pressed: u8,
-    remote_p2_pressed: u8,
+    keyboard_pressed: u16,
+    gamepad_pressed: u16,
+    remote_pressed: u16,
+    keyboard_p2_pressed: u16,
+    gamepad_p2_pressed: u16,
+    remote_p2_pressed: u16,
     gamepad_stick_dpad_pressed: u8,
     tilt_keyboard_pressed: u8,
     ws_keyboard_x_pressed: u8,
@@ -25,27 +25,27 @@ impl HostInputState {
         Self::default()
     }
 
-    pub(super) fn set_keyboard(&mut self, key: JoypadKey, pressed: bool) {
+    pub(super) fn set_keyboard(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.keyboard_pressed, key, pressed);
     }
 
-    pub(super) fn set_keyboard_p2(&mut self, key: JoypadKey, pressed: bool) {
+    pub(super) fn set_keyboard_p2(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.keyboard_p2_pressed, key, pressed);
     }
 
-    pub(super) fn set_gamepad(&mut self, key: JoypadKey, pressed: bool) {
+    pub(super) fn set_gamepad(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.gamepad_pressed, key, pressed);
     }
 
-    pub(super) fn set_gamepad_p2(&mut self, key: JoypadKey, pressed: bool) {
+    pub(super) fn set_gamepad_p2(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.gamepad_p2_pressed, key, pressed);
     }
 
-    pub(super) fn set_remote(&mut self, key: JoypadKey, pressed: bool) {
+    pub(super) fn set_remote(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.remote_pressed, key, pressed);
     }
 
-    pub(super) fn set_remote_p2(&mut self, key: JoypadKey, pressed: bool) {
+    pub(super) fn set_remote_p2(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.remote_p2_pressed, key, pressed);
     }
 
@@ -171,23 +171,23 @@ impl HostInputState {
     }
 
     pub(super) fn dpad_pressed(&self) -> u8 {
-        (self.keyboard_pressed
+        ((self.keyboard_pressed
             | self.gamepad_pressed
             | self.remote_pressed
-            | self.gamepad_stick_dpad_pressed)
-            & 0x0F
+            | u16::from(self.gamepad_stick_dpad_pressed))
+            & 0x0F) as u8
     }
 
     pub(super) fn buttons_pressed(&self) -> u8 {
-        ((self.keyboard_pressed | self.gamepad_pressed | self.remote_pressed) >> 4) & 0x0F
+        ((self.keyboard_pressed | self.gamepad_pressed | self.remote_pressed) >> 4) as u8
     }
 
     pub(super) fn dpad_p2_pressed(&self) -> u8 {
-        (self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) & 0x0F
+        ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) & 0x0F) as u8
     }
 
     pub(super) fn buttons_p2_pressed(&self) -> u8 {
-        ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) >> 4) & 0x0F
+        ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) >> 4) as u8
     }
 
     pub(super) fn ws_buttons_pressed(&self, display_rotated: bool) -> u8 {
@@ -198,7 +198,7 @@ impl HostInputState {
 
         self.ws_keyboard_button_pressed
             | self.ws_gamepad_button_pressed
-            | self.buttons_pressed()
+            | (self.buttons_pressed() & 0x0F)
             | (y_buttons << 4)
     }
 
@@ -210,8 +210,8 @@ impl HostInputState {
         x_buttons & 0x0F
     }
 
-    fn set_mask_bit(mask: &mut u8, key: JoypadKey, pressed: bool) {
-        let bit = joypad_host_bit(key);
+    fn set_mask_bit(mask: &mut u16, key: HostButton, pressed: bool) {
+        let bit = key.host_mask_bit();
         if pressed {
             *mask |= bit;
         } else {
@@ -235,19 +235,6 @@ fn host_dpad_to_ws_diamond(mask: u8) -> u8 {
         ws |= 1 << 3;
     }
     ws
-}
-
-fn joypad_host_bit(key: JoypadKey) -> u8 {
-    match key {
-        JoypadKey::Right => 1 << 0,
-        JoypadKey::Left => 1 << 1,
-        JoypadKey::Up => 1 << 2,
-        JoypadKey::Down => 1 << 3,
-        JoypadKey::A => 1 << 4,
-        JoypadKey::B => 1 << 5,
-        JoypadKey::Select => 1 << 6,
-        JoypadKey::Start => 1 << 7,
-    }
 }
 
 impl super::App {

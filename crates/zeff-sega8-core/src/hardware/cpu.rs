@@ -2,7 +2,7 @@ use super::bus::Bus;
 use super::constants::{
     Z80_FLAG_BIT_3, Z80_FLAG_BIT_5, Z80_FLAG_CARRY, Z80_FLAG_HALF_CARRY, Z80_FLAG_PARITY_OVERFLOW,
     Z80_FLAG_SIGN, Z80_FLAG_SUBTRACT, Z80_FLAG_ZERO, Z80_INTERRUPT_ACK_OPCODE,
-    Z80_INTERRUPT_VECTOR_IM1, Z80_RESET_PC, Z80_RESET_SP,
+    Z80_INTERRUPT_VECTOR_IM1, Z80_INTERRUPT_VECTOR_NMI, Z80_RESET_PC, Z80_RESET_SP,
 };
 
 mod access;
@@ -90,6 +90,7 @@ const CYCLES_INTERRUPT_ACK: u32 = 13;
 const CYCLES_IM: u32 = 8;
 const CYCLES_ED_NOP: u32 = 8;
 const CYCLES_RETI_RETN: u32 = 14;
+const CYCLES_NMI_ACK: u32 = 11;
 const CYCLES_EX_AF_AF_SHADOW: u32 = 4;
 const CYCLES_EX_DE_HL: u32 = 4;
 const CYCLES_EX_SP_HL: u32 = 19;
@@ -270,6 +271,10 @@ impl Cpu {
     pub fn step(&mut self, bus: &mut Bus) -> Option<FetchedInstruction> {
         if self.state == CpuState::Suspended {
             return None;
+        }
+
+        if let Some(interrupt) = self.try_service_non_maskable_interrupt(bus) {
+            return Some(interrupt);
         }
 
         if let Some(interrupt) = self.try_service_maskable_interrupt(bus) {

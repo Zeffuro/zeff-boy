@@ -6,104 +6,32 @@ use super::constants::{
     FIXED_BOOT_ROM_BYTES, IO_OPEN_BUS_VALUE, IO_PORT_CONTROLLER_1, IO_PORT_CONTROLLER_2,
     IO_PORT_GG_EXT_DATA, IO_PORT_GG_EXT_DIRECTION, IO_PORT_GG_PSG_STEREO,
     IO_PORT_GG_SERIAL_CONTROL, IO_PORT_GG_SERIAL_RX, IO_PORT_GG_SERIAL_TX, IO_PORT_GG_START,
-    IO_PORT_H_COUNTER, IO_PORT_PSG, IO_PORT_PSG_MIRROR_MASK, IO_PORT_PSG_MIRROR_VALUE,
-    IO_PORT_TMS9918_CONTROL, IO_PORT_TMS9918_DATA, IO_PORT_V_COUNTER, IO_PORT_VDP_CONTROL,
-    IO_PORT_VDP_CONTROL_MIRROR_VALUE, IO_PORT_VDP_DATA, IO_PORT_VDP_DATA_MIRROR_VALUE,
-    IO_PORT_VDP_MIRROR_MASK, MAPPER_FRAME_CONTROL, MAPPER_FRAME_CONTROL_CART_RAM_BANK_SELECT,
-    MAPPER_FRAME_CONTROL_CART_RAM_ENABLE, MAPPER_SLOT0_BANK, MAPPER_SLOT1_BANK, MAPPER_SLOT2_BANK,
+    IO_PORT_H_COUNTER, IO_PORT_MEMORY_CONTROL, IO_PORT_PSG, IO_PORT_PSG_MIRROR_MASK,
+    IO_PORT_PSG_MIRROR_VALUE, IO_PORT_TMS9918_CONTROL, IO_PORT_TMS9918_DATA, IO_PORT_V_COUNTER,
+    IO_PORT_VDP_CONTROL, IO_PORT_VDP_CONTROL_MIRROR_VALUE, IO_PORT_VDP_DATA,
+    IO_PORT_VDP_DATA_MIRROR_VALUE, IO_PORT_VDP_MIRROR_MASK, SG_WORK_RAM_MASK, SG_WORK_RAM_SIZE,
     SLOT_SIZE, SLOT0_END, SLOT0_START, SLOT1_END, SLOT1_START, SLOT2_END, SLOT2_START,
-    SMS_CARTRIDGE_RAM_BANK_SIZE, SMS_CARTRIDGE_RAM_SIZE, SMS_WORK_RAM_SIZE, WORK_RAM_END,
-    WORK_RAM_MASK, WORK_RAM_START,
+    SMS_CARTRIDGE_RAM_SIZE, SMS_WORK_RAM_SIZE, WORK_RAM_END, WORK_RAM_MASK, WORK_RAM_START,
 };
 use super::input::{ControllerPort, Input};
+pub use super::mapper::SegaMapper;
 use super::region::Sega8Region;
 use super::serial::GameGearSerial;
 use super::timing::Sega8VideoStandard;
-use super::vdp::Vdp;
+use super::vdp::{Mode4ColorMode, Vdp};
 
 const SAVE_STATE_VERSION_WITH_GG_START: u32 = 2;
 const SAVE_STATE_VERSION_WITH_IO_CONTROL: u32 = 4;
 const SAVE_STATE_VERSION_WITH_GG_SERIAL: u32 = 6;
 const SAVE_STATE_VERSION_WITH_GG_SERIAL_FLAGS: u32 = 7;
+const SAVE_STATE_VERSION_WITH_MEMORY_CONTROL: u32 = 8;
+const SAVE_STATE_VERSION_WITH_GG_SERIAL_TIMING: u32 = 9;
+const SAVE_STATE_VERSION_WITH_VDP_CRAM_LATCH: u32 = 10;
 const IO_CONTROL_DEFAULT: u8 = 0xFF;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SegaMapper {
-    kind: Sega8MapperKind,
-    frame_control: u8,
-    slot_banks: [u8; 3],
-}
-
-impl Default for SegaMapper {
-    fn default() -> Self {
-        Self::new(Sega8MapperKind::Sega)
-    }
-}
-
-impl SegaMapper {
-    fn new(kind: Sega8MapperKind) -> Self {
-        Self {
-            kind,
-            frame_control: 0,
-            slot_banks: default_slot_banks(kind),
-        }
-    }
-
-    pub fn kind(self) -> Sega8MapperKind {
-        self.kind
-    }
-
-    pub fn kind_label(self) -> &'static str {
-        self.kind.label()
-    }
-
-    pub fn frame_control(self) -> u8 {
-        self.frame_control
-    }
-
-    pub fn slot_banks(self) -> [u8; 3] {
-        self.slot_banks
-    }
-
-    pub fn slot2_cartridge_ram_enabled(self) -> bool {
-        self.kind == Sega8MapperKind::Sega
-            && self.frame_control & MAPPER_FRAME_CONTROL_CART_RAM_ENABLE != 0
-    }
-
-    pub fn cartridge_ram_bank(self) -> usize {
-        usize::from(self.frame_control & MAPPER_FRAME_CONTROL_CART_RAM_BANK_SELECT != 0)
-    }
-
-    fn reset(&mut self) {
-        *self = Self::new(self.kind);
-    }
-
-    fn write_sega_register(&mut self, addr: u16, val: u8) {
-        match addr {
-            MAPPER_FRAME_CONTROL => self.frame_control = val,
-            MAPPER_SLOT0_BANK => self.slot_banks[0] = val,
-            MAPPER_SLOT1_BANK => self.slot_banks[1] = val,
-            MAPPER_SLOT2_BANK => self.slot_banks[2] = val,
-            _ => {}
-        }
-    }
-
-    fn write_codemasters_register(&mut self, addr: u16, val: u8) {
-        match addr {
-            SLOT0_START..=SLOT0_END => self.slot_banks[0] = val,
-            SLOT1_START..=SLOT1_END => self.slot_banks[1] = val,
-            SLOT2_START..=SLOT2_END => self.slot_banks[2] = val,
-            _ => {}
-        }
-    }
-}
-
-fn default_slot_banks(kind: Sega8MapperKind) -> [u8; 3] {
-    match kind {
-        Sega8MapperKind::Sega => [0, 1, 2],
-        Sega8MapperKind::Codemasters => [0, 1, 0],
-    }
-}
+const MEMORY_CONTROL_DEFAULT: u8 = 0x00;
+const MEMORY_CONTROL_IO_DISABLE: u8 = 1 << 2;
+const MEMORY_CONTROL_WORK_RAM_DISABLE: u8 = 1 << 4;
+const MEMORY_CONTROL_CARTRIDGE_DISABLE: u8 = 1 << 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuAccessTraceEvent {
@@ -136,6 +64,7 @@ pub struct Bus {
     apu: Apu,
     input: Input,
     game_gear_serial: GameGearSerial,
+    memory_control: u8,
     rom_patches: Vec<zeff_emu_common::cheats::CheatPatch>,
     console_region: Sega8Region,
     debug_trace_enabled: bool,
@@ -175,15 +104,17 @@ impl Bus {
         console_region: Sega8Region,
     ) -> Self {
         let mapper = SegaMapper::new(cartridge.mapper_kind());
+        let color_mode = mode4_color_mode_for_system(cartridge.system());
         Self {
             cartridge,
             mapper,
             work_ram: [0; SMS_WORK_RAM_SIZE],
             cartridge_ram: [0; SMS_CARTRIDGE_RAM_SIZE],
-            vdp: Vdp::new_with_video_standard(video_standard),
+            vdp: Vdp::new_with_video_standard_and_color_mode(video_standard, color_mode),
             apu: Apu::new_with_sample_rate(sample_rate),
             input: Input::new(),
             game_gear_serial: GameGearSerial::new(),
+            memory_control: MEMORY_CONTROL_DEFAULT,
             rom_patches: Vec::new(),
             console_region,
             debug_trace_enabled: false,
@@ -195,12 +126,16 @@ impl Bus {
         self.mapper
     }
 
-    pub fn work_ram(&self) -> &[u8; SMS_WORK_RAM_SIZE] {
-        &self.work_ram
+    pub fn work_ram(&self) -> &[u8] {
+        &self.work_ram[..self.work_ram_size()]
     }
 
     pub fn cartridge_ram(&self) -> &[u8; SMS_CARTRIDGE_RAM_SIZE] {
         &self.cartridge_ram
+    }
+
+    pub fn cartridge_ram_visible(&self) -> &[u8] {
+        &self.cartridge_ram[..self.cartridge.save_ram_kind().size()]
     }
 
     pub fn load_cartridge_ram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
@@ -263,12 +198,17 @@ impl Bus {
         &mut self.game_gear_serial
     }
 
+    pub fn memory_control(&self) -> u8 {
+        self.memory_control
+    }
+
     pub fn sync_game_gear_link_peer(&mut self, peer: &mut Self) {
         if self.cartridge.system() == Sega8System::GameGear
             && peer.cartridge.system() == Sega8System::GameGear
         {
+            let clock_hz = self.video_standard().clock_hz_approx();
             self.game_gear_serial
-                .exchange_with_peer(&mut peer.game_gear_serial);
+                .exchange_with_peer(&mut peer.game_gear_serial, clock_hz);
         }
     }
 
@@ -287,10 +227,13 @@ impl Bus {
     pub fn reset(&mut self) {
         self.mapper.reset();
         self.work_ram.fill(0);
+        self.vdp
+            .set_color_mode(mode4_color_mode_for_system(self.cartridge.system()));
         self.vdp.reset();
         self.apu.reset();
         self.input.reset();
         self.game_gear_serial.reset();
+        self.memory_control = MEMORY_CONTROL_DEFAULT;
         self.rom_patches.clear();
         self.debug_trace_enabled = false;
         self.debug_trace_events.borrow_mut().clear();
@@ -299,6 +242,8 @@ impl Bus {
     pub fn step_cycles(&mut self, cycles: u32) {
         self.vdp.step_cycles(cycles);
         self.apu.step_cycles(cycles);
+        self.game_gear_serial
+            .step_cycles(cycles, self.video_standard().clock_hz_approx());
     }
 
     pub fn drain_audio_samples_into(&mut self, out: &mut Vec<f32>) {
@@ -321,6 +266,15 @@ impl Bus {
         self.vdp.interrupt_pending()
     }
 
+    pub fn non_maskable_interrupt_pending(&self) -> bool {
+        self.cartridge.system() == Sega8System::GameGear && self.game_gear_serial.rx_nmi_pending()
+    }
+
+    pub fn acknowledge_non_maskable_interrupt(&mut self) -> bool {
+        self.cartridge.system() == Sega8System::GameGear
+            && self.game_gear_serial.take_rx_nmi_pending()
+    }
+
     pub fn begin_cpu_access_trace(&mut self) {
         self.debug_trace_enabled = true;
         self.debug_trace_events.borrow_mut().clear();
@@ -332,9 +286,9 @@ impl Bus {
     }
 
     pub(crate) fn write_state(&self, w: &mut zeff_emu_common::save_state::StateWriter) {
-        w.write_u8(mapper_kind_to_byte(self.mapper.kind));
-        w.write_u8(self.mapper.frame_control);
-        for bank in self.mapper.slot_banks {
+        w.write_u8(mapper_kind_to_byte(self.mapper.kind()));
+        w.write_u8(self.mapper.frame_control());
+        for bank in self.mapper.slot_banks() {
             w.write_u8(bank);
         }
         w.write_vec(&self.work_ram);
@@ -346,6 +300,8 @@ impl Bus {
         w.write_bool(self.input.game_gear_start_pressed());
         w.write_u8(self.input.io_control());
         self.game_gear_serial.write_state(w);
+        w.write_u8(self.memory_control);
+        w.write_u8(self.vdp.gg_cram_latch_state());
     }
 
     pub(crate) fn read_state(
@@ -361,11 +317,12 @@ impl Bus {
                 self.cartridge.mapper_kind().label()
             );
         }
-        self.mapper.kind = mapper_kind;
-        self.mapper.frame_control = r.read_u8()?;
-        for bank in &mut self.mapper.slot_banks {
+        let frame_control = r.read_u8()?;
+        let mut slot_banks = [0; 3];
+        for bank in &mut slot_banks {
             *bank = r.read_u8()?;
         }
+        self.mapper = SegaMapper::from_state(mapper_kind, frame_control, slot_banks);
         read_fixed_vec(r, &mut self.work_ram, SMS_WORK_RAM_SIZE, "work RAM")?;
         read_fixed_vec(
             r,
@@ -393,11 +350,25 @@ impl Bus {
         };
         self.input.set_io_control(io_control);
         if version >= SAVE_STATE_VERSION_WITH_GG_SERIAL {
-            self.game_gear_serial
-                .read_state(r, version >= SAVE_STATE_VERSION_WITH_GG_SERIAL_FLAGS)?;
+            self.game_gear_serial.read_state(
+                r,
+                version >= SAVE_STATE_VERSION_WITH_GG_SERIAL_FLAGS,
+                version >= SAVE_STATE_VERSION_WITH_GG_SERIAL_TIMING,
+            )?;
         } else {
             self.game_gear_serial.reset();
         }
+        self.memory_control = if version >= SAVE_STATE_VERSION_WITH_MEMORY_CONTROL {
+            r.read_u8()?
+        } else {
+            MEMORY_CONTROL_DEFAULT
+        };
+        self.vdp
+            .set_gg_cram_latch_state(if version >= SAVE_STATE_VERSION_WITH_VDP_CRAM_LATCH {
+                r.read_u8()?
+            } else {
+                0
+            });
         self.debug_trace_enabled = false;
         self.debug_trace_events.borrow_mut().clear();
         Ok(())
@@ -412,27 +383,50 @@ impl Bus {
 
     fn cpu_read_raw(&self, addr: u16) -> u8 {
         match addr {
+            SLOT0_START..=SLOT2_END if !self.cartridge_enabled_for_memory() => IO_OPEN_BUS_VALUE,
+            SLOT0_START..=SLOT2_END
+                if self
+                    .mapper
+                    .rom_page_8k_mapping(addr, self.cartridge.rom_page_8k_count())
+                    .is_some() =>
+            {
+                let (page, offset, reverse_bits) = self
+                    .mapper
+                    .rom_page_8k_mapping(addr, self.cartridge.rom_page_8k_count())
+                    .expect("8 KiB mapper page should be present");
+                let value = self.cartridge.read_page_8k(page, offset);
+                if reverse_bits {
+                    value.reverse_bits()
+                } else {
+                    value
+                }
+            }
             SLOT0_START..=SLOT0_END => {
                 if self.mapper.kind() == Sega8MapperKind::Sega && addr < FIXED_BOOT_ROM_BYTES {
                     self.cartridge.read_bank(0, addr)
                 } else {
                     self.cartridge
-                        .read_bank(self.mapper.slot_banks[0], addr % SLOT_SIZE)
+                        .read_bank(self.mapper.slot0_bank(), addr % SLOT_SIZE)
                 }
             }
             SLOT1_START..=SLOT1_END => self
                 .cartridge
-                .read_bank(self.mapper.slot_banks[1], addr.wrapping_sub(SLOT1_START)),
+                .read_bank(self.mapper.slot1_bank(), addr.wrapping_sub(SLOT1_START)),
             SLOT2_START..=SLOT2_END => {
                 if self.mapper.slot2_cartridge_ram_enabled() {
-                    let offset = self.cartridge_ram_offset(addr);
+                    let offset = self.mapper.slot2_cartridge_ram_offset(addr);
+                    self.cartridge_ram[offset]
+                } else if let Some(offset) = self.mapper.codemasters_cartridge_ram_offset(addr) {
                     self.cartridge_ram[offset]
                 } else {
                     self.cartridge
-                        .read_bank(self.mapper.slot_banks[2], addr.wrapping_sub(SLOT2_START))
+                        .read_bank(self.mapper.slot2_bank(), addr.wrapping_sub(SLOT2_START))
                 }
             }
-            WORK_RAM_START..=WORK_RAM_END => self.work_ram[(addr & WORK_RAM_MASK) as usize],
+            WORK_RAM_START..=WORK_RAM_END if self.work_ram_enabled_for_memory() => {
+                self.work_ram[self.work_ram_offset(addr)]
+            }
+            WORK_RAM_START..=WORK_RAM_END => IO_OPEN_BUS_VALUE,
         }
     }
 
@@ -463,85 +457,178 @@ impl Bus {
     }
 
     fn is_rom_read_address(&self, addr: u16) -> bool {
-        matches!(addr, SLOT0_START..=SLOT1_END)
-            || matches!(addr, SLOT2_START..=SLOT2_END) && !self.mapper.slot2_cartridge_ram_enabled()
+        self.cartridge_enabled_for_memory()
+            && (matches!(addr, SLOT0_START..=SLOT1_END)
+                || matches!(addr, SLOT2_START..=SLOT2_END)
+                    && !self.mapper.slot2_cartridge_ram_enabled()
+                    && self.mapper.codemasters_cartridge_ram_offset(addr).is_none())
     }
 
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
         let old_value = self.cpu_read_raw(addr);
         match addr {
-            SLOT0_START..=SLOT2_END if self.mapper.kind() == Sega8MapperKind::Codemasters => {
+            SLOT2_START..=SLOT2_END
+                if self.cartridge_enabled_for_memory()
+                    && self.mapper.codemasters_cartridge_ram_offset(addr).is_some() =>
+            {
+                let offset = self
+                    .mapper
+                    .codemasters_cartridge_ram_offset(addr)
+                    .expect("Codemasters RAM offset should be present");
+                self.cartridge_ram[offset] = val;
+            }
+            SLOT0_START..=SLOT2_END
+                if self.cartridge_enabled_for_memory()
+                    && self.mapper.kind() == Sega8MapperKind::Codemasters =>
+            {
                 self.mapper.write_codemasters_register(addr, val);
             }
-            SLOT2_START..=SLOT2_END if self.mapper.slot2_cartridge_ram_enabled() => {
-                let offset = self.cartridge_ram_offset(addr);
+            SLOT0_START..=SLOT0_END
+                if self.cartridge_enabled_for_memory()
+                    && matches!(
+                        self.mapper.kind(),
+                        Sega8MapperKind::Msx | Sega8MapperKind::Nemesis
+                    ) =>
+            {
+                self.mapper.write_msx_register(addr, val);
+            }
+            SLOT1_START..=SLOT2_END
+                if self.cartridge_enabled_for_memory()
+                    && self.mapper.kind() == Sega8MapperKind::Janggun =>
+            {
+                self.mapper.write_janggun_register(addr, val);
+            }
+            SLOT2_START..=SLOT2_END
+                if self.cartridge_enabled_for_memory()
+                    && self.mapper.kind() == Sega8MapperKind::Korean =>
+            {
+                self.mapper.write_korean_register(addr, val);
+            }
+            SLOT2_START..=SLOT2_END
+                if self.cartridge_enabled_for_memory()
+                    && self.mapper.slot2_cartridge_ram_enabled() =>
+            {
+                let offset = self.mapper.slot2_cartridge_ram_offset(addr);
                 self.cartridge_ram[offset] = val;
             }
             WORK_RAM_START..=WORK_RAM_END => {
-                self.work_ram[(addr & WORK_RAM_MASK) as usize] = val;
-                self.mapper.write_sega_register(addr, val);
+                if self.work_ram_enabled_for_memory() {
+                    let offset = self.work_ram_offset(addr);
+                    self.work_ram[offset] = val;
+                }
+                if self.cartridge.system() != Sega8System::Sg1000
+                    && self.cartridge_enabled_for_memory()
+                {
+                    if self.mapper.kind() == Sega8MapperKind::Janggun {
+                        self.mapper.write_janggun_register(addr, val);
+                    } else {
+                        self.mapper.write_sega_register(addr, val);
+                    }
+                }
             }
             _ => {}
         }
         self.record_cpu_write(addr, old_value, val);
     }
 
-    fn cartridge_ram_offset(&self, addr: u16) -> usize {
-        self.mapper.cartridge_ram_bank() * SMS_CARTRIDGE_RAM_BANK_SIZE
-            + usize::from(addr.wrapping_sub(SLOT2_START))
+    fn cartridge_enabled_for_memory(&self) -> bool {
+        self.cartridge.system() != Sega8System::MasterSystem
+            || self.memory_control & MEMORY_CONTROL_CARTRIDGE_DISABLE == 0
+    }
+
+    fn work_ram_enabled_for_memory(&self) -> bool {
+        self.cartridge.system() != Sega8System::MasterSystem
+            || self.memory_control & MEMORY_CONTROL_WORK_RAM_DISABLE == 0
+    }
+
+    fn io_enabled_for_memory(&self) -> bool {
+        self.cartridge.system() != Sega8System::MasterSystem
+            || self.memory_control & MEMORY_CONTROL_IO_DISABLE == 0
+    }
+
+    fn work_ram_size(&self) -> usize {
+        match self.cartridge.system() {
+            Sega8System::Sg1000 => SG_WORK_RAM_SIZE,
+            Sega8System::MasterSystem | Sega8System::GameGear => SMS_WORK_RAM_SIZE,
+        }
+    }
+
+    fn work_ram_offset(&self, addr: u16) -> usize {
+        usize::from(addr & self.work_ram_mask())
+    }
+
+    fn work_ram_mask(&self) -> u16 {
+        match self.cartridge.system() {
+            Sega8System::Sg1000 => SG_WORK_RAM_MASK,
+            Sega8System::MasterSystem | Sega8System::GameGear => WORK_RAM_MASK,
+        }
     }
 
     pub fn io_read(&mut self, port: u8) -> u8 {
-        let value = match port {
-            IO_PORT_GG_START if self.cartridge.system() == Sega8System::GameGear => {
-                self.input.read_game_gear_start(self.console_region)
-            }
-            IO_PORT_GG_EXT_DATA if self.cartridge.system() == Sega8System::GameGear => {
-                self.game_gear_serial.read_ext_data()
-            }
-            IO_PORT_GG_EXT_DIRECTION if self.cartridge.system() == Sega8System::GameGear => {
-                self.game_gear_serial.ext_direction()
-            }
-            IO_PORT_GG_SERIAL_TX if self.cartridge.system() == Sega8System::GameGear => {
-                self.game_gear_serial.tx_data()
-            }
-            IO_PORT_GG_SERIAL_RX if self.cartridge.system() == Sega8System::GameGear => {
-                self.game_gear_serial.read_rx_data()
-            }
-            IO_PORT_GG_SERIAL_CONTROL if self.cartridge.system() == Sega8System::GameGear => {
-                self.game_gear_serial.read_status()
-            }
-            IO_PORT_V_COUNTER | IO_PORT_H_COUNTER => self.read_counter_port(port),
-            IO_PORT_VDP_DATA | IO_PORT_TMS9918_DATA => self.vdp.read_data(),
-            IO_PORT_VDP_CONTROL | IO_PORT_TMS9918_CONTROL => self.vdp.read_status(),
-            IO_PORT_CONTROLLER_1 => self
-                .input
-                .read_controller_for_bus(ControllerPort::One, self.console_region),
-            IO_PORT_CONTROLLER_2 => self
-                .input
-                .read_controller_for_bus(ControllerPort::Two, self.console_region),
-            _ => {
-                if is_counter_mirror(port) {
-                    self.read_counter_port(port)
-                } else if is_vdp_data_mirror(port) {
-                    self.vdp.read_data()
-                } else if is_vdp_control_mirror(port) {
-                    self.vdp.read_status()
-                } else if let Some(controller_port) =
-                    controller_port_mirror(self.cartridge.system(), port)
-                {
-                    self.input
-                        .read_controller_for_bus(controller_port, self.console_region)
-                } else {
-                    IO_OPEN_BUS_VALUE
+        let value = if self.io_enabled_for_memory() {
+            match port {
+                IO_PORT_GG_START if self.cartridge.system() == Sega8System::GameGear => {
+                    self.input.read_game_gear_start(self.console_region)
+                }
+                IO_PORT_GG_EXT_DATA if self.cartridge.system() == Sega8System::GameGear => {
+                    self.game_gear_serial.read_ext_data()
+                }
+                IO_PORT_GG_EXT_DIRECTION if self.cartridge.system() == Sega8System::GameGear => {
+                    self.game_gear_serial.ext_direction()
+                }
+                IO_PORT_GG_SERIAL_TX if self.cartridge.system() == Sega8System::GameGear => {
+                    self.game_gear_serial.tx_data()
+                }
+                IO_PORT_GG_SERIAL_RX if self.cartridge.system() == Sega8System::GameGear => {
+                    self.game_gear_serial.read_rx_data()
+                }
+                IO_PORT_GG_SERIAL_CONTROL if self.cartridge.system() == Sega8System::GameGear => {
+                    self.game_gear_serial.read_status()
+                }
+                IO_PORT_V_COUNTER | IO_PORT_H_COUNTER => self.read_counter_port(port),
+                IO_PORT_VDP_DATA | IO_PORT_TMS9918_DATA => self.vdp.read_data(),
+                IO_PORT_VDP_CONTROL | IO_PORT_TMS9918_CONTROL => self.vdp.read_status(),
+                IO_PORT_CONTROLLER_1 => self
+                    .input
+                    .read_controller_for_bus(ControllerPort::One, self.console_region),
+                IO_PORT_CONTROLLER_2 => self
+                    .input
+                    .read_controller_for_bus(ControllerPort::Two, self.console_region),
+                _ => {
+                    if is_counter_mirror(port) {
+                        self.read_counter_port(port)
+                    } else if is_vdp_data_mirror(port) {
+                        self.vdp.read_data()
+                    } else if is_vdp_control_mirror(port) {
+                        self.vdp.read_status()
+                    } else if let Some(controller_port) =
+                        controller_port_mirror(self.cartridge.system(), port)
+                    {
+                        self.input
+                            .read_controller_for_bus(controller_port, self.console_region)
+                    } else {
+                        IO_OPEN_BUS_VALUE
+                    }
                 }
             }
+        } else {
+            IO_OPEN_BUS_VALUE
         };
         self.record_io_read(port, value);
         value
     }
 
     pub fn io_write(&mut self, port: u8, val: u8) {
+        if self.write_memory_control_port(port, val) {
+            self.record_io_write(port, val);
+            return;
+        }
+
+        if !self.io_enabled_for_memory() {
+            self.record_io_write(port, val);
+            return;
+        }
+
         if self.write_game_gear_specific_port(port, val) {
             self.record_io_write(port, val);
             return;
@@ -563,6 +650,15 @@ impl Bus {
             self.vdp.write_control(val);
         }
         self.record_io_write(port, val);
+    }
+
+    fn write_memory_control_port(&mut self, port: u8, val: u8) -> bool {
+        if self.cartridge.system() != Sega8System::MasterSystem || !is_memory_control_mirror(port) {
+            return false;
+        }
+
+        self.memory_control = val;
+        true
     }
 
     fn read_counter_port(&self, port: u8) -> u8 {
@@ -634,6 +730,13 @@ fn is_vdp_control_mirror(port: u8) -> bool {
     port & IO_PORT_VDP_MIRROR_MASK == IO_PORT_VDP_CONTROL_MIRROR_VALUE
 }
 
+fn mode4_color_mode_for_system(system: Sega8System) -> Mode4ColorMode {
+    match system {
+        Sega8System::GameGear => Mode4ColorMode::GameGear,
+        Sega8System::MasterSystem | Sega8System::Sg1000 => Mode4ColorMode::Sms,
+    }
+}
+
 fn is_counter_mirror(port: u8) -> bool {
     port & IO_PORT_PSG_MIRROR_MASK == IO_PORT_PSG_MIRROR_VALUE
 }
@@ -644,6 +747,10 @@ fn is_psg_write_mirror(port: u8) -> bool {
 
 fn is_low_io_control_mirror(port: u8) -> bool {
     port < 0x40 && port & 1 != 0
+}
+
+fn is_memory_control_mirror(port: u8) -> bool {
+    port == IO_PORT_MEMORY_CONTROL || port < 0x40 && port & 1 == 0
 }
 
 fn controller_port_mirror(system: Sega8System, port: u8) -> Option<ControllerPort> {
@@ -671,6 +778,10 @@ fn mapper_kind_to_byte(kind: Sega8MapperKind) -> u8 {
     match kind {
         Sega8MapperKind::Sega => 0,
         Sega8MapperKind::Codemasters => 1,
+        Sega8MapperKind::Korean => 2,
+        Sega8MapperKind::Msx => 3,
+        Sega8MapperKind::Nemesis => 4,
+        Sega8MapperKind::Janggun => 5,
     }
 }
 
@@ -678,6 +789,10 @@ fn byte_to_mapper_kind(value: u8) -> anyhow::Result<Sega8MapperKind> {
     match value {
         0 => Ok(Sega8MapperKind::Sega),
         1 => Ok(Sega8MapperKind::Codemasters),
+        2 => Ok(Sega8MapperKind::Korean),
+        3 => Ok(Sega8MapperKind::Msx),
+        4 => Ok(Sega8MapperKind::Nemesis),
+        5 => Ok(Sega8MapperKind::Janggun),
         _ => anyhow::bail!("invalid Sega 8-bit mapper tag in save-state: {value}"),
     }
 }
@@ -704,9 +819,12 @@ mod tests {
     use super::*;
     use crate::hardware::cartridge::{Sega8MapperKind, SystemHint};
     use crate::hardware::constants::{
-        CODEMASTERS_HEADER_OFFSET, CODEMASTERS_HEADER_SIZE, IO_PORT_CONTROL, IO_PORT_GG_EXT_DATA,
-        IO_PORT_GG_EXT_DIRECTION, IO_PORT_GG_SERIAL_CONTROL, IO_PORT_GG_SERIAL_RX,
-        IO_PORT_GG_SERIAL_TX, ROM_BANK_SIZE,
+        CODEMASTERS_CARTRIDGE_RAM_SIZE, CODEMASTERS_HEADER_OFFSET, CODEMASTERS_HEADER_SIZE,
+        IO_PORT_CONTROL, IO_PORT_GG_EXT_DATA, IO_PORT_GG_EXT_DIRECTION, IO_PORT_GG_SERIAL_CONTROL,
+        IO_PORT_GG_SERIAL_RX, IO_PORT_GG_SERIAL_TX, MAPPER_FRAME_CONTROL,
+        MAPPER_FRAME_CONTROL_CART_RAM_BANK_SELECT, MAPPER_FRAME_CONTROL_CART_RAM_ENABLE,
+        MAPPER_SLOT0_BANK, MAPPER_SLOT1_BANK, MAPPER_SLOT2_BANK, ROM_BANK_SIZE, ROM_PAGE_8K_SIZE,
+        SG_WORK_RAM_SIZE,
     };
 
     const CODEMASTERS_TEST_HEADER_BANK_COUNT: usize = 0x00;
@@ -723,6 +841,14 @@ mod tests {
         let mut rom = vec![0; bank_count * ROM_BANK_SIZE];
         for bank in 0..bank_count {
             rom[bank * ROM_BANK_SIZE..(bank + 1) * ROM_BANK_SIZE].fill(bank as u8);
+        }
+        rom
+    }
+
+    fn paged_rom_8k(page_count: usize) -> Vec<u8> {
+        let mut rom = vec![0; page_count * ROM_PAGE_8K_SIZE];
+        for page in 0..page_count {
+            rom[page * ROM_PAGE_8K_SIZE..(page + 1) * ROM_PAGE_8K_SIZE].fill(page as u8);
         }
         rom
     }
@@ -760,12 +886,38 @@ mod tests {
         Bus::new(cart)
     }
 
+    fn sg1000_bus_with_banked_rom(bank_count: usize) -> Bus {
+        let cart = Cartridge::load_with_hint(&banked_rom(bank_count), SystemHint::Sg1000)
+            .expect("banked ROM should load");
+        Bus::new(cart)
+    }
+
     fn bus_with_codemasters_banked_rom(bank_count: usize) -> Bus {
         let cart = Cartridge::load_with_hint(
             &codemasters_banked_rom(bank_count),
             SystemHint::MasterSystem,
         )
         .expect("Codemasters banked ROM should load");
+        Bus::new(cart)
+    }
+
+    fn bus_with_korean_banked_rom(bank_count: usize) -> Bus {
+        let cart = Cartridge::load_with_hint_and_mapper_kind(
+            &banked_rom(bank_count),
+            SystemHint::MasterSystem,
+            Some(Sega8MapperKind::Korean),
+        )
+        .expect("Korean banked ROM should load");
+        Bus::new(cart)
+    }
+
+    fn bus_with_forced_mapper_paged_rom(mapper_kind: Sega8MapperKind, page_count: usize) -> Bus {
+        let cart = Cartridge::load_with_hint_and_mapper_kind(
+            &paged_rom_8k(page_count),
+            SystemHint::MasterSystem,
+            Some(mapper_kind),
+        )
+        .expect("forced mapper paged ROM should load");
         Bus::new(cart)
     }
 
@@ -832,6 +984,155 @@ mod tests {
     }
 
     #[test]
+    fn codemasters_high_slot1_bit_maps_ram_into_upper_half_of_slot2() {
+        let mut bus = bus_with_codemasters_banked_rom(4);
+
+        bus.cpu_write(SLOT1_START, 0x82);
+
+        assert_eq!(bus.mapper().slot1_bank(), 2);
+        assert!(bus.mapper().codemasters_cartridge_ram_enabled());
+        assert_eq!(bus.cpu_read(SLOT1_START), 2);
+        assert_eq!(bus.cpu_read(SLOT2_START), 0);
+        assert_eq!(
+            bus.cartridge_ram_visible().len(),
+            CODEMASTERS_CARTRIDGE_RAM_SIZE
+        );
+
+        bus.cpu_write(0xA000, 0x5A);
+
+        assert_eq!(bus.cpu_read(0xA000), 0x5A);
+        assert_eq!(bus.cartridge_ram_visible()[0], 0x5A);
+        assert_eq!(
+            bus.mapper().slot_banks(),
+            [0, 0x82, 0],
+            "writing mapped RAM must not also switch the slot-2 ROM bank"
+        );
+
+        bus.cpu_write(SLOT2_START, 3);
+
+        assert_eq!(bus.cpu_read(SLOT2_START), 3);
+        assert_eq!(bus.cpu_read(0xA000), 0x5A);
+
+        bus.cpu_write(SLOT1_START, 0x02);
+
+        assert!(!bus.mapper().codemasters_cartridge_ram_enabled());
+        assert_eq!(bus.cpu_read(0xA000), 3);
+
+        bus.cpu_write(SLOT1_START, 0x82);
+
+        assert_eq!(bus.cpu_read(0xA000), 0x5A);
+    }
+
+    #[test]
+    fn korean_mapper_switches_slot2_with_a000_register_only() {
+        let mut bus = bus_with_korean_banked_rom(4);
+
+        assert_eq!(bus.mapper().kind(), Sega8MapperKind::Korean);
+        assert_eq!(bus.cpu_read(SLOT0_START), 0);
+        assert_eq!(bus.cpu_read(SLOT1_START), 1);
+        assert_eq!(bus.cpu_read(SLOT2_START), 2);
+
+        bus.cpu_write(0xA000, 3);
+
+        assert_eq!(bus.mapper().slot_banks(), [0, 1, 3]);
+        assert_eq!(bus.cpu_read(SLOT0_START), 0);
+        assert_eq!(bus.cpu_read(SLOT1_START), 1);
+        assert_eq!(bus.cpu_read(SLOT2_START), 3);
+
+        bus.cpu_write(MAPPER_SLOT1_BANK, 2);
+        bus.cpu_write(MAPPER_SLOT2_BANK, 1);
+
+        assert_eq!(bus.mapper().slot_banks(), [0, 1, 3]);
+        assert_eq!(bus.cpu_read(SLOT2_START), 3);
+    }
+
+    #[test]
+    fn msx_mapper_uses_four_switchable_eight_kib_pages_after_fixed_first_16k() {
+        let mut bus = bus_with_forced_mapper_paged_rom(Sega8MapperKind::Msx, 8);
+
+        assert_eq!(bus.mapper().kind(), Sega8MapperKind::Msx);
+        assert_eq!(bus.cpu_read(0x0000), 0);
+        assert_eq!(bus.cpu_read(0x2000), 1);
+        assert_eq!(bus.cpu_read(0x4000), 2);
+        assert_eq!(bus.cpu_read(0x6000), 3);
+        assert_eq!(bus.cpu_read(0x8000), 4);
+        assert_eq!(bus.cpu_read(0xA000), 5);
+
+        bus.cpu_write(0x0000, 7);
+        bus.cpu_write(0x0001, 6);
+        bus.cpu_write(0x0002, 5);
+        bus.cpu_write(0x0003, 4);
+
+        assert_eq!(bus.cpu_read(0x4000), 5);
+        assert_eq!(bus.cpu_read(0x6000), 4);
+        assert_eq!(bus.cpu_read(0x8000), 7);
+        assert_eq!(bus.cpu_read(0xA000), 6);
+    }
+
+    #[test]
+    fn nemesis_mapper_fixes_first_page_to_last_rom_page() {
+        let mut bus = bus_with_forced_mapper_paged_rom(Sega8MapperKind::Nemesis, 8);
+
+        assert_eq!(bus.mapper().kind(), Sega8MapperKind::Nemesis);
+        assert_eq!(bus.cpu_read(0x0000), 7);
+        assert_eq!(bus.cpu_read(0x2000), 1);
+        assert_eq!(bus.cpu_read(0x4000), 2);
+        assert_eq!(bus.cpu_read(0x6000), 3);
+        assert_eq!(bus.cpu_read(0x8000), 4);
+        assert_eq!(bus.cpu_read(0xA000), 5);
+
+        bus.cpu_write(0x0000, 0);
+        bus.cpu_write(0x0001, 2);
+        bus.cpu_write(0x0002, 3);
+        bus.cpu_write(0x0003, 4);
+
+        assert_eq!(bus.cpu_read(0x0000), 7);
+        assert_eq!(bus.cpu_read(0x2000), 1);
+        assert_eq!(bus.cpu_read(0x4000), 3);
+        assert_eq!(bus.cpu_read(0x6000), 4);
+        assert_eq!(bus.cpu_read(0x8000), 0);
+        assert_eq!(bus.cpu_read(0xA000), 2);
+    }
+
+    #[test]
+    fn janggun_mapper_supports_8k_pages_and_bit_reversed_reads() {
+        let mut bus = bus_with_forced_mapper_paged_rom(Sega8MapperKind::Janggun, 16);
+
+        assert_eq!(bus.mapper().kind(), Sega8MapperKind::Janggun);
+        assert_eq!(bus.cpu_read(0x0000), 0);
+        assert_eq!(bus.cpu_read(0x2000), 1);
+        assert_eq!(bus.cpu_read(0x4000), 2);
+        assert_eq!(bus.cpu_read(0x6000), 3);
+        assert_eq!(bus.cpu_read(0x8000), 4);
+        assert_eq!(bus.cpu_read(0xA000), 5);
+
+        bus.cpu_write(0x4000, 0x46);
+        bus.cpu_write(0x6000, 0x07);
+        bus.cpu_write(0x8000, 0x48);
+        bus.cpu_write(0xA000, 0x09);
+
+        assert_eq!(bus.cpu_read(0x4000), 6u8.reverse_bits());
+        assert_eq!(bus.cpu_read(0x6000), 7);
+        assert_eq!(bus.cpu_read(0x8000), 8u8.reverse_bits());
+        assert_eq!(bus.cpu_read(0xA000), 9);
+    }
+
+    #[test]
+    fn janggun_mapper_fffe_ffff_switch_16k_pairs_and_remain_ram_backed() {
+        let mut bus = bus_with_forced_mapper_paged_rom(Sega8MapperKind::Janggun, 16);
+
+        bus.cpu_write(0xFFFE, 0x42);
+        bus.cpu_write(0xFFFF, 0x04);
+
+        assert_eq!(bus.cpu_read(0x4000), 2u8.reverse_bits());
+        assert_eq!(bus.cpu_read(0x6000), 3u8.reverse_bits());
+        assert_eq!(bus.cpu_read(0x8000), 4);
+        assert_eq!(bus.cpu_read(0xA000), 5);
+        assert_eq!(bus.cpu_read(0xFFFE), 0x42);
+        assert_eq!(bus.cpu_read(0xFFFF), 0x04);
+    }
+
+    #[test]
     fn work_ram_is_mirrored_and_mapper_registers_are_ram_backed() {
         let mut bus = bus_with_banked_rom(4);
 
@@ -842,6 +1143,42 @@ mod tests {
         bus.cpu_write(MAPPER_FRAME_CONTROL, 0x08);
         assert_eq!(bus.cpu_read(MAPPER_FRAME_CONTROL), 0x08);
         assert_eq!(bus.mapper().frame_control(), 0x08);
+    }
+
+    #[test]
+    fn sg1000_work_ram_is_one_kilobyte_mirrored_through_c000_ffff() {
+        let mut bus = sg1000_bus_with_banked_rom(4);
+
+        assert_eq!(bus.work_ram().len(), SG_WORK_RAM_SIZE);
+
+        bus.cpu_write(0xC123, 0x5A);
+
+        assert_eq!(bus.cpu_read(0xC123), 0x5A);
+        assert_eq!(bus.cpu_read(0xC523), 0x5A);
+        assert_eq!(bus.cpu_read(0xD123), 0x5A);
+        assert_eq!(bus.cpu_read(0xE123), 0x5A);
+        assert_eq!(bus.cpu_read(0xFD23), 0x5A);
+    }
+
+    #[test]
+    fn sg1000_work_ram_mirror_does_not_write_sms_mapper_registers() {
+        let mut bus = sg1000_bus_with_banked_rom(4);
+
+        bus.cpu_write(MAPPER_FRAME_CONTROL, MAPPER_FRAME_CONTROL_CART_RAM_ENABLE);
+        bus.cpu_write(MAPPER_SLOT0_BANK, 3);
+        bus.cpu_write(MAPPER_SLOT1_BANK, 2);
+        bus.cpu_write(MAPPER_SLOT2_BANK, 1);
+
+        assert_eq!(bus.mapper().frame_control(), 0);
+        assert_eq!(bus.mapper().slot_banks(), [0, 1, 2]);
+        assert_eq!(
+            bus.cpu_read(MAPPER_FRAME_CONTROL),
+            MAPPER_FRAME_CONTROL_CART_RAM_ENABLE
+        );
+        assert_eq!(bus.cpu_read(0xC3FC), MAPPER_FRAME_CONTROL_CART_RAM_ENABLE);
+        assert_eq!(bus.cpu_read(0xC3FD), 3);
+        assert_eq!(bus.cpu_read(0xC3FE), 2);
+        assert_eq!(bus.cpu_read(0xC3FF), 1);
     }
 
     #[test]
@@ -931,6 +1268,23 @@ mod tests {
         bus.cpu_write(0x8000, 0x5A);
 
         assert_eq!(bus.cpu_read(0x8000), 0x5A);
+    }
+
+    #[test]
+    fn rom_patches_do_not_override_codemasters_mapped_ram() {
+        let mut bus = bus_with_codemasters_banked_rom(4);
+
+        bus.add_rom_patch(zeff_emu_common::cheats::CheatPatch::RomWrite {
+            address: 0xA000,
+            value: zeff_emu_common::cheats::CheatValue::Constant(0xAA),
+        });
+
+        assert_eq!(bus.cpu_read(0xA000), 0xAA);
+
+        bus.cpu_write(SLOT1_START, 0x80);
+        bus.cpu_write(0xA000, 0x5A);
+
+        assert_eq!(bus.cpu_read(0xA000), 0x5A);
     }
 
     #[test]
@@ -1075,6 +1429,13 @@ mod tests {
         left.io_write(IO_PORT_GG_SERIAL_TX, 0x5A);
         left.sync_game_gear_link_peer(&mut right);
 
+        assert_ne!(left.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x01, 0);
+        assert_eq!(right.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
+
+        left.step_cycles(20_000);
+        right.step_cycles(20_000);
+        left.sync_game_gear_link_peer(&mut right);
+
         assert_eq!(left.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x05, 0);
         assert_ne!(right.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
         assert_eq!(right.io_read(IO_PORT_GG_SERIAL_RX), 0x5A);
@@ -1091,7 +1452,7 @@ mod tests {
         right.io_write(IO_PORT_GG_EXT_DATA, 0x2A);
         left.sync_game_gear_link_peer(&mut right);
 
-        assert_eq!(left.io_read(IO_PORT_GG_EXT_DATA), 0xAA);
+        assert_eq!(left.io_read(IO_PORT_GG_EXT_DATA), 0x9A);
     }
 
     #[test]
@@ -1102,6 +1463,80 @@ mod tests {
         bus.io_write(0x01, 0x55);
 
         assert_eq!(bus.io_read(IO_PORT_CONTROLLER_2) & 0xC0, 0x00);
+    }
+
+    #[test]
+    fn sms_memory_control_can_hide_and_restore_work_ram() {
+        let mut bus = bus_with_banked_rom(4);
+
+        bus.cpu_write(0xC000, 0x5A);
+        assert_eq!(bus.cpu_read(0xC000), 0x5A);
+
+        bus.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_WORK_RAM_DISABLE);
+        assert_eq!(bus.memory_control(), MEMORY_CONTROL_WORK_RAM_DISABLE);
+        assert_eq!(bus.cpu_read(0xC000), IO_OPEN_BUS_VALUE);
+        bus.cpu_write(0xC000, 0xA5);
+        assert_eq!(bus.cpu_read(0xC000), IO_OPEN_BUS_VALUE);
+
+        bus.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_DEFAULT);
+        assert_eq!(bus.cpu_read(0xC000), 0x5A);
+    }
+
+    #[test]
+    fn sms_memory_control_can_hide_cartridge_without_losing_mapper_state() {
+        let mut bus = bus_with_banked_rom(4);
+
+        bus.cpu_write(MAPPER_SLOT1_BANK, 3);
+        assert_eq!(bus.cpu_read(SLOT1_START), 3);
+
+        bus.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_CARTRIDGE_DISABLE);
+        assert_eq!(bus.cpu_read(SLOT1_START), IO_OPEN_BUS_VALUE);
+        bus.cpu_write(MAPPER_SLOT1_BANK, 2);
+        assert_eq!(bus.mapper().slot1_bank(), 3);
+
+        bus.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_DEFAULT);
+        assert_eq!(bus.cpu_read(SLOT1_START), 3);
+    }
+
+    #[test]
+    fn sms_memory_control_can_disable_io_but_still_accept_port_3e_writes() {
+        let mut bus = bus_with_banked_rom(4);
+        bus.input_mut()
+            .set_controller_raw(ControllerPort::One, 0xEE);
+
+        bus.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_IO_DISABLE);
+        assert_eq!(bus.io_read(IO_PORT_CONTROLLER_1), IO_OPEN_BUS_VALUE);
+        bus.io_write(IO_PORT_CONTROL, 0x55);
+        assert_eq!(bus.input().io_control(), IO_CONTROL_DEFAULT);
+
+        bus.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_DEFAULT);
+        assert_eq!(bus.io_read(IO_PORT_CONTROLLER_1), 0xEE);
+    }
+
+    #[test]
+    fn sms_low_even_ports_mirror_memory_control_write() {
+        let mut bus = bus_with_banked_rom(4);
+
+        bus.io_write(0x00, MEMORY_CONTROL_WORK_RAM_DISABLE);
+
+        assert_eq!(bus.memory_control(), MEMORY_CONTROL_WORK_RAM_DISABLE);
+        assert_eq!(bus.cpu_read(0xC000), IO_OPEN_BUS_VALUE);
+    }
+
+    #[test]
+    fn non_sms_systems_ignore_sms_memory_control_port() {
+        let mut gg = game_gear_bus_with_banked_rom(4);
+        let mut sg = sg1000_bus_with_banked_rom(4);
+
+        gg.cpu_write(0xC000, 0x5A);
+        gg.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_WORK_RAM_DISABLE);
+        assert_eq!(gg.memory_control(), MEMORY_CONTROL_DEFAULT);
+        assert_eq!(gg.cpu_read(0xC000), 0x5A);
+
+        sg.cpu_write(0xC000, 0xA5);
+        sg.io_write(IO_PORT_MEMORY_CONTROL, MEMORY_CONTROL_WORK_RAM_DISABLE);
+        assert_eq!(sg.memory_control(), MEMORY_CONTROL_DEFAULT);
+        assert_eq!(sg.cpu_read(0xC000), 0xA5);
     }
 
     #[test]

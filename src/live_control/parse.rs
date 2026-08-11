@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
+use crate::input::HostButton;
 use serde::Deserialize;
 use serde_json::Value;
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
-use super::types::LiveCommand;
+use super::types::{LiveCommand, LiveMemorySpace};
 
 #[derive(Debug)]
 pub(super) struct ParsedWireRequest {
@@ -98,7 +98,10 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
                 .ok_or_else(|| "missing required field: path".to_string())?,
         },
         "memory" | "read_memory" | "readmemory" => LiveCommand::MemoryRead {
-            space: request.space.clone().unwrap_or_else(|| "cpu".to_string()),
+            space: request
+                .space
+                .map(LiveMemorySpace::from_wire)
+                .unwrap_or_default(),
             start: optional_u32(&request.start)
                 .or_else(|| optional_u32(&request.address))
                 .unwrap_or(0),
@@ -161,26 +164,12 @@ fn optional_player(request: &WireRequest) -> Result<u8, String> {
     }
 }
 
-fn required_button(request: &WireRequest) -> Result<JoypadKey, String> {
+fn required_button(request: &WireRequest) -> Result<HostButton, String> {
     let button = request
         .button
         .as_deref()
         .ok_or_else(|| "missing required field: button".to_string())?;
-    parse_button(button).ok_or_else(|| format!("unknown button: {button}"))
-}
-
-fn parse_button(button: &str) -> Option<JoypadKey> {
-    match normalized_name(button).as_str() {
-        "right" => Some(JoypadKey::Right),
-        "left" => Some(JoypadKey::Left),
-        "up" => Some(JoypadKey::Up),
-        "down" => Some(JoypadKey::Down),
-        "a" => Some(JoypadKey::A),
-        "b" => Some(JoypadKey::B),
-        "select" => Some(JoypadKey::Select),
-        "start" => Some(JoypadKey::Start),
-        _ => None,
-    }
+    HostButton::from_name(button).ok_or_else(|| format!("unknown button: {button}"))
 }
 
 fn normalized_name(s: &str) -> String {

@@ -78,6 +78,8 @@ impl CoreState {
             self.save_ram_kind(),
             self.framebuffer_len(),
             ExtendedMemoryRegionSizes {
+                external_work_ram_len: self.external_work_ram_size(),
+                internal_work_ram_len: self.internal_work_ram_size(),
                 palette_ram_len: self.palette_ram_size(),
                 oam_len: self.oam_size(),
                 io_registers_len: self.io_registers_size(),
@@ -124,6 +126,14 @@ impl CoreState {
                 out.clear();
                 out.extend_from_slice(ewram);
                 out.extend_from_slice(iwram);
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::ExternalWorkRam) => {
+                copy_slice_to_vec(out, emu.system_ram().0);
+                Ok(region)
+            }
+            (ActiveCore::Gba(emu), MemoryRegionKind::InternalWorkRam) => {
+                copy_slice_to_vec(out, emu.system_ram().1);
                 Ok(region)
             }
             (ActiveCore::Gba(emu), MemoryRegionKind::VideoRam) => {
@@ -180,7 +190,7 @@ impl CoreState {
                 Ok(region)
             }
             (ActiveCore::Sega8(emu), MemoryRegionKind::SaveRam) => {
-                copy_slice_to_vec(out, emu.bus().cartridge_ram());
+                copy_slice_to_vec(out, emu.bus().cartridge_ram_visible());
                 Ok(region)
             }
             (ActiveCore::Ws(emu), MemoryRegionKind::SystemRam) => {
@@ -299,6 +309,20 @@ impl CoreState {
             ActiveCore::Nes(_) => 0x800,
             ActiveCore::Sega8(emu) => emu.system_ram().len(),
             ActiveCore::Ws(emu) => emu.system_ram().len(),
+        }
+    }
+
+    pub fn external_work_ram_size(&self) -> usize {
+        match &self.core {
+            ActiveCore::Gba(emu) => emu.system_ram().0.len(),
+            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
+        }
+    }
+
+    pub fn internal_work_ram_size(&self) -> usize {
+        match &self.core {
+            ActiveCore::Gba(emu) => emu.system_ram().1.len(),
+            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
         }
     }
 

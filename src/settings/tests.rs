@@ -50,7 +50,13 @@ fn settings_backward_compat_missing_fields_use_defaults() {
         Sega8ConsoleRegionPreference::Auto
     );
     assert_eq!(s.key_bindings_p2.up, KeyCode::Numpad8);
+    assert_eq!(s.key_bindings.l, KeyCode::KeyA);
+    assert_eq!(s.key_bindings.r, KeyCode::KeyS);
+    assert_eq!(s.key_bindings_p2.l, KeyCode::Numpad7);
+    assert_eq!(s.key_bindings_p2.r, KeyCode::Numpad9);
     assert_eq!(s.gamepad_bindings.get_p2(BindingAction::A), "South");
+    assert_eq!(s.gamepad_bindings.get(BindingAction::L), "LeftTrigger");
+    assert_eq!(s.gamepad_bindings.get(BindingAction::R), "RightTrigger");
 }
 
 #[test]
@@ -100,6 +106,8 @@ fn key_bindings_deserialize_unknown_falls_back_to_defaults() {
     let bindings: KeyBindings = serde_json::from_str(json).unwrap();
     assert_eq!(bindings.left, KeyCode::ArrowLeft);
     assert_eq!(bindings.up, KeyCode::ArrowUp);
+    assert_eq!(bindings.l, KeyCode::KeyA);
+    assert_eq!(bindings.r, KeyCode::KeyS);
 }
 
 #[test]
@@ -111,6 +119,8 @@ fn player_two_key_bindings_use_numpad_defaults() {
     assert_eq!(bindings.right, KeyCode::Numpad6);
     assert_eq!(bindings.a, KeyCode::Numpad1);
     assert_eq!(bindings.b, KeyCode::Numpad2);
+    assert_eq!(bindings.l, KeyCode::Numpad7);
+    assert_eq!(bindings.r, KeyCode::Numpad9);
     assert_eq!(bindings.start, KeyCode::NumpadEnter);
     assert_eq!(bindings.select, KeyCode::Numpad0);
 }
@@ -165,17 +175,31 @@ fn shortcut_bindings_set_and_get() {
 fn gamepad_bindings_roundtrip() {
     let mut gb = GamepadBindings::default();
     gb.set(BindingAction::A, "West");
+    gb.set(BindingAction::R, "RightTrigger2");
     gb.set_p2(BindingAction::B, "North");
+    gb.set_p2(BindingAction::L, "LeftTrigger2");
     gb.set_ws(WonderSwanButton::Y4, "RightTrigger");
     let json = serde_json::to_string(&gb).unwrap();
     let restored: GamepadBindings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.get(BindingAction::A), "West");
     assert_eq!(restored.get(BindingAction::B), "East");
+    assert_eq!(restored.get(BindingAction::L), "LeftTrigger");
+    assert_eq!(restored.get(BindingAction::R), "RightTrigger2");
     assert_eq!(restored.get_p2(BindingAction::A), "South");
     assert_eq!(restored.get_p2(BindingAction::B), "North");
+    assert_eq!(restored.get_p2(BindingAction::L), "LeftTrigger2");
+    assert_eq!(restored.get_p2(BindingAction::R), "RightTrigger");
     assert!(matches!(
         restored.map_button_name_p2("North"),
-        Some(zeff_gb_core::hardware::joypad::JoypadKey::B)
+        Some(crate::input::HostButton::B)
+    ));
+    assert!(matches!(
+        restored.map_button_name("RightTrigger2"),
+        Some(crate::input::HostButton::R)
+    ));
+    assert!(matches!(
+        restored.map_button_name_p2("LeftTrigger2"),
+        Some(crate::input::HostButton::L)
     ));
     assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
     assert_eq!(restored.get_ws(WonderSwanButton::B), "East");
@@ -206,6 +230,8 @@ fn gamepad_bindings_deserialize_missing_ws_buttons_to_defaults() {
     let restored: GamepadBindings = serde_json::from_str(json).unwrap();
     assert_eq!(restored.get_p2(BindingAction::A), "South");
     assert_eq!(restored.get_p2(BindingAction::B), "East");
+    assert_eq!(restored.get_p2(BindingAction::L), "LeftTrigger");
+    assert_eq!(restored.get_p2(BindingAction::R), "RightTrigger");
     assert_eq!(restored.get_p2(BindingAction::Up), "DPadUp");
     assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
     assert_eq!(restored.get_ws(WonderSwanButton::B), "East");

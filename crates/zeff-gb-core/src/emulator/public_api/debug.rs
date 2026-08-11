@@ -1,6 +1,7 @@
 use super::super::Emulator;
 use crate::debug::{WatchHit, WatchType, Watchpoint};
 use crate::hardware::types::CpuState;
+use zeff_emu_common::cheats::CheatByteTarget;
 
 impl Emulator {
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
@@ -69,5 +70,15 @@ impl Emulator {
         let old = self.bus.read_byte_raw(addr);
         self.bus.write_byte(addr, value);
         self.debug.check_watch_write(addr, old, value);
+    }
+}
+
+impl CheatByteTarget<u16> for Emulator {
+    fn cheat_peek8(&self, address: u16) -> u8 {
+        self.peek_byte_raw(address)
+    }
+
+    fn cheat_write8(&mut self, address: u16, value: u8) {
+        self.write_byte(address, value);
     }
 }

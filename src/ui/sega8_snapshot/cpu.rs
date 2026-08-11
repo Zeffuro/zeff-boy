@@ -173,6 +173,7 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
                 lines: vec![
                     format!("kind={}", mapper.kind_label()),
                     format!("frame_control={:02X}", mapper.frame_control()),
+                    format!("memory_control={:02X}", emu.bus().memory_control()),
                     format!("slot_banks={:?}", mapper.slot_banks()),
                     format!(
                         "slot2_cart_ram={} cart_ram_bank={} cart_ram_nonzero={}",

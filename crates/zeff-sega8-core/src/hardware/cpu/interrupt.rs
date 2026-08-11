@@ -1,6 +1,33 @@
 use super::*;
 
 impl Cpu {
+    pub(super) fn try_service_non_maskable_interrupt(
+        &mut self,
+        bus: &mut Bus,
+    ) -> Option<FetchedInstruction> {
+        if !bus.non_maskable_interrupt_pending() {
+            return None;
+        }
+
+        let pc = self.regs.pc;
+        bus.acknowledge_non_maskable_interrupt();
+        self.state = CpuState::Running;
+        self.interrupt_flip_flop_1 = false;
+        self.enable_interrupts_delay = 0;
+        self.push_u16(bus, self.regs.pc);
+        self.regs.pc = Z80_INTERRUPT_VECTOR_NMI;
+        self.last_opcode_pc = pc;
+        self.last_opcode = Z80_INTERRUPT_ACK_OPCODE;
+
+        let cycles = CYCLES_NMI_ACK;
+        self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+        Some(FetchedInstruction {
+            pc,
+            opcode: Z80_INTERRUPT_ACK_OPCODE,
+            cycles,
+        })
+    }
+
     pub(super) fn try_service_maskable_interrupt(
         &mut self,
         bus: &mut Bus,

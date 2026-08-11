@@ -199,15 +199,12 @@ pub extern "C" fn retro_run() {
         let (buttons, dpad) = input::poll_joypad_port(0);
         state.set_input(buttons, dpad);
 
-        if state.is_nes() {
-            let p2_device = state.port_device[1];
-            if p2_device == RETRO_DEVICE_LIGHTGUN {
-                let (trigger, hit) = input::poll_lightgun_port(1);
-                state.set_zapper_state(trigger, hit);
-            } else {
-                let (b2, d2) = input::poll_joypad_port(1);
-                state.set_input_p2(b2, d2);
-            }
+        if state.supports_p2_lightgun() && state.port_device[1] == RETRO_DEVICE_LIGHTGUN {
+            let (trigger, hit) = input::poll_lightgun_port(1);
+            state.set_zapper_state(trigger, hit);
+        } else if state.supports_p2_joypad() {
+            let (b2, d2) = input::poll_joypad_port(1);
+            state.set_input_p2(b2, d2);
         }
 
         state.step_frame();

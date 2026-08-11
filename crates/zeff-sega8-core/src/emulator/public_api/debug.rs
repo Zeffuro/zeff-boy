@@ -1,5 +1,6 @@
 use crate::emulator::Emulator;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::cheats::CheatByteTarget;
 use zeff_emu_common::debug::{AddressWatchHit, AddressWatchpoint, WatchType};
 
 impl Emulator {
@@ -95,5 +96,15 @@ impl Emulator {
 
     pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8, u32)> {
         self.opcode_log.recent(n)
+    }
+}
+
+impl CheatByteTarget<u16> for Emulator {
+    fn cheat_peek8(&self, address: u16) -> u8 {
+        self.cpu_peek8(address)
+    }
+
+    fn cheat_write8(&mut self, address: u16, value: u8) {
+        self.cpu_write8(address, value);
     }
 }

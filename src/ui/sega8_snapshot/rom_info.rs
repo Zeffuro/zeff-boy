@@ -45,6 +45,10 @@ pub(super) fn sega8_rom_info(emu: &Emulator) -> RomDebugInfo {
                 "Normalized Size",
                 format!("{} bytes", cart.normalized_len()),
             ),
+            (
+                "Normalized CRC32",
+                format!("{:08X}", cart.normalized_crc32()),
+            ),
             ("ROM Banks", cart.rom_bank_count().to_string()),
             (
                 "Copier Header",

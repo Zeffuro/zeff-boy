@@ -54,6 +54,7 @@ pub(super) fn run_ws_headless(
     let bus_trace_active = !opts.trace_bus_filters.is_empty();
     let start = Instant::now();
     let mut frames_run = 0u64;
+    let mut current_input = InputMasks::default();
     let mut audio_scratch: Vec<f32> = Vec::new();
     let mut audio_dump: Vec<f32> = Vec::new();
     let mut audio_stats = AudioStats::default();
@@ -72,11 +73,14 @@ pub(super) fn run_ws_headless(
         &mut screenshot_written,
     )?;
     write_screenshot_sequence_if_requested(opts, 0, emulator.framebuffer(), dimensions)?;
+    emulator.set_opcode_log_enabled(
+        opts.trace_opcodes || opts.print_debug_state || opts.debug_state_path.is_some(),
+    );
 
     for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
-        let input = input_for_frame(opts, frame_number);
-        emulator.set_input(input.buttons, input.dpad);
+        current_input = input_for_frame(opts, frame_number);
+        emulator.set_input(current_input.buttons, current_input.dpad);
 
         if opts.trace_opcodes || bus_trace_active {
             emulator.clear_frame_ready();
@@ -238,6 +242,18 @@ pub(super) fn run_ws_headless(
         emulator.framebuffer(),
         dimensions,
         &mut screenshot_written,
+    )?;
+    emit_debug_state(
+        opts,
+        ws_debug_state(WsDebugStateRequest {
+            emulator: &emulator,
+            frames_run,
+            opts,
+            input: current_input,
+            stuck: stuck.as_ref().and_then(StuckTracker::current_report),
+            screenshot: screenshot_path_if_written(opts, screenshot_written),
+            audio_stats,
+        }),
     )?;
     if !opts.no_sram {
         flush_battery(path, emulator.dump_battery_sram());

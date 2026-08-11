@@ -1,4 +1,5 @@
 use super::{ActiveCore, CoreState};
+use crate::input::InputDescriptorConfig;
 
 impl CoreState {
     pub fn step_frame(&mut self) {
@@ -54,6 +55,33 @@ impl CoreState {
     pub fn set_zapper_state(&mut self, trigger: bool, hit: bool) {
         if let ActiveCore::Nes(emu) = &mut self.core {
             emu.set_zapper_state(true, trigger, hit, None);
+        }
+    }
+
+    pub fn supports_p2_joypad(&self) -> bool {
+        match &self.core {
+            ActiveCore::Nes(_) => true,
+            ActiveCore::Sega8(emu) => !matches!(
+                emu.system(),
+                zeff_sega8_core::hardware::cartridge::Sega8System::GameGear
+            ),
+            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Ws(_) => false,
+        }
+    }
+
+    pub fn supports_p2_lightgun(&self) -> bool {
+        matches!(&self.core, ActiveCore::Nes(_))
+    }
+
+    pub fn supports_shoulders(&self) -> bool {
+        matches!(&self.core, ActiveCore::Gba(_))
+    }
+
+    pub fn input_descriptor_config(&self) -> InputDescriptorConfig {
+        InputDescriptorConfig {
+            supports_shoulders: self.supports_shoulders(),
+            supports_p2_joypad: self.supports_p2_joypad(),
+            supports_p2_lightgun: self.supports_p2_lightgun(),
         }
     }
 

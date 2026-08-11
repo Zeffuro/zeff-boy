@@ -7,6 +7,8 @@
 pub enum MemoryRegionKind {
     CpuAddressSpace,
     SystemRam,
+    ExternalWorkRam,
+    InternalWorkRam,
     VideoRam,
     PaletteRam,
     Oam,
@@ -15,8 +17,23 @@ pub enum MemoryRegionKind {
     Framebuffer,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(rename_all = "snake_case")
+)]
+pub enum MemoryRegionView {
+    AddressSpace,
+    Physical,
+    Aggregate,
+    Derived,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExtendedMemoryRegionSizes {
+    pub external_work_ram_len: usize,
+    pub internal_work_ram_len: usize,
     pub palette_ram_len: usize,
     pub oam_len: usize,
     pub io_registers_len: usize,
@@ -29,12 +46,18 @@ pub struct MemoryRegionDescriptor {
     pub kind: MemoryRegionKind,
     pub size: Option<usize>,
     pub address_bits: Option<u8>,
+    pub readable: bool,
     pub writable: bool,
+    pub side_effect_free: bool,
+    pub copyable: bool,
+    pub view: MemoryRegionView,
     pub aliases: &'static [&'static str],
 }
 
 const CPU_ALIASES: &[&str] = &["memory", "ram"];
-const SYSTEM_RAM_ALIASES: &[&str] = &["systemram", "wram", "ewram", "iwram"];
+const SYSTEM_RAM_ALIASES: &[&str] = &["systemram", "wram"];
+const EXTERNAL_WORK_RAM_ALIASES: &[&str] = &["ewram", "externalwram", "external_work_ram"];
+const INTERNAL_WORK_RAM_ALIASES: &[&str] = &["iwram", "internalwram", "internal_work_ram"];
 const VIDEO_RAM_ALIASES: &[&str] = &["vram", "chr", "chrdata"];
 const PALETTE_RAM_ALIASES: &[&str] = &["palette", "paletteram", "palette_ram", "cram"];
 const OAM_ALIASES: &[&str] = &["sprites", "sprite_ram", "obj", "objects"];
@@ -50,7 +73,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::CpuAddressSpace,
             size: None,
             address_bits: Some(address_bits),
+            readable: true,
             writable: true,
+            side_effect_free: true,
+            copyable: false,
+            view: MemoryRegionView::AddressSpace,
             aliases: CPU_ALIASES,
         }
     }
@@ -62,8 +89,60 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::SystemRam,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
             aliases: SYSTEM_RAM_ALIASES,
+        }
+    }
+
+    pub const fn aggregate_system_ram(size: usize) -> Self {
+        Self {
+            id: "system_ram",
+            label: "System RAM",
+            kind: MemoryRegionKind::SystemRam,
+            size: Some(size),
+            address_bits: None,
+            readable: true,
+            writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Aggregate,
+            aliases: SYSTEM_RAM_ALIASES,
+        }
+    }
+
+    pub const fn external_work_ram(size: usize) -> Self {
+        Self {
+            id: "ewram",
+            label: "External Work RAM",
+            kind: MemoryRegionKind::ExternalWorkRam,
+            size: Some(size),
+            address_bits: None,
+            readable: true,
+            writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
+            aliases: EXTERNAL_WORK_RAM_ALIASES,
+        }
+    }
+
+    pub const fn internal_work_ram(size: usize) -> Self {
+        Self {
+            id: "iwram",
+            label: "Internal Work RAM",
+            kind: MemoryRegionKind::InternalWorkRam,
+            size: Some(size),
+            address_bits: None,
+            readable: true,
+            writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
+            aliases: INTERNAL_WORK_RAM_ALIASES,
         }
     }
 
@@ -74,7 +153,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::VideoRam,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
             aliases: VIDEO_RAM_ALIASES,
         }
     }
@@ -86,7 +169,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::PaletteRam,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
             aliases: PALETTE_RAM_ALIASES,
         }
     }
@@ -98,7 +185,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::Oam,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
             aliases: OAM_ALIASES,
         }
     }
@@ -110,7 +201,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::IoRegisters,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
             aliases: IO_REGISTER_ALIASES,
         }
     }
@@ -122,7 +217,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::SaveRam,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
             aliases: SAVE_RAM_ALIASES,
         }
     }
@@ -134,7 +233,11 @@ impl MemoryRegionDescriptor {
             kind: MemoryRegionKind::Framebuffer,
             size: Some(size),
             address_bits: None,
+            readable: true,
             writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Derived,
             aliases: FRAMEBUFFER_ALIASES,
         }
     }
@@ -196,7 +299,26 @@ pub fn standard_memory_regions_with_extended(
     let mut regions = vec![MemoryRegionDescriptor::cpu_address_space(cpu_address_bits)];
 
     if system_ram_len > 0 {
-        regions.push(MemoryRegionDescriptor::system_ram(system_ram_len));
+        let has_physical_work_ram =
+            extended.external_work_ram_len > 0 || extended.internal_work_ram_len > 0;
+        let system_ram = if has_physical_work_ram {
+            MemoryRegionDescriptor::aggregate_system_ram(system_ram_len)
+        } else {
+            MemoryRegionDescriptor::system_ram(system_ram_len)
+        };
+        regions.push(system_ram);
+    }
+
+    if extended.external_work_ram_len > 0 {
+        regions.push(MemoryRegionDescriptor::external_work_ram(
+            extended.external_work_ram_len,
+        ));
+    }
+
+    if extended.internal_work_ram_len > 0 {
+        regions.push(MemoryRegionDescriptor::internal_work_ram(
+            extended.internal_work_ram_len,
+        ));
     }
 
     if video_ram_len > 0 {
@@ -238,7 +360,11 @@ mod tests {
         assert_eq!(region.id, "cpu");
         assert_eq!(region.size, None);
         assert_eq!(region.address_bits, Some(32));
+        assert!(region.readable);
         assert!(region.writable);
+        assert!(region.side_effect_free);
+        assert!(!region.copyable);
+        assert_eq!(region.view, MemoryRegionView::AddressSpace);
         assert!(region.matches_id_or_alias("memory"));
         assert!(region.matches_id_or_alias("CPU"));
     }
@@ -249,6 +375,11 @@ mod tests {
 
         assert_eq!(region.kind, MemoryRegionKind::VideoRam);
         assert_eq!(region.size, Some(0x2000));
+        assert!(region.readable);
+        assert!(!region.writable);
+        assert!(region.side_effect_free);
+        assert!(region.copyable);
+        assert_eq!(region.view, MemoryRegionView::Physical);
         assert!(region.matches_id_or_alias("vram"));
         assert!(region.matches_id_or_alias("chr"));
         assert!(region.matches_id_or_alias("video-ram"));
@@ -270,6 +401,7 @@ mod tests {
 
         assert_eq!(io.kind, MemoryRegionKind::IoRegisters);
         assert_eq!(io.size, Some(0x40));
+        assert_eq!(io.view, MemoryRegionView::Physical);
         assert!(io.matches_id_or_alias("io"));
     }
 
@@ -282,6 +414,8 @@ mod tests {
             crate::save_ram::SaveRamKind::none(),
             160 * 144 * 4,
             ExtendedMemoryRegionSizes {
+                external_work_ram_len: 0,
+                internal_work_ram_len: 0,
                 palette_ram_len: 0x40,
                 oam_len: 0x100,
                 io_registers_len: 0,
@@ -325,15 +459,31 @@ mod tests {
             crate::save_ram::SaveRamKind::none(),
             240 * 160 * 4,
             ExtendedMemoryRegionSizes {
+                external_work_ram_len: 0x40000,
+                internal_work_ram_len: 0x8000,
                 palette_ram_len: 0x400,
                 oam_len: 0x400,
                 io_registers_len: 0x400,
             },
         );
 
+        assert!(regions.iter().any(|region| region.id == "ewram"));
+        assert!(regions.iter().any(|region| region.id == "iwram"));
         assert!(regions.iter().any(|region| region.id == "palette_ram"));
         assert!(regions.iter().any(|region| region.id == "oam"));
         assert!(regions.iter().any(|region| region.id == "io_registers"));
         assert!(!regions.iter().any(|region| region.id == "save_ram"));
+        assert_eq!(
+            resolve_memory_region(&regions, "system_ram").map(|region| region.view),
+            Some(MemoryRegionView::Aggregate)
+        );
+        assert_eq!(
+            resolve_memory_region(&regions, "ewram").map(|region| region.view),
+            Some(MemoryRegionView::Physical)
+        );
+        assert_eq!(
+            resolve_memory_region(&regions, "framebuffer").map(|region| region.view),
+            Some(MemoryRegionView::Derived)
+        );
     }
 }

@@ -7,8 +7,37 @@ use super::constants::{
 
 const NTSC_192_LINEAR_VCOUNTER_END_SCANLINE: u16 = 0xDA;
 const NTSC_192_POST_VISIBLE_VCOUNTER_START: u16 = 0xD5;
+const NTSC_224_LINEAR_VCOUNTER_END_SCANLINE: u16 = 0xEA;
+const NTSC_224_POST_VISIBLE_VCOUNTER_START: u16 = 0xE5;
 const PAL_192_LINEAR_VCOUNTER_END_SCANLINE: u16 = 0xF2;
 const PAL_192_POST_VISIBLE_VCOUNTER_START: u16 = 0xBA;
+const PAL_224_LINEAR_VCOUNTER_END_SCANLINE: u16 = 0xFF;
+const PAL_224_RESTART_VCOUNTER_END_SCANLINE: u16 = 0x102;
+const PAL_224_POST_VISIBLE_VCOUNTER_START: u16 = 0xCA;
+const PAL_240_LINEAR_VCOUNTER_END_SCANLINE: u16 = 0xFF;
+const PAL_240_RESTART_VCOUNTER_END_SCANLINE: u16 = 0x10A;
+const PAL_240_POST_VISIBLE_VCOUNTER_START: u16 = 0xD2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sega8DisplayHeight {
+    Lines192,
+    Lines224,
+    Lines240,
+}
+
+impl Sega8DisplayHeight {
+    pub const fn lines(self) -> u16 {
+        match self {
+            Self::Lines192 => 192,
+            Self::Lines224 => 224,
+            Self::Lines240 => 240,
+        }
+    }
+
+    pub const fn frame_interrupt_scanline(self) -> u16 {
+        self.lines() + 1
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Sega8VideoStandard {
@@ -54,24 +83,46 @@ impl Sega8VideoStandard {
         self.cycles_per_frame() * self.frame_rate_approx()
     }
 
-    pub fn v_counter_for_192_line_scanline(self, scanline: u16) -> u8 {
+    pub fn v_counter_for_scanline(self, display_height: Sega8DisplayHeight, scanline: u16) -> u8 {
         let scanline = scanline % self.total_scanlines();
-        let (linear_end, post_visible_start) = match self {
-            Self::Ntsc => (
+        match (self, display_height) {
+            (Self::Ntsc, Sega8DisplayHeight::Lines192) => v_counter_with_post_visible_sequence(
+                scanline,
                 NTSC_192_LINEAR_VCOUNTER_END_SCANLINE,
                 NTSC_192_POST_VISIBLE_VCOUNTER_START,
             ),
-            Self::Pal => (
+            (Self::Ntsc, Sega8DisplayHeight::Lines224) => v_counter_with_post_visible_sequence(
+                scanline,
+                NTSC_224_LINEAR_VCOUNTER_END_SCANLINE,
+                NTSC_224_POST_VISIBLE_VCOUNTER_START,
+            ),
+            (Self::Ntsc, Sega8DisplayHeight::Lines240) => scanline as u8,
+            (Self::Pal, Sega8DisplayHeight::Lines192) => v_counter_with_post_visible_sequence(
+                scanline,
                 PAL_192_LINEAR_VCOUNTER_END_SCANLINE,
                 PAL_192_POST_VISIBLE_VCOUNTER_START,
             ),
-        };
-
-        if scanline <= linear_end {
-            scanline as u8
-        } else {
-            (post_visible_start + scanline - linear_end - 1) as u8
+            (Self::Pal, Sega8DisplayHeight::Lines224) => {
+                v_counter_with_restart_and_post_visible_sequence(
+                    scanline,
+                    PAL_224_LINEAR_VCOUNTER_END_SCANLINE,
+                    PAL_224_RESTART_VCOUNTER_END_SCANLINE,
+                    PAL_224_POST_VISIBLE_VCOUNTER_START,
+                )
+            }
+            (Self::Pal, Sega8DisplayHeight::Lines240) => {
+                v_counter_with_restart_and_post_visible_sequence(
+                    scanline,
+                    PAL_240_LINEAR_VCOUNTER_END_SCANLINE,
+                    PAL_240_RESTART_VCOUNTER_END_SCANLINE,
+                    PAL_240_POST_VISIBLE_VCOUNTER_START,
+                )
+            }
         }
+    }
+
+    pub fn v_counter_for_192_line_scanline(self, scanline: u16) -> u8 {
+        self.v_counter_for_scanline(Sega8DisplayHeight::Lines192, scanline)
     }
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -115,6 +166,33 @@ impl Sega8VideoStandard {
         }
 
         None
+    }
+}
+
+fn v_counter_with_post_visible_sequence(
+    scanline: u16,
+    linear_end: u16,
+    post_visible_start: u16,
+) -> u8 {
+    if scanline <= linear_end {
+        scanline as u8
+    } else {
+        (post_visible_start + scanline - linear_end - 1) as u8
+    }
+}
+
+fn v_counter_with_restart_and_post_visible_sequence(
+    scanline: u16,
+    linear_end: u16,
+    restart_end: u16,
+    post_visible_start: u16,
+) -> u8 {
+    if scanline <= linear_end {
+        scanline as u8
+    } else if scanline <= restart_end {
+        (scanline - linear_end - 1) as u8
+    } else {
+        (post_visible_start + scanline - restart_end - 1) as u8
     }
 }
 
@@ -189,5 +267,49 @@ mod tests {
         );
         assert_eq!(standard.v_counter_for_192_line_scanline(312), 0xFF);
         assert_eq!(standard.v_counter_for_192_line_scanline(313), 0x00);
+    }
+
+    #[test]
+    fn ntsc_224_line_v_counter_uses_sms_tv_detection_sequence() {
+        let standard = Sega8VideoStandard::Ntsc;
+        let height = Sega8DisplayHeight::Lines224;
+
+        assert_eq!(standard.v_counter_for_scanline(height, 0xEA), 0xEA);
+        assert_eq!(standard.v_counter_for_scanline(height, 0xEB), 0xE5);
+        assert_eq!(standard.v_counter_for_scanline(height, 261), 0xFF);
+    }
+
+    #[test]
+    fn ntsc_240_line_v_counter_wraps_after_255() {
+        let standard = Sega8VideoStandard::Ntsc;
+        let height = Sega8DisplayHeight::Lines240;
+
+        assert_eq!(standard.v_counter_for_scanline(height, 0xFF), 0xFF);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x100), 0x00);
+        assert_eq!(standard.v_counter_for_scanline(height, 261), 0x05);
+    }
+
+    #[test]
+    fn pal_224_line_v_counter_uses_restart_and_post_visible_sequence() {
+        let standard = Sega8VideoStandard::Pal;
+        let height = Sega8DisplayHeight::Lines224;
+
+        assert_eq!(standard.v_counter_for_scanline(height, 0xFF), 0xFF);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x100), 0x00);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x102), 0x02);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x103), 0xCA);
+        assert_eq!(standard.v_counter_for_scanline(height, 312), 0xFF);
+    }
+
+    #[test]
+    fn pal_240_line_v_counter_uses_restart_and_post_visible_sequence() {
+        let standard = Sega8VideoStandard::Pal;
+        let height = Sega8DisplayHeight::Lines240;
+
+        assert_eq!(standard.v_counter_for_scanline(height, 0xFF), 0xFF);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x100), 0x00);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x10A), 0x0A);
+        assert_eq!(standard.v_counter_for_scanline(height, 0x10B), 0xD2);
+        assert_eq!(standard.v_counter_for_scanline(height, 312), 0xFF);
     }
 }

@@ -5587,6 +5587,7 @@ name = "zeff-sega8-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crc32fast",
  "sha2",
  "zeff-emu-common",
  "zip",

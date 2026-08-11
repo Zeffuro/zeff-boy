@@ -6,7 +6,7 @@ use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 
 const MAGIC: &[u8; 8] = b"ZBSEGA8\0";
-const VERSION: u32 = 7;
+const VERSION: u32 = 10;
 const MIN_SUPPORTED_VERSION: u32 = 1;
 const VERSION_WITH_VIDEO_STANDARD: u32 = 3;
 const VERSION_WITH_CONSOLE_REGION: u32 = 4;
@@ -130,14 +130,32 @@ fn read_fixed_vec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::cartridge::SystemHint;
+    use crate::emulator::Sega8LoadConfig;
+    use crate::hardware::cartridge::{Sega8MapperKind, SystemHint};
     use crate::hardware::constants::{
-        IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_START, MAPPER_FRAME_CONTROL,
-        MAPPER_FRAME_CONTROL_CART_RAM_ENABLE, SLOT2_START,
+        IO_OPEN_BUS_VALUE, IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_START,
+        IO_PORT_MEMORY_CONTROL, IO_PORT_VDP_CONTROL, IO_PORT_VDP_DATA, MAPPER_FRAME_CONTROL,
+        MAPPER_FRAME_CONTROL_CART_RAM_ENABLE, ROM_BANK_SIZE, ROM_PAGE_8K_SIZE, SLOT2_START,
     };
 
     fn test_rom() -> Vec<u8> {
         vec![0x3E, 0x5A, 0x32, 0x00, 0xC0, 0x76]
+    }
+
+    fn banked_rom(bank_count: usize) -> Vec<u8> {
+        let mut rom = vec![0; bank_count * ROM_BANK_SIZE];
+        for bank in 0..bank_count {
+            rom[bank * ROM_BANK_SIZE..(bank + 1) * ROM_BANK_SIZE].fill(bank as u8);
+        }
+        rom
+    }
+
+    fn paged_rom_8k(page_count: usize) -> Vec<u8> {
+        let mut rom = vec![0; page_count * ROM_PAGE_8K_SIZE];
+        for page in 0..page_count {
+            rom[page * ROM_PAGE_8K_SIZE..(page + 1) * ROM_PAGE_8K_SIZE].fill(page as u8);
+        }
+        rom
     }
 
     fn set_state_version(bytes: &mut [u8], version: u32) {
@@ -156,8 +174,28 @@ mod tests {
         for _ in 0..6 {
             bytes
                 .pop()
-                .expect("v7 state should end with Game Gear serial bytes");
+                .expect("state should include Game Gear serial bytes");
         }
+    }
+
+    fn strip_game_gear_serial_timing_state(bytes: &mut Vec<u8>) {
+        for _ in 0..4 {
+            bytes
+                .pop()
+                .expect("v9 state should include Game Gear serial timing bytes");
+        }
+    }
+
+    fn strip_memory_control_state(bytes: &mut Vec<u8>) {
+        bytes
+            .pop()
+            .expect("v8 state should end with memory control byte");
+    }
+
+    fn strip_vdp_cram_latch_state(bytes: &mut Vec<u8>) {
+        bytes
+            .pop()
+            .expect("v10 state should end with VDP CRAM latch byte");
     }
 
     #[test]
@@ -197,6 +235,23 @@ mod tests {
     }
 
     #[test]
+    fn roundtrips_sms_memory_control_state() {
+        let rom = test_rom();
+        let mut saved = Emulator::new_with_hint(&rom, 48_000, SystemHint::MasterSystem).unwrap();
+        saved.bus_mut().cpu_write(0xC000, 0x5A);
+        saved.bus_mut().io_write(IO_PORT_MEMORY_CONTROL, 0x10);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new_with_hint(&rom, 48_000, SystemHint::MasterSystem).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.bus().memory_control(), 0x10);
+        assert_eq!(restored.bus().cpu_read(0xC000), IO_OPEN_BUS_VALUE);
+        restored.bus_mut().io_write(IO_PORT_MEMORY_CONTROL, 0x00);
+        assert_eq!(restored.bus().cpu_read(0xC000), 0x5A);
+    }
+
+    #[test]
     fn rejects_cross_rom_state() {
         let saved_rom = test_rom();
         let mut other_rom = test_rom();
@@ -229,6 +284,67 @@ mod tests {
 
         assert!(restored.bus().mapper().slot2_cartridge_ram_enabled());
         assert_eq!(restored.bus().cpu_read(SLOT2_START), 0xA5);
+    }
+
+    #[test]
+    fn roundtrips_korean_mapper_state() {
+        let rom = banked_rom(4);
+        let config = Sega8LoadConfig::new(48_000)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_mapper_kind(Some(Sega8MapperKind::Korean));
+        let mut saved = Emulator::new_with_config(&rom, config).unwrap();
+        saved.bus_mut().cpu_write(0xA000, 3);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new_with_config(&rom, config).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.bus().mapper().kind(), Sega8MapperKind::Korean);
+        assert_eq!(restored.bus().mapper().slot_banks(), [0, 1, 3]);
+        assert_eq!(restored.bus().cpu_read(SLOT2_START), 3);
+    }
+
+    #[test]
+    fn roundtrips_msx_mapper_state() {
+        let rom = paged_rom_8k(8);
+        let config = Sega8LoadConfig::new(48_000)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_mapper_kind(Some(Sega8MapperKind::Msx));
+        let mut saved = Emulator::new_with_config(&rom, config).unwrap();
+        saved.bus_mut().cpu_write(0x0000, 7);
+        saved.bus_mut().cpu_write(0x0001, 6);
+        saved.bus_mut().cpu_write(0x0002, 5);
+        saved.bus_mut().cpu_write(0x0003, 4);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new_with_config(&rom, config).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.bus().mapper().kind(), Sega8MapperKind::Msx);
+        assert_eq!(restored.bus().cpu_read(0x4000), 5);
+        assert_eq!(restored.bus().cpu_read(0x6000), 4);
+        assert_eq!(restored.bus().cpu_read(0x8000), 7);
+        assert_eq!(restored.bus().cpu_read(0xA000), 6);
+    }
+
+    #[test]
+    fn roundtrips_janggun_mapper_state() {
+        let rom = paged_rom_8k(16);
+        let config = Sega8LoadConfig::new(48_000)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_mapper_kind(Some(Sega8MapperKind::Janggun));
+        let mut saved = Emulator::new_with_config(&rom, config).unwrap();
+        saved.bus_mut().cpu_write(0x4000, 0x46);
+        saved.bus_mut().cpu_write(0xFFFF, 0x04);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new_with_config(&rom, config).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.bus().mapper().kind(), Sega8MapperKind::Janggun);
+        assert_eq!(restored.bus().cpu_read(0x4000), 6u8.reverse_bits());
+        assert_eq!(restored.bus().cpu_read(0x8000), 4);
+        assert_eq!(restored.bus().cpu_read(0xA000), 5);
     }
 
     #[test]
@@ -279,6 +395,9 @@ mod tests {
         set_state_version(&mut bytes, 2);
         bytes.remove(console_region_offset());
         bytes.remove(video_standard_offset());
+        strip_vdp_cram_latch_state(&mut bytes);
+        strip_memory_control_state(&mut bytes);
+        strip_game_gear_serial_timing_state(&mut bytes);
         strip_game_gear_serial_state(&mut bytes);
         bytes
             .pop()
@@ -308,6 +427,9 @@ mod tests {
         let mut bytes = encode_state(&saved).unwrap();
         set_state_version(&mut bytes, 3);
         bytes.remove(console_region_offset());
+        strip_vdp_cram_latch_state(&mut bytes);
+        strip_memory_control_state(&mut bytes);
+        strip_game_gear_serial_timing_state(&mut bytes);
         strip_game_gear_serial_state(&mut bytes);
         bytes
             .pop()
@@ -319,6 +441,7 @@ mod tests {
         assert_eq!(restored.video_standard(), Sega8VideoStandard::Pal);
         assert_eq!(restored.console_region(), Sega8Region::Export);
         assert_eq!(restored.bus().input().io_control(), 0xFF);
+        assert_eq!(restored.bus().memory_control(), 0x00);
         restored.bus_mut().io_write(IO_PORT_CONTROL, 0x55);
         assert_eq!(restored.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0, 0);
     }
@@ -337,6 +460,9 @@ mod tests {
         set_state_version(&mut bytes, 1);
         bytes.remove(console_region_offset());
         bytes.remove(video_standard_offset());
+        strip_vdp_cram_latch_state(&mut bytes);
+        strip_memory_control_state(&mut bytes);
+        strip_game_gear_serial_timing_state(&mut bytes);
         strip_game_gear_serial_state(&mut bytes);
         bytes
             .pop()
@@ -363,6 +489,9 @@ mod tests {
             .io_write(crate::hardware::constants::IO_PORT_GG_SERIAL_CONTROL, 0x30);
         let mut bytes = encode_state(&saved).unwrap();
         set_state_version(&mut bytes, 5);
+        strip_vdp_cram_latch_state(&mut bytes);
+        strip_memory_control_state(&mut bytes);
+        strip_game_gear_serial_timing_state(&mut bytes);
         strip_game_gear_serial_state(&mut bytes);
 
         let mut restored = Emulator::new_with_hint(&rom, 48_000, SystemHint::GameGear).unwrap();
@@ -388,7 +517,10 @@ mod tests {
             .io_write(crate::hardware::constants::IO_PORT_GG_SERIAL_TX, 0xA5);
         let mut bytes = encode_state(&saved).unwrap();
         set_state_version(&mut bytes, 6);
-        bytes.pop().expect("v7 state should end with serial flags");
+        strip_vdp_cram_latch_state(&mut bytes);
+        strip_memory_control_state(&mut bytes);
+        strip_game_gear_serial_timing_state(&mut bytes);
+        bytes.pop().expect("v7 state should include serial flags");
 
         let mut restored = Emulator::new_with_hint(&rom, 48_000, SystemHint::GameGear).unwrap();
         decode_state(&mut restored, &bytes).unwrap();
@@ -406,5 +538,24 @@ mod tests {
                 & 0x03,
             0
         );
+    }
+
+    #[test]
+    fn decodes_v9_state_without_vdp_cram_latch() {
+        let rom = test_rom();
+        let mut saved = Emulator::new_with_hint(&rom, 48_000, SystemHint::GameGear).unwrap();
+        saved.bus_mut().io_write(IO_PORT_VDP_CONTROL, 0x00);
+        saved.bus_mut().io_write(IO_PORT_VDP_CONTROL, 0xC0);
+        saved.bus_mut().io_write(IO_PORT_VDP_DATA, 0x7B);
+        let mut bytes = encode_state(&saved).unwrap();
+        set_state_version(&mut bytes, 9);
+        strip_vdp_cram_latch_state(&mut bytes);
+
+        let mut restored = Emulator::new_with_hint(&rom, 48_000, SystemHint::GameGear).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+        restored.bus_mut().io_write(IO_PORT_VDP_DATA, 0x05);
+
+        assert_eq!(restored.bus().vdp().cram()[0], 0x00);
+        assert_eq!(restored.bus().vdp().cram()[1], 0x05);
     }
 }

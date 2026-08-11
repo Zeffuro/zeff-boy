@@ -22,7 +22,10 @@ impl crate::emu_core_trait::DebuggableEmulator for GbEmulator {
     fn toggle_breakpoint(&mut self, addr: Address) {
         self.toggle_breakpoint(narrow_u16(addr))
     }
-    fn debug_write(&mut self, addr: Address, val: u8) {
+    fn cpu_peek8(&self, addr: Address) -> u8 {
+        self.cpu_peek8(narrow_u16(addr))
+    }
+    fn cpu_write8(&mut self, addr: Address, val: u8) {
         self.cpu_write8(narrow_u16(addr), val)
     }
     fn is_cpu_suspended(&self) -> bool {
@@ -174,7 +177,9 @@ impl EmulatorCore for GbBackend {
             }
             MemoryRegionKind::PaletteRam
             | MemoryRegionKind::Oam
-            | MemoryRegionKind::IoRegisters => {
+            | MemoryRegionKind::IoRegisters
+            | MemoryRegionKind::ExternalWorkRam
+            | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(
                     "Game Boy memory region '{}' is not exposed as a copyable region",
                     region.id

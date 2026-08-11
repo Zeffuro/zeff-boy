@@ -1,11 +1,11 @@
 use super::*;
+use crate::input::HostButton;
 use crate::settings::WonderSwanButton;
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
 #[test]
 fn keyboard_a_button_in_buttons_pressed() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::A, true);
+    state.set_keyboard(HostButton::A, true);
     assert_eq!(state.buttons_pressed(), 0x01);
     assert_eq!(state.dpad_pressed(), 0x00);
 }
@@ -13,7 +13,7 @@ fn keyboard_a_button_in_buttons_pressed() {
 #[test]
 fn keyboard_dpad_right_in_dpad_pressed() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::Right, true);
+    state.set_keyboard(HostButton::Right, true);
     assert_eq!(state.dpad_pressed(), 0x01);
     assert_eq!(state.buttons_pressed(), 0x00);
 }
@@ -21,18 +21,18 @@ fn keyboard_dpad_right_in_dpad_pressed() {
 #[test]
 fn keyboard_and_gamepad_merge_via_or() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::A, true);
-    state.set_gamepad(JoypadKey::B, true);
+    state.set_keyboard(HostButton::A, true);
+    state.set_gamepad(HostButton::B, true);
     assert_eq!(state.buttons_pressed(), 0x03);
 }
 
 #[test]
 fn remote_input_merges_with_keyboard_and_gamepad() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::A, true);
-    state.set_gamepad(JoypadKey::B, true);
-    state.set_remote(JoypadKey::Start, true);
-    state.set_remote(JoypadKey::Right, true);
+    state.set_keyboard(HostButton::A, true);
+    state.set_gamepad(HostButton::B, true);
+    state.set_remote(HostButton::Start, true);
+    state.set_remote(HostButton::Right, true);
     assert_eq!(state.buttons_pressed(), 0x0B);
     assert_eq!(state.dpad_pressed(), 0x01);
 }
@@ -40,11 +40,11 @@ fn remote_input_merges_with_keyboard_and_gamepad() {
 #[test]
 fn remote_player_two_input_is_kept_separate_from_player_one() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::A, true);
-    state.set_keyboard_p2(JoypadKey::A, true);
-    state.set_gamepad_p2(JoypadKey::Right, true);
-    state.set_remote_p2(JoypadKey::B, true);
-    state.set_remote_p2(JoypadKey::Left, true);
+    state.set_keyboard(HostButton::A, true);
+    state.set_keyboard_p2(HostButton::A, true);
+    state.set_gamepad_p2(HostButton::Right, true);
+    state.set_remote_p2(HostButton::B, true);
+    state.set_remote_p2(HostButton::Left, true);
 
     assert_eq!(state.buttons_pressed(), 0x01);
     assert_eq!(state.dpad_pressed(), 0x00);
@@ -55,25 +55,47 @@ fn remote_player_two_input_is_kept_separate_from_player_one() {
 #[test]
 fn release_clears_bit() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::A, true);
+    state.set_keyboard(HostButton::A, true);
     assert_eq!(state.buttons_pressed(), 0x01);
-    state.set_keyboard(JoypadKey::A, false);
+    state.set_keyboard(HostButton::A, false);
     assert_eq!(state.buttons_pressed(), 0x00);
 }
 
 #[test]
 fn all_buttons_and_dpad() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::A, true);
-    state.set_keyboard(JoypadKey::B, true);
-    state.set_keyboard(JoypadKey::Select, true);
-    state.set_keyboard(JoypadKey::Start, true);
-    state.set_keyboard(JoypadKey::Up, true);
-    state.set_keyboard(JoypadKey::Down, true);
-    state.set_keyboard(JoypadKey::Left, true);
-    state.set_keyboard(JoypadKey::Right, true);
-    assert_eq!(state.buttons_pressed(), 0x0F);
+    state.set_keyboard(HostButton::A, true);
+    state.set_keyboard(HostButton::B, true);
+    state.set_keyboard(HostButton::L, true);
+    state.set_keyboard(HostButton::R, true);
+    state.set_keyboard(HostButton::Select, true);
+    state.set_keyboard(HostButton::Start, true);
+    state.set_keyboard(HostButton::Up, true);
+    state.set_keyboard(HostButton::Down, true);
+    state.set_keyboard(HostButton::Left, true);
+    state.set_keyboard(HostButton::Right, true);
+    assert_eq!(state.buttons_pressed(), 0x3F);
     assert_eq!(state.dpad_pressed(), 0x0F);
+}
+
+#[test]
+fn p2_shoulders_use_same_button_bits_as_p1() {
+    let mut state = HostInputState::new();
+    state.set_keyboard_p2(HostButton::L, true);
+    state.set_gamepad_p2(HostButton::R, true);
+
+    assert_eq!(state.buttons_pressed(), 0x00);
+    assert_eq!(state.buttons_p2_pressed(), 0x30);
+}
+
+#[test]
+fn wonderswan_generic_buttons_do_not_treat_shoulders_as_y_buttons() {
+    let mut state = HostInputState::new();
+    state.set_keyboard(HostButton::L, true);
+    state.set_gamepad(HostButton::R, true);
+
+    assert_eq!(state.ws_buttons_pressed(false), 0);
+    assert_eq!(state.ws_buttons_pressed(true), 0);
 }
 
 #[test]
@@ -115,8 +137,8 @@ fn wonderswan_direct_gamepad_packs_separately_from_keyboard() {
 #[test]
 fn wonderswan_generic_dpad_follows_x_buttons_when_horizontal() {
     let mut state = HostInputState::new();
-    state.set_gamepad(JoypadKey::Up, true);
-    state.set_gamepad(JoypadKey::Right, true);
+    state.set_gamepad(HostButton::Up, true);
+    state.set_gamepad(HostButton::Right, true);
 
     assert_eq!(state.ws_dpad_pressed(false), 0b0011);
     assert_eq!(state.ws_buttons_pressed(false) >> 4, 0);
@@ -125,8 +147,8 @@ fn wonderswan_generic_dpad_follows_x_buttons_when_horizontal() {
 #[test]
 fn wonderswan_generic_dpad_follows_y_buttons_when_rotated() {
     let mut state = HostInputState::new();
-    state.set_gamepad(JoypadKey::Down, true);
-    state.set_gamepad(JoypadKey::Left, true);
+    state.set_gamepad(HostButton::Down, true);
+    state.set_gamepad(HostButton::Left, true);
 
     assert_eq!(state.ws_dpad_pressed(true), 0);
     assert_eq!(state.ws_buttons_pressed(true) >> 4, 0b1100);
@@ -188,7 +210,7 @@ fn stick_dpad_cardinal_snap_suppresses_minor_axis() {
 #[test]
 fn stick_dpad_merges_with_keyboard() {
     let mut state = HostInputState::new();
-    state.set_keyboard(JoypadKey::Up, true);
+    state.set_keyboard(HostButton::Up, true);
     state.set_gamepad_stick_dpad((0.8, 0.0), 0.3);
     let d = state.dpad_pressed();
     assert!(d & 0x01 != 0, "Right from stick");

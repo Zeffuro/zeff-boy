@@ -3,17 +3,29 @@ use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_
 
 use crate::app::App;
 use crate::debug::ConsoleGraphicsData;
+use crate::live_control::LiveMemorySpace;
 
 impl App {
-    pub(super) fn live_memory_json(&mut self, space: &str, start: u32, length: usize) -> Value {
-        let normalized = normalized_space_name(space);
+    pub(super) fn live_memory_json(
+        &mut self,
+        requested_space: &LiveMemorySpace,
+        start: u32,
+        length: usize,
+    ) -> Value {
+        let raw_space = requested_space.request_name();
+        let normalized = normalized_space_name(raw_space);
         let regions = self
             .cached_ui_data
             .as_ref()
             .and_then(|data| data.core_features.as_ref())
             .map(|features| features.memory_regions.as_slice())
             .unwrap_or(&[]);
-        let space = canonical_cached_memory_space(space, &normalized, regions);
+        let space = match requested_space {
+            LiveMemorySpace::Cpu => "cpu".to_string(),
+            LiveMemorySpace::Region(_) => {
+                canonical_cached_memory_space(raw_space, &normalized, regions)
+            }
+        };
 
         if space == "cpu" {
             self.remote_memory_view_start = Some(start);
@@ -183,6 +195,8 @@ fn canonical_cached_memory_space(
             MemoryRegionKind::Oam => "oam",
             MemoryRegionKind::Framebuffer => "framebuffer",
             MemoryRegionKind::SystemRam => "systemram",
+            MemoryRegionKind::ExternalWorkRam => "ewram",
+            MemoryRegionKind::InternalWorkRam => "iwram",
             MemoryRegionKind::SaveRam => "saveram",
             MemoryRegionKind::IoRegisters => "ioregisters",
         }

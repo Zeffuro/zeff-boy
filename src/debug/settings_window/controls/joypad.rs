@@ -41,16 +41,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                     ui.strong("Gamepad P2");
                     ui.end_row();
 
-                    for action in [
-                        BindingAction::Up,
-                        BindingAction::Down,
-                        BindingAction::Left,
-                        BindingAction::Right,
-                        BindingAction::A,
-                        BindingAction::B,
-                        BindingAction::Start,
-                        BindingAction::Select,
-                    ] {
+                    for &action in BindingAction::ALL {
                         ui.label(joypad_label(action));
 
                         let key_name = format!("{:?}", settings.key_bindings.get(action));
@@ -145,6 +136,8 @@ fn joypad_label(action: BindingAction) -> &'static str {
         BindingAction::Right => "Right",
         BindingAction::A => "A",
         BindingAction::B => "B",
+        BindingAction::L => "L",
+        BindingAction::R => "R",
         BindingAction::Start => "Start",
         BindingAction::Select => "Select",
     }

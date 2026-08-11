@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::{collections::VecDeque, time::Instant};
 
-use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
+use zeff_sega8_core::emulator::{Emulator as Sega8Emulator, Sega8LoadConfig};
 
 use crate::cli::types::HeadlessOptions;
 use crate::emu_backend::ActiveSystem;
@@ -38,14 +38,14 @@ pub(super) fn run_sega8_headless(
         .unwrap_or_default();
     let console_region_fallback =
         crate::emu_backend::sega8::console_region_from_paths(rom_path, rom_path);
-    let mut emulator = Sega8Emulator::new_with_hint_video_standard_region_fallback(
-        rom_data,
-        zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE,
-        hint,
-        video_standard,
-        opts.sega8_console_region,
-        console_region_fallback,
-    )?;
+    let mapper_kind = crate::emu_backend::sega8::mapper_kind_from_paths(rom_path, rom_path);
+    let load_config = Sega8LoadConfig::new(zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE)
+        .with_system_hint(hint)
+        .with_mapper_kind(mapper_kind)
+        .with_video_standard(video_standard)
+        .with_console_region(opts.sega8_console_region)
+        .with_console_region_fallback(console_region_fallback);
+    let mut emulator = Sega8Emulator::new_with_config(rom_data, load_config)?;
     if !opts.no_sram
         && let Some(sram_path) =
             crate::emu_backend::sega8::try_load_battery_sram(&mut emulator, rom_path)

@@ -1,4 +1,5 @@
 use super::*;
+use zeff_emu_common::cheats::{CheatPatch, CheatValue};
 use zeff_emu_common::memory::MemoryRegionKind;
 use zeff_emu_common::system::{CoreFamily, System};
 
@@ -47,6 +48,29 @@ fn nes_rom() -> Vec<u8> {
 
 fn gb_rom() -> Vec<u8> {
     vec![0u8; 0x8000]
+}
+
+fn codemasters_rom(bank_count: usize) -> Vec<u8> {
+    use zeff_sega8_core::hardware::constants::{
+        CODEMASTERS_HEADER_OFFSET, CODEMASTERS_HEADER_SIZE, ROM_BANK_SIZE,
+    };
+
+    let mut rom = vec![0; bank_count * ROM_BANK_SIZE];
+    for bank in 0..bank_count {
+        rom[bank * ROM_BANK_SIZE..(bank + 1) * ROM_BANK_SIZE].fill(bank as u8);
+    }
+
+    let offset = CODEMASTERS_HEADER_OFFSET;
+    rom[offset] = bank_count as u8;
+    rom[offset + 1] = 0x31;
+    rom[offset + 2] = 0x08;
+    rom[offset + 3] = 0x93;
+    rom[offset + 4] = 0x10;
+    rom[offset + 5] = 0x59;
+    rom[offset + 6..offset + 8].copy_from_slice(&0x1234u16.to_le_bytes());
+    rom[offset + 8..offset + 10].copy_from_slice(&0xEDCCu16.to_le_bytes());
+    rom[offset + 10..offset + CODEMASTERS_HEADER_SIZE].fill(0);
+    rom
 }
 
 #[test]
@@ -105,6 +129,20 @@ fn sega8_libretro_uses_path_region_for_video_standard_and_fps() {
     );
     assert_eq!(state.fps(), 50.0);
     assert!(state.is_pal_region());
+}
+
+#[test]
+fn sega8_libretro_applies_explicit_mapper_path_tag() {
+    let state = CoreState::from_rom(&[0x76], "Example [mapper=janggun].sms")
+        .expect("Sega 8-bit ROM should load");
+
+    let ActiveCore::Sega8(emu) = &state.core else {
+        panic!("expected Sega8 core");
+    };
+    assert_eq!(
+        emu.bus().mapper().kind(),
+        zeff_sega8_core::hardware::cartridge::Sega8MapperKind::Janggun
+    );
 }
 
 #[test]
@@ -214,6 +252,71 @@ fn gba_libretro_cheat_set_applies_wide_raw_ram_cheats_each_frame() {
 }
 
 #[test]
+fn gba_libretro_cheat_set_applies_wide_raw_multi_code_each_frame() {
+    let rom = gba_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+
+    state.cheat_set("$02000000:42 + 0x02000001 = 43");
+    state.step_frame();
+
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_0000), 0x42);
+    assert_eq!(emu.cpu_peek8(0x0200_0001), 0x43);
+}
+
+#[test]
+fn gba_libretro_ram_cheats_check_existing_value() {
+    let rom = gba_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+
+    {
+        let ActiveCore::Gba(emu) = &mut state.core else {
+            panic!("expected GBA core");
+        };
+        emu.cpu_write8(0x0200_0000, 0x01);
+    }
+
+    state.ram_cheats = vec![CheatPatch::WideRamWriteIfEquals {
+        address: 0x0200_0000,
+        value: CheatValue::Constant(0x42),
+        compare: CheatValue::Constant(0x99),
+    }];
+    state.apply_ram_cheats();
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_0000), 0x01);
+
+    state.ram_cheats = vec![CheatPatch::WideRamWriteIfEquals {
+        address: 0x0200_0000,
+        value: CheatValue::Constant(0x42),
+        compare: CheatValue::Constant(0x01),
+    }];
+    state.apply_ram_cheats();
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_0000), 0x42);
+}
+
+#[test]
+fn gba_libretro_cheat_reset_clears_wide_raw_ram_cheats() {
+    let rom = gba_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+
+    state.cheat_set("02000000:42");
+    state.cheat_reset();
+    state.step_frame();
+
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_0000), 0x00);
+}
+
+#[test]
 fn ws_libretro_cheat_set_applies_wide_raw_ram_cheats_each_frame() {
     let rom = ws_rom();
     let mut state = CoreState::from_rom(&rom, "test.ws").expect("WonderSwan ROM should load");
@@ -245,6 +348,16 @@ fn gba_memory_regions_include_debuggable_video_side_regions() {
         state.memory_region_size(MemoryRegionKind::IoRegisters),
         zeff_gba_core::hardware::constants::IO_SIZE
     );
+    assert_eq!(
+        state.memory_region_size(MemoryRegionKind::ExternalWorkRam),
+        zeff_gba_core::hardware::constants::EWRAM_SIZE
+    );
+    assert_eq!(
+        state.memory_region_size(MemoryRegionKind::InternalWorkRam),
+        zeff_gba_core::hardware::constants::IWRAM_SIZE
+    );
+    assert!(regions.iter().any(|region| region.id == "ewram"));
+    assert!(regions.iter().any(|region| region.id == "iwram"));
     assert!(regions.iter().any(|region| region.id == "palette_ram"));
     assert!(regions.iter().any(|region| region.id == "oam"));
     assert!(regions.iter().any(|region| region.id == "io_registers"));
@@ -314,8 +427,29 @@ fn system_specs_map_to_libretro_core_state() {
             assert_eq!(state.native_width(), spec.screen_size.0);
             assert_eq!(state.native_height(), spec.screen_size.1);
             assert_eq!(state.system_label(), expected_system_label(spec.system));
+            assert_eq!(
+                state.system_ram_size(),
+                expected_system_ram_size(spec.system),
+                "unexpected system RAM size for {}",
+                spec.code
+            );
         }
     }
+}
+
+#[test]
+fn codemasters_save_ram_region_uses_mapper_visible_eight_kilobytes() {
+    let mut state = CoreState::from_rom(&codemasters_rom(4), "codemasters.sms")
+        .expect("Codemasters ROM should load");
+    let mut copied = Vec::new();
+
+    let region = state
+        .copy_memory_region("save_ram", &mut copied)
+        .expect("Codemasters mapper RAM should be copyable");
+
+    assert_eq!(state.save_ram_kind().size(), 0x2000);
+    assert_eq!(region.size, Some(0x2000));
+    assert_eq!(copied.len(), 0x2000);
 }
 
 #[test]
@@ -378,6 +512,20 @@ fn expected_system_label(system: System) -> &'static str {
         System::Sms => "SMS",
         System::Gg => "Game Gear",
         System::Sg => "SG-1000/SC-3000",
+    }
+}
+
+fn expected_system_ram_size(system: System) -> usize {
+    match system {
+        System::Gb => zeff_gb_core::hardware::types::constants::WRAM_SIZE * 8,
+        System::Gba => {
+            zeff_gba_core::hardware::constants::EWRAM_SIZE
+                + zeff_gba_core::hardware::constants::IWRAM_SIZE
+        }
+        System::Nes => 0x800,
+        System::Ws => zeff_ws_core::hardware::constants::WSC_INTERNAL_RAM_SIZE,
+        System::Sms | System::Gg => zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
+        System::Sg => zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
     }
 }
 

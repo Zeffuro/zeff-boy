@@ -105,11 +105,35 @@ fn classifies_standard_mapper_ram_as_unknown_persistence() {
 }
 
 #[test]
-fn codemasters_mapper_does_not_expose_standard_sega_save_ram() {
+fn codemasters_mapper_exposes_mapper_ram_as_unknown_persistence() {
     let cart = Cartridge::load_with_hint(&rom_with_codemasters_header(), SystemHint::MasterSystem)
         .expect("Codemasters-style ROM should load");
 
-    assert_eq!(cart.save_ram_kind(), SaveRamKind::none());
+    assert_eq!(
+        cart.save_ram_kind(),
+        SaveRamKind::mapper_ram_unknown(crate::hardware::constants::CODEMASTERS_CARTRIDGE_RAM_SIZE)
+    );
+    assert!(!cart.save_ram_kind().is_battery_backed());
+}
+
+#[test]
+fn forced_rom_only_mapper_kinds_have_no_mapper_ram_metadata() {
+    for mapper_kind in [
+        Sega8MapperKind::Korean,
+        Sega8MapperKind::Msx,
+        Sega8MapperKind::Nemesis,
+        Sega8MapperKind::Janggun,
+    ] {
+        let cart = Cartridge::load_with_hint_and_mapper_kind(
+            &rom_with_header(HeaderLocation::Offset0x7ff0, 0x4C),
+            SystemHint::MasterSystem,
+            Some(mapper_kind),
+        )
+        .expect("ROM should load with forced mapper");
+
+        assert_eq!(cart.mapper_kind(), mapper_kind);
+        assert_eq!(cart.save_ram_kind(), SaveRamKind::none());
+    }
 }
 
 #[test]
@@ -138,6 +162,20 @@ fn strips_512_byte_copier_header_before_header_scan() {
         cart.header().unwrap().location,
         HeaderLocation::Offset0x7ff0
     );
+    assert_eq!(cart.normalized_crc32(), crc32fast::hash(&rom));
+}
+
+#[test]
+fn explicit_mapper_override_takes_precedence_over_detected_headers() {
+    let cart = Cartridge::load_with_hint_and_mapper_kind(
+        &rom_with_codemasters_header(),
+        SystemHint::MasterSystem,
+        Some(Sega8MapperKind::Janggun),
+    )
+    .expect("ROM should load with forced mapper");
+
+    assert!(cart.codemasters_header().is_some());
+    assert_eq!(cart.mapper_kind(), Sega8MapperKind::Janggun);
 }
 
 #[test]
@@ -167,6 +205,26 @@ fn system_hint_is_inferred_from_rom_extension() {
     );
     assert_eq!(
         SystemHint::from_path(std::path::Path::new("game.gbc")),
+        None
+    );
+}
+
+#[test]
+fn mapper_kind_is_inferred_only_from_explicit_mapper_path_tags() {
+    assert_eq!(
+        Sega8MapperKind::from_path(std::path::Path::new("game [mapper=janggun].sms")),
+        Some(Sega8MapperKind::Janggun)
+    );
+    assert_eq!(
+        Sega8MapperKind::from_path(std::path::Path::new("game (mapper-msx).sms")),
+        Some(Sega8MapperKind::Msx)
+    );
+    assert_eq!(
+        Sega8MapperKind::from_path(std::path::Path::new("game nemesis mapper.sms")),
+        Some(Sega8MapperKind::Nemesis)
+    );
+    assert_eq!(
+        Sega8MapperKind::from_path(std::path::Path::new("game (Korea).sms")),
         None
     );
 }

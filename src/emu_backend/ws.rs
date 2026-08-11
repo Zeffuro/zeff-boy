@@ -25,7 +25,10 @@ impl crate::emu_core_trait::DebuggableEmulator for WsEmulator {
         self.toggle_breakpoint(addr);
     }
 
-    fn debug_write(&mut self, addr: Address, val: u8) {
+    fn cpu_peek8(&self, addr: Address) -> u8 {
+        self.cpu_peek8(addr)
+    }
+    fn cpu_write8(&mut self, addr: Address, val: u8) {
         self.cpu_write8(addr, val);
     }
     fn is_cpu_suspended(&self) -> bool {
@@ -187,7 +190,9 @@ impl EmulatorCore for WsBackend {
             }
             MemoryRegionKind::PaletteRam
             | MemoryRegionKind::Oam
-            | MemoryRegionKind::IoRegisters => {
+            | MemoryRegionKind::IoRegisters
+            | MemoryRegionKind::ExternalWorkRam
+            | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(
                     "WonderSwan memory region '{}' is not exposed as a copyable region",
                     region.id

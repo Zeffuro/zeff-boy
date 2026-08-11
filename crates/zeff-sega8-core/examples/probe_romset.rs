@@ -21,6 +21,13 @@ const SUPPORTED_ROM_EXTENSIONS: &[&str] = &["sms", "gg", "sg", "sc"];
 const ARCHIVE_EXTENSION: &str = "zip";
 const FNV1A64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A64_PRIME: u64 = 0x100000001b3;
+const KOREAN_MAPPER_BANK_REGISTER: u16 = 0xA000;
+const MSX_MAPPER_REGISTER_START: u16 = 0x0000;
+const MSX_MAPPER_REGISTER_END: u16 = 0x0003;
+const JANGGUN_MAPPER_REGISTER_0: u16 = 0x4000;
+const JANGGUN_MAPPER_REGISTER_1: u16 = 0x6000;
+const JANGGUN_MAPPER_REGISTER_2: u16 = 0x8000;
+const JANGGUN_MAPPER_REGISTER_3: u16 = 0xA000;
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -71,9 +78,16 @@ struct SystemStats {
     read_errors: usize,
     sega_mapper_write_roms: usize,
     codemasters_like_mapper_write_roms: usize,
+    korean_mapper_write_roms: usize,
+    msx_like_mapper_write_roms: usize,
+    janggun_mapper_write_roms: usize,
     other_rom_space_write_roms: usize,
     sega_mapper_kind_roms: usize,
     codemasters_mapper_kind_roms: usize,
+    korean_mapper_kind_roms: usize,
+    msx_mapper_kind_roms: usize,
+    nemesis_mapper_kind_roms: usize,
+    janggun_mapper_kind_roms: usize,
     frame_probed_roms: usize,
     frame_completed_roms: usize,
     frame_suspended_roms: usize,
@@ -97,6 +111,9 @@ struct SystemStats {
 struct RomProbeObservations {
     sega_mapper_write: bool,
     codemasters_like_mapper_write: bool,
+    korean_mapper_write: bool,
+    msx_like_mapper_write: bool,
+    janggun_mapper_write: bool,
     other_rom_space_write: bool,
 }
 
@@ -513,6 +530,10 @@ fn probe_rom(bytes: &[u8], path: &Path, config: &Config, report: &mut ProbeRepor
     match mapper_kind {
         Sega8MapperKind::Sega => stats.sega_mapper_kind_roms += 1,
         Sega8MapperKind::Codemasters => stats.codemasters_mapper_kind_roms += 1,
+        Sega8MapperKind::Korean => stats.korean_mapper_kind_roms += 1,
+        Sega8MapperKind::Msx => stats.msx_mapper_kind_roms += 1,
+        Sega8MapperKind::Nemesis => stats.nemesis_mapper_kind_roms += 1,
+        Sega8MapperKind::Janggun => stats.janggun_mapper_kind_roms += 1,
     }
 
     let mut bus_observations = RomProbeObservations::default();
@@ -532,6 +553,9 @@ fn probe_rom(bytes: &[u8], path: &Path, config: &Config, report: &mut ProbeRepor
     stats.sega_mapper_write_roms += usize::from(bus_observations.sega_mapper_write);
     stats.codemasters_like_mapper_write_roms +=
         usize::from(bus_observations.codemasters_like_mapper_write);
+    stats.korean_mapper_write_roms += usize::from(bus_observations.korean_mapper_write);
+    stats.msx_like_mapper_write_roms += usize::from(bus_observations.msx_like_mapper_write);
+    stats.janggun_mapper_write_roms += usize::from(bus_observations.janggun_mapper_write);
     stats.other_rom_space_write_roms += usize::from(bus_observations.other_rom_space_write);
 
     if let Some(trap) = emulator.cpu_trap() {
@@ -843,11 +867,28 @@ fn record_observed_bus_event(observations: &mut RomProbeObservations, event: Cpu
         return;
     };
 
+    let mut known_mapper_write = false;
     if is_sega_mapper_register(addr) {
         observations.sega_mapper_write = true;
-    } else if is_codemasters_like_mapper_register(addr) {
+        known_mapper_write = true;
+    }
+    if is_codemasters_like_mapper_register(addr) {
         observations.codemasters_like_mapper_write = true;
-    } else if is_rom_space(addr) {
+        known_mapper_write = true;
+    }
+    if is_korean_mapper_register(addr) {
+        observations.korean_mapper_write = true;
+        known_mapper_write = true;
+    }
+    if is_msx_like_mapper_register(addr) {
+        observations.msx_like_mapper_write = true;
+        known_mapper_write = true;
+    }
+    if is_janggun_mapper_register(addr) {
+        observations.janggun_mapper_write = true;
+        known_mapper_write = true;
+    }
+    if !known_mapper_write && is_rom_space(addr) {
         observations.other_rom_space_write = true;
     }
 }
@@ -861,6 +902,24 @@ fn is_sega_mapper_register(addr: u16) -> bool {
 
 fn is_codemasters_like_mapper_register(addr: u16) -> bool {
     matches!(addr, SLOT0_START | SLOT1_START | SLOT2_START)
+}
+
+fn is_korean_mapper_register(addr: u16) -> bool {
+    addr == KOREAN_MAPPER_BANK_REGISTER
+}
+
+fn is_msx_like_mapper_register(addr: u16) -> bool {
+    (MSX_MAPPER_REGISTER_START..=MSX_MAPPER_REGISTER_END).contains(&addr)
+}
+
+fn is_janggun_mapper_register(addr: u16) -> bool {
+    matches!(
+        addr,
+        JANGGUN_MAPPER_REGISTER_0
+            | JANGGUN_MAPPER_REGISTER_1
+            | JANGGUN_MAPPER_REGISTER_2
+            | JANGGUN_MAPPER_REGISTER_3
+    )
 }
 
 fn is_rom_space(addr: u16) -> bool {
@@ -908,7 +967,7 @@ fn print_report(report: &ProbeReport) {
     for (system, stats) in &report.systems {
         println!();
         println!(
-            "{system}: loaded={} trapped={} completed_window={} load_errors={} read_errors={} mapper_kind(sega={} codemasters={}) mapper_writes(sega={} codemasters_like={} other_rom_space={})",
+            "{system}: loaded={} trapped={} completed_window={} load_errors={} read_errors={} mapper_kind(sega={} codemasters={} korean={} msx={} nemesis={} janggun={}) mapper_writes(sega={} codemasters_like={} korean={} msx_like={} janggun={} other_rom_space={})",
             stats.loaded,
             stats.trapped,
             stats.completed_window,
@@ -916,8 +975,15 @@ fn print_report(report: &ProbeReport) {
             stats.read_errors,
             stats.sega_mapper_kind_roms,
             stats.codemasters_mapper_kind_roms,
+            stats.korean_mapper_kind_roms,
+            stats.msx_mapper_kind_roms,
+            stats.nemesis_mapper_kind_roms,
+            stats.janggun_mapper_kind_roms,
             stats.sega_mapper_write_roms,
             stats.codemasters_like_mapper_write_roms,
+            stats.korean_mapper_write_roms,
+            stats.msx_like_mapper_write_roms,
+            stats.janggun_mapper_write_roms,
             stats.other_rom_space_write_roms
         );
 

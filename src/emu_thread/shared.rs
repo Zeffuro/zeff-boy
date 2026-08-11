@@ -84,7 +84,7 @@ impl EmuThread {
     ) {
         if matches!(resp, EmuResponse::LoadStateOk { .. }) {
             rewind_buffer.clear();
-            Self::install_rom_patches(backend, cheats);
+            backend.install_rom_patches(cheats);
         }
     }
 
@@ -255,21 +255,7 @@ impl EmuThread {
     ) {
         for _ in 0..n {
             backend.step_frame();
-            if let Some(gb) = backend.gb_mut() {
-                Self::apply_ram_cheats(&mut gb.emu, cheats);
-            }
-            if let Some(nes) = backend.nes_mut() {
-                Self::apply_nes_ram_cheats(&mut nes.emu, cheats);
-            }
-            if let Some(gba) = backend.gba_mut() {
-                Self::apply_gba_ram_cheats(&mut gba.emu, cheats);
-            }
-            if let Some(sega8) = backend.sega8_mut() {
-                Self::apply_sega8_ram_cheats(&mut sega8.emu, cheats);
-            }
-            if let Some(ws) = backend.ws_mut() {
-                Self::apply_ws_ram_cheats(&mut ws.emu, cheats);
-            }
+            backend.apply_ram_cheats(cheats);
             if backend.is_suspended() {
                 break;
             }
@@ -300,19 +286,7 @@ impl EmuThread {
             EmuBackend::Ws(ws) => ui::collect_ws_snapshot(&ws.emu, snapshot, buffers),
             EmuBackend::Sega8(sega8) => ui::collect_sega8_snapshot(&sega8.emu, snapshot, buffers),
         };
-        data.core_features = Some(ui::CoreFeatureInfo {
-            core_family: backend.core_family(),
-            save_ram_kind: backend.save_ram_kind(),
-            has_battery: backend.has_battery(),
-            system_ram_len: backend.system_ram_len(),
-            video_ram_len: backend.video_ram_len(),
-            memory_regions: backend.memory_regions(),
-            cheat_features: ui::CheatFeatureInfo::for_system(backend.system()),
-            supports_save_states: true,
-            supports_rewind: true,
-            supports_debugger: backend.supports_debugger(),
-            supports_opcode_history: backend.supports_opcode_history(),
-        });
+        data.core_features = Some(backend.capabilities());
         data
     }
 

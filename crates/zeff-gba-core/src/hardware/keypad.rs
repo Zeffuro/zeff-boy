@@ -58,4 +58,15 @@ mod tests {
         keypad.set_host_input(0b11_0011, 0b0101);
         assert_eq!(keypad.read_keyinput() & 0x03D3, 0x0080);
     }
+
+    #[test]
+    fn maps_host_shoulders_to_l_and_r_bits() {
+        let mut keypad = Keypad::new();
+
+        keypad.set_host_input(0x30, 0);
+
+        assert_eq!(keypad.read_keyinput() & 0x0100, 0);
+        assert_eq!(keypad.read_keyinput() & 0x0200, 0);
+        assert_eq!(keypad.read_keyinput() & 0x00FF, 0x00FF);
+    }
 }

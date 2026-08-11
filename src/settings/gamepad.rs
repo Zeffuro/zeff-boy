@@ -22,6 +22,14 @@ fn default_gp_b() -> String {
     "East".to_string()
 }
 
+fn default_gp_l() -> String {
+    "LeftTrigger".to_string()
+}
+
+fn default_gp_r() -> String {
+    "RightTrigger".to_string()
+}
+
 fn default_gp_start() -> String {
     "Start".to_string()
 }
@@ -59,6 +67,8 @@ pub(crate) enum GamepadAction {
 pub(crate) struct GamepadBindings {
     pub(crate) a: String,
     pub(crate) b: String,
+    pub(crate) l: String,
+    pub(crate) r: String,
     pub(crate) start: String,
     pub(crate) select: String,
     pub(crate) up: String,
@@ -69,6 +79,10 @@ pub(crate) struct GamepadBindings {
     pub(crate) p2_a: String,
     #[serde(default = "default_gp_b")]
     pub(crate) p2_b: String,
+    #[serde(default = "default_gp_l")]
+    pub(crate) p2_l: String,
+    #[serde(default = "default_gp_r")]
+    pub(crate) p2_r: String,
     #[serde(default = "default_gp_start")]
     pub(crate) p2_start: String,
     #[serde(default = "default_gp_select")]
@@ -120,6 +134,8 @@ impl Default for GamepadBindings {
         Self {
             a: default_gp_a(),
             b: default_gp_b(),
+            l: default_gp_l(),
+            r: default_gp_r(),
             start: default_gp_start(),
             select: default_gp_select(),
             up: default_gp_up(),
@@ -128,6 +144,8 @@ impl Default for GamepadBindings {
             right: default_gp_right(),
             p2_a: default_gp_a(),
             p2_b: default_gp_b(),
+            p2_l: default_gp_l(),
+            p2_r: default_gp_r(),
             p2_start: default_gp_start(),
             p2_select: default_gp_select(),
             p2_up: default_gp_up(),
@@ -206,17 +224,11 @@ impl GamepadBindings {
             && self.ws_start.is_empty()
     }
 
-    pub(crate) fn map_button_name(
-        &self,
-        name: &str,
-    ) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
+    pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::input::HostButton> {
         self.map_button_name_for_player(name, 1)
     }
 
-    pub(crate) fn map_button_name_p2(
-        &self,
-        name: &str,
-    ) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
+    pub(crate) fn map_button_name_p2(&self, name: &str) -> Option<crate::input::HostButton> {
         self.map_button_name_for_player(name, 2)
     }
 
@@ -224,31 +236,37 @@ impl GamepadBindings {
         &self,
         name: &str,
         player: u8,
-    ) -> Option<zeff_gb_core::hardware::joypad::JoypadKey> {
-        use zeff_gb_core::hardware::joypad::JoypadKey;
+    ) -> Option<crate::input::HostButton> {
+        use crate::input::HostButton;
         if name == self.get_for_player(BindingAction::A, player) {
-            return Some(JoypadKey::A);
+            return Some(HostButton::A);
         }
         if name == self.get_for_player(BindingAction::B, player) {
-            return Some(JoypadKey::B);
+            return Some(HostButton::B);
+        }
+        if name == self.get_for_player(BindingAction::L, player) {
+            return Some(HostButton::L);
+        }
+        if name == self.get_for_player(BindingAction::R, player) {
+            return Some(HostButton::R);
         }
         if name == self.get_for_player(BindingAction::Start, player) {
-            return Some(JoypadKey::Start);
+            return Some(HostButton::Start);
         }
         if name == self.get_for_player(BindingAction::Select, player) {
-            return Some(JoypadKey::Select);
+            return Some(HostButton::Select);
         }
         if name == self.get_for_player(BindingAction::Up, player) {
-            return Some(JoypadKey::Up);
+            return Some(HostButton::Up);
         }
         if name == self.get_for_player(BindingAction::Down, player) {
-            return Some(JoypadKey::Down);
+            return Some(HostButton::Down);
         }
         if name == self.get_for_player(BindingAction::Left, player) {
-            return Some(JoypadKey::Left);
+            return Some(HostButton::Left);
         }
         if name == self.get_for_player(BindingAction::Right, player) {
-            return Some(JoypadKey::Right);
+            return Some(HostButton::Right);
         }
         None
     }
@@ -292,6 +310,8 @@ impl GamepadBindings {
             return match action {
                 BindingAction::A => &self.p2_a,
                 BindingAction::B => &self.p2_b,
+                BindingAction::L => &self.p2_l,
+                BindingAction::R => &self.p2_r,
                 BindingAction::Start => &self.p2_start,
                 BindingAction::Select => &self.p2_select,
                 BindingAction::Up => &self.p2_up,
@@ -304,6 +324,8 @@ impl GamepadBindings {
         match action {
             BindingAction::A => &self.a,
             BindingAction::B => &self.b,
+            BindingAction::L => &self.l,
+            BindingAction::R => &self.r,
             BindingAction::Start => &self.start,
             BindingAction::Select => &self.select,
             BindingAction::Up => &self.up,
@@ -318,6 +340,8 @@ impl GamepadBindings {
         match action {
             BindingAction::A => self.a = s,
             BindingAction::B => self.b = s,
+            BindingAction::L => self.l = s,
+            BindingAction::R => self.r = s,
             BindingAction::Start => self.start = s,
             BindingAction::Select => self.select = s,
             BindingAction::Up => self.up = s,
@@ -332,6 +356,8 @@ impl GamepadBindings {
         match action {
             BindingAction::A => self.p2_a = s,
             BindingAction::B => self.p2_b = s,
+            BindingAction::L => self.p2_l = s,
+            BindingAction::R => self.p2_r = s,
             BindingAction::Start => self.p2_start = s,
             BindingAction::Select => self.p2_select = s,
             BindingAction::Up => self.p2_up = s,

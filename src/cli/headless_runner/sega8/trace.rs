@@ -214,7 +214,7 @@ fn sega8_cpu_trace_suffix(emulator: &Sega8Emulator) -> String {
     let vdp = emulator.bus().vdp();
     let mapper = emulator.bus().mapper();
     format!(
-        "a={} f={} bc={} de={} hl={} ix={} iy={} sp={} i={} r={} iff={} im={:?} v={} h={} status={} line={} mapper={} banks={:02X},{:02X},{:02X} cart_ram={} cart_ram_bank={}",
+        "a={} f={} bc={} de={} hl={} ix={} iy={} sp={} i={} r={} iff={} im={:?} v={} h={} status={} line={} mapper={} memctl={} banks={:02X},{:02X},{:02X} cart_ram={} cart_ram_bank={}",
         format_pc(u64::from(regs.a), 2),
         format_pc(u64::from(regs.f), 2),
         format_pc(u64::from(regs.bc()), 4),
@@ -232,6 +232,7 @@ fn sega8_cpu_trace_suffix(emulator: &Sega8Emulator) -> String {
         format_pc(u64::from(vdp.status()), 2),
         vdp.line_counter(),
         mapper.kind_label(),
+        format_pc(u64::from(emulator.bus().memory_control()), 2),
         mapper.slot_banks()[0],
         mapper.slot_banks()[1],
         mapper.slot_banks()[2],

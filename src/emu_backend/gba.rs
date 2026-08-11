@@ -21,7 +21,10 @@ impl crate::emu_core_trait::DebuggableEmulator for GbaEmulator {
     fn toggle_breakpoint(&mut self, addr: Address) {
         self.toggle_breakpoint(addr);
     }
-    fn debug_write(&mut self, addr: Address, val: u8) {
+    fn cpu_peek8(&self, addr: Address) -> u8 {
+        self.cpu_peek8(addr)
+    }
+    fn cpu_write8(&mut self, addr: Address, val: u8) {
         self.cpu_write8(addr, val);
     }
     fn is_cpu_suspended(&self) -> bool {
@@ -138,6 +141,14 @@ impl EmulatorCore for GbaBackend {
         ewram.len() + iwram.len()
     }
 
+    fn external_work_ram_len(&self) -> usize {
+        self.emu.system_ram().0.len()
+    }
+
+    fn internal_work_ram_len(&self) -> usize {
+        self.emu.system_ram().1.len()
+    }
+
     fn video_ram_len(&self) -> usize {
         self.emu.video_ram_snapshot().len()
     }
@@ -183,6 +194,8 @@ impl EmulatorCore for GbaBackend {
                 out.extend_from_slice(ewram);
                 out.extend_from_slice(iwram);
             }
+            MemoryRegionKind::ExternalWorkRam => copy_slice_to_vec(out, self.emu.system_ram().0),
+            MemoryRegionKind::InternalWorkRam => copy_slice_to_vec(out, self.emu.system_ram().1),
             MemoryRegionKind::VideoRam => copy_slice_to_vec(out, self.emu.video_ram_snapshot()),
             MemoryRegionKind::PaletteRam => copy_slice_to_vec(out, self.emu.palette_ram_snapshot()),
             MemoryRegionKind::Oam => copy_slice_to_vec(out, self.emu.oam_snapshot()),

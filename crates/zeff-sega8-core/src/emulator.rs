@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
 use crate::hardware::bus::Bus;
-use crate::hardware::cartridge::{Cartridge, Sega8System, SystemHint};
+use crate::hardware::cartridge::{Cartridge, Sega8MapperKind, Sega8System, SystemHint};
 use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, RGBA_CHANNELS, SMS_SCREEN_H, SMS_SCREEN_W,
 };
@@ -34,6 +34,77 @@ const SMS_PAD_RIGHT: u8 = 1 << 3;
 const SMS_PAD_BUTTON_1: u8 = 1 << 4;
 const SMS_PAD_BUTTON_2: u8 = 1 << 5;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sega8LoadConfig {
+    pub sample_rate: u32,
+    pub system_hint: SystemHint,
+    pub mapper_kind: Option<Sega8MapperKind>,
+    pub video_standard: Option<Sega8VideoStandard>,
+    pub console_region: Option<Sega8Region>,
+    pub console_region_fallback: Option<Sega8Region>,
+}
+
+impl Default for Sega8LoadConfig {
+    fn default() -> Self {
+        Self {
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            system_hint: SystemHint::Auto,
+            mapper_kind: None,
+            video_standard: None,
+            console_region: None,
+            console_region_fallback: None,
+        }
+    }
+}
+
+impl Sega8LoadConfig {
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            sample_rate,
+            ..Self::default()
+        }
+    }
+
+    pub fn from_path(sample_rate: u32, path: &Path) -> Self {
+        Self {
+            sample_rate,
+            system_hint: SystemHint::from_path(path).unwrap_or_default(),
+            mapper_kind: Sega8MapperKind::from_path(path),
+            video_standard: Sega8VideoStandard::from_path(path),
+            console_region_fallback: Sega8Region::from_path(path),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_system_hint(mut self, system_hint: SystemHint) -> Self {
+        self.system_hint = system_hint;
+        self
+    }
+
+    pub fn with_mapper_kind(mut self, mapper_kind: Option<Sega8MapperKind>) -> Self {
+        self.mapper_kind = mapper_kind;
+        self
+    }
+
+    pub fn with_video_standard(mut self, video_standard: Sega8VideoStandard) -> Self {
+        self.video_standard = Some(video_standard);
+        self
+    }
+
+    pub fn with_console_region(mut self, console_region: Option<Sega8Region>) -> Self {
+        self.console_region = console_region;
+        self
+    }
+
+    pub fn with_console_region_fallback(
+        mut self,
+        console_region_fallback: Option<Sega8Region>,
+    ) -> Self {
+        self.console_region_fallback = console_region_fallback;
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct Emulator {
     pub(crate) cpu: Cpu,
@@ -50,7 +121,7 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new(rom_data: &[u8], sample_rate: u32) -> anyhow::Result<Self> {
-        Self::new_with_hint(rom_data, sample_rate, SystemHint::Auto)
+        Self::new_with_config(rom_data, Sega8LoadConfig::new(sample_rate))
     }
 
     pub fn new_with_path_hint(
@@ -58,17 +129,7 @@ impl Emulator {
         sample_rate: u32,
         path: &Path,
     ) -> anyhow::Result<Self> {
-        let hint = SystemHint::from_path(path).unwrap_or(SystemHint::Auto);
-        let video_standard = Sega8VideoStandard::from_path(path).unwrap_or_default();
-        let console_region_fallback = Sega8Region::from_path(path);
-        Self::new_with_hint_video_standard_region_fallback(
-            rom_data,
-            sample_rate,
-            hint,
-            video_standard,
-            None,
-            console_region_fallback,
-        )
+        Self::new_with_config(rom_data, Sega8LoadConfig::from_path(sample_rate, path))
     }
 
     pub fn new_with_hint(
@@ -76,11 +137,9 @@ impl Emulator {
         sample_rate: u32,
         hint: SystemHint,
     ) -> anyhow::Result<Self> {
-        Self::new_with_hint_and_video_standard(
+        Self::new_with_config(
             rom_data,
-            sample_rate,
-            hint,
-            Sega8VideoStandard::default(),
+            Sega8LoadConfig::new(sample_rate).with_system_hint(hint),
         )
     }
 
@@ -90,12 +149,11 @@ impl Emulator {
         hint: SystemHint,
         video_standard: Sega8VideoStandard,
     ) -> anyhow::Result<Self> {
-        Self::new_with_hint_video_standard_and_region(
+        Self::new_with_config(
             rom_data,
-            sample_rate,
-            hint,
-            video_standard,
-            None,
+            Sega8LoadConfig::new(sample_rate)
+                .with_system_hint(hint)
+                .with_video_standard(video_standard),
         )
     }
 
@@ -106,13 +164,12 @@ impl Emulator {
         video_standard: Sega8VideoStandard,
         console_region: Option<Sega8Region>,
     ) -> anyhow::Result<Self> {
-        Self::new_with_hint_video_standard_region_fallback(
+        Self::new_with_config(
             rom_data,
-            sample_rate,
-            hint,
-            video_standard,
-            console_region,
-            None,
+            Sega8LoadConfig::new(sample_rate)
+                .with_system_hint(hint)
+                .with_video_standard(video_standard)
+                .with_console_region(console_region),
         )
     }
 
@@ -124,19 +181,36 @@ impl Emulator {
         console_region: Option<Sega8Region>,
         console_region_fallback: Option<Sega8Region>,
     ) -> anyhow::Result<Self> {
-        let sample_rate = if sample_rate == 0 {
+        Self::new_with_config(
+            rom_data,
+            Sega8LoadConfig::new(sample_rate)
+                .with_system_hint(hint)
+                .with_video_standard(video_standard)
+                .with_console_region(console_region)
+                .with_console_region_fallback(console_region_fallback),
+        )
+    }
+
+    pub fn new_with_config(rom_data: &[u8], config: Sega8LoadConfig) -> anyhow::Result<Self> {
+        let sample_rate = if config.sample_rate == 0 {
             DEFAULT_SAMPLE_RATE
         } else {
-            sample_rate
+            config.sample_rate
         };
-        let cartridge = Cartridge::load_with_hint(rom_data, hint)?;
-        let console_region = console_region
+        let video_standard = config.video_standard.unwrap_or_default();
+        let cartridge = Cartridge::load_with_hint_and_mapper_kind(
+            rom_data,
+            config.system_hint,
+            config.mapper_kind,
+        )?;
+        let console_region = config
+            .console_region
             .or_else(|| {
                 cartridge
                     .header()
                     .and_then(|header| Sega8Region::from_header_region(header.region))
             })
-            .or(console_region_fallback)
+            .or(config.console_region_fallback)
             .unwrap_or_default();
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let framebuffer = vec![0; framebuffer_len(cartridge.system())];

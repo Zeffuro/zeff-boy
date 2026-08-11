@@ -1,11 +1,11 @@
 use serde_json::{Value, json};
-use zeff_gb_core::hardware::joypad::JoypadKey;
 
 use super::App;
+use crate::emu_backend::CoreCapabilities;
 use crate::emu_thread::EmuCommand;
+use crate::input::HostButton;
 use crate::live_control::{LiveCommand, LiveReply, PendingButtonRelease};
-use crate::ui::CoreFeatureInfo;
-use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind};
+use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, MemoryRegionView};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::system::CoreFamily;
 
@@ -229,7 +229,7 @@ impl App {
     }
 }
 
-fn core_features_json(features: &CoreFeatureInfo) -> Value {
+fn core_features_json(features: &CoreCapabilities) -> Value {
     json!({
         "core_family": core_family_label(features.core_family),
         "save_ram": save_ram_kind_json(features.save_ram_kind),
@@ -237,6 +237,7 @@ fn core_features_json(features: &CoreFeatureInfo) -> Value {
         "system_ram_len": features.system_ram_len,
         "video_ram_len": features.video_ram_len,
         "memory_regions": features.memory_regions.iter().map(memory_region_json).collect::<Vec<_>>(),
+        "input": input_features_json(&features.input_features),
         "cheats": cheat_features_json(&features.cheat_features),
         "supports_save_states": features.supports_save_states,
         "supports_rewind": features.supports_rewind,
@@ -245,7 +246,16 @@ fn core_features_json(features: &CoreFeatureInfo) -> Value {
     })
 }
 
-fn cheat_features_json(features: &crate::ui::CheatFeatureInfo) -> Value {
+fn input_features_json(features: &crate::emu_backend::InputCapabilities) -> Value {
+    json!({
+        "buttons": features.buttons.iter().map(|button| button.label()).collect::<Vec<_>>(),
+        "supports_player_two": features.supports_player_two,
+        "supports_lightgun": features.supports_lightgun,
+        "supports_wonderswan_direct_buttons": features.supports_wonderswan_direct_buttons,
+    })
+}
+
+fn cheat_features_json(features: &crate::emu_backend::CheatCapabilities) -> Value {
     json!({
         "supports_user_cheats": features.supports_user_cheats,
         "supports_libretro_database": features.supports_libretro_database,
@@ -272,7 +282,11 @@ fn memory_region_json(region: &MemoryRegionDescriptor) -> Value {
         "kind": memory_region_kind_label(region.kind),
         "size": region.size,
         "address_bits": region.address_bits,
+        "readable": region.readable,
         "writable": region.writable,
+        "side_effect_free": region.side_effect_free,
+        "copyable": region.copyable,
+        "view": memory_region_view_label(region.view),
         "aliases": region.aliases,
     })
 }
@@ -281,12 +295,23 @@ fn memory_region_kind_label(kind: MemoryRegionKind) -> &'static str {
     match kind {
         MemoryRegionKind::CpuAddressSpace => "cpu_address_space",
         MemoryRegionKind::SystemRam => "system_ram",
+        MemoryRegionKind::ExternalWorkRam => "external_work_ram",
+        MemoryRegionKind::InternalWorkRam => "internal_work_ram",
         MemoryRegionKind::VideoRam => "video_ram",
         MemoryRegionKind::PaletteRam => "palette_ram",
         MemoryRegionKind::Oam => "oam",
         MemoryRegionKind::IoRegisters => "io_registers",
         MemoryRegionKind::SaveRam => "save_ram",
         MemoryRegionKind::Framebuffer => "framebuffer",
+    }
+}
+
+fn memory_region_view_label(view: MemoryRegionView) -> &'static str {
+    match view {
+        MemoryRegionView::AddressSpace => "address_space",
+        MemoryRegionView::Physical => "physical",
+        MemoryRegionView::Aggregate => "aggregate",
+        MemoryRegionView::Derived => "derived",
     }
 }
 
@@ -310,7 +335,7 @@ fn save_ram_kind_json(kind: SaveRamKind) -> Value {
 fn set_remote_player(
     host_input: &mut crate::app::input::HostInputState,
     player: u8,
-    key: JoypadKey,
+    key: HostButton,
     pressed: bool,
 ) {
     if player == 2 {
@@ -320,12 +345,12 @@ fn set_remote_player(
     }
 }
 
-fn same_pending_button(release: &PendingButtonRelease, player: u8, key: JoypadKey) -> bool {
+fn same_pending_button(release: &PendingButtonRelease, player: u8, key: HostButton) -> bool {
     release.player == player && same_joypad_key(release.key, key)
 }
 
-fn same_joypad_key(a: JoypadKey, b: JoypadKey) -> bool {
-    std::mem::discriminant(&a) == std::mem::discriminant(&b)
+fn same_joypad_key(a: HostButton, b: HostButton) -> bool {
+    a == b
 }
 
 #[cfg(test)]
@@ -334,14 +359,17 @@ mod tests {
 
     #[test]
     fn core_features_json_exposes_opcode_history_support() {
-        let features = CoreFeatureInfo {
+        let features = CoreCapabilities {
             core_family: CoreFamily::Sega8,
             save_ram_kind: SaveRamKind::MapperRamUnknown { size: 0x8000 },
             has_battery: false,
             system_ram_len: 0x2000,
             video_ram_len: 0x4000,
             memory_regions: Vec::new(),
-            cheat_features: crate::ui::CheatFeatureInfo::for_system(
+            input_features: crate::emu_backend::InputCapabilities::for_system(
+                crate::emu_backend::ActiveSystem::MasterSystem,
+            ),
+            cheat_features: crate::emu_backend::CheatCapabilities::for_system(
                 crate::emu_backend::ActiveSystem::MasterSystem,
             ),
             supports_save_states: true,
@@ -355,8 +383,25 @@ mod tests {
         assert_eq!(json["core_family"], "sega8");
         assert_eq!(json["supports_debugger"], true);
         assert_eq!(json["supports_opcode_history"], true);
+        assert_eq!(json["input"]["supports_player_two"], true);
+        assert_eq!(json["input"]["supports_lightgun"], false);
+        assert_eq!(json["input"]["buttons"][0], "Up");
         assert_eq!(json["cheats"]["supports_user_cheats"], true);
         assert_eq!(json["cheats"]["supports_rom_patches"], true);
         assert_eq!(json["cheats"]["formats"][1], "Action Replay");
+    }
+
+    #[test]
+    fn memory_region_json_exposes_view_and_access_metadata() {
+        let region = MemoryRegionDescriptor::cpu_address_space(20);
+
+        let json = memory_region_json(&region);
+
+        assert_eq!(json["id"], "cpu");
+        assert_eq!(json["view"], "address_space");
+        assert_eq!(json["readable"], true);
+        assert_eq!(json["writable"], true);
+        assert_eq!(json["side_effect_free"], true);
+        assert_eq!(json["copyable"], false);
     }
 }

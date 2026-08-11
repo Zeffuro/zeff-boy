@@ -10,7 +10,9 @@ mod wire;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use types::{LiveCommand, LiveReply, LiveRequest, PendingButtonRelease};
+pub(crate) use types::{
+    LiveCommand, LiveMemorySpace, LiveReply, LiveRequest, PendingButtonRelease,
+};
 
 const ENV_VAR: &str = "ZEFF_REMOTE_CONTROL";
 const DEFAULT_ADDR: &str = "127.0.0.1:17684";

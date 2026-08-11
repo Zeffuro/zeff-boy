@@ -51,7 +51,7 @@ fn apply_debug_actions_to(emu: &mut impl DebuggableEmulator, actions: &DebugUiAc
             DebugAction::AddWatchpoint(addr, wt) => emu.add_watchpoint(addr, wt),
             DebugAction::RemoveBreakpoint(addr) => emu.remove_breakpoint(addr),
             DebugAction::ToggleBreakpoint(addr) => emu.toggle_breakpoint(addr),
-            DebugAction::WriteMemory(addr, val) => emu.debug_write(addr, val),
+            DebugAction::WriteMemory(addr, val) => emu.cpu_write8(addr, val),
         }
     }
 }

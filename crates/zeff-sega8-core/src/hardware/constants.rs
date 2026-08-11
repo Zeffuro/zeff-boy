@@ -14,11 +14,14 @@ pub const SMS_Z80_CYCLES_PER_FRAME: u32 = SMS_SCANLINE_Z80_CYCLES * (SMS_TOTAL_S
 pub const SEGA8_Z80_CLOCK_HZ_APPROX: u32 = SMS_Z80_CYCLES_PER_FRAME * SEGA8_NTSC_FRAME_RATE_APPROX;
 
 pub const ROM_BANK_SIZE: usize = 0x4000;
+pub const ROM_PAGE_8K_SIZE: usize = 0x2000;
 pub const SMS_WORK_RAM_SIZE: usize = 0x2000;
+pub const SG_WORK_RAM_SIZE: usize = 0x0400;
 pub const SMS_CARTRIDGE_RAM_BANK_SIZE: usize = 0x4000;
 pub const SMS_CARTRIDGE_RAM_BANK_COUNT: usize = 2;
 pub const SMS_CARTRIDGE_RAM_SIZE: usize =
     SMS_CARTRIDGE_RAM_BANK_SIZE * SMS_CARTRIDGE_RAM_BANK_COUNT;
+pub const CODEMASTERS_CARTRIDGE_RAM_SIZE: usize = 0x2000;
 pub const SMS_VRAM_SIZE: usize = 0x4000;
 pub const SMS_CRAM_SIZE: usize = 0x40;
 pub const SMS_VDP_REGISTER_COUNT: usize = 16;
@@ -53,6 +56,7 @@ pub const SLOT2_END: u16 = 0xBFFF;
 pub const WORK_RAM_START: u16 = 0xC000;
 pub const WORK_RAM_END: u16 = 0xFFFF;
 pub const WORK_RAM_MASK: u16 = 0x1FFF;
+pub const SG_WORK_RAM_MASK: u16 = 0x03FF;
 
 pub const MAPPER_FRAME_CONTROL: u16 = 0xFFFC;
 pub const MAPPER_SLOT0_BANK: u16 = 0xFFFD;
@@ -69,6 +73,7 @@ pub const IO_PORT_GG_SERIAL_TX: u8 = 0x03;
 pub const IO_PORT_GG_SERIAL_RX: u8 = 0x04;
 pub const IO_PORT_GG_SERIAL_CONTROL: u8 = 0x05;
 pub const IO_PORT_GG_PSG_STEREO: u8 = 0x06;
+pub const IO_PORT_MEMORY_CONTROL: u8 = 0x3E;
 pub const IO_PORT_CONTROL: u8 = 0x3F;
 pub const IO_PORT_V_COUNTER: u8 = 0x7E;
 pub const IO_PORT_H_COUNTER: u8 = 0x7F;
@@ -110,6 +115,7 @@ pub const MODE4_SPRITE_TERMINATOR_Y: u8 = 0xD0;
 
 pub const Z80_INTERRUPT_ACK_OPCODE: u8 = 0xFF;
 pub const Z80_INTERRUPT_VECTOR_IM1: u16 = 0x0038;
+pub const Z80_INTERRUPT_VECTOR_NMI: u16 = 0x0066;
 pub const Z80_RESET_PC: u16 = 0x0000;
 pub const Z80_RESET_SP: u16 = 0xDFF0;
 pub const Z80_FLAG_SIGN: u8 = 0x80;

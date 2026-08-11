@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_sega8_core::emulator::Sega8LoadConfig;
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -169,15 +170,14 @@ fn load_sega8_backend(
         .or_else(|| super::sega8::video_standard_from_paths(source_path, rom_path))
         .unwrap_or_default();
     let console_region_fallback = super::sega8::console_region_from_paths(source_path, rom_path);
-    let mut emu =
-        zeff_sega8_core::emulator::Emulator::new_with_hint_video_standard_region_fallback(
-            rom_data,
-            sample_rate,
-            hint,
-            video_standard,
-            config.sega8_console_region,
-            console_region_fallback,
-        )?;
+    let mapper_kind = super::sega8::mapper_kind_from_paths(source_path, rom_path);
+    let load_config = Sega8LoadConfig::new(sample_rate)
+        .with_system_hint(hint)
+        .with_mapper_kind(mapper_kind)
+        .with_video_standard(video_standard)
+        .with_console_region(config.sega8_console_region)
+        .with_console_region_fallback(console_region_fallback);
+    let mut emu = zeff_sega8_core::emulator::Emulator::new_with_config(rom_data, load_config)?;
     log_sram_result(super::sega8::try_load_battery_sram(&mut emu, rom_path));
     Ok(wrap_sega8_backend(emu, source_path, rom_path))
 }

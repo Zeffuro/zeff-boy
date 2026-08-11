@@ -1,5 +1,6 @@
 use crate::emulator::Emulator;
 use crate::hardware::cpu::CpuState;
+use zeff_emu_common::cheats::CheatByteTarget;
 
 impl Emulator {
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
@@ -84,5 +85,15 @@ impl Emulator {
 
     pub fn set_cpu_pc(&mut self, pc: u16) {
         self.cpu.pc = pc;
+    }
+}
+
+impl CheatByteTarget<u16> for Emulator {
+    fn cheat_peek8(&self, address: u16) -> u8 {
+        self.cpu_peek(address)
+    }
+
+    fn cheat_write8(&mut self, address: u16, value: u8) {
+        self.cpu_write(address, value);
     }
 }

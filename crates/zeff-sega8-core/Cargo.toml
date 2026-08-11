@@ -9,6 +9,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 anyhow = "1.0.104"
+crc32fast = "1.5.0"
 sha2 = "0.11.0"
 zeff-emu-common = { path = "../zeff-emu-common" }
 

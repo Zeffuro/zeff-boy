@@ -1,6 +1,7 @@
 use crate::emulator::Emulator;
 use crate::emulator::WsOpcodeRecord;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::cheats::CheatByteTarget;
 use zeff_emu_common::debug::{AddressWatchHit, AddressWatchpoint, WatchType};
 
 impl Emulator {
@@ -81,5 +82,15 @@ impl Emulator {
 
     pub fn recent_opcodes(&self, n: usize) -> Vec<WsOpcodeRecord> {
         self.opcode_log.recent(n)
+    }
+}
+
+impl CheatByteTarget<Address> for Emulator {
+    fn cheat_peek8(&self, address: Address) -> u8 {
+        self.cpu_peek8(address)
+    }
+
+    fn cheat_write8(&mut self, address: Address, value: u8) {
+        self.cpu_write8(address, value);
     }
 }

@@ -8,8 +8,25 @@ pub(crate) enum BindingAction {
     Right,
     A,
     B,
+    L,
+    R,
     Start,
     Select,
+}
+
+impl BindingAction {
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::Up,
+        Self::Down,
+        Self::Left,
+        Self::Right,
+        Self::A,
+        Self::B,
+        Self::L,
+        Self::R,
+        Self::Start,
+        Self::Select,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
