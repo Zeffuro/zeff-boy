@@ -132,3 +132,31 @@ fn bess_footer_does_not_break_native_decode() {
     assert_eq!(restored.last_opcode, 0x76);
     assert_eq!(restored.last_opcode_pc, 0x0200);
 }
+
+#[test]
+fn native_decode_restores_cgb_dmg_compat_state_without_serialized_rom() {
+    let rom = vec![0u8; 0x8000];
+    let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
+    assert!(!header.is_cgb_compatible);
+
+    let bus = Bus::new(rom, &header, HardwareMode::CGBNormal).expect("test bus should initialize");
+    let cpu = Cpu::new();
+    let state = SaveStateRef {
+        version: SAVE_STATE_VERSION,
+        rom_hash: [0xEF; 32],
+        cpu: &cpu,
+        bus: &bus,
+        hardware_mode_preference: HardwareModePreference::Auto,
+        hardware_mode: HardwareMode::CGBNormal,
+        cycle_count: 99,
+        last_opcode: 0x10,
+        last_opcode_pc: 0x0300,
+    };
+
+    let bytes = encode_state_bytes(&state).expect("encode should succeed");
+    let restored = decode_state(&bytes).expect("decode should not validate the empty saved ROM");
+
+    assert_eq!(restored.hardware_mode, HardwareMode::CGBNormal);
+    assert_eq!(restored.rom_hash, [0xEF; 32]);
+    assert_eq!(restored.cycle_count, 99);
+}

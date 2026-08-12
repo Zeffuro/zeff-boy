@@ -51,15 +51,11 @@ impl Bus {
     pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
         let hardware_mode = reader.read_hardware_mode()?;
         let cartridge = Cartridge::read_state(reader)?;
-        let cgb_dmg_compat = matches!(
-            hardware_mode,
-            HardwareMode::CGBNormal | HardwareMode::CGBDouble
-        ) && !RomHeader::from_rom(cartridge.rom_bytes())?.is_cgb_compatible;
 
         let mut bus = Self {
             cartridge,
             hardware_mode,
-            cgb_dmg_compat,
+            cgb_dmg_compat: false,
             vram: vec![0u8; VRAM_SIZE * 2].into_boxed_slice(),
             wram: vec![0u8; WRAM_SIZE * 8].into_boxed_slice(),
             vram_bank: 0,
@@ -121,5 +117,13 @@ impl Bus {
         bus.cpu_read_trace.clear();
         bus.cpu_write_trace.clear();
         Ok(bus)
+    }
+
+    pub(crate) fn restore_cartridge_rom_bytes(&mut self, rom: Vec<u8>, header: &RomHeader) {
+        self.cartridge.restore_rom_bytes(rom);
+        self.cgb_dmg_compat = matches!(
+            self.hardware_mode,
+            HardwareMode::CGBNormal | HardwareMode::CGBDouble
+        ) && !header.is_cgb_compatible;
     }
 }

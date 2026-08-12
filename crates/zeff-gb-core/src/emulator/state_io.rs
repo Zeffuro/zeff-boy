@@ -98,7 +98,7 @@ impl Emulator {
 
                     let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
                     let mut restored_bus = state.bus;
-                    restored_bus.cartridge.restore_rom_bytes(rom_bytes);
+                    restored_bus.restore_cartridge_rom_bytes(rom_bytes, &self.header);
                     Self::apply_bus_fixups(
                         &mut restored_bus,
                         self.bus.apu_sample_rate(),
