@@ -41,10 +41,24 @@ impl EmuThread {
             return;
         }
 
+        let mut midi_snapshots = Vec::new();
         if tcp_link.is_some() {
-            Self::step_n_frames_with_tcp_link(backend, UNCAPPED_BATCH_SIZE, cheats, tcp_link);
+            Self::step_n_frames_with_tcp_link(
+                backend,
+                UNCAPPED_BATCH_SIZE,
+                cheats,
+                tcp_link,
+                false,
+                &mut midi_snapshots,
+            );
         } else {
-            Self::step_n_frames(backend, UNCAPPED_BATCH_SIZE, cheats);
+            Self::step_n_frames(
+                backend,
+                UNCAPPED_BATCH_SIZE,
+                cheats,
+                false,
+                &mut midi_snapshots,
+            );
         }
 
         publish_framebuffer(shared_fb, backend.framebuffer());
@@ -56,7 +70,7 @@ impl EmuThread {
             is_mbc7: backend.is_mbc7(),
             is_pocket_camera: backend.is_pocket_camera(),
             rewind_fill: rewind_buffer.fill_ratio(),
-            apu_snapshot: None,
+            apu_snapshots: Vec::new(),
         };
 
         Self::send_frame(frame_tx, drain_rx, result);

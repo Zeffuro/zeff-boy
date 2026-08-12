@@ -112,13 +112,13 @@ impl Emulator {
             Sega8System::MasterSystem => {
                 let area = Mode4RenderArea::new(SMS_SCREEN_W, SMS_SCREEN_H, 0, 0);
                 if self.bus.vdp().mode4_enabled() {
-                    self.bus.vdp().render_mode4_frame_rgba(
+                    self.bus.vdp().render_mode4_presented_frame_rgba(
                         &mut self.framebuffer,
                         area,
                         Mode4ColorMode::Sms,
                     );
                 } else {
-                    self.bus.vdp().render_tms9918_area_rgba(
+                    self.bus.vdp().render_tms9918_presented_area_rgba(
                         &mut self.framebuffer,
                         area,
                         Tms9918ColorMode::Palette,
@@ -129,13 +129,13 @@ impl Emulator {
                 let area =
                     Mode4RenderArea::new(GG_SCREEN_W, GG_SCREEN_H, GG_VIEWPORT_X, GG_VIEWPORT_Y);
                 if self.bus.vdp().mode4_enabled() {
-                    self.bus.vdp().render_mode4_frame_rgba(
+                    self.bus.vdp().render_mode4_presented_frame_rgba(
                         &mut self.framebuffer,
                         area,
                         Mode4ColorMode::GameGear,
                     );
                 } else {
-                    self.bus.vdp().render_tms9918_area_rgba(
+                    self.bus.vdp().render_tms9918_presented_area_rgba(
                         &mut self.framebuffer,
                         area,
                         Tms9918ColorMode::GameGearCram,
@@ -143,7 +143,7 @@ impl Emulator {
                 }
             }
             Sega8System::Sg1000 => {
-                self.bus.vdp().render_tms9918_area_rgba(
+                self.bus.vdp().render_tms9918_presented_area_rgba(
                     &mut self.framebuffer,
                     Mode4RenderArea::new(SMS_SCREEN_W, SMS_SCREEN_H, 0, 0),
                     Tms9918ColorMode::Palette,

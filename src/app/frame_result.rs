@@ -86,7 +86,7 @@ impl App {
 
         if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
-            if let Some(snapshot) = result.apu_snapshot {
+            for snapshot in result.apu_snapshots {
                 recorder.write_apu_snapshot(snapshot);
             }
         }

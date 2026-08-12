@@ -291,6 +291,11 @@ impl EmuBackend {
         dispatch!(self, step_frame())
     }
 
+    #[inline]
+    pub(crate) fn frame_count(&self) -> u64 {
+        dispatch!(self, frame_count())
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn step_game_boy_frame_with_remote_link(
         &mut self,

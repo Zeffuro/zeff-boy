@@ -27,6 +27,7 @@ const SAVE_STATE_VERSION_WITH_GG_SERIAL_FLAGS: u32 = 7;
 const SAVE_STATE_VERSION_WITH_MEMORY_CONTROL: u32 = 8;
 const SAVE_STATE_VERSION_WITH_GG_SERIAL_TIMING: u32 = 9;
 const SAVE_STATE_VERSION_WITH_VDP_CRAM_LATCH: u32 = 10;
+const SAVE_STATE_VERSION_WITH_VDP_SCANLINE_DISPLAY: u32 = 11;
 const IO_CONTROL_DEFAULT: u8 = 0xFF;
 const MEMORY_CONTROL_DEFAULT: u8 = 0x00;
 const MEMORY_CONTROL_IO_DISABLE: u8 = 1 << 2;
@@ -330,7 +331,8 @@ impl Bus {
             SMS_CARTRIDGE_RAM_SIZE,
             "cartridge RAM",
         )?;
-        self.vdp.read_state(r)?;
+        self.vdp
+            .read_state(r, version >= SAVE_STATE_VERSION_WITH_VDP_SCANLINE_DISPLAY)?;
         self.apu.read_state(r)?;
         self.input
             .set_controller_raw(ControllerPort::One, r.read_u8()?);

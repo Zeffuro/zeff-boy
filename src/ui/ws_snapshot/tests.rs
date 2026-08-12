@@ -107,6 +107,7 @@ fn wonder_swan_snapshot_exposes_apu_debug_when_viewer_is_open() {
     emu.io_write8(0x0081, 0x07);
     emu.io_write8(0x0088, 0xF8);
     emu.io_write8(0x0090, 0x01);
+    emu.step_frame();
 
     let data = collect_ws_snapshot(
         &emu,
@@ -124,5 +125,6 @@ fn wonder_swan_snapshot_exposes_apu_debug_when_viewer_is_open() {
     let apu = data.apu_debug.expect("WS APU debug should be populated");
     assert_eq!(apu.channels.len(), 4);
     assert!(apu.channels[0].enabled);
-    assert_eq!(apu.channels[0].waveform.len(), 32);
+    assert!(!apu.master_waveform.is_empty());
+    assert!(!apu.channels[0].waveform.is_empty());
 }

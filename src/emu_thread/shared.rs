@@ -3,6 +3,7 @@ use crate::ui;
 
 use super::types::{publish_framebuffer, publish_owned_framebuffer};
 use super::{EmuResponse, EmuThread, FrameInput, FrameResult, SharedFramebuffer};
+use crate::audio_recorder::MidiApuSnapshot;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::link::gb::GameBoyRemoteLink;
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,9 +35,17 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
+        let midi_capture_active = input.audio.midi_capture_active;
+        let mut midi_snapshots = Vec::new();
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
-            Self::step_n_frames(backend, input.frames, cheats);
+            Self::step_n_frames(
+                backend,
+                input.frames,
+                cheats,
+                midi_capture_active,
+                &mut midi_snapshots,
+            );
         }
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
@@ -48,7 +57,6 @@ impl EmuThread {
 
         Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
-        let midi_capture_active = input.audio.midi_capture_active;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
@@ -58,7 +66,7 @@ impl EmuThread {
             backend,
             reusable_audio,
             ui_data,
-            midi_capture_active,
+            midi_snapshots,
             rewind_buffer.fill_ratio(),
         )
     }
@@ -90,9 +98,18 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
+        let midi_capture_active = input.audio.midi_capture_active;
+        let mut midi_snapshots = Vec::new();
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
-            Self::step_n_frames_with_tcp_link(backend, input.frames, cheats, tcp_link);
+            Self::step_n_frames_with_tcp_link(
+                backend,
+                input.frames,
+                cheats,
+                tcp_link,
+                midi_capture_active,
+                &mut midi_snapshots,
+            );
         }
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
@@ -104,7 +121,6 @@ impl EmuThread {
 
         Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
-        let midi_capture_active = input.audio.midi_capture_active;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
@@ -114,7 +130,7 @@ impl EmuThread {
             backend,
             reusable_audio,
             ui_data,
-            midi_capture_active,
+            midi_snapshots,
             rewind_buffer.fill_ratio(),
         )
     }
@@ -243,10 +259,18 @@ impl EmuThread {
         backend: &mut EmuBackend,
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
+        midi_capture_active: bool,
+        midi_snapshots: &mut Vec<MidiApuSnapshot>,
     ) {
         for _ in 0..n {
+            let frame_count_before = midi_capture_active.then(|| backend.frame_count());
             backend.step_frame();
             backend.apply_ram_cheats(cheats);
+            Self::collect_midi_snapshot_if_frame_advanced(
+                backend,
+                frame_count_before,
+                midi_snapshots,
+            );
             if backend.is_suspended() {
                 break;
             }
@@ -259,8 +283,11 @@ impl EmuThread {
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
         mut tcp_link: Option<&mut GameBoyRemoteLink<TcpLinkTransport>>,
+        midi_capture_active: bool,
+        midi_snapshots: &mut Vec<MidiApuSnapshot>,
     ) {
         for _ in 0..n {
+            let frame_count_before = midi_capture_active.then(|| backend.frame_count());
             if let Some(link) = tcp_link.as_deref_mut() {
                 if backend.step_game_boy_frame_with_remote_link(link).is_err() {
                     link.disconnect();
@@ -271,6 +298,11 @@ impl EmuThread {
                 backend.step_frame();
             }
             backend.apply_ram_cheats(cheats);
+            Self::collect_midi_snapshot_if_frame_advanced(
+                backend,
+                frame_count_before,
+                midi_snapshots,
+            );
 
             if backend.is_suspended() {
                 break;
@@ -290,7 +322,7 @@ impl EmuThread {
         backend: &mut EmuBackend,
         reusable_audio: Option<Vec<f32>>,
         ui_data: ui::UiFrameData,
-        midi_capture_active: bool,
+        apu_snapshots: Vec<MidiApuSnapshot>,
         rewind_fill: f32,
     ) -> FrameResult {
         let rumble = backend.rumble_active();
@@ -300,12 +332,6 @@ impl EmuThread {
         let is_mbc7 = backend.is_mbc7();
         let is_pocket_camera = backend.is_pocket_camera();
 
-        let apu_snapshot = if midi_capture_active {
-            backend.apu_channel_snapshot()
-        } else {
-            None
-        };
-
         FrameResult {
             rumble,
             audio_samples,
@@ -313,7 +339,23 @@ impl EmuThread {
             is_mbc7,
             is_pocket_camera,
             rewind_fill,
-            apu_snapshot,
+            apu_snapshots,
+        }
+    }
+
+    fn collect_midi_snapshot_if_frame_advanced(
+        backend: &EmuBackend,
+        frame_count_before: Option<u64>,
+        midi_snapshots: &mut Vec<MidiApuSnapshot>,
+    ) {
+        let Some(frame_count_before) = frame_count_before else {
+            return;
+        };
+        if backend.frame_count() == frame_count_before {
+            return;
+        }
+        if let Some(snapshot) = backend.apu_channel_snapshot() {
+            midi_snapshots.push(snapshot);
         }
     }
 }
@@ -357,7 +399,7 @@ mod tests {
             &mut backend,
             Some(vec![0.25, -0.25, 0.5, -0.5]),
             ui::UiFrameData::default(),
-            false,
+            Vec::new(),
             0.0,
         );
 
@@ -365,6 +407,23 @@ mod tests {
             result.audio_samples.is_empty(),
             "stale recycled audio samples must be cleared before draining new core audio"
         );
+    }
+
+    #[test]
+    fn step_n_frames_collects_midi_snapshot_per_emulated_frame() {
+        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
+            &[0x00],
+            44_100,
+            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        )
+        .unwrap();
+        let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
+        let mut midi_snapshots = Vec::new();
+
+        EmuThread::step_n_frames(&mut backend, 3, &[], true, &mut midi_snapshots);
+
+        assert_eq!(backend.frame_count(), 3);
+        assert_eq!(midi_snapshots.len(), 3);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -385,8 +444,24 @@ mod tests {
         }
 
         for _ in 0..50 {
-            EmuThread::step_n_frames_with_tcp_link(&mut left, 1, &[], Some(&mut left_link));
-            EmuThread::step_n_frames_with_tcp_link(&mut right, 1, &[], Some(&mut right_link));
+            let mut left_snapshots = Vec::new();
+            EmuThread::step_n_frames_with_tcp_link(
+                &mut left,
+                1,
+                &[],
+                Some(&mut left_link),
+                false,
+                &mut left_snapshots,
+            );
+            let mut right_snapshots = Vec::new();
+            EmuThread::step_n_frames_with_tcp_link(
+                &mut right,
+                1,
+                &[],
+                Some(&mut right_link),
+                false,
+                &mut right_snapshots,
+            );
             let (EmuBackend::Gb(left_gb), EmuBackend::Gb(right_gb)) = (&left, &right) else {
                 panic!("expected GB backends");
             };
@@ -423,12 +498,24 @@ mod tests {
             left.emu.write_byte(SERIAL_SC, 0x81);
         }
 
-        EmuThread::step_n_frames_with_tcp_link(&mut left, 5, &[], Some(&mut left_link));
+        let mut midi_snapshots = Vec::new();
+        EmuThread::step_n_frames_with_tcp_link(
+            &mut left,
+            5,
+            &[],
+            Some(&mut left_link),
+            true,
+            &mut midi_snapshots,
+        );
 
         let EmuBackend::Gb(left) = &left else {
             panic!("expected GB backend");
         };
         assert_eq!(left.emu.frame_count(), 0);
+        assert!(
+            midi_snapshots.is_empty(),
+            "GB link waits must not record MIDI time when no emulated frame advanced"
+        );
         assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
         assert_eq!(
             left.emu.game_boy_link_state().pending_master_byte,
@@ -450,7 +537,15 @@ mod tests {
             left.emu.write_byte(SERIAL_SC, 0x80);
         }
 
-        EmuThread::step_n_frames_with_tcp_link(&mut left, 1, &[], Some(&mut left_link));
+        let mut midi_snapshots = Vec::new();
+        EmuThread::step_n_frames_with_tcp_link(
+            &mut left,
+            1,
+            &[],
+            Some(&mut left_link),
+            false,
+            &mut midi_snapshots,
+        );
 
         let EmuBackend::Gb(left) = &left else {
             panic!("expected GB backend");

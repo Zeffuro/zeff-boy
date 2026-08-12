@@ -35,7 +35,13 @@ fn snapshot_request() -> SnapshotRequest {
 
 #[test]
 fn sega8_snapshot_exposes_live_debug_and_graphics_data() {
-    let emu = Emulator::new_with_hint(&[0x00, 0x76], 48_000, SystemHint::MasterSystem).unwrap();
+    let mut emu = Emulator::new_with_hint(
+        &[0x3E, 0x90, 0xD3, 0x7F, 0x76],
+        48_000,
+        SystemHint::MasterSystem,
+    )
+    .unwrap();
+    emu.step_frame();
 
     let data = collect_sega8_snapshot(
         &emu,
@@ -63,6 +69,14 @@ fn sega8_snapshot_exposes_live_debug_and_graphics_data() {
         .expect("Sega8 snapshot should include APU debug data");
     assert_eq!(apu.channels.len(), 4);
     assert!(apu.master_lines.iter().any(|line| line.contains("stereo=")));
+    assert!(
+        !apu.master_waveform.is_empty(),
+        "Sega8 APU viewer should expose recent master samples"
+    );
+    assert!(
+        !apu.channels[0].waveform.is_empty(),
+        "Sega8 APU viewer should expose recent channel samples"
+    );
     let ConsoleGraphicsData::Sega8(gfx) = data
         .graphics_data
         .as_ref()
@@ -83,7 +97,7 @@ fn sega8_snapshot_exposes_live_debug_and_graphics_data() {
         .find(|section| section.heading == "VDP")
         .expect("Sega8 CPU debug should include a VDP section");
     assert!(vdp_section.lines.iter().any(|line| line.contains("mode4=")));
-    assert_eq!(data.rom_size, 2);
+    assert_eq!(data.rom_size, 5);
 }
 
 #[test]

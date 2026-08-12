@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use super::constants::SEGA8_Z80_CLOCK_HZ_APPROX;
 
 pub const PSG_CHANNEL_COUNT: usize = 4;
@@ -12,6 +14,7 @@ const NOISE_LFSR_FEEDBACK_BIT: u16 = 0x8000;
 const NOISE_MODE_WHITE: u8 = 0x04;
 const NOISE_PERIOD_MASK: u8 = 0x03;
 const MAX_SAVED_SAMPLE_BUFFER_LEN: usize = 262_144;
+const DEBUG_WAVEFORM_SAMPLE_COUNT: usize = 512;
 
 // SN76489 volume registers use 2 dB attenuation steps; 15 is silent.
 const VOLUME_TABLE: [f32; 16] = [
@@ -64,6 +67,8 @@ pub struct Psg {
     sample_generation_enabled: bool,
     sample_cycle_accumulator: u32,
     sample_buffer: Vec<f32>,
+    debug_master_samples: VecDeque<f32>,
+    debug_channel_samples: [VecDeque<f32>; PSG_CHANNEL_COUNT],
     channel_mutes: [bool; PSG_CHANNEL_COUNT],
 }
 
@@ -98,6 +103,10 @@ impl Psg {
             sample_generation_enabled: true,
             sample_cycle_accumulator: 0,
             sample_buffer: Vec::new(),
+            debug_master_samples: VecDeque::with_capacity(DEBUG_WAVEFORM_SAMPLE_COUNT),
+            debug_channel_samples: std::array::from_fn(|_| {
+                VecDeque::with_capacity(DEBUG_WAVEFORM_SAMPLE_COUNT)
+            }),
             channel_mutes: [false; PSG_CHANNEL_COUNT],
         };
         if sample_rate == 0 {
@@ -147,6 +156,7 @@ impl Psg {
         }
         self.sample_cycle_accumulator %= SEGA8_Z80_CLOCK_HZ_APPROX;
         self.sample_buffer.clear();
+        self.clear_debug_sample_history();
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -157,6 +167,7 @@ impl Psg {
         self.sample_generation_enabled = enabled;
         if !enabled {
             self.sample_buffer.clear();
+            self.clear_debug_sample_history();
         }
     }
 
@@ -198,6 +209,17 @@ impl Psg {
 
     pub fn buffered_sample_count(&self) -> usize {
         self.sample_buffer.len()
+    }
+
+    pub fn master_debug_samples_ordered(&self) -> Vec<f32> {
+        self.debug_master_samples.iter().copied().collect()
+    }
+
+    pub fn channel_debug_samples_ordered(&self, channel: usize) -> Vec<f32> {
+        self.debug_channel_samples
+            .get(channel)
+            .map(|samples| samples.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     pub fn debug_snapshot(&self) -> PsgDebugSnapshot {
@@ -300,6 +322,7 @@ impl Psg {
         for muted in &mut self.channel_mutes {
             *muted = r.read_bool()?;
         }
+        self.clear_debug_sample_history();
         Ok(())
     }
 
@@ -374,9 +397,10 @@ impl Psg {
         while accumulator >= u64::from(SEGA8_Z80_CLOCK_HZ_APPROX) {
             accumulator -= u64::from(SEGA8_Z80_CLOCK_HZ_APPROX);
             if self.sample_generation_enabled {
-                let (left, right) = self.mix_current_sample();
+                let (left, right, channels) = self.mix_current_sample();
                 self.sample_buffer.push(left);
                 self.sample_buffer.push(right);
+                self.push_debug_samples((left + right) * 0.5, channels);
             }
         }
         self.sample_cycle_accumulator = accumulator as u32;
@@ -435,18 +459,32 @@ impl Psg {
         }
     }
 
-    fn mix_current_sample(&self) -> (f32, f32) {
+    fn mix_current_sample(&self) -> (f32, f32, [f32; PSG_CHANNEL_COUNT]) {
         let mut left = 0.0;
         let mut right = 0.0;
+        let channels = self.current_channel_samples();
 
-        for channel in 0..PSG_CHANNEL_COUNT {
+        for (channel, sample) in channels.iter().copied().enumerate() {
+            if self.stereo_control & (1 << (channel + 4)) != 0 {
+                left += sample;
+            }
+            if self.stereo_control & (1 << channel) != 0 {
+                right += sample;
+            }
+        }
+
+        (left * MIX_GAIN, right * MIX_GAIN, channels)
+    }
+
+    fn current_channel_samples(&self) -> [f32; PSG_CHANNEL_COUNT] {
+        std::array::from_fn(|channel| {
             if self.channel_mutes[channel] {
-                continue;
+                return 0.0;
             }
 
             let attenuation = VOLUME_TABLE[usize::from(self.volume[channel])];
             if attenuation == 0.0 {
-                continue;
+                return 0.0;
             }
 
             let wave = if channel < PSG_TONE_CHANNEL_COUNT {
@@ -460,17 +498,23 @@ impl Psg {
             } else {
                 -1.0
             };
-            let sample = wave * attenuation;
 
-            if self.stereo_control & (1 << (channel + 4)) != 0 {
-                left += sample;
-            }
-            if self.stereo_control & (1 << channel) != 0 {
-                right += sample;
-            }
+            wave * attenuation
+        })
+    }
+
+    fn push_debug_samples(&mut self, master: f32, channels: [f32; PSG_CHANNEL_COUNT]) {
+        push_debug_sample(&mut self.debug_master_samples, master);
+        for (history, sample) in self.debug_channel_samples.iter_mut().zip(channels) {
+            push_debug_sample(history, sample);
         }
+    }
 
-        (left * MIX_GAIN, right * MIX_GAIN)
+    fn clear_debug_sample_history(&mut self) {
+        self.debug_master_samples.clear();
+        for channel in &mut self.debug_channel_samples {
+            channel.clear();
+        }
     }
 
     fn latched_register_name(&self) -> &'static str {
@@ -491,6 +535,13 @@ impl Psg {
 
 fn write_i32(w: &mut zeff_emu_common::save_state::StateWriter, value: i32) {
     w.write_u32(value as u32);
+}
+
+fn push_debug_sample(history: &mut VecDeque<f32>, sample: f32) {
+    if history.len() == DEBUG_WAVEFORM_SAMPLE_COUNT {
+        history.pop_front();
+    }
+    history.push_back(sample);
 }
 
 fn read_i32(r: &mut zeff_emu_common::save_state::StateReader<'_>) -> anyhow::Result<i32> {
@@ -608,6 +659,46 @@ mod tests {
         );
         assert!(peak(&samples) > 0.05);
         assert!(psg.buffered_sample_count() == 0);
+    }
+
+    #[test]
+    fn master_debug_samples_expose_recent_mono_waveform_without_draining_audio() {
+        let mut psg = Psg::new_with_sample_rate(48_000);
+        psg.write_data(0x80);
+        psg.write_data(0x04);
+        psg.write_data(0x90);
+
+        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME);
+        let buffered_before = psg.buffered_sample_count();
+        let debug_samples = psg.master_debug_samples_ordered();
+
+        assert_eq!(psg.buffered_sample_count(), buffered_before);
+        assert_eq!(debug_samples.len(), DEBUG_WAVEFORM_SAMPLE_COUNT);
+        assert!(peak(&debug_samples) > 0.05);
+    }
+
+    #[test]
+    fn debug_samples_survive_audio_drain() {
+        let mut psg = Psg::new_with_sample_rate(48_000);
+        psg.write_data(0x80);
+        psg.write_data(0x04);
+        psg.write_data(0x90);
+
+        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME);
+        let mut drained = Vec::new();
+        psg.drain_audio_samples_into(&mut drained);
+
+        assert_eq!(psg.buffered_sample_count(), 0);
+        assert_eq!(
+            psg.master_debug_samples_ordered().len(),
+            DEBUG_WAVEFORM_SAMPLE_COUNT
+        );
+        assert_eq!(
+            psg.channel_debug_samples_ordered(0).len(),
+            DEBUG_WAVEFORM_SAMPLE_COUNT
+        );
+        assert!(peak(&psg.master_debug_samples_ordered()) > 0.05);
+        assert!(peak(&psg.channel_debug_samples_ordered(0)) > 0.05);
     }
 
     #[test]

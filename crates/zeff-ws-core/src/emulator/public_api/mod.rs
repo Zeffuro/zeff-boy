@@ -28,6 +28,14 @@ impl Emulator {
         self.bus.apu.sample_generation_enabled()
     }
 
+    pub fn apu_master_debug_samples_ordered(&self) -> Vec<f32> {
+        self.bus.apu.master_debug_samples_ordered()
+    }
+
+    pub fn apu_channel_debug_samples_ordered(&self, channel: usize) -> Vec<f32> {
+        self.bus.apu.channel_debug_samples_ordered(channel)
+    }
+
     pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 4]) {
         self.bus.apu.set_channel_mutes(mutes);
     }

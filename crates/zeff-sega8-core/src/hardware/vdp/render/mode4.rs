@@ -19,6 +19,26 @@ pub(super) fn render_frame_rgba(
     mask_left_column_rgba(vdp, framebuffer, area, color_mode);
 }
 
+pub(super) fn render_presented_frame_rgba(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    color_mode: Mode4ColorMode,
+) {
+    let expected_len = area.expected_rgba_len();
+    if framebuffer.len() < expected_len {
+        return;
+    }
+    if color_mode == vdp.color_mode && vdp.copy_presented_area_rgba(framebuffer, area) {
+        return;
+    }
+
+    render_background_rgba_with_color(vdp, framebuffer, area, color_mode);
+    render_sprites_rgba(vdp, framebuffer, area, color_mode);
+    mask_left_column_rgba(vdp, framebuffer, area, color_mode);
+    fill_disabled_scanlines_backdrop_rgba(vdp, framebuffer, area, color_mode);
+}
+
 fn render_background_rgba_with_color(
     vdp: &Vdp,
     framebuffer: &mut [u8],
@@ -80,6 +100,25 @@ fn fill_backdrop_rgba(
     let rgba = vdp.mode4_color_rgba(vdp.mode4_backdrop_color_index(), color_mode);
     for pixel in framebuffer[..expected_len].chunks_exact_mut(RGBA_CHANNELS) {
         pixel.copy_from_slice(&rgba);
+    }
+}
+
+fn fill_disabled_scanlines_backdrop_rgba(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    color_mode: Mode4ColorMode,
+) {
+    let rgba = vdp.mode4_color_rgba(vdp.mode4_backdrop_color_index(), color_mode);
+    for y in 0..area.height {
+        if vdp.scanline_display_enabled_for_source_y(area.source_y + y) {
+            continue;
+        }
+        let row_start = y * area.width * RGBA_CHANNELS;
+        let row_end = row_start + area.width * RGBA_CHANNELS;
+        for pixel in framebuffer[row_start..row_end].chunks_exact_mut(RGBA_CHANNELS) {
+            pixel.copy_from_slice(&rgba);
+        }
     }
 }
 

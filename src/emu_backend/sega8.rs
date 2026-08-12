@@ -94,6 +94,11 @@ impl EmulatorCore for Sega8Backend {
     }
 
     #[inline]
+    fn frame_count(&self) -> u64 {
+        self.emu.frame_count()
+    }
+
+    #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
     }

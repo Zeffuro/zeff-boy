@@ -29,6 +29,7 @@ pub(crate) trait DebuggableEmulator {
 
 pub(crate) trait EmulatorCore {
     fn step_frame(&mut self);
+    fn frame_count(&self) -> u64;
     fn framebuffer(&self) -> &[u8];
     fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>);
     #[allow(dead_code)]

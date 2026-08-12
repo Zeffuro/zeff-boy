@@ -8,6 +8,11 @@ use zeff_sega8_core::hardware::apu::{
 
 use super::MidiApuSnapshot;
 
+pub(super) const MIDI_TICKS_PER_QUARTER: u16 = 960;
+pub(super) const MIDI_TICKS_PER_FRAME: u32 = 16;
+const GB_TEMPO_US_PER_BEAT: u32 = 1_004_520;
+const NES_SEGA8_TEMPO_US_PER_BEAT: u32 = 998_340;
+
 pub(super) fn gb_square_freq_to_hz(freq_reg: u16) -> f64 {
     let denom = 2048u32.saturating_sub(freq_reg as u32).max(1);
     131072.0 / denom as f64
@@ -49,10 +54,6 @@ pub(super) fn finish_midi(
         return Ok(path);
     }
 
-    const TICKS_PER_FRAME: u16 = 1;
-    const GB_TEMPO_US_PER_BEAT: u32 = 16742;
-    const NES_TEMPO_US_PER_BEAT: u32 = 16639;
-
     let track_data: Vec<Vec<u8>>;
     let tempo_us: u32;
 
@@ -64,7 +65,7 @@ pub(super) fn finish_midi(
                 MidiApuSnapshot::Gb(_) | MidiApuSnapshot::Sega8(_) => None,
             })
             .collect();
-        tempo_us = NES_TEMPO_US_PER_BEAT;
+        tempo_us = NES_SEGA8_TEMPO_US_PER_BEAT;
         track_data = (0..4)
             .map(|ch| build_midi_track_nes(&nes_snapshots, ch))
             .collect();
@@ -76,7 +77,7 @@ pub(super) fn finish_midi(
                 MidiApuSnapshot::Gb(_) | MidiApuSnapshot::Nes(_) => None,
             })
             .collect();
-        tempo_us = NES_TEMPO_US_PER_BEAT;
+        tempo_us = NES_SEGA8_TEMPO_US_PER_BEAT;
         track_data = (0..PSG_CHANNEL_COUNT)
             .map(|ch| build_midi_track_sega8(&sega8_snapshots, ch))
             .collect();
@@ -100,7 +101,7 @@ pub(super) fn finish_midi(
     smf.extend_from_slice(&6u32.to_be_bytes());
     smf.extend_from_slice(&1u16.to_be_bytes());
     smf.extend_from_slice(&5u16.to_be_bytes());
-    smf.extend_from_slice(&TICKS_PER_FRAME.to_be_bytes());
+    smf.extend_from_slice(&MIDI_TICKS_PER_QUARTER.to_be_bytes());
 
     let tempo_track = build_tempo_track(tempo_us);
     smf.extend_from_slice(b"MTrk");
@@ -256,7 +257,7 @@ fn build_midi_track(
             current_velocity = 0;
         }
 
-        pending_delta = pending_delta.saturating_add(1);
+        pending_delta = pending_delta.saturating_add(MIDI_TICKS_PER_FRAME);
     }
 
     // Final note-off if still sounding

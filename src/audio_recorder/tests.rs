@@ -112,6 +112,16 @@ fn ch0_note_events(track: &[u8]) -> Vec<(u32, u8, u8)> {
     out
 }
 
+fn midi_header_division(data: &[u8]) -> u16 {
+    u16::from_be_bytes([data[12], data[13]])
+}
+
+fn midi_tempo_us_per_beat(data: &[u8]) -> u32 {
+    assert_eq!(&data[14..18], b"MTrk");
+    assert_eq!(&data[22..26], &[0x00, 0xFF, 0x51, 0x03]);
+    (u32::from(data[26]) << 16) | (u32::from(data[27]) << 8) | u32::from(data[28])
+}
+
 #[test]
 fn gb_square_freq_to_hz_middle_range() {
     let hz = super::midi::gb_square_freq_to_hz(1750);
@@ -211,7 +221,26 @@ fn finish_midi_produces_valid_smf_header() {
     let data = std::fs::read(&path).unwrap();
     assert!(data.len() > 14);
     assert_eq!(&data[0..4], b"MThd");
+    assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
     assert_eq!(&data[14..18], b"MTrk");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn finish_midi_uses_player_friendly_ppq_timing() {
+    let snapshots = vec![
+        MidiApuSnapshot::Sega8(sega8_snapshot(254, 0)),
+        MidiApuSnapshot::Sega8(sega8_snapshot(226, 0)),
+    ];
+
+    let dir = std::env::temp_dir();
+    let path = dir.join("test_midi_timing_output.mid");
+    finish_midi(path.clone(), &snapshots).unwrap();
+
+    let data = std::fs::read(&path).unwrap();
+    assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
+    assert_eq!(midi_tempo_us_per_beat(&data), 998_340);
 
     let _ = std::fs::remove_file(&path);
 }
@@ -226,7 +255,7 @@ fn midi_note_change_on_adjacent_snapshots_advances_time() {
 
     assert_eq!(events[0].0, 0);
     assert_eq!(events[0].1, 0x90);
-    assert_eq!(events[1].0, 1);
+    assert_eq!(events[1].0, MIDI_TICKS_PER_FRAME);
     assert_eq!(events[1].1, 0x80);
     assert_eq!(events[2].0, 0);
     assert_eq!(events[2].1, 0x90);
@@ -241,7 +270,7 @@ fn midi_note_off_on_adjacent_snapshot_advances_time() {
     assert!(events.len() >= 2);
 
     assert_eq!(events[0], (0, 0x90, events[0].2));
-    assert_eq!(events[1], (1, 0x80, events[1].2));
+    assert_eq!(events[1], (MIDI_TICKS_PER_FRAME, 0x80, events[1].2));
 }
 
 #[test]
@@ -252,7 +281,7 @@ fn midi_new_note_after_one_silent_snapshot_uses_delta_one() {
     let events = ch0_note_events(&track);
     assert!(!events.is_empty());
 
-    assert_eq!(events[0].0, 1);
+    assert_eq!(events[0].0, MIDI_TICKS_PER_FRAME);
     assert_eq!(events[0].1, 0x90);
 }
 
@@ -266,7 +295,7 @@ fn nes_midi_note_change_on_adjacent_snapshots_advances_time() {
 
     assert_eq!(events[0].0, 0);
     assert_eq!(events[0].1, 0x90);
-    assert_eq!(events[1].0, 1);
+    assert_eq!(events[1].0, MIDI_TICKS_PER_FRAME);
     assert_eq!(events[1].1, 0x80);
     assert_eq!(events[2].0, 0);
     assert_eq!(events[2].1, 0x90);
@@ -282,7 +311,7 @@ fn sega8_midi_note_change_on_adjacent_snapshots_advances_time() {
 
     assert_eq!(events[0].0, 0);
     assert_eq!(events[0].1, 0x90);
-    assert_eq!(events[1].0, 1);
+    assert_eq!(events[1].0, MIDI_TICKS_PER_FRAME);
     assert_eq!(events[1].1, 0x80);
     assert_eq!(events[2].0, 0);
     assert_eq!(events[2].1, 0x90);

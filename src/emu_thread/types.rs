@@ -107,7 +107,7 @@ pub(crate) struct FrameResult {
     pub(crate) is_mbc7: bool,
     pub(crate) is_pocket_camera: bool,
     pub(crate) rewind_fill: f32,
-    pub(crate) apu_snapshot: Option<crate::audio_recorder::MidiApuSnapshot>,
+    pub(crate) apu_snapshots: Vec<crate::audio_recorder::MidiApuSnapshot>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]

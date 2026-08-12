@@ -1,7 +1,10 @@
+use std::collections::VecDeque;
+
 use super::constants::CPU_CLOCK_HZ;
 
 const CHANNEL_COUNT: usize = 4;
 const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+const DEBUG_WAVEFORM_SAMPLE_COUNT: usize = 512;
 const HYPER_VOICE_LEFT_LO_PORT: u16 = 0x0064;
 const HYPER_VOICE_LEFT_HI_PORT: u16 = 0x0065;
 const HYPER_VOICE_RIGHT_LO_PORT: u16 = 0x0066;
@@ -76,6 +79,8 @@ pub struct Apu {
     sample_generation_enabled: bool,
     sample_cycle_accumulator: u32,
     sample_buffer: Vec<f32>,
+    debug_master_samples: VecDeque<f32>,
+    debug_channel_samples: [VecDeque<f32>; CHANNEL_COUNT],
     channel_mutes: [bool; CHANNEL_COUNT],
 }
 
@@ -160,6 +165,10 @@ impl Apu {
             sample_generation_enabled: true,
             sample_cycle_accumulator: 0,
             sample_buffer: Vec::new(),
+            debug_master_samples: VecDeque::with_capacity(DEBUG_WAVEFORM_SAMPLE_COUNT),
+            debug_channel_samples: std::array::from_fn(|_| {
+                VecDeque::with_capacity(DEBUG_WAVEFORM_SAMPLE_COUNT)
+            }),
             channel_mutes: [false; CHANNEL_COUNT],
         };
         if sample_rate == 0 {
@@ -192,6 +201,7 @@ impl Apu {
         self.hyper_voice_channel_control = 0;
         self.sample_cycle_accumulator = 0;
         self.sample_buffer.clear();
+        self.clear_debug_sample_history();
     }
 
     pub fn handles_port(port: u16) -> bool {
@@ -378,6 +388,7 @@ impl Apu {
         self.sample_generation_enabled = enabled;
         if !enabled {
             self.sample_buffer.clear();
+            self.clear_debug_sample_history();
         }
     }
 
@@ -391,6 +402,17 @@ impl Apu {
 
     pub fn channel_mutes(&self) -> [bool; CHANNEL_COUNT] {
         self.channel_mutes
+    }
+
+    pub fn master_debug_samples_ordered(&self) -> Vec<f32> {
+        self.debug_master_samples.iter().copied().collect()
+    }
+
+    pub fn channel_debug_samples_ordered(&self, channel: usize) -> Vec<f32> {
+        self.debug_channel_samples
+            .get(channel)
+            .map(|samples| samples.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     pub fn debug_snapshot(&self) -> ApuDebugSnapshot {
@@ -474,6 +496,7 @@ impl Apu {
         self.sample_cycle_accumulator = state.sample_cycle_accumulator % CPU_CLOCK_HZ;
         self.channel_mutes = state.channel_mutes;
         self.sample_buffer.clear();
+        self.clear_debug_sample_history();
     }
 
     fn clocks_until_next_sample(&self) -> u32 {
@@ -500,9 +523,10 @@ impl Apu {
         while accumulator >= u64::from(CPU_CLOCK_HZ) {
             accumulator -= u64::from(CPU_CLOCK_HZ);
             if self.sample_generation_enabled {
-                let (left, right) = self.mix_current_sample(ram);
+                let (left, right, channels) = self.mix_current_sample(ram);
                 self.sample_buffer.push(left);
                 self.sample_buffer.push(right);
+                self.push_debug_samples((left + right) * 0.5, channels);
             }
         }
         self.sample_cycle_accumulator = accumulator as u32;
@@ -636,11 +660,12 @@ impl Apu {
         self.sample_pos[channel] & 0x0F
     }
 
-    fn mix_current_sample(&self, ram: &[u8]) -> (f32, f32) {
+    fn mix_current_sample(&self, ram: &[u8]) -> (f32, f32, [f32; CHANNEL_COUNT]) {
         let mut left = 0.0;
         let mut right = 0.0;
+        let mut channels = [0.0; CHANNEL_COUNT];
 
-        for channel in 0..CHANNEL_COUNT {
+        for (channel, channel_debug_sample) in channels.iter_mut().enumerate() {
             if self.control & (1 << channel) == 0 || self.channel_mutes[channel] {
                 continue;
             }
@@ -658,6 +683,7 @@ impl Apu {
                 };
             left += channel_left;
             right += channel_right;
+            *channel_debug_sample = (channel_left + channel_right) * 0.5 * 0.25;
         }
 
         if self.hyper_voice_control & HYPER_VOICE_ENABLE != 0 {
@@ -665,10 +691,9 @@ impl Apu {
             right += f32::from(self.hyper_voice_right_output) / 32768.0;
         }
 
-        (
-            (left * 0.25).clamp(-1.0, 1.0),
-            (right * 0.25).clamp(-1.0, 1.0),
-        )
+        let left = (left * 0.25).clamp(-1.0, 1.0);
+        let right = (right * 0.25).clamp(-1.0, 1.0);
+        (left, right, channels)
     }
 
     fn mix_wave_channel(&self, channel: usize, ram: &[u8]) -> (f32, f32) {
@@ -736,6 +761,27 @@ impl Apu {
             sample >> shift
         }
     }
+
+    fn push_debug_samples(&mut self, master: f32, channels: [f32; CHANNEL_COUNT]) {
+        push_debug_sample(&mut self.debug_master_samples, master);
+        for (history, sample) in self.debug_channel_samples.iter_mut().zip(channels) {
+            push_debug_sample(history, sample);
+        }
+    }
+
+    fn clear_debug_sample_history(&mut self) {
+        self.debug_master_samples.clear();
+        for samples in &mut self.debug_channel_samples {
+            samples.clear();
+        }
+    }
+}
+
+fn push_debug_sample(history: &mut VecDeque<f32>, sample: f32) {
+    if history.len() == DEBUG_WAVEFORM_SAMPLE_COUNT {
+        history.pop_front();
+    }
+    history.push_back(sample);
 }
 
 #[cfg(test)]
@@ -802,6 +848,55 @@ mod tests {
         apu.drain_audio_samples_into(&mut samples);
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| sample.abs() <= f32::EPSILON));
+    }
+
+    #[test]
+    fn debug_samples_survive_audio_drain() {
+        let mut apu = Apu::new(48_000);
+        let ram = alternating_wave_ram();
+        apu.write8(0x80, 0x00);
+        apu.write8(0x81, 0x07);
+        apu.write8(0x88, 0xFF);
+        apu.write8(0x90, 0x01);
+
+        apu.step_cycles(4096, &ram);
+        let before_drain = apu.master_debug_samples_ordered();
+        let mut samples = Vec::new();
+        apu.drain_audio_samples_into(&mut samples);
+
+        assert!(!samples.is_empty());
+        assert!(!before_drain.is_empty());
+        assert_eq!(apu.debug_snapshot().buffered_samples, 0);
+        assert_eq!(apu.master_debug_samples_ordered(), before_drain);
+        assert!(
+            apu.channel_debug_samples_ordered(0)
+                .iter()
+                .any(|sample| sample.abs() > 0.001)
+        );
+    }
+
+    #[test]
+    fn debug_samples_follow_channel_mutes() {
+        let mut apu = Apu::new(48_000);
+        let ram = alternating_wave_ram();
+        apu.write8(0x80, 0x00);
+        apu.write8(0x81, 0x07);
+        apu.write8(0x88, 0xFF);
+        apu.write8(0x90, 0x01);
+        apu.set_channel_mutes([true, false, false, false]);
+
+        apu.step_cycles(4096, &ram);
+
+        assert!(
+            apu.channel_debug_samples_ordered(0)
+                .iter()
+                .all(|sample| sample.abs() <= f32::EPSILON)
+        );
+        assert!(
+            apu.master_debug_samples_ordered()
+                .iter()
+                .all(|sample| sample.abs() <= f32::EPSILON)
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 
 const MAGIC: &[u8; 8] = b"ZBSEGA8\0";
-const VERSION: u32 = 10;
+const VERSION: u32 = 11;
 const MIN_SUPPORTED_VERSION: u32 = 1;
 const VERSION_WITH_VIDEO_STANDARD: u32 = 3;
 const VERSION_WITH_CONSOLE_REGION: u32 = 4;
@@ -136,7 +136,11 @@ mod tests {
         IO_OPEN_BUS_VALUE, IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_START,
         IO_PORT_MEMORY_CONTROL, IO_PORT_VDP_CONTROL, IO_PORT_VDP_DATA, MAPPER_FRAME_CONTROL,
         MAPPER_FRAME_CONTROL_CART_RAM_ENABLE, ROM_BANK_SIZE, ROM_PAGE_8K_SIZE, SLOT2_START,
+        SMS_CARTRIDGE_RAM_SIZE, SMS_CRAM_SIZE, SMS_VDP_REGISTER_COUNT, SMS_VRAM_SIZE,
+        SMS_WORK_RAM_SIZE,
     };
+
+    const VDP_SCANLINE_DISPLAY_HISTORY_BYTES: usize = 240;
 
     fn test_rom() -> Vec<u8> {
         vec![0x3E, 0x5A, 0x32, 0x00, 0xC0, 0x76]
@@ -196,6 +200,75 @@ mod tests {
         bytes
             .pop()
             .expect("v10 state should end with VDP CRAM latch byte");
+    }
+
+    fn strip_vdp_scanline_display_state(bytes: &mut Vec<u8>) {
+        let start = vdp_scanline_display_history_offset(bytes);
+        bytes.drain(start..start + VDP_SCANLINE_DISPLAY_HISTORY_BYTES);
+    }
+
+    fn vdp_scanline_display_history_offset(bytes: &[u8]) -> usize {
+        let mut r = StateReader::new(bytes);
+        let mut magic = [0; 8];
+        r.read_exact(&mut magic).unwrap();
+        r.read_u32().unwrap();
+        let mut rom_hash = [0; 32];
+        r.read_exact(&mut rom_hash).unwrap();
+        r.read_u64().unwrap();
+        r.read_u32().unwrap();
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        r.read_vec(MAX_FRAMEBUFFER_SIZE).unwrap();
+        skip_cpu_state(&mut r);
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        for _ in 0..3 {
+            r.read_u8().unwrap();
+        }
+        r.read_vec(SMS_WORK_RAM_SIZE).unwrap();
+        r.read_vec(SMS_CARTRIDGE_RAM_SIZE).unwrap();
+        r.read_vec(SMS_VRAM_SIZE).unwrap();
+        r.read_vec(SMS_CRAM_SIZE).unwrap();
+        r.read_vec(SMS_VDP_REGISTER_COUNT).unwrap();
+        r.read_u16().unwrap();
+        r.read_u8().unwrap();
+        r.read_bool().unwrap();
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        r.read_u16().unwrap();
+        r.read_u32().unwrap();
+        r.position()
+    }
+
+    fn skip_cpu_state(r: &mut StateReader<'_>) {
+        let mut registers = [0; 18];
+        r.read_exact(&mut registers).unwrap();
+        let mut shadow_registers = [0; 8];
+        r.read_exact(&mut shadow_registers).unwrap();
+        r.read_u8().unwrap();
+        r.read_u8().unwrap();
+        r.read_bool().unwrap();
+        r.read_bool().unwrap();
+        r.read_u8().unwrap();
+        r.read_u64().unwrap();
+        r.read_u16().unwrap();
+        r.read_u8().unwrap();
+        match r.read_u8().unwrap() {
+            0 => {}
+            1 => {
+                r.read_u16().unwrap();
+                r.read_u8().unwrap();
+            }
+            2 => {
+                r.read_u16().unwrap();
+                r.read_u8().unwrap();
+                r.read_u8().unwrap();
+            }
+            tag => panic!("unexpected CPU trap tag in test save state: {tag}"),
+        }
     }
 
     #[test]
@@ -392,6 +465,7 @@ mod tests {
         .unwrap();
         saved.set_input(0x08, 0x00);
         let mut bytes = encode_state(&saved).unwrap();
+        strip_vdp_scanline_display_state(&mut bytes);
         set_state_version(&mut bytes, 2);
         bytes.remove(console_region_offset());
         bytes.remove(video_standard_offset());
@@ -425,6 +499,7 @@ mod tests {
         saved.set_console_region(Sega8Region::Japanese);
         saved.bus_mut().io_write(IO_PORT_CONTROL, 0x55);
         let mut bytes = encode_state(&saved).unwrap();
+        strip_vdp_scanline_display_state(&mut bytes);
         set_state_version(&mut bytes, 3);
         bytes.remove(console_region_offset());
         strip_vdp_cram_latch_state(&mut bytes);
@@ -457,6 +532,7 @@ mod tests {
         )
         .unwrap();
         let mut bytes = encode_state(&saved).unwrap();
+        strip_vdp_scanline_display_state(&mut bytes);
         set_state_version(&mut bytes, 1);
         bytes.remove(console_region_offset());
         bytes.remove(video_standard_offset());
@@ -488,6 +564,7 @@ mod tests {
             .bus_mut()
             .io_write(crate::hardware::constants::IO_PORT_GG_SERIAL_CONTROL, 0x30);
         let mut bytes = encode_state(&saved).unwrap();
+        strip_vdp_scanline_display_state(&mut bytes);
         set_state_version(&mut bytes, 5);
         strip_vdp_cram_latch_state(&mut bytes);
         strip_memory_control_state(&mut bytes);
@@ -516,6 +593,7 @@ mod tests {
             .bus_mut()
             .io_write(crate::hardware::constants::IO_PORT_GG_SERIAL_TX, 0xA5);
         let mut bytes = encode_state(&saved).unwrap();
+        strip_vdp_scanline_display_state(&mut bytes);
         set_state_version(&mut bytes, 6);
         strip_vdp_cram_latch_state(&mut bytes);
         strip_memory_control_state(&mut bytes);
@@ -548,6 +626,7 @@ mod tests {
         saved.bus_mut().io_write(IO_PORT_VDP_CONTROL, 0xC0);
         saved.bus_mut().io_write(IO_PORT_VDP_DATA, 0x7B);
         let mut bytes = encode_state(&saved).unwrap();
+        strip_vdp_scanline_display_state(&mut bytes);
         set_state_version(&mut bytes, 9);
         strip_vdp_cram_latch_state(&mut bytes);
 

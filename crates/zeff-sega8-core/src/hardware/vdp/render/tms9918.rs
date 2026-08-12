@@ -10,7 +10,6 @@ pub(super) fn render_frame_rgba(
     if framebuffer.len() < expected_len {
         return;
     }
-
     let backdrop = vdp.tms_backdrop_color(color_mode);
     if !vdp.display_enabled() {
         fill_rgba(framebuffer, area, backdrop);
@@ -28,6 +27,40 @@ pub(super) fn render_frame_rgba(
     if !matches!(vdp.tms9918_mode(), Tms9918Mode::Text) {
         render_sprites_rgba(vdp, framebuffer, area, color_mode);
     }
+}
+
+pub(super) fn render_presented_frame_rgba(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    color_mode: Tms9918ColorMode,
+) {
+    let expected_len = area.expected_rgba_len();
+    if framebuffer.len() < expected_len {
+        return;
+    }
+    if color_mode == vdp.tms_presented_color_mode()
+        && vdp.copy_presented_area_rgba(framebuffer, area)
+    {
+        return;
+    }
+
+    let backdrop = vdp.tms_backdrop_color(color_mode);
+    match vdp.tms9918_mode() {
+        Tms9918Mode::GraphicsI => render_graphics_i_rgba(vdp, framebuffer, area, color_mode),
+        Tms9918Mode::GraphicsII => render_graphics_ii_rgba(vdp, framebuffer, area, color_mode),
+        Tms9918Mode::Multicolor => render_multicolor_rgba(vdp, framebuffer, area, color_mode),
+        Tms9918Mode::Text => render_text_rgba(vdp, framebuffer, area, color_mode),
+        Tms9918Mode::Invalid => {
+            fill_rgba(framebuffer, area, backdrop);
+            return;
+        }
+    }
+
+    if !matches!(vdp.tms9918_mode(), Tms9918Mode::Text) {
+        render_sprites_rgba(vdp, framebuffer, area, color_mode);
+    }
+    fill_disabled_scanlines_rgba(vdp, framebuffer, area, backdrop);
 }
 
 fn render_graphics_i_rgba(
@@ -183,6 +216,24 @@ fn render_text_rgba(
                 let offset = (dest_y * area.width + dest_x) * RGBA_CHANNELS;
                 framebuffer[offset..offset + RGBA_CHANNELS].copy_from_slice(&rgba);
             }
+        }
+    }
+}
+
+fn fill_disabled_scanlines_rgba(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    color: [u8; RGBA_CHANNELS],
+) {
+    for y in 0..area.height {
+        if vdp.scanline_display_enabled_for_source_y(area.source_y + y) {
+            continue;
+        }
+        let row_start = y * area.width * RGBA_CHANNELS;
+        let row_end = row_start + area.width * RGBA_CHANNELS;
+        for pixel in framebuffer[row_start..row_end].chunks_exact_mut(RGBA_CHANNELS) {
+            pixel.copy_from_slice(&color);
         }
     }
 }

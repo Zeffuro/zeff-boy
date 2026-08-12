@@ -3,7 +3,8 @@ use zeff_sega8_core::emulator::Emulator;
 use zeff_sega8_core::hardware::apu::{PSG_CHANNEL_COUNT, PSG_TONE_CHANNEL_COUNT};
 
 pub(super) fn sega8_apu_snapshot(emu: &Emulator) -> ApuDebugInfo {
-    let apu = emu.bus().apu().debug_snapshot();
+    let psg = emu.bus().apu();
+    let apu = psg.debug_snapshot();
     let channels = (0..PSG_CHANNEL_COUNT)
         .map(|index| ApuChannelDebug {
             name: channel_name(index),
@@ -11,7 +12,7 @@ pub(super) fn sega8_apu_snapshot(emu: &Emulator) -> ApuDebugInfo {
             muted: apu.channel_mutes[index],
             register_lines: vec![channel_register_line(index, &apu)],
             detail_line: channel_detail_line(index, &apu, emu.video_standard().clock_hz_approx()),
-            waveform: Vec::new(),
+            waveform: psg.channel_debug_samples_ordered(index),
         })
         .collect();
 
@@ -33,7 +34,7 @@ pub(super) fn sega8_apu_snapshot(emu: &Emulator) -> ApuDebugInfo {
                 super::on_off(apu.sample_generation_enabled)
             ),
         ],
-        master_waveform: Vec::new(),
+        master_waveform: psg.master_debug_samples_ordered(),
         channels,
         extra_sections: vec![DebugSection {
             heading: "Stereo Routing",
