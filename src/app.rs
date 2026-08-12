@@ -33,6 +33,7 @@ mod frame_result;
 mod input;
 mod keyboard;
 mod lifecycle;
+mod link;
 #[cfg(not(target_arch = "wasm32"))]
 mod remote;
 mod render;
@@ -155,6 +156,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             rom_hash: None,
         },
         nes_palette_cache: NesPaletteFileCache::default(),
+        pending_archive_selection: None,
         pending_debug_actions: DebugUiActions::none(),
         shutdown_performed: false,
         toast_manager: ToastManager::new(),
@@ -180,6 +182,9 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         live_control: crate::live_control::LiveControl::from_env(),
         #[cfg(not(target_arch = "wasm32"))]
         live_button_releases: Vec::new(),
+        #[cfg(not(target_arch = "wasm32"))]
+        tcp_link_active: false,
+        window_focused: true,
         egui_wants_keyboard: false,
         game_view_focused: true,
         active_system,
@@ -252,6 +257,7 @@ struct App {
     cached_ui_data: Option<ui::UiFrameData>,
     rom_info: CachedRomInfo,
     nes_palette_cache: NesPaletteFileCache,
+    pending_archive_selection: Option<PendingArchiveSelection>,
     pending_debug_actions: DebugUiActions,
     shutdown_performed: bool,
     toast_manager: ToastManager,
@@ -266,6 +272,9 @@ struct App {
     live_control: crate::live_control::LiveControl,
     #[cfg(not(target_arch = "wasm32"))]
     live_button_releases: Vec<crate::live_control::PendingButtonRelease>,
+    #[cfg(not(target_arch = "wasm32"))]
+    tcp_link_active: bool,
+    window_focused: bool,
     egui_wants_keyboard: bool,
     game_view_focused: bool,
     active_system: ActiveSystem,
@@ -404,10 +413,16 @@ impl App {
     }
 
     fn recv_cold_response(&mut self) -> Option<EmuResponse> {
-        while let Some(result) = self.emu_thread.as_ref()?.try_recv_frame() {
-            self.process_frame_result(result);
+        loop {
+            while let Some(result) = self.emu_thread.as_ref()?.try_recv_frame() {
+                self.process_frame_result(result);
+            }
+            let response = self.emu_thread.as_ref()?.recv()?;
+            if self.handle_link_response(&response) {
+                continue;
+            }
+            return Some(response);
         }
-        self.emu_thread.as_ref()?.recv()
     }
 }
 

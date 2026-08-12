@@ -274,6 +274,54 @@ fn parse_cheat_for_system_gba_raw_wide_multi_code() {
 }
 
 #[test]
+fn parse_cheat_for_system_gba_codebreaker_byte_and_halfword_writes() {
+    let result =
+        parse_cheat_for_system("3200E924+0096+8201A454+07B7", ActiveSystem::GameBoyAdvance);
+    let (patches, ty) = result.expect("GBA CodeBreaker/XPloder RAM writes should parse");
+    assert_eq!(ty, CheatType::XPloder);
+    assert_eq!(
+        patches,
+        vec![
+            CheatPatch::WideRamWrite {
+                address: 0x0200_E924,
+                value: CheatValue::Constant(0x96),
+            },
+            CheatPatch::WideRamWrite {
+                address: 0x0201_A454,
+                value: CheatValue::Constant(0xB7),
+            },
+            CheatPatch::WideRamWrite {
+                address: 0x0201_A455,
+                value: CheatValue::Constant(0x07),
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_cheat_for_system_gba_codebreaker_serial_halfword_writes() {
+    let result =
+        parse_cheat_for_system("42035CBE+1388+00000005+0002", ActiveSystem::GameBoyAdvance);
+    let (patches, ty) = result.expect("GBA serial RAM writes should parse");
+    assert_eq!(ty, CheatType::XPloder);
+    assert_eq!(patches.len(), 10);
+    assert_eq!(
+        patches[0],
+        CheatPatch::WideRamWrite {
+            address: 0x0203_5CBE,
+            value: CheatValue::Constant(0x88),
+        }
+    );
+    assert_eq!(
+        patches[9],
+        CheatPatch::WideRamWrite {
+            address: 0x0203_5CC7,
+            value: CheatValue::Constant(0x13),
+        }
+    );
+}
+
+#[test]
 fn parse_cheat_for_system_ws_raw_wide() {
     let result = parse_cheat_for_system("00001234=56", ActiveSystem::WonderSwan);
     let (patches, ty) = result.expect("WS raw wide cheat should parse");
@@ -442,6 +490,38 @@ cheat0_enable = true
     assert_eq!(cheats[0].name, "Test GBA RAM");
     assert_eq!(cheats[0].code_type, CheatType::Raw);
     assert!(cheats[0].enabled);
+}
+
+#[test]
+fn parse_cht_file_for_system_gba_codebreaker_encrypted_entries_keep_state() {
+    let content = r#"cheats = 2
+
+cheat0_desc = "Activator"
+cheat0_code = "9F6637CD47C3"
+cheat0_enable = false
+
+cheat1_desc = "No Random Battles"
+cheat1_code = "5B1005082B1B"
+cheat1_enable = true
+"#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::GameBoyAdvance);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "No Random Battles");
+    assert_eq!(cheats[0].code_type, CheatType::XPloder);
+    assert!(cheats[0].enabled);
+    assert_eq!(
+        cheats[0].patches,
+        vec![
+            CheatPatch::WideRamWrite {
+                address: 0x0200_23BE,
+                value: CheatValue::Constant(0x00),
+            },
+            CheatPatch::WideRamWrite {
+                address: 0x0200_23BF,
+                value: CheatValue::Constant(0x00),
+            },
+        ]
+    );
 }
 
 #[test]

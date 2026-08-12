@@ -13,6 +13,9 @@ pub(super) use archive_and_slots::build_slot_info;
 pub(crate) use archive_and_slots::extract_rom_from_zip;
 #[allow(unused_imports)] // Used on WASM for drag-and-drop ROM loading
 pub(super) use archive_and_slots::extract_rom_from_zip_bytes;
+pub(super) use archive_and_slots::{
+    extract_rom_entry_from_zip, extract_rom_entry_path_from_zip, list_rom_entries_in_zip,
+};
 pub(crate) use rom_loading::detect_and_extract_rom;
 
 use crate::debug::FpsTracker;

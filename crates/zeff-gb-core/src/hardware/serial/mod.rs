@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io::{self, Write};
 
+use super::bus::GameBoyLinkState;
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
@@ -24,6 +25,8 @@ pub(super) struct Serial {
     cycles: u64,
     mode: HardwareMode,
     output_log: Vec<u8>,
+    link_peer_present: bool,
+    pending_link_byte: Option<u8>,
 }
 
 impl fmt::Debug for Serial {
@@ -34,6 +37,8 @@ impl fmt::Debug for Serial {
             .field("cycles", &self.cycles)
             .field("mode", &self.mode)
             .field("output_log_len", &self.output_log.len())
+            .field("link_peer_present", &self.link_peer_present)
+            .field("pending_link_byte", &self.pending_link_byte)
             .finish()
     }
 }
@@ -46,6 +51,8 @@ impl Serial {
             cycles: 0,
             mode: HardwareMode::DMG,
             output_log: Vec::new(),
+            link_peer_present: false,
+            pending_link_byte: None,
         }
     }
 
@@ -83,6 +90,9 @@ impl Serial {
 
     pub(super) fn write_sc(&mut self, value: u8) {
         self.sc = value;
+        if (self.sc & 0x80) == 0 {
+            self.pending_link_byte = None;
+        }
     }
 
     pub(super) fn set_clock_phase(&mut self, cycles: u64) {
@@ -97,6 +107,87 @@ impl Serial {
         self.cycles = 0;
     }
 
+    pub(super) fn set_link_peer_present(&mut self, present: bool) {
+        self.link_peer_present = present;
+        if !present {
+            self.pending_link_byte = None;
+        }
+    }
+
+    pub(super) fn pending_link_byte(&self) -> Option<u8> {
+        self.pending_link_byte
+    }
+
+    pub(super) fn link_state(&self) -> GameBoyLinkState {
+        GameBoyLinkState {
+            pending_master_byte: self.pending_link_byte,
+            external_clock_byte: self
+                .external_clock_transfer_active()
+                .then_some(self.link_transfer_byte()),
+            output_byte: self.link_transfer_byte(),
+        }
+    }
+
+    pub(super) fn external_clock_transfer_active(&self) -> bool {
+        self.pending_link_byte.is_none() && (self.sc & 0x81) == 0x80
+    }
+
+    pub(super) fn link_transfer_byte(&self) -> u8 {
+        self.sb
+    }
+
+    pub(super) fn complete_link_transfer(&mut self, response: u8) -> bool {
+        if self.pending_link_byte.take().is_none() && !self.external_clock_transfer_active() {
+            return false;
+        }
+
+        self.sb = response;
+        self.sc &= !0x80;
+        true
+    }
+
+    pub(super) fn apply_link_peer_state(&mut self, peer: GameBoyLinkState) -> bool {
+        if let Some(local_byte) = self.pending_link_byte() {
+            let response = peer
+                .pending_master_byte
+                .or(peer.external_clock_byte)
+                .unwrap_or(peer.output_byte);
+            debug_assert_eq!(self.pending_link_byte(), Some(local_byte));
+            return self.complete_link_transfer(response);
+        }
+
+        if self.external_clock_transfer_active()
+            && let Some(peer_byte) = peer.pending_master_byte
+        {
+            return self.complete_link_transfer(peer_byte);
+        }
+
+        false
+    }
+
+    pub(super) fn apply_remote_link_peer_state(
+        &mut self,
+        peer: GameBoyLinkState,
+        idle_master_response: Option<u8>,
+    ) -> bool {
+        if let Some(local_byte) = self.pending_link_byte() {
+            let response = peer
+                .pending_master_byte
+                .or(peer.external_clock_byte)
+                .unwrap_or_else(|| idle_master_response.unwrap_or(peer.output_byte));
+            debug_assert_eq!(self.pending_link_byte(), Some(local_byte));
+            return self.complete_link_transfer(response);
+        }
+
+        if self.external_clock_transfer_active()
+            && let Some(peer_byte) = peer.pending_master_byte
+        {
+            return self.complete_link_transfer(peer_byte);
+        }
+
+        false
+    }
+
     pub(super) fn step(&mut self, cycles: u64, device: &mut dyn SerialDevice) -> bool {
         let transfer_period = self.transfer_period();
         let active = self.sc & 0x81 == 0x81;
@@ -105,6 +196,11 @@ impl Serial {
         let crossed_period = previous_cycles + cycles >= transfer_period;
 
         if active && crossed_period {
+            if self.link_peer_present {
+                self.pending_link_byte = Some(self.sb);
+                return false;
+            }
+
             let response = device.exchange_byte(self.sb);
             self.output_log.push(self.sb);
             print!("{}", self.sb as char);
@@ -132,6 +228,8 @@ impl Serial {
             cycles: reader.read_u64()?,
             mode: reader.read_hardware_mode()?,
             output_log: Vec::new(),
+            link_peer_present: false,
+            pending_link_byte: None,
         })
     }
 }

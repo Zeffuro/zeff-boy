@@ -291,6 +291,38 @@ impl EmuBackend {
         dispatch!(self, step_frame())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_game_boy_frame_with_remote_link(
+        &mut self,
+        link: &mut crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+    ) -> Result<(), crate::link::LinkSessionError> {
+        let Self::Gb(gb) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+
+        link.poll_emulator(&mut gb.emu)?;
+        if gb.emu.game_boy_link_state().pending_master_byte.is_some() {
+            return Ok(());
+        }
+
+        let mut link_error = None;
+        gb.emu.step_until_frame_or(|emulator| {
+            if let Err(err) = link.poll_emulator(emulator) {
+                link_error = Some(err);
+                return true;
+            }
+            if emulator.game_boy_link_state().pending_master_byte.is_some() {
+                return true;
+            }
+            false
+        });
+
+        if let Some(err) = link_error {
+            return Err(err);
+        }
+        link.poll_emulator(&mut gb.emu)
+    }
+
     #[inline]
     pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         dispatch!(self, drain_audio_samples_into(buf))
@@ -326,6 +358,64 @@ impl EmuBackend {
 
     pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         dispatch!(self, set_input_p2(buttons_pressed, dpad_pressed))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_link_peer_present(&mut self, present: bool) -> bool {
+        match self {
+            Self::Gb(gb) => {
+                gb.emu.set_game_boy_link_peer_present(present);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn game_boy_link_state(
+        &self,
+    ) -> Option<zeff_gb_core::hardware::bus::GameBoyLinkState> {
+        match self {
+            Self::Gb(gb) => Some(gb.emu.game_boy_link_state()),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn sync_game_boy_remote_link_state(
+        &mut self,
+        peer_state: zeff_gb_core::hardware::bus::GameBoyLinkState,
+        idle_master_response: Option<u8>,
+    ) -> bool {
+        match self {
+            Self::Gb(gb) => gb.emu.sync_game_boy_remote_link_peer_with_idle_response(
+                peer_state,
+                idle_master_response,
+            ),
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn sync_link_peer(&mut self, peer: &mut Self) -> bool {
+        match (self, peer) {
+            (Self::Gb(left), Self::Gb(right)) => {
+                left.emu.sync_game_boy_link_peer(&mut right.emu);
+                true
+            }
+            (Self::Sega8(left), Self::Sega8(right))
+                if left.system() == ActiveSystem::GameGear
+                    && right.system() == ActiveSystem::GameGear =>
+            {
+                left.emu.sync_game_gear_link_peer(&mut right.emu);
+                true
+            }
+            (Self::Ws(left), Self::Ws(right)) => {
+                left.emu.sync_wonder_swan_link_peer(&mut right.emu);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {

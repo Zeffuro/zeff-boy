@@ -1,5 +1,6 @@
 use crate::debug::{self, DebugTab, DebugTabViewer, DebugUiActions, DebugWindowState, MenuAction};
 use crate::debug::{DebugDataRefs, ToastManager};
+use crate::rom_archive::{ArchiveSelectionAction, PendingArchiveSelection};
 
 use super::Graphics;
 use super::viewport::calculate_viewport;
@@ -35,11 +36,13 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) slot_occupied: [bool; 10],
     pub(crate) active_save_slot: u8,
     pub(crate) can_undo_load_state: bool,
+    pub(crate) archive_selection: Option<&'a PendingArchiveSelection>,
 }
 
 pub(crate) struct RenderResult {
     pub(crate) actions: Vec<MenuAction>,
     pub(crate) debug_actions: DebugUiActions,
+    pub(crate) archive_selection_action: Option<ArchiveSelectionAction>,
     pub(crate) egui_wants_keyboard: bool,
     pub(crate) game_view_focused: bool,
 }
@@ -130,6 +133,49 @@ impl Graphics {
                     });
             });
         ctx_egui.request_repaint();
+    }
+
+    fn draw_archive_selection_window(
+        &self,
+        ctx_egui: &egui::Context,
+        selection: &PendingArchiveSelection,
+    ) -> Option<ArchiveSelectionAction> {
+        let mut action = None;
+        let archive_name = selection
+            .archive_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("archive");
+
+        egui::Window::new("Select ROM from archive")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(560.0)
+            .show(ctx_egui, |ui| {
+                ui.label(format!(
+                    "{} contains multiple supported ROMs. Choose one to load:",
+                    archive_name
+                ));
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for entry in &selection.entries {
+                            if ui.button(entry.display_label()).clicked() {
+                                action = Some(ArchiveSelectionAction::Load {
+                                    archive_path: selection.archive_path.clone(),
+                                    entry_index: entry.index,
+                                });
+                            }
+                        }
+                    });
+                ui.separator();
+                if ui.button("Cancel").clicked() {
+                    action = Some(ArchiveSelectionAction::Cancel);
+                }
+            });
+        ctx_egui.request_repaint();
+        action
     }
 
     fn submit_gpu_passes(
@@ -379,6 +425,9 @@ impl Graphics {
         }
 
         ctx.toast_manager.set_recording(ctx.is_recording_audio);
+        let archive_selection_action = ctx.archive_selection.and_then(|selection| {
+            self.draw_archive_selection_window(self.egui.context(), selection)
+        });
         ctx.toast_manager.draw(self.egui.context());
 
         if ctx.is_rewinding {
@@ -420,6 +469,7 @@ impl Graphics {
         Ok(RenderResult {
             actions: forwarded_actions,
             debug_actions,
+            archive_selection_action,
             egui_wants_keyboard,
             game_view_focused,
         })

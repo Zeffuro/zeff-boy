@@ -1,12 +1,13 @@
 use super::{ActiveCore, CoreState};
 use zeff_emu_common::cheats::{
-    CheatPatch, apply_ram_cheats_16, apply_wide_ram_cheats, parse_raw16_cheats,
-    parse_wide_raw_cheats,
+    CheatPatch, apply_ram_cheats_16, apply_wide_ram_cheats,
+    parse_gba_codebreaker_cheats_with_state, parse_raw16_cheats, parse_wide_raw_cheats,
 };
 
 impl CoreState {
     pub fn cheat_reset(&mut self) {
         self.ram_cheats.clear();
+        self.gba_codebreaker_state.reset();
         match &mut self.core {
             ActiveCore::Gb(emu) => emu.clear_rom_patches(),
             ActiveCore::Gba(_) => {}
@@ -33,8 +34,11 @@ impl CoreState {
                 }
             }
             ActiveCore::Gba(_) => {
-                self.ram_cheats
-                    .extend(parse_wide_raw_cheats(code).unwrap_or_default());
+                if let Some(patches) = parse_wide_raw_cheats(code).or_else(|| {
+                    parse_gba_codebreaker_cheats_with_state(code, &mut self.gba_codebreaker_state)
+                }) {
+                    self.ram_cheats.extend(patches);
+                }
             }
             ActiveCore::Nes(emu) => {
                 if let Some(patch) = zeff_nes_core::cheats::decode_nes_game_genie(code) {

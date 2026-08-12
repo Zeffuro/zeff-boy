@@ -97,6 +97,18 @@ impl App {
                     rom_crc32,
                 ),
             }
+        } else if let Some(ws) = backend.ws() {
+            let rom_title = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("WonderSwan ROM")
+                .to_string();
+            apply_local_cheat_rom_info(
+                &mut self.debug_windows.cheat,
+                system,
+                rom_title,
+                Some(ws.emu.rom_crc32()),
+            );
         } else {
             self.debug_windows.cheat.rom_title = None;
             self.debug_windows.cheat.rom_crc32 = None;

@@ -32,6 +32,13 @@ fn large_linear_bank_prefetch_rom(old_bank_code: &[u8], new_bank_code: &[u8]) ->
     rom
 }
 
+fn code_with_handler(prefix: &[u8], handler_offset: usize, handler: &[u8]) -> Vec<u8> {
+    let mut code = vec![0xF4; handler_offset + handler.len()];
+    code[..prefix.len()].copy_from_slice(prefix);
+    code[handler_offset..handler_offset + handler.len()].copy_from_slice(handler);
+    code
+}
+
 #[test]
 fn loads_and_steps_minimal_rom() {
     let rom = rom_with_reset_code(&[0x90, 0xF4]);
@@ -235,6 +242,214 @@ fn taken_branch_after_linear_bank_write_fetches_target_from_new_bank() {
 
     assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
     assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x99);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xF4);
+    assert_eq!(emu.cpu_state(), CpuState::Halted);
+}
+
+#[test]
+fn far_jump_after_linear_bank_write_fetches_target_from_new_bank() {
+    let old_bank = code_with_handler(
+        &[
+            0xB0, 0x00, // mov al,00
+            0xE6, 0xC0, // out c0,al
+            0xEA, 0x10, 0x00, 0x00, 0xF0, // jmp f000:0010
+        ],
+        0x10,
+        &[
+            0xB0, 0x11, // mov al,11
+            0xF4, // hlt
+        ],
+    );
+    let new_bank = code_with_handler(
+        &[
+            0xB0, 0xEE, // mov al,ee
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x77, // mov al,77
+            0xF4, // hlt
+        ],
+    );
+    let rom = large_linear_bank_prefetch_rom(&old_bank, &new_bank);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xEA);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xE6);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xEA);
+    assert_eq!(emu.cpu_pc(), 0xF0010);
+    assert_eq!(emu.bus.cartridge.linear_bank(), 0);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x77);
+}
+
+#[test]
+fn far_call_and_return_after_linear_bank_write_stay_on_new_bank() {
+    let old_bank = code_with_handler(
+        &[
+            0xB0, 0x00, // mov al,00
+            0xE6, 0xC0, // out c0,al
+            0x9A, 0x10, 0x00, 0x00, 0xF0, // call f000:0010
+            0xB0, 0x11, // mov al,11
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x22, // mov al,22
+            0xCB, // retf
+        ],
+    );
+    let new_bank = code_with_handler(
+        &[
+            0xB0, 0xEE, // mov al,ee
+            0xF4, // hlt
+            0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, // padding to return address 0009
+            0xB0, 0x99, // mov al,99
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x66, // mov al,66
+            0xCB, // retf
+        ],
+    );
+    let rom = large_linear_bank_prefetch_rom(&old_bank, &new_bank);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xEA);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xE6);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0x9A);
+    assert_eq!(emu.cpu_pc(), 0xF0010);
+    assert_eq!(emu.bus.cartridge.linear_bank(), 0);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x66);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xCB);
+    assert_eq!(emu.cpu_pc(), 0xF0009);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x99);
+}
+
+#[test]
+fn software_interrupt_after_linear_bank_write_fetches_handler_from_new_bank() {
+    let old_bank = code_with_handler(
+        &[
+            0xB0, 0x00, // mov al,00
+            0xE6, 0xC0, // out c0,al
+            0xCD, 0x20, // int 20h
+            0xB0, 0x11, // mov al,11
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x22, // mov al,22
+            0xF4, // hlt
+        ],
+    );
+    let new_bank = code_with_handler(
+        &[
+            0xB0, 0xEE, // mov al,ee
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x88, // mov al,88
+            0xF4, // hlt
+        ],
+    );
+    let rom = large_linear_bank_prefetch_rom(&old_bank, &new_bank);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.bus.write16(0x80, 0x0010);
+    emu.bus.write16(0x82, 0xF000);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xEA);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xE6);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xCD);
+    assert_eq!(emu.cpu_pc(), 0xF0010);
+    assert_eq!(emu.bus.cartridge.linear_bank(), 0);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x88);
+}
+
+#[test]
+fn hardware_interrupt_after_linear_bank_write_flushes_deferred_bank() {
+    let old_bank = code_with_handler(
+        &[
+            0xFB, // sti
+            0xB0, 0x00, // mov al,00
+            0xE6, 0xC0, // out c0,al
+            0x90, // nop that would be the stale prefetched instruction
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x33, // mov al,33
+            0xF4, // hlt
+        ],
+    );
+    let new_bank = code_with_handler(
+        &[
+            0xB0, 0xEE, // mov al,ee
+            0xF4, // hlt
+        ],
+        0x10,
+        &[
+            0xB0, 0x99, // mov al,99
+            0xF4, // hlt
+        ],
+    );
+    let rom = large_linear_bank_prefetch_rom(&old_bank, &new_bank);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.bus.write16(0x84, 0x0010);
+    emu.bus.write16(0x86, 0xF000);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xEA);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xFB);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xE6);
+    assert_eq!(emu.bus.cartridge.linear_bank(), 1);
+
+    emu.io_write8(0xB0, 0x20);
+    emu.io_write8(0xB2, 0x02);
+    emu.set_input(0x01, 0x00);
+
+    assert_eq!(emu.step_instruction(), None);
+    assert_eq!(emu.cpu_pc(), 0xF0010);
+    assert_eq!(emu.bus.cartridge.linear_bank(), 0);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x99);
+}
+
+#[test]
+fn self_modified_ram_target_is_visible_after_far_jump_flush() {
+    let rom = rom_with_reset_code(&[
+        0xB8, 0x00, 0x00, // mov ax,0000
+        0x8E, 0xD8, // mov ds,ax
+        0xC6, 0x06, 0x00, 0x01, 0xB0, // mov byte [0100],b0
+        0xC6, 0x06, 0x01, 0x01, 0x5A, // mov byte [0101],5a
+        0xC6, 0x06, 0x02, 0x01, 0xF4, // mov byte [0102],f4
+        0xEA, 0x00, 0x01, 0x00, 0x00, // jmp 0000:0100
+        0xF4, // hlt
+    ]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+
+    for expected in [0xEA, 0xB8, 0x8E, 0xC6, 0xC6, 0xC6, 0xEA] {
+        assert_eq!(emu.step_instruction().unwrap().opcode, expected);
+    }
+    assert_eq!(emu.cpu_pc(), 0x00100);
+
+    assert_eq!(emu.step_instruction().unwrap().opcode, 0xB0);
+    assert_eq!(emu.cpu_registers()[0] & 0x00FF, 0x5A);
     assert_eq!(emu.step_instruction().unwrap().opcode, 0xF4);
     assert_eq!(emu.cpu_state(), CpuState::Halted);
 }

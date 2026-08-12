@@ -35,6 +35,9 @@ pub(crate) enum MenuAction {
     StopReplayRecording,
     LoadReplay,
     TakeScreenshot,
+    HostTcpLink,
+    JoinTcpLink,
+    DisconnectLink,
     ToggleWsRotation,
     SetLayerToggles(bool, bool, bool),
     SetGbaBgLayerToggles([bool; 4]),
@@ -114,7 +117,13 @@ pub(crate) fn draw_menu_bar(
                         });
 
                         ui.menu_button("Tools", |ui| {
-                            tools_menu::draw(ui, dock_state, debug_windows);
+                            tools_menu::draw(
+                                ui,
+                                &mut actions,
+                                dock_state,
+                                debug_windows,
+                                mb.active_system,
+                            );
                         });
 
                         ui.menu_button("Help", |ui| {

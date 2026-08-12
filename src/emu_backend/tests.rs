@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use zeff_emu_common::debug::WatchType;
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
 
 mod fixtures;
 
@@ -199,6 +200,47 @@ fn shared_backend_loader_applies_explicit_sega8_mapper_tag_from_paths() {
         sega8.emu.bus().mapper().kind(),
         zeff_sega8_core::hardware::cartridge::Sega8MapperKind::Janggun
     );
+}
+
+#[test]
+fn backend_link_peer_sync_exchanges_game_boy_bytes() {
+    let mut left = build_gb_backend();
+    let mut right = build_gb_backend();
+
+    assert!(left.sync_link_peer(&mut right));
+
+    {
+        let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&mut left, &mut right) else {
+            panic!("expected GB backends");
+        };
+        left.emu.write_byte(SERIAL_SB, 0xAB);
+        right.emu.write_byte(SERIAL_SB, 0x34);
+        left.emu.write_byte(SERIAL_SC, 0x81);
+        right.emu.write_byte(SERIAL_SC, 0x80);
+    }
+
+    left.step_frame();
+    right.step_frame();
+
+    assert!(left.sync_link_peer(&mut right));
+
+    let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&left, &right) else {
+        panic!("expected GB backends");
+    };
+    assert_eq!(left.emu.cpu_peek8(SERIAL_SB), 0x34);
+    assert_eq!(right.emu.cpu_peek8(SERIAL_SB), 0xAB);
+    assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(right.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(left.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    assert_eq!(right.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+}
+
+#[test]
+fn backend_link_peer_sync_rejects_incompatible_pairs() {
+    let mut gb = build_gb_backend();
+    let mut gba = build_gba_backend();
+
+    assert!(!gb.sync_link_peer(&mut gba));
 }
 
 fn test_rom_for_system(system: ActiveSystem) -> Vec<u8> {

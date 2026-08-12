@@ -3,9 +3,13 @@ use crate::ui;
 
 use super::types::{publish_framebuffer, publish_owned_framebuffer};
 use super::{EmuResponse, EmuThread, FrameInput, FrameResult, SharedFramebuffer};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::link::gb::GameBoyRemoteLink;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::link::transport::TcpLinkTransport;
 
 impl EmuThread {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn handle_step_frames(
         backend: &mut EmuBackend,
         mut input: FrameInput,
@@ -33,6 +37,62 @@ impl EmuThread {
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
             Self::step_n_frames(backend, input.frames, cheats);
+        }
+        if input.rewind_seconds != *rewind_seconds {
+            *rewind_seconds = input.rewind_seconds;
+            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                *rewind_seconds,
+                super::REWIND_SNAPSHOTS_PER_SECOND,
+            );
+        }
+
+        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
+
+        let midi_capture_active = input.audio.midi_capture_active;
+        let reusable_audio = input.buffers.audio.take();
+        let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
+
+        publish_framebuffer(shared_fb, backend.framebuffer());
+
+        Self::build_frame_result(
+            backend,
+            reusable_audio,
+            ui_data,
+            midi_capture_active,
+            rewind_buffer.fill_ratio(),
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn handle_step_frames_with_tcp_link(
+        backend: &mut EmuBackend,
+        mut input: FrameInput,
+        cheats: &[crate::cheats::CheatPatch],
+        tcp_link: Option<&mut GameBoyRemoteLink<TcpLinkTransport>>,
+        uncapped_mode: bool,
+        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
+        rewind_seconds: &mut usize,
+        shared_fb: &SharedFramebuffer,
+    ) -> FrameResult {
+        Self::configure_system(backend, &input, uncapped_mode);
+
+        backend.set_input(input.joypad.buttons, input.joypad.dpad);
+        backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_zapper_state(
+            input.zapper.enabled,
+            input.zapper.trigger,
+            input.zapper.hit,
+            input.zapper.screen_pos,
+        );
+
+        if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
+            backend.set_apu_channel_mutes(mutes);
+        }
+
+        let stepped_frames = input.frames > 0 && backend.is_running();
+        if stepped_frames {
+            Self::step_n_frames_with_tcp_link(backend, input.frames, cheats, tcp_link);
         }
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
@@ -193,6 +253,31 @@ impl EmuThread {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_n_frames_with_tcp_link(
+        backend: &mut EmuBackend,
+        n: usize,
+        cheats: &[crate::cheats::CheatPatch],
+        mut tcp_link: Option<&mut GameBoyRemoteLink<TcpLinkTransport>>,
+    ) {
+        for _ in 0..n {
+            if let Some(link) = tcp_link.as_deref_mut() {
+                if backend.step_game_boy_frame_with_remote_link(link).is_err() {
+                    link.disconnect();
+                    backend.set_link_peer_present(false);
+                    backend.step_frame();
+                }
+            } else {
+                backend.step_frame();
+            }
+            backend.apply_ram_cheats(cheats);
+
+            if backend.is_suspended() {
+                break;
+            }
+        }
+    }
+
     pub(crate) fn collect_ui_snapshot(
         backend: &mut EmuBackend,
         snapshot: &super::SnapshotRequest,
@@ -236,7 +321,15 @@ impl EmuThread {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::link::LinkSession;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::net::TcpListener;
     use std::path::PathBuf;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::thread;
+    #[cfg(not(target_arch = "wasm32"))]
+    use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
     use zeff_ws_core::hardware::cartridge::compute_footer_checksum;
 
     fn minimal_ws_rom() -> Vec<u8> {
@@ -272,5 +365,141 @@ mod tests {
             result.audio_samples.is_empty(),
             "stale recycled audio samples must be cleared before draining new core audio"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tcp_link_stepper_exchanges_game_boy_bytes_between_backends() {
+        let (mut left_link, mut right_link) = tcp_link_pair();
+        let mut left = gb_backend();
+        let mut right = gb_backend();
+
+        {
+            let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&mut left, &mut right) else {
+                panic!("expected GB backends");
+            };
+            left.emu.write_byte(SERIAL_SB, 0xAB);
+            right.emu.write_byte(SERIAL_SB, 0x34);
+            left.emu.write_byte(SERIAL_SC, 0x81);
+            right.emu.write_byte(SERIAL_SC, 0x80);
+        }
+
+        for _ in 0..50 {
+            EmuThread::step_n_frames_with_tcp_link(&mut left, 1, &[], Some(&mut left_link));
+            EmuThread::step_n_frames_with_tcp_link(&mut right, 1, &[], Some(&mut right_link));
+            let (EmuBackend::Gb(left_gb), EmuBackend::Gb(right_gb)) = (&left, &right) else {
+                panic!("expected GB backends");
+            };
+            if left_gb.emu.cpu_peek8(SERIAL_SC) & 0x80 == 0
+                && right_gb.emu.cpu_peek8(SERIAL_SC) & 0x80 == 0
+            {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&left, &right) else {
+            panic!("expected GB backends");
+        };
+        assert_eq!(left.emu.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(right.emu.cpu_peek8(SERIAL_SB), 0xAB);
+        assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(right.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(left.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+        assert_eq!(right.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tcp_link_stepper_stops_at_game_boy_link_boundary_until_peer_catches_up() {
+        let (mut left_link, _right_link) = tcp_link_pair();
+        let mut left = gb_backend();
+
+        {
+            let EmuBackend::Gb(left) = &mut left else {
+                panic!("expected GB backend");
+            };
+            left.emu.write_byte(SERIAL_SB, 0xAB);
+            left.emu.write_byte(SERIAL_SC, 0x81);
+        }
+
+        EmuThread::step_n_frames_with_tcp_link(&mut left, 5, &[], Some(&mut left_link));
+
+        let EmuBackend::Gb(left) = &left else {
+            panic!("expected GB backend");
+        };
+        assert_eq!(left.emu.frame_count(), 0);
+        assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
+        assert_eq!(
+            left.emu.game_boy_link_state().pending_master_byte,
+            Some(0xAB)
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tcp_link_stepper_does_not_stop_at_game_boy_external_clock_wait() {
+        let (mut left_link, _right_link) = tcp_link_pair();
+        let mut left = gb_backend();
+
+        {
+            let EmuBackend::Gb(left) = &mut left else {
+                panic!("expected GB backend");
+            };
+            left.emu.write_byte(SERIAL_SB, 0x02);
+            left.emu.write_byte(SERIAL_SC, 0x80);
+        }
+
+        EmuThread::step_n_frames_with_tcp_link(&mut left, 1, &[], Some(&mut left_link));
+
+        let EmuBackend::Gb(left) = &left else {
+            panic!("expected GB backend");
+        };
+        assert!(
+            left.emu.frame_count() > 0,
+            "external-clock readiness must not deadlock the frame stepper"
+        );
+        assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
+        assert_eq!(
+            left.emu.game_boy_link_state().external_clock_byte,
+            Some(0x02)
+        );
+        assert_eq!(left.emu.game_boy_link_state().pending_master_byte, None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tcp_link_pair() -> (
+        crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+        crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let host_thread = thread::spawn(move || {
+            crate::link::transport::TcpLinkTransport::accept_once(listener).unwrap()
+        });
+
+        let client = crate::link::transport::TcpLinkTransport::connect(addr).unwrap();
+        let host = host_thread.join().unwrap();
+
+        (
+            crate::link::gb::GameBoyRemoteLink::new(LinkSession::new(
+                host,
+                crate::link::LinkSystemType::GameBoy,
+                crate::link::LinkEndpointId(1),
+            )),
+            crate::link::gb::GameBoyRemoteLink::new(LinkSession::new(
+                client,
+                crate::link::LinkSystemType::GameBoy,
+                crate::link::LinkEndpointId(2),
+            )),
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn gb_backend() -> EmuBackend {
+        let rom = vec![0u8; 0x8000];
+        let gb = zeff_gb_core::emulator::Emulator::new(&rom, 44_100)
+            .expect("GB emulator should initialize");
+        EmuBackend::from_gb(gb, PathBuf::from("test.gb"))
     }
 }

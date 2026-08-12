@@ -63,6 +63,7 @@ impl App {
             slot_occupied,
             active_save_slot: self.active_save_slot,
             can_undo_load_state: self.undo_load_state.is_some(),
+            archive_selection: self.pending_archive_selection.as_ref(),
         }) {
             Ok(result) => {
                 let mut settings_dirty = false;
@@ -99,6 +100,24 @@ impl App {
                         MenuAction::StopReplayRecording => self.stop_replay_recording(),
                         MenuAction::LoadReplay => self.load_and_play_replay(),
                         MenuAction::TakeScreenshot => self.take_screenshot(),
+                        MenuAction::HostTcpLink => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.host_tcp_link();
+                            #[cfg(target_arch = "wasm32")]
+                            self.toast_manager.error("TCP link is native-only");
+                        }
+                        MenuAction::JoinTcpLink => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.join_tcp_link();
+                            #[cfg(target_arch = "wasm32")]
+                            self.toast_manager.error("TCP link is native-only");
+                        }
+                        MenuAction::DisconnectLink => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.disconnect_link();
+                            #[cfg(target_arch = "wasm32")]
+                            self.toast_manager.info("No TCP link active");
+                        }
                         MenuAction::ToggleWsRotation => self.toggle_ws_rotation(),
                         MenuAction::ToolbarSettingsChanged => settings_dirty = true,
                         MenuAction::SetLayerToggles(bg, win, sprites) => {
@@ -108,6 +127,21 @@ impl App {
                             self.pending_debug_actions.gba_bg_layer_toggles = Some(*layers);
                         }
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
+                    }
+                }
+                if let Some(action) = result.archive_selection_action {
+                    match action {
+                        crate::rom_archive::ArchiveSelectionAction::Load {
+                            archive_path,
+                            entry_index,
+                        } => {
+                            self.pending_archive_selection = None;
+                            self.load_archive_entry_with_options(&archive_path, entry_index, true);
+                        }
+                        crate::rom_archive::ArchiveSelectionAction::Cancel => {
+                            self.pending_archive_selection = None;
+                            self.toast_manager.info("Archive load canceled");
+                        }
                     }
                 }
                 if settings_dirty {

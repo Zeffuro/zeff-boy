@@ -110,6 +110,13 @@ pub(crate) struct FrameResult {
     pub(crate) apu_snapshot: Option<crate::audio_recorder::MidiApuSnapshot>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TcpLinkMode {
+    Host { bind_addr: String },
+    Join { connect_addr: String },
+}
+
 pub(crate) enum EmuCommand {
     StepFrames(Box<FrameInput>),
     SaveStateSlot(u8),
@@ -138,6 +145,10 @@ pub(crate) enum EmuCommand {
     SetSampleRate(u32),
     SetUncapped(bool),
     UpdateCheats(Vec<crate::cheats::CheatPatch>),
+    #[cfg(not(target_arch = "wasm32"))]
+    StartTcpLink(TcpLinkMode),
+    #[cfg(not(target_arch = "wasm32"))]
+    DisconnectLink,
     Rewind,
     Shutdown,
 }
@@ -145,12 +156,22 @@ pub(crate) enum EmuCommand {
 pub(crate) enum EmuResponse {
     SaveStateOk(String),
     SaveStateFailed(String),
-    LoadStateOk { path: String },
+    LoadStateOk {
+        path: String,
+    },
     LoadStateFailed(String),
     RewindOk,
     RewindFailed(String),
     StateCaptured(Vec<u8>),
     StateCaptureFailed(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    LinkPending(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    LinkConnected(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    LinkFailed(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    LinkDisconnected,
     SramFlushed(Option<String>),
     ShutdownComplete,
 }

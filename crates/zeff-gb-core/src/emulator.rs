@@ -57,6 +57,7 @@ impl fmt::Debug for Emulator {
 mod tests {
     use super::*;
     use crate::debug::WatchType;
+    use crate::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
     use zeff_emu_common::save_ram::SaveRamKind;
 
     #[test]
@@ -122,5 +123,86 @@ mod tests {
         emulator.bus.trace_cpu_accesses = false;
 
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn game_boy_link_peer_sync_exchanges_internal_and_external_transfer_bytes() {
+        let rom = vec![0u8; 0x8000];
+        let mut left = Emulator::new(&rom, 44_100).expect("left GB emulator should initialize");
+        let mut right = Emulator::new(&rom, 44_100).expect("right GB emulator should initialize");
+
+        left.sync_game_boy_link_peer(&mut right);
+
+        left.write_byte(SERIAL_SB, 0xAB);
+        right.write_byte(SERIAL_SB, 0x34);
+        left.write_byte(SERIAL_SC, 0x81);
+        right.write_byte(SERIAL_SC, 0x80);
+
+        left.step_frame();
+        right.step_frame();
+
+        assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
+        assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
+
+        left.sync_game_boy_link_peer(&mut right);
+
+        assert_eq!(left.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(right.cpu_peek8(SERIAL_SB), 0xAB);
+        assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(left.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+        assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn game_boy_link_peer_sync_completes_unanswered_master_with_peer_output_byte() {
+        let rom = vec![0u8; 0x8000];
+        let mut left = Emulator::new(&rom, 44_100).expect("left GB emulator should initialize");
+        let mut right = Emulator::new(&rom, 44_100).expect("right GB emulator should initialize");
+
+        left.sync_game_boy_link_peer(&mut right);
+
+        left.write_byte(SERIAL_SB, 0xAB);
+        right.write_byte(SERIAL_SB, 0x34);
+        left.write_byte(SERIAL_SC, 0x81);
+
+        left.step_frame();
+        left.sync_game_boy_link_peer(&mut right);
+
+        assert_eq!(left.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(right.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(left.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+        assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
+    }
+
+    #[test]
+    fn game_boy_remote_link_state_matches_local_sync_result() {
+        let rom = vec![0u8; 0x8000];
+        let mut left = Emulator::new(&rom, 44_100).expect("left GB emulator should initialize");
+        let mut right = Emulator::new(&rom, 44_100).expect("right GB emulator should initialize");
+
+        left.set_game_boy_link_peer_present(true);
+        right.set_game_boy_link_peer_present(true);
+        left.write_byte(SERIAL_SB, 0xAB);
+        right.write_byte(SERIAL_SB, 0x34);
+        left.write_byte(SERIAL_SC, 0x81);
+        right.write_byte(SERIAL_SC, 0x80);
+
+        left.step_frame();
+        right.step_frame();
+
+        let left_state = left.game_boy_link_state();
+        let right_state = right.game_boy_link_state();
+        left.sync_game_boy_remote_link_peer(right_state);
+        right.sync_game_boy_remote_link_peer(left_state);
+
+        assert_eq!(left.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(right.cpu_peek8(SERIAL_SB), 0xAB);
+        assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(left.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+        assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
     }
 }

@@ -15,6 +15,19 @@ mod trace;
 pub use oam_corruption::OamCorruptionType;
 pub use trace::CpuAccessTraceEvent;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GameBoyLinkState {
+    pub pending_master_byte: Option<u8>,
+    pub external_clock_byte: Option<u8>,
+    pub output_byte: u8,
+}
+
+impl GameBoyLinkState {
+    pub fn is_idle(self) -> bool {
+        self.pending_master_byte.is_none() && self.external_clock_byte.is_none()
+    }
+}
+
 pub struct Bus {
     pub cartridge: Cartridge,
     pub hardware_mode: HardwareMode,
@@ -427,6 +440,49 @@ impl Bus {
     pub(in crate::hardware) fn step_serial(&mut self, t_cycles: u64) {
         if self.io.serial.step(t_cycles, &mut self.io.printer) {
             self.if_reg |= 0x08;
+        }
+    }
+
+    pub fn set_game_boy_link_peer_present(&mut self, present: bool) {
+        self.io.serial.set_link_peer_present(present);
+    }
+
+    pub fn game_boy_link_state(&self) -> GameBoyLinkState {
+        self.io.serial.link_state()
+    }
+
+    pub fn sync_game_boy_remote_link_peer(&mut self, peer_state: GameBoyLinkState) -> bool {
+        self.sync_game_boy_remote_link_peer_with_idle_response(peer_state, None)
+    }
+
+    pub fn sync_game_boy_remote_link_peer_with_idle_response(
+        &mut self,
+        peer_state: GameBoyLinkState,
+        idle_master_response: Option<u8>,
+    ) -> bool {
+        self.io.serial.set_link_peer_present(true);
+        let completed = self
+            .io
+            .serial
+            .apply_remote_link_peer_state(peer_state, idle_master_response);
+        if completed {
+            self.if_reg |= 0x08;
+        }
+        completed
+    }
+
+    pub fn sync_game_boy_link_peer(&mut self, peer: &mut Self) {
+        self.io.serial.set_link_peer_present(true);
+        peer.io.serial.set_link_peer_present(true);
+
+        let self_state = self.io.serial.link_state();
+        let peer_state = peer.io.serial.link_state();
+
+        if self.io.serial.apply_link_peer_state(peer_state) {
+            self.if_reg |= 0x08;
+        }
+        if peer.io.serial.apply_link_peer_state(self_state) {
+            peer.if_reg |= 0x08;
         }
     }
 

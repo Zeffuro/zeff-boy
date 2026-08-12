@@ -16,8 +16,11 @@ impl App {
             }
         }
 
-        if self.rewind.pending || self.rewind.backstep_pending {
-            while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
+        while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
+            if self.handle_link_response(&resp) {
+                continue;
+            }
+            if self.rewind.pending || self.rewind.backstep_pending {
                 match resp {
                     EmuResponse::RewindOk => {
                         if let Some(thread) = &self.emu_thread {
@@ -45,6 +48,8 @@ impl App {
                     }
                     _ => {}
                 }
+            } else {
+                log::debug!("Ignoring unexpected emulator response while idle");
             }
         }
     }

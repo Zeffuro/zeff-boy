@@ -361,6 +361,45 @@ fn gba_libretro_cheat_set_applies_wide_raw_multi_code_each_frame() {
 }
 
 #[test]
+fn gba_libretro_cheat_set_applies_codebreaker_ram_writes_each_frame() {
+    let rom = gba_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+
+    state.cheat_set("3200E924+0096+8201A454+07B7");
+    state.step_frame();
+
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_E924), 0x96);
+    assert_eq!(emu.cpu_peek8(0x0201_A454), 0xB7);
+    assert_eq!(emu.cpu_peek8(0x0201_A455), 0x07);
+}
+
+#[test]
+fn gba_libretro_cheat_set_decrypts_codebreaker_sequence_across_calls() {
+    let rom = gba_rom();
+    let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");
+    {
+        let ActiveCore::Gba(emu) = &mut state.core else {
+            panic!("expected GBA core");
+        };
+        emu.cpu_write8(0x0200_23BE, 0x12);
+        emu.cpu_write8(0x0200_23BF, 0x34);
+    }
+
+    state.cheat_set("9F6637CD47C3");
+    state.cheat_set("5B1005082B1B");
+    state.step_frame();
+
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.cpu_peek8(0x0200_23BE), 0x00);
+    assert_eq!(emu.cpu_peek8(0x0200_23BF), 0x00);
+}
+
+#[test]
 fn gba_libretro_ram_cheats_check_existing_value() {
     let rom = gba_rom();
     let mut state = CoreState::from_rom(&rom, "test.gba").expect("GBA ROM should load");

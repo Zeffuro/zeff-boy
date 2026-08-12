@@ -5,6 +5,34 @@ mod queries;
 use super::Emulator;
 
 impl Emulator {
+    pub fn sync_game_boy_link_peer(&mut self, peer: &mut Self) {
+        self.bus.sync_game_boy_link_peer(&mut peer.bus);
+    }
+
+    pub fn set_game_boy_link_peer_present(&mut self, present: bool) {
+        self.bus.set_game_boy_link_peer_present(present);
+    }
+
+    pub fn game_boy_link_state(&self) -> crate::hardware::bus::GameBoyLinkState {
+        self.bus.game_boy_link_state()
+    }
+
+    pub fn sync_game_boy_remote_link_peer(
+        &mut self,
+        peer_state: crate::hardware::bus::GameBoyLinkState,
+    ) -> bool {
+        self.bus.sync_game_boy_remote_link_peer(peer_state)
+    }
+
+    pub fn sync_game_boy_remote_link_peer_with_idle_response(
+        &mut self,
+        peer_state: crate::hardware::bus::GameBoyLinkState,
+        idle_master_response: Option<u8>,
+    ) -> bool {
+        self.bus
+            .sync_game_boy_remote_link_peer_with_idle_response(peer_state, idle_master_response)
+    }
+
     pub fn set_input(&mut self, buttons: u8, dpad: u8) {
         if self.bus.apply_joypad_pressed_masks(buttons, dpad) {
             self.bus.if_reg |= 0x10;

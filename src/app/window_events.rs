@@ -119,6 +119,7 @@ impl App {
     }
 
     pub(super) fn handle_focus_change(&mut self, focused: bool) {
+        self.window_focused = focused;
         if focused {
             self.timing.last_frame_time = Instant::now();
 
@@ -127,7 +128,10 @@ impl App {
                 self.speed.paused = false;
                 self.toast_manager.set_paused(false);
             }
-        } else if self.settings.emulation.pause_on_unfocus && !self.speed.paused {
+        } else if self.settings.emulation.pause_on_unfocus
+            && !self.link_keeps_running()
+            && !self.speed.paused
+        {
             self.paused_by_unfocus = true;
             self.speed.paused = true;
             self.toast_manager.set_paused(true);

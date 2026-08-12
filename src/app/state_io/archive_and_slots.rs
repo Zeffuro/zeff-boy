@@ -1,4 +1,5 @@
 use crate::emu_backend::{ActiveSystem, ROM_EXTENSIONS};
+use crate::rom_archive::ArchiveRomEntry;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -6,6 +7,45 @@ pub(crate) fn extract_rom_from_zip(zip_path: &Path) -> anyhow::Result<(PathBuf, 
     let file = std::fs::File::open(zip_path).context("Failed to open ZIP")?;
     let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
     extract_rom_entries(&mut archive, zip_path)
+}
+
+pub(crate) fn list_rom_entries_in_zip(zip_path: &Path) -> anyhow::Result<Vec<ArchiveRomEntry>> {
+    let file = std::fs::File::open(zip_path).context("Failed to open ZIP")?;
+    let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
+    Ok(collect_rom_entries(&mut archive))
+}
+
+pub(crate) fn extract_rom_entry_from_zip(
+    zip_path: &Path,
+    entry_index: usize,
+) -> anyhow::Result<(PathBuf, Vec<u8>)> {
+    let file = std::fs::File::open(zip_path).context("Failed to open ZIP")?;
+    let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
+    extract_rom_entry_by_index(&mut archive, zip_path, entry_index)
+}
+
+pub(crate) fn extract_rom_entry_path_from_zip(
+    zip_path: &Path,
+    virtual_rom_path: &Path,
+) -> anyhow::Result<(PathBuf, Vec<u8>)> {
+    let relative = virtual_rom_path.strip_prefix(zip_path).with_context(|| {
+        format!(
+            "Loaded ROM path '{}' is not inside archive '{}'",
+            virtual_rom_path.display(),
+            zip_path.display()
+        )
+    })?;
+    let entry_name = zip_entry_name_from_relative_path(relative);
+    let file = std::fs::File::open(zip_path).context("Failed to open ZIP")?;
+    let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
+    let index = (0..archive.len())
+        .find(|&i| {
+            archive
+                .by_index(i)
+                .is_ok_and(|entry| entry.name() == entry_name)
+        })
+        .with_context(|| format!("Archive entry '{entry_name}' no longer exists"))?;
+    extract_rom_entry_by_index(&mut archive, zip_path, index)
 }
 
 #[allow(dead_code)] // Used on WASM for drag-and-drop ROM loading
@@ -30,18 +70,7 @@ fn extract_rom_entries<R: std::io::Read + std::io::Seek>(
         })
         .collect();
 
-    let rom_entries: Vec<(usize, String)> = (0..archive.len())
-        .filter_map(|i| {
-            let entry = archive.by_index(i).ok()?;
-            let name = entry.name().to_string();
-            let ext = Path::new(&name).extension()?.to_str()?.to_ascii_lowercase();
-            if ROM_EXTENSIONS.contains(&ext.as_str()) {
-                Some((i, name))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let rom_entries = collect_rom_entries(archive);
 
     match rom_entries.len() {
         0 => {
@@ -66,26 +95,63 @@ fn extract_rom_entries<R: std::io::Read + std::io::Seek>(
                 ROM_EXTENSIONS.join(", ."),
             )
         }
-        1 => {
-            let (idx, name) = &rom_entries[0];
-            let mut entry = archive
-                .by_index(*idx)
-                .with_context(|| format!("Failed to read '{name}' from ZIP"))?;
-            let mut data = Vec::with_capacity(entry.size() as usize);
-            std::io::Read::read_to_end(&mut entry, &mut data)
-                .with_context(|| format!("Failed to decompress '{name}'"))?;
-            let virtual_path = base_path.join(name);
-            Ok((virtual_path, data))
-        }
+        1 => extract_rom_entry_by_index(archive, base_path, rom_entries[0].index),
         n => anyhow::bail!(
             "ZIP contains {n} ROM files; expected exactly 1. Found: {}",
             rom_entries
                 .iter()
-                .map(|(_, n)| n.as_str())
+                .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
     }
+}
+
+fn collect_rom_entries<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+) -> Vec<ArchiveRomEntry> {
+    (0..archive.len())
+        .filter_map(|index| {
+            let entry = archive.by_index(index).ok()?;
+            if entry.is_dir() {
+                return None;
+            }
+            let name = entry.name().to_string();
+            let system = ActiveSystem::from_path(Path::new(&name))?;
+            Some(ArchiveRomEntry {
+                index,
+                name,
+                system,
+                uncompressed_size: entry.size(),
+            })
+        })
+        .collect()
+}
+
+fn extract_rom_entry_by_index<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    base_path: &Path,
+    entry_index: usize,
+) -> anyhow::Result<(PathBuf, Vec<u8>)> {
+    let mut entry = archive
+        .by_index(entry_index)
+        .with_context(|| format!("Failed to read entry #{entry_index} from ZIP"))?;
+    let name = entry.name().to_string();
+    if ActiveSystem::from_path(Path::new(&name)).is_none() {
+        anyhow::bail!("Archive entry '{name}' is not a supported ROM");
+    }
+    let mut data = Vec::with_capacity(entry.size() as usize);
+    std::io::Read::read_to_end(&mut entry, &mut data)
+        .with_context(|| format!("Failed to decompress '{name}'"))?;
+    let virtual_path = base_path.join(name);
+    Ok((virtual_path, data))
+}
+
+fn zip_entry_name_from_relative_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[derive(Clone)]
@@ -135,14 +201,20 @@ mod tests {
     use super::*;
     use std::io::{Cursor, Write};
 
-    fn zip_with_file(name: &str, bytes: &[u8]) -> Vec<u8> {
+    fn zip_with_files(files: &[(&str, &[u8])]) -> Vec<u8> {
         let cursor = Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(cursor);
-        writer
-            .start_file(name, zip::write::SimpleFileOptions::default())
-            .expect("zip entry should start");
-        writer.write_all(bytes).expect("zip entry should write");
+        for (name, bytes) in files {
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .expect("zip entry should start");
+            writer.write_all(bytes).expect("zip entry should write");
+        }
         writer.finish().expect("zip should finish").into_inner()
+    }
+
+    fn zip_with_file(name: &str, bytes: &[u8]) -> Vec<u8> {
+        zip_with_files(&[(name, bytes)])
     }
 
     #[test]
@@ -166,5 +238,41 @@ mod tests {
             .to_string();
 
         assert!(err.contains(".gba"), "error was: {err}");
+    }
+
+    #[test]
+    fn lists_multiple_roms_in_zip() {
+        let zip = zip_with_files(&[
+            ("folder/one.gb", &[1, 2, 3]),
+            ("folder/two.gba", &[4, 5, 6, 7]),
+            ("readme.txt", b"ignored"),
+        ]);
+        let cursor = Cursor::new(zip);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip should open");
+
+        let entries = collect_rom_entries(&mut archive);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "folder/one.gb");
+        assert_eq!(entries[0].system, ActiveSystem::GameBoy);
+        assert_eq!(entries[1].name, "folder/two.gba");
+        assert_eq!(entries[1].system, ActiveSystem::GameBoyAdvance);
+        assert_eq!(entries[1].uncompressed_size, 4);
+    }
+
+    #[test]
+    fn extracts_selected_rom_from_multi_rom_zip() {
+        let zip = zip_with_files(&[
+            ("folder/one.gb", &[1, 2, 3]),
+            ("folder/two.gba", &[4, 5, 6, 7]),
+        ]);
+        let cursor = Cursor::new(zip);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip should open");
+
+        let (path, data) = extract_rom_entry_by_index(&mut archive, Path::new("archive.zip"), 1)
+            .expect("selected ROM should extract");
+
+        assert_eq!(path, PathBuf::from("archive.zip").join("folder/two.gba"));
+        assert_eq!(data, [4, 5, 6, 7]);
     }
 }

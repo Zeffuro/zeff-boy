@@ -346,6 +346,7 @@ impl Cpu {
         self.ip = bus.read16(vector_addr);
         self.segments[SegmentRegister::Cs.index()] = bus.read16(vector_addr + 2);
         self.add_cycles(bus, cycles);
+        bus.flush_deferred_linear_bank();
     }
 
     pub(super) fn set_popped_flags(&mut self, value: u16) {

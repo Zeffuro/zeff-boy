@@ -4,19 +4,21 @@ use crate::emu_backend::{
     load_backend_from_rom_source, system_specs,
 };
 use crate::emu_thread::{EmuCommand, EmuResponse};
+use crate::rom_archive::PendingArchiveSelection;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 use zeff_ws_core::hardware::cartridge::RomOrientation;
 
+fn is_zip_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+}
+
 pub(crate) fn detect_and_extract_rom(
     path: &Path,
 ) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
-    let is_zip = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
-
-    let (rom_path, preloaded_data) = if is_zip {
+    let (rom_path, preloaded_data) = if is_zip_path(path) {
         let (virtual_path, data) = super::extract_rom_from_zip(path)
             .with_context(|| format!("Failed to extract ROM from '{}'", path.display()))?;
         log::info!(
@@ -51,6 +53,42 @@ pub(crate) fn detect_and_extract_rom(
     Ok((rom_path, preloaded_data, system))
 }
 
+fn detect_and_extract_archive_entry(
+    archive_path: &Path,
+    entry_index: usize,
+) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
+    let (rom_path, data) = super::extract_rom_entry_from_zip(archive_path, entry_index)
+        .with_context(|| format!("Failed to extract ROM from '{}'", archive_path.display()))?;
+    detect_system_for_loaded_path(rom_path, Some(data))
+}
+
+fn detect_and_extract_archive_entry_path(
+    archive_path: &Path,
+    virtual_rom_path: &Path,
+) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
+    let (rom_path, data) =
+        super::extract_rom_entry_path_from_zip(archive_path, virtual_rom_path)
+            .with_context(|| format!("Failed to extract ROM from '{}'", archive_path.display()))?;
+    detect_system_for_loaded_path(rom_path, Some(data))
+}
+
+fn detect_system_for_loaded_path(
+    rom_path: PathBuf,
+    preloaded_data: Option<Vec<u8>>,
+) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
+    let system = ActiveSystem::from_path(&rom_path).ok_or_else(|| {
+        let ext = rom_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("(none)");
+        anyhow::anyhow!(
+            "Unsupported file type '.{ext}'. Supported extensions: {}",
+            ActiveSystem::supported_extensions()
+        )
+    })?;
+    Ok((rom_path, preloaded_data, system))
+}
+
 impl App {
     pub(super) fn init_backend(
         &self,
@@ -80,7 +118,18 @@ impl App {
         Ok((loaded.backend, loaded.original_crc32))
     }
 
-    fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
+    fn load_prepared_rom_with_options(
+        &mut self,
+        source_path: &Path,
+        rom_path: PathBuf,
+        preloaded_data: Option<Vec<u8>>,
+        system: ActiveSystem,
+        auto_load_state: bool,
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.tcp_link_active = false;
+        }
         self.stop_emu_thread();
         self.stop_camera_capture();
 
@@ -93,32 +142,23 @@ impl App {
         self.debug_windows.last_disasm_pc = None;
         self.undo_load_state = None;
 
-        let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
-            Ok(result) => result,
-            Err(e) => {
-                let msg = format!("{e:#}");
-                log::warn!("{msg}");
-                self.toast_manager.error(msg);
-                return;
-            }
-        };
-
         let (backend, original_crc) =
-            match self.init_backend(system, path, &rom_path, preloaded_data) {
+            match self.init_backend(system, source_path, &rom_path, preloaded_data) {
                 Ok(result) => result,
                 Err(e) => {
-                    log::error!("Failed to load ROM '{}': {}", path.display(), e);
+                    log::error!("Failed to load ROM '{}': {}", source_path.display(), e);
                     self.toast_manager.error(format!("Failed to load ROM: {e}"));
                     return;
                 }
             };
 
-        let rom_name = path
+        let rom_name = rom_path
             .file_name()
+            .or_else(|| source_path.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or("ROM")
             .to_string();
-        log::info!("Loaded ROM: {}", path.display());
+        log::info!("Loaded ROM: {}", rom_path.display());
 
         self.finalize_rom_load(
             &backend,
@@ -127,12 +167,12 @@ impl App {
             backend.source_path().to_path_buf(),
         );
 
-        self.setup_cheats_for_rom(system, path, &backend);
+        self.setup_cheats_for_rom(system, &rom_path, &backend);
         self.setup_mods_for_rom(system, original_crc);
 
         self.spawn_emu_thread(backend);
 
-        self.settings.add_recent_rom(path);
+        self.settings.add_recent_rom(source_path);
         self.settings.save();
         self.toast_manager.info(format!("Loaded {rom_name}"));
 
@@ -159,7 +199,82 @@ impl App {
         self.refresh_slot_info();
     }
 
+    fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
+        let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
+            Ok(result) => result,
+            Err(e) => {
+                let msg = format!("{e:#}");
+                log::warn!("{msg}");
+                self.toast_manager.error(msg);
+                return;
+            }
+        };
+
+        self.load_prepared_rom_with_options(
+            path,
+            rom_path,
+            preloaded_data,
+            system,
+            auto_load_state,
+        );
+    }
+
+    pub(in crate::app) fn load_archive_entry_with_options(
+        &mut self,
+        archive_path: &Path,
+        entry_index: usize,
+        auto_load_state: bool,
+    ) {
+        let (rom_path, preloaded_data, system) =
+            match detect_and_extract_archive_entry(archive_path, entry_index) {
+                Ok(result) => result,
+                Err(e) => {
+                    let msg = format!("{e:#}");
+                    log::warn!("{msg}");
+                    self.toast_manager.error(msg);
+                    return;
+                }
+            };
+
+        self.load_prepared_rom_with_options(
+            archive_path,
+            rom_path,
+            preloaded_data,
+            system,
+            auto_load_state,
+        );
+    }
+
+    fn load_archive_entry_path_with_options(
+        &mut self,
+        archive_path: &Path,
+        virtual_rom_path: &Path,
+        auto_load_state: bool,
+    ) {
+        let (rom_path, preloaded_data, system) =
+            match detect_and_extract_archive_entry_path(archive_path, virtual_rom_path) {
+                Ok(result) => result,
+                Err(e) => {
+                    let msg = format!("{e:#}");
+                    log::warn!("{msg}");
+                    self.toast_manager.error(msg);
+                    return;
+                }
+            };
+
+        self.load_prepared_rom_with_options(
+            archive_path,
+            rom_path,
+            preloaded_data,
+            system,
+            auto_load_state,
+        );
+    }
+
     pub(in crate::app) fn load_rom(&mut self, path: &Path) {
+        if self.begin_archive_selection_if_needed(path) {
+            return;
+        }
         self.load_rom_with_options(path, true);
     }
 
@@ -169,7 +284,14 @@ impl App {
             return;
         };
 
-        self.load_rom_with_options(&path, false);
+        if is_zip_path(&path)
+            && let Some(rom_path) = self.rom_info.rom_path.clone()
+            && rom_path != path
+        {
+            self.load_archive_entry_path_with_options(&path, &rom_path, false);
+        } else {
+            self.load_rom_with_options(&path, false);
+        }
         self.toast_manager.success("Game reset");
     }
 
@@ -183,6 +305,10 @@ impl App {
 
         self.stop_emu_thread();
         self.stop_camera_capture();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.tcp_link_active = false;
+        }
 
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.clear_framebuffer();
@@ -219,6 +345,7 @@ impl App {
         self.debug_windows.cheat.libretro_status = None;
         self.debug_windows.cheat.user_codes.clear();
         self.debug_windows.cheat.libretro_codes.clear();
+        self.pending_archive_selection = None;
 
         self.debug_windows.mod_state.clear();
 
@@ -259,6 +386,26 @@ impl App {
 
     pub(in crate::app) fn handle_dropped_file(&mut self, path: PathBuf) {
         self.load_rom(&path);
+    }
+
+    fn begin_archive_selection_if_needed(&mut self, path: &Path) -> bool {
+        if !is_zip_path(path) {
+            return false;
+        }
+        let entries = match super::list_rom_entries_in_zip(path) {
+            Ok(entries) => entries,
+            Err(_) => return false,
+        };
+        if entries.len() <= 1 {
+            return false;
+        }
+        self.pending_archive_selection = Some(PendingArchiveSelection {
+            archive_path: path.to_path_buf(),
+            entries,
+        });
+        self.toast_manager
+            .info("Archive contains multiple ROMs; choose one to load");
+        true
     }
 
     pub(in crate::app) fn finalize_rom_load(

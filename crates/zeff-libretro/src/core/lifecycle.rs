@@ -44,6 +44,7 @@ impl CoreState {
             core,
             rom_data: data.to_vec(),
             ram_cheats: Vec::new(),
+            gba_codebreaker_state: zeff_emu_common::cheats::GbaCodeBreakerState::default(),
             audio_buf: Vec::with_capacity(4096),
             sample_rate,
             xrgb_buf: Vec::new(),

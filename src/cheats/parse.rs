@@ -22,6 +22,30 @@ fn try_parse_wide_raw(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     zeff_emu_common::cheats::parse_wide_raw_cheats(input).map(|patches| (patches, CheatType::Raw))
 }
 
+fn try_parse_gba_codebreaker(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
+    zeff_emu_common::cheats::parse_gba_codebreaker_cheats(input)
+        .map(|patches| (patches, CheatType::XPloder))
+}
+
+fn try_parse_gba_codebreaker_with_state(
+    input: &str,
+    state: &mut zeff_emu_common::cheats::GbaCodeBreakerState,
+) -> Option<(Vec<CheatPatch>, CheatType)> {
+    zeff_emu_common::cheats::parse_gba_codebreaker_cheats_with_state(input, state)
+        .map(|patches| (patches, CheatType::XPloder))
+}
+
+fn try_parse_gba(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
+    try_parse_wide_raw(input).or_else(|| try_parse_gba_codebreaker(input))
+}
+
+fn try_parse_gba_with_state(
+    input: &str,
+    state: &mut zeff_emu_common::cheats::GbaCodeBreakerState,
+) -> Option<(Vec<CheatPatch>, CheatType)> {
+    try_parse_wide_raw(input).or_else(|| try_parse_gba_codebreaker_with_state(input, state))
+}
+
 fn try_parse_single_for_system(
     input: &str,
     system: ActiveSystem,
@@ -34,7 +58,19 @@ fn try_parse_single_for_system(
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             zeff_sega8_core::cheats::parse_cheat(input).ok()
         }
-        ActiveSystem::GameBoyAdvance | ActiveSystem::WonderSwan => try_parse_wide_raw(input),
+        ActiveSystem::GameBoyAdvance => try_parse_gba(input),
+        ActiveSystem::WonderSwan => try_parse_wide_raw(input),
+    }
+}
+
+fn try_parse_single_for_system_with_gba_state(
+    input: &str,
+    system: ActiveSystem,
+    gba_codebreaker_state: &mut zeff_emu_common::cheats::GbaCodeBreakerState,
+) -> Option<(Vec<CheatPatch>, CheatType)> {
+    match system {
+        ActiveSystem::GameBoyAdvance => try_parse_gba_with_state(input, gba_codebreaker_state),
+        _ => try_parse_single_for_system(input, system),
     }
 }
 
@@ -66,7 +102,7 @@ pub(crate) fn parse_cheat_for_system(
                 all_patches.extend(patches);
             } else {
                 return Err(
-                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA/WS: raw (AAAAAAAA:VV)",
+                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
                 );
             }
         }
@@ -79,6 +115,25 @@ pub(crate) fn parse_cheat_for_system(
     }
 
     Err(
-        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA/WS: raw (AAAAAAAA:VV)",
+        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
     )
+}
+
+pub(crate) fn parse_cheat_for_system_with_gba_state(
+    input: &str,
+    system: ActiveSystem,
+    gba_codebreaker_state: &mut zeff_emu_common::cheats::GbaCodeBreakerState,
+) -> Result<(Vec<CheatPatch>, CheatType), &'static str> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("Empty cheat code");
+    }
+
+    if let Some(result) =
+        try_parse_single_for_system_with_gba_state(trimmed, system, gba_codebreaker_state)
+    {
+        return Ok(result);
+    }
+
+    parse_cheat_for_system(trimmed, system)
 }

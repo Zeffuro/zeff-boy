@@ -74,6 +74,59 @@ impl Emulator {
         (pc_before, op, cb_prefix, self.cpu.last_step_cycles)
     }
 
+    pub fn step_until_frame_or<F>(&mut self, mut should_stop: F)
+    where
+        F: FnMut(&mut Self) -> bool,
+    {
+        if matches!(self.cpu.running, CpuState::Suspended) {
+            return;
+        }
+
+        if self.bus.ppu_lcdc() & 0x80 == 0 {
+            let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
+            let target = self.cpu.cycles.wrapping_add(frame_cycles);
+            while self.cpu.cycles < target && !matches!(self.cpu.running, CpuState::Suspended) {
+                self.step_runtime_instruction();
+                if should_stop(self) {
+                    return;
+                }
+            }
+            if !matches!(self.cpu.running, CpuState::Suspended) {
+                self.frame_count = self.frame_count.wrapping_add(1);
+            }
+            return;
+        }
+
+        let max_cycles = Self::cycles_per_frame(self.hardware_mode).saturating_mul(2);
+        let start_cycles = self.cpu.cycles;
+        let mut previous_ly = self.bus.ppu_ly();
+
+        while self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
+            && !matches!(self.cpu.running, CpuState::Suspended)
+        {
+            self.step_runtime_instruction();
+            if should_stop(self) {
+                return;
+            }
+            if self.reached_vblank_start(&mut previous_ly) {
+                break;
+            }
+        }
+
+        if !matches!(self.cpu.running, CpuState::Suspended) {
+            self.frame_count = self.frame_count.wrapping_add(1);
+        }
+    }
+
+    fn step_runtime_instruction(&mut self) {
+        if self.debug.any_active() || self.opcode_log.enabled {
+            let _ = self.step_instruction();
+        } else {
+            self.cpu.step(&mut self.bus);
+            self.hardware_mode = self.bus.hardware_mode;
+        }
+    }
+
     pub fn step_frame(&mut self) {
         if matches!(self.cpu.running, CpuState::Suspended) {
             return;

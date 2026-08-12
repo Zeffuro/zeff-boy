@@ -107,7 +107,14 @@ impl CheatCapabilities {
                 supports_rom_patches: true,
                 formats: &["Raw", "Action Replay", "Game Genie"],
             },
-            ActiveSystem::GameBoyAdvance | ActiveSystem::WonderSwan => Self {
+            ActiveSystem::GameBoyAdvance => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: false,
+                supports_ram_writes: true,
+                supports_rom_patches: false,
+                formats: &["Raw", "CodeBreaker/XPloder"],
+            },
+            ActiveSystem::WonderSwan => Self {
                 supports_user_cheats: true,
                 supports_libretro_database: false,
                 supports_ram_writes: true,

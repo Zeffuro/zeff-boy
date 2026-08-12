@@ -151,6 +151,13 @@ pub(super) fn draw(
         "When enabled, renders Super Game Boy borders for compatible ROMs. \
          Requires SGB or Auto hardware mode and an SGB-supported ROM.",
     );
+    ui.horizontal(|ui| {
+        ui.label("TCP link address");
+        ui.text_edit_singleline(&mut settings.emulation.tcp_link_addr)
+            .on_hover_text(
+                "Host binds this address; Join connects to it. Change the port here when needed.",
+            );
+    });
     ui.checkbox(
         &mut settings.emulation.nes_zapper_enabled,
         "Enable NES Zapper (Light Gun)",

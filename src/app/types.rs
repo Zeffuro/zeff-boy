@@ -94,6 +94,8 @@ pub(super) struct CachedRomInfo {
     pub(super) rom_hash: Option<[u8; 32]>,
 }
 
+pub(super) type PendingArchiveSelection = crate::rom_archive::PendingArchiveSelection;
+
 #[derive(Default)]
 pub(super) struct NesPaletteFileCache {
     pub(super) path: String,

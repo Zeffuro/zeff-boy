@@ -201,6 +201,14 @@ impl Bus {
         self.pending_linear_bank = None;
     }
 
+    pub(crate) fn flush_deferred_linear_bank(&mut self) {
+        let Some(pending) = self.pending_linear_bank else {
+            return;
+        };
+        self.cartridge.set_linear_bank(pending.value);
+        self.pending_linear_bank = None;
+    }
+
     pub fn ppu_debug_snapshot(&self) -> PpuDebugSnapshot {
         self.ppu.debug_snapshot()
     }

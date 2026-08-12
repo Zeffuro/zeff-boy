@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use crate::emu_backend::ActiveSystem;
 
 use super::CheatCode;
-use super::parse::parse_cheat_for_system;
+use super::parse::{parse_cheat_for_system, parse_cheat_for_system_with_gba_state};
 
 pub(crate) fn parse_cht_file_for_system(content: &str, system: ActiveSystem) -> Vec<CheatCode> {
     let mut entries: HashMap<usize, (Option<String>, Option<String>, bool)> = HashMap::new();
+    let mut gba_codebreaker_state = zeff_emu_common::cheats::GbaCodeBreakerState::default();
 
     for line in content.lines() {
         let line = line.trim();
@@ -44,8 +45,21 @@ pub(crate) fn parse_cht_file_for_system(content: &str, system: ActiveSystem) -> 
             }
             let name = desc.unwrap_or_else(|| code_text.clone());
 
-            match parse_cheat_for_system(&code_text, system) {
+            let parsed = if system == ActiveSystem::GameBoyAdvance {
+                parse_cheat_for_system_with_gba_state(
+                    &code_text,
+                    system,
+                    &mut gba_codebreaker_state,
+                )
+            } else {
+                parse_cheat_for_system(&code_text, system)
+            };
+
+            match parsed {
                 Ok((patches, code_type)) => {
+                    if patches.is_empty() {
+                        continue;
+                    }
                     let parameter_value =
                         patches.iter().copied().find_map(|p| p.default_user_value());
                     cheats.push(CheatCode {

@@ -408,6 +408,8 @@ pub(crate) struct EmulationSettings {
     pub(crate) uncapped_speed: bool,
     pub(crate) frame_skip: bool,
     pub(crate) auto_save_state: bool,
+    #[serde(default = "default_tcp_link_addr")]
+    pub(crate) tcp_link_addr: String,
     #[serde(default)]
     pub(crate) sgb_border_enabled: bool,
     #[serde(default)]
@@ -424,6 +426,10 @@ fn default_pause_on_unfocus() -> bool {
     true
 }
 
+fn default_tcp_link_addr() -> String {
+    "127.0.0.1:8765".to_string()
+}
+
 impl Default for EmulationSettings {
     fn default() -> Self {
         Self {
@@ -437,6 +443,7 @@ impl Default for EmulationSettings {
             uncapped_speed: false,
             frame_skip: false,
             auto_save_state: false,
+            tcp_link_addr: default_tcp_link_addr(),
             sgb_border_enabled: false,
             nes_zapper_enabled: false,
             pause_on_unfocus: true,

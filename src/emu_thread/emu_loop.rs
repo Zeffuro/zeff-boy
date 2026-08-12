@@ -1,12 +1,26 @@
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
+use std::thread;
+use std::time::Duration;
 
 use crate::cheats::CheatPatch;
-use crate::emu_backend::EmuBackend;
+use crate::emu_backend::{ActiveSystem, EmuBackend};
+use crate::link::gb::GameBoyRemoteLink;
+use crate::link::transport::TcpLinkTransport;
+use crate::link::{LinkConnectionState, LinkEndpointId, LinkSession, LinkSystemType};
 
 use super::{
     DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_SNAPSHOTS_PER_SECOND, SharedFramebuffer,
+    REWIND_SNAPSHOTS_PER_SECOND, SharedFramebuffer, TcpLinkMode,
 };
+
+const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+struct PendingTcpLink {
+    label: String,
+    endpoint: LinkEndpointId,
+    receiver: StdReceiver<Result<TcpLinkTransport, String>>,
+}
 
 pub(super) struct EmuLoop {
     pub(super) backend: EmuBackend,
@@ -17,6 +31,8 @@ pub(super) struct EmuLoop {
     pub(super) shared_framebuffer: SharedFramebuffer,
     uncapped_mode: bool,
     last_cheats: Vec<CheatPatch>,
+    tcp_link: Option<GameBoyRemoteLink<TcpLinkTransport>>,
+    pending_tcp_link: Option<PendingTcpLink>,
     rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
 }
@@ -39,6 +55,8 @@ impl EmuLoop {
             shared_framebuffer,
             uncapped_mode: false,
             last_cheats: Vec::new(),
+            tcp_link: None,
+            pending_tcp_link: None,
             rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new(
                 DEFAULT_REWIND_SECONDS,
                 REWIND_SNAPSHOTS_PER_SECOND,
@@ -49,11 +67,20 @@ impl EmuLoop {
 
     pub(super) fn run(&mut self) {
         loop {
+            self.poll_tcp_link_connection();
+            self.clear_disconnected_tcp_link();
+
             let command = if self.uncapped_mode {
                 match self.cmd_rx.try_recv() {
                     Ok(cmd) => Some(cmd),
                     Err(crossbeam_channel::TryRecvError::Empty) => None,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                }
+            } else if self.pending_tcp_link.is_some() {
+                match self.cmd_rx.recv_timeout(PENDING_LINK_POLL_INTERVAL) {
+                    Ok(cmd) => Some(cmd),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => None,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                 }
             } else {
                 match self.cmd_rx.recv() {
@@ -70,6 +97,7 @@ impl EmuLoop {
                 EmuThread::run_uncapped_batch(
                     &mut self.backend,
                     &self.last_cheats,
+                    self.tcp_link.as_mut(),
                     &self.shared_framebuffer,
                     &self.rewind_buffer,
                     &self.frame_tx,
@@ -91,17 +119,27 @@ impl EmuLoop {
                 self.backend.install_rom_patches(&self.last_cheats);
             }
 
+            EmuCommand::StartTcpLink(mode) => {
+                self.start_tcp_link(mode);
+            }
+
+            EmuCommand::DisconnectLink => {
+                self.disconnect_tcp_link();
+            }
+
             EmuCommand::StepFrames(input) => {
                 let input = *input;
-                let result = EmuThread::handle_step_frames(
+                let result = EmuThread::handle_step_frames_with_tcp_link(
                     &mut self.backend,
                     input,
                     &self.last_cheats,
+                    self.tcp_link.as_mut(),
                     self.uncapped_mode,
                     &mut self.rewind_buffer,
                     &mut self.rewind_seconds,
                     &self.shared_framebuffer,
                 );
+                self.clear_disconnected_tcp_link();
                 if !EmuThread::send_frame(&self.frame_tx, &self.drain_rx, result) {
                     return false;
                 }
@@ -234,6 +272,7 @@ impl EmuLoop {
             }
 
             EmuCommand::Shutdown => {
+                self.disconnect_tcp_link();
                 self.handle_shutdown();
                 return false;
             }
@@ -247,6 +286,100 @@ impl EmuLoop {
 
     fn send_resp_fn(&self) -> impl Fn(EmuResponse) -> bool + '_ {
         |resp| self.resp_tx.send(resp).is_ok()
+    }
+
+    fn start_tcp_link(&mut self, mode: TcpLinkMode) {
+        if self.backend.system() != ActiveSystem::GameBoy {
+            let _ = self.send_resp(EmuResponse::LinkFailed(
+                "TCP link currently supports GB/GBC only".to_string(),
+            ));
+            return;
+        }
+
+        self.disconnect_tcp_link();
+        self.pending_tcp_link = None;
+
+        let (label, endpoint, receiver) = match mode {
+            TcpLinkMode::Host { bind_addr } => {
+                let label = format!("hosting on {bind_addr}");
+                let (sender, receiver) = mpsc::channel();
+                thread::spawn(move || {
+                    let result = TcpLinkTransport::host_once(bind_addr.as_str())
+                        .map_err(|err| format!("Host failed: {err}"));
+                    let _ = sender.send(result);
+                });
+                (label, LinkEndpointId(1), receiver)
+            }
+            TcpLinkMode::Join { connect_addr } => {
+                let label = format!("joining {connect_addr}");
+                let (sender, receiver) = mpsc::channel();
+                thread::spawn(move || {
+                    let result = TcpLinkTransport::connect(connect_addr.as_str())
+                        .map_err(|err| format!("Join failed: {err}"));
+                    let _ = sender.send(result);
+                });
+                (label, LinkEndpointId(2), receiver)
+            }
+        };
+
+        self.pending_tcp_link = Some(PendingTcpLink {
+            label: label.clone(),
+            endpoint,
+            receiver,
+        });
+        let _ = self.send_resp(EmuResponse::LinkPending(label));
+    }
+
+    fn poll_tcp_link_connection(&mut self) {
+        let Some(pending) = self.pending_tcp_link.as_ref() else {
+            return;
+        };
+
+        let result = match pending.receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("link connection worker stopped".to_string()),
+        };
+
+        let pending = self
+            .pending_tcp_link
+            .take()
+            .expect("pending link should exist after polling it");
+        match result {
+            Ok(transport) => {
+                self.backend.set_link_peer_present(true);
+                self.tcp_link = Some(GameBoyRemoteLink::new(LinkSession::new(
+                    transport,
+                    LinkSystemType::GameBoy,
+                    pending.endpoint,
+                )));
+                let _ = self.send_resp(EmuResponse::LinkConnected(pending.label));
+            }
+            Err(err) => {
+                self.backend.set_link_peer_present(false);
+                let _ = self.send_resp(EmuResponse::LinkFailed(err));
+            }
+        }
+    }
+
+    fn clear_disconnected_tcp_link(&mut self) {
+        let disconnected = self
+            .tcp_link
+            .as_ref()
+            .is_some_and(|link| link.state() == LinkConnectionState::Disconnected);
+        if disconnected {
+            self.tcp_link = None;
+            self.backend.set_link_peer_present(false);
+            let _ = self.send_resp(EmuResponse::LinkDisconnected);
+        }
+    }
+
+    fn disconnect_tcp_link(&mut self) {
+        self.pending_tcp_link = None;
+        if let Some(mut link) = self.tcp_link.take() {
+            link.disconnect();
+        }
+        self.backend.set_link_peer_present(false);
     }
 
     fn finalize_load_state(
