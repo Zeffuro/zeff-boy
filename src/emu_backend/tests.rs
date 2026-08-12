@@ -368,6 +368,17 @@ fn assert_backend_state_decode_smoke(mut backend: EmuBackend) {
 }
 
 #[test]
+fn sega8_backend_exposes_apu_snapshot_for_midi_capture() {
+    let mut backend = build_sms_backend();
+    backend.step_frame();
+
+    assert!(
+        backend.apu_channel_snapshot().is_some(),
+        "Sega 8-bit should expose PSG channel data for MIDI capture"
+    );
+}
+
+#[test]
 fn debuggable_adapter_exposes_uniform_cpu_peek_write() {
     let mut gb = zeff_gb_core::emulator::Emulator::from_rom_data(
         &build_gb_test_rom(),

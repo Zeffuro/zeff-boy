@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
 use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
+use zeff_sega8_core::hardware::apu::{
+    ApuDebugSnapshot as Sega8ApuSnapshot, PSG_CHANNEL_COUNT, PSG_TONE_CHANNEL_COUNT,
+};
 
 use super::MidiApuSnapshot;
 
@@ -50,28 +53,39 @@ pub(super) fn finish_midi(
     const GB_TEMPO_US_PER_BEAT: u32 = 16742;
     const NES_TEMPO_US_PER_BEAT: u32 = 16639;
 
-    let is_nes = matches!(snapshots[0], MidiApuSnapshot::Nes(_));
     let track_data: Vec<Vec<u8>>;
     let tempo_us: u32;
 
-    if is_nes {
+    if matches!(snapshots[0], MidiApuSnapshot::Nes(_)) {
         let nes_snapshots: Vec<NesApuChannelSnapshot> = snapshots
             .iter()
             .filter_map(|s| match s {
                 MidiApuSnapshot::Nes(snap) => Some(*snap),
-                MidiApuSnapshot::Gb(_) => None,
+                MidiApuSnapshot::Gb(_) | MidiApuSnapshot::Sega8(_) => None,
             })
             .collect();
         tempo_us = NES_TEMPO_US_PER_BEAT;
         track_data = (0..4)
             .map(|ch| build_midi_track_nes(&nes_snapshots, ch))
             .collect();
+    } else if matches!(snapshots[0], MidiApuSnapshot::Sega8(_)) {
+        let sega8_snapshots: Vec<Sega8ApuSnapshot> = snapshots
+            .iter()
+            .filter_map(|s| match s {
+                MidiApuSnapshot::Sega8(snap) => Some(*snap),
+                MidiApuSnapshot::Gb(_) | MidiApuSnapshot::Nes(_) => None,
+            })
+            .collect();
+        tempo_us = NES_TEMPO_US_PER_BEAT;
+        track_data = (0..PSG_CHANNEL_COUNT)
+            .map(|ch| build_midi_track_sega8(&sega8_snapshots, ch))
+            .collect();
     } else {
         let gb_snapshots: Vec<GbApuChannelSnapshot> = snapshots
             .iter()
             .filter_map(|s| match s {
                 MidiApuSnapshot::Gb(snap) => Some(*snap),
-                MidiApuSnapshot::Nes(_) => None,
+                MidiApuSnapshot::Nes(_) | MidiApuSnapshot::Sega8(_) => None,
             })
             .collect();
         tempo_us = GB_TEMPO_US_PER_BEAT;
@@ -141,6 +155,19 @@ fn drum_note_for_noise(volume: u8) -> u8 {
 
 pub(super) fn nes_pulse_freq_to_hz(timer_period: u16) -> f64 {
     zeff_nes_core::hardware::constants::APU_CPU_CLOCK_NTSC / (16.0 * (timer_period as f64 + 1.0))
+}
+
+pub(super) fn sega8_tone_freq_to_hz(period: u16) -> f64 {
+    if period <= 1 {
+        return 0.0;
+    }
+    zeff_sega8_core::hardware::constants::SEGA8_Z80_CLOCK_HZ_APPROX as f64
+        / (32.0 * f64::from(period))
+}
+
+pub(super) fn sega8_attenuation_to_velocity(volume: u8) -> u8 {
+    let volume = volume.min(15);
+    ((u16::from(15 - volume) * 127 + 7) / 15) as u8
 }
 
 fn nes_triangle_freq_to_hz(timer_period: u16) -> f64 {
@@ -334,6 +361,35 @@ pub(super) fn build_midi_track_nes(snapshots: &[NesApuChannelSnapshot], channel:
                 nes_pulse_freq_to_hz(timer_period)
             };
             hz_to_midi_note(hz)
+        };
+
+        FrameChannelState {
+            note,
+            velocity,
+            enabled,
+        }
+    })
+}
+
+pub(super) fn build_midi_track_sega8(snapshots: &[Sega8ApuSnapshot], channel: usize) -> Vec<u8> {
+    let name = match channel {
+        0 => "Sega PSG Tone 0",
+        1 => "Sega PSG Tone 1",
+        2 => "Sega PSG Tone 2",
+        3 => "Sega PSG Noise",
+        _ => "Unknown",
+    };
+
+    build_midi_track(name, channel, snapshots.len(), |i| {
+        let snap = &snapshots[i];
+        let volume = snap.volume.get(channel).copied().unwrap_or(15);
+        let velocity = sega8_attenuation_to_velocity(volume);
+        let enabled = volume < 15 && !snap.channel_mutes.get(channel).copied().unwrap_or(false);
+
+        let note = if channel >= PSG_TONE_CHANNEL_COUNT {
+            drum_note_for_noise(15 - volume.min(15))
+        } else {
+            hz_to_midi_note(sega8_tone_freq_to_hz(snap.tone_period[channel]))
         };
 
         FrameChannelState {

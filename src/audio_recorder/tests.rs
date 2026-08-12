@@ -3,6 +3,7 @@ use super::*;
 
 use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
 use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
+use zeff_sega8_core::hardware::apu::ApuDebugSnapshot as Sega8ApuSnapshot;
 
 fn gb_snapshot(ch1_enabled: bool, ch1_frequency: u16, ch1_volume: u8) -> GbApuChannelSnapshot {
     GbApuChannelSnapshot {
@@ -37,6 +38,22 @@ fn nes_snapshot(
         triangle_volume: 0,
         noise_enabled: false,
         noise_volume: 0,
+    }
+}
+
+fn sega8_snapshot(tone0_period: u16, tone0_volume: u8) -> Sega8ApuSnapshot {
+    Sega8ApuSnapshot {
+        tone_period: [tone0_period, 0, 0],
+        volume: [tone0_volume, 15, 15, 15],
+        noise_control: 0,
+        stereo_control: 0xFF,
+        latched_register: "tone0",
+        sample_rate: 44_100,
+        sample_generation_enabled: true,
+        buffered_samples: 0,
+        channel_mutes: [false; 4],
+        last_write: None,
+        write_count: 0,
     }
 }
 
@@ -114,6 +131,12 @@ fn nes_pulse_freq_to_hz_middle_range() {
 }
 
 #[test]
+fn sega8_tone_freq_to_hz_middle_range() {
+    let hz = super::midi::sega8_tone_freq_to_hz(254);
+    assert!((hz - 440.0).abs() < 2.0);
+}
+
+#[test]
 fn hz_to_midi_note_a4() {
     assert_eq!(hz_to_midi_note(440.0), 69);
 }
@@ -136,6 +159,12 @@ fn volume_to_velocity_full() {
 #[test]
 fn volume_to_velocity_zero() {
     assert_eq!(volume_to_velocity(0), 0);
+}
+
+#[test]
+fn sega8_attenuation_to_velocity_inverts_silence() {
+    assert_eq!(sega8_attenuation_to_velocity(0), 127);
+    assert_eq!(sega8_attenuation_to_velocity(15), 0);
 }
 
 #[test]
@@ -232,6 +261,22 @@ fn nes_midi_note_change_on_adjacent_snapshots_advances_time() {
     let snapshots = vec![nes_snapshot(true, 253, 15), nes_snapshot(true, 225, 15)];
 
     let track = build_midi_track_nes(&snapshots, 0);
+    let events = ch0_note_events(&track);
+    assert!(events.len() >= 4);
+
+    assert_eq!(events[0].0, 0);
+    assert_eq!(events[0].1, 0x90);
+    assert_eq!(events[1].0, 1);
+    assert_eq!(events[1].1, 0x80);
+    assert_eq!(events[2].0, 0);
+    assert_eq!(events[2].1, 0x90);
+}
+
+#[test]
+fn sega8_midi_note_change_on_adjacent_snapshots_advances_time() {
+    let snapshots = vec![sega8_snapshot(254, 0), sega8_snapshot(226, 0)];
+
+    let track = build_midi_track_sega8(&snapshots, 0);
     let events = ch0_note_events(&track);
     assert!(events.len() >= 4);
 

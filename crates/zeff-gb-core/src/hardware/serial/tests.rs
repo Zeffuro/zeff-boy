@@ -75,15 +75,21 @@ fn linked_internal_clock_transfer_waits_for_peer_sync() {
     let mut dev = DisconnectedDevice;
     serial.mode = HardwareMode::DMG;
     serial.sb = 0xAB;
-    serial.sc = 0x81;
     serial.set_link_peer_present(true);
+    serial.write_sc(0x81);
 
+    assert_eq!(serial.pending_link_byte(), Some(0xAB));
+    assert!(serial.take_link_action().is_some());
     assert!(!serial.step(4096, &mut dev));
     assert_eq!(serial.pending_link_byte(), Some(0xAB));
     assert_eq!(serial.sb, 0xAB);
     assert_eq!(serial.sc & 0x80, 0x80);
 
-    assert!(serial.complete_link_transfer(0x34));
+    assert!(serial.apply_link_reply(GameBoyLinkReply {
+        out_byte: 0x34,
+        passive: true,
+        serial_generation: 0,
+    }));
     assert_eq!(serial.pending_link_byte(), None);
     assert_eq!(serial.sb, 0x34);
     assert_eq!(serial.sc & 0x80, 0);
@@ -110,12 +116,10 @@ fn external_clock_transfer_completes_only_from_link_sync() {
 #[test]
 fn link_state_exports_pending_master_and_external_clock_bytes() {
     let mut serial = Serial::new();
-    let mut dev = DisconnectedDevice;
     serial.mode = HardwareMode::DMG;
     serial.sb = 0xAB;
-    serial.sc = 0x81;
     serial.set_link_peer_present(true);
-    serial.step(4096, &mut dev);
+    serial.write_sc(0x81);
 
     assert_eq!(
         serial.link_state(),
@@ -142,59 +146,88 @@ fn link_state_exports_pending_master_and_external_clock_bytes() {
 }
 
 #[test]
-fn remote_link_state_resolves_local_pending_master() {
+fn reply_can_be_bound_before_transfer_period_finishes() {
     let mut serial = Serial::new();
-    let mut dev = DisconnectedDevice;
     serial.mode = HardwareMode::DMG;
     serial.sb = 0xAB;
-    serial.sc = 0x81;
     serial.set_link_peer_present(true);
-    serial.step(4096, &mut dev);
+    serial.write_sc(0x81);
 
-    assert!(serial.apply_link_peer_state(GameBoyLinkState {
-        pending_master_byte: None,
-        external_clock_byte: Some(0x34),
-        output_byte: 0x34,
+    assert!(serial.take_link_action().is_some());
+    assert!(serial.apply_link_reply(GameBoyLinkReply {
+        out_byte: 0x34,
+        passive: true,
+        serial_generation: 0,
     }));
+    assert_eq!(serial.pending_link_byte(), Some(0xAB));
+    assert_eq!(serial.sb, 0xAB);
+    assert_eq!(serial.sc & 0x80, 0x80);
+
+    let mut dev = DisconnectedDevice;
+    assert!(!serial.step(4095, &mut dev));
+    assert!(serial.step(1, &mut dev));
     assert_eq!(serial.sb, 0x34);
-    assert_eq!(serial.sc & 0x80, 0);
+    assert_eq!(serial.sc & 0x80, 0x00);
 }
 
 #[test]
-fn remote_idle_state_can_complete_local_pending_master_with_explicit_fallback() {
+fn late_reply_completes_ready_master_transfer_immediately() {
     let mut serial = Serial::new();
-    let mut dev = DisconnectedDevice;
     serial.mode = HardwareMode::DMG;
     serial.sb = 0xAB;
-    serial.sc = 0x81;
     serial.set_link_peer_present(true);
-    serial.step(4096, &mut dev);
+    serial.write_sc(0x81);
 
-    assert!(serial.apply_remote_link_peer_state(GameBoyLinkState::default(), Some(0xFF)));
+    let mut dev = DisconnectedDevice;
+    assert!(serial.take_link_action().is_some());
+    assert!(!serial.step(4096, &mut dev));
+    assert!(serial.apply_link_reply(GameBoyLinkReply {
+        out_byte: 0xFF,
+        passive: false,
+        serial_generation: 0,
+    }));
     assert_eq!(serial.sb, 0xFF);
     assert_eq!(serial.sc & 0x80, 0);
     assert_eq!(serial.pending_link_byte(), None);
 }
 
 #[test]
-fn remote_connected_idle_state_uses_peer_output_byte_for_local_pending_master() {
+fn external_clock_reply_reports_passive_output() {
     let mut serial = Serial::new();
-    let mut dev = DisconnectedDevice;
     serial.mode = HardwareMode::DMG;
-    serial.sb = 0xAB;
-    serial.sc = 0x81;
+    serial.sb = 0x34;
     serial.set_link_peer_present(true);
-    serial.step(4096, &mut dev);
+    serial.write_sc(0x80);
 
-    assert!(serial.apply_remote_link_peer_state(
-        GameBoyLinkState {
-            pending_master_byte: None,
-            external_clock_byte: None,
-            output_byte: 0x34,
-        },
-        None,
-    ));
-    assert_eq!(serial.sb, 0x34);
+    assert_eq!(
+        serial.reply_to_master_start(),
+        GameBoyLinkReply {
+            out_byte: 0x34,
+            passive: true,
+            serial_generation: 1,
+        }
+    );
+    assert!(serial.complete_external_from_master(0xAB));
+    assert_eq!(serial.sb, 0xAB);
     assert_eq!(serial.sc & 0x80, 0);
-    assert_eq!(serial.pending_link_byte(), None);
+}
+
+#[test]
+fn connected_idle_reply_reports_current_output_without_passive_completion() {
+    let mut serial = Serial::new();
+    serial.mode = HardwareMode::DMG;
+    serial.sb = 0x34;
+    serial.set_link_peer_present(true);
+
+    assert_eq!(
+        serial.reply_to_master_start(),
+        GameBoyLinkReply {
+            out_byte: 0x34,
+            passive: false,
+            serial_generation: 0,
+        }
+    );
+    assert!(!serial.complete_external_from_master(0xAB));
+    assert_eq!(serial.sb, 0x34);
+    assert_eq!(serial.sc & 0x80, 0x00);
 }

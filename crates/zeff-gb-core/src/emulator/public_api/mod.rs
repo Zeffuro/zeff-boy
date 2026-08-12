@@ -17,6 +17,29 @@ impl Emulator {
         self.bus.game_boy_link_state()
     }
 
+    pub fn game_boy_link_pending_master_response(&self) -> bool {
+        self.bus.game_boy_link_pending_master_response()
+    }
+
+    pub fn take_game_boy_link_action(&mut self) -> Option<crate::hardware::bus::GameBoyLinkAction> {
+        self.bus.take_game_boy_link_action()
+    }
+
+    pub fn game_boy_link_reply_to_master_start(&self) -> crate::hardware::bus::GameBoyLinkReply {
+        self.bus.game_boy_link_reply_to_master_start()
+    }
+
+    pub fn apply_game_boy_link_reply(
+        &mut self,
+        reply: crate::hardware::bus::GameBoyLinkReply,
+    ) -> bool {
+        self.bus.apply_game_boy_link_reply(reply)
+    }
+
+    pub fn complete_game_boy_external_link_transfer(&mut self, peer_byte: u8) -> bool {
+        self.bus.complete_game_boy_external_link_transfer(peer_byte)
+    }
+
     pub fn sync_game_boy_remote_link_peer(
         &mut self,
         peer_state: crate::hardware::bus::GameBoyLinkState,

@@ -8,6 +8,7 @@ use zeff_sega8_core::hardware::cartridge::{Sega8MapperKind, Sega8System, SystemH
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
+use crate::audio_recorder::MidiApuSnapshot;
 use crate::emu_backend::ActiveSystem;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_slice_to_vec};
@@ -178,6 +179,12 @@ impl EmulatorCore for Sega8Backend {
 
     fn supports_opcode_history(&self) -> bool {
         true
+    }
+
+    fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
+        Some(MidiApuSnapshot::Sega8(
+            self.emu.bus().apu().debug_snapshot(),
+        ))
     }
 
     fn copy_memory_region(

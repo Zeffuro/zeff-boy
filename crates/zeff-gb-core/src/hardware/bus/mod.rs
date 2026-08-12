@@ -28,6 +28,20 @@ impl GameBoyLinkState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameBoyLinkAction {
+    pub out_byte: u8,
+    pub clock_period_t_cycles: u64,
+    pub serial_generation: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameBoyLinkReply {
+    pub out_byte: u8,
+    pub passive: bool,
+    pub serial_generation: u64,
+}
+
 pub struct Bus {
     pub cartridge: Cartridge,
     pub hardware_mode: HardwareMode,
@@ -451,6 +465,31 @@ impl Bus {
         self.io.serial.link_state()
     }
 
+    pub fn game_boy_link_pending_master_response(&self) -> bool {
+        self.io.serial.pending_link_byte().is_some()
+            && self.io.serial.pending_link_response().is_none()
+    }
+
+    pub fn take_game_boy_link_action(&mut self) -> Option<GameBoyLinkAction> {
+        self.io.serial.take_link_action()
+    }
+
+    pub fn game_boy_link_reply_to_master_start(&self) -> GameBoyLinkReply {
+        self.io.serial.reply_to_master_start()
+    }
+
+    pub fn apply_game_boy_link_reply(&mut self, reply: GameBoyLinkReply) -> bool {
+        self.io.serial.apply_link_reply(reply)
+    }
+
+    pub fn complete_game_boy_external_link_transfer(&mut self, peer_byte: u8) -> bool {
+        let completed = self.io.serial.complete_external_from_master(peer_byte);
+        if completed {
+            self.if_reg |= 0x08;
+        }
+        completed
+    }
+
     pub fn sync_game_boy_remote_link_peer(&mut self, peer_state: GameBoyLinkState) -> bool {
         self.sync_game_boy_remote_link_peer_with_idle_response(peer_state, None)
     }
@@ -475,14 +514,36 @@ impl Bus {
         self.io.serial.set_link_peer_present(true);
         peer.io.serial.set_link_peer_present(true);
 
-        let self_state = self.io.serial.link_state();
-        let peer_state = peer.io.serial.link_state();
-
-        if self.io.serial.apply_link_peer_state(peer_state) {
-            self.if_reg |= 0x08;
+        if let Some(action) = self.io.serial.take_link_action() {
+            let reply = peer.io.serial.reply_to_master_start();
+            let completed_self = self.io.serial.apply_link_reply(reply);
+            if completed_self && self.io.serial.pending_link_byte().is_none() {
+                self.if_reg |= 0x08;
+            }
+            if reply.passive
+                && peer
+                    .io
+                    .serial
+                    .complete_external_from_master(action.out_byte)
+            {
+                peer.if_reg |= 0x08;
+            }
         }
-        if peer.io.serial.apply_link_peer_state(self_state) {
-            peer.if_reg |= 0x08;
+
+        if let Some(action) = peer.io.serial.take_link_action() {
+            let reply = self.io.serial.reply_to_master_start();
+            let completed_peer = peer.io.serial.apply_link_reply(reply);
+            if completed_peer && peer.io.serial.pending_link_byte().is_none() {
+                peer.if_reg |= 0x08;
+            }
+            if reply.passive
+                && self
+                    .io
+                    .serial
+                    .complete_external_from_master(action.out_byte)
+            {
+                self.if_reg |= 0x08;
+            }
         }
     }
 

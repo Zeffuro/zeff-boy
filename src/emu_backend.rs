@@ -301,7 +301,7 @@ impl EmuBackend {
         };
 
         link.poll_emulator(&mut gb.emu)?;
-        if gb.emu.game_boy_link_state().pending_master_byte.is_some() {
+        if gb.emu.game_boy_link_pending_master_response() {
             return Ok(());
         }
 
@@ -311,7 +311,7 @@ impl EmuBackend {
                 link_error = Some(err);
                 return true;
             }
-            if emulator.game_boy_link_state().pending_master_byte.is_some() {
+            if emulator.game_boy_link_pending_master_response() {
                 return true;
             }
             false

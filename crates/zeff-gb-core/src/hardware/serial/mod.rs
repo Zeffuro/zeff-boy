@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::{self, Write};
 
-use super::bus::GameBoyLinkState;
+use super::bus::{GameBoyLinkAction, GameBoyLinkReply, GameBoyLinkState};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
@@ -27,6 +27,10 @@ pub(super) struct Serial {
     output_log: Vec<u8>,
     link_peer_present: bool,
     pending_link_byte: Option<u8>,
+    pending_link_response: Option<u8>,
+    pending_link_completion_ready: bool,
+    queued_link_action: Option<GameBoyLinkAction>,
+    serial_generation: u64,
 }
 
 impl fmt::Debug for Serial {
@@ -39,6 +43,13 @@ impl fmt::Debug for Serial {
             .field("output_log_len", &self.output_log.len())
             .field("link_peer_present", &self.link_peer_present)
             .field("pending_link_byte", &self.pending_link_byte)
+            .field("pending_link_response", &self.pending_link_response)
+            .field(
+                "pending_link_completion_ready",
+                &self.pending_link_completion_ready,
+            )
+            .field("queued_link_action", &self.queued_link_action)
+            .field("serial_generation", &self.serial_generation)
             .finish()
     }
 }
@@ -53,6 +64,10 @@ impl Serial {
             output_log: Vec::new(),
             link_peer_present: false,
             pending_link_byte: None,
+            pending_link_response: None,
+            pending_link_completion_ready: false,
+            queued_link_action: None,
+            serial_generation: 0,
         }
     }
 
@@ -86,12 +101,35 @@ impl Serial {
 
     pub(super) fn write_sb(&mut self, value: u8) {
         self.sb = value;
+        self.bump_serial_generation();
     }
 
     pub(super) fn write_sc(&mut self, value: u8) {
+        let was_internal_active = (self.sc & 0x81) == 0x81;
         self.sc = value;
+        self.bump_serial_generation();
         if (self.sc & 0x80) == 0 {
             self.pending_link_byte = None;
+            self.pending_link_response = None;
+            self.pending_link_completion_ready = false;
+            self.queued_link_action = None;
+            return;
+        }
+
+        if self.link_peer_present
+            && !was_internal_active
+            && self.pending_link_byte.is_none()
+            && (self.sc & 0x81) == 0x81
+        {
+            let action = GameBoyLinkAction {
+                out_byte: self.sb,
+                clock_period_t_cycles: self.transfer_period(),
+                serial_generation: self.serial_generation,
+            };
+            self.pending_link_byte = Some(action.out_byte);
+            self.pending_link_response = None;
+            self.pending_link_completion_ready = false;
+            self.queued_link_action = Some(action);
         }
     }
 
@@ -108,14 +146,36 @@ impl Serial {
     }
 
     pub(super) fn set_link_peer_present(&mut self, present: bool) {
+        let was_present = self.link_peer_present;
         self.link_peer_present = present;
         if !present {
             self.pending_link_byte = None;
+            self.pending_link_response = None;
+            self.pending_link_completion_ready = false;
+            self.queued_link_action = None;
+        } else if !was_present && self.pending_link_byte.is_none() && (self.sc & 0x81) == 0x81 {
+            let action = GameBoyLinkAction {
+                out_byte: self.sb,
+                clock_period_t_cycles: self.transfer_period(),
+                serial_generation: self.serial_generation,
+            };
+            self.pending_link_byte = Some(action.out_byte);
+            self.pending_link_response = None;
+            self.pending_link_completion_ready = false;
+            self.queued_link_action = Some(action);
         }
     }
 
     pub(super) fn pending_link_byte(&self) -> Option<u8> {
         self.pending_link_byte
+    }
+
+    pub(super) fn pending_link_response(&self) -> Option<u8> {
+        self.pending_link_response
+    }
+
+    pub(super) fn take_link_action(&mut self) -> Option<GameBoyLinkAction> {
+        self.queued_link_action.take()
     }
 
     pub(super) fn link_state(&self) -> GameBoyLinkState {
@@ -143,26 +203,40 @@ impl Serial {
 
         self.sb = response;
         self.sc &= !0x80;
+        self.pending_link_response = None;
+        self.pending_link_completion_ready = false;
+        self.queued_link_action = None;
+        self.bump_serial_generation();
         true
     }
 
-    pub(super) fn apply_link_peer_state(&mut self, peer: GameBoyLinkState) -> bool {
-        if let Some(local_byte) = self.pending_link_byte() {
-            let response = peer
-                .pending_master_byte
-                .or(peer.external_clock_byte)
-                .unwrap_or(peer.output_byte);
-            debug_assert_eq!(self.pending_link_byte(), Some(local_byte));
-            return self.complete_link_transfer(response);
+    pub(super) fn apply_link_reply(&mut self, reply: GameBoyLinkReply) -> bool {
+        if self.pending_link_byte.is_none() {
+            return false;
         }
 
-        if self.external_clock_transfer_active()
-            && let Some(peer_byte) = peer.pending_master_byte
-        {
-            return self.complete_link_transfer(peer_byte);
+        if self.pending_link_completion_ready {
+            return self.complete_link_transfer(reply.out_byte);
         }
 
-        false
+        self.pending_link_response = Some(reply.out_byte);
+        true
+    }
+
+    pub(super) fn reply_to_master_start(&self) -> GameBoyLinkReply {
+        GameBoyLinkReply {
+            out_byte: self.link_transfer_byte(),
+            passive: self.external_clock_transfer_active(),
+            serial_generation: self.serial_generation,
+        }
+    }
+
+    pub(super) fn complete_external_from_master(&mut self, peer_byte: u8) -> bool {
+        if !self.external_clock_transfer_active() {
+            return false;
+        }
+
+        self.complete_link_transfer(peer_byte)
     }
 
     pub(super) fn apply_remote_link_peer_state(
@@ -196,8 +270,12 @@ impl Serial {
         let crossed_period = previous_cycles + cycles >= transfer_period;
 
         if active && crossed_period {
-            if self.link_peer_present {
-                self.pending_link_byte = Some(self.sb);
+            if let Some(response) = self.pending_link_response {
+                return self.complete_link_transfer(response);
+            }
+
+            if self.link_peer_present && self.pending_link_byte.is_some() {
+                self.pending_link_completion_ready = true;
                 return false;
             }
 
@@ -208,10 +286,15 @@ impl Serial {
 
             self.sb = response;
             self.sc &= !0x80;
+            self.bump_serial_generation();
             return true;
         }
 
         false
+    }
+
+    fn bump_serial_generation(&mut self) {
+        self.serial_generation = self.serial_generation.wrapping_add(1);
     }
 
     pub(super) fn write_state(&self, writer: &mut StateWriter) {
@@ -230,6 +313,10 @@ impl Serial {
             output_log: Vec::new(),
             link_peer_present: false,
             pending_link_byte: None,
+            pending_link_response: None,
+            pending_link_completion_ready: false,
+            queued_link_action: None,
+            serial_generation: 0,
         })
     }
 }
