@@ -525,7 +525,7 @@ fn libretro_valid_extensions_include_gba_and_sega8() {
         .expect("valid extensions should be UTF-8");
 
     for ext in [
-        "gb", "gbc", "sgb", "gba", "nes", "ws", "wsc", "sms", "gg", "sg", "sc",
+        "gb", "gbc", "sgb", "gba", "nes", "fds", "ws", "wsc", "sms", "gg", "sg", "sc",
     ] {
         assert!(
             extensions.split('|').any(|entry| entry == ext),
@@ -546,6 +546,10 @@ fn system_specs_map_to_libretro_core_state() {
                 valid_extensions.split('|').any(|entry| entry == *extension),
                 "libretro valid extension list is missing {extension}"
             );
+
+            if *extension == "fds" {
+                continue;
+            }
 
             let rom = rom_for_system(spec.system);
             let path = format!("matrix.{extension}");

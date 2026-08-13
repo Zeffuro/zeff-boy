@@ -33,7 +33,7 @@ pub(crate) const LIB_VERSION: &CStr = const {
         Err(_) => unreachable!(),
     }
 };
-pub(crate) const VALID_EXTENSIONS: &CStr = c"gb|gbc|sgb|gba|nes|ws|wsc|sms|gg|sg|sc";
+pub(crate) const VALID_EXTENSIONS: &CStr = c"gb|gbc|sgb|gba|nes|fds|ws|wsc|sms|gg|sg|sc";
 
 pub(crate) fn env_cmd(cmd: c_uint, data: *mut c_void) -> bool {
     if let Some(cb) = *lock(&CB_ENVIRONMENT) {
