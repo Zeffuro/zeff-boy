@@ -77,7 +77,9 @@ pub use color_dreams::ColorDreams;
 pub use contra100::Contra100In1;
 pub use cony_yoko::ConyYoko;
 pub use cprom::Cprom;
-pub use fds::Fds;
+pub use fds::{
+    FDS_BIOS_SIZE, FDS_DRIVE_SLOT_ID, FDS_HEADER_SIZE, FDS_SIDE_SIZE, Fds, FdsImage, FdsImageError,
+};
 pub use ffe_mapper8::FfeMapper8;
 pub use fme7::Fme7;
 pub use g0151::G0151;

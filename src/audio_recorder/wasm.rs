@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::AudioRecordingFormat;
 
-use super::MidiApuSnapshot;
+use crate::audio_tooling::AudioSemanticFrame;
 
 pub(crate) struct AudioRecorder;
 
@@ -20,7 +20,7 @@ impl AudioRecorder {
 
     pub(crate) fn write_samples(&mut self, _samples: &[f32]) {}
 
-    pub(crate) fn write_apu_snapshot(&mut self, _snapshot: MidiApuSnapshot) {}
+    pub(crate) fn write_audio_semantic_frame(&mut self, _frame: AudioSemanticFrame) {}
 
     pub(crate) fn is_midi(&self) -> bool {
         false

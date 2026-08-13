@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::AudioRecordingFormat;
 
-use super::MidiApuSnapshot;
+use crate::audio_tooling::AudioSemanticFrame;
 
 const MIDI_INITIAL_SNAPSHOT_CAPACITY: usize = 3600;
 
@@ -30,7 +30,7 @@ enum RecorderInner {
         chunk_threshold: usize,
     },
     Midi {
-        snapshots: Vec<MidiApuSnapshot>,
+        frames: Vec<AudioSemanticFrame>,
     },
 }
 
@@ -77,7 +77,7 @@ impl AudioRecorder {
                 }
             }
             AudioRecordingFormat::Midi => RecorderInner::Midi {
-                snapshots: Vec::with_capacity(MIDI_INITIAL_SNAPSHOT_CAPACITY),
+                frames: Vec::with_capacity(MIDI_INITIAL_SNAPSHOT_CAPACITY),
             },
         };
 
@@ -131,9 +131,9 @@ impl AudioRecorder {
         }
     }
 
-    pub(crate) fn write_apu_snapshot(&mut self, snapshot: MidiApuSnapshot) {
-        if let RecorderInner::Midi { snapshots } = &mut self.inner {
-            snapshots.push(snapshot);
+    pub(crate) fn write_audio_semantic_frame(&mut self, frame: AudioSemanticFrame) {
+        if let RecorderInner::Midi { frames } = &mut self.inner {
+            frames.push(frame);
         }
     }
 
@@ -164,7 +164,7 @@ impl AudioRecorder {
                 buffer,
                 ..
             } => finish_ogg(self.path, writer, encoder, &buffer),
-            RecorderInner::Midi { snapshots } => super::midi::finish_midi(self.path, &snapshots),
+            RecorderInner::Midi { frames } => super::midi::finish_midi(self.path, &frames),
         }
     }
 }

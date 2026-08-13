@@ -15,6 +15,9 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            self.disable_uncapped_for_replay();
+            self.clear_replay_progress();
+
             let default_name = self
                 .rom_info
                 .rom_path
@@ -59,6 +62,7 @@ impl App {
     pub(in crate::app) fn stop_replay_recording(&mut self) {
         if let Some(recorder) = self.recording.replay_recorder.take() {
             self.toast_manager.set_replay_recording(false);
+            self.clear_replay_progress();
             let frame_count = recorder.frame_count();
             match recorder.finish() {
                 Ok(path) => {
@@ -93,6 +97,9 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            self.disable_uncapped_for_replay();
+            self.clear_replay_progress();
+
             let file = crate::platform::FileDialog::new()
                 .set_title("Load Replay")
                 .set_directory(self.state_dialog_dir())
@@ -138,5 +145,25 @@ impl App {
                 }
             }
         }
+    }
+
+    fn disable_uncapped_for_replay(&mut self) {
+        if !(self.timing.uncapped_speed || self.settings.emulation.uncapped_speed) {
+            return;
+        }
+
+        self.timing.uncapped_speed = false;
+        self.settings.emulation.uncapped_speed = false;
+        self.settings.save();
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::SetUncapped(false));
+        }
+        self.toast_manager
+            .info("Uncapped mode disabled for deterministic replay");
+    }
+
+    fn clear_replay_progress(&mut self) {
+        self.recording.pending_replay_batches.clear();
+        self.recording.queued_replay_playback_frames = 0;
     }
 }

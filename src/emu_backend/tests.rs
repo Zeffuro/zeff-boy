@@ -1,3 +1,4 @@
+use super::firmware::firmware_plan_for_active_system;
 use super::{
     ActiveSystem, BackendLoadConfig, BackendRuntimeConfig, EmuBackend, ROM_EXTENSIONS,
     load_backend_from_rom_source, system_specs,
@@ -34,6 +35,10 @@ fn active_system_detects_supported_rom_extensions() {
     );
     assert_eq!(
         ActiveSystem::from_path(&PathBuf::from("game.nes")),
+        Some(ActiveSystem::Nes)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.fds")),
         Some(ActiveSystem::Nes)
     );
     assert_eq!(
@@ -128,9 +133,33 @@ fn shared_backend_loader_covers_every_supported_core() {
 }
 
 #[test]
+fn shared_backend_loader_rejects_fds_with_firmware_message_until_app_boot_is_wired() {
+    let err = match load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        &PathBuf::from("test.fds"),
+        &PathBuf::from("test.fds"),
+        Some(vec![
+            0x55;
+            zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE
+        ]),
+        BackendLoadConfig::default(),
+    ) {
+        Ok(_) => panic!("FDS app-level loading should remain guarded until firmware boot is wired"),
+        Err(err) => err,
+    };
+
+    let message = err.to_string();
+    assert!(message.contains("Famicom Disk System images are detected"));
+    assert!(message.contains("nintendo.fds.bios"));
+}
+
+#[test]
 fn system_specs_map_to_shared_backend_loader() {
     for spec in system_specs() {
         for extension in spec.rom_extensions {
+            if *extension == "fds" {
+                continue;
+            }
             let rom = test_rom_for_system(spec.system);
             let rom_name = format!("matrix.{extension}");
             let rom_path = PathBuf::from(&rom_name);
@@ -158,6 +187,32 @@ fn system_specs_map_to_shared_backend_loader() {
             assert_eq!(loaded.backend.framebuffer().len(), spec.framebuffer_len());
         }
     }
+}
+
+#[test]
+fn active_system_firmware_plans_preserve_current_core_defaults() {
+    assert!(firmware_plan_for_active_system(ActiveSystem::Nes).is_empty());
+    assert!(firmware_plan_for_active_system(ActiveSystem::WonderSwan).is_empty());
+
+    let gba_plan = firmware_plan_for_active_system(ActiveSystem::GameBoyAdvance);
+    assert_eq!(gba_plan.len(), 1);
+    assert_eq!(gba_plan[0].id.as_ref(), "nintendo.gba.bios");
+    assert_eq!(
+        gba_plan[0].requirement,
+        zeff_firmware::RequirementLevel::Recommended
+    );
+    assert!(matches!(
+        gba_plan[0].fallback,
+        zeff_firmware::FallbackKind::Hle { .. }
+    ));
+
+    let sms_plan = firmware_plan_for_active_system(ActiveSystem::MasterSystem);
+    assert_eq!(sms_plan.len(), 1);
+    assert_eq!(sms_plan[0].id.as_ref(), "sega.sms.boot");
+    assert!(matches!(
+        sms_plan[0].fallback,
+        zeff_firmware::FallbackKind::SkipBoot { .. }
+    ));
 }
 
 #[test]
@@ -233,6 +288,40 @@ fn backend_link_peer_sync_exchanges_game_boy_bytes() {
     assert_eq!(right.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
     assert_eq!(left.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
     assert_eq!(right.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+}
+
+#[test]
+fn backend_link_peer_sync_exchanges_wonder_swan_uart_bytes() {
+    let mut left = build_ws_backend();
+    let mut right = build_ws_backend();
+
+    assert!(left.sync_link_peer(&mut right));
+
+    {
+        let (EmuBackend::Ws(left), EmuBackend::Ws(right)) = (&mut left, &mut right) else {
+            panic!("expected WonderSwan backends");
+        };
+        left.emu.io_write8(0x00B3, 0x80);
+        right.emu.io_write8(0x00B3, 0x80);
+        left.emu.io_write8(0x00B1, 0x5A);
+    }
+
+    for _ in 0..64 {
+        left.step_frame();
+        assert!(left.sync_link_peer(&mut right));
+        let EmuBackend::Ws(right) = &right else {
+            panic!("expected WonderSwan backend");
+        };
+        if right.emu.io_peek8(0x00B3) & 0x01 != 0 {
+            break;
+        }
+    }
+
+    let EmuBackend::Ws(right) = &right else {
+        panic!("expected WonderSwan backend");
+    };
+    assert_eq!(right.emu.io_peek8(0x00B3) & 0x01, 0x01);
+    assert_eq!(right.emu.io_peek8(0x00B1), 0x5A);
 }
 
 #[test]
@@ -368,14 +457,69 @@ fn assert_backend_state_decode_smoke(mut backend: EmuBackend) {
 }
 
 #[test]
-fn sega8_backend_exposes_apu_snapshot_for_midi_capture() {
+fn sega8_backend_exposes_semantic_audio_frame_for_recording() {
     let mut backend = build_sms_backend();
     backend.step_frame();
 
-    assert!(
-        backend.apu_channel_snapshot().is_some(),
-        "Sega 8-bit should expose PSG channel data for MIDI capture"
+    let frame = backend
+        .audio_semantic_frame()
+        .expect("Sega 8-bit should expose PSG semantic audio data for recording");
+    assert_eq!(frame.voices.len(), 4);
+    assert_eq!(frame.voices[0].name, "Sega PSG Tone 0");
+    assert_eq!(
+        frame.voices[3].class,
+        crate::audio_tooling::AudioVoiceClass::Noise
     );
+    assert_eq!(frame.voices[3].pitch_hz, None);
+}
+
+#[test]
+fn gba_backend_exposes_semantic_audio_frame_for_recording() {
+    let mut backend = build_gba_backend();
+    backend.step_frame();
+
+    let frame = backend
+        .audio_semantic_frame()
+        .expect("GBA should expose PSG and FIFO semantic audio data for recording/tooling");
+    assert_eq!(frame.voices.len(), 6);
+    assert_eq!(frame.voices[0].name, "GBA PSG 1 (Square + Sweep)");
+    assert_eq!(
+        frame.voices[2].class,
+        crate::audio_tooling::AudioVoiceClass::Wavetable
+    );
+    assert_eq!(
+        frame.voices[3].class,
+        crate::audio_tooling::AudioVoiceClass::Noise
+    );
+    assert_eq!(frame.voices[3].pitch_hz, None);
+    assert_eq!(
+        frame.voices[4].class,
+        crate::audio_tooling::AudioVoiceClass::Pcm
+    );
+    assert_eq!(frame.voices[4].name, "GBA FIFO A");
+    assert_eq!(frame.voices[4].pitch_hz, None);
+}
+
+#[test]
+fn ws_backend_exposes_semantic_audio_frame_for_recording() {
+    let mut backend = build_ws_backend();
+    backend.step_frame();
+
+    let frame = backend.audio_semantic_frame().expect(
+        "WonderSwan should expose wave/noise/PCM semantic audio data for recording/tooling",
+    );
+    assert_eq!(frame.voices.len(), 5);
+    assert_eq!(frame.voices[0].name, "WS CH0 Wave");
+    assert_eq!(
+        frame.voices[0].class,
+        crate::audio_tooling::AudioVoiceClass::Wavetable
+    );
+    assert_eq!(
+        frame.voices[4].class,
+        crate::audio_tooling::AudioVoiceClass::Pcm
+    );
+    assert_eq!(frame.voices[4].name, "WS HyperVoice");
+    assert_eq!(frame.voices[4].pitch_hz, None);
 }
 
 #[test]

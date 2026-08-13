@@ -8,6 +8,16 @@ impl Emulator {
         self.bus.sync_wonder_swan_link_peer(&mut peer.bus);
     }
 
+    pub fn take_wonder_swan_link_tx_event(
+        &mut self,
+    ) -> Option<crate::hardware::bus::WonderSwanTxEvent> {
+        self.bus.take_wonder_swan_link_tx_event()
+    }
+
+    pub fn receive_wonder_swan_link_byte(&mut self, value: u8) {
+        self.bus.receive_wonder_swan_link_byte(value);
+    }
+
     pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         self.bus.apu.drain_audio_samples_into(buf);
     }

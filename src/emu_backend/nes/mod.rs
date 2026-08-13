@@ -5,7 +5,10 @@ use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
-use crate::audio_recorder::MidiApuSnapshot;
+use crate::audio_tooling::{
+    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState,
+    NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
+};
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
@@ -182,8 +185,11 @@ impl EmulatorCore for NesBackend {
         self.emu.set_input_p2(buttons_pressed, dpad_pressed);
     }
 
-    fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
-        Some(MidiApuSnapshot::Nes(self.emu.apu_channel_snapshot()))
+    fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
+        Some(nes_audio_semantic_frame(
+            self.emu.frame_count(),
+            self.emu.apu_channel_snapshot(),
+        ))
     }
 
     fn copy_memory_region(
@@ -224,6 +230,60 @@ impl EmulatorCore for NesBackend {
 
         Ok(region)
     }
+}
+
+fn nes_audio_semantic_frame(
+    frame: u64,
+    snap: zeff_nes_core::hardware::apu::ApuChannelSnapshot,
+) -> AudioSemanticFrame {
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+        voices: vec![
+            AudioVoiceState {
+                channel: AudioChannelId(0),
+                name: "NES Pulse 1",
+                class: AudioVoiceClass::Pulse,
+                active: snap.pulse1_enabled,
+                pitch_hz: Some(nes_pulse_freq_to_hz(snap.pulse1_timer_period)),
+                level: Some(level_from_u4(snap.pulse1_volume)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(1),
+                name: "NES Pulse 2",
+                class: AudioVoiceClass::Pulse,
+                active: snap.pulse2_enabled,
+                pitch_hz: Some(nes_pulse_freq_to_hz(snap.pulse2_timer_period)),
+                level: Some(level_from_u4(snap.pulse2_volume)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(2),
+                name: "NES Triangle",
+                class: AudioVoiceClass::Triangle,
+                active: snap.triangle_enabled,
+                pitch_hz: Some(nes_triangle_freq_to_hz(snap.triangle_timer_period)),
+                level: Some(level_from_u4(snap.triangle_volume)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(3),
+                name: "NES Noise",
+                class: AudioVoiceClass::Noise,
+                active: snap.noise_enabled,
+                pitch_hz: None,
+                level: Some(level_from_u4(snap.noise_volume)),
+            },
+        ],
+    }
+}
+
+fn nes_pulse_freq_to_hz(timer_period: u16) -> f64 {
+    zeff_nes_core::hardware::constants::APU_CPU_CLOCK_NTSC
+        / (16.0 * (f64::from(timer_period) + 1.0))
+}
+
+fn nes_triangle_freq_to_hz(timer_period: u16) -> f64 {
+    zeff_nes_core::hardware::constants::APU_CPU_CLOCK_NTSC
+        / (32.0 * (f64::from(timer_period) + 1.0))
 }
 
 pub(crate) fn try_load_battery_sram(

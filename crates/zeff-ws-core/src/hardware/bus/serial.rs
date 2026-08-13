@@ -1,5 +1,15 @@
 use super::*;
+use std::collections::VecDeque;
+
 use crate::hardware::constants::CPU_CLOCK_HZ;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WonderSwanTxEvent {
+    pub completed_cycle: u64,
+    pub byte: u8,
+    pub baud_bps: u32,
+    pub generation: u64,
+}
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Uart {
@@ -9,10 +19,11 @@ pub(super) struct Uart {
     tx_data: u8,
     tx_pending: bool,
     tx_cycles_remaining: u32,
-    completed_tx: Option<u8>,
+    completed_tx_events: VecDeque<WonderSwanTxEvent>,
+    tx_generation: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct UartSaveState {
     pub rx_data: u8,
     pub rx_ready: bool,
@@ -20,7 +31,8 @@ pub(crate) struct UartSaveState {
     pub tx_data: u8,
     pub tx_pending: bool,
     pub tx_cycles_remaining: u32,
-    pub completed_tx: Option<u8>,
+    pub completed_tx_events: Vec<WonderSwanTxEvent>,
+    pub tx_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,6 +44,7 @@ pub struct UartDebugSnapshot {
     pub baud_bps: u32,
     pub tx_cycles_remaining: u32,
     pub completed_tx: Option<u8>,
+    pub completed_tx_count: usize,
 }
 
 impl Uart {
@@ -49,11 +62,16 @@ impl Uart {
         self.rx_data
     }
 
-    pub(super) fn write_data(&mut self, value: u8, control: u8) {
+    pub(super) fn write_data(&mut self, value: u8, control: u8) -> bool {
+        if control & SERIAL_CONTROL_ENABLE == 0 || self.tx_pending {
+            return false;
+        }
+
         self.tx_data = value;
         self.tx_pending = true;
         self.tx_cycles_remaining = byte_cycles(control);
-        self.completed_tx = None;
+        self.tx_generation = self.tx_generation.wrapping_add(1);
+        true
     }
 
     pub(super) fn write_control(&mut self, value: u8) -> u8 {
@@ -77,7 +95,7 @@ impl Uart {
         status
     }
 
-    pub(super) fn step_cycles(&mut self, cycles: u32, control: u8) {
+    pub(super) fn step_cycles(&mut self, cycles: u32, control: u8, completed_cycle_end: u64) {
         if control & SERIAL_CONTROL_ENABLE == 0 || !self.tx_pending {
             return;
         }
@@ -85,13 +103,19 @@ impl Uart {
             self.tx_cycles_remaining -= cycles;
             return;
         }
+        let overshoot_cycles = cycles - self.tx_cycles_remaining;
         self.tx_pending = false;
         self.tx_cycles_remaining = 0;
-        self.completed_tx = Some(self.tx_data);
+        self.completed_tx_events.push_back(WonderSwanTxEvent {
+            completed_cycle: completed_cycle_end.saturating_sub(u64::from(overshoot_cycles)),
+            byte: self.tx_data,
+            baud_bps: baud_bps(control),
+            generation: self.tx_generation,
+        });
     }
 
     pub(super) fn receive_byte(&mut self, value: u8, control: u8) {
-        if control & SERIAL_CONTROL_ENABLE == 0 {
+        if control & SERIAL_CONTROL_ENABLE == 0 || self.overrun {
             return;
         }
         if self.rx_ready {
@@ -102,8 +126,8 @@ impl Uart {
         self.rx_ready = true;
     }
 
-    pub(super) fn take_completed_tx(&mut self) -> Option<u8> {
-        self.completed_tx.take()
+    pub(super) fn take_completed_tx(&mut self) -> Option<WonderSwanTxEvent> {
+        self.completed_tx_events.pop_front()
     }
 
     pub(super) fn debug_snapshot(&self, control: u8) -> UartDebugSnapshot {
@@ -114,7 +138,8 @@ impl Uart {
             control: control & (SERIAL_CONTROL_ENABLE | SERIAL_CONTROL_FAST_BAUD),
             baud_bps: baud_bps(control),
             tx_cycles_remaining: self.tx_cycles_remaining,
-            completed_tx: self.completed_tx,
+            completed_tx: self.completed_tx_events.front().map(|event| event.byte),
+            completed_tx_count: self.completed_tx_events.len(),
         }
     }
 
@@ -126,7 +151,8 @@ impl Uart {
             tx_data: self.tx_data,
             tx_pending: self.tx_pending,
             tx_cycles_remaining: self.tx_cycles_remaining,
-            completed_tx: self.completed_tx,
+            completed_tx_events: self.completed_tx_events.iter().copied().collect(),
+            tx_generation: self.tx_generation,
         }
     }
 
@@ -137,7 +163,8 @@ impl Uart {
         self.tx_data = state.tx_data;
         self.tx_pending = state.tx_pending;
         self.tx_cycles_remaining = state.tx_cycles_remaining;
-        self.completed_tx = state.completed_tx;
+        self.completed_tx_events = state.completed_tx_events.into();
+        self.tx_generation = state.tx_generation;
     }
 }
 

@@ -70,6 +70,12 @@ pub(crate) struct JoypadInput {
     pub(crate) dpad_p2: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReplayJoypadFrame {
+    pub(crate) buttons: u8,
+    pub(crate) dpad: u8,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ZapperInput {
     pub(crate) enabled: bool,
@@ -86,6 +92,7 @@ pub(crate) struct AudioConfig {
 
 pub(crate) struct FrameInput {
     pub(crate) frames: usize,
+    pub(crate) replay_joypad_frames: Option<Vec<ReplayJoypadFrame>>,
     pub(crate) host_tilt: (f32, f32),
     pub(crate) host_camera_frame: Option<Vec<u8>>,
     pub(crate) joypad: JoypadInput,
@@ -101,13 +108,14 @@ pub(crate) struct FrameInput {
 }
 
 pub(crate) struct FrameResult {
+    pub(crate) advanced_frames: usize,
     pub(crate) rumble: bool,
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) is_pocket_camera: bool,
     pub(crate) rewind_fill: f32,
-    pub(crate) apu_snapshots: Vec<crate::audio_recorder::MidiApuSnapshot>,
+    pub(crate) audio_semantic_frames: Vec<crate::audio_tooling::AudioSemanticFrame>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -4,7 +4,12 @@ use zeff_emu_common::address::Address;
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_gba_core::emulator::Emulator as GbaEmulator;
+use zeff_gba_core::hardware::apu::ApuDebugSnapshot;
 
+use crate::audio_tooling::{
+    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState,
+    NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
+};
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
@@ -178,6 +183,13 @@ impl EmulatorCore for GbaBackend {
         true
     }
 
+    fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
+        Some(gba_audio_semantic_frame(
+            self.emu.frame_count(),
+            self.emu.apu_debug_snapshot(),
+        ))
+    }
+
     fn cpu_address_bits(&self) -> u8 {
         32
     }
@@ -217,6 +229,90 @@ impl EmulatorCore for GbaBackend {
         }
 
         Ok(region)
+    }
+}
+
+fn gba_audio_semantic_frame(frame: u64, snap: ApuDebugSnapshot) -> AudioSemanticFrame {
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+        voices: vec![
+            AudioVoiceState {
+                channel: AudioChannelId(0),
+                name: "GBA PSG 1 (Square + Sweep)",
+                class: AudioVoiceClass::Pulse,
+                active: psg_active(&snap, 0),
+                pitch_hz: Some(gb_square_freq_to_hz(snap.psg_frequency[0])),
+                level: Some(level_from_u4(snap.psg_volume[0])),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(1),
+                name: "GBA PSG 2 (Square)",
+                class: AudioVoiceClass::Pulse,
+                active: psg_active(&snap, 1),
+                pitch_hz: Some(gb_square_freq_to_hz(snap.psg_frequency[1])),
+                level: Some(level_from_u4(snap.psg_volume[1])),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(2),
+                name: "GBA PSG 3 (Wave)",
+                class: AudioVoiceClass::Wavetable,
+                active: psg_active(&snap, 2),
+                pitch_hz: Some(gb_wave_freq_to_hz(snap.psg_frequency[2])),
+                level: Some(gb_wave_level(snap.psg_volume[2])),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(3),
+                name: "GBA PSG 4 (Noise)",
+                class: AudioVoiceClass::Noise,
+                active: psg_active(&snap, 3),
+                pitch_hz: None,
+                level: Some(level_from_u4(snap.psg_volume[3])),
+            },
+            gba_fifo_voice(&snap, 0),
+            gba_fifo_voice(&snap, 1),
+        ],
+    }
+}
+
+fn psg_active(snap: &ApuDebugSnapshot, channel: usize) -> bool {
+    snap.psg_enabled[channel] && !snap.channel_mutes[channel]
+}
+
+fn gba_fifo_voice(snap: &ApuDebugSnapshot, fifo: usize) -> AudioVoiceState {
+    let mute_index = 4 + fifo;
+    let sample = snap.current_sample[fifo];
+    AudioVoiceState {
+        channel: AudioChannelId(mute_index as u16),
+        name: if fifo == 0 {
+            "GBA FIFO A"
+        } else {
+            "GBA FIFO B"
+        },
+        class: AudioVoiceClass::Pcm,
+        active: !snap.channel_mutes[mute_index] && (snap.fifo_len[fifo] > 0 || sample != 0),
+        pitch_hz: None,
+        level: Some((f32::from(sample).abs() / 127.0).clamp(0.0, 1.0)),
+    }
+}
+
+fn gb_square_freq_to_hz(freq_reg: u16) -> f64 {
+    let denom = 2048u32.saturating_sub(freq_reg as u32).max(1);
+    131_072.0 / f64::from(denom)
+}
+
+fn gb_wave_freq_to_hz(freq_reg: u16) -> f64 {
+    let denom = 2048u32.saturating_sub(freq_reg as u32).max(1);
+    65_536.0 / f64::from(denom)
+}
+
+fn gb_wave_level(level: u8) -> f32 {
+    match level {
+        0 => 0.0,
+        1 => 1.0,
+        2 => 80.0 / 127.0,
+        3 => 48.0 / 127.0,
+        _ => 0.0,
     }
 }
 

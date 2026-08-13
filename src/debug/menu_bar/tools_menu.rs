@@ -21,13 +21,14 @@ pub(super) fn draw(
     }
     ui.separator();
     ui.label("Link Cable");
-    let gb_link_enabled = active_system == ActiveSystem::GameBoy;
+    let remote_link_enabled = cfg!(not(target_arch = "wasm32"))
+        && crate::link::remote_link_system_for_active_system(active_system).is_some();
     #[cfg(target_arch = "wasm32")]
     ui.label("TCP link is native-only");
     if ui
-        .add_enabled(gb_link_enabled, egui::Button::new("Host TCP Link"))
+        .add_enabled(remote_link_enabled, egui::Button::new("Host TCP Link"))
         .on_hover_text(
-            "Open this after loading the first GB/GBC ROM, then Join from another app instance",
+            "Open this after loading the first GB/GBC or WonderSwan/WSC ROM, then Join from another app instance",
         )
         .clicked()
     {
@@ -35,7 +36,7 @@ pub(super) fn draw(
         ui.close();
     }
     if ui
-        .add_enabled(gb_link_enabled, egui::Button::new("Join TCP Link"))
+        .add_enabled(remote_link_enabled, egui::Button::new("Join TCP Link"))
         .on_hover_text("Join a localhost link hosted by another app instance")
         .clicked()
     {

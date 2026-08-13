@@ -1,5 +1,7 @@
 use super::{DEFAULT_SAMPLE_RATE, Emulator};
 use crate::hardware::bus::DebugTraceEvent;
+use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_HEADER_SIZE, FDS_SIDE_SIZE};
+use crate::hardware::cartridge::{NesMapper, RomFormat};
 use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4};
 use crate::hardware::cpu::StatusFlags;
 use zeff_emu_common::save_ram::SaveRamKind;
@@ -34,6 +36,10 @@ fn build_vs_system_test_rom() -> Vec<u8> {
     rom
 }
 
+fn build_fds_image(fill: u8) -> Vec<u8> {
+    vec![fill; FDS_SIDE_SIZE]
+}
+
 #[test]
 fn new_uses_power_on_reset_without_stack_adjust() {
     let emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
@@ -44,6 +50,41 @@ fn new_uses_power_on_reset_without_stack_adjust() {
     assert_eq!(emu.cpu.regs.x, 0);
     assert_eq!(emu.cpu.regs.y, 0);
     assert_eq!(emu.cpu.regs.p.bits(), 0x24);
+}
+
+#[test]
+fn new_fds_builds_emulator_from_bios_and_disk_image() {
+    let disk = build_fds_image(0x4A);
+    let mut bios = vec![0xEA; FDS_BIOS_SIZE];
+    bios[FDS_BIOS_SIZE - 4] = 0x00;
+    bios[FDS_BIOS_SIZE - 3] = 0xE0;
+
+    let emu = Emulator::new_fds(&disk, bios, DEFAULT_SAMPLE_RATE)
+        .expect("FDS emulator should initialize");
+
+    assert_eq!(emu.bus.cartridge.header().format, RomFormat::Nes2);
+    assert_eq!(emu.bus.cartridge.header().mapper_kind(), NesMapper::Fds);
+    assert_eq!(emu.cpu.pc, 0xE000);
+    assert_eq!(emu.rom_crc32, crc32fast::hash(&disk));
+    assert_eq!(emu.rom_hash, sha256(&disk));
+}
+
+#[test]
+fn new_fds_canonical_hash_ignores_optional_fw_nes_header() {
+    let raw = build_fds_image(0x9B);
+    let mut headered = [0; FDS_HEADER_SIZE].to_vec();
+    headered[..4].copy_from_slice(b"FDS\x1A");
+    headered[4] = 1;
+    headered.extend_from_slice(&raw);
+    let bios = vec![0xEA; FDS_BIOS_SIZE];
+
+    let raw_emu =
+        Emulator::new_fds(&raw, bios.clone(), DEFAULT_SAMPLE_RATE).expect("raw FDS should load");
+    let headered_emu =
+        Emulator::new_fds(&headered, bios, DEFAULT_SAMPLE_RATE).expect("headered FDS should load");
+
+    assert_eq!(raw_emu.rom_crc32, headered_emu.rom_crc32);
+    assert_eq!(raw_emu.rom_hash, headered_emu.rom_hash);
 }
 
 #[test]
@@ -163,6 +204,12 @@ fn reset_preserves_cpu_registers_and_decrements_stack() {
     assert_eq!(emu.bus.ram[0x110], 0xBC);
     assert_eq!(emu.bus.ram[0x111], 0x9A);
     assert_eq!(emu.bus.ram[0x112], 0xFB);
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+
+    Sha256::digest(bytes).into()
 }
 
 #[test]

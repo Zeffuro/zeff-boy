@@ -8,7 +8,9 @@ use zeff_sega8_core::hardware::cartridge::{Sega8MapperKind, Sega8System, SystemH
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
-use crate::audio_recorder::MidiApuSnapshot;
+use crate::audio_tooling::{
+    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
+};
 use crate::emu_backend::ActiveSystem;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_slice_to_vec};
@@ -186,8 +188,9 @@ impl EmulatorCore for Sega8Backend {
         true
     }
 
-    fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
-        Some(MidiApuSnapshot::Sega8(
+    fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
+        Some(sega8_audio_semantic_frame(
+            self.emu.frame_count(),
             self.emu.bus().apu().debug_snapshot(),
         ))
     }
@@ -228,6 +231,53 @@ impl EmulatorCore for Sega8Backend {
 
         Ok(region)
     }
+}
+
+fn sega8_audio_semantic_frame(
+    frame: u64,
+    snap: zeff_sega8_core::hardware::apu::ApuDebugSnapshot,
+) -> AudioSemanticFrame {
+    let mut voices = Vec::with_capacity(zeff_sega8_core::hardware::apu::PSG_CHANNEL_COUNT);
+    for channel in 0..zeff_sega8_core::hardware::apu::PSG_CHANNEL_COUNT {
+        let volume = snap.volume.get(channel).copied().unwrap_or(15).min(15);
+        let level = f32::from(15 - volume) / 15.0;
+        let muted = snap.channel_mutes.get(channel).copied().unwrap_or(false);
+        let active = volume < 15 && !muted;
+        let tone_channel = channel < zeff_sega8_core::hardware::apu::PSG_TONE_CHANNEL_COUNT;
+
+        voices.push(AudioVoiceState {
+            channel: AudioChannelId(channel as u16),
+            name: match channel {
+                0 => "Sega PSG Tone 0",
+                1 => "Sega PSG Tone 1",
+                2 => "Sega PSG Tone 2",
+                3 => "Sega PSG Noise",
+                _ => "Sega PSG Unknown",
+            },
+            class: if tone_channel {
+                AudioVoiceClass::Tone
+            } else {
+                AudioVoiceClass::Noise
+            },
+            active,
+            pitch_hz: tone_channel.then(|| sega8_tone_freq_to_hz(snap.tone_period[channel])),
+            level: Some(level),
+        });
+    }
+
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+        voices,
+    }
+}
+
+fn sega8_tone_freq_to_hz(period: u16) -> f64 {
+    if period <= 1 {
+        return 0.0;
+    }
+    f64::from(zeff_sega8_core::hardware::constants::SEGA8_Z80_CLOCK_HZ_APPROX)
+        / (32.0 * f64::from(period))
 }
 
 pub(crate) fn hint_for_active_system(system: ActiveSystem) -> Option<SystemHint> {

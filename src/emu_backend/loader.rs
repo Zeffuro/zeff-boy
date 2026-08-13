@@ -55,6 +55,15 @@ pub(crate) fn load_backend_from_rom_source(
         crc32fast::hash(&rom_data)
     };
 
+    let firmware_plan = super::firmware::firmware_plan_for_active_system(system);
+    if !firmware_plan.is_empty() {
+        log::debug!(
+            "{} firmware plan has {} request(s); current load path preserves core defaults",
+            system_load_label(system),
+            firmware_plan.len()
+        );
+    }
+
     let mut backend = match system {
         ActiveSystem::GameBoy => load_gb_backend(&rom_data, source_path, rom_path, config)?,
         ActiveSystem::Nes => load_nes_backend(&rom_data, source_path, rom_path, config)?,
@@ -116,6 +125,17 @@ fn load_nes_backend(
     rom_path: &Path,
     config: BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
+    if is_fds_path(rom_path) {
+        let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
+        let firmware_id = plan
+            .first()
+            .map(|request| request.id.as_ref())
+            .unwrap_or("nintendo.fds.bios");
+        anyhow::bail!(
+            "Famicom Disk System images are detected, but app-level FDS boot is not wired yet. Required firmware: {firmware_id}"
+        );
+    }
+
     let sample_rate = config
         .sample_rate
         .map(f64::from)
@@ -123,6 +143,12 @@ fn load_nes_backend(
     let mut emu = zeff_nes_core::emulator::Emulator::new(rom_data, sample_rate)?;
     log_sram_result(super::nes::try_load_battery_sram(&mut emu, rom_path));
     Ok(wrap_nes_backend(emu, source_path, rom_path))
+}
+
+fn is_fds_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"))
 }
 
 fn load_gba_backend(

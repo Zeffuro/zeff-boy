@@ -164,6 +164,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             audio_recorder: None,
             replay_recorder: None,
             replay_player: None,
+            pending_replay_batches: std::collections::VecDeque::new(),
+            queued_replay_playback_frames: 0,
         },
         rewind: RewindState {
             held: false,

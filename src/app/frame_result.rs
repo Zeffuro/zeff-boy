@@ -56,6 +56,7 @@ impl App {
 
     pub(super) fn process_frame_result(&mut self, result: FrameResult) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
+        self.commit_replay_batch(result.advanced_frames);
 
         // Read the latest framebuffer from the lock-free shared buffer
         if let Some(thread) = &self.emu_thread {
@@ -86,8 +87,8 @@ impl App {
 
         if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
-            for snapshot in result.apu_snapshots {
-                recorder.write_apu_snapshot(snapshot);
+            for frame in result.audio_semantic_frames {
+                recorder.write_audio_semantic_frame(frame);
             }
         }
         let mut reusable_audio = result.audio_samples;
@@ -199,5 +200,42 @@ impl App {
         }
 
         self.cached_ui_data = Some(ui_data);
+    }
+
+    fn commit_replay_batch(&mut self, mut advanced_frames: usize) {
+        while advanced_frames > 0 {
+            let Some(mut batch) = self.recording.pending_replay_batches.pop_front() else {
+                break;
+            };
+
+            let commit_count = advanced_frames.min(batch.frames.len());
+            if batch.record
+                && let Some(recorder) = &mut self.recording.replay_recorder
+            {
+                for frame in batch.frames.iter().take(commit_count) {
+                    recorder.record_frame(frame.buttons, frame.dpad);
+                }
+            }
+            if batch.playback {
+                if let Some(player) = &mut self.recording.replay_player {
+                    player.advance_frames(commit_count);
+                    if player.is_finished() {
+                        self.toast_manager.info("Replay finished");
+                        self.recording.replay_player = None;
+                    }
+                }
+                self.recording.queued_replay_playback_frames = self
+                    .recording
+                    .queued_replay_playback_frames
+                    .saturating_sub(commit_count);
+            }
+
+            advanced_frames -= commit_count;
+            if commit_count < batch.frames.len() {
+                batch.frames.drain(..commit_count);
+                self.recording.pending_replay_batches.push_front(batch);
+                break;
+            }
+        }
     }
 }

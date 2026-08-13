@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::audio_recorder::MidiApuSnapshot;
+use crate::audio_tooling::AudioSemanticFrame;
 use zeff_emu_common::address::Address;
 use zeff_emu_common::memory::{
     ExtendedMemoryRegionSizes, MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region,
@@ -159,7 +159,7 @@ pub(crate) trait EmulatorCore {
     #[inline]
     fn set_input_p2(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}
     #[inline]
-    fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
+    fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
         None
     }
     #[inline]

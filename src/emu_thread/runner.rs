@@ -1,7 +1,7 @@
 use crossbeam_channel::{Sender, TrySendError};
 
 use crate::emu_backend::EmuBackend;
-use crate::link::gb::GameBoyRemoteLink;
+use crate::link::RemoteLink;
 use crate::link::transport::TcpLinkTransport;
 use crate::ui;
 
@@ -30,7 +30,7 @@ impl EmuThread {
     pub(crate) fn run_uncapped_batch(
         backend: &mut EmuBackend,
         cheats: &[crate::cheats::CheatPatch],
-        tcp_link: Option<&mut GameBoyRemoteLink<TcpLinkTransport>>,
+        tcp_link: Option<&mut RemoteLink<TcpLinkTransport>>,
         shared_fb: &SharedFramebuffer,
         rewind_buffer: &zeff_emu_common::rewind::RewindBuffer,
         frame_tx: &Sender<FrameResult>,
@@ -41,36 +41,39 @@ impl EmuThread {
             return;
         }
 
-        let mut midi_snapshots = Vec::new();
-        if tcp_link.is_some() {
+        let mut audio_semantic_frames = Vec::new();
+        let advanced_frames = if tcp_link.is_some() {
             Self::step_n_frames_with_tcp_link(
                 backend,
                 UNCAPPED_BATCH_SIZE,
                 cheats,
                 tcp_link,
                 false,
-                &mut midi_snapshots,
-            );
+                &mut audio_semantic_frames,
+                None,
+            )
         } else {
             Self::step_n_frames(
                 backend,
                 UNCAPPED_BATCH_SIZE,
                 cheats,
                 false,
-                &mut midi_snapshots,
-            );
-        }
+                &mut audio_semantic_frames,
+                None,
+            )
+        };
 
         publish_framebuffer(shared_fb, backend.framebuffer());
 
         let result = FrameResult {
+            advanced_frames,
             rumble: backend.rumble_active(),
             audio_samples: Vec::new(),
             ui_data: ui::UiFrameData::default(),
             is_mbc7: backend.is_mbc7(),
             is_pocket_camera: backend.is_pocket_camera(),
             rewind_fill: rewind_buffer.fill_ratio(),
-            apu_snapshots: Vec::new(),
+            audio_semantic_frames: Vec::new(),
         };
 
         Self::send_frame(frame_tx, drain_rx, result);

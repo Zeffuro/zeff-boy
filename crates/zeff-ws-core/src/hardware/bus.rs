@@ -17,6 +17,7 @@ mod serial;
 use serial::Uart;
 pub use serial::UartDebugSnapshot;
 pub(crate) use serial::UartSaveState;
+pub use serial::WonderSwanTxEvent;
 mod timers;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,7 +169,7 @@ impl Bus {
     pub fn step_cycles(&mut self, cycles: u32) {
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
         let serial_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
-        self.uart.step_cycles(cycles, serial_control);
+        self.uart.step_cycles(cycles, serial_control, self.cycles);
         self.refresh_level_interrupts();
         self.apu.step_cycles(cycles, &self.ram);
         self.step_sound_dma(cycles);
@@ -276,18 +277,26 @@ impl Bus {
     }
 
     pub fn sync_wonder_swan_link_peer(&mut self, peer: &mut Bus) {
-        let self_tx = self.uart.take_completed_tx();
-        let peer_tx = peer.uart.take_completed_tx();
         let self_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
         let peer_control = peer.io[usize::from(SERIAL_CONTROL_PORT)];
-        if let Some(value) = self_tx {
-            peer.uart.receive_byte(value, peer_control);
+        while let Some(event) = self.uart.take_completed_tx() {
+            peer.uart.receive_byte(event.byte, peer_control);
         }
-        if let Some(value) = peer_tx {
-            self.uart.receive_byte(value, self_control);
+        while let Some(event) = peer.uart.take_completed_tx() {
+            self.uart.receive_byte(event.byte, self_control);
         }
         self.refresh_level_interrupts();
         peer.refresh_level_interrupts();
+    }
+
+    pub fn take_wonder_swan_link_tx_event(&mut self) -> Option<WonderSwanTxEvent> {
+        self.uart.take_completed_tx()
+    }
+
+    pub fn receive_wonder_swan_link_byte(&mut self, value: u8) {
+        let control = self.io[usize::from(SERIAL_CONTROL_PORT)];
+        self.uart.receive_byte(value, control);
+        self.refresh_level_interrupts();
     }
 
     fn linear_bank_read(&self) -> u8 {
@@ -911,6 +920,49 @@ mod tests {
     }
 
     #[test]
+    fn serial_write_while_tx_busy_does_not_replace_active_byte() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+
+        left.io_write8(SERIAL_DATA_PORT, 0x11);
+        left.step_cycles(1_600);
+        left.io_write8(SERIAL_DATA_PORT, 0x22);
+        left.step_cycles(1_600);
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x11);
+        assert_eq!(left.uart_debug_snapshot().tx_data, 0x11);
+    }
+
+    #[test]
+    fn serial_completed_tx_events_queue_until_peer_sync() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(
+            SERIAL_CONTROL_PORT,
+            SERIAL_CONTROL_ENABLE | SERIAL_CONTROL_FAST_BAUD,
+        );
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+
+        left.io_write8(SERIAL_DATA_PORT, 0x11);
+        left.step_cycles(800);
+        left.io_write8(SERIAL_DATA_PORT, 0x22);
+        left.step_cycles(800);
+        assert_eq!(left.uart_debug_snapshot().completed_tx_count, 2);
+
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(left.uart_debug_snapshot().completed_tx_count, 0);
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_OVERRUN,
+            SERIAL_STATUS_OVERRUN
+        );
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x11);
+    }
+
+    #[test]
     fn serial_fast_baud_completes_in_shorter_byte_time() {
         let mut left = Bus::new(minimal_cart());
         let mut right = Bus::new(minimal_cart());
@@ -991,6 +1043,47 @@ mod tests {
             right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_OVERRUN,
             0
         );
+    }
+
+    #[test]
+    fn serial_overrun_blocks_receive_until_reset() {
+        let mut left = Bus::new(minimal_cart());
+        let mut right = Bus::new(minimal_cart());
+        left.io_write8(
+            SERIAL_CONTROL_PORT,
+            SERIAL_CONTROL_ENABLE | SERIAL_CONTROL_FAST_BAUD,
+        );
+        right.io_write8(SERIAL_CONTROL_PORT, SERIAL_CONTROL_ENABLE);
+
+        left.io_write8(SERIAL_DATA_PORT, 0x11);
+        left.step_cycles(800);
+        left.sync_wonder_swan_link_peer(&mut right);
+        left.io_write8(SERIAL_DATA_PORT, 0x22);
+        left.step_cycles(800);
+        left.sync_wonder_swan_link_peer(&mut right);
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_OVERRUN,
+            SERIAL_STATUS_OVERRUN
+        );
+
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x11);
+        left.io_write8(SERIAL_DATA_PORT, 0x33);
+        left.step_cycles(800);
+        left.sync_wonder_swan_link_peer(&mut right);
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_RX_READY,
+            0
+        );
+
+        right.io_write8(
+            SERIAL_CONTROL_PORT,
+            SERIAL_CONTROL_ENABLE | SERIAL_CONTROL_RESET_OVERRUN,
+        );
+        left.io_write8(SERIAL_DATA_PORT, 0x44);
+        left.step_cycles(800);
+        left.sync_wonder_swan_link_peer(&mut right);
+
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x44);
     }
 
     #[test]

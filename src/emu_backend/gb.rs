@@ -5,7 +5,10 @@ use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 
-use crate::audio_recorder::MidiApuSnapshot;
+use crate::audio_tooling::{
+    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, GB_TEMPO_US_PER_BEAT,
+    level_from_u4,
+};
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
@@ -196,8 +199,11 @@ impl EmulatorCore for GbBackend {
     }
 
     #[inline]
-    fn apu_channel_snapshot(&self) -> Option<MidiApuSnapshot> {
-        Some(MidiApuSnapshot::Gb(self.emu.apu_channel_snapshot()))
+    fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
+        Some(gb_audio_semantic_frame(
+            self.emu.frame_count(),
+            self.emu.apu_channel_snapshot(),
+        ))
     }
 
     #[inline]
@@ -213,6 +219,70 @@ impl EmulatorCore for GbBackend {
     #[inline]
     fn is_pocket_camera(&self) -> bool {
         self.emu.is_pocket_camera_cartridge()
+    }
+}
+
+fn gb_audio_semantic_frame(
+    frame: u64,
+    snap: zeff_gb_core::hardware::apu::ApuChannelSnapshot,
+) -> AudioSemanticFrame {
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: GB_TEMPO_US_PER_BEAT,
+        voices: vec![
+            AudioVoiceState {
+                channel: AudioChannelId(0),
+                name: "GB CH1 (Square 1)",
+                class: AudioVoiceClass::Pulse,
+                active: snap.ch1_enabled,
+                pitch_hz: Some(gb_square_freq_to_hz(snap.ch1_frequency)),
+                level: Some(level_from_u4(snap.ch1_volume)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(1),
+                name: "GB CH2 (Square 2)",
+                class: AudioVoiceClass::Pulse,
+                active: snap.ch2_enabled,
+                pitch_hz: Some(gb_square_freq_to_hz(snap.ch2_frequency)),
+                level: Some(level_from_u4(snap.ch2_volume)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(2),
+                name: "GB CH3 (Wave)",
+                class: AudioVoiceClass::Wavetable,
+                active: snap.ch3_enabled,
+                pitch_hz: Some(gb_wave_freq_to_hz(snap.ch3_frequency)),
+                level: Some(gb_wave_level(snap.ch3_output_level)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(3),
+                name: "GB CH4 (Noise)",
+                class: AudioVoiceClass::Noise,
+                active: snap.ch4_enabled,
+                pitch_hz: None,
+                level: Some(level_from_u4(snap.ch4_volume)),
+            },
+        ],
+    }
+}
+
+fn gb_square_freq_to_hz(freq_reg: u16) -> f64 {
+    let denom = 2048u32.saturating_sub(freq_reg as u32).max(1);
+    131_072.0 / f64::from(denom)
+}
+
+fn gb_wave_freq_to_hz(freq_reg: u16) -> f64 {
+    let denom = 2048u32.saturating_sub(freq_reg as u32).max(1);
+    65_536.0 / f64::from(denom)
+}
+
+fn gb_wave_level(level: u8) -> f32 {
+    match level {
+        0 => 0.0,
+        1 => 1.0,
+        2 => 80.0 / 127.0,
+        3 => 48.0 / 127.0,
+        _ => 0.0,
     }
 }
 

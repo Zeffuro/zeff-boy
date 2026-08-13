@@ -127,6 +127,12 @@ impl LinkedEmulationSession {
     }
 
     pub(crate) fn step_frame_pair(&mut self) -> Result<(), LinkSessionError> {
+        if let (EmuBackend::Ws(first), EmuBackend::Ws(second)) = (&mut self.first, &mut self.second)
+        {
+            step_wonder_swan_frame_pair(&mut first.emu, &mut second.emu);
+            return self.sync_link_peer();
+        }
+
         self.sync_link_peer()?;
         self.first.step_frame();
         self.second.step_frame();
@@ -135,6 +141,51 @@ impl LinkedEmulationSession {
 
     pub(crate) fn into_backends(self) -> (EmuBackend, EmuBackend) {
         (self.first, self.second)
+    }
+}
+
+fn step_wonder_swan_frame_pair(
+    first: &mut zeff_ws_core::emulator::Emulator,
+    second: &mut zeff_ws_core::emulator::Emulator,
+) {
+    use zeff_ws_core::hardware::constants::CYCLES_PER_FRAME;
+    use zeff_ws_core::hardware::cpu::CpuState;
+
+    let first_was_suspended = first.cpu_state() == CpuState::Suspended;
+    let second_was_suspended = second.cpu_state() == CpuState::Suspended;
+    let first_guard = first
+        .cpu_cycles()
+        .wrapping_add(u64::from(CYCLES_PER_FRAME) * 2);
+    let second_guard = second
+        .cpu_cycles()
+        .wrapping_add(u64::from(CYCLES_PER_FRAME) * 2);
+
+    if !first_was_suspended {
+        first.clear_frame_ready();
+    }
+    if !second_was_suspended {
+        second.clear_frame_ready();
+    }
+
+    while (!first_was_suspended && !first.frame_ready() && first.cpu_cycles() < first_guard)
+        || (!second_was_suspended && !second.frame_ready() && second.cpu_cycles() < second_guard)
+    {
+        if !first_was_suspended && !first.frame_ready() && first.cpu_cycles() < first_guard {
+            first.step_instruction();
+        }
+        first.sync_wonder_swan_link_peer(second);
+
+        if !second_was_suspended && !second.frame_ready() && second.cpu_cycles() < second_guard {
+            second.step_instruction();
+        }
+        first.sync_wonder_swan_link_peer(second);
+    }
+
+    if !first_was_suspended {
+        first.finish_frame();
+    }
+    if !second_was_suspended {
+        second.finish_frame();
     }
 }
 
@@ -215,6 +266,30 @@ mod tests {
     }
 
     #[test]
+    fn linked_emulation_session_steps_wonder_swan_uart_pair() {
+        let mut session = LinkedEmulationSession::new(ws_backend(), ws_backend()).unwrap();
+
+        {
+            let (left, right) = session.backends_mut();
+            let (EmuBackend::Ws(left), EmuBackend::Ws(right)) = (left, right) else {
+                panic!("expected WonderSwan backends");
+            };
+            left.emu.io_write8(0x00B3, 0x80);
+            right.emu.io_write8(0x00B3, 0x80);
+            left.emu.io_write8(0x00B1, 0x5A);
+        }
+
+        session.step_frame_pair().unwrap();
+
+        let (_, right) = session.backends();
+        let EmuBackend::Ws(right) = right else {
+            panic!("expected WonderSwan backend");
+        };
+        assert_eq!(right.emu.io_peek8(0x00B3) & 0x01, 0x01);
+        assert_eq!(right.emu.io_peek8(0x00B1), 0x5A);
+    }
+
+    #[test]
     fn linked_emulation_session_rejects_incompatible_backends() {
         assert_eq!(
             LinkedEmulationSession::new(gb_backend(), gba_backend()).map(|_| ()),
@@ -239,5 +314,20 @@ mod tests {
         let gba = zeff_gba_core::emulator::Emulator::new(&rom, 44_100)
             .expect("GBA emulator should initialize");
         EmuBackend::from_gba(gba, PathBuf::from("test.gba"))
+    }
+
+    fn ws_backend() -> EmuBackend {
+        let mut rom = vec![0xFF; 0x10000];
+        rom[0] = 0xF4;
+        let reset_vector = rom.len() - 16;
+        rom[reset_vector..reset_vector + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+        let footer = rom.len() - 10;
+        rom[footer + 4] = 0x01;
+        let checksum = zeff_ws_core::hardware::cartridge::compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+
+        let ws =
+            zeff_ws_core::emulator::Emulator::from_rom_data(&rom).expect("WS emulator should init");
+        EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
     }
 }

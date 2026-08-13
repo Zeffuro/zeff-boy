@@ -67,9 +67,18 @@ impl App {
                 self.rewind.throttle = 0;
             }
             self.rewind.pops = 0;
-            if self.frames_in_flight < MAX_IN_FLIGHT {
+            let max_in_flight = if self.recording.replay_recorder.is_some()
+                || self.recording.replay_player.is_some()
+                || !self.recording.pending_replay_batches.is_empty()
+            {
+                1
+            } else {
+                MAX_IN_FLIGHT
+            };
+
+            if self.frames_in_flight < max_in_flight {
                 let now = Instant::now();
-                let frames_to_step = if self.speed.paused {
+                let mut frames_to_step = if self.speed.paused {
                     self.timing.last_frame_time = now;
                     if std::mem::take(&mut self.debug_requests.frame_advance) {
                         1
@@ -79,6 +88,11 @@ impl App {
                 } else {
                     self.compute_frames_to_step(now)
                 };
+                if frames_to_step > 0
+                    && let Some(batch) = self.recording.pending_replay_batches.front()
+                {
+                    frames_to_step = frames_to_step.min(batch.frames.len());
+                }
 
                 let remote_capture_pending = self.remote_debug_frames_remaining > 0
                     || self.remote_memory_frames_remaining > 0
@@ -104,7 +118,18 @@ impl App {
                     };
 
                     let host_camera_frame = self.camera_frame();
-                    let (buttons_pressed, dpad_pressed) = self.gather_joypad_input();
+                    let (buttons_pressed, dpad_pressed) =
+                        self.current_replay_recordable_joypad_input();
+                    let replay_playback_active = self.recording.replay_player.is_some();
+                    let replay_joypad_frames = self.prepare_replay_joypad_batch(
+                        frames_to_step,
+                        buttons_pressed,
+                        dpad_pressed,
+                    );
+                    if replay_playback_active {
+                        frames_to_step =
+                            replay_joypad_frames.as_ref().map_or(0, std::vec::Vec::len);
+                    }
                     let (buttons_pressed_p2, dpad_pressed_p2) = self.current_host_joypad_p2_input();
                     let zapper = self.nes_zapper_input();
                     let reqs = debug::compute_tab_requirements(&self.debug_dock);
@@ -113,6 +138,7 @@ impl App {
 
                     let input = FrameInput {
                         frames: frames_to_step,
+                        replay_joypad_frames,
                         host_tilt,
                         host_camera_frame,
                         joypad: JoypadInput {

@@ -1,0 +1,17 @@
+[package]
+name = "zeff-firmware"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "Firmware catalog, validation, and resolution model for zeff-boy."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+md-5 = "0.11.0"
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+sha1 = "0.11.0"
+sha2 = "0.11.0"
+
+[features]
+serde = ["dep:serde"]

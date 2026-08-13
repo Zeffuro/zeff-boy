@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -49,12 +50,20 @@ pub(super) struct RecordingState {
     pub(super) audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
     pub(super) replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
     pub(super) replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
+    pub(super) pending_replay_batches: VecDeque<PendingReplayBatch>,
+    pub(super) queued_replay_playback_frames: usize,
 }
 
 impl RecordingState {
     pub(super) fn is_audio_recording(&self) -> bool {
         self.audio_recorder.is_some()
     }
+}
+
+pub(super) struct PendingReplayBatch {
+    pub(super) frames: Vec<crate::emu_thread::ReplayJoypadFrame>,
+    pub(super) record: bool,
+    pub(super) playback: bool,
 }
 
 pub(super) struct TimingState {

@@ -29,6 +29,31 @@ impl Emulator {
         let cartridge = Cartridge::load(rom_data)?;
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let rom_crc32 = crc32fast::hash(rom_data);
+        Self::from_cartridge(cartridge, rom_hash, rom_crc32, sample_rate)
+    }
+
+    pub fn new_fds(
+        fds_image_data: &[u8],
+        bios_data: Vec<u8>,
+        sample_rate: f64,
+    ) -> anyhow::Result<Self> {
+        let image = crate::hardware::cartridge::mappers::FdsImage::parse(fds_image_data)?;
+        let mut hasher = Sha256::new();
+        for side in image.sides() {
+            hasher.update(side);
+        }
+        let rom_hash = hasher.finalize().into();
+        let cartridge = Cartridge::load_fds(image, bios_data)?;
+        let rom_crc32 = cartridge.rom_crc32();
+        Self::from_cartridge(cartridge, rom_hash, rom_crc32, sample_rate)
+    }
+
+    fn from_cartridge(
+        cartridge: Cartridge,
+        rom_hash: [u8; 32],
+        rom_crc32: u32,
+        sample_rate: f64,
+    ) -> anyhow::Result<Self> {
         let bus = Bus::new(cartridge, sample_rate);
 
         let mut emu = Self {

@@ -194,6 +194,7 @@ impl Bus {
                 self.io[usize::from(SERIAL_DATA_PORT)] = value;
                 self.uart
                     .write_data(value, self.io[usize::from(SERIAL_CONTROL_PORT)]);
+                self.refresh_level_interrupts();
             }
             SERIAL_CONTROL_PORT => {
                 self.io[usize::from(SERIAL_CONTROL_PORT)] = self.uart.write_control(value);

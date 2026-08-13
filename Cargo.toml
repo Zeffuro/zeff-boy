@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/zeff-emu-common",
+    "crates/zeff-firmware",
     "crates/zeff-gb-core",
     "crates/zeff-gba-core",
     "crates/zeff-nes-core",
@@ -29,6 +30,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 zeff-emu-common = { path = "crates/zeff-emu-common" }
+zeff-firmware = { path = "crates/zeff-firmware" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }

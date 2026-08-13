@@ -21,6 +21,7 @@ use crate::emu_core_trait::EmulatorCore;
 
 pub(crate) mod capabilities;
 pub(crate) mod cheats;
+pub(crate) mod firmware;
 pub(crate) mod gb;
 pub(crate) mod gba;
 pub(crate) mod loader;
@@ -282,8 +283,8 @@ impl EmuBackend {
         dispatch!(self, is_pocket_camera())
     }
 
-    pub(crate) fn apu_channel_snapshot(&self) -> Option<crate::audio_recorder::MidiApuSnapshot> {
-        dispatch!(self, apu_channel_snapshot())
+    pub(crate) fn audio_semantic_frame(&self) -> Option<crate::audio_tooling::AudioSemanticFrame> {
+        dispatch!(self, audio_semantic_frame())
     }
 
     #[inline]
@@ -326,6 +327,50 @@ impl EmuBackend {
             return Err(err);
         }
         link.poll_emulator(&mut gb.emu)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_wonder_swan_frame_with_remote_link(
+        &mut self,
+        link: &mut crate::link::ws::WonderSwanRemoteLink<crate::link::transport::TcpLinkTransport>,
+    ) -> Result<(), crate::link::LinkSessionError> {
+        let Self::Ws(ws) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+
+        link.poll_emulator(&mut ws.emu)?;
+        if ws.emu.is_cpu_suspended() {
+            return Ok(());
+        }
+
+        ws.emu.clear_frame_ready();
+        let guard = ws
+            .emu
+            .cpu_cycles()
+            .wrapping_add(u64::from(zeff_ws_core::hardware::constants::CYCLES_PER_FRAME) * 2);
+        while !ws.emu.frame_ready() && ws.emu.cpu_cycles() < guard {
+            if ws.emu.step_instruction().is_none() && ws.emu.is_cpu_suspended() {
+                break;
+            }
+            link.poll_emulator(&mut ws.emu)?;
+        }
+        ws.emu.finish_frame();
+        link.poll_emulator(&mut ws.emu)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_frame_with_remote_link(
+        &mut self,
+        link: &mut crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
+    ) -> Result<(), crate::link::LinkSessionError> {
+        match link {
+            crate::link::RemoteLink::GameBoy(link) => {
+                self.step_game_boy_frame_with_remote_link(link)
+            }
+            crate::link::RemoteLink::WonderSwan(link) => {
+                self.step_wonder_swan_frame_with_remote_link(link)
+            }
+        }
     }
 
     #[inline]

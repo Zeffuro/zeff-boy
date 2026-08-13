@@ -3,14 +3,14 @@ use std::path::Path;
 
 const GB_ROM_EXTENSIONS: [&str; 3] = ["gb", "gbc", "sgb"];
 const GBA_ROM_EXTENSIONS: [&str; 1] = ["gba"];
-const NES_ROM_EXTENSIONS: [&str; 1] = ["nes"];
+const NES_ROM_EXTENSIONS: [&str; 2] = ["nes", "fds"];
 const WS_ROM_EXTENSIONS: [&str; 2] = ["ws", "wsc"];
 const SMS_ROM_EXTENSIONS: [&str; 1] = ["sms"];
 const GG_ROM_EXTENSIONS: [&str; 1] = ["gg"];
 const SG_ROM_EXTENSIONS: [&str; 2] = ["sg", "sc"];
 const ARCHIVE_EXTENSION_LIST: [&str; 1] = ["zip"];
 const SUPPORTED_EXTENSIONS_LABEL: &str =
-    ".gb, .gbc, .sgb, .gba, .nes, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
+    ".gb, .gbc, .sgb, .gba, .nes, .fds, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
 const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|ws|sms|gg|sg";
 
 pub const RGBA_BYTES_PER_PIXEL: usize = 4;
@@ -42,6 +42,7 @@ pub const ROM_EXTENSIONS: &[&str] = &[
     GB_ROM_EXTENSIONS[2],
     GBA_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[0],
+    NES_ROM_EXTENSIONS[1],
     WS_ROM_EXTENSIONS[0],
     WS_ROM_EXTENSIONS[1],
     SMS_ROM_EXTENSIONS[0],
@@ -55,6 +56,7 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     GB_ROM_EXTENSIONS[2],
     GBA_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[0],
+    NES_ROM_EXTENSIONS[1],
     WS_ROM_EXTENSIONS[0],
     WS_ROM_EXTENSIONS[1],
     SMS_ROM_EXTENSIONS[0],
@@ -346,6 +348,10 @@ mod tests {
         );
         assert_eq!(
             System::from_path(&PathBuf::from("game.nes")),
+            Some(System::Nes)
+        );
+        assert_eq!(
+            System::from_path(&PathBuf::from("game.fds")),
             Some(System::Nes)
         );
         assert_eq!(

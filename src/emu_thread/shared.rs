@@ -2,10 +2,12 @@ use crate::emu_backend::{BackendRuntimeConfig, EmuBackend};
 use crate::ui;
 
 use super::types::{publish_framebuffer, publish_owned_framebuffer};
-use super::{EmuResponse, EmuThread, FrameInput, FrameResult, SharedFramebuffer};
-use crate::audio_recorder::MidiApuSnapshot;
+use super::{
+    EmuResponse, EmuThread, FrameInput, FrameResult, ReplayJoypadFrame, SharedFramebuffer,
+};
+use crate::audio_tooling::AudioSemanticFrame;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::link::gb::GameBoyRemoteLink;
+use crate::link::RemoteLink;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::link::transport::TcpLinkTransport;
 
@@ -36,15 +38,17 @@ impl EmuThread {
         }
 
         let midi_capture_active = input.audio.midi_capture_active;
-        let mut midi_snapshots = Vec::new();
+        let mut audio_semantic_frames = Vec::new();
+        let mut advanced_frames = 0;
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
-            Self::step_n_frames(
+            advanced_frames = Self::step_n_frames(
                 backend,
                 input.frames,
                 cheats,
                 midi_capture_active,
-                &mut midi_snapshots,
+                &mut audio_semantic_frames,
+                input.replay_joypad_frames.as_deref(),
             );
         }
         if input.rewind_seconds != *rewind_seconds {
@@ -66,8 +70,9 @@ impl EmuThread {
             backend,
             reusable_audio,
             ui_data,
-            midi_snapshots,
+            audio_semantic_frames,
             rewind_buffer.fill_ratio(),
+            advanced_frames,
         )
     }
 
@@ -77,7 +82,7 @@ impl EmuThread {
         backend: &mut EmuBackend,
         mut input: FrameInput,
         cheats: &[crate::cheats::CheatPatch],
-        tcp_link: Option<&mut GameBoyRemoteLink<TcpLinkTransport>>,
+        tcp_link: Option<&mut RemoteLink<TcpLinkTransport>>,
         uncapped_mode: bool,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
@@ -99,16 +104,18 @@ impl EmuThread {
         }
 
         let midi_capture_active = input.audio.midi_capture_active;
-        let mut midi_snapshots = Vec::new();
+        let mut audio_semantic_frames = Vec::new();
+        let mut advanced_frames = 0;
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
-            Self::step_n_frames_with_tcp_link(
+            advanced_frames = Self::step_n_frames_with_tcp_link(
                 backend,
                 input.frames,
                 cheats,
                 tcp_link,
                 midi_capture_active,
-                &mut midi_snapshots,
+                &mut audio_semantic_frames,
+                input.replay_joypad_frames.as_deref(),
             );
         }
         if input.rewind_seconds != *rewind_seconds {
@@ -130,8 +137,9 @@ impl EmuThread {
             backend,
             reusable_audio,
             ui_data,
-            midi_snapshots,
+            audio_semantic_frames,
             rewind_buffer.fill_ratio(),
+            advanced_frames,
         )
     }
 
@@ -260,36 +268,53 @@ impl EmuThread {
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
         midi_capture_active: bool,
-        midi_snapshots: &mut Vec<MidiApuSnapshot>,
-    ) {
-        for _ in 0..n {
-            let frame_count_before = midi_capture_active.then(|| backend.frame_count());
+        audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
+        replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+    ) -> usize {
+        let mut advanced_frames = 0;
+        for frame_index in 0..n {
+            if let Some(frame) = replay_joypad_frames.and_then(|frames| frames.get(frame_index)) {
+                backend.set_input(frame.buttons, frame.dpad);
+            }
+
+            let frame_count_before = backend.frame_count();
             backend.step_frame();
             backend.apply_ram_cheats(cheats);
             Self::collect_midi_snapshot_if_frame_advanced(
                 backend,
-                frame_count_before,
-                midi_snapshots,
+                midi_capture_active.then_some(frame_count_before),
+                audio_semantic_frames,
             );
+            if backend.frame_count() != frame_count_before {
+                advanced_frames += 1;
+            }
             if backend.is_suspended() {
                 break;
             }
         }
+        advanced_frames
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn step_n_frames_with_tcp_link(
         backend: &mut EmuBackend,
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
-        mut tcp_link: Option<&mut GameBoyRemoteLink<TcpLinkTransport>>,
+        mut tcp_link: Option<&mut RemoteLink<TcpLinkTransport>>,
         midi_capture_active: bool,
-        midi_snapshots: &mut Vec<MidiApuSnapshot>,
-    ) {
-        for _ in 0..n {
-            let frame_count_before = midi_capture_active.then(|| backend.frame_count());
+        audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
+        replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+    ) -> usize {
+        let mut advanced_frames = 0;
+        for frame_index in 0..n {
+            if let Some(frame) = replay_joypad_frames.and_then(|frames| frames.get(frame_index)) {
+                backend.set_input(frame.buttons, frame.dpad);
+            }
+
+            let frame_count_before = backend.frame_count();
             if let Some(link) = tcp_link.as_deref_mut() {
-                if backend.step_game_boy_frame_with_remote_link(link).is_err() {
+                if backend.step_frame_with_remote_link(link).is_err() {
                     link.disconnect();
                     backend.set_link_peer_present(false);
                     backend.step_frame();
@@ -300,14 +325,18 @@ impl EmuThread {
             backend.apply_ram_cheats(cheats);
             Self::collect_midi_snapshot_if_frame_advanced(
                 backend,
-                frame_count_before,
-                midi_snapshots,
+                midi_capture_active.then_some(frame_count_before),
+                audio_semantic_frames,
             );
+            if backend.frame_count() != frame_count_before {
+                advanced_frames += 1;
+            }
 
             if backend.is_suspended() {
                 break;
             }
         }
+        advanced_frames
     }
 
     pub(crate) fn collect_ui_snapshot(
@@ -322,8 +351,9 @@ impl EmuThread {
         backend: &mut EmuBackend,
         reusable_audio: Option<Vec<f32>>,
         ui_data: ui::UiFrameData,
-        apu_snapshots: Vec<MidiApuSnapshot>,
+        audio_semantic_frames: Vec<AudioSemanticFrame>,
         rewind_fill: f32,
+        advanced_frames: usize,
     ) -> FrameResult {
         let rumble = backend.rumble_active();
         let mut audio_samples = reusable_audio.unwrap_or_default();
@@ -333,20 +363,21 @@ impl EmuThread {
         let is_pocket_camera = backend.is_pocket_camera();
 
         FrameResult {
+            advanced_frames,
             rumble,
             audio_samples,
             ui_data,
             is_mbc7,
             is_pocket_camera,
             rewind_fill,
-            apu_snapshots,
+            audio_semantic_frames,
         }
     }
 
     fn collect_midi_snapshot_if_frame_advanced(
         backend: &EmuBackend,
         frame_count_before: Option<u64>,
-        midi_snapshots: &mut Vec<MidiApuSnapshot>,
+        audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
     ) {
         let Some(frame_count_before) = frame_count_before else {
             return;
@@ -354,8 +385,8 @@ impl EmuThread {
         if backend.frame_count() == frame_count_before {
             return;
         }
-        if let Some(snapshot) = backend.apu_channel_snapshot() {
-            midi_snapshots.push(snapshot);
+        if let Some(frame) = backend.audio_semantic_frame() {
+            audio_semantic_frames.push(frame);
         }
     }
 }
@@ -401,6 +432,7 @@ mod tests {
             ui::UiFrameData::default(),
             Vec::new(),
             0.0,
+            0,
         );
 
         assert!(
@@ -418,12 +450,57 @@ mod tests {
         )
         .unwrap();
         let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
-        let mut midi_snapshots = Vec::new();
+        let mut audio_semantic_frames = Vec::new();
 
-        EmuThread::step_n_frames(&mut backend, 3, &[], true, &mut midi_snapshots);
+        let advanced_frames =
+            EmuThread::step_n_frames(&mut backend, 3, &[], true, &mut audio_semantic_frames, None);
 
         assert_eq!(backend.frame_count(), 3);
-        assert_eq!(midi_snapshots.len(), 3);
+        assert_eq!(advanced_frames, 3);
+        assert_eq!(audio_semantic_frames.len(), 3);
+    }
+
+    #[test]
+    fn step_n_frames_applies_replay_joypad_input_per_emulated_frame() {
+        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
+            &[0x00],
+            44_100,
+            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        )
+        .unwrap();
+        let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
+        let replay_frames = [
+            ReplayJoypadFrame {
+                buttons: 0x01,
+                dpad: 0x00,
+            },
+            ReplayJoypadFrame {
+                buttons: 0x00,
+                dpad: 0x01,
+            },
+        ];
+        let mut audio_semantic_frames = Vec::new();
+
+        let advanced_frames = EmuThread::step_n_frames(
+            &mut backend,
+            2,
+            &[],
+            false,
+            &mut audio_semantic_frames,
+            Some(&replay_frames),
+        );
+
+        assert_eq!(advanced_frames, 2);
+        let EmuBackend::Sega8(sega8) = &backend else {
+            panic!("expected Sega8 backend");
+        };
+        let raw = sega8
+            .emu
+            .bus()
+            .input()
+            .read_controller(zeff_sega8_core::hardware::input::ControllerPort::One);
+        assert_ne!(raw & (1 << 4), 0, "button 1 should be released");
+        assert_eq!(raw & (1 << 3), 0, "right should be pressed");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -452,6 +529,7 @@ mod tests {
                 Some(&mut left_link),
                 false,
                 &mut left_snapshots,
+                None,
             );
             let mut right_snapshots = Vec::new();
             EmuThread::step_n_frames_with_tcp_link(
@@ -461,6 +539,7 @@ mod tests {
                 Some(&mut right_link),
                 false,
                 &mut right_snapshots,
+                None,
             );
             let (EmuBackend::Gb(left_gb), EmuBackend::Gb(right_gb)) = (&left, &right) else {
                 panic!("expected GB backends");
@@ -498,23 +577,25 @@ mod tests {
             left.emu.write_byte(SERIAL_SC, 0x81);
         }
 
-        let mut midi_snapshots = Vec::new();
-        EmuThread::step_n_frames_with_tcp_link(
+        let mut audio_semantic_frames = Vec::new();
+        let advanced_frames = EmuThread::step_n_frames_with_tcp_link(
             &mut left,
             5,
             &[],
             Some(&mut left_link),
             true,
-            &mut midi_snapshots,
+            &mut audio_semantic_frames,
+            None,
         );
 
         let EmuBackend::Gb(left) = &left else {
             panic!("expected GB backend");
         };
         assert_eq!(left.emu.frame_count(), 0);
+        assert_eq!(advanced_frames, 0);
         assert!(
-            midi_snapshots.is_empty(),
-            "GB link waits must not record MIDI time when no emulated frame advanced"
+            audio_semantic_frames.is_empty(),
+            "GB link waits must not record audio-tooling time when no emulated frame advanced"
         );
         assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
         assert_eq!(
@@ -537,19 +618,21 @@ mod tests {
             left.emu.write_byte(SERIAL_SC, 0x80);
         }
 
-        let mut midi_snapshots = Vec::new();
-        EmuThread::step_n_frames_with_tcp_link(
+        let mut audio_semantic_frames = Vec::new();
+        let advanced_frames = EmuThread::step_n_frames_with_tcp_link(
             &mut left,
             1,
             &[],
             Some(&mut left_link),
             false,
-            &mut midi_snapshots,
+            &mut audio_semantic_frames,
+            None,
         );
 
         let EmuBackend::Gb(left) = &left else {
             panic!("expected GB backend");
         };
+        assert!(advanced_frames > 0);
         assert!(
             left.emu.frame_count() > 0,
             "external-clock readiness must not deadlock the frame stepper"
@@ -564,8 +647,8 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn tcp_link_pair() -> (
-        crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
-        crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
+        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
     ) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -577,17 +660,130 @@ mod tests {
         let host = host_thread.join().unwrap();
 
         (
-            crate::link::gb::GameBoyRemoteLink::new(LinkSession::new(
-                host,
-                crate::link::LinkSystemType::GameBoy,
-                crate::link::LinkEndpointId(1),
+            crate::link::RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::new(
+                LinkSession::new(
+                    host,
+                    crate::link::LinkSystemType::GameBoy,
+                    crate::link::LinkEndpointId(1),
+                ),
             )),
-            crate::link::gb::GameBoyRemoteLink::new(LinkSession::new(
-                client,
-                crate::link::LinkSystemType::GameBoy,
-                crate::link::LinkEndpointId(2),
+            crate::link::RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::new(
+                LinkSession::new(
+                    client,
+                    crate::link::LinkSystemType::GameBoy,
+                    crate::link::LinkEndpointId(2),
+                ),
             )),
         )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tcp_link_stepper_exchanges_wonder_swan_uart_bytes_between_backends() {
+        let (mut left_link, mut right_link) = tcp_wonder_swan_link_pair();
+        let mut left = ws_backend();
+        let mut right = ws_backend();
+
+        {
+            let (EmuBackend::Ws(left), EmuBackend::Ws(right)) = (&mut left, &mut right) else {
+                panic!("expected WS backends");
+            };
+            left.emu.io_write8(0x00B3, 0x80);
+            right.emu.io_write8(0x00B3, 0x80);
+            left.emu.io_write8(0x00B1, 0x5A);
+        }
+
+        for _ in 0..50 {
+            let mut left_snapshots = Vec::new();
+            EmuThread::step_n_frames_with_tcp_link(
+                &mut left,
+                1,
+                &[],
+                Some(&mut left_link),
+                false,
+                &mut left_snapshots,
+                None,
+            );
+            let mut right_snapshots = Vec::new();
+            EmuThread::step_n_frames_with_tcp_link(
+                &mut right,
+                1,
+                &[],
+                Some(&mut right_link),
+                false,
+                &mut right_snapshots,
+                None,
+            );
+            let EmuBackend::Ws(right_ws) = &right else {
+                panic!("expected WS backend");
+            };
+            if right_ws.emu.io_peek8(0x00B3) & 0x01 != 0 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        let EmuBackend::Ws(right) = &right else {
+            panic!("expected WS backend");
+        };
+        assert_eq!(right.emu.io_peek8(0x00B3) & 0x01, 0x01);
+        assert_eq!(right.emu.io_peek8(0x00B1), 0x5A);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tcp_wonder_swan_link_pair() -> (
+        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
+        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let host_thread = thread::spawn(move || {
+            crate::link::transport::TcpLinkTransport::accept_once(listener).unwrap()
+        });
+
+        let client = crate::link::transport::TcpLinkTransport::connect(addr).unwrap();
+        let host = host_thread.join().unwrap();
+
+        (
+            crate::link::RemoteLink::WonderSwan(crate::link::ws::WonderSwanRemoteLink::new(
+                LinkSession::new(
+                    host,
+                    crate::link::LinkSystemType::WonderSwan,
+                    crate::link::LinkEndpointId(1),
+                ),
+            )),
+            crate::link::RemoteLink::WonderSwan(crate::link::ws::WonderSwanRemoteLink::new(
+                LinkSession::new(
+                    client,
+                    crate::link::LinkSystemType::WonderSwan,
+                    crate::link::LinkEndpointId(2),
+                ),
+            )),
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ws_backend() -> EmuBackend {
+        let ws = zeff_ws_core::emulator::Emulator::from_rom_data(&minimal_running_ws_rom())
+            .expect("WS emulator should initialize");
+        EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
+    }
+
+    fn minimal_running_ws_rom() -> Vec<u8> {
+        let mut rom = vec![0x90; 0x10000];
+        rom[0] = 0x90;
+        rom[1] = 0xEB;
+        rom[2] = 0xFC;
+        let reset_vector = rom.len() - 16;
+        rom[reset_vector..reset_vector + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+        let footer = rom.len() - 10;
+        rom[footer] = 0x01;
+        rom[footer + 1] = 0x00;
+        rom[footer + 2] = 0x23;
+        rom[footer + 4] = 0x01;
+        let checksum = compute_footer_checksum(&rom);
+        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+        rom
     }
 
     #[cfg(not(target_arch = "wasm32"))]

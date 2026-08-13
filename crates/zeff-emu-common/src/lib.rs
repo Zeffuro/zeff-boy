@@ -3,6 +3,7 @@
 pub mod address;
 pub mod cheats;
 pub mod debug;
+pub mod media;
 pub mod memory;
 pub mod replay;
 pub mod rewind;

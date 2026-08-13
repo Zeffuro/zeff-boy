@@ -1,59 +1,79 @@
 use super::midi::*;
-use super::*;
 
-use zeff_gb_core::hardware::apu::ApuChannelSnapshot as GbApuChannelSnapshot;
-use zeff_nes_core::hardware::apu::ApuChannelSnapshot as NesApuChannelSnapshot;
-use zeff_sega8_core::hardware::apu::ApuDebugSnapshot as Sega8ApuSnapshot;
+use crate::audio_tooling::{
+    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, GB_TEMPO_US_PER_BEAT,
+    NTSC_60_TEMPO_US_PER_BEAT,
+};
 
-fn gb_snapshot(ch1_enabled: bool, ch1_frequency: u16, ch1_volume: u8) -> GbApuChannelSnapshot {
-    GbApuChannelSnapshot {
-        ch1_enabled,
-        ch1_frequency,
-        ch1_volume,
-        ch2_enabled: false,
-        ch2_frequency: 0,
-        ch2_volume: 0,
-        ch3_enabled: false,
-        ch3_frequency: 0,
-        ch3_output_level: 0,
-        ch4_enabled: false,
-        ch4_volume: 0,
+fn voice_frame(
+    frame: u64,
+    channel: u16,
+    name: &'static str,
+    class: AudioVoiceClass,
+    active: bool,
+    pitch_level: (Option<f64>, f32),
+) -> AudioSemanticFrame {
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+        voices: vec![AudioVoiceState {
+            channel: AudioChannelId(channel),
+            name,
+            class,
+            active,
+            pitch_hz: pitch_level.0,
+            level: Some(pitch_level.1),
+        }],
     }
 }
 
-fn nes_snapshot(
-    pulse1_enabled: bool,
-    pulse1_timer_period: u16,
-    pulse1_volume: u8,
-) -> NesApuChannelSnapshot {
-    NesApuChannelSnapshot {
-        pulse1_enabled,
-        pulse1_timer_period,
-        pulse1_volume,
-        pulse2_enabled: false,
-        pulse2_timer_period: 0,
-        pulse2_volume: 0,
-        triangle_enabled: false,
-        triangle_timer_period: 0,
-        triangle_volume: 0,
-        noise_enabled: false,
-        noise_volume: 0,
+fn mixed_frame(frame: u64, tone_hz: f64, noise_active: bool) -> AudioSemanticFrame {
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+        voices: vec![
+            AudioVoiceState {
+                channel: AudioChannelId(0),
+                name: "Sega PSG Tone 0",
+                class: AudioVoiceClass::Tone,
+                active: true,
+                pitch_hz: Some(tone_hz),
+                level: Some(1.0),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(3),
+                name: "Sega PSG Noise",
+                class: AudioVoiceClass::Noise,
+                active: noise_active,
+                pitch_hz: None,
+                level: Some(1.0),
+            },
+        ],
     }
 }
 
-fn sega8_snapshot(tone0_period: u16, tone0_volume: u8) -> Sega8ApuSnapshot {
-    Sega8ApuSnapshot {
-        tone_period: [tone0_period, 0, 0],
-        volume: [tone0_volume, 15, 15, 15],
-        noise_control: 0,
-        stereo_control: 0xFF,
-        latched_register: "tone0",
-        sample_rate: 44_100,
-        sample_generation_enabled: true,
-        buffered_samples: 0,
-        channel_mutes: [false; 4],
-        last_write: None,
-        write_count: 0,
+fn mixed_frame_with_pcm(frame: u64, tone_hz: f64) -> AudioSemanticFrame {
+    AudioSemanticFrame {
+        frame,
+        tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+        voices: vec![
+            AudioVoiceState {
+                channel: AudioChannelId(0),
+                name: "GBA PSG 1 (Square + Sweep)",
+                class: AudioVoiceClass::Pulse,
+                active: true,
+                pitch_hz: Some(tone_hz),
+                level: Some(1.0),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(4),
+                name: "GBA FIFO A",
+                class: AudioVoiceClass::Pcm,
+                active: true,
+                pitch_hz: None,
+                level: Some(0.5),
+            },
+        ],
     }
 }
 
@@ -112,6 +132,10 @@ fn ch0_note_events(track: &[u8]) -> Vec<(u32, u8, u8)> {
     out
 }
 
+fn midi_header_track_count(data: &[u8]) -> u16 {
+    u16::from_be_bytes([data[10], data[11]])
+}
+
 fn midi_header_division(data: &[u8]) -> u16 {
     u16::from_be_bytes([data[12], data[13]])
 }
@@ -120,30 +144,6 @@ fn midi_tempo_us_per_beat(data: &[u8]) -> u32 {
     assert_eq!(&data[14..18], b"MTrk");
     assert_eq!(&data[22..26], &[0x00, 0xFF, 0x51, 0x03]);
     (u32::from(data[26]) << 16) | (u32::from(data[27]) << 8) | u32::from(data[28])
-}
-
-#[test]
-fn gb_square_freq_to_hz_middle_range() {
-    let hz = super::midi::gb_square_freq_to_hz(1750);
-    assert!((hz - 439.8).abs() < 1.0);
-}
-
-#[test]
-fn gb_wave_freq_to_hz_middle_range() {
-    let hz = super::midi::gb_wave_freq_to_hz(1750);
-    assert!((hz - 219.9).abs() < 1.0);
-}
-
-#[test]
-fn nes_pulse_freq_to_hz_middle_range() {
-    let hz = super::midi::nes_pulse_freq_to_hz(253);
-    assert!((hz - 440.0).abs() < 1.0);
-}
-
-#[test]
-fn sega8_tone_freq_to_hz_middle_range() {
-    let hz = super::midi::sega8_tone_freq_to_hz(254);
-    assert!((hz - 440.0).abs() < 2.0);
 }
 
 #[test]
@@ -159,30 +159,6 @@ fn hz_to_midi_note_c4() {
 #[test]
 fn hz_to_midi_note_zero_returns_zero() {
     assert_eq!(hz_to_midi_note(0.0), 0);
-}
-
-#[test]
-fn volume_to_velocity_full() {
-    assert_eq!(volume_to_velocity(15), 127);
-}
-
-#[test]
-fn volume_to_velocity_zero() {
-    assert_eq!(volume_to_velocity(0), 0);
-}
-
-#[test]
-fn sega8_attenuation_to_velocity_inverts_silence() {
-    assert_eq!(sega8_attenuation_to_velocity(0), 127);
-    assert_eq!(sega8_attenuation_to_velocity(15), 0);
-}
-
-#[test]
-fn wave_level_to_velocity_values() {
-    assert_eq!(super::midi::wave_level_to_velocity(0), 0);
-    assert_eq!(super::midi::wave_level_to_velocity(1), 127);
-    assert_eq!(super::midi::wave_level_to_velocity(2), 80);
-    assert_eq!(super::midi::wave_level_to_velocity(3), 48);
 }
 
 #[test]
@@ -208,19 +184,34 @@ fn write_vlq_two_bytes() {
 
 #[test]
 fn finish_midi_produces_valid_smf_header() {
-    let snapshots = vec![
-        MidiApuSnapshot::Gb(gb_snapshot(true, 1750, 15)),
-        MidiApuSnapshot::Gb(gb_snapshot(true, 1800, 12)),
+    let frames = vec![
+        voice_frame(
+            0,
+            0,
+            "GB CH1 (Square 1)",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 1.0),
+        ),
+        voice_frame(
+            1,
+            0,
+            "GB CH1 (Square 1)",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(494.0), 0.8),
+        ),
     ];
 
     let dir = std::env::temp_dir();
     let path = dir.join("test_midi_output.mid");
-    let result = finish_midi(path.clone(), &snapshots);
+    let result = finish_midi(path.clone(), &frames);
     assert!(result.is_ok());
 
     let data = std::fs::read(&path).unwrap();
     assert!(data.len() > 14);
     assert_eq!(&data[0..4], b"MThd");
+    assert_eq!(midi_header_track_count(&data), 2);
     assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
     assert_eq!(&data[14..18], b"MTrk");
 
@@ -228,28 +219,62 @@ fn finish_midi_produces_valid_smf_header() {
 }
 
 #[test]
-fn finish_midi_uses_player_friendly_ppq_timing() {
-    let snapshots = vec![
-        MidiApuSnapshot::Sega8(sega8_snapshot(254, 0)),
-        MidiApuSnapshot::Sega8(sega8_snapshot(226, 0)),
+fn finish_midi_uses_semantic_frame_tempo() {
+    let mut frames = vec![
+        voice_frame(
+            0,
+            0,
+            "GB CH1 (Square 1)",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 1.0),
+        ),
+        voice_frame(
+            1,
+            0,
+            "GB CH1 (Square 1)",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(494.0), 1.0),
+        ),
     ];
+    for frame in &mut frames {
+        frame.tempo_us_per_beat = GB_TEMPO_US_PER_BEAT;
+    }
 
     let dir = std::env::temp_dir();
     let path = dir.join("test_midi_timing_output.mid");
-    finish_midi(path.clone(), &snapshots).unwrap();
+    finish_midi(path.clone(), &frames).unwrap();
 
     let data = std::fs::read(&path).unwrap();
     assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
-    assert_eq!(midi_tempo_us_per_beat(&data), 998_340);
+    assert_eq!(midi_tempo_us_per_beat(&data), GB_TEMPO_US_PER_BEAT);
 
     let _ = std::fs::remove_file(&path);
 }
 
 #[test]
-fn midi_note_change_on_adjacent_snapshots_advances_time() {
-    let snapshots = vec![gb_snapshot(true, 1750, 15), gb_snapshot(true, 1800, 15)];
+fn midi_note_change_on_adjacent_frames_advances_time() {
+    let frames = vec![
+        voice_frame(
+            0,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 1.0),
+        ),
+        voice_frame(
+            1,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(494.0), 1.0),
+        ),
+    ];
 
-    let track = build_midi_track_gb(&snapshots, 0);
+    let track = build_midi_track_for_voice(&frames, AudioChannelId(0), 0);
     let events = ch0_note_events(&track);
     assert!(events.len() >= 4);
 
@@ -262,10 +287,27 @@ fn midi_note_change_on_adjacent_snapshots_advances_time() {
 }
 
 #[test]
-fn midi_note_off_on_adjacent_snapshot_advances_time() {
-    let snapshots = vec![gb_snapshot(true, 1750, 15), gb_snapshot(false, 1750, 15)];
+fn midi_note_off_on_adjacent_frame_advances_time() {
+    let frames = vec![
+        voice_frame(
+            0,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 1.0),
+        ),
+        voice_frame(
+            1,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            false,
+            (Some(440.0), 1.0),
+        ),
+    ];
 
-    let track = build_midi_track_gb(&snapshots, 0);
+    let track = build_midi_track_for_voice(&frames, AudioChannelId(0), 0);
     let events = ch0_note_events(&track);
     assert!(events.len() >= 2);
 
@@ -274,10 +316,27 @@ fn midi_note_off_on_adjacent_snapshot_advances_time() {
 }
 
 #[test]
-fn midi_new_note_after_one_silent_snapshot_uses_delta_one() {
-    let snapshots = vec![gb_snapshot(false, 1750, 15), gb_snapshot(true, 1750, 15)];
+fn midi_new_note_after_one_silent_frame_uses_delta_one() {
+    let frames = vec![
+        voice_frame(
+            0,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            false,
+            (Some(440.0), 1.0),
+        ),
+        voice_frame(
+            1,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 1.0),
+        ),
+    ];
 
-    let track = build_midi_track_gb(&snapshots, 0);
+    let track = build_midi_track_for_voice(&frames, AudioChannelId(0), 0);
     let events = ch0_note_events(&track);
     assert!(!events.is_empty());
 
@@ -286,33 +345,68 @@ fn midi_new_note_after_one_silent_snapshot_uses_delta_one() {
 }
 
 #[test]
-fn nes_midi_note_change_on_adjacent_snapshots_advances_time() {
-    let snapshots = vec![nes_snapshot(true, 253, 15), nes_snapshot(true, 225, 15)];
+fn midi_omits_noise_tracks_by_default() {
+    let frames = vec![mixed_frame(0, 440.0, true), mixed_frame(1, 494.0, true)];
 
-    let track = build_midi_track_nes(&snapshots, 0);
-    let events = ch0_note_events(&track);
-    assert!(events.len() >= 4);
+    let dir = std::env::temp_dir();
+    let path = dir.join("test_midi_noise_omit.mid");
+    finish_midi(path.clone(), &frames).unwrap();
 
-    assert_eq!(events[0].0, 0);
-    assert_eq!(events[0].1, 0x90);
-    assert_eq!(events[1].0, MIDI_TICKS_PER_FRAME);
-    assert_eq!(events[1].1, 0x80);
-    assert_eq!(events[2].0, 0);
-    assert_eq!(events[2].1, 0x90);
+    let data = std::fs::read(&path).unwrap();
+    assert_eq!(
+        midi_header_track_count(&data),
+        2,
+        "tempo + one pitched tone; noise semantic voice is not projected to fake drums"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
-fn sega8_midi_note_change_on_adjacent_snapshots_advances_time() {
-    let snapshots = vec![sega8_snapshot(254, 0), sega8_snapshot(226, 0)];
+fn midi_omits_pcm_tracks_by_default() {
+    let frames = vec![
+        mixed_frame_with_pcm(0, 440.0),
+        mixed_frame_with_pcm(1, 494.0),
+    ];
 
-    let track = build_midi_track_sega8(&snapshots, 0);
-    let events = ch0_note_events(&track);
-    assert!(events.len() >= 4);
+    let dir = std::env::temp_dir();
+    let path = dir.join("test_midi_pcm_omit.mid");
+    finish_midi(path.clone(), &frames).unwrap();
 
-    assert_eq!(events[0].0, 0);
-    assert_eq!(events[0].1, 0x90);
-    assert_eq!(events[1].0, MIDI_TICKS_PER_FRAME);
-    assert_eq!(events[1].1, 0x80);
-    assert_eq!(events[2].0, 0);
-    assert_eq!(events[2].1, 0x90);
+    let data = std::fs::read(&path).unwrap();
+    assert_eq!(
+        midi_header_track_count(&data),
+        2,
+        "tempo + one pitched PSG voice; PCM semantic voice is not projected to fake pitched MIDI"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn midi_omits_same_note_velocity_aftertouch() {
+    let frames = vec![
+        voice_frame(
+            0,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 1.0),
+        ),
+        voice_frame(
+            1,
+            0,
+            "Voice",
+            AudioVoiceClass::Pulse,
+            true,
+            (Some(440.0), 0.5),
+        ),
+    ];
+
+    let track = build_midi_track_for_voice(&frames, AudioChannelId(0), 0);
+    assert!(
+        !track.contains(&0xA0),
+        "hardware level changes should not be encoded as polyphonic key pressure"
+    );
 }

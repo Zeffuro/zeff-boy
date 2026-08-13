@@ -567,6 +567,33 @@ impl Cartridge {
         })
     }
 
+    pub fn load_fds(image: mappers::FdsImage, bios_data: Vec<u8>) -> Result<Self> {
+        if bios_data.len() != mappers::FDS_BIOS_SIZE {
+            bail!(
+                "FDS BIOS size mismatch: expected {} bytes, got {}",
+                mappers::FDS_BIOS_SIZE,
+                bios_data.len()
+            );
+        }
+
+        let rom_crc32 = fds_image_crc32(&image);
+        let prg_crc32 = crc32fast::hash(&bios_data);
+        let header = fds_synthetic_header(bios_data.len());
+        let mapper = MapperImpl::Fds(mappers::Fds::with_disk_image(
+            bios_data,
+            image,
+            header.mirroring,
+        ));
+
+        Ok(Self {
+            header,
+            mapper,
+            rom_crc32,
+            prg_crc32,
+            effective_mapper_label: Some("Famicom Disk System"),
+        })
+    }
+
     pub fn header(&self) -> &RomHeader {
         &self.header
     }
@@ -669,6 +696,35 @@ impl Cartridge {
 
     pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
         self.mapper.read_state(r)
+    }
+}
+
+fn fds_image_crc32(image: &mappers::FdsImage) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    for side in image.sides() {
+        hasher.update(side);
+    }
+    hasher.finalize()
+}
+
+fn fds_synthetic_header(bios_size: usize) -> RomHeader {
+    RomHeader {
+        format: RomFormat::Nes2,
+        prg_rom_size: bios_size,
+        chr_rom_size: 0,
+        mapper_id: NesMapper::Fds.id(),
+        submapper_id: 0,
+        mirroring: Mirroring::Horizontal,
+        has_battery: true,
+        has_trainer: false,
+        console_type: ConsoleType::Nes,
+        prg_ram_size: 0x8000,
+        prg_nvram_size: 0,
+        chr_ram_size: 0x2000,
+        chr_nvram_size: 0,
+        timing: TimingMode::Ntsc,
+        misc_roms: 0,
+        default_expansion_device: 0,
     }
 }
 

@@ -121,6 +121,44 @@ fn replay_load_handles_odd_trailing_byte() {
 }
 
 #[test]
+fn replay_peek_frames_does_not_consume_cursor() {
+    let path = unique_path("peek_frames");
+    let frames = [(0x01, 0x02), (0x03, 0x04), (0x05, 0x06)];
+    let mut recorder = ReplayRecorder::new(path.clone(), vec![]);
+    for (buttons, dpad) in frames {
+        recorder.record_frame(buttons, dpad);
+    }
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+    assert_eq!(player.peek_frames(0, 2), vec![(0x01, 0x02), (0x03, 0x04)]);
+    assert_eq!(player.remaining(), 3);
+    assert_eq!(player.next_frame(), Some((0x01, 0x02)));
+    assert_eq!(player.peek_frames(1, 10), vec![(0x05, 0x06)]);
+    assert_eq!(player.remaining(), 2);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_advance_frames_clamps_to_end() {
+    let path = unique_path("advance_frames");
+    let mut recorder = ReplayRecorder::new(path.clone(), vec![]);
+    recorder.record_frame(0x01, 0x02);
+    recorder.record_frame(0x03, 0x04);
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+    player.advance_frames(1);
+    assert_eq!(player.next_frame(), Some((0x03, 0x04)));
+    player.advance_frames(100);
+    assert!(player.is_finished());
+    assert_eq!(player.next_frame(), None);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn replay_frame_count_tracks_recording() {
     let recorder = ReplayRecorder::new(std::path::PathBuf::from("/dev/null"), vec![]);
     assert_eq!(recorder.frame_count(), 0);

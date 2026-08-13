@@ -127,6 +127,16 @@ impl ReplayPlayer {
         }
     }
 
+    pub fn peek_frames(&self, offset: usize, count: usize) -> Vec<(u8, u8)> {
+        let start = self.cursor.saturating_add(offset).min(self.frames.len());
+        let end = start.saturating_add(count).min(self.frames.len());
+        self.frames[start..end].to_vec()
+    }
+
+    pub fn advance_frames(&mut self, count: usize) {
+        self.cursor = self.cursor.saturating_add(count).min(self.frames.len());
+    }
+
     pub fn remaining(&self) -> usize {
         self.frames.len().saturating_sub(self.cursor)
     }

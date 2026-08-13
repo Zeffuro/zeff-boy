@@ -2,11 +2,11 @@ use anyhow::{Context, bail};
 
 use crate::emulator::Emulator;
 use crate::hardware::apu::ApuSaveState;
-use crate::hardware::bus::UartSaveState;
+use crate::hardware::bus::{UartSaveState, WonderSwanTxEvent};
 use crate::hardware::cpu::CpuState;
 
 const MAGIC: &[u8; 8] = b"ZEFFWS1\0";
-const VERSION: u8 = 10;
+const VERSION: u8 = 11;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::new();
@@ -41,8 +41,17 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u8(uart.tx_data);
     w.u8(u8::from(uart.tx_pending));
     w.u32(uart.tx_cycles_remaining);
-    w.u8(u8::from(uart.completed_tx.is_some()));
-    w.u8(uart.completed_tx.unwrap_or(0));
+    w.u64(uart.tx_generation);
+    w.u32(
+        u32::try_from(uart.completed_tx_events.len())
+            .context("WonderSwan save-state UART completed-TX queue is too large")?,
+    );
+    for event in &uart.completed_tx_events {
+        w.u64(event.completed_cycle);
+        w.u8(event.byte);
+        w.u32(event.baud_bps);
+        w.u64(event.generation);
+    }
     let (sound_dma_reload_source, sound_dma_reload_length, sound_dma_cycle_accumulator) =
         emu.bus.sound_dma_save_values();
     w.u32(sound_dma_reload_source);
@@ -151,8 +160,26 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         let tx_data = r.u8()?;
         let tx_pending = r.u8()? != 0;
         let tx_cycles_remaining = r.u32()?;
-        let completed_tx_present = r.u8()? != 0;
-        let completed_tx_value = r.u8()?;
+        let (tx_generation, completed_tx_events) = if version >= 11 {
+            let tx_generation = r.u64()?;
+            let event_count = r.u32()? as usize;
+            let mut completed_tx_events = Vec::with_capacity(event_count);
+            for _ in 0..event_count {
+                completed_tx_events.push(WonderSwanTxEvent {
+                    completed_cycle: r.u64()?,
+                    byte: r.u8()?,
+                    baud_bps: r.u32()?,
+                    generation: r.u64()?,
+                });
+            }
+            (tx_generation, completed_tx_events)
+        } else {
+            let completed_tx_present = r.u8()? != 0;
+            let completed_tx_value = r.u8()?;
+            let completed_tx_events =
+                legacy_completed_tx_event(completed_tx_present, completed_tx_value, emu);
+            (0, completed_tx_events)
+        };
         emu.bus.load_uart_save_state(UartSaveState {
             rx_data,
             rx_ready,
@@ -160,7 +187,8 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
             tx_data,
             tx_pending,
             tx_cycles_remaining,
-            completed_tx: completed_tx_present.then_some(completed_tx_value),
+            completed_tx_events,
+            tx_generation,
         });
     } else {
         emu.bus.load_uart_save_state(UartSaveState::default());
@@ -282,6 +310,21 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     }
     r.finish()?;
     Ok(())
+}
+
+fn legacy_completed_tx_event(present: bool, byte: u8, emu: &Emulator) -> Vec<WonderSwanTxEvent> {
+    if !present {
+        return Vec::new();
+    }
+
+    let control = emu.bus.io[0x00B3];
+    let baud_bps = if control & 0x40 != 0 { 38_400 } else { 9_600 };
+    vec![WonderSwanTxEvent {
+        completed_cycle: emu.bus.cycles,
+        byte,
+        baud_bps,
+        generation: 0,
+    }]
 }
 
 fn cpu_state_to_byte(state: CpuState) -> u8 {

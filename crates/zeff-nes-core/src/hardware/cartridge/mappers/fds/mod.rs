@@ -1,8 +1,13 @@
 pub(crate) mod audio;
+mod image;
 
 use crate::hardware::cartridge::{Mapper, Mirroring};
 use audio::FdsAudio;
+pub use image::{FDS_HEADER_SIZE, FDS_SIDE_SIZE, FdsImage, FdsImageError};
+use zeff_emu_common::media::{MediaObjectId, MediaSlotId, MediaSlotState};
 
+pub const FDS_BIOS_SIZE: usize = 0x2000;
+pub const FDS_DRIVE_SLOT_ID: &str = "fds.drive0";
 const PRG_RAM_SIZE: usize = 0x8000;
 const CHR_RAM_SIZE: usize = 0x2000;
 
@@ -11,6 +16,8 @@ pub struct Fds {
     prg_ram: Vec<u8>,
     chr_ram: [u8; CHR_RAM_SIZE],
     mirroring: Mirroring,
+    disk_image: Option<FdsImage>,
+    media_slot: MediaSlotState,
 
     irq_latch: u16,
     irq_counter: u16,
@@ -31,6 +38,8 @@ impl Fds {
             prg_ram: vec![0; PRG_RAM_SIZE],
             chr_ram: [0; CHR_RAM_SIZE],
             mirroring,
+            disk_image: None,
+            media_slot: MediaSlotState::empty(FDS_DRIVE_SLOT_ID),
             irq_latch: 0,
             irq_counter: 0,
             irq_enabled: false,
@@ -40,6 +49,32 @@ impl Fds {
             disk_reg: 0,
             audio: FdsAudio::new(),
         }
+    }
+
+    pub fn with_disk_image(prg_rom: Vec<u8>, disk_image: FdsImage, mirroring: Mirroring) -> Self {
+        let media_id = disk_image.media_object_id();
+        let mut fds = Self::new(prg_rom, mirroring);
+        fds.media_slot = inserted_fds_media_slot(media_id);
+        fds.disk_image = Some(disk_image);
+        fds
+    }
+
+    pub fn disk_image(&self) -> Option<&FdsImage> {
+        self.disk_image.as_ref()
+    }
+
+    pub fn media_slot_state(&self) -> &MediaSlotState {
+        &self.media_slot
+    }
+}
+
+fn inserted_fds_media_slot(media_id: MediaObjectId) -> MediaSlotState {
+    MediaSlotState {
+        slot: MediaSlotId::from(FDS_DRIVE_SLOT_ID),
+        media_id: Some(media_id),
+        side: Some(0),
+        write_protected: false,
+        mutation_counter: 0,
     }
 }
 
@@ -213,8 +248,25 @@ mod tests {
     use super::*;
 
     fn make_fds() -> Fds {
-        let bios = vec![0xFF; 0x2000];
+        let bios = vec![0xFF; FDS_BIOS_SIZE];
         Fds::new(bios, Mirroring::Horizontal)
+    }
+
+    fn side(fill: u8) -> Vec<u8> {
+        vec![fill; FDS_SIDE_SIZE]
+    }
+
+    #[test]
+    fn disk_image_constructor_initializes_media_slot() {
+        let image = FdsImage::parse(&side(0x34)).expect("FDS image should parse");
+        let media_id = image.media_object_id();
+        let fds = Fds::with_disk_image(vec![0xFF; FDS_BIOS_SIZE], image, Mirroring::Horizontal);
+
+        assert_eq!(fds.disk_image().unwrap().side_count(), 1);
+        assert_eq!(fds.media_slot_state().slot.as_ref(), FDS_DRIVE_SLOT_ID);
+        assert_eq!(fds.media_slot_state().media_id.as_ref(), Some(&media_id));
+        assert_eq!(fds.media_slot_state().side, Some(0));
+        assert!(!fds.media_slot_state().write_protected);
     }
 
     #[test]

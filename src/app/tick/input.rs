@@ -1,4 +1,6 @@
 use super::super::App;
+use super::super::PendingReplayBatch;
+use crate::emu_thread::ReplayJoypadFrame;
 use crate::settings::GamepadAction;
 
 impl App {
@@ -67,19 +69,8 @@ impl App {
         }
     }
 
-    pub(super) fn gather_joypad_input(&mut self) -> (u8, u8) {
-        let (mut buttons, dpad) = if let Some(player) = &mut self.recording.replay_player {
-            if let Some((buttons, dpad)) = player.next_frame() {
-                (buttons, dpad)
-            } else {
-                self.toast_manager.info("Replay finished");
-                self.recording.replay_player = None;
-                self.current_host_joypad_input()
-            }
-        } else {
-            self.current_host_joypad_input()
-        };
-
+    pub(super) fn current_replay_recordable_joypad_input(&mut self) -> (u8, u8) {
+        let (mut buttons, dpad) = self.current_host_joypad_input();
         if self.speed.turbo_held {
             self.speed.turbo_counter = self.speed.turbo_counter.wrapping_add(1);
             if self.speed.turbo_counter % 2 == 1 {
@@ -89,10 +80,60 @@ impl App {
             self.speed.turbo_counter = 0;
         }
 
-        if let Some(recorder) = &mut self.recording.replay_recorder {
-            recorder.record_frame(buttons, dpad);
+        (buttons, dpad)
+    }
+
+    pub(super) fn prepare_replay_joypad_batch(
+        &mut self,
+        frames_to_step: usize,
+        buttons: u8,
+        dpad: u8,
+    ) -> Option<Vec<ReplayJoypadFrame>> {
+        if frames_to_step == 0 {
+            return None;
         }
 
-        (buttons, dpad)
+        if let Some(batch) = self.recording.pending_replay_batches.front() {
+            return Some(batch.frames.iter().copied().take(frames_to_step).collect());
+        }
+
+        if let Some(player) = self.recording.replay_player.as_ref() {
+            let frames = player
+                .peek_frames(self.recording.queued_replay_playback_frames, frames_to_step)
+                .into_iter()
+                .map(|(buttons, dpad)| ReplayJoypadFrame { buttons, dpad })
+                .collect::<Vec<_>>();
+
+            if frames.is_empty() {
+                self.toast_manager.info("Replay finished");
+                self.recording.replay_player = None;
+                self.recording.queued_replay_playback_frames = 0;
+                return None;
+            }
+
+            self.recording.queued_replay_playback_frames += frames.len();
+            self.recording
+                .pending_replay_batches
+                .push_back(PendingReplayBatch {
+                    frames: frames.clone(),
+                    record: false,
+                    playback: true,
+                });
+            return Some(frames);
+        }
+
+        if self.recording.replay_recorder.is_some() {
+            let frames = vec![ReplayJoypadFrame { buttons, dpad }; frames_to_step];
+            self.recording
+                .pending_replay_batches
+                .push_back(PendingReplayBatch {
+                    frames: frames.clone(),
+                    record: true,
+                    playback: false,
+                });
+            return Some(frames);
+        }
+
+        None
     }
 }

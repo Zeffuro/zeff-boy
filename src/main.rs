@@ -6,6 +6,7 @@
 mod app;
 mod audio;
 mod audio_recorder;
+mod audio_tooling;
 mod camera;
 mod cheats;
 #[cfg(not(target_arch = "wasm32"))]

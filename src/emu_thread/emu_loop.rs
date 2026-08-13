@@ -4,10 +4,12 @@ use std::thread;
 use std::time::Duration;
 
 use crate::cheats::CheatPatch;
-use crate::emu_backend::{ActiveSystem, EmuBackend};
-use crate::link::gb::GameBoyRemoteLink;
+use crate::emu_backend::EmuBackend;
 use crate::link::transport::TcpLinkTransport;
-use crate::link::{LinkConnectionState, LinkEndpointId, LinkSession, LinkSystemType};
+use crate::link::{
+    LinkConnectionState, LinkEndpointId, LinkSession, LinkSystemType, RemoteLink,
+    remote_link_system_for_active_system,
+};
 
 use super::{
     DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
@@ -19,6 +21,7 @@ const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 struct PendingTcpLink {
     label: String,
     endpoint: LinkEndpointId,
+    system: LinkSystemType,
     receiver: StdReceiver<Result<TcpLinkTransport, String>>,
 }
 
@@ -31,7 +34,7 @@ pub(super) struct EmuLoop {
     pub(super) shared_framebuffer: SharedFramebuffer,
     uncapped_mode: bool,
     last_cheats: Vec<CheatPatch>,
-    tcp_link: Option<GameBoyRemoteLink<TcpLinkTransport>>,
+    tcp_link: Option<RemoteLink<TcpLinkTransport>>,
     pending_tcp_link: Option<PendingTcpLink>,
     rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
@@ -289,12 +292,12 @@ impl EmuLoop {
     }
 
     fn start_tcp_link(&mut self, mode: TcpLinkMode) {
-        if self.backend.system() != ActiveSystem::GameBoy {
+        let Some(system) = remote_link_system_for_active_system(self.backend.system()) else {
             let _ = self.send_resp(EmuResponse::LinkFailed(
-                "TCP link currently supports GB/GBC only".to_string(),
+                "TCP link currently supports GB/GBC and WonderSwan/WSC only".to_string(),
             ));
             return;
-        }
+        };
 
         self.disconnect_tcp_link();
         self.pending_tcp_link = None;
@@ -325,6 +328,7 @@ impl EmuLoop {
         self.pending_tcp_link = Some(PendingTcpLink {
             label: label.clone(),
             endpoint,
+            system,
             receiver,
         });
         let _ = self.send_resp(EmuResponse::LinkPending(label));
@@ -348,11 +352,22 @@ impl EmuLoop {
         match result {
             Ok(transport) => {
                 self.backend.set_link_peer_present(true);
-                self.tcp_link = Some(GameBoyRemoteLink::new(LinkSession::new(
-                    transport,
-                    LinkSystemType::GameBoy,
-                    pending.endpoint,
-                )));
+                let session = LinkSession::new(transport, pending.system, pending.endpoint);
+                self.tcp_link = Some(match pending.system {
+                    LinkSystemType::GameBoy => {
+                        RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::new(session))
+                    }
+                    LinkSystemType::WonderSwan => {
+                        RemoteLink::WonderSwan(crate::link::ws::WonderSwanRemoteLink::new(session))
+                    }
+                    LinkSystemType::GameGear => {
+                        self.backend.set_link_peer_present(false);
+                        let _ = self.send_resp(EmuResponse::LinkFailed(
+                            "TCP link does not support Game Gear yet".to_string(),
+                        ));
+                        return;
+                    }
+                });
                 let _ = self.send_resp(EmuResponse::LinkConnected(pending.label));
             }
             Err(err) => {

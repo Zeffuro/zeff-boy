@@ -58,12 +58,12 @@ impl App {
     pub(super) fn host_tcp_link(&mut self) {
         if self.emu_thread.is_none() {
             self.toast_manager
-                .error("Load a GB/GBC ROM before hosting link");
+                .error("Load a GB/GBC or WonderSwan/WSC ROM before hosting link");
             return;
         }
-        if self.active_system != crate::emu_backend::ActiveSystem::GameBoy {
+        if crate::link::remote_link_system_for_active_system(self.active_system).is_none() {
             self.toast_manager
-                .error("TCP link currently supports GB/GBC only");
+                .error("TCP link currently supports GB/GBC and WonderSwan/WSC only");
             return;
         }
 
@@ -79,12 +79,12 @@ impl App {
     pub(super) fn join_tcp_link(&mut self) {
         if self.emu_thread.is_none() {
             self.toast_manager
-                .error("Load a GB/GBC ROM before joining link");
+                .error("Load a GB/GBC or WonderSwan/WSC ROM before joining link");
             return;
         }
-        if self.active_system != crate::emu_backend::ActiveSystem::GameBoy {
+        if crate::link::remote_link_system_for_active_system(self.active_system).is_none() {
             self.toast_manager
-                .error("TCP link currently supports GB/GBC only");
+                .error("TCP link currently supports GB/GBC and WonderSwan/WSC only");
             return;
         }
 
