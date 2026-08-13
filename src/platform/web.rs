@@ -123,6 +123,10 @@ impl FileDialog {
         trigger_file_picker(&self.accept, slot);
     }
 
+    pub(crate) fn pick_folder(self) -> Option<PathBuf> {
+        None
+    }
+
     pub(crate) fn save_file(self) -> Option<PathBuf> {
         None
     }

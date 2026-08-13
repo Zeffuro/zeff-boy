@@ -13,7 +13,7 @@ use crate::link::{
 
 use super::{
     DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_SNAPSHOTS_PER_SECOND, SharedFramebuffer, TcpLinkMode,
+    REWIND_SNAPSHOTS_PER_SECOND, ReplayStartState, SharedFramebuffer, TcpLinkMode,
 };
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -36,6 +36,7 @@ pub(super) struct EmuLoop {
     last_cheats: Vec<CheatPatch>,
     tcp_link: Option<RemoteLink<TcpLinkTransport>>,
     pending_tcp_link: Option<PendingTcpLink>,
+    game_boy_replay_link: Option<crate::link::gb::GameBoyReplayLink>,
     rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
 }
@@ -60,6 +61,7 @@ impl EmuLoop {
             last_cheats: Vec::new(),
             tcp_link: None,
             pending_tcp_link: None,
+            game_boy_replay_link: None,
             rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new(
                 DEFAULT_REWIND_SECONDS,
                 REWIND_SNAPSHOTS_PER_SECOND,
@@ -123,26 +125,42 @@ impl EmuLoop {
             }
 
             EmuCommand::StartTcpLink(mode) => {
+                self.game_boy_replay_link = None;
                 self.start_tcp_link(mode);
             }
 
             EmuCommand::DisconnectLink => {
                 self.disconnect_tcp_link();
+                self.game_boy_replay_link = None;
             }
 
             EmuCommand::StepFrames(input) => {
                 let input = *input;
-                let result = EmuThread::handle_step_frames_with_tcp_link(
-                    &mut self.backend,
-                    input,
-                    &self.last_cheats,
-                    self.tcp_link.as_mut(),
-                    self.uncapped_mode,
-                    &mut self.rewind_buffer,
-                    &mut self.rewind_seconds,
-                    &self.shared_framebuffer,
-                );
-                self.clear_disconnected_tcp_link();
+                let result = if let Some(replay_link) = self.game_boy_replay_link.as_mut() {
+                    EmuThread::handle_step_frames_with_game_boy_replay_link(
+                        &mut self.backend,
+                        input,
+                        &self.last_cheats,
+                        replay_link,
+                        self.uncapped_mode,
+                        &mut self.rewind_buffer,
+                        &mut self.rewind_seconds,
+                        &self.shared_framebuffer,
+                    )
+                } else {
+                    let result = EmuThread::handle_step_frames_with_tcp_link(
+                        &mut self.backend,
+                        input,
+                        &self.last_cheats,
+                        self.tcp_link.as_mut(),
+                        self.uncapped_mode,
+                        &mut self.rewind_buffer,
+                        &mut self.rewind_seconds,
+                        &self.shared_framebuffer,
+                    );
+                    self.clear_disconnected_tcp_link();
+                    result
+                };
                 if !EmuThread::send_frame(&self.frame_tx, &self.drain_rx, result) {
                     return false;
                 }
@@ -210,9 +228,36 @@ impl EmuLoop {
                 self.backend.set_sample_rate(rate);
             }
 
+            EmuCommand::SetFdsDiskSide(side) => {
+                let resp = match self.backend.set_fds_disk_side(side) {
+                    Ok(()) => {
+                        let selected = self.backend.fds_disk_side().unwrap_or(side);
+                        EmuResponse::FdsDiskSideChanged(selected)
+                    }
+                    Err(err) => EmuResponse::FdsDiskSideChangeFailed(err.to_string()),
+                };
+                if !self.send_resp(resp) {
+                    return false;
+                }
+            }
+
             EmuCommand::CaptureStateBytes => {
                 let resp = match EmuThread::encode_current_state(&self.backend) {
                     Ok(bytes) => EmuResponse::StateCaptured(bytes),
+                    Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
+                };
+                if !self.send_resp(resp) {
+                    return false;
+                }
+            }
+
+            EmuCommand::CaptureReplayStart => {
+                let resp = match EmuThread::encode_current_state(&self.backend) {
+                    Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
+                        state_bytes: bytes,
+                        frame_count: self.backend.frame_count(),
+                        metadata: self.backend.replay_metadata(),
+                    })),
                     Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
                 };
                 if !self.send_resp(resp) {
@@ -224,8 +269,21 @@ impl EmuLoop {
                 state_bytes,
                 buttons_pressed,
                 dpad_pressed,
+                replay_events,
             } => {
                 let result = self.backend.load_state_from_bytes(state_bytes);
+                if result.is_ok() {
+                    self.game_boy_replay_link = replay_events.and_then(|events| {
+                        let link = crate::link::gb::GameBoyReplayLink::new(
+                            events,
+                            self.backend.frame_count(),
+                        );
+                        (!link.is_empty()).then_some(link)
+                    });
+                    if self.game_boy_replay_link.is_some() {
+                        self.disconnect_tcp_link();
+                    }
+                }
                 if !self.finalize_load_state(
                     result,
                     "(replay)".to_string(),

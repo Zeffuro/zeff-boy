@@ -70,18 +70,36 @@ pub(crate) struct JoypadInput {
     pub(crate) dpad_p2: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ReplayJoypadFrame {
-    pub(crate) buttons: u8,
-    pub(crate) dpad: u8,
-}
+pub(crate) type ReplayJoypadFrame = zeff_emu_common::replay::ReplayJoypadFrame;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ZapperInput {
     pub(crate) enabled: bool,
     pub(crate) trigger: bool,
     pub(crate) hit: bool,
     pub(crate) screen_pos: Option<(u16, u16)>,
+}
+
+impl From<ZapperInput> for zeff_emu_common::replay::ReplayZapperFrame {
+    fn from(value: ZapperInput) -> Self {
+        Self {
+            enabled: value.enabled,
+            trigger: value.trigger,
+            hit: value.hit,
+            screen_pos: value.screen_pos,
+        }
+    }
+}
+
+impl From<zeff_emu_common::replay::ReplayZapperFrame> for ZapperInput {
+    fn from(value: zeff_emu_common::replay::ReplayZapperFrame) -> Self {
+        Self {
+            enabled: value.enabled,
+            trigger: value.trigger,
+            hit: value.hit,
+            screen_pos: value.screen_pos,
+        }
+    }
 }
 
 pub(crate) struct AudioConfig {
@@ -109,6 +127,7 @@ pub(crate) struct FrameInput {
 
 pub(crate) struct FrameResult {
     pub(crate) advanced_frames: usize,
+    pub(crate) replay_events: Vec<zeff_emu_common::replay::ReplayEvent>,
     pub(crate) rumble: bool,
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
@@ -145,13 +164,16 @@ pub(crate) enum EmuCommand {
         dpad_pressed: u8,
     },
     CaptureStateBytes,
+    CaptureReplayStart,
     LoadStateBytes {
         state_bytes: Vec<u8>,
         buttons_pressed: u8,
         dpad_pressed: u8,
+        replay_events: Option<Vec<zeff_emu_common::replay::ReplayEvent>>,
     },
     SetSampleRate(u32),
     SetUncapped(bool),
+    SetFdsDiskSide(u8),
     UpdateCheats(Vec<crate::cheats::CheatPatch>),
     #[cfg(not(target_arch = "wasm32"))]
     StartTcpLink(TcpLinkMode),
@@ -171,7 +193,10 @@ pub(crate) enum EmuResponse {
     RewindOk,
     RewindFailed(String),
     StateCaptured(Vec<u8>),
+    ReplayStartCaptured(Box<ReplayStartState>),
     StateCaptureFailed(String),
+    FdsDiskSideChanged(u8),
+    FdsDiskSideChangeFailed(String),
     #[cfg(not(target_arch = "wasm32"))]
     LinkPending(String),
     #[cfg(not(target_arch = "wasm32"))]
@@ -182,6 +207,12 @@ pub(crate) enum EmuResponse {
     LinkDisconnected,
     SramFlushed(Option<String>),
     ShutdownComplete,
+}
+
+pub(crate) struct ReplayStartState {
+    pub(crate) state_bytes: Vec<u8>,
+    pub(crate) frame_count: u64,
+    pub(crate) metadata: zeff_emu_common::replay::ReplayMetadata,
 }
 
 #[cfg(test)]

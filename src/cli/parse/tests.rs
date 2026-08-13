@@ -1,7 +1,29 @@
 use super::input::parse_zapper_event_arg;
+use super::parse_args_from;
 use super::values::{parse_sega8_console_region_arg, parse_sega8_video_standard_arg};
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
+
+#[test]
+fn parses_headless_replay_options() {
+    let args = parse_args_from([
+        "--headless",
+        "--replay",
+        "test.zrpl",
+        "--expect-replay-final-hash",
+        "abc123",
+        "game.gb",
+    ])
+    .unwrap();
+
+    let headless = args.headless.expect("headless mode should be enabled");
+    assert_eq!(
+        headless.replay_path.unwrap(),
+        std::path::PathBuf::from("test.zrpl")
+    );
+    assert_eq!(headless.expect_replay_final_hash.as_deref(), Some("abc123"));
+    assert_eq!(args.rom_path.as_deref(), Some("game.gb"));
+}
 
 #[test]
 fn zapper_events_accept_comma_coordinates_and_semicolon_separation() {

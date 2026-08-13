@@ -174,6 +174,12 @@ impl Serial {
         self.pending_link_response
     }
 
+    pub(super) fn waiting_at_link_completion_boundary(&self) -> bool {
+        self.pending_link_byte.is_some()
+            && self.pending_link_completion_ready
+            && self.pending_link_response.is_none()
+    }
+
     pub(super) fn take_link_action(&mut self) -> Option<GameBoyLinkAction> {
         self.queued_link_action.take()
     }

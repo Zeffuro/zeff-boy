@@ -104,6 +104,29 @@ fn collect_enabled_patches_resolves_user_parameter_values() {
 }
 
 #[test]
+fn enabled_patch_hash_tracks_resolved_enabled_cheats() {
+    let mut cheat = CheatCode {
+        name: "Parameterized".to_string(),
+        code_text: "01??C000".to_string(),
+        enabled: true,
+        parameter_value: Some(0xA0),
+        code_type: CheatType::GameShark,
+        patches: vec![CheatPatch::RamWrite {
+            address: 0xC000,
+            value: CheatValue::from_mask_base_user(0xF0, 0x05),
+        }],
+    };
+
+    let hash_a = enabled_patch_hash(&[cheat.clone()], &[]).expect("enabled cheat should hash");
+    cheat.parameter_value = Some(0xB0);
+    let hash_b = enabled_patch_hash(&[cheat.clone()], &[]).expect("changed cheat should hash");
+    cheat.enabled = false;
+
+    assert_ne!(hash_a, hash_b);
+    assert_eq!(enabled_patch_hash(&[cheat], &[]), None);
+}
+
+#[test]
 fn export_cht_file_roundtrips_through_system_parser() {
     let original = vec![CheatCode {
         name: "Sega raw".to_string(),

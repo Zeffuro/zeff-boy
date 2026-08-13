@@ -1,3 +1,4 @@
+use super::media::fds_side_label;
 use super::{App, SpeedMode};
 use crate::debug::{ConsoleGraphicsData, DebugTab, is_tab_open};
 use crate::emu_thread::{EmuResponse, FrameResult};
@@ -19,6 +20,28 @@ impl App {
         while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
             if self.handle_link_response(&resp) {
                 continue;
+            }
+            match resp {
+                EmuResponse::FdsDiskSideChanged(side) => {
+                    if self.recording.replay_media_events_pending > 0 {
+                        self.recording.replay_media_events_pending -= 1;
+                        log::debug!("Replay selected FDS side {}", fds_side_label(side));
+                        continue;
+                    }
+                    self.toast_manager
+                        .success(format!("FDS side {} selected", fds_side_label(side)));
+                    continue;
+                }
+                EmuResponse::FdsDiskSideChangeFailed(message) => {
+                    if self.recording.replay_media_events_pending > 0 {
+                        self.recording.replay_media_events_pending -= 1;
+                        self.recording.replay_player = None;
+                    }
+                    self.toast_manager
+                        .error(format!("FDS side change failed: {message}"));
+                    continue;
+                }
+                _ => {}
             }
             if self.rewind.pending || self.rewind.backstep_pending {
                 match resp {
@@ -56,6 +79,7 @@ impl App {
 
     pub(super) fn process_frame_result(&mut self, result: FrameResult) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
+        self.record_replay_events(result.replay_events);
         self.commit_replay_batch(result.advanced_frames);
 
         // Read the latest framebuffer from the lock-free shared buffer
@@ -202,6 +226,41 @@ impl App {
         self.cached_ui_data = Some(ui_data);
     }
 
+    fn record_replay_events(&mut self, events: Vec<zeff_emu_common::replay::ReplayEvent>) {
+        let base_frame = self.recording.replay_recording_base_frame;
+        let Some(recorder) = &mut self.recording.replay_recorder else {
+            return;
+        };
+        for event in events {
+            recorder.record_event(Self::replay_relative_event(event, base_frame));
+        }
+    }
+
+    fn replay_relative_event(
+        event: zeff_emu_common::replay::ReplayEvent,
+        base_frame: u64,
+    ) -> zeff_emu_common::replay::ReplayEvent {
+        match event {
+            zeff_emu_common::replay::ReplayEvent::GameBoyLink { frame, tick, event } => {
+                zeff_emu_common::replay::ReplayEvent::GameBoyLink {
+                    frame: frame.saturating_sub(base_frame),
+                    tick,
+                    event,
+                }
+            }
+            zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
+                frame,
+                session_cycle,
+                event,
+            } => zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
+                frame: frame.saturating_sub(base_frame),
+                session_cycle,
+                event,
+            },
+            event => event,
+        }
+    }
+
     fn commit_replay_batch(&mut self, mut advanced_frames: usize) {
         while advanced_frames > 0 {
             let Some(mut batch) = self.recording.pending_replay_batches.pop_front() else {
@@ -213,7 +272,7 @@ impl App {
                 && let Some(recorder) = &mut self.recording.replay_recorder
             {
                 for frame in batch.frames.iter().take(commit_count) {
-                    recorder.record_frame(frame.buttons, frame.dpad);
+                    recorder.record_joypad_frame(frame.clone());
                 }
             }
             if batch.playback {

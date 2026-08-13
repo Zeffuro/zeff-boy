@@ -416,6 +416,8 @@ pub(crate) struct EmulationSettings {
     pub(crate) nes_zapper_enabled: bool,
     #[serde(default = "default_pause_on_unfocus")]
     pub(crate) pause_on_unfocus: bool,
+    #[serde(default)]
+    pub(crate) firmware_directory: String,
 }
 
 fn default_slow_motion_divisor() -> usize {
@@ -447,8 +449,62 @@ impl Default for EmulationSettings {
             sgb_border_enabled: false,
             nes_zapper_enabled: false,
             pause_on_unfocus: true,
+            firmware_directory: String::new(),
         }
     }
+}
+
+impl EmulationSettings {
+    pub(crate) fn firmware_directory_path(&self) -> Option<std::path::PathBuf> {
+        let path = self.firmware_directory.trim();
+        if path.is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(path))
+        }
+    }
+
+    pub(crate) fn firmware_search_dirs(&self) -> Vec<std::path::PathBuf> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            Vec::new()
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            const LEGACY_ENV_VAR: &str = "ZEFF_FIRMWARE_DIR";
+
+            self.firmware_search_dirs_with_env(
+                std::env::var_os(LEGACY_ENV_VAR).map(std::path::PathBuf::from),
+            )
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn firmware_search_dirs_with_env(
+        &self,
+        legacy_env_dir: Option<std::path::PathBuf>,
+    ) -> Vec<std::path::PathBuf> {
+        let mut dirs = Vec::new();
+        if let Some(path) = self.firmware_directory_path() {
+            push_unique_firmware_dir(&mut dirs, path);
+        }
+        if let Some(path) = legacy_env_dir {
+            push_unique_firmware_dir(&mut dirs, path);
+        }
+        dirs
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn push_unique_firmware_dir(dirs: &mut Vec<std::path::PathBuf>, path: std::path::PathBuf) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    if dirs.iter().any(|existing| existing == &path) {
+        return;
+    }
+    dirs.push(path);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

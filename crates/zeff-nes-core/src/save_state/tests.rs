@@ -81,6 +81,30 @@ fn save_state_roundtrip_preserves_bus_state() {
 }
 
 #[test]
+fn decode_preserves_runtime_audio_config() {
+    let mut saved = make_emulator();
+    saved.set_sample_rate(44_100);
+    saved.set_apu_sample_generation_enabled(true);
+    let state_bytes = encode_state(&saved).expect("encode should succeed");
+
+    let mut restored = make_emulator();
+    restored.set_sample_rate(96_000);
+    restored.set_apu_sample_generation_enabled(false);
+
+    decode_state(&mut restored, &state_bytes).expect("decode should succeed");
+
+    assert_eq!(restored.bus.apu.output_sample_rate, 96_000.0);
+    restored.step_frame();
+
+    let mut samples = Vec::new();
+    restored.drain_audio_samples_into(&mut samples);
+    assert!(
+        samples.is_empty(),
+        "saved sample-generation mode should not override runtime skip-audio state"
+    );
+}
+
+#[test]
 fn save_state_rom_hash_mismatch_rejected() {
     let mut emu = make_emulator();
     let state_bytes = encode_state(&emu).expect("encode should succeed");

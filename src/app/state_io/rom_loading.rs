@@ -113,6 +113,9 @@ impl App {
                     .sega8_video_standard
                     .forced_standard(),
                 sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
+                firmware_search_dirs: self.settings.emulation.firmware_search_dirs(),
+                #[cfg(test)]
+                fds_bios_override: None,
             },
         )?;
         Ok((loaded.backend, loaded.original_crc32))
@@ -324,6 +327,7 @@ impl App {
         self.rom_info.rom_path = None;
         self.rom_info.source_path = None;
         self.rom_info.rom_hash = None;
+        self.rom_info.replay_metadata = None;
         self.rom_info.is_mbc7 = false;
         self.rom_info.is_pocket_camera = false;
         self.speed.paused = false;
@@ -420,6 +424,7 @@ impl App {
         self.rom_info.rom_path = Some(rom_path_buf);
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
+        self.rom_info.replay_metadata = Some(backend.replay_metadata());
         self.active_system = system;
         self.ws_display_rotated = backend
             .ws()

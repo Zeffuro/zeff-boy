@@ -236,4 +236,18 @@ impl MapperImpl {
     pub(super) fn load_battery_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         dispatch_mapper!(self, load_battery_data, bytes)
     }
+
+    pub(super) fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
+        match self {
+            Self::Fds(mapper) => mapper.select_side(side),
+            _ => anyhow::bail!("current NES cartridge is not Famicom Disk System content"),
+        }
+    }
+
+    pub(super) fn fds_disk_side(&self) -> Option<u8> {
+        match self {
+            Self::Fds(mapper) => mapper.selected_side(),
+            _ => None,
+        }
+    }
 }

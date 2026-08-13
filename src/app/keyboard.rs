@@ -190,6 +190,24 @@ impl App {
             return false;
         }
 
+        if self.modifiers.ctrl && self.modifiers.alt && self.active_system == ActiveSystem::Nes {
+            match key_code {
+                KeyCode::KeyA => {
+                    if pressed {
+                        self.set_fds_disk_side(0);
+                    }
+                    return true;
+                }
+                KeyCode::KeyB => {
+                    if pressed {
+                        self.set_fds_disk_side(1);
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
         let digit_slot = match key_code {
             KeyCode::Digit0 => Some(0u8),
             KeyCode::Digit1 => Some(1),
@@ -246,7 +264,13 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
             if pressed {
-                self.timing.uncapped_speed = !self.timing.uncapped_speed;
+                let enable_uncapped = !self.timing.uncapped_speed;
+                if enable_uncapped && self.recording.is_replay_active() {
+                    self.disable_uncapped_for_replay();
+                    return true;
+                }
+
+                self.timing.uncapped_speed = enable_uncapped;
                 self.settings.emulation.uncapped_speed = self.timing.uncapped_speed;
                 self.settings.save();
                 if let Some(thread) = &self.emu_thread {

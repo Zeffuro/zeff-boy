@@ -21,7 +21,13 @@ mod tests;
 mod values;
 
 pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    parse_args_from(std::env::args().skip(1))
+}
+
+pub(crate) fn parse_args_from(
+    args: impl IntoIterator<Item = impl Into<String>>,
+) -> anyhow::Result<CliArgs> {
+    let args: Vec<String> = args.into_iter().map(Into::into).collect();
     let mut mode_override: Option<HardwareModePreference> = None;
     let mut rom_path: Option<String> = None;
     let mut headless_enabled = false;
@@ -317,6 +323,20 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                     anyhow::bail!("--load-state requires a file path");
                 };
                 headless.load_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--replay" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--replay requires a replay file path");
+                };
+                headless.replay_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--expect-replay-final-hash" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--expect-replay-final-hash requires a SHA-256 hex digest");
+                };
+                headless.expect_replay_final_hash = Some(value.to_string());
                 i += 2;
             }
             "--screenshot" => {

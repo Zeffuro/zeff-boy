@@ -470,6 +470,10 @@ impl Bus {
             && self.io.serial.pending_link_response().is_none()
     }
 
+    pub fn game_boy_link_waiting_at_completion_boundary(&self) -> bool {
+        self.io.serial.waiting_at_link_completion_boundary()
+    }
+
     pub fn take_game_boy_link_action(&mut self) -> Option<GameBoyLinkAction> {
         self.io.serial.take_link_action()
     }

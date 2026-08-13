@@ -4,6 +4,11 @@ use crate::platform::Instant;
 
 impl App {
     pub(super) fn sync_speed_setting(&mut self) {
+        if self.settings.emulation.uncapped_speed && self.recording.is_replay_active() {
+            self.disable_uncapped_for_replay();
+            return;
+        }
+
         if self.timing.uncapped_speed != self.settings.emulation.uncapped_speed {
             self.timing.uncapped_speed = self.settings.emulation.uncapped_speed;
             if let Some(thread) = &self.emu_thread {

@@ -75,6 +75,25 @@ impl NesBackend {
     pub(crate) fn source_path(&self) -> &Path {
         self.paths.source_path()
     }
+
+    pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
+        self.paths.firmware_manifests()
+    }
+
+    pub(crate) fn set_firmware_manifests(
+        &mut self,
+        firmware_manifests: Vec<zeff_emu_common::replay::ReplayFirmwareManifest>,
+    ) {
+        self.paths.set_firmware_manifests(firmware_manifests);
+    }
+
+    pub(crate) fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
+        self.emu.set_fds_disk_side(side)
+    }
+
+    pub(crate) fn fds_disk_side(&self) -> Option<u8> {
+        self.emu.fds_disk_side()
+    }
 }
 
 impl EmulatorCore for NesBackend {

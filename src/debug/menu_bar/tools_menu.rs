@@ -20,6 +20,30 @@ pub(super) fn draw(
         ui.close();
     }
     ui.separator();
+    ui.label("FDS Disk");
+    let fds_enabled = active_system == ActiveSystem::Nes;
+    ui.add_enabled_ui(fds_enabled, |ui| {
+        if ui
+            .button("Side A")
+            .on_hover_text("Shortcut: Ctrl+Alt+A")
+            .clicked()
+        {
+            actions.push(MenuAction::SetFdsDiskSide(0));
+            ui.close();
+        }
+        if ui
+            .button("Side B")
+            .on_hover_text("Shortcut: Ctrl+Alt+B")
+            .clicked()
+        {
+            actions.push(MenuAction::SetFdsDiskSide(1));
+            ui.close();
+        }
+    });
+    if !fds_enabled {
+        ui.label("Load FDS content first");
+    }
+    ui.separator();
     ui.label("Link Cable");
     let remote_link_enabled = cfg!(not(target_arch = "wasm32"))
         && crate::link::remote_link_system_for_active_system(active_system).is_some();

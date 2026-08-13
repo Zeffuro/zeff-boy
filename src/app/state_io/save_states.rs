@@ -53,6 +53,7 @@ impl App {
                 state_bytes,
                 buttons_pressed,
                 dpad_pressed,
+                replay_events: None,
             });
         }
         match self.recv_cold_response() {
@@ -290,6 +291,7 @@ impl App {
                     state_bytes: bytes,
                     buttons_pressed,
                     dpad_pressed,
+                    replay_events: None,
                 });
             }
             match self.recv_cold_response() {

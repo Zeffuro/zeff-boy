@@ -55,6 +55,7 @@ fn main() -> anyhow::Result<()> {
         return cli::run_headless(
             Path::new(&rom_path_arg),
             settings.emulation.hardware_mode_preference,
+            settings.emulation.firmware_search_dirs(),
             &headless_opts,
         );
     }
@@ -82,6 +83,7 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             gb_hardware_mode_preference: settings.emulation.hardware_mode_preference,
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),
+            firmware_search_dirs: settings.emulation.firmware_search_dirs(),
             ..BackendLoadConfig::default()
         },
     )?;

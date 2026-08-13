@@ -111,6 +111,14 @@ impl Emulator {
     pub fn add_game_genie_patch(&mut self, patch: crate::cheats::NesGameGeniePatch) {
         self.bus.game_genie.patches.push(patch);
     }
+
+    pub fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
+        self.bus.cartridge.set_fds_disk_side(side)
+    }
+
+    pub fn fds_disk_side(&self) -> Option<u8> {
+        self.bus.cartridge.fds_disk_side()
+    }
 }
 
 fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {

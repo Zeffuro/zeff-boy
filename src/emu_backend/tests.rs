@@ -133,7 +133,7 @@ fn shared_backend_loader_covers_every_supported_core() {
 }
 
 #[test]
-fn shared_backend_loader_rejects_fds_with_firmware_message_until_app_boot_is_wired() {
+fn shared_backend_loader_rejects_fds_without_firmware_dir() {
     let err = match load_backend_from_rom_source(
         ActiveSystem::Nes,
         &PathBuf::from("test.fds"),
@@ -149,8 +149,69 @@ fn shared_backend_loader_rejects_fds_with_firmware_message_until_app_boot_is_wir
     };
 
     let message = err.to_string();
-    assert!(message.contains("Famicom Disk System images are detected"));
+    assert!(message.contains("Famicom Disk System firmware is required"));
+    assert!(message.contains("Settings > Firmware > Firmware directory"));
     assert!(message.contains("nintendo.fds.bios"));
+}
+
+#[test]
+fn shared_backend_loader_uses_configured_fds_firmware_dir() {
+    let firmware_dir = std::env::temp_dir().join(format!(
+        "zeff_boy_empty_fds_firmware_dir_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&firmware_dir);
+    std::fs::create_dir(&firmware_dir).expect("temp firmware dir should be created");
+
+    let err = match load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        &PathBuf::from("test.fds"),
+        &PathBuf::from("test.fds"),
+        Some(vec![
+            0x55;
+            zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE
+        ]),
+        BackendLoadConfig {
+            firmware_search_dirs: vec![firmware_dir.clone()],
+            ..BackendLoadConfig::default()
+        },
+    ) {
+        Ok(_) => panic!("empty firmware directory should not satisfy FDS BIOS resolution"),
+        Err(err) => err,
+    };
+    let _ = std::fs::remove_dir_all(&firmware_dir);
+
+    let message = err.to_string();
+    assert!(message.contains(&firmware_dir.display().to_string()));
+    assert!(message.contains("No recognized nintendo.fds.bios"));
+}
+
+#[test]
+fn shared_backend_loader_initializes_fds_with_resolved_bios() {
+    static TEST_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
+        [0xFF; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
+    let fds_image = vec![0x55; zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE];
+    let rom_path = PathBuf::from("test.fds");
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        &rom_path,
+        &rom_path,
+        Some(fds_image.clone()),
+        BackendLoadConfig {
+            fds_bios_override: Some(&TEST_FDS_BIOS),
+            ..BackendLoadConfig::default()
+        },
+    )
+    .expect("FDS app loader should initialize when BIOS bytes are resolved");
+
+    assert_eq!(loaded.backend.system(), ActiveSystem::Nes);
+    assert_eq!(loaded.backend.rom_path(), rom_path);
+    assert_eq!(loaded.original_crc32, crc32fast::hash(&fds_image));
+    assert_eq!(
+        loaded.backend.save_ram_kind(),
+        zeff_emu_common::save_ram::SaveRamKind::known_battery_backed(0x8000)
+    );
+    assert!(!loaded.backend.framebuffer().is_empty());
 }
 
 #[test]
@@ -715,6 +776,46 @@ fn ws_backend_replays_save_state_deterministically() {
 #[test]
 fn sega8_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_sms_backend(), 1, 2);
+}
+
+#[test]
+fn gb_runtime_audio_output_settings_do_not_affect_encoded_state() {
+    assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+        build_gb_backend(),
+        build_gb_backend(),
+    );
+}
+
+#[test]
+fn nes_runtime_audio_output_settings_do_not_affect_encoded_state() {
+    assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+        build_nes_backend(),
+        build_nes_backend(),
+    );
+}
+
+#[test]
+fn gba_runtime_audio_output_settings_do_not_affect_encoded_state() {
+    assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+        build_gba_backend(),
+        build_gba_backend(),
+    );
+}
+
+#[test]
+fn ws_runtime_audio_output_settings_do_not_affect_encoded_state() {
+    assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+        build_ws_backend(),
+        build_ws_backend(),
+    );
+}
+
+#[test]
+fn sega8_runtime_audio_output_settings_do_not_affect_encoded_state() {
+    assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+        build_sms_backend(),
+        build_sms_backend(),
+    );
 }
 
 #[test]

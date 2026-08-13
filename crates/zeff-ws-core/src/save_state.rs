@@ -14,8 +14,8 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u8(VERSION);
     w.bytes(&emu.rom_hash);
     w.u64(emu.frame_count);
-    w.u32(emu.sample_rate());
-    w.u8(u8::from(emu.apu_sample_generation_enabled()));
+    w.u32(crate::emulator::DEFAULT_SAMPLE_RATE);
+    w.u8(1);
 
     for reg in emu.cpu.regs {
         w.u16(reg);
@@ -105,14 +105,18 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.u8(apu.sound_test);
     w.u8(apu.hyper_voice_control);
     w.u8(apu.hyper_voice_channel_control);
-    w.u32(apu.sample_cycle_accumulator);
-    for muted in apu.channel_mutes {
-        w.u8(u8::from(muted));
+    w.u32(0);
+    for _ in apu.channel_mutes {
+        w.u8(0);
     }
     Ok(w.finish())
 }
 
 pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
+    let runtime_sample_rate = emu.sample_rate();
+    let runtime_sample_generation_enabled = emu.apu_sample_generation_enabled();
+    let runtime_channel_mutes = emu.bus.apu.channel_mutes();
+
     let mut r = StateReader::new(data);
     r.expect_bytes(MAGIC)?;
     let version = r.u8()?;
@@ -126,8 +130,10 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     }
 
     emu.frame_count = r.u64()?;
-    emu.set_sample_rate(r.u32()?);
-    emu.set_apu_sample_generation_enabled(r.u8()? != 0);
+    let _saved_sample_rate = r.u32()?;
+    let _saved_sample_generation_enabled = r.u8()?;
+    emu.set_sample_rate(runtime_sample_rate);
+    emu.set_apu_sample_generation_enabled(runtime_sample_generation_enabled);
 
     for reg in &mut emu.cpu.regs {
         *reg = r.u16()?;
@@ -275,7 +281,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         let sound_test = if version >= 7 { r.u8()? } else { 0 };
         let hyper_voice_control = r.u8()?;
         let hyper_voice_channel_control = r.u8()?;
-        let sample_cycle_accumulator = r.u32()?;
+        let _saved_sample_cycle_accumulator = r.u32()?;
         let mut channel_mutes = [false; 4];
         for muted in &mut channel_mutes {
             *muted = r.u8()? != 0;
@@ -302,8 +308,8 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
             sound_test,
             hyper_voice_control,
             hyper_voice_channel_control,
-            sample_cycle_accumulator,
-            channel_mutes,
+            sample_cycle_accumulator: 0,
+            channel_mutes: runtime_channel_mutes,
         });
     } else {
         emu.bus.apu.reset();
@@ -568,6 +574,26 @@ mod tests {
         decode_state(&mut restored, &state).unwrap();
 
         assert_eq!(restored.uart_debug_snapshot(), before);
+    }
+
+    #[test]
+    fn decode_preserves_runtime_audio_config() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut saved = Emulator::new(&rom, 44_100).unwrap();
+        saved.set_apu_sample_generation_enabled(true);
+        saved.set_apu_channel_mutes([false, false, false, false]);
+        let state = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 96_000).unwrap();
+        restored.set_apu_sample_generation_enabled(false);
+        restored.set_apu_channel_mutes([true, false, true, false]);
+
+        decode_state(&mut restored, &state).unwrap();
+
+        let apu = restored.apu_debug_snapshot();
+        assert_eq!(apu.sample_rate, 96_000);
+        assert!(!apu.sample_generation_enabled);
+        assert_eq!(apu.channel_mutes, [true, false, true, false]);
     }
 
     #[test]

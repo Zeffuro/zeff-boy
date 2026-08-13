@@ -215,6 +215,25 @@ impl EmuBackend {
         dispatch!(self, source_path())
     }
 
+    pub(crate) fn replay_metadata(&self) -> zeff_emu_common::replay::ReplayMetadata {
+        zeff_emu_common::replay::ReplayMetadata {
+            system: Some(self.system().code().to_owned()),
+            core_family: Some(format!("{:?}", self.core_family())),
+            rom_sha256: Some(self.rom_hash()),
+            firmware: dispatch!(self, firmware_manifests()).to_vec(),
+            events: Vec::new(),
+            cheat_sha256: None,
+            final_state_sha256: None,
+        }
+    }
+
+    pub(crate) fn set_firmware_manifests(
+        &mut self,
+        firmware_manifests: Vec<zeff_emu_common::replay::ReplayFirmwareManifest>,
+    ) {
+        dispatch!(self, set_firmware_manifests(firmware_manifests))
+    }
+
     pub(crate) fn rom_hash(&self) -> [u8; 32] {
         dispatch!(self, rom_hash())
     }
@@ -312,7 +331,7 @@ impl EmuBackend {
         };
 
         link.poll_emulator(&mut gb.emu)?;
-        if gb.emu.game_boy_link_pending_master_response() {
+        if gb.emu.game_boy_link_waiting_at_completion_boundary() {
             link.trace_wait_boundary(gb.emu.cpu_cycles(), "frame_start");
             return Ok(());
         }
@@ -323,7 +342,41 @@ impl EmuBackend {
                 link_error = Some(err);
                 return true;
             }
-            if emulator.game_boy_link_pending_master_response() {
+            if emulator.game_boy_link_waiting_at_completion_boundary() {
+                link.trace_wait_boundary(emulator.cpu_cycles(), "mid_frame");
+                return true;
+            }
+            false
+        });
+
+        if let Some(err) = link_error {
+            return Err(err);
+        }
+        link.poll_emulator(&mut gb.emu)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_game_boy_frame_with_replay_link(
+        &mut self,
+        link: &mut crate::link::gb::GameBoyReplayLink,
+    ) -> Result<(), crate::link::LinkSessionError> {
+        let Self::Gb(gb) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+
+        link.poll_emulator(&mut gb.emu)?;
+        if gb.emu.game_boy_link_waiting_at_completion_boundary() {
+            link.trace_wait_boundary(gb.emu.cpu_cycles(), "frame_start");
+            return Ok(());
+        }
+
+        let mut link_error = None;
+        gb.emu.step_until_frame_or(|emulator| {
+            if let Err(err) = link.poll_emulator(emulator) {
+                link_error = Some(err);
+                return true;
+            }
+            if emulator.game_boy_link_waiting_at_completion_boundary() {
                 link.trace_wait_boundary(emulator.cpu_cycles(), "mid_frame");
                 return true;
             }
@@ -440,8 +493,34 @@ impl EmuBackend {
         dispatch!(self, set_zapper_state(enabled, trigger, hit, screen_pos))
     }
 
+    pub(crate) fn set_replay_host_tilt(&mut self, host_tilt: (f32, f32)) {
+        if let Self::Gb(gb) = self {
+            gb.emu.set_mbc7_host_tilt(host_tilt.0, host_tilt.1);
+        }
+    }
+
+    pub(crate) fn set_replay_camera_frame(&mut self, camera_frame: &[u8]) {
+        if let Self::Gb(gb) = self {
+            gb.emu.set_camera_host_frame(camera_frame);
+        }
+    }
+
     pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         dispatch!(self, set_input_p2(buttons_pressed, dpad_pressed))
+    }
+
+    pub(crate) fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
+        match self {
+            Self::Nes(nes) => nes.set_fds_disk_side(side),
+            _ => anyhow::bail!("FDS disk side selection is only available for NES/FDS content"),
+        }
+    }
+
+    pub(crate) fn fds_disk_side(&self) -> Option<u8> {
+        match self {
+            Self::Nes(nes) => nes.fds_disk_side(),
+            _ => None,
+        }
     }
 
     #[allow(dead_code)]

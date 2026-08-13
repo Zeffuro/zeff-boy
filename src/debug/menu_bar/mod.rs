@@ -35,6 +35,7 @@ pub(crate) enum MenuAction {
     StopReplayRecording,
     LoadReplay,
     TakeScreenshot,
+    SetFdsDiskSide(u8),
     HostTcpLink,
     JoinTcpLink,
     DisconnectLink,

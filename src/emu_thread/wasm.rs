@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 
 use zeff_emu_common::rewind::RewindBuffer;
 
+use super::ReplayStartState;
 use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, SharedFramebuffer};
 use super::{DEFAULT_REWIND_SECONDS, REWIND_SNAPSHOTS_PER_SECOND};
 use crate::cheats::CheatPatch;
@@ -79,6 +80,15 @@ impl EmuThread {
                 *uncapped_mode = on;
                 backend.set_apu_sample_generation_enabled(!on);
             }
+            EmuCommand::SetFdsDiskSide(side) => {
+                let resp = match backend.set_fds_disk_side(side) {
+                    Ok(()) => {
+                        EmuResponse::FdsDiskSideChanged(backend.fds_disk_side().unwrap_or(side))
+                    }
+                    Err(err) => EmuResponse::FdsDiskSideChangeFailed(err.to_string()),
+                };
+                pending_responses.push_back(resp);
+            }
             EmuCommand::SaveStateSlot(slot) => {
                 let resp = Self::save_state_sync(backend, slot);
                 pending_responses.push_back(resp);
@@ -154,10 +164,22 @@ impl EmuThread {
                 };
                 pending_responses.push_back(resp);
             }
+            EmuCommand::CaptureReplayStart => {
+                let resp = match backend.encode_state_bytes() {
+                    Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
+                        state_bytes: bytes,
+                        frame_count: backend.frame_count(),
+                        metadata: backend.replay_metadata(),
+                    })),
+                    Err(e) => EmuResponse::StateCaptureFailed(e.to_string()),
+                };
+                pending_responses.push_back(resp);
+            }
             EmuCommand::LoadStateBytes {
                 state_bytes,
                 buttons_pressed,
                 dpad_pressed,
+                replay_events: _,
             } => {
                 let result = backend.load_state_from_bytes(state_bytes);
                 let resp = Self::respond_load_state(

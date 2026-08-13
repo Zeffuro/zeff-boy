@@ -117,21 +117,58 @@ impl App {
                         }
                     };
 
-                    let host_camera_frame = self.camera_frame();
                     let (buttons_pressed, dpad_pressed) =
                         self.current_replay_recordable_joypad_input();
                     let replay_playback_active = self.recording.replay_player.is_some();
+                    let host_camera_frame = if replay_playback_active {
+                        None
+                    } else {
+                        self.camera_frame()
+                    };
+                    if replay_playback_active {
+                        self.apply_replay_events_at_cursor();
+                    }
                     let replay_joypad_frames = self.prepare_replay_joypad_batch(
                         frames_to_step,
                         buttons_pressed,
                         dpad_pressed,
+                        host_tilt,
+                        host_camera_frame.as_deref(),
                     );
                     if replay_playback_active {
                         frames_to_step =
                             replay_joypad_frames.as_ref().map_or(0, std::vec::Vec::len);
                     }
-                    let (buttons_pressed_p2, dpad_pressed_p2) = self.current_host_joypad_p2_input();
-                    let zapper = self.nes_zapper_input();
+                    let (buttons_pressed_p2, dpad_pressed_p2) =
+                        replay_joypad_frames.as_ref().map_or_else(
+                            || self.current_host_joypad_p2_input(),
+                            |frames| {
+                                frames
+                                    .first()
+                                    .map(|frame| (frame.buttons_p2, frame.dpad_p2))
+                                    .unwrap_or((0, 0))
+                            },
+                        );
+                    let zapper = replay_joypad_frames.as_ref().map_or_else(
+                        || self.nes_zapper_input(),
+                        |frames| {
+                            frames
+                                .first()
+                                .map(|frame| frame.zapper.into())
+                                .unwrap_or_default()
+                        },
+                    );
+                    let host_tilt = replay_joypad_frames.as_ref().map_or(host_tilt, |frames| {
+                        frames
+                            .first()
+                            .map(|frame| frame.host_tilt)
+                            .unwrap_or((0.0, 0.0))
+                    });
+                    let host_camera_frame = replay_joypad_frames
+                        .as_ref()
+                        .map_or(host_camera_frame, |frames| {
+                            frames.first().and_then(|frame| frame.camera_frame.clone())
+                        });
                     let reqs = debug::compute_tab_requirements(&self.debug_dock);
                     let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
                     let buffers = self.take_reusable_buffers();

@@ -18,7 +18,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u32(VERSION);
     w.write_bytes(&emu.rom_hash);
     w.write_u64(emu.frame_count);
-    w.write_u32(emu.sample_rate);
+    w.write_u32(crate::emulator::DEFAULT_SAMPLE_RATE);
     w.write_u8(video_standard_to_byte(emu.video_standard));
     w.write_u8(console_region_to_byte(emu.console_region));
     w.write_vec(&emu.framebuffer);
@@ -46,7 +46,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     }
 
     emu.frame_count = r.read_u64()?;
-    emu.sample_rate = r.read_u32()?.max(1);
+    let _saved_sample_rate = r.read_u32()?;
     let video_standard = if version >= VERSION_WITH_VIDEO_STANDARD {
         byte_to_video_standard(r.read_u8()?)?
     } else {
@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(restored.bus().cpu_read(0xC000), 0x5A);
         assert_eq!(restored.frame_count(), saved.frame_count());
         assert_eq!(restored.framebuffer(), saved.framebuffer());
-        assert_eq!(restored.sample_rate(), saved.sample_rate());
+        assert_eq!(restored.sample_rate(), 48_000);
         assert_eq!(restored.video_standard(), Sega8VideoStandard::Pal);
         assert_eq!(
             restored.console_region(),
@@ -305,6 +305,27 @@ mod tests {
             restored.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0,
             0xC0
         );
+    }
+
+    #[test]
+    fn decode_preserves_runtime_audio_config() {
+        let rom = test_rom();
+        let mut saved = Emulator::new_with_hint(&rom, 44_100, SystemHint::MasterSystem).unwrap();
+        saved.set_apu_sample_generation_enabled(true);
+        saved.set_apu_channel_mutes([false, false, false, false]);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new_with_hint(&rom, 96_000, SystemHint::MasterSystem).unwrap();
+        restored.set_apu_sample_generation_enabled(false);
+        restored.set_apu_channel_mutes([true, false, true, false]);
+
+        decode_state(&mut restored, &bytes).unwrap();
+
+        let apu = restored.bus().apu().debug_snapshot();
+        assert_eq!(restored.sample_rate(), 96_000);
+        assert_eq!(apu.sample_rate, 96_000);
+        assert!(!apu.sample_generation_enabled);
+        assert_eq!(apu.channel_mutes, [true, false, true, false]);
     }
 
     #[test]

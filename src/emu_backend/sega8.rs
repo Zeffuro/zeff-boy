@@ -84,6 +84,17 @@ impl Sega8Backend {
         self.paths.source_path()
     }
 
+    pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
+        self.paths.firmware_manifests()
+    }
+
+    pub(crate) fn set_firmware_manifests(
+        &mut self,
+        firmware_manifests: Vec<zeff_emu_common::replay::ReplayFirmwareManifest>,
+    ) {
+        self.paths.set_firmware_manifests(firmware_manifests);
+    }
+
     pub(crate) fn system(&self) -> ActiveSystem {
         active_system_for_sega8(self.emu.system())
     }

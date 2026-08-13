@@ -34,6 +34,7 @@ mod input;
 mod keyboard;
 mod lifecycle;
 mod link;
+mod media;
 #[cfg(not(target_arch = "wasm32"))]
 mod remote;
 mod render;
@@ -154,6 +155,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             rom_path: cached_rom_path,
             source_path: cached_source_path,
             rom_hash: None,
+            replay_metadata: None,
         },
         nes_palette_cache: NesPaletteFileCache::default(),
         pending_archive_selection: None,
@@ -166,6 +168,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             replay_player: None,
             pending_replay_batches: std::collections::VecDeque::new(),
             queued_replay_playback_frames: 0,
+            replay_recording_base_frame: 0,
+            replay_media_events_pending: 0,
         },
         rewind: RewindState {
             held: false,

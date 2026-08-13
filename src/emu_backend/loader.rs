@@ -8,7 +8,7 @@ use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 use super::{ActiveSystem, EmuBackend};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct BackendLoadConfig {
     pub(crate) gb_hardware_mode_preference: HardwareModePreference,
     pub(crate) sample_rate: Option<u32>,
@@ -16,6 +16,9 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) initial_input: Option<(u8, u8)>,
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
     pub(crate) sega8_console_region: Option<Sega8Region>,
+    pub(crate) firmware_search_dirs: Vec<PathBuf>,
+    #[cfg(test)]
+    pub(crate) fds_bios_override: Option<&'static [u8]>,
 }
 
 impl Default for BackendLoadConfig {
@@ -27,6 +30,9 @@ impl Default for BackendLoadConfig {
             initial_input: None,
             sega8_video_standard: None,
             sega8_console_region: None,
+            firmware_search_dirs: Vec::new(),
+            #[cfg(test)]
+            fds_bios_override: None,
         }
     }
 }
@@ -65,12 +71,14 @@ pub(crate) fn load_backend_from_rom_source(
     }
 
     let mut backend = match system {
-        ActiveSystem::GameBoy => load_gb_backend(&rom_data, source_path, rom_path, config)?,
-        ActiveSystem::Nes => load_nes_backend(&rom_data, source_path, rom_path, config)?,
-        ActiveSystem::GameBoyAdvance => load_gba_backend(&rom_data, source_path, rom_path, config)?,
-        ActiveSystem::WonderSwan => load_ws_backend(&rom_data, source_path, rom_path, config)?,
+        ActiveSystem::GameBoy => load_gb_backend(&rom_data, source_path, rom_path, &config)?,
+        ActiveSystem::Nes => load_nes_backend(&rom_data, source_path, rom_path, &config)?,
+        ActiveSystem::GameBoyAdvance => {
+            load_gba_backend(&rom_data, source_path, rom_path, &config)?
+        }
+        ActiveSystem::WonderSwan => load_ws_backend(&rom_data, source_path, rom_path, &config)?,
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
-            load_sega8_backend(system, &rom_data, source_path, rom_path, config)?
+            load_sega8_backend(system, &rom_data, source_path, rom_path, &config)?
         }
     };
 
@@ -106,7 +114,7 @@ fn load_gb_backend(
     rom_data: &[u8],
     source_path: &Path,
     rom_path: &Path,
-    config: BackendLoadConfig,
+    config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
     let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
         rom_data,
@@ -123,17 +131,18 @@ fn load_nes_backend(
     rom_data: &[u8],
     source_path: &Path,
     rom_path: &Path,
-    config: BackendLoadConfig,
+    config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
     if is_fds_path(rom_path) {
-        let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
-        let firmware_id = plan
-            .first()
-            .map(|request| request.id.as_ref())
-            .unwrap_or("nintendo.fds.bios");
-        anyhow::bail!(
-            "Famicom Disk System images are detected, but app-level FDS boot is not wired yet. Required firmware: {firmware_id}"
-        );
+        let sample_rate = config
+            .sample_rate
+            .map(f64::from)
+            .unwrap_or(zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE);
+        let bios = resolve_fds_bios(config, rom_path)?;
+        let emu = zeff_nes_core::emulator::Emulator::new_fds(rom_data, bios.bytes, sample_rate)?;
+        let mut backend = wrap_nes_backend(emu, source_path, rom_path);
+        backend.set_firmware_manifests(vec![bios.manifest]);
+        return Ok(backend);
     }
 
     let sample_rate = config
@@ -143,6 +152,25 @@ fn load_nes_backend(
     let mut emu = zeff_nes_core::emulator::Emulator::new(rom_data, sample_rate)?;
     log_sram_result(super::nes::try_load_battery_sram(&mut emu, rom_path));
     Ok(wrap_nes_backend(emu, source_path, rom_path))
+}
+
+fn resolve_fds_bios(
+    _config: &BackendLoadConfig,
+    rom_path: &Path,
+) -> anyhow::Result<super::firmware::ResolvedFirmwareBytes> {
+    #[cfg(test)]
+    if let Some(bytes) = _config.fds_bios_override {
+        return Ok(super::firmware::ResolvedFirmwareBytes {
+            bytes: bytes.to_vec(),
+            manifest: zeff_emu_common::replay::ReplayFirmwareManifest::External {
+                firmware_id: "nintendo.fds.bios".to_owned(),
+                variant: Some("test-override".to_owned()),
+                sha256: zeff_firmware::sha256_bytes(bytes),
+            },
+        });
+    }
+
+    super::firmware::resolve_fds_bios_with_manifest(&_config.firmware_search_dirs, Some(rom_path))
 }
 
 fn is_fds_path(path: &Path) -> bool {
@@ -155,7 +183,7 @@ fn load_gba_backend(
     rom_data: &[u8],
     source_path: &Path,
     rom_path: &Path,
-    config: BackendLoadConfig,
+    config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
     let sample_rate = config
         .sample_rate
@@ -169,7 +197,7 @@ fn load_ws_backend(
     rom_data: &[u8],
     source_path: &Path,
     rom_path: &Path,
-    config: BackendLoadConfig,
+    config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
     let sample_rate = config
         .sample_rate
@@ -184,7 +212,7 @@ fn load_sega8_backend(
     rom_data: &[u8],
     source_path: &Path,
     rom_path: &Path,
-    config: BackendLoadConfig,
+    config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
     let sample_rate = config
         .sample_rate

@@ -36,6 +36,10 @@ impl FileDialog {
         self.inner.pick_file()
     }
 
+    pub(crate) fn pick_folder(self) -> Option<PathBuf> {
+        self.inner.pick_folder()
+    }
+
     pub(crate) fn save_file(self) -> Option<PathBuf> {
         self.inner.save_file()
     }

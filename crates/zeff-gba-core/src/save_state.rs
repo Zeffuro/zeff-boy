@@ -87,29 +87,29 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     }
 
     w.write_vec(&emu.bus.cartridge.dump_battery_data().unwrap_or_default());
-    w.write_u32(emu.bus.apu.sample_rate());
-    w.write_bool(emu.bus.apu.sample_generation_enabled());
-    for mute in emu.bus.apu.channel_mutes() {
-        w.write_bool(mute);
+    w.write_u32(crate::emulator::DEFAULT_SAMPLE_RATE);
+    w.write_bool(true);
+    for _ in 0..6 {
+        w.write_bool(false);
     }
     let apu_state = emu.bus.apu.save_state();
     w.write_vec(&apu_state.fifo_a);
     w.write_vec(&apu_state.fifo_b);
     w.write_u8(apu_state.current_a as u8);
     w.write_u8(apu_state.current_b as u8);
-    w.write_f64(apu_state.output_phase);
-    w.write_f64(apu_state.dac_phase);
-    write_f32(&mut w, apu_state.dac_accum_left);
-    write_f32(&mut w, apu_state.dac_accum_right);
-    w.write_u32(apu_state.dac_accum_count);
-    write_f32(&mut w, apu_state.last_dac_left);
-    write_f32(&mut w, apu_state.last_dac_right);
-    write_f32(&mut w, apu_state.output_filter_left);
-    write_f32(&mut w, apu_state.output_filter_right);
+    w.write_f64(0.0);
+    w.write_f64(0.0);
+    write_f32(&mut w, 0.0);
+    write_f32(&mut w, 0.0);
+    w.write_u32(0);
+    write_f32(&mut w, 0.0);
+    write_f32(&mut w, 0.0);
+    write_f32(&mut w, 0.0);
+    write_f32(&mut w, 0.0);
     w.write_u32(apu_state.psg_cycle_accum);
-    w.write_u64(apu_state.output_pairs_generated);
-    w.write_u64(apu_state.direct_pairs_generated);
-    w.write_u64(apu_state.psg_pairs_generated);
+    w.write_u64(0);
+    w.write_u64(0);
+    w.write_u64(0);
 
     Ok(w.into_bytes())
 }

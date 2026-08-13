@@ -2,6 +2,7 @@ mod audio;
 mod camera;
 mod controls;
 mod emulation;
+mod firmware;
 mod ui;
 mod video;
 
@@ -35,7 +36,15 @@ pub(crate) fn draw_settings_window(
         .resizable(true)
         .constrain_to(constrain_rect)
         .show(ctx, |ui| {
-            const TABS: &[&str] = &["Emulation", "Controls", "Audio", "Video", "UI", "Camera"];
+            const TABS: &[&str] = &[
+                "Emulation",
+                "Firmware",
+                "Controls",
+                "Audio",
+                "Video",
+                "UI",
+                "Camera",
+            ];
 
             ui.horizontal(|ui| {
                 for (i, &label) in TABS.iter().enumerate() {
@@ -54,9 +63,10 @@ pub(crate) fn draw_settings_window(
                 .show(ui, |ui| {
                     match state.settings_tab {
                         0 => emulation::draw(ui, settings, active_system),
-                        1 => controls::draw(ui, settings, state, active_system),
-                        2 => audio::draw(ui, settings),
-                        3 => video::draw(
+                        1 => firmware::draw(ui, settings),
+                        2 => controls::draw(ui, settings, state, active_system),
+                        3 => audio::draw(ui, settings),
+                        4 => video::draw(
                             ui,
                             settings,
                             active_system,
@@ -65,8 +75,8 @@ pub(crate) fn draw_settings_window(
                             #[cfg(target_arch = "wasm32")]
                             emu.nes_palette_file_slot.clone(),
                         ),
-                        4 => ui::draw(ui, settings),
-                        5 => camera::draw(ui, settings, state),
+                        5 => ui::draw(ui, settings),
+                        6 => camera::draw(ui, settings, state),
                         _ => {}
                     }
 

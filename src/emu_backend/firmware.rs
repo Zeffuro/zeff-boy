@@ -1,5 +1,11 @@
 use super::ActiveSystem;
 
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedFirmwareBytes {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) manifest: zeff_emu_common::replay::ReplayFirmwareManifest,
+}
+
 pub(crate) fn firmware_plan_for_active_system(
     system: ActiveSystem,
 ) -> Vec<zeff_firmware::FirmwareRequest> {
@@ -13,4 +19,472 @@ pub(crate) fn firmware_plan_for_active_system(
         ActiveSystem::MasterSystem | ActiveSystem::Sg1000 => ExistingCoreSystem::MasterSystem,
         ActiveSystem::GameGear => ExistingCoreSystem::GameGear,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_fds_bios(
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<Vec<u8>> {
+    Ok(resolve_fds_bios_with_manifest(firmware_roots, content_path)?.bytes)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_fds_bios_with_manifest(
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    use anyhow::Context;
+
+    const FDS_BIOS_ID: &str = "nintendo.fds.bios";
+
+    let catalog = zeff_firmware::catalog_specs();
+    let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
+    let expected_filenames = expected_filenames_for_plan(catalog, &plan);
+    let search_dirs = firmware_search_dirs(firmware_roots, content_path);
+    let mut candidate_summaries = Vec::new();
+
+    for search_dir in &search_dirs {
+        let inventory = match search_dir.mode {
+            FirmwareSearchMode::FullDirectory => {
+                zeff_firmware::FirmwareInventory::from_directory(&search_dir.path, catalog)
+                    .with_context(|| {
+                        format!(
+                            "failed to scan firmware directory {}",
+                            search_dir.path.display()
+                        )
+                    })?
+            }
+            FirmwareSearchMode::KnownFilenamesOnly => {
+                scan_known_firmware_filenames(&search_dir.path, &expected_filenames, catalog)
+            }
+        };
+        if inventory.entries().is_empty() {
+            continue;
+        }
+
+        let resolution = zeff_firmware::FirmwareResolver::new(catalog, &inventory).resolve(&plan);
+        for entry in &resolution.entries {
+            if entry.request.id.as_ref() != FDS_BIOS_ID {
+                continue;
+            }
+            if let zeff_firmware::FirmwareSelection::External(firmware) = &entry.selection {
+                log::info!(
+                    "Resolved FDS BIOS from {} in {}",
+                    firmware.original_filename.as_deref().unwrap_or("<unknown>"),
+                    search_dir.path.display()
+                );
+                return Ok(ResolvedFirmwareBytes {
+                    bytes: firmware.bytes.to_vec(),
+                    manifest: replay_firmware_manifest(firmware.selection_manifest()),
+                });
+            }
+
+            let candidate_summary = fds_firmware_candidate_summary(&entry.candidates);
+            if !candidate_summary.is_empty() {
+                candidate_summaries.push(format!(
+                    "{}: {}",
+                    search_dir.path.display(),
+                    candidate_summary
+                ));
+            }
+        }
+    }
+
+    let searched = if search_dirs.is_empty() {
+        "no firmware directories were available".to_owned()
+    } else {
+        search_dirs
+            .iter()
+            .map(|dir| match dir.mode {
+                FirmwareSearchMode::FullDirectory => dir.path.display().to_string(),
+                FirmwareSearchMode::KnownFilenamesOnly => {
+                    format!("{} (known firmware filenames only)", dir.path.display())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let candidate_summary = if candidate_summaries.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", candidate_summaries.join(" "))
+    };
+
+    anyhow::bail!(
+        "Famicom Disk System firmware is required. No recognized {FDS_BIOS_ID} was found. Searched: {searched}. Expected a known 8192-byte disksys.rom. Set Settings > Firmware > Firmware directory; dedicated firmware roots named BIOS, firmware, or system also scan immediate system subfolders. Zeff-boy also checks non-recursive firmware folders near the loaded ROM.{}",
+        candidate_summary
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_fds_bios(
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<Vec<u8>> {
+    anyhow::bail!(
+        "Famicom Disk System firmware is required, but browser firmware storage/import is not wired yet"
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_fds_bios_with_manifest(
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    anyhow::bail!(
+        "Famicom Disk System firmware is required, but browser firmware storage/import is not wired yet"
+    )
+}
+
+pub(crate) fn replay_firmware_manifest(
+    manifest: zeff_firmware::FirmwareSelectionManifest,
+) -> zeff_emu_common::replay::ReplayFirmwareManifest {
+    match manifest {
+        zeff_firmware::FirmwareSelectionManifest::External {
+            firmware_id,
+            variant,
+            sha256,
+        } => zeff_emu_common::replay::ReplayFirmwareManifest::External {
+            firmware_id: firmware_id.as_ref().to_owned(),
+            variant: variant.map(|variant| variant.as_ref().to_owned()),
+            sha256,
+        },
+        zeff_firmware::FirmwareSelectionManifest::Hle {
+            firmware_id,
+            implementation,
+            compatibility_version,
+        } => zeff_emu_common::replay::ReplayFirmwareManifest::Hle {
+            firmware_id: firmware_id.as_ref().to_owned(),
+            implementation,
+            compatibility_version,
+        },
+        zeff_firmware::FirmwareSelectionManifest::BuiltinOpenSource {
+            firmware_id,
+            implementation,
+            compatibility_version,
+            sha256,
+        } => zeff_emu_common::replay::ReplayFirmwareManifest::BuiltinOpenSource {
+            firmware_id: firmware_id.as_ref().to_owned(),
+            implementation,
+            compatibility_version,
+            sha256,
+        },
+        zeff_firmware::FirmwareSelectionManifest::Skipped {
+            firmware_id,
+            compatibility_version,
+        } => zeff_emu_common::replay::ReplayFirmwareManifest::Skipped {
+            firmware_id: firmware_id.as_ref().to_owned(),
+            compatibility_version,
+        },
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FirmwareSearchMode {
+    FullDirectory,
+    KnownFilenamesOnly,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FirmwareSearchDir {
+    path: std::path::PathBuf,
+    mode: FirmwareSearchMode,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn firmware_search_dirs(
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> Vec<FirmwareSearchDir> {
+    let mut out = Vec::new();
+    for root in firmware_roots {
+        push_configured_firmware_search_dirs(&mut out, Some(root.clone()));
+    }
+
+    if let Some(content_parent) = content_path.and_then(std::path::Path::parent) {
+        push_firmware_search_dir(
+            &mut out,
+            Some(content_parent.to_path_buf()),
+            FirmwareSearchMode::KnownFilenamesOnly,
+        );
+        for name in FIRMWARE_ROOT_DIR_NAMES {
+            push_firmware_search_dir(
+                &mut out,
+                Some(content_parent.join(name)),
+                FirmwareSearchMode::KnownFilenamesOnly,
+            );
+        }
+
+        if let Some(collection_parent) = content_parent.parent() {
+            for name in FIRMWARE_ROOT_DIR_NAMES {
+                push_firmware_search_dir(
+                    &mut out,
+                    Some(collection_parent.join(name)),
+                    FirmwareSearchMode::KnownFilenamesOnly,
+                );
+            }
+        }
+    }
+
+    out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const FIRMWARE_ROOT_DIR_NAMES: &[&str] = &["bios", "BIOS Files", "firmware", "system"];
+
+#[cfg(not(target_arch = "wasm32"))]
+fn push_configured_firmware_search_dirs(
+    out: &mut Vec<FirmwareSearchDir>,
+    path: Option<std::path::PathBuf>,
+) {
+    let Some(path) = path else {
+        return;
+    };
+    if path.as_os_str().is_empty() {
+        return;
+    }
+
+    let scan_immediate_subdirs = is_dedicated_firmware_root(&path);
+    push_firmware_search_dir(out, Some(path.clone()), FirmwareSearchMode::FullDirectory);
+
+    if !scan_immediate_subdirs {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(&path) else {
+        return;
+    };
+    let mut subdirs = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let Ok(file_type) = entry.file_type() else {
+                return None;
+            };
+            file_type.is_dir().then(|| entry.path())
+        })
+        .collect::<Vec<_>>();
+    subdirs.sort();
+
+    for subdir in subdirs {
+        push_firmware_search_dir(out, Some(subdir), FirmwareSearchMode::FullDirectory);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_dedicated_firmware_root(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    FIRMWARE_ROOT_DIR_NAMES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn push_firmware_search_dir(
+    out: &mut Vec<FirmwareSearchDir>,
+    path: Option<std::path::PathBuf>,
+    mode: FirmwareSearchMode,
+) {
+    let Some(path) = path else {
+        return;
+    };
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    if out.iter().any(|existing| existing.path == path) {
+        return;
+    }
+    out.push(FirmwareSearchDir { path, mode });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn expected_filenames_for_plan(
+    catalog: &[zeff_firmware::FirmwareSpec],
+    plan: &[zeff_firmware::FirmwareRequest],
+) -> std::collections::BTreeSet<String> {
+    plan.iter()
+        .filter_map(|request| {
+            catalog
+                .iter()
+                .find(|spec| spec.id == request.id.as_ref())
+                .map(|spec| (request, spec))
+        })
+        .flat_map(|(_request, spec)| spec.variants.iter())
+        .flat_map(|variant| variant.filenames.iter())
+        .map(|filename| filename.to_ascii_lowercase())
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn scan_known_firmware_filenames(
+    dir: &std::path::Path,
+    expected_filenames: &std::collections::BTreeSet<String>,
+    catalog: &[zeff_firmware::FirmwareSpec],
+) -> zeff_firmware::FirmwareInventory {
+    let mut inventory = zeff_firmware::FirmwareInventory::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return inventory;
+    };
+    let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let filename = entry.file_name();
+        let Some(filename_str) = filename.to_str() else {
+            continue;
+        };
+        if !expected_filenames.contains(&filename_str.to_ascii_lowercase()) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(entry.path()) else {
+            continue;
+        };
+        inventory.add(zeff_firmware::FirmwareInventoryEntry::from_bytes(
+            bytes,
+            Some(filename_str.to_owned()),
+            catalog,
+        ));
+    }
+
+    inventory
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fds_firmware_candidate_summary(candidates: &[zeff_firmware::FirmwareCandidate]) -> String {
+    if candidates.is_empty() {
+        return String::new();
+    }
+
+    let names = candidates
+        .iter()
+        .filter_map(|candidate| candidate.original_filename.as_deref())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        " Candidate files had plausible size but unknown names/hashes.".to_owned()
+    } else {
+        format!(
+            " Candidate file(s) with plausible size but unrecognized hash: {}.",
+            names.join(", ")
+        )
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_near_firmware_search_is_nonrecursive_and_limited() {
+        let dirs = firmware_search_dirs(
+            &[],
+            Some(std::path::Path::new(
+                "Z:/Android/Roms/FDS/Bubble Bobble.fds",
+            )),
+        );
+
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: std::path::PathBuf::from("Z:/Android/Roms/FDS"),
+            mode: FirmwareSearchMode::KnownFilenamesOnly,
+        }));
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: std::path::PathBuf::from("Z:/Android/Roms/FDS/bios"),
+            mode: FirmwareSearchMode::KnownFilenamesOnly,
+        }));
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: std::path::PathBuf::from("Z:/Android/Roms/FDS/BIOS Files"),
+            mode: FirmwareSearchMode::KnownFilenamesOnly,
+        }));
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: std::path::PathBuf::from("Z:/Android/Roms/bios"),
+            mode: FirmwareSearchMode::KnownFilenamesOnly,
+        }));
+        assert!(
+            !dirs
+                .iter()
+                .any(|dir| dir.path == std::path::Path::new("Z:/Android/Roms"))
+        );
+    }
+
+    #[test]
+    fn configured_bios_root_searches_immediate_system_subdirs() {
+        let root = std::env::temp_dir()
+            .join(format!(
+                "zeff_configured_firmware_root_{}",
+                std::process::id()
+            ))
+            .join("BIOS");
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+        std::fs::create_dir_all(root.join("FDS")).expect("FDS firmware dir should be created");
+        std::fs::create_dir_all(root.join("PlayStation"))
+            .expect("PlayStation firmware dir should be created");
+
+        let dirs = firmware_search_dirs(std::slice::from_ref(&root), None);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: root.clone(),
+            mode: FirmwareSearchMode::FullDirectory,
+        }));
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: root.join("FDS"),
+            mode: FirmwareSearchMode::FullDirectory,
+        }));
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: root.join("PlayStation"),
+            mode: FirmwareSearchMode::FullDirectory,
+        }));
+    }
+
+    #[test]
+    fn configured_non_firmware_root_does_not_scan_immediate_subdirs() {
+        let root = std::env::temp_dir()
+            .join(format!("zeff_configured_rom_root_{}", std::process::id()))
+            .join("Roms");
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+        std::fs::create_dir_all(root.join("FDS")).expect("FDS ROM dir should be created");
+
+        let dirs = firmware_search_dirs(std::slice::from_ref(&root), None);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+
+        assert!(dirs.contains(&FirmwareSearchDir {
+            path: root.clone(),
+            mode: FirmwareSearchMode::FullDirectory,
+        }));
+        assert!(!dirs.contains(&FirmwareSearchDir {
+            path: root.join("FDS"),
+            mode: FirmwareSearchMode::FullDirectory,
+        }));
+    }
+
+    #[test]
+    fn known_filename_scan_ignores_unrelated_rom_files() {
+        let root =
+            std::env::temp_dir().join(format!("zeff_known_firmware_scan_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).expect("temp dir should be created");
+        std::fs::write(root.join("game.fds"), vec![0x55; 65_500]).unwrap();
+        std::fs::write(root.join("DISKSYS.ROM"), vec![0xAA; 8_192]).unwrap();
+
+        let catalog = zeff_firmware::catalog_specs();
+        let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
+        let expected = expected_filenames_for_plan(catalog, &plan);
+        let inventory = scan_known_firmware_filenames(&root, &expected, catalog);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(inventory.entries().len(), 1);
+        assert_eq!(
+            inventory.entries()[0].original_filename.as_deref(),
+            Some("DISKSYS.ROM")
+        );
+    }
 }

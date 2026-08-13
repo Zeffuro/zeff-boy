@@ -1,8 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use zeff_emu_common::replay::ReplayFirmwareManifest;
+
 pub(crate) struct BackendPaths {
     rom_path: PathBuf,
     source_path: PathBuf,
+    firmware_manifests: Vec<ReplayFirmwareManifest>,
 }
 
 impl BackendPaths {
@@ -14,6 +17,7 @@ impl BackendPaths {
         Self {
             rom_path,
             source_path,
+            firmware_manifests: Vec::new(),
         }
     }
 
@@ -23,5 +27,16 @@ impl BackendPaths {
 
     pub(crate) fn source_path(&self) -> &Path {
         &self.source_path
+    }
+
+    pub(crate) fn firmware_manifests(&self) -> &[ReplayFirmwareManifest] {
+        &self.firmware_manifests
+    }
+
+    pub(crate) fn set_firmware_manifests(
+        &mut self,
+        firmware_manifests: Vec<ReplayFirmwareManifest>,
+    ) {
+        self.firmware_manifests = firmware_manifests;
     }
 }

@@ -23,6 +23,7 @@ use gb::run_gb_headless;
 use gba::run_gba_headless;
 use input::{InputMasks, input_for_frame, input_p2_for_frame};
 use nes::run_nes_headless;
+use replay::run_replay_headless;
 use screenshots::*;
 use sega8::run_sega8_headless;
 use stuck::{
@@ -42,6 +43,7 @@ mod gb;
 mod gba;
 mod input;
 mod nes;
+mod replay;
 mod screenshots;
 mod sega8;
 mod stuck;
@@ -54,14 +56,26 @@ mod ws;
 pub(crate) fn run_headless(
     path: &Path,
     mode_preference: HardwareModePreference,
+    firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
     let (rom_path, rom_data, system) = load_headless_rom(path)?;
 
+    if opts.replay_path.is_some() {
+        return run_replay_headless(
+            path,
+            &rom_path,
+            rom_data,
+            system,
+            firmware_search_dirs,
+            opts,
+        );
+    }
+
     match system {
         ActiveSystem::GameBoy => run_gb_headless(&rom_path, &rom_data, mode_preference, opts),
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
-        ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, opts),
+        ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts),
         ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             run_sega8_headless(&rom_path, &rom_data, system, opts)

@@ -100,11 +100,13 @@ impl Apu {
         w.write_bool(self.irq_inhibit);
         w.write_bool(self.frame_irq);
         w.write_u64(self.frame_cycle);
-        w.write_f64(self.output_sample_rate);
-        w.write_f64(self.sample_accumulator);
+        w.write_f64(crate::emulator::DEFAULT_SAMPLE_RATE);
+        w.write_f64(0.0);
     }
 
     pub fn read_state(&mut self, r: &mut crate::save_state::StateReader) -> anyhow::Result<()> {
+        let runtime_output_sample_rate = self.output_sample_rate;
+
         self.pulse1.read_state(r)?;
         self.pulse2.read_state(r)?;
         self.triangle.read_state(r)?;
@@ -117,9 +119,11 @@ impl Apu {
         self.frame_reset_delay = 0;
         self.frame_irq_repeat = 0;
         self.frame_irq_suppression_ticks = 0;
-        self.output_sample_rate = r.read_f64()?;
-        self.sample_accumulator = r.read_f64()?;
-        self.output_filter = NesOutputFilter::new(self.output_sample_rate);
+        let _saved_output_sample_rate = r.read_f64()?;
+        let _saved_sample_accumulator = r.read_f64()?;
+        self.output_sample_rate = runtime_output_sample_rate;
+        self.sample_accumulator = 0.0;
+        self.output_filter = NesOutputFilter::new(runtime_output_sample_rate);
 
         self.sample_buffer.clear();
         self.master_debug_samples.clear();

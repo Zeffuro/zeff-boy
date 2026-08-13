@@ -190,10 +190,6 @@ impl Apu {
         }
     }
 
-    pub(crate) fn sample_generation_enabled(&self) -> bool {
-        self.sample_generation_enabled
-    }
-
     pub(crate) fn channel_mutes(&self) -> [bool; 6] {
         self.channel_mutes
     }

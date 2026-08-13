@@ -100,6 +100,7 @@ impl App {
                         MenuAction::StopReplayRecording => self.stop_replay_recording(),
                         MenuAction::LoadReplay => self.load_and_play_replay(),
                         MenuAction::TakeScreenshot => self.take_screenshot(),
+                        MenuAction::SetFdsDiskSide(side) => self.set_fds_disk_side(*side),
                         MenuAction::HostTcpLink => {
                             #[cfg(not(target_arch = "wasm32"))]
                             self.host_tcp_link();

@@ -165,6 +165,46 @@ pub(super) fn assert_save_state_replay_is_deterministic(
     );
 }
 
+pub(super) fn assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+    mut default_audio: EmuBackend,
+    mut alternate_audio: EmuBackend,
+) {
+    default_audio.set_sample_rate(44_100);
+
+    alternate_audio.set_sample_rate(96_000);
+    alternate_audio.set_apu_sample_generation_enabled(false);
+    alternate_audio.set_apu_channel_mutes(&[true, true, true, true, true, true]);
+
+    step_frames(&mut default_audio, 3);
+    step_frames(&mut alternate_audio, 3);
+
+    assert_eq!(default_audio.frame_count(), alternate_audio.frame_count());
+    assert_eq!(
+        default_audio.framebuffer(),
+        alternate_audio.framebuffer(),
+        "runtime audio output settings should not affect video output for identical input"
+    );
+
+    let default_state = default_audio
+        .encode_state_bytes()
+        .expect("backend should encode default-audio save-state");
+    let alternate_state = alternate_audio
+        .encode_state_bytes()
+        .expect("backend should encode alternate-audio save-state");
+
+    if default_state != alternate_state {
+        let first_diff = default_state
+            .iter()
+            .zip(&alternate_state)
+            .position(|(left, right)| left != right);
+        panic!(
+            "runtime audio output settings changed encoded deterministic state: default_len={} alternate_len={} first_diff={first_diff:?}",
+            default_state.len(),
+            alternate_state.len()
+        );
+    }
+}
+
 pub(super) fn assert_backend_feature_contract(
     mut backend: EmuBackend,
     system: ActiveSystem,

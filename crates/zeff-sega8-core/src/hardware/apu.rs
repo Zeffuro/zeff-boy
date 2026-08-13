@@ -15,6 +15,7 @@ const NOISE_MODE_WHITE: u8 = 0x04;
 const NOISE_PERIOD_MASK: u8 = 0x03;
 const MAX_SAVED_SAMPLE_BUFFER_LEN: usize = 262_144;
 const DEBUG_WAVEFORM_SAMPLE_COUNT: usize = 512;
+const CANONICAL_SAVED_SAMPLE_RATE: u32 = PSG_DEFAULT_SAMPLE_RATE;
 
 // SN76489 volume registers use 2 dB attenuation steps; 15 is silent.
 const VOLUME_TABLE: [f32; 16] = [
@@ -267,15 +268,12 @@ impl Psg {
         }
         write_i32(w, self.noise_counter_cycles);
         w.write_u16(self.noise_lfsr);
-        w.write_u32(self.sample_rate);
-        w.write_bool(self.sample_generation_enabled);
-        w.write_u32(self.sample_cycle_accumulator);
-        w.write_u32(self.sample_buffer.len() as u32);
-        for sample in &self.sample_buffer {
-            write_f32(w, *sample);
-        }
-        for muted in self.channel_mutes {
-            w.write_bool(muted);
+        w.write_u32(CANONICAL_SAVED_SAMPLE_RATE);
+        w.write_bool(true);
+        w.write_u32(0);
+        w.write_u32(0);
+        for _ in 0..PSG_CHANNEL_COUNT {
+            w.write_bool(false);
         }
     }
 
@@ -283,6 +281,10 @@ impl Psg {
         &mut self,
         r: &mut zeff_emu_common::save_state::StateReader<'_>,
     ) -> anyhow::Result<()> {
+        let runtime_sample_rate = self.sample_rate;
+        let runtime_sample_generation_enabled = self.sample_generation_enabled;
+        let runtime_channel_mutes = self.channel_mutes;
+
         self.last_write = if r.read_bool()? {
             Some(r.read_u8()?)
         } else {
@@ -307,9 +309,9 @@ impl Psg {
         }
         self.noise_counter_cycles = read_i32(r)?;
         self.noise_lfsr = r.read_u16()?;
-        self.sample_rate = r.read_u32()?.max(1);
-        self.sample_generation_enabled = r.read_bool()?;
-        self.sample_cycle_accumulator = r.read_u32()? % SEGA8_Z80_CLOCK_HZ_APPROX;
+        let _saved_sample_rate = r.read_u32()?;
+        let _saved_sample_generation_enabled = r.read_bool()?;
+        let _saved_sample_cycle_accumulator = r.read_u32()?;
         let sample_count = r.read_u32()? as usize;
         if sample_count > MAX_SAVED_SAMPLE_BUFFER_LEN {
             anyhow::bail!("Sega 8-bit save-state PSG sample buffer too large: {sample_count}");
@@ -319,9 +321,14 @@ impl Psg {
         for _ in 0..sample_count {
             self.sample_buffer.push(read_f32(r)?);
         }
-        for muted in &mut self.channel_mutes {
-            *muted = r.read_bool()?;
+        for _ in 0..PSG_CHANNEL_COUNT {
+            let _saved_mute = r.read_bool()?;
         }
+        self.sample_rate = runtime_sample_rate;
+        self.sample_generation_enabled = runtime_sample_generation_enabled;
+        self.sample_cycle_accumulator = 0;
+        self.channel_mutes = runtime_channel_mutes;
+        self.sample_buffer.clear();
         self.clear_debug_sample_history();
         Ok(())
     }
@@ -546,10 +553,6 @@ fn push_debug_sample(history: &mut VecDeque<f32>, sample: f32) {
 
 fn read_i32(r: &mut zeff_emu_common::save_state::StateReader<'_>) -> anyhow::Result<i32> {
     Ok(r.read_u32()? as i32)
-}
-
-fn write_f32(w: &mut zeff_emu_common::save_state::StateWriter, value: f32) {
-    w.write_u32(value.to_bits());
 }
 
 fn read_f32(r: &mut zeff_emu_common::save_state::StateReader<'_>) -> anyhow::Result<f32> {

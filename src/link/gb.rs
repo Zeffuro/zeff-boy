@@ -3,6 +3,7 @@ use std::io::Write;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent};
 use zeff_gb_core::emulator::Emulator as GameBoyEmulator;
 use zeff_gb_core::hardware::bus::{GameBoyLinkAction, GameBoyLinkReply};
 
@@ -19,6 +20,16 @@ const TRANSFER_REPLY_PAYLOAD_LEN: usize = 1 + 8 + 8 + 1 + 1 + 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GbTransferId(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingGameBoyMasterTransfer {
+    id: GbTransferId,
+    start_tick: u64,
+    clock_period_t_cycles: u64,
+    out_byte: u8,
+    serial_generation: u64,
+    boundary_waits: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GameBoyLinkPayloadError {
@@ -43,9 +54,174 @@ enum GameBoyLinkEvent {
 pub(crate) struct GameBoyRemoteLink<T: LinkTransport> {
     session: LinkSession<T>,
     next_transfer_id: u64,
-    pending_master_transfer: Option<GbTransferId>,
+    pending_master_transfer: Option<PendingGameBoyMasterTransfer>,
+    recorded_replay_events: Vec<ReplayEvent>,
     #[cfg(not(target_arch = "wasm32"))]
     trace: Option<LinkTrace>,
+}
+
+pub(crate) struct GameBoyReplayLink {
+    events: Vec<(u64, u64, ReplayGameBoyLinkEvent)>,
+    base_frame: u64,
+    cursor: usize,
+    pending_master_transfer: Option<u64>,
+}
+
+impl GameBoyReplayLink {
+    pub(crate) fn new(events: Vec<ReplayEvent>, base_frame: u64) -> Self {
+        let mut events: Vec<_> = events
+            .into_iter()
+            .filter_map(|event| {
+                if let ReplayEvent::GameBoyLink { frame, tick, event } = event {
+                    Some((frame, tick, event))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        events.sort_by_key(|(frame, tick, event)| (*frame, *tick, gb_replay_event_sort_key(event)));
+        Self {
+            events,
+            base_frame,
+            cursor: 0,
+            pending_master_transfer: None,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
+    pub(crate) fn poll_emulator(
+        &mut self,
+        emulator: &mut GameBoyEmulator,
+    ) -> Result<(), LinkSessionError> {
+        emulator.set_game_boy_link_peer_present(true);
+        self.apply_due_remote_master_starts(emulator)?;
+        self.send_pending_master_start(emulator)?;
+        self.apply_due_events(emulator)?;
+        if emulator.game_boy_link_waiting_at_completion_boundary() {
+            self.apply_pending_reply_at_boundary(emulator)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn trace_wait_boundary(&mut self, _cycle: u64, _context: &str) {}
+
+    fn send_pending_master_start(
+        &mut self,
+        emulator: &mut GameBoyEmulator,
+    ) -> Result<(), LinkSessionError> {
+        let Some(_action) = emulator.take_game_boy_link_action() else {
+            return Ok(());
+        };
+
+        if self.pending_master_transfer.is_some() {
+            return Err(LinkSessionError::MalformedPacketPayload);
+        }
+
+        let Some((_, _, ReplayGameBoyLinkEvent::RemoteReply { transfer_id, .. })) =
+            self.events.get(self.cursor).copied()
+        else {
+            return Err(LinkSessionError::MalformedPacketPayload);
+        };
+
+        self.pending_master_transfer = Some(transfer_id);
+        Ok(())
+    }
+
+    fn apply_due_remote_master_starts(
+        &mut self,
+        emulator: &mut GameBoyEmulator,
+    ) -> Result<(), LinkSessionError> {
+        loop {
+            let Some((frame, tick, event)) = self.events.get(self.cursor).copied() else {
+                return Ok(());
+            };
+            if self.absolute_event_frame(frame) > emulator.frame_count()
+                || tick > emulator.cpu_cycles()
+            {
+                return Ok(());
+            }
+            if !matches!(event, ReplayGameBoyLinkEvent::RemoteMasterStart { .. }) {
+                return Ok(());
+            }
+            self.cursor += 1;
+            self.apply_event(emulator, event)?;
+        }
+    }
+
+    fn absolute_event_frame(&self, replay_frame: u64) -> u64 {
+        self.base_frame.saturating_add(replay_frame)
+    }
+
+    fn apply_due_events(&mut self, emulator: &mut GameBoyEmulator) -> Result<(), LinkSessionError> {
+        loop {
+            let Some((frame, tick, event)) = self.events.get(self.cursor).copied() else {
+                return Ok(());
+            };
+            if self.absolute_event_frame(frame) > emulator.frame_count()
+                || tick > emulator.cpu_cycles()
+            {
+                return Ok(());
+            }
+            self.cursor += 1;
+
+            self.apply_event(emulator, event)?;
+        }
+    }
+
+    fn apply_pending_reply_at_boundary(
+        &mut self,
+        emulator: &mut GameBoyEmulator,
+    ) -> Result<(), LinkSessionError> {
+        let Some((_, _, event @ ReplayGameBoyLinkEvent::RemoteReply { transfer_id, .. })) =
+            self.events.get(self.cursor).copied()
+        else {
+            return Ok(());
+        };
+        if self.pending_master_transfer != Some(transfer_id) {
+            return Ok(());
+        }
+        self.cursor += 1;
+        self.apply_event(emulator, event)
+    }
+
+    fn apply_event(
+        &mut self,
+        emulator: &mut GameBoyEmulator,
+        event: ReplayGameBoyLinkEvent,
+    ) -> Result<(), LinkSessionError> {
+        match event {
+            ReplayGameBoyLinkEvent::RemoteMasterStart { out_byte, .. } => {
+                let reply = emulator.game_boy_link_reply_to_master_start();
+                if reply.passive {
+                    emulator.complete_game_boy_external_link_transfer(out_byte);
+                }
+                Ok(())
+            }
+            ReplayGameBoyLinkEvent::RemoteReply {
+                transfer_id,
+                out_byte,
+                passive,
+                serial_generation,
+            } => {
+                if self.pending_master_transfer != Some(transfer_id) {
+                    return Err(LinkSessionError::MalformedPacketPayload);
+                }
+                let applied = emulator.apply_game_boy_link_reply(GameBoyLinkReply {
+                    out_byte,
+                    passive,
+                    serial_generation,
+                });
+                if !applied {
+                    return Err(LinkSessionError::MalformedPacketPayload);
+                }
+                self.pending_master_transfer = None;
+                Ok(())
+            }
+        }
+    }
 }
 
 impl<T: LinkTransport> GameBoyRemoteLink<T> {
@@ -56,6 +232,7 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             session,
             next_transfer_id: 0,
             pending_master_transfer: None,
+            recorded_replay_events: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             trace,
         }
@@ -95,7 +272,9 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         emulator.set_game_boy_link_peer_present(true);
         self.drain_incoming(emulator)?;
         self.send_pending_master_start(emulator)?;
-        self.poll_for_pending_master_reply(emulator)?;
+        if emulator.game_boy_link_waiting_at_completion_boundary() {
+            self.poll_for_pending_master_reply(emulator)?;
+        }
         self.drain_incoming(emulator)?;
 
         Ok(())
@@ -107,16 +286,35 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
     }
 
     pub(crate) fn pending_master_transfer_id(&self) -> Option<u64> {
-        self.pending_master_transfer.map(|id| id.0)
+        self.pending_master_transfer.map(|pending| pending.id.0)
+    }
+
+    pub(crate) fn take_replay_events(&mut self) -> Vec<ReplayEvent> {
+        std::mem::take(&mut self.recorded_replay_events)
     }
 
     pub(crate) fn trace_wait_boundary(&mut self, cycle: u64, context: &str) {
-        self.trace(format!(
-            "wait pending_master context={} tick={} pending={:?}",
-            context,
-            cycle,
-            self.pending_master_transfer_id()
-        ));
+        let message = if let Some(pending) = &mut self.pending_master_transfer {
+            pending.boundary_waits = pending.boundary_waits.saturating_add(1);
+            format!(
+                "wait completion_boundary context={} tick={} pending={} start={} elapsed={} period={} out={:02X} gen={} waits={}",
+                context,
+                cycle,
+                pending.id.0,
+                pending.start_tick,
+                cycle.saturating_sub(pending.start_tick),
+                pending.clock_period_t_cycles,
+                pending.out_byte,
+                pending.serial_generation,
+                pending.boundary_waits
+            )
+        } else {
+            format!(
+                "wait completion_boundary context={} tick={} pending=None",
+                context, cycle
+            )
+        };
+        self.trace(message);
     }
 
     fn drain_incoming(&mut self, emulator: &mut GameBoyEmulator) -> Result<(), LinkSessionError> {
@@ -164,6 +362,15 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                     action.serial_generation,
                     format_reply(reply)
                 ));
+                self.record_replay_event(
+                    emulator,
+                    ReplayGameBoyLinkEvent::RemoteMasterStart {
+                        transfer_id: transfer_id.0,
+                        clock_period_t_cycles: action.clock_period_t_cycles,
+                        out_byte: action.out_byte,
+                        serial_generation: action.serial_generation,
+                    },
+                );
                 self.send_event(GameBoyLinkEvent::TransferReply {
                     transfer_id,
                     sample_tick: emulator.cpu_cycles(),
@@ -194,15 +401,24 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                     sample_tick,
                     format_reply(reply)
                 ));
-                if self.pending_master_transfer != Some(transfer_id) {
+                if self.pending_master_transfer.map(|pending| pending.id) != Some(transfer_id) {
                     self.trace(format!(
                         "protocol fault unexpected_reply id={} pending={:?}",
                         transfer_id.0,
-                        self.pending_master_transfer.map(|id| id.0)
+                        self.pending_master_transfer.map(|pending| pending.id.0)
                     ));
                     return Err(LinkSessionError::MalformedPacketPayload);
                 }
                 if emulator.apply_game_boy_link_reply(reply) {
+                    self.record_replay_event(
+                        emulator,
+                        ReplayGameBoyLinkEvent::RemoteReply {
+                            transfer_id: transfer_id.0,
+                            out_byte: reply.out_byte,
+                            passive: reply.passive,
+                            serial_generation: reply.serial_generation,
+                        },
+                    );
                     self.pending_master_transfer = None;
                     self.trace(format!(
                         "bound reply id={} in={:02X} passive={}",
@@ -229,14 +445,21 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         if self.pending_master_transfer.is_some() {
             self.trace(format!(
                 "protocol fault local_master_while_pending pending={:?} out={:02X}",
-                self.pending_master_transfer.map(|id| id.0),
+                self.pending_master_transfer.map(|pending| pending.id.0),
                 action.out_byte
             ));
             return Err(LinkSessionError::MalformedPacketPayload);
         }
 
         let transfer_id = self.allocate_transfer_id();
-        self.pending_master_transfer = Some(transfer_id);
+        self.pending_master_transfer = Some(PendingGameBoyMasterTransfer {
+            id: transfer_id,
+            start_tick: emulator.cpu_cycles(),
+            clock_period_t_cycles: action.clock_period_t_cycles,
+            out_byte: action.out_byte,
+            serial_generation: action.serial_generation,
+            boundary_waits: 0,
+        });
         self.trace(format!(
             "send master_start id={} tick={} out={:02X} period={} gen={}",
             transfer_id.0,
@@ -300,6 +523,14 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         GbTransferId(endpoint | counter)
     }
 
+    fn record_replay_event(&mut self, emulator: &GameBoyEmulator, event: ReplayGameBoyLinkEvent) {
+        self.recorded_replay_events.push(ReplayEvent::GameBoyLink {
+            frame: emulator.frame_count(),
+            tick: emulator.cpu_cycles(),
+            event,
+        });
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn trace(&mut self, message: String) {
         if let Some(trace) = &mut self.trace {
@@ -309,6 +540,13 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
 
     #[cfg(target_arch = "wasm32")]
     fn trace(&mut self, _message: String) {}
+}
+
+fn gb_replay_event_sort_key(event: &ReplayGameBoyLinkEvent) -> u8 {
+    match event {
+        ReplayGameBoyLinkEvent::RemoteMasterStart { .. } => 0,
+        ReplayGameBoyLinkEvent::RemoteReply { .. } => 1,
+    }
 }
 
 fn encode_game_boy_link_event(event: GameBoyLinkEvent) -> Vec<u8> {
@@ -538,6 +776,155 @@ mod tests {
         assert_eq!(left.cpu_peek8(SERIAL_SB), 0x34);
         assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0);
         assert_eq!(left.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn game_boy_remote_link_records_replay_events_for_endpoint() {
+        let (left_transport, right_transport) = LocalLinkTransport::pair();
+        let mut left_link = GameBoyRemoteLink::new(LinkSession::new(
+            left_transport,
+            LinkSystemType::GameBoy,
+            LinkEndpointId(1),
+        ));
+        let mut right_link = GameBoyRemoteLink::new(LinkSession::new(
+            right_transport,
+            LinkSystemType::GameBoy,
+            LinkEndpointId(2),
+        ));
+        let mut left = gb_emulator();
+        let mut right = gb_emulator();
+
+        left.set_game_boy_link_peer_present(true);
+        right.set_game_boy_link_peer_present(true);
+        left.write_byte(SERIAL_SB, 0xAB);
+        right.write_byte(SERIAL_SB, 0x34);
+        left.write_byte(SERIAL_SC, 0x81);
+        right.write_byte(SERIAL_SC, 0x80);
+
+        left_link.poll_emulator(&mut left).unwrap();
+        right_link.poll_emulator(&mut right).unwrap();
+        left_link.poll_emulator(&mut left).unwrap();
+
+        let left_events = left_link.take_replay_events();
+        let right_events = right_link.take_replay_events();
+
+        assert_eq!(
+            left_events,
+            vec![ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 4,
+                },
+            }]
+        );
+        assert_eq!(
+            right_events,
+            vec![ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0xAB,
+                    serial_generation: 4,
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn game_boy_replay_link_applies_recorded_reply_without_tcp_peer() {
+        let mut replay_link = GameBoyReplayLink::new(
+            vec![ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 4,
+                },
+            }],
+            0,
+        );
+        let mut gb = gb_emulator();
+
+        gb.write_byte(SERIAL_SB, 0xAB);
+        gb.write_byte(SERIAL_SC, 0x81);
+        replay_link.poll_emulator(&mut gb).unwrap();
+        gb.step_frame();
+
+        assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(gb.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn game_boy_replay_link_handles_simultaneous_remote_master_before_reply() {
+        let mut replay_link = GameBoyReplayLink::new(
+            vec![
+                ReplayEvent::GameBoyLink {
+                    frame: 0,
+                    tick: 0,
+                    event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                        transfer_id: 0x0200_0000_0000_0000,
+                        clock_period_t_cycles: 4096,
+                        out_byte: 0x56,
+                        serial_generation: 4,
+                    },
+                },
+                ReplayEvent::GameBoyLink {
+                    frame: 0,
+                    tick: 0,
+                    event: ReplayGameBoyLinkEvent::RemoteReply {
+                        transfer_id: 0x0100_0000_0000_0000,
+                        out_byte: 0x34,
+                        passive: false,
+                        serial_generation: 4,
+                    },
+                },
+            ],
+            0,
+        );
+        let mut gb = gb_emulator();
+
+        gb.write_byte(SERIAL_SB, 0xAB);
+        gb.write_byte(SERIAL_SC, 0x81);
+        replay_link.poll_emulator(&mut gb).unwrap();
+        gb.step_frame();
+
+        assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(gb.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn game_boy_remote_link_does_not_spin_wait_for_early_pending_reply() {
+        let (left_transport, _right_transport) = LocalLinkTransport::pair();
+        let mut left_link = GameBoyRemoteLink::new(LinkSession::new(
+            left_transport,
+            LinkSystemType::GameBoy,
+            LinkEndpointId(1),
+        ));
+        let mut left = gb_emulator();
+
+        left.set_game_boy_link_peer_present(true);
+        left.write_byte(SERIAL_SB, 0xAB);
+        left.write_byte(SERIAL_SC, 0x81);
+
+        left_link.poll_emulator(&mut left).unwrap();
+
+        assert_eq!(
+            left_link.pending_master_transfer_id(),
+            Some(0x0100_0000_0000_0000)
+        );
+        assert!(!left.game_boy_link_waiting_at_completion_boundary());
+        assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
+        assert_eq!(left.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
     }
 
     #[test]

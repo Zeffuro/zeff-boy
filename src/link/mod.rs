@@ -48,6 +48,13 @@ impl<T: LinkTransport> RemoteLink<T> {
             Self::WonderSwan(link) => link.disconnect(),
         }
     }
+
+    pub(crate) fn take_replay_events(&mut self) -> Vec<zeff_emu_common::replay::ReplayEvent> {
+        match self {
+            Self::GameBoy(link) => link.take_replay_events(),
+            Self::WonderSwan(..) => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]

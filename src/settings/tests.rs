@@ -57,6 +57,44 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.gamepad_bindings.get_p2(BindingAction::A), "South");
     assert_eq!(s.gamepad_bindings.get(BindingAction::L), "LeftTrigger");
     assert_eq!(s.gamepad_bindings.get(BindingAction::R), "RightTrigger");
+    assert_eq!(s.emulation.firmware_directory, "");
+    assert_eq!(s.emulation.firmware_directory_path(), None);
+}
+
+#[test]
+fn firmware_directory_setting_roundtrip_and_trims_empty_path() {
+    let mut s = Settings::default();
+    s.emulation.firmware_directory = "  ".to_string();
+    assert_eq!(s.emulation.firmware_directory_path(), None);
+
+    s.emulation.firmware_directory = "F:/Firmware".to_string();
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored.emulation.firmware_directory, "F:/Firmware");
+    assert_eq!(
+        restored.emulation.firmware_directory_path(),
+        Some(PathBuf::from("F:/Firmware"))
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn firmware_search_dirs_use_configured_dir_before_legacy_env_fallback() {
+    let mut s = Settings::default();
+    s.emulation.firmware_directory = "F:/Firmware".to_string();
+
+    let dirs = s
+        .emulation
+        .firmware_search_dirs_with_env(Some(PathBuf::from("F:/EnvFirmware")));
+
+    assert_eq!(
+        dirs,
+        vec![
+            PathBuf::from("F:/Firmware"),
+            PathBuf::from("F:/EnvFirmware")
+        ]
+    );
 }
 
 #[test]

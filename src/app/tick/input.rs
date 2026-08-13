@@ -88,21 +88,21 @@ impl App {
         frames_to_step: usize,
         buttons: u8,
         dpad: u8,
+        host_tilt: (f32, f32),
+        host_camera_frame: Option<&[u8]>,
     ) -> Option<Vec<ReplayJoypadFrame>> {
         if frames_to_step == 0 {
             return None;
         }
 
         if let Some(batch) = self.recording.pending_replay_batches.front() {
-            return Some(batch.frames.iter().copied().take(frames_to_step).collect());
+            return Some(batch.frames.iter().take(frames_to_step).cloned().collect());
         }
 
         if let Some(player) = self.recording.replay_player.as_ref() {
+            let frames_to_step = player.frames_until_next_event(frames_to_step);
             let frames = player
-                .peek_frames(self.recording.queued_replay_playback_frames, frames_to_step)
-                .into_iter()
-                .map(|(buttons, dpad)| ReplayJoypadFrame { buttons, dpad })
-                .collect::<Vec<_>>();
+                .peek_joypad_frames(self.recording.queued_replay_playback_frames, frames_to_step);
 
             if frames.is_empty() {
                 self.toast_manager.info("Replay finished");
@@ -123,7 +123,34 @@ impl App {
         }
 
         if self.recording.replay_recorder.is_some() {
-            let frames = vec![ReplayJoypadFrame { buttons, dpad }; frames_to_step];
+            let (buttons_p2, dpad_p2) = self.current_host_joypad_p2_input();
+            let zapper = if self.active_system == crate::emu_backend::ActiveSystem::Nes {
+                self.nes_zapper_input().into()
+            } else {
+                Default::default()
+            };
+            let host_tilt = if self.rom_info.is_mbc7 {
+                host_tilt
+            } else {
+                (0.0, 0.0)
+            };
+            let camera_frame = self
+                .rom_info
+                .is_pocket_camera
+                .then(|| host_camera_frame.map(<[u8]>::to_vec))
+                .flatten();
+            let frames = vec![
+                ReplayJoypadFrame {
+                    buttons,
+                    dpad,
+                    buttons_p2,
+                    dpad_p2,
+                    zapper,
+                    host_tilt,
+                    camera_frame,
+                };
+                frames_to_step
+            ];
             self.recording
                 .pending_replay_batches
                 .push_back(PendingReplayBatch {

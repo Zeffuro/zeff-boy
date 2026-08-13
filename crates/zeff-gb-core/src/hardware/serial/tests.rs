@@ -181,14 +181,33 @@ fn late_reply_completes_ready_master_transfer_immediately() {
     let mut dev = DisconnectedDevice;
     assert!(serial.take_link_action().is_some());
     assert!(!serial.step(4096, &mut dev));
+    assert!(serial.waiting_at_link_completion_boundary());
     assert!(serial.apply_link_reply(GameBoyLinkReply {
         out_byte: 0xFF,
         passive: false,
         serial_generation: 0,
     }));
+    assert!(!serial.waiting_at_link_completion_boundary());
     assert_eq!(serial.sb, 0xFF);
     assert_eq!(serial.sc & 0x80, 0);
     assert_eq!(serial.pending_link_byte(), None);
+}
+
+#[test]
+fn link_completion_boundary_query_ignores_early_pending_reply() {
+    let mut serial = Serial::new();
+    serial.mode = HardwareMode::DMG;
+    serial.sb = 0xAB;
+    serial.set_link_peer_present(true);
+    serial.write_sc(0x81);
+
+    let mut dev = DisconnectedDevice;
+    assert!(serial.take_link_action().is_some());
+    assert!(!serial.waiting_at_link_completion_boundary());
+    assert!(!serial.step(4095, &mut dev));
+    assert!(!serial.waiting_at_link_completion_boundary());
+    assert!(!serial.step(1, &mut dev));
+    assert!(serial.waiting_at_link_completion_boundary());
 }
 
 #[test]

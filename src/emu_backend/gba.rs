@@ -76,6 +76,17 @@ impl GbaBackend {
     pub(crate) fn source_path(&self) -> &Path {
         self.paths.source_path()
     }
+
+    pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
+        self.paths.firmware_manifests()
+    }
+
+    pub(crate) fn set_firmware_manifests(
+        &mut self,
+        firmware_manifests: Vec<zeff_emu_common::replay::ReplayFirmwareManifest>,
+    ) {
+        self.paths.set_firmware_manifests(firmware_manifests);
+    }
 }
 
 impl EmulatorCore for GbaBackend {

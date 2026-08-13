@@ -52,11 +52,19 @@ pub(super) struct RecordingState {
     pub(super) replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
     pub(super) pending_replay_batches: VecDeque<PendingReplayBatch>,
     pub(super) queued_replay_playback_frames: usize,
+    pub(super) replay_recording_base_frame: u64,
+    pub(super) replay_media_events_pending: usize,
 }
 
 impl RecordingState {
     pub(super) fn is_audio_recording(&self) -> bool {
         self.audio_recorder.is_some()
+    }
+
+    pub(super) fn is_replay_active(&self) -> bool {
+        self.replay_recorder.is_some()
+            || self.replay_player.is_some()
+            || !self.pending_replay_batches.is_empty()
     }
 }
 
@@ -101,6 +109,7 @@ pub(super) struct CachedRomInfo {
     pub(super) rom_path: Option<PathBuf>,
     pub(super) source_path: Option<PathBuf>,
     pub(super) rom_hash: Option<[u8; 32]>,
+    pub(super) replay_metadata: Option<zeff_emu_common::replay::ReplayMetadata>,
 }
 
 pub(super) type PendingArchiveSelection = crate::rom_archive::PendingArchiveSelection;
@@ -131,3 +140,40 @@ pub(super) const MAX_IN_FLIGHT: usize = 2;
 pub(super) const MAX_FRAMES_PER_TICK: usize = 10;
 pub(super) const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 pub(super) const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recording_state() -> RecordingState {
+        RecordingState {
+            audio_recorder: None,
+            replay_recorder: None,
+            replay_player: None,
+            pending_replay_batches: VecDeque::new(),
+            queued_replay_playback_frames: 0,
+            replay_recording_base_frame: 0,
+            replay_media_events_pending: 0,
+        }
+    }
+
+    #[test]
+    fn replay_activity_includes_recording_and_pending_batches() {
+        let mut state = recording_state();
+        assert!(!state.is_replay_active());
+
+        state.replay_recorder = Some(zeff_emu_common::replay::ReplayRecorder::new(
+            PathBuf::from("test.zrpl"),
+            vec![],
+        ));
+        assert!(state.is_replay_active());
+
+        state.replay_recorder = None;
+        state.pending_replay_batches.push_back(PendingReplayBatch {
+            frames: Vec::new(),
+            record: false,
+            playback: true,
+        });
+        assert!(state.is_replay_active());
+    }
+}

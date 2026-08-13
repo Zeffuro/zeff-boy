@@ -690,6 +690,14 @@ impl Cartridge {
         self.mapper.load_battery_data(bytes)
     }
 
+    pub fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
+        self.mapper.set_fds_disk_side(side)
+    }
+
+    pub fn fds_disk_side(&self) -> Option<u8> {
+        self.mapper.fds_disk_side()
+    }
+
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {
         self.mapper.write_state(w);
     }

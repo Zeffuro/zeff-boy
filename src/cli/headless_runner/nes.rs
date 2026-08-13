@@ -3,11 +3,21 @@ use super::*;
 pub(super) fn run_nes_headless(
     path: &Path,
     rom_data: &[u8],
+    firmware_search_dirs: &[std::path::PathBuf],
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
     ensure_system_headless_options("nes", opts)?;
 
-    let mut emulator = NesEmulator::new(rom_data, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?;
+    let mut emulator = if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"))
+    {
+        let bios =
+            crate::emu_backend::firmware::resolve_fds_bios(firmware_search_dirs, Some(path))?;
+        NesEmulator::new_fds(rom_data, bios, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?
+    } else {
+        NesEmulator::new(rom_data, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?
+    };
     if !opts.no_sram
         && let Some(sram_path) = crate::emu_backend::nes::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {

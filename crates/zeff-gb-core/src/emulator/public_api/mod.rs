@@ -21,6 +21,10 @@ impl Emulator {
         self.bus.game_boy_link_pending_master_response()
     }
 
+    pub fn game_boy_link_waiting_at_completion_boundary(&self) -> bool {
+        self.bus.game_boy_link_waiting_at_completion_boundary()
+    }
+
     pub fn take_game_boy_link_action(&mut self) -> Option<crate::hardware::bus::GameBoyLinkAction> {
         self.bus.take_game_boy_link_action()
     }

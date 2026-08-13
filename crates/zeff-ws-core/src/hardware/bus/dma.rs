@@ -8,6 +8,106 @@ pub(super) struct SoundDma {
 }
 
 impl Bus {
+    fn dma_source_offset(&self) -> u16 {
+        u16::from_le_bytes([
+            self.io[usize::from(DMA_SOURCE_LO_PORT)],
+            self.io[usize::from(DMA_SOURCE_HI_PORT)],
+        ])
+    }
+
+    fn set_dma_source_offset(&mut self, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.io[usize::from(DMA_SOURCE_LO_PORT)] = lo;
+        self.io[usize::from(DMA_SOURCE_HI_PORT)] = hi;
+    }
+
+    fn dma_source_segment(&self) -> u16 {
+        u16::from(self.io[usize::from(DMA_SOURCE_SEGMENT_PORT)] & 0x0F)
+    }
+
+    fn set_dma_source_segment(&mut self, value: u16) {
+        self.io[usize::from(DMA_SOURCE_SEGMENT_PORT)] = (value & 0x0F) as u8;
+        self.io[usize::from(DMA_SOURCE_SEGMENT_HIGH_PORT)] = 0;
+    }
+
+    fn dma_destination(&self) -> u16 {
+        u16::from_le_bytes([
+            self.io[usize::from(DMA_DESTINATION_LO_PORT)],
+            self.io[usize::from(DMA_DESTINATION_HI_PORT)],
+        ])
+    }
+
+    fn set_dma_destination(&mut self, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.io[usize::from(DMA_DESTINATION_LO_PORT)] = lo;
+        self.io[usize::from(DMA_DESTINATION_HI_PORT)] = hi;
+    }
+
+    fn dma_length(&self) -> u16 {
+        u16::from_le_bytes([
+            self.io[usize::from(DMA_LENGTH_LO_PORT)],
+            self.io[usize::from(DMA_LENGTH_HI_PORT)],
+        ])
+    }
+
+    fn set_dma_length(&mut self, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.io[usize::from(DMA_LENGTH_LO_PORT)] = lo;
+        self.io[usize::from(DMA_LENGTH_HI_PORT)] = hi;
+    }
+
+    pub(super) fn run_dma_transfer(&mut self, control: u8) {
+        let mut source =
+            u32::from(self.dma_source_offset()) | (u32::from(self.dma_source_segment()) << 16);
+        let mut destination = u32::from(self.dma_destination());
+        let mut remaining = self.dma_length();
+        let decrement = control & 0x40 != 0;
+
+        if !self.gdma_source_accessible(source) {
+            return;
+        }
+
+        let transfer_cycles = if remaining == 0 {
+            0
+        } else {
+            5 + u32::from(remaining)
+        };
+
+        while remaining > 0 {
+            let lo = self.peek8(source);
+            let hi = self.peek8(source.wrapping_add(1));
+            self.write8(destination, lo);
+            self.write8(destination.wrapping_add(1), hi);
+            remaining = remaining.saturating_sub(2);
+            if decrement {
+                source = source.wrapping_sub(2);
+                destination = destination.wrapping_sub(2);
+            } else {
+                source = source.wrapping_add(2);
+                destination = destination.wrapping_add(2);
+            }
+        }
+
+        self.set_dma_source_offset(source as u16);
+        self.set_dma_source_segment((source >> 16) as u16);
+        self.set_dma_destination(destination as u16);
+        self.set_dma_length(0);
+        self.io[usize::from(DMA_CONTROL_PORT)] = control & 0x7F;
+        self.step_cycles(transfer_cycles);
+    }
+
+    fn gdma_source_accessible(&self, source: u32) -> bool {
+        match source & ADDRESS_MASK {
+            0x00000..=0x0FFFF => true,
+            0x10000..=0x1FFFF => false,
+            0x20000..=0x7FFFF => true,
+            0x80000..=0xFFFFF => {
+                self.io[usize::from(SYSTEM_CONTROL_PORT)] & SYSTEM_CTRL1_ROM_WAIT == 0
+            }
+            _ => false,
+        }
+    }
+
     fn sound_dma_source(&self) -> u32 {
         u32::from(u16::from_le_bytes([
             self.io[usize::from(SOUND_DMA_SOURCE_LO_PORT)],
