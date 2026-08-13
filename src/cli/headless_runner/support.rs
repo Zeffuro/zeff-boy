@@ -28,6 +28,12 @@ pub(super) fn ensure_system_headless_options(
     if opts.expect_ws_pass_fail_tiles && system != "ws" {
         anyhow::bail!("--expect-ws-pass-fail-tiles is only supported for WonderSwan headless runs");
     }
+    if opts.ws_link_peer_path.is_some() && system != "ws" {
+        anyhow::bail!("--ws-link-peer is only supported for WonderSwan headless runs");
+    }
+    if opts.expect_ws_link_bytes != 0 && system != "ws" {
+        anyhow::bail!("--expect-ws-link-bytes is only supported for WonderSwan headless runs");
+    }
     if opts.expect_sega8_sdsc.is_some() && !matches!(system, "sms" | "gg" | "sg") {
         anyhow::bail!("--expect-sega8-sdsc is only supported for Sega 8-bit headless runs");
     }
@@ -42,9 +48,12 @@ pub(super) fn ensure_system_headless_options(
     if opts.sega8_console_region.is_some() && !matches!(system, "sms" | "gg" | "sg") {
         anyhow::bail!("--sega8-console-region is only supported for Sega 8-bit headless runs");
     }
-    if !opts.input_events_p2.is_empty() && !matches!(system, "nes" | "sms" | "gg" | "sg") {
+    if !opts.input_events_p2.is_empty()
+        && !(matches!(system, "nes" | "sms" | "gg" | "sg")
+            || (system == "ws" && opts.ws_link_peer_path.is_some()))
+    {
         anyhow::bail!(
-            "--press-p2/--input-p2 is only supported for NES and Sega 8-bit headless runs"
+            "--press-p2/--input-p2 is only supported for NES, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
         );
     }
     if !opts.memory_dumps.is_empty() && system != "ws" {

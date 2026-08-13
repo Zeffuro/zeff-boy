@@ -71,6 +71,20 @@ pub(crate) fn parse_args() -> anyhow::Result<CliArgs> {
                 headless.expect_ws_pass_fail_tiles = true;
                 i += 1;
             }
+            "--ws-link-peer" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--ws-link-peer requires a peer ROM path or 'same'");
+                };
+                headless.ws_link_peer_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--expect-ws-link-bytes" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--expect-ws-link-bytes requires a numeric value");
+                };
+                headless.expect_ws_link_bytes = parse_u64_arg(value, "--expect-ws-link-bytes")?;
+                i += 2;
+            }
             "--expect-sega8-sdsc" | "--expect-sdsc" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires a string value", args[i]);

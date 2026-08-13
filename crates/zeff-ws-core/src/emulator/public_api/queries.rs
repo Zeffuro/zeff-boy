@@ -99,6 +99,10 @@ impl Emulator {
         self.bus.io_peek8(port)
     }
 
+    pub fn io_read8(&mut self, port: u16) -> u8 {
+        self.bus.io_read8(port)
+    }
+
     pub fn io_write8(&mut self, port: u16, value: u8) {
         self.bus.io_write8(port, value);
     }

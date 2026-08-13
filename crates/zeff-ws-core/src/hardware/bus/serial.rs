@@ -115,7 +115,7 @@ impl Uart {
     }
 
     pub(super) fn receive_byte(&mut self, value: u8, control: u8) {
-        if control & SERIAL_CONTROL_ENABLE == 0 || self.overrun {
+        if control & SERIAL_CONTROL_ENABLE == 0 {
             return;
         }
         if self.rx_ready {

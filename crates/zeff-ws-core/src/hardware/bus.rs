@@ -1046,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn serial_overrun_blocks_receive_until_reset() {
+    fn serial_overrun_latches_error_but_allows_receive_after_buffer_read() {
         let mut left = Bus::new(minimal_cart());
         let mut right = Bus::new(minimal_cart());
         left.io_write8(
@@ -1072,8 +1072,14 @@ mod tests {
         left.sync_wonder_swan_link_peer(&mut right);
         assert_eq!(
             right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_RX_READY,
-            0
+            SERIAL_STATUS_RX_READY
         );
+        assert_eq!(
+            right.io_read8(SERIAL_CONTROL_PORT) & SERIAL_STATUS_OVERRUN,
+            SERIAL_STATUS_OVERRUN,
+            "overrun remains software-visible until B3 bit 5 reset"
+        );
+        assert_eq!(right.io_read8(SERIAL_DATA_PORT), 0x33);
 
         right.io_write8(
             SERIAL_CONTROL_PORT,

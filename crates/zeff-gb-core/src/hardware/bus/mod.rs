@@ -479,7 +479,11 @@ impl Bus {
     }
 
     pub fn apply_game_boy_link_reply(&mut self, reply: GameBoyLinkReply) -> bool {
-        self.io.serial.apply_link_reply(reply)
+        let completed = self.io.serial.apply_link_reply(reply);
+        if completed && self.io.serial.pending_link_byte().is_none() {
+            self.if_reg |= 0x08;
+        }
+        completed
     }
 
     pub fn complete_game_boy_external_link_transfer(&mut self, peer_byte: u8) -> bool {

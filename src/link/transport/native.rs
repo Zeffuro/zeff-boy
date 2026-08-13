@@ -1,5 +1,5 @@
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -8,6 +8,8 @@ use std::thread::{self, JoinHandle};
 use super::{LinkConnectionState, LinkTransport, LinkTransportError};
 
 const MAX_TCP_PACKET_LEN: usize = u16::MAX as usize;
+const CONNECT_RETRY_ATTEMPTS: usize = 40;
+const CONNECT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
 
 pub(crate) const DEFAULT_TCP_LINK_ADDR: &str = "127.0.0.1:8765";
 
@@ -20,11 +22,13 @@ pub(crate) struct TcpLinkTransport {
 
 impl TcpLinkTransport {
     pub(crate) fn connect(addr: impl ToSocketAddrs) -> io::Result<Self> {
-        Self::from_stream(TcpStream::connect(addr)?)
+        let addrs = resolve_addrs(addr)?;
+        Self::from_stream(connect_with_retries(&addrs)?)
     }
 
     pub(crate) fn host_once(addr: impl ToSocketAddrs) -> io::Result<Self> {
-        let listener = TcpListener::bind(addr)?;
+        let addrs = resolve_addrs(addr)?;
+        let listener = bind_with_retries(&addrs)?;
         Self::accept_once(listener)
     }
 
@@ -53,6 +57,87 @@ impl TcpLinkTransport {
             shutdown_stream,
         })
     }
+}
+
+fn resolve_addrs(addr: impl ToSocketAddrs) -> io::Result<Vec<SocketAddr>> {
+    let addrs: Vec<_> = addr.to_socket_addrs()?.collect();
+    if addrs.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "link address did not resolve to any socket address",
+        ));
+    }
+    Ok(addrs)
+}
+
+fn connect_with_retries(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
+    retry_transient_link_open(|| try_connect_once(addrs))
+}
+
+fn bind_with_retries(addrs: &[SocketAddr]) -> io::Result<TcpListener> {
+    retry_transient_link_open(|| try_bind_once(addrs))
+}
+
+fn retry_transient_link_open<T>(mut attempt: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    let mut last_err = None;
+    for attempt_index in 0..CONNECT_RETRY_ATTEMPTS {
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                let transient = is_transient_link_open_error(&err);
+                last_err = Some(err);
+                if !transient || attempt_index + 1 == CONNECT_RETRY_ATTEMPTS {
+                    break;
+                }
+                thread::sleep(CONNECT_RETRY_DELAY);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "link address did not resolve to any socket address",
+        )
+    }))
+}
+
+fn try_connect_once(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
+    let mut last_err = None;
+    for addr in addrs {
+        match TcpStream::connect(addr) {
+            Ok(stream) => return Ok(stream),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "link address did not resolve to any socket address",
+        )
+    }))
+}
+
+fn try_bind_once(addrs: &[SocketAddr]) -> io::Result<TcpListener> {
+    let mut last_err = None;
+    for addr in addrs {
+        match TcpListener::bind(addr) {
+            Ok(listener) => return Ok(listener),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "link address did not resolve to any socket address",
+        )
+    }))
+}
+
+fn is_transient_link_open_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::AddrInUse | io::ErrorKind::ConnectionRefused | io::ErrorKind::TimedOut
+    )
 }
 
 impl LinkTransport for TcpLinkTransport {

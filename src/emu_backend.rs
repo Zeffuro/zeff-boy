@@ -19,6 +19,11 @@ pub(crate) use self::ws::WsBackend;
 
 use crate::emu_core_trait::EmulatorCore;
 
+#[cfg(not(target_arch = "wasm32"))]
+const WONDER_SWAN_REMOTE_LINK_WAIT_SPINS: usize = 2048;
+#[cfg(not(target_arch = "wasm32"))]
+const WONDER_SWAN_REMOTE_LINK_POLL_INTERVAL_CYCLES: u64 = 800;
+
 pub(crate) mod capabilities;
 pub(crate) mod cheats;
 pub(crate) mod firmware;
@@ -308,6 +313,7 @@ impl EmuBackend {
 
         link.poll_emulator(&mut gb.emu)?;
         if gb.emu.game_boy_link_pending_master_response() {
+            link.trace_wait_boundary(gb.emu.cpu_cycles(), "frame_start");
             return Ok(());
         }
 
@@ -318,6 +324,7 @@ impl EmuBackend {
                 return true;
             }
             if emulator.game_boy_link_pending_master_response() {
+                link.trace_wait_boundary(emulator.cpu_cycles(), "mid_frame");
                 return true;
             }
             false
@@ -342,17 +349,33 @@ impl EmuBackend {
         if ws.emu.is_cpu_suspended() {
             return Ok(());
         }
+        if !wait_for_wonder_swan_remote_link_window(&mut ws.emu, link)? {
+            return Ok(());
+        }
 
         ws.emu.clear_frame_ready();
+        let mut next_link_poll_cycle = ws
+            .emu
+            .cpu_cycles()
+            .saturating_add(WONDER_SWAN_REMOTE_LINK_POLL_INTERVAL_CYCLES);
         let guard = ws
             .emu
             .cpu_cycles()
             .wrapping_add(u64::from(zeff_ws_core::hardware::constants::CYCLES_PER_FRAME) * 2);
         while !ws.emu.frame_ready() && ws.emu.cpu_cycles() < guard {
+            if ws.emu.cpu_cycles() >= next_link_poll_cycle {
+                link.poll_emulator(&mut ws.emu)?;
+                if !wait_for_wonder_swan_remote_link_window(&mut ws.emu, link)? {
+                    return Ok(());
+                }
+                next_link_poll_cycle = ws
+                    .emu
+                    .cpu_cycles()
+                    .saturating_add(WONDER_SWAN_REMOTE_LINK_POLL_INTERVAL_CYCLES);
+            }
             if ws.emu.step_instruction().is_none() && ws.emu.is_cpu_suspended() {
                 break;
             }
-            link.poll_emulator(&mut ws.emu)?;
         }
         ws.emu.finish_frame();
         link.poll_emulator(&mut ws.emu)
@@ -512,6 +535,21 @@ impl EmuBackend {
             .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
         self.load_state_from_bytes(bytes)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_wonder_swan_remote_link_window(
+    emulator: &mut zeff_ws_core::emulator::Emulator,
+    link: &mut crate::link::ws::WonderSwanRemoteLink<crate::link::transport::TcpLinkTransport>,
+) -> Result<bool, crate::link::LinkSessionError> {
+    for _ in 0..WONDER_SWAN_REMOTE_LINK_WAIT_SPINS {
+        link.poll_emulator(emulator)?;
+        if link.can_advance(emulator) {
+            return Ok(true);
+        }
+        std::thread::yield_now();
+    }
+    Ok(false)
 }
 
 #[cfg(test)]

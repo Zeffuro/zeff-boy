@@ -77,10 +77,34 @@ pub(crate) fn fetch_tests(
         results.push(result);
     }
 
+    for (index, loaded) in tests.iter().enumerate() {
+        if !is_retryable_source_archive_prepare_failure(&results[index]) {
+            continue;
+        }
+
+        let result = fetch_one(loaded, sources, cli)?;
+        println!(
+            "{:<21} {:<7} {:<8} {} (retry)",
+            fetch_status_name(result.status),
+            result.core,
+            result.tier,
+            result.id
+        );
+        results[index] = result;
+    }
+
     Ok(FetchReport {
         selected_count: tests.len(),
         results,
     })
+}
+
+fn is_retryable_source_archive_prepare_failure(result: &FetchResult) -> bool {
+    result.status == FetchStatus::DownloadFailed
+        && result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("failed to prepare source archive "))
 }
 
 fn fetch_one(
@@ -620,6 +644,28 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn source_archive_prepare_download_failures_are_retryable() {
+        let mut result = FetchResult {
+            id: "gb/test".to_string(),
+            core: Core::Gb,
+            tier: Tier::Accuracy,
+            status: FetchStatus::DownloadFailed,
+            target: PathBuf::from("rom-tests/cache/gb/test.gb"),
+            source_id: Some("source".to_string()),
+            reason: Some("failed to prepare source archive source".to_string()),
+        };
+
+        assert!(is_retryable_source_archive_prepare_failure(&result));
+
+        result.reason = Some("HTTP request failed".to_string());
+        assert!(!is_retryable_source_archive_prepare_failure(&result));
+
+        result.status = FetchStatus::ArchiveEntryMissing;
+        result.reason = Some("failed to prepare source archive source".to_string());
+        assert!(!is_retryable_source_archive_prepare_failure(&result));
     }
 
     #[test]

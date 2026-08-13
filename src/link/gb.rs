@@ -106,6 +106,19 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         self.session.disconnect();
     }
 
+    pub(crate) fn pending_master_transfer_id(&self) -> Option<u64> {
+        self.pending_master_transfer.map(|id| id.0)
+    }
+
+    pub(crate) fn trace_wait_boundary(&mut self, cycle: u64, context: &str) {
+        self.trace(format!(
+            "wait pending_master context={} tick={} pending={:?}",
+            context,
+            cycle,
+            self.pending_master_transfer_id()
+        ));
+    }
+
     fn drain_incoming(&mut self, emulator: &mut GameBoyEmulator) -> Result<(), LinkSessionError> {
         loop {
             let Some(packet) = self.session.try_receive_packet()? else {
