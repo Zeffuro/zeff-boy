@@ -72,10 +72,13 @@ pub(in crate::cli::headless_runner) fn format_ws_bus_trace_line(
         }
         WsBusTraceEvent::IoWrite {
             port,
+            written_value,
             old_value,
             new_value,
         } => {
-            format!("iowrite port={port:04X} old={old_value:02X} new={new_value:02X}")
+            format!(
+                "iowrite port={port:04X} write={written_value:02X} old={old_value:02X} new={new_value:02X}"
+            )
         }
     };
     let pc = fetched.map_or_else(|| emulator.cpu_pc(), |fetch| fetch.pc);

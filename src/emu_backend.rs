@@ -373,7 +373,18 @@ impl EmuBackend {
                     .cpu_cycles()
                     .saturating_add(WONDER_SWAN_REMOTE_LINK_POLL_INTERVAL_CYCLES);
             }
-            if ws.emu.step_instruction().is_none() && ws.emu.is_cpu_suspended() {
+            let fetched = if link.trace_enabled() {
+                let (fetched, bus_events) = ws.emu.step_instruction_with_io_trace();
+                link.trace_serial_io_events(
+                    &ws.emu,
+                    fetched.or_else(|| ws.emu.last_fetch()),
+                    &bus_events,
+                );
+                fetched
+            } else {
+                ws.emu.step_instruction()
+            };
+            if fetched.is_none() && ws.emu.is_cpu_suspended() {
                 break;
             }
         }

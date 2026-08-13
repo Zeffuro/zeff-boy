@@ -1,5 +1,5 @@
 use crate::emulator::Emulator;
-use crate::hardware::bus::DebugTraceEvent;
+use crate::hardware::bus::{DebugTraceEvent, DebugTraceMode};
 use crate::hardware::constants::CYCLES_PER_FRAME;
 use crate::hardware::cpu::FetchedInstruction;
 use zeff_emu_common::address::Address;
@@ -23,19 +23,25 @@ impl Emulator {
     }
 
     pub fn step_instruction(&mut self) -> Option<FetchedInstruction> {
-        self.step_instruction_inner(false, false).0
+        self.step_instruction_inner(false, DebugTraceMode::None).0
     }
 
     pub fn step_instruction_with_bus_trace(
         &mut self,
     ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
-        self.step_instruction_inner(false, true)
+        self.step_instruction_inner(false, DebugTraceMode::MemoryAndIo)
+    }
+
+    pub fn step_instruction_with_io_trace(
+        &mut self,
+    ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
+        self.step_instruction_inner(false, DebugTraceMode::IoOnly)
     }
 
     pub(crate) fn step_instruction_inner(
         &mut self,
         skip_breakpoint_check: bool,
-        collect_bus_trace: bool,
+        requested_trace_mode: DebugTraceMode,
     ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
         if self.cpu.is_suspended() {
             return (None, Vec::new());
@@ -48,8 +54,13 @@ impl Emulator {
         }
 
         let watch_active = !self.debug.watchpoints.is_empty();
-        let trace_active = watch_active || collect_bus_trace;
-        self.bus.debug_trace_enabled = trace_active;
+        let trace_mode = if watch_active {
+            DebugTraceMode::MemoryAndIo
+        } else {
+            requested_trace_mode
+        };
+        let trace_active = trace_mode != DebugTraceMode::None;
+        self.bus.debug_trace_mode = trace_mode;
         if trace_active {
             self.bus.debug_trace_events.clear();
         }
@@ -62,7 +73,7 @@ impl Emulator {
             self.opcode_log.push(instruction.into());
         }
         let events = if trace_active {
-            self.bus.debug_trace_enabled = false;
+            self.bus.debug_trace_mode = DebugTraceMode::None;
             self.bus.take_debug_trace_events()
         } else {
             Vec::new()
@@ -90,7 +101,7 @@ impl Emulator {
             }
         }
 
-        let bus_trace_events = if collect_bus_trace {
+        let bus_trace_events = if requested_trace_mode != DebugTraceMode::None {
             events
         } else {
             Vec::new()

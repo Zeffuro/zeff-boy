@@ -37,9 +37,18 @@ pub enum DebugTraceEvent {
     },
     IoWrite {
         port: u16,
+        written_value: u8,
         old_value: u8,
         new_value: u8,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DebugTraceMode {
+    #[default]
+    None,
+    MemoryAndIo,
+    IoOnly,
 }
 
 #[derive(Clone, Debug)]
@@ -60,7 +69,7 @@ pub struct Bus {
     cartridge_eeprom_write_enabled: bool,
     pending_linear_bank: Option<DeferredLinearBank>,
     pub cycles: u64,
-    pub(crate) debug_trace_enabled: bool,
+    pub(crate) debug_trace_mode: DebugTraceMode,
     pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
 }
 
@@ -91,7 +100,7 @@ impl Bus {
             cartridge_eeprom_write_enabled: false,
             pending_linear_bank: None,
             cycles: 0,
-            debug_trace_enabled: false,
+            debug_trace_mode: DebugTraceMode::None,
             debug_trace_events: Vec::new(),
         }
     }
@@ -123,7 +132,7 @@ impl Bus {
     pub fn read8(&mut self, addr: u32) -> u8 {
         let addr = addr & ADDRESS_MASK;
         let value = self.peek8(addr);
-        self.record(DebugTraceEvent::Read { addr, value });
+        self.record_memory(DebugTraceEvent::Read { addr, value });
         value
     }
 
@@ -153,7 +162,7 @@ impl Bus {
             _ => {}
         }
         let new_value = self.peek8(addr);
-        self.record(DebugTraceEvent::Write {
+        self.record_memory(DebugTraceEvent::Write {
             addr,
             old_value,
             new_value,
@@ -254,8 +263,14 @@ impl Bus {
         self.keypad.write(0x40);
     }
 
-    fn record(&mut self, event: DebugTraceEvent) {
-        if self.debug_trace_enabled {
+    fn record_memory(&mut self, event: DebugTraceEvent) {
+        if self.debug_trace_mode == DebugTraceMode::MemoryAndIo {
+            self.debug_trace_events.push(event);
+        }
+    }
+
+    fn record_io(&mut self, event: DebugTraceEvent) {
+        if self.debug_trace_mode != DebugTraceMode::None {
             self.debug_trace_events.push(event);
         }
     }

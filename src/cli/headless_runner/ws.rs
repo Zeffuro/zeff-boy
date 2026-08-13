@@ -377,6 +377,7 @@ fn run_ws_link_pair_headless(
     let start = Instant::now();
     let mut frames_run = 0u64;
     let mut stats = WsLinkPairStats::default();
+    let mut bus_traced = 0u64;
     for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
         let left_input = input_for_frame(opts, frame_number);
@@ -384,7 +385,7 @@ fn run_ws_link_pair_headless(
         left.set_input(left_input.buttons, left_input.dpad);
         right.set_input(right_input.buttons, right_input.dpad);
 
-        step_linked_ws_frame_pair(&mut left, &mut right, &mut stats);
+        step_linked_ws_frame_pair(&mut left, &mut right, &mut stats, opts, &mut bus_traced);
         frames_run = frame_number;
 
         if left.is_cpu_suspended() || right.is_cpu_suspended() {
@@ -446,7 +447,6 @@ fn ensure_ws_link_pair_options(opts: &HeadlessOptions) -> anyhow::Result<()> {
     if opts.expect_ws_text.is_some()
         || opts.expect_ws_pass_fail_tiles
         || opts.trace_opcodes
-        || !opts.trace_bus_filters.is_empty()
         || opts.trace_watch_interrupts
         || opts.load_state_path.is_some()
         || opts.screenshot_path.is_some()
@@ -458,7 +458,7 @@ fn ensure_ws_link_pair_options(opts: &HeadlessOptions) -> anyhow::Result<()> {
         || !opts.memory_dumps.is_empty()
     {
         anyhow::bail!(
-            "--ws-link-peer is currently a minimal link diagnostic mode; combine it only with --max-frames, --press, --press-p2, --input-script, --input-script-p2, --no-apu, --no-sram, and --expect-ws-link-bytes"
+            "--ws-link-peer is currently a minimal link diagnostic mode; combine it only with --max-frames, --press, --press-p2, --input-script, --input-script-p2, --trace-bus/--trace-bus-read/--trace-bus-write, --trace-bus-limit, --trace-start-t, --no-apu, --no-sram, and --expect-ws-link-bytes"
         );
     }
     Ok(())
@@ -479,6 +479,8 @@ fn step_linked_ws_frame_pair(
     left: &mut WsEmulator,
     right: &mut WsEmulator,
     stats: &mut WsLinkPairStats,
+    opts: &HeadlessOptions,
+    bus_traced: &mut u64,
 ) {
     use zeff_ws_core::hardware::constants::CYCLES_PER_FRAME;
 
@@ -502,12 +504,12 @@ fn step_linked_ws_frame_pair(
         || should_step_ws_frame_side(right, right_was_suspended, right_guard)
     {
         if should_step_ws_frame_side(left, left_was_suspended, left_guard) {
-            left.step_instruction();
+            step_ws_link_side(left, "left", opts, bus_traced);
         }
         drain_ws_link_events(left, right, &mut stats.left_to_right_tx);
 
         if should_step_ws_frame_side(right, right_was_suspended, right_guard) {
-            right.step_instruction();
+            step_ws_link_side(right, "right", opts, bus_traced);
         }
         drain_ws_link_events(right, left, &mut stats.right_to_left_tx);
 
@@ -524,6 +526,43 @@ fn step_linked_ws_frame_pair(
     }
     if !right_was_suspended {
         right.finish_frame();
+    }
+}
+
+fn step_ws_link_side(
+    emulator: &mut WsEmulator,
+    side: &str,
+    opts: &HeadlessOptions,
+    bus_traced: &mut u64,
+) {
+    let bus_trace_collecting = !opts.trace_bus_filters.is_empty()
+        && (opts.trace_bus_limit == 0 || *bus_traced < opts.trace_bus_limit);
+    if !bus_trace_collecting {
+        emulator.step_instruction();
+        return;
+    }
+
+    let (fetched, bus_events) = emulator.step_instruction_with_bus_trace();
+    if emulator.cpu_cycles() < opts.trace_start_t {
+        return;
+    }
+
+    for event in bus_events {
+        if opts.trace_bus_limit != 0 && *bus_traced >= opts.trace_bus_limit {
+            break;
+        }
+        if should_trace_ws_bus_event(opts, event) {
+            println!(
+                "[ws-link side={side}] {}",
+                format_ws_bus_trace_line(
+                    *bus_traced,
+                    emulator,
+                    fetched.or_else(|| emulator.last_fetch()),
+                    event,
+                )
+            );
+            *bus_traced = bus_traced.wrapping_add(1);
+        }
     }
 }
 

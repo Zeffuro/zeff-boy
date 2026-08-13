@@ -50,7 +50,7 @@ impl Bus {
             RTC_PAYLOAD_PORT => self.rtc.read_payload(),
             _ => self.io[usize::from(port)],
         };
-        self.record(DebugTraceEvent::IoRead { port, value });
+        self.record_io(DebugTraceEvent::IoRead { port, value });
         value
     }
 
@@ -227,8 +227,9 @@ impl Bus {
             _ => self.io[usize::from(port)] = value,
         }
         let new_value = self.io_peek8(port);
-        self.record(DebugTraceEvent::IoWrite {
+        self.record_io(DebugTraceEvent::IoWrite {
             port,
+            written_value: value,
             old_value,
             new_value,
         });

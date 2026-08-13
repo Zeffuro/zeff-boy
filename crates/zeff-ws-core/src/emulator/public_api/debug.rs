@@ -1,5 +1,6 @@
 use crate::emulator::Emulator;
 use crate::emulator::WsOpcodeRecord;
+use crate::hardware::bus::DebugTraceMode;
 use zeff_emu_common::address::Address;
 use zeff_emu_common::cheats::CheatByteTarget;
 use zeff_emu_common::debug::{AddressWatchHit, AddressWatchpoint, WatchType};
@@ -40,7 +41,7 @@ impl Emulator {
         self.debug.clear_hits();
         self.debug.break_on_next = false;
         self.cpu.resume();
-        let _ = self.step_instruction_inner(true, false);
+        let _ = self.step_instruction_inner(true, DebugTraceMode::None);
         self.cpu.suspend();
     }
 
