@@ -11,6 +11,8 @@ use crate::model::*;
 use crate::sources::{SourceKind, SourceSpec};
 use crate::util::{HashCheck, verify_file_hash, verify_rom_hash};
 
+const SOURCE_DOWNLOAD_ATTEMPTS: usize = 3;
+
 #[derive(Debug)]
 pub(crate) struct FetchReport {
     pub(crate) selected_count: usize,
@@ -389,16 +391,46 @@ fn ensure_source_archive(
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let bytes = match download_bytes(&source.url) {
-        Ok(bytes) => bytes,
-        Err(_) => return Ok(FetchStatus::DownloadFailed),
-    };
-    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))?;
+    download_source_archive_with_retries(source, path, download_bytes)
+}
 
-    match verify_file_hash(path, &source.sha256)? {
-        HashCheck::Ok | HashCheck::NoExpectedHash => Ok(FetchStatus::Downloaded),
-        HashCheck::Mismatch { .. } => Ok(FetchStatus::HashMismatch),
+fn download_source_archive_with_retries(
+    source: &SourceSpec,
+    path: &Path,
+    mut download: impl FnMut(&str) -> anyhow::Result<Vec<u8>>,
+) -> anyhow::Result<FetchStatus> {
+    let mut last_download_error = None;
+    let mut last_status = FetchStatus::DownloadFailed;
+
+    for _ in 0..SOURCE_DOWNLOAD_ATTEMPTS {
+        let bytes = match download(&source.url) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                last_download_error = Some(err);
+                last_status = FetchStatus::DownloadFailed;
+                continue;
+            }
+        };
+
+        fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))?;
+
+        match verify_file_hash(path, &source.sha256)? {
+            HashCheck::Ok | HashCheck::NoExpectedHash => return Ok(FetchStatus::Downloaded),
+            HashCheck::Mismatch { .. } => {
+                last_download_error = None;
+                last_status = FetchStatus::HashMismatch;
+            }
+        }
     }
+
+    if let Some(err) = last_download_error {
+        eprintln!(
+            "failed to download source archive {} after {} attempts: {err}",
+            source.id, SOURCE_DOWNLOAD_ATTEMPTS
+        );
+    }
+
+    Ok(last_status)
 }
 
 fn download_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
@@ -481,13 +513,18 @@ fn fetch_status_name(status: FetchStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     fn source(license_confidence: LicenseConfidence) -> SourceSpec {
+        source_with_sha256(license_confidence, "0".repeat(64))
+    }
+
+    fn source_with_sha256(license_confidence: LicenseConfidence, sha256: String) -> SourceSpec {
         SourceSpec {
             id: "source".to_string(),
             kind: SourceKind::Zip,
             url: "https://example.invalid/source.zip".to_string(),
-            sha256: "0".repeat(64),
+            sha256,
             archive_prefix: Some("archive-root".to_string()),
             archive_path_strip_prefix: Some("local-cache-root".to_string()),
             contains_built_roms: true,
@@ -496,6 +533,11 @@ mod tests {
             redistributable: false,
             notes: None,
         }
+    }
+
+    fn sha256_bytes(bytes: &[u8]) -> String {
+        let digest = Sha256::digest(bytes);
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     fn test_case(tier: Tier) -> TestCase {
@@ -543,6 +585,41 @@ mod tests {
             ),
             "archive-root/nes-test-roms/a.nes"
         );
+    }
+
+    #[test]
+    fn source_archive_download_retries_transient_failure() {
+        let bytes = b"ok".to_vec();
+        let source = source_with_sha256(LicenseConfidence::Verified, sha256_bytes(&bytes));
+        let test_dir = std::env::temp_dir().join(format!(
+            "zeff-romtest-fetch-retry-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&test_dir).expect("failed to create temporary test directory");
+        let target = test_dir.join("source.zip");
+        let mut attempts = 0;
+
+        let status = download_source_archive_with_retries(&source, &target, |_| {
+            attempts += 1;
+            if attempts == 1 {
+                anyhow::bail!("transient failure");
+            }
+            Ok(bytes.clone())
+        })
+        .expect("download should eventually succeed");
+
+        assert_eq!(status, FetchStatus::Downloaded);
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            std::fs::read(&target).expect("downloaded source should exist"),
+            bytes
+        );
+
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 
     #[test]

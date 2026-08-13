@@ -247,8 +247,8 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             if self.pending_master_transfer.is_none() {
                 return Ok(());
             }
-            match self.session.try_receive_packet()? {
-                Some(packet) => match packet.kind {
+            if let Some(packet) = self.session.try_receive_packet()? {
+                match packet.kind {
                     LinkPacketKind::LinkEvent => {
                         let event = decode_game_boy_link_event(&packet.payload)
                             .map_err(|_| LinkSessionError::MalformedPacketPayload)?;
@@ -262,11 +262,10 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                         ));
                     }
                     LinkPacketKind::Hello | LinkPacketKind::LinkState => {}
-                },
-                None => {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    std::thread::yield_now();
                 }
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                std::thread::yield_now();
             }
         }
 
