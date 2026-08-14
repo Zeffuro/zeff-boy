@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::camera::CameraCapture;
@@ -49,10 +51,13 @@ pub(super) struct RewindState {
 pub(super) struct RecordingState {
     pub(super) audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
     pub(super) replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) replay_finalization: Option<ReplayFinalizationState>,
     pub(super) replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
     pub(super) pending_replay_batches: VecDeque<PendingReplayBatch>,
     pub(super) queued_replay_playback_frames: usize,
     pub(super) replay_recording_base_frame: u64,
+    pub(super) replay_recording_base_game_boy_tick: Option<u64>,
     pub(super) replay_media_events_pending: usize,
 }
 
@@ -63,9 +68,64 @@ impl RecordingState {
 
     pub(super) fn is_replay_active(&self) -> bool {
         self.replay_recorder.is_some()
+            || self.is_replay_finalizing()
             || self.replay_player.is_some()
             || !self.pending_replay_batches.is_empty()
     }
+
+    pub(super) fn replay_recorder_for_commits(
+        &mut self,
+    ) -> Option<&mut zeff_emu_common::replay::ReplayRecorder> {
+        if let Some(recorder) = self.replay_recorder.as_mut() {
+            return Some(recorder);
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(ReplayFinalizationState::CapturingFinalState { recorder, .. }) =
+            self.replay_finalization.as_mut()
+        {
+            return Some(recorder);
+        }
+
+        None
+    }
+
+    pub(super) fn is_replay_finalizing(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.replay_finalization.is_some()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn is_replay_final_state_capture_pending(&self) -> bool {
+        matches!(
+            self.replay_finalization,
+            Some(ReplayFinalizationState::CapturingFinalState { .. })
+        )
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) enum ReplayFinalizationState {
+    CapturingFinalState {
+        recorder: Box<zeff_emu_common::replay::ReplayRecorder>,
+        frame_count: usize,
+    },
+    Saving {
+        frame_count: usize,
+        receiver: mpsc::Receiver<ReplaySaveResult>,
+    },
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct ReplaySaveResult {
+    pub(super) frame_count: usize,
+    pub(super) result: Result<PathBuf, String>,
 }
 
 pub(super) struct PendingReplayBatch {
@@ -149,10 +209,12 @@ mod tests {
         RecordingState {
             audio_recorder: None,
             replay_recorder: None,
+            replay_finalization: None,
             replay_player: None,
             pending_replay_batches: VecDeque::new(),
             queued_replay_playback_frames: 0,
             replay_recording_base_frame: 0,
+            replay_recording_base_game_boy_tick: None,
             replay_media_events_pending: 0,
         }
     }
@@ -175,5 +237,16 @@ mod tests {
             playback: true,
         });
         assert!(state.is_replay_active());
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            state.pending_replay_batches.clear();
+            let (_sender, receiver) = mpsc::channel();
+            state.replay_finalization = Some(ReplayFinalizationState::Saving {
+                frame_count: 0,
+                receiver,
+            });
+            assert!(state.is_replay_active());
+        }
     }
 }

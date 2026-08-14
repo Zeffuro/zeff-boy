@@ -207,6 +207,12 @@ impl EmuBackend {
         dispatch!(self, encode_state_bytes())
     }
 
+    pub(crate) fn encode_replay_hash_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = self.encode_state_bytes()?;
+        canonicalize_state_bytes_for_replay_hash(self.system(), &mut bytes);
+        Ok(bytes)
+    }
+
     pub(crate) fn rom_path(&self) -> &Path {
         dispatch!(self, rom_path())
     }
@@ -224,6 +230,8 @@ impl EmuBackend {
             events: Vec::new(),
             cheat_sha256: None,
             final_state_sha256: None,
+            game_boy_link_start_state: None,
+            game_boy_link_start_tick: None,
         }
     }
 
@@ -321,6 +329,13 @@ impl EmuBackend {
         dispatch!(self, frame_count())
     }
 
+    pub(crate) fn game_boy_cpu_cycles(&self) -> Option<u64> {
+        match self {
+            Self::Gb(gb) => Some(gb.emu.cpu_cycles()),
+            _ => None,
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn step_game_boy_frame_with_remote_link(
         &mut self,
@@ -331,8 +346,8 @@ impl EmuBackend {
         };
 
         link.poll_emulator(&mut gb.emu)?;
-        if gb.emu.game_boy_link_waiting_at_completion_boundary() {
-            link.trace_wait_boundary(gb.emu.cpu_cycles(), "frame_start");
+        if gb.emu.game_boy_link_pending_master_response() {
+            link.trace_wait_pending_master(gb.emu.cpu_cycles(), "frame_start");
             return Ok(());
         }
 
@@ -342,8 +357,69 @@ impl EmuBackend {
                 link_error = Some(err);
                 return true;
             }
-            if emulator.game_boy_link_waiting_at_completion_boundary() {
-                link.trace_wait_boundary(emulator.cpu_cycles(), "mid_frame");
+            if emulator.game_boy_link_pending_master_response() {
+                link.trace_wait_pending_master(emulator.cpu_cycles(), "mid_frame");
+                return true;
+            }
+            false
+        });
+
+        if let Some(err) = link_error {
+            return Err(err);
+        }
+        link.poll_emulator(&mut gb.emu)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_game_boy_frame_with_remote_link_after_tick(
+        &mut self,
+        link: &mut crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+        activation_tick: u64,
+    ) -> Result<(), crate::link::LinkSessionError> {
+        let Self::Gb(gb) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+
+        if gb.emu.cpu_cycles() >= activation_tick {
+            return link.poll_emulator(&mut gb.emu).and_then(|_| {
+                if gb.emu.game_boy_link_pending_master_response() {
+                    link.trace_wait_pending_master(gb.emu.cpu_cycles(), "frame_start");
+                    Ok(())
+                } else {
+                    let mut link_error = None;
+                    gb.emu.step_until_frame_or(|emulator| {
+                        if let Err(err) = link.poll_emulator(emulator) {
+                            link_error = Some(err);
+                            return true;
+                        }
+                        if emulator.game_boy_link_pending_master_response() {
+                            link.trace_wait_pending_master(emulator.cpu_cycles(), "mid_frame");
+                            return true;
+                        }
+                        false
+                    });
+
+                    if let Some(err) = link_error {
+                        return Err(err);
+                    }
+                    link.poll_emulator(&mut gb.emu)
+                }
+            });
+        }
+
+        gb.emu
+            .restore_game_boy_link_peer_present_without_action(false);
+        let mut link_error = None;
+        gb.emu.step_until_frame_or(|emulator| {
+            if emulator.cpu_cycles() < activation_tick {
+                return false;
+            }
+            if let Err(err) = link.poll_emulator(emulator) {
+                link_error = Some(err);
+                return true;
+            }
+            if emulator.game_boy_link_pending_master_response() {
+                link.trace_wait_pending_master(emulator.cpu_cycles(), "mid_frame_activation");
                 return true;
             }
             false
@@ -544,6 +620,28 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn game_boy_link_replay_state(
+        &self,
+    ) -> Option<zeff_emu_common::replay::ReplayGameBoyLinkState> {
+        match self {
+            Self::Gb(gb) => Some(gb.emu.game_boy_link_replay_state()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn restore_game_boy_link_replay_state(
+        &mut self,
+        state: zeff_emu_common::replay::ReplayGameBoyLinkState,
+    ) -> bool {
+        match self {
+            Self::Gb(gb) => {
+                gb.emu.restore_game_boy_link_replay_state(state);
+                true
+            }
+            _ => false,
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn sync_game_boy_remote_link_state(
         &mut self,
@@ -624,6 +722,12 @@ impl EmuBackend {
             .with_context(|| format!("failed to read save state: {}", path.display()))?
             .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
         self.load_state_from_bytes(bytes)
+    }
+}
+
+pub(crate) fn canonicalize_state_bytes_for_replay_hash(system: ActiveSystem, bytes: &mut [u8]) {
+    if system == ActiveSystem::GameBoy {
+        zeff_gb_core::save_state::canonicalize_replay_hash_bytes(bytes);
     }
 }
 

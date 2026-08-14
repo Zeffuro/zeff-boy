@@ -169,6 +169,7 @@ impl EmuThread {
                     Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
                         state_bytes: bytes,
                         frame_count: backend.frame_count(),
+                        game_boy_cpu_cycles: backend.game_boy_cpu_cycles(),
                         metadata: backend.replay_metadata(),
                     })),
                     Err(e) => EmuResponse::StateCaptureFailed(e.to_string()),
@@ -180,6 +181,8 @@ impl EmuThread {
                 buttons_pressed,
                 dpad_pressed,
                 replay_events: _,
+                game_boy_link_start_state: _,
+                game_boy_link_start_tick: _,
             } => {
                 let result = backend.load_state_from_bytes(state_bytes);
                 let resp = Self::respond_load_state(
@@ -192,6 +195,9 @@ impl EmuThread {
                 );
                 Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
                 pending_responses.push_back(resp);
+            }
+            EmuCommand::RestoreGameBoyLinkState(state) => {
+                backend.restore_game_boy_link_replay_state(state);
             }
             EmuCommand::UpdateCheats(patches) => {
                 *last_cheats = patches;

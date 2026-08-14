@@ -132,6 +132,12 @@ impl EmuLoop {
             EmuCommand::DisconnectLink => {
                 self.disconnect_tcp_link();
                 self.game_boy_replay_link = None;
+                if !self.send_resp(EmuResponse::LinkDisconnected {
+                    frame_count: self.backend.frame_count(),
+                    game_boy_link_state: self.backend.game_boy_link_replay_state(),
+                }) {
+                    return false;
+                }
             }
 
             EmuCommand::StepFrames(input) => {
@@ -241,6 +247,10 @@ impl EmuLoop {
                 }
             }
 
+            EmuCommand::RestoreGameBoyLinkState(state) => {
+                self.backend.restore_game_boy_link_replay_state(state);
+            }
+
             EmuCommand::CaptureStateBytes => {
                 let resp = match EmuThread::encode_current_state(&self.backend) {
                     Ok(bytes) => EmuResponse::StateCaptured(bytes),
@@ -252,11 +262,13 @@ impl EmuLoop {
             }
 
             EmuCommand::CaptureReplayStart => {
+                let metadata = self.capture_replay_metadata();
                 let resp = match EmuThread::encode_current_state(&self.backend) {
                     Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
                         state_bytes: bytes,
                         frame_count: self.backend.frame_count(),
-                        metadata: self.backend.replay_metadata(),
+                        game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
+                        metadata,
                     })),
                     Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
                 };
@@ -270,13 +282,42 @@ impl EmuLoop {
                 buttons_pressed,
                 dpad_pressed,
                 replay_events,
+                game_boy_link_start_state,
+                game_boy_link_start_tick,
             } => {
-                let result = self.backend.load_state_from_bytes(state_bytes);
+                let mut result = self.backend.load_state_from_bytes(state_bytes);
+                if result.is_ok()
+                    && let Some(expected_tick) = game_boy_link_start_tick
+                {
+                    result = match self.backend.game_boy_cpu_cycles() {
+                        Some(actual_tick) if actual_tick == expected_tick => Ok(()),
+                        Some(actual_tick) => Err(anyhow::anyhow!(
+                            "replay GB start tick mismatch: metadata={expected_tick}, state={actual_tick}"
+                        )),
+                        None => Err(anyhow::anyhow!(
+                            "replay declares a GB start tick but current backend is not Game Boy"
+                        )),
+                    };
+                }
                 if result.is_ok() {
+                    let has_game_boy_link_events = replay_events.as_ref().is_some_and(|events| {
+                        events.iter().any(|event| {
+                            matches!(
+                                event,
+                                zeff_emu_common::replay::ReplayEvent::GameBoyLink { .. }
+                                    | zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { .. }
+                            )
+                        })
+                    });
+                    if has_game_boy_link_events && let Some(state) = game_boy_link_start_state {
+                        self.backend.restore_game_boy_link_replay_state(state);
+                    }
                     self.game_boy_replay_link = replay_events.and_then(|events| {
                         let link = crate::link::gb::GameBoyReplayLink::new(
                             events,
                             self.backend.frame_count(),
+                            game_boy_link_start_tick,
+                            self.backend.game_boy_cpu_cycles().unwrap_or(0),
                         );
                         (!link.is_empty()).then_some(link)
                     });
@@ -392,6 +433,22 @@ impl EmuLoop {
         let _ = self.send_resp(EmuResponse::LinkPending(label));
     }
 
+    fn capture_replay_metadata(&mut self) -> zeff_emu_common::replay::ReplayMetadata {
+        let mut metadata = self.backend.replay_metadata();
+        let has_connected_game_boy_link = matches!(
+            self.tcp_link.as_ref(),
+            Some(RemoteLink::GameBoy(link)) if link.state() != LinkConnectionState::Disconnected
+        );
+        if has_connected_game_boy_link {
+            self.backend.set_link_peer_present(true);
+            metadata.game_boy_link_start_state = self
+                .backend
+                .game_boy_link_replay_state()
+                .filter(|state| !state.is_idle());
+        }
+        metadata
+    }
+
     fn poll_tcp_link_connection(&mut self) {
         let Some(pending) = self.pending_tcp_link.as_ref() else {
             return;
@@ -426,7 +483,11 @@ impl EmuLoop {
                         return;
                     }
                 });
-                let _ = self.send_resp(EmuResponse::LinkConnected(pending.label));
+                let _ = self.send_resp(EmuResponse::LinkConnected {
+                    label: pending.label,
+                    frame_count: self.backend.frame_count(),
+                    game_boy_link_state: self.backend.game_boy_link_replay_state(),
+                });
             }
             Err(err) => {
                 self.backend.set_link_peer_present(false);
@@ -443,7 +504,10 @@ impl EmuLoop {
         if disconnected {
             self.tcp_link = None;
             self.backend.set_link_peer_present(false);
-            let _ = self.send_resp(EmuResponse::LinkDisconnected);
+            let _ = self.send_resp(EmuResponse::LinkDisconnected {
+                frame_count: self.backend.frame_count(),
+                game_boy_link_state: self.backend.game_boy_link_replay_state(),
+            });
         }
     }
 

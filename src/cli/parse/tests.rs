@@ -10,6 +10,13 @@ fn parses_headless_replay_options() {
         "--headless",
         "--replay",
         "test.zrpl",
+        "--replay-peer",
+        "peer.zrpl",
+        "--replay-peer-live-link",
+        "--replay-tail-frames",
+        "12000",
+        "--expect-gb-link-events",
+        "2400",
         "--expect-replay-final-hash",
         "abc123",
         "game.gb",
@@ -21,8 +28,33 @@ fn parses_headless_replay_options() {
         headless.replay_path.unwrap(),
         std::path::PathBuf::from("test.zrpl")
     );
+    assert_eq!(
+        headless.replay_peer_path.unwrap(),
+        std::path::PathBuf::from("peer.zrpl")
+    );
+    assert!(headless.replay_peer_live_link);
+    assert_eq!(headless.replay_tail_frames, 12_000);
+    assert_eq!(headless.expect_gb_link_events, 2400);
     assert_eq!(headless.expect_replay_final_hash.as_deref(), Some("abc123"));
     assert_eq!(args.rom_path.as_deref(), Some("game.gb"));
+}
+
+#[test]
+fn replay_peer_requires_primary_replay() {
+    let err = match parse_args_from(["--headless", "--replay-peer", "peer.zrpl", "game.gb"]) {
+        Ok(_) => panic!("--replay-peer without --replay should fail"),
+        Err(err) => err,
+    };
+    assert!(format!("{err}").contains("--replay-peer requires --replay"));
+}
+
+#[test]
+fn replay_peer_live_link_requires_replay_peer() {
+    let err = match parse_args_from(["--headless", "--replay-peer-live-link", "game.gb"]) {
+        Ok(_) => panic!("--replay-peer-live-link without --replay-peer should fail"),
+        Err(err) => err,
+    };
+    assert!(format!("{err}").contains("--replay-peer-live-link requires --replay-peer"));
 }
 
 #[test]

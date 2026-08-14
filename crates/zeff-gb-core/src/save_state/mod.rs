@@ -4,7 +4,7 @@ mod bess;
 mod decode;
 mod encode;
 
-pub use bess::{has_bess_footer, import_bess};
+pub use bess::{canonicalize_replay_hash_bytes, has_bess_footer, import_bess};
 #[cfg(test)]
 use decode::decode_state;
 pub use decode::{decode_on_thread, validate_compatibility};

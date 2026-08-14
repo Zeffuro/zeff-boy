@@ -111,3 +111,59 @@ fn parses_zapper_command_with_screen_position() {
         }
     ));
 }
+
+#[test]
+fn parses_replay_recording_commands() {
+    let parsed = parse_wire_request(
+        r#"{"command":"record_replay","path":"Z:\\Android\\Roms\\GBC\\trade.zrpl"}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::StartReplayRecording { ref path }
+            if path == std::path::Path::new(r"Z:\Android\Roms\GBC\trade.zrpl")
+    ));
+
+    let parsed = parse_wire_request(r#"{"command":"stop_replay"}"#).unwrap();
+    assert!(matches!(parsed.command, LiveCommand::StopReplayRecording));
+}
+
+#[test]
+fn parses_link_control_commands() {
+    let parsed = parse_wire_request(r#"{"command":"host_link","addr":"127.0.0.1:19000"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::HostLink {
+            addr: Some(ref addr)
+        } if addr == "127.0.0.1:19000"
+    ));
+
+    let parsed = parse_wire_request(r#"{"command":"join_link","addr":"127.0.0.1:19000"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::JoinLink {
+            addr: Some(ref addr)
+        } if addr == "127.0.0.1:19000"
+    ));
+
+    let parsed = parse_wire_request(r#"{"command":"disconnect_link"}"#).unwrap();
+    assert!(matches!(parsed.command, LiveCommand::DisconnectLink));
+}
+
+#[test]
+fn parses_save_state_slot_commands() {
+    let parsed = parse_wire_request(r#"{"command":"load_state_slot","slot":0}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::LoadStateSlot { slot: 0 }
+    ));
+
+    let parsed = parse_wire_request(r#"{"command":"save_state_slot","slot":9}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::SaveStateSlot { slot: 9 }
+    ));
+
+    let err = parse_wire_request(r#"{"command":"load_state_slot","slot":10}"#).unwrap_err();
+    assert!(err.contains("slot must be between 0 and 9"));
+}

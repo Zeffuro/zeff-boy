@@ -24,6 +24,8 @@ struct WireRequest {
     enabled: Option<bool>,
     frames: Option<usize>,
     path: Option<String>,
+    slot: Option<u8>,
+    addr: Option<String>,
     space: Option<String>,
     start: Option<Value>,
     address: Option<Value>,
@@ -97,6 +99,37 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
                 .map(PathBuf::from)
                 .ok_or_else(|| "missing required field: path".to_string())?,
         },
+        "save_state_slot" | "savestateslot" | "state_save_slot" | "statesaveslot" => {
+            LiveCommand::SaveStateSlot {
+                slot: required_slot(&request)?,
+            }
+        }
+        "load_state_slot" | "loadstateslot" | "state_load_slot" | "stateloadslot" => {
+            LiveCommand::LoadStateSlot {
+                slot: required_slot(&request)?,
+            }
+        }
+        "start_replay_recording" | "startreplayrecording" | "record_replay" | "recordreplay" => {
+            LiveCommand::StartReplayRecording {
+                path: request
+                    .path
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "missing required field: path".to_string())?,
+            }
+        }
+        "stop_replay_recording" | "stopreplayrecording" | "stop_replay" | "stopreplay" => {
+            LiveCommand::StopReplayRecording
+        }
+        "host_link" | "hostlink" | "link_host" | "linkhost" => {
+            LiveCommand::HostLink { addr: request.addr }
+        }
+        "join_link" | "joinlink" | "connect_link" | "connectlink" | "link_join" | "linkjoin" => {
+            LiveCommand::JoinLink { addr: request.addr }
+        }
+        "disconnect_link" | "disconnectlink" | "link_disconnect" | "linkdisconnect" => {
+            LiveCommand::DisconnectLink
+        }
         "memory" | "read_memory" | "readmemory" => LiveCommand::MemoryRead {
             space: request
                 .space
@@ -115,6 +148,17 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
         id: request.id,
         command,
     })
+}
+
+fn required_slot(request: &WireRequest) -> Result<u8, String> {
+    let slot = request
+        .slot
+        .ok_or_else(|| "missing required field: slot".to_string())?;
+    if slot <= 9 {
+        Ok(slot)
+    } else {
+        Err("slot must be between 0 and 9".to_string())
+    }
 }
 
 fn optional_u32(value: &Option<Value>) -> Option<u32> {

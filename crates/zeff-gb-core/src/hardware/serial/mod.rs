@@ -5,6 +5,7 @@ use super::bus::{GameBoyLinkAction, GameBoyLinkReply, GameBoyLinkState};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
+use zeff_emu_common::replay::{ReplayGameBoyLinkAction, ReplayGameBoyLinkState};
 
 pub trait SerialDevice {
     fn exchange_byte(&mut self, byte: u8) -> u8;
@@ -166,6 +167,16 @@ impl Serial {
         }
     }
 
+    pub(super) fn restore_link_peer_present_without_action(&mut self, present: bool) {
+        self.link_peer_present = present;
+        if !present {
+            self.pending_link_byte = None;
+            self.pending_link_response = None;
+            self.pending_link_completion_ready = false;
+            self.queued_link_action = None;
+        }
+    }
+
     pub(super) fn pending_link_byte(&self) -> Option<u8> {
         self.pending_link_byte
     }
@@ -182,6 +193,36 @@ impl Serial {
 
     pub(super) fn take_link_action(&mut self) -> Option<GameBoyLinkAction> {
         self.queued_link_action.take()
+    }
+
+    pub(super) fn replay_link_state(&self) -> ReplayGameBoyLinkState {
+        ReplayGameBoyLinkState {
+            peer_present: self.link_peer_present,
+            pending_master_byte: self.pending_link_byte,
+            pending_master_response: self.pending_link_response,
+            pending_master_completion_ready: self.pending_link_completion_ready,
+            queued_master_action: self
+                .queued_link_action
+                .map(|action| ReplayGameBoyLinkAction {
+                    out_byte: action.out_byte,
+                    clock_period_t_cycles: action.clock_period_t_cycles,
+                    serial_generation: action.serial_generation,
+                }),
+            serial_generation: self.serial_generation,
+        }
+    }
+
+    pub(super) fn restore_replay_link_state(&mut self, state: ReplayGameBoyLinkState) {
+        self.link_peer_present = state.peer_present;
+        self.pending_link_byte = state.pending_master_byte;
+        self.pending_link_response = state.pending_master_response;
+        self.pending_link_completion_ready = state.pending_master_completion_ready;
+        self.queued_link_action = state.queued_master_action.map(|action| GameBoyLinkAction {
+            out_byte: action.out_byte,
+            clock_period_t_cycles: action.clock_period_t_cycles,
+            serial_generation: action.serial_generation,
+        });
+        self.serial_generation = state.serial_generation;
     }
 
     pub(super) fn link_state(&self) -> GameBoyLinkState {

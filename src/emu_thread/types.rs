@@ -128,6 +128,7 @@ pub(crate) struct FrameInput {
 pub(crate) struct FrameResult {
     pub(crate) advanced_frames: usize,
     pub(crate) replay_events: Vec<zeff_emu_common::replay::ReplayEvent>,
+    pub(crate) replay_error: Option<String>,
     pub(crate) rumble: bool,
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
@@ -170,10 +171,13 @@ pub(crate) enum EmuCommand {
         buttons_pressed: u8,
         dpad_pressed: u8,
         replay_events: Option<Vec<zeff_emu_common::replay::ReplayEvent>>,
+        game_boy_link_start_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+        game_boy_link_start_tick: Option<u64>,
     },
     SetSampleRate(u32),
     SetUncapped(bool),
     SetFdsDiskSide(u8),
+    RestoreGameBoyLinkState(zeff_emu_common::replay::ReplayGameBoyLinkState),
     UpdateCheats(Vec<crate::cheats::CheatPatch>),
     #[cfg(not(target_arch = "wasm32"))]
     StartTcpLink(TcpLinkMode),
@@ -200,11 +204,18 @@ pub(crate) enum EmuResponse {
     #[cfg(not(target_arch = "wasm32"))]
     LinkPending(String),
     #[cfg(not(target_arch = "wasm32"))]
-    LinkConnected(String),
+    LinkConnected {
+        label: String,
+        frame_count: u64,
+        game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+    },
     #[cfg(not(target_arch = "wasm32"))]
     LinkFailed(String),
     #[cfg(not(target_arch = "wasm32"))]
-    LinkDisconnected,
+    LinkDisconnected {
+        frame_count: u64,
+        game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+    },
     SramFlushed(Option<String>),
     ShutdownComplete,
 }
@@ -212,6 +223,7 @@ pub(crate) enum EmuResponse {
 pub(crate) struct ReplayStartState {
     pub(crate) state_bytes: Vec<u8>,
     pub(crate) frame_count: u64,
+    pub(crate) game_boy_cpu_cycles: Option<u64>,
     pub(crate) metadata: zeff_emu_common::replay::ReplayMetadata,
 }
 

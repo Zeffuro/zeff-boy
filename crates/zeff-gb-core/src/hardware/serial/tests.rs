@@ -250,3 +250,34 @@ fn connected_idle_reply_reports_current_output_without_passive_completion() {
     assert_eq!(serial.sb, 0x34);
     assert_eq!(serial.sc & 0x80, 0x00);
 }
+
+#[test]
+fn replay_link_state_roundtrips_pending_master_runtime_fields() {
+    let mut serial = Serial::new();
+    serial.mode = HardwareMode::DMG;
+    serial.sb = 0x56;
+    serial.set_link_peer_present(true);
+    serial.write_sc(0x81);
+    let action = serial
+        .take_link_action()
+        .expect("connected internal transfer should queue link action");
+    assert_eq!(action.out_byte, 0x56);
+
+    let mut dev = DisconnectedDevice;
+    assert!(!serial.step(4096, &mut dev));
+    assert!(serial.waiting_at_link_completion_boundary());
+    let state = serial.replay_link_state();
+
+    let mut restored = Serial::new();
+    restored.restore_replay_link_state(state);
+
+    assert_eq!(restored.replay_link_state(), state);
+    assert!(restored.waiting_at_link_completion_boundary());
+    assert!(restored.apply_link_reply(GameBoyLinkReply {
+        out_byte: 0xA5,
+        passive: false,
+        serial_generation: 99,
+    }));
+    assert_eq!(restored.sb, 0xA5);
+    assert_eq!(restored.sc & 0x80, 0);
+}

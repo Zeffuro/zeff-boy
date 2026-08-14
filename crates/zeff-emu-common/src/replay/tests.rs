@@ -1,5 +1,6 @@
 use super::{
-    ReplayEvent, ReplayFirmwareManifest, ReplayGameBoyLinkEvent, ReplayJoypadFrame, ReplayMetadata,
+    ReplayEvent, ReplayFirmwareManifest, ReplayGameBoyLinkAction, ReplayGameBoyLinkEvent,
+    ReplayGameBoyLinkReply, ReplayGameBoyLinkState, ReplayJoypadFrame, ReplayMetadata,
     ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent, ReplayZapperFrame,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -64,6 +65,19 @@ fn replay_roundtrip_with_metadata() {
         events: Vec::new(),
         cheat_sha256: Some([0x44; 32]),
         final_state_sha256: Some([0x33; 32]),
+        game_boy_link_start_state: Some(ReplayGameBoyLinkState {
+            peer_present: true,
+            pending_master_byte: Some(0x12),
+            pending_master_response: Some(0x34),
+            pending_master_completion_ready: false,
+            queued_master_action: Some(ReplayGameBoyLinkAction {
+                out_byte: 0x12,
+                clock_period_t_cycles: 4096,
+                serial_generation: 7,
+            }),
+            serial_generation: 7,
+        }),
+        game_boy_link_start_tick: Some(123_456),
     };
 
     let mut recorder =
@@ -134,12 +148,27 @@ fn replay_roundtrip_with_link_events_preserves_semantic_order() {
         },
         ReplayEvent::GameBoyLink {
             frame: 1,
+            tick: 105,
+            event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                transfer_id: 0x0200_0000_0000_0009,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x12,
+                serial_generation: 76,
+            },
+        },
+        ReplayEvent::GameBoyLink {
+            frame: 1,
             tick: 100,
             event: ReplayGameBoyLinkEvent::RemoteMasterStart {
                 transfer_id: 0x0100_0000_0000_0007,
                 clock_period_t_cycles: 4096,
                 out_byte: 0xAB,
                 serial_generation: 42,
+                local_reply: Some(ReplayGameBoyLinkReply {
+                    out_byte: 0xCD,
+                    passive: true,
+                    serial_generation: 43,
+                }),
             },
         },
     ];
@@ -164,6 +193,21 @@ fn replay_roundtrip_with_link_events_preserves_semantic_order() {
                     clock_period_t_cycles: 4096,
                     out_byte: 0xAB,
                     serial_generation: 42,
+                    local_reply: Some(ReplayGameBoyLinkReply {
+                        out_byte: 0xCD,
+                        passive: true,
+                        serial_generation: 43,
+                    }),
+                },
+            ),
+            (
+                1,
+                105,
+                ReplayGameBoyLinkEvent::LocalMasterStart {
+                    transfer_id: 0x0200_0000_0000_0009,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0x12,
+                    serial_generation: 76,
                 },
             ),
             (
@@ -190,6 +234,37 @@ fn replay_roundtrip_with_link_events_preserves_semantic_order() {
             },
         )]
     );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_finish_pads_input_stream_to_metadata_event_frames() {
+    let path = unique_path("event_padding");
+    let metadata = ReplayMetadata {
+        events: vec![ReplayEvent::GameBoyLink {
+            frame: 4,
+            tick: 123,
+            event: ReplayGameBoyLinkEvent::RemoteReply {
+                transfer_id: 1,
+                out_byte: 0x34,
+                passive: true,
+                serial_generation: 2,
+            },
+        }],
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), vec![1, 2, 3], metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame::p1(0x0F, 0x03));
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+
+    assert_eq!(player.total_frames(), 5);
+    for _ in 0..5 {
+        assert_eq!(player.next_frame(), Some((0x0F, 0x03)));
+    }
+    assert_eq!(player.next_frame(), None);
 
     let _ = std::fs::remove_file(&path);
 }
@@ -529,6 +604,34 @@ fn replay_load_empty_metadata() {
     let player = ReplayPlayer::load(&path).expect("replay should load");
     assert!(player.metadata().is_empty());
     assert_eq!(player.save_state(), &[0xAB]);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_loads_legacy_v1_without_metadata() {
+    let path = unique_path("legacy_v1");
+
+    let mut save_state = Vec::new();
+    save_state.extend_from_slice(b"ZBSTATE\0");
+    save_state.extend_from_slice(&3u32.to_le_bytes());
+    save_state.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+
+    let mut data = Vec::new();
+    data.extend_from_slice(b"ZRPL");
+    data.extend_from_slice(&1u32.to_le_bytes());
+    data.extend_from_slice(&(save_state.len() as u32).to_le_bytes());
+    data.extend_from_slice(&save_state);
+    data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+    std::fs::write(&path, &data).unwrap();
+
+    let mut player = ReplayPlayer::load(&path).expect("legacy replay should load");
+    assert!(player.metadata().is_empty());
+    assert_eq!(player.save_state(), &save_state);
+    assert_eq!(player.total_frames(), 2);
+    assert_eq!(player.next_frame(), Some((0x01, 0x02)));
+    assert_eq!(player.next_frame(), Some((0x03, 0x04)));
+    assert_eq!(player.next_frame(), None);
 
     let _ = std::fs::remove_file(&path);
 }

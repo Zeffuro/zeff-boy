@@ -18,7 +18,7 @@
 ///         otherwise exactly that many camera bytes follow
 /// ```
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -30,6 +30,10 @@ const FRAME_FIXED_BYTES: usize = 18;
 const CAMERA_REPEAT_SENTINEL: u32 = u32::MAX;
 const MAX_REPLAY_CAMERA_FRAME_BYTES: usize = 1024 * 1024;
 pub const POCKET_CAMERA_FRAME_BYTES: usize = 128 * 112;
+// Pre-metadata v1 recordings stored `[save_state_len][save_state][2-byte input frames]`.
+// Keep this narrow so corrupt metadata-first files are not silently accepted as legacy.
+const LEGACY_GB_SAVE_STATE_MAGIC: &[u8; 8] = b"ZBSTATE\0";
+const LEGACY_NES_SAVE_STATE_MAGIC: &[u8; 8] = b"ZBNSTATE";
 
 #[derive(Clone, Debug, Default)]
 pub struct ReplayJoypadFrame {
@@ -124,6 +128,8 @@ pub struct ReplayMetadata {
     pub events: Vec<ReplayEvent>,
     pub cheat_sha256: Option<[u8; 32]>,
     pub final_state_sha256: Option<[u8; 32]>,
+    pub game_boy_link_start_state: Option<ReplayGameBoyLinkState>,
+    pub game_boy_link_start_tick: Option<u64>,
 }
 
 impl ReplayMetadata {
@@ -134,6 +140,9 @@ impl ReplayMetadata {
             && self.firmware.is_empty()
             && self.events.is_empty()
             && self.cheat_sha256.is_none()
+            && self.final_state_sha256.is_none()
+            && self.game_boy_link_start_state.is_none()
+            && self.game_boy_link_start_tick.is_none()
     }
 
     fn encode(&self) -> Vec<u8> {
@@ -154,6 +163,8 @@ impl ReplayMetadata {
         }
         write_optional_hash(&mut out, self.cheat_sha256);
         write_optional_hash(&mut out, self.final_state_sha256);
+        write_optional_game_boy_link_state(&mut out, self.game_boy_link_start_state);
+        write_optional_u64(&mut out, self.game_boy_link_start_tick);
         out
     }
 
@@ -180,6 +191,8 @@ impl ReplayMetadata {
         events.sort_by_key(ReplayEvent::sort_key);
         let cheat_sha256 = read_optional_hash_if_present(&mut cursor)?;
         let final_state_sha256 = read_optional_hash_if_present(&mut cursor)?;
+        let game_boy_link_start_state = read_optional_game_boy_link_state_if_present(&mut cursor)?;
+        let game_boy_link_start_tick = read_optional_u64_if_present(&mut cursor)?;
         cursor.finish()?;
 
         Ok(Self {
@@ -190,6 +203,8 @@ impl ReplayMetadata {
             events,
             cheat_sha256,
             final_state_sha256,
+            game_boy_link_start_state,
+            game_boy_link_start_tick,
         })
     }
 }
@@ -199,6 +214,39 @@ fn read_optional_hash_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Opti
         Ok(None)
     } else {
         cursor.read_optional_hash()
+    }
+}
+
+fn write_optional_game_boy_link_state(out: &mut Vec<u8>, state: Option<ReplayGameBoyLinkState>) {
+    match state {
+        Some(state) => {
+            out.push(1);
+            state.encode(out);
+        }
+        None => out.push(0),
+    }
+}
+
+fn read_optional_game_boy_link_state_if_present(
+    cursor: &mut MetadataCursor<'_>,
+) -> Result<Option<ReplayGameBoyLinkState>> {
+    if cursor.is_finished() {
+        return Ok(None);
+    }
+    if !read_bool(cursor, "GB link start state present flag")? {
+        return Ok(None);
+    }
+    Ok(Some(ReplayGameBoyLinkState::decode(cursor)?))
+}
+
+fn read_optional_u64_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Option<u64>> {
+    if cursor.is_finished() {
+        return Ok(None);
+    }
+    match cursor.read_u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(cursor.read_u64()?)),
+        tag => bail!("invalid optional u64 tag: {tag}"),
     }
 }
 
@@ -310,6 +358,10 @@ pub enum ReplayEvent {
         tick: u64,
         event: ReplayGameBoyLinkEvent,
     },
+    GameBoyLinkState {
+        frame: u64,
+        state: ReplayGameBoyLinkState,
+    },
     WonderSwanLink {
         frame: u64,
         session_cycle: u64,
@@ -319,11 +371,18 @@ pub enum ReplayEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplayGameBoyLinkEvent {
+    LocalMasterStart {
+        transfer_id: u64,
+        clock_period_t_cycles: u64,
+        out_byte: u8,
+        serial_generation: u64,
+    },
     RemoteMasterStart {
         transfer_id: u64,
         clock_period_t_cycles: u64,
         out_byte: u8,
         serial_generation: u64,
+        local_reply: Option<ReplayGameBoyLinkReply>,
     },
     RemoteReply {
         transfer_id: u64,
@@ -331,6 +390,30 @@ pub enum ReplayGameBoyLinkEvent {
         passive: bool,
         serial_generation: u64,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayGameBoyLinkReply {
+    pub out_byte: u8,
+    pub passive: bool,
+    pub serial_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayGameBoyLinkAction {
+    pub out_byte: u8,
+    pub clock_period_t_cycles: u64,
+    pub serial_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayGameBoyLinkState {
+    pub peer_present: bool,
+    pub pending_master_byte: Option<u8>,
+    pub pending_master_response: Option<u8>,
+    pub pending_master_completion_ready: bool,
+    pub queued_master_action: Option<ReplayGameBoyLinkAction>,
+    pub serial_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -347,6 +430,7 @@ impl ReplayEvent {
         match self {
             Self::FdsDiskSide { frame, .. } => *frame,
             Self::GameBoyLink { frame, .. } => *frame,
+            Self::GameBoyLinkState { frame, .. } => *frame,
             Self::WonderSwanLink { frame, .. } => *frame,
         }
     }
@@ -354,19 +438,23 @@ impl ReplayEvent {
     fn sort_key(&self) -> (u64, u64, u8) {
         match self {
             Self::FdsDiskSide { frame, .. } => (*frame, 0, 0),
+            Self::GameBoyLinkState { frame, .. } => (*frame, 0, 1),
             Self::GameBoyLink { frame, tick, event } => {
-                (*frame, *tick, 1 + event.sort_discriminant())
+                (*frame, *tick, 2 + event.sort_discriminant())
             }
             Self::WonderSwanLink {
                 frame,
                 session_cycle,
                 ..
-            } => (*frame, *session_cycle, 4),
+            } => (*frame, *session_cycle, 5),
         }
     }
 
     fn is_frame_boundary_event(&self) -> bool {
-        matches!(self, Self::FdsDiskSide { .. })
+        matches!(
+            self,
+            Self::FdsDiskSide { .. } | Self::GameBoyLinkState { .. }
+        )
     }
 
     fn encode(&self, out: &mut Vec<u8>) {
@@ -381,6 +469,11 @@ impl ReplayEvent {
                 write_u64(out, *frame);
                 write_u64(out, *tick);
                 event.encode(out);
+            }
+            Self::GameBoyLinkState { frame, state } => {
+                out.push(3);
+                write_u64(out, *frame);
+                state.encode(out);
             }
             Self::WonderSwanLink {
                 frame,
@@ -406,6 +499,10 @@ impl ReplayEvent {
                 tick: cursor.read_u64()?,
                 event: ReplayGameBoyLinkEvent::decode(cursor)?,
             }),
+            3 => Ok(Self::GameBoyLinkState {
+                frame: cursor.read_u64()?,
+                state: ReplayGameBoyLinkState::decode(cursor)?,
+            }),
             2 => Ok(Self::WonderSwanLink {
                 frame: cursor.read_u64()?,
                 session_cycle: cursor.read_u64()?,
@@ -419,25 +516,49 @@ impl ReplayEvent {
 impl ReplayGameBoyLinkEvent {
     fn sort_discriminant(&self) -> u8 {
         match self {
-            Self::RemoteMasterStart { .. } => 0,
-            Self::RemoteReply { .. } => 1,
+            Self::LocalMasterStart { .. } => 0,
+            Self::RemoteMasterStart { .. } => 1,
+            Self::RemoteReply { .. } => 2,
         }
     }
 
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
-            Self::RemoteMasterStart {
+            Self::LocalMasterStart {
                 transfer_id,
                 clock_period_t_cycles,
                 out_byte,
                 serial_generation,
             } => {
-                out.push(0);
+                out.push(3);
                 write_u64(out, *transfer_id);
                 write_u64(out, *clock_period_t_cycles);
                 out.push(*out_byte);
                 write_u64(out, *serial_generation);
             }
+            Self::RemoteMasterStart {
+                transfer_id,
+                clock_period_t_cycles,
+                out_byte,
+                serial_generation,
+                local_reply,
+            } => match local_reply {
+                Some(reply) => {
+                    out.push(2);
+                    write_u64(out, *transfer_id);
+                    write_u64(out, *clock_period_t_cycles);
+                    out.push(*out_byte);
+                    write_u64(out, *serial_generation);
+                    reply.encode(out);
+                }
+                None => {
+                    out.push(0);
+                    write_u64(out, *transfer_id);
+                    write_u64(out, *clock_period_t_cycles);
+                    out.push(*out_byte);
+                    write_u64(out, *serial_generation);
+                }
+            },
             Self::RemoteReply {
                 transfer_id,
                 out_byte,
@@ -460,6 +581,7 @@ impl ReplayGameBoyLinkEvent {
                 clock_period_t_cycles: cursor.read_u64()?,
                 out_byte: cursor.read_u8()?,
                 serial_generation: cursor.read_u64()?,
+                local_reply: None,
             }),
             1 => Ok(Self::RemoteReply {
                 transfer_id: cursor.read_u64()?,
@@ -467,8 +589,99 @@ impl ReplayGameBoyLinkEvent {
                 passive: read_bool(cursor, "GB link reply passive flag")?,
                 serial_generation: cursor.read_u64()?,
             }),
+            2 => Ok(Self::RemoteMasterStart {
+                transfer_id: cursor.read_u64()?,
+                clock_period_t_cycles: cursor.read_u64()?,
+                out_byte: cursor.read_u8()?,
+                serial_generation: cursor.read_u64()?,
+                local_reply: Some(ReplayGameBoyLinkReply::decode(cursor)?),
+            }),
+            3 => Ok(Self::LocalMasterStart {
+                transfer_id: cursor.read_u64()?,
+                clock_period_t_cycles: cursor.read_u64()?,
+                out_byte: cursor.read_u8()?,
+                serial_generation: cursor.read_u64()?,
+            }),
             tag => bail!("unknown GB replay link event tag: {tag}"),
         }
+    }
+}
+
+impl ReplayGameBoyLinkReply {
+    fn encode(&self, out: &mut Vec<u8>) {
+        out.push(self.out_byte);
+        out.push(u8::from(self.passive));
+        write_u64(out, self.serial_generation);
+    }
+
+    fn decode(cursor: &mut MetadataCursor<'_>) -> Result<Self> {
+        Ok(Self {
+            out_byte: cursor.read_u8()?,
+            passive: read_bool(cursor, "GB remote-master local reply passive flag")?,
+            serial_generation: cursor.read_u64()?,
+        })
+    }
+}
+
+impl ReplayGameBoyLinkAction {
+    fn encode(self, out: &mut Vec<u8>) {
+        out.push(self.out_byte);
+        write_u64(out, self.clock_period_t_cycles);
+        write_u64(out, self.serial_generation);
+    }
+
+    fn decode(cursor: &mut MetadataCursor<'_>) -> Result<Self> {
+        Ok(Self {
+            out_byte: cursor.read_u8()?,
+            clock_period_t_cycles: cursor.read_u64()?,
+            serial_generation: cursor.read_u64()?,
+        })
+    }
+}
+
+impl ReplayGameBoyLinkState {
+    pub fn is_idle(self) -> bool {
+        !self.peer_present
+            && self.pending_master_byte.is_none()
+            && self.pending_master_response.is_none()
+            && !self.pending_master_completion_ready
+            && self.queued_master_action.is_none()
+    }
+
+    fn encode(self, out: &mut Vec<u8>) {
+        out.push(u8::from(self.peer_present));
+        write_optional_u8(out, self.pending_master_byte);
+        write_optional_u8(out, self.pending_master_response);
+        out.push(u8::from(self.pending_master_completion_ready));
+        match self.queued_master_action {
+            Some(action) => {
+                out.push(1);
+                action.encode(out);
+            }
+            None => out.push(0),
+        }
+        write_u64(out, self.serial_generation);
+    }
+
+    fn decode(cursor: &mut MetadataCursor<'_>) -> Result<Self> {
+        Ok(Self {
+            peer_present: read_bool(cursor, "GB link start peer-present flag")?,
+            pending_master_byte: read_optional_u8(cursor, "GB link start pending master byte")?,
+            pending_master_response: read_optional_u8(
+                cursor,
+                "GB link start pending master response",
+            )?,
+            pending_master_completion_ready: read_bool(
+                cursor,
+                "GB link start pending master completion flag",
+            )?,
+            queued_master_action: if read_bool(cursor, "GB link start queued action flag")? {
+                Some(ReplayGameBoyLinkAction::decode(cursor)?)
+            } else {
+                None
+            },
+            serial_generation: cursor.read_u64()?,
+        })
     }
 }
 
@@ -542,9 +755,12 @@ impl ReplayRecorder {
         self.metadata.final_state_sha256 = Some(hash);
     }
 
-    pub fn finish(self) -> Result<PathBuf> {
-        let mut file = File::create(&self.path)
+    pub fn finish(mut self) -> Result<PathBuf> {
+        pad_frames_to_metadata_events(&mut self.frames, &self.metadata);
+
+        let raw_file = File::create(&self.path)
             .with_context(|| format!("failed to create replay file: {}", self.path.display()))?;
+        let mut file = BufWriter::new(raw_file);
 
         file.write_all(MAGIC)?;
         file.write_all(&VERSION.to_le_bytes())?;
@@ -589,7 +805,8 @@ impl ReplayRecorder {
             }
         }
 
-        file.sync_all()?;
+        file.flush()?;
+        file.get_ref().sync_all()?;
         log::info!(
             "Wrote replay: {} frames to {}",
             self.frames.len(),
@@ -611,6 +828,23 @@ pub struct ReplayPlayer {
     event_cursor: usize,
 }
 
+fn pad_frames_to_metadata_events(frames: &mut Vec<ReplayJoypadFrame>, metadata: &ReplayMetadata) {
+    let Some(required_frames) = metadata
+        .events
+        .iter()
+        .filter_map(|event| usize::try_from(event.frame().saturating_add(1)).ok())
+        .max()
+    else {
+        return;
+    };
+    if frames.len() >= required_frames {
+        return;
+    }
+
+    let pad_frame = frames.last().cloned().unwrap_or_default();
+    frames.resize(required_frames, pad_frame);
+}
+
 impl ReplayPlayer {
     pub fn load(path: &Path) -> Result<Self> {
         let mut file = File::open(path)
@@ -629,13 +863,33 @@ impl ReplayPlayer {
             bail!("unsupported replay version: {version}");
         }
 
-        let mut metadata_len_buf = [0u8; 4];
-        file.read_exact(&mut metadata_len_buf)?;
-        let metadata_len = u32::from_le_bytes(metadata_len_buf) as usize;
-        let mut metadata_bytes = vec![0u8; metadata_len];
-        file.read_exact(&mut metadata_bytes)?;
-        let metadata =
-            ReplayMetadata::decode(&metadata_bytes).context("invalid replay metadata")?;
+        let mut first_len_buf = [0u8; 4];
+        file.read_exact(&mut first_len_buf)?;
+        let first_len = u32::from_le_bytes(first_len_buf) as usize;
+        let mut first_block = vec![0u8; first_len];
+        file.read_exact(&mut first_block)?;
+
+        if legacy_v1_save_state_block(&first_block) {
+            let mut input_data = Vec::new();
+            file.read_to_end(&mut input_data)?;
+            let frames = decode_legacy_v1_input_frames(&input_data)?;
+
+            log::info!(
+                "Loaded legacy replay: {} frames from {}",
+                frames.len(),
+                path.display()
+            );
+
+            return Ok(Self {
+                save_state: first_block,
+                frames,
+                cursor: 0,
+                metadata: ReplayMetadata::default(),
+                event_cursor: 0,
+            });
+        }
+
+        let metadata = ReplayMetadata::decode(&first_block).context("invalid replay metadata")?;
 
         let mut state_len_buf = [0u8; 4];
         file.read_exact(&mut state_len_buf)?;
@@ -646,7 +900,8 @@ impl ReplayPlayer {
 
         let mut input_data = Vec::new();
         file.read_to_end(&mut input_data)?;
-        let frames = decode_input_frames(&input_data)?;
+        let mut frames = decode_input_frames(&input_data)?;
+        pad_frames_to_metadata_events(&mut frames, &metadata);
 
         log::info!(
             "Loaded replay: {} frames from {}",
@@ -769,10 +1024,12 @@ impl ReplayPlayer {
     }
 
     pub fn uses_game_boy_link_events(&self) -> bool {
-        self.metadata
-            .events
-            .iter()
-            .any(|event| matches!(event, ReplayEvent::GameBoyLink { .. }))
+        self.metadata.events.iter().any(|event| {
+            matches!(
+                event,
+                ReplayEvent::GameBoyLink { .. } | ReplayEvent::GameBoyLinkState { .. }
+            )
+        })
     }
 
     pub fn uses_wonder_swan_link_events(&self) -> bool {
@@ -892,6 +1149,24 @@ fn decode_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFrame>> {
     Ok(frames)
 }
 
+fn legacy_v1_save_state_block(bytes: &[u8]) -> bool {
+    bytes.starts_with(LEGACY_GB_SAVE_STATE_MAGIC) || bytes.starts_with(LEGACY_NES_SAVE_STATE_MAGIC)
+}
+
+fn decode_legacy_v1_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFrame>> {
+    if !input_data.len().is_multiple_of(2) {
+        bail!(
+            "legacy replay input stream has odd byte length: {}",
+            input_data.len()
+        );
+    }
+
+    Ok(input_data
+        .chunks_exact(2)
+        .map(|chunk| ReplayJoypadFrame::p1(chunk[0], chunk[1]))
+        .collect())
+}
+
 fn read_replay_input_exact<'a>(
     input_data: &'a [u8],
     offset: &mut usize,
@@ -936,11 +1211,39 @@ fn write_optional_hash(out: &mut Vec<u8>, value: Option<[u8; 32]>) {
     }
 }
 
+fn write_optional_u8(out: &mut Vec<u8>, value: Option<u8>) {
+    match value {
+        Some(value) => {
+            out.push(1);
+            out.push(value);
+        }
+        None => out.push(0),
+    }
+}
+
+fn write_optional_u64(out: &mut Vec<u8>, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            out.push(1);
+            write_u64(out, value);
+        }
+        None => out.push(0),
+    }
+}
+
 fn read_bool(cursor: &mut MetadataCursor<'_>, name: &str) -> Result<bool> {
     match cursor.read_u8()? {
         0 => Ok(false),
         1 => Ok(true),
         value => bail!("invalid replay metadata {name}: {value}"),
+    }
+}
+
+fn read_optional_u8(cursor: &mut MetadataCursor<'_>, name: &str) -> Result<Option<u8>> {
+    match cursor.read_u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(cursor.read_u8()?)),
+        value => bail!("invalid replay metadata {name} tag: {value}"),
     }
 }
 

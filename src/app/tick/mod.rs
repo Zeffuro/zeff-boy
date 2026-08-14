@@ -36,6 +36,8 @@ impl App {
         let host_tilt = self.update_host_tilt_and_stick_mode();
 
         self.drain_emu_responses();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_replay_save_worker();
 
         // Handle backstep: pop one rewind snapshot and pause
         if std::mem::take(&mut self.debug_requests.backstep)

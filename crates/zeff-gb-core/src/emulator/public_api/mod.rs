@@ -13,6 +13,11 @@ impl Emulator {
         self.bus.set_game_boy_link_peer_present(present);
     }
 
+    pub fn restore_game_boy_link_peer_present_without_action(&mut self, present: bool) {
+        self.bus
+            .restore_game_boy_link_peer_present_without_action(present);
+    }
+
     pub fn game_boy_link_state(&self) -> crate::hardware::bus::GameBoyLinkState {
         self.bus.game_boy_link_state()
     }
@@ -27,6 +32,17 @@ impl Emulator {
 
     pub fn take_game_boy_link_action(&mut self) -> Option<crate::hardware::bus::GameBoyLinkAction> {
         self.bus.take_game_boy_link_action()
+    }
+
+    pub fn game_boy_link_replay_state(&self) -> zeff_emu_common::replay::ReplayGameBoyLinkState {
+        self.bus.game_boy_link_replay_state()
+    }
+
+    pub fn restore_game_boy_link_replay_state(
+        &mut self,
+        state: zeff_emu_common::replay::ReplayGameBoyLinkState,
+    ) {
+        self.bus.restore_game_boy_link_replay_state(state);
     }
 
     pub fn game_boy_link_reply_to_master_start(&self) -> crate::hardware::bus::GameBoyLinkReply {

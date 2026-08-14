@@ -1,6 +1,9 @@
+#[cfg(not(target_arch = "wasm32"))]
+use super::super::types::{ReplayFinalizationState, ReplaySaveResult};
 use super::App;
 use crate::emu_thread::{EmuCommand, EmuResponse};
-use zeff_firmware::sha256_bytes;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 impl App {
     pub(in crate::app) fn start_replay_recording(&mut self) {
@@ -16,8 +19,10 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.disable_uncapped_for_replay();
-            self.clear_replay_progress();
+            if self.recording.is_replay_finalizing() {
+                self.toast_manager.info("Replay save is still finishing");
+                return;
+            }
 
             let default_name = self
                 .rom_info
@@ -41,32 +46,64 @@ impl App {
                 return;
             };
 
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::CaptureReplayStart);
+            if let Err(err) = self.start_replay_recording_to_path(path) {
+                log::error!("Failed to start replay recording: {err}");
+                self.toast_manager
+                    .error(format!("Replay start failed: {err}"));
             }
-            match self.recv_cold_response() {
-                Some(EmuResponse::ReplayStartCaptured(start)) => {
-                    let mut metadata = start.metadata;
-                    metadata.cheat_sha256 = crate::cheats::enabled_patch_hash(
-                        &self.debug_windows.cheat.user_codes,
-                        &self.debug_windows.cheat.libretro_codes,
-                    );
-                    let recorder = zeff_emu_common::replay::ReplayRecorder::new_with_metadata(
-                        path,
-                        start.state_bytes,
-                        metadata,
-                    );
-                    self.recording.replay_recording_base_frame = start.frame_count;
-                    self.recording.replay_recorder = Some(recorder);
-                    self.toast_manager.set_replay_recording(true);
-                }
-                Some(EmuResponse::StateCaptureFailed(err)) => {
-                    log::error!("Failed to capture state for replay: {}", err);
-                    self.toast_manager
-                        .error(format!("Replay start failed: {err}"));
-                }
-                _ => {}
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn start_replay_recording_to_path(
+        &mut self,
+        path: PathBuf,
+    ) -> anyhow::Result<()> {
+        if self.emu_thread.is_none() {
+            anyhow::bail!("no ROM is running");
+        }
+        if self.recording.is_replay_finalizing() {
+            anyhow::bail!("replay save is still finishing");
+        }
+        if self.recording.replay_recorder.is_some() {
+            anyhow::bail!("replay recording is already active");
+        }
+        if self.recording.replay_player.is_some() {
+            anyhow::bail!("stop replay playback before recording");
+        }
+
+        self.disable_uncapped_for_replay();
+        self.clear_replay_progress();
+
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::CaptureReplayStart);
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::ReplayStartCaptured(start)) => {
+                let mut metadata = start.metadata;
+                metadata.cheat_sha256 = crate::cheats::enabled_patch_hash(
+                    &self.debug_windows.cheat.user_codes,
+                    &self.debug_windows.cheat.libretro_codes,
+                );
+                metadata.game_boy_link_start_tick = start.game_boy_cpu_cycles;
+                let recorder = zeff_emu_common::replay::ReplayRecorder::new_with_metadata(
+                    path,
+                    start.state_bytes,
+                    metadata,
+                );
+                self.recording.replay_recording_base_frame = start.frame_count;
+                self.recording.replay_recording_base_game_boy_tick = start.game_boy_cpu_cycles;
+                self.recording.replay_recorder = Some(recorder);
+                self.toast_manager.set_replay_recording(true);
+                Ok(())
             }
+            Some(EmuResponse::StateCaptureFailed(err)) => {
+                anyhow::bail!("failed to capture replay start state: {err}");
+            }
+            Some(resp) => {
+                anyhow::bail!("unexpected replay start response: {}", response_kind(&resp))
+            }
+            None => anyhow::bail!("emulator thread stopped before replay start was captured"),
         }
     }
 
@@ -76,49 +113,37 @@ impl App {
             while let Some(result) = self.emu_thread.as_ref().and_then(|t| t.try_recv_frame()) {
                 self.process_frame_result(result);
             }
-            if let Some(thread) = &self.emu_thread {
+            let capture_requested = if let Some(thread) = &self.emu_thread {
                 thread.send(EmuCommand::CaptureStateBytes);
-            }
-            let mut final_state_hash = None;
-            match self.recv_cold_response() {
-                Some(EmuResponse::StateCaptured(bytes)) => {
-                    final_state_hash = Some(sha256_bytes(&bytes));
-                }
-                Some(EmuResponse::StateCaptureFailed(err)) => {
-                    log::warn!("Replay final state hash capture failed: {err}");
-                }
-                Some(other) => {
-                    log::debug!(
-                        "Unexpected response while capturing replay final state: {:?}",
-                        response_kind(&other)
-                    );
-                }
-                None => {}
-            }
-            let Some(mut recorder) = self.recording.replay_recorder.take() else {
+                true
+            } else {
+                false
+            };
+            let Some(recorder) = self.recording.replay_recorder.take() else {
                 return;
             };
-            if let Some(hash) = final_state_hash {
-                recorder.set_final_state_sha256(hash);
-            }
-            self.clear_replay_progress();
             let frame_count = recorder.frame_count();
-            match recorder.finish() {
-                Ok(path) => {
-                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-                    log::info!(
-                        "Replay saved to {} ({} frames)",
-                        path.display(),
-                        frame_count
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.recording.replay_finalization =
+                    Some(ReplayFinalizationState::CapturingFinalState {
+                        recorder: Box::new(recorder),
+                        frame_count,
+                    });
+                self.toast_manager.set_replay_saving(true);
+                if !capture_requested {
+                    self.start_replay_save_worker(
+                        None,
+                        Some("emulator thread is not available".to_string()),
                     );
-                    self.toast_manager
-                        .success(format!("Saved {name} ({frame_count} frames)"));
                 }
-                Err(err) => {
-                    log::error!("Failed to save replay: {}", err);
-                    self.toast_manager
-                        .error(format!("Replay save failed: {err}"));
-                }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                drop(recorder);
+                self.clear_replay_progress();
             }
         }
     }
@@ -136,6 +161,11 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if self.recording.is_replay_finalizing() {
+                self.toast_manager.info("Replay save is still finishing");
+                return;
+            }
+
             self.disable_uncapped_for_replay();
             self.clear_replay_progress();
 
@@ -164,6 +194,8 @@ impl App {
                             buttons_pressed: 0,
                             dpad_pressed: 0,
                             replay_events: Some(player.metadata().events.clone()),
+                            game_boy_link_start_state: player.metadata().game_boy_link_start_state,
+                            game_boy_link_start_tick: player.metadata().game_boy_link_start_tick,
                         });
                     }
                     match self.recv_cold_response() {
@@ -211,6 +243,7 @@ impl App {
         self.recording.pending_replay_batches.clear();
         self.recording.queued_replay_playback_frames = 0;
         self.recording.replay_recording_base_frame = 0;
+        self.recording.replay_recording_base_game_boy_tick = None;
         self.recording.replay_media_events_pending = 0;
     }
 
@@ -290,6 +323,175 @@ impl App {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl App {
+    pub(in crate::app) fn consume_replay_finalization_response(
+        &mut self,
+        response: EmuResponse,
+    ) -> Option<EmuResponse> {
+        if !self.recording.is_replay_final_state_capture_pending() {
+            return Some(response);
+        }
+
+        match response {
+            EmuResponse::StateCaptured(bytes) => {
+                self.start_replay_save_worker(Some(bytes), None);
+                None
+            }
+            EmuResponse::StateCaptureFailed(err) => {
+                log::warn!("Replay final state hash capture failed: {err}");
+                self.start_replay_save_worker(None, Some(err));
+                None
+            }
+            other => Some(other),
+        }
+    }
+
+    fn start_replay_save_worker(
+        &mut self,
+        final_state_bytes: Option<Vec<u8>>,
+        capture_error: Option<String>,
+    ) {
+        let Some(finalization) = self.recording.replay_finalization.take() else {
+            return;
+        };
+        let ReplayFinalizationState::CapturingFinalState {
+            mut recorder,
+            frame_count,
+        } = finalization
+        else {
+            self.recording.replay_finalization = Some(finalization);
+            return;
+        };
+
+        if !self.recording.pending_replay_batches.is_empty() {
+            log::warn!(
+                "Replay finalizing with {} uncommitted replay input batch(es); dropping them",
+                self.recording.pending_replay_batches.len()
+            );
+        }
+        self.clear_replay_progress();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let active_system = self.active_system;
+        std::thread::spawn(move || {
+            if let Some(mut bytes) = final_state_bytes {
+                crate::emu_backend::canonicalize_state_bytes_for_replay_hash(
+                    active_system,
+                    &mut bytes,
+                );
+                recorder.set_final_state_sha256(zeff_firmware::sha256_bytes(&bytes));
+            }
+            if let Some(err) = capture_error {
+                log::warn!("Saving replay without final state hash: {err}");
+            }
+            let result = recorder.finish().map_err(|err| err.to_string());
+            let _ = sender.send(ReplaySaveResult {
+                frame_count,
+                result,
+            });
+        });
+
+        self.recording.replay_finalization = Some(ReplayFinalizationState::Saving {
+            frame_count,
+            receiver,
+        });
+    }
+
+    pub(in crate::app) fn poll_replay_save_worker(&mut self) {
+        let result = match self.recording.replay_finalization.as_mut() {
+            Some(ReplayFinalizationState::Saving {
+                frame_count,
+                receiver,
+            }) => match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(ReplaySaveResult {
+                    frame_count: *frame_count,
+                    result: Err("replay save worker stopped".to_string()),
+                }),
+            },
+            _ => None,
+        };
+
+        if let Some(result) = result {
+            self.finish_replay_save_result(result);
+        }
+    }
+
+    pub(in crate::app) fn wait_for_replay_finalization_on_shutdown(&mut self) {
+        while self.recording.replay_finalization.is_some() {
+            if let Some(ReplayFinalizationState::Saving { .. }) =
+                self.recording.replay_finalization.as_ref()
+            {
+                let result = match self.recording.replay_finalization.take() {
+                    Some(ReplayFinalizationState::Saving {
+                        frame_count,
+                        receiver,
+                    }) => receiver.recv().unwrap_or_else(|_| ReplaySaveResult {
+                        frame_count,
+                        result: Err("replay save worker stopped".to_string()),
+                    }),
+                    other => {
+                        self.recording.replay_finalization = other;
+                        continue;
+                    }
+                };
+                self.finish_replay_save_result(result);
+                continue;
+            }
+
+            while let Some(result) = self.emu_thread.as_ref().and_then(|t| t.try_recv_frame()) {
+                self.process_frame_result(result);
+            }
+            let response = match self.emu_thread.as_ref().and_then(|t| t.recv()) {
+                Some(response) => response,
+                None => {
+                    log::warn!("Replay finalization abandoned: emulator thread stopped");
+                    self.recording.replay_finalization = None;
+                    self.toast_manager.set_replay_saving(false);
+                    break;
+                }
+            };
+            if self.handle_link_response(&response) {
+                continue;
+            }
+            match self.consume_replay_finalization_response(response) {
+                None => continue,
+                Some(response) => {
+                    log::debug!(
+                        "Ignoring unexpected response while finalizing replay on shutdown: {:?}",
+                        response_kind(&response)
+                    );
+                }
+            }
+        }
+    }
+
+    fn finish_replay_save_result(&mut self, result: ReplaySaveResult) {
+        self.recording.replay_finalization = None;
+        self.toast_manager.set_replay_saving(false);
+
+        match result.result {
+            Ok(path) => {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                log::info!(
+                    "Replay saved to {} ({} frames)",
+                    path.display(),
+                    result.frame_count
+                );
+                self.toast_manager
+                    .success(format!("Saved {name} ({} frames)", result.frame_count));
+            }
+            Err(err) => {
+                log::error!("Failed to save replay: {}", err);
+                self.toast_manager
+                    .error(format!("Replay save failed: {err}"));
+            }
+        }
+    }
+}
+
 fn validate_replay_host_input_frame_shapes(
     player: &zeff_emu_common::replay::ReplayPlayer,
 ) -> anyhow::Result<()> {
@@ -320,11 +522,11 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         #[cfg(not(target_arch = "wasm32"))]
         EmuResponse::LinkPending(_) => "LinkPending",
         #[cfg(not(target_arch = "wasm32"))]
-        EmuResponse::LinkConnected(_) => "LinkConnected",
+        EmuResponse::LinkConnected { .. } => "LinkConnected",
         #[cfg(not(target_arch = "wasm32"))]
         EmuResponse::LinkFailed(_) => "LinkFailed",
         #[cfg(not(target_arch = "wasm32"))]
-        EmuResponse::LinkDisconnected => "LinkDisconnected",
+        EmuResponse::LinkDisconnected { .. } => "LinkDisconnected",
         EmuResponse::SramFlushed(_) => "SramFlushed",
         EmuResponse::ShutdownComplete => "ShutdownComplete",
     }

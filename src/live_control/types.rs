@@ -40,6 +40,23 @@ pub(crate) enum LiveCommand {
     LoadState {
         path: PathBuf,
     },
+    SaveStateSlot {
+        slot: u8,
+    },
+    LoadStateSlot {
+        slot: u8,
+    },
+    StartReplayRecording {
+        path: PathBuf,
+    },
+    StopReplayRecording,
+    HostLink {
+        addr: Option<String>,
+    },
+    JoinLink {
+        addr: Option<String>,
+    },
+    DisconnectLink,
     MemoryRead {
         space: LiveMemorySpace,
         start: u32,

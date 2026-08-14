@@ -39,6 +39,11 @@ impl App {
                         self.recording.replay_media_events_pending += 1;
                     }
                 }
+                ReplayEvent::GameBoyLinkState { state, .. } => {
+                    if let Some(thread) = &self.emu_thread {
+                        thread.send(EmuCommand::RestoreGameBoyLinkState(state));
+                    }
+                }
                 ReplayEvent::GameBoyLink { .. } | ReplayEvent::WonderSwanLink { .. } => {}
             }
         }

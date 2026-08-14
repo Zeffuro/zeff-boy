@@ -461,6 +461,12 @@ impl Bus {
         self.io.serial.set_link_peer_present(present);
     }
 
+    pub fn restore_game_boy_link_peer_present_without_action(&mut self, present: bool) {
+        self.io
+            .serial
+            .restore_link_peer_present_without_action(present);
+    }
+
     pub fn game_boy_link_state(&self) -> GameBoyLinkState {
         self.io.serial.link_state()
     }
@@ -476,6 +482,17 @@ impl Bus {
 
     pub fn take_game_boy_link_action(&mut self) -> Option<GameBoyLinkAction> {
         self.io.serial.take_link_action()
+    }
+
+    pub fn game_boy_link_replay_state(&self) -> zeff_emu_common::replay::ReplayGameBoyLinkState {
+        self.io.serial.replay_link_state()
+    }
+
+    pub fn restore_game_boy_link_replay_state(
+        &mut self,
+        state: zeff_emu_common::replay::ReplayGameBoyLinkState,
+    ) {
+        self.io.serial.restore_replay_link_state(state);
     }
 
     pub fn game_boy_link_reply_to_master_start(&self) -> GameBoyLinkReply {

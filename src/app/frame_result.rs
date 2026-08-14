@@ -21,6 +21,11 @@ impl App {
             if self.handle_link_response(&resp) {
                 continue;
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            let resp = match self.consume_replay_finalization_response(resp) {
+                Some(resp) => resp,
+                None => continue,
+            };
             match resp {
                 EmuResponse::FdsDiskSideChanged(side) => {
                     if self.recording.replay_media_events_pending > 0 {
@@ -77,10 +82,17 @@ impl App {
         }
     }
 
-    pub(super) fn process_frame_result(&mut self, result: FrameResult) {
+    pub(super) fn process_frame_result(&mut self, mut result: FrameResult) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
         self.record_replay_events(result.replay_events);
         self.commit_replay_batch(result.advanced_frames);
+        if let Some(error) = result.replay_error.take() {
+            log::warn!("Replay stopped: {error}");
+            self.recording.replay_player = None;
+            self.recording.pending_replay_batches.clear();
+            self.recording.queued_replay_playback_frames = 0;
+            self.toast_manager.error(format!("Replay stopped: {error}"));
+        }
 
         // Read the latest framebuffer from the lock-free shared buffer
         if let Some(thread) = &self.emu_thread {
@@ -228,24 +240,38 @@ impl App {
 
     fn record_replay_events(&mut self, events: Vec<zeff_emu_common::replay::ReplayEvent>) {
         let base_frame = self.recording.replay_recording_base_frame;
-        let Some(recorder) = &mut self.recording.replay_recorder else {
+        let base_game_boy_tick = self.recording.replay_recording_base_game_boy_tick;
+        let Some(recorder) = self.recording.replay_recorder_for_commits() else {
             return;
         };
         for event in events {
-            recorder.record_event(Self::replay_relative_event(event, base_frame));
+            recorder.record_event(Self::replay_relative_event(
+                event,
+                base_frame,
+                base_game_boy_tick,
+            ));
         }
     }
 
     fn replay_relative_event(
         event: zeff_emu_common::replay::ReplayEvent,
         base_frame: u64,
+        base_game_boy_tick: Option<u64>,
     ) -> zeff_emu_common::replay::ReplayEvent {
         match event {
             zeff_emu_common::replay::ReplayEvent::GameBoyLink { frame, tick, event } => {
                 zeff_emu_common::replay::ReplayEvent::GameBoyLink {
                     frame: frame.saturating_sub(base_frame),
-                    tick,
+                    tick: base_game_boy_tick
+                        .map(|base_tick| tick.saturating_sub(base_tick))
+                        .unwrap_or(tick),
                     event,
+                }
+            }
+            zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { frame, state } => {
+                zeff_emu_common::replay::ReplayEvent::GameBoyLinkState {
+                    frame: frame.saturating_sub(base_frame),
+                    state,
                 }
             }
             zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
@@ -269,7 +295,7 @@ impl App {
 
             let commit_count = advanced_frames.min(batch.frames.len());
             if batch.record
-                && let Some(recorder) = &mut self.recording.replay_recorder
+                && let Some(recorder) = self.recording.replay_recorder_for_commits()
             {
                 for frame in batch.frames.iter().take(commit_count) {
                     recorder.record_joypad_frame(frame.clone());

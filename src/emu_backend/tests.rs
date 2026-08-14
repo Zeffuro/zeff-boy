@@ -759,6 +759,34 @@ fn gb_backend_replays_save_state_deterministically() {
 }
 
 #[test]
+fn gb_rtc_replay_hash_ignores_bess_wall_clock_timestamp() {
+    let backend = load_test_backend_with_shared_loader(
+        ActiveSystem::GameBoy,
+        "rtc.gbc",
+        build_gb_mbc3_rtc_test_rom(),
+    );
+
+    let mut canonicalized_raw = backend
+        .encode_state_bytes()
+        .expect("GB RTC backend should encode save-state");
+    let replay_hash_state = backend
+        .encode_replay_hash_state_bytes()
+        .expect("GB RTC backend should encode replay-hash state");
+
+    assert_ne!(
+        replay_hash_state, canonicalized_raw,
+        "raw GB RTC save-state should include a BESS wall-clock timestamp"
+    );
+
+    zeff_gb_core::save_state::canonicalize_replay_hash_bytes(&mut canonicalized_raw);
+
+    assert_eq!(
+        replay_hash_state, canonicalized_raw,
+        "replay-hash state should only canonicalize timestamp noise"
+    );
+}
+
+#[test]
 fn nes_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_nes_backend(), 1, 2);
 }

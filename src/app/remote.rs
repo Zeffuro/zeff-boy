@@ -147,6 +147,73 @@ impl App {
                 Ok(result) => LiveReply::ok(result),
                 Err(err) => LiveReply::error(err.to_string()),
             },
+            LiveCommand::SaveStateSlot { slot } => {
+                self.save_state_slot(slot);
+                LiveReply::ok(self.live_status_json())
+            }
+            LiveCommand::LoadStateSlot { slot } => {
+                self.load_state_slot(slot);
+                LiveReply::ok(self.live_status_json())
+            }
+            LiveCommand::StartReplayRecording { path } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.start_replay_recording_to_path(path) {
+                        Ok(()) => LiveReply::ok(self.live_status_json()),
+                        Err(err) => LiveReply::error(err.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = path;
+                    LiveReply::error("replay recording is not available on web")
+                }
+            }
+            LiveCommand::StopReplayRecording => {
+                self.stop_replay_recording();
+                LiveReply::ok(self.live_status_json())
+            }
+            LiveCommand::HostLink { addr } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if let Some(addr) = addr {
+                        self.settings.emulation.tcp_link_addr = addr;
+                    }
+                    self.host_tcp_link();
+                    LiveReply::ok(self.live_status_json())
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = addr;
+                    LiveReply::error("TCP link is not available on web")
+                }
+            }
+            LiveCommand::JoinLink { addr } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if let Some(addr) = addr {
+                        self.settings.emulation.tcp_link_addr = addr;
+                    }
+                    self.join_tcp_link();
+                    LiveReply::ok(self.live_status_json())
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = addr;
+                    LiveReply::error("TCP link is not available on web")
+                }
+            }
+            LiveCommand::DisconnectLink => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.disconnect_link();
+                    LiveReply::ok(self.live_status_json())
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    LiveReply::error("TCP link is not available on web")
+                }
+            }
             LiveCommand::MemoryRead {
                 space,
                 start,
@@ -157,6 +224,10 @@ impl App {
     }
 
     fn live_status_json(&self) -> Value {
+        #[cfg(not(target_arch = "wasm32"))]
+        let tcp_link_active = self.tcp_link_active;
+        #[cfg(target_arch = "wasm32")]
+        let tcp_link_active = false;
         let framebuffer_bytes = self
             .last_displayed_frame
             .as_ref()
@@ -173,6 +244,19 @@ impl App {
             "slow_motion": self.settings.emulation.slow_motion_enabled,
             "fast_forward": self.speed.fast_forward_held,
             "uncapped": self.timing.uncapped_speed,
+            "tcp_link_active": tcp_link_active,
+            "replay": {
+                "recording": self.recording.replay_recorder.is_some(),
+                "recorded_frames": self.recording
+                    .replay_recorder
+                    .as_ref()
+                    .map(|recorder| recorder.frame_count())
+                    .unwrap_or(0),
+                "recording_base_frame": self.recording.replay_recording_base_frame,
+                "playing": self.recording.replay_player.is_some(),
+                "saving": self.recording.is_replay_finalizing(),
+                "pending_batches": self.recording.pending_replay_batches.len(),
+            },
             "active_save_slot": self.active_save_slot,
             "rewind_fill": self.rewind.fill,
             "framebuffer": {

@@ -16,6 +16,8 @@ impl App {
 
         self.stop_audio_recording();
         self.stop_replay_recording();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.wait_for_replay_finalization_on_shutdown();
 
         if self.settings.emulation.auto_save_state
             && let Some(thread) = &self.emu_thread

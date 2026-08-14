@@ -24,8 +24,71 @@ pub(super) const CORE_BLOCK_LEN: u32 = 0xD0;
 pub(super) const INFO_BLOCK_LEN: u32 = 0x12;
 pub(super) const RTC_BLOCK_LEN: u32 = 0x30;
 
+const NATIVE_SAVE_STATE_MAGIC: &[u8; 8] = b"ZBSTATE\0";
+const NATIVE_LAST_OPCODE_OFFSET: usize = 97;
+const NATIVE_LAST_OPCODE_PC_OFFSET: usize = 98;
+const NATIVE_LAST_OPCODE_END: usize = NATIVE_LAST_OPCODE_PC_OFFSET + 2;
+
 pub fn has_bess_footer(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[bytes.len() - 4..] == BESS_MAGIC
+}
+
+pub fn canonicalize_replay_hash_bytes(bytes: &mut [u8]) {
+    canonicalize_native_debug_observers(bytes);
+
+    let Some(footer_start) = bytes.len().checked_sub(8) else {
+        return;
+    };
+    if !has_bess_footer(bytes) {
+        return;
+    }
+
+    let mut pos = read_u32_le(&bytes[footer_start..footer_start + 4]) as usize;
+    if pos >= footer_start {
+        return;
+    }
+
+    loop {
+        let Some(header_end) = pos.checked_add(8) else {
+            return;
+        };
+        if header_end > footer_start {
+            return;
+        }
+
+        let id: [u8; 4] = bytes[pos..pos + 4].try_into().expect("slice is 4 bytes");
+        let len = read_u32_le(&bytes[pos + 4..pos + 8]) as usize;
+        let data_start = header_end;
+        let Some(data_end) = data_start.checked_add(len) else {
+            return;
+        };
+        if data_end > footer_start {
+            return;
+        }
+
+        if id == BLOCK_RTC && len >= RTC_BLOCK_LEN as usize {
+            let timestamp_start = data_start + 0x28;
+            let timestamp_end = timestamp_start + 8;
+            if timestamp_end <= data_end {
+                bytes[timestamp_start..timestamp_end].fill(0);
+            }
+        }
+
+        if id == BLOCK_END {
+            return;
+        }
+
+        pos = data_end;
+    }
+}
+
+fn canonicalize_native_debug_observers(bytes: &mut [u8]) {
+    if bytes.len() < NATIVE_LAST_OPCODE_END || !bytes.starts_with(NATIVE_SAVE_STATE_MAGIC) {
+        return;
+    }
+
+    bytes[NATIVE_LAST_OPCODE_OFFSET] = 0;
+    bytes[NATIVE_LAST_OPCODE_PC_OFFSET..NATIVE_LAST_OPCODE_END].fill(0);
 }
 
 pub(super) fn write_block_header(writer: &mut super::StateWriter, id: &[u8; 4], len: u32) {
@@ -88,5 +151,64 @@ pub(super) fn copy_buffer(file: &[u8], offset: usize, size: usize, dest: &mut [u
 
     for b in &mut dest[copy_len..] {
         *b = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BESS_MAGIC, BLOCK_END, BLOCK_RTC, RTC_BLOCK_LEN, canonicalize_replay_hash_bytes};
+    use crate::save_state::SAVE_STATE_MAGIC;
+
+    #[test]
+    fn replay_hash_canonicalization_zeros_bess_rtc_timestamps() {
+        let mut original = b"native-state-prefix".to_vec();
+        let first_block_offset = original.len() as u32;
+        original.extend_from_slice(&BLOCK_RTC);
+        original.extend_from_slice(&RTC_BLOCK_LEN.to_le_bytes());
+        original.extend_from_slice(&[0x11; 0x28]);
+        original.extend_from_slice(&123_456_789u64.to_le_bytes());
+        original.extend_from_slice(&BLOCK_END);
+        original.extend_from_slice(&0u32.to_le_bytes());
+        original.extend_from_slice(&first_block_offset.to_le_bytes());
+        original.extend_from_slice(BESS_MAGIC);
+
+        let mut different_timestamp = original.clone();
+        let timestamp_start = first_block_offset as usize + 8 + 0x28;
+        different_timestamp[timestamp_start..timestamp_start + 8]
+            .copy_from_slice(&987_654_321u64.to_le_bytes());
+
+        canonicalize_replay_hash_bytes(&mut original);
+        canonicalize_replay_hash_bytes(&mut different_timestamp);
+
+        assert_eq!(original, different_timestamp);
+        assert_eq!(&original[timestamp_start..timestamp_start + 8], &[0; 8]);
+    }
+
+    #[test]
+    fn replay_hash_canonicalization_ignores_non_bess_data() {
+        let mut bytes = b"native-state-prefix".to_vec();
+        let unchanged = bytes.clone();
+
+        canonicalize_replay_hash_bytes(&mut bytes);
+
+        assert_eq!(bytes, unchanged);
+    }
+
+    #[test]
+    fn replay_hash_canonicalization_zeros_native_debug_observers() {
+        let mut first = vec![0u8; 120];
+        first[..SAVE_STATE_MAGIC.len()].copy_from_slice(&SAVE_STATE_MAGIC);
+        first[97] = 0xF1;
+        first[98..100].copy_from_slice(&0x2FEAu16.to_le_bytes());
+
+        let mut second = first.clone();
+        second[97] = 0x00;
+        second[98..100].copy_from_slice(&0x0460u16.to_le_bytes());
+
+        canonicalize_replay_hash_bytes(&mut first);
+        canonicalize_replay_hash_bytes(&mut second);
+
+        assert_eq!(first, second);
+        assert_eq!(&first[97..100], &[0, 0, 0]);
     }
 }

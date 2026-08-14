@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail};
 use serde_json::{Value, json};
 
-use crate::args::{optional_bool, optional_string, optional_u64, required_string};
+use crate::args::{
+    normalized_action, optional_bool, optional_string, optional_u64, required_string,
+};
 use crate::live_client;
 use crate::protocol::{DEFAULT_CONTROL_ADDR, initialize_result, jsonrpc_error, tool_result, tools};
 use crate::repo::{repo_root_is_valid, resolve_repo_root};
@@ -120,6 +122,9 @@ impl Server {
             "zeff_screenshot" => self.tool_screenshot(args),
             "zeff_save_state" => self.tool_save_state(args),
             "zeff_load_state" => self.tool_load_state(args),
+            "zeff_state_slot" => self.tool_state_slot(args),
+            "zeff_replay" => self.tool_replay(args),
+            "zeff_link" => self.tool_link(args),
             "zeff_memory" => self.tool_memory(args),
             "zeff_graphics" => self.tool_graphics(),
             "zeff_sequence" => self.tool_sequence(args),
@@ -223,6 +228,12 @@ impl Server {
         if let Some(frames) = optional_u64(args, "frames") {
             request["frames"] = json!(frames);
         }
+        if let Some(player) = optional_u64(args, "player")
+            .or_else(|| optional_u64(args, "controller"))
+            .or_else(|| optional_u64(args, "port"))
+        {
+            request["player"] = json!(player);
+        }
         self.call_live(request)
     }
 
@@ -294,6 +305,54 @@ impl Server {
         }))
     }
 
+    fn tool_state_slot(&self, args: &Value) -> anyhow::Result<Value> {
+        let action = optional_string(args, "action").unwrap_or_else(|| "load".to_string());
+        let command = match normalized_action(&action).as_str() {
+            "save" | "savestate" | "statesave" => "save_state_slot",
+            "load" | "loadstate" | "stateload" => "load_state_slot",
+            other => bail!("unknown state-slot action: {other}"),
+        };
+        self.call_live(json!({
+            "command": command,
+            "slot": required_slot(args)?,
+        }))
+    }
+
+    fn tool_replay(&self, args: &Value) -> anyhow::Result<Value> {
+        let action = optional_string(args, "action").unwrap_or_else(|| "start".to_string());
+        match normalized_action(&action).as_str() {
+            "start" | "record" | "recordreplay" | "startrecording" => {
+                let path = required_string(args, "path")?;
+                self.call_live(json!({
+                    "command": "record_replay",
+                    "path": path,
+                }))
+            }
+            "stop" | "stopreplay" | "stoprecording" => {
+                self.call_live(json!({ "command": "stop_replay" }))
+            }
+            other => bail!("unknown replay action: {other}"),
+        }
+    }
+
+    fn tool_link(&self, args: &Value) -> anyhow::Result<Value> {
+        let action = required_string(args, "action")?;
+        let command = match normalized_action(&action).as_str() {
+            "host" | "hostlink" => "host_link",
+            "join" | "connect" | "connectlink" | "joinlink" => "join_link",
+            "disconnect" | "disconnectlink" => "disconnect_link",
+            other => bail!("unknown link action: {other}"),
+        };
+        let mut request = json!({ "command": command });
+        if let Some(addr) = optional_string(args, "addr")
+            .or_else(|| optional_string(args, "address"))
+            .or_else(|| optional_string(args, "connect_addr"))
+        {
+            request["addr"] = json!(addr);
+        }
+        self.call_live(request)
+    }
+
     fn tool_memory(&self, args: &Value) -> anyhow::Result<Value> {
         let space = optional_string(args, "space").unwrap_or_else(|| "cpu".to_string());
         let start = optional_u64(args, "start")
@@ -341,6 +400,15 @@ impl Server {
     }
 }
 
+fn required_slot(args: &Value) -> anyhow::Result<u8> {
+    let slot = optional_u64(args, "slot").context("missing required integer argument: slot")?;
+    if slot <= 9 {
+        Ok(slot as u8)
+    } else {
+        bail!("slot must be between 0 and 9")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +430,9 @@ mod tests {
         assert!(names.contains(&"zeff_screenshot".to_string()));
         assert!(names.contains(&"zeff_save_state".to_string()));
         assert!(names.contains(&"zeff_load_state".to_string()));
+        assert!(names.contains(&"zeff_state_slot".to_string()));
+        assert!(names.contains(&"zeff_replay".to_string()));
+        assert!(names.contains(&"zeff_link".to_string()));
         assert!(names.contains(&"zeff_memory".to_string()));
         assert!(names.contains(&"zeff_graphics".to_string()));
         assert!(names.contains(&"zeff_sequence".to_string()));

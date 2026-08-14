@@ -23,9 +23,14 @@ impl App {
                 self.toast_manager.info(format!("Link {label}"));
                 true
             }
-            EmuResponse::LinkConnected(label) => {
+            EmuResponse::LinkConnected {
+                label,
+                frame_count,
+                game_boy_link_state,
+            } => {
                 self.tcp_link_active = true;
                 self.resume_if_paused_by_unfocus_for_link();
+                self.record_game_boy_link_state_replay_event(*frame_count, *game_boy_link_state);
                 self.toast_manager
                     .success(format!("Link connected ({label})"));
                 true
@@ -36,10 +41,17 @@ impl App {
                 self.toast_manager.error(format!("Link failed: {message}"));
                 true
             }
-            EmuResponse::LinkDisconnected => {
+            EmuResponse::LinkDisconnected {
+                frame_count,
+                game_boy_link_state,
+            } => {
+                let was_active = self.tcp_link_active;
                 self.tcp_link_active = false;
                 self.pause_for_unfocus_if_needed_after_link_end();
-                self.toast_manager.info("Link disconnected");
+                self.record_game_boy_link_state_replay_event(*frame_count, *game_boy_link_state);
+                if was_active {
+                    self.toast_manager.info("Link disconnected");
+                }
                 true
             }
             _ => false,
@@ -132,5 +144,26 @@ impl App {
             self.speed.paused = true;
             self.toast_manager.set_paused(true);
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn record_game_boy_link_state_replay_event(
+        &mut self,
+        frame_count: u64,
+        state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+    ) {
+        if self.active_system != crate::emu_backend::ActiveSystem::GameBoy {
+            return;
+        }
+        let Some(state) = state else {
+            return;
+        };
+        let Some(recorder) = self.recording.replay_recorder.as_mut() else {
+            return;
+        };
+        recorder.record_event(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState {
+            frame: frame_count.saturating_sub(self.recording.replay_recording_base_frame),
+            state,
+        });
     }
 }

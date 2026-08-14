@@ -54,6 +54,8 @@ impl App {
                 buttons_pressed,
                 dpad_pressed,
                 replay_events: None,
+                game_boy_link_start_state: None,
+                game_boy_link_start_tick: None,
             });
         }
         match self.recv_cold_response() {
@@ -292,6 +294,8 @@ impl App {
                     buttons_pressed,
                     dpad_pressed,
                     replay_events: None,
+                    game_boy_link_start_state: None,
+                    game_boy_link_start_tick: None,
                 });
             }
             match self.recv_cold_response() {

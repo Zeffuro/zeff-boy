@@ -122,19 +122,58 @@ impl App {
         self.window_focused = focused;
         if focused {
             self.timing.last_frame_time = Instant::now();
+            self.suppress_unfocus_pause_until_focus = false;
 
             if self.paused_by_unfocus {
                 self.paused_by_unfocus = false;
                 self.speed.paused = false;
                 self.toast_manager.set_paused(false);
             }
-        } else if self.settings.emulation.pause_on_unfocus
-            && !self.link_keeps_running()
-            && !self.speed.paused
-        {
-            self.paused_by_unfocus = true;
-            self.speed.paused = true;
-            self.toast_manager.set_paused(true);
+        } else {
+            let link_keeps_running = self.link_keeps_running();
+            if should_pause_on_unfocus(
+                self.suppress_unfocus_pause_until_focus,
+                self.settings.emulation.pause_on_unfocus,
+                link_keeps_running,
+                self.speed.paused,
+            ) {
+                self.paused_by_unfocus = true;
+                self.speed.paused = true;
+                self.toast_manager.set_paused(true);
+            }
         }
+    }
+}
+
+fn should_pause_on_unfocus(
+    suppress_unfocus_pause_until_focus: bool,
+    pause_on_unfocus: bool,
+    link_keeps_running: bool,
+    paused: bool,
+) -> bool {
+    if suppress_unfocus_pause_until_focus {
+        return false;
+    }
+    pause_on_unfocus && !link_keeps_running && !paused
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_pause_on_unfocus;
+
+    #[test]
+    fn dialog_unfocus_suppression_blocks_until_focus_returns() {
+        let suppress = true;
+
+        assert!(!should_pause_on_unfocus(suppress, true, false, false));
+        assert!(!should_pause_on_unfocus(suppress, true, false, false));
+        assert!(should_pause_on_unfocus(false, true, false, false));
+    }
+
+    #[test]
+    fn unfocus_does_not_pause_while_link_keeps_running_or_already_paused() {
+        assert!(!should_pause_on_unfocus(false, true, true, false));
+        assert!(!should_pause_on_unfocus(false, true, false, true));
+        assert!(!should_pause_on_unfocus(false, false, false, false));
     }
 }

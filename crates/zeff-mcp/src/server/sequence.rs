@@ -66,6 +66,15 @@ impl Server {
             "screenshot" => self.tool_screenshot(step),
             "savestate" | "statesave" => self.tool_save_state(step),
             "loadstate" | "stateload" => self.tool_load_state(step),
+            "stateslot" | "loadstateslot" | "savestateslot" => {
+                self.sequence_state_slot(action, step)
+            }
+            "replay" | "recordreplay" | "startreplay" | "stopreplay" => {
+                self.sequence_replay(action, step)
+            }
+            "link" | "hostlink" | "joinlink" | "connectlink" | "disconnectlink" => {
+                self.sequence_link(action, step)
+            }
             "pause" | "resume" | "toggle" => {
                 let mut args = step.clone();
                 args["action"] = json!(match normalized_action(action).as_str() {
@@ -107,6 +116,37 @@ impl Server {
             args["action"] = json!(action);
         }
         self.tool_button(&args)
+    }
+
+    fn sequence_state_slot(&self, action: &str, step: &Value) -> anyhow::Result<Value> {
+        let mut args = step.clone();
+        match normalized_action(action).as_str() {
+            "loadstateslot" => args["action"] = json!("load"),
+            "savestateslot" => args["action"] = json!("save"),
+            _ => {}
+        }
+        self.tool_state_slot(&args)
+    }
+
+    fn sequence_replay(&self, action: &str, step: &Value) -> anyhow::Result<Value> {
+        let mut args = step.clone();
+        match normalized_action(action).as_str() {
+            "recordreplay" | "startreplay" => args["action"] = json!("start"),
+            "stopreplay" => args["action"] = json!("stop"),
+            _ => {}
+        }
+        self.tool_replay(&args)
+    }
+
+    fn sequence_link(&self, action: &str, step: &Value) -> anyhow::Result<Value> {
+        let mut args = step.clone();
+        match normalized_action(action).as_str() {
+            "hostlink" => args["action"] = json!("host"),
+            "joinlink" | "connectlink" => args["action"] = json!("join"),
+            "disconnectlink" => args["action"] = json!("disconnect"),
+            _ => {}
+        }
+        self.tool_link(&args)
     }
 
     fn sequence_speed(&self, action: &str, step: &Value) -> anyhow::Result<Value> {

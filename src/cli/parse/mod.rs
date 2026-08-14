@@ -332,6 +332,31 @@ pub(crate) fn parse_args_from(
                 headless.replay_path = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--replay-peer" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--replay-peer requires a replay file path");
+                };
+                headless.replay_peer_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--replay-peer-live-link" => {
+                headless.replay_peer_live_link = true;
+                i += 1;
+            }
+            "--replay-tail-frames" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--replay-tail-frames requires a numeric value");
+                };
+                headless.replay_tail_frames = parse_u64_arg(value, "--replay-tail-frames")?;
+                i += 2;
+            }
+            "--expect-gb-link-events" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--expect-gb-link-events requires a numeric value");
+                };
+                headless.expect_gb_link_events = parse_u64_arg(value, "--expect-gb-link-events")?;
+                i += 2;
+            }
             "--expect-replay-final-hash" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--expect-replay-final-hash requires a SHA-256 hex digest");
@@ -427,6 +452,13 @@ pub(crate) fn parse_args_from(
                 i += 1;
             }
         }
+    }
+
+    if headless.replay_peer_path.is_some() && headless.replay_path.is_none() {
+        anyhow::bail!("--replay-peer requires --replay");
+    }
+    if headless.replay_peer_live_link && headless.replay_peer_path.is_none() {
+        anyhow::bail!("--replay-peer-live-link requires --replay-peer");
     }
 
     Ok(CliArgs {

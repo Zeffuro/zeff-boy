@@ -130,6 +130,16 @@ impl ToastManager {
         );
     }
 
+    pub(crate) fn set_replay_saving(&mut self, active: bool) {
+        self.set_persistent(
+            "replay_saving",
+            active,
+            "Saving Replay",
+            egui::Color32::from_rgba_unmultiplied(50, 70, 110, 220),
+            false,
+        );
+    }
+
     fn push(&mut self, message: String, kind: ToastKind) {
         self.toasts.push(Toast {
             message,

@@ -68,6 +68,7 @@ impl EmuThread {
         let result = FrameResult {
             advanced_frames,
             replay_events: Vec::new(),
+            replay_error: None,
             rumble: backend.rumble_active(),
             audio_samples: Vec::new(),
             ui_data: ui::UiFrameData::default(),

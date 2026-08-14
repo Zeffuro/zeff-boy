@@ -67,7 +67,12 @@ pub(crate) fn tools() -> Vec<Value> {
                         "enum": ["tap", "press", "release"],
                         "default": "tap"
                     },
-                    "frames": { "type": "integer", "default": 4 }
+                    "frames": { "type": "integer", "default": 4 },
+                    "player": {
+                        "type": "integer",
+                        "enum": [1, 2],
+                        "default": 1
+                    }
                 },
                 "required": ["button"]
             }
@@ -170,6 +175,62 @@ pub(crate) fn tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "zeff_state_slot",
+            "description": "Load or save one of the app's numbered state slots.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["load", "save"],
+                        "default": "load"
+                    },
+                    "slot": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9
+                    }
+                },
+                "required": ["slot"]
+            }
+        }),
+        json!({
+            "name": "zeff_replay",
+            "description": "Start or stop replay recording without opening a file dialog.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "stop"],
+                        "default": "start"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Required when action=start."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "zeff_link",
+            "description": "Host, join, or disconnect the local TCP link cable.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["host", "join", "disconnect"]
+                    },
+                    "addr": {
+                        "type": "string",
+                        "description": "Optional host/connect address, for example 127.0.0.1:8765."
+                    }
+                },
+                "required": ["action"]
+            }
+        }),
+        json!({
             "name": "zeff_memory",
             "description": "Read a compact byte range from CPU memory, VRAM, OAM, palette RAM, CHR/nametable data, or the framebuffer.",
             "inputSchema": {
@@ -213,9 +274,10 @@ pub(crate) fn tools() -> Vec<Value> {
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "description": "wait, tap, press, release, zapper, screenshot, save_state, load_state, memory, graphics, status, debug_info, pause, resume, frame_advance, speed"
+                                    "description": "wait, tap, press, release, zapper, screenshot, save_state, load_state, state_slot, replay, link, memory, graphics, status, debug_info, pause, resume, frame_advance, speed"
                                 },
                                 "button": { "type": "string" },
+                                "player": { "type": "integer" },
                                 "trigger": { "type": "boolean" },
                                 "hit": { "type": "boolean" },
                                 "x": { "type": "integer" },
@@ -226,6 +288,8 @@ pub(crate) fn tools() -> Vec<Value> {
                                 "ms": { "type": "integer" },
                                 "seconds": { "type": "integer" },
                                 "path": { "type": "string" },
+                                "slot": { "type": "integer" },
+                                "addr": { "type": "string" },
                                 "space": { "type": "string" },
                                 "start": { "type": "integer" },
                                 "length": { "type": "integer" },
