@@ -3,6 +3,10 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 
 impl App {
     pub(super) fn stop_emu_thread(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.recording.pending_replay_start = None;
+        }
         if let Some(mut thread) = self.emu_thread.take() {
             thread.shutdown();
         }

@@ -166,12 +166,13 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             audio_recorder: None,
             replay_recorder: None,
             #[cfg(not(target_arch = "wasm32"))]
+            pending_replay_start: None,
+            #[cfg(not(target_arch = "wasm32"))]
             replay_finalization: None,
             replay_player: None,
             pending_replay_batches: std::collections::VecDeque::new(),
             queued_replay_playback_frames: 0,
-            replay_recording_base_frame: 0,
-            replay_recording_base_game_boy_tick: None,
+            replay_recording_origin: ReplayCaptureOrigin::default(),
             replay_media_events_pending: 0,
         },
         rewind: RewindState {
@@ -432,6 +433,11 @@ impl App {
             if self.handle_link_response(&response) {
                 continue;
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            let response = match self.consume_replay_start_response(response) {
+                Some(response) => response,
+                None => continue,
+            };
             #[cfg(not(target_arch = "wasm32"))]
             let response = match self.consume_replay_finalization_response(response) {
                 Some(response) => response,

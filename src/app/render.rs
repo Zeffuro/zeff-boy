@@ -15,7 +15,8 @@ impl App {
             .map(|info| info.speed_mode_label);
 
         let is_recording = self.recording.is_audio_recording();
-        let is_recording_replay = self.recording.replay_recorder.is_some();
+        let is_recording_replay =
+            self.recording.replay_recorder.is_some() || self.recording.is_replay_start_pending();
         let is_playing_replay = self.recording.replay_player.is_some();
         let is_rewinding = self.rewind.held && self.settings.rewind.enabled;
         let autohide_menu_bar = self.settings.ui.autohide_menu_bar;

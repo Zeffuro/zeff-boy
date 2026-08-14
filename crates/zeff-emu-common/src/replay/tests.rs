@@ -270,6 +270,76 @@ fn replay_finish_pads_input_stream_to_metadata_event_frames() {
 }
 
 #[test]
+fn replay_finish_does_not_pad_terminal_frame_boundary_event() {
+    let path = unique_path("terminal_boundary_event_padding");
+    let metadata = ReplayMetadata {
+        events: vec![ReplayEvent::GameBoyLinkState {
+            frame: 1,
+            state: ReplayGameBoyLinkState {
+                peer_present: true,
+                pending_master_byte: None,
+                pending_master_response: None,
+                pending_master_completion_ready: false,
+                queued_master_action: None,
+                serial_generation: 0,
+            },
+        }],
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), vec![1, 2, 3], metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame::p1(0x0F, 0x03));
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+
+    assert_eq!(player.total_frames(), 1);
+    assert_eq!(player.next_frame(), Some((0x0F, 0x03)));
+    assert_eq!(
+        player.take_events_at_cursor(),
+        vec![ReplayEvent::GameBoyLinkState {
+            frame: 1,
+            state: ReplayGameBoyLinkState {
+                peer_present: true,
+                pending_master_byte: None,
+                pending_master_response: None,
+                pending_master_completion_ready: false,
+                queued_master_action: None,
+                serial_generation: 0,
+            },
+        }]
+    );
+    assert_eq!(player.next_frame(), None);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_finish_pads_to_frame_boundary_event_without_extra_frame() {
+    let path = unique_path("future_boundary_event_padding");
+    let metadata = ReplayMetadata {
+        events: vec![ReplayEvent::FdsDiskSide { frame: 4, side: 1 }],
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), vec![1, 2, 3], metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame::p1(0x0F, 0x03));
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+
+    assert_eq!(player.total_frames(), 4);
+    for _ in 0..4 {
+        assert_eq!(player.next_frame(), Some((0x0F, 0x03)));
+    }
+    assert_eq!(
+        player.take_events_at_cursor(),
+        vec![ReplayEvent::FdsDiskSide { frame: 4, side: 1 }]
+    );
+    assert_eq!(player.next_frame(), None);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn replay_link_events_do_not_throttle_frame_boundary_batches() {
     let path = unique_path("link_events_do_not_throttle");
     let mut recorder =

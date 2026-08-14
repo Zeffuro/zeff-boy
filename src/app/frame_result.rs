@@ -22,6 +22,11 @@ impl App {
                 continue;
             }
             #[cfg(not(target_arch = "wasm32"))]
+            let resp = match self.consume_replay_start_response(resp) {
+                Some(resp) => resp,
+                None => continue,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
             let resp = match self.consume_replay_finalization_response(resp) {
                 Some(resp) => resp,
                 None => continue,
@@ -239,51 +244,79 @@ impl App {
     }
 
     fn record_replay_events(&mut self, events: Vec<zeff_emu_common::replay::ReplayEvent>) {
-        let base_frame = self.recording.replay_recording_base_frame;
-        let base_game_boy_tick = self.recording.replay_recording_base_game_boy_tick;
+        let origin = self.recording.replay_recording_origin;
         let Some(recorder) = self.recording.replay_recorder_for_commits() else {
             return;
         };
         for event in events {
-            recorder.record_event(Self::replay_relative_event(
-                event,
-                base_frame,
-                base_game_boy_tick,
-            ));
+            let event = match Self::replay_relative_event(event, origin) {
+                Ok(event) => event,
+                Err(err) => {
+                    log::warn!("Dropping replay event with invalid capture origin: {err}");
+                    continue;
+                }
+            };
+            recorder.record_event(event);
         }
     }
 
     fn replay_relative_event(
         event: zeff_emu_common::replay::ReplayEvent,
-        base_frame: u64,
-        base_game_boy_tick: Option<u64>,
-    ) -> zeff_emu_common::replay::ReplayEvent {
+        origin: crate::app::types::ReplayCaptureOrigin,
+    ) -> anyhow::Result<zeff_emu_common::replay::ReplayEvent> {
         match event {
             zeff_emu_common::replay::ReplayEvent::GameBoyLink { frame, tick, event } => {
-                zeff_emu_common::replay::ReplayEvent::GameBoyLink {
-                    frame: frame.saturating_sub(base_frame),
-                    tick: base_game_boy_tick
-                        .map(|base_tick| tick.saturating_sub(base_tick))
-                        .unwrap_or(tick),
+                let relative_frame = frame.checked_sub(origin.frame).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "GB link event frame {frame} is before replay origin frame {}",
+                        origin.frame
+                    )
+                })?;
+                let relative_tick = if let Some(base_tick) = origin.game_boy_tick {
+                    tick.checked_sub(base_tick).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "GB link event tick {tick} is before replay origin tick {base_tick}"
+                        )
+                    })?
+                } else {
+                    tick
+                };
+                Ok(zeff_emu_common::replay::ReplayEvent::GameBoyLink {
+                    frame: relative_frame,
+                    tick: relative_tick,
                     event,
-                }
+                })
             }
             zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { frame, state } => {
-                zeff_emu_common::replay::ReplayEvent::GameBoyLinkState {
-                    frame: frame.saturating_sub(base_frame),
+                let relative_frame = frame.checked_sub(origin.frame).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "GB link state event frame {frame} is before replay origin frame {}",
+                        origin.frame
+                    )
+                })?;
+                Ok(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState {
+                    frame: relative_frame,
                     state,
-                }
+                })
             }
             zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
                 frame,
                 session_cycle,
                 event,
-            } => zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
-                frame: frame.saturating_sub(base_frame),
-                session_cycle,
-                event,
-            },
-            event => event,
+            } => {
+                let relative_frame = frame.checked_sub(origin.frame).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "WonderSwan link event frame {frame} is before replay origin frame {}",
+                        origin.frame
+                    )
+                })?;
+                Ok(zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
+                    frame: relative_frame,
+                    session_cycle,
+                    event,
+                })
+            }
+            event => Ok(event),
         }
     }
 
@@ -322,5 +355,101 @@ impl App {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent};
+
+    use crate::app::types::ReplayCaptureOrigin;
+
+    use super::App;
+
+    #[test]
+    fn replay_relative_event_rejects_pre_origin_frame() {
+        let err = App::replay_relative_event(
+            ReplayEvent::GameBoyLink {
+                frame: 9,
+                tick: 200,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: 1,
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 2,
+                },
+            },
+            ReplayCaptureOrigin {
+                frame: 10,
+                game_boy_tick: Some(100),
+            },
+        )
+        .expect_err("pre-origin event should be rejected");
+
+        assert!(
+            err.to_string().contains("before replay origin frame"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn replay_relative_event_rejects_pre_origin_game_boy_tick() {
+        let err = App::replay_relative_event(
+            ReplayEvent::GameBoyLink {
+                frame: 10,
+                tick: 99,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: 1,
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 2,
+                },
+            },
+            ReplayCaptureOrigin {
+                frame: 10,
+                game_boy_tick: Some(100),
+            },
+        )
+        .expect_err("pre-origin tick should be rejected");
+
+        assert!(
+            err.to_string().contains("before replay origin tick"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn replay_relative_event_rebases_frame_and_game_boy_tick() {
+        let event = App::replay_relative_event(
+            ReplayEvent::GameBoyLink {
+                frame: 12,
+                tick: 150,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: 1,
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 2,
+                },
+            },
+            ReplayCaptureOrigin {
+                frame: 10,
+                game_boy_tick: Some(100),
+            },
+        )
+        .expect("post-origin event should be valid");
+
+        assert_eq!(
+            event,
+            ReplayEvent::GameBoyLink {
+                frame: 2,
+                tick: 50,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: 1,
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 2,
+                },
+            }
+        );
     }
 }

@@ -1,6 +1,8 @@
 #[cfg(not(target_arch = "wasm32"))]
-use super::super::types::{ReplayFinalizationState, ReplaySaveResult};
+use super::super::types::{PendingReplayStart, ReplayFinalizationState, ReplaySaveResult};
 use super::App;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::emu_thread::ReplayStartState;
 use crate::emu_thread::{EmuCommand, EmuResponse};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
@@ -65,6 +67,9 @@ impl App {
         if self.recording.is_replay_finalizing() {
             anyhow::bail!("replay save is still finishing");
         }
+        if self.recording.pending_replay_start.is_some() {
+            anyhow::bail!("replay recording is already starting");
+        }
         if self.recording.replay_recorder.is_some() {
             anyhow::bail!("replay recording is already active");
         }
@@ -75,39 +80,23 @@ impl App {
         self.disable_uncapped_for_replay();
         self.clear_replay_progress();
 
+        self.recording.pending_replay_start = Some(PendingReplayStart { path });
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::CaptureReplayStart);
         }
-        match self.recv_cold_response() {
-            Some(EmuResponse::ReplayStartCaptured(start)) => {
-                let mut metadata = start.metadata;
-                metadata.cheat_sha256 = crate::cheats::enabled_patch_hash(
-                    &self.debug_windows.cheat.user_codes,
-                    &self.debug_windows.cheat.libretro_codes,
-                );
-                metadata.game_boy_link_start_tick = start.game_boy_cpu_cycles;
-                let recorder = zeff_emu_common::replay::ReplayRecorder::new_with_metadata(
-                    path,
-                    start.state_bytes,
-                    metadata,
-                );
-                self.recording.replay_recording_base_frame = start.frame_count;
-                self.recording.replay_recording_base_game_boy_tick = start.game_boy_cpu_cycles;
-                self.recording.replay_recorder = Some(recorder);
-                self.toast_manager.set_replay_recording(true);
-                Ok(())
-            }
-            Some(EmuResponse::StateCaptureFailed(err)) => {
-                anyhow::bail!("failed to capture replay start state: {err}");
-            }
-            Some(resp) => {
-                anyhow::bail!("unexpected replay start response: {}", response_kind(&resp))
-            }
-            None => anyhow::bail!("emulator thread stopped before replay start was captured"),
-        }
+        self.toast_manager.info("Replay recording starting");
+        Ok(())
     }
 
     pub(in crate::app) fn stop_replay_recording(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.recording.pending_replay_start.take().is_some() {
+            self.clear_replay_progress();
+            self.toast_manager.set_replay_recording(false);
+            self.toast_manager.info("Replay start canceled");
+            return;
+        }
+
         if self.recording.replay_recorder.is_some() {
             self.toast_manager.set_replay_recording(false);
             while let Some(result) = self.emu_thread.as_ref().and_then(|t| t.try_recv_frame()) {
@@ -240,10 +229,13 @@ impl App {
     }
 
     fn clear_replay_progress(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.recording.pending_replay_start = None;
+        }
         self.recording.pending_replay_batches.clear();
         self.recording.queued_replay_playback_frames = 0;
-        self.recording.replay_recording_base_frame = 0;
-        self.recording.replay_recording_base_game_boy_tick = None;
+        self.recording.replay_recording_origin = crate::app::types::ReplayCaptureOrigin::default();
         self.recording.replay_media_events_pending = 0;
     }
 
@@ -325,6 +317,71 @@ impl App {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl App {
+    pub(in crate::app) fn consume_replay_start_response(
+        &mut self,
+        response: EmuResponse,
+    ) -> Option<EmuResponse> {
+        match response {
+            EmuResponse::ReplayStartCaptured(start) => {
+                let Some(pending) = self.recording.pending_replay_start.take() else {
+                    log::warn!("Ignoring stale replay start capture response");
+                    return None;
+                };
+                if let Err(err) = self.finish_pending_replay_start(start, pending.path) {
+                    log::error!("Failed to start replay recording: {err}");
+                    self.clear_replay_progress();
+                    self.toast_manager
+                        .error(format!("Replay start failed: {err}"));
+                }
+                None
+            }
+            EmuResponse::StateCaptureFailed(err)
+                if self.recording.pending_replay_start.is_some() =>
+            {
+                self.recording.pending_replay_start = None;
+                self.clear_replay_progress();
+                let message = format!("failed to capture replay start state: {err}");
+                log::error!("{message}");
+                self.toast_manager
+                    .error(format!("Replay start failed: {err}"));
+                None
+            }
+            other => Some(other),
+        }
+    }
+
+    fn finish_pending_replay_start(
+        &mut self,
+        start: Box<ReplayStartState>,
+        path: PathBuf,
+    ) -> anyhow::Result<()> {
+        if self.recording.replay_recorder.is_some() {
+            anyhow::bail!("replay recording is already active");
+        }
+        if self.recording.replay_player.is_some() {
+            anyhow::bail!("stop replay playback before recording");
+        }
+
+        let mut metadata = start.metadata;
+        metadata.cheat_sha256 = crate::cheats::enabled_patch_hash(
+            &self.debug_windows.cheat.user_codes,
+            &self.debug_windows.cheat.libretro_codes,
+        );
+        metadata.game_boy_link_start_tick = start.game_boy_cpu_cycles;
+        let recorder = zeff_emu_common::replay::ReplayRecorder::new_with_metadata(
+            path,
+            start.state_bytes,
+            metadata,
+        );
+        self.recording.replay_recording_origin = crate::app::types::ReplayCaptureOrigin {
+            frame: start.frame_count,
+            game_boy_tick: start.game_boy_cpu_cycles,
+        };
+        self.recording.replay_recorder = Some(recorder);
+        self.toast_manager.set_replay_recording(true);
+        Ok(())
+    }
+
     pub(in crate::app) fn consume_replay_finalization_response(
         &mut self,
         response: EmuResponse,

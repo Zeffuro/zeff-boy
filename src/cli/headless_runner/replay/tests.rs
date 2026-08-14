@@ -1,0 +1,719 @@
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::emu_backend::{
+    ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
+};
+use zeff_emu_common::replay::{
+    ReplayEvent, ReplayGameBoyLinkEvent, ReplayGameBoyLinkState, ReplayJoypadFrame, ReplayMetadata,
+    ReplayPlayer, ReplayRecorder,
+};
+use zeff_firmware::sha256_hex;
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+
+use super::HeadlessOptions;
+use super::endpoint::run_loaded_replay_headless;
+#[cfg(not(target_arch = "wasm32"))]
+use super::paired_live::ensure_replay_metadata_has_expected_gb_link_events;
+#[cfg(not(target_arch = "wasm32"))]
+use super::timeline::{PairedGameBoyReplayTimeline, paired_game_boy_replay_timeline};
+
+static TEST_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
+    [0xFF; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
+
+struct TestTempDir {
+    path: PathBuf,
+}
+
+impl TestTempDir {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TestTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn test_temp_dir(prefix: &str) -> anyhow::Result<TestTempDir> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), suffix));
+    std::fs::create_dir(&path)?;
+    Ok(TestTempDir { path })
+}
+
+fn build_fds_test_image() -> Vec<u8> {
+    let mut side_a = vec![0xA1; zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE];
+    let mut side_b = vec![0xB2; zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE];
+    side_a[0] = 0x01;
+    side_b[0] = 0x02;
+    side_a.extend_from_slice(&side_b);
+    side_a
+}
+
+fn load_fds_test_backend(rom_path: &Path) -> anyhow::Result<EmuBackend> {
+    Ok(load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        rom_path,
+        rom_path,
+        Some(build_fds_test_image()),
+        BackendLoadConfig {
+            fds_bios_override: Some(&TEST_FDS_BIOS),
+            ..BackendLoadConfig::default()
+        },
+    )?
+    .backend)
+}
+
+fn build_nes_test_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    let prg = 16;
+    rom[prg] = 0xA9;
+    rom[prg + 1] = 0x42;
+    rom[prg + 2] = 0x85;
+    rom[prg + 3] = 0x00;
+    rom[prg + 4] = 0xEA;
+    rom[prg + 5] = 0xEA;
+    rom[prg + 0x3FFC] = 0x00;
+    rom[prg + 0x3FFD] = 0x80;
+    rom
+}
+
+fn load_nes_test_backend(rom_path: &Path, rom_data: Vec<u8>) -> anyhow::Result<EmuBackend> {
+    Ok(load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        rom_path,
+        rom_path,
+        Some(rom_data),
+        BackendLoadConfig::default(),
+    )?
+    .backend)
+}
+
+fn build_pocket_camera_test_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x134..0x143].copy_from_slice(b"POCKET CAM TEST");
+    rom[0x143] = 0x00;
+    rom[0x147] = 0xFC;
+    rom[0x148] = 0x00;
+    rom[0x149] = 0x04;
+    rom[0x14A] = 0x01;
+    rom[0x14B] = 0x33;
+    rom[0x14C] = 0x00;
+    let mut checksum = 0u8;
+    for byte in &rom[0x134..=0x14C] {
+        checksum = checksum.wrapping_sub(*byte).wrapping_sub(1);
+    }
+    rom[0x14D] = checksum;
+    rom
+}
+
+fn load_pocket_camera_test_backend(rom_path: &Path) -> anyhow::Result<EmuBackend> {
+    Ok(load_backend_from_rom_source(
+        ActiveSystem::GameBoy,
+        rom_path,
+        rom_path,
+        Some(build_pocket_camera_test_rom()),
+        BackendLoadConfig::default(),
+    )?
+    .backend)
+}
+
+fn arm_pocket_camera_capture(backend: &mut EmuBackend) {
+    let EmuBackend::Gb(gb) = backend else {
+        panic!("expected GB backend");
+    };
+    gb.emu.write_byte(0x0000, 0x0A);
+    gb.emu.write_byte(0x4000, 0x10);
+    gb.emu.write_byte(0xA002, 0x00);
+    gb.emu.write_byte(0xA003, 0x01);
+    gb.emu.write_byte(0xA000, 0x01);
+}
+
+fn replay_player_with_gb_events(
+    dir: &Path,
+    name: &str,
+    frames: usize,
+    events: Vec<ReplayEvent>,
+) -> anyhow::Result<ReplayPlayer> {
+    let path = dir.join(name);
+    let metadata = ReplayMetadata {
+        events,
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), Vec::new(), metadata);
+    for _ in 0..frames {
+        recorder.record_joypad_frame(ReplayJoypadFrame::default());
+    }
+    recorder.finish()?;
+    ReplayPlayer::load(&path)
+}
+
+#[test]
+fn paired_game_boy_replay_timeline_aligns_common_transfer_ids() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_pair_timeline")?;
+    let left = replay_player_with_gb_events(
+        temp.path(),
+        "left.zrpl",
+        8_121,
+        vec![ReplayEvent::GameBoyLink {
+            frame: 1_333,
+            tick: 2_206_540_680,
+            event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                transfer_id: 0x0100_0000_0000_0000,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x01,
+                serial_generation: 9,
+            },
+        }],
+    )?;
+    let right = replay_player_with_gb_events(
+        temp.path(),
+        "right.zrpl",
+        10_148,
+        vec![ReplayEvent::GameBoyLink {
+            frame: 273,
+            tick: 2_147_632_556,
+            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                transfer_id: 0x0100_0000_0000_0000,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x01,
+                serial_generation: 9,
+                local_reply: None,
+            },
+        }],
+    )?;
+
+    let timeline = paired_game_boy_replay_timeline(&left, &right, 5);
+
+    assert_eq!(
+        timeline,
+        PairedGameBoyReplayTimeline {
+            left_start_offset: 0,
+            right_start_offset: 1_060,
+            link_activation_frame: 1_333,
+            left_link_activation_frame: 1_333,
+            right_link_activation_frame: 1_333,
+            left_link_activation_tick: None,
+            right_link_activation_tick: Some(2_147_632_556),
+            left_target_frames: 8_126,
+            right_target_frames: 10_153,
+            total_global_frames: 11_213,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn paired_game_boy_replay_timeline_uses_recorded_link_state_frames() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_pair_timeline_link_state")?;
+    let state = ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        serial_generation: 0,
+    };
+    let left = replay_player_with_gb_events(
+        temp.path(),
+        "left.zrpl",
+        8_121,
+        vec![
+            ReplayEvent::GameBoyLinkState { frame: 100, state },
+            ReplayEvent::GameBoyLink {
+                frame: 1_333,
+                tick: 2_206_540_680,
+                event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0x01,
+                    serial_generation: 9,
+                },
+            },
+        ],
+    )?;
+    let right = replay_player_with_gb_events(
+        temp.path(),
+        "right.zrpl",
+        10_148,
+        vec![
+            ReplayEvent::GameBoyLinkState { frame: 20, state },
+            ReplayEvent::GameBoyLink {
+                frame: 273,
+                tick: 2_147_632_556,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0x01,
+                    serial_generation: 9,
+                    local_reply: None,
+                },
+            },
+        ],
+    )?;
+
+    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
+
+    assert_eq!(timeline.left_link_activation_frame, 1_060);
+    assert_eq!(timeline.right_link_activation_frame, 1_333);
+    assert_eq!(timeline.left_link_activation_tick, None);
+    assert_eq!(timeline.right_link_activation_tick, Some(2_147_632_556));
+    assert_eq!(timeline.link_activation_frame, 1_060);
+    Ok(())
+}
+
+#[test]
+fn paired_game_boy_replay_timeline_defaults_without_common_transfer_ids() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_pair_timeline_no_common")?;
+    let left = replay_player_with_gb_events(
+        temp.path(),
+        "left.zrpl",
+        12,
+        vec![ReplayEvent::GameBoyLink {
+            frame: 4,
+            tick: 100,
+            event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                transfer_id: 1,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x01,
+                serial_generation: 0,
+            },
+        }],
+    )?;
+    let right = replay_player_with_gb_events(
+        temp.path(),
+        "right.zrpl",
+        10,
+        vec![ReplayEvent::GameBoyLink {
+            frame: 2,
+            tick: 50,
+            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                transfer_id: 2,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x01,
+                serial_generation: 0,
+                local_reply: None,
+            },
+        }],
+    )?;
+
+    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
+
+    assert_eq!(
+        timeline,
+        PairedGameBoyReplayTimeline {
+            left_start_offset: 0,
+            right_start_offset: 0,
+            link_activation_frame: 0,
+            left_link_activation_frame: 0,
+            right_link_activation_frame: 0,
+            left_link_activation_tick: None,
+            right_link_activation_tick: None,
+            left_target_frames: 12,
+            right_target_frames: 10,
+            total_global_frames: 12,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_headless_replay_route")?;
+    let rom_path = temp.path().join("test.nes");
+    let replay_path = temp.path().join("test.zrpl");
+    let rom_data = build_nes_test_rom();
+    std::fs::write(&rom_path, &rom_data)?;
+
+    let mut expected_backend = load_nes_test_backend(&rom_path, rom_data)?;
+    let start_state = expected_backend.encode_state_bytes()?;
+    let metadata = expected_backend.replay_metadata();
+
+    let input_frames = [
+        ReplayJoypadFrame {
+            buttons: 0x01,
+            dpad: 0x02,
+            buttons_p2: 0x04,
+            dpad_p2: 0x08,
+            zapper: Default::default(),
+            host_tilt: (0.0, 0.0),
+            camera_frame: None,
+        },
+        ReplayJoypadFrame {
+            buttons: 0x03,
+            dpad: 0x04,
+            buttons_p2: 0x02,
+            dpad_p2: 0x01,
+            zapper: zeff_emu_common::replay::ReplayZapperFrame {
+                enabled: true,
+                trigger: true,
+                hit: false,
+                screen_pos: Some((128, 96)),
+            },
+            host_tilt: (0.0, 0.0),
+            camera_frame: None,
+        },
+        ReplayJoypadFrame {
+            buttons: 0x08,
+            dpad: 0x01,
+            buttons_p2: 0x00,
+            dpad_p2: 0x04,
+            zapper: Default::default(),
+            host_tilt: (0.0, 0.0),
+            camera_frame: None,
+        },
+    ];
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state.clone(), metadata);
+    for frame in &input_frames {
+        recorder.record_joypad_frame(frame.clone());
+    }
+    recorder.finish()?;
+
+    expected_backend.load_state_from_bytes(start_state)?;
+    for frame in &input_frames {
+        expected_backend.set_input(frame.buttons, frame.dpad);
+        expected_backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
+        expected_backend.set_zapper_state(
+            frame.zapper.enabled,
+            frame.zapper.trigger,
+            frame.zapper.hit,
+            frame.zapper.screen_pos,
+        );
+        expected_backend.set_replay_host_tilt(frame.host_tilt);
+        if let Some(camera_frame) = frame.camera_frame.as_deref() {
+            expected_backend.set_replay_camera_frame(camera_frame);
+        }
+        expected_backend.step_frame();
+    }
+    let expected_hash = sha256_hex(&expected_backend.encode_state_bytes()?);
+
+    super::super::run_headless(
+        &rom_path,
+        HardwareModePreference::Auto,
+        Vec::new(),
+        &HeadlessOptions {
+            replay_path: Some(replay_path),
+            expect_replay_final_hash: Some(expected_hash),
+            ..HeadlessOptions::default()
+        },
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_camera_replay")?;
+    let replay_path = temp.path().join("camera.zrpl");
+    let rom_path = temp.path().join("camera.gb");
+
+    let mut expected_backend = load_pocket_camera_test_backend(&rom_path)?;
+    let runner_backend = load_pocket_camera_test_backend(&rom_path)?;
+    arm_pocket_camera_capture(&mut expected_backend);
+    let start_state = expected_backend.encode_state_bytes()?;
+    let metadata = expected_backend.replay_metadata();
+    let camera_frame = (0..(128 * 112))
+        .map(|i| ((i * 17) & 0xFF) as u8)
+        .collect::<Vec<_>>();
+    let input_frame = ReplayJoypadFrame {
+        buttons: 0,
+        dpad: 0,
+        buttons_p2: 0,
+        dpad_p2: 0,
+        zapper: Default::default(),
+        host_tilt: (0.0, 0.0),
+        camera_frame: Some(camera_frame),
+    };
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state.clone(), metadata);
+    recorder.record_joypad_frame(input_frame.clone());
+    recorder.finish()?;
+
+    expected_backend.load_state_from_bytes(start_state)?;
+    expected_backend.set_replay_camera_frame(
+        input_frame
+            .camera_frame
+            .as_deref()
+            .expect("test frame should contain camera data"),
+    );
+    expected_backend.step_frame();
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let summary = run_loaded_replay_headless(runner_backend, player, &HeadlessOptions::default())?;
+
+    assert_eq!(summary.frames, 1);
+    assert_eq!(
+        summary.final_state_hash,
+        sha256_hex(&expected_backend.encode_state_bytes()?)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_rejects_pocket_camera_input_for_non_camera_rom() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_camera_replay_reject")?;
+    let replay_path = temp.path().join("camera-on-nes.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let rom_data = build_nes_test_rom();
+
+    let backend = load_nes_test_backend(&rom_path, rom_data)?;
+    let start_state = backend.encode_state_bytes()?;
+    let metadata = backend.replay_metadata();
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame {
+        buttons: 0,
+        dpad: 0,
+        buttons_p2: 0,
+        dpad_p2: 0,
+        zapper: Default::default(),
+        host_tilt: (0.0, 0.0),
+        camera_frame: Some(vec![0x10, 0x20, 0x30, 0x40]),
+    });
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("Pocket Camera replay payload should require Pocket Camera hardware");
+    assert!(
+        err.to_string().contains("Pocket Camera input"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_rejects_zapper_input_for_non_nes_rom() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_zapper_replay_reject")?;
+    let replay_path = temp.path().join("zapper-on-gb.zrpl");
+    let rom_path = temp.path().join("plain.gb");
+    let rom_data = vec![0u8; 0x8000];
+
+    let backend = load_backend_from_rom_source(
+        ActiveSystem::GameBoy,
+        &rom_path,
+        &rom_path,
+        Some(rom_data),
+        BackendLoadConfig::default(),
+    )?
+    .backend;
+    let start_state = backend.encode_state_bytes()?;
+    let metadata = backend.replay_metadata();
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame {
+        buttons: 0,
+        dpad: 0,
+        buttons_p2: 0,
+        dpad_p2: 0,
+        zapper: zeff_emu_common::replay::ReplayZapperFrame {
+            enabled: true,
+            trigger: true,
+            hit: false,
+            screen_pos: Some((128, 96)),
+        },
+        host_tilt: (0.0, 0.0),
+        camera_frame: None,
+    });
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("Zapper replay payload should require NES hardware");
+    assert!(
+        err.to_string().contains("NES Zapper input"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_rejects_mbc7_tilt_input_for_non_mbc7_rom() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_tilt_replay_reject")?;
+    let replay_path = temp.path().join("tilt-on-plain-gb.zrpl");
+    let rom_path = temp.path().join("plain.gb");
+    let rom_data = vec![0u8; 0x8000];
+
+    let backend = load_backend_from_rom_source(
+        ActiveSystem::GameBoy,
+        &rom_path,
+        &rom_path,
+        Some(rom_data),
+        BackendLoadConfig::default(),
+    )?
+    .backend;
+    let start_state = backend.encode_state_bytes()?;
+    let metadata = backend.replay_metadata();
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame {
+        buttons: 0,
+        dpad: 0,
+        buttons_p2: 0,
+        dpad_p2: 0,
+        zapper: Default::default(),
+        host_tilt: (0.25, -0.5),
+        camera_frame: None,
+    });
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("MBC7 tilt replay payload should require MBC7 hardware");
+    assert!(
+        err.to_string().contains("MBC7 tilt input"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_rejects_embedded_final_state_hash_mismatch() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_hash_mismatch")?;
+    let replay_path = temp.path().join("hash-mismatch.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let rom_data = build_nes_test_rom();
+
+    let backend = load_nes_test_backend(&rom_path, rom_data)?;
+    let start_state = backend.encode_state_bytes()?;
+    let mut metadata = backend.replay_metadata();
+    metadata.final_state_sha256 = Some([0xA5; 32]);
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_frame(0, 0);
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("embedded hash mismatch should fail playback");
+    assert!(
+        err.to_string()
+            .contains("replay embedded final state hash mismatch"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_rejects_cheat_dependent_metadata() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_cheat_metadata")?;
+    let replay_path = temp.path().join("cheats.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let rom_data = build_nes_test_rom();
+
+    let backend = load_nes_test_backend(&rom_path, rom_data)?;
+    let start_state = backend.encode_state_bytes()?;
+    let mut metadata = backend.replay_metadata();
+    metadata.cheat_sha256 = Some([0x5A; 32]);
+
+    let recorder = ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("headless replay should reject cheat-dependent metadata");
+    assert!(
+        err.to_string().contains("enabled cheat set"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn live_link_event_floor_rejects_incomplete_replay_metadata() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_link_event_floor")?;
+    let replay_path = temp.path().join("short-link.zrpl");
+    let metadata = ReplayMetadata {
+        events: vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 0,
+            event: ReplayGameBoyLinkEvent::RemoteReply {
+                transfer_id: 1,
+                out_byte: 0x42,
+                passive: true,
+                serial_generation: 7,
+            },
+        }],
+        ..ReplayMetadata::default()
+    };
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), b"state".to_vec(), metadata);
+    recorder.record_frame(0, 0);
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = ensure_replay_metadata_has_expected_gb_link_events(
+        "left",
+        &player,
+        &HeadlessOptions {
+            expect_gb_link_events: 2,
+            ..HeadlessOptions::default()
+        },
+    )
+    .expect_err("short GB link replay should fail the event-count preflight");
+    assert!(
+        err.to_string().contains("only 1 GB link events"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_applies_fds_side_events_before_matching_frame() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_fds_replay_event")?;
+    let replay_path = temp.path().join("side-change.zrpl");
+    let rom_path = temp.path().join("test.fds");
+
+    let mut expected_backend = load_fds_test_backend(&rom_path)?;
+    let runner_backend = load_fds_test_backend(&rom_path)?;
+    let start_state = expected_backend.encode_state_bytes()?;
+    let metadata = expected_backend.replay_metadata();
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state.clone(), metadata);
+    recorder.record_frame(0x00, 0x00);
+    recorder.record_event(ReplayEvent::FdsDiskSide { frame: 1, side: 1 });
+    recorder.record_frame(0x00, 0x00);
+    recorder.finish()?;
+
+    expected_backend.load_state_from_bytes(start_state)?;
+    expected_backend.set_input(0x00, 0x00);
+    expected_backend.step_frame();
+    expected_backend.set_fds_disk_side(1)?;
+    expected_backend.set_input(0x00, 0x00);
+    expected_backend.step_frame();
+
+    let expected_hash = sha256_hex(&expected_backend.encode_state_bytes()?);
+    let player = ReplayPlayer::load(&replay_path)?;
+    let summary = run_loaded_replay_headless(runner_backend, player, &HeadlessOptions::default())?;
+
+    assert_eq!(summary.frames, 2);
+    assert_eq!(summary.events_applied, 1);
+    assert_eq!(summary.final_state_hash, expected_hash);
+    assert_eq!(expected_backend.fds_disk_side(), Some(1));
+
+    Ok(())
+}

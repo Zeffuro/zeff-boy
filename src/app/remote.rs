@@ -246,13 +246,18 @@ impl App {
             "uncapped": self.timing.uncapped_speed,
             "tcp_link_active": tcp_link_active,
             "replay": {
+                "starting": self.recording.is_replay_start_pending(),
                 "recording": self.recording.replay_recorder.is_some(),
                 "recorded_frames": self.recording
                     .replay_recorder
                     .as_ref()
                     .map(|recorder| recorder.frame_count())
                     .unwrap_or(0),
-                "recording_base_frame": self.recording.replay_recording_base_frame,
+                "recording_base_frame": self.recording.replay_recording_origin.frame,
+                "recording_base_game_boy_tick": self
+                    .recording
+                    .replay_recording_origin
+                    .game_boy_tick,
                 "playing": self.recording.replay_player.is_some(),
                 "saving": self.recording.is_replay_finalizing(),
                 "pending_batches": self.recording.pending_replay_batches.len(),

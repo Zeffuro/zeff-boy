@@ -35,9 +35,6 @@ impl App {
         let was_paused_by_unfocus = self.paused_by_unfocus;
         self.speed.paused = was_paused;
         self.paused_by_unfocus = false;
-        if self.window_focused {
-            self.suppress_unfocus_pause_until_focus = false;
-        }
         if was_paused_by_unfocus && !was_paused {
             self.toast_manager.set_paused(false);
         }

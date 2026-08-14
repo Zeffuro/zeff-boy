@@ -262,15 +262,19 @@ impl EmuLoop {
             }
 
             EmuCommand::CaptureReplayStart => {
-                let metadata = self.capture_replay_metadata();
-                let resp = match EmuThread::encode_current_state(&self.backend) {
-                    Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
-                        state_bytes: bytes,
-                        frame_count: self.backend.frame_count(),
-                        game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
-                        metadata,
-                    })),
-                    Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
+                let resp = if let Some(blocker) = self.replay_start_capture_blocker() {
+                    EmuResponse::StateCaptureFailed(format!("replay start rejected: {blocker}"))
+                } else {
+                    let metadata = self.capture_replay_metadata();
+                    match EmuThread::encode_current_state(&self.backend) {
+                        Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
+                            state_bytes: bytes,
+                            frame_count: self.backend.frame_count(),
+                            game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
+                            metadata,
+                        })),
+                        Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
+                    }
                 };
                 if !self.send_resp(resp) {
                     return false;
@@ -388,6 +392,16 @@ impl EmuLoop {
 
     fn send_resp_fn(&self) -> impl Fn(EmuResponse) -> bool + '_ {
         |resp| self.resp_tx.send(resp).is_ok()
+    }
+
+    fn replay_start_capture_blocker(&self) -> Option<String> {
+        let Some(RemoteLink::GameBoy(link)) = self.tcp_link.as_ref() else {
+            return None;
+        };
+        game_boy_replay_start_capture_blocker(
+            link.pending_master_transfer_id(),
+            self.backend.game_boy_link_replay_state(),
+        )
     }
 
     fn start_tcp_link(&mut self, mode: TcpLinkMode) {
@@ -571,5 +585,88 @@ impl EmuLoop {
         if self.resp_tx.send(EmuResponse::ShutdownComplete).is_err() {
             log::debug!("shutdown: completion response dropped (receiver closed)");
         }
+    }
+}
+
+fn game_boy_replay_start_capture_blocker(
+    pending_live_transfer_id: Option<u64>,
+    state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+) -> Option<String> {
+    if let Some(transfer_id) = pending_live_transfer_id {
+        return Some(format!(
+            "GB live link transfer {transfer_id} is waiting for a peer reply"
+        ));
+    }
+
+    let state = state?;
+    if state.pending_master_byte.is_some()
+        && state.pending_master_response.is_none()
+        && state.queued_master_action.is_none()
+    {
+        return Some(
+            "GB live link local master transfer has already left the core but has no recorded reply"
+                .to_string(),
+        );
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::game_boy_replay_start_capture_blocker;
+
+    fn replay_link_state(
+        pending_master_byte: Option<u8>,
+        pending_master_response: Option<u8>,
+        queued_master_action: Option<zeff_emu_common::replay::ReplayGameBoyLinkAction>,
+    ) -> zeff_emu_common::replay::ReplayGameBoyLinkState {
+        zeff_emu_common::replay::ReplayGameBoyLinkState {
+            peer_present: true,
+            pending_master_byte,
+            pending_master_response,
+            pending_master_completion_ready: false,
+            queued_master_action,
+            serial_generation: 7,
+        }
+    }
+
+    #[test]
+    fn replay_start_capture_rejects_pending_live_master_transfer() {
+        assert!(
+            game_boy_replay_start_capture_blocker(Some(17), None)
+                .unwrap()
+                .contains("17")
+        );
+    }
+
+    #[test]
+    fn replay_start_capture_rejects_consumed_core_master_without_reply() {
+        let state = replay_link_state(Some(0x12), None, None);
+
+        assert!(game_boy_replay_start_capture_blocker(None, Some(state)).is_some());
+    }
+
+    #[test]
+    fn replay_start_capture_allows_queued_or_replied_core_master() {
+        let queued = replay_link_state(
+            Some(0x12),
+            None,
+            Some(zeff_emu_common::replay::ReplayGameBoyLinkAction {
+                out_byte: 0x12,
+                clock_period_t_cycles: 4096,
+                serial_generation: 7,
+            }),
+        );
+        let replied = replay_link_state(Some(0x12), Some(0x34), None);
+
+        assert_eq!(
+            game_boy_replay_start_capture_blocker(None, Some(queued)),
+            None
+        );
+        assert_eq!(
+            game_boy_replay_start_capture_blocker(None, Some(replied)),
+            None
+        );
     }
 }

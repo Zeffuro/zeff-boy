@@ -158,12 +158,19 @@ impl App {
         let Some(state) = state else {
             return;
         };
+        let origin = self.recording.replay_recording_origin;
+        let Some(frame) = frame_count.checked_sub(origin.frame) else {
+            log::warn!(
+                "Dropping GB replay link-state event before replay origin: frame={} origin={}",
+                frame_count,
+                origin.frame
+            );
+            return;
+        };
         let Some(recorder) = self.recording.replay_recorder.as_mut() else {
             return;
         };
-        recorder.record_event(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState {
-            frame: frame_count.saturating_sub(self.recording.replay_recording_base_frame),
-            state,
-        });
+        recorder
+            .record_event(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { frame, state });
     }
 }

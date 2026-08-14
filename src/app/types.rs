@@ -48,16 +48,23 @@ pub(super) struct RewindState {
     pub(super) backstep_pending: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct ReplayCaptureOrigin {
+    pub(super) frame: u64,
+    pub(super) game_boy_tick: Option<u64>,
+}
+
 pub(super) struct RecordingState {
     pub(super) audio_recorder: Option<crate::audio_recorder::AudioRecorder>,
     pub(super) replay_recorder: Option<zeff_emu_common::replay::ReplayRecorder>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) pending_replay_start: Option<PendingReplayStart>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) replay_finalization: Option<ReplayFinalizationState>,
     pub(super) replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
     pub(super) pending_replay_batches: VecDeque<PendingReplayBatch>,
     pub(super) queued_replay_playback_frames: usize,
-    pub(super) replay_recording_base_frame: u64,
-    pub(super) replay_recording_base_game_boy_tick: Option<u64>,
+    pub(super) replay_recording_origin: ReplayCaptureOrigin,
     pub(super) replay_media_events_pending: usize,
 }
 
@@ -68,6 +75,7 @@ impl RecordingState {
 
     pub(super) fn is_replay_active(&self) -> bool {
         self.replay_recorder.is_some()
+            || self.is_replay_start_pending()
             || self.is_replay_finalizing()
             || self.replay_player.is_some()
             || !self.pending_replay_batches.is_empty()
@@ -101,6 +109,17 @@ impl RecordingState {
         }
     }
 
+    pub(super) fn is_replay_start_pending(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.pending_replay_start.is_some()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn is_replay_final_state_capture_pending(&self) -> bool {
         matches!(
@@ -108,6 +127,11 @@ impl RecordingState {
             Some(ReplayFinalizationState::CapturingFinalState { .. })
         )
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct PendingReplayStart {
+    pub(super) path: PathBuf,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -209,12 +233,12 @@ mod tests {
         RecordingState {
             audio_recorder: None,
             replay_recorder: None,
+            pending_replay_start: None,
             replay_finalization: None,
             replay_player: None,
             pending_replay_batches: VecDeque::new(),
             queued_replay_playback_frames: 0,
-            replay_recording_base_frame: 0,
-            replay_recording_base_game_boy_tick: None,
+            replay_recording_origin: ReplayCaptureOrigin::default(),
             replay_media_events_pending: 0,
         }
     }
@@ -231,6 +255,12 @@ mod tests {
         assert!(state.is_replay_active());
 
         state.replay_recorder = None;
+        state.pending_replay_start = Some(PendingReplayStart {
+            path: PathBuf::from("starting.zrpl"),
+        });
+        assert!(state.is_replay_active());
+
+        state.pending_replay_start = None;
         state.pending_replay_batches.push_back(PendingReplayBatch {
             frames: Vec::new(),
             record: false,
