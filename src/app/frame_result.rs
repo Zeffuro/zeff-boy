@@ -6,6 +6,11 @@ use crate::platform::Instant;
 
 impl App {
     pub(super) fn drain_emu_responses(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.recording.is_replay_start_pending() {
+            self.drain_emu_control_responses();
+        }
+
         loop {
             let result = match &self.emu_thread {
                 Some(thread) => thread.try_recv_frame(),
@@ -17,6 +22,10 @@ impl App {
             }
         }
 
+        self.drain_emu_control_responses();
+    }
+
+    fn drain_emu_control_responses(&mut self) {
         while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
             if self.handle_link_response(&resp) {
                 continue;

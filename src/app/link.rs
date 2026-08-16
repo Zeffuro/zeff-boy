@@ -120,7 +120,11 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn link_keeps_running(&self) -> bool {
-        self.tcp_link_active
+        activity_keeps_running_while_unfocused(
+            self.tcp_link_active,
+            self.recording.is_replay_active(),
+            self.live_control.is_enabled(),
+        )
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -129,17 +133,22 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn resume_if_paused_by_unfocus_for_link(&mut self) {
+    pub(super) fn resume_if_paused_by_unfocus_for_link(&mut self) {
         if self.paused_by_unfocus {
             self.paused_by_unfocus = false;
             self.speed.paused = false;
+            self.timing.last_frame_time = crate::platform::Instant::now();
             self.toast_manager.set_paused(false);
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn pause_for_unfocus_if_needed_after_link_end(&mut self) {
-        if !self.window_focused && self.settings.emulation.pause_on_unfocus && !self.speed.paused {
+        if !self.window_focused
+            && self.settings.emulation.pause_on_unfocus
+            && !self.link_keeps_running()
+            && !self.speed.paused
+        {
             self.paused_by_unfocus = true;
             self.speed.paused = true;
             self.toast_manager.set_paused(true);
@@ -172,5 +181,28 @@ impl App {
         };
         recorder
             .record_event(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { frame, state });
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn activity_keeps_running_while_unfocused(
+    tcp_link_active: bool,
+    replay_active: bool,
+    live_control_active: bool,
+) -> bool {
+    tcp_link_active || replay_active || live_control_active
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests {
+    use super::activity_keeps_running_while_unfocused;
+
+    #[test]
+    fn replay_activity_keeps_unfocused_native_instance_running() {
+        assert!(activity_keeps_running_while_unfocused(false, true, false));
+        assert!(activity_keeps_running_while_unfocused(true, false, false));
+        assert!(activity_keeps_running_while_unfocused(false, false, true));
+        assert!(!activity_keeps_running_while_unfocused(false, false, false));
     }
 }

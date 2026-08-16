@@ -10,6 +10,10 @@ use winit::window::Fullscreen;
 
 impl App {
     pub(super) fn reset_audio_output(&mut self) {
+        if std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1") {
+            self.audio = None;
+            return;
+        }
         let preferred = self.settings.audio.output_sample_rate;
         self.audio = AudioOutput::new(Some(preferred))
             .map_err(|e| log::warn!("Audio init failed: {e}"))

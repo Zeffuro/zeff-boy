@@ -69,171 +69,164 @@ impl App {
                 self.rewind.throttle = 0;
             }
             self.rewind.pops = 0;
-            if self.recording.is_replay_start_pending() {
-                self.timing.last_frame_time = Instant::now();
+            let max_in_flight = if self.recording.limits_in_flight_for_replay() {
+                1
             } else {
-                let max_in_flight = if self.recording.replay_recorder.is_some()
-                    || self.recording.replay_player.is_some()
-                    || !self.recording.pending_replay_batches.is_empty()
-                {
-                    1
-                } else {
-                    MAX_IN_FLIGHT
-                };
+                MAX_IN_FLIGHT
+            };
 
-                if self.frames_in_flight < max_in_flight {
-                    let now = Instant::now();
-                    let mut frames_to_step = if self.speed.paused {
-                        self.timing.last_frame_time = now;
-                        if std::mem::take(&mut self.debug_requests.frame_advance) {
-                            1
-                        } else {
-                            0
-                        }
+            if self.frames_in_flight < max_in_flight {
+                let now = Instant::now();
+                let mut frames_to_step = if self.speed.paused {
+                    self.timing.last_frame_time = now;
+                    if std::mem::take(&mut self.debug_requests.frame_advance) {
+                        1
                     } else {
-                        self.compute_frames_to_step(now)
-                    };
-                    if frames_to_step > 0
-                        && let Some(batch) = self.recording.pending_replay_batches.front()
-                    {
-                        frames_to_step = frames_to_step.min(batch.frames.len());
+                        0
                     }
+                } else {
+                    self.compute_frames_to_step(now)
+                };
+                if frames_to_step > 0
+                    && let Some(batch) = self.recording.pending_replay_batches.front()
+                {
+                    frames_to_step = frames_to_step.min(batch.frames.len());
+                }
 
-                    let remote_capture_pending = self.remote_debug_frames_remaining > 0
-                        || self.remote_memory_frames_remaining > 0
-                        || self.remote_graphics_frames_remaining > 0;
-                    let has_pending = self.debug_requests.has_pending()
-                        || self.pending_debug_actions.has_pending()
-                        || remote_capture_pending;
+                let remote_capture_pending = self.remote_debug_frames_remaining > 0
+                    || self.remote_memory_frames_remaining > 0
+                    || self.remote_graphics_frames_remaining > 0;
+                let has_pending = self.debug_requests.has_pending()
+                    || self.pending_debug_actions.has_pending()
+                    || remote_capture_pending;
 
-                    if frames_to_step > 0 || has_pending {
-                        let want_viewer_update = match self.speed_mode() {
-                            SpeedMode::Normal | SpeedMode::SlowMotion => true,
-                            SpeedMode::FastForward | SpeedMode::Uncapped => {
-                                let now = Instant::now();
-                                if now.duration_since(self.timing.last_viewer_update)
-                                    >= VIEWER_UPDATE_INTERVAL
-                                {
-                                    self.timing.last_viewer_update = now;
-                                    true
-                                } else {
-                                    false
-                                }
+                if frames_to_step > 0 || has_pending {
+                    let want_viewer_update = match self.speed_mode() {
+                        SpeedMode::Normal | SpeedMode::SlowMotion => true,
+                        SpeedMode::FastForward | SpeedMode::Uncapped => {
+                            let now = Instant::now();
+                            if now.duration_since(self.timing.last_viewer_update)
+                                >= VIEWER_UPDATE_INTERVAL
+                            {
+                                self.timing.last_viewer_update = now;
+                                true
+                            } else {
+                                false
                             }
-                        };
+                        }
+                    };
 
-                        let (buttons_pressed, dpad_pressed) =
-                            self.current_replay_recordable_joypad_input();
-                        let replay_playback_active = self.recording.replay_player.is_some();
-                        let host_camera_frame = if replay_playback_active {
-                            None
-                        } else {
-                            self.camera_frame()
-                        };
-                        if replay_playback_active {
-                            self.apply_replay_events_at_cursor();
-                        }
-                        let replay_joypad_frames = self.prepare_replay_joypad_batch(
-                            frames_to_step,
-                            buttons_pressed,
-                            dpad_pressed,
-                            host_tilt,
-                            host_camera_frame.as_deref(),
-                        );
-                        if replay_playback_active {
-                            frames_to_step =
-                                replay_joypad_frames.as_ref().map_or(0, std::vec::Vec::len);
-                        }
-                        let (buttons_pressed_p2, dpad_pressed_p2) =
-                            replay_joypad_frames.as_ref().map_or_else(
-                                || self.current_host_joypad_p2_input(),
-                                |frames| {
-                                    frames
-                                        .first()
-                                        .map(|frame| (frame.buttons_p2, frame.dpad_p2))
-                                        .unwrap_or((0, 0))
-                                },
-                            );
-                        let zapper = replay_joypad_frames.as_ref().map_or_else(
-                            || self.nes_zapper_input(),
+                    let (buttons_pressed, dpad_pressed) =
+                        self.current_replay_recordable_joypad_input();
+                    let replay_playback_active = self.recording.replay_player.is_some();
+                    let host_camera_frame = if replay_playback_active {
+                        None
+                    } else {
+                        self.camera_frame()
+                    };
+                    if replay_playback_active {
+                        self.apply_replay_events_at_cursor();
+                    }
+                    let replay_joypad_frames = self.prepare_replay_joypad_batch(
+                        frames_to_step,
+                        buttons_pressed,
+                        dpad_pressed,
+                        host_tilt,
+                        host_camera_frame.as_deref(),
+                    );
+                    if replay_playback_active {
+                        frames_to_step =
+                            replay_joypad_frames.as_ref().map_or(0, std::vec::Vec::len);
+                    }
+                    let (buttons_pressed_p2, dpad_pressed_p2) =
+                        replay_joypad_frames.as_ref().map_or_else(
+                            || self.current_host_joypad_p2_input(),
                             |frames| {
                                 frames
                                     .first()
-                                    .map(|frame| frame.zapper.into())
-                                    .unwrap_or_default()
+                                    .map(|frame| (frame.buttons_p2, frame.dpad_p2))
+                                    .unwrap_or((0, 0))
                             },
                         );
-                        let host_tilt = replay_joypad_frames.as_ref().map_or(host_tilt, |frames| {
+                    let zapper = replay_joypad_frames.as_ref().map_or_else(
+                        || self.nes_zapper_input(),
+                        |frames| {
                             frames
                                 .first()
-                                .map(|frame| frame.host_tilt)
-                                .unwrap_or((0.0, 0.0))
+                                .map(|frame| frame.zapper.into())
+                                .unwrap_or_default()
+                        },
+                    );
+                    let host_tilt = replay_joypad_frames.as_ref().map_or(host_tilt, |frames| {
+                        frames
+                            .first()
+                            .map(|frame| frame.host_tilt)
+                            .unwrap_or((0.0, 0.0))
+                    });
+                    let host_camera_frame = replay_joypad_frames
+                        .as_ref()
+                        .map_or(host_camera_frame, |frames| {
+                            frames.first().and_then(|frame| frame.camera_frame.clone())
                         });
-                        let host_camera_frame = replay_joypad_frames
-                            .as_ref()
-                            .map_or(host_camera_frame, |frames| {
-                                frames.first().and_then(|frame| frame.camera_frame.clone())
-                            });
-                        let reqs = debug::compute_tab_requirements(&self.debug_dock);
-                        let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
-                        let buffers = self.take_reusable_buffers();
+                    let reqs = debug::compute_tab_requirements(&self.debug_dock);
+                    let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
+                    let buffers = self.take_reusable_buffers();
 
-                        let input = FrameInput {
-                            frames: frames_to_step,
-                            replay_joypad_frames,
-                            host_tilt,
-                            host_camera_frame,
-                            joypad: JoypadInput {
-                                buttons: buttons_pressed,
-                                dpad: dpad_pressed,
-                                buttons_p2: buttons_pressed_p2,
-                                dpad_p2: dpad_pressed_p2,
+                    let input = FrameInput {
+                        frames: frames_to_step,
+                        replay_joypad_frames,
+                        host_tilt,
+                        host_camera_frame,
+                        joypad: JoypadInput {
+                            buttons: buttons_pressed,
+                            dpad: dpad_pressed,
+                            buttons_p2: buttons_pressed_p2,
+                            dpad_p2: dpad_pressed_p2,
+                        },
+                        zapper,
+                        debug_step: std::mem::take(&mut self.debug_requests.step),
+                        debug_continue: std::mem::take(&mut self.debug_requests.continue_),
+                        audio: AudioConfig {
+                            apu_capture_enabled: reqs.needs_apu,
+                            skip_audio: match self.speed_mode() {
+                                SpeedMode::Uncapped => true,
+                                SpeedMode::FastForward => {
+                                    self.settings.audio.mute_during_fast_forward
+                                }
+                                SpeedMode::Normal | SpeedMode::SlowMotion => false,
                             },
-                            zapper,
-                            debug_step: std::mem::take(&mut self.debug_requests.step),
-                            debug_continue: std::mem::take(&mut self.debug_requests.continue_),
-                            audio: AudioConfig {
-                                apu_capture_enabled: reqs.needs_apu,
-                                skip_audio: match self.speed_mode() {
-                                    SpeedMode::Uncapped => true,
-                                    SpeedMode::FastForward => {
-                                        self.settings.audio.mute_during_fast_forward
-                                    }
-                                    SpeedMode::Normal | SpeedMode::SlowMotion => false,
-                                },
-                                midi_capture_active: self
-                                    .recording
-                                    .audio_recorder
-                                    .as_ref()
-                                    .is_some_and(|r| r.is_midi()),
-                            },
-                            debug_actions: std::mem::replace(
-                                &mut self.pending_debug_actions,
-                                DebugUiActions::none(),
-                            ),
-                            snapshot,
-                            buffers,
-                            rewind_enabled: self.settings.rewind.enabled && !self.rewind.held,
-                            rewind_seconds: self.settings.rewind.seconds,
-                        };
+                            midi_capture_active: self
+                                .recording
+                                .audio_recorder
+                                .as_ref()
+                                .is_some_and(|r| r.is_midi()),
+                        },
+                        debug_actions: std::mem::replace(
+                            &mut self.pending_debug_actions,
+                            DebugUiActions::none(),
+                        ),
+                        snapshot,
+                        buffers,
+                        rewind_enabled: self.settings.rewind.enabled && !self.rewind.held,
+                        rewind_seconds: self.settings.rewind.seconds,
+                    };
 
-                        if let Some(thread) = &self.emu_thread {
-                            if self.debug_windows.cheat.cheats_dirty {
-                                self.debug_windows.cheat.cheats_dirty = false;
-                                thread.send(EmuCommand::UpdateCheats(
-                                    crate::cheats::collect_enabled_patches(
-                                        &self.debug_windows.cheat.user_codes,
-                                        &self.debug_windows.cheat.libretro_codes,
-                                    ),
-                                ));
-                            }
-                            thread.send(EmuCommand::StepFrames(Box::new(input)));
-                            self.frames_in_flight += 1;
+                    if let Some(thread) = &self.emu_thread {
+                        if self.debug_windows.cheat.cheats_dirty {
+                            self.debug_windows.cheat.cheats_dirty = false;
+                            thread.send(EmuCommand::UpdateCheats(
+                                crate::cheats::collect_enabled_patches(
+                                    &self.debug_windows.cheat.user_codes,
+                                    &self.debug_windows.cheat.libretro_codes,
+                                ),
+                            ));
                         }
+                        thread.send(EmuCommand::StepFrames(Box::new(input)));
+                        self.frames_in_flight += 1;
+                    }
 
-                        if frames_to_step > 0 {
-                            self.fps_tracker.tick_n(frames_to_step);
-                        }
+                    if frames_to_step > 0 {
+                        self.fps_tracker.tick_n(frames_to_step);
                     }
                 }
             }

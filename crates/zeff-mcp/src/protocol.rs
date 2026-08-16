@@ -32,6 +32,7 @@ pub(crate) fn tools() -> Vec<Value> {
                     "rom_path": { "type": "string" },
                     "addr": { "type": "string", "default": DEFAULT_CONTROL_ADDR },
                     "release": { "type": "boolean", "default": false },
+                    "mute_audio": { "type": "boolean", "default": true },
                     "wait_seconds": { "type": "integer", "default": 45 },
                     "zeff_boy_exe": { "type": "string" },
                     "repo_root": {
@@ -305,6 +306,128 @@ pub(crate) fn tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "zeff_pair_start",
+            "description": "Start two Zeff Boy instances with separate live-control sockets for link automation. ROM paths are not echoed back.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "rom_path": { "type": "string" },
+                    "left_addr": { "type": "string", "default": DEFAULT_CONTROL_ADDR },
+                    "right_addr": { "type": "string", "default": "127.0.0.1:17685" },
+                    "release": { "type": "boolean", "default": false },
+                    "mute_audio": { "type": "boolean", "default": true },
+                    "wait_seconds": { "type": "integer", "default": 45 },
+                    "zeff_boy_exe": { "type": "string" },
+                    "repo_root": {
+                        "type": "string",
+                        "description": "Optional Zeff Boy repository root override. Normally auto-detected."
+                    }
+                },
+                "required": ["rom_path"]
+            }
+        }),
+        json!({
+            "name": "zeff_pair_status",
+            "description": "Read status from both tracked Zeff Boy link-test instances.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
+            "name": "zeff_pair_sequence",
+            "description": "Run live-control actions against the left, right, or both tracked link-test instances.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "target": {
+                                    "type": "string",
+                                    "enum": ["left", "right", "both", "host", "join"],
+                                    "default": "both"
+                                },
+                                "action": {
+                                    "type": "string",
+                                    "description": "wait, tap, press, release, zapper, screenshot, save_state, load_state, state_slot, replay, link, memory, graphics, status, debug_info, pause, resume, frame_advance, speed"
+                                },
+                                "button": { "type": "string" },
+                                "player": { "type": "integer" },
+                                "frames": { "type": "integer" },
+                                "ms": { "type": "integer" },
+                                "seconds": { "type": "integer" },
+                                "path": { "type": "string" },
+                                "slot": { "type": "integer" },
+                                "addr": { "type": "string" },
+                                "space": { "type": "string" },
+                                "start": { "type": "integer" },
+                                "length": { "type": "integer" },
+                                "mode": { "type": "string" },
+                                "enabled": { "type": "boolean" }
+                            },
+                            "required": ["action"]
+                        }
+                    },
+                    "stop_on_error": { "type": "boolean", "default": true }
+                },
+                "required": ["steps"]
+            }
+        }),
+        json!({
+            "name": "zeff_pair_gb_trade_fixture",
+            "description": "Drive a two-instance GB/GBC trade capture from a local trade-room state using live-control memory/framebuffer checks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "state_path": {
+                        "type": "string",
+                        "default": "temp/pair-run/gb-trade-fixture.state"
+                    },
+                    "left_replay_path": {
+                        "type": "string",
+                        "default": "temp/pair-run/automated-recording/automated-host-trade.zrpl"
+                    },
+                    "right_replay_path": {
+                        "type": "string",
+                        "default": "temp/pair-run/automated-recording/automated-join-trade.zrpl"
+                    },
+                    "link_addr": {
+                        "type": "string",
+                        "default": "127.0.0.1:8765"
+                    },
+                    "left_party_index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5,
+                        "default": 2
+                    },
+                    "right_party_index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5,
+                        "default": 0
+                    },
+                    "record_replay": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "fast_forward": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "default": 240
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "zeff_pair_stop",
+            "description": "Stop the two Zeff Boy processes launched by zeff_pair_start.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
             "name": "zeff_stop",
             "description": "Stop the Zeff Boy process launched by zeff_start.",
             "inputSchema": empty_schema()
@@ -331,7 +454,7 @@ pub(crate) fn tool_result(result: anyhow::Result<Value>) -> Value {
             "isError": true,
             "content": [{
                 "type": "text",
-                "text": err.to_string()
+                "text": format!("{err:#}")
             }]
         }),
     }

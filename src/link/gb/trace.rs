@@ -23,7 +23,13 @@ impl LinkTrace {
             .append(true)
             .open(&path)
             .ok()?;
-        Some(Self { file })
+        let mut trace = Self { file };
+        trace.write(&format!(
+            "--- session start pid={} endpoint={} ---",
+            std::process::id(),
+            endpoint.0
+        ));
+        Some(trace)
     }
 
     pub(super) fn write(&mut self, message: &str) {

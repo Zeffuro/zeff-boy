@@ -111,16 +111,10 @@ impl GameBoyReplayLink {
                     ReplayGameBoyLinkEvent::RemoteMasterStart { .. }
                 ) =>
             {
-                // A future or next remote-master event does not imply the cable
-                // is absent. Frame-boundary GameBoyLinkState events and replay
-                // start state carry the authoritative peer-present timeline.
-                // Forcing the peer absent here changes games that poll serial
-                // state while waiting for the remote endpoint to become master.
+                // Remote-master timing does not own cable-present state.
             }
             None => {
-                // Preserve the last recorded/restored peer-present state after
-                // the final semantic transfer. The recording may end while the
-                // cable is still connected.
+                // Keep the last cable state after the event stream ends.
             }
             Some(_) => unreachable!("all Game Boy replay event variants are handled"),
         }

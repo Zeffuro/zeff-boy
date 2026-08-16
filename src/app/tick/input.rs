@@ -122,7 +122,7 @@ impl App {
             return Some(frames);
         }
 
-        if self.recording.replay_recorder.is_some() {
+        if self.recording.should_stage_replay_recording_input() {
             let (buttons_p2, dpad_p2) = self.current_host_joypad_p2_input();
             let zapper = if self.active_system == crate::emu_backend::ActiveSystem::Nes {
                 self.nes_zapper_input().into()

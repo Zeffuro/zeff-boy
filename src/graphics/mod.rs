@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{PhysicalPosition, PhysicalSize},
     event::WindowEvent,
     event_loop::ActiveEventLoop,
     window::{Window, WindowAttributes},
@@ -43,12 +43,33 @@ impl Graphics {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if crate::live_control::automation_mode_enabled() {
+                attrs = attrs
+                    .with_active(false)
+                    .with_decorations(false)
+                    .with_position(PhysicalPosition::new(-32_000, -32_000));
+
+                #[cfg(target_os = "windows")]
+                {
+                    use winit::platform::windows::WindowAttributesExtWindows as _;
+
+                    attrs = attrs.with_skip_taskbar(true);
+                }
+            }
+
             if let Some(icon) = Self::load_window_icon() {
                 attrs = attrs.with_window_icon(Some(icon));
             }
         }
 
-        Ok(Arc::new(event_loop.create_window(attrs)?))
+        let window = Arc::new(event_loop.create_window(attrs)?);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if crate::live_control::automation_mode_enabled() {
+            window.set_minimized(true);
+        }
+
+        Ok(window)
     }
 
     #[cfg(not(target_arch = "wasm32"))]

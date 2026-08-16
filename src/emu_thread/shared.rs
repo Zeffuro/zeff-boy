@@ -483,14 +483,29 @@ impl EmuThread {
             }
 
             let frame_count_before = backend.frame_count();
-            if let Some(link) = tcp_link.as_deref_mut() {
-                if backend.step_frame_with_remote_link(link).is_err() {
-                    link.disconnect();
-                    backend.set_link_peer_present(false);
+            let retry_deadline = std::time::Instant::now() + std::time::Duration::from_millis(20);
+            loop {
+                if let Some(link) = tcp_link.as_deref_mut() {
+                    if backend.step_frame_with_remote_link(link).is_err() {
+                        link.disconnect();
+                        backend.set_link_peer_present(false);
+                        backend.step_frame();
+                    }
+                } else {
                     backend.step_frame();
                 }
-            } else {
-                backend.step_frame();
+
+                if backend.frame_count() != frame_count_before
+                    || !matches!(
+                        backend,
+                        EmuBackend::Gb(gb)
+                            if gb.emu.game_boy_link_pending_master_response()
+                    )
+                    || std::time::Instant::now() >= retry_deadline
+                {
+                    break;
+                }
+                std::thread::yield_now();
             }
             backend.apply_ram_cheats(cheats);
             Self::collect_midi_snapshot_if_frame_advanced(

@@ -49,9 +49,7 @@ pub(crate) struct WonderSwanRemoteLink<T: LinkTransport> {
     last_sent_watermark: Option<u64>,
     remote_watermark: Option<u64>,
     inbound_events: VecDeque<WonderSwanLinkEvent>,
-    // Keep this slot even while the inbound queue is empty: TCP can expose
-    // consecutive UART bytes as separate packets, but the emulated receiver
-    // still must not see them closer together than the selected byte time.
+    // Preserve UART byte spacing even if TCP packets arrive back-to-back.
     next_rx_delivery_cycle: Option<u64>,
     last_uart_trace_state: Option<UartTraceState>,
     #[cfg(not(target_arch = "wasm32"))]

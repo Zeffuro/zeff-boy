@@ -1,5 +1,6 @@
+use std::ffi::OsString;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,20 @@ use crate::live_client;
 use crate::protocol::{DEFAULT_CONTROL_ADDR, initialize_result, jsonrpc_error, tool_result, tools};
 use crate::repo::{repo_root_is_valid, resolve_repo_root};
 
+mod pair;
+mod pair_gb_trade_fixture;
+mod pair_gb_trade_fixture_config;
+mod pair_gb_trade_fixture_replay;
+mod pair_gb_trade_fixture_route;
+mod pair_gb_trade_fixture_screen;
+mod pair_sequence;
 mod sequence;
+
+struct LaunchOptions<'a> {
+    release: bool,
+    mute_audio: bool,
+    zeff_boy_exe: Option<&'a str>,
+}
 
 const MAX_SEQUENCE_FRAME_ADVANCE: u64 = 600;
 
@@ -29,6 +43,17 @@ struct ServerState {
     control_addr: String,
     repo_root: PathBuf,
     child: Option<Child>,
+    pair: Option<PairState>,
+}
+
+struct PairState {
+    left: LiveInstance,
+    right: LiveInstance,
+}
+
+struct LiveInstance {
+    control_addr: String,
+    child: Child,
 }
 
 impl Server {
@@ -40,6 +65,7 @@ impl Server {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                 }),
                 child: None,
+                pair: None,
             },
         }
     }
@@ -128,6 +154,11 @@ impl Server {
             "zeff_memory" => self.tool_memory(args),
             "zeff_graphics" => self.tool_graphics(),
             "zeff_sequence" => self.tool_sequence(args),
+            "zeff_pair_start" => self.tool_pair_start(args),
+            "zeff_pair_status" => self.tool_pair_status(),
+            "zeff_pair_sequence" => self.tool_pair_sequence(args),
+            "zeff_pair_gb_trade_fixture" => self.tool_pair_gb_trade_fixture(args),
+            "zeff_pair_stop" => self.tool_pair_stop(),
             "zeff_stop" => self.tool_stop(),
             other => bail!("unknown tool: {other}"),
         };
@@ -139,6 +170,7 @@ impl Server {
         let rom_path = required_string(args, "rom_path")?;
         let addr = optional_string(args, "addr").unwrap_or_else(|| self.state.control_addr.clone());
         let release = optional_bool(args, "release").unwrap_or(false);
+        let mute_audio = optional_bool(args, "mute_audio").unwrap_or(true);
         let wait_seconds = optional_u64(args, "wait_seconds").unwrap_or(45).min(180);
         let zeff_boy_exe = optional_string(args, "zeff_boy_exe");
         if let Some(repo_root) = optional_string(args, "repo_root") {
@@ -146,6 +178,10 @@ impl Server {
         }
 
         self.state.control_addr = addr.clone();
+
+        if self.pair_is_running()? {
+            bail!("a tracked Zeff Boy pair is already running");
+        }
 
         if self.child_is_running()? {
             return Ok(json!({
@@ -156,43 +192,53 @@ impl Server {
             }));
         }
 
-        let mut command = if let Some(exe) = zeff_boy_exe {
-            let mut command = Command::new(exe);
-            command.arg(rom_path);
-            command
-        } else {
-            let mut command = Command::new("cargo");
-            command
-                .arg("run")
-                .arg("--manifest-path")
-                .arg(self.state.repo_root.join("Cargo.toml"))
-                .arg("-p")
-                .arg("zeff-boy");
-            if release {
-                command.arg("--release");
-            }
-            command.arg("--").arg(rom_path);
-            command
+        let launch = LaunchOptions {
+            release,
+            mute_audio,
+            zeff_boy_exe: zeff_boy_exe.as_deref(),
         };
+        let child = self.spawn_instance(&rom_path, &addr, &launch)?;
+        self.state.child = Some(child);
 
-        command
-            .current_dir(&self.state.repo_root)
-            .env("ZEFF_REMOTE_CONTROL", &addr)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        self.state.child = Some(command.spawn().context("failed to start zeff-boy")?);
-
-        let status = self.wait_for_status(Duration::from_secs(wait_seconds));
+        let status = self.wait_for_status_at(&addr, Duration::from_secs(wait_seconds));
         Ok(json!({
             "started": true,
             "ready": status.is_ok(),
             "addr": self.state.control_addr,
             "repo_root_detected": repo_root_is_valid(&self.state.repo_root),
             "rom_path_redacted": true,
+            "audio_muted": mute_audio,
             "status": status.ok(),
         }))
+    }
+
+    fn spawn_instance(
+        &self,
+        rom_path: &str,
+        addr: &str,
+        launch: &LaunchOptions<'_>,
+    ) -> anyhow::Result<Child> {
+        let mut command = if let Some(exe) = launch.zeff_boy_exe {
+            let mut command = Command::new(exe);
+            command.arg(rom_path);
+            command
+        } else {
+            let mut command = Command::new("cargo");
+            command.args(zeff_boy_cargo_args(&self.state.repo_root, launch.release));
+            command.arg("--").arg(rom_path);
+            command
+        };
+
+        command
+            .current_dir(&self.state.repo_root)
+            .env("ZEFF_REMOTE_CONTROL", addr)
+            .env("ZEFF_REMOTE_AUTOMATION", "1")
+            .env("ZEFF_MUTE_AUDIO", if launch.mute_audio { "1" } else { "0" })
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        command.spawn().context("failed to start zeff-boy")
     }
 
     fn child_is_running(&mut self) -> anyhow::Result<bool> {
@@ -207,10 +253,10 @@ impl Server {
         }
     }
 
-    fn wait_for_status(&self, timeout: Duration) -> anyhow::Result<Value> {
+    fn wait_for_status_at(&self, addr: &str, timeout: Duration) -> anyhow::Result<Value> {
         let deadline = Instant::now() + timeout;
         loop {
-            match self.call_live(json!({ "command": "status" })) {
+            match self.call_live_at(addr, json!({ "command": "status" })) {
                 Ok(status) => return Ok(status),
                 Err(err) if Instant::now() >= deadline => return Err(err),
                 Err(_) => std::thread::sleep(Duration::from_millis(250)),
@@ -396,7 +442,11 @@ impl Server {
     }
 
     fn call_live(&self, request: Value) -> anyhow::Result<Value> {
-        live_client::call_live(&self.state.control_addr, request)
+        self.call_live_at(&self.state.control_addr, request)
+    }
+
+    fn call_live_at(&self, addr: &str, request: Value) -> anyhow::Result<Value> {
+        live_client::call_live(addr, request)
     }
 }
 
@@ -407,6 +457,22 @@ fn required_slot(args: &Value) -> anyhow::Result<u8> {
     } else {
         bail!("slot must be between 0 and 9")
     }
+}
+
+fn zeff_boy_cargo_args(repo_root: &Path, release: bool) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("run"),
+        OsString::from("--manifest-path"),
+        repo_root.join("Cargo.toml").into_os_string(),
+        OsString::from("-p"),
+        OsString::from("zeff-boy"),
+        OsString::from("--bin"),
+        OsString::from("zeff-boy"),
+    ];
+    if release {
+        args.push(OsString::from("--release"));
+    }
+    args
 }
 
 #[cfg(test)]
@@ -436,6 +502,11 @@ mod tests {
         assert!(names.contains(&"zeff_memory".to_string()));
         assert!(names.contains(&"zeff_graphics".to_string()));
         assert!(names.contains(&"zeff_sequence".to_string()));
+        assert!(names.contains(&"zeff_pair_start".to_string()));
+        assert!(names.contains(&"zeff_pair_status".to_string()));
+        assert!(names.contains(&"zeff_pair_sequence".to_string()));
+        assert!(names.contains(&"zeff_pair_gb_trade_fixture".to_string()));
+        assert!(names.contains(&"zeff_pair_stop".to_string()));
         assert!(names.contains(&"zeff_stop".to_string()));
     }
 
@@ -443,5 +514,17 @@ mod tests {
     fn compiled_manifest_dir_resolves_repo_root() {
         let root = resolve_repo_root().expect("repo root should resolve from CARGO_MANIFEST_DIR");
         assert!(repo_root_is_valid(&root));
+    }
+
+    #[test]
+    fn cargo_launcher_selects_zeff_boy_binary() {
+        let args = zeff_boy_cargo_args(Path::new("repo"), false)
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--bin", "zeff-boy"])
+        );
     }
 }

@@ -232,6 +232,24 @@ fn external_clock_reply_reports_passive_output() {
 }
 
 #[test]
+fn scheduled_external_clock_transfer_completes_at_period() {
+    let mut serial = Serial::new();
+    serial.mode = HardwareMode::DMG;
+    serial.sb = 0x34;
+    serial.set_link_peer_present(true);
+    serial.write_sc(0x80);
+
+    assert!(serial.schedule_external_from_master(0xAB, 4096));
+    let mut dev = DisconnectedDevice;
+    assert!(!serial.step(4095, &mut dev));
+    assert_eq!(serial.sb, 0x34);
+    assert_eq!(serial.sc & 0x80, 0x80);
+    assert!(serial.step(1, &mut dev));
+    assert_eq!(serial.sb, 0xAB);
+    assert_eq!(serial.sc & 0x80, 0);
+}
+
+#[test]
 fn connected_idle_reply_reports_current_output_without_passive_completion() {
     let mut serial = Serial::new();
     serial.mode = HardwareMode::DMG;

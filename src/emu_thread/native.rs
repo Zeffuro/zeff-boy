@@ -6,7 +6,8 @@ use super::emu_loop;
 use super::types::{self, EmuCommand, EmuResponse, FrameResult, SharedFramebuffer};
 use crate::emu_backend::EmuBackend;
 
-const FRAME_CHANNEL_CAPACITY: usize = 1;
+// Keep in sync with the app's frame-step in-flight limit.
+const FRAME_CHANNEL_CAPACITY: usize = 2;
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
 pub(crate) struct EmuThread {

@@ -3,17 +3,17 @@ use super::*;
 #[test]
 fn search_filenames_basic() {
     let files = vec![
-        "Pokemon Red Version (USA).cht".to_string(),
-        "Pokemon Blue Version (USA).cht".to_string(),
-        "Super Mario Land (World).cht".to_string(),
-        "Tetris (World).cht".to_string(),
+        "Example Red Version (USA).cht".to_string(),
+        "Example Blue Version (USA).cht".to_string(),
+        "Platformer Land (World).cht".to_string(),
+        "Block Puzzle (World).cht".to_string(),
     ];
 
-    let results = search_filenames("pokemon", &files, 50);
+    let results = search_filenames("example", &files, 50);
     assert_eq!(results.len(), 2);
-    assert!(results[0].contains("Pokemon"));
+    assert!(results[0].contains("Example"));
 
-    let results = search_filenames("mario", &files, 50);
+    let results = search_filenames("platformer", &files, 50);
     assert_eq!(results.len(), 1);
 
     let results = search_filenames("", &files, 50);
@@ -23,10 +23,10 @@ fn search_filenames_basic() {
 #[test]
 fn search_filenames_multi_term() {
     let files = vec![
-        "Pokemon Red Version (USA).cht".to_string(),
-        "Pokemon Blue Version (USA).cht".to_string(),
+        "Example Red Version (USA).cht".to_string(),
+        "Example Blue Version (USA).cht".to_string(),
     ];
-    let results = search_filenames("pokemon red", &files, 50);
+    let results = search_filenames("example red", &files, 50);
     assert_eq!(results.len(), 1);
     assert!(results[0].contains("Red"));
 }
@@ -41,15 +41,15 @@ fn search_filenames_respects_limit() {
 #[test]
 fn search_filenames_with_hints_prefers_exact_like_title() {
     let files = vec![
-        "Pokemon Red Version (USA, Europe).cht".to_string(),
-        "Pokemon Blue Version (USA, Europe).cht".to_string(),
-        "Tetris (World).cht".to_string(),
+        "Example Red Version (USA, Europe).cht".to_string(),
+        "Example Blue Version (USA, Europe).cht".to_string(),
+        "Block Puzzle (World).cht".to_string(),
     ];
-    let hints = vec!["Pokemon Red Version".to_string()];
+    let hints = vec!["Example Red Version".to_string()];
     let results = search_filenames_with_hints("", &files, 10, &hints);
     assert_eq!(
         results.first().unwrap(),
-        "Pokemon Red Version (USA, Europe).cht"
+        "Example Red Version (USA, Europe).cht"
     );
 }
 

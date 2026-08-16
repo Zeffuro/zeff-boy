@@ -245,6 +245,10 @@ impl App {
             "fast_forward": self.speed.fast_forward_held,
             "uncapped": self.timing.uncapped_speed,
             "tcp_link_active": tcp_link_active,
+            "frames_in_flight": self.frames_in_flight,
+            "window_focused": self.window_focused,
+            "paused_by_unfocus": self.paused_by_unfocus,
+            "unfocus_pause_suppressed": self.suppress_unfocus_pause_until_focus,
             "replay": {
                 "starting": self.recording.is_replay_start_pending(),
                 "recording": self.recording.replay_recorder.is_some(),

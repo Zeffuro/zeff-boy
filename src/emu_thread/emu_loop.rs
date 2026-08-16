@@ -98,7 +98,7 @@ impl EmuLoop {
                 if !self.handle_command(command) {
                     break;
                 }
-            } else {
+            } else if self.uncapped_mode {
                 EmuThread::run_uncapped_batch(
                     &mut self.backend,
                     &self.last_cheats,

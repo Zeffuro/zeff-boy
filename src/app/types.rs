@@ -81,6 +81,16 @@ impl RecordingState {
             || !self.pending_replay_batches.is_empty()
     }
 
+    pub(super) fn should_stage_replay_recording_input(&self) -> bool {
+        self.replay_recorder.is_some() || self.is_replay_start_pending()
+    }
+
+    pub(super) fn limits_in_flight_for_replay(&self) -> bool {
+        self.should_stage_replay_recording_input()
+            || self.replay_player.is_some()
+            || !self.pending_replay_batches.is_empty()
+    }
+
     pub(super) fn replay_recorder_for_commits(
         &mut self,
     ) -> Option<&mut zeff_emu_common::replay::ReplayRecorder> {
@@ -259,6 +269,8 @@ mod tests {
             path: PathBuf::from("starting.zrpl"),
         });
         assert!(state.is_replay_active());
+        assert!(state.should_stage_replay_recording_input());
+        assert!(state.limits_in_flight_for_replay());
 
         state.pending_replay_start = None;
         state.pending_replay_batches.push_back(PendingReplayBatch {

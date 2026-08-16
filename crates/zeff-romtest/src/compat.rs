@@ -380,11 +380,11 @@ mod tests {
     #[test]
     fn file_name_match_filters_case_insensitively() {
         assert!(file_name_matches(
-            Path::new("Pokemon Crystal.gbc"),
-            &normalized_name_matches(&["crystal".to_string()])
+            Path::new("Example Gem.gbc"),
+            &normalized_name_matches(&["gem".to_string()])
         ));
         assert!(!file_name_matches(
-            Path::new("Pokemon Crystal.gbc"),
+            Path::new("Example Gem.gbc"),
             &normalized_name_matches(&["emerald".to_string()])
         ));
     }

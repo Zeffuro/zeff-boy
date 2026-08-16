@@ -30,6 +30,7 @@ pub(super) struct Serial {
     pending_link_byte: Option<u8>,
     pending_link_response: Option<u8>,
     pending_link_completion_ready: bool,
+    pending_external_completion: Option<(u8, u64)>,
     queued_link_action: Option<GameBoyLinkAction>,
     serial_generation: u64,
 }
@@ -67,6 +68,7 @@ impl Serial {
             pending_link_byte: None,
             pending_link_response: None,
             pending_link_completion_ready: false,
+            pending_external_completion: None,
             queued_link_action: None,
             serial_generation: 0,
         }
@@ -113,6 +115,7 @@ impl Serial {
             self.pending_link_byte = None;
             self.pending_link_response = None;
             self.pending_link_completion_ready = false;
+            self.pending_external_completion = None;
             self.queued_link_action = None;
             return;
         }
@@ -130,6 +133,7 @@ impl Serial {
             self.pending_link_byte = Some(action.out_byte);
             self.pending_link_response = None;
             self.pending_link_completion_ready = false;
+            self.pending_external_completion = None;
             self.queued_link_action = Some(action);
         }
     }
@@ -153,6 +157,7 @@ impl Serial {
             self.pending_link_byte = None;
             self.pending_link_response = None;
             self.pending_link_completion_ready = false;
+            self.pending_external_completion = None;
             self.queued_link_action = None;
         } else if !was_present && self.pending_link_byte.is_none() && (self.sc & 0x81) == 0x81 {
             let action = GameBoyLinkAction {
@@ -173,6 +178,7 @@ impl Serial {
             self.pending_link_byte = None;
             self.pending_link_response = None;
             self.pending_link_completion_ready = false;
+            self.pending_external_completion = None;
             self.queued_link_action = None;
         }
     }
@@ -217,6 +223,7 @@ impl Serial {
         self.pending_link_byte = state.pending_master_byte;
         self.pending_link_response = state.pending_master_response;
         self.pending_link_completion_ready = state.pending_master_completion_ready;
+        self.pending_external_completion = None;
         self.queued_link_action = state.queued_master_action.map(|action| GameBoyLinkAction {
             out_byte: action.out_byte,
             clock_period_t_cycles: action.clock_period_t_cycles,
@@ -252,6 +259,7 @@ impl Serial {
         self.sc &= !0x80;
         self.pending_link_response = None;
         self.pending_link_completion_ready = false;
+        self.pending_external_completion = None;
         self.queued_link_action = None;
         self.bump_serial_generation();
         true
@@ -286,6 +294,14 @@ impl Serial {
         self.complete_link_transfer(peer_byte)
     }
 
+    pub(super) fn schedule_external_from_master(&mut self, peer_byte: u8, period: u64) -> bool {
+        if !self.external_clock_transfer_active() || self.pending_external_completion.is_some() {
+            return false;
+        }
+        self.pending_external_completion = Some((peer_byte, period));
+        true
+    }
+
     pub(super) fn apply_remote_link_peer_state(
         &mut self,
         peer: GameBoyLinkState,
@@ -315,6 +331,14 @@ impl Serial {
         let previous_cycles = self.cycles;
         self.cycles = self.cycles.wrapping_add(cycles) % transfer_period;
         let crossed_period = previous_cycles + cycles >= transfer_period;
+
+        if let Some((peer_byte, remaining)) = self.pending_external_completion {
+            if cycles >= remaining {
+                self.pending_external_completion = None;
+                return self.complete_link_transfer(peer_byte);
+            }
+            self.pending_external_completion = Some((peer_byte, remaining - cycles));
+        }
 
         if active && crossed_period {
             if let Some(response) = self.pending_link_response {
@@ -362,6 +386,7 @@ impl Serial {
             pending_link_byte: None,
             pending_link_response: None,
             pending_link_completion_ready: false,
+            pending_external_completion: None,
             queued_link_action: None,
             serial_generation: 0,
         })

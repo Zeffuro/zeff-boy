@@ -96,6 +96,7 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
     }
 
     pub(crate) fn disconnect(&mut self) {
+        self.trace("send disconnect".to_string());
         let _ = self.session.send(LinkPacketKind::Disconnect, &[]);
         self.session.disconnect();
     }
@@ -214,25 +215,38 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                         }),
                     },
                 );
+                if reply.passive {
+                    let start = emulator.cpu_cycles();
+                    if !emulator.schedule_game_boy_external_link_transfer(
+                        action.out_byte,
+                        action.clock_period_t_cycles,
+                    ) {
+                        return Err(LinkSessionError::MalformedPacketPayload);
+                    }
+                    let target = start.saturating_add(action.clock_period_t_cycles);
+                    while emulator.cpu_cycles() < target {
+                        let before = emulator.cpu_cycles();
+                        let (_, _, _, cycles) = emulator.step_instruction();
+                        if cycles == 0 || emulator.cpu_cycles() == before {
+                            return Err(LinkSessionError::MalformedPacketPayload);
+                        }
+                    }
+                    if emulator.game_boy_link_reply_to_master_start().passive {
+                        return Err(LinkSessionError::MalformedPacketPayload);
+                    }
+                    self.passive_rearm_catchup_after_tick = Some(emulator.cpu_cycles());
+                    self.trace(format!(
+                        "complete passive id={} tick={} in={:02X}",
+                        transfer_id.0,
+                        emulator.cpu_cycles(),
+                        action.out_byte
+                    ));
+                }
                 self.send_event(GameBoyLinkEvent::TransferReply {
                     transfer_id,
                     sample_tick: emulator.cpu_cycles(),
                     reply,
                 })?;
-                if reply.passive {
-                    if emulator.complete_game_boy_external_link_transfer(action.out_byte) {
-                        self.trace(format!(
-                            "complete passive id={} in={:02X}",
-                            transfer_id.0, action.out_byte
-                        ));
-                        self.passive_rearm_catchup_after_tick = Some(emulator.cpu_cycles());
-                    } else {
-                        self.trace(format!(
-                            "passive completion missed id={} in={:02X}",
-                            transfer_id.0, action.out_byte
-                        ));
-                    }
-                }
             }
             GameBoyLinkEvent::TransferReply {
                 transfer_id,
@@ -343,8 +357,8 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         }
 
         let start_tick = emulator.cpu_cycles();
-        let cycle_budget = clock_period_t_cycles.max(PASSIVE_REARM_CATCHUP_T_CYCLES);
-        let target_tick = start_tick.saturating_add(cycle_budget);
+        let target_tick =
+            start_tick.saturating_add(clock_period_t_cycles.max(PASSIVE_REARM_CATCHUP_T_CYCLES));
         let mut instructions = 0usize;
         while emulator.cpu_cycles() < target_tick
             && instructions < PASSIVE_REARM_CATCHUP_INSTRUCTIONS
@@ -359,15 +373,13 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             }
         }
 
-        let passive = emulator.game_boy_link_reply_to_master_start().passive;
         self.trace(format!(
-            "catchup passive_rearm completed_tick={} start_tick={} end_tick={} elapsed={} instructions={} passive={}",
+            "catchup passive_rearm completed_tick={} start_tick={} end_tick={} instructions={} passive={}",
             completed_tick,
             start_tick,
             emulator.cpu_cycles(),
-            emulator.cpu_cycles().saturating_sub(start_tick),
             instructions,
-            passive
+            emulator.game_boy_link_reply_to_master_start().passive
         ));
         self.passive_rearm_catchup_after_tick = None;
     }

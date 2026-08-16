@@ -515,6 +515,12 @@ impl Bus {
         completed
     }
 
+    pub fn schedule_game_boy_external_link_transfer(&mut self, peer_byte: u8, period: u64) -> bool {
+        self.io
+            .serial
+            .schedule_external_from_master(peer_byte, period)
+    }
+
     pub fn sync_game_boy_remote_link_peer(&mut self, peer_state: GameBoyLinkState) -> bool {
         self.sync_game_boy_remote_link_peer_with_idle_response(peer_state, None)
     }

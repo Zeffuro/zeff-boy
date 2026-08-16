@@ -5,7 +5,7 @@ use crate::emu_backend::ActiveSystem;
 #[test]
 fn storage_key_prefers_crc32() {
     assert_eq!(
-        storage_key(Some("Pokemon Red"), Some(0xD7037C83)),
+        storage_key(Some("Example Red"), Some(0xD7037C83)),
         Some("D7037C83".to_string())
     );
 }
@@ -13,8 +13,8 @@ fn storage_key_prefers_crc32() {
 #[test]
 fn storage_key_uses_sanitized_title_when_crc_missing() {
     assert_eq!(
-        storage_key(Some("Pokemon: Red/Blue?"), None),
-        Some("Pokemon_ Red_Blue_".to_string())
+        storage_key(Some("Example: Red/Blue?"), None),
+        Some("Example_ Red_Blue_".to_string())
     );
 }
 

@@ -81,6 +81,8 @@ impl App {
         self.clear_replay_progress();
 
         self.recording.pending_replay_start = Some(PendingReplayStart { path });
+        self.resume_if_paused_by_unfocus_for_link();
+        self.timing.last_frame_time = crate::platform::Instant::now();
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::CaptureReplayStart);
         }
@@ -93,12 +95,14 @@ impl App {
         if self.recording.pending_replay_start.take().is_some() {
             self.clear_replay_progress();
             self.toast_manager.set_replay_recording(false);
+            self.timing.last_frame_time = crate::platform::Instant::now();
             self.toast_manager.info("Replay start canceled");
             return;
         }
 
         if self.recording.replay_recorder.is_some() {
             self.toast_manager.set_replay_recording(false);
+            self.timing.last_frame_time = crate::platform::Instant::now();
             while let Some(result) = self.emu_thread.as_ref().and_then(|t| t.try_recv_frame()) {
                 self.process_frame_result(result);
             }
@@ -340,6 +344,7 @@ impl App {
             {
                 self.recording.pending_replay_start = None;
                 self.clear_replay_progress();
+                self.timing.last_frame_time = crate::platform::Instant::now();
                 let message = format!("failed to capture replay start state: {err}");
                 log::error!("{message}");
                 self.toast_manager
@@ -378,6 +383,7 @@ impl App {
             game_boy_tick: start.game_boy_cpu_cycles,
         };
         self.recording.replay_recorder = Some(recorder);
+        self.timing.last_frame_time = crate::platform::Instant::now();
         self.toast_manager.set_replay_recording(true);
         Ok(())
     }

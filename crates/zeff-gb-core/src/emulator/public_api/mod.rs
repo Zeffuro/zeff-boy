@@ -56,6 +56,11 @@ impl Emulator {
         self.bus.apply_game_boy_link_reply(reply)
     }
 
+    pub fn schedule_game_boy_external_link_transfer(&mut self, peer_byte: u8, period: u64) -> bool {
+        self.bus
+            .schedule_game_boy_external_link_transfer(peer_byte, period)
+    }
+
     pub fn complete_game_boy_external_link_transfer(&mut self, peer_byte: u8) -> bool {
         self.bus.complete_game_boy_external_link_transfer(peer_byte)
     }

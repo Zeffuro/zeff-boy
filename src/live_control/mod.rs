@@ -15,6 +15,7 @@ pub(crate) use types::{
 };
 
 const ENV_VAR: &str = "ZEFF_REMOTE_CONTROL";
+pub(crate) const AUTOMATION_ENV_VAR: &str = "ZEFF_REMOTE_AUTOMATION";
 const DEFAULT_ADDR: &str = "127.0.0.1:17684";
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -46,4 +47,14 @@ impl LiveControl {
     pub(crate) fn addr(&self) -> Option<SocketAddr> {
         self.addr
     }
+}
+
+pub(crate) fn automation_mode_enabled() -> bool {
+    std::env::var(AUTOMATION_ENV_VAR)
+        .ok()
+        .is_some_and(|value| env_flag_enabled(value.trim()))
+}
+
+fn env_flag_enabled(value: &str) -> bool {
+    !value.is_empty() && !matches!(value, "0" | "false" | "False" | "off" | "Off" | "no")
 }

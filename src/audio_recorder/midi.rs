@@ -160,9 +160,7 @@ pub(super) fn build_midi_track_for_voice(
                     current_note = Some(state.note);
                     current_velocity = state.velocity;
                 } else if state.velocity != current_velocity {
-                    // MIDI is only the compatibility projection. Exact hardware level
-                    // changes belong in the semantic/event log, not polyphonic
-                    // key pressure pretending to be amplitude automation.
+                    // Keep MIDI note-only; exact volume changes stay semantic.
                     current_velocity = state.velocity;
                 }
             } else {
