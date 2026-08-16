@@ -1,4 +1,7 @@
-use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply};
+use std::collections::VecDeque;
+use zeff_emu_common::replay::{
+    ReplayEvent, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply, ReplayGameBoyLinkState,
+};
 use zeff_gb_core::emulator::Emulator as GameBoyEmulator;
 
 use crate::emu_backend::EmuBackend;
@@ -33,6 +36,8 @@ pub(crate) struct GameBoyRemoteLink<T: LinkTransport> {
     next_transfer_id: u64,
     pending_master_transfer: Option<PendingGameBoyMasterTransfer>,
     passive_rearm_catchup_after_tick: Option<u64>,
+    replay_inbound_schedule: Option<VecDeque<(u64, u64)>>,
+    replay_state_schedule: Option<VecDeque<(u64, u64, ReplayGameBoyLinkState)>>,
     recorded_replay_events: Vec<ReplayEvent>,
     #[cfg(not(target_arch = "wasm32"))]
     trace: Option<LinkTrace>,
@@ -47,10 +52,31 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             next_transfer_id: 0,
             pending_master_transfer: None,
             passive_rearm_catchup_after_tick: None,
+            replay_inbound_schedule: None,
+            replay_state_schedule: None,
             recorded_replay_events: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             trace,
         }
+    }
+
+    pub(crate) fn with_replay_inbound_schedule(
+        session: LinkSession<T>,
+        schedule: Vec<(u64, u64)>,
+    ) -> Self {
+        let mut link = Self::new(session);
+        link.replay_inbound_schedule = Some(schedule.into());
+        link
+    }
+
+    pub(crate) fn with_replay_schedules(
+        session: LinkSession<T>,
+        inbound_schedule: Vec<(u64, u64)>,
+        state_schedule: Vec<(u64, u64, ReplayGameBoyLinkState)>,
+    ) -> Self {
+        let mut link = Self::with_replay_inbound_schedule(session, inbound_schedule);
+        link.replay_state_schedule = Some(state_schedule.into());
+        link
     }
 
     pub(crate) fn state(&self) -> LinkConnectionState {
@@ -84,6 +110,10 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             ));
         }
 
+        if !self.apply_due_replay_states(emulator) {
+            emulator.restore_game_boy_link_peer_present_without_action(false);
+            return Ok(());
+        }
         emulator.set_game_boy_link_peer_present(true);
         self.drain_incoming(emulator)?;
         self.send_pending_master_start(emulator)?;
@@ -157,6 +187,9 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
 
     fn drain_incoming(&mut self, emulator: &mut GameBoyEmulator) -> Result<(), LinkSessionError> {
         loop {
+            if !self.replay_inbound_event_is_due(emulator) {
+                return Ok(());
+            }
             let Some(packet) = self.session.try_receive_packet()? else {
                 return Ok(());
             };
@@ -166,6 +199,7 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                     let event = decode_game_boy_link_event(&packet.payload)
                         .map_err(|_| LinkSessionError::MalformedPacketPayload)?;
                     self.handle_event(emulator, event)?;
+                    self.consume_replay_inbound_event();
                 }
                 LinkPacketKind::Disconnect => {
                     self.trace("recv disconnect".to_string());
@@ -392,12 +426,16 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             if self.pending_master_transfer.is_none() {
                 return Ok(());
             }
+            if !self.replay_inbound_event_is_due(emulator) {
+                return Ok(());
+            }
             if let Some(packet) = self.session.try_receive_packet()? {
                 match packet.kind {
                     LinkPacketKind::LinkEvent => {
                         let event = decode_game_boy_link_event(&packet.payload)
                             .map_err(|_| LinkSessionError::MalformedPacketPayload)?;
                         self.handle_event(emulator, event)?;
+                        self.consume_replay_inbound_event();
                     }
                     LinkPacketKind::Disconnect => {
                         self.trace("recv disconnect".to_string());
@@ -423,6 +461,47 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             &encode_game_boy_link_event(event),
         )?;
         Ok(())
+    }
+
+    fn replay_inbound_event_is_due(&self, emulator: &GameBoyEmulator) -> bool {
+        let Some(schedule) = &self.replay_inbound_schedule else {
+            return true;
+        };
+        let Some(&(frame, tick)) = schedule.front() else {
+            return false;
+        };
+        emulator.frame_count() > frame
+            || (emulator.frame_count() == frame && emulator.cpu_cycles() >= tick)
+    }
+
+    fn apply_due_replay_states(&mut self, emulator: &mut GameBoyEmulator) -> bool {
+        let Some(schedule) = &mut self.replay_state_schedule else {
+            return true;
+        };
+        let Some(&(frame, tick, _)) = schedule.front() else {
+            return true;
+        };
+        if emulator.frame_count() < frame
+            || (emulator.frame_count() == frame && emulator.cpu_cycles() < tick)
+        {
+            return false;
+        }
+        while let Some(&(frame, tick, state)) = schedule.front() {
+            if emulator.frame_count() < frame
+                || (emulator.frame_count() == frame && emulator.cpu_cycles() < tick)
+            {
+                break;
+            }
+            emulator.restore_game_boy_link_replay_state(state);
+            schedule.pop_front();
+        }
+        true
+    }
+
+    fn consume_replay_inbound_event(&mut self) {
+        if let Some(schedule) = &mut self.replay_inbound_schedule {
+            schedule.pop_front();
+        }
     }
 
     fn allocate_transfer_id(&mut self) -> GbTransferId {

@@ -14,6 +14,7 @@ pub(crate) mod protocol;
 pub(crate) mod session;
 pub(crate) mod transport;
 pub(crate) mod ws;
+pub(crate) mod ws_replay;
 
 pub(crate) fn remote_link_system_for_active_system(
     active_system: ActiveSystem,
@@ -52,7 +53,7 @@ impl<T: LinkTransport> RemoteLink<T> {
     pub(crate) fn take_replay_events(&mut self) -> Vec<zeff_emu_common::replay::ReplayEvent> {
         match self {
             Self::GameBoy(link) => link.take_replay_events(),
-            Self::WonderSwan(..) => Vec::new(),
+            Self::WonderSwan(link) => link.take_replay_events(),
         }
     }
 }

@@ -9,6 +9,7 @@ pub(super) fn draw_memory_viewer_content(
     ui: &mut egui::Ui,
     state: &mut MemoryViewerState,
     memory_page: &[(Address, u8)],
+    symbols: &crate::symbols::SymbolSession,
 ) -> Vec<(Address, u8)> {
     let mut writes = Vec::new();
     let address_space = state.address_space;
@@ -16,13 +17,21 @@ pub(super) fn draw_memory_viewer_content(
 
     sync_flash_state(state, memory_page);
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Address:");
-        let response = ui.text_edit_singleline(&mut state.jump_input);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut state.jump_input)
+                .desired_width(110.0)
+                .hint_text("hex or symbol"),
+        );
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_hex_u32(&state.jump_input)
+            && let Some(addr) = parse_hex_u32(&state.jump_input).or_else(|| {
+                symbols
+                    .resolve_cpu_name(state.jump_input.trim())
+                    .and_then(|address| u32::try_from(address).ok())
+            })
         {
             state.view_start = address_space.clamp_start(addr);
             state.jump_input = address_space.format(state.view_start);
@@ -33,7 +42,7 @@ pub(super) fn draw_memory_viewer_content(
         }
     });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("-0x10").clicked() {
             state.view_start = state.view_start.saturating_sub(0x10);
         }
@@ -53,6 +62,9 @@ pub(super) fn draw_memory_viewer_content(
         address_space.format(address_space.min),
         address_space.format(address_space.max_start.saturating_add(0xFF))
     ));
+    if let Some(name) = symbols.symbol_name_at_cpu_address(state.view_start as u64) {
+        ui.monospace(name);
+    }
 
     let slider = ui.add(
         egui::Slider::new(
@@ -69,8 +81,9 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
+    let layout = hex_viewer::hex_layout(ui.available_width(), address_space.addr_width);
     let hex_block = ui.vertical(|ui| {
-        let fmt = hex_viewer::hex_text_formats(ui);
+        let fmt = hex_viewer::hex_text_formats(ui, layout);
         hex_viewer::draw_hex_header(ui, "Addr   ", &fmt);
         hex_viewer::draw_hex_grid(
             ui,
@@ -86,6 +99,7 @@ pub(super) fn draw_memory_viewer_content(
         hex_block.response.rect,
         state.view_start,
         address_space.max_start,
+        layout.bytes_per_row,
     );
     if scrolled_start != state.view_start {
         state.view_start = address_space.clamp_start(scrolled_start);

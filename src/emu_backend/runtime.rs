@@ -158,6 +158,16 @@ fn apply_debug_actions_to(emu: &mut impl DebuggableEmulator, actions: &DebugUiAc
 
 fn apply_gb_debug_actions(emu: &mut zeff_gb_core::emulator::Emulator, actions: &DebugUiActions) {
     apply_debug_actions_to(emu, actions);
+    for &offset in &actions.remove_rom_breakpoints {
+        if let Ok(offset) = usize::try_from(offset) {
+            emu.remove_rom_breakpoint(offset);
+        }
+    }
+    for &offset in &actions.toggle_rom_breakpoints {
+        if let Ok(offset) = usize::try_from(offset) {
+            emu.toggle_rom_breakpoint(offset);
+        }
+    }
     if let Some((bg, win, sprites)) = actions.layer_toggles {
         emu.set_ppu_debug_flags(bg, win, sprites);
     }

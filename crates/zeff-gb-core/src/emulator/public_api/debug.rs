@@ -10,12 +10,14 @@ impl Emulator {
 
     pub fn debug_continue(&mut self) {
         self.debug.clear_hits();
+        self.hit_rom_breakpoint = None;
         self.debug.break_on_next = false;
         self.cpu.running = CpuState::Running;
     }
 
     pub fn debug_step(&mut self) {
         self.debug.clear_hits();
+        self.hit_rom_breakpoint = None;
         self.debug.break_on_next = true;
         self.cpu.running = CpuState::Running;
     }
@@ -38,6 +40,29 @@ impl Emulator {
 
     pub fn iter_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
         self.debug.iter_breakpoints()
+    }
+
+    pub fn toggle_rom_breakpoint(&mut self, offset: usize) {
+        match self.rom_breakpoints.binary_search(&offset) {
+            Ok(index) => {
+                self.rom_breakpoints.remove(index);
+            }
+            Err(index) => self.rom_breakpoints.insert(index, offset),
+        }
+    }
+
+    pub fn remove_rom_breakpoint(&mut self, offset: usize) {
+        if let Ok(index) = self.rom_breakpoints.binary_search(&offset) {
+            self.rom_breakpoints.remove(index);
+        }
+    }
+
+    pub fn iter_rom_breakpoints(&self) -> impl Iterator<Item = usize> + '_ {
+        self.rom_breakpoints.iter().copied()
+    }
+
+    pub fn debug_hit_rom_breakpoint(&self) -> Option<usize> {
+        self.hit_rom_breakpoint
     }
 
     pub fn debug_watchpoints(&self) -> &[Watchpoint] {

@@ -4,7 +4,7 @@ pub(super) fn pad_frames_to_metadata_events(
     frames: &mut Vec<ReplayJoypadFrame>,
     metadata: &ReplayMetadata,
 ) {
-    let Some(required_frames) = metadata
+    let required_event_frames = metadata
         .events
         .iter()
         .filter_map(|event| {
@@ -15,8 +15,13 @@ pub(super) fn pad_frames_to_metadata_events(
                 frame.checked_add(1)
             }
         })
-        .max()
-    else {
+        .max();
+    let required_checkpoint_frames = metadata
+        .checkpoints
+        .iter()
+        .filter_map(|checkpoint| usize::try_from(checkpoint.frame).ok())
+        .max();
+    let Some(required_frames) = required_event_frames.max(required_checkpoint_frames) else {
         return;
     };
     if frames.len() >= required_frames {

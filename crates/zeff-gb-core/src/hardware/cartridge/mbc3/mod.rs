@@ -2,7 +2,7 @@ use super::CartridgeDebugInfo;
 use super::rtc::{RTC_REG_COUNT, Rtc, T_CYCLES_PER_SECOND, sanitize_rtc_register};
 use super::{
     MAX_SAVE_RAM, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram, read_banked_rom,
-    read_fixed_rom, write_banked_ram,
+    read_fixed_rom, rom_offset_for_bank, write_banked_ram,
 };
 use crate::save_state::{StateReader, StateWriter, StateWriterGbExt};
 use anyhow::Result;
@@ -46,6 +46,11 @@ impl Mbc3 {
             0x4000..=0x7FFF => read_banked_rom(&self.rom, self.rom_bank, addr),
             _ => 0xFF,
         }
+    }
+
+    pub fn rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = if addr < 0x4000 { 0 } else { self.rom_bank };
+        rom_offset_for_bank(&self.rom, bank, addr)
     }
 
     pub fn write_rom(&mut self, addr: u16, value: u8) {

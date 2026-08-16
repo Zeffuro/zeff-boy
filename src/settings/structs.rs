@@ -6,9 +6,9 @@ use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::enums::{
-    AudioRecordingFormat, ColorCorrection, DmgPalettePreset, EffectPreset,
+    AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset, EffectPreset,
     EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, ShaderParams, ShaderPreset,
-    UiThemePreset, VsyncMode, WonderSwanColorCorrection,
+    UiDensity, UiThemePreset, VsyncMode, WonderSwanColorCorrection,
 };
 use super::keycode_serde::keycode_from_string;
 use super::tilt_bindings::TiltKeyBindings;
@@ -303,6 +303,18 @@ fn default_ui_scale() -> f32 {
     1.0
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_debugger_window_size() -> [u32; 2] {
+    [1100, 760]
+}
+
+fn default_settings_window_size() -> [u32; 2] {
+    [760, 680]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct UiSettings {
@@ -317,6 +329,30 @@ pub(crate) struct UiSettings {
     pub(crate) open_debug_tabs: Vec<String>,
     #[serde(default)]
     pub(crate) theme_preset: UiThemePreset,
+    #[serde(default)]
+    pub(crate) ui_density: UiDensity,
+    #[serde(default)]
+    pub(crate) debug_presentation: DebugPresentation,
+    #[serde(default = "default_true")]
+    pub(crate) debugger_window_open: bool,
+    #[serde(default)]
+    pub(crate) debugger_window_position: Option<[i32; 2]>,
+    #[serde(default = "default_debugger_window_size")]
+    pub(crate) debugger_window_size: [u32; 2],
+    #[serde(default)]
+    pub(crate) debugger_window_maximized: bool,
+    #[serde(default)]
+    pub(crate) settings_window_position: Option<[i32; 2]>,
+    #[serde(default = "default_settings_window_size")]
+    pub(crate) settings_window_size: [u32; 2],
+    #[serde(default)]
+    pub(crate) settings_window_maximized: bool,
+    #[serde(default)]
+    pub(crate) debugger_dock_layout: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) floating_dock_layout: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) ide_dock_layout: Option<serde_json::Value>,
 }
 
 impl Default for UiSettings {
@@ -329,6 +365,43 @@ impl Default for UiSettings {
             ui_scale_needs_auto: false,
             open_debug_tabs: Vec::new(),
             theme_preset: UiThemePreset::default(),
+            ui_density: UiDensity::default(),
+            debug_presentation: DebugPresentation::default(),
+            debugger_window_open: true,
+            debugger_window_position: None,
+            debugger_window_size: default_debugger_window_size(),
+            debugger_window_maximized: false,
+            settings_window_position: None,
+            settings_window_size: default_settings_window_size(),
+            settings_window_maximized: false,
+            debugger_dock_layout: None,
+            floating_dock_layout: None,
+            ide_dock_layout: None,
+        }
+    }
+}
+
+impl UiSettings {
+    pub(crate) fn dock_layout(
+        &self,
+        presentation: DebugPresentation,
+    ) -> Option<&serde_json::Value> {
+        match presentation {
+            DebugPresentation::GameAndDebugger => self.debugger_dock_layout.as_ref(),
+            DebugPresentation::Floating => self.floating_dock_layout.as_ref(),
+            DebugPresentation::Ide => self.ide_dock_layout.as_ref(),
+        }
+    }
+
+    pub(crate) fn set_dock_layout(
+        &mut self,
+        presentation: DebugPresentation,
+        layout: serde_json::Value,
+    ) {
+        match presentation {
+            DebugPresentation::GameAndDebugger => self.debugger_dock_layout = Some(layout),
+            DebugPresentation::Floating => self.floating_dock_layout = Some(layout),
+            DebugPresentation::Ide => self.ide_dock_layout = Some(layout),
         }
     }
 }

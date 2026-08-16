@@ -33,6 +33,10 @@ pub(super) fn cpu_debug_json(cpu: &CpuDebugSnapshot) -> Value {
             "address": addr,
             "address_hex": format_addr(*addr),
         })).collect::<Vec<_>>(),
+        "rom_breakpoints": cpu.rom_breakpoints.iter().map(|offset| json!({
+            "offset": offset,
+            "offset_hex": format!("{offset:06X}"),
+        })).collect::<Vec<_>>(),
         "watchpoints": cpu.watchpoints.iter().map(|watch| json!({
             "address": watch.address,
             "address_hex": format_addr(watch.address),
@@ -40,6 +44,7 @@ pub(super) fn cpu_debug_json(cpu: &CpuDebugSnapshot) -> Value {
         })).collect::<Vec<_>>(),
         "hit_breakpoint": cpu.hit_breakpoint,
         "hit_breakpoint_hex": cpu.hit_breakpoint.map(format_addr),
+        "hit_rom_breakpoint": cpu.hit_rom_breakpoint,
         "hit_watchpoint": cpu.hit_watchpoint.as_ref().map(|hit| json!({
             "address": hit.address,
             "address_hex": format_addr(hit.address),
@@ -120,11 +125,13 @@ mod tests {
                 repeat_count: 1,
             }],
             breakpoints: vec![0x1234],
+            rom_breakpoints: vec![0x81234],
             watchpoints: vec![WatchpointDisplay {
                 address: 0xC000,
                 watch_type: WatchType::ReadWrite,
             }],
             hit_breakpoint: Some(0x1234),
+            hit_rom_breakpoint: Some(0x81234),
             hit_watchpoint: Some(WatchHitDisplay {
                 address: 0xC000,
                 old_value: 0x11,

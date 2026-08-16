@@ -24,6 +24,18 @@ impl Emulator {
         self.bus.cartridge.debug_info()
     }
 
+    pub fn rom_offset_for_cpu_address(&self, addr: u16) -> Option<usize> {
+        self.bus.cartridge.rom_offset(addr)
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        let lower = self.rom_offset_for_cpu_address(0).unwrap_or(usize::MAX) as u32;
+        let upper = self
+            .rom_offset_for_cpu_address(0x4000)
+            .unwrap_or(usize::MAX) as u32;
+        u64::from(lower) << 32 | u64::from(upper)
+    }
+
     pub fn is_mbc7_cartridge(&self) -> bool {
         self.header.cartridge_type.is_mbc7()
     }
@@ -117,6 +129,7 @@ impl Emulator {
                 points.sort_unstable();
                 points
             },
+            rom_breakpoints: self.rom_breakpoints.clone(),
             watchpoints: self
                 .debug
                 .watchpoints
@@ -127,6 +140,7 @@ impl Emulator {
                 })
                 .collect(),
             hit_breakpoint: self.debug.hit_breakpoint,
+            hit_rom_breakpoint: self.hit_rom_breakpoint,
             hit_watchpoint: self.debug.hit_watchpoint,
             tilt_is_mbc7: false,
             tilt_stick_controls_tilt: false,

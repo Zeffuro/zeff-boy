@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use super::common::{
-    COLOR_ADDR, COLOR_DIM, COLOR_FLASH, DEBUG_MONO_FONT_SIZE, HEX_BYTES_PER_ROW, HEX_ROWS_VISIBLE,
-    parse_hex_u32,
-};
+use super::common::{COLOR_ADDR, COLOR_DIM, COLOR_FLASH, DEBUG_MONO_FONT_SIZE, parse_hex_u32};
 use crate::debug::types::{MemoryBookmark, MemoryByteDiff};
 use zeff_emu_common::address::Address;
 
@@ -13,9 +10,33 @@ pub(super) struct HexFormats {
     pub normal: egui::TextFormat,
     pub dim: egui::TextFormat,
     pub flash: egui::TextFormat,
+    layout: HexLayout,
 }
 
-pub(super) fn hex_text_formats(ui: &egui::Ui) -> HexFormats {
+#[derive(Clone, Copy)]
+pub(super) struct HexLayout {
+    pub(super) bytes_per_row: usize,
+    show_ascii: bool,
+}
+
+pub(super) fn hex_layout(available_width: f32, addr_width: usize) -> HexLayout {
+    let char_width = DEBUG_MONO_FONT_SIZE * 0.62;
+    for bytes_per_row in [16, 8, 4] {
+        let chars = addr_width + 5 + bytes_per_row * 4;
+        if available_width >= chars as f32 * char_width {
+            return HexLayout {
+                bytes_per_row,
+                show_ascii: true,
+            };
+        }
+    }
+    HexLayout {
+        bytes_per_row: 4,
+        show_ascii: false,
+    }
+}
+
+pub(super) fn hex_text_formats(ui: &egui::Ui, layout: HexLayout) -> HexFormats {
     let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
     let normal_color = ui.visuals().text_color();
     HexFormats {
@@ -39,6 +60,7 @@ pub(super) fn hex_text_formats(ui: &egui::Ui) -> HexFormats {
             color: COLOR_FLASH,
             ..Default::default()
         },
+        layout,
     }
 }
 
@@ -46,12 +68,14 @@ pub(super) fn draw_hex_header(ui: &mut egui::Ui, addr_label: &str, fmt: &HexForm
     let mut job = egui::text::LayoutJob::default();
     let mut scratch = String::with_capacity(8);
     job.append(addr_label, 0.0, fmt.addr.clone());
-    for i in 0..HEX_BYTES_PER_ROW {
+    for i in 0..fmt.layout.bytes_per_row {
         scratch.clear();
         let _ = write!(scratch, "+{:X} ", i);
         job.append(&scratch, 0.0, fmt.addr.clone());
     }
-    job.append("  ASCII", 0.0, fmt.addr.clone());
+    if fmt.layout.show_ascii {
+        job.append("  ASCII", 0.0, fmt.addr.clone());
+    }
     ui.label(job);
 }
 
@@ -63,9 +87,11 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
     flash_ticks: Option<&[u8]>,
     tbl_map: &HashMap<u8, String>,
 ) {
+    let layout = fmt.layout;
     let mut scratch = String::with_capacity(12);
-    for row in 0..HEX_ROWS_VISIBLE {
-        let row_start = row * HEX_BYTES_PER_ROW;
+    let rows = page.len().div_ceil(layout.bytes_per_row);
+    for row in 0..rows {
+        let row_start = row * layout.bytes_per_row;
         if row_start >= page.len() {
             break;
         }
@@ -86,7 +112,7 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
         }
         job.append(&scratch, 0.0, fmt.addr.clone());
 
-        for col in 0..HEX_BYTES_PER_ROW {
+        for col in 0..layout.bytes_per_row {
             let idx = row_start + col;
             if idx >= page.len() {
                 job.append("-- ", 0.0, fmt.dim.clone());
@@ -100,19 +126,23 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
             }
         }
 
-        job.append("  ", 0.0, fmt.normal.clone());
-        for col in 0..HEX_BYTES_PER_ROW {
-            let idx = row_start + col;
-            if idx < page.len() {
-                let byte = page[idx].1;
-                let ch = super::common::tbl_lookup(byte, tbl_map);
-                let text_fmt =
-                    if ch.len() == 1 && ch.as_bytes()[0] == b'.' && !tbl_map.contains_key(&byte) {
+        if layout.show_ascii {
+            job.append("  ", 0.0, fmt.normal.clone());
+            for col in 0..layout.bytes_per_row {
+                let idx = row_start + col;
+                if idx < page.len() {
+                    let byte = page[idx].1;
+                    let ch = super::common::tbl_lookup(byte, tbl_map);
+                    let text_fmt = if ch.len() == 1
+                        && ch.as_bytes()[0] == b'.'
+                        && !tbl_map.contains_key(&byte)
+                    {
                         &fmt.dim
                     } else {
                         &fmt.normal
                     };
-                job.append(&ch, 0.0, text_fmt.clone());
+                    job.append(&ch, 0.0, text_fmt.clone());
+                }
             }
         }
 
@@ -125,13 +155,14 @@ pub(super) fn handle_scroll(
     hover_rect: egui::Rect,
     view_start: u32,
     max_start: u32,
+    row_bytes: usize,
 ) -> u32 {
     if ui.rect_contains_pointer(hover_rect) {
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll >= 1.0 {
-            return view_start.saturating_sub(0x10);
+            return view_start.saturating_sub(row_bytes as u32);
         } else if scroll <= -1.0 {
-            return view_start.saturating_add(0x10).min(max_start);
+            return view_start.saturating_add(row_bytes as u32).min(max_start);
         }
     }
     view_start
@@ -337,5 +368,12 @@ mod tests {
             new: 0x2B,
         });
         assert_eq!(line, "0000C123: 1A -> 2B");
+    }
+
+    #[test]
+    fn hex_layout_shrinks_with_the_window() {
+        assert_eq!(hex_layout(700.0, 6).bytes_per_row, 16);
+        assert_eq!(hex_layout(360.0, 6).bytes_per_row, 8);
+        assert_eq!(hex_layout(220.0, 6).bytes_per_row, 4);
     }
 }

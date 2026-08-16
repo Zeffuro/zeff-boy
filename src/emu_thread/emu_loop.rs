@@ -37,6 +37,7 @@ pub(super) struct EmuLoop {
     tcp_link: Option<RemoteLink<TcpLinkTransport>>,
     pending_tcp_link: Option<PendingTcpLink>,
     game_boy_replay_link: Option<crate::link::gb::GameBoyReplayLink>,
+    wonder_swan_replay_link: Option<crate::link::ws_replay::WonderSwanReplayLink>,
     rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
 }
@@ -62,6 +63,7 @@ impl EmuLoop {
             tcp_link: None,
             pending_tcp_link: None,
             game_boy_replay_link: None,
+            wonder_swan_replay_link: None,
             rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new(
                 DEFAULT_REWIND_SECONDS,
                 REWIND_SNAPSHOTS_PER_SECOND,
@@ -126,14 +128,17 @@ impl EmuLoop {
 
             EmuCommand::StartTcpLink(mode) => {
                 self.game_boy_replay_link = None;
+                self.wonder_swan_replay_link = None;
                 self.start_tcp_link(mode);
             }
 
             EmuCommand::DisconnectLink => {
                 self.disconnect_tcp_link();
                 self.game_boy_replay_link = None;
+                self.wonder_swan_replay_link = None;
                 if !self.send_resp(EmuResponse::LinkDisconnected {
                     frame_count: self.backend.frame_count(),
+                    game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
                     game_boy_link_state: self.backend.game_boy_link_replay_state(),
                 }) {
                     return false;
@@ -144,6 +149,17 @@ impl EmuLoop {
                 let input = *input;
                 let result = if let Some(replay_link) = self.game_boy_replay_link.as_mut() {
                     EmuThread::handle_step_frames_with_game_boy_replay_link(
+                        &mut self.backend,
+                        input,
+                        &self.last_cheats,
+                        replay_link,
+                        self.uncapped_mode,
+                        &mut self.rewind_buffer,
+                        &mut self.rewind_seconds,
+                        &self.shared_framebuffer,
+                    )
+                } else if let Some(replay_link) = self.wonder_swan_replay_link.as_mut() {
+                    EmuThread::handle_step_frames_with_wonder_swan_replay_link(
                         &mut self.backend,
                         input,
                         &self.last_cheats,
@@ -261,20 +277,43 @@ impl EmuLoop {
                 }
             }
 
-            EmuCommand::CaptureReplayStart => {
+            EmuCommand::CaptureReplayStart { capture_id } => {
                 let resp = if let Some(blocker) = self.replay_start_capture_blocker() {
-                    EmuResponse::StateCaptureFailed(format!("replay start rejected: {blocker}"))
+                    EmuResponse::ReplayStartCaptureFailed {
+                        capture_id,
+                        error: format!("replay start rejected: {blocker}"),
+                    }
                 } else {
                     let metadata = self.capture_replay_metadata();
                     match EmuThread::encode_current_state(&self.backend) {
-                        Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
-                            state_bytes: bytes,
-                            frame_count: self.backend.frame_count(),
-                            game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
-                            metadata,
-                        })),
-                        Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
+                        Ok(bytes) => EmuResponse::ReplayStartCaptured {
+                            capture_id,
+                            start: Box::new(ReplayStartState {
+                                state_bytes: bytes,
+                                frame_count: self.backend.frame_count(),
+                                game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
+                                wonder_swan_cpu_cycles: self.backend.wonder_swan_cpu_cycles(),
+                                metadata,
+                            }),
+                        },
+                        Err(err) => EmuResponse::ReplayStartCaptureFailed {
+                            capture_id,
+                            error: err.to_string(),
+                        },
                     }
+                };
+                if !self.send_resp(resp) {
+                    return false;
+                }
+            }
+
+            EmuCommand::CaptureReplayCheckpoint { frame } => {
+                let resp = match EmuThread::encode_current_state(&self.backend) {
+                    Ok(state_bytes) => EmuResponse::ReplayCheckpointCaptured { frame, state_bytes },
+                    Err(err) => EmuResponse::ReplayCheckpointCaptureFailed {
+                        frame,
+                        error: err.to_string(),
+                    },
                 };
                 if !self.send_resp(resp) {
                     return false;
@@ -288,6 +327,7 @@ impl EmuLoop {
                 replay_events,
                 game_boy_link_start_state,
                 game_boy_link_start_tick,
+                wonder_swan_link_start_tick,
             } => {
                 let mut result = self.backend.load_state_from_bytes(state_bytes);
                 if result.is_ok()
@@ -303,30 +343,74 @@ impl EmuLoop {
                         )),
                     };
                 }
+                if result.is_ok()
+                    && let Some(expected_tick) = wonder_swan_link_start_tick
+                {
+                    result = match self.backend.wonder_swan_cpu_cycles() {
+                        Some(actual_tick) if actual_tick == expected_tick => Ok(()),
+                        Some(actual_tick) => Err(anyhow::anyhow!(
+                            "replay WonderSwan start tick mismatch: metadata={expected_tick}, state={actual_tick}"
+                        )),
+                        None => Err(anyhow::anyhow!(
+                            "replay declares a WonderSwan start tick but current backend is not WonderSwan"
+                        )),
+                    };
+                }
                 if result.is_ok() {
+                    self.game_boy_replay_link = None;
+                    self.wonder_swan_replay_link = None;
                     let has_game_boy_link_events = replay_events.as_ref().is_some_and(|events| {
                         events.iter().any(|event| {
                             matches!(
                                 event,
                                 zeff_emu_common::replay::ReplayEvent::GameBoyLink { .. }
                                     | zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { .. }
+                                    | zeff_emu_common::replay::ReplayEvent::GameBoyLinkStateAtTick { .. }
                             )
                         })
                     });
                     if has_game_boy_link_events && let Some(state) = game_boy_link_start_state {
                         self.backend.restore_game_boy_link_replay_state(state);
                     }
-                    self.game_boy_replay_link = replay_events.and_then(|events| {
-                        let link = crate::link::gb::GameBoyReplayLink::new(
-                            events,
-                            self.backend.frame_count(),
-                            game_boy_link_start_tick,
-                            self.backend.game_boy_cpu_cycles().unwrap_or(0),
-                        );
-                        (!link.is_empty()).then_some(link)
-                    });
-                    if self.game_boy_replay_link.is_some() {
-                        self.disconnect_tcp_link();
+                    match replay_events
+                        .as_ref()
+                        .map(|events| {
+                            crate::link::gb::GameBoyReplayLink::try_new(
+                                events.clone(),
+                                self.backend.frame_count(),
+                                game_boy_link_start_tick,
+                                self.backend.game_boy_cpu_cycles().unwrap_or(0),
+                            )
+                        })
+                        .transpose()
+                    {
+                        Ok(Some(link)) if !link.is_empty() => {
+                            self.game_boy_replay_link = Some(link);
+                            self.disconnect_tcp_link();
+                        }
+                        Ok(_) => self.game_boy_replay_link = None,
+                        Err(err) => result = Err(err),
+                    }
+                    if result.is_ok() {
+                        match replay_events
+                            .as_ref()
+                            .map(|events| {
+                                crate::link::ws_replay::WonderSwanReplayLink::try_new(
+                                    events.clone(),
+                                    self.backend.frame_count(),
+                                    wonder_swan_link_start_tick,
+                                    self.backend.wonder_swan_cpu_cycles().unwrap_or(0),
+                                )
+                            })
+                            .transpose()
+                        {
+                            Ok(Some(link)) if !link.is_empty() => {
+                                self.wonder_swan_replay_link = Some(link);
+                                self.disconnect_tcp_link();
+                            }
+                            Ok(_) => self.wonder_swan_replay_link = None,
+                            Err(err) => result = Err(err),
+                        }
                     }
                 }
                 if !self.finalize_load_state(
@@ -455,11 +539,11 @@ impl EmuLoop {
         );
         if has_connected_game_boy_link {
             self.backend.set_link_peer_present(true);
-            metadata.game_boy_link_start_state = self
-                .backend
-                .game_boy_link_replay_state()
-                .filter(|state| !state.is_idle());
         }
+        metadata.game_boy_link_start_state = self
+            .backend
+            .game_boy_link_replay_state()
+            .filter(|state| !state.is_idle());
         metadata
     }
 
@@ -500,6 +584,7 @@ impl EmuLoop {
                 let _ = self.send_resp(EmuResponse::LinkConnected {
                     label: pending.label,
                     frame_count: self.backend.frame_count(),
+                    game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
                     game_boy_link_state: self.backend.game_boy_link_replay_state(),
                 });
             }
@@ -520,6 +605,7 @@ impl EmuLoop {
             self.backend.set_link_peer_present(false);
             let _ = self.send_resp(EmuResponse::LinkDisconnected {
                 frame_count: self.backend.frame_count(),
+                game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
                 game_boy_link_state: self.backend.game_boy_link_replay_state(),
             });
         }

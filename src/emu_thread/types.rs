@@ -44,6 +44,8 @@ pub(crate) struct SnapshotRequest {
     pub(crate) show_rom_viewer: bool,
     pub(crate) rom_view_start: u32,
     pub(crate) last_disasm_pc: Option<Address>,
+    pub(crate) last_disasm_mapping: Option<u64>,
+    pub(crate) disasm_target: Option<crate::debug::DisassemblyTarget>,
     pub(crate) memory_search: Option<MemorySearchRequest>,
     pub(crate) rom_search: Option<MemorySearchRequest>,
     pub(crate) render: RenderSettings,
@@ -165,7 +167,12 @@ pub(crate) enum EmuCommand {
         dpad_pressed: u8,
     },
     CaptureStateBytes,
-    CaptureReplayStart,
+    CaptureReplayStart {
+        capture_id: u64,
+    },
+    CaptureReplayCheckpoint {
+        frame: u64,
+    },
     LoadStateBytes {
         state_bytes: Vec<u8>,
         buttons_pressed: u8,
@@ -173,6 +180,7 @@ pub(crate) enum EmuCommand {
         replay_events: Option<Vec<zeff_emu_common::replay::ReplayEvent>>,
         game_boy_link_start_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
         game_boy_link_start_tick: Option<u64>,
+        wonder_swan_link_start_tick: Option<u64>,
     },
     SetSampleRate(u32),
     SetUncapped(bool),
@@ -197,7 +205,22 @@ pub(crate) enum EmuResponse {
     RewindOk,
     RewindFailed(String),
     StateCaptured(Vec<u8>),
-    ReplayStartCaptured(Box<ReplayStartState>),
+    ReplayStartCaptured {
+        capture_id: u64,
+        start: Box<ReplayStartState>,
+    },
+    ReplayStartCaptureFailed {
+        capture_id: u64,
+        error: String,
+    },
+    ReplayCheckpointCaptured {
+        frame: u64,
+        state_bytes: Vec<u8>,
+    },
+    ReplayCheckpointCaptureFailed {
+        frame: u64,
+        error: String,
+    },
     StateCaptureFailed(String),
     FdsDiskSideChanged(u8),
     FdsDiskSideChangeFailed(String),
@@ -207,6 +230,7 @@ pub(crate) enum EmuResponse {
     LinkConnected {
         label: String,
         frame_count: u64,
+        game_boy_cpu_cycles: Option<u64>,
         game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
     },
     #[cfg(not(target_arch = "wasm32"))]
@@ -214,6 +238,7 @@ pub(crate) enum EmuResponse {
     #[cfg(not(target_arch = "wasm32"))]
     LinkDisconnected {
         frame_count: u64,
+        game_boy_cpu_cycles: Option<u64>,
         game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
     },
     SramFlushed(Option<String>),
@@ -224,6 +249,7 @@ pub(crate) struct ReplayStartState {
     pub(crate) state_bytes: Vec<u8>,
     pub(crate) frame_count: u64,
     pub(crate) game_boy_cpu_cycles: Option<u64>,
+    pub(crate) wonder_swan_cpu_cycles: Option<u64>,
     pub(crate) metadata: zeff_emu_common::replay::ReplayMetadata,
 }
 

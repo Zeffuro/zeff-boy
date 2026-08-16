@@ -39,6 +39,11 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.rewind.seconds, default_rewind_seconds());
     assert_eq!(s.video.shader_preset, ShaderPreset::None);
     assert!(!s.ui.autohide_menu_bar);
+    assert_eq!(s.ui.debug_presentation, DebugPresentation::default());
+    assert_eq!(s.ui.ui_density, UiDensity::default());
+    assert!(s.ui.debugger_window_open);
+    assert_eq!(s.ui.debugger_window_size, [1100, 760]);
+    assert_eq!(s.ui.settings_window_size, [760, 680]);
     assert_eq!(s.emulation.slow_motion_divisor, 4);
     assert!(!s.emulation.slow_motion_enabled);
     assert_eq!(

@@ -82,8 +82,10 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         mem_around_pc: snap.mem_around_pc.map(|(addr, value)| (addr.into(), value)),
         recent_opcodes,
         breakpoints: debug_controls.breakpoints,
+        rom_breakpoints: Vec::new(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,
+        hit_rom_breakpoint: None,
         hit_watchpoint: debug_controls.hit_watchpoint,
     }
 }

@@ -44,8 +44,10 @@ pub struct DebugInfo {
 
     pub recent_ops: Vec<(u16, u8, bool)>,
     pub breakpoints: Vec<u16>,
+    pub rom_breakpoints: Vec<usize>,
     pub watchpoints: Vec<WatchpointInfo>,
     pub hit_breakpoint: Option<u16>,
+    pub hit_rom_breakpoint: Option<usize>,
     pub hit_watchpoint: Option<WatchHit>,
 
     pub tilt_is_mbc7: bool,

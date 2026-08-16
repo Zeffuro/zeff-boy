@@ -265,16 +265,13 @@ impl App {
         if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
             if pressed {
                 let enable_uncapped = !self.timing.uncapped_speed;
-                if enable_uncapped && self.recording.is_replay_active() {
-                    self.disable_uncapped_for_replay();
-                    return true;
-                }
-
                 self.timing.uncapped_speed = enable_uncapped;
                 self.settings.emulation.uncapped_speed = self.timing.uncapped_speed;
                 self.settings.save();
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::SetUncapped(self.timing.uncapped_speed));
+                    thread.send(EmuCommand::SetUncapped(
+                        self.timing.uncapped_speed && !self.recording.is_replay_active(),
+                    ));
                 }
             }
             return true;

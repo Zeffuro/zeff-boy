@@ -55,8 +55,10 @@ pub(crate) fn collect_sega8_snapshot(
 
     data.disassembly_view = super::build_disassembly_view(
         snapshot.show_disassembler,
-        snapshot.last_disasm_pc,
-        Address::from(emu.cpu().regs().pc),
+        snapshot
+            .last_disasm_pc
+            .map(|pc| (pc, snapshot.last_disasm_mapping)),
+        (Address::from(emu.cpu().regs().pc), None),
         || z80_disassemble_around(|addr| emu.cpu_peek8(addr), emu.cpu().regs().pc, 12, 26),
         emu.iter_breakpoints(),
     );

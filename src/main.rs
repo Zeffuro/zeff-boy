@@ -28,6 +28,7 @@ mod platform;
 mod rom_archive;
 mod save_paths;
 mod settings;
+mod symbols;
 mod ui;
 
 #[cfg(not(target_arch = "wasm32"))]

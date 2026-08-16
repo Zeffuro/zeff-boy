@@ -17,6 +17,11 @@ pub enum ReplayEvent {
         frame: u64,
         state: ReplayGameBoyLinkState,
     },
+    GameBoyLinkStateAtTick {
+        frame: u64,
+        tick: u64,
+        state: ReplayGameBoyLinkState,
+    },
     WonderSwanLink {
         frame: u64,
         session_cycle: u64,
@@ -86,6 +91,7 @@ impl ReplayEvent {
             Self::FdsDiskSide { frame, .. } => *frame,
             Self::GameBoyLink { frame, .. } => *frame,
             Self::GameBoyLinkState { frame, .. } => *frame,
+            Self::GameBoyLinkStateAtTick { frame, .. } => *frame,
             Self::WonderSwanLink { frame, .. } => *frame,
         }
     }
@@ -94,8 +100,9 @@ impl ReplayEvent {
         match self {
             Self::FdsDiskSide { frame, .. } => (*frame, 0, 0),
             Self::GameBoyLinkState { frame, .. } => (*frame, 0, 1),
+            Self::GameBoyLinkStateAtTick { frame, tick, .. } => (*frame, *tick, 2),
             Self::GameBoyLink { frame, tick, event } => {
-                (*frame, *tick, 2 + event.sort_discriminant())
+                (*frame, *tick, 3 + event.sort_discriminant())
             }
             Self::WonderSwanLink {
                 frame,
@@ -130,6 +137,12 @@ impl ReplayEvent {
                 write_u64(out, *frame);
                 state.encode(out);
             }
+            Self::GameBoyLinkStateAtTick { frame, tick, state } => {
+                out.push(4);
+                write_u64(out, *frame);
+                write_u64(out, *tick);
+                state.encode(out);
+            }
             Self::WonderSwanLink {
                 frame,
                 session_cycle,
@@ -156,6 +169,11 @@ impl ReplayEvent {
             }),
             3 => Ok(Self::GameBoyLinkState {
                 frame: cursor.read_u64()?,
+                state: ReplayGameBoyLinkState::decode(cursor)?,
+            }),
+            4 => Ok(Self::GameBoyLinkStateAtTick {
+                frame: cursor.read_u64()?,
+                tick: cursor.read_u64()?,
                 state: ReplayGameBoyLinkState::decode(cursor)?,
             }),
             2 => Ok(Self::WonderSwanLink {
@@ -301,6 +319,7 @@ impl ReplayGameBoyLinkState {
             && self.pending_master_response.is_none()
             && !self.pending_master_completion_ready
             && self.queued_master_action.is_none()
+            && self.serial_generation == 0
     }
 
     pub(super) fn encode(self, out: &mut Vec<u8>) {

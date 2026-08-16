@@ -25,22 +25,12 @@ impl App {
             self.rewind.pops as f32 * self.settings.rewind.capture_interval() as f32 / 60.0;
         let slot_labels = &self.cached_slot_info.labels;
         let slot_occupied = self.cached_slot_info.occupied;
+        let debugger_window_open = self.settings.ui.debugger_window_open;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut focus_debugger_window = false;
 
         match gfx.render(graphics::RenderContext {
-            data: DebugDataRefs {
-                cpu_debug: ui_frame_data.and_then(|d| d.cpu_debug.as_ref()),
-                perf_info: ui_frame_data.and_then(|d| d.perf_info.as_ref()),
-                apu_debug: ui_frame_data.and_then(|d| d.apu_debug.as_ref()),
-                oam_debug: ui_frame_data.and_then(|d| d.oam_debug.as_ref()),
-                palette_debug: ui_frame_data.and_then(|d| d.palette_debug.as_ref()),
-                rom_debug: ui_frame_data.and_then(|d| d.rom_debug.as_ref()),
-                input_debug: ui_frame_data.and_then(|d| d.input_debug.as_ref()),
-                graphics_data: ui_frame_data.and_then(|d| d.graphics_data.as_ref()),
-                disassembly_view: ui_frame_data.and_then(|d| d.disassembly_view.as_ref()),
-                memory_page: ui_frame_data.and_then(|d| d.memory_page.as_deref()),
-                rom_page: ui_frame_data.and_then(|d| d.rom_page.as_deref()),
-                rom_size: ui_frame_data.map_or(0, |d| d.rom_size),
-            },
+            data: debug_data_refs(ui_frame_data, &self.symbols),
             active_system: Some(self.active_system),
             debug_windows: &mut self.debug_windows,
             settings: &mut self.settings,
@@ -57,6 +47,7 @@ impl App {
             rewind_seconds_back,
             is_paused: self.speed.paused,
             ws_display_rotated: self.ws_display_rotated,
+            #[cfg(target_arch = "wasm32")]
             is_pocket_camera: self.rom_info.is_pocket_camera,
             autohide_menu_bar,
             cursor_y,
@@ -65,6 +56,10 @@ impl App {
             active_save_slot: self.active_save_slot,
             can_undo_load_state: self.undo_load_state.is_some(),
             archive_selection: self.pending_archive_selection.as_ref(),
+            show_debug_dock: self.active_debug_presentation
+                != crate::settings::DebugPresentation::GameAndDebugger,
+            debugger_window_open,
+            debug_presentation: self.active_debug_presentation,
         }) {
             Ok(result) => {
                 let mut settings_dirty = false;
@@ -128,6 +123,18 @@ impl App {
                         MenuAction::SetGbaBgLayerToggles(layers) => {
                             self.pending_debug_actions.gba_bg_layer_toggles = Some(*layers);
                         }
+                        MenuAction::OpenDebuggerWindow => {
+                            self.settings.ui.debugger_window_open = true;
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                focus_debugger_window = true;
+                            }
+                            settings_dirty = true;
+                        }
+                        MenuAction::SetDebugPresentation(presentation) => {
+                            self.settings.ui.debug_presentation = *presentation;
+                            settings_dirty = true;
+                        }
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
                     }
                 }
@@ -157,14 +164,7 @@ impl App {
                 );
                 self.merge_debug_actions(result.debug_actions);
                 if !self.show_settings_window {
-                    self.debug_windows.rebinding_action = None;
-                    self.debug_windows.rebinding_shortcut = None;
-                    self.debug_windows.rebinding_gamepad = None;
-                    self.debug_windows.rebinding_gamepad_p2 = None;
-                    self.debug_windows.rebinding_ws_gamepad = None;
-                    self.debug_windows.rebinding_gamepad_action = None;
-                    self.debug_windows.rebinding_speedup = false;
-                    self.debug_windows.rebinding_rewind = false;
+                    self.clear_rebinding_state();
                 }
                 self.egui_wants_keyboard = result.egui_wants_keyboard;
                 self.game_view_focused = result.game_view_focused;
@@ -174,6 +174,11 @@ impl App {
                 gfx.resize(size.width, size.height);
             }
             Err(graphics::FrameError::Timeout) => {}
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if focus_debugger_window && let Some(gfx) = self.gfx.as_ref() {
+            gfx.focus_debugger_window();
         }
 
         if settings_was_open && !self.show_settings_window {
@@ -190,7 +195,91 @@ impl App {
         true
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn render_debugger_frame(
+        &mut self,
+        ui_frame_data: Option<&crate::ui::UiFrameData>,
+    ) -> bool {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
+        match gfx.render_debugger(graphics::DebuggerRenderContext {
+            data: debug_data_refs(ui_frame_data, &self.symbols),
+            debug_windows: &mut self.debug_windows,
+            settings: &self.settings,
+            dock_state: &mut self.debug_dock,
+        }) {
+            Ok(result) => {
+                crate::ui::apply_debug_actions(
+                    &result.debug_actions,
+                    &mut self.debug_requests.step,
+                    &mut self.debug_requests.continue_,
+                    &mut self.debug_requests.backstep,
+                );
+                self.merge_debug_actions(result.debug_actions);
+                true
+            }
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
+                if let Some(size) = gfx.debugger_window().map(winit::window::Window::inner_size) {
+                    gfx.resize_debugger(size.width, size.height);
+                }
+                false
+            }
+            Err(graphics::FrameError::Timeout) => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn render_settings_frame(
+        &mut self,
+        ui_frame_data: Option<&crate::ui::UiFrameData>,
+    ) -> bool {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
+        let gb_hardware_mode_label = ui_frame_data
+            .and_then(|data| data.perf_info.as_ref())
+            .filter(|perf| perf.platform_name == "Game Boy")
+            .map(|perf| perf.hardware_label.as_ref());
+        match gfx.render_settings_window(graphics::SettingsRenderContext {
+            settings: &mut self.settings,
+            state: &mut self.debug_windows,
+            active_system: self.emu_thread.as_ref().map(|_| self.active_system),
+            gb_hardware_mode_label,
+            is_pocket_camera: self.rom_info.is_pocket_camera,
+        }) {
+            Ok(()) => true,
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
+                if let Some(size) = gfx.settings_window().map(winit::window::Window::inner_size) {
+                    gfx.resize_settings_window(size.width, size.height);
+                }
+                false
+            }
+            Err(graphics::FrameError::Timeout) => false,
+        }
+    }
+
+    pub(super) fn clear_rebinding_state(&mut self) {
+        self.debug_windows.rebinding_action = None;
+        self.debug_windows.rebinding_shortcut = None;
+        self.debug_windows.rebinding_gamepad = None;
+        self.debug_windows.rebinding_gamepad_p2 = None;
+        self.debug_windows.rebinding_ws_gamepad = None;
+        self.debug_windows.rebinding_gamepad_action = None;
+        self.debug_windows.rebinding_speedup = false;
+        self.debug_windows.rebinding_rewind = false;
+    }
+
     fn merge_debug_actions(&mut self, actions: DebugUiActions) {
+        if let Some(target) = actions.disasm_target {
+            self.debug_windows.disasm_target = Some(target);
+            self.debug_windows.last_disasm_pc = None;
+            self.debug_windows.last_disasm_mapping = None;
+        } else if actions.follow_disasm_pc {
+            self.debug_windows.disasm_target = None;
+            self.debug_windows.last_disasm_pc = None;
+            self.debug_windows.last_disasm_mapping = None;
+        }
         let pending = &mut self.pending_debug_actions;
         if actions.add_breakpoint.is_some() {
             pending.add_breakpoint = actions.add_breakpoint;
@@ -198,16 +287,25 @@ impl App {
         if actions.add_watchpoint.is_some() {
             pending.add_watchpoint = actions.add_watchpoint;
         }
-        let bp_changed =
-            !actions.remove_breakpoints.is_empty() || !actions.toggle_breakpoints.is_empty();
+        let bp_changed = !actions.remove_breakpoints.is_empty()
+            || !actions.toggle_breakpoints.is_empty()
+            || !actions.remove_rom_breakpoints.is_empty()
+            || !actions.toggle_rom_breakpoints.is_empty();
         pending
             .remove_breakpoints
             .extend(actions.remove_breakpoints);
         pending
             .toggle_breakpoints
             .extend(actions.toggle_breakpoints);
+        pending
+            .remove_rom_breakpoints
+            .extend(actions.remove_rom_breakpoints);
+        pending
+            .toggle_rom_breakpoints
+            .extend(actions.toggle_rom_breakpoints);
         if bp_changed || actions.add_breakpoint.is_some() {
             self.debug_windows.last_disasm_pc = None;
+            self.debug_windows.last_disasm_mapping = None;
         }
         pending.memory_writes.extend(actions.memory_writes);
         if actions.apu_channel_mutes.is_some() {
@@ -219,5 +317,26 @@ impl App {
         if actions.gba_bg_layer_toggles.is_some() {
             pending.gba_bg_layer_toggles = actions.gba_bg_layer_toggles;
         }
+    }
+}
+
+fn debug_data_refs<'a>(
+    data: Option<&'a crate::ui::UiFrameData>,
+    symbols: &'a crate::symbols::SymbolSession,
+) -> DebugDataRefs<'a> {
+    DebugDataRefs {
+        symbols,
+        cpu_debug: data.and_then(|data| data.cpu_debug.as_ref()),
+        perf_info: data.and_then(|data| data.perf_info.as_ref()),
+        apu_debug: data.and_then(|data| data.apu_debug.as_ref()),
+        oam_debug: data.and_then(|data| data.oam_debug.as_ref()),
+        palette_debug: data.and_then(|data| data.palette_debug.as_ref()),
+        rom_debug: data.and_then(|data| data.rom_debug.as_ref()),
+        input_debug: data.and_then(|data| data.input_debug.as_ref()),
+        graphics_data: data.and_then(|data| data.graphics_data.as_ref()),
+        disassembly_view: data.and_then(|data| data.disassembly_view.as_ref()),
+        memory_page: data.and_then(|data| data.memory_page.as_deref()),
+        rom_page: data.and_then(|data| data.rom_page.as_deref()),
+        rom_size: data.map_or(0, |data| data.rom_size),
     }
 }

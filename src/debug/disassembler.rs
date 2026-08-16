@@ -13,6 +13,8 @@ macro_rules! mn {
 #[derive(Clone)]
 pub(crate) struct DisassembledLine {
     pub(crate) address: Address,
+    pub(crate) storage_offset: Option<u64>,
+    pub(crate) symbol: Option<String>,
     pub(crate) bytes: InstructionBytes,
     pub(crate) mnemonic: Mnemonic,
 }
@@ -20,8 +22,18 @@ pub(crate) struct DisassembledLine {
 #[derive(Clone)]
 pub(crate) struct DisassemblyView {
     pub(crate) pc: Address,
+    pub(crate) mapping: Option<u64>,
+    pub(crate) is_navigation_target: bool,
     pub(crate) lines: Vec<DisassembledLine>,
     pub(crate) breakpoints: Vec<Address>,
+    pub(crate) rom_breakpoints: Vec<u64>,
+    pub(crate) hit_rom_breakpoint: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DisassemblyTarget {
+    pub(crate) cpu_address: Address,
+    pub(crate) storage_offset: u64,
 }
 
 mod gb;

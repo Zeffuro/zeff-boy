@@ -7,6 +7,12 @@ use super::{
 
 const METADATA_VERSION: u32 = 1;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayCheckpoint {
+    pub frame: u64,
+    pub state_sha256: [u8; 32],
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReplayMetadata {
     pub system: Option<String>,
@@ -18,6 +24,8 @@ pub struct ReplayMetadata {
     pub final_state_sha256: Option<[u8; 32]>,
     pub game_boy_link_start_state: Option<ReplayGameBoyLinkState>,
     pub game_boy_link_start_tick: Option<u64>,
+    pub wonder_swan_link_start_tick: Option<u64>,
+    pub checkpoints: Vec<ReplayCheckpoint>,
 }
 
 impl ReplayMetadata {
@@ -31,6 +39,8 @@ impl ReplayMetadata {
             && self.final_state_sha256.is_none()
             && self.game_boy_link_start_state.is_none()
             && self.game_boy_link_start_tick.is_none()
+            && self.wonder_swan_link_start_tick.is_none()
+            && self.checkpoints.is_empty()
     }
 
     pub(super) fn encode(&self) -> Vec<u8> {
@@ -53,6 +63,14 @@ impl ReplayMetadata {
         write_optional_hash(&mut out, self.final_state_sha256);
         write_optional_game_boy_link_state(&mut out, self.game_boy_link_start_state);
         write_optional_u64(&mut out, self.game_boy_link_start_tick);
+        write_optional_u64(&mut out, self.wonder_swan_link_start_tick);
+        let mut checkpoints = self.checkpoints.clone();
+        checkpoints.sort_by_key(|checkpoint| checkpoint.frame);
+        write_u32(&mut out, checkpoints.len() as u32);
+        for checkpoint in &checkpoints {
+            out.extend_from_slice(&checkpoint.frame.to_le_bytes());
+            out.extend_from_slice(&checkpoint.state_sha256);
+        }
         out
     }
 
@@ -81,6 +99,8 @@ impl ReplayMetadata {
         let final_state_sha256 = read_optional_hash_if_present(&mut cursor)?;
         let game_boy_link_start_state = read_optional_game_boy_link_state_if_present(&mut cursor)?;
         let game_boy_link_start_tick = read_optional_u64_if_present(&mut cursor)?;
+        let wonder_swan_link_start_tick = read_optional_u64_if_present(&mut cursor)?;
+        let checkpoints = read_checkpoints_if_present(&mut cursor)?;
         cursor.finish()?;
 
         Ok(Self {
@@ -93,6 +113,8 @@ impl ReplayMetadata {
             final_state_sha256,
             game_boy_link_start_state,
             game_boy_link_start_tick,
+            wonder_swan_link_start_tick,
+            checkpoints,
         })
     }
 }
@@ -136,6 +158,22 @@ fn read_optional_u64_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Optio
         1 => Ok(Some(cursor.read_u64()?)),
         tag => bail!("invalid optional u64 tag: {tag}"),
     }
+}
+
+fn read_checkpoints_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Vec<ReplayCheckpoint>> {
+    if cursor.is_finished() {
+        return Ok(Vec::new());
+    }
+    let count = cursor.read_u32()? as usize;
+    let mut checkpoints = Vec::with_capacity(count);
+    for _ in 0..count {
+        checkpoints.push(ReplayCheckpoint {
+            frame: cursor.read_u64()?,
+            state_sha256: cursor.read_hash()?,
+        });
+    }
+    checkpoints.sort_by_key(|checkpoint| checkpoint.frame);
+    Ok(checkpoints)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

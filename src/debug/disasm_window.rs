@@ -7,9 +7,11 @@ use zeff_emu_common::address::Address;
 
 pub(crate) struct DisassemblerActions {
     pub(crate) toggle_breakpoints: Vec<Address>,
+    pub(crate) toggle_rom_breakpoints: Vec<u64>,
     pub(crate) step_requested: bool,
     pub(crate) continue_requested: bool,
     pub(crate) backstep_requested: bool,
+    pub(crate) follow_pc_requested: bool,
 }
 
 pub(super) fn draw_disassembler_content(
@@ -18,11 +20,14 @@ pub(super) fn draw_disassembler_content(
 ) -> DisassemblerActions {
     let mut actions = DisassemblerActions {
         toggle_breakpoints: Vec::new(),
+        toggle_rom_breakpoints: Vec::new(),
         step_requested: false,
         continue_requested: false,
         backstep_requested: false,
+        follow_pc_requested: false,
     };
     let mut breakpoints: HashSet<Address> = view.breakpoints.iter().copied().collect();
+    let mut rom_breakpoints: HashSet<u64> = view.rom_breakpoints.iter().copied().collect();
 
     ui.horizontal(|ui| {
         if ui.button("▶ Continue (F9)").clicked() {
@@ -41,7 +46,17 @@ pub(super) fn draw_disassembler_content(
         }
     });
 
-    ui.label("Click a line to toggle breakpoint.");
+    if view.is_navigation_target {
+        ui.horizontal(|ui| {
+            ui.label("Viewing ROM target");
+            if ui.small_button("Follow PC").clicked() {
+                actions.follow_pc_requested = true;
+            }
+        });
+        ui.label("Click a line to toggle a ROM breakpoint.");
+    } else {
+        ui.label("Click a line to toggle breakpoint.");
+    }
     ui.separator();
 
     let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
@@ -63,12 +78,17 @@ pub(super) fn draw_disassembler_content(
         color: bp_color,
         ..Default::default()
     };
+    let fmt_symbol = egui::TextFormat {
+        font_id: mono.clone(),
+        color: egui::Color32::from_rgb(110, 190, 140),
+        ..Default::default()
+    };
 
     let mut header = egui::text::LayoutJob::default();
     header.append("     ", 0.0, fmt_addr.clone());
     header.append("Addr   ", 0.0, fmt_addr.clone());
     header.append("Bytes       ", 0.0, fmt_addr.clone());
-    header.append("Mnemonic", 0.0, fmt_addr.clone());
+    header.append("Mnemonic / Symbol", 0.0, fmt_addr.clone());
     ui.label(header);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -77,7 +97,12 @@ pub(super) fn draw_disassembler_content(
         let mut padded = String::with_capacity(12);
         for line in &view.lines {
             let is_pc = line.address == view.pc;
-            let has_breakpoint = breakpoints.contains(&line.address);
+            let has_breakpoint = if view.is_navigation_target {
+                line.storage_offset
+                    .is_some_and(|offset| rom_breakpoints.contains(&offset))
+            } else {
+                breakpoints.contains(&line.address)
+            };
 
             scratch.clear();
             for (i, b) in line.bytes.iter().enumerate() {
@@ -107,14 +132,29 @@ pub(super) fn draw_disassembler_content(
             let _ = write!(padded, "{:<11} ", scratch);
             job.append(&padded, 0.0, fmt_code.clone());
             job.append(&line.mnemonic, 0.0, fmt_code);
+            if let Some(symbol) = &line.symbol {
+                job.append("  ", 0.0, fmt_normal.clone());
+                job.append(symbol, 0.0, fmt_symbol.clone());
+            }
 
             let label = ui.add(egui::Label::new(job).sense(egui::Sense::click()));
             if label.clicked() {
-                actions.toggle_breakpoints.push(line.address);
-                if has_breakpoint {
-                    breakpoints.remove(&line.address);
+                if view.is_navigation_target {
+                    if let Some(offset) = line.storage_offset {
+                        actions.toggle_rom_breakpoints.push(offset);
+                        if has_breakpoint {
+                            rom_breakpoints.remove(&offset);
+                        } else {
+                            rom_breakpoints.insert(offset);
+                        }
+                    }
                 } else {
-                    breakpoints.insert(line.address);
+                    actions.toggle_breakpoints.push(line.address);
+                    if has_breakpoint {
+                        breakpoints.remove(&line.address);
+                    } else {
+                        breakpoints.insert(line.address);
+                    }
                 }
             }
         }

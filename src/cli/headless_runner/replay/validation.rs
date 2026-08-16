@@ -1,5 +1,6 @@
 use crate::emu_backend::{ActiveSystem, EmuBackend};
 use zeff_emu_common::replay::{ReplayMetadata, ReplayPlayer};
+use zeff_firmware::sha256_bytes;
 
 pub(super) fn digest_hex(bytes: &[u8; 32]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -48,6 +49,50 @@ pub(super) fn validate_game_boy_replay_start_tick(
     })?;
     if actual != expected {
         anyhow::bail!("{label} GB start tick mismatch: metadata={expected}, state={actual}");
+    }
+    Ok(())
+}
+
+pub(super) fn validate_wonder_swan_replay_start_tick(
+    label: &str,
+    backend: &EmuBackend,
+    player: &ReplayPlayer,
+) -> anyhow::Result<()> {
+    let Some(expected) = player.metadata().wonder_swan_link_start_tick else {
+        return Ok(());
+    };
+    let actual = backend.wonder_swan_cpu_cycles().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{label} declares a WonderSwan start tick but current backend is not WonderSwan"
+        )
+    })?;
+    if actual != expected {
+        anyhow::bail!(
+            "{label} WonderSwan start tick mismatch: metadata={expected}, state={actual}"
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn validate_replay_checkpoint(
+    player: &ReplayPlayer,
+    backend: &EmuBackend,
+) -> anyhow::Result<()> {
+    let frame = u64::try_from(player.cursor()).unwrap_or(u64::MAX);
+    let checkpoints = player
+        .metadata()
+        .checkpoints
+        .iter()
+        .filter(|checkpoint| checkpoint.frame == frame);
+    for checkpoint in checkpoints {
+        let actual = sha256_bytes(&backend.encode_replay_hash_state_bytes()?);
+        if actual != checkpoint.state_sha256 {
+            anyhow::bail!(
+                "replay diverged at checkpoint frame {frame}: expected {}, got {}",
+                digest_hex(&checkpoint.state_sha256),
+                digest_hex(&actual)
+            );
+        }
     }
     Ok(())
 }

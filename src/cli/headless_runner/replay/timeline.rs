@@ -30,60 +30,27 @@ pub(super) fn paired_game_boy_replay_timeline(
         None => (0, 0, 0),
     };
     let both_streams_running_frame = left_start_offset.max(right_start_offset);
-    let left_peer_present_state_frame =
-        first_game_boy_peer_present_state(left_player).map(|(frame, _)| {
-            left_start_offset
-                .saturating_add(frame)
-                .max(both_streams_running_frame)
-        });
-    let right_peer_present_state_frame =
-        first_game_boy_peer_present_state(right_player).map(|(frame, _)| {
-            right_start_offset
-                .saturating_add(frame)
-                .max(both_streams_running_frame)
-        });
-    let (
-        left_link_activation_frame,
-        right_link_activation_frame,
-        left_link_activation_tick,
-        right_link_activation_tick,
-    ) = match common_transfer {
-        Some((_, _, left_event, _, right_tick, right_event))
-            if matches!(left_event, ReplayGameBoyLinkEvent::LocalMasterStart { .. })
-                && matches!(
-                    right_event,
-                    ReplayGameBoyLinkEvent::RemoteMasterStart { .. }
-                        | ReplayGameBoyLinkEvent::RemoteReply { .. }
-                ) =>
-        {
-            (
-                left_peer_present_state_frame.unwrap_or(transfer_anchor_frame),
-                transfer_anchor_frame,
-                None,
-                Some(right_tick),
-            )
-        }
-        Some((_, left_tick, left_event, _, _, right_event))
-            if matches!(
-                left_event,
-                ReplayGameBoyLinkEvent::RemoteMasterStart { .. }
-                    | ReplayGameBoyLinkEvent::RemoteReply { .. }
-            ) && matches!(right_event, ReplayGameBoyLinkEvent::LocalMasterStart { .. }) =>
-        {
-            (
-                transfer_anchor_frame,
-                right_peer_present_state_frame.unwrap_or(transfer_anchor_frame),
-                Some(left_tick),
-                None,
-            )
-        }
-        Some(_) | None => (
-            both_streams_running_frame,
-            both_streams_running_frame,
-            None,
-            None,
-        ),
+    let left_peer_present_state = first_game_boy_peer_present_state(left_player);
+    let right_peer_present_state = first_game_boy_peer_present_state(right_player);
+    let left_peer_present_state_frame = left_peer_present_state.map(|(frame, _, _)| {
+        left_start_offset
+            .saturating_add(frame)
+            .max(both_streams_running_frame)
+    });
+    let right_peer_present_state_frame = right_peer_present_state.map(|(frame, _, _)| {
+        right_start_offset
+            .saturating_add(frame)
+            .max(both_streams_running_frame)
+    });
+    let fallback_activation_frame = if common_transfer.is_some() {
+        transfer_anchor_frame
+    } else {
+        both_streams_running_frame
     };
+    let left_link_activation_frame =
+        left_peer_present_state_frame.unwrap_or(fallback_activation_frame);
+    let right_link_activation_frame =
+        right_peer_present_state_frame.unwrap_or(fallback_activation_frame);
     let link_activation_frame = left_link_activation_frame.min(right_link_activation_frame);
     let left_target_frames = left_player
         .total_frames()
@@ -101,8 +68,8 @@ pub(super) fn paired_game_boy_replay_timeline(
         link_activation_frame,
         left_link_activation_frame,
         right_link_activation_frame,
-        left_link_activation_tick,
-        right_link_activation_tick,
+        left_link_activation_tick: left_peer_present_state.and_then(|(_, tick, _)| tick),
+        right_link_activation_tick: right_peer_present_state.and_then(|(_, tick, _)| tick),
         left_target_frames,
         right_target_frames,
         total_global_frames,
@@ -146,12 +113,24 @@ fn first_common_game_boy_transfer_frames(
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn first_game_boy_peer_present_state(
     player: &ReplayPlayer,
-) -> Option<(usize, zeff_emu_common::replay::ReplayGameBoyLinkState)> {
+) -> Option<(
+    usize,
+    Option<u64>,
+    zeff_emu_common::replay::ReplayGameBoyLinkState,
+)> {
     player.metadata().events.iter().find_map(|event| {
         if let ReplayEvent::GameBoyLinkState { frame, state } = event
             && state.peer_present
         {
-            usize::try_from(*frame).ok().map(|frame| (frame, *state))
+            usize::try_from(*frame)
+                .ok()
+                .map(|frame| (frame, None, *state))
+        } else if let ReplayEvent::GameBoyLinkStateAtTick { frame, tick, state } = event
+            && state.peer_present
+        {
+            usize::try_from(*frame)
+                .ok()
+                .map(|frame| (frame, Some(*tick), *state))
         } else {
             None
         }

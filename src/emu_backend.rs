@@ -232,6 +232,8 @@ impl EmuBackend {
             final_state_sha256: None,
             game_boy_link_start_state: None,
             game_boy_link_start_tick: None,
+            wonder_swan_link_start_tick: None,
+            checkpoints: Vec::new(),
         }
     }
 
@@ -336,10 +338,17 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn wonder_swan_cpu_cycles(&self) -> Option<u64> {
+        match self {
+            Self::Ws(ws) => Some(ws.emu.cpu_cycles()),
+            _ => None,
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn step_game_boy_frame_with_remote_link(
+    pub(crate) fn step_game_boy_frame_with_remote_link<T: crate::link::LinkTransport>(
         &mut self,
-        link: &mut crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+        link: &mut crate::link::gb::GameBoyRemoteLink<T>,
     ) -> Result<(), crate::link::LinkSessionError> {
         let Self::Gb(gb) = self else {
             return Err(crate::link::LinkSessionError::IncompatibleSystems);
@@ -371,9 +380,9 @@ impl EmuBackend {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn step_game_boy_frame_with_remote_link_after_tick(
+    pub(crate) fn step_game_boy_frame_with_remote_link_after_tick<T: crate::link::LinkTransport>(
         &mut self,
-        link: &mut crate::link::gb::GameBoyRemoteLink<crate::link::transport::TcpLinkTransport>,
+        link: &mut crate::link::gb::GameBoyRemoteLink<T>,
         activation_tick: u64,
     ) -> Result<(), crate::link::LinkSessionError> {
         let Self::Gb(gb) = self else {
@@ -513,6 +522,36 @@ impl EmuBackend {
             } else {
                 ws.emu.step_instruction()
             };
+            if fetched.is_none() && ws.emu.is_cpu_suspended() {
+                break;
+            }
+        }
+        ws.emu.finish_frame();
+        link.poll_emulator(&mut ws.emu)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_wonder_swan_frame_with_replay_link(
+        &mut self,
+        link: &mut crate::link::ws_replay::WonderSwanReplayLink,
+    ) -> Result<(), crate::link::LinkSessionError> {
+        let Self::Ws(ws) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+
+        link.poll_emulator(&mut ws.emu)?;
+        if ws.emu.is_cpu_suspended() {
+            return Ok(());
+        }
+
+        ws.emu.clear_frame_ready();
+        let guard = ws
+            .emu
+            .cpu_cycles()
+            .wrapping_add(u64::from(zeff_ws_core::hardware::constants::CYCLES_PER_FRAME) * 2);
+        while !ws.emu.frame_ready() && ws.emu.cpu_cycles() < guard {
+            link.poll_emulator(&mut ws.emu)?;
+            let fetched = ws.emu.step_instruction();
             if fetched.is_none() && ws.emu.is_cpu_suspended() {
                 break;
             }

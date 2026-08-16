@@ -135,6 +135,10 @@ impl Cartridge {
         dispatch_cart!(self, c => c.read_rom(addr))
     }
 
+    pub fn rom_offset(&self, addr: u16) -> Option<usize> {
+        dispatch_cart!(self, c => c.rom_offset(addr))
+    }
+
     pub fn write_rom(&mut self, addr: u16, value: u8) {
         dispatch_cart!(self, c => c.write_rom(addr, value))
     }
@@ -296,6 +300,15 @@ fn read_banked_rom(rom: &[u8], bank: usize, addr: u16) -> u8 {
 
 fn read_fixed_rom(rom: &[u8], addr: u16) -> u8 {
     rom.get(addr as usize).copied().unwrap_or(0xFF)
+}
+
+fn rom_offset_for_bank(rom: &[u8], bank: usize, addr: u16) -> Option<usize> {
+    if addr > 0x7FFF {
+        return None;
+    }
+    let bank_count = (rom.len() / ROM_BANK_SIZE).max(1);
+    let offset = (bank % bank_count) * ROM_BANK_SIZE + (addr as usize & (ROM_BANK_SIZE - 1));
+    (offset < rom.len()).then_some(offset)
 }
 
 fn read_banked_ram(ram: &[u8], bank: usize, addr: u16) -> u8 {

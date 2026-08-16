@@ -13,14 +13,13 @@ use crate::platform::Instant;
 use crate::{
     audio::AudioOutput,
     debug::{
-        DebugTab, DebugUiActions, DebugWindowState, FpsTracker, ToastManager,
-        create_default_dock_state, create_dock_from_saved_tabs,
+        DebugTab, DebugUiActions, DebugWindowState, FpsTracker, ToastManager, restore_dock_layout,
     },
     emu_backend::{ActiveSystem, EmuBackend},
     emu_thread::{EmuResponse, EmuThread},
     graphics::Graphics,
     input::GamepadHandler,
-    settings::{LeftStickMode, Settings},
+    settings::{DebugPresentation, LeftStickMode, Settings},
     ui,
 };
 
@@ -59,12 +58,22 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     let uncapped_speed = settings.emulation.uncapped_speed;
     let vsync_mode = settings.video.vsync_mode;
     let initial_audio_output_sample_rate = settings.audio.output_sample_rate;
+    let initial_debug_presentation = effective_debug_presentation(settings.ui.debug_presentation);
+    let initial_debug_dock = restore_dock_layout(
+        initial_debug_presentation,
+        settings.ui.dock_layout(initial_debug_presentation),
+        &settings.ui.open_debug_tabs,
+    );
 
     // Cache metadata before handing emulator to emu thread
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
     let cached_source_path = backend.as_ref().map(|b| b.source_path().to_path_buf());
+    let initial_symbols = backend
+        .as_ref()
+        .map(crate::symbols::SymbolSession::load_for_backend)
+        .unwrap_or_default();
     let initial_ws_display_rotated = backend.as_ref().and_then(|b| b.ws()).is_some_and(|ws| {
         ws.preferred_orientation() == zeff_ws_core::hardware::cartridge::RomOrientation::Vertical
     });
@@ -97,11 +106,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         window_id: None,
         fps_tracker: FpsTracker::new(),
         debug_windows: DebugWindowState::new(),
-        debug_dock: if settings.ui.open_debug_tabs.is_empty() {
-            create_default_dock_state()
-        } else {
-            create_dock_from_saved_tabs(&settings.ui.open_debug_tabs)
-        },
+        debug_dock: initial_debug_dock,
+        active_debug_presentation: initial_debug_presentation,
         exit_requested: false,
         settings,
         timing: TimingState {
@@ -157,6 +163,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             rom_hash: None,
             replay_metadata: None,
         },
+        symbols: initial_symbols,
         nes_palette_cache: NesPaletteFileCache::default(),
         pending_archive_selection: None,
         pending_debug_actions: DebugUiActions::none(),
@@ -168,12 +175,16 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             #[cfg(not(target_arch = "wasm32"))]
             pending_replay_start: None,
             #[cfg(not(target_arch = "wasm32"))]
+            next_replay_capture_id: 0,
+            #[cfg(not(target_arch = "wasm32"))]
             replay_finalization: None,
             replay_player: None,
             pending_replay_batches: std::collections::VecDeque::new(),
             queued_replay_playback_frames: 0,
             replay_recording_origin: ReplayCaptureOrigin::default(),
             replay_media_events_pending: 0,
+            last_replay_checkpoint_frame: 0,
+            pending_replay_checkpoint_hashes: std::collections::BTreeMap::new(),
         },
         rewind: RewindState {
             held: false,
@@ -195,6 +206,16 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         #[cfg(not(target_arch = "wasm32"))]
         tcp_link_active: false,
         window_focused: true,
+        game_window_focused: true,
+        #[cfg(not(target_arch = "wasm32"))]
+        debugger_window_focused: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        settings_window_focused: false,
+        focus_state_dirty: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        last_debugger_render: Instant::now(),
+        #[cfg(not(target_arch = "wasm32"))]
+        last_settings_render: Instant::now(),
         egui_wants_keyboard: false,
         game_view_focused: true,
         active_system,
@@ -244,6 +265,7 @@ struct App {
     fps_tracker: FpsTracker,
     debug_windows: DebugWindowState,
     debug_dock: egui_dock::DockState<DebugTab>,
+    active_debug_presentation: DebugPresentation,
     exit_requested: bool,
     settings: Settings,
     timing: TimingState,
@@ -267,6 +289,7 @@ struct App {
     frames_in_flight: usize,
     cached_ui_data: Option<ui::UiFrameData>,
     rom_info: CachedRomInfo,
+    symbols: crate::symbols::SymbolSession,
     nes_palette_cache: NesPaletteFileCache,
     pending_archive_selection: Option<PendingArchiveSelection>,
     pending_debug_actions: DebugUiActions,
@@ -286,6 +309,16 @@ struct App {
     #[cfg(not(target_arch = "wasm32"))]
     tcp_link_active: bool,
     window_focused: bool,
+    game_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    debugger_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    settings_window_focused: bool,
+    focus_state_dirty: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_debugger_render: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_settings_render: Instant,
     egui_wants_keyboard: bool,
     game_view_focused: bool,
     active_system: ActiveSystem,
@@ -296,7 +329,38 @@ struct App {
     suppress_unfocus_pause_until_focus: bool,
 }
 
+fn effective_debug_presentation(presentation: DebugPresentation) -> DebugPresentation {
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::live_control::automation_mode_enabled() {
+        return DebugPresentation::Floating;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if presentation == DebugPresentation::GameAndDebugger {
+        return DebugPresentation::Floating;
+    }
+
+    presentation
+}
+
 impl App {
+    fn debug_workspace_visible(&self) -> bool {
+        if self.active_debug_presentation != DebugPresentation::GameAndDebugger {
+            return true;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.settings.ui.debugger_window_open
+            && self
+                .gfx
+                .as_ref()
+                .and_then(Graphics::debugger_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     fn speed_mode(&self) -> SpeedMode {
         if self.timing.uncapped_speed {
             SpeedMode::Uncapped
@@ -465,7 +529,12 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.wasm_poll_hooks(event_loop);
         #[cfg(not(target_arch = "wasm32"))]
-        self.drain_live_control();
+        {
+            self.drain_live_control();
+            self.sync_debug_presentation(event_loop);
+            self.sync_settings_window(event_loop);
+        }
+        self.apply_focus_state();
         self.schedule_next_frame(event_loop);
     }
 

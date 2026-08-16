@@ -4,6 +4,7 @@ use std::io::Write;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+use zeff_emu_common::replay::{ReplayEvent, ReplayWonderSwanLinkEvent};
 use zeff_ws_core::emulator::Emulator as WonderSwanEmulator;
 use zeff_ws_core::hardware::bus::{DebugTraceEvent, UartDebugSnapshot, WonderSwanTxEvent};
 use zeff_ws_core::hardware::cpu::FetchedInstruction;
@@ -52,6 +53,7 @@ pub(crate) struct WonderSwanRemoteLink<T: LinkTransport> {
     // Preserve UART byte spacing even if TCP packets arrive back-to-back.
     next_rx_delivery_cycle: Option<u64>,
     last_uart_trace_state: Option<UartTraceState>,
+    recorded_replay_events: Vec<ReplayEvent>,
     #[cfg(not(target_arch = "wasm32"))]
     trace: Option<LinkTrace>,
 }
@@ -68,6 +70,7 @@ impl<T: LinkTransport> WonderSwanRemoteLink<T> {
             inbound_events: VecDeque::new(),
             next_rx_delivery_cycle: None,
             last_uart_trace_state: None,
+            recorded_replay_events: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             trace,
         }
@@ -75,6 +78,10 @@ impl<T: LinkTransport> WonderSwanRemoteLink<T> {
 
     pub(crate) fn state(&self) -> LinkConnectionState {
         self.session.state()
+    }
+
+    pub(crate) fn take_replay_events(&mut self) -> Vec<ReplayEvent> {
+        std::mem::take(&mut self.recorded_replay_events)
     }
 
     pub(crate) fn trace_enabled(&self) -> bool {
@@ -307,6 +314,16 @@ impl<T: LinkTransport> WonderSwanRemoteLink<T> {
             let before = emulator.uart_debug_snapshot();
             emulator.receive_wonder_swan_link_byte(event.byte);
             let after = emulator.uart_debug_snapshot();
+            self.recorded_replay_events
+                .push(ReplayEvent::WonderSwanLink {
+                    frame: emulator.frame_count(),
+                    session_cycle: emulator.cpu_cycles(),
+                    event: ReplayWonderSwanLinkEvent::RemoteByte {
+                        generation: event.generation,
+                        baud_bps: event.baud_bps,
+                        byte: event.byte,
+                    },
+                });
             self.trace(format!(
                 "deliver outcome={} before_status={:02X} after_status={:02X} before_rx={:02X} after_rx={:02X} receiver_baud={} sender_baud={}",
                 receive_outcome(event, before, after),
@@ -686,6 +703,17 @@ mod tests {
             SERIAL_STATUS_RX_READY
         );
         assert_eq!(right.io_peek8(SERIAL_DATA_PORT), 0x5A);
+        assert!(matches!(
+            right_link.take_replay_events().as_slice(),
+            [ReplayEvent::WonderSwanLink {
+                event: ReplayWonderSwanLinkEvent::RemoteByte {
+                    generation: _,
+                    baud_bps: _,
+                    byte: 0x5A,
+                },
+                ..
+            }]
+        ));
     }
 
     #[test]

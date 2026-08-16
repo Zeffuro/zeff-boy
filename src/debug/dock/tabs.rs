@@ -1,6 +1,7 @@
 use egui_dock::DockState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum DebugTab {
     GameView,
     CpuDebug,
@@ -18,6 +19,7 @@ pub(crate) enum DebugTab {
     Cheats,
     RomViewer,
     Mods,
+    SymbolBrowser,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -111,6 +113,7 @@ impl DebugTab {
                 ..Default::default()
             },
             DebugTab::Mods => TabDataRequirements::default(),
+            DebugTab::SymbolBrowser => TabDataRequirements::default(),
         }
     }
 }
@@ -145,15 +148,23 @@ const TAB_META: &[(DebugTab, &str, &str)] = &[
     (DebugTab::Breakpoints, "Breakpoints", "Breakpoints"),
     (DebugTab::Cheats, "Cheats", "Cheats"),
     (DebugTab::Mods, "Mods", "Mods"),
+    (DebugTab::SymbolBrowser, "Symbols", "SymbolBrowser"),
 ];
 
 impl DebugTab {
-    pub(super) fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         TAB_META
             .iter()
             .find(|(t, _, _)| *t == self)
             .map(|(_, title, _)| *title)
             .unwrap_or("?")
+    }
+
+    pub(crate) fn all_tools() -> impl Iterator<Item = Self> {
+        TAB_META
+            .iter()
+            .map(|(tab, _, _)| *tab)
+            .filter(|tab| *tab != Self::GameView)
     }
 
     pub(crate) fn persist_name(self) -> &'static str {

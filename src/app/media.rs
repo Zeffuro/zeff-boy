@@ -44,6 +44,7 @@ impl App {
                         thread.send(EmuCommand::RestoreGameBoyLinkState(state));
                     }
                 }
+                ReplayEvent::GameBoyLinkStateAtTick { .. } => {}
                 ReplayEvent::GameBoyLink { .. } | ReplayEvent::WonderSwanLink { .. } => {}
             }
         }

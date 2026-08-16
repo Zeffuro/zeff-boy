@@ -6,7 +6,8 @@ use anyhow::{Context, Result, bail};
 
 use super::validation::pad_frames_to_metadata_events;
 use super::{
-    CAMERA_REPEAT_SENTINEL, MAGIC, ReplayEvent, ReplayJoypadFrame, ReplayMetadata, VERSION,
+    CAMERA_REPEAT_SENTINEL, MAGIC, ReplayCheckpoint, ReplayEvent, ReplayJoypadFrame,
+    ReplayMetadata, VERSION,
 };
 
 pub struct ReplayRecorder {
@@ -49,6 +50,13 @@ impl ReplayRecorder {
 
     pub fn set_final_state_sha256(&mut self, hash: [u8; 32]) {
         self.metadata.final_state_sha256 = Some(hash);
+    }
+
+    pub fn record_checkpoint(&mut self, frame: u64, state_sha256: [u8; 32]) {
+        self.metadata.checkpoints.push(ReplayCheckpoint {
+            frame,
+            state_sha256,
+        });
     }
 
     pub fn finish(mut self) -> Result<PathBuf> {

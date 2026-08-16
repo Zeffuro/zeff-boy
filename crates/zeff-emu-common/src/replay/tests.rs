@@ -1,7 +1,7 @@
 use super::{
-    ReplayEvent, ReplayFirmwareManifest, ReplayGameBoyLinkAction, ReplayGameBoyLinkEvent,
-    ReplayGameBoyLinkReply, ReplayGameBoyLinkState, ReplayJoypadFrame, ReplayMetadata,
-    ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent, ReplayZapperFrame,
+    ReplayCheckpoint, ReplayEvent, ReplayFirmwareManifest, ReplayGameBoyLinkAction,
+    ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply, ReplayGameBoyLinkState, ReplayJoypadFrame,
+    ReplayMetadata, ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent, ReplayZapperFrame,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -78,6 +78,11 @@ fn replay_roundtrip_with_metadata() {
             serial_generation: 7,
         }),
         game_boy_link_start_tick: Some(123_456),
+        wonder_swan_link_start_tick: Some(654_321),
+        checkpoints: vec![ReplayCheckpoint {
+            frame: 1,
+            state_sha256: [0x55; 32],
+        }],
     };
 
     let mut recorder =
@@ -92,6 +97,20 @@ fn replay_roundtrip_with_metadata() {
     assert_eq!(player.next_frame(), None);
 
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn idle_game_boy_link_state_requires_initial_serial_generation() {
+    let state = ReplayGameBoyLinkState {
+        peer_present: false,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        serial_generation: 1,
+    };
+
+    assert!(!state.is_idle());
 }
 
 #[test]
@@ -309,6 +328,48 @@ fn replay_finish_does_not_pad_terminal_frame_boundary_event() {
         }]
     );
     assert_eq!(player.next_frame(), None);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_tick_link_state_roundtrips_without_frame_boundary_delivery() {
+    let path = unique_path("tick_link_state");
+    let state = ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        serial_generation: 7,
+    };
+    let metadata = ReplayMetadata {
+        events: vec![ReplayEvent::GameBoyLinkStateAtTick {
+            frame: 1,
+            tick: 123,
+            state,
+        }],
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), vec![1, 2, 3], metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame::p1(0x0F, 0x03));
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+
+    assert_eq!(player.total_frames(), 2);
+    assert_eq!(player.next_frame(), Some((0x0F, 0x03)));
+    assert_eq!(player.take_events_at_cursor(), Vec::<ReplayEvent>::new());
+    assert_eq!(player.next_frame(), Some((0x0F, 0x03)));
+    assert_eq!(player.take_events_at_cursor(), Vec::<ReplayEvent>::new());
+    assert_eq!(
+        player.metadata().events,
+        vec![ReplayEvent::GameBoyLinkStateAtTick {
+            frame: 1,
+            tick: 123,
+            state,
+        }]
+    );
 
     let _ = std::fs::remove_file(&path);
 }

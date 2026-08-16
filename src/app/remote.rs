@@ -78,15 +78,12 @@ impl App {
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::SetUncapped(enabled) => {
-                if enabled && self.recording.is_replay_active() {
-                    self.disable_uncapped_for_replay();
-                    return LiveReply::ok(self.live_status_json());
-                }
-
                 self.timing.uncapped_speed = enabled;
                 self.settings.emulation.uncapped_speed = enabled;
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::SetUncapped(enabled));
+                    thread.send(EmuCommand::SetUncapped(
+                        enabled && !self.recording.is_replay_active(),
+                    ));
                 }
                 LiveReply::ok(self.live_status_json())
             }

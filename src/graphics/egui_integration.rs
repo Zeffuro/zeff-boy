@@ -3,7 +3,7 @@ use egui::ClippedPrimitive;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::graphics::gpu::GpuContext;
-use crate::settings::UiThemePreset;
+use crate::settings::{UiDensity, UiThemePreset};
 
 pub(crate) struct EguiFrameOutput {
     pub(crate) full_output: egui::FullOutput,
@@ -14,6 +14,7 @@ pub(crate) struct EguiRenderer {
     state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
     active_theme: UiThemePreset,
+    active_density: UiDensity,
 }
 
 impl EguiRenderer {
@@ -23,37 +24,10 @@ impl EguiRenderer {
         format: wgpu::TextureFormat,
     ) -> Result<Self> {
         let ctx = egui::Context::default();
-        let mut style = (*ctx.global_style()).clone();
-
-        style.text_styles.insert(
-            egui::TextStyle::Body,
-            egui::FontId::new(14.0, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Button,
-            egui::FontId::new(14.0, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Small,
-            egui::FontId::new(11.0, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Heading,
-            egui::FontId::new(18.0, egui::FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Monospace,
-            egui::FontId::new(13.0, egui::FontFamily::Monospace),
-        );
-
-        style.spacing.item_spacing = egui::vec2(8.0, 4.0);
-        style.spacing.button_padding = egui::vec2(6.0, 2.0);
-        style.spacing.interact_size = egui::vec2(40.0, 20.0);
-        style.interaction.selectable_labels = false;
-
         let theme = UiThemePreset::default();
+        let density = UiDensity::default();
         ctx.set_visuals(build_visuals(theme));
-        ctx.set_global_style(style);
+        ctx.set_global_style(build_style(density));
 
         let state = egui_winit::State::new(
             ctx.clone(),
@@ -72,15 +46,19 @@ impl EguiRenderer {
             state,
             renderer,
             active_theme: theme,
+            active_density: density,
         })
     }
 
-    pub(crate) fn apply_theme(&mut self, preset: UiThemePreset) {
-        if preset == self.active_theme {
-            return;
+    pub(crate) fn apply_style(&mut self, theme: UiThemePreset, density: UiDensity) {
+        if theme != self.active_theme {
+            self.active_theme = theme;
+            self.ctx.set_visuals(build_visuals(theme));
         }
-        self.active_theme = preset;
-        self.ctx.set_visuals(build_visuals(preset));
+        if density != self.active_density {
+            self.active_density = density;
+            self.ctx.set_global_style(build_style(density));
+        }
     }
 
     pub(crate) fn context(&self) -> &egui::Context {
@@ -90,6 +68,15 @@ impl EguiRenderer {
     pub(crate) fn handle_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
         let response = self.state.on_window_event(window, event);
         response.consumed
+    }
+
+    pub(crate) fn handle_event_with_repaint(
+        &mut self,
+        window: &Window,
+        event: &WindowEvent,
+    ) -> (bool, bool) {
+        let response = self.state.on_window_event(window, event);
+        (response.consumed, response.repaint)
     }
 
     pub(crate) fn begin_frame(&mut self, window: &Window) {
@@ -171,6 +158,69 @@ impl EguiRenderer {
         self.renderer
             .update_egui_texture_from_wgpu_texture(device, view, filter, id);
     }
+}
+
+pub(super) fn dock_style(ctx: &egui::Context, density: UiDensity) -> egui_dock::Style {
+    let mut style = egui_dock::Style::from_egui(ctx.global_style().as_ref());
+    if density == UiDensity::Compact {
+        style.tab_bar.height = 20.0;
+        style.tab.spacing = 0.0;
+        style.tab.tab_body.inner_margin = egui::Margin::same(2);
+        style.separator.width = 1.0;
+        style.separator.extra_interact_width = 3.0;
+    }
+    style
+}
+
+fn build_style(density: UiDensity) -> egui::Style {
+    let mut style = egui::Style::default();
+    let (body, small, heading, monospace, item_spacing, button_padding, interact_size) =
+        match density {
+            UiDensity::Compact => (
+                12.5,
+                10.0,
+                15.0,
+                12.0,
+                egui::vec2(4.0, 2.0),
+                egui::vec2(4.0, 1.0),
+                egui::vec2(36.0, 18.0),
+            ),
+            UiDensity::Comfortable => (
+                14.0,
+                11.0,
+                18.0,
+                13.0,
+                egui::vec2(8.0, 4.0),
+                egui::vec2(6.0, 2.0),
+                egui::vec2(40.0, 20.0),
+            ),
+        };
+
+    style.text_styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::new(body, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::new(body, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Small,
+        egui::FontId::new(small, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(heading, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Monospace,
+        egui::FontId::new(monospace, egui::FontFamily::Monospace),
+    );
+    style.spacing.item_spacing = item_spacing;
+    style.spacing.button_padding = button_padding;
+    style.spacing.interact_size = interact_size;
+    style.interaction.selectable_labels = false;
+    style
 }
 
 fn build_visuals(preset: UiThemePreset) -> egui::Visuals {

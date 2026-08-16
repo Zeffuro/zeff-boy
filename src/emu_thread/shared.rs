@@ -150,6 +150,78 @@ impl EmuThread {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn handle_step_frames_with_wonder_swan_replay_link(
+        backend: &mut EmuBackend,
+        mut input: FrameInput,
+        cheats: &[crate::cheats::CheatPatch],
+        replay_link: &mut crate::link::ws_replay::WonderSwanReplayLink,
+        uncapped_mode: bool,
+        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
+        rewind_seconds: &mut usize,
+        shared_fb: &SharedFramebuffer,
+    ) -> FrameResult {
+        Self::configure_system(backend, &input, uncapped_mode);
+
+        backend.set_input(input.joypad.buttons, input.joypad.dpad);
+        backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_zapper_state(
+            input.zapper.enabled,
+            input.zapper.trigger,
+            input.zapper.hit,
+            input.zapper.screen_pos,
+        );
+
+        if let Some(mutes) = &input.debug_actions.apu_channel_mutes {
+            backend.set_apu_channel_mutes(mutes);
+        }
+
+        let midi_capture_active = input.audio.midi_capture_active;
+        let mut audio_semantic_frames = Vec::new();
+        let mut advanced_frames = 0;
+        let mut replay_error = None;
+        let stepped_frames = input.frames > 0 && backend.is_running();
+        if stepped_frames {
+            let result = Self::step_n_frames_with_wonder_swan_replay_link(
+                backend,
+                input.frames,
+                cheats,
+                replay_link,
+                midi_capture_active,
+                &mut audio_semantic_frames,
+                input.replay_joypad_frames.as_deref(),
+            );
+            advanced_frames = result.0;
+            replay_error = result.1;
+        }
+        if input.rewind_seconds != *rewind_seconds {
+            *rewind_seconds = input.rewind_seconds;
+            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                *rewind_seconds,
+                super::REWIND_SNAPSHOTS_PER_SECOND,
+            );
+        }
+
+        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
+
+        let reusable_audio = input.buffers.audio.take();
+        let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
+
+        publish_framebuffer(shared_fb, backend.framebuffer());
+
+        let mut result = Self::build_frame_result(
+            backend,
+            reusable_audio,
+            ui_data,
+            audio_semantic_frames,
+            rewind_buffer.fill_ratio(),
+            advanced_frames,
+        );
+        result.replay_error = replay_error;
+        result
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_step_frames_with_tcp_link(
         backend: &mut EmuBackend,
         mut input: FrameInput,
@@ -429,6 +501,67 @@ impl EmuThread {
                 return (
                     advanced_frames,
                     Some(format!("GB link replay event failed: {err:?}; {summary}")),
+                );
+            }
+            backend.apply_ram_cheats(cheats);
+            Self::collect_midi_snapshot_if_frame_advanced(
+                backend,
+                midi_capture_active.then_some(frame_count_before),
+                audio_semantic_frames,
+            );
+            if backend.frame_count() != frame_count_before {
+                advanced_frames += 1;
+                replay_frame_index += 1;
+            } else {
+                break;
+            }
+            if backend.is_suspended() {
+                break;
+            }
+        }
+        (advanced_frames, None)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn step_n_frames_with_wonder_swan_replay_link(
+        backend: &mut EmuBackend,
+        n: usize,
+        cheats: &[crate::cheats::CheatPatch],
+        replay_link: &mut crate::link::ws_replay::WonderSwanReplayLink,
+        midi_capture_active: bool,
+        audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
+        replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+    ) -> (usize, Option<String>) {
+        let mut advanced_frames = 0;
+        let mut replay_frame_index = 0;
+        for _ in 0..n {
+            if let Some(frame) =
+                replay_joypad_frames.and_then(|frames| frames.get(replay_frame_index))
+            {
+                backend.set_input(frame.buttons, frame.dpad);
+                backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
+                let zapper = super::ZapperInput::from(frame.zapper);
+                backend.set_zapper_state(
+                    zapper.enabled,
+                    zapper.trigger,
+                    zapper.hit,
+                    zapper.screen_pos,
+                );
+                backend.set_replay_host_tilt(frame.host_tilt);
+                if let Some(camera_frame) = frame.camera_frame.as_deref() {
+                    backend.set_replay_camera_frame(camera_frame);
+                }
+            }
+
+            let frame_count_before = backend.frame_count();
+            if let Err(err) = backend.step_wonder_swan_frame_with_replay_link(replay_link) {
+                return (
+                    advanced_frames,
+                    Some(format!(
+                        "WonderSwan link replay event failed: {err:?}; {}",
+                        replay_link.debug_summary()
+                    )),
                 );
             }
             backend.apply_ram_cheats(cheats);

@@ -5,13 +5,15 @@ use zeff_firmware::sha256_hex;
 use super::HeadlessOptions;
 use super::validation::{
     validate_embedded_final_state_hash, validate_game_boy_replay_start_tick,
-    validate_replay_playback,
+    validate_replay_checkpoint, validate_replay_playback, validate_wonder_swan_replay_start_tick,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReplayHeadlessSummary {
     pub(super) frames: usize,
     pub(super) events_applied: usize,
+    pub(super) game_boy_link_events_delivered: usize,
+    pub(super) game_boy_link_events_total: usize,
     pub(super) final_state_hash: String,
     pub(super) final_framebuffer_hash: String,
 }
@@ -22,8 +24,10 @@ pub(super) fn run_loaded_replay_headless(
     opts: &HeadlessOptions,
 ) -> anyhow::Result<ReplayHeadlessSummary> {
     validate_replay_playback(&player, &backend)?;
+    let has_game_boy_link_events = player.uses_game_boy_link_events();
     backend.load_state_from_bytes(player.save_state().to_vec())?;
     validate_game_boy_replay_start_tick("replay", &backend, &player)?;
+    validate_wonder_swan_replay_start_tick("replay", &backend, &player)?;
     #[cfg(not(target_arch = "wasm32"))]
     if player.uses_game_boy_link_events()
         && let Some(state) = player.metadata().game_boy_link_start_state
@@ -32,12 +36,22 @@ pub(super) fn run_loaded_replay_headless(
     }
     #[cfg(not(target_arch = "wasm32"))]
     let mut game_boy_replay_link = {
-        let link = crate::link::gb::GameBoyReplayLink::new(
+        let link = crate::link::gb::GameBoyReplayLink::try_new(
             player.metadata().events.clone(),
             backend.frame_count(),
             player.metadata().game_boy_link_start_tick,
             backend.game_boy_cpu_cycles().unwrap_or(0),
-        );
+        )?;
+        (!link.is_empty()).then_some(link)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut wonder_swan_replay_link = {
+        let link = crate::link::ws_replay::WonderSwanReplayLink::try_new(
+            player.metadata().events.clone(),
+            backend.frame_count(),
+            player.metadata().wonder_swan_link_start_tick,
+            backend.wonder_swan_cpu_cycles().unwrap_or(0),
+        )?;
         (!link.is_empty()).then_some(link)
     };
 
@@ -67,6 +81,13 @@ pub(super) fn run_loaded_replay_headless(
                 let summary = link.debug_summary();
                 anyhow::bail!("replay Game Boy link event failed: {err:?}; {summary}");
             }
+        } else if let Some(link) = wonder_swan_replay_link.as_mut() {
+            if let Err(err) = backend.step_wonder_swan_frame_with_replay_link(link) {
+                anyhow::bail!(
+                    "replay WonderSwan link event failed: {err:?}; {}",
+                    link.debug_summary()
+                );
+            }
         } else {
             backend.step_frame();
         }
@@ -74,6 +95,13 @@ pub(super) fn run_loaded_replay_headless(
         backend.step_frame();
         if backend.frame_count() != frame_count_before {
             player.advance_frames(1);
+            if has_game_boy_link_events {
+                if let Err(err) = validate_replay_checkpoint(&player, &backend) {
+                    log::warn!("{err}");
+                }
+            } else {
+                validate_replay_checkpoint(&player, &backend)?;
+            }
             stalled_slices = 0;
         } else {
             stalled_slices += 1;
@@ -85,21 +113,53 @@ pub(super) fn run_loaded_replay_headless(
                         link.debug_summary()
                     );
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(link) = wonder_swan_replay_link.as_ref() {
+                    anyhow::bail!(
+                        "replay made no frame progress for {stalled_slices} WonderSwan link slices; {}",
+                        link.debug_summary()
+                    );
+                }
                 anyhow::bail!("replay made no frame progress for {stalled_slices} slices");
             }
         }
     }
     apply_replay_events_at_cursor(&mut backend, &mut player, &mut events_applied)?;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    let game_boy_link_event_progress = if let Some(link) = game_boy_replay_link.as_ref() {
+        if !link.all_events_delivered() {
+            anyhow::bail!(
+                "replay ended with undelivered Game Boy link events; {}",
+                link.debug_summary()
+            );
+        }
+        link.event_progress()
+    } else {
+        (0, 0)
+    };
+    #[cfg(target_arch = "wasm32")]
+    let game_boy_link_event_progress = (0, 0);
+
     let final_state = backend.encode_replay_hash_state_bytes()?;
     let final_state_hash = sha256_hex(&final_state);
     let final_framebuffer_hash = sha256_hex(backend.framebuffer());
 
-    validate_embedded_final_state_hash(
-        "replay",
-        player.metadata().final_state_sha256,
-        &final_state_hash,
-    )?;
+    if has_game_boy_link_events {
+        if let Err(err) = validate_embedded_final_state_hash(
+            "replay",
+            player.metadata().final_state_sha256,
+            &final_state_hash,
+        ) {
+            log::warn!("{err}");
+        }
+    } else {
+        validate_embedded_final_state_hash(
+            "replay",
+            player.metadata().final_state_sha256,
+            &final_state_hash,
+        )?;
+    }
 
     if let Some(expected) = opts.expect_replay_final_hash.as_deref()
         && !final_state_hash.eq_ignore_ascii_case(expected)
@@ -112,6 +172,8 @@ pub(super) fn run_loaded_replay_headless(
     Ok(ReplayHeadlessSummary {
         frames: player.total_frames(),
         events_applied,
+        game_boy_link_events_delivered: game_boy_link_event_progress.0,
+        game_boy_link_events_total: game_boy_link_event_progress.1,
         final_state_hash,
         final_framebuffer_hash,
     })
@@ -132,6 +194,7 @@ fn apply_replay_events_at_cursor(
                 backend.restore_game_boy_link_replay_state(state);
                 *events_applied += 1;
             }
+            ReplayEvent::GameBoyLinkStateAtTick { .. } => {}
             ReplayEvent::GameBoyLink { .. } | ReplayEvent::WonderSwanLink { .. } => {}
         }
     }

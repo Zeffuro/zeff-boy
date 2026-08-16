@@ -4,21 +4,29 @@ use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::WindowEvent,
     event_loop::ActiveEventLoop,
-    window::{Window, WindowAttributes},
+    window::{Window, WindowAttributes, WindowId},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+mod debugger_window;
 mod egui_integration;
 mod framebuffer;
 mod gpu;
 mod pipeline;
 mod render_frame;
+#[cfg(not(target_arch = "wasm32"))]
+mod settings_window;
 mod viewport;
 
 use egui_integration::EguiRenderer;
 use framebuffer::FramebufferRenderer;
 use gpu::GpuContext;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
 pub(crate) use render_frame::{FrameError, RenderContext};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use settings_window::SettingsRenderContext;
 pub(crate) use viewport::AspectRatioMode;
 
 use crate::settings::VsyncMode;
@@ -33,6 +41,10 @@ pub(crate) struct Graphics {
     game_egui_texture_id: Option<egui::TextureId>,
     game_view_pixel_size: Option<(u32, u32)>,
     last_direct_game_viewport: Option<(f32, f32, f32, f32, u32, u32)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    debugger: Option<debugger_window::DebuggerWindow>,
+    #[cfg(not(target_arch = "wasm32"))]
+    settings_window: Option<settings_window::SettingsWindow>,
 }
 
 impl Graphics {
@@ -73,7 +85,7 @@ impl Graphics {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_window_icon() -> Option<winit::window::Icon> {
+    pub(super) fn load_window_icon() -> Option<winit::window::Icon> {
         use std::io::Cursor;
 
         static ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
@@ -119,6 +131,10 @@ impl Graphics {
             game_egui_texture_id: None,
             game_view_pixel_size: None,
             last_direct_game_viewport: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            debugger: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            settings_window: None,
         })
     }
 
@@ -144,6 +160,130 @@ impl Graphics {
 
     pub(crate) fn handle_event(&mut self, event: &WindowEvent) -> bool {
         self.egui.handle_event(&self.window, event)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_debugger_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::Settings,
+    ) -> Result<WindowId> {
+        if let Some(debugger) = self.debugger.as_ref() {
+            debugger.window().focus_window();
+            return Ok(debugger.id());
+        }
+        let debugger = debugger_window::DebuggerWindow::new(event_loop, &self.gpu, settings)?;
+        let id = debugger.id();
+        self.debugger = Some(debugger);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_debugger_window(&mut self) {
+        self.debugger = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn debugger_window_id(&self) -> Option<WindowId> {
+        self.debugger
+            .as_ref()
+            .map(debugger_window::DebuggerWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn debugger_window(&self) -> Option<&Window> {
+        self.debugger
+            .as_ref()
+            .map(debugger_window::DebuggerWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn focus_debugger_window(&self) {
+        if let Some(window) = self.debugger_window() {
+            window.focus_window();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn debugger_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.debugger
+            .as_mut()
+            .is_some_and(|debugger| debugger.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_debugger(&mut self, width: u32, height: u32) {
+        if let Some(debugger) = self.debugger.as_mut() {
+            debugger.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_debugger(
+        &mut self,
+        ctx: DebuggerRenderContext<'_>,
+    ) -> Result<DebuggerRenderResult, FrameError> {
+        self.debugger.as_mut().ok_or(FrameError::Lost)?.render(ctx)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_settings_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::Settings,
+    ) -> Result<WindowId> {
+        if let Some(window) = self.settings_window.as_ref() {
+            window.window().focus_window();
+            return Ok(window.id());
+        }
+        let window = settings_window::SettingsWindow::new(event_loop, &self.gpu, settings)?;
+        let id = window.id();
+        self.settings_window = Some(window);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_settings_window(&mut self) {
+        self.settings_window = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn settings_window_id(&self) -> Option<WindowId> {
+        self.settings_window
+            .as_ref()
+            .map(settings_window::SettingsWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn settings_window(&self) -> Option<&Window> {
+        self.settings_window
+            .as_ref()
+            .map(settings_window::SettingsWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn settings_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.settings_window
+            .as_mut()
+            .is_some_and(|window| window.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_settings_window(&mut self, width: u32, height: u32) {
+        if let Some(window) = self.settings_window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_settings_window(
+        &mut self,
+        ctx: SettingsRenderContext<'_>,
+    ) -> Result<(), FrameError> {
+        self.settings_window
+            .as_mut()
+            .ok_or(FrameError::Lost)?
+            .render(ctx)
     }
 
     pub(crate) fn upload_framebuffer(&self, framebuffer: &[u8]) {

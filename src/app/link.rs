@@ -26,11 +26,16 @@ impl App {
             EmuResponse::LinkConnected {
                 label,
                 frame_count,
+                game_boy_cpu_cycles,
                 game_boy_link_state,
             } => {
                 self.tcp_link_active = true;
                 self.resume_if_paused_by_unfocus_for_link();
-                self.record_game_boy_link_state_replay_event(*frame_count, *game_boy_link_state);
+                self.record_game_boy_link_state_replay_event(
+                    *frame_count,
+                    *game_boy_cpu_cycles,
+                    *game_boy_link_state,
+                );
                 self.toast_manager
                     .success(format!("Link connected ({label})"));
                 true
@@ -43,12 +48,17 @@ impl App {
             }
             EmuResponse::LinkDisconnected {
                 frame_count,
+                game_boy_cpu_cycles,
                 game_boy_link_state,
             } => {
                 let was_active = self.tcp_link_active;
                 self.tcp_link_active = false;
                 self.pause_for_unfocus_if_needed_after_link_end();
-                self.record_game_boy_link_state_replay_event(*frame_count, *game_boy_link_state);
+                self.record_game_boy_link_state_replay_event(
+                    *frame_count,
+                    *game_boy_cpu_cycles,
+                    *game_boy_link_state,
+                );
                 if was_active {
                     self.toast_manager.info("Link disconnected");
                 }
@@ -159,6 +169,7 @@ impl App {
     fn record_game_boy_link_state_replay_event(
         &mut self,
         frame_count: u64,
+        game_boy_cpu_cycles: Option<u64>,
         state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
     ) {
         if self.active_system != crate::emu_backend::ActiveSystem::GameBoy {
@@ -179,8 +190,24 @@ impl App {
         let Some(recorder) = self.recording.replay_recorder.as_mut() else {
             return;
         };
-        recorder
-            .record_event(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState { frame, state });
+        if let (Some(tick), Some(base_tick)) = (game_boy_cpu_cycles, origin.game_boy_tick) {
+            let Some(tick) = tick.checked_sub(base_tick) else {
+                log::warn!(
+                    "Dropping GB replay link-state event before replay origin tick: tick={} origin={}",
+                    tick,
+                    base_tick
+                );
+                return;
+            };
+            recorder.record_event(
+                zeff_emu_common::replay::ReplayEvent::GameBoyLinkStateAtTick { frame, tick, state },
+            );
+        } else {
+            recorder.record_event(zeff_emu_common::replay::ReplayEvent::GameBoyLinkState {
+                frame,
+                state,
+            });
+        }
     }
 }
 

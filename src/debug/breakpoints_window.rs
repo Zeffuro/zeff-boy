@@ -75,6 +75,35 @@ pub(super) fn draw_breakpoints_content(
             });
     }
 
+    if !info.rom_breakpoints.is_empty() {
+        ui.separator();
+        ui.heading("ROM Breakpoints");
+        egui::Grid::new("rom_bp_grid")
+            .striped(true)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Offset").strong());
+                ui.label(egui::RichText::new("Actions").strong());
+                ui.end_row();
+
+                for &offset in &info.rom_breakpoints {
+                    let hit = info.hit_rom_breakpoint == Some(offset);
+                    let text = if hit {
+                        egui::RichText::new(format!("{offset:06X} ●"))
+                            .color(COLOR_BREAKPOINT_HIT)
+                            .monospace()
+                    } else {
+                        egui::RichText::new(format!("{offset:06X}")).monospace()
+                    };
+                    ui.label(text);
+                    if ui.small_button("Remove").clicked() {
+                        actions.remove_rom_breakpoints.push(offset);
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+
     ui.separator();
     ui.heading("Watchpoints");
     ui.horizontal(|ui| {

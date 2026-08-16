@@ -139,8 +139,16 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         mem_around_pc: info.mem_around_pc.map(|(addr, value)| (addr.into(), value)),
         recent_opcodes,
         breakpoints: debug_controls.breakpoints,
+        rom_breakpoints: info
+            .rom_breakpoints
+            .iter()
+            .filter_map(|&offset| u64::try_from(offset).ok())
+            .collect(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,
+        hit_rom_breakpoint: info
+            .hit_rom_breakpoint
+            .and_then(|offset| u64::try_from(offset).ok()),
         hit_watchpoint: debug_controls.hit_watchpoint,
     }
 }

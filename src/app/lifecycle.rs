@@ -1,4 +1,4 @@
-use super::{App, SpeedMode, UI_RENDER_INTERVAL};
+use super::{App, SpeedMode, UI_RENDER_INTERVAL, VIEWER_UPDATE_INTERVAL};
 use crate::{
     audio::AudioOutput,
     emu_thread::{EmuCommand, EmuThread},
@@ -119,6 +119,7 @@ impl App {
             let gfx = pollster::block_on(Graphics::new(window, vsync)) // platform-ok
                 .expect("failed to initialize graphics");
             self.finalize_gfx_init(gfx);
+            self.sync_debug_presentation(event_loop);
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -266,6 +267,87 @@ impl App {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 gfx.window().request_redraw();
             }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.active_debug_presentation == crate::settings::DebugPresentation::GameAndDebugger
+            && self.settings.ui.debugger_window_open
+            && Instant::now().duration_since(self.last_debugger_render) >= VIEWER_UPDATE_INTERVAL
+            && let Some(window) = gfx.debugger_window()
+            && window.is_minimized() != Some(true)
+        {
+            window.request_redraw();
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.show_settings_window
+            && Instant::now().duration_since(self.last_settings_render)
+                >= std::time::Duration::from_millis(66)
+            && let Some(window) = gfx.settings_window()
+            && window.is_minimized() != Some(true)
+        {
+            window.request_redraw();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn sync_debug_presentation(&mut self, event_loop: &ActiveEventLoop) {
+        let desired = super::effective_debug_presentation(self.settings.ui.debug_presentation);
+        if desired != self.active_debug_presentation {
+            self.persist_current_dock_layout();
+            self.active_debug_presentation = desired;
+            self.debug_dock = crate::debug::restore_dock_layout(
+                desired,
+                self.settings.ui.dock_layout(desired),
+                &[],
+            );
+            if desired == crate::settings::DebugPresentation::GameAndDebugger {
+                self.settings.ui.debugger_window_open = true;
+            }
+            self.settings.save();
+        }
+
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if desired == crate::settings::DebugPresentation::GameAndDebugger
+            && self.settings.ui.debugger_window_open
+        {
+            if gfx.debugger_window_id().is_none()
+                && let Err(err) = gfx.open_debugger_window(event_loop, &self.settings)
+            {
+                log::error!("Failed to open debugger window: {err}");
+                self.active_debug_presentation = crate::settings::DebugPresentation::Floating;
+                self.settings.ui.debug_presentation = crate::settings::DebugPresentation::Floating;
+                self.settings.ui.debugger_window_open = false;
+                self.debug_dock = crate::debug::create_default_dock_state();
+                self.settings.save();
+                self.toast_manager.error("Failed to open debugger window");
+            }
+        } else if gfx.debugger_window_id().is_some() {
+            gfx.close_debugger_window();
+            self.debugger_window_focused = false;
+            self.focus_state_dirty = true;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn sync_settings_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if self.show_settings_window {
+            if gfx.settings_window_id().is_none()
+                && let Err(err) = gfx.open_settings_window(event_loop, &self.settings)
+            {
+                log::error!("Failed to open settings window: {err}");
+                self.show_settings_window = false;
+                self.toast_manager.error("Failed to open settings window");
+            }
+        } else if gfx.settings_window_id().is_some() {
+            gfx.close_settings_window();
+            self.settings_window_focused = false;
+            self.focus_state_dirty = true;
         }
     }
 }

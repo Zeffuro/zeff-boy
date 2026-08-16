@@ -20,6 +20,11 @@ impl RomOnly {
         self.rom.get(addr as usize).copied().unwrap_or(0xFF)
     }
 
+    pub fn rom_offset(&self, addr: u16) -> Option<usize> {
+        let offset = addr as usize;
+        (addr <= 0x7FFF && offset < self.rom.len()).then_some(offset)
+    }
+
     pub fn write_rom(&mut self, _addr: u16, _value: u8) {}
 
     pub fn read_ram(&self, addr: u16) -> u8 {

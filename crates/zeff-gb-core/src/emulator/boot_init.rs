@@ -50,6 +50,8 @@ impl Emulator {
             last_opcode: 0,
             last_opcode_pc: 0,
             debug: DebugController::new(),
+            rom_breakpoints: Vec::new(),
+            hit_rom_breakpoint: None,
             rom_hash,
         };
 

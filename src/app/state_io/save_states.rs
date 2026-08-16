@@ -56,6 +56,7 @@ impl App {
                 replay_events: None,
                 game_boy_link_start_state: None,
                 game_boy_link_start_tick: None,
+                wonder_swan_link_start_tick: None,
             });
         }
         match self.recv_cold_response() {
@@ -296,6 +297,7 @@ impl App {
                     replay_events: None,
                     game_boy_link_start_state: None,
                     game_boy_link_start_tick: None,
+                    wonder_swan_link_start_tick: None,
                 });
             }
             match self.recv_cold_response() {

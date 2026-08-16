@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
@@ -52,6 +52,7 @@ pub(super) struct RewindState {
 pub(super) struct ReplayCaptureOrigin {
     pub(super) frame: u64,
     pub(super) game_boy_tick: Option<u64>,
+    pub(super) wonder_swan_tick: Option<u64>,
 }
 
 pub(super) struct RecordingState {
@@ -60,12 +61,16 @@ pub(super) struct RecordingState {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) pending_replay_start: Option<PendingReplayStart>,
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) next_replay_capture_id: u64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) replay_finalization: Option<ReplayFinalizationState>,
     pub(super) replay_player: Option<zeff_emu_common::replay::ReplayPlayer>,
     pub(super) pending_replay_batches: VecDeque<PendingReplayBatch>,
     pub(super) queued_replay_playback_frames: usize,
     pub(super) replay_recording_origin: ReplayCaptureOrigin,
     pub(super) replay_media_events_pending: usize,
+    pub(super) last_replay_checkpoint_frame: usize,
+    pub(super) pending_replay_checkpoint_hashes: BTreeMap<u64, [u8; 32]>,
 }
 
 impl RecordingState {
@@ -79,6 +84,11 @@ impl RecordingState {
             || self.is_replay_finalizing()
             || self.replay_player.is_some()
             || !self.pending_replay_batches.is_empty()
+            || !self.pending_replay_checkpoint_hashes.is_empty()
+    }
+
+    pub(super) fn allows_cheat_updates(&self) -> bool {
+        !self.is_replay_active()
     }
 
     pub(super) fn should_stage_replay_recording_input(&self) -> bool {
@@ -131,6 +141,20 @@ impl RecordingState {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn allocate_replay_capture_id(&mut self) -> u64 {
+        let capture_id = self.next_replay_capture_id;
+        self.next_replay_capture_id = self.next_replay_capture_id.wrapping_add(1);
+        capture_id
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn replay_start_matches(&self, capture_id: u64) -> bool {
+        self.pending_replay_start
+            .as_ref()
+            .is_some_and(|pending| pending.capture_id == capture_id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn is_replay_final_state_capture_pending(&self) -> bool {
         matches!(
             self.replay_finalization,
@@ -142,6 +166,7 @@ impl RecordingState {
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) struct PendingReplayStart {
     pub(super) path: PathBuf,
+    pub(super) capture_id: u64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -244,12 +269,15 @@ mod tests {
             audio_recorder: None,
             replay_recorder: None,
             pending_replay_start: None,
+            next_replay_capture_id: 0,
             replay_finalization: None,
             replay_player: None,
             pending_replay_batches: VecDeque::new(),
             queued_replay_playback_frames: 0,
             replay_recording_origin: ReplayCaptureOrigin::default(),
             replay_media_events_pending: 0,
+            last_replay_checkpoint_frame: 0,
+            pending_replay_checkpoint_hashes: BTreeMap::new(),
         }
     }
 
@@ -263,14 +291,26 @@ mod tests {
             vec![],
         ));
         assert!(state.is_replay_active());
+        assert!(!state.allows_cheat_updates());
 
         state.replay_recorder = None;
         state.pending_replay_start = Some(PendingReplayStart {
             path: PathBuf::from("starting.zrpl"),
+            capture_id: 7,
         });
         assert!(state.is_replay_active());
         assert!(state.should_stage_replay_recording_input());
         assert!(state.limits_in_flight_for_replay());
+
+        assert!(state.replay_start_matches(7));
+
+        state.pending_replay_start = None;
+        state
+            .pending_replay_checkpoint_hashes
+            .insert(300, [0x55; 32]);
+        assert!(state.is_replay_active());
+        assert!(!state.replay_start_matches(6));
+        assert!(!state.allows_cheat_updates());
 
         state.pending_replay_start = None;
         state.pending_replay_batches.push_back(PendingReplayBatch {
@@ -279,6 +319,7 @@ mod tests {
             playback: true,
         });
         assert!(state.is_replay_active());
+        assert!(!state.allows_cheat_updates());
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -289,6 +330,31 @@ mod tests {
                 receiver,
             });
             assert!(state.is_replay_active());
+            assert!(!state.allows_cheat_updates());
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            state.replay_finalization = None;
+        }
+        state.pending_replay_batches.clear();
+        state.pending_replay_checkpoint_hashes.clear();
+        assert!(state.allows_cheat_updates());
+    }
+
+    #[test]
+    fn replay_capture_ids_do_not_match_an_older_pending_start() {
+        let mut state = recording_state();
+        let first = state.allocate_replay_capture_id();
+        let second = state.allocate_replay_capture_id();
+
+        state.pending_replay_start = Some(PendingReplayStart {
+            path: PathBuf::from("second.zrpl"),
+            capture_id: second,
+        });
+
+        assert_ne!(first, second);
+        assert!(!state.replay_start_matches(first));
+        assert!(state.replay_start_matches(second));
     }
 }

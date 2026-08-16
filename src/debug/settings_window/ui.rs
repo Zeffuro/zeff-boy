@@ -4,7 +4,9 @@ use crate::settings::Settings;
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.heading("UI");
 
-    enum_combo_box(ui, "Theme", &mut settings.ui.theme_preset);
+    enum_combo_box(ui, "UI theme", &mut settings.ui.theme_preset);
+    enum_combo_box(ui, "UI density", &mut settings.ui.ui_density);
+    enum_combo_box(ui, "Debugger layout", &mut settings.ui.debug_presentation);
     ui.add_space(4.0);
 
     ui.checkbox(&mut settings.ui.show_fps, "Show FPS in debug panel");

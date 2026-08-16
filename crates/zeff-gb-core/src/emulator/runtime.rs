@@ -51,7 +51,19 @@ impl Emulator {
             }
         }
 
-        if self.debug.should_break(pc_before) {
+        let hit_rom_breakpoint = if self.rom_breakpoints.is_empty() {
+            None
+        } else {
+            self.bus
+                .cartridge
+                .rom_offset(pc_before)
+                .filter(|offset| self.rom_breakpoints.binary_search(offset).is_ok())
+        };
+        if let Some(offset) = hit_rom_breakpoint {
+            self.hit_rom_breakpoint = Some(offset);
+            self.debug.hit_breakpoint = Some(pc_before);
+            self.cpu.running = CpuState::Suspended;
+        } else if self.debug.should_break(pc_before) {
             self.cpu.running = CpuState::Suspended;
         }
 
@@ -119,7 +131,7 @@ impl Emulator {
     }
 
     fn step_runtime_instruction(&mut self) {
-        if self.debug.any_active() || self.opcode_log.enabled {
+        if self.debug.any_active() || !self.rom_breakpoints.is_empty() || self.opcode_log.enabled {
             let _ = self.step_instruction();
         } else {
             self.cpu.step(&mut self.bus);
@@ -144,7 +156,7 @@ impl Emulator {
         let start_cycles = self.cpu.cycles;
         let mut previous_ly = self.bus.ppu_ly();
 
-        if self.debug.any_active() || self.opcode_log.enabled {
+        if self.debug.any_active() || !self.rom_breakpoints.is_empty() || self.opcode_log.enabled {
             while !matches!(self.cpu.running, CpuState::Suspended) {
                 let _ = self.step_instruction();
                 if self.reached_vblank_start(&mut previous_ly)
@@ -172,7 +184,7 @@ impl Emulator {
         let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
         let target = self.cpu.cycles.wrapping_add(frame_cycles);
 
-        if self.debug.any_active() || self.opcode_log.enabled {
+        if self.debug.any_active() || !self.rom_breakpoints.is_empty() || self.opcode_log.enabled {
             while self.cpu.cycles < target && !matches!(self.cpu.running, CpuState::Suspended) {
                 let _ = self.step_instruction();
             }

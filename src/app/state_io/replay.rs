@@ -7,6 +7,8 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+const REPLAY_CHECKPOINT_INTERVAL_FRAMES: usize = 300;
+
 impl App {
     pub(in crate::app) fn start_replay_recording(&mut self) {
         if self.emu_thread.is_none() {
@@ -77,14 +79,15 @@ impl App {
             anyhow::bail!("stop replay playback before recording");
         }
 
-        self.disable_uncapped_for_replay();
+        self.suspend_uncapped_worker_for_replay();
         self.clear_replay_progress();
 
-        self.recording.pending_replay_start = Some(PendingReplayStart { path });
+        let capture_id = self.recording.allocate_replay_capture_id();
+        self.recording.pending_replay_start = Some(PendingReplayStart { path, capture_id });
         self.resume_if_paused_by_unfocus_for_link();
         self.timing.last_frame_time = crate::platform::Instant::now();
         if let Some(thread) = &self.emu_thread {
-            thread.send(EmuCommand::CaptureReplayStart);
+            thread.send(EmuCommand::CaptureReplayStart { capture_id });
         }
         self.toast_manager.info("Replay recording starting");
         Ok(())
@@ -94,6 +97,7 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         if self.recording.pending_replay_start.take().is_some() {
             self.clear_replay_progress();
+            self.resume_uncapped_worker_after_replay();
             self.toast_manager.set_replay_recording(false);
             self.timing.last_frame_time = crate::platform::Instant::now();
             self.toast_manager.info("Replay start canceled");
@@ -112,6 +116,7 @@ impl App {
             } else {
                 false
             };
+            self.resume_uncapped_worker_after_replay();
             let Some(recorder) = self.recording.replay_recorder.take() else {
                 return;
             };
@@ -159,7 +164,6 @@ impl App {
                 return;
             }
 
-            self.disable_uncapped_for_replay();
             self.clear_replay_progress();
 
             let file = crate::platform::FileDialog::new()
@@ -181,6 +185,7 @@ impl App {
                     }
                     let total = player.total_frames();
                     let state_bytes = player.save_state().to_vec();
+                    self.suspend_uncapped_worker_for_replay();
                     if let Some(thread) = &self.emu_thread {
                         thread.send(EmuCommand::LoadStateBytes {
                             state_bytes,
@@ -189,6 +194,9 @@ impl App {
                             replay_events: Some(player.metadata().events.clone()),
                             game_boy_link_start_state: player.metadata().game_boy_link_start_state,
                             game_boy_link_start_tick: player.metadata().game_boy_link_start_tick,
+                            wonder_swan_link_start_tick: player
+                                .metadata()
+                                .wonder_swan_link_start_tick,
                         });
                     }
                     match self.recv_cold_response() {
@@ -201,11 +209,12 @@ impl App {
                                 .info(format!("Playing replay ({total} frames)"));
                         }
                         Some(EmuResponse::LoadStateFailed(err)) => {
+                            self.resume_uncapped_worker_after_replay();
                             log::error!("Failed to load replay state: {}", err);
                             self.toast_manager
                                 .error(format!("Replay load failed: {err}"));
                         }
-                        _ => {}
+                        _ => self.resume_uncapped_worker_after_replay(),
                     }
                 }
                 Err(err) => {
@@ -217,19 +226,21 @@ impl App {
         }
     }
 
-    pub(in crate::app) fn disable_uncapped_for_replay(&mut self) {
-        if !(self.timing.uncapped_speed || self.settings.emulation.uncapped_speed) {
+    pub(in crate::app) fn suspend_uncapped_worker_for_replay(&mut self) {
+        if !self.timing.uncapped_speed {
             return;
         }
-
-        self.timing.uncapped_speed = false;
-        self.settings.emulation.uncapped_speed = false;
-        self.settings.save();
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::SetUncapped(false));
         }
-        self.toast_manager
-            .info("Uncapped mode disabled for deterministic replay");
+    }
+
+    pub(in crate::app) fn resume_uncapped_worker_after_replay(&mut self) {
+        if self.timing.uncapped_speed
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(EmuCommand::SetUncapped(true));
+        }
     }
 
     fn clear_replay_progress(&mut self) {
@@ -241,6 +252,8 @@ impl App {
         self.recording.queued_replay_playback_frames = 0;
         self.recording.replay_recording_origin = crate::app::types::ReplayCaptureOrigin::default();
         self.recording.replay_media_events_pending = 0;
+        self.recording.last_replay_checkpoint_frame = 0;
+        self.recording.pending_replay_checkpoint_hashes.clear();
     }
 
     fn validate_replay_playback(
@@ -326,29 +339,38 @@ impl App {
         response: EmuResponse,
     ) -> Option<EmuResponse> {
         match response {
-            EmuResponse::ReplayStartCaptured(start) => {
-                let Some(pending) = self.recording.pending_replay_start.take() else {
-                    log::warn!("Ignoring stale replay start capture response");
+            EmuResponse::ReplayStartCaptured { capture_id, start } => {
+                if !self.recording.replay_start_matches(capture_id) {
+                    log::warn!("Ignoring stale replay start capture response {capture_id}");
                     return None;
-                };
+                }
+                let pending = self
+                    .recording
+                    .pending_replay_start
+                    .take()
+                    .expect("matching replay start should be pending");
                 if let Err(err) = self.finish_pending_replay_start(start, pending.path) {
                     log::error!("Failed to start replay recording: {err}");
                     self.clear_replay_progress();
+                    self.resume_uncapped_worker_after_replay();
                     self.toast_manager
                         .error(format!("Replay start failed: {err}"));
                 }
                 None
             }
-            EmuResponse::StateCaptureFailed(err)
-                if self.recording.pending_replay_start.is_some() =>
-            {
+            EmuResponse::ReplayStartCaptureFailed { capture_id, error } => {
+                if !self.recording.replay_start_matches(capture_id) {
+                    log::warn!("Ignoring stale replay start capture failure {capture_id}");
+                    return None;
+                }
                 self.recording.pending_replay_start = None;
                 self.clear_replay_progress();
+                self.resume_uncapped_worker_after_replay();
                 self.timing.last_frame_time = crate::platform::Instant::now();
-                let message = format!("failed to capture replay start state: {err}");
+                let message = format!("failed to capture replay start state: {error}");
                 log::error!("{message}");
                 self.toast_manager
-                    .error(format!("Replay start failed: {err}"));
+                    .error(format!("Replay start failed: {error}"));
                 None
             }
             other => Some(other),
@@ -373,6 +395,7 @@ impl App {
             &self.debug_windows.cheat.libretro_codes,
         );
         metadata.game_boy_link_start_tick = start.game_boy_cpu_cycles;
+        metadata.wonder_swan_link_start_tick = start.wonder_swan_cpu_cycles;
         let recorder = zeff_emu_common::replay::ReplayRecorder::new_with_metadata(
             path,
             start.state_bytes,
@@ -381,8 +404,10 @@ impl App {
         self.recording.replay_recording_origin = crate::app::types::ReplayCaptureOrigin {
             frame: start.frame_count,
             game_boy_tick: start.game_boy_cpu_cycles,
+            wonder_swan_tick: start.wonder_swan_cpu_cycles,
         };
         self.recording.replay_recorder = Some(recorder);
+        self.recording.last_replay_checkpoint_frame = 0;
         self.timing.last_frame_time = crate::platform::Instant::now();
         self.toast_manager.set_replay_recording(true);
         Ok(())
@@ -407,6 +432,133 @@ impl App {
                 None
             }
             other => Some(other),
+        }
+    }
+
+    pub(in crate::app) fn schedule_replay_checkpoint(&mut self) {
+        let Some(thread) = &self.emu_thread else {
+            return;
+        };
+        if let Some(recorder) = self.recording.replay_recorder.as_ref() {
+            let frame = recorder.frame_count();
+            if frame > 0
+                && frame.is_multiple_of(REPLAY_CHECKPOINT_INTERVAL_FRAMES)
+                && frame > self.recording.last_replay_checkpoint_frame
+                && let Ok(frame) = u64::try_from(frame)
+            {
+                self.recording.last_replay_checkpoint_frame = frame as usize;
+                thread.send(EmuCommand::CaptureReplayCheckpoint { frame });
+            }
+        }
+        let Some(player) = self.recording.replay_player.as_ref() else {
+            return;
+        };
+        let frame = u64::try_from(player.cursor()).unwrap_or(u64::MAX);
+        let Some(checkpoint) = player
+            .metadata()
+            .checkpoints
+            .iter()
+            .find(|checkpoint| checkpoint.frame == frame)
+        else {
+            return;
+        };
+        if self
+            .recording
+            .pending_replay_checkpoint_hashes
+            .insert(frame, checkpoint.state_sha256)
+            .is_none()
+        {
+            thread.send(EmuCommand::CaptureReplayCheckpoint { frame });
+        }
+    }
+
+    pub(in crate::app) fn consume_replay_checkpoint_response(
+        &mut self,
+        response: EmuResponse,
+    ) -> Option<EmuResponse> {
+        let game_boy_link_replay = self
+            .recording
+            .replay_player
+            .as_ref()
+            .is_some_and(zeff_emu_common::replay::ReplayPlayer::uses_game_boy_link_events);
+        match response {
+            EmuResponse::ReplayCheckpointCaptured {
+                frame,
+                mut state_bytes,
+            } => {
+                crate::emu_backend::canonicalize_state_bytes_for_replay_hash(
+                    self.active_system,
+                    &mut state_bytes,
+                );
+                let hash = zeff_firmware::sha256_bytes(&state_bytes);
+                if let Some(expected) = self
+                    .recording
+                    .pending_replay_checkpoint_hashes
+                    .remove(&frame)
+                {
+                    if hash != expected {
+                        if game_boy_link_replay {
+                            log::warn!("Game Boy link replay diverged at frame {frame}");
+                        } else {
+                            self.recording.replay_player = None;
+                            self.clear_replay_progress();
+                            self.resume_uncapped_worker_after_replay();
+                            self.toast_manager
+                                .error(format!("Replay diverged at frame {frame}"));
+                            return None;
+                        }
+                    }
+                    if self
+                        .recording
+                        .replay_player
+                        .as_ref()
+                        .is_some_and(zeff_emu_common::replay::ReplayPlayer::is_finished)
+                    {
+                        self.recording.replay_player = None;
+                        self.clear_replay_progress();
+                        self.resume_uncapped_worker_after_replay();
+                        self.toast_manager.info("Replay finished");
+                    }
+                } else if let Some(recorder) = self.recording.replay_recorder_for_commits() {
+                    recorder.record_checkpoint(frame, hash);
+                }
+                None
+            }
+            EmuResponse::ReplayCheckpointCaptureFailed { frame, error } => {
+                if self
+                    .recording
+                    .pending_replay_checkpoint_hashes
+                    .remove(&frame)
+                    .is_some()
+                {
+                    if game_boy_link_replay {
+                        log::warn!(
+                            "Game Boy link replay checkpoint failed at frame {frame}: {error}"
+                        );
+                        if self
+                            .recording
+                            .replay_player
+                            .as_ref()
+                            .is_some_and(zeff_emu_common::replay::ReplayPlayer::is_finished)
+                        {
+                            self.recording.replay_player = None;
+                            self.clear_replay_progress();
+                            self.resume_uncapped_worker_after_replay();
+                            self.toast_manager.info("Replay finished");
+                        }
+                    } else {
+                        self.recording.replay_player = None;
+                        self.clear_replay_progress();
+                        self.resume_uncapped_worker_after_replay();
+                        self.toast_manager
+                            .error(format!("Replay checkpoint failed at frame {frame}"));
+                    }
+                } else {
+                    log::warn!("Replay checkpoint capture failed at frame {frame}: {error}");
+                }
+                None
+            }
+            response => Some(response),
         }
     }
 
@@ -578,7 +730,10 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         EmuResponse::RewindOk => "RewindOk",
         EmuResponse::RewindFailed(_) => "RewindFailed",
         EmuResponse::StateCaptured(_) => "StateCaptured",
-        EmuResponse::ReplayStartCaptured(_) => "ReplayStartCaptured",
+        EmuResponse::ReplayStartCaptured { .. } => "ReplayStartCaptured",
+        EmuResponse::ReplayStartCaptureFailed { .. } => "ReplayStartCaptureFailed",
+        EmuResponse::ReplayCheckpointCaptured { .. } => "ReplayCheckpointCaptured",
+        EmuResponse::ReplayCheckpointCaptureFailed { .. } => "ReplayCheckpointCaptureFailed",
         EmuResponse::StateCaptureFailed(_) => "StateCaptureFailed",
         EmuResponse::FdsDiskSideChanged(_) => "FdsDiskSideChanged",
         EmuResponse::FdsDiskSideChangeFailed(_) => "FdsDiskSideChangeFailed",

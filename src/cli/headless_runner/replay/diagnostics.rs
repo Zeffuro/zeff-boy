@@ -12,8 +12,33 @@ pub(super) fn compare_game_boy_link_event_prefix(
         game_boy_link_event_signature(&recorded_events[index])
             != game_boy_link_event_signature(&generated_events[index])
     }) {
+        let start = index.saturating_sub(2);
+        let recorded_context = recorded_events[start..=index]
+            .iter()
+            .map(format_game_boy_link_event_for_diagnostic)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let generated_context = generated_events[start..=index]
+            .iter()
+            .map(format_game_boy_link_event_for_diagnostic)
+            .collect::<Vec<_>>()
+            .join(" | ");
         return format!(
-            "{label}_first_link_event_mismatch index={} recorded={} generated={}",
+            "{label}_first_link_event_mismatch index={} recorded={} generated={} recorded_context=[{}] generated_context=[{}]",
+            index,
+            format_game_boy_link_event_for_diagnostic(&recorded_events[index]),
+            format_game_boy_link_event_for_diagnostic(&generated_events[index]),
+            recorded_context,
+            generated_context
+        );
+    }
+
+    if let Some(index) = (0..compare_len).find(|&index| {
+        game_boy_link_event_timing(&recorded_events[index])
+            != game_boy_link_event_timing(&generated_events[index])
+    }) {
+        return format!(
+            "{label}_first_link_event_timing_mismatch index={} recorded={} generated={}",
             index,
             format_game_boy_link_event_for_diagnostic(&recorded_events[index]),
             format_game_boy_link_event_for_diagnostic(&generated_events[index])
@@ -58,6 +83,14 @@ fn game_boy_link_event_signature(event: &ReplayEvent) -> String {
         return "not_gb_link".to_string();
     };
     normalized_game_boy_link_event_signature(*event)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn game_boy_link_event_timing(event: &ReplayEvent) -> Option<(u64, u64)> {
+    match event {
+        ReplayEvent::GameBoyLink { frame, tick, .. } => Some((*frame, *tick)),
+        _ => None,
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

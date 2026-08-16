@@ -202,7 +202,9 @@ impl ReplayPlayer {
         self.metadata.events.iter().any(|event| {
             matches!(
                 event,
-                ReplayEvent::GameBoyLink { .. } | ReplayEvent::GameBoyLinkState { .. }
+                ReplayEvent::GameBoyLink { .. }
+                    | ReplayEvent::GameBoyLinkState { .. }
+                    | ReplayEvent::GameBoyLinkStateAtTick { .. }
             )
         })
     }

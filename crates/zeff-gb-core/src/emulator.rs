@@ -29,6 +29,8 @@ pub struct Emulator {
     pub(crate) last_opcode: u8,
     pub(crate) last_opcode_pc: u16,
     pub(crate) debug: DebugController,
+    pub(crate) rom_breakpoints: Vec<usize>,
+    pub(crate) hit_rom_breakpoint: Option<usize>,
     pub(crate) rom_hash: [u8; 32],
 }
 
@@ -123,6 +125,30 @@ mod tests {
         emulator.bus.trace_cpu_accesses = false;
 
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn rom_breakpoint_uses_the_active_physical_bank() {
+        let mut rom = vec![0u8; 4 * 0x4000];
+        rom[0x147] = 0x19;
+        rom[0x148] = 0x01;
+        let mut emulator = Emulator::new(&rom, 44_100).unwrap();
+        emulator.toggle_rom_breakpoint(0x8560);
+
+        emulator.write_byte(0x2000, 2);
+        emulator.cpu.pc = 0x4560;
+        emulator.step_instruction();
+        assert_eq!(emulator.debug_hit_rom_breakpoint(), Some(0x8560));
+
+        emulator.debug_continue();
+        emulator.write_byte(0x2000, 1);
+        emulator.cpu.pc = 0x4560;
+        emulator.step_instruction();
+        assert_eq!(emulator.debug_hit_rom_breakpoint(), None);
+        assert!(!matches!(
+            emulator.cpu.running,
+            crate::hardware::types::CpuState::Suspended
+        ));
     }
 
     #[test]

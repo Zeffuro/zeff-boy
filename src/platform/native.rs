@@ -46,8 +46,8 @@ impl FileDialog {
 }
 
 pub(crate) fn screenshots_dir() -> PathBuf {
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("zeff-boy").join("screenshots");
+    if let Some(config_dir) = config_dir_path() {
+        return config_dir.join("screenshots");
     }
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
@@ -179,8 +179,8 @@ pub(crate) fn save_settings_json(json: &str) {
 }
 
 fn save_root_path() -> PathBuf {
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("zeff-boy").join("saves");
+    if let Some(config_dir) = config_dir_path() {
+        return config_dir.join("saves");
     }
     std::env::current_exe()
         .ok()
@@ -190,6 +190,9 @@ fn save_root_path() -> PathBuf {
 }
 
 fn config_dir_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("ZEFF_CONFIG_DIR") {
+        return Some(PathBuf::from(path));
+    }
     dirs::config_dir().map(|base| base.join("zeff-boy"))
 }
 

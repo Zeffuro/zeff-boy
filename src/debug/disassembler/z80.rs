@@ -74,6 +74,8 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
 fn decode_prefixed(addr: u16, bytes: InstructionBytes, mnemonic: Mnemonic) -> DisassembledLine {
     DisassembledLine {
         address: addr.into(),
+        storage_offset: None,
+        symbol: None,
         bytes,
         mnemonic,
     }
@@ -86,6 +88,8 @@ fn decode_base(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
     let mnemonic = base_mnemonic(bus_read, addr, opcode, BASE_REGISTER_NAMES);
     DisassembledLine {
         address: addr.into(),
+        storage_offset: None,
+        symbol: None,
         bytes,
         mnemonic,
     }
@@ -120,6 +124,8 @@ fn decode_indexed(
 
     DisassembledLine {
         address: addr.into(),
+        storage_offset: None,
+        symbol: None,
         bytes,
         mnemonic,
     }

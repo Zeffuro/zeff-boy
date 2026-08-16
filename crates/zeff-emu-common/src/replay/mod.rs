@@ -16,7 +16,7 @@ pub(crate) use format::{
     write_optional_u64, write_string, write_u32, write_u64,
 };
 pub use input::{POCKET_CAMERA_FRAME_BYTES, ReplayJoypadFrame, ReplayZapperFrame};
-pub use metadata::{ReplayFirmwareManifest, ReplayMetadata};
+pub use metadata::{ReplayCheckpoint, ReplayFirmwareManifest, ReplayMetadata};
 pub use reader::ReplayPlayer;
 pub use writer::ReplayRecorder;
 

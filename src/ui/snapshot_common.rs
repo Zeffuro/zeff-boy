@@ -45,23 +45,28 @@ pub(crate) fn build_rom_page(show: bool, start: u32, rom_bytes: &[u8]) -> Option
 
 pub(crate) fn build_disassembly_view(
     show: bool,
-    last_pc: Option<Address>,
-    current_pc: Address,
+    previous: Option<(Address, Option<u64>)>,
+    current: (Address, Option<u64>),
     disassemble: impl FnOnce() -> Vec<crate::debug::DisassembledLine>,
     breakpoints_iter: impl Iterator<Item = Address>,
 ) -> Option<DisassemblyView> {
     if !show {
         return None;
     }
-    if last_pc == Some(current_pc) {
+    if previous == Some(current) {
         return None;
     }
+    let (current_pc, current_mapping) = current;
     let mut breakpoints: Vec<Address> = breakpoints_iter.collect();
     breakpoints.sort_unstable();
     Some(DisassemblyView {
         pc: current_pc,
+        mapping: current_mapping,
+        is_navigation_target: false,
         lines: disassemble(),
         breakpoints,
+        rom_breakpoints: Vec::new(),
+        hit_rom_breakpoint: None,
     })
 }
 
@@ -201,5 +206,31 @@ pub(crate) fn build_libretro_section(
     RomInfoSection {
         heading: "libretro Metadata",
         fields,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disassembly_refreshes_when_mapping_changes_at_the_same_pc() {
+        let refreshed = build_disassembly_view(
+            true,
+            Some((0x4560, Some(1))),
+            (0x4560, Some(2)),
+            Vec::new,
+            std::iter::empty(),
+        );
+        assert!(refreshed.is_some());
+
+        let unchanged = build_disassembly_view(
+            true,
+            Some((0x4560, Some(2))),
+            (0x4560, Some(2)),
+            Vec::new,
+            std::iter::empty(),
+        );
+        assert!(unchanged.is_none());
     }
 }

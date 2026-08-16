@@ -29,6 +29,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) rewind_seconds_back: f32,
     pub(crate) is_paused: bool,
     pub(crate) ws_display_rotated: bool,
+    #[cfg(target_arch = "wasm32")]
     pub(crate) is_pocket_camera: bool,
     pub(crate) autohide_menu_bar: bool,
     pub(crate) cursor_y: Option<f32>,
@@ -37,6 +38,9 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) active_save_slot: u8,
     pub(crate) can_undo_load_state: bool,
     pub(crate) archive_selection: Option<&'a PendingArchiveSelection>,
+    pub(crate) show_debug_dock: bool,
+    pub(crate) debugger_window_open: bool,
+    pub(crate) debug_presentation: crate::settings::DebugPresentation,
 }
 
 pub(crate) struct RenderResult {
@@ -282,13 +286,22 @@ impl Graphics {
         let (frame, view) = self.acquire_surface_frame()?;
 
         self.egui.begin_frame(&self.window);
-        self.egui.apply_theme(ctx.settings.ui.theme_preset);
+        self.egui
+            .apply_style(ctx.settings.ui.theme_preset, ctx.settings.ui.ui_density);
 
         let base_ppp = self.window.scale_factor() as f32;
         let target_ppp = base_ppp * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);
         if (self.egui.context().pixels_per_point() - target_ppp).abs() > 0.01 {
             self.egui.context().set_pixels_per_point(target_ppp);
         }
+
+        let mut root_ui = egui::Ui::new(
+            self.egui.context().clone(),
+            egui::Id::new("main_root_ui"),
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::background())
+                .max_rect(self.egui.context().content_rect()),
+        );
 
         let show_menu = if ctx.autohide_menu_bar {
             let pointer_near_top = ctx.cursor_y.is_some_and(|y| y < 8.0);
@@ -300,7 +313,7 @@ impl Graphics {
 
         let menu_actions = if show_menu {
             debug::draw_menu_bar(
-                self.egui.context(),
+                &mut root_ui,
                 &debug::MenuBarContext {
                     current_mode: self.aspect_ratio_mode,
                     speed_mode_label: ctx.speed_mode_label,
@@ -316,6 +329,9 @@ impl Graphics {
                     slot_occupied: &ctx.slot_occupied,
                     active_save_slot: ctx.active_save_slot,
                     can_undo_load_state: ctx.can_undo_load_state,
+                    external_debugger: !ctx.show_debug_dock,
+                    debugger_window_open: ctx.debugger_window_open,
+                    debug_presentation: ctx.debug_presentation,
                 },
                 ctx.dock_state,
                 ctx.settings,
@@ -334,15 +350,13 @@ impl Graphics {
             }
         }
 
-        let content_rect = self.egui.context().content_rect();
-        let menu_height = menu_actions.menu_bar_height_points;
-        let content_min = content_rect.min + egui::vec2(0.0, menu_height);
-        let content_size = egui::vec2(
-            content_rect.width(),
-            (content_rect.height() - menu_height).max(0.0),
-        );
-        let content_bounds = egui::Rect::from_min_size(content_min, content_size);
+        let content_rect = root_ui.available_rect_before_wrap();
+        let content_min = content_rect.min;
+        let content_size = content_rect.size();
+        #[cfg(target_arch = "wasm32")]
+        let content_bounds = content_rect;
 
+        #[cfg(target_arch = "wasm32")]
         let gb_hardware_mode_label = ctx.data.perf_info.and_then(|perf| {
             if perf.platform_name != "Game Boy" {
                 None
@@ -351,6 +365,7 @@ impl Graphics {
             }
         });
 
+        #[cfg(target_arch = "wasm32")]
         if *ctx.show_settings_window {
             debug::draw_settings_window(
                 self.egui.context(),
@@ -368,14 +383,14 @@ impl Graphics {
             );
         }
 
-        let debug_actions;
+        let mut debug_actions;
         let has_any_emu_data = ctx.active_system.is_some()
             || ctx.data.cpu_debug.is_some()
             || ctx.data.perf_info.is_some()
             || ctx.data.memory_page.is_some()
             || ctx.data.rom_page.is_some();
 
-        if has_any_emu_data {
+        if has_any_emu_data && ctx.show_debug_dock {
             let has_game_view = debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
             let (game_texture_id, _) =
                 self.ensure_game_texture(has_game_view, ctx.settings.video.offscreen_scale);
@@ -390,25 +405,26 @@ impl Graphics {
                 game_view_pixel_size: None,
             };
 
-            egui::Area::new(egui::Id::new("dock_area"))
-                .fixed_pos(content_min)
-                .order(egui::Order::Background)
-                .show(self.egui.context(), |ui| {
-                    ui.set_min_size(content_size);
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(&mut root_ui, |ui| {
                     egui_dock::DockArea::new(ctx.dock_state)
-                        .window_bounds(content_bounds)
                         .secondary_button_on_modifier(false)
-                        .style(egui_dock::Style::from_egui(
-                            self.egui.context().global_style().as_ref(),
+                        .style(super::egui_integration::dock_style(
+                            self.egui.context(),
+                            ctx.settings.ui.ui_density,
                         ))
-                        .show_inside(ui, &mut tab_viewer);
+                        .show_inside(ui, &mut tab_viewer)
                 });
             debug_actions = tab_viewer.actions;
+            if let Some(tab) = debug_actions.focus_tab.take() {
+                debug::activate_dock_tab(ctx.dock_state, tab);
+            }
 
             if let Some(size) = tab_viewer.game_view_pixel_size {
                 self.game_view_pixel_size = Some(size);
             }
-        } else {
+        } else if !has_any_emu_data {
             debug_actions = DebugUiActions::none();
             egui::Area::new(egui::Id::new("empty_state"))
                 .fixed_pos(content_min)
@@ -422,6 +438,8 @@ impl Graphics {
                         },
                     );
                 });
+        } else {
+            debug_actions = DebugUiActions::none();
         }
 
         ctx.toast_manager.set_recording(ctx.is_recording_audio);
@@ -436,13 +454,14 @@ impl Graphics {
 
         let egui_wants_keyboard = self.egui.context().egui_wants_keyboard_input();
 
-        let has_game_view_in_dock =
-            has_any_emu_data && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
+        let has_game_view_in_dock = has_any_emu_data
+            && ctx.show_debug_dock
+            && debug::is_tab_open(ctx.dock_state, DebugTab::GameView);
         let render_framebuffer_directly = has_any_emu_data && !has_game_view_in_dock;
 
         let game_view_focused = if render_framebuffer_directly {
             true
-        } else if has_any_emu_data {
+        } else if has_any_emu_data && ctx.show_debug_dock {
             ctx.dock_state
                 .focused_leaf()
                 .and_then(|path| ctx.dock_state.leaf(path).ok())

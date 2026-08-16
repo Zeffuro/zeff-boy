@@ -20,6 +20,8 @@ fn snapshot_request() -> SnapshotRequest {
         show_rom_viewer: true,
         rom_view_start: 0,
         last_disasm_pc: None,
+        last_disasm_mapping: None,
+        disasm_target: None,
         memory_search: None,
         rom_search: None,
         render: RenderSettings {

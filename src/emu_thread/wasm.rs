@@ -164,15 +164,32 @@ impl EmuThread {
                 };
                 pending_responses.push_back(resp);
             }
-            EmuCommand::CaptureReplayStart => {
+            EmuCommand::CaptureReplayStart { capture_id } => {
                 let resp = match backend.encode_state_bytes() {
-                    Ok(bytes) => EmuResponse::ReplayStartCaptured(Box::new(ReplayStartState {
-                        state_bytes: bytes,
-                        frame_count: backend.frame_count(),
-                        game_boy_cpu_cycles: backend.game_boy_cpu_cycles(),
-                        metadata: backend.replay_metadata(),
-                    })),
-                    Err(e) => EmuResponse::StateCaptureFailed(e.to_string()),
+                    Ok(bytes) => EmuResponse::ReplayStartCaptured {
+                        capture_id,
+                        start: Box::new(ReplayStartState {
+                            state_bytes: bytes,
+                            frame_count: backend.frame_count(),
+                            game_boy_cpu_cycles: backend.game_boy_cpu_cycles(),
+                            wonder_swan_cpu_cycles: backend.wonder_swan_cpu_cycles(),
+                            metadata: backend.replay_metadata(),
+                        }),
+                    },
+                    Err(e) => EmuResponse::ReplayStartCaptureFailed {
+                        capture_id,
+                        error: e.to_string(),
+                    },
+                };
+                pending_responses.push_back(resp);
+            }
+            EmuCommand::CaptureReplayCheckpoint { frame } => {
+                let resp = match backend.encode_state_bytes() {
+                    Ok(state_bytes) => EmuResponse::ReplayCheckpointCaptured { frame, state_bytes },
+                    Err(error) => EmuResponse::ReplayCheckpointCaptureFailed {
+                        frame,
+                        error: error.to_string(),
+                    },
                 };
                 pending_responses.push_back(resp);
             }
@@ -183,6 +200,7 @@ impl EmuThread {
                 replay_events: _,
                 game_boy_link_start_state: _,
                 game_boy_link_start_tick: _,
+                wonder_swan_link_start_tick: _,
             } => {
                 let result = backend.load_state_from_bytes(state_bytes);
                 let resp = Self::respond_load_state(

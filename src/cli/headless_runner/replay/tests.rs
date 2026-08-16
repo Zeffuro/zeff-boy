@@ -6,7 +6,7 @@ use crate::emu_backend::{
 };
 use zeff_emu_common::replay::{
     ReplayEvent, ReplayGameBoyLinkEvent, ReplayGameBoyLinkState, ReplayJoypadFrame, ReplayMetadata,
-    ReplayPlayer, ReplayRecorder,
+    ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent,
 };
 use zeff_firmware::sha256_hex;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
@@ -127,6 +127,24 @@ fn load_pocket_camera_test_backend(rom_path: &Path) -> anyhow::Result<EmuBackend
     .backend)
 }
 
+fn wonder_swan_test_backend() -> EmuBackend {
+    let mut rom = vec![0x90; 0x10000];
+    rom[0] = 0x90;
+    rom[1] = 0xEB;
+    rom[2] = 0xFC;
+    let reset_vector = rom.len() - 16;
+    rom[reset_vector..reset_vector + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
+    let footer = rom.len() - 10;
+    rom[footer] = 0x01;
+    rom[footer + 2] = 0x23;
+    rom[footer + 4] = 0x01;
+    let checksum = zeff_ws_core::hardware::cartridge::compute_footer_checksum(&rom);
+    rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+    let ws = zeff_ws_core::emulator::Emulator::from_rom_data(&rom)
+        .expect("minimal WonderSwan ROM should initialize");
+    EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
+}
+
 fn arm_pocket_camera_capture(backend: &mut EmuBackend) {
     let EmuBackend::Gb(gb) = backend else {
         panic!("expected GB backend");
@@ -203,7 +221,7 @@ fn paired_game_boy_replay_timeline_aligns_common_transfer_ids() -> anyhow::Resul
             left_link_activation_frame: 1_333,
             right_link_activation_frame: 1_333,
             left_link_activation_tick: None,
-            right_link_activation_tick: Some(2_147_632_556),
+            right_link_activation_tick: None,
             left_target_frames: 8_126,
             right_target_frames: 10_153,
             total_global_frames: 11_213,
@@ -264,10 +282,51 @@ fn paired_game_boy_replay_timeline_uses_recorded_link_state_frames() -> anyhow::
     let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
 
     assert_eq!(timeline.left_link_activation_frame, 1_060);
-    assert_eq!(timeline.right_link_activation_frame, 1_333);
+    assert_eq!(timeline.right_link_activation_frame, 1_080);
     assert_eq!(timeline.left_link_activation_tick, None);
-    assert_eq!(timeline.right_link_activation_tick, Some(2_147_632_556));
+    assert_eq!(timeline.right_link_activation_tick, None);
     assert_eq!(timeline.link_activation_frame, 1_060);
+    Ok(())
+}
+
+#[test]
+fn paired_game_boy_replay_timeline_uses_recorded_link_state_ticks() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_pair_timeline_link_state_ticks")?;
+    let state = ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        serial_generation: 0,
+    };
+    let left = replay_player_with_gb_events(
+        temp.path(),
+        "left.zrpl",
+        10,
+        vec![ReplayEvent::GameBoyLinkStateAtTick {
+            frame: 4,
+            tick: 100,
+            state,
+        }],
+    )?;
+    let right = replay_player_with_gb_events(
+        temp.path(),
+        "right.zrpl",
+        10,
+        vec![ReplayEvent::GameBoyLinkStateAtTick {
+            frame: 7,
+            tick: 200,
+            state,
+        }],
+    )?;
+
+    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
+
+    assert_eq!(timeline.left_link_activation_frame, 4);
+    assert_eq!(timeline.right_link_activation_frame, 7);
+    assert_eq!(timeline.left_link_activation_tick, Some(100));
+    assert_eq!(timeline.right_link_activation_tick, Some(200));
     Ok(())
 }
 
@@ -408,6 +467,52 @@ fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::
         },
     )?;
 
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_applies_wonder_swan_link_events() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_wonder_swan_link_replay")?;
+    let replay_path = temp.path().join("link.zrpl");
+    let mut expected_backend = wonder_swan_test_backend();
+    let EmuBackend::Ws(ws) = &mut expected_backend else {
+        panic!("expected WonderSwan backend");
+    };
+    ws.emu.io_write8(0x00B3, 0x80);
+    let start_state = expected_backend.encode_state_bytes()?;
+    let mut metadata = expected_backend.replay_metadata();
+    metadata.wonder_swan_link_start_tick = expected_backend.wonder_swan_cpu_cycles();
+    metadata.events.push(ReplayEvent::WonderSwanLink {
+        frame: 0,
+        session_cycle: 0,
+        event: ReplayWonderSwanLinkEvent::RemoteByte {
+            generation: 0,
+            baud_bps: 9_600,
+            byte: 0x5A,
+        },
+    });
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state.clone(), metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame::default());
+    recorder.finish()?;
+
+    expected_backend.load_state_from_bytes(start_state)?;
+    let EmuBackend::Ws(ws) = &mut expected_backend else {
+        panic!("expected WonderSwan backend");
+    };
+    ws.emu.receive_wonder_swan_link_byte(0x5A);
+    expected_backend.step_frame();
+    let expected_hash = sha256_hex(&expected_backend.encode_replay_hash_state_bytes()?);
+
+    let summary = run_loaded_replay_headless(
+        wonder_swan_test_backend(),
+        ReplayPlayer::load(&replay_path)?,
+        &HeadlessOptions {
+            expect_replay_final_hash: Some(expected_hash),
+            ..HeadlessOptions::default()
+        },
+    )?;
+    assert_eq!(summary.frames, 1);
     Ok(())
 }
 
@@ -611,6 +716,63 @@ fn loaded_replay_rejects_embedded_final_state_hash_mismatch() -> anyhow::Result<
         "unexpected error: {err}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_reports_checkpoint_divergence_frame() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_checkpoint_mismatch")?;
+    let replay_path = temp.path().join("checkpoint-mismatch.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let rom_data = build_nes_test_rom();
+
+    let backend = load_nes_test_backend(&rom_path, rom_data)?;
+    let start_state = backend.encode_state_bytes()?;
+    let metadata = backend.replay_metadata();
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_frame(0, 0);
+    recorder.record_checkpoint(1, [0xA5; 32]);
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("checkpoint mismatch should fail playback");
+    assert!(
+        err.to_string()
+            .contains("replay diverged at checkpoint frame 1"),
+        "unexpected error: {err}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_validates_matching_checkpoint() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_checkpoint")?;
+    let replay_path = temp.path().join("checkpoint.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let rom_data = build_nes_test_rom();
+
+    let mut expected_backend = load_nes_test_backend(&rom_path, rom_data.clone())?;
+    let start_state = expected_backend.encode_state_bytes()?;
+    let metadata = expected_backend.replay_metadata();
+    expected_backend.step_frame();
+    let checkpoint_hash =
+        zeff_firmware::sha256_bytes(&expected_backend.encode_replay_hash_state_bytes()?);
+
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_frame(0, 0);
+    recorder.record_checkpoint(1, checkpoint_hash);
+    recorder.finish()?;
+
+    let summary = run_loaded_replay_headless(
+        load_nes_test_backend(&rom_path, rom_data)?,
+        ReplayPlayer::load(&replay_path)?,
+        &HeadlessOptions::default(),
+    )?;
+    assert_eq!(summary.frames, 1);
     Ok(())
 }
 

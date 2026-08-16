@@ -202,8 +202,10 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
         mem_around_pc,
         recent_opcodes,
         breakpoints: debug_controls.breakpoints,
+        rom_breakpoints: Vec::new(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,
+        hit_rom_breakpoint: None,
         hit_watchpoint: debug_controls.hit_watchpoint,
     }
 }

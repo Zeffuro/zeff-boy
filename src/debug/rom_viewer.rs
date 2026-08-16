@@ -9,6 +9,7 @@ pub(super) fn draw_rom_viewer_content(
     state: &mut RomViewerState,
     rom_page: &[(u32, u8)],
     rom_size: u32,
+    symbols: &crate::symbols::SymbolSession,
 ) {
     state.rom_size = rom_size;
 
@@ -26,13 +27,21 @@ pub(super) fn draw_rom_viewer_content(
     ));
     ui.separator();
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Offset:");
-        let response = ui.text_edit_singleline(&mut state.jump_input);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut state.jump_input)
+                .desired_width(130.0)
+                .hint_text("hex or symbol"),
+        );
         let input_has_focus = response.has_focus();
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
-            && let Some(addr) = parse_hex_u32(&state.jump_input)
+            && let Some(addr) = parse_hex_u32(&state.jump_input).or_else(|| {
+                symbols
+                    .resolve_rom_name(state.jump_input.trim())
+                    .and_then(|offset| u32::try_from(offset).ok())
+            })
         {
             state.view_start = (addr & !0xF).min(max_start);
             state.jump_input = format!("{:06X}", state.view_start);
@@ -43,7 +52,7 @@ pub(super) fn draw_rom_viewer_content(
         }
     });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("-0x10").clicked() {
             state.view_start = state.view_start.saturating_sub(0x10);
         }
@@ -69,16 +78,25 @@ pub(super) fn draw_rom_viewer_content(
 
     let bank = state.view_start / ROM_BANK_SIZE;
     ui.label(format!("Bank: {} (0x{:02X})", bank, bank));
+    if let Some(name) = symbols.symbol_name_at_rom_offset(state.view_start as u64) {
+        ui.monospace(name);
+    }
 
     ui.separator();
 
+    let layout = hex_viewer::hex_layout(ui.available_width(), 6);
     let hex_block = ui.vertical(|ui| {
-        let fmt = hex_viewer::hex_text_formats(ui);
+        let fmt = hex_viewer::hex_text_formats(ui, layout);
         hex_viewer::draw_hex_header(ui, "Offset   ", &fmt);
         hex_viewer::draw_hex_grid(ui, rom_page, 6, &fmt, None, &state.tbl_map);
     });
-    let scrolled_start =
-        hex_viewer::handle_scroll(ui, hex_block.response.rect, state.view_start, max_start);
+    let scrolled_start = hex_viewer::handle_scroll(
+        ui,
+        hex_block.response.rect,
+        state.view_start,
+        max_start,
+        layout.bytes_per_row,
+    );
     if scrolled_start != state.view_start {
         state.view_start = scrolled_start;
         state.jump_input = format!("{:06X}", state.view_start);

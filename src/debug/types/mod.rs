@@ -23,6 +23,7 @@ use zeff_emu_common::address::Address;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DebugDataRefs<'a> {
+    pub(crate) symbols: &'a crate::symbols::SymbolSession,
     pub(crate) cpu_debug: Option<&'a CpuDebugSnapshot>,
     pub(crate) perf_info: Option<&'a PerfInfo>,
     pub(crate) apu_debug: Option<&'a ApuDebugInfo>,
@@ -51,9 +52,12 @@ pub(crate) struct DebugWindowState {
     pub(crate) rebinding_speedup: bool,
     pub(crate) rebinding_rewind: bool,
     pub(crate) last_disasm_pc: Option<Address>,
+    pub(crate) last_disasm_mapping: Option<u64>,
+    pub(crate) disasm_target: Option<super::DisassemblyTarget>,
     pub(crate) tilemap: TilemapViewerState,
     pub(crate) tiles: TileViewerState,
     pub(crate) rom_viewer: RomViewerState,
+    pub(crate) symbol_browser: SymbolBrowserState,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
     pub(crate) settings_tab: usize,
     pub(crate) camera_devices: Vec<crate::camera::CameraDeviceInfo>,
@@ -83,9 +87,12 @@ impl DebugWindowState {
             rebinding_speedup: false,
             rebinding_rewind: false,
             last_disasm_pc: None,
+            last_disasm_mapping: None,
+            disasm_target: None,
             tilemap: TilemapViewerState::new(),
             tiles: TileViewerState::new(),
             rom_viewer: RomViewerState::new(),
+            symbol_browser: SymbolBrowserState::default(),
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),
             settings_tab: 0,
             camera_devices: Vec::new(),
@@ -101,6 +108,14 @@ impl DebugWindowState {
             tilemap_viewer_was_open: false,
         }
     }
+}
+
+#[derive(Default)]
+pub(crate) struct SymbolBrowserState {
+    pub(crate) query: String,
+    pub(crate) last_query: String,
+    pub(crate) last_generation: u64,
+    pub(crate) results: Vec<crate::symbols::SymbolId>,
 }
 
 fn fold_bytes(bytes: &[u8]) -> u64 {

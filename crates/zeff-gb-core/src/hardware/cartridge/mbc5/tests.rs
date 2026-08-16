@@ -25,6 +25,19 @@ fn bank_0_is_valid_for_mbc5() {
 }
 
 #[test]
+fn rom_offset_tracks_bank_switches() {
+    let mut mbc = make_mbc5(4, 0, false);
+    assert_eq!(mbc.rom_offset(0x4560), Some(0x4560));
+    let initial_mapping = (mbc.rom_offset(0), mbc.rom_offset(0x4000));
+
+    mbc.write_rom(0x2000, 0x02);
+    assert_eq!(mbc.rom_offset(0x4560), Some(0x8560));
+    assert_ne!(initial_mapping, (mbc.rom_offset(0), mbc.rom_offset(0x4000)));
+    assert_eq!(mbc.rom_offset(0x0150), Some(0x0150));
+    assert_eq!(mbc.rom_offset(0x8000), None);
+}
+
+#[test]
 fn bank_switching_low_byte() {
     let mut mbc = make_mbc5(256, 0, false);
     mbc.write_rom(0x2000, 0xFF);

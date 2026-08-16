@@ -16,6 +16,7 @@ use super::super::palette_viewer::draw_palette_viewer_content;
 use super::super::perf_monitor::draw_performance_content;
 use super::super::rom_info::draw_rom_info_content;
 use super::super::rom_viewer::draw_rom_viewer_content;
+use super::super::symbol_browser::{SymbolBrowserViews, draw_symbol_browser_content};
 use super::super::tile_viewer::draw_tile_viewer_content;
 use super::super::tilemap_viewer::draw_tilemap_viewer_content;
 use super::super::types::{ConsoleGraphicsData, DebugDataRefs};
@@ -115,15 +116,23 @@ impl TabViewer for DebugTabViewer<'_> {
                     self.actions
                         .toggle_breakpoints
                         .extend(disasm_actions.toggle_breakpoints);
+                    self.actions
+                        .toggle_rom_breakpoints
+                        .extend(disasm_actions.toggle_rom_breakpoints);
                     self.actions.step_requested |= disasm_actions.step_requested;
                     self.actions.continue_requested |= disasm_actions.continue_requested;
                     self.actions.backstep_requested |= disasm_actions.backstep_requested;
+                    self.actions.follow_disasm_pc |= disasm_actions.follow_pc_requested;
                 }
             }
             DebugTab::MemoryViewer => {
                 if let Some(page) = self.data.memory_page {
-                    let writes =
-                        draw_memory_viewer_content(ui, &mut self.window_state.memory, page);
+                    let writes = draw_memory_viewer_content(
+                        ui,
+                        &mut self.window_state.memory,
+                        page,
+                        self.data.symbols,
+                    );
                     self.actions.memory_writes.extend(writes);
                 }
             }
@@ -183,8 +192,22 @@ impl TabViewer for DebugTabViewer<'_> {
                         &mut self.window_state.rom_viewer,
                         page,
                         self.data.rom_size,
+                        self.data.symbols,
                     );
                 }
+            }
+            DebugTab::SymbolBrowser => {
+                draw_symbol_browser_content(
+                    ui,
+                    self.data.symbols,
+                    self.data.cpu_debug,
+                    SymbolBrowserViews {
+                        state: &mut self.window_state.symbol_browser,
+                        memory: &mut self.window_state.memory,
+                        rom: &mut self.window_state.rom_viewer,
+                    },
+                    &mut self.actions,
+                );
             }
         }
     }

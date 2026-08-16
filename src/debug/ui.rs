@@ -5,13 +5,17 @@ use crate::debug::types::CpuDebugSnapshot;
 use zeff_emu_common::address::Address;
 
 pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar};
-pub(crate) use super::settings_window::{SettingsContext, draw_settings_window};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use super::settings_window::draw_settings_window;
+pub(crate) use super::settings_window::{SettingsContext, draw_settings_content};
 
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<Address>,
     pub(crate) add_watchpoint: Option<(Address, WatchType)>,
     pub(crate) remove_breakpoints: Vec<Address>,
     pub(crate) toggle_breakpoints: Vec<Address>,
+    pub(crate) remove_rom_breakpoints: Vec<u64>,
+    pub(crate) toggle_rom_breakpoints: Vec<u64>,
     pub(crate) memory_writes: Vec<(Address, u8)>,
     pub(crate) apu_channel_mutes: Option<Vec<bool>>,
     pub(crate) step_requested: bool,
@@ -19,6 +23,9 @@ pub(crate) struct DebugUiActions {
     pub(crate) backstep_requested: bool,
     pub(crate) layer_toggles: Option<(bool, bool, bool)>,
     pub(crate) gba_bg_layer_toggles: Option<[bool; 4]>,
+    pub(crate) focus_tab: Option<super::DebugTab>,
+    pub(crate) disasm_target: Option<super::DisassemblyTarget>,
+    pub(crate) follow_disasm_pc: bool,
 }
 
 impl DebugUiActions {
@@ -28,6 +35,8 @@ impl DebugUiActions {
             add_watchpoint: None,
             remove_breakpoints: Vec::new(),
             toggle_breakpoints: Vec::new(),
+            remove_rom_breakpoints: Vec::new(),
+            toggle_rom_breakpoints: Vec::new(),
             memory_writes: Vec::new(),
             apu_channel_mutes: None,
             step_requested: false,
@@ -35,6 +44,9 @@ impl DebugUiActions {
             backstep_requested: false,
             layer_toggles: None,
             gba_bg_layer_toggles: None,
+            focus_tab: None,
+            disasm_target: None,
+            follow_disasm_pc: false,
         }
     }
 
@@ -43,6 +55,8 @@ impl DebugUiActions {
             || self.add_watchpoint.is_some()
             || !self.remove_breakpoints.is_empty()
             || !self.toggle_breakpoints.is_empty()
+            || !self.remove_rom_breakpoints.is_empty()
+            || !self.toggle_rom_breakpoints.is_empty()
             || !self.memory_writes.is_empty()
             || self.apu_channel_mutes.is_some()
             || self.layer_toggles.is_some()

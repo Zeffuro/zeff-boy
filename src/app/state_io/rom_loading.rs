@@ -143,6 +143,8 @@ impl App {
         self.last_core_frame = None;
         self.last_displayed_frame = None;
         self.debug_windows.last_disasm_pc = None;
+        self.debug_windows.last_disasm_mapping = None;
+        self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
 
         let (backend, original_crc) =
@@ -328,8 +330,12 @@ impl App {
         self.rom_info.source_path = None;
         self.rom_info.rom_hash = None;
         self.rom_info.replay_metadata = None;
+        self.symbols = crate::symbols::SymbolSession::default();
         self.rom_info.is_mbc7 = false;
         self.rom_info.is_pocket_camera = false;
+        self.debug_windows.last_disasm_pc = None;
+        self.debug_windows.last_disasm_mapping = None;
+        self.debug_windows.disasm_target = None;
         self.speed.paused = false;
         self.rewind.held = false;
         self.rewind.fill = 0.0;
@@ -425,6 +431,7 @@ impl App {
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.rom_info.replay_metadata = Some(backend.replay_metadata());
+        self.symbols = crate::symbols::SymbolSession::load_for_backend(backend);
         self.active_system = system;
         self.ws_display_rotated = backend
             .ws()

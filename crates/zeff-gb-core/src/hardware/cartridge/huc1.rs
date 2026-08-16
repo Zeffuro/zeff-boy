@@ -44,6 +44,24 @@ impl HuC1 {
         }
     }
 
+    pub fn rom_offset(&self, addr: u16) -> Option<usize> {
+        match addr {
+            0x0000..=0x3FFF => {
+                let offset = addr as usize;
+                (offset < self.rom.len()).then_some(offset)
+            }
+            0x4000..=0x7FFF if !self.rom.is_empty() => {
+                let mut offset = self.rom_bank << 14;
+                if !self.banking_mode {
+                    offset |= self.rom_high_address << 19;
+                }
+                offset |= (addr & 0x3FFF) as usize;
+                Some(offset % self.rom.len())
+            }
+            _ => None,
+        }
+    }
+
     pub fn write_rom(&mut self, addr: u16, value: u8) {
         match addr {
             0x0000..=0x1FFF => self.ram_enable = is_ram_enable(value),

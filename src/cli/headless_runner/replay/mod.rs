@@ -65,9 +65,11 @@ pub(super) fn run_replay_headless(
     let start = Instant::now();
     let summary = endpoint::run_loaded_replay_headless(loaded.backend, player, opts)?;
     println!(
-        "[headless] replay frames={} events={} final_state_sha256={} final_framebuffer_sha256={} elapsed_ms={}",
+        "[headless] replay frames={} events={} gb_link_events={}/{} final_state_sha256={} final_framebuffer_sha256={} elapsed_ms={}",
         summary.frames,
         summary.events_applied,
+        summary.game_boy_link_events_delivered,
+        summary.game_boy_link_events_total,
         summary.final_state_hash,
         summary.final_framebuffer_hash,
         start.elapsed().as_millis()

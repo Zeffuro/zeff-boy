@@ -67,8 +67,10 @@ pub(crate) struct CpuDebugSnapshot {
     pub(crate) recent_opcodes: Vec<RecentOpcodeDisplay>,
 
     pub(crate) breakpoints: Vec<Address>,
+    pub(crate) rom_breakpoints: Vec<u64>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
     pub(crate) hit_breakpoint: Option<Address>,
+    pub(crate) hit_rom_breakpoint: Option<u64>,
     pub(crate) hit_watchpoint: Option<WatchHitDisplay>,
 }
 

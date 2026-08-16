@@ -35,8 +35,10 @@ impl App {
         };
 
         SnapshotRequest {
-            want_debug_info: reqs.needs_debug_info || remote_wants_debug,
-            want_perf_info: reqs.needs_perf_info || self.settings.ui.show_fps || remote_wants_debug,
+            want_debug_info: (reqs.needs_debug_info && want_viewer_update) || remote_wants_debug,
+            want_perf_info: (reqs.needs_perf_info && want_viewer_update)
+                || self.settings.ui.show_fps
+                || remote_wants_debug,
             any_viewer_open: reqs.needs_viewer_data && want_viewer_update,
             any_vram_viewer_open: (reqs.needs_vram && want_viewer_update) || remote_wants_graphics,
             show_oam_viewer: (reqs.needs_oam && want_viewer_update) || remote_wants_graphics,
@@ -49,6 +51,8 @@ impl App {
             show_rom_viewer: reqs.needs_rom_page && want_viewer_update,
             rom_view_start: self.debug_windows.rom_viewer.view_start,
             last_disasm_pc: self.debug_windows.last_disasm_pc,
+            last_disasm_mapping: self.debug_windows.last_disasm_mapping,
+            disasm_target: self.debug_windows.disasm_target,
             memory_search: super::search::parse_pending_search(&mut self.debug_windows.memory),
             rom_search: super::search::parse_pending_search(&mut self.debug_windows.rom_viewer),
             render: RenderSettings {

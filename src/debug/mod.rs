@@ -25,6 +25,7 @@ pub(crate) mod perf_monitor;
 mod rom_info;
 mod rom_viewer;
 mod settings_window;
+mod symbol_browser;
 mod tile_viewer;
 mod tilemap_viewer;
 pub(crate) mod toast;
@@ -33,13 +34,13 @@ mod ui;
 pub(crate) mod ui_helpers;
 
 pub(crate) use disassembler::{
-    DisassembledLine, DisassemblyView, disassemble_around, nes_disassemble_around,
-    z80_disassemble_around,
+    DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,
+    nes_disassemble_around, z80_disassemble_around,
 };
 pub(crate) use dock::{
-    DebugTab, DebugTabViewer, compute_tab_requirements, create_default_dock_state,
-    create_dock_from_saved_tabs, create_ide_dock_state, ensure_game_view_tab, is_tab_open,
-    save_open_tabs,
+    DebugTab, DebugTabViewer, activate_dock_tab, compute_tab_requirements,
+    create_debugger_dock_state, create_default_dock_state, create_ide_dock_state,
+    ensure_game_view_tab, is_tab_open, restore_dock_layout, save_open_tabs, serialize_dock_layout,
 };
 pub(crate) use fps::FpsTracker;
 pub(crate) use toast::ToastManager;
@@ -54,7 +55,9 @@ pub(crate) use types::{
     MemorySearchMode, MemorySearchResult, MemoryViewerState, PerfInfo, RomSearchResult,
     RomViewerState, TileViewerState, TilemapViewerState,
 };
+#[cfg(target_arch = "wasm32")]
+pub(crate) use ui::draw_settings_window;
 pub(crate) use ui::{
     DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, SettingsContext, draw_menu_bar,
-    draw_settings_window,
+    draw_settings_content,
 };

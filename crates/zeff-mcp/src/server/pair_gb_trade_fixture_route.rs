@@ -60,20 +60,28 @@ impl Server {
         self.wait_for_screen_settle(left_addr, deadline)?;
         self.wait_for_screen_settle(right_addr, deadline)?;
         std::thread::sleep(Duration::from_millis(2_000));
-        self.walk_gb_trade_fixture_to_coord(
-            left_addr,
-            LEFT_CONSOLE_STAND_X,
-            TRADE_CONSOLE_Y,
-            deadline,
-        )?;
-        self.walk_gb_trade_fixture_to_coord(
-            right_addr,
-            RIGHT_CONSOLE_STAND_X,
-            TRADE_CONSOLE_Y,
-            deadline,
-        )?;
-        self.ensure_gb_trade_fixture_console_positions(left_addr, right_addr, deadline)?;
-        Ok(())
+        for _ in 0..8 {
+            self.walk_gb_trade_fixture_to_coord(
+                left_addr,
+                LEFT_CONSOLE_STAND_X,
+                TRADE_CONSOLE_Y,
+                deadline,
+            )?;
+            self.walk_gb_trade_fixture_to_coord(
+                right_addr,
+                RIGHT_CONSOLE_STAND_X,
+                TRADE_CONSOLE_Y,
+                deadline,
+            )?;
+            std::thread::sleep(Duration::from_millis(500));
+            if self
+                .ensure_gb_trade_fixture_console_positions(left_addr, right_addr, deadline)
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        self.ensure_gb_trade_fixture_console_positions(left_addr, right_addr, deadline)
     }
 
     pub(super) fn trigger_trade_consoles(
@@ -143,16 +151,16 @@ impl Server {
                 return Ok(());
             }
 
-            let button = if position.y < target_y {
-                "down"
-            } else if position.y > target_y {
-                "up"
-            } else if position.x < target_x {
+            let button = if position.x < target_x {
                 "right"
-            } else {
+            } else if position.x > target_x {
                 "left"
+            } else if position.y < target_y {
+                "down"
+            } else {
+                "up"
             };
-            self.tap_button(addr, button, 2)?;
+            self.tap_button(addr, button, 1)?;
             self.wait_for_screen_settle(addr, deadline)?;
         }
 

@@ -47,6 +47,18 @@ impl Mbc1 {
         self.rom.get(physical_addr).copied().unwrap_or(0xFF)
     }
 
+    pub fn rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = match addr {
+            0x0000..=0x3FFF if self.banking_mode => self.fixed_area_rom_bank(),
+            0x0000..=0x3FFF => 0,
+            0x4000..=0x7FFF => self.switchable_rom_bank(),
+            _ => return None,
+        };
+        let physical_bank = bank & self.rom_bank_mask;
+        let offset = (physical_bank * ROM_BANK_SIZE) | (addr as usize & 0x3FFF);
+        (offset < self.rom.len()).then_some(offset)
+    }
+
     pub fn write_rom(&mut self, addr: u16, value: u8) {
         match addr {
             0x0000..=0x1FFF => self.ram_enable = is_ram_enable(value),

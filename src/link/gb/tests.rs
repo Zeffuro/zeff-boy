@@ -91,6 +91,45 @@ fn game_boy_remote_link_binds_reply_to_exact_transfer_id() {
 }
 
 #[test]
+fn game_boy_remote_link_replay_schedule_waits_for_receive_tick() {
+    let (left_transport, right_transport) = LocalLinkTransport::pair();
+    let mut left_link = GameBoyRemoteLink::new(LinkSession::new(
+        left_transport,
+        LinkSystemType::GameBoy,
+        LinkEndpointId(1),
+    ));
+    let mut right_link = GameBoyRemoteLink::with_replay_inbound_schedule(
+        LinkSession::new(right_transport, LinkSystemType::GameBoy, LinkEndpointId(2)),
+        vec![(0, 4)],
+    );
+    let mut left = gb_emulator();
+    let mut right = gb_emulator();
+
+    left.set_game_boy_link_peer_present(true);
+    left.write_byte(SERIAL_SB, 0xAB);
+    right.write_byte(SERIAL_SB, 0x34);
+    left.write_byte(SERIAL_SC, 0x81);
+    right.write_byte(SERIAL_SC, 0x80);
+
+    left_link.poll_emulator(&mut left).unwrap();
+    right_link.poll_emulator(&mut right).unwrap();
+    assert!(right_link.take_replay_events().is_empty());
+
+    while right.cpu_cycles() < 4 {
+        right.step_instruction();
+    }
+    right_link.poll_emulator(&mut right).unwrap();
+
+    assert!(matches!(
+        right_link.take_replay_events().as_slice(),
+        [ReplayEvent::GameBoyLink {
+            event: ReplayGameBoyLinkEvent::RemoteMasterStart { .. },
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn game_boy_remote_link_records_replay_events_for_endpoint() {
     let (left_transport, right_transport) = LocalLinkTransport::pair();
     let mut left_link = GameBoyRemoteLink::new(LinkSession::new(
@@ -196,6 +235,34 @@ fn game_boy_replay_link_applies_recorded_reply_without_tcp_peer() {
 }
 
 #[test]
+fn game_boy_replay_link_completes_passive_transfer() {
+    let mut replay_link = GameBoyReplayLink::new(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 0,
+            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                transfer_id: 0x0100_0000_0000_0000,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x34,
+                serial_generation: 4,
+                local_reply: None,
+            },
+        }],
+        0,
+        None,
+        0,
+    );
+    let mut gb = gb_emulator();
+    gb.write_byte(SERIAL_SB, 0xAB);
+    gb.write_byte(SERIAL_SC, 0x80);
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
+    assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+}
+
+#[test]
 fn game_boy_replay_link_validates_recorded_local_master_start() {
     let mut replay_link = GameBoyReplayLink::new(
         vec![
@@ -278,6 +345,72 @@ fn game_boy_replay_link_does_not_arm_future_local_master_start() {
 }
 
 #[test]
+fn game_boy_replay_link_keeps_link_state_before_future_local_master() {
+    let mut replay_link = GameBoyReplayLink::new(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 5,
+            tick: 0,
+            event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                transfer_id: 0x0100_0000_0000_0000,
+                clock_period_t_cycles: 4096,
+                out_byte: 0xAB,
+                serial_generation: 4,
+            },
+        }],
+        0,
+        None,
+        0,
+    );
+    let mut gb = gb_emulator();
+    gb.restore_game_boy_link_replay_state(zeff_emu_common::replay::ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        serial_generation: 0,
+    });
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+
+    assert!(gb.game_boy_link_replay_state().peer_present);
+}
+
+#[test]
+fn game_boy_replay_link_applies_timed_link_state_at_recorded_tick() {
+    let state = zeff_emu_common::replay::ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        serial_generation: 7,
+    };
+    let mut replay_link = GameBoyReplayLink::new(
+        vec![ReplayEvent::GameBoyLinkStateAtTick {
+            frame: 0,
+            tick: 4,
+            state,
+        }],
+        0,
+        Some(0),
+        0,
+    );
+    let mut gb = gb_emulator();
+
+    assert!(!replay_link.is_empty());
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert!(!gb.game_boy_link_replay_state().peer_present);
+
+    while gb.cpu_cycles() < 4 {
+        gb.step_instruction();
+    }
+    replay_link.poll_emulator(&mut gb).unwrap();
+
+    assert_eq!(gb.game_boy_link_replay_state(), state);
+}
+
+#[test]
 fn game_boy_replay_link_preserves_recorded_peer_presence_before_remote_master() {
     let mut replay_link = GameBoyReplayLink::new(
         vec![ReplayEvent::GameBoyLink {
@@ -330,7 +463,31 @@ fn game_boy_replay_link_expands_relative_ticks_from_playback_start() {
         5_000,
     );
 
-    assert_eq!(replay_link.absolute_event_tick(123), 5_123);
+    assert_eq!(replay_link.events[0].tick, 5_123);
+}
+
+#[test]
+fn game_boy_replay_link_rejects_overflowed_playback_timestamps() {
+    let event = ReplayEvent::GameBoyLink {
+        frame: 1,
+        tick: 1,
+        event: ReplayGameBoyLinkEvent::RemoteReply {
+            transfer_id: 1,
+            out_byte: 0x34,
+            passive: true,
+            serial_generation: 1,
+        },
+    };
+
+    let frame_error = GameBoyReplayLink::try_new(vec![event.clone()], u64::MAX, None, 0)
+        .err()
+        .expect("overflowed replay frame should fail");
+    assert!(frame_error.to_string().contains("frame"));
+
+    let tick_error = GameBoyReplayLink::try_new(vec![event], 0, Some(0), u64::MAX)
+        .err()
+        .expect("overflowed replay tick should fail");
+    assert!(tick_error.to_string().contains("tick"));
 }
 
 #[test]
@@ -490,7 +647,7 @@ fn game_boy_replay_link_handles_simultaneous_remote_master_before_reply() {
 }
 
 #[test]
-fn game_boy_replay_link_rejects_remote_master_local_reply_mismatch() {
+fn game_boy_replay_link_tolerates_remote_master_local_reply_mismatch() {
     let mut replay_link = GameBoyReplayLink::new(
         vec![ReplayEvent::GameBoyLink {
             frame: 0,
@@ -513,14 +670,12 @@ fn game_boy_replay_link_rejects_remote_master_local_reply_mismatch() {
     );
     let mut gb = gb_emulator();
 
-    assert_eq!(
-        replay_link.poll_emulator(&mut gb),
-        Err(LinkSessionError::MalformedPacketPayload)
-    );
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert!(replay_link.events.iter().all(|record| record.delivered));
 }
 
 #[test]
-fn game_boy_replay_link_rejects_remote_master_local_reply_generation_mismatch() {
+fn game_boy_replay_link_tolerates_remote_master_local_reply_generation_mismatch() {
     let mut replay_link = GameBoyReplayLink::new(
         vec![ReplayEvent::GameBoyLink {
             frame: 0,
@@ -543,10 +698,8 @@ fn game_boy_replay_link_rejects_remote_master_local_reply_generation_mismatch() 
     );
     let mut gb = gb_emulator();
 
-    assert_eq!(
-        replay_link.poll_emulator(&mut gb),
-        Err(LinkSessionError::MalformedPacketPayload)
-    );
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert!(replay_link.events.iter().all(|record| record.delivered));
 }
 
 #[test]

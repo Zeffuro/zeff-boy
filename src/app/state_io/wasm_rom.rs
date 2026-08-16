@@ -49,6 +49,8 @@ impl App {
         self.last_core_frame = None;
         self.last_displayed_frame = None;
         self.debug_windows.last_disasm_pc = None;
+        self.debug_windows.last_disasm_mapping = None;
+        self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
 
         let path = PathBuf::from(&name);

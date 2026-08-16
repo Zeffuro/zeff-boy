@@ -92,6 +92,21 @@ impl App {
                 {
                     frames_to_step = frames_to_step.min(batch.frames.len());
                 }
+                if let Some(recorder) = self.recording.replay_recorder.as_ref() {
+                    let until_checkpoint = 300 - recorder.frame_count() % 300;
+                    frames_to_step = frames_to_step.min(until_checkpoint);
+                }
+                if let Some(player) = self.recording.replay_player.as_ref() {
+                    let cursor = u64::try_from(player.cursor()).unwrap_or(u64::MAX);
+                    if let Some(checkpoint) = player
+                        .metadata()
+                        .checkpoints
+                        .iter()
+                        .find(|checkpoint| checkpoint.frame > cursor)
+                    {
+                        frames_to_step = frames_to_step.min((checkpoint.frame - cursor) as usize);
+                    }
+                }
 
                 let remote_capture_pending = self.remote_debug_frames_remaining > 0
                     || self.remote_memory_frames_remaining > 0
@@ -101,18 +116,21 @@ impl App {
                     || remote_capture_pending;
 
                 if frames_to_step > 0 || has_pending {
-                    let want_viewer_update = match self.speed_mode() {
-                        SpeedMode::Normal | SpeedMode::SlowMotion => true,
-                        SpeedMode::FastForward | SpeedMode::Uncapped => {
-                            let now = Instant::now();
-                            if now.duration_since(self.timing.last_viewer_update)
-                                >= VIEWER_UPDATE_INTERVAL
-                            {
-                                self.timing.last_viewer_update = now;
-                                true
-                            } else {
-                                false
-                            }
+                    let throttle_viewers = self.active_debug_presentation
+                        == crate::settings::DebugPresentation::GameAndDebugger
+                        || matches!(
+                            self.speed_mode(),
+                            SpeedMode::FastForward | SpeedMode::Uncapped
+                        );
+                    let want_viewer_update = has_pending || !throttle_viewers || {
+                        let now = Instant::now();
+                        if now.duration_since(self.timing.last_viewer_update)
+                            >= VIEWER_UPDATE_INTERVAL
+                        {
+                            self.timing.last_viewer_update = now;
+                            true
+                        } else {
+                            false
                         }
                     };
 
@@ -168,7 +186,11 @@ impl App {
                         .map_or(host_camera_frame, |frames| {
                             frames.first().and_then(|frame| frame.camera_frame.clone())
                         });
-                    let reqs = debug::compute_tab_requirements(&self.debug_dock);
+                    let reqs = if self.debug_workspace_visible() {
+                        debug::compute_tab_requirements(&self.debug_dock)
+                    } else {
+                        debug::dock::TabDataRequirements::default()
+                    };
                     let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
                     let buffers = self.take_reusable_buffers();
 
@@ -187,7 +209,7 @@ impl App {
                         debug_step: std::mem::take(&mut self.debug_requests.step),
                         debug_continue: std::mem::take(&mut self.debug_requests.continue_),
                         audio: AudioConfig {
-                            apu_capture_enabled: reqs.needs_apu,
+                            apu_capture_enabled: reqs.needs_apu && want_viewer_update,
                             skip_audio: match self.speed_mode() {
                                 SpeedMode::Uncapped => true,
                                 SpeedMode::FastForward => {
@@ -212,7 +234,9 @@ impl App {
                     };
 
                     if let Some(thread) = &self.emu_thread {
-                        if self.debug_windows.cheat.cheats_dirty {
+                        if self.debug_windows.cheat.cheats_dirty
+                            && self.recording.allows_cheat_updates()
+                        {
                             self.debug_windows.cheat.cheats_dirty = false;
                             thread.send(EmuCommand::UpdateCheats(
                                 crate::cheats::collect_enabled_patches(

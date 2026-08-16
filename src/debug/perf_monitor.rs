@@ -1,19 +1,32 @@
 use crate::debug::types::PerfInfo;
+use crate::platform::Instant;
+use std::time::Duration;
 
 const HISTORY_LEN: usize = 120;
+const HISTORY_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) struct PerfHistory {
     fps_samples: Vec<f64>,
+    last_sample: Option<Instant>,
 }
 
 impl PerfHistory {
     pub(crate) fn new() -> Self {
         Self {
             fps_samples: Vec::with_capacity(HISTORY_LEN),
+            last_sample: None,
         }
     }
 
     pub(crate) fn push(&mut self, fps: f64) {
+        let now = Instant::now();
+        if self
+            .last_sample
+            .is_some_and(|last| now.duration_since(last) < HISTORY_SAMPLE_INTERVAL)
+        {
+            return;
+        }
+        self.last_sample = Some(now);
         if self.fps_samples.len() >= HISTORY_LEN {
             self.fps_samples.remove(0);
         }

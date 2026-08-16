@@ -50,8 +50,10 @@ pub(crate) fn collect_nes_snapshot(
 
     data.disassembly_view = super::build_disassembly_view(
         snapshot.show_disassembler,
-        snapshot.last_disasm_pc,
-        emu.cpu_pc().into(),
+        snapshot
+            .last_disasm_pc
+            .map(|pc| (pc, snapshot.last_disasm_mapping)),
+        (emu.cpu_pc().into(), None),
         || {
             nes_disassemble_around(
                 |addr| nes_disasm_peek_byte(emu.bus(), addr),

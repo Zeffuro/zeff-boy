@@ -1,6 +1,6 @@
 use super::media::fds_side_label;
 use super::{App, SpeedMode};
-use crate::debug::{ConsoleGraphicsData, DebugTab, is_tab_open};
+use crate::debug::{ConsoleGraphicsData, DebugTab, RomInfoSection, is_tab_open};
 use crate::emu_thread::{EmuResponse, FrameResult};
 use crate::platform::Instant;
 
@@ -32,6 +32,11 @@ impl App {
             }
             #[cfg(not(target_arch = "wasm32"))]
             let resp = match self.consume_replay_start_response(resp) {
+                Some(resp) => resp,
+                None => continue,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let resp = match self.consume_replay_checkpoint_response(resp) {
                 Some(resp) => resp,
                 None => continue,
             };
@@ -100,11 +105,14 @@ impl App {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
         self.record_replay_events(result.replay_events);
         self.commit_replay_batch(result.advanced_frames);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.schedule_replay_checkpoint();
         if let Some(error) = result.replay_error.take() {
             log::warn!("Replay stopped: {error}");
             self.recording.replay_player = None;
             self.recording.pending_replay_batches.clear();
             self.recording.queued_replay_playback_frames = 0;
+            self.resume_uncapped_worker_after_replay();
             self.toast_manager.error(format!("Replay stopped: {error}"));
         }
 
@@ -148,6 +156,18 @@ impl App {
         let mut ui_data = result.ui_data;
 
         if let Some(ref mut cached) = self.cached_ui_data {
+            if ui_data.cpu_debug.is_none() {
+                ui_data.cpu_debug = cached.cpu_debug.take();
+            }
+            if ui_data.perf_info.is_none() {
+                ui_data.perf_info = cached.perf_info.take();
+            }
+            if ui_data.input_debug.is_none() {
+                ui_data.input_debug = cached.input_debug.take();
+            }
+            if ui_data.palette_debug.is_none() {
+                ui_data.palette_debug = cached.palette_debug.take();
+            }
             if ui_data.graphics_data.is_some() {
                 match cached.graphics_data.take() {
                     Some(ConsoleGraphicsData::Gb(gb)) if !gb.vram.is_empty() => {
@@ -183,13 +203,14 @@ impl App {
             if ui_data.apu_debug.is_none() {
                 ui_data.apu_debug = cached.apu_debug.take();
             }
-            if let Some(ref disasm) = ui_data.disassembly_view {
-                self.debug_windows.last_disasm_pc = Some(disasm.pc);
-            } else {
+            if ui_data.disassembly_view.is_none() {
                 ui_data.disassembly_view = cached.disassembly_view.take();
             }
             if ui_data.rom_debug.is_none() {
                 ui_data.rom_debug = cached.rom_debug.take();
+            }
+            if ui_data.rom_page.is_none() {
+                ui_data.rom_page = cached.rom_page.take();
             }
             match ui_data.memory_page.take() {
                 Some(page) if !page.is_empty() => {
@@ -208,6 +229,12 @@ impl App {
             }
         }
 
+        if let Some(ref mut disasm) = ui_data.disassembly_view {
+            self.symbols.annotate_disassembly(disasm);
+            self.debug_windows.last_disasm_pc = Some(disasm.pc);
+            self.debug_windows.last_disasm_mapping = disasm.mapping;
+        }
+
         if let Some(ref mut perf) = ui_data.perf_info {
             perf.fps = if self.settings.ui.show_fps {
                 self.fps_tracker.fps()
@@ -216,6 +243,19 @@ impl App {
             };
             perf.speed_mode_label = self.speed_mode_label();
             perf.frames_in_flight = self.frames_in_flight;
+        }
+
+        if let Some(ref mut info) = ui_data.rom_debug
+            && !info
+                .sections
+                .iter()
+                .any(|section| section.heading == "Symbols")
+            && let Some(fields) = self.symbols.summary_fields()
+        {
+            info.sections.push(RomInfoSection {
+                heading: "Symbols",
+                fields,
+            });
         }
 
         if let Some(results) = ui_data.memory_search_results.take() {
@@ -319,9 +359,18 @@ impl App {
                         origin.frame
                     )
                 })?;
+                let relative_tick = if let Some(base_tick) = origin.wonder_swan_tick {
+                    session_cycle.checked_sub(base_tick).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "WonderSwan link event tick {session_cycle} is before replay origin tick {base_tick}"
+                        )
+                    })?
+                } else {
+                    session_cycle
+                };
                 Ok(zeff_emu_common::replay::ReplayEvent::WonderSwanLink {
                     frame: relative_frame,
-                    session_cycle,
+                    session_cycle: relative_tick,
                     event,
                 })
             }
@@ -347,8 +396,21 @@ impl App {
                 if let Some(player) = &mut self.recording.replay_player {
                     player.advance_frames(commit_count);
                     if player.is_finished() {
-                        self.toast_manager.info("Replay finished");
-                        self.recording.replay_player = None;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let frame = u64::try_from(player.cursor()).unwrap_or(u64::MAX);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let has_checkpoint = player
+                            .metadata()
+                            .checkpoints
+                            .iter()
+                            .any(|checkpoint| checkpoint.frame == frame);
+                        #[cfg(target_arch = "wasm32")]
+                        let has_checkpoint = false;
+                        if !has_checkpoint {
+                            self.toast_manager.info("Replay finished");
+                            self.recording.replay_player = None;
+                            self.resume_uncapped_worker_after_replay();
+                        }
                     }
                 }
                 self.recording.queued_replay_playback_frames = self
@@ -391,6 +453,7 @@ mod tests {
             ReplayCaptureOrigin {
                 frame: 10,
                 game_boy_tick: Some(100),
+                wonder_swan_tick: None,
             },
         )
         .expect_err("pre-origin event should be rejected");
@@ -417,6 +480,7 @@ mod tests {
             ReplayCaptureOrigin {
                 frame: 10,
                 game_boy_tick: Some(100),
+                wonder_swan_tick: None,
             },
         )
         .expect_err("pre-origin tick should be rejected");
@@ -443,6 +507,7 @@ mod tests {
             ReplayCaptureOrigin {
                 frame: 10,
                 game_boy_tick: Some(100),
+                wonder_swan_tick: None,
             },
         )
         .expect("post-origin event should be valid");
