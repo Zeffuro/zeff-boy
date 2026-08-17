@@ -31,6 +31,9 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
             address: addr.into(),
             storage_offset: None,
             symbol: None,
+            control_target: None,
+            control_target_storage: None,
+            control_target_symbol: None,
             bytes,
             mnemonic: cb_mnemonic(cb),
         };
@@ -194,11 +197,27 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
         0xFE => mn!("CP ${:02X}", d8),
         0xFF => mn!("RST $38"),
     };
+    let control_target = match opcode {
+        0x18 | 0x20 | 0x28 | 0x30 | 0x38 => Some(r8_target),
+        0xC2 | 0xC3 | 0xC4 | 0xCA | 0xCC | 0xCD | 0xD2 | 0xD4 | 0xDA | 0xDC => Some(d16),
+        0xC7 => Some(0x00),
+        0xCF => Some(0x08),
+        0xD7 => Some(0x10),
+        0xDF => Some(0x18),
+        0xE7 => Some(0x20),
+        0xEF => Some(0x28),
+        0xF7 => Some(0x30),
+        0xFF => Some(0x38),
+        _ => None,
+    };
 
     DisassembledLine {
         address: addr.into(),
         storage_offset: None,
         symbol: None,
+        control_target: control_target.map(Into::into),
+        control_target_storage: None,
+        control_target_symbol: None,
         bytes,
         mnemonic,
     }
@@ -234,4 +253,20 @@ fn read_u16(bus_read: &impl Fn(u16) -> u8, addr: u16) -> u16 {
 
 fn fmt_rel(offset: i8, target: u16) -> Mnemonic {
     mn!("{} (${:04X})", fmt_signed(offset), target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_instruction;
+
+    #[test]
+    fn decodes_relative_and_absolute_control_targets() {
+        let relative = [0x20, 0xFC, 0x00];
+        let line = decode_instruction(&|address| relative[address as usize], 0);
+        assert_eq!(line.control_target, Some(0xFFFEu16.into()));
+
+        let call = [0xCD, 0x60, 0x45];
+        let line = decode_instruction(&|address| call[address as usize], 0);
+        assert_eq!(line.control_target, Some(0x4560u16.into()));
+    }
 }

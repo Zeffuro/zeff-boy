@@ -22,6 +22,30 @@ fn default_camera_gamma() -> f32 {
     1.05
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct DebugColors {
+    pub(crate) address: [u8; 4],
+    pub(crate) symbol: [u8; 4],
+    pub(crate) pc: [u8; 4],
+    pub(crate) changed: [u8; 4],
+    pub(crate) breakpoint: [u8; 4],
+    pub(crate) watchpoint: [u8; 4],
+}
+
+impl Default for DebugColors {
+    fn default() -> Self {
+        Self {
+            address: [140, 140, 170, 255],
+            symbol: [110, 190, 140, 255],
+            pc: [63, 48, 82, 255],
+            changed: [255, 100, 80, 255],
+            breakpoint: [255, 80, 80, 255],
+            watchpoint: [255, 180, 60, 255],
+        }
+    }
+}
+
 fn default_camera_contrast() -> f32 {
     1.65
 }
@@ -331,6 +355,10 @@ pub(crate) struct UiSettings {
     pub(crate) theme_preset: UiThemePreset,
     #[serde(default)]
     pub(crate) ui_density: UiDensity,
+    #[serde(default = "default_debug_monospace_scale")]
+    pub(crate) debug_monospace_scale: f32,
+    #[serde(default)]
+    pub(crate) debug_colors: DebugColors,
     #[serde(default)]
     pub(crate) debug_presentation: DebugPresentation,
     #[serde(default = "default_true")]
@@ -366,6 +394,8 @@ impl Default for UiSettings {
             open_debug_tabs: Vec::new(),
             theme_preset: UiThemePreset::default(),
             ui_density: UiDensity::default(),
+            debug_monospace_scale: default_debug_monospace_scale(),
+            debug_colors: DebugColors::default(),
             debug_presentation: DebugPresentation::default(),
             debugger_window_open: true,
             debugger_window_position: None,
@@ -379,6 +409,10 @@ impl Default for UiSettings {
             ide_dock_layout: None,
         }
     }
+}
+
+fn default_debug_monospace_scale() -> f32 {
+    1.0
 }
 
 impl UiSettings {

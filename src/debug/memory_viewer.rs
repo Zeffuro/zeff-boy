@@ -81,7 +81,11 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
-    let layout = hex_viewer::hex_layout(ui.available_width(), address_space.addr_width);
+    let layout = hex_viewer::hex_layout(
+        ui.available_width(),
+        address_space.addr_width,
+        super::common::debug_mono_font(ui).size,
+    );
     let hex_block = ui.vertical(|ui| {
         let fmt = hex_viewer::hex_text_formats(ui, layout);
         hex_viewer::draw_hex_header(ui, "Addr   ", &fmt);

@@ -37,6 +37,8 @@ impl App {
 
         self.drain_emu_responses();
         #[cfg(not(target_arch = "wasm32"))]
+        self.poll_symbol_load();
+        #[cfg(not(target_arch = "wasm32"))]
         self.poll_replay_save_worker();
 
         // Handle backstep: pop one rewind snapshot and pause
@@ -307,6 +309,8 @@ impl App {
 
         let ui_frame_data = self.cached_ui_data.take();
         let rendered = self.render_frame(ui_frame_data.as_ref());
+        #[cfg(not(target_arch = "wasm32"))]
+        self.render_native_auxiliary_windows(ui_frame_data.as_ref());
         self.cached_ui_data = ui_frame_data;
         if !rendered {
             return;
@@ -316,5 +320,41 @@ impl App {
             is_tab_open(&self.debug_dock, DebugTab::TileViewer);
         self.debug_windows.tilemap_viewer_was_open =
             is_tab_open(&self.debug_dock, DebugTab::TilemapViewer);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn render_native_auxiliary_windows(&mut self, data: Option<&crate::ui::UiFrameData>) {
+        let now = Instant::now();
+        let debugger_visible = self.active_debug_presentation
+            == crate::settings::DebugPresentation::GameAndDebugger
+            && self.settings.ui.debugger_window_open
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::debugger_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if debugger_visible
+            && now.duration_since(self.last_debugger_render) >= VIEWER_UPDATE_INTERVAL
+        {
+            self.render_debugger_frame(data);
+            self.last_debugger_render = now;
+        }
+
+        let settings_visible = self.show_settings_window
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::settings_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if settings_visible
+            && now.duration_since(self.last_settings_render) >= std::time::Duration::from_millis(66)
+        {
+            let before = self.settings.clone();
+            self.render_settings_frame(data);
+            if self.settings != before {
+                self.settings.save();
+            }
+            self.last_settings_render = now;
+        }
     }
 }

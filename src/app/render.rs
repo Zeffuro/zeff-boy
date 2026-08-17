@@ -271,14 +271,44 @@ impl App {
     }
 
     fn merge_debug_actions(&mut self, actions: DebugUiActions) {
+        let mut symbol_changed = false;
+        for name in &actions.remove_user_symbols {
+            match self.symbols.remove_user_symbol(name) {
+                Ok(Some(path)) => self
+                    .toast_manager
+                    .success(format!("Removed {name} from {}", path.display())),
+                Ok(None) => self.toast_manager.success(format!("Removed {name}")),
+                Err(error) => self
+                    .toast_manager
+                    .error(format!("Could not remove {name}: {error}")),
+            }
+            symbol_changed = true;
+        }
+        if let Some(symbol) = actions.user_symbol {
+            let name = symbol.name.clone();
+            match self.symbols.upsert_user_symbol(symbol) {
+                Ok(Some(path)) => self
+                    .toast_manager
+                    .success(format!("Saved {name} to {}", path.display())),
+                Ok(None) => self.toast_manager.success(format!("Added {name}")),
+                Err(error) => self
+                    .toast_manager
+                    .error(format!("Could not add {name}: {error}")),
+            }
+            symbol_changed = true;
+        }
+        if symbol_changed {
+            self.debug_windows.last_disasm_pc = None;
+            self.debug_windows.last_disasm_mapping = None;
+        }
         if let Some(target) = actions.disasm_target {
-            self.debug_windows.disasm_target = Some(target);
-            self.debug_windows.last_disasm_pc = None;
-            self.debug_windows.last_disasm_mapping = None;
+            self.navigate_disassembly(Some(target));
         } else if actions.follow_disasm_pc {
-            self.debug_windows.disasm_target = None;
-            self.debug_windows.last_disasm_pc = None;
-            self.debug_windows.last_disasm_mapping = None;
+            self.navigate_disassembly(None);
+        } else if actions.disasm_back {
+            self.navigate_disassembly_history(true);
+        } else if actions.disasm_forward {
+            self.navigate_disassembly_history(false);
         }
         let pending = &mut self.pending_debug_actions;
         if actions.add_breakpoint.is_some() {
@@ -317,6 +347,40 @@ impl App {
         if actions.gba_bg_layer_toggles.is_some() {
             pending.gba_bg_layer_toggles = actions.gba_bg_layer_toggles;
         }
+    }
+
+    fn navigate_disassembly(&mut self, target: Option<crate::debug::DisassemblyTarget>) {
+        if self.debug_windows.disasm_target == target {
+            return;
+        }
+        self.debug_windows
+            .disasm_back
+            .push(self.debug_windows.disasm_target);
+        self.debug_windows.disasm_forward.clear();
+        self.debug_windows.disasm_target = target;
+        self.debug_windows.last_disasm_pc = None;
+        self.debug_windows.last_disasm_mapping = None;
+    }
+
+    fn navigate_disassembly_history(&mut self, back: bool) {
+        let (from, to) = if back {
+            (
+                &mut self.debug_windows.disasm_back,
+                &mut self.debug_windows.disasm_forward,
+            )
+        } else {
+            (
+                &mut self.debug_windows.disasm_forward,
+                &mut self.debug_windows.disasm_back,
+            )
+        };
+        let Some(target) = from.pop() else {
+            return;
+        };
+        to.push(self.debug_windows.disasm_target);
+        self.debug_windows.disasm_target = target;
+        self.debug_windows.last_disasm_pc = None;
+        self.debug_windows.last_disasm_mapping = None;
     }
 }
 

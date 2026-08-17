@@ -84,7 +84,11 @@ pub(super) fn draw_rom_viewer_content(
 
     ui.separator();
 
-    let layout = hex_viewer::hex_layout(ui.available_width(), 6);
+    let layout = hex_viewer::hex_layout(
+        ui.available_width(),
+        6,
+        super::common::debug_mono_font(ui).size,
+    );
     let hex_block = ui.vertical(|ui| {
         let fmt = hex_viewer::hex_text_formats(ui, layout);
         hex_viewer::draw_hex_header(ui, "Offset   ", &fmt);

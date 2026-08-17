@@ -26,6 +26,10 @@ pub(crate) struct DebugUiActions {
     pub(crate) focus_tab: Option<super::DebugTab>,
     pub(crate) disasm_target: Option<super::DisassemblyTarget>,
     pub(crate) follow_disasm_pc: bool,
+    pub(crate) disasm_back: bool,
+    pub(crate) disasm_forward: bool,
+    pub(crate) user_symbol: Option<crate::symbols::UserSymbolDraft>,
+    pub(crate) remove_user_symbols: Vec<String>,
 }
 
 impl DebugUiActions {
@@ -47,6 +51,10 @@ impl DebugUiActions {
             focus_tab: None,
             disasm_target: None,
             follow_disasm_pc: false,
+            disasm_back: false,
+            disasm_forward: false,
+            user_symbol: None,
+            remove_user_symbols: Vec::new(),
         }
     }
 
@@ -70,6 +78,13 @@ pub(super) fn draw_cpu_debug_content(
     info: &CpuDebugSnapshot,
     actions: &mut DebugUiActions,
 ) {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        draw_cpu_debug_rows(ui, info, actions);
+    });
+}
+
+fn draw_cpu_debug_rows(ui: &mut egui::Ui, info: &CpuDebugSnapshot, actions: &mut DebugUiActions) {
     ui.heading("CPU Registers");
     for line in &info.register_lines {
         ui.monospace(line);

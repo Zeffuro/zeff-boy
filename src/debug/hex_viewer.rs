@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use super::common::{COLOR_ADDR, COLOR_DIM, COLOR_FLASH, DEBUG_MONO_FONT_SIZE, parse_hex_u32};
+use super::common::{COLOR_DIM, color32, debug_colors, debug_mono_font, parse_hex_u32};
 use crate::debug::types::{MemoryBookmark, MemoryByteDiff};
 use zeff_emu_common::address::Address;
 
@@ -19,8 +19,8 @@ pub(super) struct HexLayout {
     show_ascii: bool,
 }
 
-pub(super) fn hex_layout(available_width: f32, addr_width: usize) -> HexLayout {
-    let char_width = DEBUG_MONO_FONT_SIZE * 0.62;
+pub(super) fn hex_layout(available_width: f32, addr_width: usize, mono_size: f32) -> HexLayout {
+    let char_width = mono_size * 0.62;
     for bytes_per_row in [16, 8, 4] {
         let chars = addr_width + 5 + bytes_per_row * 4;
         if available_width >= chars as f32 * char_width {
@@ -37,12 +37,13 @@ pub(super) fn hex_layout(available_width: f32, addr_width: usize) -> HexLayout {
 }
 
 pub(super) fn hex_text_formats(ui: &egui::Ui, layout: HexLayout) -> HexFormats {
-    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
+    let mono = debug_mono_font(ui);
     let normal_color = ui.visuals().text_color();
+    let colors = debug_colors(ui);
     HexFormats {
         addr: egui::TextFormat {
             font_id: mono.clone(),
-            color: COLOR_ADDR,
+            color: color32(colors.address),
             ..Default::default()
         },
         normal: egui::TextFormat {
@@ -57,7 +58,7 @@ pub(super) fn hex_text_formats(ui: &egui::Ui, layout: HexLayout) -> HexFormats {
         },
         flash: egui::TextFormat {
             font_id: mono,
-            color: COLOR_FLASH,
+            color: color32(colors.changed),
             ..Default::default()
         },
         layout,
@@ -372,8 +373,8 @@ mod tests {
 
     #[test]
     fn hex_layout_shrinks_with_the_window() {
-        assert_eq!(hex_layout(700.0, 6).bytes_per_row, 16);
-        assert_eq!(hex_layout(360.0, 6).bytes_per_row, 8);
-        assert_eq!(hex_layout(220.0, 6).bytes_per_row, 4);
+        assert_eq!(hex_layout(700.0, 6, 13.0).bytes_per_row, 16);
+        assert_eq!(hex_layout(360.0, 6, 13.0).bytes_per_row, 8);
+        assert_eq!(hex_layout(220.0, 6, 13.0).bytes_per_row, 4);
     }
 }

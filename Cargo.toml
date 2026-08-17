@@ -52,6 +52,7 @@ png = "0.18.1"
 crc32fast = "1.5.0"
 const-hex = "1.19.1"
 arrayvec = "0.7.8"
+smallvec = "1.15.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 gilrs = "0.11.2"
 

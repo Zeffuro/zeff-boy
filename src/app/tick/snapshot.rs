@@ -1,4 +1,5 @@
 use super::super::App;
+use crate::debug::ConsoleReadSpace;
 use crate::debug::dock::TabDataRequirements;
 use crate::emu_thread::{RenderSettings, ReusableBuffers, SnapshotRequest};
 
@@ -27,7 +28,16 @@ impl App {
         } else {
             false
         };
-        let memory_view_start = if remote_wants_memory {
+        let console_read = self.debug_windows.console.pending_read;
+        let console_memory_start = console_read
+            .filter(|read| read.space == ConsoleReadSpace::Cpu)
+            .map(|read| read.start);
+        let console_rom_start = console_read
+            .filter(|read| read.space == ConsoleReadSpace::Rom)
+            .map(|read| read.start);
+        let memory_view_start = if let Some(start) = console_memory_start {
+            start
+        } else if remote_wants_memory {
             self.remote_memory_view_start
                 .unwrap_or(self.debug_windows.memory.view_start)
         } else {
@@ -46,10 +56,12 @@ impl App {
             show_disassembler: reqs.needs_disassembly && want_viewer_update,
             show_rom_info: reqs.needs_rom_info && want_viewer_update,
             show_memory_viewer: (reqs.needs_memory_page && want_viewer_update)
-                || remote_wants_memory,
+                || remote_wants_memory
+                || console_memory_start.is_some(),
             memory_view_start,
-            show_rom_viewer: reqs.needs_rom_page && want_viewer_update,
-            rom_view_start: self.debug_windows.rom_viewer.view_start,
+            show_rom_viewer: (reqs.needs_rom_page && want_viewer_update)
+                || console_rom_start.is_some(),
+            rom_view_start: console_rom_start.unwrap_or(self.debug_windows.rom_viewer.view_start),
             last_disasm_pc: self.debug_windows.last_disasm_pc,
             last_disasm_mapping: self.debug_windows.last_disasm_mapping,
             disasm_target: self.debug_windows.disasm_target,

@@ -1,15 +1,19 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use super::{CpuLocation, StorageLocation, SymbolId, SymbolRecord};
+use smallvec::SmallVec;
+
+use super::{CpuLocation, ProvenanceKind, StorageLocation, SymbolId, SymbolRecord};
 
 #[derive(Default)]
 pub(crate) struct SymbolStore {
     symbols: Vec<SymbolRecord>,
-    name_index: HashMap<String, Vec<SymbolId>>,
-    cpu_index: BTreeMap<CpuLocation, Vec<SymbolId>>,
-    storage_index: BTreeMap<StorageLocation, Vec<SymbolId>>,
+    name_index: HashMap<String, SymbolIds>,
+    cpu_index: HashMap<CpuLocation, SymbolIds>,
+    storage_index: Vec<(StorageLocation, SymbolIds)>,
     generation: u64,
 }
+
+type SymbolIds = SmallVec<[SymbolId; 1]>;
 
 impl SymbolStore {
     pub(crate) fn insert(&mut self, mut symbol: SymbolRecord) -> SymbolId {
@@ -22,17 +26,88 @@ impl SymbolStore {
         if let Some(cpu) = symbol.location.cpu {
             self.cpu_index.entry(cpu).or_default().push(id);
         }
-        if let Some(storage) = symbol.location.storage {
-            self.storage_index.entry(storage).or_default().push(id);
-        }
+        self.insert_storage(symbol.location.storage, id);
         self.symbols.push(symbol);
         self.generation = self.generation.wrapping_add(1);
         id
     }
 
+    fn insert_storage(&mut self, location: Option<StorageLocation>, id: SymbolId) {
+        let Some(location) = location else {
+            return;
+        };
+        match self
+            .storage_index
+            .binary_search_by_key(&location, |(entry, _)| *entry)
+        {
+            Ok(index) => self.storage_index[index].1.push(id),
+            Err(index) => self.storage_index.insert(index, (location, single_id(id))),
+        }
+    }
+
     pub(crate) fn extend(&mut self, symbols: impl IntoIterator<Item = SymbolRecord>) {
+        let symbols = symbols.into_iter();
+        let (lower, upper) = symbols.size_hint();
+        let additional = upper.unwrap_or(lower);
+        self.symbols.reserve(additional);
+        self.name_index.reserve(additional);
+        if additional <= 512 {
+            for symbol in symbols {
+                self.insert(symbol);
+            }
+            return;
+        }
+        let start = self.symbols.len();
+        self.symbols
+            .extend(symbols.enumerate().map(|(offset, mut symbol)| {
+                symbol.id = SymbolId((start + offset) as u32);
+                symbol
+            }));
+        self.rebuild_indices();
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    pub(crate) fn replace_user_symbols(&mut self, symbols: impl IntoIterator<Item = SymbolRecord>) {
+        self.symbols
+            .retain(|symbol| symbol.provenance.kind != ProvenanceKind::User);
+        self.rebuild_indices();
         for symbol in symbols {
             self.insert(symbol);
+        }
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    fn rebuild_indices(&mut self) {
+        self.name_index.clear();
+        self.cpu_index.clear();
+        self.storage_index.clear();
+        self.name_index.reserve(self.symbols.len());
+        self.cpu_index.reserve(self.symbols.len());
+        let mut storage_entries = Vec::with_capacity(self.symbols.len());
+        for (index, symbol) in self.symbols.iter_mut().enumerate() {
+            let id = SymbolId(index as u32);
+            symbol.id = id;
+            self.name_index
+                .entry(symbol.name.clone())
+                .or_default()
+                .push(id);
+            if let Some(cpu) = symbol.location.cpu {
+                self.cpu_index.entry(cpu).or_default().push(id);
+            }
+            if let Some(storage) = symbol.location.storage {
+                storage_entries.push((storage, id));
+            }
+        }
+        storage_entries.sort_unstable_by_key(|(location, _)| *location);
+        self.storage_index.reserve(storage_entries.len());
+        for (location, id) in storage_entries {
+            if let Some((last_location, ids)) = self.storage_index.last_mut()
+                && *last_location == location
+            {
+                ids.push(id);
+            } else {
+                self.storage_index.push((location, single_id(id)));
+            }
         }
     }
 
@@ -58,12 +133,42 @@ impl SymbolStore {
     }
 
     pub(crate) fn search_ids(&self, query: &str, limit: usize) -> Vec<SymbolId> {
+        self.search_ids_matching(query, limit, |_| true)
+    }
+
+    pub(crate) fn search_ids_matching(
+        &self,
+        query: &str,
+        limit: usize,
+        matches: impl Fn(&SymbolRecord) -> bool,
+    ) -> Vec<SymbolId> {
         let query = query.trim().to_ascii_lowercase();
-        self.symbols
+        let mut matches = self
+            .symbols
             .iter()
-            .filter(|symbol| query.is_empty() || symbol.name.to_ascii_lowercase().contains(&query))
+            .enumerate()
+            .filter(|(_, symbol)| matches(symbol))
+            .filter_map(|(index, symbol)| {
+                let name = symbol.name.to_ascii_lowercase();
+                let rank = if query.is_empty() || name == query {
+                    0
+                } else if name.starts_with(&query) {
+                    1
+                } else if name.contains(&query) {
+                    2
+                } else {
+                    return None;
+                };
+                Some((rank, index, symbol.id))
+            })
+            .collect::<Vec<_>>();
+        if !query.is_empty() {
+            matches.sort_unstable_by_key(|(rank, index, _)| (*rank, *index));
+        }
+        matches
+            .into_iter()
             .take(limit)
-            .map(|symbol| symbol.id)
+            .map(|(_, _, id)| id)
             .collect()
     }
 
@@ -80,9 +185,10 @@ impl SymbolStore {
         location: StorageLocation,
     ) -> impl Iterator<Item = &SymbolRecord> {
         self.storage_index
-            .get(&location)
+            .binary_search_by_key(&location, |(entry, _)| *entry)
+            .ok()
             .into_iter()
-            .flatten()
+            .flat_map(|index| self.storage_index[index].1.iter())
             .filter_map(|id| self.symbol(*id))
     }
 
@@ -90,14 +196,16 @@ impl SymbolStore {
         &self,
         location: StorageLocation,
     ) -> impl Iterator<Item = &SymbolRecord> {
-        let region_start = StorageLocation {
-            offset: 0,
-            ..location
-        };
-        self.storage_index
-            .range(region_start..=location)
+        let end = self
+            .storage_index
+            .partition_point(|(start, _)| *start <= location);
+        self.storage_index[..end]
+            .iter()
             .rev()
-            .flat_map(|(_, ids)| ids)
+            .take_while(move |(start, _)| {
+                start.image == location.image && start.region == location.region
+            })
+            .flat_map(|(_, ids)| ids.iter())
             .filter_map(|id| self.symbol(*id))
             .filter(move |symbol| {
                 let Some(start) = symbol.location.storage else {
@@ -121,13 +229,21 @@ impl SymbolStore {
     }
 }
 
+fn single_id(id: SymbolId) -> SymbolIds {
+    let mut ids = SymbolIds::new();
+    ids.push(id);
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::symbols::import::{ImportContext, TargetInfo, import_symbols};
     use crate::symbols::{
         AddressSpaceId, Confidence, ExecMode, ImageId, Provenance, ProvenanceKind, RegionId,
         SymbolKind, SymbolLocation, SymbolScope,
     };
+    use zeff_emu_common::system::System;
 
     fn symbol(name: &str, cpu: u64, offset: u64) -> SymbolRecord {
         SymbolRecord {
@@ -155,6 +271,7 @@ mod tests {
                 source: None,
             },
             confidence: Confidence::Exact,
+            comment: None,
         }
     }
 
@@ -196,6 +313,36 @@ mod tests {
     }
 
     #[test]
+    fn indexes_external_gnu_nm_symbols_when_configured() {
+        let Ok(path) = std::env::var("ZEFF_TEST_GNU_NM_SYM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let module = import_symbols(
+            "game.sym",
+            &data,
+            &ImportContext {
+                target: TargetInfo {
+                    system: System::Gba,
+                },
+                image: ImageId(0),
+                rom_region: RegionId(0),
+                cpu_space: AddressSpaceId(0),
+                source_name: None,
+            },
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let mut store = SymbolStore::default();
+        store.extend(module.symbols);
+        eprintln!(
+            "external GNU nm index: {} ms",
+            started.elapsed().as_millis()
+        );
+        assert!(store.len() > 70_000);
+    }
+
+    #[test]
     fn symbol_search_is_case_insensitive_and_limited() {
         let mut store = SymbolStore::default();
         store.insert(symbol("UpdatePlayer", 0x4560, 0x8560));
@@ -206,5 +353,38 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(store.symbol(results[0]).unwrap().name, "UpdatePlayer");
         assert_eq!(store.search_ids("PLAYER", 10).len(), 2);
+    }
+
+    #[test]
+    fn symbol_search_ranks_exact_and_prefix_matches_first() {
+        let mut store = SymbolStore::default();
+        store.insert(symbol("BeforeUpdate", 0x4560, 0x8560));
+        store.insert(symbol("UpdateNpc", 0x4660, 0x8660));
+        store.insert(symbol("Update", 0x4760, 0x8760));
+
+        let names = store
+            .search_ids("update", 10)
+            .into_iter()
+            .map(|id| store.symbol(id).unwrap().name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Update", "UpdateNpc", "BeforeUpdate"]);
+    }
+
+    #[test]
+    fn replacing_user_symbols_keeps_imported_symbols() {
+        let mut store = SymbolStore::default();
+        store.insert(symbol("Imported", 0x4560, 0x8560));
+        let mut first = symbol("First", 0x4660, 0x8660);
+        first.provenance.kind = ProvenanceKind::User;
+        store.replace_user_symbols([first]);
+
+        let mut second = symbol("Second", 0x4760, 0x8760);
+        second.provenance.kind = ProvenanceKind::User;
+        store.replace_user_symbols([second]);
+
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.lookup_name("Imported").count(), 1);
+        assert_eq!(store.lookup_name("First").count(), 0);
+        assert_eq!(store.lookup_name("Second").count(), 1);
     }
 }

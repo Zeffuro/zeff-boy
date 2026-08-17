@@ -1,3 +1,4 @@
+use crate::debug::gba_disassemble_around;
 use crate::emu_thread::{ReusableBuffers, SnapshotRequest};
 
 mod apu;
@@ -64,6 +65,42 @@ pub(crate) fn collect_gba_snapshot(
         data.cpu_debug = Some(cpu::gba_cpu_snapshot(emu));
     }
 
+    let disasm_target = snapshot.disasm_target.filter(|target| {
+        (0x0800_0000..=0x0DFF_FFFF).contains(&target.cpu_address)
+            && target.storage_offset < rom_bytes.len() as u64
+    });
+    let thumb = emu.cpu_thumb_state();
+    let current_disasm = disasm_target.map_or_else(
+        || (emu.cpu_pc(), Some(u64::from(thumb))),
+        |target| (target.cpu_address, Some(target.storage_offset)),
+    );
+    data.disassembly_view = super::build_disassembly_view(
+        snapshot.show_disassembler,
+        snapshot
+            .last_disasm_pc
+            .map(|pc| (pc, snapshot.last_disasm_mapping)),
+        current_disasm,
+        || {
+            gba_disassemble_around(
+                |addr| {
+                    disasm_target.map_or_else(
+                        || emu.cpu_peek8(addr),
+                        |target| target_rom_byte(rom_bytes, target, addr),
+                    )
+                },
+                current_disasm.0,
+                thumb,
+                12,
+                26,
+            )
+        },
+        emu.iter_breakpoints(),
+    )
+    .map(|mut view| {
+        view.is_navigation_target = disasm_target.is_some();
+        view
+    });
+
     if snapshot.any_vram_viewer_open {
         data.graphics_data = Some(crate::debug::ConsoleGraphicsData::Gba(
             graphics::gba_graphics_data(emu, buffers.vram.take()),
@@ -87,6 +124,17 @@ pub(crate) fn collect_gba_snapshot(
     }
 
     data
+}
+
+fn target_rom_byte(rom: &[u8], target: crate::debug::DisassemblyTarget, address: u32) -> u8 {
+    let offset = target
+        .storage_offset
+        .saturating_add(u64::from(address.wrapping_sub(target.cpu_address)));
+    usize::try_from(offset)
+        .ok()
+        .and_then(|offset| rom.get(offset))
+        .copied()
+        .unwrap_or(0xFF)
 }
 
 fn on_off(value: bool) -> &'static str {

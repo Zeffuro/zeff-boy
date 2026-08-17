@@ -109,8 +109,12 @@ impl SettingsWindow {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.egui.begin_frame(&self.window);
-        self.egui
-            .apply_style(ctx.settings.ui.theme_preset, ctx.settings.ui.ui_density);
+        self.egui.apply_style(
+            ctx.settings.ui.theme_preset,
+            ctx.settings.ui.ui_density,
+            ctx.settings.ui.debug_monospace_scale,
+            ctx.settings.ui.debug_colors,
+        );
         let target_ppp =
             self.window.scale_factor() as f32 * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);
         if (self.egui.context().pixels_per_point() - target_ppp).abs() > 0.01 {

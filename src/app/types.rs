@@ -187,6 +187,19 @@ pub(super) struct ReplaySaveResult {
     pub(super) result: Result<PathBuf, String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct PendingSymbolLoad {
+    pub(super) request_id: u64,
+    pub(super) receiver: mpsc::Receiver<SymbolLoadResult>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct SymbolLoadResult {
+    pub(super) request_id: u64,
+    pub(super) elapsed: Duration,
+    pub(super) session: crate::symbols::SymbolSession,
+}
+
 pub(super) struct PendingReplayBatch {
     pub(super) frames: Vec<crate::emu_thread::ReplayJoypadFrame>,
     pub(super) record: bool,

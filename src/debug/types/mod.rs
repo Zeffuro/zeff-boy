@@ -54,10 +54,13 @@ pub(crate) struct DebugWindowState {
     pub(crate) last_disasm_pc: Option<Address>,
     pub(crate) last_disasm_mapping: Option<u64>,
     pub(crate) disasm_target: Option<super::DisassemblyTarget>,
+    pub(crate) disasm_back: Vec<Option<super::DisassemblyTarget>>,
+    pub(crate) disasm_forward: Vec<Option<super::DisassemblyTarget>>,
     pub(crate) tilemap: TilemapViewerState,
     pub(crate) tiles: TileViewerState,
     pub(crate) rom_viewer: RomViewerState,
     pub(crate) symbol_browser: SymbolBrowserState,
+    pub(crate) console: super::DebugConsoleState,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
     pub(crate) settings_tab: usize,
     pub(crate) camera_devices: Vec<crate::camera::CameraDeviceInfo>,
@@ -89,10 +92,13 @@ impl DebugWindowState {
             last_disasm_pc: None,
             last_disasm_mapping: None,
             disasm_target: None,
+            disasm_back: Vec::new(),
+            disasm_forward: Vec::new(),
             tilemap: TilemapViewerState::new(),
             tiles: TileViewerState::new(),
             rom_viewer: RomViewerState::new(),
             symbol_browser: SymbolBrowserState::default(),
+            console: super::DebugConsoleState::default(),
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),
             settings_tab: 0,
             camera_devices: Vec::new(),
@@ -110,12 +116,43 @@ impl DebugWindowState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SymbolLocationFilter {
+    #[default]
+    All,
+    Rom,
+    CpuOnly,
+    Constants,
+}
+
+impl SymbolLocationFilter {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::All => "All locations",
+            Self::Rom => "ROM",
+            Self::CpuOnly => "CPU only",
+            Self::Constants => "Constants",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct SymbolBrowserState {
     pub(crate) query: String,
     pub(crate) last_query: String,
     pub(crate) last_generation: u64,
+    pub(crate) kind_filter: Option<crate::symbols::SymbolKind>,
+    pub(crate) last_kind_filter: Option<crate::symbols::SymbolKind>,
+    pub(crate) location_filter: SymbolLocationFilter,
+    pub(crate) last_location_filter: SymbolLocationFilter,
     pub(crate) results: Vec<crate::symbols::SymbolId>,
+    pub(crate) selected: Option<crate::symbols::SymbolId>,
+    pub(crate) editor: Option<SymbolEditorState>,
+}
+
+pub(crate) struct SymbolEditorState {
+    pub(crate) original_user_name: Option<String>,
+    pub(crate) draft: crate::symbols::UserSymbolDraft,
 }
 
 fn fold_bytes(bytes: &[u8]) -> u64 {

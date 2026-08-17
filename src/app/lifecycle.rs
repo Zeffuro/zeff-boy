@@ -1,4 +1,4 @@
-use super::{App, SpeedMode, UI_RENDER_INTERVAL, VIEWER_UPDATE_INTERVAL};
+use super::{App, SpeedMode, UI_RENDER_INTERVAL};
 use crate::{
     audio::AudioOutput,
     emu_thread::{EmuCommand, EmuThread},
@@ -267,26 +267,6 @@ impl App {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 gfx.window().request_redraw();
             }
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if self.active_debug_presentation == crate::settings::DebugPresentation::GameAndDebugger
-            && self.settings.ui.debugger_window_open
-            && Instant::now().duration_since(self.last_debugger_render) >= VIEWER_UPDATE_INTERVAL
-            && let Some(window) = gfx.debugger_window()
-            && window.is_minimized() != Some(true)
-        {
-            window.request_redraw();
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if self.show_settings_window
-            && Instant::now().duration_since(self.last_settings_render)
-                >= std::time::Duration::from_millis(66)
-            && let Some(window) = gfx.settings_window()
-            && window.is_minimized() != Some(true)
-        {
-            window.request_redraw();
         }
     }
 

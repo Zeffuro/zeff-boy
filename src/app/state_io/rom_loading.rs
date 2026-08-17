@@ -331,6 +331,10 @@ impl App {
         self.rom_info.rom_hash = None;
         self.rom_info.replay_metadata = None;
         self.symbols = crate::symbols::SymbolSession::default();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.pending_symbol_load = None;
+        }
         self.rom_info.is_mbc7 = false;
         self.rom_info.is_pocket_camera = false;
         self.debug_windows.last_disasm_pc = None;
@@ -431,7 +435,12 @@ impl App {
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.rom_info.replay_metadata = Some(backend.replay_metadata());
-        self.symbols = crate::symbols::SymbolSession::load_for_backend(backend);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.start_symbol_load(backend);
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.symbols = crate::symbols::SymbolSession::load_for_backend(backend);
+        }
         self.active_system = system;
         self.ws_display_rotated = backend
             .ws()
@@ -451,6 +460,100 @@ impl App {
         let (native_w, native_h) = self.active_display_size();
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.set_native_size(native_w, native_h);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn start_symbol_load(&mut self, backend: &EmuBackend) {
+        self.start_symbol_load_for_paths(
+            backend.system(),
+            backend.rom_path().to_path_buf(),
+            backend.source_path().to_path_buf(),
+            backend.rom_hash(),
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn start_symbol_load_for_paths(
+        &mut self,
+        system: ActiveSystem,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+        rom_hash: [u8; 32],
+    ) {
+        self.pending_symbol_load = None;
+        self.symbols = crate::symbols::SymbolSession::loading();
+        let request_id = self.next_symbol_load_id;
+        self.next_symbol_load_id = self.next_symbol_load_id.wrapping_add(1);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let started = std::time::Instant::now();
+        let worker = std::thread::Builder::new()
+            .name("zeff-symbol-load".to_owned())
+            .spawn(move || {
+                let session = crate::symbols::SymbolSession::load_for_paths(
+                    system,
+                    &rom_path,
+                    &source_path,
+                    rom_hash,
+                );
+                let _ = sender.send(super::super::SymbolLoadResult {
+                    request_id,
+                    elapsed: started.elapsed(),
+                    session,
+                });
+            });
+        match worker {
+            Ok(_) => {
+                self.pending_symbol_load = Some(super::super::PendingSymbolLoad {
+                    request_id,
+                    receiver,
+                });
+                self.toast_manager.info("Loading symbols...");
+            }
+            Err(error) => {
+                self.symbols = crate::symbols::SymbolSession::default();
+                self.toast_manager
+                    .error(format!("Couldn't start symbol loader: {error}"));
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn poll_symbol_load(&mut self) {
+        let Some(pending) = self.pending_symbol_load.as_ref() else {
+            return;
+        };
+        let result = match pending.receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_symbol_load = None;
+                self.symbols = crate::symbols::SymbolSession::default();
+                self.toast_manager
+                    .error("Symbol loader stopped unexpectedly");
+                return;
+            }
+        };
+        if result.request_id != pending.request_id {
+            return;
+        }
+        self.pending_symbol_load = None;
+        let imported_symbol_count = result
+            .session
+            .modules
+            .iter()
+            .filter(|module| !module.is_builtin())
+            .map(|module| module.symbol_count)
+            .sum::<usize>();
+        self.symbols = result.session;
+        if imported_symbol_count > 0 {
+            self.toast_manager.info(format!(
+                "Loaded {imported_symbol_count} symbols in {} ms",
+                result.elapsed.as_millis()
+            ));
+        } else if let Some(diagnostic) = self.symbols.diagnostics.first() {
+            self.toast_manager
+                .info(format!("Symbol load skipped: {diagnostic}"));
         }
     }
 }

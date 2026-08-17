@@ -3,7 +3,7 @@ use egui::ClippedPrimitive;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::graphics::gpu::GpuContext;
-use crate::settings::{UiDensity, UiThemePreset};
+use crate::settings::{DebugColors, UiDensity, UiThemePreset};
 
 pub(crate) struct EguiFrameOutput {
     pub(crate) full_output: egui::FullOutput,
@@ -15,6 +15,8 @@ pub(crate) struct EguiRenderer {
     renderer: egui_wgpu::Renderer,
     active_theme: UiThemePreset,
     active_density: UiDensity,
+    active_debug_monospace_scale: f32,
+    active_debug_colors: DebugColors,
 }
 
 impl EguiRenderer {
@@ -26,8 +28,11 @@ impl EguiRenderer {
         let ctx = egui::Context::default();
         let theme = UiThemePreset::default();
         let density = UiDensity::default();
+        let debug_monospace_scale = 1.0;
+        let debug_colors = DebugColors::default();
         ctx.set_visuals(build_visuals(theme));
-        ctx.set_global_style(build_style(density));
+        ctx.set_global_style(build_style(density, debug_monospace_scale));
+        crate::debug::common::set_debug_colors(&ctx, debug_colors);
 
         let state = egui_winit::State::new(
             ctx.clone(),
@@ -47,17 +52,33 @@ impl EguiRenderer {
             renderer,
             active_theme: theme,
             active_density: density,
+            active_debug_monospace_scale: debug_monospace_scale,
+            active_debug_colors: debug_colors,
         })
     }
 
-    pub(crate) fn apply_style(&mut self, theme: UiThemePreset, density: UiDensity) {
+    pub(crate) fn apply_style(
+        &mut self,
+        theme: UiThemePreset,
+        density: UiDensity,
+        debug_monospace_scale: f32,
+        debug_colors: DebugColors,
+    ) {
         if theme != self.active_theme {
             self.active_theme = theme;
             self.ctx.set_visuals(build_visuals(theme));
         }
-        if density != self.active_density {
+        if density != self.active_density
+            || (debug_monospace_scale - self.active_debug_monospace_scale).abs() > f32::EPSILON
+        {
             self.active_density = density;
-            self.ctx.set_global_style(build_style(density));
+            self.active_debug_monospace_scale = debug_monospace_scale;
+            self.ctx
+                .set_global_style(build_style(density, debug_monospace_scale));
+        }
+        if debug_colors != self.active_debug_colors {
+            self.active_debug_colors = debug_colors;
+            crate::debug::common::set_debug_colors(&self.ctx, debug_colors);
         }
     }
 
@@ -172,7 +193,7 @@ pub(super) fn dock_style(ctx: &egui::Context, density: UiDensity) -> egui_dock::
     style
 }
 
-fn build_style(density: UiDensity) -> egui::Style {
+fn build_style(density: UiDensity, debug_monospace_scale: f32) -> egui::Style {
     let mut style = egui::Style::default();
     let (body, small, heading, monospace, item_spacing, button_padding, interact_size) =
         match density {
@@ -214,7 +235,10 @@ fn build_style(density: UiDensity) -> egui::Style {
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
-        egui::FontId::new(monospace, egui::FontFamily::Monospace),
+        egui::FontId::new(
+            monospace * debug_monospace_scale.clamp(0.75, 1.5),
+            egui::FontFamily::Monospace,
+        ),
     );
     style.spacing.item_spacing = item_spacing;
     style.spacing.button_padding = button_padding;

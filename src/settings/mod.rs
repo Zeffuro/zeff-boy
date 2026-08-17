@@ -21,7 +21,7 @@ pub(crate) use keyboard_bindings::{KeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
-    AudioSettings, CameraSettings, EmulationSettings, RecentRomEntry, RewindSettings,
+    AudioSettings, CameraSettings, DebugColors, EmulationSettings, RecentRomEntry, RewindSettings,
     Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, TiltSettings, UiSettings,
     VideoSettings,
 };

@@ -1,7 +1,6 @@
 use crate::debug::BreakpointState;
 use crate::debug::common::{
-    COLOR_BREAKPOINT_HIT, COLOR_CONTINUE_BUTTON, COLOR_WATCHPOINT_HIT, WatchType, format_addr,
-    parse_hex_u32,
+    COLOR_CONTINUE_BUTTON, WatchType, color32, debug_colors, format_addr, parse_hex_u32,
 };
 use crate::debug::types::CpuDebugSnapshot;
 use crate::debug::ui::DebugUiActions;
@@ -12,6 +11,9 @@ pub(super) fn draw_breakpoints_content(
     state: &mut BreakpointState,
     actions: &mut DebugUiActions,
 ) {
+    let colors = debug_colors(ui);
+    let breakpoint_color = color32(colors.breakpoint);
+    let watchpoint_color = color32(colors.watchpoint);
     ui.heading("Breakpoints");
     ui.horizontal(|ui| {
         ui.label("Address:");
@@ -50,7 +52,7 @@ pub(super) fn draw_breakpoints_content(
                     let hit = info.hit_breakpoint == Some(addr);
                     let label = if hit {
                         egui::RichText::new(format!("{} ●", format_addr(addr)))
-                            .color(COLOR_BREAKPOINT_HIT)
+                            .color(breakpoint_color)
                             .monospace()
                     } else {
                         egui::RichText::new(format_addr(addr)).monospace()
@@ -90,7 +92,7 @@ pub(super) fn draw_breakpoints_content(
                     let hit = info.hit_rom_breakpoint == Some(offset);
                     let text = if hit {
                         egui::RichText::new(format!("{offset:06X} ●"))
-                            .color(COLOR_BREAKPOINT_HIT)
+                            .color(breakpoint_color)
                             .monospace()
                     } else {
                         egui::RichText::new(format!("{offset:06X}")).monospace()
@@ -155,7 +157,7 @@ pub(super) fn draw_breakpoints_content(
                         .is_some_and(|h| h.address == wp.address);
                     let label = if hit {
                         egui::RichText::new(format!("{} ●", format_addr(wp.address)))
-                            .color(COLOR_WATCHPOINT_HIT)
+                            .color(watchpoint_color)
                             .monospace()
                     } else {
                         egui::RichText::new(format_addr(wp.address)).monospace()
@@ -170,14 +172,14 @@ pub(super) fn draw_breakpoints_content(
     if let Some(bp) = info.hit_breakpoint {
         ui.separator();
         ui.colored_label(
-            COLOR_BREAKPOINT_HIT,
+            breakpoint_color,
             format!("⚑ Breakpoint hit @ {}", format_addr(bp)),
         );
     }
     if let Some(ref hit) = info.hit_watchpoint {
         ui.separator();
         ui.colored_label(
-            COLOR_WATCHPOINT_HIT,
+            watchpoint_color,
             format!(
                 "⚑ Watchpoint {:?} @ {}: {:02X} → {:02X}",
                 hit.watch_type,

@@ -20,6 +20,7 @@ pub(crate) enum DebugTab {
     RomViewer,
     Mods,
     SymbolBrowser,
+    Console,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -114,6 +115,12 @@ impl DebugTab {
             },
             DebugTab::Mods => TabDataRequirements::default(),
             DebugTab::SymbolBrowser => TabDataRequirements::default(),
+            DebugTab::Console => TabDataRequirements {
+                needs_debug_info: true,
+                needs_rom_info: true,
+                needs_disassembly: true,
+                ..Default::default()
+            },
         }
     }
 }
@@ -149,6 +156,7 @@ const TAB_META: &[(DebugTab, &str, &str)] = &[
     (DebugTab::Cheats, "Cheats", "Cheats"),
     (DebugTab::Mods, "Mods", "Mods"),
     (DebugTab::SymbolBrowser, "Symbols", "SymbolBrowser"),
+    (DebugTab::Console, "Console", "Console"),
 ];
 
 impl DebugTab {

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use super::common::{COLOR_ADDR, COLOR_PC_HIGHLIGHT_BG, DEBUG_MONO_FONT_SIZE, format_addr};
-use crate::debug::DisassemblyView;
+use super::common::{color32, debug_colors, debug_mono_font, format_addr};
+use crate::debug::{DisassemblyTarget, DisassemblyView};
 use zeff_emu_common::address::Address;
 
 pub(crate) struct DisassemblerActions {
@@ -12,6 +12,9 @@ pub(crate) struct DisassemblerActions {
     pub(crate) continue_requested: bool,
     pub(crate) backstep_requested: bool,
     pub(crate) follow_pc_requested: bool,
+    pub(crate) back_requested: bool,
+    pub(crate) forward_requested: bool,
+    pub(crate) disasm_target: Option<DisassemblyTarget>,
 }
 
 pub(super) fn draw_disassembler_content(
@@ -25,6 +28,9 @@ pub(super) fn draw_disassembler_content(
         continue_requested: false,
         backstep_requested: false,
         follow_pc_requested: false,
+        back_requested: false,
+        forward_requested: false,
+        disasm_target: None,
     };
     let mut breakpoints: HashSet<Address> = view.breakpoints.iter().copied().collect();
     let mut rom_breakpoints: HashSet<u64> = view.rom_breakpoints.iter().copied().collect();
@@ -49,6 +55,12 @@ pub(super) fn draw_disassembler_content(
     if view.is_navigation_target {
         ui.horizontal(|ui| {
             ui.label("Viewing ROM target");
+            if ui.small_button("←").on_hover_text("Back").clicked() {
+                actions.back_requested = true;
+            }
+            if ui.small_button("→").on_hover_text("Forward").clicked() {
+                actions.forward_requested = true;
+            }
             if ui.small_button("Follow PC").clicked() {
                 actions.follow_pc_requested = true;
             }
@@ -59,13 +71,14 @@ pub(super) fn draw_disassembler_content(
     }
     ui.separator();
 
-    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
+    let mono = debug_mono_font(ui);
     let normal_color = ui.visuals().text_color();
-    let bp_color = egui::Color32::RED;
+    let colors = debug_colors(ui);
+    let bp_color = color32(colors.breakpoint);
 
     let fmt_addr = egui::TextFormat {
         font_id: mono.clone(),
-        color: COLOR_ADDR,
+        color: color32(colors.address),
         ..Default::default()
     };
     let fmt_normal = egui::TextFormat {
@@ -80,7 +93,7 @@ pub(super) fn draw_disassembler_content(
     };
     let fmt_symbol = egui::TextFormat {
         font_id: mono.clone(),
-        color: egui::Color32::from_rgb(110, 190, 140),
+        color: color32(colors.symbol),
         ..Default::default()
     };
 
@@ -126,7 +139,7 @@ pub(super) fn draw_disassembler_content(
 
             let mut fmt_code = fmt_normal.clone();
             if is_pc {
-                fmt_code.background = COLOR_PC_HIGHLIGHT_BG;
+                fmt_code.background = color32(colors.pc);
             }
             padded.clear();
             let _ = write!(padded, "{:<11} ", scratch);
@@ -136,9 +149,24 @@ pub(super) fn draw_disassembler_content(
                 job.append("  ", 0.0, fmt_normal.clone());
                 job.append(symbol, 0.0, fmt_symbol.clone());
             }
+            if let Some(symbol) = &line.control_target_symbol {
+                job.append("  â†’ ", 0.0, fmt_normal.clone());
+                job.append(symbol, 0.0, fmt_symbol.clone());
+            }
 
-            let label = ui.add(egui::Label::new(job).sense(egui::Sense::click()));
-            if label.clicked() {
+            let mut label = ui.add(egui::Label::new(job).sense(egui::Sense::click()));
+            if line.control_target_storage.is_some() {
+                label = label.on_hover_text("Double-click to follow target");
+            }
+            if label.double_clicked()
+                && let (Some(cpu_address), Some(storage_offset)) =
+                    (line.control_target, line.control_target_storage)
+            {
+                actions.disasm_target = Some(DisassemblyTarget {
+                    cpu_address,
+                    storage_offset,
+                });
+            } else if label.clicked() {
                 if view.is_navigation_target {
                     if let Some(offset) = line.storage_offset {
                         actions.toggle_rom_breakpoints.push(offset);

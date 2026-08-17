@@ -3,6 +3,7 @@ use egui_dock::{TabViewer, widgets::tab_viewer::OnCloseResponse};
 use super::super::apu_viewer::draw_apu_viewer_content;
 use super::super::breakpoints_window::draw_breakpoints_content;
 use super::super::cheats_window::draw_cheats_content;
+use super::super::console::{DebugConsoleContext, DebugConsoleViews, draw_debug_console_content};
 use super::super::disasm_window::draw_disassembler_content;
 use super::super::gba_tile_viewer::draw_gba_tile_viewer_content;
 use super::super::gba_tilemap_viewer::draw_gba_tilemap_viewer_content;
@@ -123,6 +124,11 @@ impl TabViewer for DebugTabViewer<'_> {
                     self.actions.continue_requested |= disasm_actions.continue_requested;
                     self.actions.backstep_requested |= disasm_actions.backstep_requested;
                     self.actions.follow_disasm_pc |= disasm_actions.follow_pc_requested;
+                    self.actions.disasm_back |= disasm_actions.back_requested;
+                    self.actions.disasm_forward |= disasm_actions.forward_requested;
+                    if disasm_actions.disasm_target.is_some() {
+                        self.actions.disasm_target = disasm_actions.disasm_target;
+                    }
                 }
             }
             DebugTab::MemoryViewer => {
@@ -209,6 +215,25 @@ impl TabViewer for DebugTabViewer<'_> {
                     &mut self.actions,
                 );
             }
+            DebugTab::Console => {
+                draw_debug_console_content(
+                    ui,
+                    &mut self.window_state.console,
+                    DebugConsoleContext {
+                        symbols: self.data.symbols,
+                        cpu_debug: self.data.cpu_debug,
+                        rom_debug: self.data.rom_debug,
+                        disassembly: self.data.disassembly_view,
+                        memory_page: self.data.memory_page,
+                        rom_page: self.data.rom_page,
+                    },
+                    DebugConsoleViews {
+                        memory: &mut self.window_state.memory,
+                        rom: &mut self.window_state.rom_viewer,
+                    },
+                    &mut self.actions,
+                );
+            }
         }
     }
 
@@ -226,7 +251,7 @@ impl TabViewer for DebugTabViewer<'_> {
 
     fn scroll_bars(&self, tab: &Self::Tab) -> [bool; 2] {
         match tab {
-            DebugTab::GameView => [false, false],
+            DebugTab::GameView | DebugTab::Console => [false, false],
             _ => [false, true],
         }
     }

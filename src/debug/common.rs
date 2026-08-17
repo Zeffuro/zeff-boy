@@ -3,20 +3,38 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use zeff_emu_common::address::Address;
 
-pub(crate) const COLOR_ADDR: egui::Color32 = egui::Color32::from_rgb(140, 140, 170);
 pub(crate) const COLOR_DIM: egui::Color32 = egui::Color32::from_rgb(90, 90, 90);
-pub(crate) const COLOR_FLASH: egui::Color32 = egui::Color32::from_rgb(255, 100, 80);
-pub(crate) const COLOR_BREAKPOINT_HIT: egui::Color32 = egui::Color32::from_rgb(255, 80, 80);
-pub(crate) const COLOR_WATCHPOINT_HIT: egui::Color32 = egui::Color32::from_rgb(255, 180, 60);
 pub(crate) const COLOR_CONTINUE_BUTTON: egui::Color32 = egui::Color32::from_rgb(40, 100, 40);
-pub(crate) const COLOR_PC_HIGHLIGHT_BG: egui::Color32 = egui::Color32::from_rgb(45, 65, 45);
 
 pub(crate) const HEX_BYTES_PER_ROW: usize = 16;
 pub(crate) const HEX_ROWS_VISIBLE: usize = 16;
 pub(crate) const HEX_PAGE_SIZE: usize = HEX_ROWS_VISIBLE * HEX_BYTES_PER_ROW;
-pub(crate) const DEBUG_MONO_FONT_SIZE: f32 = 13.0;
 
 pub(crate) use zeff_emu_common::debug::WatchType;
+
+const DEBUG_COLORS_ID: &str = "debug_colors";
+
+pub(crate) fn set_debug_colors(ctx: &egui::Context, colors: crate::settings::DebugColors) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new(DEBUG_COLORS_ID), colors));
+}
+
+pub(crate) fn debug_colors(ui: &egui::Ui) -> crate::settings::DebugColors {
+    ui.ctx()
+        .data(|data| data.get_temp(egui::Id::new(DEBUG_COLORS_ID)))
+        .unwrap_or_default()
+}
+
+pub(crate) fn color32(color: [u8; 4]) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3])
+}
+
+pub(crate) fn debug_mono_font(ui: &egui::Ui) -> egui::FontId {
+    ui.style()
+        .text_styles
+        .get(&egui::TextStyle::Monospace)
+        .cloned()
+        .unwrap_or_else(|| egui::FontId::monospace(13.0))
+}
 
 pub(crate) fn format_addr(addr: Address) -> String {
     if addr <= 0xFFFF {

@@ -10,6 +10,7 @@ pub(crate) struct RomIdentity {
 pub(crate) enum IdentityStatus {
     Exact,
     Mismatch,
+    BuiltIn,
     #[default]
     Unverified,
 }
@@ -27,6 +28,7 @@ impl IdentityStatus {
         match self {
             Self::Exact => "Exact",
             Self::Mismatch => "Mismatch",
+            Self::BuiltIn => "Built-in",
             Self::Unverified => "Unverified",
         }
     }

@@ -119,6 +119,7 @@ impl SymbolImporter for RgbdsSymImporter {
                     source: ctx.source_name.clone(),
                 },
                 confidence: Confidence::Exact,
+                comment: None,
             });
         }
         Ok(module)

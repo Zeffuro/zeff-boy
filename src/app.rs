@@ -70,10 +70,6 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
     let cached_source_path = backend.as_ref().map(|b| b.source_path().to_path_buf());
-    let initial_symbols = backend
-        .as_ref()
-        .map(crate::symbols::SymbolSession::load_for_backend)
-        .unwrap_or_default();
     let initial_ws_display_rotated = backend.as_ref().and_then(|b| b.ws()).is_some_and(|ws| {
         ws.preferred_orientation() == zeff_ws_core::hardware::cartridge::RomOrientation::Vertical
     });
@@ -163,7 +159,11 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             rom_hash: None,
             replay_metadata: None,
         },
-        symbols: initial_symbols,
+        symbols: crate::symbols::SymbolSession::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        pending_symbol_load: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        next_symbol_load_id: 0,
         nes_palette_cache: NesPaletteFileCache::default(),
         pending_archive_selection: None,
         pending_debug_actions: DebugUiActions::none(),
@@ -230,6 +230,17 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     };
 
     app.debug_windows.memory.configure_for_system(active_system);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((system, rom_path, source_path, rom_hash)) = app.initial_backend.as_ref().map(|b| {
+        (
+            b.system(),
+            b.rom_path().to_path_buf(),
+            b.source_path().to_path_buf(),
+            b.rom_hash(),
+        )
+    }) {
+        app.start_symbol_load_for_paths(system, rom_path, source_path, rom_hash);
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     event_loop.run_app(&mut app)?;
@@ -290,6 +301,10 @@ struct App {
     cached_ui_data: Option<ui::UiFrameData>,
     rom_info: CachedRomInfo,
     symbols: crate::symbols::SymbolSession,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_symbol_load: Option<PendingSymbolLoad>,
+    #[cfg(not(target_arch = "wasm32"))]
+    next_symbol_load_id: u64,
     nes_palette_cache: NesPaletteFileCache,
     pending_archive_selection: Option<PendingArchiveSelection>,
     pending_debug_actions: DebugUiActions,

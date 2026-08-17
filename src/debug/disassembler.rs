@@ -15,6 +15,9 @@ pub(crate) struct DisassembledLine {
     pub(crate) address: Address,
     pub(crate) storage_offset: Option<u64>,
     pub(crate) symbol: Option<String>,
+    pub(crate) control_target: Option<Address>,
+    pub(crate) control_target_storage: Option<u64>,
+    pub(crate) control_target_symbol: Option<String>,
     pub(crate) bytes: InstructionBytes,
     pub(crate) mnemonic: Mnemonic,
 }
@@ -37,6 +40,7 @@ pub(crate) struct DisassemblyTarget {
 }
 
 mod gb;
+mod gba;
 mod nes;
 mod z80;
 
@@ -83,6 +87,16 @@ pub(crate) fn z80_disassemble_around(
         lines_before_pc,
         total_lines,
     )
+}
+
+pub(crate) fn gba_disassemble_around(
+    bus_read: impl Fn(u32) -> u8,
+    pc: u32,
+    thumb: bool,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    gba::disassemble_around(&bus_read, pc, thumb, lines_before_pc, total_lines)
 }
 
 fn disassemble_around_with(

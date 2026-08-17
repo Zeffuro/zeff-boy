@@ -77,6 +77,7 @@ pub(crate) enum SymbolScope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProvenanceKind {
+    Platform,
     Build,
     DebugFormat,
     LinkMap,
@@ -111,6 +112,17 @@ pub(crate) struct SymbolRecord {
     pub(crate) scope: SymbolScope,
     pub(crate) provenance: Provenance,
     pub(crate) confidence: Confidence,
+    pub(crate) comment: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UserSymbolDraft {
+    pub(crate) name: String,
+    pub(crate) location: SymbolLocation,
+    pub(crate) value: Option<u64>,
+    pub(crate) kind: SymbolKind,
+    pub(crate) size: Option<u64>,
+    pub(crate) comment: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

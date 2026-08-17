@@ -286,8 +286,12 @@ impl Graphics {
         let (frame, view) = self.acquire_surface_frame()?;
 
         self.egui.begin_frame(&self.window);
-        self.egui
-            .apply_style(ctx.settings.ui.theme_preset, ctx.settings.ui.ui_density);
+        self.egui.apply_style(
+            ctx.settings.ui.theme_preset,
+            ctx.settings.ui.ui_density,
+            ctx.settings.ui.debug_monospace_scale,
+            ctx.settings.ui.debug_colors,
+        );
 
         let base_ppp = self.window.scale_factor() as f32;
         let target_ppp = base_ppp * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);

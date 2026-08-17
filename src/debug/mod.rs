@@ -2,6 +2,7 @@ mod apu_viewer;
 mod breakpoints_window;
 mod cheats_window;
 pub(crate) mod common;
+mod console;
 mod data_inspector;
 mod disasm_window;
 mod disassembler;
@@ -33,9 +34,10 @@ pub(crate) mod types;
 mod ui;
 pub(crate) mod ui_helpers;
 
+pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};
 pub(crate) use disassembler::{
     DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,
-    nes_disassemble_around, z80_disassemble_around,
+    gba_disassemble_around, nes_disassemble_around, z80_disassemble_around,
 };
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, activate_dock_tab, compute_tab_requirements,

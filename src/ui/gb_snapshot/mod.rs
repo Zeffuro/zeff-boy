@@ -112,6 +112,19 @@ pub(crate) fn collect_emu_snapshot(
                     .and_then(|address| emu.rom_offset_for_cpu_address(address))
                     .map(|offset| offset as u64)
             };
+            line.control_target_storage = line
+                .control_target
+                .and_then(|address| u16::try_from(address).ok())
+                .and_then(|address| {
+                    disasm_target
+                        .and_then(|(target, target_address)| {
+                            target_rom_offset(target, target_address, address)
+                        })
+                        .or_else(|| {
+                            emu.rom_offset_for_cpu_address(address)
+                                .map(|offset| offset as u64)
+                        })
+                });
         }
         view
     });

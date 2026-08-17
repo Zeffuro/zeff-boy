@@ -105,3 +105,30 @@ fn gba_snapshot_exposes_live_debug_graphics_apu_and_perf_data() {
     );
     assert_eq!(gfx.oam.len(), zeff_gba_core::hardware::constants::OAM_SIZE);
 }
+
+#[test]
+fn gba_snapshot_includes_arm_disassembly_when_requested() {
+    let rom = minimal_gba_rom();
+    let emu = zeff_gba_core::emulator::Emulator::new(&rom, 48_000).unwrap();
+    let mut request = snapshot_request();
+    request.show_disassembler = true;
+
+    let data = collect_gba_snapshot(
+        &emu,
+        &request,
+        ReusableBuffers {
+            audio: None,
+            vram: None,
+            oam: None,
+            memory_page: None,
+            nes_chr: None,
+            nes_nametable: None,
+        },
+    );
+
+    assert!(
+        data.disassembly_view
+            .as_ref()
+            .is_some_and(|view| !view.lines.is_empty())
+    );
+}

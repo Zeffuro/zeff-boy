@@ -1,4 +1,4 @@
-use super::common::{COLOR_ADDR, DEBUG_MONO_FONT_SIZE, parse_hex_u32};
+use super::common::{color32, debug_colors, debug_mono_font, parse_hex_u32};
 use zeff_emu_common::address::Address;
 
 struct InspectorConfig {
@@ -114,8 +114,8 @@ pub(super) fn draw_data_inspector_rom(
 }
 
 fn draw_inspector_body(ui: &mut egui::Ui, bytes: &[u8]) {
-    let mono = egui::FontId::new(DEBUG_MONO_FONT_SIZE, egui::FontFamily::Monospace);
-    let label_color = COLOR_ADDR;
+    let mono = debug_mono_font(ui);
+    let label_color = color32(debug_colors(ui).address);
     let value_color = ui.visuals().text_color();
 
     let b0 = bytes[0];

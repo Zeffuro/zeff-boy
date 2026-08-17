@@ -4,13 +4,16 @@ mod gb;
 mod identity;
 pub(crate) mod import;
 mod model;
+mod platform;
 mod session;
 pub(crate) mod store;
+#[cfg(not(target_arch = "wasm32"))]
+mod user;
 
 pub(crate) use model::{
     AddressSpaceId, Confidence, CpuLocation, DebugAccess, ExecMode, ImageId, Provenance,
     ProvenanceKind, RegionId, ResolvedDebugLocation, StorageLocation, SymbolId, SymbolKind,
-    SymbolLocation, SymbolRecord, SymbolScope,
+    SymbolLocation, SymbolRecord, SymbolScope, UserSymbolDraft,
 };
 pub(crate) use session::SymbolSession;
 

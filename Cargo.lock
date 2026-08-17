@@ -5521,6 +5521,7 @@ dependencies = [
  "rubato",
  "serde",
  "serde_json",
+ "smallvec",
  "ureq",
  "vorbis-encoder",
  "wasm-bindgen",
