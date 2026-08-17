@@ -77,6 +77,18 @@ impl Mapper for Mapper242 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let bank = self.map_prg_bank(addr);
+        Some((bank * 0x4000 + (addr as usize & 0x3FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.latch)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize] = val,
@@ -155,6 +167,8 @@ mod tests {
 
         assert_eq!(mapper.cpu_peek(0x8000), 0x0B);
         assert_eq!(mapper.cpu_peek(0xC000), 0x0F);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(0x0B * 0x4000 + 0x123));
+        assert_eq!(mapper.cpu_rom_offset(0xC123), Some(0x0F * 0x4000 + 0x123));
         assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
     }
 

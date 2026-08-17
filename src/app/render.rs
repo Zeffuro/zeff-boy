@@ -66,6 +66,12 @@ impl App {
                 for action in &result.actions {
                     match action {
                         MenuAction::OpenFile => self.open_file_dialog(),
+                        MenuAction::LoadSymbolFile => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.open_symbol_file_dialog();
+                            #[cfg(target_arch = "wasm32")]
+                            self.toast_manager.error("Symbol files are native-only");
+                        }
                         MenuAction::ResetGame => self.reset_game(),
                         MenuAction::StopGame => self.stop_game(),
                         MenuAction::SaveStateFile => self.save_state_file_dialog(),
@@ -301,6 +307,11 @@ impl App {
             self.debug_windows.last_disasm_pc = None;
             self.debug_windows.last_disasm_mapping = None;
         }
+        if let Some(address) = actions.memory_target {
+            let memory = &mut self.debug_windows.memory;
+            memory.view_start = memory.address_space.clamp_start(address);
+            memory.jump_input = memory.address_space.format(memory.view_start);
+        }
         if let Some(target) = actions.disasm_target {
             self.navigate_disassembly(Some(target));
         } else if actions.follow_disasm_pc {
@@ -314,11 +325,18 @@ impl App {
         if actions.add_breakpoint.is_some() {
             pending.add_breakpoint = actions.add_breakpoint;
         }
+        if actions.add_one_shot_breakpoint.is_some() {
+            pending.add_one_shot_breakpoint = actions.add_one_shot_breakpoint;
+        }
         if actions.add_watchpoint.is_some() {
             pending.add_watchpoint = actions.add_watchpoint;
         }
+        pending
+            .remove_watchpoints
+            .extend(actions.remove_watchpoints);
         let bp_changed = !actions.remove_breakpoints.is_empty()
             || !actions.toggle_breakpoints.is_empty()
+            || !actions.add_rom_breakpoints.is_empty()
             || !actions.remove_rom_breakpoints.is_empty()
             || !actions.toggle_rom_breakpoints.is_empty();
         pending
@@ -331,9 +349,15 @@ impl App {
             .remove_rom_breakpoints
             .extend(actions.remove_rom_breakpoints);
         pending
+            .add_rom_breakpoints
+            .extend(actions.add_rom_breakpoints);
+        pending
             .toggle_rom_breakpoints
             .extend(actions.toggle_rom_breakpoints);
-        if bp_changed || actions.add_breakpoint.is_some() {
+        if bp_changed
+            || actions.add_breakpoint.is_some()
+            || actions.add_one_shot_breakpoint.is_some()
+        {
             self.debug_windows.last_disasm_pc = None;
             self.debug_windows.last_disasm_mapping = None;
         }

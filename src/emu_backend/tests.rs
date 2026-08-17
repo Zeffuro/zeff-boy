@@ -630,7 +630,8 @@ fn ws_backend_debug_actions_update_core_debug_state() {
     let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.ws"));
     let mut actions = DebugUiActions::none();
     actions.add_breakpoint = Some(0xF0000);
-    actions.add_watchpoint = Some((0x0000, WatchType::Write));
+    actions.add_one_shot_breakpoint = Some(0xF0010);
+    actions.add_watchpoint = Some((0x0000, 0x000F, WatchType::Write));
     actions.memory_writes.push((0x0000, 0x5A));
 
     backend.apply_runtime_config(BackendRuntimeConfig::new(&actions));
@@ -638,13 +639,35 @@ fn ws_backend_debug_actions_update_core_debug_state() {
     let ws = backend
         .ws()
         .expect("backend should remain WonderSwan after debug actions");
-    assert_eq!(ws.emu.iter_breakpoints().collect::<Vec<_>>(), vec![0xF0000]);
+    assert_eq!(
+        ws.emu.iter_breakpoints().collect::<Vec<_>>(),
+        vec![0xF0000, 0xF0010]
+    );
+    assert_eq!(
+        ws.emu.iter_one_shot_breakpoints().collect::<Vec<_>>(),
+        vec![0xF0010]
+    );
     assert_eq!(ws.emu.debug_watchpoints().len(), 1);
+    assert_eq!(ws.emu.debug_watchpoints()[0].end_address, 0x000F);
     assert_eq!(
         ws.emu
             .debug_hit_watchpoint()
             .map(|hit| (hit.address, hit.new_value)),
         Some((0x0000, 0x5A))
+    );
+
+    let mut actions = DebugUiActions::none();
+    actions
+        .remove_watchpoints
+        .push((0x0000, 0x000F, WatchType::Write));
+    backend.apply_runtime_config(BackendRuntimeConfig::new(&actions));
+    assert!(
+        backend
+            .ws()
+            .expect("backend should remain WonderSwan")
+            .emu
+            .debug_watchpoints()
+            .is_empty()
     );
 }
 

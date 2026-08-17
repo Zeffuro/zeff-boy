@@ -67,6 +67,16 @@ impl Mapper for Nina001 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF)
+            .contains(&addr)
+            .then(|| self.prg_addr(addr))
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if let 0x6000..=0x7FFF = addr {
             if !self.prg_ram.is_empty() {

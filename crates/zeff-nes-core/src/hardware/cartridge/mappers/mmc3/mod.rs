@@ -127,6 +127,18 @@ impl Mapper for Mmc3 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF)
+            .contains(&addr)
+            .then(|| self.map_prg_bank(addr) * 0x2000 + (addr as usize & 0x1FFF))
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank_select)
+            | (u64::from(self.bank_registers[6]) << 8)
+            | (u64::from(self.bank_registers[7]) << 16)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x6000..=0x7FFF if self.prg_ram_enable && !self.prg_ram_write_protect => {

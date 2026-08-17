@@ -116,6 +116,20 @@ pub(crate) struct SymbolRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SourceFile {
+    pub(crate) path: String,
+    pub(crate) crc32: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SourceLine {
+    pub(crate) location: SymbolLocation,
+    pub(crate) size: u64,
+    pub(crate) source_file: usize,
+    pub(crate) line: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UserSymbolDraft {
     pub(crate) name: String,
     pub(crate) location: SymbolLocation,

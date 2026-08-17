@@ -37,6 +37,14 @@ impl Emulator {
         self.cpu.pc
     }
 
+    pub fn rom_offset_for_cpu_address(&self, addr: u16) -> Option<usize> {
+        self.bus.cartridge.cpu_rom_offset(addr)
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        self.bus.cartridge.rom_mapping_token()
+    }
+
     pub fn cpu_cycles(&self) -> u64 {
         self.cpu.cycles
     }

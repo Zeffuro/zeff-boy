@@ -186,6 +186,26 @@ impl Mapper for Ga23c {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let bank = self.map_prg_bank(addr);
+        Some((bank * 0x2000 + (addr as usize & 0x1FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        let mut token = u64::from(self.bank_select);
+        for bank in self.bank_registers {
+            token = token.rotate_left(7) ^ u64::from(bank);
+        }
+        token
+            ^ (u64::from(self.outer_regs[0]) << 1)
+            ^ (u64::from(self.outer_regs[1]) << 17)
+            ^ (u64::from(self.outer_regs[2]) << 33)
+            ^ (u64::from(self.outer_regs[3]) << 49)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x6000..=0x7FFF if addr & 0xF001 == 0x6000 => {
@@ -359,6 +379,7 @@ mod tests {
         mapper.cpu_write(0x8001, 0x04);
 
         assert_eq!(mapper.cpu_peek(0x8000), 0x03);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(0x03 * 0x2000 + 0x123));
         assert_eq!(mapper.cpu_peek(0xA000), 0x04);
         assert_eq!(mapper.cpu_peek(0xC000), 0x3E);
         assert_eq!(mapper.cpu_peek(0xE000), 0x3F);

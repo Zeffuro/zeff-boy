@@ -8,6 +8,7 @@ use zeff_emu_common::address::Address;
 #[derive(Clone, Debug)]
 pub(crate) struct WatchpointDisplay {
     pub(crate) address: Address,
+    pub(crate) end_address: Address,
     pub(crate) watch_type: WatchType,
 }
 
@@ -22,9 +23,20 @@ pub(crate) struct WatchHitDisplay {
 #[derive(Clone, Debug)]
 pub(crate) struct RecentOpcodeDisplay {
     pub(crate) address: Address,
+    pub(crate) storage_offset: Option<u64>,
     pub(crate) bytes: Vec<u8>,
     pub(crate) detail: Option<String>,
     pub(crate) repeat_count: usize,
+    pub(crate) thumb: Option<bool>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CallStackDisplay {
+    pub(crate) target: Address,
+    pub(crate) return_address: Address,
+    pub(crate) target_rom_offset: Option<u64>,
+    pub(crate) return_rom_offset: Option<u64>,
+    pub(crate) kind: &'static str,
 }
 
 impl RecentOpcodeDisplay {
@@ -48,9 +60,26 @@ impl RecentOpcodeDisplay {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DebugSection {
     pub(crate) heading: &'static str,
     pub(crate) lines: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IoBitDisplay {
+    pub(crate) mask: u32,
+    pub(crate) label: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IoRegisterDisplay {
+    pub(crate) name: &'static str,
+    pub(crate) address: Address,
+    pub(crate) value: u32,
+    pub(crate) width: u8,
+    pub(crate) writable_mask: u32,
+    pub(crate) bits: Vec<IoBitDisplay>,
 }
 
 pub(crate) struct CpuDebugSnapshot {
@@ -58,20 +87,105 @@ pub(crate) struct CpuDebugSnapshot {
     pub(crate) flags: Vec<(char, bool)>,
     pub(crate) status_text: String,
     pub(crate) cpu_state: String,
+    pub(crate) pc: Address,
 
     pub(crate) cycles: u64,
 
     pub(crate) last_opcode_line: String,
     pub(crate) sections: Vec<DebugSection>,
-    pub(crate) mem_around_pc: [(Address, u8); 32],
+    pub(crate) io_registers: Vec<IoRegisterDisplay>,
     pub(crate) recent_opcodes: Vec<RecentOpcodeDisplay>,
+    pub(crate) call_stack: Vec<CallStackDisplay>,
+    pub(crate) call_stack_available: bool,
 
     pub(crate) breakpoints: Vec<Address>,
+    pub(crate) one_shot_breakpoints: Vec<Address>,
     pub(crate) rom_breakpoints: Vec<u64>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
     pub(crate) hit_breakpoint: Option<Address>,
     pub(crate) hit_rom_breakpoint: Option<u64>,
     pub(crate) hit_watchpoint: Option<WatchHitDisplay>,
+}
+
+#[derive(Default)]
+pub(crate) struct CpuDebugViewState {
+    previous_register_lines: Vec<String>,
+    previous_flags: Vec<(char, bool)>,
+    previous_section_lines: Vec<Vec<String>>,
+    register_flash_ticks: Vec<u8>,
+    flag_flash_ticks: Vec<u8>,
+    section_flash_ticks: Vec<Vec<u8>>,
+}
+
+impl CpuDebugViewState {
+    pub(crate) fn sync(&mut self, info: &CpuDebugSnapshot) {
+        sync_flash_ticks(
+            &mut self.register_flash_ticks,
+            &self.previous_register_lines,
+            &info.register_lines,
+        );
+        sync_flash_ticks(
+            &mut self.flag_flash_ticks,
+            &self.previous_flags,
+            &info.flags,
+        );
+        self.section_flash_ticks
+            .resize_with(info.sections.len(), Vec::new);
+        for (index, section) in info.sections.iter().enumerate() {
+            let previous = self
+                .previous_section_lines
+                .get(index)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            sync_flash_ticks(
+                &mut self.section_flash_ticks[index],
+                previous,
+                &section.lines,
+            );
+        }
+        self.previous_register_lines
+            .clone_from(&info.register_lines);
+        self.previous_flags.clone_from(&info.flags);
+        self.previous_section_lines = info
+            .sections
+            .iter()
+            .map(|section| section.lines.clone())
+            .collect();
+    }
+
+    pub(crate) fn register_changed(&self, index: usize) -> bool {
+        self.register_flash_ticks.get(index).copied().unwrap_or(0) > 0
+    }
+
+    pub(crate) fn flag_changed(&self, index: usize) -> bool {
+        self.flag_flash_ticks.get(index).copied().unwrap_or(0) > 0
+    }
+
+    pub(crate) fn section_line_changed(&self, section: usize, line: usize) -> bool {
+        self.section_flash_ticks
+            .get(section)
+            .and_then(|ticks| ticks.get(line))
+            .copied()
+            .unwrap_or(0)
+            > 0
+    }
+}
+
+fn sync_flash_ticks<T: PartialEq>(ticks: &mut Vec<u8>, previous: &[T], current: &[T]) {
+    const FLASH_TICKS: u8 = 12;
+    if previous.is_empty() {
+        ticks.clear();
+        ticks.resize(current.len(), 0);
+        return;
+    }
+    ticks.resize(current.len(), 0);
+    for (index, value) in current.iter().enumerate() {
+        if previous.get(index) != Some(value) {
+            ticks[index] = FLASH_TICKS;
+        } else if ticks[index] > 0 {
+            ticks[index] -= 1;
+        }
+    }
 }
 
 pub(crate) struct ApuChannelDebug {
@@ -188,15 +302,17 @@ pub(crate) struct GbGraphicsData {
 
 #[cfg(test)]
 mod tests {
-    use super::RecentOpcodeDisplay;
+    use super::{CpuDebugSnapshot, CpuDebugViewState, RecentOpcodeDisplay};
 
     #[test]
     fn recent_opcode_line_formats_bytes_details_and_repeats() {
         let display = RecentOpcodeDisplay {
             address: 0x1234,
+            storage_offset: None,
             bytes: vec![0xCB, 0x7C],
             detail: Some("CB prefix".into()),
             repeat_count: 3,
+            thumb: None,
         };
 
         assert_eq!(display.line(), "1234: CB 7C (CB prefix) (x3)");
@@ -206,11 +322,57 @@ mod tests {
     fn recent_opcode_line_omits_optional_parts() {
         let display = RecentOpcodeDisplay {
             address: 0x00AF,
+            storage_offset: None,
             bytes: vec![0xEA],
             detail: None,
             repeat_count: 1,
+            thumb: None,
         };
 
         assert_eq!(display.line(), "00AF: EA");
+    }
+
+    #[test]
+    fn cpu_view_marks_changed_registers_and_flags() {
+        let mut state = CpuDebugViewState::default();
+        let mut info = CpuDebugSnapshot {
+            register_lines: vec!["AF: 01B0".into()],
+            flags: vec![('Z', true)],
+            status_text: String::new(),
+            cpu_state: String::new(),
+            pc: 0,
+            cycles: 0,
+            last_opcode_line: String::new(),
+            sections: Vec::new(),
+            io_registers: Vec::new(),
+            recent_opcodes: Vec::new(),
+            call_stack: Vec::new(),
+            call_stack_available: false,
+            breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
+            rom_breakpoints: Vec::new(),
+            watchpoints: Vec::new(),
+            hit_breakpoint: None,
+            hit_rom_breakpoint: None,
+            hit_watchpoint: None,
+        };
+        state.sync(&info);
+        assert!(!state.register_changed(0));
+        assert!(!state.flag_changed(0));
+
+        info.register_lines[0] = "AF: 02B0".into();
+        info.flags[0] = ('Z', false);
+        info.sections.push(super::DebugSection {
+            heading: "Timer",
+            lines: vec!["TIMA:01".into()],
+        });
+        state.sync(&info);
+        assert!(state.register_changed(0));
+        assert!(state.flag_changed(0));
+        assert!(!state.section_line_changed(0, 0));
+
+        info.sections[0].lines[0] = "TIMA:02".into();
+        state.sync(&info);
+        assert!(state.section_line_changed(0, 0));
     }
 }

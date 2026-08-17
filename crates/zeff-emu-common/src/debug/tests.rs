@@ -20,6 +20,25 @@ fn toggle_breakpoint() {
 }
 
 #[test]
+fn one_shot_breakpoint_removes_itself() {
+    let mut dc = DebugController::new();
+    dc.add_one_shot_breakpoint(0x1234);
+    assert_eq!(
+        dc.iter_one_shot_breakpoints().collect::<Vec<_>>(),
+        vec![0x1234]
+    );
+    assert!(dc.should_break(0x1234));
+    assert!(!dc.has_breakpoint(0x1234));
+    assert!(!dc.should_break(0x1234));
+
+    let mut dc = AddressDebugController::new();
+    dc.add_one_shot_breakpoint(0x0200_0000);
+    assert!(dc.should_break(0x0200_0000));
+    assert!(dc.iter_breakpoints().next().is_none());
+    assert!(!dc.should_break(0x0200_0000));
+}
+
+#[test]
 fn should_break_on_breakpoint() {
     let mut dc = DebugController::new();
     dc.add_breakpoint(0x200);
@@ -64,6 +83,30 @@ fn duplicate_watchpoint_not_added() {
     dc.add_watchpoint(0x500, WatchType::Read);
     dc.add_watchpoint(0x500, WatchType::Read);
     assert_eq!(dc.watchpoints.len(), 1);
+}
+
+#[test]
+fn ranged_watchpoint_matches_and_removes() {
+    let mut dc = DebugController::new();
+    dc.add_watchpoint_range(0xC000, 0xC00F, WatchType::ReadWrite);
+    dc.check_watch_read(0xC008, 0x42);
+    assert_eq!(dc.hit_watchpoint.unwrap().address, 0xC008);
+
+    dc.clear_hits();
+    dc.remove_watchpoint(0xC000, 0xC00F, WatchType::ReadWrite);
+    dc.check_watch_write(0xC008, 0x42, 0x43);
+    assert!(dc.hit_watchpoint.is_none());
+    assert!(!dc.has_watchpoints());
+}
+
+#[test]
+fn address_ranged_watchpoint_orders_bounds() {
+    let mut dc = AddressDebugController::new();
+    dc.add_watchpoint_range(0x0200_001F, 0x0200_0010, WatchType::Write);
+    assert_eq!(dc.watchpoints[0].address, 0x0200_0010);
+    assert_eq!(dc.watchpoints[0].end_address, 0x0200_001F);
+    dc.check_watch_write(0x0200_0018, 0, 1);
+    assert_eq!(dc.hit_watchpoint.unwrap().address, 0x0200_0018);
 }
 
 #[test]

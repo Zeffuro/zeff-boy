@@ -10,6 +10,7 @@ pub enum WatchType {
 #[derive(Clone, Debug)]
 pub struct AddressWatchpoint {
     pub address: Address,
+    pub end_address: Address,
     pub watch_type: WatchType,
     pub last_value: Option<u8>,
 }
@@ -25,6 +26,7 @@ pub struct AddressWatchHit {
 #[derive(Clone, Debug)]
 pub struct Watchpoint {
     pub address: u16,
+    pub end_address: u16,
     pub watch_type: WatchType,
     pub last_value: Option<u8>,
 }

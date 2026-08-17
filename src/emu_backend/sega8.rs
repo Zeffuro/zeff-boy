@@ -19,9 +19,25 @@ impl crate::emu_core_trait::DebuggableEmulator for Sega8Emulator {
     fn add_breakpoint(&mut self, addr: Address) {
         self.add_breakpoint(addr);
     }
+    fn add_one_shot_breakpoint(&mut self, addr: Address) {
+        self.add_one_shot_breakpoint(addr);
+    }
 
-    fn add_watchpoint(&mut self, addr: Address, wt: zeff_emu_common::debug::WatchType) {
-        self.add_watchpoint(addr, wt);
+    fn add_watchpoint_range(
+        &mut self,
+        start: Address,
+        end: Address,
+        wt: zeff_emu_common::debug::WatchType,
+    ) {
+        self.add_watchpoint_range(start, end, wt);
+    }
+    fn remove_watchpoint(
+        &mut self,
+        start: Address,
+        end: Address,
+        wt: zeff_emu_common::debug::WatchType,
+    ) {
+        self.remove_watchpoint(start, end, wt);
     }
 
     fn remove_breakpoint(&mut self, addr: Address) {

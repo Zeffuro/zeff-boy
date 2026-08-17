@@ -1,7 +1,5 @@
-use std::fmt::Write;
-
 use crate::debug::common::{COLOR_CONTINUE_BUTTON, WatchType, format_addr};
-use crate::debug::types::CpuDebugSnapshot;
+use crate::debug::types::{CpuDebugSnapshot, CpuDebugViewState};
 use zeff_emu_common::address::Address;
 
 pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw_menu_bar};
@@ -11,10 +9,13 @@ pub(crate) use super::settings_window::{SettingsContext, draw_settings_content};
 
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<Address>,
-    pub(crate) add_watchpoint: Option<(Address, WatchType)>,
+    pub(crate) add_one_shot_breakpoint: Option<Address>,
+    pub(crate) add_watchpoint: Option<(Address, Address, WatchType)>,
+    pub(crate) remove_watchpoints: Vec<(Address, Address, WatchType)>,
     pub(crate) remove_breakpoints: Vec<Address>,
     pub(crate) toggle_breakpoints: Vec<Address>,
     pub(crate) remove_rom_breakpoints: Vec<u64>,
+    pub(crate) add_rom_breakpoints: Vec<u64>,
     pub(crate) toggle_rom_breakpoints: Vec<u64>,
     pub(crate) memory_writes: Vec<(Address, u8)>,
     pub(crate) apu_channel_mutes: Option<Vec<bool>>,
@@ -24,6 +25,7 @@ pub(crate) struct DebugUiActions {
     pub(crate) layer_toggles: Option<(bool, bool, bool)>,
     pub(crate) gba_bg_layer_toggles: Option<[bool; 4]>,
     pub(crate) focus_tab: Option<super::DebugTab>,
+    pub(crate) memory_target: Option<Address>,
     pub(crate) disasm_target: Option<super::DisassemblyTarget>,
     pub(crate) follow_disasm_pc: bool,
     pub(crate) disasm_back: bool,
@@ -36,10 +38,13 @@ impl DebugUiActions {
     pub(crate) fn none() -> Self {
         Self {
             add_breakpoint: None,
+            add_one_shot_breakpoint: None,
             add_watchpoint: None,
+            remove_watchpoints: Vec::new(),
             remove_breakpoints: Vec::new(),
             toggle_breakpoints: Vec::new(),
             remove_rom_breakpoints: Vec::new(),
+            add_rom_breakpoints: Vec::new(),
             toggle_rom_breakpoints: Vec::new(),
             memory_writes: Vec::new(),
             apu_channel_mutes: None,
@@ -49,6 +54,7 @@ impl DebugUiActions {
             layer_toggles: None,
             gba_bg_layer_toggles: None,
             focus_tab: None,
+            memory_target: None,
             disasm_target: None,
             follow_disasm_pc: false,
             disasm_back: false,
@@ -60,10 +66,13 @@ impl DebugUiActions {
 
     pub(crate) fn has_pending(&self) -> bool {
         self.add_breakpoint.is_some()
+            || self.add_one_shot_breakpoint.is_some()
             || self.add_watchpoint.is_some()
+            || !self.remove_watchpoints.is_empty()
             || !self.remove_breakpoints.is_empty()
             || !self.toggle_breakpoints.is_empty()
             || !self.remove_rom_breakpoints.is_empty()
+            || !self.add_rom_breakpoints.is_empty()
             || !self.toggle_rom_breakpoints.is_empty()
             || !self.memory_writes.is_empty()
             || self.apu_channel_mutes.is_some()
@@ -72,99 +81,147 @@ impl DebugUiActions {
     }
 }
 
-/// Unified CPU / System debug panel. Renders any console's snapshot.
 pub(super) fn draw_cpu_debug_content(
     ui: &mut egui::Ui,
     info: &CpuDebugSnapshot,
+    state: &mut CpuDebugViewState,
     actions: &mut DebugUiActions,
 ) {
+    state.sync(info);
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        draw_cpu_debug_rows(ui, info, actions);
+        draw_cpu_debug_rows(ui, info, state, actions);
     });
 }
 
-fn draw_cpu_debug_rows(ui: &mut egui::Ui, info: &CpuDebugSnapshot, actions: &mut DebugUiActions) {
-    ui.heading("CPU Registers");
-    for line in &info.register_lines {
-        ui.monospace(line);
-    }
-    ui.separator();
+fn draw_cpu_debug_rows(
+    ui: &mut egui::Ui,
+    info: &CpuDebugSnapshot,
+    state: &CpuDebugViewState,
+    actions: &mut DebugUiActions,
+) {
+    let colors = crate::debug::common::debug_colors(ui);
+    let changed = crate::debug::common::color32(colors.changed);
+    let address = crate::debug::common::color32(colors.address);
+    let active = crate::debug::common::color32(colors.symbol);
+    let breakpoint = crate::debug::common::color32(colors.breakpoint);
+    let watchpoint = crate::debug::common::color32(colors.watchpoint);
+    let selection = crate::debug::common::color32(colors.selection);
+    let mono = crate::debug::common::debug_mono_font(ui);
+    let suspended = info.cpu_state.eq_ignore_ascii_case("Suspended");
+    let running = info.cpu_state.eq_ignore_ascii_case("Running");
+    let state_color = if suspended {
+        breakpoint
+    } else if running {
+        active
+    } else {
+        selection
+    };
 
-    ui.heading("Flags");
-    let flags_str: String = info
-        .flags
-        .iter()
-        .map(|(ch, set)| if *set { *ch } else { '-' })
-        .collect();
-    ui.monospace(format!("[{}]  {}", flags_str, info.status_text));
-    ui.separator();
-
-    ui.heading("Last Opcode");
-    ui.monospace(&info.last_opcode_line);
-    ui.monospace(format!("Total cycles: {}", info.cycles));
-    ui.separator();
-
-    for section in &info.sections {
-        ui.heading(section.heading);
-        for line in &section.lines {
-            ui.monospace(line);
-        }
-        ui.separator();
-    }
-
-    ui.heading("Memory @ PC");
-    let mut line = String::new();
-    for (i, (addr, val)) in info.mem_around_pc.iter().enumerate() {
-        if i % 8 == 0 {
-            if !line.is_empty() {
-                ui.monospace(&line);
-                line.clear();
+    ui.horizontal_wrapped(|ui| {
+        if suspended {
+            let button = egui::Button::new("Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
+            if ui.add(button).clicked() {
+                actions.continue_requested = true;
             }
-            let _ = write!(line, "{}: ", format_addr(*addr));
         }
-        let _ = write!(line, "{:02X} ", val);
-    }
-    if !line.is_empty() {
-        ui.monospace(&line);
-    }
-
-    if !info.recent_opcodes.is_empty() {
-        ui.separator();
-        ui.heading("Recent Opcodes");
-        for opcode in &info.recent_opcodes {
-            ui.monospace(opcode.line());
-        }
-    }
-
-    let suspended = info.cpu_state == "Suspended";
-    if suspended {
-        ui.separator();
-        let button = egui::Button::new("▶ Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
-        if ui.add(button).clicked() {
-            actions.continue_requested = true;
-        }
-    }
-
-    ui.horizontal(|ui| {
-        if ui.button("Step").clicked() {
+        if ui.button("Step (F7)").clicked() {
             actions.step_requested = true;
         }
-        if !suspended && ui.button("Continue").clicked() {
-            actions.continue_requested = true;
+        if ui.button("Step Back").clicked() {
+            actions.backstep_requested = true;
+        }
+        ui.separator();
+        if ui.small_button("Disassembly").clicked() {
+            actions.focus_tab = Some(super::DebugTab::Disassembler);
+        }
+        if ui.small_button("History").clicked() {
+            actions.focus_tab = Some(super::DebugTab::ExecutionHistory);
+        }
+        if ui.small_button("Memory").clicked() {
+            actions.focus_tab = Some(super::DebugTab::MemoryViewer);
+        }
+        if ui.small_button("Hardware / I/O").clicked() {
+            actions.focus_tab = Some(super::DebugTab::HardwareIo);
         }
     });
 
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new(&info.cpu_state)
+                .font(mono.clone())
+                .color(state_color)
+                .strong(),
+        );
+        ui.label(
+            egui::RichText::new(format!("PC {}", format_addr(info.pc)))
+                .font(mono.clone())
+                .color(selection),
+        );
+        ui.weak(&info.status_text);
+    });
+
     if let Some(bp) = info.hit_breakpoint {
-        ui.monospace(format!("Hit breakpoint @ {}", format_addr(bp)));
+        ui.colored_label(
+            breakpoint,
+            egui::RichText::new(format!("Breakpoint hit at {}", format_addr(bp)))
+                .font(mono.clone()),
+        );
+    }
+    if let Some(offset) = info.hit_rom_breakpoint {
+        ui.colored_label(
+            breakpoint,
+            egui::RichText::new(format!("ROM breakpoint hit at +{offset:06X}")).font(mono.clone()),
+        );
     }
     if let Some(hit) = &info.hit_watchpoint {
-        ui.monospace(format!(
-            "Watch hit: {:?} @ {}: {:02X} -> {:02X}",
-            hit.watch_type,
-            format_addr(hit.address),
-            hit.old_value,
-            hit.new_value
-        ));
+        ui.colored_label(
+            watchpoint,
+            egui::RichText::new(format!(
+                "Watch hit {:?} at {}: {:02X} to {:02X}",
+                hit.watch_type,
+                format_addr(hit.address),
+                hit.old_value,
+                hit.new_value
+            ))
+            .font(mono.clone()),
+        );
     }
+
+    ui.separator();
+    ui.weak("Registers");
+    for (index, line) in info.register_lines.iter().enumerate() {
+        let text = egui::RichText::new(line).font(mono.clone());
+        if state.register_changed(index) {
+            ui.colored_label(changed, text);
+        } else {
+            ui.label(text);
+        }
+    }
+    ui.horizontal(|ui| {
+        ui.weak("Flags");
+        for (index, (ch, set)) in info.flags.iter().enumerate() {
+            let text = egui::RichText::new(ch.to_string())
+                .font(mono.clone())
+                .strong();
+            if state.flag_changed(index) {
+                ui.colored_label(changed, text);
+            } else if *set {
+                ui.colored_label(active, text);
+            } else {
+                ui.weak(text);
+            }
+        }
+    });
+    ui.separator();
+
+    ui.horizontal_wrapped(|ui| {
+        ui.weak("Last");
+        ui.label(
+            egui::RichText::new(&info.last_opcode_line)
+                .font(mono.clone())
+                .color(address),
+        );
+        ui.weak(format!("{} cycles", info.cycles));
+    });
 }

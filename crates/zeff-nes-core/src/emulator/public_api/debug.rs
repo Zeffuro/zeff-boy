@@ -4,10 +4,13 @@ use zeff_emu_common::cheats::CheatByteTarget;
 
 impl Emulator {
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        if self.opcode_log.enabled != enabled {
+            self.call_stack.clear();
+        }
         self.opcode_log.set_enabled(enabled);
     }
 
-    pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8)> {
+    pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8, Option<usize>)> {
         self.opcode_log.recent(n)
     }
 
@@ -31,6 +34,10 @@ impl Emulator {
         self.debug.add_breakpoint(addr);
     }
 
+    pub fn add_one_shot_breakpoint(&mut self, addr: u16) {
+        self.debug.add_one_shot_breakpoint(addr);
+    }
+
     pub fn remove_breakpoint(&mut self, addr: u16) {
         self.debug.remove_breakpoint(addr);
     }
@@ -43,8 +50,25 @@ impl Emulator {
         self.debug.add_watchpoint(addr, watch_type);
     }
 
+    pub fn add_watchpoint_range(
+        &mut self,
+        start: u16,
+        end: u16,
+        watch_type: crate::debug::WatchType,
+    ) {
+        self.debug.add_watchpoint_range(start, end, watch_type);
+    }
+
+    pub fn remove_watchpoint(&mut self, start: u16, end: u16, watch_type: crate::debug::WatchType) {
+        self.debug.remove_watchpoint(start, end, watch_type);
+    }
+
     pub fn iter_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
         self.debug.iter_breakpoints()
+    }
+
+    pub fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
+        self.debug.iter_one_shot_breakpoints()
     }
 
     pub fn debug_watchpoints(&self) -> &[crate::debug::Watchpoint] {

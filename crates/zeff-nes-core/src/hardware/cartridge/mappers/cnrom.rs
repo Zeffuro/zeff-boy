@@ -51,6 +51,12 @@ impl Mapper for Cnrom {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF)
+            .contains(&addr)
+            .then(|| (addr as usize - 0x8000) % self.prg_rom.len())
+    }
+
     fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr.is_empty() {
             return 0;

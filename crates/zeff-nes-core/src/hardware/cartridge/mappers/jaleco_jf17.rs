@@ -62,6 +62,21 @@ impl Mapper for JalecoJf17 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = match (addr, self.fixed_low_prg) {
+            (0x8000..=0xBFFF, true) => 0,
+            (0x8000..=0xBFFF, false) => self.prg_bank as usize,
+            (0xC000..=0xFFFF, true) => self.prg_bank as usize,
+            (0xC000..=0xFFFF, false) => self.prg_bank_count_16k().saturating_sub(1),
+            _ => return None,
+        } % self.prg_bank_count_16k();
+        Some((bank * 0x4000 + (addr as usize & 0x3FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank) | (u64::from(self.fixed_low_prg) << 8)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr < 0x8000 {
             return;
@@ -142,6 +157,7 @@ mod tests {
 
         mapper.cpu_write(0x8000, 0xC3);
         assert_eq!(mapper.cpu_peek(0x8001), 3);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(3 * 0x4000 + 0x123));
         assert_eq!(mapper.chr_read(0x0000), 3);
 
         mapper.cpu_write(0xC000, 0xC4);
@@ -175,5 +191,6 @@ mod tests {
 
         assert_eq!(mapper.cpu_peek(0x8001), 0);
         assert_eq!(mapper.cpu_peek(0xC001), 4);
+        assert_eq!(mapper.cpu_rom_offset(0xC123), Some(4 * 0x4000 + 0x123));
     }
 }

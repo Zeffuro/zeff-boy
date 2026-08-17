@@ -45,7 +45,9 @@ impl<'a> BackendRuntimeConfig<'a> {
 
 enum DebugAction {
     AddBreakpoint(Address),
-    AddWatchpoint(Address, WatchType),
+    AddOneShotBreakpoint(Address),
+    AddWatchpoint(Address, Address, WatchType),
+    RemoveWatchpoint(Address, Address, WatchType),
     RemoveBreakpoint(Address),
     ToggleBreakpoint(Address),
     WriteMemory(Address, u8),
@@ -120,9 +122,21 @@ fn collect_debug_actions(actions: &DebugUiActions) -> impl Iterator<Item = Debug
         .map(|&addr| DebugAction::AddBreakpoint(addr))
         .chain(
             actions
+                .add_one_shot_breakpoint
+                .iter()
+                .map(|&addr| DebugAction::AddOneShotBreakpoint(addr)),
+        )
+        .chain(
+            actions
                 .add_watchpoint
                 .iter()
-                .map(|&(addr, wt)| DebugAction::AddWatchpoint(addr, wt)),
+                .map(|&(start, end, wt)| DebugAction::AddWatchpoint(start, end, wt)),
+        )
+        .chain(
+            actions
+                .remove_watchpoints
+                .iter()
+                .map(|&(start, end, wt)| DebugAction::RemoveWatchpoint(start, end, wt)),
         )
         .chain(
             actions
@@ -148,7 +162,9 @@ fn apply_debug_actions_to(emu: &mut impl DebuggableEmulator, actions: &DebugUiAc
     for action in collect_debug_actions(actions) {
         match action {
             DebugAction::AddBreakpoint(addr) => emu.add_breakpoint(addr),
-            DebugAction::AddWatchpoint(addr, wt) => emu.add_watchpoint(addr, wt),
+            DebugAction::AddOneShotBreakpoint(addr) => emu.add_one_shot_breakpoint(addr),
+            DebugAction::AddWatchpoint(start, end, wt) => emu.add_watchpoint_range(start, end, wt),
+            DebugAction::RemoveWatchpoint(start, end, wt) => emu.remove_watchpoint(start, end, wt),
             DebugAction::RemoveBreakpoint(addr) => emu.remove_breakpoint(addr),
             DebugAction::ToggleBreakpoint(addr) => emu.toggle_breakpoint(addr),
             DebugAction::WriteMemory(addr, val) => emu.cpu_write8(addr, val),
@@ -158,6 +174,11 @@ fn apply_debug_actions_to(emu: &mut impl DebuggableEmulator, actions: &DebugUiAc
 
 fn apply_gb_debug_actions(emu: &mut zeff_gb_core::emulator::Emulator, actions: &DebugUiActions) {
     apply_debug_actions_to(emu, actions);
+    for &offset in &actions.add_rom_breakpoints {
+        if let Ok(offset) = usize::try_from(offset) {
+            emu.add_rom_breakpoint(offset);
+        }
+    }
     for &offset in &actions.remove_rom_breakpoints {
         if let Ok(offset) = usize::try_from(offset) {
             emu.remove_rom_breakpoint(offset);

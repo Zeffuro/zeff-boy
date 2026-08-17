@@ -2,11 +2,14 @@ use egui_dock::{TabViewer, widgets::tab_viewer::OnCloseResponse};
 
 use super::super::apu_viewer::draw_apu_viewer_content;
 use super::super::breakpoints_window::draw_breakpoints_content;
+use super::super::call_stack::draw_call_stack_content;
 use super::super::cheats_window::draw_cheats_content;
 use super::super::console::{DebugConsoleContext, DebugConsoleViews, draw_debug_console_content};
 use super::super::disasm_window::draw_disassembler_content;
+use super::super::execution_history::draw_execution_history_content;
 use super::super::gba_tile_viewer::draw_gba_tile_viewer_content;
 use super::super::gba_tilemap_viewer::draw_gba_tilemap_viewer_content;
+use super::super::hardware_io::draw_hardware_io_content;
 use super::super::input_viewer::draw_input_viewer_content;
 use super::super::memory_viewer::draw_memory_viewer_content;
 use super::super::mods_window::draw_mods_content;
@@ -17,6 +20,8 @@ use super::super::palette_viewer::draw_palette_viewer_content;
 use super::super::perf_monitor::draw_performance_content;
 use super::super::rom_info::draw_rom_info_content;
 use super::super::rom_viewer::draw_rom_viewer_content;
+use super::super::sega8_tile_viewer::draw_sega8_tile_viewer_content;
+use super::super::source_viewer::draw_source_viewer_content;
 use super::super::symbol_browser::{SymbolBrowserViews, draw_symbol_browser_content};
 use super::super::tile_viewer::draw_tile_viewer_content;
 use super::super::tilemap_viewer::draw_tilemap_viewer_content;
@@ -91,7 +96,22 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::CpuDebug => {
                 if let Some(info) = self.data.cpu_debug {
-                    draw_cpu_debug_content(ui, info, &mut self.actions);
+                    draw_cpu_debug_content(
+                        ui,
+                        info,
+                        &mut self.window_state.cpu_view,
+                        &mut self.actions,
+                    );
+                }
+            }
+            DebugTab::HardwareIo => {
+                if let Some(info) = self.data.cpu_debug {
+                    draw_hardware_io_content(
+                        ui,
+                        info,
+                        &mut self.window_state.hardware_view,
+                        &mut self.actions,
+                    );
                 }
             }
             DebugTab::InputViewer => {
@@ -120,6 +140,10 @@ impl TabViewer for DebugTabViewer<'_> {
                     self.actions
                         .toggle_rom_breakpoints
                         .extend(disasm_actions.toggle_rom_breakpoints);
+                    if disasm_actions.add_one_shot_breakpoint.is_some() {
+                        self.actions.add_one_shot_breakpoint =
+                            disasm_actions.add_one_shot_breakpoint;
+                    }
                     self.actions.step_requested |= disasm_actions.step_requested;
                     self.actions.continue_requested |= disasm_actions.continue_requested;
                     self.actions.backstep_requested |= disasm_actions.backstep_requested;
@@ -138,6 +162,8 @@ impl TabViewer for DebugTabViewer<'_> {
                         &mut self.window_state.memory,
                         page,
                         self.data.symbols,
+                        self.data.cpu_debug,
+                        &mut self.actions,
                     );
                     self.actions.memory_writes.extend(writes);
                 }
@@ -146,14 +172,27 @@ impl TabViewer for DebugTabViewer<'_> {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.data.graphics_data {
                     draw_tile_viewer_content(ui, data, data.ppu.bgp, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Gba(data)) = self.data.graphics_data {
-                    draw_gba_tile_viewer_content(ui, data, &mut self.window_state.tiles);
+                    draw_gba_tile_viewer_content(
+                        ui,
+                        data,
+                        &mut self.window_state.tiles,
+                        &mut self.actions,
+                    );
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tile_viewer_content(ui, data, &mut self.window_state.tiles);
+                } else if let Some(ConsoleGraphicsData::Sega8(data)) = self.data.graphics_data {
+                    draw_sega8_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
             }
             DebugTab::TilemapViewer => {
                 if let Some(ConsoleGraphicsData::Gb(data)) = self.data.graphics_data {
-                    draw_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
+                    draw_tilemap_viewer_content(
+                        ui,
+                        data,
+                        &mut self.window_state.tilemap,
+                        &mut self.window_state.tiles,
+                        &mut self.actions,
+                    );
                 } else if let Some(ConsoleGraphicsData::Gba(data)) = self.data.graphics_data {
                     draw_gba_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
@@ -162,7 +201,14 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::OamViewer => {
                 if let Some(info) = self.data.oam_debug {
-                    draw_oam_viewer_content(ui, info);
+                    draw_oam_viewer_content(
+                        ui,
+                        info,
+                        self.data.graphics_data,
+                        &mut self.window_state.oam,
+                        &mut self.window_state.tiles,
+                        &mut self.actions,
+                    );
                 }
             }
             DebugTab::PaletteViewer => {
@@ -180,6 +226,7 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_breakpoints_content(
                         ui,
                         info,
+                        self.data.symbols,
                         &mut self.window_state.bp,
                         &mut self.actions,
                     );
@@ -200,6 +247,26 @@ impl TabViewer for DebugTabViewer<'_> {
                         self.data.rom_size,
                         self.data.symbols,
                     );
+                }
+            }
+            DebugTab::SourceViewer => {
+                draw_source_viewer_content(
+                    ui,
+                    &mut self.window_state.source_viewer,
+                    self.data.symbols,
+                    self.data.disassembly_view,
+                    self.data.cpu_debug,
+                    &mut self.actions,
+                );
+            }
+            DebugTab::ExecutionHistory => {
+                if let Some(info) = self.data.cpu_debug {
+                    draw_execution_history_content(ui, info, self.data.symbols, &mut self.actions);
+                }
+            }
+            DebugTab::CallStack => {
+                if let Some(info) = self.data.cpu_debug {
+                    draw_call_stack_content(ui, info, self.data.symbols, &mut self.actions);
                 }
             }
             DebugTab::SymbolBrowser => {

@@ -117,6 +117,49 @@ impl Mapper for Mmc2 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let (bank, offset) = match self.variant {
+            Mmc2Variant::Mmc2 => match addr {
+                0x8000..=0x9FFF => (
+                    self.prg_bank as usize % self.prg_bank_count_8k(),
+                    addr as usize & 0x1FFF,
+                ),
+                0xA000..=0xBFFF => (
+                    self.prg_bank_count_8k().saturating_sub(3),
+                    addr as usize & 0x1FFF,
+                ),
+                0xC000..=0xDFFF => (
+                    self.prg_bank_count_8k().saturating_sub(2),
+                    addr as usize & 0x1FFF,
+                ),
+                0xE000..=0xFFFF => (
+                    self.prg_bank_count_8k().saturating_sub(1),
+                    addr as usize & 0x1FFF,
+                ),
+                _ => return None,
+            },
+            Mmc2Variant::Mmc4 => match addr {
+                0x8000..=0xBFFF => (
+                    self.prg_bank as usize % self.prg_bank_count_16k(),
+                    addr as usize & 0x3FFF,
+                ),
+                0xC000..=0xFFFF => (
+                    self.prg_bank_count_16k().saturating_sub(1),
+                    addr as usize & 0x3FFF,
+                ),
+                _ => return None,
+            },
+        };
+        Some(match self.variant {
+            Mmc2Variant::Mmc2 => bank * 0x2000 + offset,
+            Mmc2Variant::Mmc4 => bank * 0x4000 + offset,
+        })
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank) | (u64::from(matches!(self.variant, Mmc2Variant::Mmc4)) << 8)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x6000..=0x7FFF => {

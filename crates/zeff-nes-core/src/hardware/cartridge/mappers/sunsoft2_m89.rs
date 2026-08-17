@@ -50,6 +50,19 @@ impl Mapper for Sunsoft2Mapper89 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = match addr {
+            0x8000..=0xBFFF => self.prg_bank as usize,
+            0xC000..=0xFFFF => self.prg_bank_count_16k().saturating_sub(1),
+            _ => return None,
+        } % self.prg_bank_count_16k();
+        Some((bank * 0x4000 + (addr as usize & 0x3FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             self.prg_bank = (val >> 4) & 0x07;
@@ -124,6 +137,7 @@ mod tests {
         mapper.cpu_write(0x8000, 0xBA);
 
         assert_eq!(mapper.cpu_peek(0x8000), 3);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(3 * 0x4000 + 0x123));
         assert_eq!(mapper.cpu_peek(0xC000), 7);
         assert_eq!(mapper.chr_read(0x0000), 10);
         assert_eq!(mapper.mirroring(), Mirroring::SingleScreenUpper);

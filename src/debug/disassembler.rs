@@ -1,5 +1,5 @@
 pub(crate) type Mnemonic = arrayvec::ArrayString<32>;
-pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 4>;
+pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 16>;
 use zeff_emu_common::address::Address;
 
 macro_rules! mn {
@@ -18,6 +18,7 @@ pub(crate) struct DisassembledLine {
     pub(crate) control_target: Option<Address>,
     pub(crate) control_target_storage: Option<u64>,
     pub(crate) control_target_symbol: Option<String>,
+    pub(crate) source: Option<String>,
     pub(crate) bytes: InstructionBytes,
     pub(crate) mnemonic: Mnemonic,
 }
@@ -27,8 +28,11 @@ pub(crate) struct DisassemblyView {
     pub(crate) pc: Address,
     pub(crate) mapping: Option<u64>,
     pub(crate) is_navigation_target: bool,
+    pub(crate) is_static_target: bool,
+    pub(crate) location_symbol: Option<String>,
     pub(crate) lines: Vec<DisassembledLine>,
     pub(crate) breakpoints: Vec<Address>,
+    pub(crate) one_shot_breakpoints: Vec<Address>,
     pub(crate) rom_breakpoints: Vec<u64>,
     pub(crate) hit_rom_breakpoint: Option<u64>,
 }
@@ -36,12 +40,14 @@ pub(crate) struct DisassemblyView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DisassemblyTarget {
     pub(crate) cpu_address: Address,
-    pub(crate) storage_offset: u64,
+    pub(crate) storage_offset: Option<u64>,
+    pub(crate) thumb: Option<bool>,
 }
 
 mod gb;
 mod gba;
 mod nes;
+mod v30;
 mod z80;
 
 pub(crate) fn disassemble_around(
@@ -97,6 +103,15 @@ pub(crate) fn gba_disassemble_around(
     total_lines: usize,
 ) -> Vec<DisassembledLine> {
     gba::disassemble_around(&bus_read, pc, thumb, lines_before_pc, total_lines)
+}
+
+pub(crate) fn v30_disassemble_around(
+    bus_read: impl Fn(u32) -> u8,
+    pc: u32,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    v30::disassemble_around(&bus_read, pc, lines_before_pc, total_lines)
 }
 
 fn disassemble_around_with(

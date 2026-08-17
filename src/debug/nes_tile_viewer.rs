@@ -1,6 +1,6 @@
-use crate::debug::TileViewerState;
 use crate::debug::common::nes_palette_rgba;
 use crate::debug::types::NesGraphicsData;
+use crate::debug::{TileViewerPlatform, TileViewerRequest, TileViewerState};
 
 pub(super) fn decode_nes_tile_pixel(chr: &[u8], tile_addr: usize, row: usize, col: usize) -> u8 {
     let lo = chr.get(tile_addr + row).copied().unwrap_or(0);
@@ -28,6 +28,17 @@ pub(super) fn draw_nes_tile_viewer_content(
         .ctx()
         .data_mut(|d| d.get_persisted::<bool>(obj_mode_id))
         .unwrap_or(false);
+
+    if let Some(TileViewerRequest::Nes {
+        tile,
+        table,
+        palette,
+    }) = window_state.pending.take()
+    {
+        use_obj = true;
+        palette_index = palette.min(3);
+        window_state.select(TileViewerPlatform::Nes, table.min(1) * 256 + tile.min(255));
+    }
 
     ui.horizontal(|ui| {
         ui.checkbox(&mut use_obj, "OBJ palettes");
@@ -70,7 +81,7 @@ pub(super) fn draw_nes_tile_viewer_content(
         window_state.tracker.vram_dirty = false;
     }
 
-    super::common::show_viewer_texture(
+    let response = super::common::show_viewer_texture(
         ui,
         &mut window_state.texture,
         &window_state.image,
@@ -78,6 +89,27 @@ pub(super) fn draw_nes_tile_viewer_content(
         "nes_tiles.png",
         2.0,
     );
+
+    if response.clicked()
+        && let Some((x, y)) = super::common::hover_pixel_coords(&response, width, height)
+    {
+        let table = x / 128;
+        let tile = (y / 8) * 16 + (x % 128) / 8;
+        window_state.select(TileViewerPlatform::Nes, table * 256 + tile);
+    }
+    if window_state.selected_platform == Some(TileViewerPlatform::Nes)
+        && let Some(selection) = window_state.selected
+    {
+        let table = selection / 256;
+        let tile = selection % 256;
+        let display_index = (tile / 16) * 32 + table * 16 + tile % 16;
+        super::common::draw_grid_selection(ui, &response, 32, 16, display_index);
+        ui.horizontal_wrapped(|ui| {
+            ui.monospace(format!("Tile ${tile:02X}"));
+            ui.monospace(format!("Pattern table {table}"));
+            ui.monospace(format!("address ${:04X}", table * 0x1000 + tile * 16));
+        });
+    }
 
     ui.separator();
     ui.horizontal(|ui| {

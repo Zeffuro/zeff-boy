@@ -52,6 +52,14 @@ impl Mapper for Mapper240 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (addr >= 0x8000).then(|| self.prg_addr(addr))
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank_select >> 4)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x4020..=0x5FFF if Self::is_register(addr) => self.bank_select = val,
@@ -128,5 +136,16 @@ mod tests {
         mapper.cpu_write(0x4100, 0x32);
         assert_eq!(mapper.cpu_peek(0x8000), 3);
         assert_eq!(mapper.chr_read(0x0100), 6);
+    }
+
+    #[test]
+    fn reports_active_prg_rom_offsets() {
+        let mut mapper = Mapper240::new(
+            prg_banks(&[0, 1, 2, 3]),
+            chr_banks(&[0]),
+            Mirroring::Horizontal,
+        );
+        mapper.cpu_write(0x4800, 0x20);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(2 * 0x8000 + 0x123));
     }
 }

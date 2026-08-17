@@ -148,6 +148,16 @@ impl MapperImpl {
     }
 
     #[inline]
+    pub(super) fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        dispatch_mapper!(self, cpu_rom_offset, addr)
+    }
+
+    #[inline]
+    pub(super) fn rom_mapping_token(&self) -> u64 {
+        dispatch_mapper!(self, rom_mapping_token)
+    }
+
+    #[inline]
     pub(super) fn cpu_read(&mut self, addr: u16) -> u8 {
         dispatch_mapper!(self, cpu_read, addr)
     }

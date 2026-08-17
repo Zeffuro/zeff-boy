@@ -130,3 +130,71 @@ fn wonder_swan_snapshot_exposes_apu_debug_when_viewer_is_open() {
     assert!(!apu.master_waveform.is_empty());
     assert!(!apu.channels[0].waveform.is_empty());
 }
+
+#[test]
+fn wonder_swan_disassembly_uses_physical_rom_offsets() {
+    let rom = minimal_ws_rom();
+    let emu = Emulator::from_rom_data(&rom).unwrap();
+    let request = SnapshotRequest {
+        show_disassembler: true,
+        ..snapshot_request()
+    };
+    let data = collect_ws_snapshot(
+        &emu,
+        &request,
+        ReusableBuffers {
+            audio: None,
+            vram: None,
+            oam: None,
+            memory_page: None,
+            nes_chr: None,
+            nes_nametable: None,
+        },
+    );
+
+    let disassembly = data.disassembly_view.unwrap();
+    assert!(
+        disassembly
+            .lines
+            .iter()
+            .any(|line| line.address == emu.cpu_pc() && line.storage_offset == Some(0xFFF0))
+    );
+}
+
+#[test]
+fn wonder_swan_static_disassembly_reads_the_target_rom_offset() {
+    let mut rom = minimal_ws_rom();
+    rom[0x20..0x23].copy_from_slice(&[0xB8, 0x34, 0x12]);
+    let emu = Emulator::from_rom_data(&rom).unwrap();
+    let request = SnapshotRequest {
+        show_disassembler: true,
+        disasm_target: Some(crate::debug::DisassemblyTarget {
+            cpu_address: 0x4_0020,
+            storage_offset: Some(0x20),
+            thumb: None,
+        }),
+        ..snapshot_request()
+    };
+    let data = collect_ws_snapshot(
+        &emu,
+        &request,
+        ReusableBuffers {
+            audio: None,
+            vram: None,
+            oam: None,
+            memory_page: None,
+            nes_chr: None,
+            nes_nametable: None,
+        },
+    );
+
+    let disassembly = data.disassembly_view.unwrap();
+    assert!(disassembly.is_static_target);
+    let line = disassembly
+        .lines
+        .iter()
+        .find(|line| line.address == 0x4_0020)
+        .unwrap();
+    assert_eq!(line.storage_offset, Some(0x20));
+    assert_eq!(line.mnemonic.as_str(), "MOV AX, #$1234");
+}

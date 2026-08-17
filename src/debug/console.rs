@@ -13,9 +13,22 @@ use zeff_emu_common::address::Address;
 const OUTPUT_LIMIT: usize = 500;
 const HISTORY_LIMIT: usize = 100;
 const READ_LIMIT: usize = 64;
-const COMMANDS: [&str; 14] = [
-    "help", "clear", "find", "symbol", "peek", "romread", "goto", "mem", "rom", "break", "status",
-    "mapper", "label", "comment",
+const COMMANDS: [&str; 15] = [
+    "help",
+    "clear",
+    "find",
+    "symbol",
+    "peek",
+    "romread",
+    "goto",
+    "mem",
+    "rom",
+    "break",
+    "status",
+    "mapper",
+    "label",
+    "comment",
+    "breakonce",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,6 +223,12 @@ fn run_command(state: &mut DebugConsoleState, input: &str, context: CommandConte
             args.first().copied(),
             context.actions,
         ),
+        "breakonce" => add_one_shot_breakpoint(
+            state,
+            context.symbols,
+            args.first().copied(),
+            context.actions,
+        ),
         "label" => queue_label(
             state,
             context.symbols,
@@ -233,6 +252,7 @@ fn show_help(state: &mut DebugConsoleState) {
         "mem <addr|symbol>      Open Memory Viewer",
         "rom <off|symbol>       Open ROM Viewer",
         "break <addr|symbol>    Toggle breakpoint",
+        "breakonce <addr|symbol> Break once",
         "label <name>           Label current code location",
         "label <addr> <name>    Label a CPU address",
         "comment <symbol> <text> Add or replace a comment",
@@ -415,14 +435,19 @@ fn goto_target(
     if let Some(symbol) = exact_symbols(symbols, value).into_iter().find(|symbol| {
         symbol.location.cpu.is_some()
             && symbol.location.storage.is_some()
-            && symbol.location.exec_mode == ExecMode::Sm83
+            && matches!(symbol.location.exec_mode, ExecMode::Sm83 | ExecMode::V30)
     }) {
         let cpu_address = symbol.location.cpu.unwrap().address;
         let storage_offset = symbol.location.storage.unwrap().offset;
         if let Ok(cpu_address) = u32::try_from(cpu_address) {
             actions.disasm_target = Some(DisassemblyTarget {
                 cpu_address,
-                storage_offset,
+                storage_offset: Some(storage_offset),
+                thumb: match symbol.location.exec_mode {
+                    ExecMode::Thumb => Some(true),
+                    ExecMode::Arm => Some(false),
+                    _ => None,
+                },
             });
             actions.focus_tab = Some(DebugTab::Disassembler);
             state.push(format!("Opened {} in Disassembler", symbol.name));
@@ -486,12 +511,26 @@ fn toggle_breakpoint(
         state.push("Usage: break <address|symbol>".to_owned());
         return;
     };
-    if let Some(symbol) = exact_symbols(symbols, value).into_iter().next()
-        && let Some(storage) = symbol.location.storage
-    {
-        actions.toggle_rom_breakpoints.push(storage.offset);
-        state.push(format!("Toggled ROM breakpoint at {}", symbol.name));
-        return;
+    let exact = exact_symbols(symbols, value);
+    if symbols.exec_mode() == ExecMode::Sm83 {
+        let mut offsets = exact
+            .iter()
+            .filter_map(|symbol| symbol.location.storage.map(|storage| storage.offset))
+            .collect::<Vec<_>>();
+        offsets.sort_unstable();
+        offsets.dedup();
+        match offsets.as_slice() {
+            [offset] => {
+                actions.toggle_rom_breakpoints.push(*offset);
+                state.push(format!("Toggled ROM breakpoint at {value}"));
+                return;
+            }
+            [_, _, ..] => {
+                state.push(format!("Ambiguous ROM symbol: {value}"));
+                return;
+            }
+            [] => {}
+        }
     }
     let Some(address) = resolve_cpu(value, symbols).and_then(|value| u32::try_from(value).ok())
     else {
@@ -500,6 +539,46 @@ fn toggle_breakpoint(
     };
     actions.toggle_breakpoints.push(address);
     state.push(format!("Toggled CPU breakpoint at ${address:X}"));
+}
+
+fn add_one_shot_breakpoint(
+    state: &mut DebugConsoleState,
+    symbols: &SymbolSession,
+    value: Option<&str>,
+    actions: &mut DebugUiActions,
+) {
+    let Some(value) = value else {
+        state.push("Usage: breakonce <address|symbol>".to_owned());
+        return;
+    };
+    if let Some(address) = parse_hex(value).and_then(|value| Address::try_from(value).ok()) {
+        actions.add_one_shot_breakpoint = Some(address);
+        state.push(format!("Breaking once at CPU ${address:X}"));
+        return;
+    }
+
+    let exact = exact_symbols(symbols, value);
+    if symbols.exec_mode() == ExecMode::Sm83
+        && exact.iter().any(|symbol| symbol.location.storage.is_some())
+    {
+        state.push("One-shot physical ROM breakpoints are not supported yet".to_owned());
+        return;
+    }
+    let mut addresses = exact
+        .iter()
+        .filter_map(|symbol| symbol.location.cpu)
+        .filter_map(|cpu| Address::try_from(cpu.address).ok())
+        .collect::<Vec<_>>();
+    addresses.sort_unstable();
+    addresses.dedup();
+    match addresses.as_slice() {
+        [address] => {
+            actions.add_one_shot_breakpoint = Some(*address);
+            state.push(format!("Breaking once at CPU ${address:X}"));
+        }
+        [] => state.push(format!("Could not resolve {value}")),
+        [_, _, ..] => state.push(format!("Ambiguous CPU symbol: {value}")),
+    }
 }
 
 fn show_status(
@@ -761,7 +840,7 @@ mod tests {
             },
         );
         assert_eq!(actions.focus_tab, Some(DebugTab::Disassembler));
-        assert_eq!(actions.disasm_target.unwrap().storage_offset, 0x8560);
+        assert_eq!(actions.disasm_target.unwrap().storage_offset, Some(0x8560));
 
         run_command(
             &mut state,
@@ -782,6 +861,23 @@ mod tests {
         assert_eq!(pending.space, ConsoleReadSpace::Cpu);
         assert_eq!(pending.start, 0xC100);
         assert_eq!(pending.length, 4);
+
+        run_command(
+            &mut state,
+            "breakonce C123",
+            CommandContext {
+                symbols: &symbols,
+                cpu_debug: None,
+                rom_debug: None,
+                disassembly: None,
+                views: DebugConsoleViews {
+                    memory: &mut memory,
+                    rom: &mut rom,
+                },
+                actions: &mut actions,
+            },
+        );
+        assert_eq!(actions.add_one_shot_breakpoint, Some(0xC123));
 
         run_command(
             &mut state,
@@ -811,6 +907,8 @@ mod tests {
             pc: 0x4560,
             mapping: Some(2),
             is_navigation_target: false,
+            is_static_target: false,
+            location_symbol: None,
             lines: vec![DisassembledLine {
                 address: 0x4560,
                 storage_offset: Some(0x8560),
@@ -818,10 +916,12 @@ mod tests {
                 control_target: None,
                 control_target_storage: None,
                 control_target_symbol: None,
+                source: None,
                 bytes: Default::default(),
                 mnemonic: Default::default(),
             }],
             breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
             rom_breakpoints: Vec::new(),
             hit_rom_breakpoint: None,
         };

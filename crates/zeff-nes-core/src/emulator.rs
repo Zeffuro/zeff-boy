@@ -21,6 +21,7 @@ pub struct Emulator {
     pub(crate) rom_hash: [u8; 32],
     pub(crate) rom_crc32: u32,
     pub(crate) opcode_log: crate::debug::OpcodeLog,
+    pub(crate) call_stack: Vec<crate::debug::CallStackEntry>,
     pub(crate) debug: crate::debug::DebugController,
 }
 
@@ -62,6 +63,7 @@ impl Emulator {
             rom_hash,
             rom_crc32,
             opcode_log: crate::debug::OpcodeLog::new(),
+            call_stack: Vec::new(),
             debug: crate::debug::DebugController::new(),
         };
         emu.cpu.power_on(&mut emu.bus);
@@ -76,6 +78,7 @@ impl Emulator {
         self.bus.reset();
         self.cpu.reset(&mut self.bus);
         self.opcode_log.clear();
+        self.call_stack.clear();
         self.debug.clear_hits();
     }
 }

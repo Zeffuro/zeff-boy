@@ -72,6 +72,18 @@ impl Mapper for Contra100In1 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let bank = self.selected_prg_8k_bank(addr) % self.prg_bank_count_8k();
+        Some((bank * 0x2000 + (addr as usize & 0x1FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank) | (u64::from(self.prg_a13) << 8) | (u64::from(self.mode) << 9)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize] = val,
@@ -209,5 +221,14 @@ mod tests {
         assert_eq!(mapper.cpu_peek(0x71FF), 0x60);
         assert_eq!(mapper.cpu_peek(0x6FFF), 0x00);
         assert_eq!(mapper.cpu_peek(0x7200), 0x00);
+    }
+
+    #[test]
+    fn reports_active_prg_rom_offsets() {
+        let mut mapper = Contra100In1::new(prg_8k_banks(64), vec![0; 0x2000], Mirroring::Vertical);
+        mapper.cpu_write(0x8000, 4);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(8 * 0x2000 + 0x123));
+        mapper.cpu_write(0x8002, 0x84);
+        assert_eq!(mapper.cpu_rom_offset(0xA123), Some(9 * 0x2000 + 0x123));
     }
 }

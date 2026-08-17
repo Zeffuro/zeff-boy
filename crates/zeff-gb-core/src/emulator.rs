@@ -1,4 +1,4 @@
-use crate::debug::{DebugController, OpcodeLog};
+use crate::debug::{CallStackEntry, DebugController, OpcodeLog};
 use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::hardware::{bus::Bus, cpu::Cpu};
@@ -26,6 +26,7 @@ pub struct Emulator {
     pub(crate) cycle_count: u64,
     pub(crate) frame_count: u64,
     pub(crate) opcode_log: OpcodeLog,
+    pub(crate) call_stack: Vec<CallStackEntry>,
     pub(crate) last_opcode: u8,
     pub(crate) last_opcode_pc: u16,
     pub(crate) debug: DebugController,
@@ -133,7 +134,12 @@ mod tests {
         rom[0x147] = 0x19;
         rom[0x148] = 0x01;
         let mut emulator = Emulator::new(&rom, 44_100).unwrap();
-        emulator.toggle_rom_breakpoint(0x8560);
+        emulator.add_rom_breakpoint(0x8560);
+        emulator.add_rom_breakpoint(0x8560);
+        assert_eq!(
+            emulator.iter_rom_breakpoints().collect::<Vec<_>>(),
+            vec![0x8560]
+        );
 
         emulator.write_byte(0x2000, 2);
         emulator.cpu.pc = 0x4560;
@@ -149,6 +155,26 @@ mod tests {
             emulator.cpu.running,
             crate::hardware::types::CpuState::Suspended
         ));
+    }
+
+    #[test]
+    fn opcode_history_keeps_the_executed_physical_bank() {
+        let mut rom = vec![0u8; 4 * 0x4000];
+        rom[0x147] = 0x19;
+        rom[0x148] = 0x01;
+        let mut emulator = Emulator::new(&rom, 44_100).unwrap();
+        emulator.set_opcode_log_enabled(true);
+
+        emulator.write_byte(0x2000, 2);
+        emulator.cpu.pc = 0x4560;
+        emulator.step_instruction();
+        emulator.write_byte(0x2000, 1);
+        emulator.cpu.pc = 0x4560;
+        emulator.step_instruction();
+
+        let history = emulator.recent_opcodes(2);
+        assert_eq!(history[0].3, Some(0x4560));
+        assert_eq!(history[1].3, Some(0x8560));
     }
 
     #[test]

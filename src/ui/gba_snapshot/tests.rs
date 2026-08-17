@@ -132,3 +132,36 @@ fn gba_snapshot_includes_arm_disassembly_when_requested() {
             .is_some_and(|view| !view.lines.is_empty())
     );
 }
+
+#[test]
+fn gba_symbol_navigation_uses_the_symbol_instruction_set() {
+    let mut rom = minimal_gba_rom();
+    rom[0] = 0x00;
+    rom[1] = 0xE0;
+    let emu = zeff_gba_core::emulator::Emulator::new(&rom, 48_000).unwrap();
+    let mut request = snapshot_request();
+    request.show_disassembler = true;
+    request.disasm_target = Some(crate::debug::DisassemblyTarget {
+        cpu_address: 0x0800_0000,
+        storage_offset: Some(0),
+        thumb: Some(true),
+    });
+
+    let data = collect_gba_snapshot(
+        &emu,
+        &request,
+        ReusableBuffers {
+            audio: None,
+            vram: None,
+            oam: None,
+            memory_page: None,
+            nes_chr: None,
+            nes_nametable: None,
+        },
+    );
+
+    assert_eq!(
+        data.disassembly_view.unwrap().lines[12].mnemonic.as_str(),
+        "B $08000004"
+    );
+}

@@ -124,11 +124,13 @@ impl Emulator {
             ie: self.bus.ie,
             mem_around_pc,
             recent_ops: self.opcode_log.recent(32),
+            call_stack: self.call_stack.clone(),
             breakpoints: {
                 let mut points: Vec<u16> = self.debug.iter_breakpoints().collect();
                 points.sort_unstable();
                 points
             },
+            one_shot_breakpoints: self.debug.iter_one_shot_breakpoints().collect(),
             rom_breakpoints: self.rom_breakpoints.clone(),
             watchpoints: self
                 .debug
@@ -136,6 +138,7 @@ impl Emulator {
                 .iter()
                 .map(|w| WatchpointInfo {
                     address: w.address,
+                    end_address: w.end_address,
                     watch_type: w.watch_type,
                 })
                 .collect(),

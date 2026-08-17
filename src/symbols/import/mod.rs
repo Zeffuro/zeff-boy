@@ -1,4 +1,6 @@
 pub(crate) mod ca65;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod elf;
 pub(crate) mod fceux;
 pub(crate) mod gnu_nm;
 pub(crate) mod nocash;
@@ -8,7 +10,7 @@ pub(crate) mod wla;
 
 use zeff_emu_common::system::System;
 
-use super::{AddressSpaceId, ImageId, RegionId, SymbolRecord};
+use super::{AddressSpaceId, ImageId, RegionId, SourceFile, SourceLine, SymbolRecord};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ImportCapabilities(u32);
@@ -16,6 +18,7 @@ pub(crate) struct ImportCapabilities(u32);
 impl ImportCapabilities {
     pub(crate) const SYMBOLS: Self = Self(1 << 0);
     pub(crate) const SECTIONS: Self = Self(1 << 1);
+    pub(crate) const SOURCE_LINES: Self = Self(1 << 2);
     pub(crate) const BANKED_ADDR: Self = Self(1 << 6);
 
     pub(crate) const fn union(self, other: Self) -> Self {
@@ -45,6 +48,8 @@ pub(crate) struct ImportContext {
 pub(crate) struct SymbolModule {
     pub(crate) format: String,
     pub(crate) symbols: Vec<SymbolRecord>,
+    pub(crate) source_files: Vec<SourceFile>,
+    pub(crate) source_lines: Vec<SourceLine>,
     pub(crate) diagnostics: Vec<String>,
 }
 
@@ -61,12 +66,19 @@ pub(crate) fn import_symbols(
     ctx: &ImportContext,
 ) -> anyhow::Result<SymbolModule> {
     let ca65 = ca65::Ca65DbgImporter;
+    #[cfg(not(target_arch = "wasm32"))]
+    let elf = elf::ElfImporter;
     let fceux = fceux::FceuxNameListImporter;
     let gnu_nm = gnu_nm::GnuNmSymImporter;
     let rgbds = rgbds::RgbdsSymImporter;
     let nocash = nocash::NoCashSymImporter;
     let rgbds_map = rgbds_map::RgbdsMapImporter;
     let wla = wla::WlaSymImporter;
+    #[cfg(not(target_arch = "wasm32"))]
+    let importers: [&dyn SymbolImporter; 8] = [
+        &elf, &ca65, &fceux, &gnu_nm, &rgbds, &nocash, &rgbds_map, &wla,
+    ];
+    #[cfg(target_arch = "wasm32")]
     let importers: [&dyn SymbolImporter; 7] =
         [&ca65, &fceux, &gnu_nm, &rgbds, &nocash, &rgbds_map, &wla];
     let Some((confidence, importer)) = importers

@@ -38,6 +38,18 @@ impl Mapper for FfeMapper8 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let bank = ((self.bank_select >> 4) & 0x03) as usize % self.prg_bank_count_32k();
+        Some((bank * 0x8000 + (addr as usize & 0x7FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank_select >> 4)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             self.bank_select = val;
@@ -104,5 +116,12 @@ mod tests {
         mapper.cpu_write(0x8000, 0x21);
         assert_eq!(mapper.cpu_peek(0x8000), 0x02);
         assert_eq!(mapper.chr_read(0x0000), 0x01);
+    }
+
+    #[test]
+    fn reports_active_prg_rom_offsets() {
+        let mut mapper = FfeMapper8::new(prg_banks(4), chr_banks(4), Mirroring::Vertical);
+        mapper.cpu_write(0x8000, 0x20);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(2 * 0x8000 + 0x123));
     }
 }

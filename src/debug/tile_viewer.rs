@@ -1,5 +1,5 @@
-use crate::debug::TileViewerState;
 use crate::debug::types::GbGraphicsData;
+use crate::debug::{TileViewerPlatform, TileViewerRequest, TileViewerState};
 use zeff_gb_core::hardware::ppu::{
     apply_dmg_palette, cgb_palette_rgba, correct_color, decode_tile_pixel,
 };
@@ -53,6 +53,19 @@ pub(super) fn draw_tile_viewer_content(
         .data_mut(|d| d.get_persisted::<u8>(cgb_palette_index_id))
         .unwrap_or(0)
         .min(7);
+
+    if let Some(TileViewerRequest::Gb {
+        tile,
+        bank,
+        obj_palette,
+        palette,
+    }) = window_state.pending.take()
+    {
+        vram_bank = bank.min(max_bank);
+        use_obj_palette = obj_palette;
+        cgb_palette_index = palette.min(7);
+        window_state.select(TileViewerPlatform::Gb, tile.min(383));
+    }
 
     ui.horizontal(|ui| {
         ui.add_enabled(
@@ -111,7 +124,7 @@ pub(super) fn draw_tile_viewer_content(
         window_state.tracker.vram_dirty = false;
     }
 
-    super::common::show_viewer_texture(
+    let response = super::common::show_viewer_texture(
         ui,
         &mut window_state.texture,
         &window_state.image,
@@ -119,6 +132,21 @@ pub(super) fn draw_tile_viewer_content(
         "tiles.png",
         2.0,
     );
+    if response.clicked()
+        && let Some((x, y)) = super::common::hover_pixel_coords(&response, width, height)
+    {
+        window_state.select(TileViewerPlatform::Gb, (y / 8) * 16 + x / 8);
+    }
+    if window_state.selected_platform == Some(TileViewerPlatform::Gb)
+        && let Some(tile) = window_state.selected
+    {
+        super::common::draw_grid_selection(ui, &response, 16, 24, tile);
+        ui.horizontal_wrapped(|ui| {
+            ui.monospace(format!("Tile ${tile:03X}"));
+            ui.monospace(format!("VRAM bank {vram_bank}"));
+            ui.monospace(format!("address ${:04X}", 0x8000 + tile * 16));
+        });
+    }
 }
 
 struct TileRenderOptions {

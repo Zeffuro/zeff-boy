@@ -1,5 +1,7 @@
-use crate::debug::TilemapViewerState;
 use crate::debug::types::GbGraphicsData;
+use crate::debug::{
+    DebugTab, DebugUiActions, TileViewerRequest, TileViewerState, TilemapViewerState,
+};
 use zeff_gb_core::hardware::ppu::{
     Lcdc, apply_dmg_palette, cgb_palette_rgba, correct_color, decode_tile_pixel, tile_data_address,
 };
@@ -27,6 +29,8 @@ pub(super) fn draw_tilemap_viewer_content(
     ui: &mut egui::Ui,
     gfx: &GbGraphicsData,
     window_state: &mut TilemapViewerState,
+    tiles: &mut TileViewerState,
+    actions: &mut DebugUiActions,
 ) {
     let vram = &gfx.vram;
     let ppu = gfx.ppu;
@@ -155,7 +159,9 @@ pub(super) fn draw_tilemap_viewer_content(
         super::export::export_png_button(ui, "tilemap.png", &window_state.image);
     });
     egui::ScrollArea::both().show(ui, |ui| {
-        let response = ui.image((texture.id(), display_size));
+        let response = ui.add(
+            egui::Image::new((texture.id(), display_size)).sense(egui::Sense::click()),
+        );
 
         if show_viewport {
             let scale_x = response.rect.width() / width as f32;
@@ -199,29 +205,42 @@ pub(super) fn draw_tilemap_viewer_content(
             }
         }
 
-        if cgb_attr_available
-            && let Some((px, py)) = super::common::hover_pixel_coords(&response, width, height) {
+        if let Some(selected) = window_state.selected {
+            super::common::draw_grid_selection(ui, &response, 32, 32, selected);
+        }
+
+        if let Some((px, py)) = super::common::hover_pixel_coords(&response, width, height) {
                 let tile_row = py / 8;
                 let tile_col = px / 8;
                 let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
                 let tile_index = vram.get(tile_map_addr).copied().unwrap_or(0);
-                let raw_attr = vram.get(0x2000 + tile_map_addr).copied().unwrap_or(0);
+                let raw_attr = if cgb_attr_available {
+                    vram.get(0x2000 + tile_map_addr).copied().unwrap_or(0)
+                } else {
+                    0
+                };
                 let attr = decode_tile_attr(raw_attr);
+                if response.clicked() {
+                    window_state.selected = Some(tile_row * 32 + tile_col);
+                    tiles.pending = Some(TileViewerRequest::Gb {
+                        tile: tile_data_address(tile_index, tile_data_unsigned) / 16,
+                        bank: usize::from(attr.vram_bank),
+                        obj_palette: false,
+                        palette: attr.palette,
+                    });
+                    actions.focus_tab = Some(DebugTab::TileViewer);
+                }
                 ui.separator();
                 ui.monospace(format!(
-                    "Tile ({:3}, {:3}) map:{:04X} idx:{:02X} attr:{:02X} pal:{} bank:{} fx:{} fy:{} prio:{}",
-                    px,
-                    py,
+                    "Tile ({tile_col:2}, {tile_row:2}) map:{:04X} idx:{tile_index:02X} attr:{raw_attr:02X} pal:{} bank:{} fx:{} fy:{} prio:{}",
                     0x8000 + tile_map_addr,
-                    tile_index,
-                    raw_attr,
                     attr.palette,
                     attr.vram_bank,
                     if attr.flip_x { 1 } else { 0 },
                     if attr.flip_y { 1 } else { 0 },
                     if attr.priority { 1 } else { 0 },
                 ));
-            }
+        }
     });
 }
 

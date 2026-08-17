@@ -4,7 +4,24 @@ use zeff_emu_common::debug::{WatchHit, WatchType};
 
 pub struct WatchpointInfo {
     pub address: u16,
+    pub end_address: u16,
     pub watch_type: WatchType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallStackKind {
+    Call,
+    Restart,
+    Interrupt,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallStackEntry {
+    pub target: u16,
+    pub return_address: u16,
+    pub target_rom_offset: Option<usize>,
+    pub return_rom_offset: Option<usize>,
+    pub kind: CallStackKind,
 }
 
 pub struct DebugInfo {
@@ -42,8 +59,10 @@ pub struct DebugInfo {
 
     pub mem_around_pc: [(u16, u8); 32],
 
-    pub recent_ops: Vec<(u16, u8, bool)>,
+    pub recent_ops: Vec<(u16, u8, bool, Option<usize>)>,
+    pub call_stack: Vec<CallStackEntry>,
     pub breakpoints: Vec<u16>,
+    pub one_shot_breakpoints: Vec<u16>,
     pub rom_breakpoints: Vec<usize>,
     pub watchpoints: Vec<WatchpointInfo>,
     pub hit_breakpoint: Option<u16>,
@@ -103,4 +122,4 @@ pub struct RomInfoViewData {
     pub cartridge_state: CartridgeDebugInfo,
 }
 
-pub type OpcodeLog = zeff_emu_common::debug::OpcodeLog<(u16, u8, bool)>;
+pub type OpcodeLog = zeff_emu_common::debug::OpcodeLog<(u16, u8, bool, Option<usize>)>;

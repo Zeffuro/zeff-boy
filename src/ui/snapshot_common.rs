@@ -49,6 +49,7 @@ pub(crate) fn build_disassembly_view(
     current: (Address, Option<u64>),
     disassemble: impl FnOnce() -> Vec<crate::debug::DisassembledLine>,
     breakpoints_iter: impl Iterator<Item = Address>,
+    one_shot_breakpoints_iter: impl Iterator<Item = Address>,
 ) -> Option<DisassemblyView> {
     if !show {
         return None;
@@ -59,12 +60,17 @@ pub(crate) fn build_disassembly_view(
     let (current_pc, current_mapping) = current;
     let mut breakpoints: Vec<Address> = breakpoints_iter.collect();
     breakpoints.sort_unstable();
+    let mut one_shot_breakpoints: Vec<Address> = one_shot_breakpoints_iter.collect();
+    one_shot_breakpoints.sort_unstable();
     Some(DisassemblyView {
         pc: current_pc,
         mapping: current_mapping,
         is_navigation_target: false,
+        is_static_target: false,
+        location_symbol: None,
         lines: disassemble(),
         breakpoints,
+        one_shot_breakpoints,
         rom_breakpoints: Vec::new(),
         hit_rom_breakpoint: None,
     })
@@ -72,6 +78,7 @@ pub(crate) fn build_disassembly_view(
 
 pub(crate) struct DebugControlSnapshot {
     pub(crate) breakpoints: Vec<Address>,
+    pub(crate) one_shot_breakpoints: Vec<Address>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
     pub(crate) hit_breakpoint: Option<Address>,
     pub(crate) hit_watchpoint: Option<WatchHitDisplay>,
@@ -79,19 +86,24 @@ pub(crate) struct DebugControlSnapshot {
 
 pub(crate) fn build_debug_control_snapshot(
     breakpoints: impl IntoIterator<Item = Address>,
-    watchpoints: impl IntoIterator<Item = (Address, WatchType)>,
+    one_shot_breakpoints: impl IntoIterator<Item = Address>,
+    watchpoints: impl IntoIterator<Item = (Address, Address, WatchType)>,
     hit_breakpoint: Option<Address>,
     hit_watchpoint: Option<(Address, u8, u8, WatchType)>,
 ) -> DebugControlSnapshot {
     let mut breakpoints: Vec<Address> = breakpoints.into_iter().collect();
     breakpoints.sort_unstable();
+    let mut one_shot_breakpoints: Vec<Address> = one_shot_breakpoints.into_iter().collect();
+    one_shot_breakpoints.sort_unstable();
 
     DebugControlSnapshot {
         breakpoints,
+        one_shot_breakpoints,
         watchpoints: watchpoints
             .into_iter()
-            .map(|(address, watch_type)| WatchpointDisplay {
+            .map(|(address, end_address, watch_type)| WatchpointDisplay {
                 address,
+                end_address,
                 watch_type,
             })
             .collect(),
@@ -108,7 +120,7 @@ pub(crate) fn build_debug_control_snapshot(
 }
 
 pub(crate) fn normal_speed_mode_label() -> &'static str {
-    "1Ã—"
+    "1x"
 }
 
 pub(crate) fn build_memory_search(
@@ -221,14 +233,16 @@ mod tests {
             (0x4560, Some(2)),
             Vec::new,
             std::iter::empty(),
+            [Address::from(0x4560_u16)].into_iter(),
         );
-        assert!(refreshed.is_some());
+        assert_eq!(refreshed.unwrap().one_shot_breakpoints, [0x4560]);
 
         let unchanged = build_disassembly_view(
             true,
             Some((0x4560, Some(2))),
             (0x4560, Some(2)),
             Vec::new,
+            std::iter::empty(),
             std::iter::empty(),
         );
         assert!(unchanged.is_none());

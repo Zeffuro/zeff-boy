@@ -92,7 +92,17 @@ pub(super) fn draw_rom_viewer_content(
     let hex_block = ui.vertical(|ui| {
         let fmt = hex_viewer::hex_text_formats(ui, layout);
         hex_viewer::draw_hex_header(ui, "Offset   ", &fmt);
-        hex_viewer::draw_hex_grid(ui, rom_page, 6, &fmt, None, &state.tbl_map);
+        hex_viewer::draw_hex_grid(
+            ui,
+            rom_page,
+            6,
+            &fmt,
+            hex_viewer::HexGridOptions {
+                flash_ticks: None,
+                tbl_map: &state.tbl_map,
+                watched_ranges: &[],
+            },
+        );
     });
     let scrolled_start = hex_viewer::handle_scroll(
         ui,

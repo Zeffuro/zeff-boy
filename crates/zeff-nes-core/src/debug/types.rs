@@ -1,6 +1,21 @@
 use crate::hardware::cpu::registers::StatusFlags;
 
-pub type OpcodeLog = zeff_emu_common::debug::OpcodeLog<(u16, u8)>;
+pub type OpcodeLog = zeff_emu_common::debug::OpcodeLog<(u16, u8, Option<usize>)>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallStackKind {
+    Call,
+    Interrupt,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallStackEntry {
+    pub target: u16,
+    pub return_address: u16,
+    pub target_rom_offset: Option<usize>,
+    pub return_rom_offset: Option<usize>,
+    pub kind: CallStackKind,
+}
 
 #[derive(Clone)]
 pub struct NesDebugSnapshot {
@@ -32,7 +47,8 @@ pub struct NesDebugSnapshot {
 
     pub mem_around_pc: [(u16, u8); 32],
 
-    pub recent_ops: Vec<(u16, u8)>,
+    pub recent_ops: Vec<(u16, u8, Option<usize>)>,
+    pub call_stack: Vec<CallStackEntry>,
 
     pub flag_n: bool,
     pub flag_v: bool,
@@ -91,6 +107,7 @@ impl NesDebugSnapshot {
             mem_around_pc: mem,
 
             recent_ops: emu.opcode_log.recent(32),
+            call_stack: emu.call_stack.clone(),
 
             flag_n: cpu.regs.get_flag(StatusFlags::NEGATIVE),
             flag_v: cpu.regs.get_flag(StatusFlags::OVERFLOW),

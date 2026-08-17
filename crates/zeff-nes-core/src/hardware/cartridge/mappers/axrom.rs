@@ -34,6 +34,17 @@ impl Mapper for Axrom {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF).contains(&addr).then(|| {
+            let bank = self.prg_bank as usize % self.prg_bank_count();
+            bank * 0x8000 + (addr as usize & 0x7FFF)
+        })
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank)
+    }
+
     fn cpu_read_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
         match addr {
             0x4020..=0x7FFF => open_bus,

@@ -64,7 +64,10 @@ impl CheatState {
 
 pub(crate) struct BreakpointState {
     pub(crate) input: String,
+    pub(crate) input_error: Option<String>,
+    pub(crate) breakpoint_one_shot: bool,
     pub(crate) watchpoint_input: String,
+    pub(crate) watchpoint_error: Option<String>,
     pub(crate) watchpoint_type: WatchType,
 }
 
@@ -72,7 +75,10 @@ impl BreakpointState {
     pub(crate) fn new() -> Self {
         Self {
             input: String::new(),
+            input_error: None,
+            breakpoint_one_shot: false,
             watchpoint_input: String::new(),
+            watchpoint_error: None,
             watchpoint_type: WatchType::Write,
         }
     }

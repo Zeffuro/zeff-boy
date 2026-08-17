@@ -290,7 +290,7 @@ impl Graphics {
             ctx.settings.ui.theme_preset,
             ctx.settings.ui.ui_density,
             ctx.settings.ui.debug_monospace_scale,
-            ctx.settings.ui.debug_colors,
+            ctx.settings.ui.effective_debug_colors(),
         );
 
         let base_ppp = self.window.scale_factor() as f32;

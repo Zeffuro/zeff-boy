@@ -66,13 +66,18 @@ pub(crate) fn collect_gba_snapshot(
     }
 
     let disasm_target = snapshot.disasm_target.filter(|target| {
-        (0x0800_0000..=0x0DFF_FFFF).contains(&target.cpu_address)
-            && target.storage_offset < rom_bytes.len() as u64
+        target.storage_offset.is_none_or(|storage_offset| {
+            (0x0800_0000..=0x0DFF_FFFF).contains(&target.cpu_address)
+                && storage_offset < rom_bytes.len() as u64
+        })
     });
-    let thumb = emu.cpu_thumb_state();
+    let static_disasm_target = disasm_target.filter(|target| target.storage_offset.is_some());
+    let thumb = disasm_target
+        .and_then(|target| target.thumb)
+        .unwrap_or_else(|| emu.cpu_thumb_state());
     let current_disasm = disasm_target.map_or_else(
         || (emu.cpu_pc(), Some(u64::from(thumb))),
-        |target| (target.cpu_address, Some(target.storage_offset)),
+        |target| (target.cpu_address, target.storage_offset),
     );
     data.disassembly_view = super::build_disassembly_view(
         snapshot.show_disassembler,
@@ -83,7 +88,7 @@ pub(crate) fn collect_gba_snapshot(
         || {
             gba_disassemble_around(
                 |addr| {
-                    disasm_target.map_or_else(
+                    static_disasm_target.map_or_else(
                         || emu.cpu_peek8(addr),
                         |target| target_rom_byte(rom_bytes, target, addr),
                     )
@@ -95,9 +100,11 @@ pub(crate) fn collect_gba_snapshot(
             )
         },
         emu.iter_breakpoints(),
+        emu.iter_one_shot_breakpoints(),
     )
     .map(|mut view| {
         view.is_navigation_target = disasm_target.is_some();
+        view.is_static_target = static_disasm_target.is_some();
         view
     });
 
@@ -129,6 +136,7 @@ pub(crate) fn collect_gba_snapshot(
 fn target_rom_byte(rom: &[u8], target: crate::debug::DisassemblyTarget, address: u32) -> u8 {
     let offset = target
         .storage_offset
+        .expect("static GBA targets have a ROM offset")
         .saturating_add(u64::from(address.wrapping_sub(target.cpu_address)));
     usize::try_from(offset)
         .ok()

@@ -122,6 +122,38 @@ pub(crate) fn nes_palette_rgba(
     palette_lut[nes_color]
 }
 
+pub(crate) fn sega8_palette_rgba(
+    system: zeff_sega8_core::hardware::cartridge::Sega8System,
+    cram: &[u8],
+    color_index: usize,
+) -> [u8; 4] {
+    use zeff_sega8_core::hardware::cartridge::Sega8System;
+    match system {
+        Sega8System::GameGear => {
+            let base = (color_index & 0x1F) * 2;
+            let raw = u16::from_le_bytes([
+                cram.get(base).copied().unwrap_or(0),
+                cram.get(base + 1).copied().unwrap_or(0),
+            ]);
+            [
+                ((raw & 0xF) as u8) * 17,
+                (((raw >> 4) & 0xF) as u8) * 17,
+                (((raw >> 8) & 0xF) as u8) * 17,
+                255,
+            ]
+        }
+        Sega8System::MasterSystem | Sega8System::Sg1000 => {
+            let raw = cram.get(color_index & 0x1F).copied().unwrap_or(0);
+            [
+                (raw & 3) * 85,
+                ((raw >> 2) & 3) * 85,
+                ((raw >> 4) & 3) * 85,
+                255,
+            ]
+        }
+    }
+}
+
 pub(super) fn show_viewer_texture(
     ui: &mut egui::Ui,
     texture: &mut Option<egui::TextureHandle>,
@@ -141,8 +173,40 @@ pub(super) fn show_viewer_texture(
         super::export::export_png_button(ui, export_filename, image);
     });
     egui::ScrollArea::both()
-        .show(ui, |ui| ui.image((tex.id(), display_size)))
+        .show(ui, |ui| {
+            ui.add(egui::Image::new((tex.id(), display_size)).sense(egui::Sense::click()))
+        })
         .inner
+}
+
+pub(super) fn draw_grid_selection(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    columns: usize,
+    rows: usize,
+    index: usize,
+) {
+    if index >= columns * rows {
+        return;
+    }
+    let cell = egui::vec2(
+        response.rect.width() / columns as f32,
+        response.rect.height() / rows as f32,
+    );
+    let rect = egui::Rect::from_min_size(
+        response.rect.min
+            + egui::vec2(
+                (index % columns) as f32 * cell.x,
+                (index / columns) as f32 * cell.y,
+            ),
+        cell,
+    );
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(2.0, color32(debug_colors(ui).selection)),
+        egui::StrokeKind::Inside,
+    );
 }
 
 pub(super) fn persisted_checkbox(

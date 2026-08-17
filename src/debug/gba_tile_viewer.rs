@@ -1,10 +1,11 @@
-use crate::debug::TileViewerState;
 use crate::debug::types::GbaGraphicsData;
+use crate::debug::{TileViewerPlatform, TileViewerRequest, TileViewerState};
 
 pub(super) fn draw_gba_tile_viewer_content(
     ui: &mut egui::Ui,
     gfx: &GbaGraphicsData,
     window_state: &mut TileViewerState,
+    actions: &mut crate::debug::DebugUiActions,
 ) {
     let char_base_id = ui.make_persistent_id("gba_tile_char_base");
     let mut char_base = ui
@@ -29,6 +30,21 @@ pub(super) fn draw_gba_tile_viewer_content(
         .unwrap_or(0)
         .min(15);
 
+    if let Some(TileViewerRequest::Gba {
+        tile,
+        color_256: requested_color_256,
+        palette: requested_palette,
+    }) = window_state.pending.take()
+    {
+        obj_tiles = true;
+        color_256 = requested_color_256;
+        palette = requested_palette.min(15);
+        window_state.select(
+            TileViewerPlatform::Gba,
+            if color_256 { tile / 2 } else { tile },
+        );
+    }
+
     ui.horizontal(|ui| {
         ui.label("Char base:");
         for i in 0..4usize {
@@ -51,7 +67,13 @@ pub(super) fn draw_gba_tile_viewer_content(
     });
 
     let width = 16 * 8;
-    let height = 24 * 8;
+    let tile_count: usize = if obj_tiles {
+        if color_256 { 512 } else { 1024 }
+    } else {
+        384
+    };
+    let rows = tile_count.div_ceil(16);
+    let height = rows * 8;
     let signature = fold_bytes(&gfx.vram)
         ^ fold_bytes(&gfx.palette_ram).rotate_left(1)
         ^ fold_bytes(&gfx.oam).rotate_left(2)
@@ -73,7 +95,7 @@ pub(super) fn draw_gba_tile_viewer_content(
         );
     }
 
-    super::common::show_viewer_texture(
+    let response = super::common::show_viewer_texture(
         ui,
         &mut window_state.texture,
         &window_state.image,
@@ -81,6 +103,31 @@ pub(super) fn draw_gba_tile_viewer_content(
         "gba_tiles.png",
         2.0,
     );
+    if response.clicked()
+        && let Some((x, y)) = super::common::hover_pixel_coords(&response, width, height)
+    {
+        window_state.select(TileViewerPlatform::Gba, (y / 8) * 16 + x / 8);
+    }
+    if window_state.selected_platform == Some(TileViewerPlatform::Gba)
+        && let Some(tile) = window_state.selected
+    {
+        super::common::draw_grid_selection(ui, &response, 16, rows, tile);
+        let base = if obj_tiles {
+            0x1_0000
+        } else {
+            char_base * 0x4000
+        };
+        let stride = if color_256 { 64 } else { 32 };
+        ui.horizontal_wrapped(|ui| {
+            ui.monospace(format!("Tile ${tile:03X}"));
+            ui.monospace(format!("VRAM +${:05X}", base + tile * stride));
+            ui.monospace(if color_256 { "8bpp" } else { "4bpp" });
+            if ui.small_button("Open Memory").clicked() {
+                actions.memory_target = Some((0x0600_0000 + base + tile * stride) as u32);
+                actions.focus_tab = Some(crate::debug::DebugTab::MemoryViewer);
+            }
+        });
+    }
 }
 
 fn render_tiles(
@@ -97,7 +144,8 @@ fn render_tiles(
         char_base * 0x4000
     };
     let tile_stride = if color_256 { 64 } else { 32 };
-    for tile in 0..384usize {
+    let tile_count = image.size[1] / 8 * 16;
+    for tile in 0..tile_count {
         let tile_x = tile % 16;
         let tile_y = tile / 16;
         let tile_addr = base + tile * tile_stride;

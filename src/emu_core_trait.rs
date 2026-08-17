@@ -10,7 +10,19 @@ use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(crate) trait DebuggableEmulator {
     fn add_breakpoint(&mut self, addr: Address);
-    fn add_watchpoint(&mut self, addr: Address, wt: zeff_emu_common::debug::WatchType);
+    fn add_one_shot_breakpoint(&mut self, addr: Address);
+    fn add_watchpoint_range(
+        &mut self,
+        start: Address,
+        end: Address,
+        wt: zeff_emu_common::debug::WatchType,
+    );
+    fn remove_watchpoint(
+        &mut self,
+        start: Address,
+        end: Address,
+        wt: zeff_emu_common::debug::WatchType,
+    );
     fn remove_breakpoint(&mut self, addr: Address);
     fn toggle_breakpoint(&mut self, addr: Address);
     #[allow(dead_code)]

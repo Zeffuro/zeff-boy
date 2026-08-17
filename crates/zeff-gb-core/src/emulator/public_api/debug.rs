@@ -5,6 +5,9 @@ use zeff_emu_common::cheats::CheatByteTarget;
 
 impl Emulator {
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        if self.opcode_log.enabled != enabled {
+            self.call_stack.clear();
+        }
         self.opcode_log.enabled = enabled;
     }
 
@@ -26,6 +29,10 @@ impl Emulator {
         self.debug.add_breakpoint(addr);
     }
 
+    pub fn add_one_shot_breakpoint(&mut self, addr: u16) {
+        self.debug.add_one_shot_breakpoint(addr);
+    }
+
     pub fn remove_breakpoint(&mut self, addr: u16) {
         self.debug.remove_breakpoint(addr);
     }
@@ -38,8 +45,20 @@ impl Emulator {
         self.debug.add_watchpoint(addr, watch_type);
     }
 
+    pub fn add_watchpoint_range(&mut self, start: u16, end: u16, watch_type: WatchType) {
+        self.debug.add_watchpoint_range(start, end, watch_type);
+    }
+
+    pub fn remove_watchpoint(&mut self, start: u16, end: u16, watch_type: WatchType) {
+        self.debug.remove_watchpoint(start, end, watch_type);
+    }
+
     pub fn iter_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
         self.debug.iter_breakpoints()
+    }
+
+    pub fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
+        self.debug.iter_one_shot_breakpoints()
     }
 
     pub fn toggle_rom_breakpoint(&mut self, offset: usize) {
@@ -48,6 +67,12 @@ impl Emulator {
                 self.rom_breakpoints.remove(index);
             }
             Err(index) => self.rom_breakpoints.insert(index, offset),
+        }
+    }
+
+    pub fn add_rom_breakpoint(&mut self, offset: usize) {
+        if let Err(index) = self.rom_breakpoints.binary_search(&offset) {
+            self.rom_breakpoints.insert(index, offset);
         }
     }
 
@@ -77,7 +102,7 @@ impl Emulator {
         self.debug.hit_watchpoint.as_ref()
     }
 
-    pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8, bool)> {
+    pub fn recent_opcodes(&self, n: usize) -> Vec<(u16, u8, bool, Option<usize>)> {
         self.opcode_log.recent(n)
     }
 

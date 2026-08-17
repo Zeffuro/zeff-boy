@@ -82,10 +82,13 @@ impl App {
             WindowEvent::Resized(size) => {
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.resize_debugger(size.width, size.height);
-                    if gfx
-                        .debugger_window()
-                        .is_some_and(|window| !window.is_maximized())
-                    {
+                    if gfx.debugger_window().is_some_and(|window| {
+                        crate::graphics::window_geometry::can_persist_size(
+                            window,
+                            size,
+                            crate::graphics::window_geometry::DEBUGGER_MIN_SIZE,
+                        )
+                    }) {
                         self.settings.ui.debugger_window_size = [size.width, size.height];
                     }
                     if let Some(window) = gfx.debugger_window() {
@@ -98,7 +101,9 @@ impl App {
                     .gfx
                     .as_ref()
                     .and_then(crate::graphics::Graphics::debugger_window)
-                    .is_some_and(|window| !window.is_maximized())
+                    .is_some_and(|window| {
+                        crate::graphics::window_geometry::can_persist_position(window, position)
+                    })
                 {
                     self.settings.ui.debugger_window_position = Some([position.x, position.y]);
                 }
@@ -155,10 +160,13 @@ impl App {
             WindowEvent::Resized(size) => {
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.resize_settings_window(size.width, size.height);
-                    if gfx
-                        .settings_window()
-                        .is_some_and(|window| !window.is_maximized())
-                    {
+                    if gfx.settings_window().is_some_and(|window| {
+                        crate::graphics::window_geometry::can_persist_size(
+                            window,
+                            size,
+                            crate::graphics::window_geometry::SETTINGS_MIN_SIZE,
+                        )
+                    }) {
                         self.settings.ui.settings_window_size = [size.width, size.height];
                     }
                     if let Some(window) = gfx.settings_window() {
@@ -171,7 +179,9 @@ impl App {
                     .gfx
                     .as_ref()
                     .and_then(crate::graphics::Graphics::settings_window)
-                    .is_some_and(|window| !window.is_maximized())
+                    .is_some_and(|window| {
+                        crate::graphics::window_geometry::can_persist_position(window, position)
+                    })
                 {
                     self.settings.ui.settings_window_position = Some([position.x, position.y]);
                 }
@@ -233,11 +243,20 @@ impl App {
         else {
             return;
         };
+        if window.is_minimized() == Some(true) {
+            return;
+        }
         self.settings.ui.debugger_window_maximized = window.is_maximized();
-        if !window.is_maximized() {
-            let size = window.inner_size();
+        let size = window.inner_size();
+        if crate::graphics::window_geometry::can_persist_size(
+            window,
+            size,
+            crate::graphics::window_geometry::DEBUGGER_MIN_SIZE,
+        ) {
             self.settings.ui.debugger_window_size = [size.width, size.height];
-            if let Ok(position) = window.outer_position() {
+            if let Ok(position) = window.outer_position()
+                && crate::graphics::window_geometry::can_persist_position(window, position)
+            {
                 self.settings.ui.debugger_window_position = Some([position.x, position.y]);
             }
         }
@@ -252,11 +271,20 @@ impl App {
         else {
             return;
         };
+        if window.is_minimized() == Some(true) {
+            return;
+        }
         self.settings.ui.settings_window_maximized = window.is_maximized();
-        if !window.is_maximized() {
-            let size = window.inner_size();
+        let size = window.inner_size();
+        if crate::graphics::window_geometry::can_persist_size(
+            window,
+            size,
+            crate::graphics::window_geometry::SETTINGS_MIN_SIZE,
+        ) {
             self.settings.ui.settings_window_size = [size.width, size.height];
-            if let Ok(position) = window.outer_position() {
+            if let Ok(position) = window.outer_position()
+                && crate::graphics::window_geometry::can_persist_position(window, position)
+            {
                 self.settings.ui.settings_window_position = Some([position.x, position.y]);
             }
         }

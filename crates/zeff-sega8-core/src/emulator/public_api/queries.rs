@@ -55,4 +55,12 @@ impl Emulator {
     pub fn rom_hash(&self) -> [u8; 32] {
         self.rom_hash
     }
+
+    pub fn rom_offset_for_cpu_address(&self, addr: u16) -> Option<usize> {
+        self.bus.rom_offset_for_cpu_address(addr)
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        self.bus.rom_mapping_token()
+    }
 }

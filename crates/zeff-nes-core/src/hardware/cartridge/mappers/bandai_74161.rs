@@ -55,6 +55,19 @@ impl Mapper for Bandai74161 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = match addr {
+            0x8000..=0xBFFF => self.selected_prg_bank(),
+            0xC000..=0xFFFF => self.prg_bank_count_16k() - 1,
+            _ => return None,
+        };
+        Some((bank * 0x4000 + (addr as usize & 0x3FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.control >> 4)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if (0xC000..=0xC0FF).contains(&addr) {
             self.control = val & self.cpu_peek(addr);
@@ -122,6 +135,7 @@ mod tests {
 
         mapper.cpu_write(0xC000, 0x25);
         assert_eq!(mapper.cpu_peek(0x8000), 0x22);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(2 * 0x4000 + 0x123));
         assert_eq!(mapper.cpu_peek(0xC001), 0x77);
         assert_eq!(mapper.chr_read(0x0000), 0xEE);
     }

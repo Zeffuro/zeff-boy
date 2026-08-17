@@ -4,6 +4,7 @@ use super::{AddressWatchHit, AddressWatchpoint, WatchType};
 
 pub struct AddressDebugController {
     breakpoints: Vec<Address>,
+    one_shot_breakpoints: Vec<Address>,
     pub watchpoints: Vec<AddressWatchpoint>,
     pub break_on_next: bool,
     pub hit_breakpoint: Option<Address>,
@@ -32,6 +33,7 @@ impl AddressDebugController {
     pub fn new() -> Self {
         Self {
             breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
             watchpoints: Vec::new(),
             break_on_next: false,
             hit_breakpoint: None,
@@ -40,14 +42,23 @@ impl AddressDebugController {
     }
 
     pub fn add_breakpoint(&mut self, addr: Address) {
+        self.one_shot_breakpoints.retain(|&bp| bp != addr);
         if !self.breakpoints.contains(&addr) {
             self.breakpoints.push(addr);
             self.breakpoints.sort_unstable();
         }
     }
 
+    pub fn add_one_shot_breakpoint(&mut self, addr: Address) {
+        self.add_breakpoint(addr);
+        if let Err(index) = self.one_shot_breakpoints.binary_search(&addr) {
+            self.one_shot_breakpoints.insert(index, addr);
+        }
+    }
+
     pub fn remove_breakpoint(&mut self, addr: Address) {
         self.breakpoints.retain(|&bp| bp != addr);
+        self.one_shot_breakpoints.retain(|&bp| bp != addr);
     }
 
     pub fn toggle_breakpoint(&mut self, addr: Address) {
@@ -62,23 +73,43 @@ impl AddressDebugController {
         self.breakpoints.iter().copied()
     }
 
+    pub fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = Address> + '_ {
+        self.one_shot_breakpoints.iter().copied()
+    }
+
     pub fn add_watchpoint(&mut self, addr: Address, watch_type: WatchType) {
+        self.add_watchpoint_range(addr, addr, watch_type);
+    }
+
+    pub fn add_watchpoint_range(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        let (start, end) = ordered_range(start, end);
         if self
             .watchpoints
             .iter()
-            .any(|w| w.address == addr && w.watch_type == watch_type)
+            .any(|w| w.address == start && w.end_address == end && w.watch_type == watch_type)
         {
             return;
         }
         self.watchpoints.push(AddressWatchpoint {
-            address: addr,
+            address: start,
+            end_address: end,
             watch_type,
             last_value: None,
         });
     }
 
+    pub fn remove_watchpoint(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        let (start, end) = ordered_range(start, end);
+        self.watchpoints.retain(|watch| {
+            watch.address != start || watch.end_address != end || watch.watch_type != watch_type
+        });
+    }
+
     pub fn should_break(&mut self, pc: Address) -> bool {
         if self.breakpoints.binary_search(&pc).is_ok() {
+            if self.one_shot_breakpoints.binary_search(&pc).is_ok() {
+                self.remove_breakpoint(pc);
+            }
             self.hit_breakpoint = Some(pc);
             self.break_on_next = false;
             return true;
@@ -92,7 +123,7 @@ impl AddressDebugController {
 
     pub fn check_watch_read(&mut self, addr: Address, value: u8) {
         for watch in &mut self.watchpoints {
-            if watch.address == addr
+            if (watch.address..=watch.end_address).contains(&addr)
                 && matches!(watch.watch_type, WatchType::Read | WatchType::ReadWrite)
             {
                 let old_value = watch.last_value.unwrap_or(value);
@@ -110,7 +141,7 @@ impl AddressDebugController {
 
     pub fn check_watch_write(&mut self, addr: Address, old_val: u8, new_val: u8) {
         for watch in &mut self.watchpoints {
-            if watch.address == addr
+            if (watch.address..=watch.end_address).contains(&addr)
                 && matches!(watch.watch_type, WatchType::Write | WatchType::ReadWrite)
                 && old_val != new_val
             {
@@ -130,4 +161,8 @@ impl AddressDebugController {
         self.hit_breakpoint = None;
         self.hit_watchpoint = None;
     }
+}
+
+fn ordered_range(start: Address, end: Address) -> (Address, Address) {
+    (start.min(end), start.max(end))
 }

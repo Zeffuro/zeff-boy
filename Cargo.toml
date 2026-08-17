@@ -78,6 +78,7 @@ ureq = "3.3.0"
 vorbis-encoder = { version = "0.1.4", optional = true }
 nokhwa = { version = "0.10.11", optional = true, default-features = false, features = ["input-native"] }
 image = { version = "0.25.10", optional = true, default-features = false, features = ["jpeg"] }
+object = { version = "0.39.1", default-features = false, features = ["read_core", "elf", "std"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.126"

@@ -63,6 +63,14 @@ impl Emulator {
         self.cpu.pc()
     }
 
+    pub fn rom_offset_for_cpu_address(&self, addr: u32) -> Option<usize> {
+        self.bus.cartridge.rom_offset_for_address(addr)
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        self.bus.cartridge.rom_mapping_token()
+    }
+
     pub fn cpu_registers(&self) -> [u16; 8] {
         self.cpu.regs
     }

@@ -1,5 +1,3 @@
-use zeff_emu_common::address::Address;
-
 pub(super) fn gba_cpu_snapshot(
     emu: &zeff_gba_core::emulator::Emulator,
 ) -> crate::debug::CpuDebugSnapshot {
@@ -7,15 +5,12 @@ pub(super) fn gba_cpu_snapshot(
     let cpsr = emu.cpu_cpsr();
     let pc = emu.cpu_pc();
     let ppu = emu.ppu_debug_snapshot();
-    let mem_around_pc: [(Address, u8); 32] = std::array::from_fn(|i| {
-        let addr = pc.wrapping_add(i as u32);
-        (addr, emu.cpu_peek8(addr))
-    });
     let debug_controls = super::super::build_debug_control_snapshot(
         emu.iter_breakpoints(),
+        emu.iter_one_shot_breakpoints(),
         emu.debug_watchpoints()
             .iter()
-            .map(|watch| (watch.address, watch.watch_type)),
+            .map(|watch| (watch.address, watch.end_address, watch.watch_type)),
         emu.debug_hit_breakpoint(),
         emu.debug_hit_watchpoint()
             .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
@@ -68,6 +63,7 @@ pub(super) fn gba_cpu_snapshot(
             "Running"
         }
         .to_string(),
+        pc,
         cycles: emu.cpu_cycles(),
         last_opcode_line: emu.last_fetch().map_or_else(
             || "no instruction fetched yet".into(),
@@ -117,9 +113,36 @@ pub(super) fn gba_cpu_snapshot(
                 ],
             },
         ],
-        mem_around_pc,
+        io_registers: vec![crate::debug::IoRegisterDisplay {
+            name: "DISPCNT",
+            address: 0x0400_0000,
+            value: ppu.dispcnt.into(),
+            width: 2,
+            writable_mask: 0xFFF7,
+            bits: [
+                (15, "OBJ win"),
+                (14, "Win 1"),
+                (13, "Win 0"),
+                (12, "OBJ"),
+                (11, "BG3"),
+                (10, "BG2"),
+                (9, "BG1"),
+                (8, "BG0"),
+                (7, "Forced blank"),
+                (6, "OBJ 1D"),
+            ]
+            .into_iter()
+            .map(|(bit, label)| crate::debug::IoBitDisplay {
+                mask: 1 << bit,
+                label,
+            })
+            .collect(),
+        }],
         recent_opcodes,
+        call_stack: Vec::new(),
+        call_stack_available: false,
         breakpoints: debug_controls.breakpoints,
+        one_shot_breakpoints: debug_controls.one_shot_breakpoints,
         rom_breakpoints: Vec::new(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,

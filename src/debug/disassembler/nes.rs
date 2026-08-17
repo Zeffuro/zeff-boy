@@ -51,6 +51,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
             control_target: None,
             control_target_storage: None,
             control_target_symbol: None,
+            source: None,
             bytes,
             mnemonic: mn!("DB ${:02X}", opcode),
         };
@@ -94,6 +95,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
         control_target: None,
         control_target_storage: None,
         control_target_symbol: None,
+        source: None,
         bytes,
         mnemonic: rendered,
     }

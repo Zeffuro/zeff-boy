@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -12,6 +12,9 @@ use crate::settings::{Settings, VsyncMode};
 use super::FrameError;
 use super::egui_integration::EguiRenderer;
 use super::gpu::GpuContext;
+use super::window_geometry::{
+    SETTINGS_DEFAULT_SIZE, SETTINGS_MIN_SIZE, restored_position, restored_size,
+};
 
 pub(crate) struct SettingsRenderContext<'a> {
     pub(crate) settings: &'a mut Settings,
@@ -34,13 +37,22 @@ impl SettingsWindow {
         shared_gpu: &GpuContext,
         settings: &Settings,
     ) -> anyhow::Result<Self> {
-        let [width, height] = settings.ui.settings_window_size;
+        let size = restored_size(
+            settings.ui.settings_window_size,
+            SETTINGS_MIN_SIZE,
+            SETTINGS_DEFAULT_SIZE,
+        );
         let mut attrs = WindowAttributes::default()
             .with_title(format!("zeff-boy Settings v{}", env!("CARGO_PKG_VERSION")))
-            .with_inner_size(PhysicalSize::new(width.max(1), height.max(1)))
-            .with_min_inner_size(PhysicalSize::new(380, 320));
-        if let Some([x, y]) = settings.ui.settings_window_position {
-            attrs = attrs.with_position(PhysicalPosition::new(x, y));
+            .with_inner_size(size)
+            .with_min_inner_size(PhysicalSize::new(
+                SETTINGS_MIN_SIZE[0],
+                SETTINGS_MIN_SIZE[1],
+            ));
+        if let Some(position) =
+            restored_position(event_loop, settings.ui.settings_window_position, size)
+        {
+            attrs = attrs.with_position(position);
         }
         if let Some(icon) = super::Graphics::load_window_icon() {
             attrs = attrs.with_window_icon(Some(icon));
@@ -113,7 +125,7 @@ impl SettingsWindow {
             ctx.settings.ui.theme_preset,
             ctx.settings.ui.ui_density,
             ctx.settings.ui.debug_monospace_scale,
-            ctx.settings.ui.debug_colors,
+            ctx.settings.ui.effective_debug_colors(),
         );
         let target_ppp =
             self.window.scale_factor() as f32 * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);

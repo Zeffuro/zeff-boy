@@ -144,4 +144,10 @@ fn sega8_snapshot_exposes_z80_disassembly() {
             .iter()
             .any(|line| line.mnemonic.as_str() == "OUT ($7F),A")
     );
+    assert!(
+        disassembly
+            .lines
+            .iter()
+            .any(|line| line.address == 0 && line.storage_offset == Some(0))
+    );
 }

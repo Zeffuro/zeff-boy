@@ -1,7 +1,8 @@
 use super::{CYCLES_PER_FRAME_DOUBLE, CYCLES_PER_FRAME_NORMAL, Emulator};
+use crate::debug::{CallStackEntry, CallStackKind};
 use crate::hardware::bus::CpuAccessTraceEvent;
-use crate::hardware::types::CpuState;
 use crate::hardware::types::hardware_mode::HardwareMode;
+use crate::hardware::types::{CpuState, ImeState};
 
 impl Emulator {
     pub fn cycles_per_frame(mode: HardwareMode) -> u64 {
@@ -24,9 +25,29 @@ impl Emulator {
         }
 
         let pc_before = self.cpu.pc;
+        let sp_before = self.cpu.sp;
         let opcode_at_pc = self.bus.read_byte(pc_before);
+        let rom_offset = self.bus.cartridge.rom_offset(pc_before);
+        let call_target = u16::from_le_bytes([
+            self.bus.read_byte(pc_before.wrapping_add(1)),
+            self.bus.read_byte(pc_before.wrapping_add(2)),
+        ]);
+        let interrupt_pending = self.cpu.ime == ImeState::Enabled
+            && if self.cpu.running == CpuState::Halted {
+                self.bus.pending_interrupts_for_halt() != 0
+            } else {
+                self.bus.pending_interrupts_for_cpu() != 0
+            };
 
         self.cpu.step(&mut self.bus);
+
+        self.update_call_stack(
+            pc_before,
+            sp_before,
+            opcode_at_pc,
+            call_target,
+            interrupt_pending,
+        );
 
         self.hardware_mode = self.bus.hardware_mode;
 
@@ -73,7 +94,7 @@ impl Emulator {
             (opcode_at_pc, false)
         };
 
-        self.opcode_log.push((pc_before, op, cb_prefix));
+        self.opcode_log.push((pc_before, op, cb_prefix, rom_offset));
         self.last_opcode = op;
         self.last_opcode_pc = pc_before;
 
@@ -84,6 +105,65 @@ impl Emulator {
         );
 
         (pc_before, op, cb_prefix, self.cpu.last_step_cycles)
+    }
+
+    fn update_call_stack(
+        &mut self,
+        pc_before: u16,
+        sp_before: u16,
+        opcode: u8,
+        call_target: u16,
+        interrupt_pending: bool,
+    ) {
+        let pc_after = self.cpu.pc;
+        let sp_after = self.cpu.sp;
+        let pushed = sp_after == sp_before.wrapping_sub(2);
+        let popped = sp_after == sp_before.wrapping_add(2);
+
+        let frame = if interrupt_pending && pushed {
+            Some((pc_after, pc_before, CallStackKind::Interrupt))
+        } else if pushed && matches!(opcode, 0xC4 | 0xCC | 0xCD | 0xD4 | 0xDC) {
+            (pc_after == call_target).then_some((
+                call_target,
+                pc_before.wrapping_add(3),
+                CallStackKind::Call,
+            ))
+        } else if pushed
+            && matches!(
+                opcode,
+                0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF
+            )
+        {
+            Some((pc_after, pc_before.wrapping_add(1), CallStackKind::Restart))
+        } else {
+            None
+        };
+
+        if let Some((target, return_address, kind)) = frame {
+            if self.call_stack.len() == 256 {
+                self.call_stack.remove(0);
+            }
+            self.call_stack.push(CallStackEntry {
+                target,
+                return_address,
+                target_rom_offset: self.bus.cartridge.rom_offset(target),
+                return_rom_offset: self.bus.cartridge.rom_offset(return_address),
+                kind,
+            });
+            return;
+        }
+
+        if popped && matches!(opcode, 0xC0 | 0xC8 | 0xC9 | 0xD0 | 0xD8 | 0xD9) {
+            if let Some(index) = self
+                .call_stack
+                .iter()
+                .rposition(|frame| frame.return_address == pc_after)
+            {
+                self.call_stack.truncate(index);
+            } else {
+                self.call_stack.clear();
+            }
+        }
     }
 
     pub fn step_until_frame_or<F>(&mut self, mut should_stop: F)
@@ -215,6 +295,7 @@ impl Emulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debug::CallStackKind;
     use crate::hardware::types::hardware_mode::HardwareModePreference;
 
     #[test]
@@ -228,5 +309,43 @@ mod tests {
 
         emu.step_frame();
         assert_eq!(emu.ppu_ly(), 144);
+    }
+
+    #[test]
+    fn call_stack_tracks_call_and_return() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100..0x103].copy_from_slice(&[0xCD, 0x05, 0x01]);
+        rom[0x105] = 0xC9;
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        emu.set_opcode_log_enabled(true);
+
+        emu.step_instruction();
+        assert_eq!(emu.call_stack.len(), 1);
+        assert_eq!(emu.call_stack[0].target, 0x0105);
+        assert_eq!(emu.call_stack[0].return_address, 0x0103);
+        assert_eq!(emu.call_stack[0].kind, CallStackKind::Call);
+
+        emu.step_instruction();
+        assert!(emu.call_stack.is_empty());
+    }
+
+    #[test]
+    fn call_stack_tracks_interrupt_and_reti() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x40] = 0xD9;
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        emu.set_opcode_log_enabled(true);
+        emu.cpu.ime = ImeState::Enabled;
+        emu.bus.ie = 1;
+        emu.bus.if_reg = 1;
+
+        emu.step_instruction();
+        assert_eq!(emu.call_stack.len(), 1);
+        assert_eq!(emu.call_stack[0].target, 0x0040);
+        assert_eq!(emu.call_stack[0].return_address, 0x0100);
+        assert_eq!(emu.call_stack[0].kind, CallStackKind::Interrupt);
+
+        emu.step_instruction();
+        assert!(emu.call_stack.is_empty());
     }
 }

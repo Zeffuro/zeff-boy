@@ -47,6 +47,7 @@ impl Emulator {
             cycle_count: 0,
             frame_count: 0,
             opcode_log: OpcodeLog::new(),
+            call_stack: Vec::new(),
             last_opcode: 0,
             last_opcode_pc: 0,
             debug: DebugController::new(),

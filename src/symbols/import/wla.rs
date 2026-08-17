@@ -2,8 +2,8 @@ use zeff_emu_common::system::System;
 
 use super::{ImportCapabilities, ImportContext, SymbolImporter, SymbolModule, TargetInfo};
 use crate::symbols::{
-    Confidence, CpuLocation, ExecMode, Provenance, ProvenanceKind, StorageLocation, SymbolId,
-    SymbolKind, SymbolLocation, SymbolRecord, SymbolScope,
+    Confidence, CpuLocation, ExecMode, Provenance, ProvenanceKind, SourceFile, SourceLine,
+    StorageLocation, SymbolId, SymbolKind, SymbolLocation, SymbolRecord, SymbolScope,
 };
 
 pub(crate) struct WlaSymImporter;
@@ -21,13 +21,19 @@ impl SymbolImporter for WlaSymImporter {
             return 0;
         };
         let has_information = text.lines().any(|line| line.trim() == "[information]");
-        let has_labels = text.lines().any(|line| line.trim() == "[labels]");
-        u8::from(has_information && has_labels) * 90
+        let has_content = text.lines().any(|line| {
+            matches!(
+                line.trim(),
+                "[labels]" | "[source files v2]" | "[addr-to-line mapping v2]"
+            )
+        });
+        u8::from(has_information && has_content) * 90
     }
 
     fn capabilities(&self) -> ImportCapabilities {
         ImportCapabilities::SYMBOLS
             .union(ImportCapabilities::SECTIONS)
+            .union(ImportCapabilities::SOURCE_LINES)
             .union(ImportCapabilities::BANKED_ADDR)
     }
 
@@ -35,6 +41,8 @@ impl SymbolImporter for WlaSymImporter {
         let text = std::str::from_utf8(data)?;
         let mut entries: Vec<Entry<'_>> = Vec::new();
         let mut sections = Vec::new();
+        let mut source_files = Vec::new();
+        let mut source_lines = Vec::new();
         let mut module = SymbolModule::default();
         let mut section = "";
         for (index, raw_line) in text.lines().enumerate() {
@@ -68,6 +76,20 @@ impl SymbolImporter for WlaSymImporter {
                     None => module
                         .diagnostics
                         .push(format!("line {}: ignored malformed WLA section", index + 1)),
+                },
+                "source files v2" => match parse_source_file(line) {
+                    Some(source) => source_files.push(source),
+                    None => module.diagnostics.push(format!(
+                        "line {}: ignored malformed WLA source file",
+                        index + 1
+                    )),
+                },
+                "addr-to-line mapping v2" => match parse_source_line(line) {
+                    Some(source) => source_lines.push(source),
+                    None => module.diagnostics.push(format!(
+                        "line {}: ignored malformed WLA source line",
+                        index + 1
+                    )),
                 },
                 _ => {}
             }
@@ -126,6 +148,69 @@ impl SymbolImporter for WlaSymImporter {
                 kind,
             ));
         }
+        source_lines.sort_by_key(|source| (source.bank, source.rom, source.cpu));
+        for (index, source) in source_lines.iter().enumerate() {
+            let Some(source_file) = source_files
+                .iter()
+                .position(|file| file.object == source.object && file.file == source.file)
+            else {
+                module.diagnostics.push(format!(
+                    "ignored WLA source line {} with unknown source file {:04X}:{:04X}",
+                    source.line, source.object, source.file
+                ));
+                continue;
+            };
+            let next_offset = source_lines
+                .get(index + 1)
+                .filter(|next| next.bank == source.bank && next.rom > source.rom)
+                .map(|next| u64::from(next.rom - source.rom));
+            let section_remaining = sections
+                .iter()
+                .find(|section| {
+                    source.rom >= section.rom
+                        && source.rom < section.rom.saturating_add(section.size)
+                })
+                .map(|section| {
+                    u64::from(
+                        section
+                            .rom
+                            .saturating_add(section.size)
+                            .saturating_sub(source.rom),
+                    )
+                });
+            let size = match (next_offset, section_remaining) {
+                (Some(next), Some(remaining)) => next.min(remaining),
+                (Some(next), None) => next,
+                (None, Some(remaining)) => remaining,
+                (None, None) => 1,
+            }
+            .max(1);
+            module.source_lines.push(SourceLine {
+                location: SymbolLocation {
+                    cpu: Some(CpuLocation {
+                        space: ctx.cpu_space,
+                        address: u64::from(source.cpu),
+                    }),
+                    storage: Some(StorageLocation {
+                        image: ctx.image,
+                        region: ctx.rom_region,
+                        offset: u64::from(source.rom),
+                    }),
+                    bank: Some(source.bank),
+                    exec_mode: exec_mode(ctx.target.system),
+                },
+                size,
+                source_file,
+                line: source.line,
+            });
+        }
+        module.source_files = source_files
+            .into_iter()
+            .map(|source| SourceFile {
+                path: source.path.to_owned(),
+                crc32: Some(source.crc32),
+            })
+            .collect();
         Ok(module)
     }
 }
@@ -175,6 +260,22 @@ struct Section<'a> {
     name: &'a str,
 }
 
+struct SourceFileEntry<'a> {
+    object: u16,
+    file: u16,
+    crc32: u32,
+    path: &'a str,
+}
+
+struct SourceLineEntry {
+    rom: u32,
+    bank: u32,
+    cpu: u16,
+    object: u16,
+    file: u16,
+    line: u32,
+}
+
 fn parse_banked(line: &str) -> Option<(u32, u16, &str)> {
     let (location, name) = line.split_once(char::is_whitespace)?;
     let (bank, address) = location.split_once(':')?;
@@ -212,6 +313,53 @@ fn parse_banked_pair(value: &str) -> Option<(u32, u16)> {
         u32::from_str_radix(bank, 16).ok()?,
         u16::from_str_radix(address, 16).ok()?,
     ))
+}
+
+fn parse_source_file(line: &str) -> Option<SourceFileEntry<'_>> {
+    let mut fields = line
+        .splitn(3, char::is_whitespace)
+        .filter(|field| !field.is_empty());
+    let (object, file) = parse_u16_pair(fields.next()?)?;
+    let crc32 = u32::from_str_radix(fields.next()?, 16).ok()?;
+    let path = fields.next()?.trim();
+    (!path.is_empty()).then_some(SourceFileEntry {
+        object,
+        file,
+        crc32,
+        path,
+    })
+}
+
+fn parse_source_line(line: &str) -> Option<SourceLineEntry> {
+    let mut fields = line.split_whitespace();
+    let rom = u32::from_str_radix(fields.next()?, 16).ok()?;
+    let (bank, _) = parse_banked_pair(fields.next()?)?;
+    let cpu = u16::from_str_radix(fields.next()?, 16).ok()?;
+    let (object, file, line) = parse_source_triplet(fields.next()?)?;
+    fields.next().is_none().then_some(SourceLineEntry {
+        rom,
+        bank,
+        cpu,
+        object,
+        file,
+        line,
+    })
+}
+
+fn parse_u16_pair(value: &str) -> Option<(u16, u16)> {
+    let (first, second) = value.split_once(':')?;
+    Some((
+        u16::from_str_radix(first, 16).ok()?,
+        u16::from_str_radix(second, 16).ok()?,
+    ))
+}
+
+fn parse_source_triplet(value: &str) -> Option<(u16, u16, u32)> {
+    let mut fields = value.split(':');
+    let object = u16::from_str_radix(fields.next()?, 16).ok()?;
+    let file = u16::from_str_radix(fields.next()?, 16).ok()?;
+    let line = u32::from_str_radix(fields.next()?, 16).ok()?;
+    fields.next().is_none().then_some((object, file, line))
 }
 
 fn resolve_storage(
@@ -335,6 +483,39 @@ mod tests {
         assert_eq!(module.symbols[0].location.cpu.unwrap().address, 0x8000);
         assert!(module.symbols[0].location.storage.is_none());
         assert_eq!(module.symbols[0].location.exec_mode, ExecMode::Mos6502);
+    }
+
+    #[test]
+    fn imports_wla_v2_source_lines() {
+        let module = WlaSymImporter
+            .import(
+                b"[information]\nversion 3\n[source files v2]\n0001:0002 12345678 src/player.asm\n[addr-to-line mapping v2]\n00008560 02:4560 4560 0001:0002:0000002A",
+                &context(System::Gb),
+            )
+            .unwrap();
+        assert_eq!(module.source_files.len(), 1);
+        assert_eq!(module.source_files[0].path, "src/player.asm");
+        assert_eq!(module.source_files[0].crc32, Some(0x1234_5678));
+        assert_eq!(module.source_lines.len(), 1);
+        assert_eq!(module.source_lines[0].line, 42);
+        assert_eq!(module.source_lines[0].size, 1);
+        assert_eq!(
+            module.source_lines[0].location.storage.unwrap().offset,
+            0x8560
+        );
+    }
+
+    #[test]
+    fn source_lines_cover_until_the_next_mapping() {
+        let module = WlaSymImporter
+            .import(
+                b"[information]\nversion 3\n[source files v2]\n0001:0002 12345678 src/player.asm\n[addr-to-line mapping v2]\n00008560 02:4560 4560 0001:0002:0000002A\n00008564 02:4564 4564 0001:0002:0000002B",
+                &context(System::Gb),
+            )
+            .unwrap();
+
+        assert_eq!(module.source_lines[0].size, 4);
+        assert_eq!(module.source_lines[1].size, 1);
     }
 
     #[test]

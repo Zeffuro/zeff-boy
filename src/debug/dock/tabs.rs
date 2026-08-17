@@ -5,6 +5,7 @@ use egui_dock::DockState;
 pub(crate) enum DebugTab {
     GameView,
     CpuDebug,
+    HardwareIo,
     InputViewer,
     ApuViewer,
     RomInfo,
@@ -18,6 +19,9 @@ pub(crate) enum DebugTab {
     Breakpoints,
     Cheats,
     RomViewer,
+    SourceViewer,
+    ExecutionHistory,
+    CallStack,
     Mods,
     SymbolBrowser,
     Console,
@@ -57,6 +61,10 @@ impl DebugTab {
         match self {
             DebugTab::GameView => TabDataRequirements::default(),
             DebugTab::CpuDebug => TabDataRequirements {
+                needs_debug_info: true,
+                ..Default::default()
+            },
+            DebugTab::HardwareIo => TabDataRequirements {
                 needs_debug_info: true,
                 ..Default::default()
             },
@@ -113,6 +121,19 @@ impl DebugTab {
                 needs_rom_page: true,
                 ..Default::default()
             },
+            DebugTab::SourceViewer => TabDataRequirements {
+                needs_debug_info: true,
+                needs_disassembly: true,
+                ..Default::default()
+            },
+            DebugTab::ExecutionHistory => TabDataRequirements {
+                needs_debug_info: true,
+                ..Default::default()
+            },
+            DebugTab::CallStack => TabDataRequirements {
+                needs_debug_info: true,
+                ..Default::default()
+            },
             DebugTab::Mods => TabDataRequirements::default(),
             DebugTab::SymbolBrowser => TabDataRequirements::default(),
             DebugTab::Console => TabDataRequirements {
@@ -140,13 +161,21 @@ pub(crate) fn compute_tab_requirements(dock: &DockState<DebugTab>) -> TabDataReq
 
 const TAB_META: &[(DebugTab, &str, &str)] = &[
     (DebugTab::GameView, "Game", "GameView"),
-    (DebugTab::CpuDebug, "CPU / Debug", "CpuDebug"),
+    (DebugTab::CpuDebug, "CPU", "CpuDebug"),
+    (DebugTab::HardwareIo, "Hardware / I/O", "HardwareIo"),
     (DebugTab::InputViewer, "Input", "InputViewer"),
     (DebugTab::ApuViewer, "APU / Sound", "ApuViewer"),
     (DebugTab::RomInfo, "ROM Info", "RomInfo"),
     (DebugTab::Disassembler, "Disassembler", "Disassembler"),
     (DebugTab::MemoryViewer, "Memory Viewer", "MemoryViewer"),
     (DebugTab::RomViewer, "ROM Viewer", "RomViewer"),
+    (DebugTab::SourceViewer, "Source", "SourceViewer"),
+    (
+        DebugTab::ExecutionHistory,
+        "Execution History",
+        "ExecutionHistory",
+    ),
+    (DebugTab::CallStack, "Call Stack", "CallStack"),
     (DebugTab::TileViewer, "Tile Data", "TileViewer"),
     (DebugTab::TilemapViewer, "Tile Map", "TilemapViewer"),
     (DebugTab::OamViewer, "OAM / Sprites", "OamViewer"),
@@ -240,6 +269,16 @@ mod tests {
 
         let reqs = compute_tab_requirements(&dock);
 
+        assert!(reqs.needs_debug_info);
+    }
+
+    #[test]
+    fn source_view_requests_mapping_and_breakpoint_state() {
+        let dock = DockState::new(vec![DebugTab::SourceViewer]);
+
+        let reqs = compute_tab_requirements(&dock);
+
+        assert!(reqs.needs_disassembly);
         assert!(reqs.needs_debug_info);
     }
 }

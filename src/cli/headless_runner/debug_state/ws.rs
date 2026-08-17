@@ -41,6 +41,8 @@ pub(in crate::cli::headless_runner) fn ws_debug_state(
             serde_json::json!({
                 "address": watch.address,
                 "address_hex": format!("{:05X}", watch.address),
+                "end_address": watch.end_address,
+                "end_address_hex": format!("{:05X}", watch.end_address),
                 "type": format!("{:?}", watch.watch_type),
                 "last_value": watch.last_value,
             })

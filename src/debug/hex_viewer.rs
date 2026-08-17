@@ -10,7 +10,14 @@ pub(super) struct HexFormats {
     pub normal: egui::TextFormat,
     pub dim: egui::TextFormat,
     pub flash: egui::TextFormat,
+    pub watch: egui::TextFormat,
     layout: HexLayout,
+}
+
+pub(super) struct HexGridOptions<'a> {
+    pub(super) flash_ticks: Option<&'a [u8]>,
+    pub(super) tbl_map: &'a HashMap<u8, String>,
+    pub(super) watched_ranges: &'a [(u32, u32)],
 }
 
 #[derive(Clone, Copy)]
@@ -61,6 +68,11 @@ pub(super) fn hex_text_formats(ui: &egui::Ui, layout: HexLayout) -> HexFormats {
             color: color32(colors.changed),
             ..Default::default()
         },
+        watch: egui::TextFormat {
+            font_id: debug_mono_font(ui),
+            color: color32(colors.watchpoint),
+            ..Default::default()
+        },
         layout,
     }
 }
@@ -85,8 +97,7 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
     page: &[(A, u8)],
     addr_width: usize,
     fmt: &HexFormats,
-    flash_ticks: Option<&[u8]>,
-    tbl_map: &HashMap<u8, String>,
+    options: HexGridOptions<'_>,
 ) {
     let layout = fmt.layout;
     let mut scratch = String::with_capacity(12);
@@ -119,8 +130,24 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
                 job.append("-- ", 0.0, fmt.dim.clone());
             } else {
                 let value = page[idx].1;
-                let has_flash = flash_ticks.and_then(|ft| ft.get(idx)).copied().unwrap_or(0) > 0;
-                let text_fmt = if has_flash { &fmt.flash } else { &fmt.normal };
+                let has_flash = options
+                    .flash_ticks
+                    .and_then(|ft| ft.get(idx))
+                    .copied()
+                    .unwrap_or(0)
+                    > 0;
+                let address = page[idx].0.into();
+                let watched = options
+                    .watched_ranges
+                    .iter()
+                    .any(|&(start, end)| (start..=end).contains(&address));
+                let text_fmt = if has_flash {
+                    &fmt.flash
+                } else if watched {
+                    &fmt.watch
+                } else {
+                    &fmt.normal
+                };
                 scratch.clear();
                 let _ = write!(scratch, "{:02X} ", value);
                 job.append(&scratch, 0.0, text_fmt.clone());
@@ -133,10 +160,10 @@ pub(super) fn draw_hex_grid<A: Copy + Into<u32>>(
                 let idx = row_start + col;
                 if idx < page.len() {
                     let byte = page[idx].1;
-                    let ch = super::common::tbl_lookup(byte, tbl_map);
+                    let ch = super::common::tbl_lookup(byte, options.tbl_map);
                     let text_fmt = if ch.len() == 1
                         && ch.as_bytes()[0] == b'.'
-                        && !tbl_map.contains_key(&byte)
+                        && !options.tbl_map.contains_key(&byte)
                     {
                         &fmt.dim
                     } else {

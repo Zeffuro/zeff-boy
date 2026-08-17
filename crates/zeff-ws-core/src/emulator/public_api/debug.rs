@@ -49,6 +49,10 @@ impl Emulator {
         self.debug.add_breakpoint(addr);
     }
 
+    pub fn add_one_shot_breakpoint(&mut self, addr: Address) {
+        self.debug.add_one_shot_breakpoint(addr);
+    }
+
     pub fn remove_breakpoint(&mut self, addr: Address) {
         self.debug.remove_breakpoint(addr);
     }
@@ -61,8 +65,20 @@ impl Emulator {
         self.debug.add_watchpoint(addr, watch_type);
     }
 
+    pub fn add_watchpoint_range(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        self.debug.add_watchpoint_range(start, end, watch_type);
+    }
+
+    pub fn remove_watchpoint(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        self.debug.remove_watchpoint(start, end, watch_type);
+    }
+
     pub fn iter_breakpoints(&self) -> impl Iterator<Item = Address> + '_ {
         self.debug.iter_breakpoints()
+    }
+
+    pub fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = Address> + '_ {
+        self.debug.iter_one_shot_breakpoints()
     }
 
     pub fn debug_watchpoints(&self) -> &[AddressWatchpoint] {

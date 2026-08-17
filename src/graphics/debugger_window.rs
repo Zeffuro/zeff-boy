@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -10,6 +10,9 @@ use crate::settings::{Settings, VsyncMode};
 
 use super::egui_integration::EguiRenderer;
 use super::gpu::GpuContext;
+use super::window_geometry::{
+    DEBUGGER_DEFAULT_SIZE, DEBUGGER_MIN_SIZE, restored_position, restored_size,
+};
 use super::{AspectRatioMode, FrameError};
 
 pub(crate) struct DebuggerRenderContext<'a> {
@@ -36,12 +39,22 @@ impl DebuggerWindow {
         shared_gpu: &GpuContext,
         settings: &Settings,
     ) -> anyhow::Result<Self> {
-        let [width, height] = settings.ui.debugger_window_size;
+        let size = restored_size(
+            settings.ui.debugger_window_size,
+            DEBUGGER_MIN_SIZE,
+            DEBUGGER_DEFAULT_SIZE,
+        );
         let mut attrs = WindowAttributes::default()
             .with_title(format!("zeff-boy Debugger v{}", env!("CARGO_PKG_VERSION")))
-            .with_inner_size(PhysicalSize::new(width.max(1), height.max(1)));
-        if let Some([x, y]) = settings.ui.debugger_window_position {
-            attrs = attrs.with_position(PhysicalPosition::new(x, y));
+            .with_inner_size(size)
+            .with_min_inner_size(PhysicalSize::new(
+                DEBUGGER_MIN_SIZE[0],
+                DEBUGGER_MIN_SIZE[1],
+            ));
+        if let Some(position) =
+            restored_position(event_loop, settings.ui.debugger_window_position, size)
+        {
+            attrs = attrs.with_position(position);
         }
         if let Some(icon) = super::Graphics::load_window_icon() {
             attrs = attrs.with_window_icon(Some(icon));
@@ -117,7 +130,7 @@ impl DebuggerWindow {
             ctx.settings.ui.theme_preset,
             ctx.settings.ui.ui_density,
             ctx.settings.ui.debug_monospace_scale,
-            ctx.settings.ui.debug_colors,
+            ctx.settings.ui.effective_debug_colors(),
         );
         let target_ppp =
             self.window.scale_factor() as f32 * ctx.settings.ui.ui_scale.clamp(0.5, 3.0);
@@ -159,9 +172,14 @@ impl DebuggerWindow {
                         }
                     });
                     ui.menu_button("Layout", |ui| {
-                        if ui.button("Reset").clicked() {
-                            *ctx.dock_state = crate::debug::create_debugger_dock_state();
-                            ui.close();
+                        for preset in crate::debug::DebugWorkspacePreset::ALL {
+                            if ui.button(preset.label()).clicked() {
+                                *ctx.dock_state = crate::debug::create_workspace_dock_state(
+                                    crate::settings::DebugPresentation::GameAndDebugger,
+                                    preset,
+                                );
+                                ui.close();
+                            }
                         }
                     });
                 });

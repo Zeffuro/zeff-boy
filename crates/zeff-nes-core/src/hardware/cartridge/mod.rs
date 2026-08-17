@@ -28,6 +28,12 @@ const MAPPER3_NO_BUS_CONFLICT_PRG_CRC32S: &[u32] = &[0xF2A9_F64D, 0xE366_4231];
 
 pub(crate) trait Mapper: Send {
     fn cpu_peek(&self, addr: u16) -> u8;
+    fn cpu_rom_offset(&self, _addr: u16) -> Option<usize> {
+        None
+    }
+    fn rom_mapping_token(&self) -> u64 {
+        0
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         self.cpu_peek(addr)
     }
@@ -628,6 +634,14 @@ impl Cartridge {
     #[inline]
     pub fn cpu_peek(&self, addr: u16) -> u8 {
         self.mapper.cpu_peek(addr)
+    }
+
+    pub fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        self.mapper.cpu_rom_offset(addr)
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        self.mapper.rom_mapping_token()
     }
 
     #[inline]

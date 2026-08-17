@@ -6,17 +6,21 @@ mod viewers;
 
 pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
 pub(crate) use data_models::{
-    ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
-    GbGraphicsData, GbaGraphicsData, InputDebugInfo, NesGraphicsData, OamDebugInfo,
-    PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug, RecentOpcodeDisplay, RomDebugInfo,
-    RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
+    ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,
+    CpuDebugViewState, DebugSection, GbGraphicsData, GbaGraphicsData, InputDebugInfo, IoBitDisplay,
+    IoRegisterDisplay, NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug,
+    PaletteRowDebug, RecentOpcodeDisplay, RomDebugInfo, RomInfoSection, Sega8GraphicsData,
+    WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use memory::{
     MemoryBookmark, MemoryByteDiff, MemorySearchMode, MemorySearchResult, MemoryViewerState,
     RomSearchResult, RomViewerState,
 };
 pub(crate) use mods::ModState;
-pub(crate) use viewers::{PerfInfo, TileViewerState, TilemapViewerState};
+pub(crate) use viewers::{
+    OamViewerState, PerfInfo, SourceViewerState, TileViewerPlatform, TileViewerRequest,
+    TileViewerState, TilemapViewerState,
+};
 
 use super::DisassemblyView;
 use zeff_emu_common::address::Address;
@@ -41,6 +45,8 @@ pub(crate) struct DebugDataRefs<'a> {
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction, WonderSwanButton};
 
 pub(crate) struct DebugWindowState {
+    pub(crate) cpu_view: CpuDebugViewState,
+    pub(crate) hardware_view: CpuDebugViewState,
     pub(crate) memory: MemoryViewerState,
     pub(crate) bp: BreakpointState,
     pub(crate) rebinding_action: Option<InputBindingAction>,
@@ -58,7 +64,9 @@ pub(crate) struct DebugWindowState {
     pub(crate) disasm_forward: Vec<Option<super::DisassemblyTarget>>,
     pub(crate) tilemap: TilemapViewerState,
     pub(crate) tiles: TileViewerState,
+    pub(crate) oam: OamViewerState,
     pub(crate) rom_viewer: RomViewerState,
+    pub(crate) source_viewer: SourceViewerState,
     pub(crate) symbol_browser: SymbolBrowserState,
     pub(crate) console: super::DebugConsoleState,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
@@ -79,6 +87,8 @@ pub(crate) struct DebugWindowState {
 impl DebugWindowState {
     pub(crate) fn new() -> Self {
         Self {
+            cpu_view: CpuDebugViewState::default(),
+            hardware_view: CpuDebugViewState::default(),
             memory: MemoryViewerState::new(),
             bp: BreakpointState::new(),
             rebinding_action: None,
@@ -96,7 +106,9 @@ impl DebugWindowState {
             disasm_forward: Vec::new(),
             tilemap: TilemapViewerState::new(),
             tiles: TileViewerState::new(),
+            oam: OamViewerState::new(),
             rom_viewer: RomViewerState::new(),
+            source_viewer: SourceViewerState::default(),
             symbol_browser: SymbolBrowserState::default(),
             console: super::DebugConsoleState::default(),
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),

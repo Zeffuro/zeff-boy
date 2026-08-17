@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::emu_backend::ActiveSystem;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::debug::WatchType;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MemorySearchMode {
@@ -112,6 +113,9 @@ pub(crate) struct MemoryViewerState {
     pub(crate) pattern_max_results: usize,
     pub(crate) pattern_results: Vec<MemorySearchResult>,
     pub(crate) pattern_error: Option<String>,
+    pub(crate) watch_start_input: String,
+    pub(crate) watch_end_input: String,
+    pub(crate) watch_type: WatchType,
 }
 
 impl MemoryViewerState {
@@ -144,6 +148,9 @@ impl MemoryViewerState {
             pattern_max_results: 64,
             pattern_results: Vec::new(),
             pattern_error: None,
+            watch_start_input: String::new(),
+            watch_end_input: String::new(),
+            watch_type: WatchType::Write,
         }
     }
 
@@ -161,6 +168,8 @@ impl MemoryViewerState {
         self.flash_ticks.fill(0);
         self.edit_addr = None;
         self.inspector_addr = None;
+        self.watch_start_input.clear();
+        self.watch_end_input.clear();
     }
 }
 

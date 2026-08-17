@@ -9,9 +9,10 @@ use super::constants::{
     IO_PORT_H_COUNTER, IO_PORT_MEMORY_CONTROL, IO_PORT_PSG, IO_PORT_PSG_MIRROR_MASK,
     IO_PORT_PSG_MIRROR_VALUE, IO_PORT_TMS9918_CONTROL, IO_PORT_TMS9918_DATA, IO_PORT_V_COUNTER,
     IO_PORT_VDP_CONTROL, IO_PORT_VDP_CONTROL_MIRROR_VALUE, IO_PORT_VDP_DATA,
-    IO_PORT_VDP_DATA_MIRROR_VALUE, IO_PORT_VDP_MIRROR_MASK, SG_WORK_RAM_MASK, SG_WORK_RAM_SIZE,
-    SLOT_SIZE, SLOT0_END, SLOT0_START, SLOT1_END, SLOT1_START, SLOT2_END, SLOT2_START,
-    SMS_CARTRIDGE_RAM_SIZE, SMS_WORK_RAM_SIZE, WORK_RAM_END, WORK_RAM_MASK, WORK_RAM_START,
+    IO_PORT_VDP_DATA_MIRROR_VALUE, IO_PORT_VDP_MIRROR_MASK, ROM_PAGE_8K_SIZE, SG_WORK_RAM_MASK,
+    SG_WORK_RAM_SIZE, SLOT_SIZE, SLOT0_END, SLOT0_START, SLOT1_END, SLOT1_START, SLOT2_END,
+    SLOT2_START, SMS_CARTRIDGE_RAM_SIZE, SMS_WORK_RAM_SIZE, WORK_RAM_END, WORK_RAM_MASK,
+    WORK_RAM_START,
 };
 use super::input::{ControllerPort, Input};
 pub use super::mapper::SegaMapper;
@@ -125,6 +126,55 @@ impl Bus {
 
     pub fn mapper(&self) -> SegaMapper {
         self.mapper
+    }
+
+    pub fn rom_offset_for_cpu_address(&self, addr: u16) -> Option<usize> {
+        if !self.cartridge_enabled_for_memory() {
+            return None;
+        }
+        let offset = if let Some((page, page_offset, reverse_bits)) = self
+            .mapper
+            .rom_page_8k_mapping(addr, self.cartridge.rom_page_8k_count())
+        {
+            (!reverse_bits).then(|| usize::from(page) * ROM_PAGE_8K_SIZE + usize::from(page_offset))
+        } else {
+            match addr {
+                SLOT0_START..=SLOT0_END => Some(
+                    if self.mapper.kind() == Sega8MapperKind::Sega && addr < FIXED_BOOT_ROM_BYTES {
+                        usize::from(addr)
+                    } else {
+                        usize::from(self.mapper.slot0_bank()) * usize::from(SLOT_SIZE)
+                            + usize::from(addr % SLOT_SIZE)
+                    },
+                ),
+                SLOT1_START..=SLOT1_END => Some(
+                    usize::from(self.mapper.slot1_bank()) * usize::from(SLOT_SIZE)
+                        + usize::from(addr - SLOT1_START),
+                ),
+                SLOT2_START..=SLOT2_END
+                    if !self.mapper.slot2_cartridge_ram_enabled()
+                        && self.mapper.codemasters_cartridge_ram_offset(addr).is_none() =>
+                {
+                    Some(
+                        usize::from(self.mapper.slot2_bank()) * usize::from(SLOT_SIZE)
+                            + usize::from(addr - SLOT2_START),
+                    )
+                }
+                _ => None,
+            }
+        }?;
+        Some(offset % self.cartridge.normalized_len())
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        let mapper = self.mapper;
+        let [slot0, slot1, slot2] = mapper.slot_banks();
+        u64::from(self.memory_control)
+            | (u64::from(mapper.frame_control()) << 8)
+            | (u64::from(slot0) << 16)
+            | (u64::from(slot1) << 24)
+            | (u64::from(slot2) << 32)
+            | (u64::from(Self::mapper_kind_id(mapper.kind())) << 40)
     }
 
     pub fn work_ram(&self) -> &[u8] {
@@ -542,6 +592,17 @@ impl Bus {
             || self.memory_control & MEMORY_CONTROL_CARTRIDGE_DISABLE == 0
     }
 
+    fn mapper_kind_id(kind: Sega8MapperKind) -> u8 {
+        match kind {
+            Sega8MapperKind::Sega => 0,
+            Sega8MapperKind::Codemasters => 1,
+            Sega8MapperKind::Korean => 2,
+            Sega8MapperKind::Msx => 3,
+            Sega8MapperKind::Nemesis => 4,
+            Sega8MapperKind::Janggun => 5,
+        }
+    }
+
     fn work_ram_enabled_for_memory(&self) -> bool {
         self.cartridge.system() != Sega8System::MasterSystem
             || self.memory_control & MEMORY_CONTROL_WORK_RAM_DISABLE == 0
@@ -935,6 +996,26 @@ mod tests {
         assert_eq!(bus.cpu_read(0x0400), 0);
         assert_eq!(bus.cpu_read(0x4000), 1);
         assert_eq!(bus.cpu_read(0x8000), 2);
+    }
+
+    #[test]
+    fn rom_offset_tracks_sega_mapper_slots() {
+        let mut bus = bus_with_banked_rom(4);
+        let before = bus.rom_mapping_token();
+
+        assert_eq!(bus.rom_offset_for_cpu_address(0x4000), Some(0x4000));
+        bus.cpu_write(MAPPER_SLOT1_BANK, 3);
+
+        assert_eq!(bus.rom_offset_for_cpu_address(0x4000), Some(0xC000));
+        assert_ne!(bus.rom_mapping_token(), before);
+    }
+
+    #[test]
+    fn rom_offset_tracks_mapped_eight_kib_pages() {
+        let mut bus = bus_with_forced_mapper_paged_rom(Sega8MapperKind::Msx, 8);
+        bus.cpu_write(0x0002, 5);
+
+        assert_eq!(bus.rom_offset_for_cpu_address(0x4000), Some(0xA000));
     }
 
     #[test]

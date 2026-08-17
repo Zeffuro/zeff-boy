@@ -67,6 +67,21 @@ fn settings_backward_compat_missing_fields_use_defaults() {
 }
 
 #[test]
+fn debugger_palette_tracks_theme_until_customized() {
+    let mut ui = UiSettings {
+        theme_preset: UiThemePreset::Light,
+        ..UiSettings::default()
+    };
+    assert_eq!(
+        ui.effective_debug_colors(),
+        DebugColors::for_theme(UiThemePreset::Light)
+    );
+
+    ui.debug_colors.address = [1, 2, 3, 255];
+    assert_eq!(ui.effective_debug_colors().address, [1, 2, 3, 255]);
+}
+
+#[test]
 fn firmware_directory_setting_roundtrip_and_trims_empty_path() {
     let mut s = Settings::default();
     s.emulation.firmware_directory = "  ".to_string();

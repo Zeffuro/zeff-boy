@@ -1,5 +1,30 @@
 use egui::{Color32, ColorImage, TextureHandle};
 
+pub(crate) struct OamViewerState {
+    pub(crate) image: ColorImage,
+    pub(crate) texture: Option<TextureHandle>,
+    pub(crate) selected: usize,
+}
+
+impl OamViewerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            image: ColorImage::filled([80, 90], Color32::TRANSPARENT),
+            texture: None,
+            selected: 0,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct SourceViewerState {
+    pub(crate) loaded_source_file: Option<usize>,
+    pub(crate) loaded_path: Option<std::path::PathBuf>,
+    pub(crate) lines: Vec<String>,
+    pub(crate) selected_line: Option<u32>,
+    pub(crate) status: Option<String>,
+}
+
 pub(crate) struct ViewerDirtyTracker {
     pub(crate) vram_dirty: bool,
     pub(crate) last_vram_signature: u64,
@@ -54,6 +79,7 @@ pub(crate) struct TilemapViewerState {
     pub(crate) last_use_window_map: Option<bool>,
     pub(crate) last_show_attr_overlay: Option<bool>,
     pub(crate) last_render_cgb_colors: Option<bool>,
+    pub(crate) selected: Option<usize>,
 }
 
 impl TilemapViewerState {
@@ -66,6 +92,7 @@ impl TilemapViewerState {
             last_use_window_map: None,
             last_show_attr_overlay: None,
             last_render_cgb_colors: None,
+            selected: None,
         }
     }
 
@@ -81,6 +108,37 @@ impl TilemapViewerState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TileViewerPlatform {
+    Gb,
+    Gba,
+    Nes,
+    Sega8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TileViewerRequest {
+    Gb {
+        tile: usize,
+        bank: usize,
+        obj_palette: bool,
+        palette: u8,
+    },
+    Nes {
+        tile: usize,
+        table: usize,
+        palette: u8,
+    },
+    Gba {
+        tile: usize,
+        color_256: bool,
+        palette: usize,
+    },
+    Sega8 {
+        tile: usize,
+    },
+}
+
 pub(crate) struct TileViewerState {
     pub(crate) image: ColorImage,
     pub(crate) texture: Option<TextureHandle>,
@@ -90,6 +148,9 @@ pub(crate) struct TileViewerState {
     pub(crate) last_use_cgb_colors: Option<bool>,
     pub(crate) last_use_obj_palette: Option<bool>,
     pub(crate) last_cgb_palette_index: Option<u8>,
+    pub(crate) selected: Option<usize>,
+    pub(crate) selected_platform: Option<TileViewerPlatform>,
+    pub(crate) pending: Option<TileViewerRequest>,
 }
 
 impl TileViewerState {
@@ -103,11 +164,19 @@ impl TileViewerState {
             last_use_cgb_colors: None,
             last_use_obj_palette: None,
             last_cgb_palette_index: None,
+            selected: None,
+            selected_platform: None,
+            pending: None,
         }
     }
 
     pub(crate) fn invalidate_cache(&mut self) {
         self.tracker.vram_dirty = true;
+    }
+
+    pub(crate) fn select(&mut self, platform: TileViewerPlatform, tile: usize) {
+        self.selected = Some(tile);
+        self.selected_platform = Some(platform);
     }
 
     pub(crate) fn update_dirty_inputs(&mut self, gfx: &super::data_models::GbGraphicsData) {

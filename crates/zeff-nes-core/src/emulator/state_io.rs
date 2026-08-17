@@ -34,6 +34,7 @@ impl Emulator {
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         crate::save_state::decode_state(self, data)?;
         self.opcode_log.clear();
+        self.call_stack.clear();
         Ok(())
     }
 

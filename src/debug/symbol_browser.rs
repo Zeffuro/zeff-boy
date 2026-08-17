@@ -224,49 +224,57 @@ fn draw_symbol_details(
     symbol: &SymbolRecord,
     actions: &mut DebugUiActions,
 ) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.monospace(&symbol.name);
-        egui::Grid::new("selected_symbol_details")
-            .num_columns(2)
-            .show(ui, |ui| {
-                detail_row(ui, "Kind", format!("{:?}", symbol.kind));
-                detail_row(ui, "Scope", format!("{:?}", symbol.scope));
-                if let Some(bank) = symbol.location.bank {
-                    detail_row(ui, "Bank", format!("{bank:X}"));
-                }
-                if let Some(cpu) = symbol.location.cpu {
-                    detail_row(ui, "CPU", format!("{:X}", cpu.address));
-                }
-                if let Some(storage) = symbol.location.storage {
-                    detail_row(ui, "ROM", format!("{:X}", storage.offset));
-                }
-                if let Some(value) = symbol.value {
-                    detail_row(ui, "Value", format!("{value:X}"));
-                }
-                if let Some(size) = symbol.size {
-                    detail_row(ui, "Size", format!("{size:X}"));
-                }
-                detail_row(ui, "Source", format!("{:?}", symbol.provenance.kind));
-                if let Some(comment) = &symbol.comment {
-                    detail_row(ui, "Comment", comment.clone());
-                }
-            });
-        if ui.small_button("Label").clicked() {
-            state.editor = Some(SymbolEditorState {
-                original_user_name: (symbol.provenance.kind == ProvenanceKind::User)
-                    .then(|| symbol.name.clone()),
-                draft: UserSymbolDraft {
-                    name: symbol.name.clone(),
-                    location: symbol.location,
-                    value: symbol.value,
-                    kind: symbol.kind,
-                    size: symbol.size,
-                    comment: symbol.comment.clone(),
-                },
-            });
-        }
-        draw_editor(ui, state, actions);
-    });
+    ui.separator();
+    ui.label(
+        egui::RichText::new(&symbol.name)
+            .monospace()
+            .strong()
+            .color(crate::debug::common::color32(
+                crate::debug::common::debug_colors(ui).symbol,
+            )),
+    );
+    egui::Grid::new("selected_symbol_details")
+        .num_columns(2)
+        .spacing([10.0, 2.0])
+        .show(ui, |ui| {
+            detail_row(ui, "Kind", format!("{:?}", symbol.kind));
+            detail_row(ui, "Scope", format!("{:?}", symbol.scope));
+            if let Some(bank) = symbol.location.bank {
+                detail_row(ui, "Bank", format!("{bank:X}"));
+            }
+            if let Some(cpu) = symbol.location.cpu {
+                detail_row(ui, "CPU", format!("{:X}", cpu.address));
+            }
+            if let Some(storage) = symbol.location.storage {
+                detail_row(ui, "ROM", format!("{:X}", storage.offset));
+            }
+            if let Some(value) = symbol.value {
+                detail_row(ui, "Value", format!("{value:X}"));
+            }
+            if let Some(size) = symbol.size {
+                detail_row(ui, "Size", format!("{size:X}"));
+            }
+            detail_row(ui, "Source", format!("{:?}", symbol.provenance.kind));
+            if let Some(comment) = &symbol.comment {
+                detail_row(ui, "Comment", comment.clone());
+            }
+        });
+    if ui.small_button("Label").clicked() {
+        state.editor = Some(SymbolEditorState {
+            original_user_name: (symbol.provenance.kind == ProvenanceKind::User)
+                .then(|| symbol.name.clone()),
+            draft: UserSymbolDraft {
+                name: symbol.name.clone(),
+                location: symbol.location,
+                value: symbol.value,
+                kind: symbol.kind,
+                size: symbol.size,
+                comment: symbol.comment.clone(),
+            },
+        });
+    }
+    draw_editor(ui, state, actions);
+    ui.separator();
 }
 
 fn draw_editor(ui: &mut egui::Ui, state: &mut SymbolBrowserState, actions: &mut DebugUiActions) {
@@ -339,24 +347,48 @@ fn draw_symbol_row(
             ui.monospace(format!("CPU {:X}", cpu.address));
             if (symbol.location.exec_mode == ExecMode::Sm83 && cpu.address < 0x8000
                 || row.exec_mode == ExecMode::Arm
-                    && (0x0800_0000..=0x0DFF_FFFF).contains(&cpu.address))
+                    && (0x0800_0000..=0x0DFF_FFFF).contains(&cpu.address)
+                || symbol.location.exec_mode == ExecMode::V30 && cpu.address <= 0x0F_FFFF)
                 && let Some(storage) = symbol.location.storage
                 && let Ok(cpu_address) = u32::try_from(cpu.address)
                 && ui.small_button("Code").clicked()
             {
                 row.actions.disasm_target = Some(DisassemblyTarget {
                     cpu_address,
-                    storage_offset: storage.offset,
+                    storage_offset: Some(storage.offset),
+                    thumb: match symbol.location.exec_mode {
+                        ExecMode::Thumb => Some(true),
+                        ExecMode::Arm => Some(false),
+                        _ => None,
+                    },
                 });
                 row.actions.focus_tab = Some(DebugTab::Disassembler);
             }
             if let Some(storage) = symbol.location.storage {
-                let is_set = row
-                    .cpu_debug
-                    .is_some_and(|info| info.rom_breakpoints.contains(&storage.offset));
+                let physical = row.exec_mode == ExecMode::Sm83;
+                let is_set = row.cpu_debug.is_some_and(|info| {
+                    if physical {
+                        info.rom_breakpoints.contains(&storage.offset)
+                    } else {
+                        u32::try_from(cpu.address)
+                            .is_ok_and(|address| info.breakpoints.contains(&address))
+                    }
+                });
                 let label = if is_set { "Unbreak" } else { "Break" };
                 if ui.small_button(label).clicked() {
-                    row.actions.toggle_rom_breakpoints.push(storage.offset);
+                    if physical {
+                        row.actions.toggle_rom_breakpoints.push(storage.offset);
+                    } else if let Ok(address) = u32::try_from(cpu.address) {
+                        row.actions.toggle_breakpoints.push(address);
+                    }
+                }
+            } else if let Ok(address) = u32::try_from(cpu.address) {
+                let is_set = row
+                    .cpu_debug
+                    .is_some_and(|info| info.breakpoints.contains(&address));
+                let label = if is_set { "Unbreak" } else { "Break" };
+                if ui.small_button(label).clicked() {
+                    row.actions.toggle_breakpoints.push(address);
                 }
             }
             if ui.small_button("Memory").clicked()

@@ -41,6 +41,12 @@ impl Mapper for Cprom {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF)
+            .contains(&addr)
+            .then(|| self.prg_addr(addr))
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             self.chr_bank = (val & self.cpu_peek(addr)) & 0x03;

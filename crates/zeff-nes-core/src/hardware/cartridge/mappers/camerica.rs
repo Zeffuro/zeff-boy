@@ -39,6 +39,19 @@ impl Mapper for Camerica {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = match addr {
+            0x8000..=0xBFFF => self.prg_bank as usize % self.prg_bank_count_16k(),
+            0xC000..=0xFFFF => self.prg_bank_count_16k() - 1,
+            _ => return None,
+        };
+        Some((bank * 0x4000 + (addr as usize & 0x3FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0xC000 {
             self.prg_bank = val;
@@ -108,5 +121,17 @@ mod tests {
 
         mapper.chr_write(0x0123, 0xA5);
         assert_eq!(mapper.chr_read(0x0123), 0xA5);
+    }
+
+    #[test]
+    fn reports_active_prg_rom_offsets() {
+        let mut mapper = Camerica::new(
+            prg_banks(&[0, 1, 2, 3]),
+            vec![0; 0x2000],
+            Mirroring::Vertical,
+        );
+        mapper.cpu_write(0xC000, 2);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(2 * 0x4000 + 0x123));
+        assert_eq!(mapper.cpu_rom_offset(0xC123), Some(3 * 0x4000 + 0x123));
     }
 }

@@ -53,7 +53,7 @@ pub(crate) fn collect_nes_snapshot(
         snapshot
             .last_disasm_pc
             .map(|pc| (pc, snapshot.last_disasm_mapping)),
-        (emu.cpu_pc().into(), None),
+        (emu.cpu_pc().into(), Some(emu.rom_mapping_token())),
         || {
             nes_disassemble_around(
                 |addr| nes_disasm_peek_byte(emu.bus(), addr),
@@ -63,7 +63,20 @@ pub(crate) fn collect_nes_snapshot(
             )
         },
         emu.iter_breakpoints().map(Address::from),
-    );
+        emu.iter_one_shot_breakpoints().map(Address::from),
+    )
+    .map(|mut view| {
+        for line in &mut view.lines {
+            line.storage_offset = emu
+                .rom_offset_for_cpu_address(narrow_u16(line.address))
+                .map(|offset| offset as u64);
+            line.control_target_storage = line
+                .control_target
+                .and_then(|address| emu.rom_offset_for_cpu_address(narrow_u16(address)))
+                .map(|offset| offset as u64);
+        }
+        view
+    });
 
     if snapshot.show_rom_info {
         data.rom_debug = Some(nes_rom_info(emu));

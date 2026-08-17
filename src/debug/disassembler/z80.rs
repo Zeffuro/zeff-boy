@@ -79,6 +79,7 @@ fn decode_prefixed(addr: u16, bytes: InstructionBytes, mnemonic: Mnemonic) -> Di
         control_target: None,
         control_target_storage: None,
         control_target_symbol: None,
+        source: None,
         bytes,
         mnemonic,
     }
@@ -96,6 +97,7 @@ fn decode_base(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
         control_target: None,
         control_target_storage: None,
         control_target_symbol: None,
+        source: None,
         bytes,
         mnemonic,
     }
@@ -135,6 +137,7 @@ fn decode_indexed(
         control_target: None,
         control_target_storage: None,
         control_target_symbol: None,
+        source: None,
         bytes,
         mnemonic,
     }

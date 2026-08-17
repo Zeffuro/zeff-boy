@@ -2,6 +2,7 @@ use super::{WatchHit, WatchType, Watchpoint};
 
 pub struct DebugController {
     breakpoints: Box<[bool; 65536]>,
+    one_shot_breakpoints: Box<[bool; 65536]>,
     breakpoint_count: usize,
     pub watchpoints: Vec<Watchpoint>,
     pub break_on_next: bool,
@@ -33,6 +34,7 @@ impl DebugController {
     pub fn new() -> Self {
         Self {
             breakpoints: Box::new([false; 65536]),
+            one_shot_breakpoints: Box::new([false; 65536]),
             breakpoint_count: 0,
             watchpoints: Vec::new(),
             break_on_next: false,
@@ -55,7 +57,16 @@ impl DebugController {
             .map(|entry| entry.0 as u16)
     }
 
+    pub fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
+        self.one_shot_breakpoints
+            .iter()
+            .enumerate()
+            .filter(|entry| *entry.1)
+            .map(|entry| entry.0 as u16)
+    }
+
     pub fn add_breakpoint(&mut self, addr: u16) {
+        self.one_shot_breakpoints[addr as usize] = false;
         if !self.breakpoints[addr as usize] {
             self.breakpoints[addr as usize] = true;
             self.breakpoint_count += 1;
@@ -63,7 +74,13 @@ impl DebugController {
         self.breakpoints_active = true;
     }
 
+    pub fn add_one_shot_breakpoint(&mut self, addr: u16) {
+        self.add_breakpoint(addr);
+        self.one_shot_breakpoints[addr as usize] = true;
+    }
+
     pub fn remove_breakpoint(&mut self, addr: u16) {
+        self.one_shot_breakpoints[addr as usize] = false;
         if self.breakpoints[addr as usize] {
             self.breakpoints[addr as usize] = false;
             self.breakpoint_count -= 1;
@@ -72,31 +89,41 @@ impl DebugController {
     }
 
     pub fn toggle_breakpoint(&mut self, addr: u16) {
-        let slot = &mut self.breakpoints[addr as usize];
-        if *slot {
-            *slot = false;
-            self.breakpoint_count -= 1;
+        if self.breakpoints[addr as usize] {
+            self.remove_breakpoint(addr);
         } else {
-            *slot = true;
-            self.breakpoint_count += 1;
+            self.add_breakpoint(addr);
         }
-        self.breakpoints_active = self.breakpoint_count > 0;
     }
 
     pub fn add_watchpoint(&mut self, addr: u16, watch_type: WatchType) {
+        self.add_watchpoint_range(addr, addr, watch_type);
+    }
+
+    pub fn add_watchpoint_range(&mut self, start: u16, end: u16, watch_type: WatchType) {
+        let (start, end) = ordered_range(start, end);
         if self
             .watchpoints
             .iter()
-            .any(|w| w.address == addr && w.watch_type == watch_type)
+            .any(|w| w.address == start && w.end_address == end && w.watch_type == watch_type)
         {
             return;
         }
         self.watchpoints.push(Watchpoint {
-            address: addr,
+            address: start,
+            end_address: end,
             watch_type,
             last_value: None,
         });
         self.watchpoints_active = true;
+    }
+
+    pub fn remove_watchpoint(&mut self, start: u16, end: u16, watch_type: WatchType) {
+        let (start, end) = ordered_range(start, end);
+        self.watchpoints.retain(|watch| {
+            watch.address != start || watch.end_address != end || watch.watch_type != watch_type
+        });
+        self.watchpoints_active = !self.watchpoints.is_empty();
     }
 
     #[inline]
@@ -106,6 +133,9 @@ impl DebugController {
         }
 
         if self.breakpoints[pc as usize] {
+            if self.one_shot_breakpoints[pc as usize] {
+                self.remove_breakpoint(pc);
+            }
             self.hit_breakpoint = Some(pc);
             self.break_on_next = false;
             return true;
@@ -135,7 +165,7 @@ impl DebugController {
         }
 
         for watch in &mut self.watchpoints {
-            if watch.address != addr {
+            if !(watch.address..=watch.end_address).contains(&addr) {
                 continue;
             }
             if matches!(watch.watch_type, WatchType::Read | WatchType::ReadWrite) {
@@ -158,7 +188,7 @@ impl DebugController {
         }
 
         for watch in &mut self.watchpoints {
-            if watch.address != addr {
+            if !(watch.address..=watch.end_address).contains(&addr) {
                 continue;
             }
             if matches!(watch.watch_type, WatchType::Write | WatchType::ReadWrite)
@@ -180,4 +210,8 @@ impl DebugController {
         self.hit_breakpoint = None;
         self.hit_watchpoint = None;
     }
+}
+
+fn ordered_range(start: u16, end: u16) -> (u16, u16) {
+    (start.min(end), start.max(end))
 }

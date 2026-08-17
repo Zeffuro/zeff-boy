@@ -23,6 +23,17 @@ pub(super) fn draw(
             }
         }
     });
+    if presentation != DebugPresentation::Floating {
+        ui.menu_button("Workspace", |ui| {
+            for preset in crate::debug::DebugWorkspacePreset::ALL {
+                if ui.button(preset.label()).clicked() {
+                    *dock_state = crate::debug::create_workspace_dock_state(presentation, preset);
+                    open_external_debugger(actions, external_debugger);
+                    ui.close();
+                }
+            }
+        });
+    }
     ui.separator();
     if external_debugger && !debugger_window_open {
         if ui.button("Open Debugger Window").clicked() {
@@ -40,8 +51,13 @@ pub(super) fn draw(
         }
         ui.separator();
     }
-    if ui.button("CPU / Debug").clicked() {
+    if ui.button("CPU").clicked() {
         toggle_dock_tab(dock_state, DebugTab::CpuDebug);
+        open_external_debugger(actions, external_debugger);
+        ui.close();
+    }
+    if ui.button("Hardware / I/O").clicked() {
+        toggle_dock_tab(dock_state, DebugTab::HardwareIo);
         open_external_debugger(actions, external_debugger);
         ui.close();
     }
@@ -52,6 +68,16 @@ pub(super) fn draw(
     }
     if ui.button("Breakpoints").clicked() {
         toggle_dock_tab(dock_state, DebugTab::Breakpoints);
+        open_external_debugger(actions, external_debugger);
+        ui.close();
+    }
+    if ui.button("Execution History").clicked() {
+        toggle_dock_tab(dock_state, DebugTab::ExecutionHistory);
+        open_external_debugger(actions, external_debugger);
+        ui.close();
+    }
+    if ui.button("Call Stack").clicked() {
+        toggle_dock_tab(dock_state, DebugTab::CallStack);
         open_external_debugger(actions, external_debugger);
         ui.close();
     }
@@ -74,6 +100,11 @@ pub(super) fn draw(
     if ui.button("Symbols").clicked() {
         toggle_dock_tab(dock_state, DebugTab::SymbolBrowser);
         open_external_debugger(actions, external_debugger);
+        ui.close();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if ui.button("Load Symbol File...").clicked() {
+        actions.push(MenuAction::LoadSymbolFile);
         ui.close();
     }
     ui.separator();

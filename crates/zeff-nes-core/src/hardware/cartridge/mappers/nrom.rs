@@ -30,6 +30,12 @@ impl Mapper for Nrom {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF)
+            .contains(&addr)
+            .then(|| (addr as usize - 0x8000) % self.prg_rom.len())
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if let 0x6000..=0x7FFF = addr {
             self.prg_ram[(addr - 0x6000) as usize] = val;

@@ -1,4 +1,5 @@
 use super::{CPU_CYCLES_PER_FRAME, Emulator};
+use crate::debug::{CallStackEntry, CallStackKind};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cpu::{CpuState, CpuStepKind};
 
@@ -28,9 +29,11 @@ impl Emulator {
         }
 
         let pc_before = self.cpu.pc;
+        let sp_before = self.cpu.sp;
         let opcode = self.bus.cpu_peek(pc_before);
+        let rom_offset = self.bus.cartridge.cpu_rom_offset(pc_before);
 
-        self.opcode_log.push((pc_before, opcode));
+        self.opcode_log.push((pc_before, opcode, rom_offset));
 
         self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
         self.bus.begin_cpu_step_timing();
@@ -43,6 +46,7 @@ impl Emulator {
         self.cpu.cycles += dma_cycles;
 
         self.tick_peripherals_after_cpu_step(total_cycles);
+        self.update_call_stack(pc_before, sp_before, opcode);
 
         let mut bus_trace_events = Vec::new();
         if trace_active {
@@ -81,6 +85,56 @@ impl Emulator {
         }
 
         (pc_before, opcode, total_cycles, bus_trace_events)
+    }
+
+    fn update_call_stack(&mut self, pc_before: u16, sp_before: u8, opcode: u8) {
+        let pc_after = self.cpu.pc;
+        let sp_after = self.cpu.sp;
+        let frame = match self.cpu.last_step_kind {
+            CpuStepKind::Nmi | CpuStepKind::Irq => {
+                Some((pc_after, pc_before, CallStackKind::Interrupt))
+            }
+            CpuStepKind::Instruction if opcode == 0x20 && sp_after == sp_before.wrapping_sub(2) => {
+                Some((pc_after, pc_before.wrapping_add(3), CallStackKind::Call))
+            }
+            CpuStepKind::Instruction if opcode == 0x00 && sp_after == sp_before.wrapping_sub(3) => {
+                Some((
+                    pc_after,
+                    pc_before.wrapping_add(2),
+                    CallStackKind::Interrupt,
+                ))
+            }
+            _ => None,
+        };
+
+        if let Some((target, return_address, kind)) = frame {
+            if self.call_stack.len() == 256 {
+                self.call_stack.remove(0);
+            }
+            self.call_stack.push(CallStackEntry {
+                target,
+                return_address,
+                target_rom_offset: self.bus.cartridge.cpu_rom_offset(target),
+                return_rom_offset: self.bus.cartridge.cpu_rom_offset(return_address),
+                kind,
+            });
+            return;
+        }
+
+        let returned = self.cpu.last_step_kind == CpuStepKind::Instruction
+            && ((opcode == 0x60 && sp_after == sp_before.wrapping_add(2))
+                || (opcode == 0x40 && sp_after == sp_before.wrapping_add(3)));
+        if returned {
+            if let Some(index) = self
+                .call_stack
+                .iter()
+                .rposition(|frame| frame.return_address == pc_after)
+            {
+                self.call_stack.truncate(index);
+            } else {
+                self.call_stack.clear();
+            }
+        }
     }
 
     pub fn step_frame(&mut self) {

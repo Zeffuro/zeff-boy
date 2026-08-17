@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -13,7 +14,8 @@ use super::import::{ImportContext, TargetInfo, import_symbols};
 use super::store::SymbolStore;
 use super::{
     AddressSpaceId, Confidence, CpuLocation, ImageId, Provenance, ProvenanceKind, RegionId,
-    StorageLocation, SymbolId, SymbolRecord, SymbolScope, UserSymbolDraft,
+    SourceFile, SourceLine, StorageLocation, SymbolId, SymbolKind, SymbolRecord, SymbolScope,
+    UserSymbolDraft,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,7 +27,17 @@ pub(crate) struct LoadedSymbolModule {
     pub(crate) format: String,
     pub(crate) identity: IdentityStatus,
     pub(crate) symbol_count: usize,
+    pub(crate) source_line_count: usize,
     pub(crate) diagnostics: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SourceReference {
+    pub(crate) source_file: usize,
+    pub(crate) path: PathBuf,
+    pub(crate) display_path: String,
+    pub(crate) line: u32,
+    pub(crate) crc32: Option<u32>,
 }
 
 impl LoadedSymbolModule {
@@ -39,6 +51,11 @@ pub(crate) struct SymbolSession {
     pub(crate) store: SymbolStore,
     pub(crate) modules: Vec<LoadedSymbolModule>,
     pub(crate) diagnostics: Vec<String>,
+    source_files: Vec<SourceFile>,
+    source_roots: Vec<Option<PathBuf>>,
+    source_by_storage: BTreeMap<StorageLocation, SourceLine>,
+    source_by_cpu: BTreeMap<CpuLocation, SourceLine>,
+    source_offsets_by_line: HashMap<(usize, u32), Vec<u64>>,
     loading: bool,
     identity: Option<RomIdentity>,
     user_symbols: Vec<SymbolRecord>,
@@ -65,6 +82,40 @@ impl SymbolSession {
         rom_sha256: [u8; 32],
     ) -> Self {
         Self::load_sidecar(system, rom_path, source_path, rom_sha256)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn load_for_paths_with_sidecar(
+        system: System,
+        rom_path: &Path,
+        source_path: &Path,
+        rom_sha256: [u8; 32],
+        sidecar_path: &Path,
+    ) -> Self {
+        let identity = RomIdentity {
+            system,
+            sha256: rom_sha256,
+        };
+        let mut session = Self {
+            identity: Some(identity),
+            user_path: Some(user_symbol_sidecar_path(source_path, rom_path)),
+            ..Self::default()
+        };
+        let selected_user_path = session.user_path.as_deref() == Some(sidecar_path);
+        if sidecar_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".zdbg.json"))
+        {
+            session.load_zdbg_sidecar(sidecar_path.to_path_buf(), identity);
+        } else {
+            session.load_imported_sidecar(sidecar_path.to_path_buf(), identity, false);
+        }
+        if !selected_user_path {
+            session.load_user_sidecar();
+        }
+        session.load_platform_symbols(system);
+        session
     }
 
     pub(crate) fn loading() -> Self {
@@ -107,6 +158,11 @@ impl SymbolSession {
         if let Some(path) = discover_zdbg_sidecar(source_path, rom_path) {
             labels_loaded = session.load_zdbg_sidecar(path, identity);
         }
+        if system == System::Gba
+            && let Some(path) = discover_elf_sidecar(source_path, rom_path)
+        {
+            labels_loaded |= session.load_imported_sidecar(path, identity, labels_loaded);
+        }
         if let Some(path) = discover_symbol_sidecar(source_path, rom_path) {
             labels_loaded |= session.load_imported_sidecar(path, identity, labels_loaded);
         }
@@ -138,6 +194,7 @@ impl SymbolSession {
                     format: "Zeff Debug Symbols".to_owned(),
                     identity: IdentityStatus::Exact,
                     symbol_count: count,
+                    source_line_count: 0,
                     diagnostics: Vec::new(),
                 });
                 supplied_labels
@@ -189,6 +246,12 @@ impl SymbolSession {
                     .retain(|symbol| symbol.kind == super::SymbolKind::Section);
             }
             let count = module.symbols.len();
+            let source_line_count = module.source_lines.len();
+            self.extend_source_metadata(
+                module.source_files,
+                module.source_lines,
+                path.parent().map(Path::to_path_buf),
+            );
             self.store.extend(module.symbols.drain(..));
             Ok((
                 LoadedSymbolModule {
@@ -196,6 +259,7 @@ impl SymbolSession {
                     format: module.format,
                     identity: IdentityStatus::compare(None, identity),
                     symbol_count: count,
+                    source_line_count,
                     diagnostics: module.diagnostics,
                 },
                 supplied_labels,
@@ -256,6 +320,7 @@ impl SymbolSession {
             format: "Platform labels".to_owned(),
             identity: IdentityStatus::BuiltIn,
             symbol_count: count,
+            source_line_count: 0,
             diagnostics: Vec::new(),
         });
     }
@@ -371,6 +436,43 @@ impl SymbolSession {
             .map(|symbol| symbol.name.as_str())
     }
 
+    fn symbol_context_at_rom_offset(&self, offset: u64) -> Option<String> {
+        let location = StorageLocation {
+            image: ImageId(0),
+            region: RegionId(0),
+            offset,
+        };
+        let symbol = self
+            .store
+            .lookup_storage_containing(location)
+            .filter(|symbol| {
+                matches!(
+                    symbol.kind,
+                    SymbolKind::Function | SymbolKind::Label | SymbolKind::Section
+                )
+            })
+            .max_by_key(|symbol| {
+                let kind = match symbol.kind {
+                    SymbolKind::Function => 3,
+                    SymbolKind::Label => 2,
+                    SymbolKind::Section => 1,
+                    _ => 0,
+                };
+                let start = symbol
+                    .location
+                    .storage
+                    .map_or(0, |location| location.offset);
+                (kind, symbol_priority(symbol.provenance.kind), start)
+            })?;
+        let start = symbol.location.storage?.offset;
+        let delta = offset.saturating_sub(start);
+        Some(if delta == 0 {
+            symbol.name.clone()
+        } else {
+            format!("{}+${delta:X}", symbol.name)
+        })
+    }
+
     pub(crate) fn symbol_name_at_cpu_address(&self, address: u64) -> Option<&str> {
         self.store
             .lookup_cpu(CpuLocation {
@@ -381,7 +483,7 @@ impl SymbolSession {
             .map(|symbol| symbol.name.as_str())
     }
 
-    fn unique_symbol_name_at_cpu_address(&self, address: u64) -> Option<&str> {
+    pub(crate) fn unique_symbol_name_at_cpu_address(&self, address: u64) -> Option<&str> {
         let mut symbols = self.store.lookup_cpu(CpuLocation {
             space: AddressSpaceId(0),
             address,
@@ -440,7 +542,75 @@ impl SymbolSession {
                     line.control_target_symbol = Some(name.to_owned());
                 }
             }
+            if line.source.is_none()
+                && let Some(source) = line
+                    .storage_offset
+                    .and_then(|offset| {
+                        self.source_at_storage(StorageLocation {
+                            image: ImageId(0),
+                            region: RegionId(0),
+                            offset,
+                        })
+                    })
+                    .or_else(|| {
+                        self.source_at_cpu(CpuLocation {
+                            space: AddressSpaceId(0),
+                            address: line.address.into(),
+                        })
+                    })
+            {
+                line.source = self.format_source_line(source);
+            }
         }
+        view.location_symbol = view
+            .lines
+            .iter()
+            .find(|line| line.address == view.pc)
+            .and_then(|line| {
+                line.symbol.clone().or_else(|| {
+                    line.storage_offset
+                        .and_then(|offset| self.symbol_context_at_rom_offset(offset))
+                })
+            });
+    }
+
+    pub(crate) fn source_reference_for_disassembly(
+        &self,
+        view: &crate::debug::DisassemblyView,
+    ) -> Option<SourceReference> {
+        let line = view.lines.iter().find(|line| line.address == view.pc)?;
+        let source = line
+            .storage_offset
+            .and_then(|offset| {
+                self.source_at_storage(StorageLocation {
+                    image: ImageId(0),
+                    region: RegionId(0),
+                    offset,
+                })
+            })
+            .or_else(|| {
+                self.source_at_cpu(CpuLocation {
+                    space: AddressSpaceId(0),
+                    address: line.address.into(),
+                })
+            })?;
+        self.source_reference(source)
+    }
+
+    pub(crate) fn source_reference_at_rom_offset(&self, offset: u64) -> Option<SourceReference> {
+        let source = self.source_at_storage(StorageLocation {
+            image: ImageId(0),
+            region: RegionId(0),
+            offset,
+        })?;
+        self.source_reference(source)
+    }
+
+    pub(crate) fn source_breakpoint_offsets(&self, source_file: usize, line: u32) -> &[u64] {
+        self.source_offsets_by_line
+            .get(&(source_file, line))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub(crate) fn summary_fields(&self) -> Option<Vec<(&'static str, String)>> {
@@ -468,7 +638,80 @@ impl SymbolSession {
         if !self.user_symbols.is_empty() {
             fields.push(("User labels", self.user_symbols.len().to_string()));
         }
+        if !self.source_by_storage.is_empty() {
+            fields.push(("Source lines", self.source_by_storage.len().to_string()));
+        }
         Some(fields)
+    }
+
+    fn extend_source_metadata(
+        &mut self,
+        files: Vec<SourceFile>,
+        lines: Vec<SourceLine>,
+        source_root: Option<PathBuf>,
+    ) {
+        let file_offset = self.source_files.len();
+        self.source_roots
+            .extend(std::iter::repeat_n(source_root, files.len()));
+        self.source_files.extend(files);
+        for mut source in lines {
+            source.source_file += file_offset;
+            if let Some(storage) = source.location.storage {
+                let offsets = self
+                    .source_offsets_by_line
+                    .entry((source.source_file, source.line))
+                    .or_default();
+                if !offsets.contains(&storage.offset) {
+                    offsets.push(storage.offset);
+                }
+                self.source_by_storage
+                    .entry(storage)
+                    .or_insert(source.clone());
+            }
+            if let Some(cpu) = source.location.cpu {
+                self.source_by_cpu.entry(cpu).or_insert(source);
+            }
+        }
+    }
+
+    fn format_source_line(&self, source: &SourceLine) -> Option<String> {
+        let file = self.source_files.get(source.source_file)?;
+        Some(format!("{}:{}", file.path, source.line))
+    }
+
+    fn source_at_storage(&self, location: StorageLocation) -> Option<&SourceLine> {
+        let (start, source) = self.source_by_storage.range(..=location).next_back()?;
+        (start.image == location.image
+            && start.region == location.region
+            && location.offset.saturating_sub(start.offset) < source.size)
+            .then_some(source)
+    }
+
+    fn source_at_cpu(&self, location: CpuLocation) -> Option<&SourceLine> {
+        let (start, source) = self.source_by_cpu.range(..=location).next_back()?;
+        (start.space == location.space
+            && location.address.saturating_sub(start.address) < source.size)
+            .then_some(source)
+    }
+
+    fn source_reference(&self, source: &SourceLine) -> Option<SourceReference> {
+        let file = self.source_files.get(source.source_file)?;
+        let raw_path = PathBuf::from(&file.path);
+        let path = if raw_path.is_absolute() {
+            raw_path
+        } else {
+            self.source_roots
+                .get(source.source_file)
+                .and_then(|root| root.as_ref())
+                .map_or(raw_path.clone(), |root| root.join(&raw_path))
+        };
+        Some(SourceReference {
+            source_file: source.source_file,
+            path,
+            display_path: file.path.clone(),
+            line: source.line,
+            crc32: file.crc32,
+        })
     }
 }
 
@@ -487,6 +730,12 @@ fn symbol_priority(kind: ProvenanceKind) -> u8 {
 #[cfg(not(target_arch = "wasm32"))]
 fn discover_symbol_sidecar(source_path: &Path, rom_path: &Path) -> Option<PathBuf> {
     discover_sidecar_with_extension(source_path, rom_path, "sym")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn discover_elf_sidecar(source_path: &Path, rom_path: &Path) -> Option<PathBuf> {
+    discover_sidecar_with_extension(source_path, rom_path, "elf")
+        .or_else(|| discover_sidecar_with_extension(source_path, rom_path, "axf"))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -649,6 +898,13 @@ mod tests {
                 .unwrap(),
             std::fs::canonicalize(map).unwrap()
         );
+        let elf = dir.join("game.elf");
+        std::fs::write(&elf, b"\x7FELF").unwrap();
+        assert_eq!(
+            std::fs::canonicalize(discover_elf_sidecar(&archive, Path::new("game.gba")).unwrap())
+                .unwrap(),
+            std::fs::canonicalize(elf).unwrap()
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -681,6 +937,22 @@ mod tests {
         assert_eq!(session.modules[0].symbol_count, 2);
         assert_eq!(session.resolve_rom_name("Init"), Some(0x204));
         assert_eq!(session.resolve_cpu_name("gHeap"), Some(0x0200_0000));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn explicit_sidecar_overrides_sibling_discovery() {
+        let dir = temp_dir();
+        let rom = dir.join("game.gbc");
+        let selected = dir.join("selected.sym");
+        std::fs::write(&rom, []).unwrap();
+        std::fs::write(dir.join("game.sym"), b"01:4000 Sibling").unwrap();
+        std::fs::write(&selected, b"02:4560 Selected").unwrap();
+
+        let session =
+            SymbolSession::load_for_paths_with_sidecar(System::Gb, &rom, &rom, [0; 32], &selected);
+        assert_eq!(session.resolve_cpu_name("Selected"), Some(0x4560));
+        assert_eq!(session.resolve_cpu_name("Sibling"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -897,7 +1169,7 @@ mod tests {
     #[test]
     fn annotates_disassembly_by_physical_rom_offset() {
         let mut session = SymbolSession::default();
-        let module = import_symbols(
+        let mut module = import_symbols(
             "game.sym",
             b"02:4560 UpdatePlayer\n02:4660 UpdateNpc\n00:C100 PlayerData",
             &ImportContext {
@@ -911,11 +1183,14 @@ mod tests {
             },
         )
         .unwrap();
+        module.symbols[0].size = Some(8);
         session.store.extend(module.symbols);
         let mut view = crate::debug::DisassemblyView {
             pc: 0x4560,
             mapping: Some(2),
             is_navigation_target: false,
+            is_static_target: false,
+            location_symbol: None,
             lines: vec![crate::debug::DisassembledLine {
                 address: 0x4560,
                 storage_offset: Some(0x8560),
@@ -923,25 +1198,92 @@ mod tests {
                 control_target: Some(0x4660),
                 control_target_storage: Some(0x8660),
                 control_target_symbol: None,
+                source: None,
                 bytes: Default::default(),
                 mnemonic: Default::default(),
             }],
             breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
             rom_breakpoints: Vec::new(),
             hit_rom_breakpoint: None,
         };
 
         session.annotate_disassembly(&mut view);
         assert_eq!(view.lines[0].symbol.as_deref(), Some("UpdatePlayer"));
+        assert_eq!(view.location_symbol.as_deref(), Some("UpdatePlayer"));
         assert_eq!(
             view.lines[0].control_target_symbol.as_deref(),
             Some("UpdateNpc")
         );
         assert_eq!(session.resolve_rom_name("updateplayer"), Some(0x8560));
+        assert_eq!(
+            session.symbol_context_at_rom_offset(0x8562).as_deref(),
+            Some("UpdatePlayer+$2")
+        );
         assert_eq!(session.resolve_cpu_name("PlayerData"), Some(0xC100));
         assert_eq!(
             session.symbol_name_at_cpu_address(0xC100),
             Some("PlayerData")
+        );
+    }
+
+    #[test]
+    fn annotates_disassembly_with_wla_source_location() {
+        let mut session = SymbolSession::default();
+        let mut module = import_symbols(
+            "game.sym",
+            b"[information]\nversion 3\n[source files v2]\n0001:0002 12345678 src/player.asm\n[addr-to-line mapping v2]\n00008560 02:4560 4560 0001:0002:0000002A\n00008564 02:4564 4564 0001:0002:0000002B",
+            &ImportContext {
+                target: TargetInfo { system: System::Gb },
+                image: ImageId(0),
+                rom_region: RegionId(0),
+                cpu_space: AddressSpaceId(0),
+                source_name: None,
+            },
+        )
+        .unwrap();
+        session.extend_source_metadata(module.source_files, module.source_lines, None);
+        session.store.extend(module.symbols.drain(..));
+        let mut view = crate::debug::DisassemblyView {
+            pc: 0x4560,
+            mapping: Some(2),
+            is_navigation_target: false,
+            is_static_target: false,
+            location_symbol: None,
+            lines: vec![crate::debug::DisassembledLine {
+                address: 0x4560,
+                storage_offset: Some(0x8560),
+                symbol: None,
+                control_target: None,
+                control_target_storage: None,
+                control_target_symbol: None,
+                source: None,
+                bytes: Default::default(),
+                mnemonic: Default::default(),
+            }],
+            breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
+            rom_breakpoints: Vec::new(),
+            hit_rom_breakpoint: None,
+        };
+
+        session.annotate_disassembly(&mut view);
+        assert_eq!(view.lines[0].source.as_deref(), Some("src/player.asm:42"));
+        let source = session.source_reference_for_disassembly(&view).unwrap();
+        assert_eq!(source.path, PathBuf::from("src/player.asm"));
+        assert_eq!(source.line, 42);
+        assert_eq!(source.crc32, Some(0x1234_5678));
+        assert_eq!(
+            session.source_reference_at_rom_offset(0x8563).unwrap().line,
+            42
+        );
+        assert_eq!(
+            session.source_reference_at_rom_offset(0x8564).unwrap().line,
+            43
+        );
+        assert_eq!(
+            session.source_breakpoint_offsets(source.source_file, 42),
+            [0x8560]
         );
     }
 }

@@ -481,6 +481,18 @@ impl App {
         source_path: PathBuf,
         rom_hash: [u8; 32],
     ) {
+        self.start_symbol_load_request(system, rom_path, source_path, rom_hash, None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_symbol_load_request(
+        &mut self,
+        system: ActiveSystem,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+        rom_hash: [u8; 32],
+        sidecar_path: Option<PathBuf>,
+    ) {
         self.pending_symbol_load = None;
         self.symbols = crate::symbols::SymbolSession::loading();
         let request_id = self.next_symbol_load_id;
@@ -490,11 +502,24 @@ impl App {
         let worker = std::thread::Builder::new()
             .name("zeff-symbol-load".to_owned())
             .spawn(move || {
-                let session = crate::symbols::SymbolSession::load_for_paths(
-                    system,
-                    &rom_path,
-                    &source_path,
-                    rom_hash,
+                let session = sidecar_path.map_or_else(
+                    || {
+                        crate::symbols::SymbolSession::load_for_paths(
+                            system,
+                            &rom_path,
+                            &source_path,
+                            rom_hash,
+                        )
+                    },
+                    |path| {
+                        crate::symbols::SymbolSession::load_for_paths_with_sidecar(
+                            system,
+                            &rom_path,
+                            &source_path,
+                            rom_hash,
+                            &path,
+                        )
+                    },
                 );
                 let _ = sender.send(super::super::SymbolLoadResult {
                     request_id,
@@ -515,6 +540,37 @@ impl App {
                 self.toast_manager
                     .error(format!("Couldn't start symbol loader: {error}"));
             }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn open_symbol_file_dialog(&mut self) {
+        let (Some(rom_path), Some(source_path), Some(rom_hash)) = (
+            self.rom_info.rom_path.clone(),
+            self.rom_info.source_path.clone(),
+            self.rom_info.rom_hash,
+        ) else {
+            self.toast_manager.error("Load a ROM first");
+            return;
+        };
+        let was_paused = self.pause_for_dialog();
+        let path = crate::platform::FileDialog::new()
+            .add_filter(
+                "Symbol files",
+                &["elf", "axf", "sym", "map", "dbg", "nl", "json"],
+            )
+            .add_filter("All files", &["*"])
+            .set_title("Load Symbol File")
+            .pick_file();
+        self.resume_after_dialog(was_paused);
+        if let Some(path) = path {
+            self.start_symbol_load_request(
+                self.active_system,
+                rom_path,
+                source_path,
+                rom_hash,
+                Some(path),
+            );
         }
     }
 

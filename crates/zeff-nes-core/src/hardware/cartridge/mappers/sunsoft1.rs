@@ -50,6 +50,18 @@ impl Mapper for Sunsoft1 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let offset = if self.prg_rom.len() <= 0x4000 {
+            (addr as usize - 0x8000) % 0x4000
+        } else {
+            addr as usize - 0x8000
+        };
+        Some(offset % self.prg_rom.len())
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
             self.chr_low_bank = val & 0x07;

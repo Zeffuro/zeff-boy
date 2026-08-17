@@ -163,6 +163,39 @@ impl Mapper for Mmc1 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let outer = self.prg_outer_bank_base();
+        let inner_count = self.prg_inner_bank_count();
+        let (bank, offset) = match addr {
+            0x8000..=0xBFFF => {
+                let bank = match self.prg_mode() {
+                    0 | 1 => outer + ((self.prg_bank as usize & 0x0E) % inner_count),
+                    2 => outer,
+                    3 => outer + (self.prg_bank as usize % inner_count),
+                    _ => unreachable!(),
+                };
+                (bank, addr as usize & 0x3FFF)
+            }
+            0xC000..=0xFFFF => {
+                let bank = match self.prg_mode() {
+                    0 | 1 => outer + ((self.prg_bank as usize | 0x01) % inner_count),
+                    2 => outer + (self.prg_bank as usize % inner_count),
+                    3 => outer + inner_count - 1,
+                    _ => unreachable!(),
+                };
+                (bank, addr as usize & 0x3FFF)
+            }
+            _ => return None,
+        };
+        Some(self.prg_rom_index(bank, offset))
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.control)
+            | (u64::from(self.prg_bank) << 8)
+            | (u64::from(self.chr_bank_0) << 16)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
             0x6000..=0x7FFF => {

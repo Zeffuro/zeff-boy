@@ -26,22 +26,79 @@ fn default_camera_gamma() -> f32 {
 #[serde(default)]
 pub(crate) struct DebugColors {
     pub(crate) address: [u8; 4],
+    pub(crate) opcode: [u8; 4],
+    pub(crate) mnemonic: [u8; 4],
     pub(crate) symbol: [u8; 4],
+    pub(crate) source: [u8; 4],
     pub(crate) pc: [u8; 4],
     pub(crate) changed: [u8; 4],
     pub(crate) breakpoint: [u8; 4],
     pub(crate) watchpoint: [u8; 4],
+    pub(crate) selection: [u8; 4],
+    pub(crate) interrupt: [u8; 4],
 }
 
 impl Default for DebugColors {
     fn default() -> Self {
         Self {
             address: [140, 140, 170, 255],
+            opcode: [145, 155, 175, 255],
+            mnemonic: [205, 205, 220, 255],
             symbol: [110, 190, 140, 255],
+            source: [155, 135, 190, 255],
             pc: [63, 48, 82, 255],
             changed: [255, 100, 80, 255],
             breakpoint: [255, 80, 80, 255],
             watchpoint: [255, 180, 60, 255],
+            selection: [145, 105, 220, 255],
+            interrupt: [80, 190, 220, 255],
+        }
+    }
+}
+
+impl DebugColors {
+    pub(crate) fn for_theme(theme: UiThemePreset) -> Self {
+        match theme {
+            UiThemePreset::DefaultDark => Self::default(),
+            UiThemePreset::HighContrastDark => Self {
+                address: [185, 195, 235, 255],
+                opcode: [195, 205, 225, 255],
+                mnemonic: [245, 245, 250, 255],
+                symbol: [120, 235, 160, 255],
+                source: [210, 170, 245, 255],
+                pc: [82, 62, 108, 255],
+                changed: [255, 145, 80, 255],
+                breakpoint: [255, 95, 105, 255],
+                watchpoint: [255, 210, 80, 255],
+                selection: [180, 135, 255, 255],
+                interrupt: [95, 220, 255, 255],
+            },
+            UiThemePreset::Light => Self {
+                address: [68, 72, 112, 255],
+                opcode: [82, 88, 108, 255],
+                mnemonic: [28, 30, 38, 255],
+                symbol: [20, 112, 62, 255],
+                source: [102, 54, 132, 255],
+                pc: [225, 212, 244, 255],
+                changed: [190, 58, 28, 255],
+                breakpoint: [190, 32, 42, 255],
+                watchpoint: [150, 92, 0, 255],
+                selection: [112, 65, 175, 255],
+                interrupt: [0, 112, 150, 255],
+            },
+            UiThemePreset::Retro => Self {
+                address: [100, 220, 190, 255],
+                opcode: [130, 190, 170, 255],
+                mnemonic: [200, 245, 220, 255],
+                symbol: [245, 220, 95, 255],
+                source: [130, 205, 245, 255],
+                pc: [35, 88, 72, 255],
+                changed: [255, 145, 75, 255],
+                breakpoint: [255, 90, 90, 255],
+                watchpoint: [250, 210, 80, 255],
+                selection: [245, 105, 220, 255],
+                interrupt: [80, 225, 245, 255],
+            },
         }
     }
 }
@@ -416,6 +473,16 @@ fn default_debug_monospace_scale() -> f32 {
 }
 
 impl UiSettings {
+    pub(crate) fn effective_debug_colors(&self) -> DebugColors {
+        if self.debug_colors == DebugColors::default()
+            && self.theme_preset != UiThemePreset::DefaultDark
+        {
+            DebugColors::for_theme(self.theme_preset)
+        } else {
+            self.debug_colors
+        }
+    }
+
     pub(crate) fn dock_layout(
         &self,
         presentation: DebugPresentation,

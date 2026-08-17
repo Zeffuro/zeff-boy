@@ -4,7 +4,20 @@ use crate::settings::Settings;
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.heading("UI");
 
+    let previous_theme = settings.ui.theme_preset;
     enum_combo_box(ui, "UI theme", &mut settings.ui.theme_preset);
+    if previous_theme != settings.ui.theme_preset
+        && settings.ui.debug_colors == crate::settings::DebugColors::for_theme(previous_theme)
+    {
+        settings.ui.debug_colors =
+            crate::settings::DebugColors::for_theme(settings.ui.theme_preset);
+    }
+    if settings.ui.theme_preset != crate::settings::UiThemePreset::DefaultDark
+        && settings.ui.debug_colors == crate::settings::DebugColors::default()
+    {
+        settings.ui.debug_colors =
+            crate::settings::DebugColors::for_theme(settings.ui.theme_preset);
+    }
     enum_combo_box(ui, "UI density", &mut settings.ui.ui_density);
     ui.add(
         egui::Slider::new(&mut settings.ui.debug_monospace_scale, 0.75..=1.5)
@@ -12,12 +25,21 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             .suffix("x"),
     );
     ui.collapsing("Debugger colors", |ui| {
+        if ui.small_button("Use UI theme palette").clicked() {
+            settings.ui.debug_colors =
+                crate::settings::DebugColors::for_theme(settings.ui.theme_preset);
+        }
         color_row(ui, "Address", &mut settings.ui.debug_colors.address);
+        color_row(ui, "Opcode bytes", &mut settings.ui.debug_colors.opcode);
+        color_row(ui, "Mnemonic", &mut settings.ui.debug_colors.mnemonic);
         color_row(ui, "Symbol", &mut settings.ui.debug_colors.symbol);
+        color_row(ui, "Source", &mut settings.ui.debug_colors.source);
         color_row(ui, "Current PC", &mut settings.ui.debug_colors.pc);
         color_row(ui, "Changed", &mut settings.ui.debug_colors.changed);
         color_row(ui, "Breakpoint", &mut settings.ui.debug_colors.breakpoint);
         color_row(ui, "Watchpoint", &mut settings.ui.debug_colors.watchpoint);
+        color_row(ui, "Selection", &mut settings.ui.debug_colors.selection);
+        color_row(ui, "Interrupt", &mut settings.ui.debug_colors.interrupt);
         if ui.small_button("Reset debugger colors").clicked() {
             settings.ui.debug_colors = crate::settings::DebugColors::default();
         }

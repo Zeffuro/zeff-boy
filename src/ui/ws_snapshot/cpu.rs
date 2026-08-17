@@ -1,5 +1,4 @@
 use crate::debug::{CpuDebugSnapshot, DebugSection};
-use zeff_emu_common::address::Address;
 use zeff_ws_core::emulator::Emulator;
 
 pub(super) fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
@@ -8,15 +7,12 @@ pub(super) fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
     let flags = emu.cpu_flags();
     let pc = emu.cpu_pc();
     let ppu = emu.ppu_debug_snapshot();
-    let mem_around_pc: [(Address, u8); 32] = std::array::from_fn(|i| {
-        let addr = pc.wrapping_add(i as u32);
-        (addr, emu.cpu_peek8(addr))
-    });
     let debug_controls = super::super::build_debug_control_snapshot(
         emu.iter_breakpoints(),
+        emu.iter_one_shot_breakpoints(),
         emu.debug_watchpoints()
             .iter()
-            .map(|watch| (watch.address, watch.watch_type)),
+            .map(|watch| (watch.address, watch.end_address, watch.watch_type)),
         emu.debug_hit_breakpoint(),
         emu.debug_hit_watchpoint()
             .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
@@ -60,6 +56,7 @@ pub(super) fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
             None => format!("State: {:?}", emu.cpu_state()),
         },
         cpu_state: format!("{:?}", emu.cpu_state()),
+        pc,
         cycles: emu.cpu_cycles(),
         last_opcode_line: emu.last_fetch().map_or_else(
             || "no instruction fetched yet".into(),
@@ -118,9 +115,12 @@ pub(super) fn ws_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
                 ],
             },
         ],
-        mem_around_pc,
+        io_registers: Vec::new(),
         recent_opcodes,
+        call_stack: Vec::new(),
+        call_stack_available: false,
         breakpoints: debug_controls.breakpoints,
+        one_shot_breakpoints: debug_controls.one_shot_breakpoints,
         rom_breakpoints: Vec::new(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,

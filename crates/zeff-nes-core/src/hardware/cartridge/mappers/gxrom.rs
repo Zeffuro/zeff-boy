@@ -53,6 +53,16 @@ impl Mapper for Gxrom {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        (0x8000..=0xFFFF)
+            .contains(&addr)
+            .then(|| self.prg_addr(addr))
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank_select)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             self.bank_select = val & self.cpu_peek(addr);

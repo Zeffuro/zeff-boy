@@ -64,21 +64,23 @@ pub(crate) fn collect_emu_snapshot(
     };
 
     let disasm_target = req.disasm_target.and_then(|target| {
-        u16::try_from(target.cpu_address)
-            .ok()
-            .filter(|address| *address < 0x8000)
-            .map(|address| (target, address))
+        target.storage_offset.and_then(|storage_offset| {
+            u16::try_from(target.cpu_address)
+                .ok()
+                .filter(|address| *address < 0x8000)
+                .map(|address| (target, address, storage_offset))
+        })
     });
     let current_disasm = disasm_target.map_or_else(
         || (emu.cpu_pc().into(), Some(emu.rom_mapping_token())),
-        |(target, address)| (Address::from(address), Some(target.storage_offset)),
+        |(_, address, storage_offset)| (Address::from(address), Some(storage_offset)),
     );
     let disassembly_view = super::build_disassembly_view(
         req.show_disassembler,
         req.last_disasm_pc.map(|pc| (pc, req.last_disasm_mapping)),
         current_disasm,
         || {
-            if let Some((target, address)) = disasm_target {
+            if let Some((target, address, _)) = disasm_target {
                 let rom = emu.cartridge_rom_bytes();
                 disassemble_around(
                     |addr| target_rom_byte(rom, target, address, addr),
@@ -91,9 +93,11 @@ pub(crate) fn collect_emu_snapshot(
             }
         },
         emu.iter_breakpoints().map(Address::from),
+        emu.iter_one_shot_breakpoints().map(Address::from),
     )
     .map(|mut view| {
         view.is_navigation_target = disasm_target.is_some();
+        view.is_static_target = disasm_target.is_some();
         view.rom_breakpoints = emu
             .iter_rom_breakpoints()
             .filter_map(|offset| u64::try_from(offset).ok())
@@ -102,7 +106,7 @@ pub(crate) fn collect_emu_snapshot(
             .debug_hit_rom_breakpoint()
             .and_then(|offset| u64::try_from(offset).ok());
         for line in &mut view.lines {
-            line.storage_offset = if let Some((target, target_address)) = disasm_target {
+            line.storage_offset = if let Some((target, target_address, _)) = disasm_target {
                 u16::try_from(line.address)
                     .ok()
                     .and_then(|address| target_rom_offset(target, target_address, address))
@@ -117,7 +121,7 @@ pub(crate) fn collect_emu_snapshot(
                 .and_then(|address| u16::try_from(address).ok())
                 .and_then(|address| {
                     disasm_target
-                        .and_then(|(target, target_address)| {
+                        .and_then(|(target, target_address, _)| {
                             target_rom_offset(target, target_address, address)
                         })
                         .or_else(|| {
@@ -193,7 +197,7 @@ fn target_rom_offset(
         return None;
     }
     let base = target
-        .storage_offset
+        .storage_offset?
         .checked_sub(u64::from(target_address & 0x3FFF))?;
     base.checked_add(u64::from(address & 0x3FFF))
 }
@@ -219,7 +223,8 @@ mod tests {
     fn target_rom_mapping_stays_in_the_symbols_bank() {
         let target = crate::debug::DisassemblyTarget {
             cpu_address: 0x4560,
-            storage_offset: 0x8560,
+            storage_offset: Some(0x8560),
+            thumb: None,
         };
         assert_eq!(target_rom_offset(target, 0x4560, 0x4000), Some(0x8000));
         assert_eq!(target_rom_offset(target, 0x4560, 0x7FFF), Some(0xBFFF));

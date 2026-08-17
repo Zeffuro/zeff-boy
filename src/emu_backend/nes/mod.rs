@@ -16,8 +16,24 @@ impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
         self.add_breakpoint(narrow_u16(addr))
     }
-    fn add_watchpoint(&mut self, addr: Address, wt: zeff_emu_common::debug::WatchType) {
-        self.add_watchpoint(narrow_u16(addr), wt)
+    fn add_one_shot_breakpoint(&mut self, addr: Address) {
+        self.add_one_shot_breakpoint(narrow_u16(addr))
+    }
+    fn add_watchpoint_range(
+        &mut self,
+        start: Address,
+        end: Address,
+        wt: zeff_emu_common::debug::WatchType,
+    ) {
+        self.add_watchpoint_range(narrow_u16(start), narrow_u16(end), wt)
+    }
+    fn remove_watchpoint(
+        &mut self,
+        start: Address,
+        end: Address,
+        wt: zeff_emu_common::debug::WatchType,
+    ) {
+        self.remove_watchpoint(narrow_u16(start), narrow_u16(end), wt)
     }
     fn remove_breakpoint(&mut self, addr: Address) {
         self.remove_breakpoint(narrow_u16(addr))

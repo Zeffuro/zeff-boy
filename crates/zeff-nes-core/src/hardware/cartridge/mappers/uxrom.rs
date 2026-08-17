@@ -40,6 +40,19 @@ impl Mapper for Uxrom {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let bank = match addr {
+            0x8000..=0xBFFF => self.bank_select as usize % self.prg_bank_count(),
+            0xC000..=0xFFFF => self.prg_bank_count() - 1,
+            _ => return None,
+        };
+        Some(bank * 0x4000 + (addr as usize & 0x3FFF))
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank_select)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
             self.bank_select = val;

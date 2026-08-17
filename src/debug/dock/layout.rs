@@ -9,46 +9,59 @@ pub(crate) fn create_default_dock_state() -> DockState<DebugTab> {
 }
 
 pub(crate) fn create_ide_dock_state() -> DockState<DebugTab> {
-    // Central area: Game view
     let mut dock = DockState::new(vec![DebugTab::GameView]);
     let tree = dock.main_surface_mut();
 
-    // Left panel: CPU debug + Performance + APU + Input
-    let [_center, _left] = tree.split_left(
+    let [center, _left] = tree.split_left(
         egui_dock::NodeIndex::root(),
-        0.25,
+        0.19,
         vec![
             DebugTab::CpuDebug,
+            DebugTab::HardwareIo,
             DebugTab::Performance,
             DebugTab::ApuViewer,
             DebugTab::InputViewer,
         ],
     );
 
-    // Right panel: Disassembler + Memory + ROM Viewer
-    let [_center2, right] = tree.split_right(
-        egui_dock::NodeIndex::root(),
-        0.65,
+    let [_center, right] = tree.split_right(
+        center,
+        0.58,
         vec![
             DebugTab::Disassembler,
-            DebugTab::MemoryViewer,
-            DebugTab::RomViewer,
             DebugTab::SymbolBrowser,
+            DebugTab::SourceViewer,
         ],
     );
 
-    // Bottom-right: Breakpoints + Cheats
-    let [_right_top, _right_bottom] =
-        tree.split_below(right, 0.65, vec![DebugTab::Breakpoints, DebugTab::Cheats]);
-
-    // Below game view: Graphics viewers grouped together
-    let [_center3, _bottom] = tree.split_below(
-        egui_dock::NodeIndex::root(),
-        0.6,
+    let [right_top, _right_bottom] = tree.split_below(
+        right,
+        0.7,
         vec![
-            DebugTab::TileViewer,
-            DebugTab::TilemapViewer,
+            DebugTab::ExecutionHistory,
+            DebugTab::CallStack,
+            DebugTab::Breakpoints,
+            DebugTab::Cheats,
+        ],
+    );
+
+    let [_disasm, _memory] = tree.split_right(
+        right_top,
+        0.62,
+        vec![
+            DebugTab::MemoryViewer,
+            DebugTab::RomViewer,
+            DebugTab::RomInfo,
+        ],
+    );
+
+    let [_game, _graphics] = tree.split_below(
+        center,
+        0.7,
+        vec![
             DebugTab::OamViewer,
+            DebugTab::TilemapViewer,
+            DebugTab::TileViewer,
             DebugTab::PaletteViewer,
         ],
     );
@@ -58,33 +71,52 @@ pub(crate) fn create_ide_dock_state() -> DockState<DebugTab> {
 
 pub(crate) fn create_debugger_dock_state() -> DockState<DebugTab> {
     let mut dock = DockState::new(vec![
-        DebugTab::CpuDebug,
-        DebugTab::Performance,
-        DebugTab::ApuViewer,
-        DebugTab::InputViewer,
+        DebugTab::Disassembler,
+        DebugTab::SourceViewer,
+        DebugTab::SymbolBrowser,
     ]);
     let tree = dock.main_surface_mut();
 
-    let [_left, right] = tree.split_right(
+    let [center, _left] = tree.split_left(
         egui_dock::NodeIndex::root(),
-        0.48,
+        0.2,
         vec![
-            DebugTab::Disassembler,
+            DebugTab::CpuDebug,
+            DebugTab::HardwareIo,
+            DebugTab::Performance,
+            DebugTab::ApuViewer,
+            DebugTab::InputViewer,
+        ],
+    );
+
+    let [top, bottom] = tree.split_below(
+        center,
+        0.67,
+        vec![
+            DebugTab::ExecutionHistory,
+            DebugTab::CallStack,
+            DebugTab::Breakpoints,
+            DebugTab::Cheats,
+        ],
+    );
+
+    let [_disasm, _memory] = tree.split_right(
+        top,
+        0.64,
+        vec![
             DebugTab::MemoryViewer,
             DebugTab::RomViewer,
             DebugTab::RomInfo,
-            DebugTab::SymbolBrowser,
         ],
     );
-    let [_right_top, _right_bottom] =
-        tree.split_below(right, 0.68, vec![DebugTab::Breakpoints, DebugTab::Cheats]);
-    let [_top, _bottom] = tree.split_below(
-        egui_dock::NodeIndex::root(),
-        0.7,
+
+    let [_history, _graphics] = tree.split_right(
+        bottom,
+        0.55,
         vec![
-            DebugTab::TileViewer,
-            DebugTab::TilemapViewer,
             DebugTab::OamViewer,
+            DebugTab::TilemapViewer,
+            DebugTab::TileViewer,
             DebugTab::PaletteViewer,
         ],
     );
@@ -194,7 +226,7 @@ mod tests {
     use super::{
         create_dock_for_presentation, is_tab_open, restore_dock_layout, serialize_dock_layout,
     };
-    use crate::debug::DebugTab;
+    use crate::debug::{DebugTab, compute_tab_requirements};
     use crate::settings::DebugPresentation;
 
     #[test]
@@ -214,13 +246,28 @@ mod tests {
 
         for tab in [
             DebugTab::CpuDebug,
+            DebugTab::HardwareIo,
             DebugTab::Disassembler,
             DebugTab::MemoryViewer,
+            DebugTab::SourceViewer,
+            DebugTab::ExecutionHistory,
+            DebugTab::CallStack,
             DebugTab::Breakpoints,
             DebugTab::TileViewer,
         ] {
             assert!(is_tab_open(&dock, tab));
         }
+    }
+
+    #[test]
+    fn debugger_default_exposes_multiple_live_panes() {
+        let dock = create_dock_for_presentation(DebugPresentation::GameAndDebugger);
+        let requirements = compute_tab_requirements(&dock);
+
+        assert!(requirements.needs_debug_info);
+        assert!(requirements.needs_disassembly);
+        assert!(requirements.needs_memory_page);
+        assert!(requirements.needs_oam);
     }
 
     #[test]

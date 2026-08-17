@@ -58,10 +58,26 @@ pub(crate) fn collect_sega8_snapshot(
         snapshot
             .last_disasm_pc
             .map(|pc| (pc, snapshot.last_disasm_mapping)),
-        (Address::from(emu.cpu().regs().pc), None),
+        (
+            Address::from(emu.cpu().regs().pc),
+            Some(emu.rom_mapping_token()),
+        ),
         || z80_disassemble_around(|addr| emu.cpu_peek8(addr), emu.cpu().regs().pc, 12, 26),
         emu.iter_breakpoints(),
-    );
+        emu.iter_one_shot_breakpoints(),
+    )
+    .map(|mut view| {
+        for line in &mut view.lines {
+            line.storage_offset = emu
+                .rom_offset_for_cpu_address(narrow_u16(line.address))
+                .map(|offset| offset as u64);
+            line.control_target_storage = line
+                .control_target
+                .and_then(|address| emu.rom_offset_for_cpu_address(narrow_u16(address)))
+                .map(|offset| offset as u64);
+        }
+        view
+    });
 
     if snapshot.show_rom_info {
         data.rom_debug = Some(rom_info::sega8_rom_info(emu));

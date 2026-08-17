@@ -63,6 +63,27 @@ impl Mapper for IremG101 {
         }
     }
 
+    fn cpu_rom_offset(&self, addr: u16) -> Option<usize> {
+        let fixed_second_last = self.prg_bank_count_8k().saturating_sub(2);
+        let fixed_last = self.prg_bank_count_8k().saturating_sub(1);
+        let bank = match addr {
+            0x8000..=0x9FFF if self.prg_mode => fixed_second_last,
+            0x8000..=0x9FFF => self.prg_bank_0 as usize,
+            0xA000..=0xBFFF => self.prg_bank_1 as usize,
+            0xC000..=0xDFFF if self.prg_mode => self.prg_bank_0 as usize,
+            0xC000..=0xDFFF => fixed_second_last,
+            0xE000..=0xFFFF => fixed_last,
+            _ => return None,
+        } % self.prg_bank_count_8k();
+        Some((bank * 0x2000 + (addr as usize & 0x1FFF)) % self.prg_rom.len())
+    }
+
+    fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.prg_bank_0)
+            | (u64::from(self.prg_bank_1) << 8)
+            | (u64::from(self.prg_mode) << 16)
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr & 0xF000 {
             0x8000 => self.prg_bank_0 = val & 0x1F,
@@ -171,5 +192,15 @@ mod tests {
         assert_eq!(mapper.mirroring(), Mirroring::Vertical);
         mapper.cpu_write(0x9000, 0x01);
         assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn reports_active_prg_rom_offsets() {
+        let mut mapper = IremG101::new(prg_banks(8), chr_banks(8), Mirroring::Horizontal);
+        mapper.cpu_write(0x8000, 3);
+        assert_eq!(mapper.cpu_rom_offset(0x8123), Some(3 * 0x2000 + 0x123));
+        assert_eq!(mapper.cpu_rom_offset(0xE123), Some(7 * 0x2000 + 0x123));
+        mapper.cpu_write(0x9000, 0x02);
+        assert_eq!(mapper.cpu_rom_offset(0xC123), Some(3 * 0x2000 + 0x123));
     }
 }

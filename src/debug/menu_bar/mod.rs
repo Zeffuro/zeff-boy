@@ -19,6 +19,7 @@ pub(crate) enum MenuAction {
     ResetGame,
     StopGame,
     OpenSettings,
+    LoadSymbolFile,
     SetDebugPresentation(DebugPresentation),
     OpenDebuggerWindow,
     SaveStateFile,

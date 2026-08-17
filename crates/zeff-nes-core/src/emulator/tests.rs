@@ -41,6 +41,25 @@ fn build_fds_image(fill: u8) -> Vec<u8> {
 }
 
 #[test]
+fn call_stack_tracks_jsr_and_rts() {
+    let rom = build_test_rom_with_program(&[0x20, 0x06, 0x80, 0xEA, 0xEA, 0xEA, 0x60]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("test ROM");
+    emu.set_opcode_log_enabled(true);
+
+    emu.step_instruction();
+    assert_eq!(emu.call_stack.len(), 1);
+    assert_eq!(emu.call_stack[0].target, 0x8006);
+    assert_eq!(emu.call_stack[0].return_address, 0x8003);
+    assert_eq!(emu.call_stack[0].kind, crate::debug::CallStackKind::Call);
+
+    emu.step_instruction();
+    assert!(emu.call_stack.is_empty());
+    let history = emu.recent_opcodes(2);
+    assert_eq!(history[0].2, Some(6));
+    assert_eq!(history[1].2, Some(0));
+}
+
+#[test]
 fn new_uses_power_on_reset_without_stack_adjust() {
     let emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).expect("test ROM");
 

@@ -333,6 +333,21 @@ impl Cartridge {
         }
     }
 
+    pub fn rom_offset_for_address(&self, addr: u32) -> Option<usize> {
+        let addr = (addr & 0x000F_FFFF) as usize;
+        let offset = match addr {
+            0x20000..=0x2FFFF => self.rom_bank_offset(self.bank0, addr - 0x20000),
+            0x30000..=0x3FFFF => self.rom_bank_offset(self.bank1, addr - 0x30000),
+            0x40000..=0xFFFFF => self.linear_rom_offset(addr - 0x40000),
+            _ => return None,
+        };
+        (offset < self.rom.len()).then_some(offset)
+    }
+
+    pub fn rom_mapping_token(&self) -> u64 {
+        u64::from(self.bank0) | (u64::from(self.bank1) << 16) | (u64::from(self.linear_bank) << 32)
+    }
+
     pub fn rom_write8(&mut self, addr: u32, value: u8) {
         let addr = (addr & 0x000F_FFFF) as usize;
         if let 0x10000..=0x1FFFF = addr {
@@ -353,8 +368,7 @@ impl Cartridge {
     }
 
     fn read_rom_bank(&self, bank: u16, offset: usize) -> u8 {
-        let bank = self.effective_rom_bank(bank);
-        let rom_offset = bank * ROM_BANK_SIZE + offset;
+        let rom_offset = self.rom_bank_offset(bank, offset);
         self.rom
             .get(rom_offset)
             .copied()
@@ -367,15 +381,23 @@ impl Cartridge {
     }
 
     fn read_linear_window(&self, offset: usize) -> u8 {
-        let banks = self.rom_bank_count().max(1);
-        let physical_bank = 4 + (offset / ROM_BANK_SIZE);
-        let selected_bank =
-            (((usize::from(self.linear_bank) & 0x0F) << 4) | (physical_bank & 0x0F)) % banks;
-        let rom_offset = selected_bank * ROM_BANK_SIZE + (offset & (ROM_BANK_SIZE - 1));
+        let rom_offset = self.linear_rom_offset(offset);
         self.rom
             .get(rom_offset)
             .copied()
             .unwrap_or(DEFAULT_OPEN_BUS)
+    }
+
+    fn rom_bank_offset(&self, bank: u16, offset: usize) -> usize {
+        self.effective_rom_bank(bank) * ROM_BANK_SIZE + offset
+    }
+
+    fn linear_rom_offset(&self, offset: usize) -> usize {
+        let banks = self.rom_bank_count().max(1);
+        let physical_bank = 4 + (offset / ROM_BANK_SIZE);
+        let selected_bank =
+            (((usize::from(self.linear_bank) & 0x0F) << 4) | (physical_bank & 0x0F)) % banks;
+        selected_bank * ROM_BANK_SIZE + (offset & (ROM_BANK_SIZE - 1))
     }
 
     fn save_read8(&self, offset: usize) -> u8 {
@@ -562,6 +584,19 @@ mod tests {
         cart.set_linear_bank(0x0E);
 
         assert_eq!(cart.rom_read8(0x8_D000), 0x42);
+    }
+
+    #[test]
+    fn rom_offsets_follow_banked_and_linear_windows() {
+        let mut cart = Cartridge::load(&sized_test_rom(64 * ROM_BANK_SIZE)).unwrap();
+        cart.set_bank0(3);
+        cart.set_bank1(9);
+        cart.set_linear_bank(2);
+
+        assert_eq!(cart.rom_offset_for_address(0x2_1234), Some(0x3_1234));
+        assert_eq!(cart.rom_offset_for_address(0x3_5678), Some(0x9_5678));
+        assert_eq!(cart.rom_offset_for_address(0x4_1234), Some(0x24_1234));
+        assert_ne!(cart.rom_mapping_token(), 0);
     }
 
     #[test]

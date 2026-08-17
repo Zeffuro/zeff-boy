@@ -17,6 +17,8 @@ mod render_frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod settings_window;
 mod viewport;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod window_geometry;
 
 use egui_integration::EguiRenderer;
 use framebuffer::FramebufferRenderer;

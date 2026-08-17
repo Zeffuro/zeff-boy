@@ -423,12 +423,12 @@ impl Bus {
     }
 
     #[inline]
-    pub(in crate::hardware) fn pending_interrupts_for_cpu(&self) -> u8 {
+    pub(crate) fn pending_interrupts_for_cpu(&self) -> u8 {
         (self.if_reg | self.cpu_interrupt_pending_before_if) & self.ie & 0x1F
     }
 
     #[inline]
-    pub(in crate::hardware) fn pending_interrupts_for_halt(&self) -> u8 {
+    pub(crate) fn pending_interrupts_for_halt(&self) -> u8 {
         self.if_reg & self.ie & 0x1F
     }
 
