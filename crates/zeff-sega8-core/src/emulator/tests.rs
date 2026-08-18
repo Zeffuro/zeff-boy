@@ -16,7 +16,9 @@ use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 use zeff_emu_common::cheats::{CheatPatch, CheatValue};
 use zeff_emu_common::debug::{DebugEvent, WatchType};
+use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{ClockRate, MasterTicks};
 
 fn rom_with_header(location: HeaderLocation, region_size: u8) -> Vec<u8> {
     let mut rom = vec![0xFF; location.offset() + SEGA_HEADER_SIZE];
@@ -24,6 +26,31 @@ fn rom_with_header(location: HeaderLocation, region_size: u8) -> Vec<u8> {
     rom[offset..offset + SEGA_HEADER_MAGIC.len()].copy_from_slice(SEGA_HEADER_MAGIC);
     rom[offset + 0x0F] = region_size;
     rom
+}
+
+#[test]
+fn timing_snapshot_tracks_video_standard_and_state() {
+    let mut rom = rom_with_header(HeaderLocation::Offset0x7ff0, 0x4C);
+    rom[0] = 0x00;
+    let mut emu = Emulator::new_with_hint_and_video_standard(
+        &rom,
+        48_000,
+        SystemHint::MasterSystem,
+        Sega8VideoStandard::Pal,
+    )
+    .unwrap();
+    let rate = u64::from(Sega8VideoStandard::Pal.clock_hz_approx());
+    assert_eq!(emu.timing_snapshot().rate(), ClockRate::from_hz(rate));
+    assert_eq!(emu.timing_snapshot().now(), MasterTicks::new(0));
+
+    emu.step_instruction();
+    let saved_clock = emu.timing_snapshot();
+    let state = emu.encode_state().unwrap();
+    emu.step_instruction();
+    assert!(emu.timing_snapshot().now() > saved_clock.now());
+
+    emu.load_state(&state).unwrap();
+    assert_eq!(emu.timing_snapshot(), saved_clock);
 }
 
 fn set_vdp_write_address(emu: &mut Emulator, addr: u16) {
@@ -692,38 +719,47 @@ fn debug_write_triggers_write_watchpoint() {
 }
 
 #[test]
-fn bus_trace_records_cpu_reads_and_writes_for_instruction() {
+fn bus_trace_preserves_mixed_memory_access_order_without_timestamps() {
     let mut emu = Emulator::new_with_hint(
-        &[0x3E, 0x5A, 0x32, 0x00, 0xC0, 0x76],
+        &[0x21, 0x00, 0xC0, 0x34, 0x76],
         48_000,
         SystemHint::MasterSystem,
     )
     .expect("emulator should initialize");
 
-    let (_, load_trace) = emu.step_instruction_with_bus_trace();
+    emu.step_instruction();
+    let (_, trace) = emu.step_instruction_with_bus_trace();
     assert!(matches!(
-        load_trace.as_slice(),
+        trace.as_slice(),
         [
             CpuAccessTraceEvent::Read {
-                addr: 0x0000,
-                value: 0x3E
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: 0x0003,
+                value: 0x34,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             },
             CpuAccessTraceEvent::Read {
-                addr: 0x0001,
-                value: 0x5A
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: 0xC000,
+                value: 0,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
+            },
+            CpuAccessTraceEvent::Write {
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: 0xC000,
+                old_value: 0,
+                written_value: 1,
+                new_value: 1,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             },
         ]
     ));
-
-    let (_, store_trace) = emu.step_instruction_with_bus_trace();
-    assert!(store_trace.iter().any(|event| matches!(
-        event,
-        CpuAccessTraceEvent::Write {
-            addr: 0xC000,
-            old_value: 0x00,
-            new_value: 0x5A
-        }
-    )));
 }
 
 #[test]
@@ -755,9 +791,15 @@ fn bus_trace_records_io_writes_for_out_instruction() {
     );
     assert!(trace.iter().any(|event| matches!(
         event,
-        CpuAccessTraceEvent::IoWrite {
-            port: 0x7F,
-            value: 0x90
+        CpuAccessTraceEvent::Write {
+            at: None,
+            space: TraceWriteKind::Io,
+            addr: 0x7F,
+            old_value: 0x90,
+            written_value: 0x90,
+            new_value: 0x90,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
         }
     )));
 }

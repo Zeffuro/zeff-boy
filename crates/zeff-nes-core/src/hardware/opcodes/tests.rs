@@ -3,6 +3,7 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Cartridge;
 use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::registers::StatusFlags;
+use zeff_emu_common::time::MasterTicks;
 
 fn build_bus_with_program(program: &[u8]) -> Bus {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -649,8 +650,19 @@ fn official_rmw_writes_original_then_modified_value() {
     bus.ram[0x0200] = 0x41;
     bus.debug_trace_enabled = true;
     bus.debug_trace_events.clear();
+    bus.begin_cpu_step_timing(MasterTicks::new(cpu.cycles));
 
     cpu.step(&mut bus);
+
+    assert_eq!(
+        bus.debug_trace_events
+            .iter()
+            .map(|event| event.at())
+            .collect::<Vec<_>>(),
+        (7..13)
+            .map(|tick| Some(MasterTicks::new(tick)))
+            .collect::<Vec<_>>()
+    );
 
     let writes: Vec<_> = bus
         .debug_trace_events
@@ -664,6 +676,29 @@ fn official_rmw_writes_original_then_modified_value() {
         .collect();
     assert_eq!(writes, vec![0x41, 0x82]);
     assert_eq!(bus.ram[0x0200], 0x82);
+}
+
+#[test]
+fn every_opcode_places_one_bus_access_per_cpu_cycle() {
+    for opcode in 0..=u8::MAX {
+        let (mut cpu, mut bus) = setup(&[opcode, 0, 0]);
+        bus.debug_trace_enabled = true;
+        bus.debug_trace_events.clear();
+
+        let start = cpu.cycles;
+        bus.begin_cpu_step_timing(MasterTicks::new(start));
+        let cycles = cpu.step(&mut bus);
+        let timestamps: Vec<_> = bus
+            .debug_trace_events
+            .iter()
+            .map(|event| event.at())
+            .collect();
+        let expected: Vec<_> = (start..start + cycles)
+            .map(|tick| Some(MasterTicks::new(tick)))
+            .collect();
+
+        assert_eq!(timestamps, expected, "opcode {opcode:02X}");
+    }
 }
 
 #[test]

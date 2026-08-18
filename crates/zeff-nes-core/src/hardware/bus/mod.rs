@@ -12,6 +12,8 @@ use crate::hardware::ppu::{
     SCREEN_W, VBLANK_SCANLINE, apply_nes_emphasis, apply_nes_palette_mode, apply_rgb_ppu_emphasis,
 };
 use std::fmt;
+pub use zeff_emu_common::debug::BusAccessEvent as DebugTraceEvent;
+use zeff_emu_common::time::MasterTicks;
 
 const VS_RGB_ZAPPER_SET_E_INES_CRC32: u32 = 0x9C41_0648;
 const VS_RGB_ZAPPER_PRG_CRC32: u32 = 0xED58_8F00;
@@ -21,21 +23,6 @@ const ZAPPER_SENSOR_SAMPLE_RADIUS: i32 = 4;
 
 fn power_on_internal_ram() -> [u8; RAM_SIZE] {
     [0xFF; RAM_SIZE]
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DebugTraceEvent {
-    Read {
-        addr: u16,
-        value: u8,
-        ppu_addr: Option<u16>,
-    },
-    Write {
-        addr: u16,
-        old_value: u8,
-        new_value: u8,
-        ppu_addr: Option<u16>,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -85,6 +72,8 @@ pub struct Bus {
     pub(crate) ppu_nmi_suppressed_by_status_read: bool,
     pub(crate) cpu_step_elapsed_cycles: u64,
     pub(crate) cpu_step_events: PeripheralTickEvents,
+    pub(crate) cpu_step_start_tick: Option<MasterTicks>,
+    pub(crate) cpu_access_elapsed_cycles: u64,
     pub game_genie: NesCheatState,
     pub palette_mode: NesPaletteMode,
     pub custom_palette: Option<NesPalette>,
@@ -133,6 +122,8 @@ impl Bus {
             ppu_nmi_suppressed_by_status_read: false,
             cpu_step_elapsed_cycles: 0,
             cpu_step_events: PeripheralTickEvents::default(),
+            cpu_step_start_tick: None,
+            cpu_access_elapsed_cycles: 0,
             game_genie: NesCheatState::new(),
             palette_mode,
             custom_palette: None,
@@ -231,6 +222,8 @@ impl Bus {
         self.ppu_nmi_suppressed_by_status_read = false;
         self.cpu_step_elapsed_cycles = 0;
         self.cpu_step_events = PeripheralTickEvents::default();
+        self.cpu_step_start_tick = None;
+        self.cpu_access_elapsed_cycles = 0;
         self.vs_credit_pressed = false;
         self.vs_coin_pulse_frames = 0;
         self.zapper_screen_pos = None;
@@ -410,6 +403,8 @@ impl Bus {
         self.ppu_nmi_suppressed_by_status_read = false;
         self.cpu_step_elapsed_cycles = 0;
         self.cpu_step_events = PeripheralTickEvents::default();
+        self.cpu_step_start_tick = None;
+        self.cpu_access_elapsed_cycles = 0;
         Ok(())
     }
 
@@ -447,7 +442,8 @@ impl Bus {
                 let addr = self.apu.dmc.dma_address();
                 let byte = self.dmc_dma_read(addr);
                 self.apu.dmc.fill_sample_buffer(byte);
-                let base = if self.cpu_odd_cycle { 4 } else { 3 };
+                let elapsed = self.cpu_step_elapsed_cycles + cpu_cycle;
+                let base = if self.cpu_cycle_is_odd(elapsed) { 4 } else { 3 };
                 let conflict = if self.dma_stall_cycles > 0 { 1 } else { 0 };
                 self.dma_stall_cycles += base + conflict;
             }
@@ -464,9 +460,45 @@ impl Bus {
         events
     }
 
-    pub(crate) fn begin_cpu_step_timing(&mut self) {
+    pub(crate) fn begin_cpu_step_timing(&mut self, start_tick: MasterTicks) {
         self.cpu_step_elapsed_cycles = 0;
         self.cpu_step_events = PeripheralTickEvents::default();
+        self.begin_cpu_access_timing(start_tick);
+    }
+
+    pub(crate) fn begin_cpu_access_timing(&mut self, start_tick: MasterTicks) {
+        self.cpu_step_start_tick = Some(start_tick);
+        self.cpu_access_elapsed_cycles = 0;
+    }
+
+    pub(crate) fn prepare_cpu_instruction_accesses(&mut self) {
+        if self.cpu_step_start_tick.is_none() {
+            self.cpu_access_elapsed_cycles = 0;
+        }
+    }
+
+    pub(crate) fn advance_cpu_access_timing_to(&mut self, elapsed_cycles: u64) {
+        self.cpu_access_elapsed_cycles = self.cpu_access_elapsed_cycles.max(elapsed_cycles);
+    }
+
+    pub(crate) fn next_cpu_access_tick(&mut self) -> Option<MasterTicks> {
+        let elapsed = self.cpu_access_elapsed_cycles;
+        self.cpu_access_elapsed_cycles = self.cpu_access_elapsed_cycles.wrapping_add(1);
+        self.cpu_step_start_tick
+            .map(|start| MasterTicks::new(start.get().wrapping_add(elapsed)))
+    }
+
+    pub(crate) fn cpu_cycle_is_odd(&self, elapsed_cycles: u64) -> bool {
+        self.cpu_step_start_tick
+            .map(|start| start.get().wrapping_add(elapsed_cycles) & 1 != 0)
+            .unwrap_or(self.cpu_odd_cycle)
+    }
+
+    pub(crate) fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16) {
+        while self.cpu_access_elapsed_cycles < total_cycles {
+            let _ = self.cpu_read(pc);
+        }
+        debug_assert_eq!(self.cpu_access_elapsed_cycles, total_cycles);
     }
 
     pub(crate) fn advance_cpu_step_timing_to(&mut self, elapsed_cycles: u64) {
@@ -486,6 +518,8 @@ impl Bus {
         let events = self.cpu_step_events;
         self.cpu_step_events = PeripheralTickEvents::default();
         self.cpu_step_elapsed_cycles = 0;
+        self.cpu_step_start_tick = None;
+        self.cpu_access_elapsed_cycles = 0;
         events
     }
 }

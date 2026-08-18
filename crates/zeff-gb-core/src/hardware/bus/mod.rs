@@ -72,8 +72,8 @@ pub struct Bus {
     cpu_interrupt_pending_before_if: u8,
     io: IO,
     pub trace_cpu_accesses: bool,
-    cpu_read_trace: Vec<(u16, u8)>,
-    cpu_write_trace: Vec<(u16, u8, u8)>,
+    cpu_access_trace_origin: zeff_emu_common::time::MasterTicks,
+    cpu_access_trace: Vec<CpuAccessTraceEvent>,
     pub game_genie_patches: Vec<crate::cheats::CheatPatch>,
 }
 

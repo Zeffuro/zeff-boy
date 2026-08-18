@@ -27,7 +27,10 @@ impl Emulator {
         let trace_active = watch_active || trace_enabled;
         self.bus.trace_cpu_accesses = trace_active;
         if trace_active {
-            self.bus.begin_cpu_access_trace();
+            self.bus
+                .begin_cpu_access_trace_at(zeff_emu_common::time::MasterTicks::new(
+                    self.cycle_count,
+                ));
         }
 
         let pc_before = self.cpu.pc;
@@ -52,7 +55,7 @@ impl Emulator {
                 self.bus.pending_interrupts_for_cpu() != 0
             };
 
-        self.cpu.step(&mut self.bus);
+        self.step_cpu();
 
         self.update_call_stack(
             pc_before,
@@ -69,8 +72,6 @@ impl Emulator {
         {
             self.cpu.running = CpuState::Suspended;
         }
-
-        self.hardware_mode = self.bus.hardware_mode;
 
         let mut trace_record = trace_enabled.then(|| {
             InstructionTraceRecord::new(
@@ -94,24 +95,25 @@ impl Emulator {
             let hit_watchpoint = {
                 let debug = &mut self.debug;
                 self.bus.drain_cpu_access_trace(|event| match event {
-                    CpuAccessTraceEvent::Read { addr, value } => {
+                    CpuAccessTraceEvent::Read { addr, value, .. } => {
                         if watch_active {
-                            debug.check_watch_read(addr, value);
+                            debug.check_watch_read(addr as u16, value as u8);
                         }
                     }
                     CpuAccessTraceEvent::Write {
                         addr,
                         old_value,
                         new_value,
+                        ..
                     } => {
                         if watch_active {
-                            debug.check_watch_write(addr, old_value, new_value);
+                            debug.check_watch_write(addr as u16, old_value as u8, new_value as u8);
                         }
                         if let Some(record) = &mut trace_record {
                             record.push_write(TraceWrite {
-                                address: u32::from(addr),
-                                old_value: u32::from(old_value),
-                                new_value: u32::from(new_value),
+                                address: addr,
+                                old_value,
+                                new_value,
                                 width: TraceWriteWidth::Byte,
                                 kind: TraceWriteKind::Memory,
                             });
@@ -281,9 +283,16 @@ impl Emulator {
         {
             let _ = self.step_instruction();
         } else {
-            self.cpu.step(&mut self.bus);
-            self.hardware_mode = self.bus.hardware_mode;
+            self.step_cpu();
         }
+    }
+
+    fn step_cpu(&mut self) {
+        self.cpu.step(&mut self.bus);
+        self.cycle_count = self
+            .cycle_count
+            .wrapping_add(self.cpu.last_step_master_ticks);
+        self.hardware_mode = self.bus.hardware_mode;
     }
 
     pub fn step_frame(&mut self) {
@@ -318,8 +327,7 @@ impl Emulator {
             }
         } else {
             while self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles {
-                self.cpu.step(&mut self.bus);
-                self.hardware_mode = self.bus.hardware_mode;
+                self.step_cpu();
                 if self.reached_vblank_start(&mut previous_ly) {
                     break;
                 }
@@ -345,8 +353,7 @@ impl Emulator {
             }
         } else {
             while self.cpu.cycles < target {
-                self.cpu.step(&mut self.bus);
-                self.hardware_mode = self.bus.hardware_mode;
+                self.step_cpu();
             }
         }
     }

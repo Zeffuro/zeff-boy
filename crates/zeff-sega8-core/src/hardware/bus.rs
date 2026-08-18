@@ -20,6 +20,8 @@ use super::region::Sega8Region;
 use super::serial::GameGearSerial;
 use super::timing::Sega8VideoStandard;
 use super::vdp::{Mode4ColorMode, Vdp};
+pub use zeff_emu_common::debug::BusAccessEvent as CpuAccessTraceEvent;
+use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
 const SAVE_STATE_VERSION_WITH_GG_START: u32 = 2;
 const SAVE_STATE_VERSION_WITH_IO_CONTROL: u32 = 4;
@@ -34,27 +36,6 @@ const MEMORY_CONTROL_DEFAULT: u8 = 0x00;
 const MEMORY_CONTROL_IO_DISABLE: u8 = 1 << 2;
 const MEMORY_CONTROL_WORK_RAM_DISABLE: u8 = 1 << 4;
 const MEMORY_CONTROL_CARTRIDGE_DISABLE: u8 = 1 << 6;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CpuAccessTraceEvent {
-    Read {
-        addr: u16,
-        value: u8,
-    },
-    Write {
-        addr: u16,
-        old_value: u8,
-        new_value: u8,
-    },
-    IoRead {
-        port: u8,
-        value: u8,
-    },
-    IoWrite {
-        port: u8,
-        value: u8,
-    },
-}
 
 #[derive(Clone, Debug)]
 pub struct Bus {
@@ -334,6 +315,11 @@ impl Bus {
     pub fn drain_cpu_access_trace(&mut self) -> Vec<CpuAccessTraceEvent> {
         self.debug_trace_enabled = false;
         std::mem::take(&mut *self.debug_trace_events.borrow_mut())
+    }
+
+    pub fn recycle_cpu_access_trace(&mut self, mut events: Vec<CpuAccessTraceEvent>) {
+        events.clear();
+        *self.debug_trace_events.borrow_mut() = events;
     }
 
     pub(crate) fn write_state(&self, w: &mut zeff_emu_common::save_state::StateWriter) {
@@ -756,7 +742,14 @@ impl Bus {
         if self.debug_trace_enabled {
             self.debug_trace_events
                 .borrow_mut()
-                .push(CpuAccessTraceEvent::Read { addr, value });
+                .push(CpuAccessTraceEvent::Read {
+                    at: None,
+                    space: TraceWriteKind::Memory,
+                    addr: u32::from(addr),
+                    value: u32::from(value),
+                    width: TraceWriteWidth::Byte,
+                    mapped_addr: None,
+                });
         }
     }
 
@@ -765,9 +758,14 @@ impl Bus {
             self.debug_trace_events
                 .borrow_mut()
                 .push(CpuAccessTraceEvent::Write {
-                    addr,
-                    old_value,
-                    new_value,
+                    at: None,
+                    space: TraceWriteKind::Memory,
+                    addr: u32::from(addr),
+                    old_value: u32::from(old_value),
+                    written_value: u32::from(new_value),
+                    new_value: u32::from(new_value),
+                    width: TraceWriteWidth::Byte,
+                    mapped_addr: None,
                 });
         }
     }
@@ -776,7 +774,14 @@ impl Bus {
         if self.debug_trace_enabled {
             self.debug_trace_events
                 .borrow_mut()
-                .push(CpuAccessTraceEvent::IoRead { port, value });
+                .push(CpuAccessTraceEvent::Read {
+                    at: None,
+                    space: TraceWriteKind::Io,
+                    addr: u32::from(port),
+                    value: u32::from(value),
+                    width: TraceWriteWidth::Byte,
+                    mapped_addr: None,
+                });
         }
     }
 
@@ -784,7 +789,16 @@ impl Bus {
         if self.debug_trace_enabled {
             self.debug_trace_events
                 .borrow_mut()
-                .push(CpuAccessTraceEvent::IoWrite { port, value });
+                .push(CpuAccessTraceEvent::Write {
+                    at: None,
+                    space: TraceWriteKind::Io,
+                    addr: u32::from(port),
+                    old_value: u32::from(value),
+                    written_value: u32::from(value),
+                    new_value: u32::from(value),
+                    width: TraceWriteWidth::Byte,
+                    mapped_addr: None,
+                });
         }
     }
 }

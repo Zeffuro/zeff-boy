@@ -63,6 +63,29 @@ mod tests {
     use crate::debug::WatchType;
     use crate::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
     use zeff_emu_common::save_ram::SaveRamKind;
+    use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks};
+
+    #[test]
+    fn master_timing_round_trips_through_save_state() {
+        let rom = vec![0u8; 0x8000];
+        let mut emulator = Emulator::new(&rom, 44_100).expect("GB emulator should initialize");
+
+        fn snapshot(machine: &impl MachineTiming) -> zeff_emu_common::time::TimingSnapshot {
+            machine.timing_snapshot()
+        }
+
+        assert_eq!(snapshot(&emulator).rate(), ClockRate::from_hz(4_194_304));
+        assert_eq!(snapshot(&emulator).now(), MasterTicks::ZERO);
+
+        emulator.step_instruction();
+        assert_eq!(snapshot(&emulator).now(), MasterTicks::new(4));
+        let saved = emulator.encode_state().expect("state should encode");
+
+        emulator.step_instruction();
+        assert_eq!(snapshot(&emulator).now(), MasterTicks::new(8));
+        emulator.load_state(&saved).expect("state should restore");
+        assert_eq!(snapshot(&emulator).now(), MasterTicks::new(4));
+    }
 
     #[test]
     fn public_api_parity_wrappers_load_step_and_roundtrip_state() {

@@ -101,7 +101,7 @@ impl Emulator {
         if let Some(instruction) = fetched {
             self.opcode_log.push(instruction.into());
         }
-        let events = if trace_active {
+        let mut events = if trace_active {
             self.bus.debug_trace_mode = DebugTraceMode::None;
             self.bus.take_debug_trace_events()
         } else {
@@ -133,18 +133,33 @@ impl Emulator {
         if watch_active {
             for event in &events {
                 match *event {
-                    DebugTraceEvent::Read { addr, value } => {
-                        self.debug.check_watch_read(Address::from(addr), value);
+                    DebugTraceEvent::Read {
+                        space: TraceWriteKind::Memory,
+                        addr,
+                        value,
+                        width: TraceWriteWidth::Byte,
+                        ..
+                    } => {
+                        if let Ok(value) = u8::try_from(value) {
+                            self.debug.check_watch_read(Address::from(addr), value);
+                        }
                     }
                     DebugTraceEvent::Write {
+                        space: TraceWriteKind::Memory,
                         addr,
                         old_value,
                         new_value,
+                        width: TraceWriteWidth::Byte,
+                        ..
                     } => {
-                        self.debug
-                            .check_watch_write(Address::from(addr), old_value, new_value);
+                        if let (Ok(old_value), Ok(new_value)) =
+                            (u8::try_from(old_value), u8::try_from(new_value))
+                        {
+                            self.debug
+                                .check_watch_write(Address::from(addr), old_value, new_value);
+                        }
                     }
-                    DebugTraceEvent::IoRead { .. } | DebugTraceEvent::IoWrite { .. } => {}
+                    _ => {}
                 }
             }
             if self.debug.hit_watchpoint.is_some() {
@@ -155,6 +170,8 @@ impl Emulator {
         let bus_trace_events = if requested_trace_mode != DebugTraceMode::None {
             events
         } else {
+            events.clear();
+            self.bus.debug_trace_events = events;
             Vec::new()
         };
         (fetched, bus_trace_events)
@@ -206,29 +223,20 @@ fn append_ws_writes(record: &mut InstructionTraceRecord, events: &[DebugTraceEve
     for event in events {
         let write = match *event {
             DebugTraceEvent::Write {
+                space,
                 addr,
                 old_value,
                 new_value,
-            } => TraceWrite {
-                address: addr,
-                old_value: u32::from(old_value),
-                new_value: u32::from(new_value),
-                width: TraceWriteWidth::Byte,
-                kind: TraceWriteKind::Memory,
-            },
-            DebugTraceEvent::IoWrite {
-                port,
-                old_value,
-                new_value,
+                width,
                 ..
             } => TraceWrite {
-                address: u32::from(port),
-                old_value: u32::from(old_value),
-                new_value: u32::from(new_value),
-                width: TraceWriteWidth::Byte,
-                kind: TraceWriteKind::Io,
+                address: addr,
+                old_value,
+                new_value,
+                width,
+                kind: space,
             },
-            DebugTraceEvent::Read { .. } | DebugTraceEvent::IoRead { .. } => continue,
+            DebugTraceEvent::Read { .. } => continue,
         };
         record.push_write(write);
     }

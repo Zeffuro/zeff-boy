@@ -137,6 +137,8 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
         cycles: 0,
         last_step_cycles: 0,
         timed_cycles_accounted: 0,
+        last_step_master_ticks: 0,
+        timed_master_ticks_accounted: 0,
         halt_bug_active: false,
     };
 

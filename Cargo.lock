@@ -5619,6 +5619,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags 2.13.1",
+ "criterion",
  "sha2",
  "zeff-emu-common",
 ]
@@ -5682,6 +5683,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crc32fast",
+ "criterion",
  "sha2",
  "zeff-emu-common",
  "zip",
@@ -5693,6 +5695,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crc32fast",
+ "criterion",
  "sha2",
  "zeff-emu-common",
 ]

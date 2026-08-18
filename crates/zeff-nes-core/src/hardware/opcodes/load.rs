@@ -1,4 +1,5 @@
 use crate::hardware::bus::Bus;
+use crate::hardware::constants::STACK_BASE;
 use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::registers::StatusFlags;
 
@@ -194,22 +195,28 @@ pub fn tya(cpu: &mut Cpu, _bus: &mut Bus) {
 
 // 0x48: PHA
 pub fn pha(cpu: &mut Cpu, bus: &mut Bus) {
+    let _ = bus.cpu_read(cpu.pc);
     cpu.push8(bus, cpu.regs.a);
 }
 
 // 0x08: PHP
 pub fn php(cpu: &mut Cpu, bus: &mut Bus) {
+    let _ = bus.cpu_read(cpu.pc);
     cpu.push8(bus, cpu.regs.status_for_push(true));
 }
 
 // 0x68: PLA
 pub fn pla(cpu: &mut Cpu, bus: &mut Bus) {
+    let _ = bus.cpu_read(cpu.pc);
+    let _ = bus.cpu_read(STACK_BASE | u16::from(cpu.sp));
     cpu.regs.a = cpu.pop8(bus);
     cpu.regs.set_zn(cpu.regs.a);
 }
 
 // 0x28: PLP
 pub fn plp(cpu: &mut Cpu, bus: &mut Bus) {
+    let _ = bus.cpu_read(cpu.pc);
+    let _ = bus.cpu_read(STACK_BASE | u16::from(cpu.sp));
     let v = cpu.pop8(bus);
     cpu.delay_irq_inhibit_change();
     cpu.regs.p = StatusFlags::from_bits_truncate((v & 0xEF) | 0x20);

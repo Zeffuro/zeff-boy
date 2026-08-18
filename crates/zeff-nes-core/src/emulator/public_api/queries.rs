@@ -1,5 +1,8 @@
 use crate::emulator::Emulator;
 use crate::hardware::bus::Bus;
+use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks, TimingSnapshot};
+
+const MASTER_CLOCK_RATE: ClockRate = ClockRate::from_ratio(21_477_272, 12);
 
 impl Emulator {
     pub fn framebuffer(&self) -> &[u8] {
@@ -47,6 +50,10 @@ impl Emulator {
 
     pub fn cpu_cycles(&self) -> u64 {
         self.cpu.cycles
+    }
+
+    pub fn timing_snapshot(&self) -> TimingSnapshot {
+        <Self as MachineTiming>::timing_snapshot(self)
     }
 
     pub fn cpu_a(&self) -> u8 {
@@ -187,5 +194,11 @@ impl Emulator {
 
     pub fn video_ram_snapshot(&mut self) -> Vec<u8> {
         self.chr_ram_snapshot()
+    }
+}
+
+impl MachineTiming for Emulator {
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        TimingSnapshot::new(MasterTicks::new(self.cpu.cycles), MASTER_CLOCK_RATE)
     }
 }

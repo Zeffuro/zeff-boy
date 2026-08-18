@@ -6,6 +6,9 @@ use super::keypad::Keypad;
 use super::ppu::{Ppu, PpuDebugSnapshot};
 use super::timer::Timers;
 use std::cell::RefCell;
+use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
+
+pub use zeff_emu_common::debug::BusAccessEvent as DebugTraceEvent;
 
 mod dma;
 mod io;
@@ -28,21 +31,6 @@ const INT_HBLANK: u16 = 1 << 1;
 const INT_VCOUNT: u16 = 1 << 2;
 const IRQ_DELAY_CYCLES: u32 = 7;
 const IRQ_SAMPLE_LOOKAHEAD_CYCLES: u32 = 3;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DebugTraceEvent {
-    Read {
-        addr: u32,
-        value: u32,
-        width: u8,
-    },
-    Write {
-        addr: u32,
-        old_value: u32,
-        new_value: u32,
-        width: u8,
-    },
-}
 
 #[derive(Clone, Debug)]
 pub struct Bus {
@@ -558,10 +546,14 @@ impl Bus {
             self.debug_trace_events
                 .borrow_mut()
                 .push(DebugTraceEvent::Write {
+                    at: None,
+                    space: TraceWriteKind::Memory,
                     addr,
                     old_value,
+                    written_value: new_value,
                     new_value,
-                    width,
+                    width: trace_width(width),
+                    mapped_addr: None,
                 });
         }
     }
@@ -570,8 +562,23 @@ impl Bus {
         if self.debug_trace_enabled && self.debug_trace_reads {
             self.debug_trace_events
                 .borrow_mut()
-                .push(DebugTraceEvent::Read { addr, value, width });
+                .push(DebugTraceEvent::Read {
+                    at: None,
+                    space: TraceWriteKind::Memory,
+                    addr,
+                    value,
+                    width: trace_width(width),
+                    mapped_addr: None,
+                });
         }
+    }
+}
+
+fn trace_width(width: u8) -> TraceWriteWidth {
+    match width {
+        2 => TraceWriteWidth::Halfword,
+        4 => TraceWriteWidth::Word,
+        _ => TraceWriteWidth::Byte,
     }
 }
 

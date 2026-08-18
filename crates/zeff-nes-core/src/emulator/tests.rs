@@ -2,10 +2,11 @@ use super::{DEFAULT_SAMPLE_RATE, Emulator};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_HEADER_SIZE, FDS_SIDE_SIZE};
 use crate::hardware::cartridge::{NesMapper, RomFormat};
-use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4};
+use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4, NMI_VECTOR_HI, NMI_VECTOR_LO, OAM_DMA};
 use crate::hardware::cpu::StatusFlags;
 use zeff_emu_common::debug::DebugEvent;
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{ClockRate, MasterTicks};
 
 fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -21,6 +22,169 @@ fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {
 
 fn build_test_rom() -> Vec<u8> {
     build_test_rom_with_program(&[0xEA])
+}
+
+#[test]
+fn timing_snapshot_tracks_and_restores_cpu_cycles() {
+    let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).unwrap();
+    let start = emu.timing_snapshot();
+    assert_eq!(start.now(), MasterTicks::new(emu.cpu_cycles()));
+    assert_eq!(start.rate(), ClockRate::from_ratio(21_477_272, 12));
+
+    emu.step_instruction();
+    let saved_clock = emu.timing_snapshot();
+    let state = emu.encode_state().unwrap();
+    emu.step_instruction();
+    assert!(emu.timing_snapshot().now() > saved_clock.now());
+
+    emu.load_state(&state).unwrap();
+    assert_eq!(emu.timing_snapshot(), saved_clock);
+}
+
+#[test]
+fn indexed_access_trace_uses_exact_cpu_ticks() {
+    let rom = build_test_rom_with_program(&[0xA2, 0x01, 0xB5, 0x10]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap();
+    emu.step_instruction();
+    emu.bus.ram[0x11] = 0xA5;
+
+    let start = emu.cpu.cycles;
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    let accesses: Vec<_> = events
+        .iter()
+        .map(|event| (event.at(), event.addr()))
+        .collect();
+
+    assert_eq!(cycles, 4);
+    assert_eq!(
+        accesses,
+        vec![
+            (Some(MasterTicks::new(start)), 0x8002),
+            (Some(MasterTicks::new(start + 1)), 0x8003),
+            (Some(MasterTicks::new(start + 2)), 0x0010),
+            (Some(MasterTicks::new(start + 3)), 0x0011),
+        ]
+    );
+}
+
+#[test]
+fn page_crossing_branch_traces_both_dummy_reads() {
+    let mut program = vec![0xEA; 0x101];
+    program[0xFD] = 0xD0;
+    program[0xFE] = 0x01;
+    let mut emu =
+        Emulator::new(&build_test_rom_with_program(&program), DEFAULT_SAMPLE_RATE).unwrap();
+    emu.cpu.pc = 0x80FD;
+
+    let start = emu.cpu.cycles;
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    let accesses: Vec<_> = events
+        .iter()
+        .map(|event| (event.at(), event.addr()))
+        .collect();
+
+    assert_eq!(cycles, 4);
+    assert_eq!(emu.cpu.pc, 0x8100);
+    assert_eq!(
+        accesses,
+        vec![
+            (Some(MasterTicks::new(start)), 0x80FD),
+            (Some(MasterTicks::new(start + 1)), 0x80FE),
+            (Some(MasterTicks::new(start + 2)), 0x80FF),
+            (Some(MasterTicks::new(start + 3)), 0x8000),
+        ]
+    );
+}
+
+#[test]
+fn jsr_trace_fetches_the_high_operand_after_stack_writes() {
+    let mut emu = Emulator::new(
+        &build_test_rom_with_program(&[0x20, 0x34, 0x12]),
+        DEFAULT_SAMPLE_RATE,
+    )
+    .unwrap();
+
+    let start = emu.cpu.cycles;
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    let accesses: Vec<_> = events
+        .iter()
+        .map(|event| (event.at(), event.addr()))
+        .collect();
+
+    assert_eq!(cycles, 6);
+    assert_eq!(emu.cpu.pc, 0x1234);
+    assert_eq!(
+        accesses,
+        vec![
+            (Some(MasterTicks::new(start)), 0x8000),
+            (Some(MasterTicks::new(start + 1)), 0x8001),
+            (Some(MasterTicks::new(start + 2)), 0x01FD),
+            (Some(MasterTicks::new(start + 3)), 0x01FD),
+            (Some(MasterTicks::new(start + 4)), 0x01FC),
+            (Some(MasterTicks::new(start + 5)), 0x8002),
+        ]
+    );
+}
+
+#[test]
+fn nmi_trace_places_stack_and_vector_cycles() {
+    let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).unwrap();
+    emu.cpu.nmi_pending = true;
+
+    let start = emu.cpu.cycles;
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    let accesses: Vec<_> = events
+        .iter()
+        .map(|event| (event.at(), event.addr()))
+        .collect();
+
+    assert_eq!(cycles, 7);
+    assert_eq!(
+        accesses,
+        vec![
+            (Some(MasterTicks::new(start)), 0x8000),
+            (Some(MasterTicks::new(start + 1)), 0x8000),
+            (Some(MasterTicks::new(start + 2)), 0x01FD),
+            (Some(MasterTicks::new(start + 3)), 0x01FC),
+            (Some(MasterTicks::new(start + 4)), 0x01FB),
+            (Some(MasterTicks::new(start + 5)), u32::from(NMI_VECTOR_LO)),
+            (Some(MasterTicks::new(start + 6)), u32::from(NMI_VECTOR_HI)),
+        ]
+    );
+}
+
+#[test]
+fn oam_dma_source_reads_keep_their_stall_cycle_timestamps() {
+    let rom = build_test_rom_with_program(&[0xA9, 0x02, 0x8D, 0x14, 0x40]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap();
+    emu.step_instruction();
+
+    let start = emu.cpu.cycles;
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+
+    assert_eq!(cycles, 518);
+    assert_eq!(events.len(), 260);
+    assert_eq!(events[3].at(), Some(MasterTicks::new(start + 3)));
+    assert_eq!(events[3].addr(), u32::from(OAM_DMA));
+    assert_eq!(events[4].at(), Some(MasterTicks::new(start + 6)));
+    assert_eq!(events[4].addr(), 0x0200);
+    assert_eq!(events[259].at(), Some(MasterTicks::new(start + 516)));
+    assert_eq!(events[259].addr(), 0x02FF);
+}
+
+#[test]
+fn oam_dma_alignment_uses_the_write_cycle() {
+    let rom = build_test_rom_with_program(&[0xA2, 0x00, 0xA9, 0x02, 0x9D, 0x14, 0x40]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap();
+    emu.step_instruction();
+    emu.step_instruction();
+
+    let start = emu.cpu.cycles;
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+
+    assert_eq!(cycles, 518);
+    assert_eq!(events[4].at(), Some(MasterTicks::new(start + 4)));
+    assert_eq!(events[5].at(), Some(MasterTicks::new(start + 6)));
 }
 
 fn build_vs_system_test_rom() -> Vec<u8> {
@@ -354,7 +518,7 @@ fn indexed_store_dummy_read_can_ack_frame_irq_edge() {
     let (_, _, _, events) = emu.step_instruction_with_bus_trace();
 
     let status_read = events.iter().find_map(|event| match event {
-        DebugTraceEvent::Read { addr, value, .. } if *addr == APU_STATUS => Some(*value),
+        DebugTraceEvent::Read { addr, value, .. } if *addr == u32::from(APU_STATUS) => Some(*value),
         _ => None,
     });
 

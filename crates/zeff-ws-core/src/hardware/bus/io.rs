@@ -50,7 +50,14 @@ impl Bus {
             RTC_PAYLOAD_PORT => self.rtc.read_payload(),
             _ => self.io[usize::from(port)],
         };
-        self.record_io(DebugTraceEvent::IoRead { port, value });
+        self.record_io(BusAccessEvent::Read {
+            at: None,
+            space: TraceWriteKind::Io,
+            addr: u32::from(port),
+            value: u32::from(value),
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        });
         value
     }
 
@@ -227,11 +234,15 @@ impl Bus {
             _ => self.io[usize::from(port)] = value,
         }
         let new_value = self.io_peek8(port);
-        self.record_io(DebugTraceEvent::IoWrite {
-            port,
-            written_value: value,
-            old_value,
-            new_value,
+        self.record_io(BusAccessEvent::Write {
+            at: None,
+            space: TraceWriteKind::Io,
+            addr: u32::from(port),
+            old_value: u32::from(old_value),
+            written_value: u32::from(value),
+            new_value: u32::from(new_value),
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
         });
     }
 

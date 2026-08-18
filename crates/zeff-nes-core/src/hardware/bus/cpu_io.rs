@@ -1,5 +1,6 @@
 use super::Bus;
 use crate::hardware::constants::*;
+use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
 const CPU_RAM_MIRROR_START: u16 = 0x0000;
 const CPU_RAM_MIRROR_END: u16 = 0x1FFF;
@@ -23,6 +24,7 @@ const PPU_DATA_ADDR_MASK: u16 = 0x3FFF;
 impl Bus {
     #[inline]
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
+        let at = self.next_cpu_access_tick();
         let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
         let val = match addr {
             CPU_RAM_MIRROR_START..=CPU_RAM_MIRROR_END => {
@@ -62,9 +64,12 @@ impl Bus {
         self.cpu_open_bus = val;
         if self.debug_trace_enabled {
             self.debug_trace_events.push(super::DebugTraceEvent::Read {
-                addr,
-                value: val,
-                ppu_addr,
+                at,
+                space: TraceWriteKind::Memory,
+                addr: u32::from(addr),
+                value: u32::from(val),
+                width: TraceWriteWidth::Byte,
+                mapped_addr: ppu_addr.map(u32::from),
             });
         }
         val
@@ -75,7 +80,16 @@ impl Bus {
         if Self::cpu_read_needs_elapsed_timing(addr) {
             self.advance_cpu_step_timing_to(elapsed_cycles);
         }
+        self.advance_cpu_access_timing_to(elapsed_cycles);
         self.cpu_read(addr)
+    }
+
+    fn cpu_read_at_elapsed_cycles_detached(&mut self, addr: u16, elapsed_cycles: u64) -> u8 {
+        let instruction_cursor = self.cpu_access_elapsed_cycles;
+        self.cpu_access_elapsed_cycles = elapsed_cycles;
+        let value = self.cpu_read(addr);
+        self.cpu_access_elapsed_cycles = instruction_cursor;
+        value
     }
 
     #[inline]
@@ -103,14 +117,20 @@ impl Bus {
 
     #[inline]
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
+        let access_is_odd = self.cpu_cycle_is_odd(self.cpu_access_elapsed_cycles);
+        let at = self.next_cpu_access_tick();
         if self.debug_trace_enabled {
             let old = self.cpu_peek(addr);
             let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
             self.debug_trace_events.push(super::DebugTraceEvent::Write {
-                addr,
-                old_value: old,
-                new_value: val,
-                ppu_addr,
+                at,
+                space: TraceWriteKind::Memory,
+                addr: u32::from(addr),
+                old_value: u32::from(old),
+                written_value: u32::from(val),
+                new_value: u32::from(val),
+                width: TraceWriteWidth::Byte,
+                mapped_addr: ppu_addr.map(u32::from),
             });
         }
         match addr {
@@ -123,21 +143,26 @@ impl Bus {
             }
 
             APU_REGISTER_START..=APU_PULSE_DMC_REGISTER_END | APU_STATUS | CONTROLLER2 => {
-                self.apu.write_register(addr, val, self.cpu_odd_cycle);
+                self.apu.write_register(addr, val, access_is_odd);
             }
 
             OAM_DMA => {
                 let base = (val as u16) << 8;
-                for i in 0..OAM_DMA_PAGE_BYTES {
-                    let byte = self.cpu_read(base + i);
-                    self.write_oam_data(byte);
-                }
-
-                self.dma_stall_cycles = if self.cpu_odd_cycle {
+                let stall_cycles = if self.cpu_cycle_is_odd(self.cpu_access_elapsed_cycles) {
                     OAM_DMA_STALL_CYCLES_ODD
                 } else {
                     OAM_DMA_STALL_CYCLES_EVEN
                 };
+                let first_read_cycle = self.cpu_access_elapsed_cycles + (stall_cycles - 512);
+                for i in 0..OAM_DMA_PAGE_BYTES {
+                    let byte = self.cpu_read_at_elapsed_cycles_detached(
+                        base + i,
+                        first_read_cycle + 2 * u64::from(i),
+                    );
+                    self.write_oam_data(byte);
+                }
+
+                self.dma_stall_cycles = stall_cycles;
             }
 
             CONTROLLER1 => {
@@ -161,6 +186,7 @@ impl Bus {
         if Self::cpu_write_needs_elapsed_timing(addr) {
             self.advance_cpu_step_timing_to(elapsed_cycles);
         }
+        self.advance_cpu_access_timing_to(elapsed_cycles);
         self.cpu_write(addr, val);
     }
 
@@ -280,5 +306,26 @@ mod tests {
         bus.cpu_write(0x6000, 0x5C);
         assert_eq!(bus.cpu_read(0x6000), 0x5C);
         assert_eq!(bus.cpu_read(0x8000), 0xA7);
+    }
+
+    #[test]
+    fn trace_preserves_mapped_ppu_address_without_claiming_a_timestamp() {
+        let mut bus = test_bus();
+        bus.ppu.v = 0x2345;
+        bus.debug_trace_enabled = true;
+
+        let value = bus.cpu_read(PPU_REG_DATA);
+
+        assert_eq!(
+            bus.debug_trace_events,
+            vec![crate::hardware::bus::DebugTraceEvent::Read {
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: u32::from(PPU_REG_DATA),
+                value: u32::from(value),
+                width: TraceWriteWidth::Byte,
+                mapped_addr: Some(0x2345),
+            }]
+        );
     }
 }

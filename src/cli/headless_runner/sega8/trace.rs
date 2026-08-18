@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
 
+use zeff_emu_common::debug::TraceWriteKind;
+#[cfg(test)]
+use zeff_emu_common::debug::TraceWriteWidth;
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
 use zeff_sega8_core::hardware::bus::CpuAccessTraceEvent as Sega8BusTraceEvent;
 use zeff_sega8_core::hardware::constants::SMS_Z80_CYCLES_PER_FRAME;
@@ -157,8 +160,6 @@ fn should_trace_sega8_bus_event(opts: &HeadlessOptions, event: Sega8BusTraceEven
     let (addr, is_read) = match event {
         Sega8BusTraceEvent::Read { addr, .. } => (u64::from(addr), true),
         Sega8BusTraceEvent::Write { addr, .. } => (u64::from(addr), false),
-        Sega8BusTraceEvent::IoRead { port, .. } => (u64::from(port), true),
-        Sega8BusTraceEvent::IoWrite { port, .. } => (u64::from(port), false),
     };
 
     opts.trace_bus_filters.iter().any(|filter| {
@@ -180,21 +181,38 @@ fn format_sega8_bus_trace_line(
     event: Sega8BusTraceEvent,
 ) -> String {
     let access = match event {
-        Sega8BusTraceEvent::Read { addr, value } => {
+        Sega8BusTraceEvent::Read {
+            space: TraceWriteKind::Memory,
+            addr,
+            value,
+            ..
+        } => {
             format!("read addr={addr:04X} value={value:02X}")
         }
         Sega8BusTraceEvent::Write {
+            space: TraceWriteKind::Memory,
             addr,
             old_value,
             new_value,
+            ..
         } => {
             format!("write addr={addr:04X} old={old_value:02X} new={new_value:02X}")
         }
-        Sega8BusTraceEvent::IoRead { port, value } => {
-            format!("ioread port={port:02X} value={value:02X}")
+        Sega8BusTraceEvent::Read {
+            space: TraceWriteKind::Io,
+            addr,
+            value,
+            ..
+        } => {
+            format!("ioread port={addr:02X} value={value:02X}")
         }
-        Sega8BusTraceEvent::IoWrite { port, value } => {
-            format!("iowrite port={port:02X} value={value:02X}")
+        Sega8BusTraceEvent::Write {
+            space: TraceWriteKind::Io,
+            addr,
+            written_value,
+            ..
+        } => {
+            format!("iowrite port={addr:02X} value={written_value:02X}")
         }
     };
 
@@ -259,16 +277,26 @@ mod tests {
 
         assert!(should_trace_sega8_bus_event(
             &opts,
-            Sega8BusTraceEvent::IoWrite {
-                port: 0x7F,
-                value: 0x90
+            Sega8BusTraceEvent::Write {
+                at: None,
+                space: TraceWriteKind::Io,
+                addr: 0x7F,
+                old_value: 0x90,
+                written_value: 0x90,
+                new_value: 0x90,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             }
         ));
         assert!(!should_trace_sega8_bus_event(
             &opts,
-            Sega8BusTraceEvent::IoRead {
-                port: 0x7F,
-                value: 0xFF
+            Sega8BusTraceEvent::Read {
+                at: None,
+                space: TraceWriteKind::Io,
+                addr: 0x7F,
+                value: 0xFF,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             }
         ));
         assert!(!should_trace_sega8_bus_event(
@@ -276,7 +304,12 @@ mod tests {
             Sega8BusTraceEvent::Write {
                 addr: 0xC000,
                 old_value: 0,
-                new_value: 1
+                written_value: 1,
+                new_value: 1,
+                at: None,
+                space: TraceWriteKind::Memory,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             }
         ));
     }
@@ -295,9 +328,15 @@ mod tests {
             3,
             &emulator,
             fetched,
-            Sega8BusTraceEvent::IoWrite {
-                port: 0x7F,
-                value: 0x90,
+            Sega8BusTraceEvent::Write {
+                at: None,
+                space: TraceWriteKind::Io,
+                addr: 0x7F,
+                old_value: 0x90,
+                written_value: 0x90,
+                new_value: 0x90,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             },
         );
 

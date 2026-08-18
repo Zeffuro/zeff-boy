@@ -5,7 +5,7 @@ use crate::hardware::cpu::registers::StatusFlags;
 
 // 0x00: BRK
 pub fn brk(cpu: &mut Cpu, bus: &mut Bus) {
-    cpu.pc = cpu.pc.wrapping_add(1);
+    let _ = cpu.fetch8(bus);
     cpu.push16(bus, cpu.pc);
     cpu.push8(bus, cpu.regs.status_for_push(true));
     cpu.regs.set_flag(StatusFlags::INTERRUPT, true);
@@ -27,7 +27,7 @@ pub fn nop(_cpu: &mut Cpu, _bus: &mut Bus) {}
 
 // Unofficial 2-byte NOPs (e.g. 0x80/0x82/0x89/0xC2/0xE2).
 pub fn nop_imm(cpu: &mut Cpu, bus: &mut Bus) {
-    let _ = cpu.addr_immediate(bus);
+    let _ = cpu.fetch8(bus);
 }
 
 // Returns extra cycles: 0 (not taken), 1 (taken same page), 2 (taken + page cross)
@@ -35,6 +35,10 @@ fn branch(cpu: &mut Cpu, bus: &mut Bus, condition: bool) -> u8 {
     let target = cpu.addr_relative(bus);
     if condition {
         let page_cross = (cpu.pc & 0xFF00) != (target & 0xFF00);
+        let _ = bus.cpu_read(cpu.pc);
+        if page_cross {
+            let _ = bus.cpu_read((cpu.pc & 0xFF00) | (target & 0x00FF));
+        }
         cpu.pc = target;
         if page_cross {
             2
@@ -101,19 +105,26 @@ pub fn jmp_ind(cpu: &mut Cpu, bus: &mut Bus) {
 
 // 0x20: JSR abs
 pub fn jsr(cpu: &mut Cpu, bus: &mut Bus) {
-    let a = cpu.addr_absolute(bus);
-    cpu.push16(bus, cpu.pc.wrapping_sub(1));
-    cpu.pc = a;
+    let lo = cpu.fetch8(bus) as u16;
+    let _ = bus.cpu_read(crate::hardware::constants::STACK_BASE | u16::from(cpu.sp));
+    cpu.push16(bus, cpu.pc);
+    let hi = cpu.fetch8(bus) as u16;
+    cpu.pc = (hi << 8) | lo;
 }
 
 // 0x60: RTS
 pub fn rts(cpu: &mut Cpu, bus: &mut Bus) {
+    let _ = bus.cpu_read(cpu.pc);
+    let _ = bus.cpu_read(crate::hardware::constants::STACK_BASE | u16::from(cpu.sp));
     let a = cpu.pop16(bus);
+    let _ = bus.cpu_read(a);
     cpu.pc = a.wrapping_add(1);
 }
 
 // 0x40: RTI
 pub fn rti(cpu: &mut Cpu, bus: &mut Bus) {
+    let _ = bus.cpu_read(cpu.pc);
+    let _ = bus.cpu_read(crate::hardware::constants::STACK_BASE | u16::from(cpu.sp));
     let p = cpu.pop8(bus);
     cpu.regs.p = StatusFlags::from_bits_truncate((p & 0xEF) | 0x20);
     cpu.pc = cpu.pop16(bus);

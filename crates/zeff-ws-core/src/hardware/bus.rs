@@ -19,29 +19,9 @@ pub use serial::UartDebugSnapshot;
 pub(crate) use serial::UartSaveState;
 pub use serial::WonderSwanTxEvent;
 mod timers;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DebugTraceEvent {
-    Read {
-        addr: u32,
-        value: u8,
-    },
-    Write {
-        addr: u32,
-        old_value: u8,
-        new_value: u8,
-    },
-    IoRead {
-        port: u16,
-        value: u8,
-    },
-    IoWrite {
-        port: u16,
-        written_value: u8,
-        old_value: u8,
-        new_value: u8,
-    },
-}
+pub use zeff_emu_common::debug::BusAccessEvent;
+use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
+pub type DebugTraceEvent = BusAccessEvent;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum DebugTraceMode {
@@ -70,7 +50,7 @@ pub struct Bus {
     pending_linear_bank: Option<DeferredLinearBank>,
     pub cycles: u64,
     pub(crate) debug_trace_mode: DebugTraceMode,
-    pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
+    pub(crate) debug_trace_events: Vec<BusAccessEvent>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,7 +112,14 @@ impl Bus {
     pub fn read8(&mut self, addr: u32) -> u8 {
         let addr = addr & ADDRESS_MASK;
         let value = self.peek8(addr);
-        self.record_memory(DebugTraceEvent::Read { addr, value });
+        self.record_memory(BusAccessEvent::Read {
+            at: None,
+            space: TraceWriteKind::Memory,
+            addr,
+            value: u32::from(value),
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        });
         value
     }
 
@@ -162,10 +149,15 @@ impl Bus {
             _ => {}
         }
         let new_value = self.peek8(addr);
-        self.record_memory(DebugTraceEvent::Write {
+        self.record_memory(BusAccessEvent::Write {
+            at: None,
+            space: TraceWriteKind::Memory,
             addr,
-            old_value,
-            new_value,
+            old_value: u32::from(old_value),
+            written_value: u32::from(value),
+            new_value: u32::from(new_value),
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
         });
     }
 
@@ -227,7 +219,7 @@ impl Bus {
         self.apu.debug_snapshot()
     }
 
-    pub(crate) fn take_debug_trace_events(&mut self) -> Vec<DebugTraceEvent> {
+    pub(crate) fn take_debug_trace_events(&mut self) -> Vec<BusAccessEvent> {
         std::mem::take(&mut self.debug_trace_events)
     }
 
@@ -263,13 +255,13 @@ impl Bus {
         self.keypad.write(0x40);
     }
 
-    fn record_memory(&mut self, event: DebugTraceEvent) {
+    fn record_memory(&mut self, event: BusAccessEvent) {
         if self.debug_trace_mode == DebugTraceMode::MemoryAndIo {
             self.debug_trace_events.push(event);
         }
     }
 
-    fn record_io(&mut self, event: DebugTraceEvent) {
+    fn record_io(&mut self, event: BusAccessEvent) {
         if self.debug_trace_mode != DebugTraceMode::None {
             self.debug_trace_events.push(event);
         }
@@ -1027,11 +1019,23 @@ mod tests {
         bus.io_write8(IRQ_ENABLE_PORT, IRQ_VBLANK);
         bus.step_cycles(super::super::constants::CYCLES_PER_SCANLINE * 144);
         assert_ne!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_VBLANK, 0);
+        bus.debug_trace_mode = DebugTraceMode::IoOnly;
 
         bus.io_write8(IRQ_ACK_PORT, IRQ_VBLANK);
 
         assert_eq!(bus.io_read8(IRQ_STATUS_PORT) & IRQ_VBLANK, 0);
         assert_eq!(bus.pending_interrupt_vector(), None);
+        assert!(bus.debug_trace_events.iter().any(|event| matches!(
+            event,
+            BusAccessEvent::Write {
+                at: None,
+                space: TraceWriteKind::Io,
+                addr: 0x00B6,
+                written_value,
+                width: TraceWriteWidth::Byte,
+                ..
+            } if *written_value == u32::from(IRQ_VBLANK)
+        )));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::hardware::cartridge::EEPROM_WRITE_BUSY_CYCLES;
+use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
 use super::*;
 use crate::hardware::cartridge::RomHeader;
@@ -108,6 +109,40 @@ fn backup_region_mirrors_across_0e_and_0f_address_space() {
 
     assert_eq!(bus.read8(0x0E01_0020), 0x42);
     assert_eq!(bus.read8(0x0F00_0020), 0x42);
+}
+
+#[test]
+fn debug_trace_events_preserve_width_without_access_timing() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    bus.debug_trace_enabled = true;
+    bus.debug_trace_reads = true;
+    bus.debug_trace_writes = true;
+
+    bus.write16(0x0200_0000, 0xBEEF);
+    assert_eq!(bus.read32(0x0200_0000), 0x0000_BEEF);
+
+    let events = bus.debug_trace_events.into_inner();
+    assert!(matches!(
+        events.as_slice(),
+        [
+            DebugTraceEvent::Write {
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: 0x0200_0000,
+                width: TraceWriteWidth::Halfword,
+                mapped_addr: None,
+                ..
+            },
+            DebugTraceEvent::Read {
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: 0x0200_0000,
+                width: TraceWriteWidth::Word,
+                mapped_addr: None,
+                ..
+            }
+        ]
+    ));
 }
 
 #[test]

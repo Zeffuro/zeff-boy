@@ -1,5 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
+use zeff_emu_common::debug::{BusAccessEvent, TraceWriteKind, TraceWriteWidth};
+use zeff_emu_common::time::MasterTicks;
 use zeff_nes_core::emulator::Emulator;
 
 fn build_minimal_nes_rom() -> Vec<u8> {
@@ -34,6 +36,116 @@ fn build_minimal_nes_rom() -> Vec<u8> {
 fn create_emulator() -> Emulator {
     let rom = build_minimal_nes_rom();
     Emulator::new(&rom, 44_100.0).expect("NES emulator should initialize")
+}
+
+fn bench_step_instruction(c: &mut Criterion) {
+    let mut emu = create_emulator();
+
+    c.bench_function("nes_step_instruction", |b| {
+        b.iter(|| std::hint::black_box(emu.step_instruction()));
+    });
+
+    let mut traced = create_emulator();
+    c.bench_function("nes_step_instruction_with_bus_trace", |b| {
+        b.iter(|| std::hint::black_box(traced.step_instruction_with_bus_trace()));
+    });
+}
+
+fn bench_cpu_memory_access(c: &mut Criterion) {
+    let mut emu = create_emulator();
+
+    c.bench_function("nes_cpu_memory_access", |b| {
+        b.iter(|| {
+            let value = emu.cpu_peek8(0x0000);
+            emu.cpu_write8(0x0000, value.wrapping_add(1));
+            std::hint::black_box(value);
+        });
+    });
+}
+
+fn build_bus_trace() -> [BusAccessEvent; 7] {
+    [
+        BusAccessEvent::Write {
+            at: Some(MasterTicks::new(0)),
+            space: TraceWriteKind::Memory,
+            addr: 0x0000,
+            old_value: 0,
+            written_value: 0x12,
+            new_value: 0x12,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(1)),
+            space: TraceWriteKind::Memory,
+            addr: 0x0800,
+            value: 0x12,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Write {
+            at: Some(MasterTicks::new(2)),
+            space: TraceWriteKind::Memory,
+            addr: 0x07FF,
+            old_value: 0,
+            written_value: 0x34,
+            new_value: 0x34,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(3)),
+            space: TraceWriteKind::Memory,
+            addr: 0x17FF,
+            value: 0x34,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(4)),
+            space: TraceWriteKind::Memory,
+            addr: 0x8000,
+            value: 0x78,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(5)),
+            space: TraceWriteKind::Memory,
+            addr: 0xC000,
+            value: 0x78,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(6)),
+            space: TraceWriteKind::Memory,
+            addr: 0xFFFC,
+            value: 0,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+    ]
+}
+
+fn bench_bus_trace_replay(c: &mut Criterion) {
+    let trace = build_bus_trace();
+    let mut emu = create_emulator();
+
+    c.bench_function("nes_bus_trace_replay", |b| {
+        b.iter(|| {
+            for event in &trace {
+                match *event {
+                    BusAccessEvent::Read { addr, .. } => {
+                        std::hint::black_box(emu.cpu_peek8(addr as u16));
+                    }
+                    BusAccessEvent::Write {
+                        addr, new_value, ..
+                    } => emu.cpu_write8(addr as u16, new_value as u8),
+                }
+            }
+        });
+    });
 }
 
 fn bench_step_frame(c: &mut Criterion) {
@@ -134,6 +246,9 @@ fn bench_nes_real_roms(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_step_instruction,
+    bench_cpu_memory_access,
+    bench_bus_trace_replay,
     bench_step_frame,
     bench_save_state_encode,
     bench_save_state_roundtrip,

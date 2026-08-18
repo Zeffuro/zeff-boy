@@ -82,22 +82,24 @@ pub(in crate::cli::headless_runner) fn format_nes_bus_trace_line(
         NesBusTraceEvent::Read {
             addr,
             value,
-            ppu_addr,
+            mapped_addr,
+            ..
         } => {
             format!(
                 "read addr={addr:04X} value={value:02X}{}",
-                nes_ppu_addr_trace_suffix(ppu_addr)
+                nes_ppu_addr_trace_suffix(mapped_addr.map(|addr| addr as u16))
             )
         }
         NesBusTraceEvent::Write {
             addr,
             old_value,
             new_value,
-            ppu_addr,
+            mapped_addr,
+            ..
         } => {
             format!(
                 "write addr={addr:04X} old={old_value:02X} new={new_value:02X}{}",
-                nes_ppu_addr_trace_suffix(ppu_addr)
+                nes_ppu_addr_trace_suffix(mapped_addr.map(|addr| addr as u16))
             )
         }
     };

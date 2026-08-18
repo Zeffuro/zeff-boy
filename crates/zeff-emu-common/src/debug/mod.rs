@@ -1,4 +1,5 @@
 mod address_controller;
+mod bus_access;
 mod controller;
 mod instruction_trace;
 mod opcode_log;
@@ -8,6 +9,7 @@ mod types;
 mod tests;
 
 pub use address_controller::AddressDebugController;
+pub use bus_access::{BusAccessEvent, BusAccessSpace, BusAccessWidth};
 pub use controller::DebugController;
 pub use instruction_trace::{
     InstructionTraceRecord, InstructionTraceStore, MAX_TRACE_CAPACITY, MAX_TRACE_INSTRUCTION_BYTES,

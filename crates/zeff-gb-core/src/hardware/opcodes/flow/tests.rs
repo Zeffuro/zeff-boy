@@ -20,6 +20,7 @@ fn stop_switches_to_cgb_double_speed_when_key1_prepare_set() {
     assert_eq!(bus.hardware_mode, HardwareMode::CGBDouble);
     assert_eq!(bus.key1, 0xFE);
     assert!(matches!(cpu.running, CpuState::Running));
+    assert_eq!(cpu.timed_master_ticks_accounted, 4_104);
 }
 
 #[test]

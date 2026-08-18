@@ -261,9 +261,9 @@ rmw_unofficial_modes!(
 // ── Immediate-mode combined ops ─────────────────────────────────────
 
 // ANC: AND #imm, then copy bit 7 of result to carry.
-pub fn anc(cpu: &mut Cpu, bus: &Bus) {
+pub fn anc(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_peek(addr);
+    let val = bus.cpu_read(addr);
     cpu.regs.a &= val;
     cpu.regs.set_zn(cpu.regs.a);
     cpu.regs
@@ -271,17 +271,17 @@ pub fn anc(cpu: &mut Cpu, bus: &Bus) {
 }
 
 // ALR: AND #imm, then LSR A.
-pub fn alr(cpu: &mut Cpu, bus: &Bus) {
+pub fn alr(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_peek(addr);
+    let val = bus.cpu_read(addr);
     cpu.regs.a &= val;
     cpu.lsr_acc();
 }
 
 // ARR: AND #imm, then ROR A. Carry and overflow set specially.
-pub fn arr(cpu: &mut Cpu, bus: &Bus) {
+pub fn arr(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_peek(addr);
+    let val = bus.cpu_read(addr);
     cpu.regs.a &= val;
     let carry_in: u8 = if cpu.regs.get_flag(StatusFlags::CARRY) {
         0x80
@@ -297,9 +297,9 @@ pub fn arr(cpu: &mut Cpu, bus: &Bus) {
 }
 
 // AXS/SBX: X = (A & X) - #imm (no borrow). Sets flags like CMP.
-pub fn axs(cpu: &mut Cpu, bus: &Bus) {
+pub fn axs(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_peek(addr);
+    let val = bus.cpu_read(addr);
     let ax = cpu.regs.a & cpu.regs.x;
     let result = ax.wrapping_sub(val);
     cpu.regs.x = result;
@@ -309,18 +309,18 @@ pub fn axs(cpu: &mut Cpu, bus: &Bus) {
 
 // ATX/LAX #imm: unstable on hardware. Blargg's instr_test treats it as
 // immediate LAX: A and X receive the operand.
-pub fn atx(cpu: &mut Cpu, bus: &Bus) {
+pub fn atx(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_peek(addr);
+    let val = bus.cpu_read(addr);
     cpu.regs.a = val;
     cpu.regs.x = val;
     cpu.regs.set_zn(val);
 }
 
 // SBC duplicate at 0xEB:identical to official SBC #imm.
-pub fn sbc_unofficial(cpu: &mut Cpu, bus: &Bus) {
+pub fn sbc_unofficial(cpu: &mut Cpu, bus: &mut Bus) {
     let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_peek(addr);
+    let val = bus.cpu_read(addr);
     cpu.sbc(val);
 }
 

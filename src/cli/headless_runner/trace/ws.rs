@@ -1,3 +1,4 @@
+use zeff_emu_common::debug::TraceWriteKind;
 use zeff_ws_core::emulator::Emulator as WsEmulator;
 use zeff_ws_core::hardware::bus::DebugTraceEvent as WsBusTraceEvent;
 use zeff_ws_core::hardware::cpu::FetchedInstruction as WsFetchedInstruction;
@@ -34,8 +35,6 @@ pub(in crate::cli::headless_runner) fn should_trace_ws_bus_event(
     let (addr, is_read) = match event {
         WsBusTraceEvent::Read { addr, .. } => (u64::from(addr), true),
         WsBusTraceEvent::Write { addr, .. } => (u64::from(addr), false),
-        WsBusTraceEvent::IoRead { port, .. } => (u64::from(port), true),
-        WsBusTraceEvent::IoWrite { port, .. } => (u64::from(port), false),
     };
 
     opts.trace_bus_filters.iter().any(|filter| {
@@ -57,27 +56,41 @@ pub(in crate::cli::headless_runner) fn format_ws_bus_trace_line(
     event: WsBusTraceEvent,
 ) -> String {
     let access = match event {
-        WsBusTraceEvent::Read { addr, value } => {
+        WsBusTraceEvent::Read {
+            space: TraceWriteKind::Memory,
+            addr,
+            value,
+            ..
+        } => {
             format!("read addr={addr:05X} value={value:02X}")
         }
         WsBusTraceEvent::Write {
+            space: TraceWriteKind::Memory,
             addr,
             old_value,
             new_value,
+            ..
         } => {
             format!("write addr={addr:05X} old={old_value:02X} new={new_value:02X}")
         }
-        WsBusTraceEvent::IoRead { port, value } => {
-            format!("ioread port={port:04X} value={value:02X}")
+        WsBusTraceEvent::Read {
+            space: TraceWriteKind::Io,
+            addr,
+            value,
+            ..
+        } => {
+            format!("ioread port={addr:04X} value={value:02X}")
         }
-        WsBusTraceEvent::IoWrite {
-            port,
+        WsBusTraceEvent::Write {
+            space: TraceWriteKind::Io,
+            addr,
             written_value,
             old_value,
             new_value,
+            ..
         } => {
             format!(
-                "iowrite port={port:04X} write={written_value:02X} old={old_value:02X} new={new_value:02X}"
+                "iowrite port={addr:04X} write={written_value:02X} old={old_value:02X} new={new_value:02X}"
             )
         }
     };

@@ -1,12 +1,30 @@
 use super::Emulator;
 use zeff_emu_common::debug::{DebugEvent, WatchType};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{ClockRate, MasterTicks};
 
 fn minimal_rom() -> Vec<u8> {
     let mut rom = vec![0; 0xC0];
     rom[0xA0..0xA4].copy_from_slice(b"TEST");
     rom[0xB2] = 0x96;
     rom
+}
+
+#[test]
+fn timing_snapshot_tracks_and_restores_cpu_cycles() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    let start = emu.timing_snapshot();
+    assert_eq!(start.now(), MasterTicks::new(emu.cpu_cycles()));
+    assert_eq!(start.rate(), ClockRate::from_hz(16_777_216));
+
+    emu.step_instruction();
+    let saved_clock = emu.timing_snapshot();
+    let state = emu.encode_state().unwrap();
+    emu.step_instruction();
+    assert!(emu.timing_snapshot().now() > saved_clock.now());
+
+    emu.load_state(&state).unwrap();
+    assert_eq!(emu.timing_snapshot(), saved_clock);
 }
 
 #[test]

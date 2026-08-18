@@ -109,10 +109,12 @@ impl Cpu {
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u64 {
+        bus.prepare_cpu_instruction_accesses();
         self.last_step_kind = CpuStepKind::Idle;
         self.last_step_branch_taken_same_page = false;
 
         if self.state != CpuState::Running {
+            bus.finish_cpu_instruction_accesses(1, self.pc);
             self.last_step_cycles = 1;
             self.cycles += 1;
             return 1;
@@ -121,6 +123,7 @@ impl Cpu {
         if self.nmi_pending && self.nmi_poll_delay == 0 {
             self.nmi_pending = false;
             let cycles = self.service_nmi(bus);
+            bus.finish_cpu_instruction_accesses(cycles, self.pc);
             self.last_step_kind = CpuStepKind::Nmi;
             self.last_step_cycles = cycles;
             self.cycles += cycles;
@@ -129,6 +132,7 @@ impl Cpu {
 
         if self.irq_line && !self.irq_inhibited() {
             let cycles = self.service_irq(bus);
+            bus.finish_cpu_instruction_accesses(cycles, self.pc);
             self.last_step_kind = CpuStepKind::Irq;
             self.last_step_cycles = cycles;
             self.cycles += cycles;
@@ -142,6 +146,7 @@ impl Cpu {
         let base_cycles = crate::hardware::opcodes::cycles::CYCLE_TABLE[opcode as usize] as u64;
         let extra = crate::hardware::opcodes::dispatch::execute_opcode(self, bus, opcode) as u64;
         let cycles = base_cycles + extra;
+        bus.finish_cpu_instruction_accesses(cycles, self.pc);
         self.tick_irq_delays();
         self.last_step_cycles = cycles;
         self.cycles += cycles;
@@ -222,6 +227,8 @@ impl Cpu {
 
     fn service_nmi(&mut self, bus: &mut Bus) -> u64 {
         self.nmi_count = self.nmi_count.wrapping_add(1);
+        let _ = bus.cpu_read(self.pc);
+        let _ = bus.cpu_read(self.pc);
         self.push16(bus, self.pc);
         self.push8(bus, self.regs.status_for_push(false));
         self.regs.set_flag(StatusFlags::INTERRUPT, true);
@@ -234,6 +241,8 @@ impl Cpu {
 
     fn service_irq(&mut self, bus: &mut Bus) -> u64 {
         self.irq_count = self.irq_count.wrapping_add(1);
+        let _ = bus.cpu_read(self.pc);
+        let _ = bus.cpu_read(self.pc);
         self.push16(bus, self.pc);
         self.push8(bus, self.regs.status_for_push(false));
         self.regs.set_flag(StatusFlags::INTERRUPT, true);

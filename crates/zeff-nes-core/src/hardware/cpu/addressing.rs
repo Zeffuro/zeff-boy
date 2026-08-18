@@ -13,11 +13,15 @@ impl Cpu {
     }
 
     pub(crate) fn addr_zero_page_x(&mut self, bus: &mut Bus) -> u16 {
-        self.fetch8(bus).wrapping_add(self.regs.x) as u16
+        let base = self.fetch8(bus);
+        let _ = bus.cpu_read(u16::from(base));
+        base.wrapping_add(self.regs.x) as u16
     }
 
     pub(crate) fn addr_zero_page_y(&mut self, bus: &mut Bus) -> u16 {
-        self.fetch8(bus).wrapping_add(self.regs.y) as u16
+        let base = self.fetch8(bus);
+        let _ = bus.cpu_read(u16::from(base));
+        base.wrapping_add(self.regs.y) as u16
     }
 
     pub(crate) fn addr_absolute(&mut self, bus: &mut Bus) -> u16 {
@@ -63,7 +67,9 @@ impl Cpu {
     }
 
     pub(crate) fn addr_indirect_x(&mut self, bus: &mut Bus) -> u16 {
-        let zp = self.fetch8(bus).wrapping_add(self.regs.x);
+        let base = self.fetch8(bus);
+        let _ = bus.cpu_read(u16::from(base));
+        let zp = base.wrapping_add(self.regs.x);
         let lo = bus.cpu_read(zp as u16) as u16;
         let hi = bus.cpu_read(zp.wrapping_add(1) as u16) as u16;
         (hi << 8) | lo

@@ -27,6 +27,7 @@ pub fn stop(cpu: &mut Cpu, bus: &mut Bus) {
 
         let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
         cpu.timed_cycles_accounted += if is_double_speed { delay * 2 } else { delay };
+        cpu.timed_master_ticks_accounted = cpu.timed_master_ticks_accounted.wrapping_add(apu_delay);
         return;
     }
     cpu.running = CpuState::Stopped;

@@ -1,9 +1,11 @@
 use super::Emulator;
-use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cartridge::compute_footer_checksum;
 use crate::hardware::cpu::CpuState;
-use zeff_emu_common::debug::{DebugEvent, WatchType};
+use zeff_emu_common::debug::{
+    BusAccessEvent, DebugEvent, TraceWriteKind, TraceWriteWidth, WatchType,
+};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{ClockRate, MasterTicks};
 
 fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {
     let mut rom = vec![0xFF; 0x10000];
@@ -15,6 +17,26 @@ fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {
     let checksum = compute_footer_checksum(&rom);
     rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
     rom
+}
+
+#[test]
+fn timing_snapshot_tracks_and_restores_cpu_cycles() {
+    let rom = rom_with_reset_code(&[0x90, 0x90, 0xF4]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    assert_eq!(emu.timing_snapshot().rate(), ClockRate::from_hz(3_072_000));
+    assert_eq!(
+        emu.timing_snapshot().now(),
+        MasterTicks::new(emu.cpu_cycles())
+    );
+
+    emu.step_instruction();
+    let saved_clock = emu.timing_snapshot();
+    let state = emu.encode_state().unwrap();
+    emu.step_instruction();
+    assert!(emu.timing_snapshot().now() > saved_clock.now());
+
+    emu.load_state(&state).unwrap();
+    assert_eq!(emu.timing_snapshot(), saved_clock);
 }
 
 fn large_linear_bank_prefetch_rom(old_bank_code: &[u8], new_bank_code: &[u8]) -> Vec<u8> {
@@ -140,18 +162,43 @@ fn step_frame_produces_framebuffer() {
 }
 
 #[test]
-fn bus_trace_records_instruction_fetches_and_io() {
-    let rom = rom_with_reset_code(&[0xB0, 0x04, 0xE6, 0xC2, 0xF4]);
+fn bus_trace_preserves_memory_and_io_metadata() {
+    let rom = rom_with_reset_code(&[
+        0xB8, 0x00, 0x00, 0x8E, 0xD8, 0xB0, 0x5A, 0xA2, 0x00, 0x00, 0xE6, 0xC2, 0xF4,
+    ]);
     let mut emu = Emulator::from_rom_data(&rom).unwrap();
-    emu.step_instruction();
-    emu.step_instruction();
-    let (_, trace) = emu.step_instruction_with_bus_trace();
-    assert!(trace.iter().any(|event| {
+    for _ in 0..4 {
+        emu.step_instruction();
+    }
+    let (_, memory_trace) = emu.step_instruction_with_bus_trace();
+    let (_, io_trace) = emu.step_instruction_with_bus_trace();
+
+    assert!(memory_trace.iter().any(|event| {
         matches!(
             event,
-            DebugTraceEvent::IoWrite {
-                port: 0x00C2,
-                new_value: 4,
+            BusAccessEvent::Write {
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: 0,
+                old_value: 0,
+                written_value: 0x5A,
+                new_value: 0x5A,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
+            }
+        )
+    }));
+    assert!(io_trace.iter().any(|event| {
+        matches!(
+            event,
+            BusAccessEvent::Write {
+                at: None,
+                space: TraceWriteKind::Io,
+                addr: 0x00C2,
+                written_value: 0x5A,
+                new_value: 0x5A,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
                 ..
             }
         )

@@ -1,5 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
+use zeff_emu_common::debug::{BusAccessEvent, TraceWriteKind, TraceWriteWidth};
+use zeff_emu_common::time::MasterTicks;
 use zeff_gb_core::emulator::Emulator;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -51,6 +53,109 @@ fn bench_step_frame(c: &mut Criterion) {
     c.bench_function("step_frame", |b| {
         b.iter(|| {
             emu.step_frame();
+        });
+    });
+}
+
+fn bench_cpu_memory_access(c: &mut Criterion) {
+    let mut emu = create_emulator();
+
+    c.bench_function("gb_cpu_memory_access", |b| {
+        b.iter(|| {
+            let value = emu.cpu_peek8(0xC000);
+            emu.cpu_write8(0xC000, value.wrapping_add(1));
+            std::hint::black_box(value);
+        });
+    });
+}
+
+fn bench_bus_trace_replay(c: &mut Criterion) {
+    let trace = [
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(0)),
+            space: TraceWriteKind::Memory,
+            addr: 0x0150,
+            value: 0,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(4)),
+            space: TraceWriteKind::Memory,
+            addr: 0x3FFF,
+            value: 0,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Write {
+            at: Some(MasterTicks::new(8)),
+            space: TraceWriteKind::Memory,
+            addr: 0xC000,
+            old_value: 0,
+            written_value: 0x12,
+            new_value: 0x12,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(12)),
+            space: TraceWriteKind::Memory,
+            addr: 0xC000,
+            value: 0x12,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Write {
+            at: Some(MasterTicks::new(16)),
+            space: TraceWriteKind::Memory,
+            addr: 0xDFFF,
+            old_value: 0,
+            written_value: 0x34,
+            new_value: 0x34,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(20)),
+            space: TraceWriteKind::Memory,
+            addr: 0xDFFF,
+            value: 0x34,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Write {
+            at: Some(MasterTicks::new(24)),
+            space: TraceWriteKind::Memory,
+            addr: 0xFF80,
+            old_value: 0,
+            written_value: 0x56,
+            new_value: 0x56,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+        BusAccessEvent::Read {
+            at: Some(MasterTicks::new(28)),
+            space: TraceWriteKind::Memory,
+            addr: 0xFFFE,
+            value: 0,
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        },
+    ];
+    let mut emu = create_emulator();
+
+    c.bench_function("gb_bus_trace_replay", |b| {
+        b.iter(|| {
+            for &event in &trace {
+                match event {
+                    BusAccessEvent::Read { addr, .. } => {
+                        std::hint::black_box(emu.cpu_peek8(addr as u16));
+                    }
+                    BusAccessEvent::Write {
+                        addr, new_value, ..
+                    } => emu.cpu_write8(addr as u16, new_value as u8),
+                }
+            }
         });
     });
 }
@@ -160,6 +265,8 @@ fn bench_real_roms(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_step_instruction,
+    bench_cpu_memory_access,
+    bench_bus_trace_replay,
     bench_step_frame,
     bench_save_state_encode,
     bench_save_state_roundtrip,

@@ -52,7 +52,8 @@ impl Emulator {
         self.opcode_log.push((pc_before, opcode, rom_offset));
 
         self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
-        self.bus.begin_cpu_step_timing();
+        self.bus
+            .begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(self.cpu.cycles));
 
         let cycles = self.cpu.step(&mut self.bus);
 
@@ -111,7 +112,7 @@ impl Emulator {
                 for event in &events {
                     match *event {
                         DebugTraceEvent::Read { addr, value, .. } => {
-                            debug.check_watch_read(addr, value);
+                            debug.check_watch_read(addr as u16, value as u8);
                         }
                         DebugTraceEvent::Write {
                             addr,
@@ -119,7 +120,7 @@ impl Emulator {
                             new_value,
                             ..
                         } => {
-                            debug.check_watch_write(addr, old_value, new_value);
+                            debug.check_watch_write(addr as u16, old_value as u8, new_value as u8);
                         }
                     }
                 }
@@ -134,9 +135,9 @@ impl Emulator {
                     } = *event
                     {
                         record.push_write(TraceWrite {
-                            address: u32::from(addr),
-                            old_value: u32::from(old_value),
-                            new_value: u32::from(new_value),
+                            address: addr,
+                            old_value,
+                            new_value,
                             width: TraceWriteWidth::Byte,
                             kind: TraceWriteKind::Memory,
                         });
@@ -238,7 +239,10 @@ impl Emulator {
                 && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
             {
                 self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
-                self.bus.begin_cpu_step_timing();
+                self.bus
+                    .begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(
+                        self.cpu.cycles,
+                    ));
                 let cycles = self.cpu.step(&mut self.bus);
 
                 let dma_cycles = self.bus.dma_stall_cycles;

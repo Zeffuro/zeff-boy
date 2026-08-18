@@ -66,15 +66,20 @@ impl Bus {
             .is_some_and(|(cpu_bus, dma_bus)| cpu_bus == dma_bus)
     }
 
-    pub fn cpu_read_byte_after_oam_dma_check(&mut self, addr: u16, blocked: bool) -> u8 {
+    pub fn cpu_read_byte_after_oam_dma_check(
+        &mut self,
+        addr: u16,
+        blocked: bool,
+        master_tick_offset: u64,
+    ) -> u8 {
         if blocked {
             if self.trace_cpu_accesses {
-                self.cpu_read_trace.push((addr, 0xFF));
+                self.trace_cpu_read(master_tick_offset, addr, 0xFF);
             }
             return 0xFF;
         }
 
-        self.cpu_read_byte_unblocked(addr)
+        self.cpu_read_byte_unblocked(addr, master_tick_offset)
     }
 
     pub fn cpu_write_byte_after_oam_dma_check(
@@ -87,7 +92,7 @@ impl Bus {
             return 0;
         }
 
-        self.cpu_write_byte_unblocked(addr, value)
+        self.cpu_write_byte_unblocked(addr, value, 0)
     }
 
     pub fn cpu_write_byte_after_oam_dma_and_oam_access_check(
@@ -96,6 +101,7 @@ impl Bus {
         value: u8,
         blocked_by_oam_dma: bool,
         oam_accessible_at_access: Option<bool>,
+        master_tick_offset: u64,
     ) -> u64 {
         if blocked_by_oam_dma {
             return 0;
@@ -110,31 +116,36 @@ impl Bus {
             let old_value = self.oam[(addr - OAM_START) as usize];
             self.oam[(addr - OAM_START) as usize] = value;
             if self.trace_cpu_accesses {
-                self.cpu_write_trace.push((addr, old_value, value));
+                self.trace_cpu_write(master_tick_offset, addr, old_value, value, value);
             }
             return 0;
         }
 
-        self.cpu_write_byte_unblocked(addr, value)
+        self.cpu_write_byte_unblocked(addr, value, master_tick_offset)
     }
 
     pub fn cpu_oam_write_accessible(&self) -> bool {
         self.io.ppu.cpu_oam_write_accessible()
     }
 
-    pub(super) fn cpu_read_byte_unblocked(&mut self, addr: u16) -> u8 {
+    pub(super) fn cpu_read_byte_unblocked(&mut self, addr: u16, master_tick_offset: u64) -> u8 {
         if (OAM_START..=NOT_USABLE_END).contains(&addr) && !self.io.ppu.cpu_oam_read_accessible() {
             self.maybe_trigger_oam_corruption(addr, OamCorruptionType::Read);
         }
 
         let value = self.read_byte(addr);
         if self.trace_cpu_accesses {
-            self.cpu_read_trace.push((addr, value));
+            self.trace_cpu_read(master_tick_offset, addr, value);
         }
         value
     }
 
-    pub(super) fn cpu_write_byte_unblocked(&mut self, addr: u16, value: u8) -> u64 {
+    pub(super) fn cpu_write_byte_unblocked(
+        &mut self,
+        addr: u16,
+        value: u8,
+        master_tick_offset: u64,
+    ) -> u64 {
         let old_value = if self.trace_cpu_accesses {
             self.read_byte(addr)
         } else {
@@ -147,7 +158,7 @@ impl Bus {
         let extra_t_cycles = self.write_byte(addr, value);
         if self.trace_cpu_accesses {
             let new_value = self.read_byte(addr);
-            self.cpu_write_trace.push((addr, old_value, new_value));
+            self.trace_cpu_write(master_tick_offset, addr, old_value, value, new_value);
         }
         extra_t_cycles
     }

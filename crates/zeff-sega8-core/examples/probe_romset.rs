@@ -866,6 +866,9 @@ fn record_observed_bus_event(observations: &mut RomProbeObservations, event: Cpu
     let CpuAccessTraceEvent::Write { addr, .. } = event else {
         return;
     };
+    let Ok(addr) = u16::try_from(addr) else {
+        return;
+    };
 
     let mut known_mapper_write = false;
     if is_sega_mapper_register(addr) {

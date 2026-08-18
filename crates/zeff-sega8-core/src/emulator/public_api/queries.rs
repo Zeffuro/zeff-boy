@@ -2,6 +2,7 @@ use crate::emulator::{Emulator, dimensions_for_system};
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Sega8System;
 use crate::hardware::cpu::{Cpu, CpuTrap};
+use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks, TimingSnapshot};
 
 impl Emulator {
     pub fn framebuffer(&self) -> &[u8] {
@@ -48,6 +49,14 @@ impl Emulator {
         &self.cpu
     }
 
+    pub fn cpu_cycles(&self) -> u64 {
+        self.cpu.cycles()
+    }
+
+    pub fn timing_snapshot(&self) -> TimingSnapshot {
+        <Self as MachineTiming>::timing_snapshot(self)
+    }
+
     pub fn cpu_trap(&self) -> Option<CpuTrap> {
         self.cpu.trap()
     }
@@ -62,5 +71,14 @@ impl Emulator {
 
     pub fn rom_mapping_token(&self) -> u64 {
         self.bus.rom_mapping_token()
+    }
+}
+
+impl MachineTiming for Emulator {
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        TimingSnapshot::new(
+            MasterTicks::new(self.cpu.cycles()),
+            ClockRate::from_hz(u64::from(self.video_standard.clock_hz_approx())),
+        )
     }
 }

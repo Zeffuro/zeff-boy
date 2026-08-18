@@ -1,6 +1,10 @@
 use crate::emulator::Emulator;
 use crate::hardware::cartridge::{BackupKind, RomHeader};
 use crate::hardware::cpu::{CpuMode, CpuState, FetchedInstruction};
+use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks, TimingSnapshot};
+
+const MASTER_CLOCK_RATE: ClockRate =
+    ClockRate::from_hz(crate::hardware::constants::CPU_CLOCK_HZ as u64);
 
 impl Emulator {
     pub fn framebuffer(&self) -> &[u8] {
@@ -63,6 +67,10 @@ impl Emulator {
         self.cpu.cycles
     }
 
+    pub fn timing_snapshot(&self) -> TimingSnapshot {
+        <Self as MachineTiming>::timing_snapshot(self)
+    }
+
     pub fn cartridge_header(&self) -> &RomHeader {
         self.bus.cartridge.header()
     }
@@ -119,5 +127,11 @@ impl Emulator {
 
     pub fn ppu_debug_snapshot(&self) -> crate::hardware::ppu::PpuDebugSnapshot {
         self.bus.ppu_debug_snapshot()
+    }
+}
+
+impl MachineTiming for Emulator {
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        TimingSnapshot::new(MasterTicks::new(self.cpu.cycles), MASTER_CLOCK_RATE)
     }
 }

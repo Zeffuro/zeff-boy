@@ -10,3 +10,4 @@ pub mod rewind;
 pub mod save_ram;
 pub mod save_state;
 pub mod system;
+pub mod time;

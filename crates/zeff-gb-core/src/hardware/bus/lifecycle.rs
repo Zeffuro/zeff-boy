@@ -43,8 +43,8 @@ impl Bus {
             cpu_interrupt_pending_before_if: 0,
             io: IO::new(),
             trace_cpu_accesses: false,
-            cpu_read_trace: Vec::with_capacity(8),
-            cpu_write_trace: Vec::with_capacity(4),
+            cpu_access_trace_origin: zeff_emu_common::time::MasterTicks::ZERO,
+            cpu_access_trace: Vec::with_capacity(12),
             game_genie_patches: Vec::new(),
         };
 

@@ -24,6 +24,8 @@ pub struct Cpu {
     pub cycles: u64,
     pub last_step_cycles: u64,
     pub timed_cycles_accounted: u64,
+    pub last_step_master_ticks: u64,
+    pub timed_master_ticks_accounted: u64,
     pub halt_bug_active: bool,
 }
 
@@ -44,6 +46,8 @@ impl Cpu {
             cycles: 0,
             last_step_cycles: 0,
             timed_cycles_accounted: 0,
+            last_step_master_ticks: 0,
+            timed_master_ticks_accounted: 0,
             halt_bug_active: false,
         }
     }
@@ -51,6 +55,7 @@ impl Cpu {
     #[inline]
     pub fn step(&mut self, bus: &mut Bus) {
         self.timed_cycles_accounted = 0;
+        self.timed_master_ticks_accounted = 0;
 
         if self.running == CpuState::Halted {
             let pending = bus.pending_interrupts_for_halt();
@@ -91,6 +96,7 @@ impl Cpu {
 
     fn commit_step_cycles(&mut self) {
         self.last_step_cycles = self.timed_cycles_accounted;
+        self.last_step_master_ticks = self.timed_master_ticks_accounted;
         self.cycles += self.last_step_cycles;
     }
 
@@ -173,7 +179,11 @@ impl Cpu {
     pub fn bus_read_timed(&mut self, bus: &mut Bus, addr: u16) -> u8 {
         let blocked_by_oam_dma = bus.oam_dma_blocks_cpu_access(addr);
         self.tick_peripherals(bus, 4);
-        bus.cpu_read_byte_after_oam_dma_check(addr, blocked_by_oam_dma)
+        bus.cpu_read_byte_after_oam_dma_check(
+            addr,
+            blocked_by_oam_dma,
+            self.timed_master_ticks_accounted,
+        )
     }
 
     #[inline]
@@ -188,6 +198,7 @@ impl Cpu {
             value,
             blocked_by_oam_dma,
             oam_accessible_at_access,
+            self.timed_master_ticks_accounted,
         );
         if extra_t_cycles != 0 {
             self.tick_peripherals(bus, extra_t_cycles);
@@ -255,6 +266,8 @@ impl Cpu {
             cycles: reader.read_u64()?,
             last_step_cycles: reader.read_u64()?,
             timed_cycles_accounted: reader.read_u64()?,
+            last_step_master_ticks: 0,
+            timed_master_ticks_accounted: 0,
             halt_bug_active: reader.read_bool()?,
         })
     }
@@ -269,6 +282,9 @@ impl Cpu {
         } else {
             t_cycles
         };
+        self.timed_master_ticks_accounted = self
+            .timed_master_ticks_accounted
+            .wrapping_add(system_t_cycles);
 
         bus.step_timer(t_cycles);
         bus.step_serial(t_cycles);

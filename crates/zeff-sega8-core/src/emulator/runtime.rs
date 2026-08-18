@@ -114,14 +114,16 @@ impl Emulator {
         });
         if trace_active {
             let events = self.bus.drain_cpu_access_trace();
-            if collect_bus_trace {
-                bus_trace_events = events.clone();
-            }
             if let Some(record) = &mut trace_record {
                 append_sega_writes(record, &events);
             }
             if watch_active {
-                self.apply_cpu_access_trace_watchpoints(events);
+                self.apply_cpu_access_trace_watchpoints(&events);
+            }
+            if collect_bus_trace {
+                bus_trace_events = events;
+            } else {
+                self.bus.recycle_cpu_access_trace(events);
             }
             if self.debug.hit_watchpoint.is_some() {
                 self.cpu.suspend();
@@ -140,21 +142,38 @@ impl Emulator {
         (fetched, bus_trace_events)
     }
 
-    fn apply_cpu_access_trace_watchpoints(&mut self, events: Vec<CpuAccessTraceEvent>) {
-        for event in events {
+    fn apply_cpu_access_trace_watchpoints(&mut self, events: &[CpuAccessTraceEvent]) {
+        for &event in events {
             match event {
-                CpuAccessTraceEvent::Read { addr, value } => {
+                CpuAccessTraceEvent::Read {
+                    space: TraceWriteKind::Memory,
+                    addr,
+                    value,
+                    ..
+                } => {
+                    let (Ok(addr), Ok(value)) = (u16::try_from(addr), u8::try_from(value)) else {
+                        continue;
+                    };
                     self.debug.check_watch_read(Address::from(addr), value);
                 }
                 CpuAccessTraceEvent::Write {
+                    space: TraceWriteKind::Memory,
                     addr,
                     old_value,
                     new_value,
+                    ..
                 } => {
+                    let (Ok(addr), Ok(old_value), Ok(new_value)) = (
+                        u16::try_from(addr),
+                        u8::try_from(old_value),
+                        u8::try_from(new_value),
+                    ) else {
+                        continue;
+                    };
                     self.debug
                         .check_watch_write(Address::from(addr), old_value, new_value);
                 }
-                CpuAccessTraceEvent::IoRead { .. } | CpuAccessTraceEvent::IoWrite { .. } => {}
+                CpuAccessTraceEvent::Read { .. } | CpuAccessTraceEvent::Write { .. } => {}
             }
             if self.debug.hit_watchpoint.is_some() {
                 break;
@@ -249,21 +268,31 @@ fn append_sega_writes(record: &mut InstructionTraceRecord, events: &[CpuAccessTr
                 addr,
                 old_value,
                 new_value,
+                width: TraceWriteWidth::Byte,
+                space: TraceWriteKind::Memory,
+                ..
             } => TraceWrite {
-                address: u32::from(addr),
-                old_value: u32::from(old_value),
-                new_value: u32::from(new_value),
+                address: addr,
+                old_value,
+                new_value,
                 width: TraceWriteWidth::Byte,
                 kind: TraceWriteKind::Memory,
             },
-            CpuAccessTraceEvent::IoWrite { port, value } => TraceWrite {
-                address: u32::from(port),
-                old_value: u32::from(value),
-                new_value: u32::from(value),
+            CpuAccessTraceEvent::Write {
+                addr,
+                old_value,
+                new_value,
+                width: TraceWriteWidth::Byte,
+                space: TraceWriteKind::Io,
+                ..
+            } => TraceWrite {
+                address: addr,
+                old_value,
+                new_value,
                 width: TraceWriteWidth::Byte,
                 kind: TraceWriteKind::Io,
             },
-            CpuAccessTraceEvent::Read { .. } | CpuAccessTraceEvent::IoRead { .. } => continue,
+            CpuAccessTraceEvent::Read { .. } | CpuAccessTraceEvent::Write { .. } => continue,
         };
         record.push_write(write);
     }

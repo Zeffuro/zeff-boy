@@ -4,6 +4,7 @@ use std::io::Write;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+use zeff_emu_common::debug::TraceWriteKind;
 use zeff_emu_common::replay::{ReplayEvent, ReplayWonderSwanLinkEvent};
 use zeff_ws_core::emulator::Emulator as WonderSwanEmulator;
 use zeff_ws_core::hardware::bus::{DebugTraceEvent, UartDebugSnapshot, WonderSwanTxEvent};
@@ -444,18 +445,23 @@ fn format_serial_io_trace_line(
     event: DebugTraceEvent,
 ) -> Option<String> {
     let (access, port, detail) = match event {
-        DebugTraceEvent::IoRead { port, value }
-            if matches!(port, SERIAL_DATA_PORT | SERIAL_CONTROL_PORT) =>
-        {
-            ("ioread", port, format!("value={value:02X}"))
+        DebugTraceEvent::Read {
+            space: TraceWriteKind::Io,
+            addr,
+            value,
+            ..
+        } if matches!(addr as u16, SERIAL_DATA_PORT | SERIAL_CONTROL_PORT) => {
+            ("ioread", addr as u16, format!("value={value:02X}"))
         }
-        DebugTraceEvent::IoWrite {
-            port,
+        DebugTraceEvent::Write {
+            space: TraceWriteKind::Io,
+            addr,
             written_value,
             old_value,
             new_value,
+            ..
         } if matches!(
-            port,
+            addr as u16,
             SERIAL_DATA_PORT
                 | IRQ_ENABLE_PORT
                 | SERIAL_CONTROL_PORT
@@ -465,7 +471,7 @@ fn format_serial_io_trace_line(
         {
             (
                 "iowrite",
-                port,
+                addr as u16,
                 format!(
                     "write={written_value:02X} visible_before={old_value:02X} visible_after={new_value:02X}"
                 ),

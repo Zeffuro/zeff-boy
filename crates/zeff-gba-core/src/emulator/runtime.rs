@@ -4,7 +4,6 @@ use crate::hardware::constants::CYCLES_PER_FRAME;
 use crate::hardware::cpu::{CpuState, FetchedInstruction};
 use zeff_emu_common::debug::{
     DebugEvent, InstructionTraceRecord, RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind,
-    TraceWriteWidth,
 };
 
 impl Emulator {
@@ -179,13 +178,14 @@ impl Emulator {
                     old_value,
                     new_value,
                     width,
+                    ..
                 } = *event
                 {
                     record.push_write(TraceWrite {
                         address: addr,
                         old_value,
                         new_value,
-                        width: trace_width(width),
+                        width,
                         kind: TraceWriteKind::Memory,
                     });
                 }
@@ -233,13 +233,5 @@ fn push_gba_register_deltas(
             register: 16,
             value: after.1,
         });
-    }
-}
-
-fn trace_width(width: u8) -> TraceWriteWidth {
-    match width {
-        2 => TraceWriteWidth::Halfword,
-        4 => TraceWriteWidth::Word,
-        _ => TraceWriteWidth::Byte,
     }
 }

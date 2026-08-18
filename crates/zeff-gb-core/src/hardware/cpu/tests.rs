@@ -1,5 +1,7 @@
 use super::*;
+use crate::hardware::bus::CpuAccessTraceEvent;
 use crate::hardware::rom_header::RomHeader;
+use zeff_emu_common::time::MasterTicks;
 
 fn make_test_bus(mode: HardwareMode) -> Bus {
     let mut rom = vec![0u8; 0x8000];
@@ -11,6 +13,77 @@ fn make_test_bus(mode: HardwareMode) -> Bus {
     rom[0x005A] = 0xDE;
     let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
     Bus::new(rom, &header, mode).expect("test bus should initialize")
+}
+
+#[test]
+fn master_ticks_follow_the_system_clock() {
+    let mut cpu = Cpu::new();
+    let mut normal_bus = make_test_bus(HardwareMode::CGBNormal);
+    cpu.step(&mut normal_bus);
+    assert_eq!(cpu.last_step_cycles, 4);
+    assert_eq!(cpu.last_step_master_ticks, 4);
+
+    let mut double_bus = make_test_bus(HardwareMode::CGBDouble);
+    cpu.step(&mut double_bus);
+    assert_eq!(cpu.last_step_cycles, 4);
+    assert_eq!(cpu.last_step_master_ticks, 2);
+}
+
+#[test]
+fn cpu_access_trace_preserves_bus_order_and_master_ticks() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC000;
+    cpu.regs.a = 0x5A;
+    bus.write_byte(0xC000, 0xEA);
+    bus.write_byte(0xC001, 0x00);
+    bus.write_byte(0xC002, 0xC1);
+    bus.trace_cpu_accesses = true;
+    bus.begin_cpu_access_trace_at(MasterTicks::new(100));
+
+    cpu.step(&mut bus);
+
+    let mut events = Vec::new();
+    bus.drain_cpu_access_trace(|event| events.push(event));
+    assert_eq!(
+        events,
+        vec![
+            CpuAccessTraceEvent::Read {
+                at: Some(MasterTicks::new(104)),
+                space: zeff_emu_common::debug::TraceWriteKind::Memory,
+                addr: 0xC000,
+                value: 0xEA,
+                width: zeff_emu_common::debug::TraceWriteWidth::Byte,
+                mapped_addr: None,
+            },
+            CpuAccessTraceEvent::Read {
+                at: Some(MasterTicks::new(108)),
+                space: zeff_emu_common::debug::TraceWriteKind::Memory,
+                addr: 0xC001,
+                value: 0x00,
+                width: zeff_emu_common::debug::TraceWriteWidth::Byte,
+                mapped_addr: None,
+            },
+            CpuAccessTraceEvent::Read {
+                at: Some(MasterTicks::new(112)),
+                space: zeff_emu_common::debug::TraceWriteKind::Memory,
+                addr: 0xC002,
+                value: 0xC1,
+                width: zeff_emu_common::debug::TraceWriteWidth::Byte,
+                mapped_addr: None,
+            },
+            CpuAccessTraceEvent::Write {
+                at: Some(MasterTicks::new(116)),
+                space: zeff_emu_common::debug::TraceWriteKind::Memory,
+                addr: 0xC100,
+                old_value: 0,
+                written_value: 0x5A,
+                new_value: 0x5A,
+                width: zeff_emu_common::debug::TraceWriteWidth::Byte,
+                mapped_addr: None,
+            },
+        ]
+    );
 }
 
 #[test]
@@ -67,6 +140,43 @@ fn running_with_ime_enabled_dispatches_interrupt_in_20_t_cycles() {
     assert_eq!(cpu.pc, INT_VBLANK);
     assert_eq!(cpu.sp, 0xFFFC);
     assert_eq!(bus.if_reg & 0x01, 0x00);
+}
+
+#[test]
+fn interrupt_stack_writes_have_exact_master_ticks() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC123;
+    cpu.sp = 0xFFFE;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x01;
+    bus.if_reg = 0x01;
+    bus.trace_cpu_accesses = true;
+    bus.begin_cpu_access_trace_at(MasterTicks::new(1_000));
+
+    cpu.step(&mut bus);
+
+    let mut events = Vec::new();
+    bus.drain_cpu_access_trace(|event| events.push(event));
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        events[0],
+        CpuAccessTraceEvent::Write {
+            at: Some(at),
+            addr: 0xFFFD,
+            new_value: 0xC1,
+            ..
+        } if at == MasterTicks::new(1_012)
+    ));
+    assert!(matches!(
+        events[1],
+        CpuAccessTraceEvent::Write {
+            at: Some(at),
+            addr: 0xFFFC,
+            new_value: 0x23,
+            ..
+        } if at == MasterTicks::new(1_016)
+    ));
 }
 
 #[test]

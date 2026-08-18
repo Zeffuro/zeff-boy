@@ -96,7 +96,10 @@ pub(in crate::cli::headless_runner) fn format_gba_bus_trace_line(
     event: GbaBusTraceEvent,
 ) -> String {
     let access = match event {
-        GbaBusTraceEvent::Read { addr, value, width } => {
+        GbaBusTraceEvent::Read {
+            addr, value, width, ..
+        } => {
+            let width = width as u8;
             let digits = usize::from(width) * 2;
             format!("read{} addr={addr:08X} value={value:0digits$X}", width * 8)
         }
@@ -105,7 +108,9 @@ pub(in crate::cli::headless_runner) fn format_gba_bus_trace_line(
             old_value,
             new_value,
             width,
+            ..
         } => {
+            let width = width as u8;
             let digits = usize::from(width) * 2;
             format!(
                 "write{} addr={addr:08X} old={old_value:0digits$X} new={new_value:0digits$X}",
