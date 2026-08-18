@@ -76,6 +76,11 @@ pub(super) fn draw(
         open_external_debugger(actions, external_debugger);
         ui.close();
     }
+    if ui.button("Trace").clicked() {
+        toggle_dock_tab(dock_state, DebugTab::Trace);
+        open_external_debugger(actions, external_debugger);
+        ui.close();
+    }
     if ui.button("Call Stack").clicked() {
         toggle_dock_tab(dock_state, DebugTab::CallStack);
         open_external_debugger(actions, external_debugger);

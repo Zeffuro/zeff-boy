@@ -39,6 +39,54 @@ fn one_shot_breakpoint_removes_itself() {
 }
 
 #[test]
+fn breakpoint_waits_for_hit_count() {
+    let mut dc = DebugController::new();
+    dc.add_breakpoint_after(0x1234, 3);
+    assert!(!dc.should_break(0x1234));
+    assert_eq!(dc.hit_breakpoint, None);
+    assert!(!dc.should_break(0x1234));
+    assert_eq!(dc.hit_breakpoint, None);
+    assert!(dc.should_break(0x1234));
+    assert_eq!(dc.iter_breakpoint_hit_conditions().next().unwrap().hits, 3);
+
+    let mut dc = AddressDebugController::new();
+    dc.add_breakpoint_after(0x0200_0000, 2);
+    assert!(!dc.should_break(0x0200_0000));
+    assert_eq!(dc.hit_breakpoint, None);
+    assert!(dc.should_break(0x0200_0000));
+    assert_eq!(
+        dc.iter_breakpoint_hit_conditions()
+            .next()
+            .unwrap()
+            .target_hits,
+        2
+    );
+}
+
+#[test]
+fn event_breakpoints_are_persistent_and_clear_hits() {
+    let mut dc = DebugController::new();
+    assert!(!dc.any_active());
+    dc.set_event_breakpoint(DebugEvent::Interrupt, true);
+    assert!(dc.any_active());
+    assert!(dc.check_event(DebugEvent::Interrupt));
+    assert_eq!(dc.hit_event, Some(DebugEvent::Interrupt));
+    dc.clear_hits();
+    assert_eq!(dc.hit_event, None);
+    assert!(dc.has_event_breakpoint(DebugEvent::Interrupt));
+
+    let mut dc = AddressDebugController::new();
+    dc.set_event_breakpoint(DebugEvent::Dma, true);
+    assert!(dc.check_event(DebugEvent::Dma));
+    assert_eq!(
+        dc.iter_event_breakpoints().collect::<Vec<_>>(),
+        [DebugEvent::Dma]
+    );
+    dc.set_event_breakpoint(DebugEvent::Dma, false);
+    assert!(!dc.check_event(DebugEvent::Dma));
+}
+
+#[test]
 fn should_break_on_breakpoint() {
     let mut dc = DebugController::new();
     dc.add_breakpoint(0x200);
@@ -148,6 +196,155 @@ fn opcode_log_wraps_at_capacity() {
     assert_eq!(recent.len(), 32);
     assert_eq!(recent[0], (63, 63));
     assert_eq!(recent[31], (32, 32));
+}
+
+#[test]
+fn instruction_trace_is_inert_when_disabled() {
+    let mut trace = InstructionTraceStore::new(0);
+    assert_eq!(trace.capacity(), MIN_TRACE_CAPACITY);
+    assert_eq!(trace.push(InstructionTraceRecord::default()), None);
+    assert!(trace.is_empty());
+    assert_eq!(trace.iter().count(), 0);
+}
+
+#[test]
+fn instruction_trace_evicts_oldest_in_order() {
+    let mut trace = InstructionTraceStore::new(MIN_TRACE_CAPACITY);
+    trace.set_enabled(true);
+    for pc in 0..=MIN_TRACE_CAPACITY as u32 {
+        trace.push(InstructionTraceRecord::new(
+            TraceExecMode::Sm83,
+            pc,
+            Some(u64::from(pc)),
+            4,
+            u64::from(pc),
+            &[0],
+        ));
+    }
+
+    let entries = trace.iter().collect::<Vec<_>>();
+    assert_eq!(entries.len(), MIN_TRACE_CAPACITY);
+    assert_eq!(entries[0].pc, 1);
+    assert_eq!(entries[0].sequence, 1);
+    assert_eq!(entries.last().unwrap().pc, MIN_TRACE_CAPACITY as u32);
+    assert_eq!(entries.last().unwrap().sequence, MIN_TRACE_CAPACITY as u64);
+}
+
+#[test]
+fn instruction_trace_clamps_and_resizes_capacity() {
+    let mut trace = InstructionTraceStore::new(usize::MAX);
+    assert_eq!(trace.capacity(), MAX_TRACE_CAPACITY);
+    trace.set_capacity(0);
+    assert_eq!(trace.capacity(), MIN_TRACE_CAPACITY);
+    trace.set_capacity(MIN_TRACE_CAPACITY * 2);
+    trace.set_enabled(true);
+    for pc in 0..MIN_TRACE_CAPACITY as u32 + 4 {
+        trace.push(InstructionTraceRecord::new(
+            TraceExecMode::Z80,
+            pc,
+            None,
+            0,
+            0,
+            &[],
+        ));
+    }
+    trace.set_capacity(MIN_TRACE_CAPACITY);
+    assert_eq!(trace.iter().next().unwrap().pc, 4);
+    assert_eq!(
+        trace.iter().last().unwrap().pc,
+        MIN_TRACE_CAPACITY as u32 + 3
+    );
+}
+
+#[test]
+fn instruction_trace_entries_after_reports_retained_range() {
+    let mut trace = InstructionTraceStore::new(MIN_TRACE_CAPACITY);
+    trace.set_enabled(true);
+    for pc in 0..MIN_TRACE_CAPACITY as u32 + 2 {
+        trace.push(InstructionTraceRecord::new(
+            TraceExecMode::V30,
+            pc,
+            None,
+            0,
+            0,
+            &[],
+        ));
+    }
+
+    assert_eq!(trace.oldest_sequence(), Some(2));
+    assert_eq!(trace.newest_sequence(), Some(MIN_TRACE_CAPACITY as u64 + 1));
+    assert_eq!(
+        trace
+            .entries_after(Some(0), 2)
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert_eq!(
+        trace
+            .entries_after(Some(MIN_TRACE_CAPACITY as u64), 4)
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [MIN_TRACE_CAPACITY as u64 + 1]
+    );
+    assert!(trace.entries_after(trace.newest_sequence(), 4).is_empty());
+    assert!(trace.entries_after(None, 0).is_empty());
+}
+
+#[test]
+fn instruction_trace_clear_keeps_capture_enabled_and_sequence() {
+    let mut trace = InstructionTraceStore::new(MIN_TRACE_CAPACITY);
+    trace.set_enabled(true);
+    assert_eq!(trace.push(InstructionTraceRecord::default()), Some(0));
+    trace.clear();
+    assert!(trace.is_empty());
+    assert!(trace.is_enabled());
+    assert_eq!(trace.push(InstructionTraceRecord::default()), Some(1));
+}
+
+#[test]
+fn instruction_trace_preserves_delta_and_write_order_with_overflow() {
+    let mut entry = InstructionTraceRecord::new(
+        TraceExecMode::Arm,
+        0x0800_0000,
+        Some(0),
+        12,
+        34,
+        &[0x01, 0x02, 0x03],
+    );
+    for register in 0..MAX_TRACE_REGISTER_DELTAS as u8 + 2 {
+        entry.push_register_delta(RegisterDelta {
+            register,
+            value: u32::from(register),
+        });
+    }
+    for address in 0..MAX_TRACE_WRITES as u32 + 2 {
+        entry.push_write(TraceWrite {
+            address,
+            old_value: address,
+            new_value: address + 1,
+            width: TraceWriteWidth::Word,
+            kind: TraceWriteKind::Io,
+        });
+    }
+
+    assert_eq!(entry.register_deltas().len(), MAX_TRACE_REGISTER_DELTAS);
+    assert_eq!(entry.register_deltas()[0].register, 0);
+    assert_eq!(
+        entry.register_deltas().last().unwrap().register,
+        MAX_TRACE_REGISTER_DELTAS as u8 - 1
+    );
+    assert_eq!(entry.register_delta_overflow, 2);
+    assert_eq!(entry.writes().len(), MAX_TRACE_WRITES);
+    assert_eq!(entry.writes()[0].address, 0);
+    assert_eq!(
+        entry.writes().last().unwrap().address,
+        MAX_TRACE_WRITES as u32 - 1
+    );
+    assert_eq!(entry.write_overflow, 2);
+    assert_eq!(entry.instruction_len, 3);
 }
 
 #[test]

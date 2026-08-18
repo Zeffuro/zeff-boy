@@ -25,6 +25,8 @@ use super::super::source_viewer::draw_source_viewer_content;
 use super::super::symbol_browser::{SymbolBrowserViews, draw_symbol_browser_content};
 use super::super::tile_viewer::draw_tile_viewer_content;
 use super::super::tilemap_viewer::draw_tilemap_viewer_content;
+use super::super::tms9918_tilemap_viewer::draw_tms9918_tilemap_viewer_content;
+use super::super::trace_viewer::draw_trace_content;
 use super::super::types::{ConsoleGraphicsData, DebugDataRefs};
 use super::super::ui::draw_cpu_debug_content;
 use super::super::{DebugUiActions, DebugWindowState};
@@ -145,6 +147,7 @@ impl TabViewer for DebugTabViewer<'_> {
                             disasm_actions.add_one_shot_breakpoint;
                     }
                     self.actions.step_requested |= disasm_actions.step_requested;
+                    self.actions.next_frame_requested |= disasm_actions.next_frame_requested;
                     self.actions.continue_requested |= disasm_actions.continue_requested;
                     self.actions.backstep_requested |= disasm_actions.backstep_requested;
                     self.actions.follow_disasm_pc |= disasm_actions.follow_pc_requested;
@@ -197,6 +200,16 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_gba_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
+                } else if let Some(ConsoleGraphicsData::Sega8(data)) = self.data.graphics_data
+                    && !data.mode4.enabled
+                {
+                    draw_tms9918_tilemap_viewer_content(
+                        ui,
+                        data,
+                        &mut self.window_state.tilemap,
+                        &mut self.window_state.tiles,
+                        &mut self.actions,
+                    );
                 }
             }
             DebugTab::OamViewer => {
@@ -264,6 +277,14 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_execution_history_content(ui, info, self.data.symbols, &mut self.actions);
                 }
             }
+            DebugTab::Trace => {
+                draw_trace_content(
+                    ui,
+                    &mut self.window_state.trace,
+                    self.data.symbols,
+                    &mut self.actions,
+                );
+            }
             DebugTab::CallStack => {
                 if let Some(info) = self.data.cpu_debug {
                     draw_call_stack_content(ui, info, self.data.symbols, &mut self.actions);
@@ -278,6 +299,7 @@ impl TabViewer for DebugTabViewer<'_> {
                         state: &mut self.window_state.symbol_browser,
                         memory: &mut self.window_state.memory,
                         rom: &mut self.window_state.rom_viewer,
+                        coverage: &mut self.window_state.execution_coverage,
                     },
                     &mut self.actions,
                 );
@@ -318,7 +340,7 @@ impl TabViewer for DebugTabViewer<'_> {
 
     fn scroll_bars(&self, tab: &Self::Tab) -> [bool; 2] {
         match tab {
-            DebugTab::GameView | DebugTab::Console => [false, false],
+            DebugTab::GameView | DebugTab::Console | DebugTab::Trace => [false, false],
             _ => [false, true],
         }
     }

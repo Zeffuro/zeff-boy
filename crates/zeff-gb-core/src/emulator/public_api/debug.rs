@@ -11,6 +11,22 @@ impl Emulator {
         self.opcode_log.enabled = enabled;
     }
 
+    pub fn instruction_trace(&self) -> &zeff_emu_common::debug::InstructionTraceStore {
+        &self.instruction_trace
+    }
+
+    pub fn set_instruction_trace_enabled(&mut self, enabled: bool) {
+        self.instruction_trace.set_enabled(enabled);
+    }
+
+    pub fn set_instruction_trace_capacity(&mut self, capacity: usize) {
+        self.instruction_trace.set_capacity(capacity);
+    }
+
+    pub fn clear_instruction_trace(&mut self) {
+        self.instruction_trace.clear();
+    }
+
     pub fn debug_continue(&mut self) {
         self.debug.clear_hits();
         self.hit_rom_breakpoint = None;
@@ -25,12 +41,20 @@ impl Emulator {
         self.cpu.running = CpuState::Running;
     }
 
+    pub fn debug_suspend(&mut self) {
+        self.cpu.running = CpuState::Suspended;
+    }
+
     pub fn add_breakpoint(&mut self, addr: u16) {
         self.debug.add_breakpoint(addr);
     }
 
     pub fn add_one_shot_breakpoint(&mut self, addr: u16) {
         self.debug.add_one_shot_breakpoint(addr);
+    }
+
+    pub fn add_breakpoint_after(&mut self, addr: u16, target_hits: u64) {
+        self.debug.add_breakpoint_after(addr, target_hits);
     }
 
     pub fn remove_breakpoint(&mut self, addr: u16) {
@@ -59,6 +83,30 @@ impl Emulator {
 
     pub fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = u16> + '_ {
         self.debug.iter_one_shot_breakpoints()
+    }
+
+    pub fn iter_breakpoint_hit_conditions(
+        &self,
+    ) -> impl Iterator<Item = zeff_emu_common::debug::BreakpointHitCondition> + '_ {
+        self.debug.iter_breakpoint_hit_conditions()
+    }
+
+    pub fn set_event_breakpoint(
+        &mut self,
+        event: zeff_emu_common::debug::DebugEvent,
+        enabled: bool,
+    ) {
+        self.debug.set_event_breakpoint(event, enabled);
+    }
+
+    pub fn iter_event_breakpoints(
+        &self,
+    ) -> impl Iterator<Item = zeff_emu_common::debug::DebugEvent> + '_ {
+        self.debug.iter_event_breakpoints()
+    }
+
+    pub fn debug_hit_event(&self) -> Option<zeff_emu_common::debug::DebugEvent> {
+        self.debug.hit_event
     }
 
     pub fn toggle_rom_breakpoint(&mut self, offset: usize) {
@@ -120,6 +168,46 @@ impl Emulator {
         let old = self.bus.read_byte_raw(addr);
         self.bus.write_byte(addr, value);
         self.debug.check_watch_write(addr, old, value);
+    }
+
+    pub fn debug_execute_guest_call(
+        &mut self,
+        target: u16,
+        instruction_budget: u64,
+    ) -> Result<u64, String> {
+        if !matches!(self.cpu.running, CpuState::Suspended) {
+            return Err("CPU must be suspended".to_owned());
+        }
+        let return_pc = self.cpu.pc;
+        if target == return_pc || instruction_budget == 0 {
+            return Err("invalid call target or budget".to_owned());
+        }
+        let return_sp = self.cpu.sp;
+        let saved_ime = self.cpu.ime;
+        let [lo, hi] = return_pc.to_le_bytes();
+        self.cpu.sp = self.cpu.sp.wrapping_sub(1);
+        self.bus.write_byte(self.cpu.sp, hi);
+        self.cpu.sp = self.cpu.sp.wrapping_sub(1);
+        self.bus.write_byte(self.cpu.sp, lo);
+        self.cpu.pc = target;
+        self.cpu.ime = crate::hardware::types::ImeState::Disabled;
+        self.debug.clear_hits();
+        self.debug.break_on_next = false;
+        self.cpu.running = CpuState::Running;
+
+        for instructions in 1..=instruction_budget {
+            self.step_instruction();
+            if self.cpu.pc == return_pc && self.cpu.sp == return_sp {
+                self.cpu.ime = saved_ime;
+                self.cpu.running = CpuState::Suspended;
+                return Ok(instructions);
+            }
+            if matches!(self.cpu.running, CpuState::Suspended) {
+                return Err("call hit a debugger stop".to_owned());
+            }
+        }
+        self.cpu.running = CpuState::Suspended;
+        Err("call exceeded its instruction budget".to_owned())
     }
 }
 

@@ -5,9 +5,11 @@ use super::{
 };
 use crate::debug::DebugUiActions;
 use crate::emu_core_trait::DebuggableEmulator;
+use crate::emu_thread::GuestCallRequest;
+use crate::symbols::ExecMode;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use zeff_emu_common::debug::WatchType;
+use zeff_emu_common::debug::{DebugEvent, WatchType};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
 
@@ -130,6 +132,44 @@ fn shared_backend_loader_covers_every_supported_core() {
         assert_eq!(backend.source_path(), PathBuf::from(rom_name));
         assert!(!backend.framebuffer().is_empty());
     }
+}
+
+#[test]
+fn failed_guest_call_restores_the_full_state() {
+    let mut backend = build_gb_backend();
+    backend.debug_suspend();
+    let before = backend.encode_state_bytes().unwrap();
+    let error = backend
+        .execute_guest_call(&GuestCallRequest {
+            name: "NeverReturns".to_owned(),
+            target: 0x0150,
+            storage_offset: None,
+            explicit_overlay: false,
+            exec_mode: ExecMode::Sm83,
+            instruction_budget: 3,
+        })
+        .unwrap_err();
+
+    assert!(error.to_string().contains("state restored"));
+    assert_eq!(backend.encode_state_bytes().unwrap(), before);
+}
+
+#[test]
+fn guest_call_rejects_a_stale_rom_mapping() {
+    let mut backend = build_gb_backend();
+    backend.debug_suspend();
+    let error = backend
+        .execute_guest_call(&GuestCallRequest {
+            name: "WrongBank".to_owned(),
+            target: 0x0150,
+            storage_offset: Some(0x4150),
+            explicit_overlay: false,
+            exec_mode: ExecMode::Sm83,
+            instruction_budget: 3,
+        })
+        .unwrap_err();
+
+    assert!(error.to_string().contains("no longer maps"));
 }
 
 #[test]
@@ -631,6 +671,10 @@ fn ws_backend_debug_actions_update_core_debug_state() {
     let mut actions = DebugUiActions::none();
     actions.add_breakpoint = Some(0xF0000);
     actions.add_one_shot_breakpoint = Some(0xF0010);
+    actions.add_breakpoint_after = Some((0xF0020, 4));
+    actions
+        .event_breakpoint_changes
+        .push((DebugEvent::Interrupt, true));
     actions.add_watchpoint = Some((0x0000, 0x000F, WatchType::Write));
     actions.memory_writes.push((0x0000, 0x5A));
 
@@ -641,11 +685,19 @@ fn ws_backend_debug_actions_update_core_debug_state() {
         .expect("backend should remain WonderSwan after debug actions");
     assert_eq!(
         ws.emu.iter_breakpoints().collect::<Vec<_>>(),
-        vec![0xF0000, 0xF0010]
+        vec![0xF0000, 0xF0010, 0xF0020]
     );
     assert_eq!(
         ws.emu.iter_one_shot_breakpoints().collect::<Vec<_>>(),
         vec![0xF0010]
+    );
+    assert_eq!(
+        ws.emu.iter_breakpoint_hit_conditions().collect::<Vec<_>>()[0].target_hits,
+        4
+    );
+    assert_eq!(
+        ws.emu.iter_event_breakpoints().collect::<Vec<_>>(),
+        vec![DebugEvent::Interrupt]
     );
     assert_eq!(ws.emu.debug_watchpoints().len(), 1);
     assert_eq!(ws.emu.debug_watchpoints()[0].end_address, 0x000F);

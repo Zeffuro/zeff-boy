@@ -203,6 +203,16 @@ impl EmuBackend {
         dispatch!(self, is_suspended())
     }
 
+    pub(crate) fn debug_suspend(&mut self) {
+        match self {
+            Self::Gb(backend) => backend.emu.debug_suspend(),
+            Self::Gba(backend) => backend.emu.debug_suspend(),
+            Self::Nes(backend) => backend.emu.debug_suspend(),
+            Self::Sega8(backend) => backend.emu.debug_suspend(),
+            Self::Ws(backend) => backend.emu.debug_suspend(),
+        }
+    }
+
     pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         dispatch!(self, encode_state_bytes())
     }

@@ -61,6 +61,8 @@ impl App {
             memory_view_start,
             show_rom_viewer: (reqs.needs_rom_page && want_viewer_update)
                 || console_rom_start.is_some(),
+            show_instruction_trace: reqs.needs_trace && want_viewer_update,
+            trace_after_sequence: self.debug_windows.trace.last_sequence,
             rom_view_start: console_rom_start.unwrap_or(self.debug_windows.rom_viewer.view_start),
             last_disasm_pc: self.debug_windows.last_disasm_pc,
             last_disasm_mapping: self.debug_windows.last_disasm_mapping,

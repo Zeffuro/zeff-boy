@@ -13,9 +13,9 @@ use super::identity::RomIdentity;
 use super::import::{ImportContext, TargetInfo, import_symbols};
 use super::store::SymbolStore;
 use super::{
-    AddressSpaceId, Confidence, CpuLocation, ImageId, Provenance, ProvenanceKind, RegionId,
-    SourceFile, SourceLine, StorageLocation, SymbolId, SymbolKind, SymbolRecord, SymbolScope,
-    UserSymbolDraft,
+    AddressSpaceId, Confidence, CpuLocation, DebugSegment, ImageId, LoadInstance, Provenance,
+    ProvenanceKind, RegionId, ResolvedLoadInstance, SegmentId, SourceFile, SourceLine,
+    StorageLocation, SymbolId, SymbolKind, SymbolRecord, SymbolScope, UserSymbolDraft,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,9 +56,12 @@ pub(crate) struct SymbolSession {
     source_by_storage: BTreeMap<StorageLocation, SourceLine>,
     source_by_cpu: BTreeMap<CpuLocation, SourceLine>,
     source_offsets_by_line: HashMap<(usize, u32), Vec<u64>>,
+    source_addresses_by_line: HashMap<(usize, u32), Vec<zeff_emu_common::address::Address>>,
     loading: bool,
     identity: Option<RomIdentity>,
     user_symbols: Vec<SymbolRecord>,
+    segments: Vec<DebugSegment>,
+    load_instances: Vec<LoadInstance>,
     #[cfg(not(target_arch = "wasm32"))]
     user_path: Option<PathBuf>,
 }
@@ -183,12 +186,15 @@ impl SymbolSession {
     #[cfg(not(target_arch = "wasm32"))]
     fn load_zdbg_sidecar(&mut self, path: PathBuf, identity: RomIdentity) -> bool {
         match super::user::load_zdbg_symbols(&path, identity) {
-            Ok(symbols) => {
-                let supplied_labels = symbols
+            Ok(loaded) => {
+                let supplied_labels = loaded
+                    .symbols
                     .iter()
                     .any(|symbol| symbol.kind != super::SymbolKind::Section);
-                let count = symbols.len();
-                self.store.extend(symbols);
+                let count = loaded.symbols.len();
+                self.store.extend(loaded.symbols);
+                self.segments.extend(loaded.segments);
+                self.load_instances.extend(loaded.load_instances);
                 self.modules.push(LoadedSymbolModule {
                     path,
                     format: "Zeff Debug Symbols".to_owned(),
@@ -436,7 +442,7 @@ impl SymbolSession {
             .map(|symbol| symbol.name.as_str())
     }
 
-    fn symbol_context_at_rom_offset(&self, offset: u64) -> Option<String> {
+    pub(crate) fn symbol_context_at_rom_offset(&self, offset: u64) -> Option<String> {
         let location = StorageLocation {
             image: ImageId(0),
             region: RegionId(0),
@@ -474,22 +480,104 @@ impl SymbolSession {
     }
 
     pub(crate) fn symbol_name_at_cpu_address(&self, address: u64) -> Option<&str> {
-        self.store
+        let direct = self
+            .store
             .lookup_cpu(CpuLocation {
                 space: AddressSpaceId(0),
                 address,
             })
             .max_by_key(|symbol| symbol_priority(symbol.provenance.kind))
-            .map(|symbol| symbol.name.as_str())
+            .map(|symbol| symbol.name.as_str());
+        direct.or_else(|| {
+            let resolved = self.resolve_load_instance(CpuLocation {
+                space: AddressSpaceId(0),
+                address,
+            })?;
+            self.store
+                .lookup_storage(resolved.storage)
+                .max_by_key(|symbol| symbol_priority(symbol.provenance.kind))
+                .map(|symbol| symbol.name.as_str())
+        })
     }
 
     pub(crate) fn unique_symbol_name_at_cpu_address(&self, address: u64) -> Option<&str> {
-        let mut symbols = self.store.lookup_cpu(CpuLocation {
+        let cpu = CpuLocation {
             space: AddressSpaceId(0),
             address,
-        });
+        };
+        let mut symbols = self.store.lookup_cpu(cpu);
+        if let Some(symbol) = symbols.next() {
+            return symbols.next().is_none().then_some(symbol.name.as_str());
+        }
+        let resolved = self.resolve_load_instance(cpu)?;
+        let mut symbols = self.store.lookup_storage(resolved.storage);
         let symbol = symbols.next()?;
         symbols.next().is_none().then_some(symbol.name.as_str())
+    }
+
+    pub(crate) fn execution_symbol_ids(
+        &self,
+        physical_rom_offset: Option<u64>,
+        cpu_address: u64,
+        exec_mode: super::ExecMode,
+    ) -> Vec<SymbolId> {
+        if let Some(offset) = physical_rom_offset {
+            return self
+                .store
+                .lookup_code_storage_containing(StorageLocation {
+                    image: ImageId(0),
+                    region: RegionId(0),
+                    offset,
+                })
+                .map(|symbol| symbol.id)
+                .collect();
+        }
+
+        let storage = self
+            .resolve_load_instance(CpuLocation {
+                space: AddressSpaceId(0),
+                address: cpu_address,
+            })
+            .map(|resolved| resolved.storage);
+        if let Some(storage) = storage {
+            return self
+                .store
+                .lookup_code_storage_containing(storage)
+                .map(|symbol| symbol.id)
+                .collect();
+        }
+
+        self.store
+            .lookup_cpu(CpuLocation {
+                space: AddressSpaceId(0),
+                address: cpu_address,
+            })
+            .filter(|symbol| matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label))
+            .filter(|symbol| {
+                symbol.location.exec_mode == exec_mode
+                    || symbol.location.exec_mode == super::ExecMode::Unknown
+            })
+            .map(|symbol| symbol.id)
+            .collect()
+    }
+
+    pub(crate) fn has_code_symbol(&self, location: super::SymbolLocation) -> bool {
+        if let Some(storage) = location.storage
+            && self
+                .store
+                .lookup_code_storage_containing(storage)
+                .next()
+                .is_some()
+        {
+            return true;
+        }
+        location.cpu.is_some_and(|cpu| {
+            self.store.lookup_cpu(cpu).any(|symbol| {
+                matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label)
+                    && (symbol.location.exec_mode == location.exec_mode
+                        || symbol.location.exec_mode == super::ExecMode::Unknown)
+            })
+        })
     }
 
     pub(crate) fn resolve_cpu_name(&self, name: &str) -> Option<u64> {
@@ -497,9 +585,12 @@ impl SymbolSession {
             .lookup_name(name)
             .chain(self.store.lookup_name_case_insensitive(name))
             .filter_map(|symbol| {
-                symbol
+                let runtime = symbol
                     .location
-                    .cpu
+                    .storage
+                    .and_then(|storage| self.runtime_cpu_for_storage(storage));
+                runtime
+                    .or(symbol.location.cpu)
                     .map(|location| (symbol_priority(symbol.provenance.kind), location.address))
             })
             .max_by_key(|(priority, _)| *priority)
@@ -522,6 +613,23 @@ impl SymbolSession {
 
     pub(crate) fn annotate_disassembly(&self, view: &mut crate::debug::DisassemblyView) {
         for line in &mut view.lines {
+            if line.storage_offset.is_none() {
+                line.storage_offset = self
+                    .resolve_load_instance(CpuLocation {
+                        space: AddressSpaceId(0),
+                        address: line.address.into(),
+                    })
+                    .map(|resolved| resolved.storage.offset);
+            }
+            if line.control_target_storage.is_none() {
+                line.control_target_storage = line.control_target.and_then(|address| {
+                    self.resolve_load_instance(CpuLocation {
+                        space: AddressSpaceId(0),
+                        address: address.into(),
+                    })
+                    .map(|resolved| resolved.storage.offset)
+                });
+            }
             if line.symbol.is_none()
                 && let Some(name) = line
                     .storage_offset
@@ -613,6 +721,17 @@ impl SymbolSession {
             .unwrap_or_default()
     }
 
+    pub(crate) fn source_breakpoint_addresses(
+        &self,
+        source_file: usize,
+        line: u32,
+    ) -> &[zeff_emu_common::address::Address] {
+        self.source_addresses_by_line
+            .get(&(source_file, line))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
     pub(crate) fn summary_fields(&self) -> Option<Vec<(&'static str, String)>> {
         if self.loading {
             return Some(vec![("Symbols", "Loading...".to_owned())]);
@@ -641,7 +760,93 @@ impl SymbolSession {
         if !self.source_by_storage.is_empty() {
             fields.push(("Source lines", self.source_by_storage.len().to_string()));
         }
+        if !self.load_instances.is_empty() {
+            fields.push(("Load instances", self.load_instances.len().to_string()));
+        }
         Some(fields)
+    }
+
+    pub(crate) fn segments(&self) -> &[DebugSegment] {
+        &self.segments
+    }
+
+    pub(crate) fn load_instances(&self) -> &[LoadInstance] {
+        &self.load_instances
+    }
+
+    pub(crate) fn resolve_load_instance(&self, cpu: CpuLocation) -> Option<ResolvedLoadInstance> {
+        self.load_instances
+            .iter()
+            .filter(|instance| instance.active && instance.runtime_base.space == cpu.space)
+            .filter_map(|instance| {
+                let segment = self.segment(instance.segment)?;
+                let delta = cpu.address.checked_sub(instance.runtime_base.address)?;
+                (delta < segment.storage.size).then(|| ResolvedLoadInstance {
+                    instance: instance.id,
+                    segment: segment.id,
+                    cpu,
+                    storage: StorageLocation {
+                        offset: segment.storage.start.offset + delta,
+                        ..segment.storage.start
+                    },
+                    exec_mode: segment.exec_mode,
+                })
+            })
+            .max_by_key(|resolved| {
+                let instance = self
+                    .load_instances
+                    .iter()
+                    .find(|instance| instance.id == resolved.instance)
+                    .expect("resolved load instance");
+                (instance.generation, instance.created_cycle, instance.id)
+            })
+    }
+
+    pub(crate) fn runtime_cpu_for_storage(&self, storage: StorageLocation) -> Option<CpuLocation> {
+        self.active_runtime_cpu_for_storage(storage).or_else(|| {
+            self.segments.iter().find_map(|segment| {
+                let linked = segment.linked_cpu?;
+                let delta = storage.offset.checked_sub(segment.storage.start.offset)?;
+                (storage.image == segment.storage.start.image
+                    && storage.region == segment.storage.start.region
+                    && delta < segment.storage.size)
+                    .then(|| CpuLocation {
+                        space: linked.space,
+                        address: linked.address + delta,
+                    })
+            })
+        })
+    }
+
+    pub(crate) fn active_runtime_cpu_for_storage(
+        &self,
+        storage: StorageLocation,
+    ) -> Option<CpuLocation> {
+        self.load_instances
+            .iter()
+            .filter(|instance| instance.active)
+            .filter_map(|instance| {
+                let segment = self.segment(instance.segment)?;
+                let delta = storage.offset.checked_sub(segment.storage.start.offset)?;
+                (storage.image == segment.storage.start.image
+                    && storage.region == segment.storage.start.region
+                    && delta < segment.storage.size)
+                    .then(|| {
+                        (
+                            instance,
+                            CpuLocation {
+                                space: instance.runtime_base.space,
+                                address: instance.runtime_base.address + delta,
+                            },
+                        )
+                    })
+            })
+            .max_by_key(|(instance, _)| (instance.generation, instance.created_cycle, instance.id))
+            .map(|(_, cpu)| cpu)
+    }
+
+    fn segment(&self, id: SegmentId) -> Option<&DebugSegment> {
+        self.segments.iter().find(|segment| segment.id == id)
     }
 
     fn extend_source_metadata(
@@ -669,6 +874,15 @@ impl SymbolSession {
                     .or_insert(source.clone());
             }
             if let Some(cpu) = source.location.cpu {
+                if let Ok(address) = zeff_emu_common::address::Address::try_from(cpu.address) {
+                    let addresses = self
+                        .source_addresses_by_line
+                        .entry((source.source_file, source.line))
+                        .or_default();
+                    if !addresses.contains(&address) {
+                        addresses.push(address);
+                    }
+                }
                 self.source_by_cpu.entry(cpu).or_insert(source);
             }
         }
@@ -1285,5 +1499,107 @@ mod tests {
             session.source_breakpoint_offsets(source.source_file, 42),
             [0x8560]
         );
+        assert_eq!(
+            session.source_breakpoint_addresses(source.source_file, 42),
+            [0x4560]
+        );
+    }
+
+    #[test]
+    fn resolves_explicit_overlay_instances() {
+        let dir = temp_dir();
+        let rom = dir.join("game.gbc");
+        let sidecar = dir.join("game.zdbg.json");
+        std::fs::write(&rom, []).unwrap();
+        let symbols = serde_json::json!({
+            "format": "zeff-debug-symbols",
+            "version": 2,
+            "system": "gb",
+            "rom_sha256": "0b".repeat(32),
+            "symbols": [
+                {
+                    "name": "OldOverlay",
+                    "cpu_address": null,
+                    "rom_offset": 32768,
+                    "bank": null,
+                    "exec_mode": "sm83",
+                    "value": null,
+                    "size": 16,
+                    "kind": "function",
+                    "scope": "global",
+                    "comment": null
+                },
+                {
+                    "name": "CurrentOverlay",
+                    "cpu_address": null,
+                    "rom_offset": 36864,
+                    "bank": null,
+                    "exec_mode": "sm83",
+                    "value": null,
+                    "size": 16,
+                    "kind": "function",
+                    "scope": "global",
+                    "comment": null
+                }
+            ],
+            "segments": [
+                {"id": 1, "name": "old", "rom_offset": 32768, "size": 16,
+                 "linked_cpu_address": null, "exec_mode": "sm83"},
+                {"id": 2, "name": "current", "rom_offset": 36864, "size": 16,
+                 "linked_cpu_address": null, "exec_mode": "sm83"}
+            ],
+            "load_instances": [
+                {"id": 10, "segment_id": 1, "cpu_address": 49152,
+                 "generation": 1, "created_cycle": 100, "active": true},
+                {"id": 11, "segment_id": 2, "cpu_address": 49152,
+                 "generation": 2, "created_cycle": 200, "active": true}
+            ]
+        });
+        std::fs::write(&sidecar, serde_json::to_vec(&symbols).unwrap()).unwrap();
+
+        let session =
+            SymbolSession::load_for_paths_with_sidecar(System::Gb, &rom, &rom, [11; 32], &sidecar);
+        assert_eq!(session.segments().len(), 2);
+        assert_eq!(session.load_instances().len(), 2);
+        let resolved = session
+            .resolve_load_instance(CpuLocation {
+                space: AddressSpaceId(0),
+                address: 0xC004,
+            })
+            .unwrap();
+        assert_eq!(resolved.segment, SegmentId(2));
+        assert_eq!(resolved.storage.offset, 0x9004);
+        assert_eq!(session.resolve_cpu_name("CurrentOverlay"), Some(0xC000));
+        assert_eq!(
+            session.symbol_name_at_cpu_address(0xC000),
+            Some("CurrentOverlay")
+        );
+
+        let mut view = crate::debug::DisassemblyView {
+            pc: 0xC000,
+            mapping: None,
+            is_navigation_target: false,
+            is_static_target: false,
+            location_symbol: None,
+            lines: vec![crate::debug::DisassembledLine {
+                address: 0xC000,
+                storage_offset: None,
+                symbol: None,
+                control_target: None,
+                control_target_storage: None,
+                control_target_symbol: None,
+                source: None,
+                bytes: Default::default(),
+                mnemonic: Default::default(),
+            }],
+            breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
+            rom_breakpoints: Vec::new(),
+            hit_rom_breakpoint: None,
+        };
+        session.annotate_disassembly(&mut view);
+        assert_eq!(view.lines[0].storage_offset, Some(0x9000));
+        assert_eq!(view.lines[0].symbol.as_deref(), Some("CurrentOverlay"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

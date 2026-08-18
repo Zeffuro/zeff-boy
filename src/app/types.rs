@@ -224,6 +224,7 @@ pub(super) struct ModifierKeys {
 #[derive(Default)]
 pub(super) struct DebugRequests {
     pub(super) step: bool,
+    pub(super) next_frame: bool,
     pub(super) continue_: bool,
     pub(super) backstep: bool,
     pub(super) frame_advance: bool,
@@ -231,7 +232,7 @@ pub(super) struct DebugRequests {
 
 impl DebugRequests {
     pub(super) fn has_pending(&self) -> bool {
-        self.step || self.continue_ || self.backstep || self.frame_advance
+        self.step || self.next_frame || self.continue_ || self.backstep || self.frame_advance
     }
 }
 

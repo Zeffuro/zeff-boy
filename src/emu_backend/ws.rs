@@ -20,6 +20,14 @@ impl crate::emu_core_trait::DebuggableEmulator for WsEmulator {
         self.add_one_shot_breakpoint(addr);
     }
 
+    fn add_breakpoint_after(&mut self, addr: Address, target_hits: u64) {
+        self.add_breakpoint_after(addr, target_hits);
+    }
+
+    fn set_event_breakpoint(&mut self, event: zeff_emu_common::debug::DebugEvent, enabled: bool) {
+        self.set_event_breakpoint(event, enabled);
+    }
+
     fn add_watchpoint_range(
         &mut self,
         start: Address,
@@ -65,6 +73,18 @@ impl crate::emu_core_trait::DebuggableEmulator for WsEmulator {
     }
     fn set_opcode_log_enabled(&mut self, enabled: bool) {
         self.set_opcode_log_enabled(enabled)
+    }
+
+    fn set_instruction_trace_enabled(&mut self, enabled: bool) {
+        self.set_instruction_trace_enabled(enabled);
+    }
+
+    fn set_instruction_trace_capacity(&mut self, capacity: usize) {
+        self.set_instruction_trace_capacity(capacity);
+    }
+
+    fn clear_instruction_trace(&mut self) {
+        self.clear_instruction_trace();
     }
 }
 

@@ -154,6 +154,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         emu.cpu.brk_shadow = 0;
     }
     emu.cpu.last_fetch = None;
+    emu.cpu.last_step_was_interrupt = false;
     emu.cpu.last_trap = None;
 
     emu.bus.cycles = r.u64()?;

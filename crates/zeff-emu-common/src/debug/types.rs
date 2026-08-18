@@ -1,10 +1,41 @@
 use crate::address::Address;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DebugEvent {
+    Interrupt,
+    Dma,
+}
+
+impl DebugEvent {
+    pub const ALL: [Self; 2] = [Self::Interrupt, Self::Dma];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Interrupt => "IRQ / NMI",
+            Self::Dma => "DMA transfer",
+        }
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::Interrupt => 0,
+            Self::Dma => 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WatchType {
     Read,
     Write,
     ReadWrite,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BreakpointHitCondition {
+    pub address: Address,
+    pub target_hits: u64,
+    pub hits: u64,
 }
 
 #[derive(Clone, Debug)]

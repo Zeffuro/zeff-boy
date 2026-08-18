@@ -21,6 +21,7 @@ pub(crate) enum DebugTab {
     RomViewer,
     SourceViewer,
     ExecutionHistory,
+    Trace,
     CallStack,
     Mods,
     SymbolBrowser,
@@ -39,6 +40,7 @@ pub(crate) struct TabDataRequirements {
     pub(crate) needs_rom_info: bool,
     pub(crate) needs_memory_page: bool,
     pub(crate) needs_rom_page: bool,
+    pub(crate) needs_trace: bool,
 }
 
 impl TabDataRequirements {
@@ -53,6 +55,7 @@ impl TabDataRequirements {
         self.needs_rom_info |= other.needs_rom_info;
         self.needs_memory_page |= other.needs_memory_page;
         self.needs_rom_page |= other.needs_rom_page;
+        self.needs_trace |= other.needs_trace;
     }
 }
 
@@ -130,12 +133,19 @@ impl DebugTab {
                 needs_debug_info: true,
                 ..Default::default()
             },
+            DebugTab::Trace => TabDataRequirements {
+                needs_trace: true,
+                ..Default::default()
+            },
             DebugTab::CallStack => TabDataRequirements {
                 needs_debug_info: true,
                 ..Default::default()
             },
             DebugTab::Mods => TabDataRequirements::default(),
-            DebugTab::SymbolBrowser => TabDataRequirements::default(),
+            DebugTab::SymbolBrowser => TabDataRequirements {
+                needs_trace: true,
+                ..Default::default()
+            },
             DebugTab::Console => TabDataRequirements {
                 needs_debug_info: true,
                 needs_rom_info: true,
@@ -175,6 +185,7 @@ const TAB_META: &[(DebugTab, &str, &str)] = &[
         "Execution History",
         "ExecutionHistory",
     ),
+    (DebugTab::Trace, "Trace", "Trace"),
     (DebugTab::CallStack, "Call Stack", "CallStack"),
     (DebugTab::TileViewer, "Tile Data", "TileViewer"),
     (DebugTab::TilemapViewer, "Tile Map", "TilemapViewer"),

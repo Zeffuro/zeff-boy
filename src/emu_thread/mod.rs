@@ -20,7 +20,7 @@ pub(crate) use wasm::EmuThread;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use types::TcpLinkMode;
 pub(crate) use types::{
-    AudioConfig, EmuCommand, EmuResponse, FrameInput, FrameResult, JoypadInput,
+    AudioConfig, EmuCommand, EmuResponse, FrameInput, FrameResult, GuestCallRequest, JoypadInput,
     MemorySearchRequest, RenderSettings, ReplayJoypadFrame, ReplayStartState, ReusableBuffers,
     SharedFramebuffer, SnapshotRequest, ZapperInput,
 };

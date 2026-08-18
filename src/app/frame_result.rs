@@ -46,6 +46,49 @@ impl App {
                 None => continue,
             };
             match resp {
+                EmuResponse::GuestCallCompleted {
+                    name,
+                    instructions,
+                    undo_state,
+                } => {
+                    self.debug_windows.console.guest_call_completed(
+                        &name,
+                        instructions,
+                        undo_state,
+                    );
+                    self.debug_windows.last_disasm_pc = None;
+                    self.debug_windows.last_disasm_mapping = None;
+                    if let Some(thread) = &self.emu_thread {
+                        self.latest_frame = thread.shared_framebuffer().load_full();
+                    }
+                    self.toast_manager
+                        .success(format!("{name} returned ({instructions} instructions)"));
+                    continue;
+                }
+                EmuResponse::GuestCallFailed { name, error } => {
+                    self.debug_windows.console.guest_call_failed(&name, &error);
+                    self.toast_manager.error(format!("{name}: {error}"));
+                    continue;
+                }
+                EmuResponse::GuestCallUndone => {
+                    self.debug_windows.console.guest_call_undone();
+                    self.debug_windows.last_disasm_pc = None;
+                    self.debug_windows.last_disasm_mapping = None;
+                    if let Some(thread) = &self.emu_thread {
+                        self.latest_frame = thread.shared_framebuffer().load_full();
+                    }
+                    self.toast_manager.success("Guest call undone");
+                    continue;
+                }
+                EmuResponse::GuestCallUndoFailed(error) => {
+                    self.debug_windows.console.guest_call_undo_failed(&error);
+                    self.toast_manager
+                        .error(format!("Could not undo call: {error}"));
+                    continue;
+                }
+                _ => {}
+            }
+            match resp {
                 EmuResponse::FdsDiskSideChanged(side) => {
                     if self.recording.replay_media_events_pending > 0 {
                         self.recording.replay_media_events_pending -= 1;
@@ -154,6 +197,12 @@ impl App {
         self.recycled.audio = Some(reusable_audio);
 
         let mut ui_data = result.ui_data;
+        if let Some(batch) = ui_data.instruction_trace.take() {
+            self.debug_windows
+                .execution_coverage
+                .merge(&batch, &self.symbols);
+            self.debug_windows.trace.merge(batch);
+        }
 
         if let Some(ref mut cached) = self.cached_ui_data {
             if ui_data.cpu_debug.is_none() {

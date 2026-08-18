@@ -211,6 +211,25 @@ pub struct Mode4VdpDebugSnapshot {
     pub sprite_magnified: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tms9918VdpDebugSnapshot {
+    pub mode: Tms9918Mode,
+    pub name_table_base: usize,
+    pub pattern_table_base: usize,
+    pub color_table_base: usize,
+    pub sprite_attribute_table_base: usize,
+    pub sprite_pattern_table_base: usize,
+    pub backdrop_color: u8,
+    pub text_foreground_color: u8,
+    pub text_background_color: u8,
+    pub sprite_size: usize,
+    pub sprite_magnified: bool,
+}
+
+pub fn tms9918_palette_rgba(color: u8) -> [u8; RGBA_CHANNELS] {
+    TMS9918_PALETTE[usize::from(color & 0x0F)]
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vdp {
     video_standard: Sega8VideoStandard,
@@ -492,6 +511,32 @@ impl Vdp {
         }
     }
 
+    pub fn tms9918_debug_snapshot(&self) -> Tms9918VdpDebugSnapshot {
+        let mode = self.tms9918_mode();
+        let text_colors = self.registers[TMS_REGISTER_TEXT_BACKDROP];
+        let (pattern_table_base, color_table_base) = match mode {
+            Tms9918Mode::GraphicsII => (
+                self.tms_graphics_ii_pattern_table_base(),
+                self.tms_graphics_ii_color_table_base(),
+            ),
+            _ => (self.tms_pattern_table_base(), self.tms_color_table_base()),
+        };
+        Tms9918VdpDebugSnapshot {
+            mode,
+            name_table_base: self.tms_name_table_base(),
+            pattern_table_base,
+            color_table_base,
+            sprite_attribute_table_base: self.tms_sprite_attribute_table_base(),
+            sprite_pattern_table_base: self.tms_sprite_pattern_table_base(),
+            backdrop_color: text_colors & 0x0F,
+            text_foreground_color: text_colors >> 4,
+            text_background_color: text_colors & 0x0F,
+            sprite_size: self.tms_sprite_base_size(),
+            sprite_magnified: self.registers[VDP_REGISTER_MODE_CONTROL_2] & TMS_REG1_SPRITE_MAGNIFY
+                != 0,
+        }
+    }
+
     fn mode4_background_pixel(
         &self,
         name_table_base: usize,
@@ -643,7 +688,7 @@ impl Vdp {
     ) -> [u8; RGBA_CHANNELS] {
         let color = color & 0x0F;
         match color_mode {
-            Tms9918ColorMode::Palette => TMS9918_PALETTE[usize::from(color)],
+            Tms9918ColorMode::Palette => tms9918_palette_rgba(color),
             Tms9918ColorMode::GameGearCram => self.mode4_color_rgba(
                 MODE4_PALETTE_COLOR_OFFSET + usize::from(color),
                 Mode4ColorMode::GameGear,

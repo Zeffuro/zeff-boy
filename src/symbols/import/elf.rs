@@ -1,12 +1,13 @@
-use std::collections::HashSet;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 
-use object::{BinaryFormat, Object, ObjectSymbol, SymbolKind as ObjectSymbolKind};
+use object::{BinaryFormat, Object, ObjectSection, ObjectSymbol, SymbolKind as ObjectSymbolKind};
 use zeff_emu_common::system::System;
 
 use super::{ImportCapabilities, ImportContext, SymbolImporter, SymbolModule, TargetInfo};
 use crate::symbols::{
-    Confidence, CpuLocation, ExecMode, Provenance, ProvenanceKind, StorageLocation, SymbolId,
-    SymbolKind, SymbolLocation, SymbolRecord, SymbolScope,
+    Confidence, CpuLocation, ExecMode, Provenance, ProvenanceKind, SourceFile, SourceLine,
+    StorageLocation, SymbolId, SymbolKind, SymbolLocation, SymbolRecord, SymbolScope,
 };
 
 pub(crate) struct ElfImporter;
@@ -31,7 +32,7 @@ impl SymbolImporter for ElfImporter {
     }
 
     fn capabilities(&self) -> ImportCapabilities {
-        ImportCapabilities::SYMBOLS
+        ImportCapabilities::SYMBOLS.union(ImportCapabilities::SOURCE_LINES)
     }
 
     fn import(&self, data: &[u8], ctx: &ImportContext) -> anyhow::Result<SymbolModule> {
@@ -112,7 +113,20 @@ impl SymbolImporter for ElfImporter {
             });
         }
 
-        anyhow::ensure!(!module.symbols.is_empty(), "no usable ELF symbols found");
+        match import_dwarf_lines(&file, ctx, &mode_markers) {
+            Ok((source_files, source_lines)) => {
+                module.source_files = source_files;
+                module.source_lines = source_lines;
+            }
+            Err(error) => module
+                .diagnostics
+                .push(format!("DWARF line import failed: {error}")),
+        }
+
+        anyhow::ensure!(
+            !module.symbols.is_empty() || !module.source_lines.is_empty(),
+            "no usable ELF debug data found"
+        );
         Ok(module)
     }
 }
@@ -158,6 +172,181 @@ fn gba_rom_offset(address: u64) -> Option<u64> {
     (0x0800_0000..=0x0DFF_FFFF)
         .contains(&address)
         .then(|| (address - 0x0800_0000) & 0x01FF_FFFF)
+}
+
+#[derive(Clone)]
+struct DwarfRow {
+    address: u64,
+    path: String,
+    line: u32,
+}
+
+fn import_dwarf_lines(
+    file: &object::File<'_>,
+    ctx: &ImportContext,
+    mode_markers: &[(u64, ExecMode)],
+) -> anyhow::Result<(Vec<SourceFile>, Vec<SourceLine>)> {
+    let sections = gimli::DwarfSections::load(|id| {
+        Ok::<_, gimli::Error>(
+            file.section_by_name(id.name())
+                .map(|section| section.uncompressed_data())
+                .transpose()
+                .map_err(|_| gimli::Error::Io)?
+                .unwrap_or(Cow::Borrowed(&[])),
+        )
+    })?;
+    let dwarf = sections.borrow(|section| gimli::EndianSlice::new(section, gimli::LittleEndian));
+    let mut files = Vec::new();
+    let mut file_indices = HashMap::new();
+    let mut lines = Vec::new();
+    let mut units = dwarf.units();
+
+    while let Some(header) = units.next()? {
+        let unit = dwarf.unit(header)?;
+        let Some(program) = unit.line_program.clone() else {
+            continue;
+        };
+        let mut rows = program.rows();
+        let mut pending: Option<DwarfRow> = None;
+        while let Some((header, row)) = rows.next_row()? {
+            let address = row.address();
+            if let Some(previous) = pending.take() {
+                append_dwarf_line(
+                    previous,
+                    address,
+                    ctx,
+                    mode_markers,
+                    (&mut files, &mut file_indices, &mut lines),
+                );
+            }
+            if row.end_sequence() {
+                continue;
+            }
+            let Some(line) = row.line().and_then(|line| u32::try_from(line.get()).ok()) else {
+                continue;
+            };
+            let Some(path) = dwarf_source_path(&dwarf, &unit, header, row)? else {
+                continue;
+            };
+            pending = Some(DwarfRow {
+                address,
+                path,
+                line,
+            });
+        }
+        if let Some(previous) = pending {
+            append_dwarf_line(
+                previous.clone(),
+                previous.address.saturating_add(1),
+                ctx,
+                mode_markers,
+                (&mut files, &mut file_indices, &mut lines),
+            );
+        }
+    }
+
+    lines.sort_unstable_by_key(|line| {
+        (
+            line.location.cpu.map_or(0, |cpu| cpu.address),
+            line.source_file,
+            line.line,
+        )
+    });
+    lines.dedup_by(|left, right| {
+        left.location == right.location
+            && left.size == right.size
+            && left.source_file == right.source_file
+            && left.line == right.line
+    });
+    Ok((files, lines))
+}
+
+fn dwarf_source_path<R: gimli::Reader>(
+    dwarf: &gimli::Dwarf<R>,
+    unit: &gimli::Unit<R>,
+    header: &gimli::LineProgramHeader<R>,
+    row: &gimli::LineRow,
+) -> gimli::Result<Option<String>> {
+    let Some(file) = row.file(header) else {
+        return Ok(None);
+    };
+    let name = dwarf
+        .attr_string(unit, file.path_name())?
+        .to_string_lossy()?
+        .into_owned();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let directory = file
+        .directory(header)
+        .map(|directory| dwarf.attr_string(unit, directory))
+        .transpose()?
+        .map(|directory| directory.to_string_lossy().map(Cow::into_owned))
+        .transpose()?;
+    Ok(Some(join_source_path(directory.as_deref(), &name)))
+}
+
+fn join_source_path(directory: Option<&str>, name: &str) -> String {
+    if name.starts_with(['/', '\\']) || name.as_bytes().get(1) == Some(&b':') {
+        return name.to_owned();
+    }
+    let Some(directory) = directory.filter(|directory| !directory.is_empty()) else {
+        return name.to_owned();
+    };
+    format!(
+        "{}/{}",
+        directory.trim_end_matches(['/', '\\']),
+        name.trim_start_matches(['/', '\\'])
+    )
+}
+
+fn append_dwarf_line(
+    row: DwarfRow,
+    end: u64,
+    ctx: &ImportContext,
+    mode_markers: &[(u64, ExecMode)],
+    output: (
+        &mut Vec<SourceFile>,
+        &mut HashMap<String, usize>,
+        &mut Vec<SourceLine>,
+    ),
+) {
+    let (files, file_indices, lines) = output;
+    if row.address > u64::from(u32::MAX) || end <= row.address {
+        return;
+    }
+    let source_file = *file_indices.entry(row.path.clone()).or_insert_with(|| {
+        let index = files.len();
+        files.push(SourceFile {
+            path: row.path,
+            crc32: None,
+        });
+        index
+    });
+    let exec_mode = exec_mode(SymbolKind::Function, row.address, row.address, mode_markers);
+    let address = if exec_mode == ExecMode::Thumb {
+        row.address & !1
+    } else {
+        row.address
+    };
+    lines.push(SourceLine {
+        location: SymbolLocation {
+            cpu: Some(CpuLocation {
+                space: ctx.cpu_space,
+                address,
+            }),
+            storage: gba_rom_offset(address).map(|offset| StorageLocation {
+                image: ctx.image,
+                region: ctx.rom_region,
+                offset,
+            }),
+            bank: None,
+            exec_mode,
+        },
+        size: end.saturating_sub(row.address),
+        source_file,
+        line: row.line,
+    });
 }
 
 #[cfg(test)]
@@ -208,6 +397,110 @@ mod tests {
         assert_eq!(module.symbols[0].kind, SymbolKind::Function);
         assert_eq!(module.symbols[1].name, "gData");
         assert_eq!(module.symbols[1].kind, SymbolKind::Data);
+    }
+
+    #[test]
+    fn imports_dwarf_line_ranges() {
+        let data = elf_dwarf_fixture();
+        let module = ElfImporter.import(&data, &context()).unwrap();
+        assert_eq!(module.source_files[0].path, "/project/src/main.c");
+        assert_eq!(module.source_lines.len(), 2);
+        assert_eq!(module.source_lines[0].line, 10);
+        assert_eq!(module.source_lines[0].size, 4);
+        assert_eq!(
+            module.source_lines[0].location.cpu.unwrap().address,
+            0x0800_0100
+        );
+        assert_eq!(
+            module.source_lines[0].location.storage.unwrap().offset,
+            0x100
+        );
+        assert_eq!(module.source_lines[1].line, 11);
+        assert_eq!(module.source_lines[1].size, 4);
+    }
+
+    fn elf_dwarf_fixture() -> Vec<u8> {
+        use gimli::write::{
+            Address, AttributeValue, DwarfUnit, EndianVec, LineProgram, LineString, Sections,
+        };
+        use gimli::{Encoding, Format, LineEncoding, LittleEndian};
+        use object::write::{Object, Symbol, SymbolSection};
+
+        let encoding = Encoding {
+            format: Format::Dwarf32,
+            version: 4,
+            address_size: 4,
+        };
+        let mut dwarf = DwarfUnit::new(encoding);
+        let comp_dir = dwarf.strings.add(b"/project".to_vec());
+        let comp_name = dwarf.strings.add(b"src/main.c".to_vec());
+        let root = dwarf.unit.root();
+        let entry = dwarf.unit.get_mut(root);
+        entry.set(gimli::DW_AT_comp_dir, AttributeValue::StringRef(comp_dir));
+        entry.set(gimli::DW_AT_name, AttributeValue::StringRef(comp_name));
+
+        let mut program = LineProgram::new(
+            encoding,
+            LineEncoding::default(),
+            LineString::new(b"/project".to_vec(), encoding, &mut dwarf.line_strings),
+            Some(LineString::new(
+                b"src".to_vec(),
+                encoding,
+                &mut dwarf.line_strings,
+            )),
+            LineString::new(b"main.c".to_vec(), encoding, &mut dwarf.line_strings),
+            None,
+        );
+        let directory = program.default_directory();
+        let file = program.add_file(
+            LineString::new(b"src/main.c".to_vec(), encoding, &mut dwarf.line_strings),
+            directory,
+            None,
+        );
+        program.begin_sequence(Some(Address::Constant(0x0800_0100)));
+        program.row().file = file;
+        program.row().line = 10;
+        program.generate_row();
+        program.row().address_offset = 4;
+        program.row().line = 11;
+        program.generate_row();
+        program.end_sequence(8);
+        dwarf.unit.line_program = program;
+
+        let mut sections = Sections::new(EndianVec::new(LittleEndian));
+        dwarf.write(&mut sections).unwrap();
+
+        let mut object = Object::new(
+            object::BinaryFormat::Elf,
+            object::Architecture::Arm,
+            object::Endianness::Little,
+        );
+        let text = object.section_id(object::write::StandardSection::Text);
+        object.append_section_data(text, &[0; 8], 4);
+        object.add_symbol(Symbol {
+            name: b"Init".to_vec(),
+            value: 1,
+            size: 8,
+            kind: object::SymbolKind::Text,
+            scope: object::SymbolScope::Linkage,
+            weak: false,
+            section: SymbolSection::Section(text),
+            flags: object::SymbolFlags::None,
+        });
+        sections
+            .for_each(|id, data| {
+                if !data.slice().is_empty() {
+                    let section = object.add_section(
+                        Vec::new(),
+                        id.name().as_bytes().to_vec(),
+                        object::SectionKind::Debug,
+                    );
+                    object.append_section_data(section, data.slice(), 1);
+                }
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        object.write().unwrap()
     }
 
     fn elf_fixture() -> Vec<u8> {

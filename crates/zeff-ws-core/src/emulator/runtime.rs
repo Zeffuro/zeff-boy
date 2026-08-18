@@ -3,6 +3,10 @@ use crate::hardware::bus::{DebugTraceEvent, DebugTraceMode};
 use crate::hardware::constants::CYCLES_PER_FRAME;
 use crate::hardware::cpu::FetchedInstruction;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::debug::{
+    DebugEvent, InstructionTraceRecord, RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind,
+    TraceWriteWidth,
+};
 
 impl Emulator {
     pub fn step_frame(&mut self) {
@@ -54,7 +58,8 @@ impl Emulator {
         }
 
         let watch_active = !self.debug.watchpoints.is_empty();
-        let trace_mode = if watch_active {
+        let instruction_trace_enabled = self.instruction_trace.is_enabled();
+        let trace_mode = if watch_active || instruction_trace_enabled {
             DebugTraceMode::MemoryAndIo
         } else {
             requested_trace_mode
@@ -65,7 +70,31 @@ impl Emulator {
             self.bus.debug_trace_events.clear();
         }
 
+        let pc_before = self.cpu.pc();
+        let cycles_before = self.cpu.cycles;
+        let registers_before = if instruction_trace_enabled {
+            Some(ws_registers(&self.cpu))
+        } else {
+            None
+        };
+        let mut instruction = [0; 16];
+        let physical_rom_offset = if instruction_trace_enabled {
+            for (offset, byte) in instruction.iter_mut().enumerate() {
+                *byte = self.cpu_peek8(pc_before.wrapping_add(offset as u32));
+            }
+            self.bus.cartridge.rom_offset_for_address(pc_before)
+        } else {
+            None
+        };
+
         let fetched = self.cpu.step(&mut self.bus);
+        if self.cpu.last_step_was_interrupt
+            && self
+                .debug
+                .check_event(zeff_emu_common::debug::DebugEvent::Interrupt)
+        {
+            self.cpu.suspend();
+        }
         if fetched.is_some() {
             self.bus.retire_instruction();
         }
@@ -78,6 +107,28 @@ impl Emulator {
         } else {
             Vec::new()
         };
+
+        if instruction_trace_enabled {
+            let interrupt = self.cpu.last_step_was_interrupt;
+            let mut record = InstructionTraceRecord::new(
+                TraceExecMode::V30,
+                pc_before,
+                physical_rom_offset.map(|offset| offset as u64),
+                self.frame_count,
+                cycles_before,
+                if interrupt { &[] } else { &instruction },
+            );
+            if interrupt {
+                record.event = Some(DebugEvent::Interrupt);
+            }
+            append_ws_writes(&mut record, &events);
+            push_ws_register_deltas(
+                &mut record,
+                &registers_before.expect("trace state"),
+                &ws_registers(&self.cpu),
+            );
+            self.instruction_trace.push(record);
+        }
 
         if watch_active {
             for event in &events {
@@ -114,5 +165,71 @@ impl Emulator {
             self.bus.render_frame();
         }
         self.frame_count = self.frame_count.wrapping_add(1);
+    }
+}
+
+fn ws_registers(cpu: &crate::hardware::cpu::Cpu) -> [u32; 14] {
+    [
+        u32::from(cpu.regs[0]),
+        u32::from(cpu.regs[1]),
+        u32::from(cpu.regs[2]),
+        u32::from(cpu.regs[3]),
+        u32::from(cpu.regs[4]),
+        u32::from(cpu.regs[5]),
+        u32::from(cpu.regs[6]),
+        u32::from(cpu.regs[7]),
+        u32::from(cpu.segments[0]),
+        u32::from(cpu.segments[1]),
+        u32::from(cpu.segments[2]),
+        u32::from(cpu.segments[3]),
+        u32::from(cpu.ip),
+        u32::from(cpu.flags),
+    ]
+}
+
+fn push_ws_register_deltas(
+    record: &mut InstructionTraceRecord,
+    before: &[u32; 14],
+    after: &[u32; 14],
+) {
+    for (register, (&before, &after)) in before.iter().zip(after).enumerate() {
+        if before != after {
+            record.push_register_delta(RegisterDelta {
+                register: register as u8,
+                value: after,
+            });
+        }
+    }
+}
+
+fn append_ws_writes(record: &mut InstructionTraceRecord, events: &[DebugTraceEvent]) {
+    for event in events {
+        let write = match *event {
+            DebugTraceEvent::Write {
+                addr,
+                old_value,
+                new_value,
+            } => TraceWrite {
+                address: addr,
+                old_value: u32::from(old_value),
+                new_value: u32::from(new_value),
+                width: TraceWriteWidth::Byte,
+                kind: TraceWriteKind::Memory,
+            },
+            DebugTraceEvent::IoWrite {
+                port,
+                old_value,
+                new_value,
+                ..
+            } => TraceWrite {
+                address: u32::from(port),
+                old_value: u32::from(old_value),
+                new_value: u32::from(new_value),
+                width: TraceWriteWidth::Byte,
+                kind: TraceWriteKind::Io,
+            },
+            DebugTraceEvent::Read { .. } | DebugTraceEvent::IoRead { .. } => continue,
+        };
+        record.push_write(write);
     }
 }

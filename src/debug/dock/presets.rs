@@ -62,7 +62,11 @@ fn create_debugger(preset: DebugWorkspacePreset) -> DockState<DebugTab> {
             let [top, _history] = tree.split_below(
                 center,
                 0.7,
-                vec![DebugTab::ExecutionHistory, DebugTab::CallStack],
+                vec![
+                    DebugTab::ExecutionHistory,
+                    DebugTab::Trace,
+                    DebugTab::CallStack,
+                ],
             );
             tree.split_right(
                 top,
@@ -106,7 +110,11 @@ fn create_debugger(preset: DebugWorkspacePreset) -> DockState<DebugTab> {
             let [top, _history] = tree.split_below(
                 center,
                 0.72,
-                vec![DebugTab::ExecutionHistory, DebugTab::CallStack],
+                vec![
+                    DebugTab::ExecutionHistory,
+                    DebugTab::Trace,
+                    DebugTab::CallStack,
+                ],
             );
             tree.split_right(
                 top,
@@ -142,7 +150,11 @@ fn create_ide_cpu() -> DockState<DebugTab> {
     let [right_top, _history] = tree.split_below(
         right,
         0.7,
-        vec![DebugTab::ExecutionHistory, DebugTab::CallStack],
+        vec![
+            DebugTab::ExecutionHistory,
+            DebugTab::Trace,
+            DebugTab::CallStack,
+        ],
     );
     tree.split_right(right_top, 0.68, vec![DebugTab::MemoryViewer]);
     dock
@@ -186,7 +198,11 @@ fn create_ide_memory() -> DockState<DebugTab> {
     let [right_top, _history] = tree.split_below(
         right,
         0.72,
-        vec![DebugTab::ExecutionHistory, DebugTab::CallStack],
+        vec![
+            DebugTab::ExecutionHistory,
+            DebugTab::Trace,
+            DebugTab::CallStack,
+        ],
     );
     tree.split_right(
         right_top,

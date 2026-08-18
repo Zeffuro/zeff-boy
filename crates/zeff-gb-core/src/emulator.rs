@@ -26,6 +26,7 @@ pub struct Emulator {
     pub(crate) cycle_count: u64,
     pub(crate) frame_count: u64,
     pub(crate) opcode_log: OpcodeLog,
+    pub(crate) instruction_trace: zeff_emu_common::debug::InstructionTraceStore,
     pub(crate) call_stack: Vec<CallStackEntry>,
     pub(crate) last_opcode: u8,
     pub(crate) last_opcode_pc: u16,
@@ -126,6 +127,25 @@ mod tests {
         emulator.bus.trace_cpu_accesses = false;
 
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn guest_call_returns_to_suspended_context() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x150..0x153].copy_from_slice(&[0x3E, 0x42, 0xC9]);
+        let mut emulator = Emulator::new(&rom, 44_100).unwrap();
+        emulator.debug_suspend();
+        let pc = emulator.cpu.pc;
+        let sp = emulator.cpu.sp;
+
+        assert_eq!(emulator.debug_execute_guest_call(0x150, 10), Ok(2));
+        assert_eq!(emulator.cpu.regs.a, 0x42);
+        assert_eq!(emulator.cpu.pc, pc);
+        assert_eq!(emulator.cpu.sp, sp);
+        assert!(matches!(
+            emulator.cpu.running,
+            crate::hardware::types::CpuState::Suspended
+        ));
     }
 
     #[test]

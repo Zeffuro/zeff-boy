@@ -51,6 +51,7 @@ impl EmuThread {
                 input.replay_joypad_frames.as_deref(),
             );
         }
+        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
             *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
@@ -121,6 +122,7 @@ impl EmuThread {
             advanced_frames = result.0;
             replay_error = result.1;
         }
+        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
             *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
@@ -193,6 +195,7 @@ impl EmuThread {
             advanced_frames = result.0;
             replay_error = result.1;
         }
+        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
         if input.rewind_seconds != *rewind_seconds {
             *rewind_seconds = input.rewind_seconds;
             *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
@@ -262,6 +265,7 @@ impl EmuThread {
                 input.replay_joypad_frames.as_deref(),
             );
         }
+        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
         let replay_events = tcp_link
             .as_mut()
             .map(|link| link.take_replay_events())
@@ -411,6 +415,16 @@ impl EmuThread {
             ..BackendRuntimeConfig::new(&input.debug_actions)
         };
         backend.apply_runtime_config(runtime_config);
+    }
+
+    fn suspend_after_debug_frame(
+        backend: &mut EmuBackend,
+        requested: bool,
+        advanced_frames: usize,
+    ) {
+        if requested && advanced_frames > 0 {
+            backend.debug_suspend();
+        }
     }
 
     pub(crate) fn step_n_frames(
@@ -717,6 +731,7 @@ impl EmuThread {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debug::DebugUiActions;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::link::LinkSession;
     #[cfg(not(target_arch = "wasm32"))]
@@ -781,6 +796,30 @@ mod tests {
         assert_eq!(backend.frame_count(), 3);
         assert_eq!(advanced_frames, 3);
         assert_eq!(audio_semantic_frames.len(), 3);
+    }
+
+    #[test]
+    fn next_frame_resumes_for_one_frame_then_suspends() {
+        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
+            &[0x00],
+            44_100,
+            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        )
+        .unwrap();
+        let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
+        backend.debug_suspend();
+
+        let actions = DebugUiActions::none();
+        let mut config = BackendRuntimeConfig::new(&actions);
+        config.debug_continue = true;
+        backend.apply_runtime_config(config);
+        let before = backend.frame_count();
+        let advanced = EmuThread::step_n_frames(&mut backend, 1, &[], false, &mut Vec::new(), None);
+        EmuThread::suspend_after_debug_frame(&mut backend, true, advanced);
+
+        assert_eq!(advanced, 1);
+        assert_eq!(backend.frame_count(), before + 1);
+        assert!(backend.is_suspended());
     }
 
     #[test]

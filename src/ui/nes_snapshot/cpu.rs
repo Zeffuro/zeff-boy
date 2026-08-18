@@ -75,26 +75,30 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         })
         .collect();
 
-    let debug_controls = super::super::build_debug_control_snapshot(
-        emu.iter_breakpoints().map(Address::from),
-        emu.iter_one_shot_breakpoints().map(Address::from),
-        emu.debug_watchpoints().iter().map(|watch| {
-            (
-                Address::from(watch.address),
-                Address::from(watch.end_address),
-                watch.watch_type,
-            )
-        }),
-        emu.debug_hit_breakpoint().map(Address::from),
-        emu.debug_hit_watchpoint().map(|hit| {
-            (
-                Address::from(hit.address),
-                hit.old_value,
-                hit.new_value,
-                hit.watch_type,
-            )
-        }),
-    );
+    let debug_controls =
+        super::super::build_debug_control_snapshot(super::super::DebugControlSources {
+            breakpoints: emu.iter_breakpoints().map(Address::from),
+            one_shot_breakpoints: emu.iter_one_shot_breakpoints().map(Address::from),
+            breakpoint_hit_conditions: emu.iter_breakpoint_hit_conditions(),
+            event_breakpoints: emu.iter_event_breakpoints(),
+            watchpoints: emu.debug_watchpoints().iter().map(|watch| {
+                (
+                    Address::from(watch.address),
+                    Address::from(watch.end_address),
+                    watch.watch_type,
+                )
+            }),
+            hit_breakpoint: emu.debug_hit_breakpoint().map(Address::from),
+            hit_watchpoint: emu.debug_hit_watchpoint().map(|hit| {
+                (
+                    Address::from(hit.address),
+                    hit.old_value,
+                    hit.new_value,
+                    hit.watch_type,
+                )
+            }),
+            hit_event: emu.debug_hit_event(),
+        });
 
     CpuDebugSnapshot {
         register_lines,
@@ -150,11 +154,18 @@ pub(super) fn nes_cpu_snapshot(emu: &zeff_nes_core::emulator::Emulator) -> CpuDe
         call_stack_available: true,
         breakpoints: debug_controls.breakpoints,
         one_shot_breakpoints: debug_controls.one_shot_breakpoints,
+        breakpoint_hit_conditions: debug_controls.breakpoint_hit_conditions,
+        supported_events: vec![
+            zeff_emu_common::debug::DebugEvent::Interrupt,
+            zeff_emu_common::debug::DebugEvent::Dma,
+        ],
+        event_breakpoints: debug_controls.event_breakpoints,
         rom_breakpoints: Vec::new(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,
         hit_rom_breakpoint: None,
         hit_watchpoint: debug_controls.hit_watchpoint,
+        hit_event: debug_controls.hit_event,
     }
 }
 

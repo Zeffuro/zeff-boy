@@ -79,6 +79,7 @@ impl App {
 
             if self.frames_in_flight < max_in_flight {
                 let now = Instant::now();
+                let next_frame_requested = std::mem::take(&mut self.debug_requests.next_frame);
                 let mut frames_to_step = if self.speed.paused {
                     self.timing.last_frame_time = now;
                     if std::mem::take(&mut self.debug_requests.frame_advance) {
@@ -89,6 +90,9 @@ impl App {
                 } else {
                     self.compute_frames_to_step(now)
                 };
+                if next_frame_requested {
+                    frames_to_step = 1;
+                }
                 if frames_to_step > 0
                     && let Some(batch) = self.recording.pending_replay_batches.front()
                 {
@@ -209,7 +213,9 @@ impl App {
                         },
                         zapper,
                         debug_step: std::mem::take(&mut self.debug_requests.step),
-                        debug_continue: std::mem::take(&mut self.debug_requests.continue_),
+                        debug_continue: std::mem::take(&mut self.debug_requests.continue_)
+                            || next_frame_requested,
+                        debug_suspend_after_frame: next_frame_requested,
                         audio: AudioConfig {
                             apu_capture_enabled: reqs.needs_apu && want_viewer_update,
                             skip_audio: match self.speed_mode() {

@@ -30,6 +30,38 @@ pub(crate) fn collect_backend_snapshot(
         EmuBackend::Ws(ws) => collect_ws_snapshot(&ws.emu, snapshot, buffers),
         EmuBackend::Sega8(sega8) => collect_sega8_snapshot(&sega8.emu, snapshot, buffers),
     };
+    if snapshot.show_instruction_trace {
+        let store = match backend {
+            EmuBackend::Gb(gb) => gb.emu.instruction_trace(),
+            EmuBackend::Nes(nes) => nes.emu.instruction_trace(),
+            EmuBackend::Gba(gba) => gba.emu.instruction_trace(),
+            EmuBackend::Ws(ws) => ws.emu.instruction_trace(),
+            EmuBackend::Sega8(sega8) => sega8.emu.instruction_trace(),
+        };
+        data.instruction_trace = Some(collect_instruction_trace(
+            store,
+            snapshot.trace_after_sequence,
+        ));
+    }
     data.core_features = Some(backend.capabilities());
     data
+}
+
+fn collect_instruction_trace(
+    store: &zeff_emu_common::debug::InstructionTraceStore,
+    after_sequence: Option<u64>,
+) -> super::InstructionTraceBatch {
+    const MAX_BATCH: usize = 2_048;
+
+    let oldest_sequence = store.oldest_sequence();
+    let newest_sequence = store.newest_sequence();
+    let entries = store.entries_after(after_sequence, MAX_BATCH);
+    super::InstructionTraceBatch {
+        enabled: store.is_enabled(),
+        capacity: store.capacity(),
+        retained: store.len(),
+        oldest_sequence,
+        newest_sequence,
+        entries,
+    }
 }

@@ -10,6 +10,8 @@ pub(crate) use super::settings_window::{SettingsContext, draw_settings_content};
 pub(crate) struct DebugUiActions {
     pub(crate) add_breakpoint: Option<Address>,
     pub(crate) add_one_shot_breakpoint: Option<Address>,
+    pub(crate) add_breakpoint_after: Option<(Address, u64)>,
+    pub(crate) event_breakpoint_changes: Vec<(zeff_emu_common::debug::DebugEvent, bool)>,
     pub(crate) add_watchpoint: Option<(Address, Address, WatchType)>,
     pub(crate) remove_watchpoints: Vec<(Address, Address, WatchType)>,
     pub(crate) remove_breakpoints: Vec<Address>,
@@ -20,6 +22,7 @@ pub(crate) struct DebugUiActions {
     pub(crate) memory_writes: Vec<(Address, u8)>,
     pub(crate) apu_channel_mutes: Option<Vec<bool>>,
     pub(crate) step_requested: bool,
+    pub(crate) next_frame_requested: bool,
     pub(crate) continue_requested: bool,
     pub(crate) backstep_requested: bool,
     pub(crate) layer_toggles: Option<(bool, bool, bool)>,
@@ -32,6 +35,11 @@ pub(crate) struct DebugUiActions {
     pub(crate) disasm_forward: bool,
     pub(crate) user_symbol: Option<crate::symbols::UserSymbolDraft>,
     pub(crate) remove_user_symbols: Vec<String>,
+    pub(crate) trace_enabled: Option<bool>,
+    pub(crate) trace_clear: bool,
+    pub(crate) trace_capacity: Option<usize>,
+    pub(crate) guest_call: Option<crate::emu_thread::GuestCallRequest>,
+    pub(crate) undo_guest_call: Option<Vec<u8>>,
 }
 
 impl DebugUiActions {
@@ -39,6 +47,8 @@ impl DebugUiActions {
         Self {
             add_breakpoint: None,
             add_one_shot_breakpoint: None,
+            add_breakpoint_after: None,
+            event_breakpoint_changes: Vec::new(),
             add_watchpoint: None,
             remove_watchpoints: Vec::new(),
             remove_breakpoints: Vec::new(),
@@ -49,6 +59,7 @@ impl DebugUiActions {
             memory_writes: Vec::new(),
             apu_channel_mutes: None,
             step_requested: false,
+            next_frame_requested: false,
             continue_requested: false,
             backstep_requested: false,
             layer_toggles: None,
@@ -61,12 +72,19 @@ impl DebugUiActions {
             disasm_forward: false,
             user_symbol: None,
             remove_user_symbols: Vec::new(),
+            trace_enabled: None,
+            trace_clear: false,
+            trace_capacity: None,
+            guest_call: None,
+            undo_guest_call: None,
         }
     }
 
     pub(crate) fn has_pending(&self) -> bool {
         self.add_breakpoint.is_some()
             || self.add_one_shot_breakpoint.is_some()
+            || self.add_breakpoint_after.is_some()
+            || !self.event_breakpoint_changes.is_empty()
             || self.add_watchpoint.is_some()
             || !self.remove_watchpoints.is_empty()
             || !self.remove_breakpoints.is_empty()
@@ -78,6 +96,9 @@ impl DebugUiActions {
             || self.apu_channel_mutes.is_some()
             || self.layer_toggles.is_some()
             || self.gba_bg_layer_toggles.is_some()
+            || self.trace_enabled.is_some()
+            || self.trace_clear
+            || self.trace_capacity.is_some()
     }
 }
 
@@ -128,6 +149,9 @@ fn draw_cpu_debug_rows(
         if ui.button("Step (F7)").clicked() {
             actions.step_requested = true;
         }
+        if ui.button("Next Frame").clicked() {
+            actions.next_frame_requested = true;
+        }
         if ui.button("Step Back").clicked() {
             actions.backstep_requested = true;
         }
@@ -137,6 +161,9 @@ fn draw_cpu_debug_rows(
         }
         if ui.small_button("History").clicked() {
             actions.focus_tab = Some(super::DebugTab::ExecutionHistory);
+        }
+        if ui.small_button("Trace").clicked() {
+            actions.focus_tab = Some(super::DebugTab::Trace);
         }
         if ui.small_button("Memory").clicked() {
             actions.focus_tab = Some(super::DebugTab::MemoryViewer);
@@ -185,6 +212,12 @@ fn draw_cpu_debug_rows(
                 hit.new_value
             ))
             .font(mono.clone()),
+        );
+    }
+    if let Some(event) = info.hit_event {
+        ui.colored_label(
+            breakpoint,
+            egui::RichText::new(format!("{} breakpoint hit", event.label())).font(mono.clone()),
         );
     }
 

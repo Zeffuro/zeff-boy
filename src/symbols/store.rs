@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use smallvec::SmallVec;
 
-use super::{CpuLocation, ProvenanceKind, StorageLocation, SymbolId, SymbolRecord};
+use super::{CpuLocation, ProvenanceKind, StorageLocation, SymbolId, SymbolKind, SymbolRecord};
 
 #[derive(Default)]
 pub(crate) struct SymbolStore {
@@ -10,7 +10,16 @@ pub(crate) struct SymbolStore {
     name_index: HashMap<String, SymbolIds>,
     cpu_index: HashMap<CpuLocation, SymbolIds>,
     storage_index: Vec<(StorageLocation, SymbolIds)>,
+    code_storage_index: Vec<CodeStorageEntry>,
     generation: u64,
+}
+
+#[derive(Clone, Copy)]
+struct CodeStorageEntry {
+    start: StorageLocation,
+    end: u64,
+    max_end: u64,
+    id: SymbolId,
 }
 
 type SymbolIds = SmallVec<[SymbolId; 1]>;
@@ -28,6 +37,7 @@ impl SymbolStore {
         }
         self.insert_storage(symbol.location.storage, id);
         self.symbols.push(symbol);
+        self.rebuild_code_storage_index();
         self.generation = self.generation.wrapping_add(1);
         id
     }
@@ -81,6 +91,7 @@ impl SymbolStore {
         self.name_index.clear();
         self.cpu_index.clear();
         self.storage_index.clear();
+        self.code_storage_index.clear();
         self.name_index.reserve(self.symbols.len());
         self.cpu_index.reserve(self.symbols.len());
         let mut storage_entries = Vec::with_capacity(self.symbols.len());
@@ -108,6 +119,38 @@ impl SymbolStore {
             } else {
                 self.storage_index.push((location, single_id(id)));
             }
+        }
+        self.rebuild_code_storage_index();
+    }
+
+    fn rebuild_code_storage_index(&mut self) {
+        self.code_storage_index.clear();
+        self.code_storage_index.extend(
+            self.symbols
+                .iter()
+                .filter(|symbol| matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label))
+                .filter_map(|symbol| {
+                    let start = symbol.location.storage?;
+                    Some(CodeStorageEntry {
+                        start,
+                        end: start.offset.saturating_add(symbol.size.unwrap_or(1).max(1)),
+                        max_end: 0,
+                        id: symbol.id,
+                    })
+                }),
+        );
+        self.code_storage_index
+            .sort_unstable_by_key(|entry| entry.start);
+        let mut previous = None;
+        let mut max_end = 0;
+        for entry in &mut self.code_storage_index {
+            let group = (entry.start.image, entry.start.region);
+            if previous != Some(group) {
+                previous = Some(group);
+                max_end = 0;
+            }
+            max_end = max_end.max(entry.end);
+            entry.max_end = max_end;
         }
     }
 
@@ -216,6 +259,30 @@ impl SymbolStore {
             })
     }
 
+    pub(crate) fn lookup_code_storage_containing(
+        &self,
+        location: StorageLocation,
+    ) -> impl Iterator<Item = &SymbolRecord> {
+        let mut ids = SmallVec::<[SymbolId; 4]>::new();
+        let mut index = self
+            .code_storage_index
+            .partition_point(|entry| entry.start <= location);
+        while index != 0 {
+            index -= 1;
+            let entry = self.code_storage_index[index];
+            if entry.start.image != location.image || entry.start.region != location.region {
+                break;
+            }
+            if entry.max_end <= location.offset {
+                break;
+            }
+            if entry.end > location.offset {
+                ids.push(entry.id);
+            }
+        }
+        ids.into_iter().filter_map(|id| self.symbol(id))
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.symbols.len()
     }
@@ -310,6 +377,30 @@ mod tests {
         };
         assert_eq!(store.lookup_storage_containing(at(0x857F)).count(), 1);
         assert_eq!(store.lookup_storage_containing(at(0x8580)).count(), 0);
+    }
+
+    #[test]
+    fn code_range_index_handles_labels_inside_functions() {
+        let mut store = SymbolStore::default();
+        let mut function = symbol("Update", 0x4560, 0x8560);
+        function.kind = SymbolKind::Function;
+        function.size = Some(0x20);
+        store.insert(function);
+        store.insert(symbol("Loop", 0x4570, 0x8570));
+
+        let at = |offset| StorageLocation {
+            image: ImageId(0),
+            region: RegionId(0),
+            offset,
+        };
+        let names = store
+            .lookup_code_storage_containing(at(0x8570))
+            .map(|symbol| symbol.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"Update"));
+        assert!(names.contains(&"Loop"));
+        assert_eq!(store.lookup_code_storage_containing(at(0x857F)).count(), 1);
+        assert_eq!(store.lookup_code_storage_containing(at(0x8580)).count(), 0);
     }
 
     #[test]

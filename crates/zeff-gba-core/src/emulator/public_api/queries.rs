@@ -79,6 +79,16 @@ impl Emulator {
         self.rom_hash
     }
 
+    pub fn rom_offset_for_cpu_address(&self, address: u32) -> Option<usize> {
+        let offset = match address {
+            0x0800_0000..=0x09FF_FFFF => address - 0x0800_0000,
+            0x0A00_0000..=0x0BFF_FFFF => address - 0x0A00_0000,
+            0x0C00_0000..=0x0DFF_FFFF => address - 0x0C00_0000,
+            _ => return None,
+        };
+        ((offset as usize) < self.bus.cartridge.rom().len()).then_some(offset as usize)
+    }
+
     pub fn frame_count(&self) -> u64 {
         self.frame_count
     }

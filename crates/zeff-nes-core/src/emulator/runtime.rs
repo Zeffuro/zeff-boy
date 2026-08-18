@@ -2,6 +2,10 @@ use super::{CPU_CYCLES_PER_FRAME, Emulator};
 use crate::debug::{CallStackEntry, CallStackKind};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cpu::{CpuState, CpuStepKind};
+use zeff_emu_common::debug::{
+    DebugEvent, InstructionTraceRecord, RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind,
+    TraceWriteWidth,
+};
 
 impl Emulator {
     pub fn step_instruction(&mut self) -> (u16, u8, u64) {
@@ -22,7 +26,8 @@ impl Emulator {
         }
 
         let watch_active = self.debug.has_watchpoints();
-        let trace_active = watch_active || collect_bus_trace;
+        let instruction_trace_enabled = self.instruction_trace.is_enabled();
+        let trace_active = watch_active || collect_bus_trace || instruction_trace_enabled;
         self.bus.debug_trace_enabled = trace_active;
         if trace_active {
             self.bus.debug_trace_events.clear();
@@ -30,8 +35,19 @@ impl Emulator {
 
         let pc_before = self.cpu.pc;
         let sp_before = self.cpu.sp;
+        let cycles_before = self.cpu.cycles;
+        let registers_before = if instruction_trace_enabled {
+            Some(nes_registers(&self.cpu))
+        } else {
+            None
+        };
         let opcode = self.bus.cpu_peek(pc_before);
         let rom_offset = self.bus.cartridge.cpu_rom_offset(pc_before);
+        let mut instruction = [opcode, 0, 0];
+        if instruction_trace_enabled {
+            instruction[1] = self.bus.cpu_peek(pc_before.wrapping_add(1));
+            instruction[2] = self.bus.cpu_peek(pc_before.wrapping_add(2));
+        }
 
         self.opcode_log.push((pc_before, opcode, rom_offset));
 
@@ -47,11 +63,44 @@ impl Emulator {
 
         self.tick_peripherals_after_cpu_step(total_cycles);
         self.update_call_stack(pc_before, sp_before, opcode);
+        if matches!(self.cpu.last_step_kind, CpuStepKind::Nmi | CpuStepKind::Irq)
+            && self
+                .debug
+                .check_event(zeff_emu_common::debug::DebugEvent::Interrupt)
+        {
+            self.cpu.state = CpuState::Suspended;
+        }
+        if dma_cycles != 0
+            && self
+                .debug
+                .check_event(zeff_emu_common::debug::DebugEvent::Dma)
+        {
+            self.cpu.state = CpuState::Suspended;
+        }
 
         let mut bus_trace_events = Vec::new();
+        let mut instruction_record = instruction_trace_enabled.then(|| {
+            let interrupt = matches!(self.cpu.last_step_kind, CpuStepKind::Nmi | CpuStepKind::Irq);
+            let mut record = InstructionTraceRecord::new(
+                TraceExecMode::Mos6502,
+                u32::from(pc_before),
+                rom_offset.map(|offset| offset as u64),
+                self.frame_count(),
+                cycles_before,
+                if interrupt { &[] } else { &instruction },
+            );
+            record.event = if interrupt {
+                Some(DebugEvent::Interrupt)
+            } else if dma_cycles != 0 {
+                Some(DebugEvent::Dma)
+            } else {
+                None
+            };
+            record
+        });
         if trace_active {
             self.bus.debug_trace_enabled = false;
-            let events = std::mem::take(&mut self.bus.debug_trace_events);
+            let mut events = std::mem::take(&mut self.bus.debug_trace_events);
 
             if collect_bus_trace {
                 bus_trace_events = events.clone();
@@ -59,8 +108,8 @@ impl Emulator {
 
             let debug = &mut self.debug;
             if watch_active {
-                for event in events {
-                    match event {
+                for event in &events {
+                    match *event {
                         DebugTraceEvent::Read { addr, value, .. } => {
                             debug.check_watch_read(addr, value);
                         }
@@ -75,9 +124,39 @@ impl Emulator {
                     }
                 }
             }
+            if let Some(record) = &mut instruction_record {
+                for event in &events {
+                    if let DebugTraceEvent::Write {
+                        addr,
+                        old_value,
+                        new_value,
+                        ..
+                    } = *event
+                    {
+                        record.push_write(TraceWrite {
+                            address: u32::from(addr),
+                            old_value: u32::from(old_value),
+                            new_value: u32::from(new_value),
+                            width: TraceWriteWidth::Byte,
+                            kind: TraceWriteKind::Memory,
+                        });
+                    }
+                }
+            }
+            events.clear();
+            self.bus.debug_trace_events = events;
             if debug.hit_watchpoint.is_some() {
                 self.cpu.state = CpuState::Suspended;
             }
+        }
+
+        if let Some(mut record) = instruction_record {
+            push_nes_register_deltas(
+                &mut record,
+                &registers_before.expect("trace state"),
+                &nes_registers(&self.cpu),
+            );
+            self.instruction_trace.push(record);
         }
 
         if self.debug.should_break(self.cpu.pc) {
@@ -146,7 +225,8 @@ impl Emulator {
         let start_cycles = self.cpu.cycles;
         let max_cycles = CPU_CYCLES_PER_FRAME * 2;
 
-        if self.debug.any_active() || self.opcode_log.enabled {
+        if self.debug.any_active() || self.opcode_log.enabled || self.instruction_trace.is_enabled()
+        {
             while !self.bus.ppu.frame_ready
                 && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
                 && self.cpu.state == CpuState::Running
@@ -221,6 +301,32 @@ impl Emulator {
             )
         {
             self.cpu.delay_irq_poll_once();
+        }
+    }
+}
+
+fn nes_registers(cpu: &crate::hardware::cpu::Cpu) -> [u32; 6] {
+    [
+        u32::from(cpu.regs.a),
+        u32::from(cpu.regs.x),
+        u32::from(cpu.regs.y),
+        u32::from(cpu.sp),
+        u32::from(cpu.regs.p.bits()),
+        u32::from(cpu.pc),
+    ]
+}
+
+fn push_nes_register_deltas(
+    record: &mut InstructionTraceRecord,
+    before: &[u32; 6],
+    after: &[u32; 6],
+) {
+    for (register, (&before, &after)) in before.iter().zip(after).enumerate() {
+        if before != after {
+            record.push_register_delta(RegisterDelta {
+                register: register as u8,
+                value: after,
+            });
         }
     }
 }

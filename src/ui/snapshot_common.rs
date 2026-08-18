@@ -4,7 +4,7 @@ use crate::debug::{
 };
 use crate::emu_thread::MemorySearchRequest;
 use zeff_emu_common::address::Address;
-use zeff_emu_common::debug::WatchType;
+use zeff_emu_common::debug::{BreakpointHitCondition, DebugEvent, WatchType};
 
 pub(crate) fn build_memory_page(
     show: bool,
@@ -79,27 +79,51 @@ pub(crate) fn build_disassembly_view(
 pub(crate) struct DebugControlSnapshot {
     pub(crate) breakpoints: Vec<Address>,
     pub(crate) one_shot_breakpoints: Vec<Address>,
+    pub(crate) breakpoint_hit_conditions: Vec<BreakpointHitCondition>,
+    pub(crate) event_breakpoints: Vec<DebugEvent>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
     pub(crate) hit_breakpoint: Option<Address>,
     pub(crate) hit_watchpoint: Option<WatchHitDisplay>,
+    pub(crate) hit_event: Option<DebugEvent>,
 }
 
-pub(crate) fn build_debug_control_snapshot(
-    breakpoints: impl IntoIterator<Item = Address>,
-    one_shot_breakpoints: impl IntoIterator<Item = Address>,
-    watchpoints: impl IntoIterator<Item = (Address, Address, WatchType)>,
-    hit_breakpoint: Option<Address>,
-    hit_watchpoint: Option<(Address, u8, u8, WatchType)>,
-) -> DebugControlSnapshot {
-    let mut breakpoints: Vec<Address> = breakpoints.into_iter().collect();
+pub(crate) struct DebugControlSources<B, O, C, E, W> {
+    pub(crate) breakpoints: B,
+    pub(crate) one_shot_breakpoints: O,
+    pub(crate) breakpoint_hit_conditions: C,
+    pub(crate) event_breakpoints: E,
+    pub(crate) watchpoints: W,
+    pub(crate) hit_breakpoint: Option<Address>,
+    pub(crate) hit_watchpoint: Option<(Address, u8, u8, WatchType)>,
+    pub(crate) hit_event: Option<DebugEvent>,
+}
+
+pub(crate) fn build_debug_control_snapshot<B, O, C, E, W>(
+    sources: DebugControlSources<B, O, C, E, W>,
+) -> DebugControlSnapshot
+where
+    B: IntoIterator<Item = Address>,
+    O: IntoIterator<Item = Address>,
+    C: IntoIterator<Item = BreakpointHitCondition>,
+    E: IntoIterator<Item = DebugEvent>,
+    W: IntoIterator<Item = (Address, Address, WatchType)>,
+{
+    let mut breakpoints: Vec<Address> = sources.breakpoints.into_iter().collect();
     breakpoints.sort_unstable();
-    let mut one_shot_breakpoints: Vec<Address> = one_shot_breakpoints.into_iter().collect();
+    let mut one_shot_breakpoints: Vec<Address> = sources.one_shot_breakpoints.into_iter().collect();
     one_shot_breakpoints.sort_unstable();
+    let mut breakpoint_hit_conditions: Vec<BreakpointHitCondition> =
+        sources.breakpoint_hit_conditions.into_iter().collect();
+    breakpoint_hit_conditions.sort_unstable_by_key(|condition| condition.address);
+    let event_breakpoints = sources.event_breakpoints.into_iter().collect();
 
     DebugControlSnapshot {
         breakpoints,
         one_shot_breakpoints,
-        watchpoints: watchpoints
+        breakpoint_hit_conditions,
+        event_breakpoints,
+        watchpoints: sources
+            .watchpoints
             .into_iter()
             .map(|(address, end_address, watch_type)| WatchpointDisplay {
                 address,
@@ -107,15 +131,16 @@ pub(crate) fn build_debug_control_snapshot(
                 watch_type,
             })
             .collect(),
-        hit_breakpoint,
-        hit_watchpoint: hit_watchpoint.map(|(address, old_value, new_value, watch_type)| {
-            WatchHitDisplay {
+        hit_breakpoint: sources.hit_breakpoint,
+        hit_watchpoint: sources.hit_watchpoint.map(
+            |(address, old_value, new_value, watch_type)| WatchHitDisplay {
                 address,
                 old_value,
                 new_value,
                 watch_type,
-            }
-        }),
+            },
+        ),
+        hit_event: sources.hit_event,
     }
 }
 

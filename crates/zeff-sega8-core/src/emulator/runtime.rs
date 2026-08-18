@@ -7,6 +7,10 @@ use crate::hardware::constants::{
 use crate::hardware::cpu::FetchedInstruction;
 use crate::hardware::vdp::{Mode4ColorMode, Mode4RenderArea, Tms9918ColorMode};
 use zeff_emu_common::address::Address;
+use zeff_emu_common::debug::{
+    DebugEvent, InstructionTraceRecord, RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind,
+    TraceWriteWidth,
+};
 
 impl Emulator {
     pub fn step_frame(&mut self) {
@@ -56,23 +60,65 @@ impl Emulator {
         }
 
         let watch_active = !self.debug.watchpoints.is_empty();
-        let trace_active = watch_active || collect_bus_trace;
+        let instruction_trace_enabled = self.instruction_trace.is_enabled();
+        let trace_active = watch_active || collect_bus_trace || instruction_trace_enabled;
         if trace_active {
             self.bus.begin_cpu_access_trace();
         }
 
+        let pc_before = self.cpu.regs().pc;
+        let cycles_before = self.cpu.cycles();
+        let registers_before = if instruction_trace_enabled {
+            Some(sega_registers(self.cpu.regs()))
+        } else {
+            None
+        };
+        let mut instruction = [0; 4];
+        let physical_rom_offset = if instruction_trace_enabled {
+            for (offset, byte) in instruction.iter_mut().enumerate() {
+                *byte = self.bus.cpu_peek(pc_before.wrapping_add(offset as u16));
+            }
+            self.bus.rom_offset_for_cpu_address(pc_before)
+        } else {
+            None
+        };
         let fetched = self.cpu.step(&mut self.bus);
         if let Some(instruction) = fetched {
             self.bus.step_cycles(instruction.cycles);
             self.opcode_log
                 .push((instruction.pc, instruction.opcode, instruction.cycles));
         }
+        if self.cpu.last_step_was_interrupt()
+            && self
+                .debug
+                .check_event(zeff_emu_common::debug::DebugEvent::Interrupt)
+        {
+            self.cpu.suspend();
+        }
 
         let mut bus_trace_events = Vec::new();
+        let mut trace_record = instruction_trace_enabled.then(|| {
+            let interrupt = self.cpu.last_step_was_interrupt();
+            let mut record = InstructionTraceRecord::new(
+                TraceExecMode::Z80,
+                u32::from(pc_before),
+                physical_rom_offset.map(|offset| offset as u64),
+                self.frame_count,
+                cycles_before,
+                if interrupt { &[] } else { &instruction },
+            );
+            if interrupt {
+                record.event = Some(DebugEvent::Interrupt);
+            }
+            record
+        });
         if trace_active {
             let events = self.bus.drain_cpu_access_trace();
             if collect_bus_trace {
                 bus_trace_events = events.clone();
+            }
+            if let Some(record) = &mut trace_record {
+                append_sega_writes(record, &events);
             }
             if watch_active {
                 self.apply_cpu_access_trace_watchpoints(events);
@@ -80,6 +126,15 @@ impl Emulator {
             if self.debug.hit_watchpoint.is_some() {
                 self.cpu.suspend();
             }
+        }
+
+        if let Some(mut record) = trace_record {
+            push_sega_register_deltas(
+                &mut record,
+                &registers_before.expect("trace state"),
+                &sega_registers(self.cpu.regs()),
+            );
+            self.instruction_trace.push(record);
         }
 
         (fetched, bus_trace_events)
@@ -150,5 +205,66 @@ impl Emulator {
                 );
             }
         }
+    }
+}
+
+fn sega_registers(regs: crate::hardware::cpu::Registers) -> [u32; 14] {
+    [
+        u32::from(regs.a),
+        u32::from(regs.f),
+        u32::from(regs.b),
+        u32::from(regs.c),
+        u32::from(regs.d),
+        u32::from(regs.e),
+        u32::from(regs.h),
+        u32::from(regs.l),
+        u32::from(regs.ix),
+        u32::from(regs.iy),
+        u32::from(regs.sp),
+        u32::from(regs.pc),
+        u32::from(regs.i),
+        u32::from(regs.r),
+    ]
+}
+
+fn push_sega_register_deltas(
+    record: &mut InstructionTraceRecord,
+    before: &[u32; 14],
+    after: &[u32; 14],
+) {
+    for (register, (&before, &after)) in before.iter().zip(after).enumerate() {
+        if before != after {
+            record.push_register_delta(RegisterDelta {
+                register: register as u8,
+                value: after,
+            });
+        }
+    }
+}
+
+fn append_sega_writes(record: &mut InstructionTraceRecord, events: &[CpuAccessTraceEvent]) {
+    for event in events {
+        let write = match *event {
+            CpuAccessTraceEvent::Write {
+                addr,
+                old_value,
+                new_value,
+            } => TraceWrite {
+                address: u32::from(addr),
+                old_value: u32::from(old_value),
+                new_value: u32::from(new_value),
+                width: TraceWriteWidth::Byte,
+                kind: TraceWriteKind::Memory,
+            },
+            CpuAccessTraceEvent::IoWrite { port, value } => TraceWrite {
+                address: u32::from(port),
+                old_value: u32::from(value),
+                new_value: u32::from(value),
+                width: TraceWriteWidth::Byte,
+                kind: TraceWriteKind::Io,
+            },
+            CpuAccessTraceEvent::Read { .. } | CpuAccessTraceEvent::IoRead { .. } => continue,
+        };
+        record.push_write(write);
     }
 }

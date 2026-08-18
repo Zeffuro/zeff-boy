@@ -165,6 +165,7 @@ impl App {
                 crate::ui::apply_debug_actions(
                     &result.debug_actions,
                     &mut self.debug_requests.step,
+                    &mut self.debug_requests.next_frame,
                     &mut self.debug_requests.continue_,
                     &mut self.debug_requests.backstep,
                 );
@@ -219,6 +220,7 @@ impl App {
                 crate::ui::apply_debug_actions(
                     &result.debug_actions,
                     &mut self.debug_requests.step,
+                    &mut self.debug_requests.next_frame,
                     &mut self.debug_requests.continue_,
                     &mut self.debug_requests.backstep,
                 );
@@ -277,6 +279,16 @@ impl App {
     }
 
     fn merge_debug_actions(&mut self, actions: DebugUiActions) {
+        if let Some(request) = actions.guest_call
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(crate::emu_thread::EmuCommand::ExecuteGuestCall(request));
+        }
+        if let Some(state) = actions.undo_guest_call
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(crate::emu_thread::EmuCommand::UndoGuestCall(state));
+        }
         let mut symbol_changed = false;
         for name in &actions.remove_user_symbols {
             match self.symbols.remove_user_symbol(name) {
@@ -328,6 +340,12 @@ impl App {
         if actions.add_one_shot_breakpoint.is_some() {
             pending.add_one_shot_breakpoint = actions.add_one_shot_breakpoint;
         }
+        if actions.add_breakpoint_after.is_some() {
+            pending.add_breakpoint_after = actions.add_breakpoint_after;
+        }
+        pending
+            .event_breakpoint_changes
+            .extend(actions.event_breakpoint_changes);
         if actions.add_watchpoint.is_some() {
             pending.add_watchpoint = actions.add_watchpoint;
         }
@@ -357,6 +375,7 @@ impl App {
         if bp_changed
             || actions.add_breakpoint.is_some()
             || actions.add_one_shot_breakpoint.is_some()
+            || actions.add_breakpoint_after.is_some()
         {
             self.debug_windows.last_disasm_pc = None;
             self.debug_windows.last_disasm_mapping = None;
@@ -370,6 +389,16 @@ impl App {
         }
         if actions.gba_bg_layer_toggles.is_some() {
             pending.gba_bg_layer_toggles = actions.gba_bg_layer_toggles;
+        }
+        if actions.trace_enabled.is_some() {
+            pending.trace_enabled = actions.trace_enabled;
+        }
+        if actions.trace_clear {
+            self.debug_windows.execution_coverage.clear();
+        }
+        pending.trace_clear |= actions.trace_clear;
+        if actions.trace_capacity.is_some() {
+            pending.trace_capacity = actions.trace_capacity;
         }
     }
 

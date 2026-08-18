@@ -735,6 +735,10 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         EmuResponse::ReplayCheckpointCaptured { .. } => "ReplayCheckpointCaptured",
         EmuResponse::ReplayCheckpointCaptureFailed { .. } => "ReplayCheckpointCaptureFailed",
         EmuResponse::StateCaptureFailed(_) => "StateCaptureFailed",
+        EmuResponse::GuestCallCompleted { .. } => "GuestCallCompleted",
+        EmuResponse::GuestCallFailed { .. } => "GuestCallFailed",
+        EmuResponse::GuestCallUndone => "GuestCallUndone",
+        EmuResponse::GuestCallUndoFailed(_) => "GuestCallUndoFailed",
         EmuResponse::FdsDiskSideChanged(_) => "FdsDiskSideChanged",
         EmuResponse::FdsDiskSideChangeFailed(_) => "FdsDiskSideChangeFailed",
         #[cfg(not(target_arch = "wasm32"))]

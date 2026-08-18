@@ -133,26 +133,30 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         })
         .collect();
 
-    let debug_controls = super::super::build_debug_control_snapshot(
-        info.breakpoints.iter().copied().map(Address::from),
-        info.one_shot_breakpoints.iter().copied().map(Address::from),
-        info.watchpoints.iter().map(|watch| {
-            (
-                Address::from(watch.address),
-                Address::from(watch.end_address),
-                watch.watch_type,
-            )
-        }),
-        info.hit_breakpoint.map(Address::from),
-        info.hit_watchpoint.as_ref().map(|hit| {
-            (
-                Address::from(hit.address),
-                hit.old_value,
-                hit.new_value,
-                hit.watch_type,
-            )
-        }),
-    );
+    let debug_controls =
+        super::super::build_debug_control_snapshot(super::super::DebugControlSources {
+            breakpoints: info.breakpoints.iter().copied().map(Address::from),
+            one_shot_breakpoints: info.one_shot_breakpoints.iter().copied().map(Address::from),
+            breakpoint_hit_conditions: info.breakpoint_hit_conditions.iter().copied(),
+            event_breakpoints: info.event_breakpoints.iter().copied(),
+            watchpoints: info.watchpoints.iter().map(|watch| {
+                (
+                    Address::from(watch.address),
+                    Address::from(watch.end_address),
+                    watch.watch_type,
+                )
+            }),
+            hit_breakpoint: info.hit_breakpoint.map(Address::from),
+            hit_watchpoint: info.hit_watchpoint.as_ref().map(|hit| {
+                (
+                    Address::from(hit.address),
+                    hit.old_value,
+                    hit.new_value,
+                    hit.watch_type,
+                )
+            }),
+            hit_event: info.hit_event,
+        });
 
     CpuDebugSnapshot {
         register_lines,
@@ -169,6 +173,9 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
         call_stack_available: true,
         breakpoints: debug_controls.breakpoints,
         one_shot_breakpoints: debug_controls.one_shot_breakpoints,
+        breakpoint_hit_conditions: debug_controls.breakpoint_hit_conditions,
+        supported_events: vec![zeff_emu_common::debug::DebugEvent::Interrupt],
+        event_breakpoints: debug_controls.event_breakpoints,
         rom_breakpoints: info
             .rom_breakpoints
             .iter()
@@ -180,6 +187,7 @@ pub(super) fn gb_cpu_snapshot(info: &zeff_gb_core::debug::DebugInfo) -> CpuDebug
             .hit_rom_breakpoint
             .and_then(|offset| u64::try_from(offset).ok()),
         hit_watchpoint: debug_controls.hit_watchpoint,
+        hit_event: debug_controls.hit_event,
     }
 }
 
@@ -220,8 +228,20 @@ fn gb_io_registers(info: &zeff_gb_core::debug::DebugInfo) -> Vec<IoRegisterDispl
             0x07,
             &[(2, "Timer"), (1, "Clock 1"), (0, "Clock 0")],
         ),
+        io_register("DIV", 0xFF04, info.div, 0, &[]),
+        io_register("TIMA", 0xFF05, info.tima, 0xFF, &[]),
+        io_register("TMA", 0xFF06, info.tma, 0xFF, &[]),
         io_register("IF", 0xFF0F, info.if_reg, 0x1F, &interrupt_bits()),
         io_register("IE", 0xFFFF, info.ie, 0x1F, &interrupt_bits()),
+        io_register("SCY", 0xFF42, info.ppu.scy, 0xFF, &[]),
+        io_register("SCX", 0xFF43, info.ppu.scx, 0xFF, &[]),
+        io_register("LY", 0xFF44, info.ppu.ly, 0, &[]),
+        io_register("LYC", 0xFF45, info.ppu.lyc, 0xFF, &[]),
+        io_register("BGP", 0xFF47, info.ppu.bgp, 0xFF, &[]),
+        io_register("OBP0", 0xFF48, info.ppu.obp0, 0xFF, &[]),
+        io_register("OBP1", 0xFF49, info.ppu.obp1, 0xFF, &[]),
+        io_register("WY", 0xFF4A, info.ppu.wy, 0xFF, &[]),
+        io_register("WX", 0xFF4B, info.ppu.wx, 0xFF, &[]),
     ]
 }
 

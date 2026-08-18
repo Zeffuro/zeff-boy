@@ -58,6 +58,14 @@ pub(super) fn cpu_debug_json(cpu: &CpuDebugSnapshot) -> Value {
             "address": addr,
             "address_hex": format_addr(*addr),
         })).collect::<Vec<_>>(),
+        "breakpoint_hit_conditions": cpu.breakpoint_hit_conditions.iter().map(|condition| json!({
+            "address": condition.address,
+            "address_hex": format_addr(condition.address),
+            "target_hits": condition.target_hits,
+            "hits": condition.hits,
+        })).collect::<Vec<_>>(),
+        "supported_events": cpu.supported_events.iter().map(|event| event.label()).collect::<Vec<_>>(),
+        "event_breakpoints": cpu.event_breakpoints.iter().map(|event| event.label()).collect::<Vec<_>>(),
         "rom_breakpoints": cpu.rom_breakpoints.iter().map(|offset| json!({
             "offset": offset,
             "offset_hex": format!("{offset:06X}"),
@@ -79,6 +87,7 @@ pub(super) fn cpu_debug_json(cpu: &CpuDebugSnapshot) -> Value {
             "new_value": hit.new_value,
             "type": format!("{:?}", hit.watch_type),
         })),
+        "hit_event": cpu.hit_event.map(|event| event.label()),
         "sections": cpu.sections.iter().map(|section| json!({
             "heading": section.heading,
             "lines": section.lines,
@@ -180,6 +189,13 @@ mod tests {
             call_stack_available: true,
             breakpoints: vec![0x1234],
             one_shot_breakpoints: vec![0x4567],
+            breakpoint_hit_conditions: vec![zeff_emu_common::debug::BreakpointHitCondition {
+                address: 0x5678,
+                target_hits: 5,
+                hits: 3,
+            }],
+            supported_events: vec![zeff_emu_common::debug::DebugEvent::Interrupt],
+            event_breakpoints: vec![zeff_emu_common::debug::DebugEvent::Interrupt],
             rom_breakpoints: vec![0x81234],
             watchpoints: vec![WatchpointDisplay {
                 address: 0xC000,
@@ -194,12 +210,19 @@ mod tests {
                 new_value: 0x22,
                 watch_type: WatchType::Write,
             }),
+            hit_event: Some(zeff_emu_common::debug::DebugEvent::Interrupt),
         };
 
         let json = cpu_debug_json(&cpu);
 
         assert_eq!(json["breakpoints"][0]["address_hex"], "1234");
         assert_eq!(json["one_shot_breakpoints"][0]["address_hex"], "4567");
+        assert_eq!(json["breakpoint_hit_conditions"][0]["address_hex"], "5678");
+        assert_eq!(json["breakpoint_hit_conditions"][0]["target_hits"], 5);
+        assert_eq!(json["breakpoint_hit_conditions"][0]["hits"], 3);
+        assert_eq!(json["supported_events"][0], "IRQ / NMI");
+        assert_eq!(json["event_breakpoints"][0], "IRQ / NMI");
+        assert_eq!(json["hit_event"], "IRQ / NMI");
         assert_eq!(json["watchpoints"][0]["address_hex"], "C000");
         assert_eq!(json["watchpoints"][0]["end_address_hex"], "C00F");
         assert_eq!(json["watchpoints"][0]["type"], "ReadWrite");

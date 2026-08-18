@@ -277,6 +277,42 @@ impl EmuLoop {
                 }
             }
 
+            EmuCommand::ExecuteGuestCall(request) => {
+                let name = request.name.clone();
+                let resp = match self.backend.execute_guest_call(&request) {
+                    Ok((instructions, undo_state)) => EmuResponse::GuestCallCompleted {
+                        name,
+                        instructions,
+                        undo_state,
+                    },
+                    Err(error) => EmuResponse::GuestCallFailed {
+                        name,
+                        error: error.to_string(),
+                    },
+                };
+                super::types::publish_framebuffer(
+                    &self.shared_framebuffer,
+                    self.backend.framebuffer(),
+                );
+                if !self.send_resp(resp) {
+                    return false;
+                }
+            }
+
+            EmuCommand::UndoGuestCall(state) => {
+                let resp = match self.backend.load_state_from_bytes(state) {
+                    Ok(()) => EmuResponse::GuestCallUndone,
+                    Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
+                };
+                super::types::publish_framebuffer(
+                    &self.shared_framebuffer,
+                    self.backend.framebuffer(),
+                );
+                if !self.send_resp(resp) {
+                    return false;
+                }
+            }
+
             EmuCommand::CaptureReplayStart { capture_id } => {
                 let resp = if let Some(blocker) = self.replay_start_capture_blocker() {
                     EmuResponse::ReplayStartCaptureFailed {

@@ -13,6 +13,12 @@ pub(crate) struct AddressSpaceId(pub(crate) u16);
 pub(crate) struct SymbolId(pub(crate) u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub(crate) struct SegmentId(pub(crate) u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub(crate) struct LoadInstanceId(pub(crate) u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub(crate) struct StorageLocation {
     pub(crate) image: ImageId,
     pub(crate) region: RegionId,
@@ -25,6 +31,12 @@ pub(crate) struct CpuLocation {
     pub(crate) address: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StorageRange {
+    pub(crate) start: StorageLocation,
+    pub(crate) size: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ExecMode {
@@ -35,6 +47,34 @@ pub(crate) enum ExecMode {
     Thumb,
     V30,
     Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DebugSegment {
+    pub(crate) id: SegmentId,
+    pub(crate) name: String,
+    pub(crate) storage: StorageRange,
+    pub(crate) linked_cpu: Option<CpuLocation>,
+    pub(crate) exec_mode: ExecMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LoadInstance {
+    pub(crate) id: LoadInstanceId,
+    pub(crate) segment: SegmentId,
+    pub(crate) runtime_base: CpuLocation,
+    pub(crate) generation: u64,
+    pub(crate) created_cycle: u64,
+    pub(crate) active: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedLoadInstance {
+    pub(crate) instance: LoadInstanceId,
+    pub(crate) segment: SegmentId,
+    pub(crate) cpu: CpuLocation,
+    pub(crate) storage: StorageLocation,
+    pub(crate) exec_mode: ExecMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

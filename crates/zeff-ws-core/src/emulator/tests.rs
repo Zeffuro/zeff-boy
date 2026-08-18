@@ -2,7 +2,7 @@ use super::Emulator;
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cartridge::compute_footer_checksum;
 use crate::hardware::cpu::CpuState;
-use zeff_emu_common::debug::WatchType;
+use zeff_emu_common::debug::{DebugEvent, WatchType};
 use zeff_emu_common::save_ram::SaveRamKind;
 
 fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {
@@ -52,6 +52,43 @@ fn loads_and_steps_minimal_rom() {
 }
 
 #[test]
+fn guest_call_returns_to_suspended_context() {
+    let mut code = vec![0x90; 0x14];
+    code[0x10..0x14].copy_from_slice(&[0xB8, 0x2A, 0x00, 0xC3]);
+    let rom = rom_with_reset_code(&code);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.step_instruction();
+    emu.debug_suspend();
+    let pc = emu.cpu_pc();
+    let sp = emu.cpu_registers()[4];
+
+    assert_eq!(emu.debug_execute_guest_call(0xF0010, 10), Ok(2));
+    assert_eq!(emu.cpu_registers()[0], 0x2A);
+    assert_eq!(emu.cpu_pc(), pc);
+    assert_eq!(emu.cpu_registers()[4], sp);
+    assert_eq!(emu.cpu_state(), CpuState::Suspended);
+}
+
+#[test]
+fn interrupt_event_breakpoint_suspends_emulator() {
+    let rom = rom_with_reset_code(&[0x90, 0xF4]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.cpu.flags |= 0x0200;
+    emu.bus.write16(0x98, 0x1234);
+    emu.bus.write16(0x9A, 0xF000);
+    emu.bus.io_write8(0xB0, 0x20);
+    emu.bus.io_write8(0xB2, 0x40);
+    emu.bus
+        .step_cycles(crate::hardware::constants::CYCLES_PER_SCANLINE * 144);
+    emu.set_event_breakpoint(DebugEvent::Interrupt, true);
+
+    emu.step_instruction();
+
+    assert_eq!(emu.debug_hit_event(), Some(DebugEvent::Interrupt));
+    assert_eq!(emu.cpu_state(), CpuState::Suspended);
+}
+
+#[test]
 fn opcode_history_records_executed_instructions_when_enabled() {
     let rom = rom_with_reset_code(&[0x90, 0xF4]);
     let mut emu = Emulator::from_rom_data(&rom).unwrap();
@@ -71,6 +108,20 @@ fn opcode_history_records_executed_instructions_when_enabled() {
 
     emu.reset();
     assert!(emu.recent_opcodes(4).is_empty());
+}
+
+#[test]
+fn instruction_trace_captures_v30_bytes_and_mapping() {
+    let rom = rom_with_reset_code(&[0x90, 0xF4]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.set_instruction_trace_enabled(true);
+
+    emu.step_instruction();
+
+    let entry = emu.instruction_trace().iter().next().unwrap();
+    assert_eq!(entry.pc, 0xFFFF0);
+    assert_eq!(entry.physical_rom_offset, Some(0xFFF0));
+    assert_eq!(entry.instruction[0], 0xEA);
 }
 
 #[test]

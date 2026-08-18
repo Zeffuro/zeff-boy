@@ -1,13 +1,16 @@
-use super::{WatchHit, WatchType, Watchpoint};
+use super::{BreakpointHitCondition, DebugEvent, WatchHit, WatchType, Watchpoint};
 
 pub struct DebugController {
     breakpoints: Box<[bool; 65536]>,
     one_shot_breakpoints: Box<[bool; 65536]>,
+    hit_conditions: Vec<BreakpointHitCondition>,
+    event_breakpoints: [bool; DebugEvent::ALL.len()],
     breakpoint_count: usize,
     pub watchpoints: Vec<Watchpoint>,
     pub break_on_next: bool,
     pub hit_breakpoint: Option<u16>,
     pub hit_watchpoint: Option<WatchHit>,
+    pub hit_event: Option<DebugEvent>,
     breakpoints_active: bool,
     watchpoints_active: bool,
 }
@@ -20,6 +23,7 @@ impl std::fmt::Debug for DebugController {
             .field("break_on_next", &self.break_on_next)
             .field("hit_breakpoint", &self.hit_breakpoint)
             .field("hit_watchpoint", &self.hit_watchpoint)
+            .field("hit_event", &self.hit_event)
             .finish_non_exhaustive()
     }
 }
@@ -35,11 +39,14 @@ impl DebugController {
         Self {
             breakpoints: Box::new([false; 65536]),
             one_shot_breakpoints: Box::new([false; 65536]),
+            hit_conditions: Vec::new(),
+            event_breakpoints: [false; DebugEvent::ALL.len()],
             breakpoint_count: 0,
             watchpoints: Vec::new(),
             break_on_next: false,
             hit_breakpoint: None,
             hit_watchpoint: None,
+            hit_event: None,
             breakpoints_active: false,
             watchpoints_active: false,
         }
@@ -65,8 +72,16 @@ impl DebugController {
             .map(|entry| entry.0 as u16)
     }
 
+    pub fn iter_breakpoint_hit_conditions(
+        &self,
+    ) -> impl Iterator<Item = BreakpointHitCondition> + '_ {
+        self.hit_conditions.iter().copied()
+    }
+
     pub fn add_breakpoint(&mut self, addr: u16) {
         self.one_shot_breakpoints[addr as usize] = false;
+        self.hit_conditions
+            .retain(|condition| condition.address != u32::from(addr));
         if !self.breakpoints[addr as usize] {
             self.breakpoints[addr as usize] = true;
             self.breakpoint_count += 1;
@@ -79,8 +94,45 @@ impl DebugController {
         self.one_shot_breakpoints[addr as usize] = true;
     }
 
+    pub fn add_breakpoint_after(&mut self, addr: u16, target_hits: u64) {
+        self.add_breakpoint(addr);
+        self.hit_conditions.push(BreakpointHitCondition {
+            address: u32::from(addr),
+            target_hits: target_hits.max(1),
+            hits: 0,
+        });
+    }
+
+    pub fn set_event_breakpoint(&mut self, event: DebugEvent, enabled: bool) {
+        self.event_breakpoints[event.index()] = enabled;
+        if !enabled && self.hit_event == Some(event) {
+            self.hit_event = None;
+        }
+    }
+
+    pub fn has_event_breakpoint(&self, event: DebugEvent) -> bool {
+        self.event_breakpoints[event.index()]
+    }
+
+    pub fn iter_event_breakpoints(&self) -> impl Iterator<Item = DebugEvent> + '_ {
+        DebugEvent::ALL
+            .into_iter()
+            .filter(|event| self.has_event_breakpoint(*event))
+    }
+
+    pub fn check_event(&mut self, event: DebugEvent) -> bool {
+        if !self.has_event_breakpoint(event) {
+            return false;
+        }
+        self.hit_event = Some(event);
+        self.break_on_next = false;
+        true
+    }
+
     pub fn remove_breakpoint(&mut self, addr: u16) {
         self.one_shot_breakpoints[addr as usize] = false;
+        self.hit_conditions
+            .retain(|condition| condition.address != u32::from(addr));
         if self.breakpoints[addr as usize] {
             self.breakpoints[addr as usize] = false;
             self.breakpoint_count -= 1;
@@ -133,6 +185,17 @@ impl DebugController {
         }
 
         if self.breakpoints[pc as usize] {
+            if let Some(condition) = self
+                .hit_conditions
+                .iter_mut()
+                .find(|condition| condition.address == u32::from(pc))
+            {
+                condition.hits = condition.hits.saturating_add(1);
+                if condition.hits < condition.target_hits {
+                    self.hit_breakpoint = None;
+                    return false;
+                }
+            }
             if self.one_shot_breakpoints[pc as usize] {
                 self.remove_breakpoint(pc);
             }
@@ -156,7 +219,10 @@ impl DebugController {
 
     #[inline]
     pub fn any_active(&self) -> bool {
-        self.breakpoints_active || self.break_on_next || self.watchpoints_active
+        self.breakpoints_active
+            || self.break_on_next
+            || self.watchpoints_active
+            || self.event_breakpoints.iter().any(|enabled| *enabled)
     }
 
     pub fn check_watch_read(&mut self, addr: u16, value: u8) {
@@ -209,6 +275,7 @@ impl DebugController {
     pub fn clear_hits(&mut self) {
         self.hit_breakpoint = None;
         self.hit_watchpoint = None;
+        self.hit_event = None;
     }
 }
 

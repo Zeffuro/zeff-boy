@@ -12,6 +12,8 @@ use zeff_sega8_core::hardware::constants::{
 };
 
 const MODE4_SPRITE_COUNT: usize = 64;
+const TMS_SPRITE_COUNT: usize = 32;
+const TMS_SPRITE_ATTRIBUTE_BYTES: usize = 4;
 const PALETTE_COLORS_PER_ROW: usize = 16;
 const PALETTE_ROW_COUNT: usize = 2;
 
@@ -22,12 +24,17 @@ pub(super) fn sega8_graphics_snapshot(
 ) -> ConsoleGraphicsData {
     let vdp = emu.bus().vdp();
     let mode4 = vdp.mode4_debug_snapshot();
+    let tms9918 = vdp.tms9918_debug_snapshot();
     let mut vram = reusable_vram.unwrap_or_default();
     vram.resize(SMS_VRAM_SIZE, 0);
     vram.copy_from_slice(vdp.vram());
 
     let mut oam = reusable_oam.unwrap_or_default();
-    copy_sprite_table(&mut oam, vdp.vram(), mode4.sprite_table_base);
+    if mode4.enabled {
+        copy_sprite_table(&mut oam, vdp.vram(), mode4.sprite_table_base);
+    } else {
+        copy_tms_sprite_table(&mut oam, vdp.vram(), tms9918.sprite_attribute_table_base);
+    }
 
     ConsoleGraphicsData::Sega8(Box::new(Sega8GraphicsData {
         system: emu.system(),
@@ -49,14 +56,24 @@ pub(super) fn sega8_graphics_snapshot(
         line_interrupt_pending: vdp.line_interrupt_pending(),
         display_enabled: vdp.display_enabled(),
         tms9918_mode: format!("{:?}", vdp.tms9918_mode()),
-        sprite_table_base: mode4.sprite_table_base,
+        sprite_table_base: if mode4.enabled {
+            mode4.sprite_table_base
+        } else {
+            tms9918.sprite_attribute_table_base
+        },
         mode4,
+        tms9918,
     }))
 }
 
 pub(super) fn sega8_oam_snapshot(emu: &Emulator) -> OamDebugInfo {
     let vdp = emu.bus().vdp();
-    let sprite_table_base = vdp.mode4_debug_snapshot().sprite_table_base;
+    let mode4 = vdp.mode4_debug_snapshot();
+    let tms9918 = vdp.tms9918_debug_snapshot();
+    if !mode4.enabled {
+        return tms_oam_snapshot(vdp.vram(), tms9918.sprite_attribute_table_base);
+    }
+    let sprite_table_base = mode4.sprite_table_base;
     let vram = vdp.vram();
     let rows = (0..MODE4_SPRITE_COUNT)
         .filter_map(|index| {
@@ -78,6 +95,30 @@ pub(super) fn sega8_oam_snapshot(emu: &Emulator) -> OamDebugInfo {
         .collect();
     OamDebugInfo {
         headers: &["#", "X", "Y", "Tile", "XT Addr"],
+        rows,
+    }
+}
+
+fn tms_oam_snapshot(vram: &[u8], sprite_table_base: usize) -> OamDebugInfo {
+    let rows = (0..TMS_SPRITE_COUNT)
+        .map(|index| {
+            let offset = sprite_table_base + index * TMS_SPRITE_ATTRIBUTE_BYTES;
+            let y = vram[offset % vram.len()];
+            let x = vram[(offset + 1) % vram.len()];
+            let pattern = vram[(offset + 2) % vram.len()];
+            let tag = vram[(offset + 3) % vram.len()];
+            vec![
+                format!("{index:02}"),
+                format!("{x:03}"),
+                format!("{y:02X}"),
+                format!("{pattern:02X}"),
+                format!("{tag:02X}"),
+                format!("{:04X}", offset % vram.len()),
+            ]
+        })
+        .collect();
+    OamDebugInfo {
+        headers: &["#", "X", "Y", "Pattern", "Tag", "Addr"],
         rows,
     }
 }
@@ -107,6 +148,13 @@ pub(super) fn sega8_palette_snapshot(emu: &Emulator) -> PaletteDebugInfo {
 
 fn copy_sprite_table(buf: &mut Vec<u8>, vram: &[u8], sprite_table_base: usize) {
     buf.resize(MODE4_SPRITE_TABLE_BYTES, 0);
+    for (offset, byte) in buf.iter_mut().enumerate() {
+        *byte = vram[(sprite_table_base + offset) % vram.len()];
+    }
+}
+
+fn copy_tms_sprite_table(buf: &mut Vec<u8>, vram: &[u8], sprite_table_base: usize) {
+    buf.resize(TMS_SPRITE_COUNT * TMS_SPRITE_ATTRIBUTE_BYTES, 0);
     for (offset, byte) in buf.iter_mut().enumerate() {
         *byte = vram[(sprite_table_base + offset) % vram.len()];
     }

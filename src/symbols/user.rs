@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Context;
@@ -6,12 +7,14 @@ use zeff_emu_common::system::System;
 
 use super::identity::RomIdentity;
 use super::{
-    AddressSpaceId, Confidence, CpuLocation, ExecMode, ImageId, Provenance, ProvenanceKind,
-    RegionId, StorageLocation, SymbolId, SymbolKind, SymbolLocation, SymbolRecord, SymbolScope,
+    AddressSpaceId, Confidence, CpuLocation, DebugSegment, ExecMode, ImageId, LoadInstance,
+    LoadInstanceId, Provenance, ProvenanceKind, RegionId, SegmentId, StorageLocation, StorageRange,
+    SymbolId, SymbolKind, SymbolLocation, SymbolRecord, SymbolScope,
 };
 
 const FORMAT: &str = "zeff-debug-symbols";
-const VERSION: u32 = 1;
+const USER_VERSION: u32 = 1;
+const ZDBG_VERSION: u32 = 2;
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +24,37 @@ struct UserSymbolFile {
     system: String,
     rom_sha256: String,
     symbols: Vec<UserSymbolEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    segments: Vec<SegmentEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    load_instances: Vec<LoadInstanceEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SegmentEntry {
+    id: u32,
+    name: String,
+    rom_offset: u64,
+    size: u64,
+    linked_cpu_address: Option<u64>,
+    exec_mode: ExecMode,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LoadInstanceEntry {
+    id: u32,
+    segment_id: u32,
+    cpu_address: u64,
+    generation: u64,
+    created_cycle: u64,
+    #[serde(default = "default_active")]
+    active: bool,
+}
+
+pub(super) struct LoadedZdbgSymbols {
+    pub(super) symbols: Vec<SymbolRecord>,
+    pub(super) segments: Vec<DebugSegment>,
+    pub(super) load_instances: Vec<LoadInstance>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,21 +75,33 @@ pub(super) fn load_user_symbols(
     path: &Path,
     identity: RomIdentity,
 ) -> anyhow::Result<Vec<SymbolRecord>> {
-    load_symbols(path, identity, ProvenanceKind::User)
+    let file = load_file(path, identity)?;
+    anyhow::ensure!(
+        file.version == USER_VERSION,
+        "unsupported user symbol version"
+    );
+    entries_to_symbols(file.symbols, path, ProvenanceKind::User)
 }
 
 pub(super) fn load_zdbg_symbols(
     path: &Path,
     identity: RomIdentity,
-) -> anyhow::Result<Vec<SymbolRecord>> {
-    load_symbols(path, identity, ProvenanceKind::DebugFormat)
+) -> anyhow::Result<LoadedZdbgSymbols> {
+    let file = load_file(path, identity)?;
+    anyhow::ensure!(
+        (USER_VERSION..=ZDBG_VERSION).contains(&file.version),
+        "unsupported debug symbol version"
+    );
+    let symbols = entries_to_symbols(file.symbols, path, ProvenanceKind::DebugFormat)?;
+    let (segments, load_instances) = load_segments(file.segments, file.load_instances)?;
+    Ok(LoadedZdbgSymbols {
+        symbols,
+        segments,
+        load_instances,
+    })
 }
 
-fn load_symbols(
-    path: &Path,
-    identity: RomIdentity,
-    provenance: ProvenanceKind,
-) -> anyhow::Result<Vec<SymbolRecord>> {
+fn load_file(path: &Path, identity: RomIdentity) -> anyhow::Result<UserSymbolFile> {
     let metadata = std::fs::metadata(path)?;
     anyhow::ensure!(
         metadata.len() <= MAX_BYTES,
@@ -64,7 +110,6 @@ fn load_symbols(
     let data = std::fs::read(path)?;
     let file: UserSymbolFile = serde_json::from_slice(&data).context("invalid user symbol JSON")?;
     anyhow::ensure!(file.format == FORMAT, "unsupported user symbol format");
-    anyhow::ensure!(file.version == VERSION, "unsupported user symbol version");
     anyhow::ensure!(
         file.system == system_code(identity.system),
         "system mismatch"
@@ -74,7 +119,15 @@ fn load_symbols(
         "ROM hash mismatch"
     );
 
-    file.symbols
+    Ok(file)
+}
+
+fn entries_to_symbols(
+    symbols: Vec<UserSymbolEntry>,
+    path: &Path,
+    provenance: ProvenanceKind,
+) -> anyhow::Result<Vec<SymbolRecord>> {
+    symbols
         .into_iter()
         .map(|entry| {
             validate_name(&entry.name)?;
@@ -114,6 +167,90 @@ fn load_symbols(
         .collect()
 }
 
+fn load_segments(
+    segments: Vec<SegmentEntry>,
+    instances: Vec<LoadInstanceEntry>,
+) -> anyhow::Result<(Vec<DebugSegment>, Vec<LoadInstance>)> {
+    let mut segment_ids = HashSet::new();
+    let segments = segments
+        .into_iter()
+        .map(|segment| {
+            validate_name(&segment.name)?;
+            anyhow::ensure!(
+                segment_ids.insert(segment.id),
+                "duplicate segment id {}",
+                segment.id
+            );
+            anyhow::ensure!(
+                segment.size != 0,
+                "{} has an empty storage range",
+                segment.name
+            );
+            segment
+                .rom_offset
+                .checked_add(segment.size - 1)
+                .context("segment storage range overflows")?;
+            Ok(DebugSegment {
+                id: SegmentId(segment.id),
+                name: segment.name,
+                storage: StorageRange {
+                    start: StorageLocation {
+                        image: ImageId(0),
+                        region: RegionId(0),
+                        offset: segment.rom_offset,
+                    },
+                    size: segment.size,
+                },
+                linked_cpu: segment.linked_cpu_address.map(|address| CpuLocation {
+                    space: AddressSpaceId(0),
+                    address,
+                }),
+                exec_mode: segment.exec_mode,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let sizes = segments
+        .iter()
+        .map(|segment| (segment.id, segment.storage.size))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut instance_ids = HashSet::new();
+    let instances = instances
+        .into_iter()
+        .map(|instance| {
+            anyhow::ensure!(
+                instance_ids.insert(instance.id),
+                "duplicate load instance id {}",
+                instance.id
+            );
+            let segment = SegmentId(instance.segment_id);
+            let size = sizes
+                .get(&segment)
+                .context("load instance references an unknown segment")?;
+            instance
+                .cpu_address
+                .checked_add(size - 1)
+                .context("load instance CPU range overflows")?;
+            Ok(LoadInstance {
+                id: LoadInstanceId(instance.id),
+                segment,
+                runtime_base: CpuLocation {
+                    space: AddressSpaceId(0),
+                    address: instance.cpu_address,
+                },
+                generation: instance.generation,
+                created_cycle: instance.created_cycle,
+                active: instance.active,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok((segments, instances))
+}
+
+const fn default_active() -> bool {
+    true
+}
+
 pub(super) fn save_user_symbols(
     path: &Path,
     identity: RomIdentity,
@@ -121,7 +258,7 @@ pub(super) fn save_user_symbols(
 ) -> anyhow::Result<()> {
     let file = UserSymbolFile {
         format: FORMAT.to_owned(),
-        version: VERSION,
+        version: USER_VERSION,
         system: system_code(identity.system).to_owned(),
         rom_sha256: encode_hash(identity.sha256),
         symbols: symbols
@@ -139,6 +276,8 @@ pub(super) fn save_user_symbols(
                 comment: symbol.comment.clone(),
             })
             .collect(),
+        segments: Vec::new(),
+        load_instances: Vec::new(),
     };
     let data = serde_json::to_vec_pretty(&file)?;
     crate::platform::write_save_data(path, &data)

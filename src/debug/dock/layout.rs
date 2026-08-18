@@ -39,6 +39,7 @@ pub(crate) fn create_ide_dock_state() -> DockState<DebugTab> {
         0.7,
         vec![
             DebugTab::ExecutionHistory,
+            DebugTab::Trace,
             DebugTab::CallStack,
             DebugTab::Breakpoints,
             DebugTab::Cheats,
@@ -94,6 +95,7 @@ pub(crate) fn create_debugger_dock_state() -> DockState<DebugTab> {
         0.67,
         vec![
             DebugTab::ExecutionHistory,
+            DebugTab::Trace,
             DebugTab::CallStack,
             DebugTab::Breakpoints,
             DebugTab::Cheats,
@@ -251,6 +253,7 @@ mod tests {
             DebugTab::MemoryViewer,
             DebugTab::SourceViewer,
             DebugTab::ExecutionHistory,
+            DebugTab::Trace,
             DebugTab::CallStack,
             DebugTab::Breakpoints,
             DebugTab::TileViewer,

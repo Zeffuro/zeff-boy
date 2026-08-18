@@ -23,7 +23,7 @@ fn irq_exception_enters_bios_stub_and_restores_user_sp_lr() {
     cpu.regs[13] = 0x0300_7000;
     cpu.regs[14] = 0x0800_2222;
 
-    cpu.try_service_irq(true);
+    assert!(cpu.try_service_irq(true));
     for _ in 0..8 {
         cpu.step(&mut bus);
     }
@@ -44,7 +44,7 @@ fn irq_return_sets_protected_bios_latch_for_following_game_reads() {
     cpu.reset();
     cpu.cpsr &= !CPSR_IRQ_DISABLE;
 
-    cpu.try_service_irq(true);
+    assert!(cpu.try_service_irq(true));
     for _ in 0..8 {
         cpu.step(&mut bus);
     }

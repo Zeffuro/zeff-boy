@@ -28,12 +28,35 @@ pub(super) fn draw_breakpoints_content(
                 .desired_width(150.0)
                 .hint_text("hex or symbol"),
         );
-        ui.checkbox(&mut state.breakpoint_one_shot, "One-shot");
+        if ui
+            .checkbox(&mut state.breakpoint_one_shot, "One-shot")
+            .changed()
+            && state.breakpoint_one_shot
+        {
+            state.breakpoint_use_hit_count = false;
+        }
+        if ui
+            .checkbox(&mut state.breakpoint_use_hit_count, "Hit count")
+            .changed()
+            && state.breakpoint_use_hit_count
+        {
+            state.breakpoint_one_shot = false;
+        }
+        if state.breakpoint_use_hit_count {
+            ui.add(
+                egui::DragValue::new(&mut state.breakpoint_hit_count)
+                    .range(1..=u64::MAX)
+                    .speed(1),
+            );
+        }
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.button("Add").clicked() || enter {
             match resolve_breakpoint_input(&state.input, symbols) {
                 Ok(BreakpointInput::Cpu(address)) => {
-                    if state.breakpoint_one_shot {
+                    if state.breakpoint_use_hit_count {
+                        actions.add_breakpoint_after =
+                            Some((address, state.breakpoint_hit_count.max(1)));
+                    } else if state.breakpoint_one_shot {
                         actions.add_one_shot_breakpoint = Some(address);
                     } else {
                         actions.add_breakpoint = Some(address);
@@ -42,7 +65,11 @@ pub(super) fn draw_breakpoints_content(
                     state.input_error = None;
                 }
                 Ok(BreakpointInput::Rom(offset)) => {
-                    if state.breakpoint_one_shot {
+                    if state.breakpoint_use_hit_count {
+                        state.input_error = Some(
+                            "Hit-count physical ROM breakpoints are not supported yet".to_owned(),
+                        );
+                    } else if state.breakpoint_one_shot {
                         state.input_error = Some(
                             "One-shot physical ROM breakpoints are not supported yet".to_owned(),
                         );
@@ -94,7 +121,16 @@ pub(super) fn draw_breakpoints_content(
                                 .unwrap_or("-"),
                         );
                     }
-                    if info.one_shot_breakpoints.contains(&address) {
+                    if let Some(condition) = info
+                        .breakpoint_hit_conditions
+                        .iter()
+                        .find(|condition| condition.address == address)
+                    {
+                        ui.colored_label(
+                            watchpoint_color,
+                            format!("Hit {}/{}", condition.hits, condition.target_hits),
+                        );
+                    } else if info.one_shot_breakpoints.contains(&address) {
                         ui.colored_label(watchpoint_color, "Once");
                     } else {
                         ui.weak("Keep");
@@ -149,6 +185,25 @@ pub(super) fn draw_breakpoints_content(
                     ui.end_row();
                 }
             });
+    }
+
+    if !info.supported_events.is_empty() {
+        ui.separator();
+        ui.heading("Event Breakpoints");
+        ui.horizontal_wrapped(|ui| {
+            for &event in &info.supported_events {
+                let mut enabled = info.event_breakpoints.contains(&event);
+                if ui.checkbox(&mut enabled, event.label()).changed() {
+                    actions.event_breakpoint_changes.push((event, enabled));
+                }
+            }
+        });
+        if let Some(event) = info.hit_event {
+            ui.colored_label(
+                breakpoint_color,
+                format!("{} breakpoint hit", event.label()),
+            );
+        }
     }
 
     ui.separator();
@@ -260,6 +315,9 @@ pub(super) fn draw_breakpoints_content(
         }
         if ui.button("Step (F7)").clicked() {
             actions.step_requested = true;
+        }
+        if ui.button("Next Frame").clicked() {
+            actions.next_frame_requested = true;
         }
     }
 }

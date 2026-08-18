@@ -20,6 +20,8 @@ impl OamViewerState {
 pub(crate) struct SourceViewerState {
     pub(crate) loaded_source_file: Option<usize>,
     pub(crate) loaded_path: Option<std::path::PathBuf>,
+    pub(crate) source_path_overrides: std::collections::HashMap<usize, std::path::PathBuf>,
+    pub(crate) source_root_mappings: Vec<(std::path::PathBuf, std::path::PathBuf)>,
     pub(crate) lines: Vec<String>,
     pub(crate) selected_line: Option<u32>,
     pub(crate) status: Option<String>,
@@ -136,6 +138,7 @@ pub(crate) enum TileViewerRequest {
     },
     Sega8 {
         tile: usize,
+        tms_section: Option<usize>,
     },
 }
 

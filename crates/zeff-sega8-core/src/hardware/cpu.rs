@@ -228,6 +228,7 @@ pub struct Cpu {
     cycles: u64,
     last_opcode_pc: u16,
     last_opcode: u8,
+    last_step_was_interrupt: bool,
     trap: Option<CpuTrap>,
 }
 
@@ -244,6 +245,7 @@ impl Cpu {
             cycles: 0,
             last_opcode_pc: Z80_RESET_PC,
             last_opcode: 0,
+            last_step_was_interrupt: false,
             trap: None,
         };
         cpu.reset();
@@ -265,6 +267,7 @@ impl Cpu {
         self.cycles = 0;
         self.last_opcode_pc = Z80_RESET_PC;
         self.last_opcode = 0;
+        self.last_step_was_interrupt = false;
         self.trap = None;
     }
 
@@ -273,11 +276,15 @@ impl Cpu {
             return None;
         }
 
+        self.last_step_was_interrupt = false;
+
         if let Some(interrupt) = self.try_service_non_maskable_interrupt(bus) {
+            self.last_step_was_interrupt = true;
             return Some(interrupt);
         }
 
         if let Some(interrupt) = self.try_service_maskable_interrupt(bus) {
+            self.last_step_was_interrupt = true;
             return Some(interrupt);
         }
 
@@ -334,6 +341,10 @@ impl Cpu {
         self.last_opcode
     }
 
+    pub fn last_step_was_interrupt(&self) -> bool {
+        self.last_step_was_interrupt
+    }
+
     pub fn trap(&self) -> Option<CpuTrap> {
         self.trap
     }
@@ -354,6 +365,34 @@ impl Cpu {
         if self.state == CpuState::Suspended {
             self.state = CpuState::Running;
         }
+    }
+
+    pub(crate) fn begin_guest_call(
+        &mut self,
+        bus: &mut Bus,
+        target: u16,
+    ) -> (u16, u16, bool, bool, u8) {
+        let state = (
+            self.regs.pc,
+            self.regs.sp,
+            self.interrupt_flip_flop_1,
+            self.interrupt_flip_flop_2,
+            self.enable_interrupts_delay,
+        );
+        self.push_u16(bus, self.regs.pc);
+        self.regs.pc = target;
+        self.interrupt_flip_flop_1 = false;
+        self.interrupt_flip_flop_2 = false;
+        self.enable_interrupts_delay = 0;
+        self.state = CpuState::Running;
+        state
+    }
+
+    pub(crate) fn finish_guest_call(&mut self, iff1: bool, iff2: bool, delay: u8) {
+        self.interrupt_flip_flop_1 = iff1;
+        self.interrupt_flip_flop_2 = iff2;
+        self.enable_interrupts_delay = delay;
+        self.state = CpuState::Suspended;
     }
 
     pub(crate) fn write_state(&self, w: &mut zeff_emu_common::save_state::StateWriter) {
@@ -384,6 +423,7 @@ impl Cpu {
         self.cycles = r.read_u64()?;
         self.last_opcode_pc = r.read_u16()?;
         self.last_opcode = r.read_u8()?;
+        self.last_step_was_interrupt = false;
         self.trap = read_trap(r)?;
         Ok(())
     }

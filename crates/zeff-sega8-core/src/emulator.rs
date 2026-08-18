@@ -117,6 +117,7 @@ pub struct Emulator {
     pub(crate) console_region: Sega8Region,
     pub(crate) debug: AddressDebugController,
     pub(crate) opcode_log: OpcodeLog<(u16, u8, u32)>,
+    pub(crate) instruction_trace: zeff_emu_common::debug::InstructionTraceStore,
 }
 
 impl Emulator {
@@ -230,6 +231,7 @@ impl Emulator {
             console_region,
             debug: AddressDebugController::new(),
             opcode_log: OpcodeLog::new(),
+            instruction_trace: zeff_emu_common::debug::InstructionTraceStore::default(),
         })
     }
 
@@ -244,6 +246,7 @@ impl Emulator {
         self.framebuffer.fill(0);
         self.debug.clear_hits();
         self.opcode_log.clear();
+        self.instruction_trace.clear();
     }
 }
 

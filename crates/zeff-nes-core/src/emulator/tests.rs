@@ -4,6 +4,7 @@ use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_HEADER_SIZE, FDS_SI
 use crate::hardware::cartridge::{NesMapper, RomFormat};
 use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4};
 use crate::hardware::cpu::StatusFlags;
+use zeff_emu_common::debug::DebugEvent;
 use zeff_emu_common::save_ram::SaveRamKind;
 
 fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {
@@ -57,6 +58,63 @@ fn call_stack_tracks_jsr_and_rts() {
     let history = emu.recent_opcodes(2);
     assert_eq!(history[0].2, Some(6));
     assert_eq!(history[1].2, Some(0));
+}
+
+#[test]
+fn guest_call_returns_to_suspended_context() {
+    let rom = build_test_rom_with_program(&[0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xA9, 0x42, 0x60]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap();
+    emu.debug_suspend();
+    let pc = emu.cpu.pc;
+    let sp = emu.cpu.sp;
+
+    assert_eq!(emu.debug_execute_guest_call(0x8006, 10), Ok(2));
+    assert_eq!(emu.cpu.regs.a, 0x42);
+    assert_eq!(emu.cpu.pc, pc);
+    assert_eq!(emu.cpu.sp, sp);
+    assert_eq!(emu.cpu.state, crate::hardware::cpu::CpuState::Suspended);
+}
+
+#[test]
+fn instruction_trace_captures_mapping_and_register_changes() {
+    let rom = build_test_rom_with_program(&[0xA9, 0x42, 0xEA]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("test ROM");
+    emu.set_instruction_trace_enabled(true);
+
+    emu.step_instruction();
+
+    let entry = emu.instruction_trace().iter().next().unwrap();
+    assert_eq!(entry.pc, 0x8000);
+    assert_eq!(entry.physical_rom_offset, Some(0));
+    assert_eq!(&entry.instruction[..2], &[0xA9, 0x42]);
+    assert!(
+        entry
+            .register_deltas()
+            .iter()
+            .any(|delta| delta.register == 0)
+    );
+}
+
+#[test]
+fn event_breakpoints_stop_on_nmi_and_dma() {
+    let rom = build_test_rom_with_program(&[0xA9, 0x02, 0x8D, 0x14, 0x40, 0xEA]);
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("test ROM");
+    emu.set_event_breakpoint(DebugEvent::Interrupt, true);
+    emu.cpu.nmi_pending = true;
+
+    emu.step_instruction();
+    assert_eq!(emu.debug_hit_event(), Some(DebugEvent::Interrupt));
+    assert_eq!(emu.cpu.state, crate::hardware::cpu::CpuState::Suspended);
+
+    emu.set_event_breakpoint(DebugEvent::Interrupt, false);
+    emu.set_event_breakpoint(DebugEvent::Dma, true);
+    emu.debug_continue();
+    emu.cpu.pc = 0x8000;
+    emu.step_instruction();
+    emu.step_instruction();
+
+    assert_eq!(emu.debug_hit_event(), Some(DebugEvent::Dma));
+    assert_eq!(emu.cpu.state, crate::hardware::cpu::CpuState::Suspended);
 }
 
 #[test]

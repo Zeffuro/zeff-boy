@@ -25,6 +25,8 @@ fn snapshot_request() -> SnapshotRequest {
         show_memory_viewer: true,
         memory_view_start: 0,
         show_rom_viewer: true,
+        show_instruction_trace: false,
+        trace_after_sequence: None,
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,

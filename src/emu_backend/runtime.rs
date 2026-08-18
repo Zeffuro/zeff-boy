@@ -6,6 +6,7 @@ use zeff_emu_common::debug::WatchType;
 use zeff_nes_core::hardware::ppu::NesPalette;
 
 use super::EmuBackend;
+use crate::emu_thread::GuestCallRequest;
 
 pub(crate) struct BackendRuntimeConfig<'a> {
     pub(crate) debug_actions: &'a DebugUiActions,
@@ -46,6 +47,8 @@ impl<'a> BackendRuntimeConfig<'a> {
 enum DebugAction {
     AddBreakpoint(Address),
     AddOneShotBreakpoint(Address),
+    AddBreakpointAfter(Address, u64),
+    SetEventBreakpoint(zeff_emu_common::debug::DebugEvent, bool),
     AddWatchpoint(Address, Address, WatchType),
     RemoveWatchpoint(Address, Address, WatchType),
     RemoveBreakpoint(Address),
@@ -113,6 +116,108 @@ impl EmuBackend {
             }
         }
     }
+
+    pub(crate) fn execute_guest_call(
+        &mut self,
+        request: &GuestCallRequest,
+    ) -> anyhow::Result<(u64, Vec<u8>)> {
+        anyhow::ensure!(self.is_suspended(), "CPU must be suspended");
+        self.validate_guest_call_target(request)?;
+        let saved = self.encode_state_bytes()?;
+        let result = match self {
+            Self::Gb(backend) => {
+                let target = u16::try_from(request.target)
+                    .map_err(|_| anyhow::anyhow!("target is out of range"))?;
+                anyhow::ensure!(
+                    request.exec_mode == crate::symbols::ExecMode::Sm83,
+                    "expected SM83 code"
+                );
+                backend
+                    .emu
+                    .debug_execute_guest_call(target, request.instruction_budget)
+            }
+            Self::Nes(backend) => {
+                let target = u16::try_from(request.target)
+                    .map_err(|_| anyhow::anyhow!("target is out of range"))?;
+                anyhow::ensure!(
+                    request.exec_mode == crate::symbols::ExecMode::Mos6502,
+                    "expected 6502 code"
+                );
+                backend
+                    .emu
+                    .debug_execute_guest_call(target, request.instruction_budget)
+            }
+            Self::Sega8(backend) => {
+                let target = u16::try_from(request.target)
+                    .map_err(|_| anyhow::anyhow!("target is out of range"))?;
+                anyhow::ensure!(
+                    request.exec_mode == crate::symbols::ExecMode::Z80,
+                    "expected Z80 code"
+                );
+                backend
+                    .emu
+                    .debug_execute_guest_call(target, request.instruction_budget)
+            }
+            Self::Gba(backend) => {
+                let thumb = match request.exec_mode {
+                    crate::symbols::ExecMode::Arm => false,
+                    crate::symbols::ExecMode::Thumb => true,
+                    _ => anyhow::bail!("expected ARM or Thumb code"),
+                };
+                backend.emu.debug_execute_guest_call(
+                    request.target,
+                    thumb,
+                    request.instruction_budget,
+                )
+            }
+            Self::Ws(backend) => {
+                anyhow::ensure!(request.target <= 0x000F_FFFF, "target is out of range");
+                anyhow::ensure!(
+                    request.exec_mode == crate::symbols::ExecMode::V30,
+                    "expected V30 code"
+                );
+                backend
+                    .emu
+                    .debug_execute_guest_call(request.target, request.instruction_budget)
+            }
+        };
+        match result {
+            Ok(instructions) => Ok((instructions, saved)),
+            Err(error) => {
+                self.load_state_from_bytes(saved)
+                    .map_err(|restore| anyhow::anyhow!("{error}; rollback failed: {restore}"))?;
+                anyhow::bail!("{error}; state restored")
+            }
+        }
+    }
+
+    fn validate_guest_call_target(&self, request: &GuestCallRequest) -> anyhow::Result<()> {
+        let Some(expected) = request.storage_offset else {
+            return Ok(());
+        };
+        if request.explicit_overlay {
+            return Ok(());
+        }
+        let actual = match self {
+            Self::Gb(backend) => u16::try_from(request.target)
+                .ok()
+                .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
+            Self::Nes(backend) => u16::try_from(request.target)
+                .ok()
+                .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
+            Self::Sega8(backend) => u16::try_from(request.target)
+                .ok()
+                .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
+            Self::Gba(backend) => backend.emu.rom_offset_for_cpu_address(request.target),
+            Self::Ws(backend) => backend.emu.rom_offset_for_cpu_address(request.target),
+        }
+        .map(|offset| offset as u64);
+        anyhow::ensure!(
+            actual == Some(expected),
+            "target no longer maps to ROM offset {expected:X}"
+        );
+        Ok(())
+    }
 }
 
 fn collect_debug_actions(actions: &DebugUiActions) -> impl Iterator<Item = DebugAction> + '_ {
@@ -125,6 +230,18 @@ fn collect_debug_actions(actions: &DebugUiActions) -> impl Iterator<Item = Debug
                 .add_one_shot_breakpoint
                 .iter()
                 .map(|&addr| DebugAction::AddOneShotBreakpoint(addr)),
+        )
+        .chain(
+            actions
+                .add_breakpoint_after
+                .iter()
+                .map(|&(addr, hits)| DebugAction::AddBreakpointAfter(addr, hits)),
+        )
+        .chain(
+            actions
+                .event_breakpoint_changes
+                .iter()
+                .map(|&(event, enabled)| DebugAction::SetEventBreakpoint(event, enabled)),
         )
         .chain(
             actions
@@ -163,6 +280,10 @@ fn apply_debug_actions_to(emu: &mut impl DebuggableEmulator, actions: &DebugUiAc
         match action {
             DebugAction::AddBreakpoint(addr) => emu.add_breakpoint(addr),
             DebugAction::AddOneShotBreakpoint(addr) => emu.add_one_shot_breakpoint(addr),
+            DebugAction::AddBreakpointAfter(addr, hits) => emu.add_breakpoint_after(addr, hits),
+            DebugAction::SetEventBreakpoint(event, enabled) => {
+                emu.set_event_breakpoint(event, enabled)
+            }
             DebugAction::AddWatchpoint(start, end, wt) => emu.add_watchpoint_range(start, end, wt),
             DebugAction::RemoveWatchpoint(start, end, wt) => emu.remove_watchpoint(start, end, wt),
             DebugAction::RemoveBreakpoint(addr) => emu.remove_breakpoint(addr),
@@ -205,6 +326,15 @@ fn apply_gba_debug_actions(emu: &mut zeff_gba_core::emulator::Emulator, actions:
 }
 
 fn apply_debug_controls(emu: &mut impl DebuggableEmulator, config: &BackendRuntimeConfig<'_>) {
+    if let Some(enabled) = config.debug_actions.trace_enabled {
+        emu.set_instruction_trace_enabled(enabled);
+    }
+    if let Some(capacity) = config.debug_actions.trace_capacity {
+        emu.set_instruction_trace_capacity(capacity);
+    }
+    if config.debug_actions.trace_clear {
+        emu.clear_instruction_trace();
+    }
     if emu.supports_opcode_history() {
         emu.set_opcode_log_enabled(config.opcode_log_enabled);
     }

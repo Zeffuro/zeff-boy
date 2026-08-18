@@ -54,6 +54,7 @@ pub struct Emulator {
     pub(crate) frame_count: u64,
     pub(crate) debug: AddressDebugController,
     pub(crate) opcode_log: OpcodeLog<GbaOpcodeRecord>,
+    pub(crate) instruction_trace: zeff_emu_common::debug::InstructionTraceStore,
 }
 
 impl Emulator {
@@ -67,6 +68,7 @@ impl Emulator {
             frame_count: 0,
             debug: AddressDebugController::new(),
             opcode_log: OpcodeLog::new(),
+            instruction_trace: zeff_emu_common::debug::InstructionTraceStore::default(),
         };
         emu.reset();
         Ok(emu)
@@ -81,6 +83,7 @@ impl Emulator {
         self.frame_count = 0;
         self.debug.clear_hits();
         self.opcode_log.clear();
+        self.instruction_trace.clear();
     }
 }
 

@@ -70,6 +70,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     emu.sample_rate = emu.bus().apu().sample_rate();
     emu.debug.clear_hits();
     emu.opcode_log.clear();
+    emu.instruction_trace.clear();
 
     if !r.is_exhausted() {
         bail!("Sega 8-bit save-state has unexpected trailing data");

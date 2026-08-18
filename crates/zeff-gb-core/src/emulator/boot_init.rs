@@ -47,6 +47,7 @@ impl Emulator {
             cycle_count: 0,
             frame_count: 0,
             opcode_log: OpcodeLog::new(),
+            instruction_trace: zeff_emu_common::debug::InstructionTraceStore::default(),
             call_stack: Vec::new(),
             last_opcode: 0,
             last_opcode_pc: 0,
@@ -65,10 +66,14 @@ impl Emulator {
         let rom = self.bus.cartridge.rom_bytes().to_vec();
         let sample_rate = self.bus.apu_sample_rate();
         let mode_preference = self.hardware_mode_preference;
+        let trace_enabled = self.instruction_trace.is_enabled();
+        let trace_capacity = self.instruction_trace.capacity();
 
         match Self::from_rom_data(&rom, mode_preference) {
             Ok(mut emulator) => {
                 emulator.set_sample_rate(sample_rate);
+                emulator.instruction_trace.set_capacity(trace_capacity);
+                emulator.instruction_trace.set_enabled(trace_enabled);
                 *self = emulator;
             }
             Err(err) => {

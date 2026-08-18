@@ -152,6 +152,7 @@ fn enabled_vblank_interrupt_pushes_pc_and_vectors_to_0038() {
 
     let interrupt = cpu.step(&mut bus).expect("interrupt should be serviced");
 
+    assert!(cpu.last_step_was_interrupt());
     assert_eq!(interrupt.opcode, Z80_INTERRUPT_ACK_OPCODE);
     assert_eq!(interrupt.cycles, CYCLES_INTERRUPT_ACK);
     assert_eq!(cpu.regs().pc, Z80_INTERRUPT_VECTOR_IM1);
@@ -177,6 +178,7 @@ fn game_gear_serial_rx_nmi_pushes_pc_and_vectors_to_0066() {
 
     let interrupt = cpu.step(&mut bus).expect("NMI should be serviced");
 
+    assert!(cpu.last_step_was_interrupt());
     assert_eq!(interrupt.opcode, Z80_INTERRUPT_ACK_OPCODE);
     assert_eq!(interrupt.cycles, CYCLES_NMI_ACK);
     assert_eq!(cpu.regs().pc, Z80_INTERRUPT_VECTOR_NMI);

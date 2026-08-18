@@ -66,6 +66,7 @@ pub(crate) struct DisassemblerActions {
     pub(crate) toggle_rom_breakpoints: Vec<u64>,
     pub(crate) add_one_shot_breakpoint: Option<Address>,
     pub(crate) step_requested: bool,
+    pub(crate) next_frame_requested: bool,
     pub(crate) continue_requested: bool,
     pub(crate) backstep_requested: bool,
     pub(crate) follow_pc_requested: bool,
@@ -83,6 +84,7 @@ pub(super) fn draw_disassembler_content(
         toggle_rom_breakpoints: Vec::new(),
         add_one_shot_breakpoint: None,
         step_requested: false,
+        next_frame_requested: false,
         continue_requested: false,
         backstep_requested: false,
         follow_pc_requested: false,
@@ -96,15 +98,18 @@ pub(super) fn draw_disassembler_content(
     let mut rom_breakpoints: HashSet<u64> = view.rom_breakpoints.iter().copied().collect();
 
     ui.horizontal(|ui| {
-        if ui.button("▶ Continue (F9)").clicked() {
+        if ui.button("Continue (F9)").clicked() {
             actions.continue_requested = true;
         }
-        if ui.button("⏭ Step (F7)").clicked() {
+        if ui.button("Step (F7)").clicked() {
             actions.step_requested = true;
+        }
+        if ui.button("Next Frame").clicked() {
+            actions.next_frame_requested = true;
         }
         ui.separator();
         if ui
-            .button("⏮ Step Back")
+            .button("Step Back")
             .on_hover_text("Rewind one snapshot (~4 frames) and pause")
             .clicked()
         {

@@ -161,6 +161,7 @@ impl Emulator {
 
     fn reset_debug_state(&mut self) {
         self.opcode_log = OpcodeLog::new();
+        self.instruction_trace.clear();
         self.call_stack.clear();
         self.debug = DebugController::new();
         self.bus.trace_cpu_accesses = false;

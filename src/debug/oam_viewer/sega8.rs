@@ -1,5 +1,8 @@
 use super::*;
 use crate::debug::common::{color32, debug_colors, debug_mono_font, sega8_palette_rgba};
+use crate::debug::tms9918_graphics::{
+    color_rgba, is_tms, mode_label, sprite_at, sprite_pattern_address, sprite_pattern_pixel,
+};
 use crate::debug::types::Sega8GraphicsData;
 use zeff_sega8_core::hardware::constants::{
     MODE4_SPRITE_TERMINATOR_Y, MODE4_SPRITE_X_TILE_TABLE_OFFSET,
@@ -13,6 +16,14 @@ const SEGA_ATLAS: AtlasLayout = AtlasLayout {
     default_zoom: 2,
 };
 
+const TMS_SPRITE_COUNT: usize = 32;
+const TMS_ATLAS: AtlasLayout = AtlasLayout {
+    columns: 8,
+    cell_width: 36,
+    cell_height: 40,
+    default_zoom: 2,
+};
+
 pub(super) fn draw(
     ui: &mut egui::Ui,
     info: &OamDebugInfo,
@@ -22,13 +33,138 @@ pub(super) fn draw(
     actions: &mut DebugUiActions,
 ) {
     if !gfx.mode4.enabled {
-        draw_oam_table(ui, info);
-        ui.weak("Visual sprites currently require Mode 4.");
+        draw_tms(ui, info, gfx, state);
         return;
     }
     render_atlas(&mut state.image, gfx);
     show_sprite_atlas(ui, state, SPRITE_COUNT, SEGA_ATLAS);
     draw_selected(ui, info, gfx, state.selected, tiles, actions);
+}
+
+fn draw_tms(
+    ui: &mut egui::Ui,
+    info: &OamDebugInfo,
+    gfx: &Sega8GraphicsData,
+    state: &mut OamViewerState,
+) {
+    debug_assert!(is_tms(gfx));
+    render_tms_atlas(&mut state.image, gfx);
+    show_sprite_atlas(ui, state, TMS_SPRITE_COUNT, TMS_ATLAS);
+    draw_tms_selected(ui, info, gfx, state.selected);
+}
+
+fn render_tms_atlas(image: &mut egui::ColorImage, gfx: &Sega8GraphicsData) {
+    resize_atlas(image, TMS_SPRITE_COUNT, TMS_ATLAS);
+    fill_checker(image);
+    let scale = if gfx.tms9918.sprite_magnified { 2 } else { 1 };
+    let size = gfx.tms9918.sprite_size * scale;
+    let mut terminated = false;
+    for index in 0..TMS_SPRITE_COUNT {
+        let Some(sprite) = sprite_at(gfx, index) else {
+            terminated = true;
+            continue;
+        };
+        if terminated || sprite.color == 0 {
+            continue;
+        }
+        let cell_x = (index % TMS_ATLAS.columns) * TMS_ATLAS.cell_width;
+        let cell_y = (index / TMS_ATLAS.columns) * TMS_ATLAS.cell_height;
+        let offset_x = cell_x + (TMS_ATLAS.cell_width - size) / 2;
+        let offset_y = cell_y + (TMS_ATLAS.cell_height - size) / 2;
+        let rgba = color_rgba(gfx, sprite.color);
+        let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+        for y in 0..size {
+            for x in 0..size {
+                if sprite_pattern_pixel(
+                    &gfx.vram,
+                    &gfx.tms9918,
+                    sprite.pattern,
+                    x / scale,
+                    y / scale,
+                ) {
+                    image[(offset_x + x, offset_y + y)] = color;
+                }
+            }
+        }
+    }
+}
+
+fn draw_tms_selected(
+    ui: &mut egui::Ui,
+    info: &OamDebugInfo,
+    gfx: &Sega8GraphicsData,
+    index: usize,
+) {
+    let mono = debug_mono_font(ui);
+    let base = gfx.tms9918.sprite_attribute_table_base + index * 4;
+    ui.separator();
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new(format!("Sprite {index:02}"))
+                .font(mono.clone())
+                .color(color32(debug_colors(ui).selection))
+                .strong(),
+        );
+        ui.monospace(format!("OAM ${base:04X}"));
+        ui.weak(mode_label(gfx.tms9918.mode));
+    });
+    if let Some(sprite) = sprite_at(gfx, index) {
+        let scale = if gfx.tms9918.sprite_magnified { 2 } else { 1 };
+        egui::Grid::new("selected_tms_oam_details")
+            .num_columns(4)
+            .spacing([10.0, 2.0])
+            .show(ui, |ui| {
+                detail(
+                    ui,
+                    &mono,
+                    "Position",
+                    &format!("{}, {}", sprite.x, sprite.y),
+                );
+                detail(
+                    ui,
+                    &mono,
+                    "Size",
+                    &format!(
+                        "{}x{}",
+                        gfx.tms9918.sprite_size * scale,
+                        gfx.tms9918.sprite_size * scale
+                    ),
+                );
+                ui.end_row();
+                detail(ui, &mono, "Pattern", &format!("${:02X}", sprite.pattern));
+                detail(
+                    ui,
+                    &mono,
+                    "VRAM",
+                    &format!(
+                        "${:04X}",
+                        sprite_pattern_address(&gfx.tms9918, sprite.pattern, 0, 0)
+                    ),
+                );
+                ui.end_row();
+                detail(ui, &mono, "Color", &format!("${:X}", sprite.color));
+                detail(ui, &mono, "Early clock", yes_no(sprite.early_clock));
+                ui.end_row();
+                detail(ui, &mono, "Y raw", &format!("${:02X}", sprite.y_raw));
+                detail(ui, &mono, "Magnified", yes_no(gfx.tms9918.sprite_magnified));
+                ui.end_row();
+            });
+    } else {
+        ui.weak("Terminator or hidden entry.");
+    }
+    if let Some(row) = info.rows.get(index) {
+        ui.collapsing("Raw fields", |ui| {
+            egui::Grid::new("selected_tms_oam_raw_fields")
+                .striped(true)
+                .show(ui, |ui| {
+                    for (header, value) in info.headers.iter().zip(row) {
+                        ui.weak(*header);
+                        ui.monospace(value);
+                        ui.end_row();
+                    }
+                });
+        });
+    }
 }
 
 fn render_atlas(image: &mut egui::ColorImage, gfx: &Sega8GraphicsData) {
@@ -106,6 +242,7 @@ fn draw_selected(
         if ui.small_button("Open Tile").clicked() {
             tiles.pending = Some(TileViewerRequest::Sega8 {
                 tile: gfx.mode4.sprite_pattern_base / 32 + sprite.tile,
+                tms_section: None,
             });
             actions.focus_tab = Some(DebugTab::TileViewer);
         }
@@ -251,6 +388,19 @@ mod tests {
                 vertical_scroll_lock: false,
                 hide_left_column: false,
                 sprite_shift_left: false,
+                sprite_magnified: false,
+            },
+            tms9918: zeff_sega8_core::hardware::vdp::Tms9918VdpDebugSnapshot {
+                mode: zeff_sega8_core::hardware::vdp::Tms9918Mode::GraphicsI,
+                name_table_base: 0,
+                pattern_table_base: 0,
+                color_table_base: 0,
+                sprite_attribute_table_base: 0,
+                sprite_pattern_table_base: 0,
+                backdrop_color: 0,
+                text_foreground_color: 0,
+                text_background_color: 0,
+                sprite_size: 8,
                 sprite_magnified: false,
             },
         };

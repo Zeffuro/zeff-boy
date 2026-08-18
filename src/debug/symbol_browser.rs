@@ -1,5 +1,6 @@
 use crate::debug::types::{
-    MemoryViewerState, RomViewerState, SymbolBrowserState, SymbolEditorState, SymbolLocationFilter,
+    ExecutionCoverage, MemoryViewerState, RomViewerState, RuntimeSymbolCandidate,
+    SymbolBrowserState, SymbolEditorState, SymbolExecutionFilter, SymbolLocationFilter, SymbolSort,
 };
 use crate::debug::{CpuDebugSnapshot, DebugTab, DebugUiActions, DisassemblyTarget};
 use crate::symbols::{
@@ -21,11 +22,18 @@ const LOCATION_FILTERS: [SymbolLocationFilter; 4] = [
     SymbolLocationFilter::CpuOnly,
     SymbolLocationFilter::Constants,
 ];
+const EXECUTION_FILTERS: [SymbolExecutionFilter; 3] = [
+    SymbolExecutionFilter::All,
+    SymbolExecutionFilter::Executed,
+    SymbolExecutionFilter::Unexecuted,
+];
+const SYMBOL_SORTS: [SymbolSort; 2] = [SymbolSort::Search, SymbolSort::MostExecuted];
 
 pub(super) struct SymbolBrowserViews<'a> {
     pub(super) state: &'a mut SymbolBrowserState,
     pub(super) memory: &'a mut MemoryViewerState,
     pub(super) rom: &'a mut RomViewerState,
+    pub(super) coverage: &'a mut ExecutionCoverage,
 }
 
 struct SymbolRowContext<'a> {
@@ -34,6 +42,7 @@ struct SymbolRowContext<'a> {
     memory: &'a mut MemoryViewerState,
     rom: &'a mut RomViewerState,
     actions: &'a mut DebugUiActions,
+    symbols: &'a SymbolSession,
 }
 
 pub(super) fn draw_symbol_browser_content(
@@ -43,7 +52,13 @@ pub(super) fn draw_symbol_browser_content(
     views: SymbolBrowserViews<'_>,
     actions: &mut DebugUiActions,
 ) {
-    let SymbolBrowserViews { state, memory, rom } = views;
+    let SymbolBrowserViews {
+        state,
+        memory,
+        rom,
+        coverage,
+    } = views;
+    coverage.sync_symbols(symbols);
     if symbols.store.is_empty() {
         ui.label(if symbols.is_loading() {
             "Loading symbols..."
@@ -74,19 +89,20 @@ pub(super) fn draw_symbol_browser_content(
         || state.last_generation != symbols.store.generation()
         || state.last_kind_filter != state.kind_filter
         || state.last_location_filter != state.location_filter
+        || state.last_execution_filter != state.execution_filter
+        || state.last_sort != state.sort
+        || state.last_coverage_revision != coverage.revision()
+            && (state.execution_filter != SymbolExecutionFilter::All
+                || state.sort == SymbolSort::MostExecuted)
     {
-        let kind_filter = state.kind_filter;
-        let location_filter = state.location_filter;
-        state.results = symbols
-            .store
-            .search_ids_matching(&state.query, MAX_RESULTS, |symbol| {
-                kind_filter.is_none_or(|kind| symbol.kind == kind)
-                    && location_matches(symbol, location_filter)
-            });
+        state.results = search_symbols(symbols, coverage, state);
         state.last_query.clone_from(&state.query);
         state.last_generation = symbols.store.generation();
         state.last_kind_filter = state.kind_filter;
         state.last_location_filter = state.location_filter;
+        state.last_execution_filter = state.execution_filter;
+        state.last_sort = state.sort;
+        state.last_coverage_revision = coverage.revision();
         if state
             .selected
             .is_some_and(|id| !state.results.contains(&id))
@@ -96,13 +112,16 @@ pub(super) fn draw_symbol_browser_content(
     }
 
     ui.label(format!(
-        "{} shown / {} loaded",
+        "{} shown / {} loaded | {} instructions captured",
         state.results.len(),
-        symbols.symbol_count()
+        symbols.symbol_count(),
+        coverage.total()
     ));
+    draw_runtime_candidates(ui, state, coverage, actions);
     if let Some(symbol) = state.selected.and_then(|id| symbols.store.symbol(id)) {
-        draw_symbol_details(ui, state, symbol, actions);
+        draw_symbol_details(ui, state, symbols, symbol, coverage.hits(symbol.id));
     }
+    draw_editor(ui, state, actions);
     ui.separator();
 
     let mut selected = state.selected;
@@ -112,12 +131,19 @@ pub(super) fn draw_symbol_browser_content(
         memory,
         rom,
         actions,
+        symbols,
     };
     for id in state.results.iter().copied() {
         let Some(symbol) = symbols.store.symbol(id) else {
             continue;
         };
-        if draw_symbol_row(ui, symbol, selected == Some(id), &mut row) {
+        if draw_symbol_row(
+            ui,
+            symbol,
+            coverage.hits(id),
+            selected == Some(id),
+            &mut row,
+        ) {
             selected = Some(id);
         }
     }
@@ -164,6 +190,25 @@ fn draw_module_summary(ui: &mut egui::Ui, symbols: &SymbolSession) {
             },
         );
     }
+    if !symbols.load_instances().is_empty() {
+        egui::CollapsingHeader::new(format!("Runtime code ({})", symbols.load_instances().len()))
+            .show(ui, |ui| {
+                for instance in symbols.load_instances() {
+                    let name = symbols
+                        .segments()
+                        .iter()
+                        .find(|segment| segment.id == instance.segment)
+                        .map_or("Unknown", |segment| segment.name.as_str());
+                    ui.monospace(format!(
+                        "{}  CPU {:X}  gen {}{}",
+                        name,
+                        instance.runtime_base.address,
+                        instance.generation,
+                        if instance.active { "" } else { "  inactive" }
+                    ));
+                }
+            });
+    }
     if symbols
         .modules
         .iter()
@@ -204,6 +249,167 @@ fn draw_filters(ui: &mut egui::Ui, state: &mut SymbolBrowserState) {
                     ui.selectable_value(&mut state.location_filter, filter, filter.label());
                 }
             });
+        egui::ComboBox::from_id_salt("symbol_execution_filter")
+            .selected_text(state.execution_filter.label())
+            .show_ui(ui, |ui| {
+                for filter in EXECUTION_FILTERS {
+                    if ui
+                        .selectable_value(&mut state.execution_filter, filter, filter.label())
+                        .clicked()
+                        && filter != SymbolExecutionFilter::Executed
+                    {
+                        state.sort = SymbolSort::Search;
+                    }
+                }
+            });
+        egui::ComboBox::from_id_salt("symbol_sort")
+            .selected_text(state.sort.label())
+            .show_ui(ui, |ui| {
+                for sort in SYMBOL_SORTS {
+                    if ui
+                        .selectable_value(&mut state.sort, sort, sort.label())
+                        .clicked()
+                        && sort == SymbolSort::MostExecuted
+                    {
+                        state.execution_filter = SymbolExecutionFilter::Executed;
+                    }
+                }
+            });
+    });
+}
+
+fn search_symbols(
+    symbols: &SymbolSession,
+    coverage: &ExecutionCoverage,
+    state: &SymbolBrowserState,
+) -> Vec<crate::symbols::SymbolId> {
+    let matches = |symbol: &SymbolRecord| {
+        state.kind_filter.is_none_or(|kind| symbol.kind == kind)
+            && location_matches(symbol, state.location_filter)
+            && match state.execution_filter {
+                SymbolExecutionFilter::All => true,
+                SymbolExecutionFilter::Executed => coverage.hits(symbol.id) != 0,
+                SymbolExecutionFilter::Unexecuted => coverage.hits(symbol.id) == 0,
+            }
+    };
+
+    if state.execution_filter == SymbolExecutionFilter::Executed {
+        let query = state.query.trim().to_ascii_lowercase();
+        let mut results = coverage
+            .executed_ids()
+            .filter_map(|id| symbols.store.symbol(id))
+            .filter(|symbol| matches(symbol))
+            .filter_map(|symbol| query_rank(symbol, &query).map(|rank| (symbol.id, rank)))
+            .collect::<Vec<_>>();
+        results.sort_unstable_by(|(left_id, left_rank), (right_id, right_rank)| {
+            let hit_order = if state.sort == SymbolSort::MostExecuted {
+                coverage.hits(*right_id).cmp(&coverage.hits(*left_id))
+            } else {
+                std::cmp::Ordering::Equal
+            };
+            hit_order
+                .then_with(|| left_rank.cmp(right_rank))
+                .then_with(|| left_id.cmp(right_id))
+        });
+        return results
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|(id, _)| id)
+            .collect();
+    }
+
+    symbols
+        .store
+        .search_ids_matching(&state.query, MAX_RESULTS, matches)
+}
+
+fn query_rank(symbol: &SymbolRecord, query: &str) -> Option<u8> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    let name = symbol.name.to_ascii_lowercase();
+    if name == query {
+        Some(0)
+    } else if name.starts_with(query) {
+        Some(1)
+    } else if name.contains(query) {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+fn draw_runtime_candidates(
+    ui: &mut egui::Ui,
+    state: &mut SymbolBrowserState,
+    coverage: &ExecutionCoverage,
+    actions: &mut DebugUiActions,
+) {
+    let mut candidates = coverage.runtime_candidates().cloned().collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return;
+    }
+    candidates.sort_unstable_by(|left, right| {
+        right
+            .calls
+            .cmp(&left.calls)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    egui::CollapsingHeader::new(format!("Discovered code ({})", candidates.len()))
+        .default_open(true)
+        .show(ui, |ui| {
+            for candidate in candidates.iter().take(100) {
+                draw_runtime_candidate(ui, state, candidate, actions);
+            }
+            if candidates.len() > 100 {
+                ui.weak(format!("{} more", candidates.len() - 100));
+            }
+        });
+}
+
+fn draw_runtime_candidate(
+    ui: &mut egui::Ui,
+    state: &mut SymbolBrowserState,
+    candidate: &RuntimeSymbolCandidate,
+    actions: &mut DebugUiActions,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.monospace(&candidate.name);
+        ui.weak(format!(
+            "{} calls | {:?} | {:?}",
+            candidate.calls, candidate.provenance, candidate.confidence
+        ));
+        if let Some(storage) = candidate.location.storage {
+            ui.monospace(format!("ROM {:X}", storage.offset));
+        }
+        if ui.small_button("Code").clicked()
+            && let Some(cpu) = candidate.location.cpu
+            && let Ok(cpu_address) = u32::try_from(cpu.address)
+        {
+            actions.disasm_target = Some(DisassemblyTarget {
+                cpu_address,
+                storage_offset: candidate.location.storage.map(|storage| storage.offset),
+                thumb: match candidate.location.exec_mode {
+                    ExecMode::Thumb => Some(true),
+                    ExecMode::Arm => Some(false),
+                    _ => None,
+                },
+            });
+            actions.focus_tab = Some(DebugTab::Disassembler);
+        }
+        if ui.small_button("Promote").clicked() {
+            state.editor = Some(SymbolEditorState {
+                original_user_name: None,
+                draft: UserSymbolDraft {
+                    name: candidate.name.clone(),
+                    location: candidate.location,
+                    value: None,
+                    kind: SymbolKind::Function,
+                    size: None,
+                    comment: None,
+                },
+            });
+        }
     });
 }
 
@@ -221,8 +427,9 @@ fn location_matches(symbol: &SymbolRecord, filter: SymbolLocationFilter) -> bool
 fn draw_symbol_details(
     ui: &mut egui::Ui,
     state: &mut SymbolBrowserState,
+    symbols: &SymbolSession,
     symbol: &SymbolRecord,
-    actions: &mut DebugUiActions,
+    hits: u64,
 ) {
     ui.separator();
     ui.label(
@@ -247,6 +454,9 @@ fn draw_symbol_details(
             }
             if let Some(storage) = symbol.location.storage {
                 detail_row(ui, "ROM", format!("{:X}", storage.offset));
+                if let Some(cpu) = symbols.active_runtime_cpu_for_storage(storage) {
+                    detail_row(ui, "Runtime CPU", format!("{:X}", cpu.address));
+                }
             }
             if let Some(value) = symbol.value {
                 detail_row(ui, "Value", format!("{value:X}"));
@@ -255,6 +465,7 @@ fn draw_symbol_details(
                 detail_row(ui, "Size", format!("{size:X}"));
             }
             detail_row(ui, "Source", format!("{:?}", symbol.provenance.kind));
+            detail_row(ui, "Executed", format!("{hits} instructions"));
             if let Some(comment) = &symbol.comment {
                 detail_row(ui, "Comment", comment.clone());
             }
@@ -273,7 +484,6 @@ fn draw_symbol_details(
             },
         });
     }
-    draw_editor(ui, state, actions);
     ui.separator();
 }
 
@@ -333,6 +543,7 @@ fn detail_row(ui: &mut egui::Ui, label: &str, value: String) {
 fn draw_symbol_row(
     ui: &mut egui::Ui,
     symbol: &SymbolRecord,
+    hits: u64,
     selected: bool,
     row: &mut SymbolRowContext<'_>,
 ) -> bool {
@@ -340,12 +551,23 @@ fn draw_symbol_row(
     ui.horizontal_wrapped(|ui| {
         clicked = ui.selectable_label(selected, &symbol.name).clicked();
         ui.weak(format!("{:?}", symbol.kind));
+        if hits != 0 {
+            ui.colored_label(
+                crate::debug::common::color32(crate::debug::common::debug_colors(ui).changed),
+                format!("{hits} hits"),
+            );
+        }
         if let Some(bank) = symbol.location.bank {
             ui.monospace(format!("B{bank:X}"));
         }
-        if let Some(cpu) = symbol.location.cpu {
+        let runtime_cpu = symbol
+            .location
+            .storage
+            .and_then(|storage| row.symbols.active_runtime_cpu_for_storage(storage));
+        if let Some(cpu) = runtime_cpu.or(symbol.location.cpu) {
             ui.monospace(format!("CPU {:X}", cpu.address));
-            if (symbol.location.exec_mode == ExecMode::Sm83 && cpu.address < 0x8000
+            if (runtime_cpu.is_some()
+                || symbol.location.exec_mode == ExecMode::Sm83 && cpu.address < 0x8000
                 || row.exec_mode == ExecMode::Arm
                     && (0x0800_0000..=0x0DFF_FFFF).contains(&cpu.address)
                 || symbol.location.exec_mode == ExecMode::V30 && cpu.address <= 0x0F_FFFF)
@@ -365,7 +587,7 @@ fn draw_symbol_row(
                 row.actions.focus_tab = Some(DebugTab::Disassembler);
             }
             if let Some(storage) = symbol.location.storage {
-                let physical = row.exec_mode == ExecMode::Sm83;
+                let physical = row.exec_mode == ExecMode::Sm83 && runtime_cpu.is_none();
                 let is_set = row.cpu_debug.is_some_and(|info| {
                     if physical {
                         info.rom_breakpoints.contains(&storage.offset)

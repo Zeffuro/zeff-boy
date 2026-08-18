@@ -13,7 +13,7 @@ use zeff_emu_common::address::Address;
 const OUTPUT_LIMIT: usize = 500;
 const HISTORY_LIMIT: usize = 100;
 const READ_LIMIT: usize = 64;
-const COMMANDS: [&str; 15] = [
+const COMMANDS: [&str; 20] = [
     "help",
     "clear",
     "find",
@@ -29,6 +29,11 @@ const COMMANDS: [&str; 15] = [
     "label",
     "comment",
     "breakonce",
+    "breakafter",
+    "breakevent",
+    "nextframe",
+    "call",
+    "callundo",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,18 +55,22 @@ pub(crate) struct DebugConsoleState {
     history: Vec<String>,
     history_index: Option<usize>,
     pub(crate) pending_read: Option<PendingConsoleRead>,
+    guest_call_pending: bool,
+    guest_call_undo: Option<Vec<u8>>,
 }
 
 impl Default for DebugConsoleState {
     fn default() -> Self {
         let mut output = VecDeque::new();
-        output.push_back("Debug Console — type help for commands".to_owned());
+        output.push_back("Debug Console - type help for commands".to_owned());
         Self {
             input: String::new(),
             output,
             history: Vec::new(),
             history_index: None,
             pending_read: None,
+            guest_call_pending: false,
+            guest_call_undo: None,
         }
     }
 }
@@ -229,6 +238,31 @@ fn run_command(state: &mut DebugConsoleState, input: &str, context: CommandConte
             args.first().copied(),
             context.actions,
         ),
+        "breakafter" => add_hit_count_breakpoint(
+            state,
+            context.symbols,
+            args.first().copied(),
+            args.get(1).copied(),
+            context.actions,
+        ),
+        "breakevent" => toggle_event_breakpoint(
+            state,
+            context.cpu_debug,
+            args.first().copied(),
+            context.actions,
+        ),
+        "nextframe" => {
+            context.actions.next_frame_requested = true;
+            state.push("Running to next frame".to_owned());
+        }
+        "call" => queue_guest_call(
+            state,
+            context.symbols,
+            context.cpu_debug,
+            &args,
+            context.actions,
+        ),
+        "callundo" => queue_guest_call_undo(state, context.actions),
         "label" => queue_label(
             state,
             context.symbols,
@@ -253,6 +287,11 @@ fn show_help(state: &mut DebugConsoleState) {
         "rom <off|symbol>       Open ROM Viewer",
         "break <addr|symbol>    Toggle breakpoint",
         "breakonce <addr|symbol> Break once",
+        "breakafter <addr|symbol> <hits> Break after N hits",
+        "breakevent <interrupt|dma> Toggle event breakpoint",
+        "nextframe             Run to next frame",
+        "call <symbol> [limit] Execute a function while suspended",
+        "callundo              Undo the last successful call",
         "label <name>           Label current code location",
         "label <addr> <name>    Label a CPU address",
         "comment <symbol> <text> Add or replace a comment",
@@ -260,6 +299,98 @@ fn show_help(state: &mut DebugConsoleState) {
         "clear                  Clear output",
     ] {
         state.push(line.to_owned());
+    }
+}
+
+fn queue_guest_call(
+    state: &mut DebugConsoleState,
+    symbols: &SymbolSession,
+    cpu: Option<&CpuDebugSnapshot>,
+    args: &[&str],
+    actions: &mut DebugUiActions,
+) {
+    let Some(name) = args.first() else {
+        state.push("Usage: call <symbol> [instruction limit]".to_owned());
+        return;
+    };
+    if state.guest_call_pending {
+        state.push("A guest call is already running".to_owned());
+        return;
+    }
+    if !cpu.is_some_and(|cpu| cpu.cpu_state.eq_ignore_ascii_case("Suspended")) {
+        state.push("Suspend the CPU before calling guest code".to_owned());
+        return;
+    }
+    let budget = match args.get(1) {
+        Some(value) => match value.parse::<u64>() {
+            Ok(value) if (1..=1_000_000).contains(&value) => value,
+            _ => {
+                state.push("Instruction limit must be 1 to 1000000".to_owned());
+                return;
+            }
+        },
+        None => 100_000,
+    };
+    let mut candidates = exact_symbols(symbols, name)
+        .into_iter()
+        .filter(|symbol| matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label))
+        .filter_map(|symbol| {
+            let storage = symbol.location.storage;
+            let overlay = storage.and_then(|storage| {
+                symbols
+                    .active_runtime_cpu_for_storage(storage)
+                    .map(|cpu| cpu.address)
+            });
+            let target = overlay
+                .or_else(|| symbol.location.cpu.map(|cpu| cpu.address))
+                .or_else(|| {
+                    storage.and_then(|storage| {
+                        symbols
+                            .runtime_cpu_for_storage(storage)
+                            .map(|cpu| cpu.address)
+                    })
+                })?;
+            Some((symbol, target, overlay.is_some()))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_unstable_by_key(|(symbol, target, overlay)| {
+        (*target, symbol.location.exec_mode, *overlay)
+    });
+    candidates
+        .dedup_by_key(|(symbol, target, overlay)| (*target, symbol.location.exec_mode, *overlay));
+    let [(symbol, target, explicit_overlay)] = candidates.as_slice() else {
+        state.push(if candidates.is_empty() {
+            format!("Could not resolve callable symbol {name}")
+        } else {
+            format!("Ambiguous callable symbol {name}")
+        });
+        return;
+    };
+    let Ok(target) = u32::try_from(*target) else {
+        state.push(format!("{} is outside the CPU address space", symbol.name));
+        return;
+    };
+    actions.guest_call = Some(crate::emu_thread::GuestCallRequest {
+        name: symbol.name.clone(),
+        target,
+        storage_offset: symbol.location.storage.map(|storage| storage.offset),
+        explicit_overlay: *explicit_overlay,
+        exec_mode: symbol.location.exec_mode,
+        instruction_budget: budget,
+    });
+    state.guest_call_pending = true;
+    state.push(format!("Calling {} at ${target:X}", symbol.name));
+}
+
+fn queue_guest_call_undo(state: &mut DebugConsoleState, actions: &mut DebugUiActions) {
+    if state.guest_call_pending {
+        state.push("Wait for the current guest call".to_owned());
+    } else if let Some(saved) = &state.guest_call_undo {
+        actions.undo_guest_call = Some(saved.clone());
+        state.guest_call_pending = true;
+        state.push("Restoring pre-call state".to_owned());
+    } else {
+        state.push("No guest call to undo".to_owned());
     }
 }
 
@@ -432,12 +563,18 @@ fn goto_target(
         state.push("Usage: goto <symbol>".to_owned());
         return;
     };
-    if let Some(symbol) = exact_symbols(symbols, value).into_iter().find(|symbol| {
-        symbol.location.cpu.is_some()
-            && symbol.location.storage.is_some()
-            && matches!(symbol.location.exec_mode, ExecMode::Sm83 | ExecMode::V30)
-    }) {
-        let cpu_address = symbol.location.cpu.unwrap().address;
+    if let Some((symbol, cpu_address)) = exact_symbols(symbols, value)
+        .into_iter()
+        .filter(|symbol| symbol.location.storage.is_some())
+        .find_map(|symbol| {
+            let cpu = symbol
+                .location
+                .storage
+                .and_then(|storage| symbols.runtime_cpu_for_storage(storage))
+                .or(symbol.location.cpu)?;
+            Some((symbol, cpu.address))
+        })
+    {
         let storage_offset = symbol.location.storage.unwrap().offset;
         if let Ok(cpu_address) = u32::try_from(cpu_address) {
             actions.disasm_target = Some(DisassemblyTarget {
@@ -578,6 +715,97 @@ fn add_one_shot_breakpoint(
         }
         [] => state.push(format!("Could not resolve {value}")),
         [_, _, ..] => state.push(format!("Ambiguous CPU symbol: {value}")),
+    }
+}
+
+fn add_hit_count_breakpoint(
+    state: &mut DebugConsoleState,
+    symbols: &SymbolSession,
+    value: Option<&str>,
+    hits: Option<&str>,
+    actions: &mut DebugUiActions,
+) {
+    let (Some(value), Some(hits)) = (value, hits) else {
+        state.push("Usage: breakafter <address|symbol> <hits>".to_owned());
+        return;
+    };
+    let Ok(hits) = hits.parse::<u64>() else {
+        state.push("Hit count must be a positive integer".to_owned());
+        return;
+    };
+    if hits == 0 {
+        state.push("Hit count must be a positive integer".to_owned());
+        return;
+    }
+    if let Some(address) = parse_hex(value).and_then(|value| Address::try_from(value).ok()) {
+        actions.add_breakpoint_after = Some((address, hits));
+        state.push(format!("Breaking at CPU ${address:X} after {hits} hits"));
+        return;
+    }
+
+    let exact = exact_symbols(symbols, value);
+    if symbols.exec_mode() == ExecMode::Sm83
+        && exact.iter().any(|symbol| symbol.location.storage.is_some())
+    {
+        state.push("Hit-count physical ROM breakpoints are not supported yet".to_owned());
+        return;
+    }
+    let mut addresses = exact
+        .iter()
+        .filter_map(|symbol| symbol.location.cpu)
+        .filter_map(|cpu| Address::try_from(cpu.address).ok())
+        .collect::<Vec<_>>();
+    addresses.sort_unstable();
+    addresses.dedup();
+    match addresses.as_slice() {
+        [address] => {
+            actions.add_breakpoint_after = Some((*address, hits));
+            state.push(format!("Breaking at CPU ${address:X} after {hits} hits"));
+        }
+        [] => state.push(format!("Could not resolve {value}")),
+        [_, _, ..] => state.push(format!("Ambiguous CPU symbol: {value}")),
+    }
+}
+
+fn toggle_event_breakpoint(
+    state: &mut DebugConsoleState,
+    cpu: Option<&CpuDebugSnapshot>,
+    value: Option<&str>,
+    actions: &mut DebugUiActions,
+) {
+    let Some(value) = value else {
+        state.push("Usage: breakevent <interrupt|dma>".to_owned());
+        return;
+    };
+    let Some(event) = parse_debug_event(value) else {
+        state.push(format!("Unknown event: {value}"));
+        return;
+    };
+    let Some(cpu) = cpu else {
+        state.push("CPU debug state is unavailable".to_owned());
+        return;
+    };
+    if !cpu.supported_events.contains(&event) {
+        state.push(format!(
+            "{} breakpoints are unavailable for this core",
+            event.label()
+        ));
+        return;
+    }
+    let enabled = !cpu.event_breakpoints.contains(&event);
+    actions.event_breakpoint_changes.push((event, enabled));
+    state.push(format!(
+        "{} {} breakpoint",
+        if enabled { "Enabled" } else { "Disabled" },
+        event.label()
+    ));
+}
+
+fn parse_debug_event(value: &str) -> Option<zeff_emu_common::debug::DebugEvent> {
+    match value.to_ascii_lowercase().as_str() {
+        "interrupt" | "irq" | "nmi" => Some(zeff_emu_common::debug::DebugEvent::Interrupt),
+        "dma" => Some(zeff_emu_common::debug::DebugEvent::Dma),
+        _ => None,
     }
 }
 
@@ -754,6 +982,33 @@ fn history_next(state: &mut DebugConsoleState) {
 }
 
 impl DebugConsoleState {
+    pub(crate) fn guest_call_completed(
+        &mut self,
+        name: &str,
+        instructions: u64,
+        undo_state: Vec<u8>,
+    ) {
+        self.guest_call_pending = false;
+        self.guest_call_undo = Some(undo_state);
+        self.push(format!("{name} returned after {instructions} instructions"));
+    }
+
+    pub(crate) fn guest_call_failed(&mut self, name: &str, error: &str) {
+        self.guest_call_pending = false;
+        self.push(format!("{name} failed: {error}"));
+    }
+
+    pub(crate) fn guest_call_undone(&mut self) {
+        self.guest_call_pending = false;
+        self.guest_call_undo = None;
+        self.push("Guest call undone".to_owned());
+    }
+
+    pub(crate) fn guest_call_undo_failed(&mut self, error: &str) {
+        self.guest_call_pending = false;
+        self.push(format!("Could not undo guest call: {error}"));
+    }
+
     fn push(&mut self, line: String) {
         self.output.push_back(line);
         while self.output.len() > OUTPUT_LIMIT {
@@ -766,11 +1021,11 @@ impl DebugConsoleState {
 mod tests {
     use super::{
         CommandContext, ConsoleReadSpace, DebugConsoleState, DebugConsoleViews, completions,
-        history_next, history_previous, parse_hex, run_command,
+        history_next, history_previous, parse_debug_event, parse_hex, run_command,
     };
     use crate::debug::{
-        DebugTab, DebugUiActions, DisassembledLine, DisassemblyView, MemoryViewerState,
-        RomViewerState,
+        CpuDebugSnapshot, DebugTab, DebugUiActions, DisassembledLine, DisassemblyView,
+        MemoryViewerState, RomViewerState,
     };
     use crate::symbols::import::{ImportContext, TargetInfo, import_symbols};
     use crate::symbols::{AddressSpaceId, ImageId, RegionId, SymbolSession};
@@ -780,6 +1035,44 @@ mod tests {
         assert_eq!(parse_hex("$C100"), Some(0xC100));
         assert_eq!(parse_hex("0x8560"), Some(0x8560));
         assert_eq!(parse_hex("12_34"), Some(0x1234));
+    }
+
+    #[test]
+    fn parses_event_breakpoint_names() {
+        use zeff_emu_common::debug::DebugEvent;
+
+        assert_eq!(parse_debug_event("irq"), Some(DebugEvent::Interrupt));
+        assert_eq!(parse_debug_event("NMI"), Some(DebugEvent::Interrupt));
+        assert_eq!(parse_debug_event("dma"), Some(DebugEvent::Dma));
+        assert_eq!(parse_debug_event("scanline"), None);
+    }
+
+    fn suspended_cpu() -> CpuDebugSnapshot {
+        CpuDebugSnapshot {
+            register_lines: Vec::new(),
+            flags: Vec::new(),
+            status_text: String::new(),
+            cpu_state: "Suspended".to_owned(),
+            pc: 0,
+            cycles: 0,
+            last_opcode_line: String::new(),
+            sections: Vec::new(),
+            io_registers: Vec::new(),
+            recent_opcodes: Vec::new(),
+            call_stack: Vec::new(),
+            call_stack_available: false,
+            breakpoints: Vec::new(),
+            one_shot_breakpoints: Vec::new(),
+            breakpoint_hit_conditions: Vec::new(),
+            supported_events: Vec::new(),
+            event_breakpoints: Vec::new(),
+            rom_breakpoints: Vec::new(),
+            watchpoints: Vec::new(),
+            hit_breakpoint: None,
+            hit_rom_breakpoint: None,
+            hit_watchpoint: None,
+            hit_event: None,
+        }
     }
 
     #[test]
@@ -881,6 +1174,40 @@ mod tests {
 
         run_command(
             &mut state,
+            "breakafter C124 8",
+            CommandContext {
+                symbols: &symbols,
+                cpu_debug: None,
+                rom_debug: None,
+                disassembly: None,
+                views: DebugConsoleViews {
+                    memory: &mut memory,
+                    rom: &mut rom,
+                },
+                actions: &mut actions,
+            },
+        );
+        assert_eq!(actions.add_breakpoint_after, Some((0xC124, 8)));
+
+        run_command(
+            &mut state,
+            "nextframe",
+            CommandContext {
+                symbols: &symbols,
+                cpu_debug: None,
+                rom_debug: None,
+                disassembly: None,
+                views: DebugConsoleViews {
+                    memory: &mut memory,
+                    rom: &mut rom,
+                },
+                actions: &mut actions,
+            },
+        );
+        assert!(actions.next_frame_requested);
+
+        run_command(
+            &mut state,
             "comment UpdatePlayer Main movement routine",
             CommandContext {
                 symbols: &symbols,
@@ -898,6 +1225,51 @@ mod tests {
             actions.user_symbol.unwrap().comment.as_deref(),
             Some("Main movement routine")
         );
+    }
+
+    #[test]
+    fn guest_call_command_requires_a_symbol_and_queues_a_budget() {
+        let mut symbols = SymbolSession::default();
+        let module = import_symbols(
+            "game.sym",
+            b"02:4560 UpdatePlayer",
+            &ImportContext {
+                target: TargetInfo {
+                    system: zeff_emu_common::system::System::Gb,
+                },
+                image: ImageId(0),
+                rom_region: RegionId(0),
+                cpu_space: AddressSpaceId(0),
+                source_name: None,
+            },
+        )
+        .unwrap();
+        symbols.store.extend(module.symbols);
+        let cpu = suspended_cpu();
+        let mut state = DebugConsoleState::default();
+        let mut memory = MemoryViewerState::new();
+        let mut rom = RomViewerState::new();
+        let mut actions = DebugUiActions::none();
+        run_command(
+            &mut state,
+            "call UpdatePlayer 25",
+            CommandContext {
+                symbols: &symbols,
+                cpu_debug: Some(&cpu),
+                rom_debug: None,
+                disassembly: None,
+                views: DebugConsoleViews {
+                    memory: &mut memory,
+                    rom: &mut rom,
+                },
+                actions: &mut actions,
+            },
+        );
+
+        let call = actions.guest_call.unwrap();
+        assert_eq!(call.target, 0x4560);
+        assert_eq!(call.storage_offset, Some(0x8560));
+        assert_eq!(call.instruction_budget, 25);
     }
 
     #[test]

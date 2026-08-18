@@ -11,7 +11,18 @@ pub(super) fn draw_source_viewer_content(
     cpu_debug: Option<&crate::debug::CpuDebugSnapshot>,
     actions: &mut crate::debug::DebugUiActions,
 ) {
-    let current = disassembly.and_then(|view| symbols.source_reference_for_disassembly(view));
+    let current = disassembly
+        .and_then(|view| symbols.source_reference_for_disassembly(view))
+        .map(|mut reference| {
+            if let Some(path) = state.source_path_overrides.get(&reference.source_file) {
+                reference.path.clone_from(path);
+            } else if let Some(path) =
+                remap_source_path(&reference.path, &state.source_root_mappings)
+            {
+                reference.path = path;
+            }
+            reference
+        });
     let current_source_line = current
         .as_ref()
         .map(|reference| (reference.source_file, reference.line));
@@ -20,6 +31,39 @@ pub(super) fn draw_source_viewer_content(
             ui.monospace(format!("{}:{}", reference.display_path, reference.line));
             if ui.button("Open source").clicked() {
                 load_source(state, reference);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui.small_button("Locate...").clicked()
+                && let Some(path) = crate::platform::FileDialog::new()
+                    .set_title("Locate source file")
+                    .pick_file()
+            {
+                state
+                    .source_path_overrides
+                    .insert(reference.source_file, path.clone());
+                let mut mapped = reference.clone();
+                mapped.path = path;
+                load_source(state, &mapped);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui.small_button("Map folder...").clicked()
+                && let Some(source_root) = reference.path.parent()
+                && let Some(mapped_root) = crate::platform::FileDialog::new()
+                    .set_title("Select matching source folder")
+                    .pick_folder()
+            {
+                state
+                    .source_root_mappings
+                    .retain(|(root, _)| root != source_root);
+                state
+                    .source_root_mappings
+                    .push((source_root.to_path_buf(), mapped_root));
+                if let Some(path) = remap_source_path(&reference.path, &state.source_root_mappings)
+                {
+                    let mut mapped = reference.clone();
+                    mapped.path = path;
+                    load_source(state, &mapped);
+                }
             }
             if state.loaded_path.as_ref() == Some(&reference.path)
                 && ui.button("Current line").clicked()
@@ -85,36 +129,74 @@ fn draw_breakpoint_button(
     source_file: usize,
     line: u32,
 ) {
-    if symbols.exec_mode() != crate::symbols::ExecMode::Sm83 {
+    let offsets = symbols.source_breakpoint_offsets(source_file, line);
+    if symbols.exec_mode() == crate::symbols::ExecMode::Sm83 && !offsets.is_empty() {
+        let set = cpu_debug.is_some_and(|info| {
+            offsets
+                .iter()
+                .all(|offset| info.rom_breakpoints.contains(offset))
+        });
+        if breakpoint_button(ui, set, offsets.len()).clicked() {
+            if set {
+                actions.remove_rom_breakpoints.extend_from_slice(offsets);
+            } else if let Some(info) = cpu_debug {
+                actions.toggle_rom_breakpoints.extend(
+                    offsets
+                        .iter()
+                        .filter(|offset| !info.rom_breakpoints.contains(offset))
+                        .copied(),
+                );
+            }
+        }
         return;
     }
-    let offsets = symbols.source_breakpoint_offsets(source_file, line);
-    if offsets.is_empty() {
+
+    let addresses = symbols.source_breakpoint_addresses(source_file, line);
+    if addresses.is_empty() {
         return;
     }
     let set = cpu_debug.is_some_and(|info| {
-        offsets
+        addresses
             .iter()
-            .all(|offset| info.rom_breakpoints.contains(offset))
+            .all(|address| info.breakpoints.contains(address))
     });
-    let action = if set { "Remove" } else { "Set" };
-    let label = if offsets.len() == 1 {
-        format!("{action} breakpoint")
-    } else {
-        format!("{action} {} breakpoints", offsets.len())
-    };
-    if ui.small_button(label).clicked() {
+    if breakpoint_button(ui, set, addresses.len()).clicked() {
         if set {
-            actions.remove_rom_breakpoints.extend_from_slice(offsets);
+            actions.remove_breakpoints.extend_from_slice(addresses);
         } else if let Some(info) = cpu_debug {
-            actions.toggle_rom_breakpoints.extend(
-                offsets
+            actions.toggle_breakpoints.extend(
+                addresses
                     .iter()
-                    .filter(|offset| !info.rom_breakpoints.contains(offset))
+                    .filter(|address| !info.breakpoints.contains(address))
                     .copied(),
             );
         }
     }
+}
+
+fn breakpoint_button(ui: &mut egui::Ui, set: bool, count: usize) -> egui::Response {
+    let action = if set { "Remove" } else { "Set" };
+    let label = if count == 1 {
+        format!("{action} breakpoint")
+    } else {
+        format!("{action} {count} breakpoints")
+    };
+    ui.small_button(label)
+}
+
+fn remap_source_path(
+    path: &std::path::Path,
+    mappings: &[(std::path::PathBuf, std::path::PathBuf)],
+) -> Option<std::path::PathBuf> {
+    mappings
+        .iter()
+        .filter_map(|(source, target)| {
+            path.strip_prefix(source)
+                .ok()
+                .map(|rest| (source, target, rest))
+        })
+        .max_by_key(|(source, _, _)| source.components().count())
+        .map(|(_, target, rest)| target.join(rest))
 }
 
 fn load_source(state: &mut SourceViewerState, reference: &SourceReference) {
@@ -154,5 +236,17 @@ mod tests {
     #[test]
     fn source_limit_is_reasonable_for_debug_panes() {
         assert_eq!(MAX_SOURCE_BYTES, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn source_mapping_prefers_the_longest_root() {
+        let mappings = vec![
+            ("/build".into(), "D:/src".into()),
+            ("/build/game".into(), "E:/game".into()),
+        ];
+        assert_eq!(
+            remap_source_path(std::path::Path::new("/build/game/src/main.c"), &mappings),
+            Some(std::path::PathBuf::from("E:/game/src/main.c"))
+        );
     }
 }

@@ -1,7 +1,10 @@
 mod cheats;
 mod data_models;
+mod execution_coverage;
 mod memory;
 pub(crate) mod mods;
+mod runtime_inference;
+mod trace;
 mod viewers;
 
 pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
@@ -12,11 +15,14 @@ pub(crate) use data_models::{
     PaletteRowDebug, RecentOpcodeDisplay, RomDebugInfo, RomInfoSection, Sega8GraphicsData,
     WatchHitDisplay, WatchpointDisplay,
 };
+pub(crate) use execution_coverage::ExecutionCoverage;
 pub(crate) use memory::{
     MemoryBookmark, MemoryByteDiff, MemorySearchMode, MemorySearchResult, MemoryViewerState,
     RomSearchResult, RomViewerState,
 };
 pub(crate) use mods::ModState;
+pub(crate) use runtime_inference::RuntimeSymbolCandidate;
+pub(crate) use trace::TraceViewerState;
 pub(crate) use viewers::{
     OamViewerState, PerfInfo, SourceViewerState, TileViewerPlatform, TileViewerRequest,
     TileViewerState, TilemapViewerState,
@@ -70,6 +76,8 @@ pub(crate) struct DebugWindowState {
     pub(crate) symbol_browser: SymbolBrowserState,
     pub(crate) console: super::DebugConsoleState,
     pub(crate) perf_history: crate::debug::perf_monitor::PerfHistory,
+    pub(crate) trace: TraceViewerState,
+    pub(crate) execution_coverage: ExecutionCoverage,
     pub(crate) settings_tab: usize,
     pub(crate) camera_devices: Vec<crate::camera::CameraDeviceInfo>,
     pub(crate) camera_device_error: Option<String>,
@@ -112,6 +120,8 @@ impl DebugWindowState {
             symbol_browser: SymbolBrowserState::default(),
             console: super::DebugConsoleState::default(),
             perf_history: crate::debug::perf_monitor::PerfHistory::new(),
+            trace: TraceViewerState::new(),
+            execution_coverage: ExecutionCoverage::default(),
             settings_tab: 0,
             camera_devices: Vec::new(),
             camera_device_error: None,
@@ -148,6 +158,40 @@ impl SymbolLocationFilter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SymbolExecutionFilter {
+    #[default]
+    All,
+    Executed,
+    Unexecuted,
+}
+
+impl SymbolExecutionFilter {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::All => "Any execution",
+            Self::Executed => "Executed",
+            Self::Unexecuted => "Not executed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SymbolSort {
+    #[default]
+    Search,
+    MostExecuted,
+}
+
+impl SymbolSort {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Search => "Search order",
+            Self::MostExecuted => "Most executed",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct SymbolBrowserState {
     pub(crate) query: String,
@@ -157,6 +201,11 @@ pub(crate) struct SymbolBrowserState {
     pub(crate) last_kind_filter: Option<crate::symbols::SymbolKind>,
     pub(crate) location_filter: SymbolLocationFilter,
     pub(crate) last_location_filter: SymbolLocationFilter,
+    pub(crate) execution_filter: SymbolExecutionFilter,
+    pub(crate) last_execution_filter: SymbolExecutionFilter,
+    pub(crate) sort: SymbolSort,
+    pub(crate) last_sort: SymbolSort,
+    pub(crate) last_coverage_revision: u64,
     pub(crate) results: Vec<crate::symbols::SymbolId>,
     pub(crate) selected: Option<crate::symbols::SymbolId>,
     pub(crate) editor: Option<SymbolEditorState>,

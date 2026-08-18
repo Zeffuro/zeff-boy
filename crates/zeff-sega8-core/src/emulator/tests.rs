@@ -10,11 +10,12 @@ use crate::hardware::constants::{
     IO_PORT_GG_SERIAL_RX, IO_PORT_GG_SERIAL_TX, IO_PORT_GG_START, IO_PORT_VDP_CONTROL,
     IO_PORT_VDP_DATA, RGBA_CHANNELS, SEGA_HEADER_MAGIC, SEGA_HEADER_SIZE, SMS_MODE4_TILE_BYTES,
     SMS_SCREEN_H, SMS_SCREEN_W, VDP_CONTROL_REGISTER_WRITE_VALUE, VDP_REG0_MODE4,
+    VDP_REG1_FRAME_IRQ_ENABLE, VDP_REGISTER_MODE_CONTROL_2, VDP_STATUS_VBLANK,
 };
 use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 use zeff_emu_common::cheats::{CheatPatch, CheatValue};
-use zeff_emu_common::debug::WatchType;
+use zeff_emu_common::debug::{DebugEvent, WatchType};
 use zeff_emu_common::save_ram::SaveRamKind;
 
 fn rom_with_header(location: HeaderLocation, region_size: u8) -> Vec<u8> {
@@ -59,6 +60,36 @@ fn creates_master_system_emulator_from_auto_header() {
 }
 
 #[test]
+fn instruction_trace_captures_z80_bytes_and_mapping() {
+    let mut rom = rom_with_header(HeaderLocation::Offset0x7ff0, 0x4C);
+    rom[..2].copy_from_slice(&[0x3E, 0x42]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.set_instruction_trace_enabled(true);
+
+    emu.step_instruction();
+
+    let entry = emu.instruction_trace().iter().next().unwrap();
+    assert_eq!(entry.pc, 0);
+    assert_eq!(entry.physical_rom_offset, Some(0));
+    assert_eq!(&entry.instruction[..2], &[0x3E, 0x42]);
+}
+
+#[test]
+fn guest_call_returns_to_suspended_context() {
+    let mut rom = rom_with_header(HeaderLocation::Offset0x7ff0, 0x4C);
+    rom[0x100..0x103].copy_from_slice(&[0x3E, 0x42, 0xC9]);
+    let mut emu = Emulator::from_rom_data(&rom).unwrap();
+    emu.debug_suspend();
+    let regs = emu.cpu().regs();
+
+    assert_eq!(emu.debug_execute_guest_call(0x0100, 10), Ok(2));
+    assert_eq!(emu.cpu().regs().a, 0x42);
+    assert_eq!(emu.cpu().regs().pc, regs.pc);
+    assert_eq!(emu.cpu().regs().sp, regs.sp);
+    assert!(emu.is_suspended());
+}
+
+#[test]
 fn creates_game_gear_emulator_from_auto_header() {
     let emu = Emulator::new(&rom_with_header(HeaderLocation::Offset0x3ff0, 0x7A), 48_000)
         .expect("GG emulator should initialize");
@@ -91,6 +122,26 @@ fn path_hint_selects_pal_video_standard_from_region_tag() {
 
     assert_eq!(emu.video_standard(), Sega8VideoStandard::Pal);
     assert_eq!(emu.bus().vdp().total_scanlines(), 313);
+}
+
+#[test]
+fn interrupt_event_breakpoint_suspends_emulator() {
+    let mut emu =
+        Emulator::new_with_hint(&[0xFB, 0x00, 0x00], 48_000, SystemHint::MasterSystem).unwrap();
+    emu.set_event_breakpoint(DebugEvent::Interrupt, true);
+    emu.step_instruction();
+    emu.step_instruction();
+    set_vdp_register(
+        &mut emu,
+        VDP_REGISTER_MODE_CONTROL_2 as u8,
+        VDP_REG1_FRAME_IRQ_ENABLE,
+    );
+    emu.bus_mut().vdp_mut().set_status_bits(VDP_STATUS_VBLANK);
+
+    emu.step_instruction();
+
+    assert_eq!(emu.debug_hit_event(), Some(DebugEvent::Interrupt));
+    assert!(emu.is_suspended());
 }
 
 #[test]

@@ -14,8 +14,9 @@ mod user;
 mod ws;
 
 pub(crate) use model::{
-    AddressSpaceId, Confidence, CpuLocation, DebugAccess, ExecMode, ImageId, Provenance,
-    ProvenanceKind, RegionId, ResolvedDebugLocation, SourceFile, SourceLine, StorageLocation,
+    AddressSpaceId, Confidence, CpuLocation, DebugAccess, DebugSegment, ExecMode, ImageId,
+    LoadInstance, LoadInstanceId, Provenance, ProvenanceKind, RegionId, ResolvedDebugLocation,
+    ResolvedLoadInstance, SegmentId, SourceFile, SourceLine, StorageLocation, StorageRange,
     SymbolId, SymbolKind, SymbolLocation, SymbolRecord, SymbolScope, UserSymbolDraft,
 };
 pub(crate) use session::{SourceReference, SymbolSession};

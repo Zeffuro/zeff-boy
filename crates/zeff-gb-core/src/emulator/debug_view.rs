@@ -131,6 +131,8 @@ impl Emulator {
                 points
             },
             one_shot_breakpoints: self.debug.iter_one_shot_breakpoints().collect(),
+            breakpoint_hit_conditions: self.debug.iter_breakpoint_hit_conditions().collect(),
+            event_breakpoints: self.debug.iter_event_breakpoints().collect(),
             rom_breakpoints: self.rom_breakpoints.clone(),
             watchpoints: self
                 .debug
@@ -145,6 +147,7 @@ impl Emulator {
             hit_breakpoint: self.debug.hit_breakpoint,
             hit_rom_breakpoint: self.hit_rom_breakpoint,
             hit_watchpoint: self.debug.hit_watchpoint,
+            hit_event: self.debug.hit_event,
             tilt_is_mbc7: false,
             tilt_stick_controls_tilt: false,
             tilt_left_stick: (0.0, 0.0),

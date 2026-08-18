@@ -184,6 +184,7 @@ pub(crate) fn collect_emu_snapshot(
         rom_page,
         rom_size,
         rom_search_results,
+        instruction_trace: None,
     }
 }
 

@@ -17,16 +17,22 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
     let recent_opcodes = super::super::opcodes::sega8_recent_opcode_display(
         emu.recent_opcodes(super::super::opcodes::RECENT_OPCODE_LINE_COUNT),
     );
-    let debug_controls = super::super::build_debug_control_snapshot(
-        emu.iter_breakpoints(),
-        emu.iter_one_shot_breakpoints(),
-        emu.debug_watchpoints()
-            .iter()
-            .map(|watch| (watch.address, watch.end_address, watch.watch_type)),
-        emu.debug_hit_breakpoint(),
-        emu.debug_hit_watchpoint()
-            .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
-    );
+    let debug_controls =
+        super::super::build_debug_control_snapshot(super::super::DebugControlSources {
+            breakpoints: emu.iter_breakpoints(),
+            one_shot_breakpoints: emu.iter_one_shot_breakpoints(),
+            breakpoint_hit_conditions: emu.iter_breakpoint_hit_conditions(),
+            event_breakpoints: emu.iter_event_breakpoints(),
+            watchpoints: emu
+                .debug_watchpoints()
+                .iter()
+                .map(|watch| (watch.address, watch.end_address, watch.watch_type)),
+            hit_breakpoint: emu.debug_hit_breakpoint(),
+            hit_watchpoint: emu
+                .debug_hit_watchpoint()
+                .map(|hit| (hit.address, hit.old_value, hit.new_value, hit.watch_type)),
+            hit_event: emu.debug_hit_event(),
+        });
 
     CpuDebugSnapshot {
         register_lines: vec![
@@ -202,11 +208,15 @@ pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {
         call_stack_available: false,
         breakpoints: debug_controls.breakpoints,
         one_shot_breakpoints: debug_controls.one_shot_breakpoints,
+        breakpoint_hit_conditions: debug_controls.breakpoint_hit_conditions,
+        supported_events: vec![zeff_emu_common::debug::DebugEvent::Interrupt],
+        event_breakpoints: debug_controls.event_breakpoints,
         rom_breakpoints: Vec::new(),
         watchpoints: debug_controls.watchpoints,
         hit_breakpoint: debug_controls.hit_breakpoint,
         hit_rom_breakpoint: None,
         hit_watchpoint: debug_controls.hit_watchpoint,
+        hit_event: debug_controls.hit_event,
     }
 }
 

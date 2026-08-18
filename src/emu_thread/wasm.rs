@@ -164,6 +164,30 @@ impl EmuThread {
                 };
                 pending_responses.push_back(resp);
             }
+            EmuCommand::ExecuteGuestCall(request) => {
+                let name = request.name.clone();
+                let resp = match backend.execute_guest_call(&request) {
+                    Ok((instructions, undo_state)) => EmuResponse::GuestCallCompleted {
+                        name,
+                        instructions,
+                        undo_state,
+                    },
+                    Err(error) => EmuResponse::GuestCallFailed {
+                        name,
+                        error: error.to_string(),
+                    },
+                };
+                types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
+                pending_responses.push_back(resp);
+            }
+            EmuCommand::UndoGuestCall(state) => {
+                let resp = match backend.load_state_from_bytes(state) {
+                    Ok(()) => EmuResponse::GuestCallUndone,
+                    Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
+                };
+                types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
+                pending_responses.push_back(resp);
+            }
             EmuCommand::CaptureReplayStart { capture_id } => {
                 let resp = match backend.encode_state_bytes() {
                     Ok(bytes) => EmuResponse::ReplayStartCaptured {

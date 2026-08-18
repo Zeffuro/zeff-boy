@@ -42,6 +42,8 @@ pub(crate) struct SnapshotRequest {
     pub(crate) show_memory_viewer: bool,
     pub(crate) memory_view_start: Address,
     pub(crate) show_rom_viewer: bool,
+    pub(crate) show_instruction_trace: bool,
+    pub(crate) trace_after_sequence: Option<u64>,
     pub(crate) rom_view_start: u32,
     pub(crate) last_disasm_pc: Option<Address>,
     pub(crate) last_disasm_mapping: Option<u64>,
@@ -110,6 +112,16 @@ pub(crate) struct AudioConfig {
     pub(crate) midi_capture_active: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct GuestCallRequest {
+    pub(crate) name: String,
+    pub(crate) target: u32,
+    pub(crate) storage_offset: Option<u64>,
+    pub(crate) explicit_overlay: bool,
+    pub(crate) exec_mode: crate::symbols::ExecMode,
+    pub(crate) instruction_budget: u64,
+}
+
 pub(crate) struct FrameInput {
     pub(crate) frames: usize,
     pub(crate) replay_joypad_frames: Option<Vec<ReplayJoypadFrame>>,
@@ -119,6 +131,7 @@ pub(crate) struct FrameInput {
     pub(crate) zapper: ZapperInput,
     pub(crate) debug_step: bool,
     pub(crate) debug_continue: bool,
+    pub(crate) debug_suspend_after_frame: bool,
     pub(crate) audio: AudioConfig,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) snapshot: SnapshotRequest,
@@ -167,6 +180,8 @@ pub(crate) enum EmuCommand {
         dpad_pressed: u8,
     },
     CaptureStateBytes,
+    ExecuteGuestCall(GuestCallRequest),
+    UndoGuestCall(Vec<u8>),
     CaptureReplayStart {
         capture_id: u64,
     },
@@ -222,6 +237,17 @@ pub(crate) enum EmuResponse {
         error: String,
     },
     StateCaptureFailed(String),
+    GuestCallCompleted {
+        name: String,
+        instructions: u64,
+        undo_state: Vec<u8>,
+    },
+    GuestCallFailed {
+        name: String,
+        error: String,
+    },
+    GuestCallUndone,
+    GuestCallUndoFailed(String),
     FdsDiskSideChanged(u8),
     FdsDiskSideChangeFailed(String),
     #[cfg(not(target_arch = "wasm32"))]

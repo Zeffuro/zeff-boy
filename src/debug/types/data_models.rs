@@ -100,11 +100,15 @@ pub(crate) struct CpuDebugSnapshot {
 
     pub(crate) breakpoints: Vec<Address>,
     pub(crate) one_shot_breakpoints: Vec<Address>,
+    pub(crate) breakpoint_hit_conditions: Vec<zeff_emu_common::debug::BreakpointHitCondition>,
+    pub(crate) supported_events: Vec<zeff_emu_common::debug::DebugEvent>,
+    pub(crate) event_breakpoints: Vec<zeff_emu_common::debug::DebugEvent>,
     pub(crate) rom_breakpoints: Vec<u64>,
     pub(crate) watchpoints: Vec<WatchpointDisplay>,
     pub(crate) hit_breakpoint: Option<Address>,
     pub(crate) hit_rom_breakpoint: Option<u64>,
     pub(crate) hit_watchpoint: Option<WatchHitDisplay>,
+    pub(crate) hit_event: Option<zeff_emu_common::debug::DebugEvent>,
 }
 
 #[derive(Default)]
@@ -286,6 +290,7 @@ pub(crate) struct Sega8GraphicsData {
     pub(crate) tms9918_mode: String,
     pub(crate) sprite_table_base: usize,
     pub(crate) mode4: zeff_sega8_core::hardware::vdp::Mode4VdpDebugSnapshot,
+    pub(crate) tms9918: zeff_sega8_core::hardware::vdp::Tms9918VdpDebugSnapshot,
 }
 
 pub(crate) struct GbGraphicsData {
@@ -350,11 +355,15 @@ mod tests {
             call_stack_available: false,
             breakpoints: Vec::new(),
             one_shot_breakpoints: Vec::new(),
+            breakpoint_hit_conditions: Vec::new(),
+            supported_events: Vec::new(),
+            event_breakpoints: Vec::new(),
             rom_breakpoints: Vec::new(),
             watchpoints: Vec::new(),
             hit_breakpoint: None,
             hit_rom_breakpoint: None,
             hit_watchpoint: None,
+            hit_event: None,
         };
         state.sync(&info);
         assert!(!state.register_changed(0));

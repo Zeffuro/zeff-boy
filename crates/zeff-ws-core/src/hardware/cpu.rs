@@ -153,6 +153,7 @@ pub struct Cpu {
     pub last_trap: Option<CpuTrap>,
     pub(crate) interrupt_shadow: u8,
     pub(crate) brk_shadow: u8,
+    pub(crate) last_step_was_interrupt: bool,
     last_mul_overflow: bool,
 }
 
@@ -176,6 +177,7 @@ impl Cpu {
             last_trap: None,
             interrupt_shadow: 0,
             brk_shadow: 0,
+            last_step_was_interrupt: false,
             last_mul_overflow: false,
         };
         cpu.reset();
@@ -195,6 +197,7 @@ impl Cpu {
         self.last_trap = None;
         self.interrupt_shadow = 0;
         self.brk_shadow = 0;
+        self.last_step_was_interrupt = false;
         self.last_mul_overflow = false;
     }
 
@@ -226,6 +229,45 @@ impl Cpu {
         }
     }
 
+    pub(crate) fn begin_guest_call(
+        &mut self,
+        bus: &mut Bus,
+        target: u32,
+    ) -> Option<(u16, u16, bool, u8, u8)> {
+        let target = target & ADDRESS_MASK;
+        let cs_base = (u32::from(self.segments[SegmentRegister::Cs.index()]) << 4) & ADDRESS_MASK;
+        let offset = target.wrapping_sub(cs_base) & ADDRESS_MASK;
+        let target_ip = u16::try_from(offset).ok()?;
+        let state = (
+            self.ip,
+            self.get_reg16(REG_SP),
+            self.flags & FLAG_IF != 0,
+            self.interrupt_shadow,
+            self.brk_shadow,
+        );
+        self.push16(self.ip, bus);
+        self.ip = target_ip;
+        self.flags &= !FLAG_IF;
+        self.state = CpuState::Running;
+        Some(state)
+    }
+
+    pub(crate) fn finish_guest_call(
+        &mut self,
+        interrupts_enabled: bool,
+        interrupt_shadow: u8,
+        brk_shadow: u8,
+    ) {
+        if interrupts_enabled {
+            self.flags |= FLAG_IF;
+        } else {
+            self.flags &= !FLAG_IF;
+        }
+        self.interrupt_shadow = interrupt_shadow;
+        self.brk_shadow = brk_shadow;
+        self.state = CpuState::Suspended;
+    }
+
     pub fn pc(&self) -> u32 {
         self.physical_address(SegmentRegister::Cs, self.ip)
     }
@@ -239,7 +281,9 @@ impl Cpu {
             return None;
         }
 
+        self.last_step_was_interrupt = false;
         if self.service_pending_interrupt_or_brk(bus) {
+            self.last_step_was_interrupt = true;
             return None;
         }
 

@@ -107,6 +107,26 @@ fn control_port_register_write_updates_registers() {
 }
 
 #[test]
+fn tms_debug_snapshot_exposes_mode_and_table_bases() {
+    let mut vdp = Vdp::new();
+    vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = TMS_REG0_MODE_GRAPHICS_II;
+    vdp.registers[TMS_REGISTER_NAME_TABLE] = 0x0F;
+    vdp.registers[TMS_REGISTER_COLOR_TABLE] = 0x80;
+    vdp.registers[TMS_REGISTER_PATTERN_TABLE] = 0x04;
+    vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x7F;
+    vdp.registers[TMS_REGISTER_SPRITE_PATTERN_TABLE] = 0x07;
+
+    let debug = vdp.tms9918_debug_snapshot();
+
+    assert_eq!(debug.mode, Tms9918Mode::GraphicsII);
+    assert_eq!(debug.name_table_base, 0x3C00);
+    assert_eq!(debug.pattern_table_base, 0x2000);
+    assert_eq!(debug.color_table_base, 0x2000);
+    assert_eq!(debug.sprite_attribute_table_base, 0x3F80);
+    assert_eq!(debug.sprite_pattern_table_base, 0x3800);
+}
+
+#[test]
 fn control_port_sets_cram_write_address_and_data_port_writes_cram() {
     let mut vdp = Vdp::new();
 

@@ -199,6 +199,27 @@ impl Cpu {
         self.state = CpuState::Running;
     }
 
+    pub(crate) fn begin_guest_call(&mut self, target: u32, thumb: bool) -> (u32, u32, u32) {
+        let state = (self.pc(), self.regs[14], self.cpsr);
+        self.regs[14] = self.pc() | u32::from(self.thumb_state());
+        self.cpsr |= CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE;
+        self.cpsr = if thumb {
+            self.cpsr | CPSR_THUMB
+        } else {
+            self.cpsr & !CPSR_THUMB
+        };
+        self.set_pc(if thumb { target & !1 } else { target & !3 });
+        self.resume();
+        state
+    }
+
+    pub(crate) fn finish_guest_call(&mut self, saved_lr: u32, saved_cpsr: u32) {
+        self.regs[14] = saved_lr;
+        let interrupt_mask = CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE;
+        self.cpsr = (self.cpsr & !interrupt_mask) | (saved_cpsr & interrupt_mask);
+        self.suspend();
+    }
+
     pub fn mode(&self) -> CpuMode {
         CpuMode::from_bits((self.cpsr & CPSR_MODE_MASK) as u8)
     }
@@ -279,9 +300,9 @@ impl Cpu {
         Some(fetched)
     }
 
-    pub(crate) fn try_service_irq(&mut self, interrupt_pending: bool) {
+    pub(crate) fn try_service_irq(&mut self, interrupt_pending: bool) -> bool {
         if !interrupt_pending || self.cpsr & CPSR_IRQ_DISABLE != 0 {
-            return;
+            return false;
         }
 
         let old_cpsr = self.cpsr;
@@ -292,6 +313,7 @@ impl Cpu {
         self.set_pc(0x0000_0018);
         self.next_fetch_sequential = false;
         self.state = CpuState::Running;
+        true
     }
 
     fn fetched_condition_passed(&self, fetched: FetchedInstruction) -> bool {

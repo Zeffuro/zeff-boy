@@ -42,6 +42,7 @@ fn set_brk_vector(bus: &mut Bus, handler_ip: u16) {
 
 fn assert_interrupt_service_pushes_ip(cpu: &mut Cpu, bus: &mut Bus, expected_ip: u16) {
     assert!(cpu.step(bus).is_none());
+    assert!(cpu.last_step_was_interrupt);
     assert_eq!(cpu.segments[SegmentRegister::Cs.index()], 0xF000);
     assert_eq!(cpu.ip, 0x1234);
     assert_eq!(
