@@ -124,6 +124,10 @@ impl Cpu {
     pub(super) fn fetch_u8(&mut self, bus: &Bus) -> u8 {
         let value = bus.cpu_read(self.regs.pc);
         self.regs.pc = self.regs.pc.wrapping_add(1);
+        if usize::from(self.instruction_byte_count) < self.instruction_bytes.len() {
+            self.instruction_bytes[usize::from(self.instruction_byte_count)] = value;
+            self.instruction_byte_count += 1;
+        }
         value
     }
 

@@ -87,18 +87,27 @@ fn creates_master_system_emulator_from_auto_header() {
 }
 
 #[test]
-fn instruction_trace_captures_z80_bytes_and_mapping() {
+fn instruction_trace_captures_exact_z80_bytes_and_mapping() {
     let mut rom = rom_with_header(HeaderLocation::Offset0x7ff0, 0x4C);
-    rom[..2].copy_from_slice(&[0x3E, 0x42]);
+    rom[..5].copy_from_slice(&[
+        0x00, // NOP
+        0xCB, 0x11, // RL C
+        0x3E, 0x42, // LD A,$42
+    ]);
     let mut emu = Emulator::from_rom_data(&rom).unwrap();
     emu.set_instruction_trace_enabled(true);
 
-    emu.step_instruction();
+    for _ in 0..3 {
+        emu.step_instruction();
+    }
 
-    let entry = emu.instruction_trace().iter().next().unwrap();
-    assert_eq!(entry.pc, 0);
-    assert_eq!(entry.physical_rom_offset, Some(0));
-    assert_eq!(&entry.instruction[..2], &[0x3E, 0x42]);
+    let entries: Vec<_> = emu.instruction_trace().iter().collect();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].pc, 0);
+    assert_eq!(entries[0].physical_rom_offset, Some(0));
+    assert_eq!(entries[0].instruction_bytes(), &[0x00]);
+    assert_eq!(entries[1].instruction_bytes(), &[0xCB, 0x11]);
+    assert_eq!(entries[2].instruction_bytes(), &[0x3E, 0x42]);
 }
 
 #[test]

@@ -30,6 +30,7 @@ impl Emulator {
         let trace_active = watch_active || collect_bus_trace || instruction_trace_enabled;
         self.bus.debug_trace_enabled = trace_active;
         if trace_active {
+            self.bus.debug_trace_reads = watch_active || collect_bus_trace;
             self.bus.debug_trace_events.clear();
         }
 
@@ -43,11 +44,6 @@ impl Emulator {
         };
         let opcode = self.bus.cpu_peek(pc_before);
         let rom_offset = self.bus.cartridge.cpu_rom_offset(pc_before);
-        let mut instruction = [opcode, 0, 0];
-        if instruction_trace_enabled {
-            instruction[1] = self.bus.cpu_peek(pc_before.wrapping_add(1));
-            instruction[2] = self.bus.cpu_peek(pc_before.wrapping_add(2));
-        }
 
         self.opcode_log.push((pc_before, opcode, rom_offset));
 
@@ -88,7 +84,11 @@ impl Emulator {
                 rom_offset.map(|offset| offset as u64),
                 self.frame_count(),
                 cycles_before,
-                if interrupt { &[] } else { &instruction },
+                if interrupt {
+                    &[]
+                } else {
+                    self.cpu.instruction_bytes()
+                },
             );
             record.event = if interrupt {
                 Some(DebugEvent::Interrupt)
@@ -101,6 +101,7 @@ impl Emulator {
         });
         if trace_active {
             self.bus.debug_trace_enabled = false;
+            self.bus.debug_trace_reads = true;
             let mut events = std::mem::take(&mut self.bus.debug_trace_events);
 
             if collect_bus_trace {

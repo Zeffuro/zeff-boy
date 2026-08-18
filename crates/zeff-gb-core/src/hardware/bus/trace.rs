@@ -36,6 +36,11 @@ impl Bus {
         self.cpu_access_trace.drain(..).for_each(&mut on_event);
     }
 
+    #[inline]
+    pub(super) fn traces_cpu_writes(&self) -> bool {
+        self.trace_cpu_accesses || self.trace_cpu_writes
+    }
+
     pub(super) fn trace_cpu_read(&mut self, offset: u64, addr: u16, value: u8) {
         let at = MasterTicks::new(self.cpu_access_trace_origin.get().wrapping_add(offset));
         self.cpu_access_trace.push(CpuAccessTraceEvent::Read {

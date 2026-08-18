@@ -87,6 +87,35 @@ fn cpu_access_trace_preserves_bus_order_and_master_ticks() {
 }
 
 #[test]
+fn cpu_write_trace_skips_reads() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC000;
+    cpu.regs.a = 0x5A;
+    bus.write_byte(0xC000, 0xEA);
+    bus.write_byte(0xC001, 0x00);
+    bus.write_byte(0xC002, 0xC1);
+    bus.trace_cpu_writes = true;
+    bus.begin_cpu_access_trace_at(MasterTicks::new(100));
+
+    cpu.step(&mut bus);
+
+    let mut events = Vec::new();
+    bus.drain_cpu_access_trace(|event| events.push(event));
+    assert!(matches!(
+        events.as_slice(),
+        [CpuAccessTraceEvent::Write {
+            at: Some(at),
+            addr: 0xC100,
+            old_value: 0,
+            written_value: 0x5A,
+            new_value: 0x5A,
+            ..
+        }] if *at == MasterTicks::new(116)
+    ));
+}
+
+#[test]
 fn halt_bug_skips_next_pc_increment_once() {
     let mut cpu = Cpu::new();
     let mut bus = make_test_bus(HardwareMode::DMG);

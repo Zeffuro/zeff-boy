@@ -83,6 +83,7 @@ pub struct Bus {
     pub(crate) palette_luts: [[[u8; 4]; 64]; 8],
 
     pub(crate) debug_trace_enabled: bool,
+    pub(crate) debug_trace_reads: bool,
     pub(crate) debug_trace_events: Vec<DebugTraceEvent>,
     pub(crate) vs_credit_pressed: bool,
     pub(crate) vs_coin_pulse_frames: u8,
@@ -136,6 +137,7 @@ impl Bus {
                 rgb_ppu_emphasis,
             ),
             debug_trace_enabled: false,
+            debug_trace_reads: true,
             debug_trace_events: Vec::new(),
             vs_credit_pressed: false,
             vs_coin_pulse_frames: 0,

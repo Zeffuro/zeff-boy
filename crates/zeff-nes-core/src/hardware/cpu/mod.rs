@@ -40,6 +40,8 @@ pub struct Cpu {
     pub last_step_branch_taken_same_page: bool,
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
+    instruction_bytes: [u8; 3],
+    instruction_byte_count: u8,
     pub nmi_count: u64,
     pub irq_count: u64,
 }
@@ -69,6 +71,8 @@ impl Cpu {
             last_step_branch_taken_same_page: false,
             last_opcode: 0,
             last_opcode_pc: 0,
+            instruction_bytes: [0; 3],
+            instruction_byte_count: 0,
             nmi_count: 0,
             irq_count: 0,
         }
@@ -106,9 +110,13 @@ impl Cpu {
         self.last_step_branch_taken_same_page = false;
         self.last_opcode = 0;
         self.last_opcode_pc = self.pc;
+        self.instruction_bytes = [0; 3];
+        self.instruction_byte_count = 0;
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u64 {
+        self.instruction_bytes = [0; 3];
+        self.instruction_byte_count = 0;
         bus.prepare_cpu_instruction_accesses();
         self.last_step_kind = CpuStepKind::Idle;
         self.last_step_branch_taken_same_page = false;
@@ -195,7 +203,15 @@ impl Cpu {
     pub(crate) fn fetch8(&mut self, bus: &mut Bus) -> u8 {
         let v = bus.cpu_read(self.pc);
         self.pc = self.pc.wrapping_add(1);
+        if usize::from(self.instruction_byte_count) < self.instruction_bytes.len() {
+            self.instruction_bytes[usize::from(self.instruction_byte_count)] = v;
+            self.instruction_byte_count += 1;
+        }
         v
+    }
+
+    pub(crate) fn instruction_bytes(&self) -> &[u8] {
+        &self.instruction_bytes[..usize::from(self.instruction_byte_count)]
     }
 
     pub(crate) fn fetch16(&mut self, bus: &mut Bus) -> u16 {
@@ -304,6 +320,8 @@ impl Cpu {
         self.last_step_branch_taken_same_page = false;
         self.last_opcode = r.read_u8()?;
         self.last_opcode_pc = r.read_u16()?;
+        self.instruction_bytes = [0; 3];
+        self.instruction_byte_count = 0;
         self.nmi_count = 0;
         self.irq_count = 0;
         Ok(())

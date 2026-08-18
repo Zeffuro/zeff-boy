@@ -262,8 +262,7 @@ rmw_unofficial_modes!(
 
 // ANC: AND #imm, then copy bit 7 of result to carry.
 pub fn anc(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_read(addr);
+    let val = cpu.fetch8(bus);
     cpu.regs.a &= val;
     cpu.regs.set_zn(cpu.regs.a);
     cpu.regs
@@ -272,16 +271,14 @@ pub fn anc(cpu: &mut Cpu, bus: &mut Bus) {
 
 // ALR: AND #imm, then LSR A.
 pub fn alr(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_read(addr);
+    let val = cpu.fetch8(bus);
     cpu.regs.a &= val;
     cpu.lsr_acc();
 }
 
 // ARR: AND #imm, then ROR A. Carry and overflow set specially.
 pub fn arr(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_read(addr);
+    let val = cpu.fetch8(bus);
     cpu.regs.a &= val;
     let carry_in: u8 = if cpu.regs.get_flag(StatusFlags::CARRY) {
         0x80
@@ -298,8 +295,7 @@ pub fn arr(cpu: &mut Cpu, bus: &mut Bus) {
 
 // AXS/SBX: X = (A & X) - #imm (no borrow). Sets flags like CMP.
 pub fn axs(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_read(addr);
+    let val = cpu.fetch8(bus);
     let ax = cpu.regs.a & cpu.regs.x;
     let result = ax.wrapping_sub(val);
     cpu.regs.x = result;
@@ -310,8 +306,7 @@ pub fn axs(cpu: &mut Cpu, bus: &mut Bus) {
 // ATX/LAX #imm: unstable on hardware. Blargg's instr_test treats it as
 // immediate LAX: A and X receive the operand.
 pub fn atx(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_read(addr);
+    let val = cpu.fetch8(bus);
     cpu.regs.a = val;
     cpu.regs.x = val;
     cpu.regs.set_zn(val);
@@ -319,8 +314,7 @@ pub fn atx(cpu: &mut Cpu, bus: &mut Bus) {
 
 // SBC duplicate at 0xEB:identical to official SBC #imm.
 pub fn sbc_unofficial(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_immediate(bus);
-    let val = bus.cpu_read(addr);
+    let val = cpu.fetch8(bus);
     cpu.sbc(val);
 }
 

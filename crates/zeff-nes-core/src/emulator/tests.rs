@@ -246,13 +246,15 @@ fn instruction_trace_captures_mapping_and_register_changes() {
     emu.set_instruction_trace_enabled(true);
 
     emu.step_instruction();
+    emu.step_instruction();
 
-    let entry = emu.instruction_trace().iter().next().unwrap();
-    assert_eq!(entry.pc, 0x8000);
-    assert_eq!(entry.physical_rom_offset, Some(0));
-    assert_eq!(&entry.instruction[..2], &[0xA9, 0x42]);
+    let entries: Vec<_> = emu.instruction_trace().iter().collect();
+    assert_eq!(entries[0].pc, 0x8000);
+    assert_eq!(entries[0].physical_rom_offset, Some(0));
+    assert_eq!(entries[0].instruction_bytes(), &[0xA9, 0x42]);
+    assert_eq!(entries[1].instruction_bytes(), &[0xEA]);
     assert!(
-        entry
+        entries[0]
             .register_deltas()
             .iter()
             .any(|delta| delta.register == 0)

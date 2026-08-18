@@ -62,7 +62,7 @@ impl Bus {
             }
         };
         self.cpu_open_bus = val;
-        if self.debug_trace_enabled {
+        if self.debug_trace_enabled && self.debug_trace_reads {
             self.debug_trace_events.push(super::DebugTraceEvent::Read {
                 at,
                 space: TraceWriteKind::Memory,
@@ -327,5 +327,20 @@ mod tests {
                 mapped_addr: Some(0x2345),
             }]
         );
+    }
+
+    #[test]
+    fn write_trace_skips_reads() {
+        let mut bus = test_bus();
+        bus.debug_trace_enabled = true;
+        bus.debug_trace_reads = false;
+
+        bus.cpu_read(0);
+        bus.cpu_write(0, 0x12);
+
+        assert!(matches!(
+            bus.debug_trace_events.as_slice(),
+            [crate::hardware::bus::DebugTraceEvent::Write { addr: 0, .. }]
+        ));
     }
 }

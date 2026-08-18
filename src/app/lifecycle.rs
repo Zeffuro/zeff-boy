@@ -273,14 +273,7 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn sync_debug_presentation(&mut self, event_loop: &ActiveEventLoop) {
         let desired = super::effective_debug_presentation(self.settings.ui.debug_presentation);
-        if desired != self.active_debug_presentation {
-            self.persist_current_dock_layout();
-            self.active_debug_presentation = desired;
-            self.debug_dock = crate::debug::restore_dock_layout(
-                desired,
-                self.settings.ui.dock_layout(desired),
-                &[],
-            );
+        if self.activate_debug_presentation(desired) {
             if desired == crate::settings::DebugPresentation::GameAndDebugger {
                 self.settings.ui.debugger_window_open = true;
             }

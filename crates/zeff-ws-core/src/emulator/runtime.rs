@@ -59,8 +59,12 @@ impl Emulator {
 
         let watch_active = !self.debug.watchpoints.is_empty();
         let instruction_trace_enabled = self.instruction_trace.is_enabled();
-        let trace_mode = if watch_active || instruction_trace_enabled {
+        let trace_mode = if watch_active
+            || (instruction_trace_enabled && requested_trace_mode != DebugTraceMode::None)
+        {
             DebugTraceMode::MemoryAndIo
+        } else if instruction_trace_enabled {
+            DebugTraceMode::WritesOnly
         } else {
             requested_trace_mode
         };
@@ -77,11 +81,7 @@ impl Emulator {
         } else {
             None
         };
-        let mut instruction = [0; 16];
         let physical_rom_offset = if instruction_trace_enabled {
-            for (offset, byte) in instruction.iter_mut().enumerate() {
-                *byte = self.cpu_peek8(pc_before.wrapping_add(offset as u32));
-            }
             self.bus.cartridge.rom_offset_for_address(pc_before)
         } else {
             None
@@ -116,7 +116,11 @@ impl Emulator {
                 physical_rom_offset.map(|offset| offset as u64),
                 self.frame_count,
                 cycles_before,
-                if interrupt { &[] } else { &instruction },
+                if interrupt {
+                    &[]
+                } else {
+                    self.cpu.instruction_bytes()
+                },
             );
             if interrupt {
                 record.event = Some(DebugEvent::Interrupt);

@@ -32,6 +32,7 @@ const FLAG_OF: u16 = 0x0800;
 const FLAG_RESERVED_LOW: u16 = 0x0028;
 const FLAG_POPF_WRITABLE: u16 =
     FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_BRK | FLAG_IF | FLAG_OF;
+const MAX_INSTRUCTION_BYTES: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RepeatPrefix {
@@ -155,6 +156,8 @@ pub struct Cpu {
     pub(crate) brk_shadow: u8,
     pub(crate) last_step_was_interrupt: bool,
     last_mul_overflow: bool,
+    instruction_bytes: [u8; MAX_INSTRUCTION_BYTES],
+    instruction_len: u8,
 }
 
 impl Default for Cpu {
@@ -179,6 +182,8 @@ impl Cpu {
             brk_shadow: 0,
             last_step_was_interrupt: false,
             last_mul_overflow: false,
+            instruction_bytes: [0; MAX_INSTRUCTION_BYTES],
+            instruction_len: 0,
         };
         cpu.reset();
         cpu
@@ -199,6 +204,8 @@ impl Cpu {
         self.brk_shadow = 0;
         self.last_step_was_interrupt = false;
         self.last_mul_overflow = false;
+        self.instruction_bytes = [0; MAX_INSTRUCTION_BYTES];
+        self.instruction_len = 0;
     }
 
     pub fn apply_cartridge_start_state(&mut self, color: bool) {
@@ -272,11 +279,16 @@ impl Cpu {
         self.physical_address(SegmentRegister::Cs, self.ip)
     }
 
+    pub(crate) fn instruction_bytes(&self) -> &[u8] {
+        &self.instruction_bytes[..usize::from(self.instruction_len)]
+    }
+
     fn normalize_popped_flags(value: u16) -> u16 {
         (value & FLAG_POPF_WRITABLE) | FLAG_FIXED
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> Option<FetchedInstruction> {
+        self.instruction_len = 0;
         if self.state == CpuState::Suspended {
             return None;
         }

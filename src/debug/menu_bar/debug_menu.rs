@@ -24,7 +24,7 @@ pub(super) fn draw(
         }
     });
     if presentation != DebugPresentation::Floating {
-        ui.menu_button("Workspace", |ui| {
+        ui.menu_button("Layout", |ui| {
             for preset in crate::debug::DebugWorkspacePreset::ALL {
                 if ui.button(preset.label()).clicked() {
                     *dock_state = crate::debug::create_workspace_dock_state(presentation, preset);

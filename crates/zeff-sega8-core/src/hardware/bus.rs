@@ -37,6 +37,14 @@ const MEMORY_CONTROL_IO_DISABLE: u8 = 1 << 2;
 const MEMORY_CONTROL_WORK_RAM_DISABLE: u8 = 1 << 4;
 const MEMORY_CONTROL_CARTRIDGE_DISABLE: u8 = 1 << 6;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CpuAccessTraceMode {
+    #[default]
+    None,
+    Writes,
+    All,
+}
+
 #[derive(Clone, Debug)]
 pub struct Bus {
     pub cartridge: Cartridge,
@@ -50,7 +58,7 @@ pub struct Bus {
     memory_control: u8,
     rom_patches: Vec<zeff_emu_common::cheats::CheatPatch>,
     console_region: Sega8Region,
-    debug_trace_enabled: bool,
+    debug_trace_mode: CpuAccessTraceMode,
     debug_trace_events: RefCell<Vec<CpuAccessTraceEvent>>,
 }
 
@@ -100,7 +108,7 @@ impl Bus {
             memory_control: MEMORY_CONTROL_DEFAULT,
             rom_patches: Vec::new(),
             console_region,
-            debug_trace_enabled: false,
+            debug_trace_mode: CpuAccessTraceMode::None,
             debug_trace_events: RefCell::new(Vec::new()),
         }
     }
@@ -267,7 +275,7 @@ impl Bus {
         self.game_gear_serial.reset();
         self.memory_control = MEMORY_CONTROL_DEFAULT;
         self.rom_patches.clear();
-        self.debug_trace_enabled = false;
+        self.debug_trace_mode = CpuAccessTraceMode::None;
         self.debug_trace_events.borrow_mut().clear();
     }
 
@@ -308,12 +316,17 @@ impl Bus {
     }
 
     pub fn begin_cpu_access_trace(&mut self) {
-        self.debug_trace_enabled = true;
+        self.debug_trace_mode = CpuAccessTraceMode::All;
+        self.debug_trace_events.borrow_mut().clear();
+    }
+
+    pub(crate) fn begin_cpu_write_trace(&mut self) {
+        self.debug_trace_mode = CpuAccessTraceMode::Writes;
         self.debug_trace_events.borrow_mut().clear();
     }
 
     pub fn drain_cpu_access_trace(&mut self) -> Vec<CpuAccessTraceEvent> {
-        self.debug_trace_enabled = false;
+        self.debug_trace_mode = CpuAccessTraceMode::None;
         std::mem::take(&mut *self.debug_trace_events.borrow_mut())
     }
 
@@ -407,7 +420,7 @@ impl Bus {
             } else {
                 0
             });
-        self.debug_trace_enabled = false;
+        self.debug_trace_mode = CpuAccessTraceMode::None;
         self.debug_trace_events.borrow_mut().clear();
         Ok(())
     }
@@ -739,7 +752,7 @@ impl Bus {
     }
 
     fn record_cpu_read(&self, addr: u16, value: u8) {
-        if self.debug_trace_enabled {
+        if self.debug_trace_mode == CpuAccessTraceMode::All {
             self.debug_trace_events
                 .borrow_mut()
                 .push(CpuAccessTraceEvent::Read {
@@ -754,7 +767,7 @@ impl Bus {
     }
 
     fn record_cpu_write(&self, addr: u16, old_value: u8, new_value: u8) {
-        if self.debug_trace_enabled {
+        if self.debug_trace_mode != CpuAccessTraceMode::None {
             self.debug_trace_events
                 .borrow_mut()
                 .push(CpuAccessTraceEvent::Write {
@@ -771,7 +784,7 @@ impl Bus {
     }
 
     fn record_io_read(&self, port: u8, value: u8) {
-        if self.debug_trace_enabled {
+        if self.debug_trace_mode == CpuAccessTraceMode::All {
             self.debug_trace_events
                 .borrow_mut()
                 .push(CpuAccessTraceEvent::Read {
@@ -786,7 +799,7 @@ impl Bus {
     }
 
     fn record_io_write(&self, port: u8, value: u8) {
-        if self.debug_trace_enabled {
+        if self.debug_trace_mode != CpuAccessTraceMode::None {
             self.debug_trace_events
                 .borrow_mut()
                 .push(CpuAccessTraceEvent::Write {
@@ -1010,6 +1023,25 @@ mod tests {
         assert_eq!(bus.cpu_read(0x0400), 0);
         assert_eq!(bus.cpu_read(0x4000), 1);
         assert_eq!(bus.cpu_read(0x8000), 2);
+    }
+
+    #[test]
+    fn write_trace_skips_reads() {
+        let mut bus = bus_with_banked_rom(4);
+        bus.begin_cpu_write_trace();
+
+        bus.cpu_read(0);
+        bus.io_read(IO_PORT_CONTROL);
+        bus.cpu_write(0xC000, 0x12);
+        bus.io_write(IO_PORT_CONTROL, 0x34);
+
+        let events = bus.drain_cpu_access_trace();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|event| matches!(event, CpuAccessTraceEvent::Write { .. }))
+        );
     }
 
     #[test]

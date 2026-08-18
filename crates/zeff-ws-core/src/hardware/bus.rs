@@ -23,12 +23,29 @@ pub use zeff_emu_common::debug::BusAccessEvent;
 use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 pub type DebugTraceEvent = BusAccessEvent;
 
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProfilingSnapshot {
+    pub bus_step_calls: u64,
+    pub master_cycles: u64,
+    pub uart_step_calls: u64,
+    pub apu_step_calls: u64,
+    pub sound_dma_step_calls: u64,
+    pub ppu_step_calls: u64,
+    pub completed_scanlines: u64,
+    pub vblank_starts: u64,
+    pub line_compare_events: u64,
+    pub hblank_timer_advances: u64,
+    pub vblank_timer_advances: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum DebugTraceMode {
     #[default]
     None,
     MemoryAndIo,
     IoOnly,
+    WritesOnly,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +68,8 @@ pub struct Bus {
     pub cycles: u64,
     pub(crate) debug_trace_mode: DebugTraceMode,
     pub(crate) debug_trace_events: Vec<BusAccessEvent>,
+    #[cfg(feature = "profiling")]
+    profiling: ProfilingSnapshot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +101,8 @@ impl Bus {
             cycles: 0,
             debug_trace_mode: DebugTraceMode::None,
             debug_trace_events: Vec::new(),
+            #[cfg(feature = "profiling")]
+            profiling: ProfilingSnapshot::default(),
         }
     }
 
@@ -168,6 +189,17 @@ impl Bus {
     }
 
     pub fn step_cycles(&mut self, cycles: u32) {
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.bus_step_calls = self.profiling.bus_step_calls.wrapping_add(1);
+            self.profiling.master_cycles =
+                self.profiling.master_cycles.wrapping_add(u64::from(cycles));
+            self.profiling.uart_step_calls = self.profiling.uart_step_calls.wrapping_add(1);
+            self.profiling.apu_step_calls = self.profiling.apu_step_calls.wrapping_add(1);
+            self.profiling.sound_dma_step_calls =
+                self.profiling.sound_dma_step_calls.wrapping_add(1);
+            self.profiling.ppu_step_calls = self.profiling.ppu_step_calls.wrapping_add(1);
+        }
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
         let serial_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
         self.uart.step_cycles(cycles, serial_control, self.cycles);
@@ -175,14 +207,46 @@ impl Bus {
         self.apu.step_cycles(cycles, &self.ram);
         self.step_sound_dma(cycles);
         let ppu_events = self.ppu.step_cycles(cycles, &self.ram, &self.io);
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.completed_scanlines = self
+                .profiling
+                .completed_scanlines
+                .wrapping_add(u64::from(ppu_events.completed_scanlines));
+            self.profiling.hblank_timer_advances = self
+                .profiling
+                .hblank_timer_advances
+                .wrapping_add(u64::from(ppu_events.completed_scanlines));
+        }
         self.step_hblank_timer(ppu_events.completed_scanlines);
         if ppu_events.vblank_started {
+            #[cfg(feature = "profiling")]
+            {
+                self.profiling.vblank_starts = self.profiling.vblank_starts.wrapping_add(1);
+                self.profiling.vblank_timer_advances =
+                    self.profiling.vblank_timer_advances.wrapping_add(1);
+            }
             self.raise_interrupt(IRQ_VBLANK);
             self.step_vblank_timer();
         }
         if ppu_events.line_compare {
+            #[cfg(feature = "profiling")]
+            {
+                self.profiling.line_compare_events =
+                    self.profiling.line_compare_events.wrapping_add(1);
+            }
             self.raise_interrupt(IRQ_LINE_COMPARE);
         }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn profiling_snapshot(&self) -> ProfilingSnapshot {
+        self.profiling
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn reset_profiling(&mut self) {
+        self.profiling = ProfilingSnapshot::default();
     }
 
     pub fn render_frame(&mut self) {
@@ -256,13 +320,21 @@ impl Bus {
     }
 
     fn record_memory(&mut self, event: BusAccessEvent) {
-        if self.debug_trace_mode == DebugTraceMode::MemoryAndIo {
+        if self.debug_trace_mode == DebugTraceMode::MemoryAndIo
+            || (self.debug_trace_mode == DebugTraceMode::WritesOnly
+                && matches!(event, BusAccessEvent::Write { .. }))
+        {
             self.debug_trace_events.push(event);
         }
     }
 
     fn record_io(&mut self, event: BusAccessEvent) {
-        if self.debug_trace_mode != DebugTraceMode::None {
+        if matches!(
+            self.debug_trace_mode,
+            DebugTraceMode::MemoryAndIo | DebugTraceMode::IoOnly
+        ) || (self.debug_trace_mode == DebugTraceMode::WritesOnly
+            && matches!(event, BusAccessEvent::Write { .. }))
+        {
             self.debug_trace_events.push(event);
         }
     }
@@ -1036,6 +1108,48 @@ mod tests {
                 ..
             } if *written_value == u32::from(IRQ_VBLANK)
         )));
+    }
+
+    #[test]
+    fn writes_only_trace_skips_reads() {
+        let mut bus = Bus::new(minimal_cart());
+        bus.debug_trace_mode = DebugTraceMode::WritesOnly;
+
+        bus.read8(0);
+        bus.io_read8(IRQ_ENABLE_PORT);
+        bus.write8(0, 0x12);
+        bus.io_write8(IRQ_ENABLE_PORT, IRQ_VBLANK);
+
+        assert_eq!(bus.debug_trace_events.len(), 2);
+        assert!(
+            bus.debug_trace_events
+                .iter()
+                .all(|event| matches!(event, BusAccessEvent::Write { .. }))
+        );
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn profiling_counts_device_calls_and_transitions() {
+        let mut bus = Bus::new(minimal_cart());
+        let cycles = super::super::constants::CYCLES_PER_SCANLINE * 144;
+
+        bus.step_cycles(cycles);
+
+        let snapshot = bus.profiling_snapshot();
+        assert_eq!(snapshot.bus_step_calls, 1);
+        assert_eq!(snapshot.master_cycles, u64::from(cycles));
+        assert_eq!(snapshot.uart_step_calls, 1);
+        assert_eq!(snapshot.apu_step_calls, 1);
+        assert_eq!(snapshot.sound_dma_step_calls, 1);
+        assert_eq!(snapshot.ppu_step_calls, 1);
+        assert_eq!(snapshot.completed_scanlines, 144);
+        assert_eq!(snapshot.vblank_starts, 1);
+        assert_eq!(snapshot.hblank_timer_advances, 144);
+        assert_eq!(snapshot.vblank_timer_advances, 1);
+
+        bus.reset_profiling();
+        assert_eq!(bus.profiling_snapshot(), ProfilingSnapshot::default());
     }
 
     #[test]

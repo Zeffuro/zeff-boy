@@ -139,6 +139,12 @@ impl App {
                         }
                         MenuAction::SetDebugPresentation(presentation) => {
                             self.settings.ui.debug_presentation = *presentation;
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let desired = super::effective_debug_presentation(*presentation);
+                                self.settings.ui.debug_presentation = desired;
+                                self.activate_debug_presentation(desired);
+                            }
                             settings_dirty = true;
                         }
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}

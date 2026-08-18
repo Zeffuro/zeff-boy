@@ -12,8 +12,7 @@ macro_rules! load_all_modes {
     ($reg:ident, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
         pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
-            let a = cpu.addr_immediate(bus);
-            cpu.regs.$reg = bus.cpu_read(a);
+            cpu.regs.$reg = cpu.fetch8(bus);
             cpu.regs.set_zn(cpu.regs.$reg);
         }
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
@@ -58,8 +57,7 @@ macro_rules! load_all_modes {
     ($reg:ident, $imm:ident, $zp:ident, $zpalt:ident, $abs:ident, $absalt:ident;
      zp_addr = $zp_addr:ident, abs_addr = $abs_addr:ident) => {
         pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
-            let a = cpu.addr_immediate(bus);
-            cpu.regs.$reg = bus.cpu_read(a);
+            cpu.regs.$reg = cpu.fetch8(bus);
             cpu.regs.set_zn(cpu.regs.$reg);
         }
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {

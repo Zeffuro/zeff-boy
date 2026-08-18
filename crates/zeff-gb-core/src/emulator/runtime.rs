@@ -25,7 +25,8 @@ impl Emulator {
         let watch_active = self.debug.has_watchpoints();
         let trace_enabled = self.instruction_trace.is_enabled();
         let trace_active = watch_active || trace_enabled;
-        self.bus.trace_cpu_accesses = trace_active;
+        self.bus.trace_cpu_accesses = watch_active;
+        self.bus.trace_cpu_writes = trace_enabled;
         if trace_active {
             self.bus
                 .begin_cpu_access_trace_at(zeff_emu_common::time::MasterTicks::new(

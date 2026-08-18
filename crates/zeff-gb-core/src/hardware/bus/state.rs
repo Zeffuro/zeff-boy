@@ -82,6 +82,7 @@ impl Bus {
             cpu_interrupt_pending_before_if: 0,
             io: IO::new(),
             trace_cpu_accesses: false,
+            trace_cpu_writes: false,
             cpu_access_trace_origin: zeff_emu_common::time::MasterTicks::ZERO,
             cpu_access_trace: Vec::with_capacity(12),
             game_genie_patches: Vec::new(),
@@ -114,6 +115,7 @@ impl Bus {
 
         bus.sync_timer_serial_mode();
         bus.trace_cpu_accesses = false;
+        bus.trace_cpu_writes = false;
         bus.cpu_access_trace.clear();
         Ok(bus)
     }

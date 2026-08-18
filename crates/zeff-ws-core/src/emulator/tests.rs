@@ -134,16 +134,21 @@ fn opcode_history_records_executed_instructions_when_enabled() {
 
 #[test]
 fn instruction_trace_captures_v30_bytes_and_mapping() {
-    let rom = rom_with_reset_code(&[0x90, 0xF4]);
+    let rom = rom_with_reset_code(&[0x26, 0xB8, 0x34, 0x12, 0xF4]);
     let mut emu = Emulator::from_rom_data(&rom).unwrap();
     emu.set_instruction_trace_enabled(true);
 
     emu.step_instruction();
+    emu.step_instruction();
 
-    let entry = emu.instruction_trace().iter().next().unwrap();
-    assert_eq!(entry.pc, 0xFFFF0);
-    assert_eq!(entry.physical_rom_offset, Some(0xFFF0));
-    assert_eq!(entry.instruction[0], 0xEA);
+    let entries = emu.instruction_trace().iter().collect::<Vec<_>>();
+    assert_eq!(entries[0].pc, 0xFFFF0);
+    assert_eq!(entries[0].physical_rom_offset, Some(0xFFF0));
+    assert_eq!(
+        entries[0].instruction_bytes(),
+        &[0xEA, 0x00, 0x00, 0x00, 0xF0]
+    );
+    assert_eq!(entries[1].instruction_bytes(), &[0x26, 0xB8, 0x34, 0x12]);
 }
 
 #[test]

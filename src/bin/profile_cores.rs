@@ -1,7 +1,57 @@
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::mem::size_of;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 const DEFAULT_FRAMES: u32 = 3_000;
+
+struct CountingAllocator;
+
+static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+static REALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+#[global_allocator]
+static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        REALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATED_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+fn reset_allocation_counts() {
+    ALLOCATIONS.store(0, Ordering::Relaxed);
+    REALLOCATIONS.store(0, Ordering::Relaxed);
+    ALLOCATED_BYTES.store(0, Ordering::Relaxed);
+}
+
+fn allocation_counts() -> (u64, u64, u64) {
+    (
+        ALLOCATIONS.load(Ordering::Relaxed),
+        REALLOCATIONS.load(Ordering::Relaxed),
+        ALLOCATED_BYTES.load(Ordering::Relaxed),
+    )
+}
 
 trait ProfileMachine {
     fn profile_step_frame(&mut self);
@@ -80,16 +130,28 @@ impl ProfileMachine for zeff_ws_core::emulator::Emulator {
 }
 
 fn profile_frames<M: ProfileMachine>(label: &str, frames: u32, machine: &mut M) {
+    profile_frames_with_prepare(label, frames, machine, |_| {});
+}
+
+fn profile_frames_with_prepare<M: ProfileMachine>(
+    label: &str,
+    frames: u32,
+    machine: &mut M,
+    prepare: impl FnOnce(&mut M),
+) {
     for _ in 0..10 {
         machine.profile_step_frame();
     }
 
     let start_ticks = machine.profile_ticks();
+    prepare(machine);
+    reset_allocation_counts();
     let start = Instant::now();
     for _ in 0..frames {
         machine.profile_step_frame();
     }
     let elapsed = start.elapsed();
+    let (allocations, reallocations, allocated_bytes) = allocation_counts();
     let elapsed_ticks = machine.profile_ticks().wrapping_sub(start_ticks);
     let fps = f64::from(frames) / elapsed.as_secs_f64();
     let million_ticks_per_second = elapsed_ticks as f64 / elapsed.as_secs_f64() / 1_000_000.0;
@@ -97,6 +159,74 @@ fn profile_frames<M: ProfileMachine>(label: &str, frames: u32, machine: &mut M) 
         "{label:30} {frames:5} frames  {elapsed:>9.2?}  {fps:>8.0} fps  {million_ticks_per_second:>8.2} M {} / s",
         M::tick_label()
     );
+    println!(
+        "{:30} {:9} alloc  {:7} realloc  {:9.1} KiB",
+        "",
+        allocations,
+        reallocations,
+        allocated_bytes as f64 / 1024.0
+    );
+}
+
+fn profile_wonderswan_frames(
+    label: &str,
+    frames: u32,
+    machine: &mut zeff_ws_core::emulator::Emulator,
+) {
+    profile_frames_with_prepare(label, frames, machine, |machine| machine.reset_profiling());
+    let snapshot = machine.profiling_snapshot();
+    println!(
+        "  WonderSwan calls: bus {}  UART {}  APU {}  sound DMA {}  PPU {}",
+        snapshot.bus_step_calls,
+        snapshot.uart_step_calls,
+        snapshot.apu_step_calls,
+        snapshot.sound_dma_step_calls,
+        snapshot.ppu_step_calls,
+    );
+    println!(
+        "  WonderSwan transitions: {} cycles  {} scanlines  {} vblank  {} line compare  {} hblank timer  {} vblank timer",
+        snapshot.master_cycles,
+        snapshot.completed_scanlines,
+        snapshot.vblank_starts,
+        snapshot.line_compare_events,
+        snapshot.hblank_timer_advances,
+        snapshot.vblank_timer_advances,
+    );
+}
+
+fn profile_trace_store() {
+    use std::hint::black_box;
+    use zeff_emu_common::debug::{
+        InstructionTraceRecord, InstructionTraceStore, RegisterDelta, TraceExecMode,
+    };
+
+    const RECORDS: u64 = 2_000_000;
+    let mut store = InstructionTraceStore::default();
+    store.set_enabled(true);
+
+    let start = Instant::now();
+    for sequence in 0..RECORDS {
+        let mut record = InstructionTraceRecord::new(
+            TraceExecMode::Z80,
+            sequence as u32,
+            Some(sequence),
+            sequence / 20_000,
+            sequence,
+            &[0x00],
+        );
+        record.push_register_delta(RegisterDelta {
+            register: 0,
+            value: sequence as u32,
+        });
+        black_box(store.push(record));
+    }
+    let elapsed = start.elapsed();
+    let ns_per_record = elapsed.as_secs_f64() * 1_000_000_000.0 / RECORDS as f64;
+    println!(
+        "trace store                    {RECORDS:9} records  {elapsed:>9.2?}  {ns_per_record:>8.2} ns / record  {} bytes / record",
+        size_of::<InstructionTraceRecord>()
+    );
+    black_box(store);
 }
 
 fn load_manifest(name: &str) -> Vec<(String, String)> {
@@ -211,7 +341,7 @@ fn profile_synthetic(
         .expect("synthetic WonderSwan ROM");
     ws.set_apu_sample_generation_enabled(sample_generation_enabled);
     ws.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_frames(&format!("WonderSwan synthetic{suffix}"), frames, &mut ws);
+    profile_wonderswan_frames(&format!("WonderSwan synthetic{suffix}"), frames, &mut ws);
 }
 
 fn profile_manifest_roms(frames: u32) {
@@ -263,6 +393,10 @@ fn main() {
     if std::env::var("ZEFF_PROFILE_COMPARE_TRACE").as_deref() == Ok("1") {
         println!("\n=== Synthetic instruction-trace comparison ===");
         profile_synthetic(frames, false, true, " + trace");
+    }
+    if std::env::var("ZEFF_PROFILE_TRACE_STORE").as_deref() == Ok("1") {
+        println!("\n=== Instruction trace store ===");
+        profile_trace_store();
     }
     if std::env::var("ZEFF_PROFILE_MANIFESTS").as_deref() == Ok("1") {
         println!("\n=== Manifest ROM baseline ===");

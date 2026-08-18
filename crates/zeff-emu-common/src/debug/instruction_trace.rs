@@ -78,6 +78,7 @@ impl Default for InstructionTraceRecord {
 }
 
 impl InstructionTraceRecord {
+    #[inline]
     pub fn new(
         mode: TraceExecMode,
         pc: u32,
@@ -107,6 +108,7 @@ impl InstructionTraceRecord {
         record
     }
 
+    #[inline]
     pub fn set_instruction(&mut self, instruction: &[u8]) -> bool {
         let len = instruction.len().min(MAX_TRACE_INSTRUCTION_BYTES);
         self.instruction[..len].copy_from_slice(&instruction[..len]);
@@ -115,6 +117,11 @@ impl InstructionTraceRecord {
         instruction.len() > MAX_TRACE_INSTRUCTION_BYTES
     }
 
+    pub fn instruction_bytes(&self) -> &[u8] {
+        &self.instruction[..usize::from(self.instruction_len)]
+    }
+
+    #[inline]
     pub fn push_register_delta(&mut self, delta: RegisterDelta) -> bool {
         let len = usize::from(self.register_delta_len);
         if len == MAX_TRACE_REGISTER_DELTAS {
@@ -126,6 +133,7 @@ impl InstructionTraceRecord {
         true
     }
 
+    #[inline]
     pub fn push_write(&mut self, write: TraceWrite) -> bool {
         let len = usize::from(self.write_len);
         if len == MAX_TRACE_WRITES {

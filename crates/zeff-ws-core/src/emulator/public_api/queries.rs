@@ -7,6 +7,16 @@ const MASTER_CLOCK_RATE: ClockRate =
     ClockRate::from_hz(crate::hardware::constants::CPU_CLOCK_HZ as u64);
 
 impl Emulator {
+    #[cfg(feature = "profiling")]
+    pub fn profiling_snapshot(&self) -> crate::hardware::bus::ProfilingSnapshot {
+        self.bus.profiling_snapshot()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn reset_profiling(&mut self) {
+        self.bus.reset_profiling();
+    }
+
     pub fn framebuffer(&self) -> &[u8] {
         self.bus.ppu.framebuffer()
     }

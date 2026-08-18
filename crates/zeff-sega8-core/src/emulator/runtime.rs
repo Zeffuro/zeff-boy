@@ -63,7 +63,11 @@ impl Emulator {
         let instruction_trace_enabled = self.instruction_trace.is_enabled();
         let trace_active = watch_active || collect_bus_trace || instruction_trace_enabled;
         if trace_active {
-            self.bus.begin_cpu_access_trace();
+            if watch_active || collect_bus_trace {
+                self.bus.begin_cpu_access_trace();
+            } else {
+                self.bus.begin_cpu_write_trace();
+            }
         }
 
         let pc_before = self.cpu.regs().pc;
@@ -73,11 +77,7 @@ impl Emulator {
         } else {
             None
         };
-        let mut instruction = [0; 4];
         let physical_rom_offset = if instruction_trace_enabled {
-            for (offset, byte) in instruction.iter_mut().enumerate() {
-                *byte = self.bus.cpu_peek(pc_before.wrapping_add(offset as u16));
-            }
             self.bus.rom_offset_for_cpu_address(pc_before)
         } else {
             None
@@ -99,13 +99,18 @@ impl Emulator {
         let mut bus_trace_events = Vec::new();
         let mut trace_record = instruction_trace_enabled.then(|| {
             let interrupt = self.cpu.last_step_was_interrupt();
+            let instruction = if interrupt {
+                &[]
+            } else {
+                self.cpu.instruction_bytes()
+            };
             let mut record = InstructionTraceRecord::new(
                 TraceExecMode::Z80,
                 u32::from(pc_before),
                 physical_rom_offset.map(|offset| offset as u64),
                 self.frame_count,
                 cycles_before,
-                if interrupt { &[] } else { &instruction },
+                instruction,
             );
             if interrupt {
                 record.event = Some(DebugEvent::Interrupt);

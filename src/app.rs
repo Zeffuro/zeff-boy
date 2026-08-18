@@ -358,7 +358,34 @@ fn effective_debug_presentation(presentation: DebugPresentation) -> DebugPresent
     presentation
 }
 
+fn activate_debug_presentation_state(
+    active: &mut DebugPresentation,
+    dock: &mut egui_dock::DockState<DebugTab>,
+    settings: &mut Settings,
+    desired: DebugPresentation,
+) -> bool {
+    if desired == *active {
+        return false;
+    }
+
+    if let Some(layout) = crate::debug::serialize_dock_layout(dock) {
+        settings.ui.set_dock_layout(*active, layout);
+    }
+    *active = desired;
+    *dock = crate::debug::restore_dock_layout(desired, settings.ui.dock_layout(desired), &[]);
+    true
+}
+
 impl App {
+    fn activate_debug_presentation(&mut self, desired: DebugPresentation) -> bool {
+        activate_debug_presentation_state(
+            &mut self.active_debug_presentation,
+            &mut self.debug_dock,
+            &mut self.settings,
+            desired,
+        )
+    }
+
     fn debug_workspace_visible(&self) -> bool {
         if self.active_debug_presentation != DebugPresentation::GameAndDebugger {
             return true;
@@ -555,5 +582,80 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         self.perform_shutdown();
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    fn make_restorable(mut value: serde_json::Value) -> serde_json::Value {
+        fn visit(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    for (key, value) in fields {
+                        if matches!(key.as_str(), "x" | "y") && value.is_null() {
+                            *value = serde_json::json!(0.0);
+                        } else {
+                            visit(value);
+                        }
+                    }
+                }
+                serde_json::Value::Array(values) => values.iter_mut().for_each(visit),
+                _ => {}
+            }
+        }
+
+        visit(&mut value);
+        value
+    }
+
+    #[test]
+    fn presentation_switch_persists_and_restores_each_dock() {
+        let mut settings = Settings::default();
+        let mut active = DebugPresentation::Floating;
+        let floating_layout = make_restorable(
+            crate::debug::serialize_dock_layout(&crate::debug::create_default_dock_state())
+                .unwrap(),
+        );
+        let mut dock = serde_json::from_value(floating_layout.clone()).unwrap();
+        let floating_layout = crate::debug::serialize_dock_layout(&dock).unwrap();
+        let mut ide = crate::debug::create_ide_dock_state();
+        let memory = ide.find_tab(&DebugTab::MemoryViewer).unwrap();
+        ide.remove_tab(memory);
+        let ide_layout = make_restorable(crate::debug::serialize_dock_layout(&ide).unwrap());
+        settings
+            .ui
+            .set_dock_layout(DebugPresentation::Ide, ide_layout.clone());
+
+        assert!(activate_debug_presentation_state(
+            &mut active,
+            &mut dock,
+            &mut settings,
+            DebugPresentation::Ide,
+        ));
+        assert_eq!(active, DebugPresentation::Ide);
+        assert_eq!(crate::debug::serialize_dock_layout(&dock), Some(ide_layout));
+        assert_eq!(
+            settings.ui.dock_layout(DebugPresentation::Floating),
+            Some(&floating_layout)
+        );
+        assert!(activate_debug_presentation_state(
+            &mut active,
+            &mut dock,
+            &mut settings,
+            DebugPresentation::Floating,
+        ));
+        assert_eq!(active, DebugPresentation::Floating);
+        assert_eq!(
+            crate::debug::serialize_dock_layout(&dock),
+            Some(floating_layout)
+        );
+        assert!(!activate_debug_presentation_state(
+            &mut active,
+            &mut dock,
+            &mut settings,
+            DebugPresentation::Floating,
+        ));
     }
 }

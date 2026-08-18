@@ -229,6 +229,8 @@ pub struct Cpu {
     last_opcode_pc: u16,
     last_opcode: u8,
     last_step_was_interrupt: bool,
+    instruction_bytes: [u8; 4],
+    instruction_byte_count: u8,
     trap: Option<CpuTrap>,
 }
 
@@ -246,6 +248,8 @@ impl Cpu {
             last_opcode_pc: Z80_RESET_PC,
             last_opcode: 0,
             last_step_was_interrupt: false,
+            instruction_bytes: [0; 4],
+            instruction_byte_count: 0,
             trap: None,
         };
         cpu.reset();
@@ -268,10 +272,14 @@ impl Cpu {
         self.last_opcode_pc = Z80_RESET_PC;
         self.last_opcode = 0;
         self.last_step_was_interrupt = false;
+        self.instruction_bytes = [0; 4];
+        self.instruction_byte_count = 0;
         self.trap = None;
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> Option<FetchedInstruction> {
+        self.instruction_bytes = [0; 4];
+        self.instruction_byte_count = 0;
         if self.state == CpuState::Suspended {
             return None;
         }
@@ -343,6 +351,10 @@ impl Cpu {
 
     pub fn last_step_was_interrupt(&self) -> bool {
         self.last_step_was_interrupt
+    }
+
+    pub(crate) fn instruction_bytes(&self) -> &[u8] {
+        &self.instruction_bytes[..usize::from(self.instruction_byte_count)]
     }
 
     pub fn trap(&self) -> Option<CpuTrap> {
@@ -424,6 +436,8 @@ impl Cpu {
         self.last_opcode_pc = r.read_u16()?;
         self.last_opcode = r.read_u8()?;
         self.last_step_was_interrupt = false;
+        self.instruction_bytes = [0; 4];
+        self.instruction_byte_count = 0;
         self.trap = read_trap(r)?;
         Ok(())
     }

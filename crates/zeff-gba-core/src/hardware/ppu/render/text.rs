@@ -26,7 +26,8 @@ impl Ppu {
         mosaic: Mosaic,
     ) {
         self.fill_backdrop(palette_ram, effects, windows, pixel_layers, pixel_colors);
-        let mut layers = Vec::with_capacity(bg_count);
+        let mut layers = [(0, 0, 0); 4];
+        let mut layer_count = 0;
         for bg in 0..bg_count {
             if dispcnt & (1 << (8 + bg)) == 0 {
                 continue;
@@ -35,11 +36,12 @@ impl Ppu {
                 continue;
             }
             let control = read_le16(io, 0x08 + bg * 2);
-            layers.push((control & 0x3, bg, control));
+            layers[layer_count] = (control & 0x3, bg, control);
+            layer_count += 1;
         }
-        layers.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        layers[..layer_count].sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
 
-        for (priority, bg, control) in layers {
+        for &(priority, bg, control) in &layers[..layer_count] {
             self.render_text_bg(
                 bg,
                 control,
@@ -80,7 +82,8 @@ impl Ppu {
         windows: &Windows,
         mosaic: Mosaic,
     ) {
-        let mut layers = Vec::with_capacity(bg_count);
+        let mut layers = [(0, 0, 0); 4];
+        let mut layer_count = 0;
         for bg in 0..bg_count {
             if dispcnt & (1 << (8 + bg)) == 0 {
                 continue;
@@ -89,11 +92,12 @@ impl Ppu {
                 continue;
             }
             let control = read_le16(io, 0x08 + bg * 2);
-            layers.push((control & 0x3, bg, control));
+            layers[layer_count] = (control & 0x3, bg, control);
+            layer_count += 1;
         }
-        layers.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        layers[..layer_count].sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
 
-        for (priority, bg, control) in layers {
+        for &(priority, bg, control) in &layers[..layer_count] {
             self.render_text_bg_line(
                 bg,
                 control,

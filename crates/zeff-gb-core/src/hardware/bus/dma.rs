@@ -115,7 +115,7 @@ impl Bus {
 
             let old_value = self.oam[(addr - OAM_START) as usize];
             self.oam[(addr - OAM_START) as usize] = value;
-            if self.trace_cpu_accesses {
+            if self.traces_cpu_writes() {
                 self.trace_cpu_write(master_tick_offset, addr, old_value, value, value);
             }
             return 0;
@@ -146,7 +146,7 @@ impl Bus {
         value: u8,
         master_tick_offset: u64,
     ) -> u64 {
-        let old_value = if self.trace_cpu_accesses {
+        let old_value = if self.traces_cpu_writes() {
             self.read_byte(addr)
         } else {
             0
@@ -156,7 +156,7 @@ impl Bus {
         }
 
         let extra_t_cycles = self.write_byte(addr, value);
-        if self.trace_cpu_accesses {
+        if self.traces_cpu_writes() {
             let new_value = self.read_byte(addr);
             self.trace_cpu_write(master_tick_offset, addr, old_value, value, new_value);
         }

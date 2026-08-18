@@ -10,8 +10,7 @@ macro_rules! read_op_all_modes {
     ($op:ident, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
         pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
-            let a = cpu.addr_immediate(bus);
-            let v = bus.cpu_read(a);
+            let v = cpu.fetch8(bus);
             cpu.$op(v);
         }
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
@@ -59,8 +58,7 @@ macro_rules! compare_all_modes {
     ($reg:ident, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
         pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
-            let a = cpu.addr_immediate(bus);
-            let v = bus.cpu_read(a);
+            let v = cpu.fetch8(bus);
             cpu.compare(cpu.regs.$reg, v);
         }
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
@@ -104,8 +102,7 @@ macro_rules! compare_all_modes {
     };
     ($reg:ident, $imm:ident, $zp:ident, $abs:ident) => {
         pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
-            let a = cpu.addr_immediate(bus);
-            let v = bus.cpu_read(a);
+            let v = cpu.fetch8(bus);
             cpu.compare(cpu.regs.$reg, v);
         }
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {

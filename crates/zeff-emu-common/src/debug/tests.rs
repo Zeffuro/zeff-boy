@@ -348,6 +348,34 @@ fn instruction_trace_preserves_delta_and_write_order_with_overflow() {
 }
 
 #[test]
+fn instruction_trace_preserves_full_public_payload_on_overwrite() {
+    let mut trace = InstructionTraceStore::new(MIN_TRACE_CAPACITY);
+    trace.set_enabled(true);
+    for _ in 0..MIN_TRACE_CAPACITY {
+        trace.push(InstructionTraceRecord::default());
+    }
+
+    let mut entry = InstructionTraceRecord::default();
+    entry.instruction[MAX_TRACE_INSTRUCTION_BYTES - 1] = 0xA5;
+    entry.register_deltas[MAX_TRACE_REGISTER_DELTAS - 1] = RegisterDelta {
+        register: 0xFE,
+        value: 0x1234_5678,
+    };
+    entry.writes[MAX_TRACE_WRITES - 1] = TraceWrite {
+        address: 0x89AB_CDEF,
+        old_value: 1,
+        new_value: 2,
+        width: TraceWriteWidth::Halfword,
+        kind: TraceWriteKind::Io,
+    };
+
+    let sequence = trace.push(entry).unwrap();
+    entry.sequence = sequence;
+    assert_eq!(trace.iter().last(), Some(&entry));
+    assert_eq!(trace.entries_after(Some(sequence - 1), 1), [entry]);
+}
+
+#[test]
 fn address_debug_controller_handles_wide_breakpoints() {
     let mut dc = AddressDebugController::new();
     dc.add_breakpoint(0x0800_1234);

@@ -3,6 +3,11 @@ use super::*;
 impl Cpu {
     pub(super) fn fetch8(&mut self, bus: &mut Bus) -> u8 {
         let value = bus.read8(self.pc());
+        let len = usize::from(self.instruction_len);
+        if len < self.instruction_bytes.len() {
+            self.instruction_bytes[len] = value;
+            self.instruction_len += 1;
+        }
         self.ip = self.ip.wrapping_add(1);
         value
     }

@@ -10,8 +10,7 @@ macro_rules! bitwise_all_modes {
     ($bitop:tt, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
         pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
-            let a = cpu.addr_immediate(bus);
-            cpu.regs.a $bitop bus.cpu_read(a);
+            cpu.regs.a $bitop cpu.fetch8(bus);
             cpu.regs.set_zn(cpu.regs.a);
         }
         pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {

@@ -2,12 +2,6 @@ use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 
 impl Cpu {
-    pub(crate) fn addr_immediate(&mut self, _bus: &Bus) -> u16 {
-        let addr = self.pc;
-        self.pc = self.pc.wrapping_add(1);
-        addr
-    }
-
     pub(crate) fn addr_zero_page(&mut self, bus: &mut Bus) -> u16 {
         self.fetch8(bus) as u16
     }
