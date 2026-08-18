@@ -1,19 +1,6 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, CpuBus};
 
-pub fn unimplemented_handler(cpu: &mut Cpu, bus: &mut Bus, opcode: u8, operand_bytes: u16) {
-    log::warn!(
-        "Unimplemented opcode {:02X} at PC={:04X} (skipping {} operand byte(s))",
-        opcode,
-        cpu.pc.wrapping_sub(1),
-        operand_bytes
-    );
-    for _ in 0..operand_bytes {
-        let _ = cpu.fetch8(bus);
-    }
-}
-
-pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
+pub fn execute_opcode<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, opcode: u8) -> u8 {
     use crate::hardware::opcodes::unofficial as unoff;
 
     match opcode {
@@ -514,9 +501,9 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) -> u8 {
             0
         }
         0x8B => {
-            unimplemented_handler(cpu, bus, opcode, 1);
+            unoff::ane(cpu, bus);
             0
-        } // ANE/XAA:highly unstable (immediate)
+        } // ANE/XAA:unstable (immediate)
         0x8C => {
             crate::hardware::opcodes::load::sty_abs(cpu, bus);
             0

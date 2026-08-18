@@ -1,5 +1,4 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, CpuBus};
 
 #[inline(always)]
 fn page_cross_penalty(crossed: bool) -> u8 {
@@ -9,43 +8,43 @@ fn page_cross_penalty(crossed: bool) -> u8 {
 macro_rules! bitwise_all_modes {
     ($bitop:tt, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
-        pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $imm<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             cpu.regs.a $bitop cpu.fetch8(bus);
             cpu.regs.set_zn(cpu.regs.a);
         }
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page(bus);
             cpu.regs.a $bitop bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.a);
         }
-        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page_x(bus);
             cpu.regs.a $bitop bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.a);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute(bus);
             cpu.regs.a $bitop bus.cpu_read_after_elapsed_cycles(a, 3);
             cpu.regs.set_zn(cpu.regs.a);
         }
-        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_absolute_x_read(bus);
             cpu.regs.a $bitop bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.a);
             page_cross_penalty(crossed)
         }
-        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_absolute_y_read(bus);
             cpu.regs.a $bitop bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.a);
             page_cross_penalty(crossed)
         }
-        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_indirect_x(bus);
             cpu.regs.a $bitop bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.a);
         }
-        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $indy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_indirect_y_read(bus);
             cpu.regs.a $bitop bus.cpu_read(a);
             cpu.regs.set_zn(cpu.regs.a);
@@ -56,31 +55,31 @@ macro_rules! bitwise_all_modes {
 
 macro_rules! rmw_shift_modes {
     ($acc_fn:ident, $val_fn:ident, $acc:ident, $zp:ident, $zpx:ident, $abs:ident, $absx:ident) => {
-        pub fn $acc(cpu: &mut Cpu, _bus: &mut Bus) {
+        pub fn $acc<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
             cpu.$acc_fn();
         }
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
             let v = cpu.$val_fn(old);
             bus.cpu_write(a, v);
         }
-        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page_x(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
             let v = cpu.$val_fn(old);
             bus.cpu_write(a, v);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
             let v = cpu.$val_fn(old);
             bus.cpu_write(a, v);
         }
-        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $absx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute_x_write(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
@@ -103,12 +102,12 @@ bitwise_all_modes!(^=, eor_imm, eor_zp, eor_zp_x, eor_abs,
     eor_abs_x, eor_abs_y, eor_ind_x, eor_ind_y);
 
 // BIT: 0x24, 0x2C
-pub fn bit_zp(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn bit_zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let a = cpu.addr_zero_page(bus);
     cpu.bit_test(bus.cpu_read(a));
 }
 
-pub fn bit_abs(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn bit_abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let a = cpu.addr_absolute(bus);
     cpu.bit_test(bus.cpu_read_after_elapsed_cycles(a, 3));
 }

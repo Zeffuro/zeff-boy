@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use zeff_emu_common::address::Address;
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 use zeff_gba_core::emulator::Emulator as GbaEmulator;
 use zeff_gba_core::hardware::apu::ApuDebugSnapshot;
 
@@ -124,16 +125,6 @@ impl GbaBackend {
 }
 
 impl EmulatorCore for GbaBackend {
-    #[inline]
-    fn step_frame(&mut self) {
-        self.emu.step_frame();
-    }
-
-    #[inline]
-    fn frame_count(&self) -> u64 {
-        self.emu.frame_count()
-    }
-
     #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
@@ -274,6 +265,32 @@ impl EmulatorCore for GbaBackend {
         }
 
         Ok(region)
+    }
+}
+
+impl MachineTiming for GbaBackend {
+    #[inline]
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        self.emu.timing_snapshot()
+    }
+}
+
+impl Reset for GbaBackend {
+    #[inline]
+    fn reset(&mut self) {
+        Reset::reset(&mut self.emu);
+    }
+}
+
+impl FrameLifecycle for GbaBackend {
+    #[inline]
+    fn step_frame(&mut self) {
+        FrameLifecycle::step_frame(&mut self.emu);
+    }
+
+    #[inline]
+    fn frame_count(&self) -> u64 {
+        FrameLifecycle::frame_count(&self.emu)
     }
 }
 

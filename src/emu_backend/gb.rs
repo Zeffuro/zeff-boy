@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 
 use crate::audio_tooling::{
@@ -123,16 +124,6 @@ impl GbBackend {
 }
 
 impl EmulatorCore for GbBackend {
-    #[inline]
-    fn step_frame(&mut self) {
-        self.emu.step_frame();
-    }
-
-    #[inline]
-    fn frame_count(&self) -> u64 {
-        self.emu.frame_count()
-    }
-
     #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
@@ -264,6 +255,32 @@ impl EmulatorCore for GbBackend {
     #[inline]
     fn is_pocket_camera(&self) -> bool {
         self.emu.is_pocket_camera_cartridge()
+    }
+}
+
+impl MachineTiming for GbBackend {
+    #[inline]
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        self.emu.timing_snapshot()
+    }
+}
+
+impl Reset for GbBackend {
+    #[inline]
+    fn reset(&mut self) {
+        Reset::reset(&mut self.emu);
+    }
+}
+
+impl FrameLifecycle for GbBackend {
+    #[inline]
+    fn step_frame(&mut self) {
+        FrameLifecycle::step_frame(&mut self.emu);
+    }
+
+    #[inline]
+    fn frame_count(&self) -> u64 {
+        FrameLifecycle::frame_count(&self.emu)
     }
 }
 

@@ -7,6 +7,48 @@ pub use registers::{Registers, StatusFlags};
 use crate::hardware::bus::Bus;
 use crate::hardware::constants::*;
 
+/// Bus operations required by the 2A03 instruction engine.
+pub trait CpuBus {
+    fn cpu_read(&mut self, addr: u16) -> u8;
+    fn cpu_write(&mut self, addr: u16, value: u8);
+    fn cpu_read_after_elapsed_cycles(&mut self, addr: u16, elapsed_cycles: u64) -> u8;
+    fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, value: u8, elapsed_cycles: u64);
+    fn prepare_cpu_instruction_accesses(&mut self);
+    fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16);
+}
+
+impl CpuBus for Bus {
+    #[inline]
+    fn cpu_read(&mut self, addr: u16) -> u8 {
+        Bus::cpu_read(self, addr)
+    }
+
+    #[inline]
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        Bus::cpu_write(self, addr, value);
+    }
+
+    #[inline]
+    fn cpu_read_after_elapsed_cycles(&mut self, addr: u16, elapsed_cycles: u64) -> u8 {
+        Bus::cpu_read_after_elapsed_cycles(self, addr, elapsed_cycles)
+    }
+
+    #[inline]
+    fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, value: u8, elapsed_cycles: u64) {
+        Bus::cpu_write_after_elapsed_cycles(self, addr, value, elapsed_cycles);
+    }
+
+    #[inline]
+    fn prepare_cpu_instruction_accesses(&mut self) {
+        Bus::prepare_cpu_instruction_accesses(self);
+    }
+
+    #[inline]
+    fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16) {
+        Bus::finish_cpu_instruction_accesses(self, total_cycles, pc);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuState {
     Running,
@@ -20,6 +62,54 @@ pub enum CpuStepKind {
     Nmi,
     Irq,
     Idle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JamPhase {
+    FirstHigh,
+    FirstLow,
+    SecondLow,
+    StableHigh,
+}
+
+impl JamPhase {
+    fn address_and_advance(&mut self) -> u16 {
+        match *self {
+            Self::FirstHigh => {
+                *self = Self::FirstLow;
+                0xFFFF
+            }
+            Self::FirstLow => {
+                *self = Self::SecondLow;
+                0xFFFE
+            }
+            Self::SecondLow => {
+                *self = Self::StableHigh;
+                0xFFFE
+            }
+            Self::StableHigh => 0xFFFF,
+        }
+    }
+
+    fn tag(self) -> u8 {
+        match self {
+            Self::FirstHigh => 1,
+            Self::FirstLow => 2,
+            Self::SecondLow => 3,
+            Self::StableHigh => 4,
+        }
+    }
+
+    fn from_tag(tag: u8) -> anyhow::Result<Option<Self>> {
+        match tag {
+            0 => Ok(None),
+            1 => Ok(Some(Self::FirstHigh)),
+            2 => Ok(Some(Self::FirstLow)),
+            3 => Ok(Some(Self::SecondLow)),
+            4 => Ok(Some(Self::StableHigh)),
+            other => anyhow::bail!("invalid CPU JAM phase tag: {other}"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -40,6 +130,7 @@ pub struct Cpu {
     pub last_step_branch_taken_same_page: bool,
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
+    jam_phase: Option<JamPhase>,
     instruction_bytes: [u8; 3],
     instruction_byte_count: u8,
     pub nmi_count: u64,
@@ -71,6 +162,7 @@ impl Cpu {
             last_step_branch_taken_same_page: false,
             last_opcode: 0,
             last_opcode_pc: 0,
+            jam_phase: None,
             instruction_bytes: [0; 3],
             instruction_byte_count: 0,
             nmi_count: 0,
@@ -110,11 +202,17 @@ impl Cpu {
         self.last_step_branch_taken_same_page = false;
         self.last_opcode = 0;
         self.last_opcode_pc = self.pc;
+        self.jam_phase = None;
         self.instruction_bytes = [0; 3];
         self.instruction_byte_count = 0;
     }
 
+    #[inline]
     pub fn step(&mut self, bus: &mut Bus) -> u64 {
+        self.step_with_bus(bus)
+    }
+
+    pub(crate) fn step_with_bus<B: CpuBus>(&mut self, bus: &mut B) -> u64 {
         self.instruction_bytes = [0; 3];
         self.instruction_byte_count = 0;
         bus.prepare_cpu_instruction_accesses();
@@ -122,7 +220,14 @@ impl Cpu {
         self.last_step_branch_taken_same_page = false;
 
         if self.state != CpuState::Running {
-            bus.finish_cpu_instruction_accesses(1, self.pc);
+            let address = if self.state == CpuState::Halted {
+                self.jam_phase
+                    .get_or_insert(JamPhase::StableHigh)
+                    .address_and_advance()
+            } else {
+                self.pc
+            };
+            bus.finish_cpu_instruction_accesses(1, address);
             self.last_step_cycles = 1;
             self.cycles += 1;
             return 1;
@@ -190,6 +295,23 @@ impl Cpu {
         self.nmi_poll_delay = 1;
     }
 
+    pub(crate) fn enter_jam(&mut self) {
+        self.jam_phase = Some(JamPhase::FirstHigh);
+        self.state = CpuState::Halted;
+    }
+
+    pub(crate) fn is_jammed(&self) -> bool {
+        self.jam_phase.is_some()
+    }
+
+    pub(crate) fn resume_from_debug(&mut self) {
+        self.state = if self.is_jammed() {
+            CpuState::Halted
+        } else {
+            CpuState::Running
+        };
+    }
+
     pub(crate) fn mark_branch_taken_same_page(&mut self) {
         self.last_step_branch_taken_same_page = true;
     }
@@ -200,7 +322,7 @@ impl Cpu {
         self.irq_poll_delay = self.irq_poll_delay.saturating_sub(1);
     }
 
-    pub(crate) fn fetch8(&mut self, bus: &mut Bus) -> u8 {
+    pub(crate) fn fetch8<B: CpuBus>(&mut self, bus: &mut B) -> u8 {
         let v = bus.cpu_read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         if usize::from(self.instruction_byte_count) < self.instruction_bytes.len() {
@@ -214,34 +336,34 @@ impl Cpu {
         &self.instruction_bytes[..usize::from(self.instruction_byte_count)]
     }
 
-    pub(crate) fn fetch16(&mut self, bus: &mut Bus) -> u16 {
+    pub(crate) fn fetch16<B: CpuBus>(&mut self, bus: &mut B) -> u16 {
         let lo = self.fetch8(bus) as u16;
         let hi = self.fetch8(bus) as u16;
         (hi << 8) | lo
     }
 
-    pub(crate) fn push8(&mut self, bus: &mut Bus, val: u8) {
+    pub(crate) fn push8<B: CpuBus>(&mut self, bus: &mut B, val: u8) {
         bus.cpu_write(STACK_BASE | self.sp as u16, val);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    pub(crate) fn pop8(&mut self, bus: &mut Bus) -> u8 {
+    pub(crate) fn pop8<B: CpuBus>(&mut self, bus: &mut B) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         bus.cpu_read(STACK_BASE | self.sp as u16)
     }
 
-    pub(crate) fn push16(&mut self, bus: &mut Bus, val: u16) {
+    pub(crate) fn push16<B: CpuBus>(&mut self, bus: &mut B, val: u16) {
         self.push8(bus, (val >> 8) as u8);
         self.push8(bus, val as u8);
     }
 
-    pub(crate) fn pop16(&mut self, bus: &mut Bus) -> u16 {
+    pub(crate) fn pop16<B: CpuBus>(&mut self, bus: &mut B) -> u16 {
         let lo = self.pop8(bus) as u16;
         let hi = self.pop8(bus) as u16;
         (hi << 8) | lo
     }
 
-    fn service_nmi(&mut self, bus: &mut Bus) -> u64 {
+    fn service_nmi<B: CpuBus>(&mut self, bus: &mut B) -> u64 {
         self.nmi_count = self.nmi_count.wrapping_add(1);
         let _ = bus.cpu_read(self.pc);
         let _ = bus.cpu_read(self.pc);
@@ -255,7 +377,7 @@ impl Cpu {
         7
     }
 
-    fn service_irq(&mut self, bus: &mut Bus) -> u64 {
+    fn service_irq<B: CpuBus>(&mut self, bus: &mut B) -> u64 {
         self.irq_count = self.irq_count.wrapping_add(1);
         let _ = bus.cpu_read(self.pc);
         let _ = bus.cpu_read(self.pc);
@@ -320,13 +442,47 @@ impl Cpu {
         self.last_step_branch_taken_same_page = false;
         self.last_opcode = r.read_u8()?;
         self.last_opcode_pc = r.read_u16()?;
+        self.jam_phase = (self.state == CpuState::Halted).then_some(JamPhase::StableHigh);
         self.instruction_bytes = [0; 3];
         self.instruction_byte_count = 0;
         self.nmi_count = 0;
         self.irq_count = 0;
         Ok(())
     }
+
+    pub(crate) fn write_jam_state(&self, w: &mut crate::save_state::StateWriter) {
+        let phase = self
+            .jam_phase
+            .or((self.state == CpuState::Halted).then_some(JamPhase::StableHigh));
+        w.write_u8(phase.map_or(0, JamPhase::tag));
+    }
+
+    pub(crate) fn read_jam_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        let phase = JamPhase::from_tag(r.read_u8()?)?;
+        if phase.is_some() && self.state == CpuState::Running {
+            anyhow::bail!("running CPU cannot carry JAM phase state");
+        }
+        if phase.is_none() && self.state == CpuState::Halted {
+            anyhow::bail!("halted CPU is missing JAM phase state");
+        }
+        self.jam_phase = phase;
+        Ok(())
+    }
+}
+
+impl<B: CpuBus> zeff_emu_common::cpu::CpuCore<B> for Cpu {
+    type Step = u64;
+
+    #[inline]
+    fn step_cpu(&mut self, bus: &mut B) -> Self::Step {
+        self.step_with_bus(bus)
+    }
 }
 
 #[cfg(test)]
 mod alu_proptests;
+#[cfg(test)]
+mod conformance_tests;

@@ -37,13 +37,13 @@ impl Emulator {
     pub fn debug_continue(&mut self) {
         self.debug.clear_hits();
         self.debug.break_on_next = false;
-        self.cpu.state = CpuState::Running;
+        self.cpu.resume_from_debug();
     }
 
     pub fn debug_step(&mut self) {
         self.debug.clear_hits();
         self.debug.break_on_next = true;
-        self.cpu.state = CpuState::Running;
+        self.cpu.resume_from_debug();
     }
 
     pub fn debug_suspend(&mut self) {
@@ -166,6 +166,9 @@ impl Emulator {
     ) -> Result<u64, String> {
         if self.cpu.state != CpuState::Suspended {
             return Err("CPU must be suspended".to_owned());
+        }
+        if self.cpu.is_jammed() {
+            return Err("CPU is jammed".to_owned());
         }
         let return_pc = self.cpu.pc;
         if target == return_pc || instruction_budget == 0 {

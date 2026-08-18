@@ -1,7 +1,9 @@
 use crate::emulator::Emulator;
 use crate::hardware::cartridge::{BackupKind, RomHeader};
 use crate::hardware::cpu::{CpuMode, CpuState, FetchedInstruction};
-use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks, TimingSnapshot};
+use zeff_emu_common::time::{
+    ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
+};
 
 const MASTER_CLOCK_RATE: ClockRate =
     ClockRate::from_hz(crate::hardware::constants::CPU_CLOCK_HZ as u64);
@@ -133,5 +135,24 @@ impl Emulator {
 impl MachineTiming for Emulator {
     fn timing_snapshot(&self) -> TimingSnapshot {
         TimingSnapshot::new(MasterTicks::new(self.cpu.cycles), MASTER_CLOCK_RATE)
+    }
+}
+
+impl Reset for Emulator {
+    #[inline]
+    fn reset(&mut self) {
+        Emulator::reset(self);
+    }
+}
+
+impl FrameLifecycle for Emulator {
+    #[inline]
+    fn step_frame(&mut self) {
+        Emulator::step_frame(self);
+    }
+
+    #[inline]
+    fn frame_count(&self) -> u64 {
+        Emulator::frame_count(self)
     }
 }

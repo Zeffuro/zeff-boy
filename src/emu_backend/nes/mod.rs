@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
 use crate::audio_tooling::{
@@ -131,16 +132,6 @@ impl NesBackend {
 }
 
 impl EmulatorCore for NesBackend {
-    #[inline]
-    fn step_frame(&mut self) {
-        self.emu.step_frame();
-    }
-
-    #[inline]
-    fn frame_count(&self) -> u64 {
-        self.emu.frame_count()
-    }
-
     #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
@@ -282,6 +273,32 @@ impl EmulatorCore for NesBackend {
         }
 
         Ok(region)
+    }
+}
+
+impl MachineTiming for NesBackend {
+    #[inline]
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        self.emu.timing_snapshot()
+    }
+}
+
+impl Reset for NesBackend {
+    #[inline]
+    fn reset(&mut self) {
+        Reset::reset(&mut self.emu);
+    }
+}
+
+impl FrameLifecycle for NesBackend {
+    #[inline]
+    fn step_frame(&mut self) {
+        FrameLifecycle::step_frame(&mut self.emu);
+    }
+
+    #[inline]
+    fn frame_count(&self) -> u64 {
+        FrameLifecycle::frame_count(&self.emu)
     }
 }
 

@@ -33,6 +33,21 @@ fn make_cgb_compat_test_bus() -> Bus {
 }
 
 #[test]
+fn cpu_t_cycle_advance_uses_the_system_clock_domain() {
+    let mut normal = make_cgb_test_bus();
+    let normal_ppu_cycles = normal.ppu_cycles();
+    assert_eq!(normal.advance_cpu_t_cycles(8), 8);
+    assert_eq!(normal.ppu_cycles(), normal_ppu_cycles + 8);
+
+    let mut double = make_cgb_test_bus();
+    double.write_byte(0xFF4D, 0x01);
+    assert!(double.maybe_switch_cgb_speed());
+    let double_ppu_cycles = double.ppu_cycles();
+    assert_eq!(double.advance_cpu_t_cycles(8), 4);
+    assert_eq!(double.ppu_cycles(), double_ppu_cycles + 4);
+}
+
+#[test]
 fn oam_dma_transfers_one_byte_per_m_cycle() {
     let mut bus = make_test_bus();
     bus.oam[0] = 0xAA;

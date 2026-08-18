@@ -2,6 +2,8 @@ use super::bus::Bus;
 use super::constants::ADDRESS_MASK;
 
 mod alu;
+#[cfg(test)]
+mod conformance_tests;
 mod execute;
 mod instructions;
 mod memory;

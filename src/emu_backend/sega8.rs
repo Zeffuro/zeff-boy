@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use zeff_emu_common::address::{Address, narrow_u16};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
 use zeff_sega8_core::hardware::cartridge::{Sega8MapperKind, Sega8System, SystemHint};
 use zeff_sega8_core::hardware::region::Sega8Region;
@@ -138,16 +139,6 @@ impl Sega8Backend {
 
 impl EmulatorCore for Sega8Backend {
     #[inline]
-    fn step_frame(&mut self) {
-        self.emu.step_frame();
-    }
-
-    #[inline]
-    fn frame_count(&self) -> u64 {
-        self.emu.frame_count()
-    }
-
-    #[inline]
     fn framebuffer(&self) -> &[u8] {
         self.emu.framebuffer()
     }
@@ -277,6 +268,32 @@ impl EmulatorCore for Sega8Backend {
         }
 
         Ok(region)
+    }
+}
+
+impl MachineTiming for Sega8Backend {
+    #[inline]
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        self.emu.timing_snapshot()
+    }
+}
+
+impl Reset for Sega8Backend {
+    #[inline]
+    fn reset(&mut self) {
+        Reset::reset(&mut self.emu);
+    }
+}
+
+impl FrameLifecycle for Sega8Backend {
+    #[inline]
+    fn step_frame(&mut self) {
+        FrameLifecycle::step_frame(&mut self.emu);
+    }
+
+    #[inline]
+    fn frame_count(&self) -> u64 {
+        FrameLifecycle::frame_count(&self.emu)
     }
 }
 

@@ -1,3 +1,7 @@
+use std::num::NonZeroU64;
+
+use zeff_emu_common::cpu::{CpuCore, CpuStep};
+
 use super::bus::Bus;
 use super::constants::{
     Z80_FLAG_BIT_3, Z80_FLAG_BIT_5, Z80_FLAG_CARRY, Z80_FLAG_HALF_CARRY, Z80_FLAG_PARITY_OVERFLOW,
@@ -16,6 +20,55 @@ mod interrupt;
 mod misc;
 mod rotate;
 mod unprefixed;
+
+/// Memory, port, and interrupt operations required by the Z80 engine.
+pub trait SegaCpuBus {
+    fn cpu_read(&self, addr: u16) -> u8;
+    fn cpu_write(&mut self, addr: u16, value: u8);
+
+    fn io_read(&mut self, port: u8) -> u8;
+    fn io_write(&mut self, port: u8, value: u8);
+    fn maskable_interrupt_pending(&self) -> bool;
+    fn non_maskable_interrupt_pending(&self) -> bool;
+    fn acknowledge_non_maskable_interrupt(&mut self) -> bool;
+}
+
+impl SegaCpuBus for Bus {
+    #[inline]
+    fn cpu_read(&self, addr: u16) -> u8 {
+        Bus::cpu_read(self, addr)
+    }
+
+    #[inline]
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        Bus::cpu_write(self, addr, value);
+    }
+
+    #[inline]
+    fn io_read(&mut self, port: u8) -> u8 {
+        Bus::io_read(self, port)
+    }
+
+    #[inline]
+    fn io_write(&mut self, port: u8, value: u8) {
+        Bus::io_write(self, port, value);
+    }
+
+    #[inline]
+    fn maskable_interrupt_pending(&self) -> bool {
+        Bus::maskable_interrupt_pending(self)
+    }
+
+    #[inline]
+    fn non_maskable_interrupt_pending(&self) -> bool {
+        Bus::non_maskable_interrupt_pending(self)
+    }
+
+    #[inline]
+    fn acknowledge_non_maskable_interrupt(&mut self) -> bool {
+        Bus::acknowledge_non_maskable_interrupt(self)
+    }
+}
 
 const CYCLES_NOP: u32 = 4;
 const CYCLES_LD_RR_NN: u32 = 10;
@@ -142,6 +195,13 @@ pub struct FetchedInstruction {
     pub pc: u16,
     pub opcode: u8,
     pub cycles: u32,
+}
+
+impl CpuStep for FetchedInstruction {
+    #[inline]
+    fn cpu_cycles(&self) -> Option<NonZeroU64> {
+        NonZeroU64::new(u64::from(self.cycles))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -277,7 +337,13 @@ impl Cpu {
         self.trap = None;
     }
 
+    #[inline(always)]
     pub fn step(&mut self, bus: &mut Bus) -> Option<FetchedInstruction> {
+        self.step_with_bus(bus)
+    }
+
+    #[inline(always)]
+    pub fn step_with_bus<B: SegaCpuBus>(&mut self, bus: &mut B) -> Option<FetchedInstruction> {
         self.instruction_bytes = [0; 4];
         self.instruction_byte_count = 0;
         if self.state == CpuState::Suspended {
@@ -379,9 +445,9 @@ impl Cpu {
         }
     }
 
-    pub(crate) fn begin_guest_call(
+    pub(crate) fn begin_guest_call<B: SegaCpuBus>(
         &mut self,
-        bus: &mut Bus,
+        bus: &mut B,
         target: u16,
     ) -> (u16, u16, bool, bool, u8) {
         let state = (
@@ -440,6 +506,15 @@ impl Cpu {
         self.instruction_byte_count = 0;
         self.trap = read_trap(r)?;
         Ok(())
+    }
+}
+
+impl<B: SegaCpuBus> CpuCore<B> for Cpu {
+    type Step = Option<FetchedInstruction>;
+
+    #[inline(always)]
+    fn step_cpu(&mut self, bus: &mut B) -> Self::Step {
+        self.step_with_bus(bus)
     }
 }
 
@@ -582,5 +657,9 @@ fn read_trap(
     }
 }
 
+#[cfg(test)]
+mod conformance_tests;
+#[cfg(test)]
+mod flat_bus_tests;
 #[cfg(test)]
 mod tests;

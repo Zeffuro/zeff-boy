@@ -1,8 +1,8 @@
 use super::flow::brk;
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Cartridge;
-use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::registers::StatusFlags;
+use crate::hardware::cpu::{Cpu, CpuBus};
 use zeff_emu_common::time::MasterTicks;
 
 fn build_bus_with_program(program: &[u8]) -> Bus {
@@ -26,6 +26,95 @@ fn setup(program: &[u8]) -> (Cpu, Bus) {
     let mut cpu = Cpu::new();
     cpu.reset(&mut bus);
     (cpu, bus)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FlatAccess {
+    Read(u16, u8),
+    Write(u16, u8),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DelayedAccess {
+    Read(u16, u64),
+    Write(u16, u8, u64),
+}
+
+struct FlatRam {
+    memory: Box<[u8; 0x10000]>,
+    accesses: Vec<FlatAccess>,
+    delayed_accesses: Vec<DelayedAccess>,
+    elapsed_cycles: u64,
+}
+
+impl FlatRam {
+    fn new(initial: &[(u16, u8)]) -> Self {
+        let mut memory = Box::new([0; 0x10000]);
+        for &(address, value) in initial {
+            memory[usize::from(address)] = value;
+        }
+        Self {
+            memory,
+            accesses: Vec::new(),
+            delayed_accesses: Vec::new(),
+            elapsed_cycles: 0,
+        }
+    }
+
+    fn read(&mut self, address: u16) -> u8 {
+        let value = self.memory[usize::from(address)];
+        self.accesses.push(FlatAccess::Read(address, value));
+        self.elapsed_cycles += 1;
+        value
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.memory[usize::from(address)] = value;
+        self.accesses.push(FlatAccess::Write(address, value));
+        self.elapsed_cycles += 1;
+    }
+}
+
+impl CpuBus for FlatRam {
+    fn cpu_read(&mut self, address: u16) -> u8 {
+        self.read(address)
+    }
+
+    fn cpu_write(&mut self, address: u16, value: u8) {
+        self.write(address, value);
+    }
+
+    fn cpu_read_after_elapsed_cycles(&mut self, address: u16, elapsed_cycles: u64) -> u8 {
+        self.delayed_accesses
+            .push(DelayedAccess::Read(address, elapsed_cycles));
+        self.elapsed_cycles = self.elapsed_cycles.max(elapsed_cycles);
+        self.read(address)
+    }
+
+    fn cpu_write_after_elapsed_cycles(&mut self, address: u16, value: u8, elapsed_cycles: u64) {
+        self.delayed_accesses
+            .push(DelayedAccess::Write(address, value, elapsed_cycles));
+        self.elapsed_cycles = self.elapsed_cycles.max(elapsed_cycles);
+        self.write(address, value);
+    }
+
+    fn prepare_cpu_instruction_accesses(&mut self) {
+        self.accesses.clear();
+        self.delayed_accesses.clear();
+        self.elapsed_cycles = 0;
+    }
+
+    fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16) {
+        while self.elapsed_cycles < total_cycles {
+            self.read(pc);
+        }
+    }
+}
+
+fn flat_cpu(pc: u16) -> Cpu {
+    let mut cpu = Cpu::new();
+    cpu.pc = pc;
+    cpu
 }
 
 #[test]
@@ -442,18 +531,33 @@ fn lax_zp_loads_a_and_x() {
 }
 
 #[test]
-fn atx_immediate_loads_operand_into_a_and_x() {
-    let (mut cpu, mut bus) = setup(&[0xAB, 0x80]);
-    cpu.regs.a = 0x3C;
+fn ane_immediate_uses_corpus_mask() {
+    let (mut cpu, mut bus) = setup(&[0x8B, 0x5A]);
+    cpu.regs.a = 0x01;
+    cpu.regs.x = 0xF0;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.regs.a, 0x40);
+    assert_eq!(cpu.regs.x, 0xF0);
+    assert_eq!(cpu.pc, 0x8002);
+    assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
+    assert!(!cpu.regs.get_flag(StatusFlags::NEGATIVE));
+}
+
+#[test]
+fn atx_immediate_uses_corpus_mask_for_a_and_x() {
+    let (mut cpu, mut bus) = setup(&[0xAB, 0x55]);
+    cpu.regs.a = 0x01;
     cpu.regs.x = 0x00;
 
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.regs.a, 0x80);
-    assert_eq!(cpu.regs.x, 0x80);
+    assert_eq!(cpu.regs.a, 0x45);
+    assert_eq!(cpu.regs.x, 0x45);
     assert_eq!(cpu.pc, 0x8002);
     assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
-    assert!(cpu.regs.get_flag(StatusFlags::NEGATIVE));
+    assert!(!cpu.regs.get_flag(StatusFlags::NEGATIVE));
 }
 
 #[test]
@@ -468,7 +572,7 @@ fn sax_zp_stores_a_and_x() {
 }
 
 #[test]
-fn shy_abs_x_page_cross_writes_wrapped_address_with_base_high_mask() {
+fn shy_abs_x_page_cross_corrupts_write_high_byte_with_stored_value() {
     let (mut cpu, mut bus) = setup(&[0x9C, 0xFE, 0x02]);
     cpu.regs.x = 0x02;
     cpu.regs.y = 0xFF;
@@ -493,13 +597,13 @@ fn shy_abs_x_page_cross_writes_wrapped_address_with_base_high_mask() {
         })
         .collect();
 
-    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0200, 0x03)]);
-    assert_eq!(bus.ram[0x0200], 0x03);
-    assert_eq!(bus.ram[0x0300], 0x00);
+    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0300, 0x03)]);
+    assert_eq!(bus.ram[0x0200], 0x00);
+    assert_eq!(bus.ram[0x0300], 0x03);
 }
 
 #[test]
-fn shx_abs_y_page_cross_writes_wrapped_address_with_base_high_mask() {
+fn shx_abs_y_page_cross_corrupts_write_high_byte_with_stored_value() {
     let (mut cpu, mut bus) = setup(&[0x9E, 0xFE, 0x02]);
     cpu.regs.x = 0xFF;
     cpu.regs.y = 0x02;
@@ -524,9 +628,155 @@ fn shx_abs_y_page_cross_writes_wrapped_address_with_base_high_mask() {
         })
         .collect();
 
-    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0200, 0x03)]);
-    assert_eq!(bus.ram[0x0200], 0x03);
-    assert_eq!(bus.ram[0x0300], 0x00);
+    assert_eq!(accesses, vec![("read", 0x0200, 0), ("write", 0x0300, 0x03)]);
+    assert_eq!(bus.ram[0x0200], 0x00);
+    assert_eq!(bus.ram[0x0300], 0x03);
+}
+
+#[test]
+fn unstable_high_byte_stores_match_pinned_flat_ram_traces() {
+    let cases = [
+        (
+            0x93,
+            &[
+                (0x6834, 0x93),
+                (0x6835, 0x18),
+                (0x0018, 0x8B),
+                (0x0019, 0x70),
+                (0x7088, 0x32),
+            ][..],
+            0x6834,
+            0xC9,
+            0x70,
+            0xFD,
+            0xFD,
+            vec![
+                FlatAccess::Read(0x6834, 0x93),
+                FlatAccess::Read(0x6835, 0x18),
+                FlatAccess::Read(0x0018, 0x8B),
+                FlatAccess::Read(0x0019, 0x70),
+                FlatAccess::Read(0x7088, 0x32),
+                FlatAccess::Write(0x4088, 0x40),
+            ],
+        ),
+        (
+            0x9B,
+            &[
+                (0x4000, 0x9B),
+                (0x4001, 0x8A),
+                (0x4002, 0xCC),
+                (0xCC40, 0xA5),
+            ][..],
+            0x4000,
+            0x05,
+            0xFF,
+            0xB6,
+            0xFD,
+            vec![
+                FlatAccess::Read(0x4000, 0x9B),
+                FlatAccess::Read(0x4001, 0x8A),
+                FlatAccess::Read(0x4002, 0xCC),
+                FlatAccess::Read(0xCC40, 0xA5),
+                FlatAccess::Write(0x0540, 0x05),
+            ],
+        ),
+        (
+            0x9C,
+            &[
+                (0x4000, 0x9C),
+                (0x4001, 0xC1),
+                (0x4002, 0x05),
+                (0x0535, 0xA5),
+            ][..],
+            0x4000,
+            0x00,
+            0x74,
+            0xF0,
+            0xFD,
+            vec![
+                FlatAccess::Read(0x4000, 0x9C),
+                FlatAccess::Read(0x4001, 0xC1),
+                FlatAccess::Read(0x4002, 0x05),
+                FlatAccess::Read(0x0535, 0xA5),
+                FlatAccess::Write(0x0035, 0x00),
+            ],
+        ),
+        (
+            0x9E,
+            &[
+                (0x4000, 0x9E),
+                (0x4001, 0x30),
+                (0x4002, 0x77),
+                (0x771E, 0xA5),
+            ][..],
+            0x4000,
+            0x00,
+            0x68,
+            0xEE,
+            0xFD,
+            vec![
+                FlatAccess::Read(0x4000, 0x9E),
+                FlatAccess::Read(0x4001, 0x30),
+                FlatAccess::Read(0x4002, 0x77),
+                FlatAccess::Read(0x771E, 0xA5),
+                FlatAccess::Write(0x681E, 0x68),
+            ],
+        ),
+        (
+            0x9F,
+            &[
+                (0x4000, 0x9F),
+                (0x4001, 0xCA),
+                (0x4002, 0x03),
+                (0x0359, 0xA5),
+            ][..],
+            0x4000,
+            0x00,
+            0xFF,
+            0x8F,
+            0xFD,
+            vec![
+                FlatAccess::Read(0x4000, 0x9F),
+                FlatAccess::Read(0x4001, 0xCA),
+                FlatAccess::Read(0x4002, 0x03),
+                FlatAccess::Read(0x0359, 0xA5),
+                FlatAccess::Write(0x0059, 0x00),
+            ],
+        ),
+    ];
+
+    for (opcode, initial, pc, a, x, y, sp, expected) in cases {
+        let mut cpu = flat_cpu(pc);
+        cpu.regs.a = a;
+        cpu.regs.x = x;
+        cpu.regs.y = y;
+        cpu.sp = sp;
+        let mut bus = FlatRam::new(initial);
+
+        cpu.step_with_bus(&mut bus);
+
+        assert_eq!(cpu.last_opcode, opcode);
+        let [
+            ..,
+            FlatAccess::Read(dummy_addr, _),
+            FlatAccess::Write(write_addr, value),
+        ] = expected.as_slice()
+        else {
+            panic!("unstable store trace shape");
+        };
+        let (read_cycle, write_cycle) = if opcode == 0x93 { (4, 5) } else { (3, 4) };
+        assert_eq!(
+            bus.delayed_accesses,
+            [
+                DelayedAccess::Read(*dummy_addr, read_cycle),
+                DelayedAccess::Write(*write_addr, *value, write_cycle),
+            ]
+        );
+        assert_eq!(bus.accesses, expected);
+        if opcode == 0x9B {
+            assert_eq!(cpu.sp, cpu.regs.a & cpu.regs.x);
+        }
+    }
 }
 
 #[test]

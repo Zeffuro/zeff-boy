@@ -565,5 +565,7 @@ fn block_transfer_register_count(raw: u32) -> u32 {
 }
 
 #[cfg(test)]
+mod conformance_tests;
+#[cfg(test)]
 #[path = "cpu/tests.rs"]
 mod tests;

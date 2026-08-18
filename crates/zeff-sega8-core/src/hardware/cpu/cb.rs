@@ -2,7 +2,7 @@ use super::flags::szp_flags;
 use super::*;
 
 impl Cpu {
-    pub(super) fn execute_cb(&mut self, bus: &mut Bus) -> u32 {
+    pub(super) fn execute_cb<B: SegaCpuBus>(&mut self, bus: &mut B) -> u32 {
         let opcode = self.fetch_u8(bus);
         self.increment_refresh_register();
 

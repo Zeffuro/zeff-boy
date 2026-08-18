@@ -1,7 +1,12 @@
 use super::*;
 
 impl Cpu {
-    pub(super) fn execute_unprefixed(&mut self, bus: &mut Bus, pc: u16, opcode: u8) -> u32 {
+    pub(super) fn execute_unprefixed<B: SegaCpuBus>(
+        &mut self,
+        bus: &mut B,
+        pc: u16,
+        opcode: u8,
+    ) -> u32 {
         match opcode {
             0x00 => CYCLES_NOP,
             0x01 => {

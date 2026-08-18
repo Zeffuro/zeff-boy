@@ -2,6 +2,7 @@ use super::{CPU_CYCLES_PER_FRAME, Emulator};
 use crate::debug::{CallStackEntry, CallStackKind};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cpu::{CpuState, CpuStepKind};
+use zeff_emu_common::cpu::CpuCore;
 use zeff_emu_common::debug::{
     DebugEvent, InstructionTraceRecord, RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind,
     TraceWriteWidth,
@@ -35,6 +36,7 @@ impl Emulator {
         }
 
         let pc_before = self.cpu.pc;
+        let cpu_was_running = self.cpu.state == CpuState::Running;
         let sp_before = self.cpu.sp;
         let cycles_before = self.cpu.cycles;
         let registers_before = if instruction_trace_enabled {
@@ -42,16 +44,24 @@ impl Emulator {
         } else {
             None
         };
-        let opcode = self.bus.cpu_peek(pc_before);
-        let rom_offset = self.bus.cartridge.cpu_rom_offset(pc_before);
+        let (opcode, rom_offset) = if cpu_was_running {
+            (
+                self.bus.cpu_peek(pc_before),
+                self.bus.cartridge.cpu_rom_offset(pc_before),
+            )
+        } else {
+            (self.cpu.last_opcode, None)
+        };
 
-        self.opcode_log.push((pc_before, opcode, rom_offset));
+        if cpu_was_running {
+            self.opcode_log.push((pc_before, opcode, rom_offset));
+        }
 
         self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
         self.bus
             .begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(self.cpu.cycles));
 
-        let cycles = self.cpu.step(&mut self.bus);
+        let cycles = CpuCore::step_cpu(&mut self.cpu, &mut self.bus);
 
         let dma_cycles = self.bus.dma_stall_cycles;
         self.bus.dma_stall_cycles = 0;
@@ -76,29 +86,32 @@ impl Emulator {
         }
 
         let mut bus_trace_events = Vec::new();
-        let mut instruction_record = instruction_trace_enabled.then(|| {
-            let interrupt = matches!(self.cpu.last_step_kind, CpuStepKind::Nmi | CpuStepKind::Irq);
-            let mut record = InstructionTraceRecord::new(
-                TraceExecMode::Mos6502,
-                u32::from(pc_before),
-                rom_offset.map(|offset| offset as u64),
-                self.frame_count(),
-                cycles_before,
-                if interrupt {
-                    &[]
+        let mut instruction_record = (instruction_trace_enabled
+            && self.cpu.last_step_kind != CpuStepKind::Idle)
+            .then(|| {
+                let interrupt =
+                    matches!(self.cpu.last_step_kind, CpuStepKind::Nmi | CpuStepKind::Irq);
+                let mut record = InstructionTraceRecord::new(
+                    TraceExecMode::Mos6502,
+                    u32::from(pc_before),
+                    rom_offset.map(|offset| offset as u64),
+                    self.frame_count(),
+                    cycles_before,
+                    if interrupt {
+                        &[]
+                    } else {
+                        self.cpu.instruction_bytes()
+                    },
+                );
+                record.event = if interrupt {
+                    Some(DebugEvent::Interrupt)
+                } else if dma_cycles != 0 {
+                    Some(DebugEvent::Dma)
                 } else {
-                    self.cpu.instruction_bytes()
-                },
-            );
-            record.event = if interrupt {
-                Some(DebugEvent::Interrupt)
-            } else if dma_cycles != 0 {
-                Some(DebugEvent::Dma)
-            } else {
-                None
-            };
-            record
-        });
+                    None
+                };
+                record
+            });
         if trace_active {
             self.bus.debug_trace_enabled = false;
             self.bus.debug_trace_reads = true;
@@ -161,7 +174,12 @@ impl Emulator {
             self.instruction_trace.push(record);
         }
 
-        if self.debug.should_break(self.cpu.pc) {
+        let should_break = if self.cpu.last_step_kind == CpuStepKind::Idle {
+            std::mem::take(&mut self.debug.break_on_next)
+        } else {
+            self.debug.should_break(self.cpu.pc)
+        };
+        if should_break {
             self.cpu.state = CpuState::Suspended;
         }
 
@@ -231,7 +249,7 @@ impl Emulator {
         {
             while !self.bus.ppu.frame_ready
                 && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
-                && self.cpu.state == CpuState::Running
+                && self.cpu.state != CpuState::Suspended
             {
                 self.step_instruction();
             }
@@ -244,7 +262,7 @@ impl Emulator {
                     .begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(
                         self.cpu.cycles,
                     ));
-                let cycles = self.cpu.step(&mut self.bus);
+                let cycles = CpuCore::step_cpu(&mut self.cpu, &mut self.bus);
 
                 let dma_cycles = self.bus.dma_stall_cycles;
                 self.bus.dma_stall_cycles = 0;

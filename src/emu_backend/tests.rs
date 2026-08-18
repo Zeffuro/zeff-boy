@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use zeff_emu_common::debug::{DebugEvent, WatchType};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset};
 use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
 
 mod fixtures;
@@ -131,7 +132,41 @@ fn shared_backend_loader_covers_every_supported_core() {
         assert_eq!(backend.rom_path(), PathBuf::from(rom_name));
         assert_eq!(backend.source_path(), PathBuf::from(rom_name));
         assert!(!backend.framebuffer().is_empty());
+
+        assert_frame_lifecycle_roundtrip(backend);
     }
+}
+
+fn assert_frame_lifecycle_roundtrip(mut backend: EmuBackend) {
+    let before_frame = FrameLifecycle::frame_count(&backend);
+    let before_timing = backend.timing_snapshot();
+
+    FrameLifecycle::step_frame(&mut backend);
+
+    let after_frame = FrameLifecycle::frame_count(&backend);
+    let after_timing = backend.timing_snapshot();
+    assert_eq!(after_frame, before_frame + 1);
+    assert_eq!(before_timing.rate(), after_timing.rate());
+    assert!(
+        after_timing
+            .elapsed_since(before_timing)
+            .is_some_and(|ticks| ticks.get() > 0)
+    );
+
+    let state = backend.encode_state_bytes().unwrap();
+    FrameLifecycle::step_frame(&mut backend);
+    assert!(
+        backend
+            .timing_snapshot()
+            .elapsed_since(after_timing)
+            .is_some_and(|ticks| ticks.get() > 0)
+    );
+    backend.load_state_from_bytes(state).unwrap();
+    assert_eq!(backend.timing_snapshot(), after_timing);
+
+    Reset::reset(&mut backend);
+    assert_eq!(FrameLifecycle::frame_count(&backend), before_frame);
+    assert_eq!(backend.timing_snapshot(), before_timing);
 }
 
 #[test]

@@ -15,6 +15,7 @@ zeff-emu-common = { path = "../zeff-emu-common" }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
+zeff-test-support = { path = "../zeff-test-support" }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [[bench]]

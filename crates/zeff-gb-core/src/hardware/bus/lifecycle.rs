@@ -108,4 +108,27 @@ impl Bus {
         };
         true
     }
+
+    #[inline]
+    pub(in crate::hardware) fn advance_cpu_t_cycles(&mut self, cpu_t_cycles: u64) -> u64 {
+        let system_t_cycles = if self.hardware_mode == HardwareMode::CGBDouble {
+            cpu_t_cycles / 2
+        } else {
+            cpu_t_cycles
+        };
+
+        self.step_timer(cpu_t_cycles);
+        self.step_serial(cpu_t_cycles);
+        self.step_apu(system_t_cycles);
+
+        let previous_ppu_mode = self.ppu_mode();
+        let (ppu_interrupt, current_ppu_mode) = self.step_ppu(system_t_cycles);
+        self.if_reg |= ppu_interrupt;
+        self.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
+
+        self.step_oam_dma(cpu_t_cycles);
+        self.cartridge.step(system_t_cycles);
+
+        system_t_cycles
+    }
 }

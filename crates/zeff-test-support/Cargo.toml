@@ -1,0 +1,12 @@
+[package]
+name = "zeff-test-support"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "Shared conformance-test adapters and assertions for Zeff Boy emulator cores."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+zeff-emu-common = { path = "../zeff-emu-common" }

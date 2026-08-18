@@ -5611,6 +5611,7 @@ dependencies = [
  "serde",
  "sha2",
  "zeff-emu-common",
+ "zeff-test-support",
 ]
 
 [[package]]
@@ -5622,6 +5623,7 @@ dependencies = [
  "criterion",
  "sha2",
  "zeff-emu-common",
+ "zeff-test-support",
 ]
 
 [[package]]
@@ -5659,8 +5661,10 @@ dependencies = [
  "lz4_flex",
  "proptest",
  "serde",
+ "serde_json",
  "sha2",
  "zeff-emu-common",
+ "zeff-test-support",
 ]
 
 [[package]]
@@ -5686,7 +5690,15 @@ dependencies = [
  "criterion",
  "sha2",
  "zeff-emu-common",
+ "zeff-test-support",
  "zip",
+]
+
+[[package]]
+name = "zeff-test-support"
+version = "0.1.0"
+dependencies = [
+ "zeff-emu-common",
 ]
 
 [[package]]
@@ -5698,6 +5710,7 @@ dependencies = [
  "criterion",
  "sha2",
  "zeff-emu-common",
+ "zeff-test-support",
 ]
 
 [[package]]

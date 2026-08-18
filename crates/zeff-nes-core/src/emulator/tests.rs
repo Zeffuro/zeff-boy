@@ -3,7 +3,7 @@ use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_HEADER_SIZE, FDS_SIDE_SIZE};
 use crate::hardware::cartridge::{NesMapper, RomFormat};
 use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4, NMI_VECTOR_HI, NMI_VECTOR_LO, OAM_DMA};
-use crate::hardware::cpu::StatusFlags;
+use crate::hardware::cpu::{CpuState, CpuStepKind, StatusFlags};
 use zeff_emu_common::debug::DebugEvent;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{ClockRate, MasterTicks};
@@ -259,6 +259,148 @@ fn instruction_trace_captures_mapping_and_register_changes() {
             .iter()
             .any(|delta| delta.register == 0)
     );
+}
+
+#[test]
+fn jam_reset_releases_cpu_for_normal_execution() {
+    let mut emu = Emulator::new(
+        &build_test_rom_with_program(&[0x02, 0xEA]),
+        DEFAULT_SAMPLE_RATE,
+    )
+    .expect("test ROM");
+
+    assert_eq!(emu.step_instruction().2, 2);
+    assert!(emu.cpu.is_jammed());
+
+    emu.reset();
+    assert_eq!(emu.cpu.state, CpuState::Running);
+    assert!(!emu.cpu.is_jammed());
+
+    emu.cpu.pc = 0x8001;
+    assert_eq!(emu.step_instruction().2, 2);
+    assert_eq!(emu.cpu.state, CpuState::Running);
+}
+
+#[test]
+fn jam_does_not_service_pending_nmi_or_irq() {
+    let mut emu = Emulator::new(&build_test_rom_with_program(&[0x02]), DEFAULT_SAMPLE_RATE)
+        .expect("test ROM");
+
+    assert_eq!(emu.step_instruction().2, 2);
+    emu.cpu.nmi_pending = true;
+    emu.cpu.irq_line = true;
+
+    assert_eq!(emu.cpu.step(&mut emu.bus), 1);
+    assert_eq!(emu.cpu.state, CpuState::Halted);
+    assert_eq!(emu.cpu.last_step_kind, CpuStepKind::Idle);
+    assert!(emu.cpu.nmi_pending);
+    assert!(emu.cpu.irq_line);
+    assert_eq!(emu.cpu.nmi_count, 0);
+    assert_eq!(emu.cpu.irq_count, 0);
+}
+
+#[test]
+fn jam_debug_continue_and_step_preserve_halt_phase() {
+    let mut emu = Emulator::new(&build_test_rom_with_program(&[0x02]), DEFAULT_SAMPLE_RATE)
+        .expect("test ROM");
+
+    assert_eq!(emu.step_instruction().2, 2);
+    emu.debug_continue();
+    assert_eq!(emu.cpu.state, CpuState::Halted);
+
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    assert_eq!(cycles, 1);
+    assert_eq!(
+        events.iter().map(|event| event.addr()).collect::<Vec<_>>(),
+        [0xFFFF]
+    );
+
+    emu.debug_step();
+    assert_eq!(emu.cpu.state, CpuState::Halted);
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    assert_eq!(cycles, 1);
+    assert_eq!(
+        events.iter().map(|event| event.addr()).collect::<Vec<_>>(),
+        [0xFFFE]
+    );
+    assert_eq!(emu.cpu.state, CpuState::Suspended);
+    assert!(emu.cpu.is_jammed());
+
+    emu.debug_continue();
+    assert_eq!(emu.cpu.state, CpuState::Halted);
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    assert_eq!(cycles, 1);
+    assert_eq!(
+        events.iter().map(|event| event.addr()).collect::<Vec<_>>(),
+        [0xFFFE]
+    );
+}
+
+#[test]
+fn jam_read_watchpoint_suspends_without_losing_phase() {
+    let mut emu = Emulator::new(&build_test_rom_with_program(&[0x02]), DEFAULT_SAMPLE_RATE)
+        .expect("test ROM");
+
+    assert_eq!(emu.step_instruction().2, 2);
+    emu.add_watchpoint(0xFFFF, crate::debug::WatchType::Read);
+
+    assert_eq!(emu.step_instruction().2, 1);
+    assert_eq!(emu.cpu.state, CpuState::Suspended);
+    assert!(emu.cpu.is_jammed());
+    assert_eq!(
+        emu.debug_hit_watchpoint().map(|hit| hit.address),
+        Some(0xFFFF)
+    );
+
+    emu.debug_continue();
+    assert_eq!(emu.cpu.state, CpuState::Halted);
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    assert_eq!(cycles, 1);
+    assert_eq!(
+        events.iter().map(|event| event.addr()).collect::<Vec<_>>(),
+        [0xFFFE]
+    );
+}
+
+#[test]
+fn jam_idle_steps_do_not_grow_opcode_or_instruction_logs() {
+    let mut emu = Emulator::new(&build_test_rom_with_program(&[0x02]), DEFAULT_SAMPLE_RATE)
+        .expect("test ROM");
+    emu.set_opcode_log_enabled(true);
+    emu.set_instruction_trace_enabled(true);
+
+    assert_eq!(emu.step_instruction().2, 2);
+    let opcode_log = emu.recent_opcodes(32);
+    let trace_len = emu.instruction_trace().len();
+    assert_eq!(opcode_log.len(), 1);
+    assert_eq!(trace_len, 1);
+
+    for _ in 0..4 {
+        assert_eq!(emu.step_instruction().2, 1);
+    }
+
+    assert_eq!(emu.recent_opcodes(32), opcode_log);
+    assert_eq!(emu.instruction_trace().len(), trace_len);
+}
+
+#[test]
+fn jammed_frame_advancement_matches_with_opcode_logging_enabled() {
+    let rom = build_test_rom_with_program(&[0x02]);
+    let mut fast = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("test ROM");
+    let mut logged = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("test ROM");
+    logged.set_opcode_log_enabled(true);
+
+    fast.step_frame();
+    logged.step_frame();
+
+    assert_eq!(fast.cpu.state, CpuState::Halted);
+    assert_eq!(logged.cpu.state, CpuState::Halted);
+    assert!(fast.cpu.is_jammed());
+    assert!(logged.cpu.is_jammed());
+    assert_eq!(fast.cpu.cycles, logged.cpu.cycles);
+    assert_eq!(fast.bus.ppu_cycles, logged.bus.ppu_cycles);
+    assert_eq!(fast.frame_count(), logged.frame_count());
+    assert_eq!(logged.recent_opcodes(32).len(), 1);
 }
 
 #[test]

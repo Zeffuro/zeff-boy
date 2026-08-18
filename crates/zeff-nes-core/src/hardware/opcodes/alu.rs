@@ -1,5 +1,4 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, CpuBus};
 
 #[inline(always)]
 fn page_cross_penalty(crossed: bool) -> u8 {
@@ -9,43 +8,43 @@ fn page_cross_penalty(crossed: bool) -> u8 {
 macro_rules! read_op_all_modes {
     ($op:ident, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
-        pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $imm<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let v = cpu.fetch8(bus);
             cpu.$op(v);
         }
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
         }
-        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page_x(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
         }
-        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_absolute_x_read(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
             page_cross_penalty(crossed)
         }
-        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_absolute_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
             page_cross_penalty(crossed)
         }
-        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_indirect_x(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
         }
-        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $indy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_indirect_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.$op(v);
@@ -57,43 +56,43 @@ macro_rules! read_op_all_modes {
 macro_rules! compare_all_modes {
     ($reg:ident, $imm:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
-        pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $imm<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let v = cpu.fetch8(bus);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page_x(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_absolute_x_read(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
             page_cross_penalty(crossed)
         }
-        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_absolute_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
             page_cross_penalty(crossed)
         }
-        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_indirect_x(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $indy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (a, crossed) = cpu.addr_indirect_y_read(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
@@ -101,16 +100,16 @@ macro_rules! compare_all_modes {
         }
     };
     ($reg:ident, $imm:ident, $zp:ident, $abs:ident) => {
-        pub fn $imm(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $imm<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let v = cpu.fetch8(bus);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute(bus);
             let v = bus.cpu_read(a);
             cpu.compare(cpu.regs.$reg, v);
@@ -120,28 +119,28 @@ macro_rules! compare_all_modes {
 
 macro_rules! rmw_modes {
     ($op:ident, $zp:ident, $zpx:ident, $abs:ident, $absx:ident) => {
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
             let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
-        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_zero_page_x(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
             let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
             let v = cpu.$op(old);
             bus.cpu_write(a, v);
         }
-        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $absx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let a = cpu.addr_absolute_x_write(bus);
             let old = bus.cpu_read(a);
             bus.cpu_write(a, old);
@@ -179,25 +178,25 @@ rmw_modes!(inc_val, inc_zp, inc_zp_x, inc_abs, inc_abs_x);
 rmw_modes!(dec_val, dec_zp, dec_zp_x, dec_abs, dec_abs_x);
 
 // 0xE8: INX
-pub fn inx(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn inx<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.x = cpu.regs.x.wrapping_add(1);
     cpu.regs.set_zn(cpu.regs.x);
 }
 
 // 0xC8: INY
-pub fn iny(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn iny<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.y = cpu.regs.y.wrapping_add(1);
     cpu.regs.set_zn(cpu.regs.y);
 }
 
 // 0xCA: DEX
-pub fn dex(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn dex<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.x = cpu.regs.x.wrapping_sub(1);
     cpu.regs.set_zn(cpu.regs.x);
 }
 
 // 0x88: DEY
-pub fn dey(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn dey<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.y = cpu.regs.y.wrapping_sub(1);
     cpu.regs.set_zn(cpu.regs.y);
 }

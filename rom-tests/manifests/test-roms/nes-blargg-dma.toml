@@ -1,0 +1,46 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/sprdma_and_dmc_dma"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 3600
+tags = ["nes", "blargg", "apu", "dma", "oam", "timing"]
+notes = "Local-only OAM and DMC DMA arbitration tests."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "nes_6000_status"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "sprdma_and_dmc_dma"
+archive_path = "nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes"
+sha256 = "db3199bc1b0bdc07a316b3ab999d8fd8bb361456d2154e364c132cb06a26a10f"
+legacy_paths = ["test-roms/nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes"]
+expectation = { kind = "known_fail", reason = "Current NES core does not arbitrate DMC reads during OAM DMA per CPU cycle." }
+
+[[test_groups.roms]]
+id = "sprdma_and_dmc_dma_512"
+archive_path = "nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes"
+sha256 = "3789f5134b0561b4344e3f4ce08b4d2a416f67435e083917a80d87fdb9d3583c"
+legacy_paths = ["test-roms/nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes"]
+expectation = { kind = "known_fail", reason = "Current NES core does not arbitrate DMC reads during OAM DMA per CPU cycle." }

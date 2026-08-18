@@ -99,6 +99,9 @@ jobs:
       - name: Run tests (no default features)
         run: ${{ matrix.wrapper }} cargo nextest run --workspace --no-default-features
 
+      - name: Profile structural gate
+        run: ${{ matrix.wrapper }} cargo test --no-default-features --features profile-cores --test profile_cores_regression
+
   romtest:
     name: ROM tests
     needs: clippy

@@ -7,6 +7,7 @@ use crate::hardware::constants::{
 use crate::hardware::cpu::FetchedInstruction;
 use crate::hardware::vdp::{Mode4ColorMode, Mode4RenderArea, Tms9918ColorMode};
 use zeff_emu_common::address::Address;
+use zeff_emu_common::cpu::CpuCore;
 use zeff_emu_common::debug::{
     DebugEvent, InstructionTraceRecord, RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind,
     TraceWriteWidth,
@@ -82,7 +83,10 @@ impl Emulator {
         } else {
             None
         };
-        let fetched = self.cpu.step(&mut self.bus);
+        let fetched = <crate::hardware::cpu::Cpu as CpuCore<crate::hardware::bus::Bus>>::step_cpu(
+            &mut self.cpu,
+            &mut self.bus,
+        );
         if let Some(instruction) = fetched {
             self.bus.step_cycles(instruction.cycles);
             self.opcode_log

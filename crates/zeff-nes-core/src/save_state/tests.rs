@@ -1,4 +1,5 @@
 use super::*;
+use crate::hardware::cpu::CpuState;
 
 fn build_test_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -19,6 +20,12 @@ fn build_test_rom() -> Vec<u8> {
 
 fn make_emulator() -> crate::emulator::Emulator {
     let rom = build_test_rom();
+    crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
+}
+
+fn make_jam_emulator() -> crate::emulator::Emulator {
+    let mut rom = build_test_rom();
+    rom[16] = 0x02;
     crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
 }
 
@@ -78,6 +85,73 @@ fn save_state_roundtrip_preserves_bus_state() {
     assert_eq!(emu.bus.ram[0], 0x42);
     assert_eq!(emu.bus.ppu_cycles, ppu_cycles_before);
     assert_eq!(emu.bus.cpu_open_bus, open_bus_before);
+}
+
+#[test]
+fn save_state_v3_preserves_jam_phase_continuation() {
+    for (completed_idle_steps, expected_addr) in
+        [(0, 0xFFFF), (1, 0xFFFE), (2, 0xFFFE), (3, 0xFFFF)]
+    {
+        let mut emu = make_jam_emulator();
+        assert_eq!(emu.step_instruction().2, 2);
+        for _ in 0..completed_idle_steps {
+            assert_eq!(emu.step_instruction().2, 1);
+        }
+        if completed_idle_steps == 2 {
+            emu.debug_suspend();
+        }
+
+        let state = encode_state(&emu).expect("JAM state should encode");
+        assert_eq!(
+            u32::from_le_bytes(state[8..12].try_into().expect("save-state version")),
+            NES_SAVE_STATE_FORMAT_VERSION
+        );
+
+        let mut restored = make_jam_emulator();
+        decode_state(&mut restored, &state).expect("JAM state should decode");
+        assert!(restored.cpu.is_jammed());
+        if completed_idle_steps == 2 {
+            assert_eq!(restored.cpu.state, CpuState::Suspended);
+            restored.debug_continue();
+        }
+        assert_eq!(restored.cpu.state, CpuState::Halted);
+
+        let (_, _, cycles, events) = restored.step_instruction_with_bus_trace();
+        assert_eq!(cycles, 1);
+        assert_eq!(
+            events.iter().map(|event| event.addr()).collect::<Vec<_>>(),
+            [expected_addr]
+        );
+        assert_eq!(restored.cpu.state, CpuState::Halted);
+    }
+}
+
+#[test]
+fn save_state_v2_halted_cpu_migrates_to_stable_jam_phase() {
+    let mut emu = make_jam_emulator();
+    assert_eq!(emu.step_instruction().2, 2);
+
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V2_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    emu.reset();
+    decode_state(&mut emu, &state).expect("legacy JAM state should decode");
+    assert_eq!(emu.cpu.state, CpuState::Halted);
+    assert!(emu.cpu.is_jammed());
+
+    let (_, _, cycles, events) = emu.step_instruction_with_bus_trace();
+    assert_eq!(cycles, 1);
+    assert_eq!(
+        events.iter().map(|event| event.addr()).collect::<Vec<_>>(),
+        [0xFFFF]
+    );
 }
 
 #[test]

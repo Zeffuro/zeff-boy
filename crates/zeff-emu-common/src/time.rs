@@ -123,6 +123,15 @@ pub trait MachineTiming {
     fn timing_snapshot(&self) -> TimingSnapshot;
 }
 
+pub trait Reset {
+    fn reset(&mut self);
+}
+
+pub trait FrameLifecycle: MachineTiming + Reset {
+    fn step_frame(&mut self);
+    fn frame_count(&self) -> u64;
+}
+
 const fn gcd(mut left: u64, mut right: u64) -> u64 {
     while right != 0 {
         let remainder = left % right;

@@ -1,9 +1,9 @@
 use super::*;
 
 impl Cpu {
-    pub(super) fn try_service_non_maskable_interrupt(
+    pub(super) fn try_service_non_maskable_interrupt<B: SegaCpuBus>(
         &mut self,
-        bus: &mut Bus,
+        bus: &mut B,
     ) -> Option<FetchedInstruction> {
         if !bus.non_maskable_interrupt_pending() {
             return None;
@@ -28,9 +28,9 @@ impl Cpu {
         })
     }
 
-    pub(super) fn try_service_maskable_interrupt(
+    pub(super) fn try_service_maskable_interrupt<B: SegaCpuBus>(
         &mut self,
-        bus: &mut Bus,
+        bus: &mut B,
     ) -> Option<FetchedInstruction> {
         if !self.interrupt_flip_flop_1
             || self.enable_interrupts_delay != 0

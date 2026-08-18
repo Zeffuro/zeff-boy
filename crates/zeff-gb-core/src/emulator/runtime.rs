@@ -289,7 +289,7 @@ impl Emulator {
     }
 
     fn step_cpu(&mut self) {
-        self.cpu.step(&mut self.bus);
+        let _ = zeff_emu_common::cpu::CpuCore::step_cpu(&mut self.cpu, &mut self.bus);
         self.cycle_count = self
             .cycle_count
             .wrapping_add(self.cpu.last_step_master_ticks);

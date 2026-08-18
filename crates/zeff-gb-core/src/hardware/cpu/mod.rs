@@ -10,7 +10,6 @@ use crate::hardware::opcodes::dispatch::execute_opcode;
 use crate::hardware::types::CpuState;
 use crate::hardware::types::ImeState;
 use crate::hardware::types::constants::*;
-use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::{Result, bail};
 
@@ -275,29 +274,10 @@ impl Cpu {
     #[inline]
     fn tick_peripherals(&mut self, bus: &mut Bus, t_cycles: u64) {
         self.timed_cycles_accounted = self.timed_cycles_accounted.wrapping_add(t_cycles);
-
-        let is_double_speed = bus.hardware_mode == HardwareMode::CGBDouble;
-        let system_t_cycles = if is_double_speed {
-            t_cycles / 2
-        } else {
-            t_cycles
-        };
+        let system_t_cycles = bus.advance_cpu_t_cycles(t_cycles);
         self.timed_master_ticks_accounted = self
             .timed_master_ticks_accounted
             .wrapping_add(system_t_cycles);
-
-        bus.step_timer(t_cycles);
-        bus.step_serial(t_cycles);
-        bus.step_apu(system_t_cycles);
-
-        let previous_ppu_mode = bus.ppu_mode();
-        let (ppu_interrupt, current_ppu_mode) = bus.step_ppu(system_t_cycles);
-        bus.if_reg |= ppu_interrupt;
-        bus.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
-
-        bus.step_oam_dma(t_cycles);
-
-        bus.cartridge.step(system_t_cycles);
     }
 
     fn advance_pc_after_fetch(&mut self) {
@@ -306,6 +286,16 @@ impl Cpu {
         } else {
             self.pc = self.pc.wrapping_add(1);
         }
+    }
+}
+
+impl zeff_emu_common::cpu::CpuCore<Bus> for Cpu {
+    type Step = u64;
+
+    #[inline]
+    fn step_cpu(&mut self, bus: &mut Bus) -> Self::Step {
+        self.step(bus);
+        self.last_step_cycles
     }
 }
 
@@ -351,5 +341,7 @@ fn decode_cpu_state(tag: u8) -> Result<CpuState> {
 
 #[cfg(test)]
 mod alu_proptests;
+#[cfg(test)]
+mod conformance_tests;
 #[cfg(test)]
 mod tests;

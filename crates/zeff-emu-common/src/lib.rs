@@ -2,6 +2,7 @@
 
 pub mod address;
 pub mod cheats;
+pub mod cpu;
 pub mod debug;
 pub mod media;
 pub mod memory;

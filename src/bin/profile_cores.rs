@@ -3,6 +3,7 @@ use std::mem::size_of;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+use zeff_emu_common::time::FrameLifecycle;
 
 const DEFAULT_FRAMES: u32 = 3_000;
 
@@ -53,111 +54,38 @@ fn allocation_counts() -> (u64, u64, u64) {
     )
 }
 
-trait ProfileMachine {
-    fn profile_step_frame(&mut self);
-    fn profile_ticks(&self) -> u64;
-    fn tick_label() -> &'static str;
-}
-
-impl ProfileMachine for zeff_gb_core::emulator::Emulator {
-    fn profile_step_frame(&mut self) {
-        self.step_frame();
-    }
-
-    fn profile_ticks(&self) -> u64 {
-        self.timing_snapshot().now().get()
-    }
-
-    fn tick_label() -> &'static str {
-        "master ticks"
-    }
-}
-
-impl ProfileMachine for zeff_gba_core::emulator::Emulator {
-    fn profile_step_frame(&mut self) {
-        self.step_frame();
-    }
-
-    fn profile_ticks(&self) -> u64 {
-        self.timing_snapshot().now().get()
-    }
-
-    fn tick_label() -> &'static str {
-        "master ticks"
-    }
-}
-
-impl ProfileMachine for zeff_nes_core::emulator::Emulator {
-    fn profile_step_frame(&mut self) {
-        self.step_frame();
-    }
-
-    fn profile_ticks(&self) -> u64 {
-        self.timing_snapshot().now().get()
-    }
-
-    fn tick_label() -> &'static str {
-        "master ticks"
-    }
-}
-
-impl ProfileMachine for zeff_sega8_core::emulator::Emulator {
-    fn profile_step_frame(&mut self) {
-        self.step_frame();
-    }
-
-    fn profile_ticks(&self) -> u64 {
-        self.timing_snapshot().now().get()
-    }
-
-    fn tick_label() -> &'static str {
-        "master ticks"
-    }
-}
-
-impl ProfileMachine for zeff_ws_core::emulator::Emulator {
-    fn profile_step_frame(&mut self) {
-        self.step_frame();
-    }
-
-    fn profile_ticks(&self) -> u64 {
-        self.timing_snapshot().now().get()
-    }
-
-    fn tick_label() -> &'static str {
-        "master ticks"
-    }
-}
-
-fn profile_frames<M: ProfileMachine>(label: &str, frames: u32, machine: &mut M) {
+fn profile_frames<M: FrameLifecycle>(label: &str, frames: u32, machine: &mut M) {
     profile_frames_with_prepare(label, frames, machine, |_| {});
 }
 
-fn profile_frames_with_prepare<M: ProfileMachine>(
+fn profile_frames_with_prepare<M: FrameLifecycle>(
     label: &str,
     frames: u32,
     machine: &mut M,
     prepare: impl FnOnce(&mut M),
 ) {
     for _ in 0..10 {
-        machine.profile_step_frame();
+        machine.step_frame();
     }
 
-    let start_ticks = machine.profile_ticks();
+    let start_ticks = machine.timing_snapshot().now().get();
     prepare(machine);
     reset_allocation_counts();
     let start = Instant::now();
     for _ in 0..frames {
-        machine.profile_step_frame();
+        machine.step_frame();
     }
     let elapsed = start.elapsed();
     let (allocations, reallocations, allocated_bytes) = allocation_counts();
-    let elapsed_ticks = machine.profile_ticks().wrapping_sub(start_ticks);
+    let elapsed_ticks = machine
+        .timing_snapshot()
+        .now()
+        .get()
+        .wrapping_sub(start_ticks);
     let fps = f64::from(frames) / elapsed.as_secs_f64();
     let million_ticks_per_second = elapsed_ticks as f64 / elapsed.as_secs_f64() / 1_000_000.0;
     println!(
-        "{label:30} {frames:5} frames  {elapsed:>9.2?}  {fps:>8.0} fps  {million_ticks_per_second:>8.2} M {} / s",
-        M::tick_label()
+        "{label:30} {frames:5} frames  {elapsed:>9.2?}  {fps:>8.0} fps  {million_ticks_per_second:>8.2} M master ticks / s"
     );
     println!(
         "{:30} {:9} alloc  {:7} realloc  {:9.1} KiB",

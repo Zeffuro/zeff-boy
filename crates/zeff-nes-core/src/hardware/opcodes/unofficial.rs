@@ -1,6 +1,7 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::registers::StatusFlags;
+use crate::hardware::cpu::{Cpu, CpuBus};
+
+const UNSTABLE_IMMEDIATE_MASK: u8 = 0xEE;
 
 #[inline(always)]
 fn page_cross_penalty(crossed: bool) -> u8 {
@@ -17,28 +18,28 @@ fn lax_set(cpu: &mut Cpu, val: u8) {
 
 macro_rules! lax_modes {
     ($zp:ident, $zpy:ident, $abs:ident, $absy:ident, $indx:ident, $indy:ident) => {
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_zero_page(bus);
             lax_set(cpu, bus.cpu_read(addr));
         }
-        pub fn $zpy(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_zero_page_y(bus);
             lax_set(cpu, bus.cpu_read(addr));
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_absolute(bus);
             lax_set(cpu, bus.cpu_read(addr));
         }
-        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $absy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (addr, crossed) = cpu.addr_absolute_y_read(bus);
             lax_set(cpu, bus.cpu_read(addr));
             page_cross_penalty(crossed)
         }
-        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_indirect_x(bus);
             lax_set(cpu, bus.cpu_read(addr));
         }
-        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+        pub fn $indy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
             let (addr, crossed) = cpu.addr_indirect_y_read(bus);
             lax_set(cpu, bus.cpu_read(addr));
             page_cross_penalty(crossed)
@@ -50,7 +51,7 @@ lax_modes!(lax_zp, lax_zp_y, lax_abs, lax_abs_y, lax_ind_x, lax_ind_y);
 
 // LAS/LAR/LAE: load A, X, and SP with memory & SP. The absolute,Y mode has
 // the same page-cross timing behavior as normal indexed loads.
-pub fn las_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn las_abs_y<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     let (addr, crossed) = cpu.addr_absolute_y_read(bus);
     let val = bus.cpu_read(addr) & cpu.sp;
     cpu.regs.a = val;
@@ -64,19 +65,19 @@ pub fn las_abs_y(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
 
 macro_rules! sax_modes {
     ($zp:ident, $zpy:ident, $abs:ident, $indx:ident) => {
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_zero_page(bus);
             bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
         }
-        pub fn $zpy(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_zero_page_y(bus);
             bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_absolute(bus);
             bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
         }
-        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_indirect_x(bus);
             bus.cpu_write(addr, cpu.regs.a & cpu.regs.x);
         }
@@ -90,56 +91,75 @@ fn unstable_high_byte_mask(base: u16) -> u8 {
     ((base >> 8) as u8).wrapping_add(1)
 }
 
-fn addr_absolute_x_unstable_store(cpu: &mut Cpu, bus: &mut Bus) -> (u16, u8) {
+fn unstable_store_write_addr(base: u16, indexed: u16, value: u8) -> u16 {
+    if (base & 0xFF00) == (indexed & 0xFF00) {
+        indexed
+    } else {
+        (u16::from(value) << 8) | (indexed & 0x00FF)
+    }
+}
+
+fn addr_absolute_x_unstable_store<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> (u16, u16) {
     let base = cpu.addr_absolute(bus);
     let indexed = base.wrapping_add(u16::from(cpu.regs.x));
-    let write_addr = (base & 0xFF00) | (indexed & 0x00FF);
-    let _ = bus.cpu_read(write_addr);
-    (write_addr, unstable_high_byte_mask(base))
+    let dummy_addr = (base & 0xFF00) | (indexed & 0x00FF);
+    let _ = bus.cpu_read_after_elapsed_cycles(dummy_addr, 3);
+    (base, indexed)
 }
 
-fn addr_absolute_y_unstable_store(cpu: &mut Cpu, bus: &mut Bus) -> (u16, u8) {
+fn addr_absolute_y_unstable_store<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> (u16, u16) {
     let base = cpu.addr_absolute(bus);
     let indexed = base.wrapping_add(u16::from(cpu.regs.y));
-    let write_addr = (base & 0xFF00) | (indexed & 0x00FF);
-    let _ = bus.cpu_read(write_addr);
-    (write_addr, unstable_high_byte_mask(base))
+    let dummy_addr = (base & 0xFF00) | (indexed & 0x00FF);
+    let _ = bus.cpu_read_after_elapsed_cycles(dummy_addr, 3);
+    (base, indexed)
 }
 
-pub fn ahx_ind_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_indirect_y_write(bus);
-    let val = cpu.regs.a & cpu.regs.x & unstable_high_byte_mask(addr);
-    bus.cpu_write(addr, val);
+fn addr_indirect_y_unstable_store<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> (u16, u16) {
+    let zp = cpu.fetch8(bus);
+    let lo = u16::from(bus.cpu_read(u16::from(zp)));
+    let hi = u16::from(bus.cpu_read(u16::from(zp.wrapping_add(1))));
+    let base = (hi << 8) | lo;
+    let indexed = base.wrapping_add(u16::from(cpu.regs.y));
+    let dummy_addr = (base & 0xFF00) | (indexed & 0x00FF);
+    let _ = bus.cpu_read_after_elapsed_cycles(dummy_addr, 4);
+    (base, indexed)
 }
 
-pub fn tas_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute_y_write(bus);
+pub fn ahx_ind_y<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
+    let (base, indexed) = addr_indirect_y_unstable_store(cpu, bus);
+    let val = cpu.regs.a & cpu.regs.x & unstable_high_byte_mask(base);
+    bus.cpu_write_after_elapsed_cycles(unstable_store_write_addr(base, indexed, val), val, 5);
+}
+
+pub fn tas_abs_y<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
+    let (base, indexed) = addr_absolute_y_unstable_store(cpu, bus);
     cpu.sp = cpu.regs.a & cpu.regs.x;
-    let val = cpu.sp & unstable_high_byte_mask(addr);
-    bus.cpu_write(addr, val);
+    let val = cpu.sp & unstable_high_byte_mask(base);
+    bus.cpu_write_after_elapsed_cycles(unstable_store_write_addr(base, indexed, val), val, 4);
 }
 
-pub fn shy_abs_x(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, mask) = addr_absolute_x_unstable_store(cpu, bus);
-    let val = cpu.regs.y & mask;
-    bus.cpu_write(addr, val);
+pub fn shy_abs_x<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
+    let (base, indexed) = addr_absolute_x_unstable_store(cpu, bus);
+    let val = cpu.regs.y & unstable_high_byte_mask(base);
+    bus.cpu_write_after_elapsed_cycles(unstable_store_write_addr(base, indexed, val), val, 4);
 }
 
-pub fn shx_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let (addr, mask) = addr_absolute_y_unstable_store(cpu, bus);
-    let val = cpu.regs.x & mask;
-    bus.cpu_write(addr, val);
+pub fn shx_abs_y<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
+    let (base, indexed) = addr_absolute_y_unstable_store(cpu, bus);
+    let val = cpu.regs.x & unstable_high_byte_mask(base);
+    bus.cpu_write_after_elapsed_cycles(unstable_store_write_addr(base, indexed, val), val, 4);
 }
 
-pub fn ahx_abs_y(cpu: &mut Cpu, bus: &mut Bus) {
-    let addr = cpu.addr_absolute_y_write(bus);
-    let val = cpu.regs.a & cpu.regs.x & unstable_high_byte_mask(addr);
-    bus.cpu_write(addr, val);
+pub fn ahx_abs_y<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
+    let (base, indexed) = addr_absolute_y_unstable_store(cpu, bus);
+    let val = cpu.regs.a & cpu.regs.x & unstable_high_byte_mask(base);
+    bus.cpu_write_after_elapsed_cycles(unstable_store_write_addr(base, indexed, val), val, 4);
 }
 
 // ── DCP: DEC + CMP ─────────────────────────────────────────────────
 
-fn dcp_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
+fn dcp_op<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, addr: u16) {
     let old = bus.cpu_read(addr);
     bus.cpu_write(addr, old);
     let val = old.wrapping_sub(1);
@@ -149,7 +169,7 @@ fn dcp_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 
 // ── ISB (ISC): INC + SBC ───────────────────────────────────────────
 
-fn isb_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
+fn isb_op<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, addr: u16) {
     let old = bus.cpu_read(addr);
     bus.cpu_write(addr, old);
     let val = old.wrapping_add(1);
@@ -159,7 +179,7 @@ fn isb_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 
 // ── SLO: ASL + ORA ─────────────────────────────────────────────────
 
-fn slo_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
+fn slo_op<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, addr: u16) {
     let old = bus.cpu_read(addr);
     bus.cpu_write(addr, old);
     let shifted = cpu.asl_val(old);
@@ -170,7 +190,7 @@ fn slo_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 
 // ── RLA: ROL + AND ─────────────────────────────────────────────────
 
-fn rla_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
+fn rla_op<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, addr: u16) {
     let old = bus.cpu_read(addr);
     bus.cpu_write(addr, old);
     let rotated = cpu.rol_val(old);
@@ -181,7 +201,7 @@ fn rla_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 
 // ── SRE: LSR + EOR ─────────────────────────────────────────────────
 
-fn sre_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
+fn sre_op<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, addr: u16) {
     let old = bus.cpu_read(addr);
     bus.cpu_write(addr, old);
     let shifted = cpu.lsr_val(old);
@@ -192,7 +212,7 @@ fn sre_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 
 // ── RRA: ROR + ADC ─────────────────────────────────────────────────
 
-fn rra_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
+fn rra_op<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, addr: u16) {
     let old = bus.cpu_read(addr);
     bus.cpu_write(addr, old);
     let rotated = cpu.ror_val(old);
@@ -203,31 +223,31 @@ fn rra_op(cpu: &mut Cpu, bus: &mut Bus, addr: u16) {
 macro_rules! rmw_unofficial_modes {
     ($op:ident, $zp:ident, $zpx:ident, $abs:ident,
      $absx:ident, $absy:ident, $indx:ident, $indy:ident) => {
-        pub fn $zp(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_zero_page(bus);
             $op(cpu, bus, addr);
         }
-        pub fn $zpx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $zpx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_zero_page_x(bus);
             $op(cpu, bus, addr);
         }
-        pub fn $abs(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_absolute(bus);
             $op(cpu, bus, addr);
         }
-        pub fn $absx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $absx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_absolute_x_write(bus);
             $op(cpu, bus, addr);
         }
-        pub fn $absy(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $absy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_absolute_y_write(bus);
             $op(cpu, bus, addr);
         }
-        pub fn $indx(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_indirect_x(bus);
             $op(cpu, bus, addr);
         }
-        pub fn $indy(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $indy<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
             let addr = cpu.addr_indirect_y_write(bus);
             $op(cpu, bus, addr);
         }
@@ -261,7 +281,7 @@ rmw_unofficial_modes!(
 // ── Immediate-mode combined ops ─────────────────────────────────────
 
 // ANC: AND #imm, then copy bit 7 of result to carry.
-pub fn anc(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn anc<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
     cpu.regs.a &= val;
     cpu.regs.set_zn(cpu.regs.a);
@@ -270,14 +290,14 @@ pub fn anc(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // ALR: AND #imm, then LSR A.
-pub fn alr(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn alr<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
     cpu.regs.a &= val;
     cpu.lsr_acc();
 }
 
 // ARR: AND #imm, then ROR A. Carry and overflow set specially.
-pub fn arr(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn arr<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
     cpu.regs.a &= val;
     let carry_in: u8 = if cpu.regs.get_flag(StatusFlags::CARRY) {
@@ -294,7 +314,7 @@ pub fn arr(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // AXS/SBX: X = (A & X) - #imm (no borrow). Sets flags like CMP.
-pub fn axs(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn axs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
     let ax = cpu.regs.a & cpu.regs.x;
     let result = ax.wrapping_sub(val);
@@ -303,55 +323,60 @@ pub fn axs(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.regs.set_zn(result);
 }
 
-// ATX/LAX #imm: unstable on hardware. Blargg's instr_test treats it as
-// immediate LAX: A and X receive the operand.
-pub fn atx(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn ane<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
-    cpu.regs.a = val;
-    cpu.regs.x = val;
-    cpu.regs.set_zn(val);
+    cpu.regs.a = (cpu.regs.a | UNSTABLE_IMMEDIATE_MASK) & cpu.regs.x & val;
+    cpu.regs.set_zn(cpu.regs.a);
+}
+
+pub fn atx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
+    let val = cpu.fetch8(bus);
+    let result = (cpu.regs.a | UNSTABLE_IMMEDIATE_MASK) & val;
+    cpu.regs.a = result;
+    cpu.regs.x = result;
+    cpu.regs.set_zn(result);
 }
 
 // SBC duplicate at 0xEB:identical to official SBC #imm.
-pub fn sbc_unofficial(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn sbc_unofficial<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
     cpu.sbc(val);
 }
 
 // 1-byte NOP (implied). Used by 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA.
-pub fn nop_implied(_cpu: &mut Cpu, _bus: &mut Bus) {}
+pub fn nop_implied<B: CpuBus>(_cpu: &mut Cpu, _bus: &mut B) {}
 
 // 2-byte NOP (zero page). Reads and discards. Used by 0x04, 0x44, 0x64.
-pub fn nop_zp(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn nop_zp<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let addr = cpu.addr_zero_page(bus);
     let _ = bus.cpu_read(addr);
 }
 
 // 2-byte NOP (zero page, X). Reads and discards. Used by 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4.
-pub fn nop_zp_x(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn nop_zp_x<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let addr = cpu.addr_zero_page_x(bus);
     let _ = bus.cpu_read(addr);
 }
 
 // 3-byte NOP (absolute). Reads and discards. Used by 0x0C.
-pub fn nop_abs(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn nop_abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let addr = cpu.addr_absolute(bus);
     let _ = bus.cpu_read(addr);
 }
 
 // 3-byte NOP (absolute, X). Reads and discards. Returns page-cross penalty.
 // Used by 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC.
-pub fn nop_abs_x(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn nop_abs_x<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     let (addr, crossed) = cpu.addr_absolute_x_read(bus);
     let _ = bus.cpu_read(addr);
     page_cross_penalty(crossed)
 }
 
 // KIL/JAM: freeze the CPU. Used by various undocumented halt opcodes.
-pub fn kil(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn kil<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     log::warn!(
         "KIL/JAM opcode executed at PC={:04X}:CPU halted",
         cpu.pc.wrapping_sub(1)
     );
-    cpu.state = crate::hardware::cpu::CpuState::Halted;
+    cpu.enter_jam();
 }

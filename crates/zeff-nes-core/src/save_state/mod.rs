@@ -2,9 +2,10 @@ use anyhow::{Result, anyhow, bail};
 pub use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const NES_SAVE_STATE_MAGIC: [u8; 8] = *b"ZBNSTATE";
-pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 2;
+pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 3;
 
 const FORMAT_VERSION_V1_UNCOMPRESSED: u32 = 1;
+const FORMAT_VERSION_V2_COMPRESSED: u32 = 2;
 
 const CHR_MAX_SIZE: usize = 2 * 1024 * 1024;
 
@@ -56,6 +57,7 @@ pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
     payload.write_bytes(&emu.rom_hash);
     emu.cpu.write_state(&mut payload);
     emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
     let raw_bytes = payload.into_bytes();
 
     // Compress payload with lz4
@@ -82,22 +84,22 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
 
     // Get the payload bytes (either raw or lz4-decompressed)
     let payload: Vec<u8>;
-    let payload_ref: &[u8] = match format_version {
+    let (payload_ref, has_jam_state): (&[u8], bool) = match format_version {
         FORMAT_VERSION_V1_UNCOMPRESSED => {
             // V1: raw bytes after magic(8) + version(4)
-            &bytes[12..]
+            (&bytes[12..], false)
         }
-        NES_SAVE_STATE_FORMAT_VERSION => {
-            // V2: lz4-compressed payload after magic(8) + version(4)
+        FORMAT_VERSION_V2_COMPRESSED | NES_SAVE_STATE_FORMAT_VERSION => {
             payload = lz4_flex::decompress_size_prepended(&bytes[12..])
                 .map_err(|e| anyhow!("failed to decompress save-state: {e}"))?;
-            &payload
+            (&payload, format_version == NES_SAVE_STATE_FORMAT_VERSION)
         }
         other => {
             bail!(
-                "unsupported NES save-state format version {} (expected {} or {})",
+                "unsupported NES save-state format version {} (expected {}, {}, or {})",
                 other,
                 FORMAT_VERSION_V1_UNCOMPRESSED,
+                FORMAT_VERSION_V2_COMPRESSED,
                 NES_SAVE_STATE_FORMAT_VERSION
             );
         }
@@ -115,6 +117,9 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
     emu.cpu.read_state(&mut r)?;
     // Bus
     emu.bus.read_state(&mut r)?;
+    if has_jam_state {
+        emu.cpu.read_jam_state(&mut r)?;
+    }
 
     if !r.is_exhausted() {
         bail!("save-state has unexpected trailing data");

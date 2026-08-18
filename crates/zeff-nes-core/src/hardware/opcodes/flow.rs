@@ -1,10 +1,9 @@
-use crate::hardware::bus::Bus;
 use crate::hardware::constants::{IRQ_VECTOR_HI, IRQ_VECTOR_LO, NMI_VECTOR_HI, NMI_VECTOR_LO};
-use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::registers::StatusFlags;
+use crate::hardware::cpu::{Cpu, CpuBus};
 
 // 0x00: BRK
-pub fn brk(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn brk<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let _ = cpu.fetch8(bus);
     cpu.push16(bus, cpu.pc);
     cpu.push8(bus, cpu.regs.status_for_push(true));
@@ -23,15 +22,15 @@ pub fn brk(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // 0xEA: NOP
-pub fn nop(_cpu: &mut Cpu, _bus: &mut Bus) {}
+pub fn nop<B: CpuBus>(_cpu: &mut Cpu, _bus: &mut B) {}
 
 // Unofficial 2-byte NOPs (e.g. 0x80/0x82/0x89/0xC2/0xE2).
-pub fn nop_imm(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn nop_imm<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let _ = cpu.fetch8(bus);
 }
 
 // Returns extra cycles: 0 (not taken), 1 (taken same page), 2 (taken + page cross)
-fn branch(cpu: &mut Cpu, bus: &mut Bus, condition: bool) -> u8 {
+fn branch<B: CpuBus>(cpu: &mut Cpu, bus: &mut B, condition: bool) -> u8 {
     let target = cpu.addr_relative(bus);
     if condition {
         let page_cross = (cpu.pc & 0xFF00) != (target & 0xFF00);
@@ -52,59 +51,59 @@ fn branch(cpu: &mut Cpu, bus: &mut Bus, condition: bool) -> u8 {
 }
 
 // 0x90: BCC
-pub fn bcc(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bcc<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, !cpu.regs.get_flag(StatusFlags::CARRY))
 }
 
 // 0xB0: BCS
-pub fn bcs(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bcs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, cpu.regs.get_flag(StatusFlags::CARRY))
 }
 
 // 0xF0: BEQ
-pub fn beq(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn beq<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, cpu.regs.get_flag(StatusFlags::ZERO))
 }
 
 // 0xD0: BNE
-pub fn bne(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bne<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, !cpu.regs.get_flag(StatusFlags::ZERO))
 }
 
 // 0x30: BMI
-pub fn bmi(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bmi<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, cpu.regs.get_flag(StatusFlags::NEGATIVE))
 }
 
 // 0x10: BPL
-pub fn bpl(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bpl<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, !cpu.regs.get_flag(StatusFlags::NEGATIVE))
 }
 
 // 0x70: BVS
-pub fn bvs(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bvs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, cpu.regs.get_flag(StatusFlags::OVERFLOW))
 }
 
 // 0x50: BVC
-pub fn bvc(cpu: &mut Cpu, bus: &mut Bus) -> u8 {
+pub fn bvc<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) -> u8 {
     branch(cpu, bus, !cpu.regs.get_flag(StatusFlags::OVERFLOW))
 }
 
 // 0x4C: JMP abs
-pub fn jmp_abs(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn jmp_abs<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let a = cpu.addr_absolute(bus);
     cpu.pc = a;
 }
 
 // 0x6C: JMP (ind)
-pub fn jmp_ind(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn jmp_ind<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let a = cpu.addr_indirect(bus);
     cpu.pc = a;
 }
 
 // 0x20: JSR abs
-pub fn jsr(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn jsr<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let lo = cpu.fetch8(bus) as u16;
     let _ = bus.cpu_read(crate::hardware::constants::STACK_BASE | u16::from(cpu.sp));
     cpu.push16(bus, cpu.pc);
@@ -113,7 +112,7 @@ pub fn jsr(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // 0x60: RTS
-pub fn rts(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn rts<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let _ = bus.cpu_read(cpu.pc);
     let _ = bus.cpu_read(crate::hardware::constants::STACK_BASE | u16::from(cpu.sp));
     let a = cpu.pop16(bus);
@@ -122,7 +121,7 @@ pub fn rts(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // 0x40: RTI
-pub fn rti(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn rti<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let _ = bus.cpu_read(cpu.pc);
     let _ = bus.cpu_read(crate::hardware::constants::STACK_BASE | u16::from(cpu.sp));
     let p = cpu.pop8(bus);
@@ -132,38 +131,38 @@ pub fn rti(cpu: &mut Cpu, bus: &mut Bus) {
 }
 
 // 0x18: CLC
-pub fn clc(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn clc<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.set_flag(StatusFlags::CARRY, false);
 }
 
 // 0x38: SEC
-pub fn sec(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn sec<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.set_flag(StatusFlags::CARRY, true);
 }
 
 // 0x58: CLI
-pub fn cli(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn cli<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.delay_irq_inhibit_change();
     cpu.regs.set_flag(StatusFlags::INTERRUPT, false);
 }
 
 // 0x78: SEI
-pub fn sei(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn sei<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.delay_irq_inhibit_change();
     cpu.regs.set_flag(StatusFlags::INTERRUPT, true);
 }
 
 // 0xD8: CLD
-pub fn cld(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn cld<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.set_flag(StatusFlags::DECIMAL, false);
 }
 
 // 0xF8: SED
-pub fn sed(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn sed<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.set_flag(StatusFlags::DECIMAL, true);
 }
 
 // 0xB8: CLV
-pub fn clv(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn clv<B: CpuBus>(cpu: &mut Cpu, _bus: &mut B) {
     cpu.regs.set_flag(StatusFlags::OVERFLOW, false);
 }

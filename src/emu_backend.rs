@@ -4,6 +4,7 @@ use anyhow::Context;
 use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::system::CoreFamily;
+use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 
 pub(crate) use self::capabilities::{CheatCapabilities, CoreCapabilities, InputCapabilities};
 pub(crate) use self::gb::GbBackend;
@@ -333,12 +334,12 @@ impl EmuBackend {
 
     #[inline]
     pub(crate) fn step_frame(&mut self) {
-        dispatch!(self, step_frame())
+        FrameLifecycle::step_frame(self)
     }
 
     #[inline]
     pub(crate) fn frame_count(&self) -> u64 {
-        dispatch!(self, frame_count())
+        FrameLifecycle::frame_count(self)
     }
 
     pub(crate) fn game_boy_cpu_cycles(&self) -> Option<u64> {
@@ -771,6 +772,32 @@ impl EmuBackend {
             .with_context(|| format!("failed to read save state: {}", path.display()))?
             .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
         self.load_state_from_bytes(bytes)
+    }
+}
+
+impl MachineTiming for EmuBackend {
+    #[inline]
+    fn timing_snapshot(&self) -> TimingSnapshot {
+        dispatch!(self, timing_snapshot())
+    }
+}
+
+impl Reset for EmuBackend {
+    #[inline]
+    fn reset(&mut self) {
+        dispatch!(self, reset())
+    }
+}
+
+impl FrameLifecycle for EmuBackend {
+    #[inline]
+    fn step_frame(&mut self) {
+        dispatch!(self, step_frame())
+    }
+
+    #[inline]
+    fn frame_count(&self) -> u64 {
+        dispatch!(self, frame_count())
     }
 }
 
