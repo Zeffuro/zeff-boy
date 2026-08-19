@@ -11,6 +11,7 @@ pub(crate) enum SelfUpdateTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateStrategy {
+    #[cfg_attr(not(any(target_os = "windows", target_os = "linux")), allow(dead_code))]
     SelfUpdate(SelfUpdateTarget),
     PackageManager {
         name: &'static str,
