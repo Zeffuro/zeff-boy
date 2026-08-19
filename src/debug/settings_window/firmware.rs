@@ -471,10 +471,16 @@ mod tests {
         let paths = rows
             .iter()
             .filter(|row| row.firmware_id == "nintendo.gb.boot.cgb")
-            .filter_map(|row| row.path.as_deref())
+            .filter_map(|row| row.path.as_deref().map(PathBuf::from))
             .collect::<Vec<_>>();
 
-        assert_eq!(paths, ["cgb_boot.bin", "SkyEmu\\cgb_boot.bin"]);
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from("cgb_boot.bin"),
+                PathBuf::from("SkyEmu").join("cgb_boot.bin"),
+            ]
+        );
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 }
