@@ -36,6 +36,13 @@ impl Mapper for Nrom {
             .then(|| (addr as usize - 0x8000) % self.prg_rom.len())
     }
 
+    fn cpu_read_open_bus(&mut self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x4020..=0x5FFF => open_bus,
+            _ => self.cpu_read(addr),
+        }
+    }
+
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if let 0x6000..=0x7FFF = addr {
             self.prg_ram[(addr - 0x6000) as usize] = val;
@@ -69,5 +76,22 @@ impl Mapper for Nrom {
         r.read_exact(&mut self.prg_ram)?;
         crate::save_state::read_chr_state(r, &mut self.chr, "NROM")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unconnected_expansion_reads_use_open_bus() {
+        let mut mapper = Nrom::new(vec![0xA7; 0x4000], vec![0; 0x2000], Mirroring::Vertical);
+
+        assert_eq!(mapper.cpu_read_open_bus(0x4020, 0x40), 0x40);
+        assert_eq!(mapper.cpu_read_open_bus(0x5FFF, 0x6A), 0x6A);
+
+        mapper.cpu_write(0x6000, 0x5C);
+        assert_eq!(mapper.cpu_read_open_bus(0x6000, 0x40), 0x5C);
+        assert_eq!(mapper.cpu_read_open_bus(0x8000, 0x40), 0xA7);
     }
 }

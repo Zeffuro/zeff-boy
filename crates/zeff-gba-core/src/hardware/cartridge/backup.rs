@@ -91,6 +91,9 @@ impl Cartridge {
     }
 
     pub fn step_cycles(&mut self, cycles: u32) {
+        if let Some(rtc) = &mut self.rtc {
+            rtc.step_cycles(cycles);
+        }
         if self.backup_kind != BackupKind::Eeprom {
             return;
         }

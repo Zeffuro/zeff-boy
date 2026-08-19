@@ -1,4 +1,5 @@
 use crate::emulator::Emulator;
+use crate::hardware::cartridge::RtcDateTime;
 use zeff_emu_common::save_ram::SaveRamKind;
 
 impl Emulator {
@@ -8,6 +9,18 @@ impl Emulator {
 
     pub fn has_battery(&self) -> bool {
         self.bus.cartridge.has_battery()
+    }
+
+    pub fn has_rtc(&self) -> bool {
+        self.bus.cartridge.has_rtc()
+    }
+
+    pub fn rtc_date_time(&self) -> Option<RtcDateTime> {
+        self.bus.cartridge.rtc_date_time()
+    }
+
+    pub fn set_rtc_date_time(&mut self, date_time: RtcDateTime) -> bool {
+        self.bus.cartridge.set_rtc_date_time(date_time)
     }
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {

@@ -4,9 +4,39 @@ use crate::graphics;
 
 impl App {
     pub(super) fn render_frame(&mut self, ui_frame_data: Option<&crate::ui::UiFrameData>) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(result) = self.update_checker.poll() {
+            match result {
+                crate::update::UpdatePoll::Available => {
+                    self.toast_manager
+                        .info("A new zeff-boy version is available");
+                }
+                crate::update::UpdatePoll::Current => {
+                    self.toast_manager.success("zeff-boy is up to date");
+                }
+                crate::update::UpdatePoll::CheckFailed(err) => {
+                    self.toast_manager
+                        .error(format!("Update check failed: {err}"));
+                }
+                crate::update::UpdatePoll::InstallReady => {
+                    self.toast_manager.success("Update ready to install");
+                }
+                crate::update::UpdatePoll::InstallFailed(err) => {
+                    self.toast_manager
+                        .error(format!("Update install failed: {err}"));
+                }
+            }
+        }
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let update_info = self.update_checker.available().cloned();
+        #[cfg(not(target_arch = "wasm32"))]
+        let show_update_dialog = self.update_checker.show_dialog();
+        #[cfg(not(target_arch = "wasm32"))]
+        let update_install_state = self.update_checker.install_state();
 
         let settings_was_open = self.show_settings_window;
 
@@ -60,6 +90,12 @@ impl App {
                 != crate::settings::DebugPresentation::GameAndDebugger,
             debugger_window_open,
             debug_presentation: self.active_debug_presentation,
+            #[cfg(not(target_arch = "wasm32"))]
+            update_info: update_info.as_ref(),
+            #[cfg(not(target_arch = "wasm32"))]
+            show_update_dialog,
+            #[cfg(not(target_arch = "wasm32"))]
+            update_install_state,
         }) {
             Ok(result) => {
                 let mut settings_dirty = false;
@@ -147,7 +183,48 @@ impl App {
                             }
                             settings_dirty = true;
                         }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        MenuAction::CheckForUpdates => self.update_checker.request(true),
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(action) = result.update_action {
+                    let info = self.update_checker.available().cloned();
+                    match action {
+                        crate::update::UpdateAction::Install => {
+                            if let Err(err) = self.update_checker.install() {
+                                self.toast_manager
+                                    .error(format!("Can't install update: {err}"));
+                            }
+                        }
+                        crate::update::UpdateAction::Restart => {
+                            match self.update_checker.activate() {
+                                Ok(()) => self.exit_requested = true,
+                                Err(err) => self
+                                    .toast_manager
+                                    .error(format!("Can't activate update: {err}")),
+                            }
+                        }
+                        crate::update::UpdateAction::Download => {
+                            if let Some(info) = info.as_ref() {
+                                crate::platform::open_url(&info.download_url);
+                            }
+                            self.update_checker.dismiss();
+                        }
+                        crate::update::UpdateAction::ReleaseNotes => {
+                            if let Some(info) = info.as_ref() {
+                                crate::platform::open_url(&info.release_url);
+                            }
+                            self.update_checker.dismiss();
+                        }
+                        crate::update::UpdateAction::Later => self.update_checker.dismiss(),
+                        crate::update::UpdateAction::SkipVersion => {
+                            if let Some(version) = self.update_checker.skip_version() {
+                                self.settings.ui.skipped_update_version = Some(version);
+                                self.settings.save();
+                            }
+                        }
                     }
                 }
                 if let Some(action) = result.archive_selection_action {

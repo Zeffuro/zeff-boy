@@ -65,7 +65,7 @@ impl SettingsWindow {
             window.clone(),
             size.width.max(1),
             size.height.max(1),
-            VsyncMode::Off,
+            VsyncMode::On,
         )?;
         gpu.clear(wgpu::Color {
             r: 0.08,

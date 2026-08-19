@@ -72,11 +72,9 @@ id = "test_cpu_exec_space_apu"
 archive_path = "nes-test-roms/cpu_exec_space/test_cpu_exec_space_apu.nes"
 sha256 = "9036b3d64b7f4e0ac7d44ed85eafb4b2f93ffd2ca2ddecc19f1e0d2bec3574fe"
 legacy_paths = ["test-roms/nes-test-roms/cpu_exec_space/test_cpu_exec_space_apu.nes"]
-expectation = { kind = "known_fail", reason = "Current NES CPU/APU I/O open-bus execution behavior fails cpu_exec_space_apu with status=02." }
 
 [[test_groups.roms]]
 id = "test_cpu_exec_space_ppuio"
 archive_path = "nes-test-roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes"
 sha256 = "9f7f24d420033e032f5da0e1eb721cce1d843e032b31973acddb0255ef479251"
 legacy_paths = ["test-roms/nes-test-roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes"]
-expectation = { kind = "known_fail", reason = "Current NES CPU dummy-fetch/execution behavior around PPU I/O fails cpu_exec_space_ppuio with status=05." }

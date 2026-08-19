@@ -71,7 +71,7 @@ pub(crate) fn draw_settings_content(
         .show(ui, |ui| {
             match state.settings_tab {
                 0 => emulation::draw(ui, settings, emu.active_system),
-                1 => firmware::draw(ui, settings),
+                1 => firmware::draw(ui, settings, state),
                 2 => controls::draw(ui, settings, state, emu.active_system),
                 3 => audio::draw(ui, settings),
                 4 => video::draw(

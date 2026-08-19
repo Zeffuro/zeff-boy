@@ -221,8 +221,23 @@ impl MapperImpl {
     }
 
     #[inline]
-    pub(super) fn notify_ppu_a12(&mut self, high: bool) {
-        dispatch_mapper!(self, notify_ppu_a12, high)
+    pub(super) fn uses_qualified_ppu_a12(&self) -> bool {
+        dispatch_mapper!(self, uses_qualified_ppu_a12)
+    }
+
+    pub(super) fn notify_ppu_a12(&mut self, high: bool, ppu_cycle: u64) {
+        dispatch_mapper!(self, notify_ppu_a12, high, ppu_cycle)
+    }
+
+    pub(super) fn write_ppu_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        dispatch_mapper!(self, write_ppu_runtime_state, w)
+    }
+
+    pub(super) fn read_ppu_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        dispatch_mapper!(self, read_ppu_runtime_state, r)
     }
 
     #[inline]

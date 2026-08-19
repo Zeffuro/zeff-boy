@@ -46,6 +46,8 @@ pub(crate) enum MenuAction {
     ToggleWsRotation,
     SetLayerToggles(bool, bool, bool),
     SetGbaBgLayerToggles([bool; 4]),
+    #[cfg(not(target_arch = "wasm32"))]
+    CheckForUpdates,
 }
 
 pub(crate) struct MenuBarResult {
@@ -142,6 +144,11 @@ pub(crate) fn draw_menu_bar(
                 ui.menu_button("Help", |ui| {
                     ui.label(format!("zeff-boy v{}", env!("CARGO_PKG_VERSION")));
                     ui.separator();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui.button("Check for Updates").clicked() {
+                        actions.push(MenuAction::CheckForUpdates);
+                        ui.close();
+                    }
                     if ui.button("GitHub Repository").clicked() {
                         crate::platform::open_url("https://github.com/zeffuro/zeff-boy");
                         ui.close();

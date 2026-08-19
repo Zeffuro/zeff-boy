@@ -59,17 +59,14 @@ pub const STATUS_VBLANK: u8 = 0x80;
 
 pub const APU_CPU_CLOCK_NTSC: f64 = 1_789_773.0;
 
-// The NES CPU core currently resolves register reads/writes at instruction
-// dispatch boundaries and ticks peripherals after the instruction completes.
-// Compare the frame sequencer a few CPU cycles early so CPU-visible APU status
-// edges line up with tests that read $4015 on the exact boundary.
-pub const FRAME_STEP_1: u64 = 7453;
-pub const FRAME_STEP_2: u64 = 14909;
-pub const FRAME_STEP_3: u64 = 22367;
-pub const FRAME_STEP_4: u64 = 29825;
-pub const FRAME_STEP_5: u64 = 37280;
-pub const FRAME_STEP_4_RESET: u64 = 29829;
-pub const FRAME_STEP_5_RESET: u64 = 37281;
+pub const FRAME_STEP_1: u64 = 7457;
+pub const FRAME_STEP_2: u64 = 14913;
+pub const FRAME_STEP_3: u64 = 22371;
+pub const FRAME_STEP_4_IRQ_START: u64 = 29828;
+pub const FRAME_STEP_4_CLOCK: u64 = 29829;
+pub const FRAME_STEP_4_RESET: u64 = 29830;
+pub const FRAME_STEP_5: u64 = 37281;
+pub const FRAME_STEP_5_RESET: u64 = 37282;
 
 pub const CPU_CYCLES_PER_FRAME: u64 = 29781;
 pub const NES_FRAME_DURATION_NS: u64 = zeff_emu_common::system::NES_FRAME_DURATION_NS;

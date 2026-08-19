@@ -58,6 +58,9 @@ impl Bus {
     }
 
     pub(super) fn io_write8(&mut self, addr: u32, value: u8) {
+        if addr == 0x0400_0301 {
+            self.halt_requested = true;
+        }
         let aligned = (addr & !1) & 0x3FF;
         let existing = read_io16(&self.io, aligned as usize);
         let value16 = if addr & 1 == 0 {

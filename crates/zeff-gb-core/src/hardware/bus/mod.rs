@@ -45,6 +45,8 @@ pub struct GameBoyLinkReply {
 pub struct Bus {
     pub cartridge: Cartridge,
     pub hardware_mode: HardwareMode,
+    boot_rom: Option<Box<[u8]>>,
+    boot_rom_enabled: bool,
     cgb_dmg_compat: bool,
     pub vram: Box<[u8]>,
     pub wram: Box<[u8]>,
@@ -98,6 +100,19 @@ impl fmt::Debug for Bus {
 }
 
 impl Bus {
+    pub(crate) fn boot_rom_enabled(&self) -> bool {
+        self.boot_rom_enabled
+    }
+
+    pub(crate) fn set_boot_rom(&mut self, boot_rom: Option<Vec<u8>>, enabled: bool) {
+        self.boot_rom = boot_rom.map(Vec::into_boxed_slice);
+        self.boot_rom_enabled = enabled && self.boot_rom.is_some();
+    }
+
+    pub(crate) fn boot_rom_bytes(&self) -> Option<&[u8]> {
+        self.boot_rom.as_deref()
+    }
+
     pub fn joypad_p1(&self) -> u8 {
         self.io.joypad.read()
     }
@@ -132,6 +147,12 @@ impl Bus {
         self.io_bank[(PPU_DMA - IO_START) as usize] = 0xFF;
         self.if_reg = 0xE1;
         self.ie = 0x00;
+    }
+
+    pub(crate) fn apply_boot_rom_power_on_state(&mut self) {
+        self.io.ppu.write_lcdc(0);
+        self.if_reg = 0;
+        self.ie = 0;
     }
 
     pub fn set_sgb_multiplayer_mode(&mut self, mode: u8) {

@@ -3,13 +3,13 @@ use std::num::NonZeroU64;
 use zeff_emu_common::cpu::{CpuCore, CpuStep};
 use zeff_sega8_core::hardware::cpu::{Cpu, FetchedInstruction, SegaCpuBus};
 
-struct ToyMachine<C, B> {
+struct CpuBusHarness<C, B> {
     cpu: C,
     bus: B,
     cycles: u64,
 }
 
-impl<C, B> ToyMachine<C, B>
+impl<C, B> CpuBusHarness<C, B>
 where
     C: CpuCore<B>,
 {
@@ -71,8 +71,8 @@ impl SegaCpuBus for FlatRam {
 }
 
 #[test]
-fn cpu_core_runs_a_ram_only_machine() {
-    let mut machine = ToyMachine::new(Cpu::new(), FlatRam::new());
+fn cpu_core_runs_with_flat_ram() {
+    let mut machine = CpuBusHarness::new(Cpu::new(), FlatRam::new());
     machine.bus.bytes[..5].copy_from_slice(&[0x3E, 0x42, 0x32, 0x00, 0x80]);
 
     let first: Option<FetchedInstruction> = machine.step();

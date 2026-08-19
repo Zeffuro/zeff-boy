@@ -14,9 +14,6 @@ const CARTRIDGE_EXPANSION_START: u16 = 0x4020;
 const CARTRIDGE_RAM_END: u16 = 0x7FFF;
 const CARTRIDGE_ROM_START: u16 = 0x8000;
 const CPU_ADDR_END: u16 = 0xFFFF;
-const OAM_DMA_PAGE_BYTES: u16 = 256;
-const OAM_DMA_STALL_CYCLES_EVEN: u64 = 513;
-const OAM_DMA_STALL_CYCLES_ODD: u64 = 514;
 const CONTROLLER_OPEN_BUS_MASK: u8 = 0xE0;
 const CONTROLLER_DATA_MASK: u8 = 0x1F;
 const PPU_DATA_ADDR_MASK: u16 = 0x3FFF;
@@ -25,6 +22,33 @@ impl Bus {
     #[inline]
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         let at = self.next_cpu_access_tick();
+        self.cpu_read_for_dma(addr, at)
+    }
+
+    #[inline]
+    pub(crate) fn cpu_read_timed(&mut self, addr: u16) -> u8 {
+        self.service_pending_dma(addr);
+        self.begin_timed_cpu_cycle();
+        let at = self.next_cpu_access_tick();
+        let value = self.cpu_read_for_dma(addr, at);
+        self.finish_timed_cpu_cycle(false);
+        value
+    }
+
+    pub(super) fn cpu_read_for_dma(
+        &mut self,
+        addr: u16,
+        at: Option<zeff_emu_common::time::MasterTicks>,
+    ) -> u8 {
+        self.cpu_read_for_dma_with_trace(addr, at, true)
+    }
+
+    pub(super) fn cpu_read_for_dma_with_trace(
+        &mut self,
+        addr: u16,
+        at: Option<zeff_emu_common::time::MasterTicks>,
+        trace: bool,
+    ) -> u8 {
         let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
         let val = match addr {
             CPU_RAM_MIRROR_START..=CPU_RAM_MIRROR_END => {
@@ -35,7 +59,7 @@ impl Bus {
             }
             APU_REGISTER_START..=APU_PULSE_DMC_REGISTER_END => self.cpu_open_bus,
             OAM_DMA => self.cpu_open_bus,
-            APU_STATUS => self.apu.read_status_with_frame_irq_lookahead(1),
+            APU_STATUS => self.apu.read_status(),
             CONTROLLER1 => {
                 let zapper_hit = self.current_zapper_light_detected();
                 self.controller1.set_zapper_hit(zapper_hit);
@@ -62,7 +86,7 @@ impl Bus {
             }
         };
         self.cpu_open_bus = val;
-        if self.debug_trace_enabled && self.debug_trace_reads {
+        if trace && self.debug_trace_enabled && self.debug_trace_reads {
             self.debug_trace_events.push(super::DebugTraceEvent::Read {
                 at,
                 space: TraceWriteKind::Memory,
@@ -77,19 +101,8 @@ impl Bus {
 
     #[inline]
     pub fn cpu_read_after_elapsed_cycles(&mut self, addr: u16, elapsed_cycles: u64) -> u8 {
-        if Self::cpu_read_needs_elapsed_timing(addr) {
-            self.advance_cpu_step_timing_to(elapsed_cycles);
-        }
         self.advance_cpu_access_timing_to(elapsed_cycles);
-        self.cpu_read(addr)
-    }
-
-    fn cpu_read_at_elapsed_cycles_detached(&mut self, addr: u16, elapsed_cycles: u64) -> u8 {
-        let instruction_cursor = self.cpu_access_elapsed_cycles;
-        self.cpu_access_elapsed_cycles = elapsed_cycles;
-        let value = self.cpu_read(addr);
-        self.cpu_access_elapsed_cycles = instruction_cursor;
-        value
+        self.cpu_read_timed(addr)
     }
 
     #[inline]
@@ -119,6 +132,25 @@ impl Bus {
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
         let access_is_odd = self.cpu_cycle_is_odd(self.cpu_access_elapsed_cycles);
         let at = self.next_cpu_access_tick();
+        self.cpu_write_inner(addr, val, access_is_odd, at);
+    }
+
+    #[inline]
+    pub(crate) fn cpu_write_timed(&mut self, addr: u16, val: u8) {
+        self.begin_timed_cpu_cycle();
+        let access_is_odd = self.cpu_cycle_is_odd(self.cpu_step_elapsed_cycles);
+        let at = self.next_cpu_access_tick();
+        self.cpu_write_inner(addr, val, access_is_odd, at);
+        self.finish_timed_cpu_cycle(false);
+    }
+
+    fn cpu_write_inner(
+        &mut self,
+        addr: u16,
+        val: u8,
+        access_is_odd: bool,
+        at: Option<zeff_emu_common::time::MasterTicks>,
+    ) {
         if self.debug_trace_enabled {
             let old = self.cpu_peek(addr);
             let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
@@ -143,26 +175,20 @@ impl Bus {
             }
 
             APU_REGISTER_START..=APU_PULSE_DMC_REGISTER_END | APU_STATUS | CONTROLLER2 => {
+                let dmc_was_idle = self.apu.dmc.bytes_remaining == 0;
                 self.apu.write_register(addr, val, access_is_odd);
+                if addr == APU_STATUS {
+                    if val & 0x10 == 0 {
+                        self.dma.cancel_dmc();
+                    } else if dmc_was_idle && self.apu.dmc.bytes_remaining > 0 {
+                        self.dma
+                            .schedule_dmc_load(if access_is_odd { 4 } else { 3 });
+                    }
+                }
             }
 
             OAM_DMA => {
-                let base = (val as u16) << 8;
-                let stall_cycles = if self.cpu_cycle_is_odd(self.cpu_access_elapsed_cycles) {
-                    OAM_DMA_STALL_CYCLES_ODD
-                } else {
-                    OAM_DMA_STALL_CYCLES_EVEN
-                };
-                let first_read_cycle = self.cpu_access_elapsed_cycles + (stall_cycles - 512);
-                for i in 0..OAM_DMA_PAGE_BYTES {
-                    let byte = self.cpu_read_at_elapsed_cycles_detached(
-                        base + i,
-                        first_read_cycle + 2 * u64::from(i),
-                    );
-                    self.write_oam_data(byte);
-                }
-
-                self.dma_stall_cycles = stall_cycles;
+                self.dma.request_oam(val);
             }
 
             CONTROLLER1 => {
@@ -183,25 +209,8 @@ impl Bus {
 
     #[inline]
     pub fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, val: u8, elapsed_cycles: u64) {
-        if Self::cpu_write_needs_elapsed_timing(addr) {
-            self.advance_cpu_step_timing_to(elapsed_cycles);
-        }
         self.advance_cpu_access_timing_to(elapsed_cycles);
-        self.cpu_write(addr, val);
-    }
-
-    #[inline]
-    fn cpu_read_needs_elapsed_timing(addr: u16) -> bool {
-        matches!(
-            addr,
-            PPU_REGISTER_MIRROR_START
-                ..=PPU_REGISTER_MIRROR_END | APU_STATUS | CONTROLLER1 | CONTROLLER2
-        )
-    }
-
-    #[inline]
-    fn cpu_write_needs_elapsed_timing(addr: u16) -> bool {
-        matches!(addr, PPU_REGISTER_MIRROR_START..=CONTROLLER2)
+        self.cpu_write_timed(addr, val);
     }
 
     #[inline]
@@ -278,6 +287,67 @@ mod tests {
     }
 
     #[test]
+    fn dmc_get_preempts_oam_without_losing_the_oam_copy() {
+        let mut bus = test_bus();
+        for (index, byte) in bus.ram.iter_mut().take(256).enumerate() {
+            *byte = index as u8;
+        }
+        bus.apu.dmc.set_enabled(true);
+        bus.dma.request_dmc();
+        bus.dma.request_oam(0x00);
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        bus.service_pending_dma(0x8000);
+
+        assert_eq!(bus.ppu.oam, std::array::from_fn(|index| index as u8));
+        assert_eq!(bus.apu.dmc.bytes_remaining, 0);
+        assert!(bus.dma_stall_cycles > 514);
+    }
+
+    #[test]
+    fn oam_dma_takes_513_or_514_cycles_by_cpu_phase() {
+        for (start_tick, expected_cycles) in [(0, 513), (1, 514)] {
+            let mut bus = test_bus();
+            bus.dma.request_oam(0x00);
+            bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(start_tick));
+
+            bus.service_pending_dma(0x8000);
+
+            assert_eq!(bus.dma_stall_cycles, expected_cycles);
+        }
+    }
+
+    #[test]
+    fn dmc_dma_takes_three_or_four_cycles_by_cpu_phase() {
+        for (start_tick, expected_cycles) in [(0, 4), (1, 3)] {
+            let mut bus = test_bus();
+            bus.apu.dmc.set_enabled(true);
+            bus.dma.request_dmc();
+            bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(start_tick));
+
+            bus.service_pending_dma(0x8000);
+
+            assert_eq!(bus.dma_stall_cycles, expected_cycles);
+            assert_eq!(bus.apu.dmc.bytes_remaining, 0);
+        }
+    }
+
+    #[test]
+    fn pending_dma_waits_for_a_cpu_read() {
+        let mut bus = test_bus();
+        bus.apu.dmc.set_enabled(true);
+        bus.dma.request_dmc();
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        bus.cpu_write_timed(0x0010, 0x5A);
+        assert_eq!(bus.dma_stall_cycles, 0);
+        assert_eq!(bus.ram[0x10], 0x5A);
+
+        let _ = bus.cpu_read_timed(0x0011);
+        assert_eq!(bus.dma_stall_cycles, 3);
+    }
+
+    #[test]
     fn second_controller_reads_preserve_high_open_bus_bits() {
         let mut bus = test_bus();
         bus.controller2.press(Button::B);
@@ -306,6 +376,15 @@ mod tests {
         bus.cpu_write(0x6000, 0x5C);
         assert_eq!(bus.cpu_read(0x6000), 0x5C);
         assert_eq!(bus.cpu_read(0x8000), 0xA7);
+    }
+
+    #[test]
+    fn nrom_expansion_reads_preserve_cpu_open_bus() {
+        let mut bus = test_bus();
+        bus.cpu_open_bus = 0x40;
+
+        assert_eq!(bus.cpu_read(0x4020), 0x40);
+        assert_eq!(bus.cpu_read(0x40FF), 0x40);
     }
 
     #[test]

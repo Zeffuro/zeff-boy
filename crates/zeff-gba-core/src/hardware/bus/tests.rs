@@ -28,6 +28,14 @@ fn eeprom_cartridge() -> Cartridge {
     Cartridge::load(&rom).unwrap()
 }
 
+fn emerald_cartridge() -> Cartridge {
+    let mut rom = vec![0; 0xC0];
+    rom[0xB2] = 0x96;
+    rom[0xA0..0xA4].copy_from_slice(b"TEST");
+    rom[0xAC..0xB0].copy_from_slice(b"BPEE");
+    Cartridge::load(&rom).unwrap()
+}
+
 fn hide_oam_except_first(bus: &mut Bus) {
     for base in (8..OAM_SIZE).step_by(8) {
         bus.write16(0x0700_0000 + base as u32, 1 << 9);
@@ -185,6 +193,21 @@ fn backup_halfword_and_word_writes_store_only_selected_byte() {
     bus.write32(0x0E00_0083, 0xAABB_CCDD);
     assert_eq!(bus.read8(0x0E00_0083), 0xAA);
     assert_eq!(bus.read8(0x0E00_0084), 0xFF);
+}
+
+#[test]
+fn emerald_gpio_uses_only_halfword_and_word_gamepak_writes() {
+    let mut bus = Bus::new(emerald_cartridge(), 48_000);
+    let disabled_control = bus.read16(0x0800_00C8);
+
+    bus.write8(0x0800_00C8, 1);
+    assert_eq!(bus.read16(0x0800_00C8), disabled_control);
+
+    bus.write16(0x0800_00C8, 1);
+    bus.write32(0x0800_00C4, 0x0007_0005);
+
+    assert_eq!(bus.read16(0x0800_00C8), 1);
+    assert_eq!(bus.read16(0x0800_00C6), 7);
 }
 
 #[path = "tests/bg_window.rs"]

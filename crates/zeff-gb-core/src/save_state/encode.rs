@@ -19,6 +19,7 @@ pub fn encode_state_bytes(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
     writer.write_u8(state.last_opcode);
     writer.write_u16(state.last_opcode_pc);
     state.bus.write_state(&mut writer);
+    writer.write_bool(state.boot_rom_enabled);
 
     super::bess::append_bess(&mut writer, state.cpu, state.bus, state.hardware_mode)?;
 

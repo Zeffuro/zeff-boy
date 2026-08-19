@@ -1,4 +1,6 @@
-use super::firmware::firmware_plan_for_active_system;
+use super::firmware::{
+    default_firmware_manifests_for_active_system, firmware_plan_for_active_system,
+};
 use super::{
     ActiveSystem, BackendLoadConfig, BackendRuntimeConfig, EmuBackend, ROM_EXTENSIONS,
     load_backend_from_rom_source, system_specs,
@@ -286,6 +288,16 @@ fn shared_backend_loader_initializes_fds_with_resolved_bios() {
         loaded.backend.save_ram_kind(),
         zeff_emu_common::save_ram::SaveRamKind::known_battery_backed(0x8000)
     );
+    assert!(matches!(
+        loaded.backend.replay_metadata().firmware.as_slice(),
+        [zeff_emu_common::replay::ReplayFirmwareManifest::External {
+            firmware_id,
+            variant: Some(variant),
+            sha256,
+        }] if firmware_id == "nintendo.fds.bios"
+            && variant == "test-override"
+            && *sha256 == zeff_firmware::sha256_bytes(&TEST_FDS_BIOS)
+    ));
     assert!(!loaded.backend.framebuffer().is_empty());
 }
 
@@ -329,6 +341,7 @@ fn system_specs_map_to_shared_backend_loader() {
 fn active_system_firmware_plans_preserve_current_core_defaults() {
     assert!(firmware_plan_for_active_system(ActiveSystem::Nes).is_empty());
     assert!(firmware_plan_for_active_system(ActiveSystem::WonderSwan).is_empty());
+    assert!(firmware_plan_for_active_system(ActiveSystem::Sg1000).is_empty());
 
     let gba_plan = firmware_plan_for_active_system(ActiveSystem::GameBoyAdvance);
     assert_eq!(gba_plan.len(), 1);
@@ -349,6 +362,155 @@ fn active_system_firmware_plans_preserve_current_core_defaults() {
         sms_plan[0].fallback,
         zeff_firmware::FallbackKind::SkipBoot { .. }
     ));
+}
+
+#[test]
+fn shared_backend_loader_records_default_firmware_manifests() {
+    for system in [
+        ActiveSystem::GameBoy,
+        ActiveSystem::GameBoyAdvance,
+        ActiveSystem::Nes,
+        ActiveSystem::WonderSwan,
+        ActiveSystem::MasterSystem,
+        ActiveSystem::GameGear,
+        ActiveSystem::Sg1000,
+    ] {
+        let path = PathBuf::from(match system {
+            ActiveSystem::GameBoy => "firmware.gb",
+            ActiveSystem::GameBoyAdvance => "firmware.gba",
+            ActiveSystem::Nes => "firmware.nes",
+            ActiveSystem::WonderSwan => "firmware.ws",
+            ActiveSystem::MasterSystem => "firmware.sms",
+            ActiveSystem::GameGear => "firmware.gg",
+            ActiveSystem::Sg1000 => "firmware.sg",
+        });
+        let loaded = load_backend_from_rom_source(
+            system,
+            &path,
+            &path,
+            Some(test_rom_for_system(system)),
+            BackendLoadConfig::default(),
+        )
+        .unwrap_or_else(|err| panic!("{system:?} firmware metadata load failed: {err}"));
+
+        assert_eq!(
+            loaded.backend.replay_metadata().firmware,
+            default_firmware_manifests_for_active_system(system)
+        );
+    }
+
+    assert!(matches!(
+        default_firmware_manifests_for_active_system(ActiveSystem::GameBoyAdvance).as_slice(),
+        [zeff_emu_common::replay::ReplayFirmwareManifest::Hle {
+            firmware_id,
+            implementation,
+            compatibility_version: 1,
+        }] if firmware_id == "nintendo.gba.bios" && implementation == "zeff-gba-hle"
+    ));
+}
+
+#[test]
+#[ignore = "requires ZEFF_FIRMWARE_TEST_DIR with a retail GBA BIOS"]
+fn shared_gba_loader_uses_selected_external_bios() {
+    let root = PathBuf::from(std::env::var("ZEFF_FIRMWARE_TEST_DIR").unwrap());
+    let path = PathBuf::from("firmware-test.gba");
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::GameBoyAdvance,
+        &path,
+        &path,
+        Some(build_gba_test_rom()),
+        BackendLoadConfig {
+            firmware_search_dirs: vec![root],
+            gba_use_external_bios: true,
+            ..BackendLoadConfig::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(loaded.backend.gba().unwrap().emu.cpu_pc(), 0);
+    assert!(matches!(
+        loaded.backend.replay_metadata().firmware.as_slice(),
+        [zeff_emu_common::replay::ReplayFirmwareManifest::External {
+            firmware_id,
+            ..
+        }] if firmware_id == "nintendo.gba.bios"
+    ));
+}
+
+#[test]
+#[ignore = "requires ZEFF_FIRMWARE_TEST_DIR with retail GB boot ROMs"]
+fn shared_gb_loader_uses_boot_rom_for_selected_hardware() {
+    let root = PathBuf::from(std::env::var("ZEFF_FIRMWARE_TEST_DIR").unwrap());
+    let path = PathBuf::from("firmware-test.gbc");
+    let mut rom = test_rom_for_system(ActiveSystem::GameBoy);
+    rom[0x143] = 0x80;
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::GameBoy,
+        &path,
+        &path,
+        Some(rom),
+        BackendLoadConfig {
+            firmware_search_dirs: vec![root],
+            gb_use_external_boot_rom: true,
+            ..BackendLoadConfig::default()
+        },
+    )
+    .unwrap();
+
+    let emu = &loaded.backend.gb().unwrap().emu;
+    assert_eq!(emu.cpu_pc(), 0);
+    assert!(emu.boot_rom_enabled());
+    assert!(
+        loaded
+            .backend
+            .replay_metadata()
+            .firmware
+            .iter()
+            .any(|firmware| {
+                matches!(
+                    firmware,
+                    zeff_emu_common::replay::ReplayFirmwareManifest::External { firmware_id, .. }
+                        if firmware_id == "nintendo.gb.boot.cgb"
+                )
+            })
+    );
+}
+
+#[test]
+#[ignore = "requires ZEFF_FIRMWARE_TEST_DIR with retail Sega boot ROMs"]
+fn shared_sega8_loader_uses_selected_boot_rom() {
+    let root = PathBuf::from(std::env::var("ZEFF_FIRMWARE_TEST_DIR").unwrap());
+    for (system, name, firmware_id) in [
+        (
+            ActiveSystem::MasterSystem,
+            "firmware-test.sms",
+            "sega.sms.boot",
+        ),
+        (ActiveSystem::GameGear, "firmware-test.gg", "sega.gg.boot"),
+    ] {
+        let path = PathBuf::from(name);
+        let loaded = load_backend_from_rom_source(
+            system,
+            &path,
+            &path,
+            Some(test_rom_for_system(system)),
+            BackendLoadConfig {
+                firmware_search_dirs: vec![root.clone()],
+                sega8_use_external_boot_rom: true,
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap();
+
+        assert!(loaded.backend.sega8().unwrap().emu.bus().boot_rom_enabled());
+        assert!(matches!(
+            loaded.backend.replay_metadata().firmware.as_slice(),
+            [zeff_emu_common::replay::ReplayFirmwareManifest::External {
+                firmware_id: actual,
+                ..
+            }] if actual == firmware_id
+        ));
+    }
 }
 
 #[test]

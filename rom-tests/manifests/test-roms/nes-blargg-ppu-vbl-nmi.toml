@@ -60,7 +60,6 @@ id = "05-nmi_timing"
 archive_path = "nes-test-roms/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"
 sha256 = "72e515d689d7404ae5779b8c9c4c7b3563a755a94bd44864516f1b03df044482"
 legacy_paths = ["test-roms/nes-test-roms/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"]
-expectation = { kind = "known_fail", reason = "Current NES PPU/NMI edge timing fails ppu_vbl_nmi/05-nmi_timing." }
 
 [[test_groups.roms]]
 id = "06-suppression"
@@ -73,14 +72,12 @@ id = "07-nmi_on_timing"
 archive_path = "nes-test-roms/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes"
 sha256 = "1ed154363660b5775b112ae63ce9bb4e400ebde2afef4d0ac12fc433efda3702"
 legacy_paths = ["test-roms/nes-test-roms/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes"]
-expectation = { kind = "known_fail", reason = "Current NES PPU/NMI enable timing fails ppu_vbl_nmi/07-nmi_on_timing." }
 
 [[test_groups.roms]]
 id = "08-nmi_off_timing"
 archive_path = "nes-test-roms/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"
 sha256 = "1d2a4093091c8e58a7f99d6a3531bbc6346b52cfc59bcb17ca04c1f2376cf2fc"
 legacy_paths = ["test-roms/nes-test-roms/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"]
-expectation = { kind = "known_fail", reason = "Current NES PPU/NMI disable timing fails ppu_vbl_nmi/08-nmi_off_timing." }
 
 [[test_groups.roms]]
 id = "09-even_odd_frames"
@@ -93,4 +90,3 @@ id = "10-even_odd_timing"
 archive_path = "nes-test-roms/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
 sha256 = "7217d2d172ce11ad45c4da40c2f22201cf0eb758bc2cd8dd39d2cf0a7d4ca83e"
 legacy_paths = ["test-roms/nes-test-roms/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"]
-expectation = { kind = "known_fail", reason = "Current NES PPU odd-frame skipped-dot timing fails ppu_vbl_nmi/10-even_odd_timing." }

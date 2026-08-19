@@ -41,7 +41,7 @@ const COARSE_Y_MASK: u16 = 0x03E0;
 const SCROLL_HORIZONTAL_MASK: u16 = 0x041F;
 const SCROLL_VERTICAL_MASK: u16 = 0x7BE0;
 const PPUMASK_RENDERING_BITS: u8 = MASK_SHOW_BG | MASK_SHOW_SPRITES;
-const PPUMASK_RENDERING_DELAY_DOTS: u8 = 4;
+const PPUMASK_RENDERING_DELAY_DOTS: u8 = 1;
 
 pub struct Ppu {
     pub(crate) regs: PpuRegisters,
@@ -570,32 +570,24 @@ mod tests {
     }
 
     #[test]
-    fn ppumask_rendering_enable_is_delayed_four_dots() {
+    fn ppumask_rendering_enable_is_delayed_one_dot() {
         let mut ppu = Ppu::new();
 
         ppu.write_mask(0x18);
 
         assert!(!ppu.rendering_enabled());
-        for _ in 0..3 {
-            ppu.tick();
-            assert!(!ppu.rendering_enabled());
-        }
         ppu.tick();
         assert!(ppu.rendering_enabled());
     }
 
     #[test]
-    fn ppumask_rendering_disable_is_delayed_four_dots() {
+    fn ppumask_rendering_disable_is_delayed_one_dot() {
         let mut ppu = Ppu::new();
         ppu.regs.mask = 0x18;
 
         ppu.write_mask(0x00);
 
         assert!(ppu.rendering_enabled());
-        for _ in 0..3 {
-            ppu.tick();
-            assert!(ppu.rendering_enabled());
-        }
         ppu.tick();
         assert!(!ppu.rendering_enabled());
     }

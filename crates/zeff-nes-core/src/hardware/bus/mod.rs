@@ -1,6 +1,8 @@
 mod cpu_io;
+mod dma;
 mod ppu_bus;
 mod rendering;
+mod timing;
 
 use crate::cheats::NesCheatState;
 use crate::hardware::apu::Apu;
@@ -11,7 +13,9 @@ use crate::hardware::ppu::{
     NES_PALETTE, NES_RGB_2C03_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, SCREEN_H,
     SCREEN_W, VBLANK_SCANLINE, apply_nes_emphasis, apply_nes_palette_mode, apply_rgb_ppu_emphasis,
 };
+use dma::DmaController;
 use std::fmt;
+pub use timing::PeripheralTickEvents;
 pub use zeff_emu_common::debug::BusAccessEvent as DebugTraceEvent;
 use zeff_emu_common::time::MasterTicks;
 
@@ -25,51 +29,25 @@ fn power_on_internal_ram() -> [u8; RAM_SIZE] {
     [0xFF; RAM_SIZE]
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PeripheralTickEvents {
-    pub nmi_raised: bool,
-    pub first_nmi_cpu_cycle: Option<u64>,
-    pub irq_pending: bool,
-    pub first_irq_cpu_cycle: Option<u64>,
-}
-
-impl PeripheralTickEvents {
-    fn merge_with_offset(&mut self, other: Self, cycle_offset: u64) {
-        if other.nmi_raised {
-            self.nmi_raised = true;
-            if let Some(cycle) = other.first_nmi_cpu_cycle {
-                self.first_nmi_cpu_cycle
-                    .get_or_insert(cycle_offset.saturating_add(cycle));
-            }
-        }
-
-        if other.irq_pending {
-            self.irq_pending = true;
-            if let Some(cycle) = other.first_irq_cpu_cycle {
-                self.first_irq_cpu_cycle
-                    .get_or_insert(cycle_offset.saturating_add(cycle));
-            }
-        }
-    }
-}
-
 pub struct Bus {
     pub ram: [u8; RAM_SIZE],
     pub(crate) ppu: Ppu,
     pub apu: Apu,
     pub cartridge: Cartridge,
+    pub(crate) qualified_ppu_a12: bool,
     pub controller1: Controller,
     pub controller2: Controller,
     pub expansion_device: ExpansionDevice,
 
     pub(crate) ppu_cycles: u64,
+    pub(crate) sprite_fetch_a12: [bool; 8],
 
     pub(crate) dma_stall_cycles: u64,
+    dma: DmaController,
 
     pub(crate) cpu_odd_cycle: bool,
     pub(crate) cpu_open_bus: u8,
-    pub(crate) ppu_nmi_pending_from_register_write: bool,
-    pub(crate) ppu_nmi_suppressed_by_status_read: bool,
+    pub(crate) cpu_nmi_line_sampled: bool,
     pub(crate) cpu_step_elapsed_cycles: u64,
     pub(crate) cpu_step_events: PeripheralTickEvents,
     pub(crate) cpu_step_start_tick: Option<MasterTicks>,
@@ -93,6 +71,7 @@ pub struct Bus {
 
 impl Bus {
     pub fn new(cartridge: Cartridge, sample_rate: f64) -> Self {
+        let qualified_ppu_a12 = cartridge.uses_qualified_ppu_a12();
         let palette_mode = NesPaletteMode::default();
         let rgb_ppu_emphasis = Self::uses_rgb_2c03_palette(&cartridge);
         let base_palette = if rgb_ppu_emphasis {
@@ -112,15 +91,17 @@ impl Bus {
             ppu,
             apu,
             cartridge,
+            qualified_ppu_a12,
             controller1: Controller::new(),
             controller2: Controller::new(),
             expansion_device: ExpansionDevice::None,
             ppu_cycles: 0,
+            sprite_fetch_a12: [false; 8],
             dma_stall_cycles: 0,
+            dma: DmaController::default(),
             cpu_odd_cycle: false,
             cpu_open_bus: 0,
-            ppu_nmi_pending_from_register_write: false,
-            ppu_nmi_suppressed_by_status_read: false,
+            cpu_nmi_line_sampled: false,
             cpu_step_elapsed_cycles: 0,
             cpu_step_events: PeripheralTickEvents::default(),
             cpu_step_start_tick: None,
@@ -220,8 +201,8 @@ impl Bus {
     pub fn reset(&mut self) {
         self.apu.reset();
         self.dma_stall_cycles = 0;
-        self.ppu_nmi_pending_from_register_write = false;
-        self.ppu_nmi_suppressed_by_status_read = false;
+        self.dma = DmaController::default();
+        self.cpu_nmi_line_sampled = self.ppu.nmi_output;
         self.cpu_step_elapsed_cycles = 0;
         self.cpu_step_events = PeripheralTickEvents::default();
         self.cpu_step_start_tick = None;
@@ -401,128 +382,57 @@ impl Bus {
                 *decay_at = r.read_u64()?;
             }
         }
-        self.ppu_nmi_pending_from_register_write = false;
-        self.ppu_nmi_suppressed_by_status_read = false;
+        self.cpu_nmi_line_sampled = self.ppu.nmi_output;
+        self.dma_stall_cycles = 0;
         self.cpu_step_elapsed_cycles = 0;
         self.cpu_step_events = PeripheralTickEvents::default();
         self.cpu_step_start_tick = None;
         self.cpu_access_elapsed_cycles = 0;
+        self.sprite_fetch_a12 = [false; 8];
+        self.dma = DmaController::default();
         Ok(())
     }
 
-    fn dmc_dma_read(&mut self, addr: u16) -> u8 {
-        match addr {
-            0x0000..=0x1FFF => self.ram[(addr & RAM_MIRROR_MASK) as usize],
-            0x4020..=0xFFFF => self.cartridge.cpu_read(addr),
-            _ => 0,
+    pub(crate) fn write_dma_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.dma.write_state(w);
+    }
+
+    pub(crate) fn read_dma_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.dma.read_state(r)
+    }
+
+    pub(crate) fn write_apu_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.apu.write_frame_counter_runtime_state(w);
+    }
+
+    pub(crate) fn read_apu_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.apu.read_frame_counter_runtime_state(r)
+    }
+
+    pub(crate) fn write_ppu_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        let mut sprite_a12 = 0u8;
+        for (index, high) in self.sprite_fetch_a12.iter().copied().enumerate() {
+            sprite_a12 |= u8::from(high) << index;
         }
+        w.write_u8(sprite_a12);
+        self.cartridge.write_ppu_runtime_state(w);
     }
 
-    pub fn tick_peripherals(&mut self, cpu_cycles: u64) -> PeripheralTickEvents {
-        let mut events = PeripheralTickEvents::default();
-
-        if self.ppu_nmi_pending_from_register_write {
-            self.ppu_nmi_pending_from_register_write = false;
-            events.nmi_raised = true;
-            events.first_nmi_cpu_cycle = Some(0);
+    pub(crate) fn read_ppu_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        let sprite_a12 = r.read_u8()?;
+        for (index, high) in self.sprite_fetch_a12.iter_mut().enumerate() {
+            *high = sprite_a12 & (1 << index) != 0;
         }
-
-        for cpu_cycle in 1..=cpu_cycles {
-            for _ in 0..3 {
-                self.ppu_render_dot();
-                if self.ppu.tick() {
-                    events.nmi_raised = true;
-                    events.first_nmi_cpu_cycle.get_or_insert(cpu_cycle);
-                }
-                self.ppu_cycles += 1;
-            }
-
-            self.apu.expansion_audio = self.cartridge.audio_output();
-            self.apu.tick();
-
-            if self.apu.dmc.needs_dma() {
-                let addr = self.apu.dmc.dma_address();
-                let byte = self.dmc_dma_read(addr);
-                self.apu.dmc.fill_sample_buffer(byte);
-                let elapsed = self.cpu_step_elapsed_cycles + cpu_cycle;
-                let base = if self.cpu_cycle_is_odd(elapsed) { 4 } else { 3 };
-                let conflict = if self.dma_stall_cycles > 0 { 1 } else { 0 };
-                self.dma_stall_cycles += base + conflict;
-            }
-
-            self.cartridge.clock_cpu();
-
-            let irq_pending = self.apu.irq_pending() || self.cartridge.irq_pending();
-            events.irq_pending = irq_pending;
-            if irq_pending {
-                events.first_irq_cpu_cycle.get_or_insert(cpu_cycle);
-            }
-        }
-
-        events
-    }
-
-    pub(crate) fn begin_cpu_step_timing(&mut self, start_tick: MasterTicks) {
-        self.cpu_step_elapsed_cycles = 0;
-        self.cpu_step_events = PeripheralTickEvents::default();
-        self.begin_cpu_access_timing(start_tick);
-    }
-
-    pub(crate) fn begin_cpu_access_timing(&mut self, start_tick: MasterTicks) {
-        self.cpu_step_start_tick = Some(start_tick);
-        self.cpu_access_elapsed_cycles = 0;
-    }
-
-    pub(crate) fn prepare_cpu_instruction_accesses(&mut self) {
-        if self.cpu_step_start_tick.is_none() {
-            self.cpu_access_elapsed_cycles = 0;
-        }
-    }
-
-    pub(crate) fn advance_cpu_access_timing_to(&mut self, elapsed_cycles: u64) {
-        self.cpu_access_elapsed_cycles = self.cpu_access_elapsed_cycles.max(elapsed_cycles);
-    }
-
-    pub(crate) fn next_cpu_access_tick(&mut self) -> Option<MasterTicks> {
-        let elapsed = self.cpu_access_elapsed_cycles;
-        self.cpu_access_elapsed_cycles = self.cpu_access_elapsed_cycles.wrapping_add(1);
-        self.cpu_step_start_tick
-            .map(|start| MasterTicks::new(start.get().wrapping_add(elapsed)))
-    }
-
-    pub(crate) fn cpu_cycle_is_odd(&self, elapsed_cycles: u64) -> bool {
-        self.cpu_step_start_tick
-            .map(|start| start.get().wrapping_add(elapsed_cycles) & 1 != 0)
-            .unwrap_or(self.cpu_odd_cycle)
-    }
-
-    pub(crate) fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16) {
-        while self.cpu_access_elapsed_cycles < total_cycles {
-            let _ = self.cpu_read(pc);
-        }
-        debug_assert_eq!(self.cpu_access_elapsed_cycles, total_cycles);
-    }
-
-    pub(crate) fn advance_cpu_step_timing_to(&mut self, elapsed_cycles: u64) {
-        if elapsed_cycles <= self.cpu_step_elapsed_cycles {
-            return;
-        }
-
-        let delta = elapsed_cycles - self.cpu_step_elapsed_cycles;
-        let events = self.tick_peripherals(delta);
-        self.cpu_step_events
-            .merge_with_offset(events, self.cpu_step_elapsed_cycles);
-        self.cpu_step_elapsed_cycles = elapsed_cycles;
-    }
-
-    pub(crate) fn finish_cpu_step_timing(&mut self, total_cycles: u64) -> PeripheralTickEvents {
-        self.advance_cpu_step_timing_to(total_cycles);
-        let events = self.cpu_step_events;
-        self.cpu_step_events = PeripheralTickEvents::default();
-        self.cpu_step_elapsed_cycles = 0;
-        self.cpu_step_start_tick = None;
-        self.cpu_access_elapsed_cycles = 0;
-        events
+        self.cartridge.read_ppu_runtime_state(r)
     }
 }
 

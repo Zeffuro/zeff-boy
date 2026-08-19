@@ -279,34 +279,25 @@ impl Emulator {
     fn tick_peripherals_after_cpu_step(&mut self, total_cycles: u64) {
         let events = self.bus.finish_cpu_step_timing(total_cycles);
         let final_irq_pending = self.bus.apu.irq_pending() || self.bus.cartridge.irq_pending();
-        let nmi_suppressed_by_status_read = self.bus.ppu_nmi_suppressed_by_status_read;
-        self.bus.ppu_nmi_suppressed_by_status_read = false;
 
         let branch_taken_same_page = self.cpu.last_step_branch_taken_same_page;
-
-        if nmi_suppressed_by_status_read {
-            self.cpu.nmi_pending = false;
-        }
 
         if events.nmi_raised {
             match self.cpu.last_step_kind {
                 CpuStepKind::Instruction if self.cpu.last_opcode == 0x00 => {
-                    self.cpu.redirect_to_nmi_vector(&mut self.bus);
+                    self.cpu.nmi_pending = true;
+                    self.cpu.delay_nmi_poll_once();
                 }
                 CpuStepKind::Irq => {
-                    self.cpu.redirect_to_nmi_vector(&mut self.bus);
+                    self.cpu.nmi_pending = true;
+                    self.cpu.delay_nmi_poll_once();
                 }
                 _ => {
-                    if !nmi_suppressed_by_status_read {
-                        self.cpu.nmi_pending = true;
-                        if events.first_nmi_cpu_cycle == Some(0)
-                            || nmi_missed_poll(
-                                events.first_nmi_cpu_cycle,
-                                self.cpu.last_step_cycles,
-                            )
-                        {
-                            self.cpu.delay_nmi_poll_once();
-                        }
+                    self.cpu.nmi_pending = true;
+                    if events.first_nmi_cpu_cycle == Some(0)
+                        || nmi_missed_poll(events.first_nmi_cpu_cycle, total_cycles)
+                    {
+                        self.cpu.delay_nmi_poll_once();
                     }
                 }
             }
@@ -359,7 +350,7 @@ fn nmi_missed_poll(first_interrupt_cpu_cycle: Option<u64>, instruction_cycles: u
         return false;
     };
 
-    let missed_poll_cycle = instruction_cycles.saturating_sub(1);
+    let missed_poll_cycle = instruction_cycles;
     missed_poll_cycle != 0 && first_interrupt_cpu_cycle >= missed_poll_cycle
 }
 
@@ -368,9 +359,31 @@ fn irq_missed_poll(
     instruction_cycles: u64,
     branch_taken_same_page: bool,
 ) -> bool {
-    if !branch_taken_same_page {
+    let Some(first_interrupt_cpu_cycle) = first_interrupt_cpu_cycle else {
         return false;
+    };
+
+    let missed_poll_cycle = instruction_cycles
+        .saturating_sub(1)
+        .saturating_sub(u64::from(branch_taken_same_page));
+    missed_poll_cycle != 0 && first_interrupt_cpu_cycle >= missed_poll_cycle
+}
+
+#[cfg(test)]
+mod interrupt_poll_tests {
+    use super::{irq_missed_poll, nmi_missed_poll};
+
+    #[test]
+    fn irq_poll_uses_nominal_instruction_cycles() {
+        assert!(!irq_missed_poll(Some(2), 4, false));
+        assert!(irq_missed_poll(Some(3), 4, false));
+        assert!(!irq_missed_poll(Some(0), 3, true));
+        assert!(irq_missed_poll(Some(1), 3, true));
     }
 
-    nmi_missed_poll(first_interrupt_cpu_cycle, instruction_cycles)
+    #[test]
+    fn nmi_poll_observes_an_edge_before_the_final_cycle() {
+        assert!(!nmi_missed_poll(Some(3), 4));
+        assert!(nmi_missed_poll(Some(4), 4));
+    }
 }

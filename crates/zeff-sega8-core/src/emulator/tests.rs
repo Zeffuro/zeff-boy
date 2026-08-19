@@ -3,6 +3,78 @@ use super::{
     HOST_DPAD_UP, SMS_PAD_BUTTON_1, SMS_PAD_BUTTON_2, SMS_PAD_DOWN, SMS_PAD_LEFT, SMS_PAD_RIGHT,
     SMS_PAD_UP, Sega8LoadConfig,
 };
+
+#[test]
+fn sms_boot_rom_maps_until_memory_control_disables_it() {
+    let rom = vec![0x44; 0x8000];
+    let mut boot_rom = vec![0; 0x2000];
+    boot_rom[0] = 0x31;
+    let config = Sega8LoadConfig::new(48_000).with_system_hint(SystemHint::MasterSystem);
+    let mut emu = Emulator::new_with_config_and_boot_rom(&rom, config, &boot_rom).unwrap();
+
+    assert_eq!(emu.bus().cpu_read(0), 0x31);
+    assert!(emu.bus().boot_rom_enabled());
+    emu.bus_mut().io_write(0x3E, 0x08);
+    assert_eq!(emu.bus().cpu_read(0), 0x44);
+    assert!(!emu.bus().boot_rom_enabled());
+
+    emu.reset();
+    assert_eq!(emu.bus().cpu_read(0), 0x31);
+    assert!(emu.bus().boot_rom_enabled());
+}
+
+#[test]
+fn game_gear_boot_rom_maps_only_its_one_kib_image() {
+    let rom = vec![0x55; 0x8000];
+    let mut boot_rom = vec![0; 0x400];
+    boot_rom[0x3FF] = 0x66;
+    let config = Sega8LoadConfig::new(48_000).with_system_hint(SystemHint::GameGear);
+    let mut emu = Emulator::new_with_config_and_boot_rom(&rom, config, &boot_rom).unwrap();
+
+    assert_eq!(emu.bus().cpu_read(0x03FF), 0x66);
+    assert_eq!(emu.bus().cpu_read(0x0400), 0x55);
+    emu.bus_mut().io_write(0x02, 0xA5);
+    assert_eq!(emu.bus_mut().io_read(0x02), 0xA5);
+}
+
+#[test]
+fn post_boot_sega8_state_does_not_require_boot_rom() {
+    let rom = vec![0; 0x8000];
+    let boot_rom = vec![0; 0x2000];
+    let config = Sega8LoadConfig::new(48_000).with_system_hint(SystemHint::MasterSystem);
+    let mut with_boot = Emulator::new_with_config_and_boot_rom(&rom, config, &boot_rom).unwrap();
+    let boot_state = with_boot.encode_state().unwrap();
+    let mut without_boot = Emulator::new_with_config(&rom, config).unwrap();
+    assert!(without_boot.load_state(&boot_state).is_err());
+
+    with_boot.bus_mut().io_write(0x3E, 0x08);
+    let post_boot_state = with_boot.encode_state().unwrap();
+    without_boot.load_state(&post_boot_state).unwrap();
+    assert!(!without_boot.bus().has_boot_rom());
+}
+
+#[test]
+#[ignore = "requires ZEFF_SEGA8_BOOT_ROM and ZEFF_SEGA8_BOOT_TEST_ROM"]
+fn external_sega8_boot_rom_reaches_cartridge() {
+    let boot_rom = std::fs::read(std::env::var("ZEFF_SEGA8_BOOT_ROM").unwrap()).unwrap();
+    let rom = std::fs::read(std::env::var("ZEFF_SEGA8_BOOT_TEST_ROM").unwrap()).unwrap();
+    let hint = if boot_rom.len() == 0x400 {
+        SystemHint::GameGear
+    } else {
+        SystemHint::MasterSystem
+    };
+    let config = Sega8LoadConfig::new(48_000).with_system_hint(hint);
+    let mut emu = Emulator::new_with_config_and_boot_rom(&rom, config, &boot_rom).unwrap();
+
+    for _ in 0..5_000_000 {
+        if !emu.bus().boot_rom_enabled() {
+            break;
+        }
+        emu.step_instruction();
+    }
+
+    assert!(!emu.bus().boot_rom_enabled());
+}
 use crate::hardware::bus::CpuAccessTraceEvent;
 use crate::hardware::cartridge::{HeaderLocation, Sega8MapperKind, Sega8System, SystemHint};
 use crate::hardware::constants::{

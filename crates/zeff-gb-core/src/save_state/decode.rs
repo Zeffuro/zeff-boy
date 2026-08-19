@@ -30,9 +30,9 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     }
 
     let format_version = reader.read_u32()?;
-    if format_version != SAVE_STATE_FORMAT_VERSION {
+    if !(3..=SAVE_STATE_FORMAT_VERSION).contains(&format_version) {
         bail!(
-            "unsupported save-state file format {} (expected {})",
+            "unsupported save-state file format {} (expected 3 through {})",
             format_version,
             SAVE_STATE_FORMAT_VERSION
         );
@@ -48,6 +48,11 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     let last_opcode = reader.read_u8()?;
     let last_opcode_pc = reader.read_u16()?;
     let bus = Bus::read_state(&mut reader)?;
+    let boot_rom_enabled = if format_version >= 4 {
+        reader.read_bool()?
+    } else {
+        false
+    };
 
     if !reader.is_exhausted() && !super::bess::has_bess_footer(bytes) {
         bail!("save-state file has unexpected trailing data");
@@ -63,6 +68,7 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
         cycle_count,
         last_opcode,
         last_opcode_pc,
+        boot_rom_enabled,
     })
 }
 

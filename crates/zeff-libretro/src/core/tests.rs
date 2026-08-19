@@ -28,6 +28,13 @@ fn gba_rom() -> Vec<u8> {
     rom
 }
 
+fn emerald_flash1m_rom() -> Vec<u8> {
+    let mut rom = gba_rom();
+    rom[0xAC..0xB0].copy_from_slice(b"BPEE");
+    rom.extend_from_slice(b"FLASH1M_V103");
+    rom
+}
+
 fn nes_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
     rom[0..4].copy_from_slice(b"NES\x1A");
@@ -447,6 +454,34 @@ fn gba_libretro_cheat_reset_clears_wide_raw_ram_cheats() {
         panic!("expected GBA core");
     };
     assert_eq!(emu.cpu_peek8(0x0200_0000), 0x00);
+}
+
+#[test]
+fn gba_libretro_reset_preserves_backup_and_rtc() {
+    let mut state =
+        CoreState::from_rom(&emerald_flash1m_rom(), "emerald.gba").expect("GBA ROM should load");
+    let date_time =
+        zeff_gba_core::hardware::cartridge::RtcDateTime::new(2024, 2, 29, 4, [12, 34, 56])
+            .expect("valid RTC date/time");
+    let mut backup = vec![0xFF; state.sram_size()];
+    backup[0x1234] = 0x5A;
+
+    {
+        let ActiveCore::Gba(emu) = &mut state.core else {
+            panic!("expected GBA core");
+        };
+        emu.load_battery_sram(&backup)
+            .expect("Flash save should load");
+        assert!(emu.set_rtc_date_time(date_time));
+    }
+
+    state.reset();
+
+    let ActiveCore::Gba(emu) = &state.core else {
+        panic!("expected GBA core");
+    };
+    assert_eq!(emu.dump_battery_sram(), Some(backup));
+    assert_eq!(emu.rtc_date_time(), Some(date_time));
 }
 
 #[test]

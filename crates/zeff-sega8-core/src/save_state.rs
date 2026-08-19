@@ -6,7 +6,7 @@ use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 
 const MAGIC: &[u8; 8] = b"ZBSEGA8\0";
-const VERSION: u32 = 11;
+const VERSION: u32 = 12;
 const MIN_SUPPORTED_VERSION: u32 = 1;
 const VERSION_WITH_VIDEO_STANDARD: u32 = 3;
 const VERSION_WITH_CONSOLE_REGION: u32 = 4;
@@ -24,6 +24,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_vec(&emu.framebuffer);
     emu.cpu.write_state(&mut w);
     emu.bus.write_state(&mut w);
+    w.write_bool(emu.bus.boot_rom_enabled());
     Ok(w.into_bytes())
 }
 
@@ -67,6 +68,13 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     )?;
     emu.cpu.read_state(&mut r)?;
     emu.bus.read_state(&mut r, version)?;
+    let boot_rom_enabled = version >= 12 && r.read_bool()?;
+    if boot_rom_enabled && !emu.bus.has_boot_rom() {
+        bail!("Sega 8-bit save state is still executing the boot ROM, but none is loaded");
+    }
+    if boot_rom_enabled || emu.bus.has_boot_rom() {
+        emu.bus.set_boot_rom_enabled(boot_rom_enabled);
+    }
     emu.sample_rate = emu.bus().apu().sample_rate();
     emu.debug.clear_hits();
     emu.opcode_log.clear();
@@ -163,7 +171,12 @@ mod tests {
         rom
     }
 
-    fn set_state_version(bytes: &mut [u8], version: u32) {
+    fn set_state_version(bytes: &mut Vec<u8>, version: u32) {
+        if version < 12 {
+            bytes
+                .pop()
+                .expect("current state should include boot-ROM overlay state");
+        }
         bytes[MAGIC.len()..MAGIC.len() + 4].copy_from_slice(&version.to_le_bytes());
     }
 

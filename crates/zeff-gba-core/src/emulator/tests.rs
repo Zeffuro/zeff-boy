@@ -11,6 +11,119 @@ fn minimal_rom() -> Vec<u8> {
 }
 
 #[test]
+fn external_bios_starts_at_reset_vector_and_can_enter_game_pak_rom() {
+    let mut bios = vec![0; crate::hardware::constants::BIOS_SIZE];
+    bios[0..4].copy_from_slice(&0xE51F_F004_u32.to_le_bytes()); // ldr pc, [pc, #-4]
+    bios[4..8].copy_from_slice(&0x0800_0000_u32.to_le_bytes());
+
+    let mut emu = Emulator::new_with_bios(&minimal_rom(), &bios, 48_000).unwrap();
+    assert_eq!(emu.cpu_pc(), 0);
+    emu.step_instruction();
+    assert_eq!(emu.cpu_pc(), 0x0800_0000);
+
+    emu.reset();
+    assert_eq!(emu.cpu_pc(), 0);
+}
+
+#[test]
+fn external_bios_swi_uses_supervisor_vector() {
+    let mut bios = vec![0; crate::hardware::constants::BIOS_SIZE];
+    bios[8..12].copy_from_slice(&0xEAFF_FFFE_u32.to_le_bytes());
+    let mut rom = minimal_rom();
+    rom[0..4].copy_from_slice(&0xEF00_0006_u32.to_le_bytes());
+    let mut emu = Emulator::new_with_bios(&rom, &bios, 48_000).unwrap();
+
+    emu.cpu.set_pc(0x0800_0000);
+    emu.cpu.cpsr = 0x1F;
+    emu.step_instruction();
+
+    assert_eq!(emu.cpu_pc(), 8);
+    assert_eq!(emu.cpu.mode(), crate::hardware::cpu::CpuMode::Supervisor);
+    assert_eq!(emu.cpu.regs[14], 0x0800_0004);
+    assert_eq!(emu.cpu.spsr, 0x1F);
+}
+
+#[test]
+fn external_bios_requires_exact_hardware_size() {
+    let result = Emulator::new_with_bios(&minimal_rom(), &[0; 8], 48_000);
+    assert!(result.is_err());
+}
+
+#[test]
+#[ignore = "requires ZEFF_GBA_BIOS_PATH and ZEFF_GBA_ROM_PATH"]
+fn external_retail_bios_reaches_game_pak_rom() {
+    let bios = std::fs::read(std::env::var("ZEFF_GBA_BIOS_PATH").unwrap()).unwrap();
+    let rom = std::fs::read(std::env::var("ZEFF_GBA_ROM_PATH").unwrap()).unwrap();
+    let mut emu = Emulator::new_with_bios(&rom, &bios, 48_000).unwrap();
+    let mut recent = std::collections::VecDeque::with_capacity(16);
+
+    for _ in 0..10_000_000 {
+        if let Some(fetched) = emu.step_instruction() {
+            if recent.len() == 16 {
+                recent.pop_front();
+            }
+            recent.push_back((fetched.pc, fetched.raw));
+        }
+        if (0x0800_0000..=0x0DFF_FFFF).contains(&emu.cpu_pc()) {
+            return;
+        }
+    }
+    panic!(
+        "retail GBA BIOS did not enter Game Pak ROM; PC={:#010X}, regs={:08X?}, IE={:04X}, IF={:04X}, IME={:04X}, DISPSTAT={:04X}, VCOUNT={}, recent={recent:08X?}",
+        emu.cpu_pc(),
+        emu.cpu_registers(),
+        emu.cpu_peek16(0x0400_0200),
+        emu.cpu_peek16(0x0400_0202),
+        emu.cpu_peek16(0x0400_0208),
+        emu.cpu_peek16(0x0400_0004),
+        emu.cpu_peek16(0x0400_0006),
+    );
+}
+
+fn emerald_rom() -> Vec<u8> {
+    let mut rom = minimal_rom();
+    rom[0xAC..0xB0].copy_from_slice(b"BPEE");
+    rom.extend_from_slice(b"FLASH1M_V103");
+    rom
+}
+
+#[test]
+fn rtc_seed_survives_reset_and_state_restore_is_authoritative() {
+    use crate::hardware::cartridge::RtcDateTime;
+
+    let mut emu = Emulator::new(&emerald_rom(), 48_000).unwrap();
+    let saved = RtcDateTime::new(2024, 2, 29, 4, [23, 59, 58]).unwrap();
+    let later = RtcDateTime::new(2031, 7, 8, 2, [12, 34, 56]).unwrap();
+
+    assert!(emu.has_rtc());
+    assert!(emu.set_rtc_date_time(saved));
+    let state = emu.encode_state().unwrap();
+
+    assert!(emu.set_rtc_date_time(later));
+    emu.reset();
+    assert_eq!(emu.rtc_date_time(), Some(later));
+
+    emu.load_state(&state).unwrap();
+    assert_eq!(emu.rtc_date_time(), Some(saved));
+    assert_eq!(
+        emu.dump_battery_sram().unwrap().len(),
+        crate::hardware::constants::FLASH_1M_SIZE
+    );
+}
+
+#[test]
+fn non_rtc_cartridge_rejects_calendar_seed() {
+    use crate::hardware::cartridge::RtcDateTime;
+
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    let date_time = RtcDateTime::new(2026, 8, 19, 3, [12, 0, 0]).unwrap();
+
+    assert!(!emu.has_rtc());
+    assert!(!emu.set_rtc_date_time(date_time));
+    assert_eq!(emu.rtc_date_time(), None);
+}
+
+#[test]
 fn timing_snapshot_tracks_and_restores_cpu_cycles() {
     let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
     let start = emu.timing_snapshot();

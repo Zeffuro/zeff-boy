@@ -1,5 +1,7 @@
 use super::{ActiveCore, CoreState};
+use chrono::{Datelike, Local, Timelike};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_gba_core::hardware::cartridge::RtcDateTime;
 use zeff_sega8_core::emulator::Sega8LoadConfig;
 use zeff_sega8_core::hardware::cartridge::SystemHint;
 
@@ -15,7 +17,12 @@ impl CoreState {
 
         let core = match ext.as_str() {
             "gba" => {
-                let emu = zeff_gba_core::emulator::Emulator::new(data, sample_rate)?;
+                let mut emu = zeff_gba_core::emulator::Emulator::new(data, sample_rate)?;
+                if emu.has_rtc()
+                    && let Some(date_time) = local_rtc_date_time()
+                {
+                    emu.set_rtc_date_time(date_time);
+                }
                 ActiveCore::Gba(Box::new(emu))
             }
             "nes" => {
@@ -67,16 +74,22 @@ impl CoreState {
                     self.core = ActiveCore::Gb(Box::new(emu));
                 }
             }
-            ActiveCore::Gba(_) => {
-                if let Ok(emu) =
-                    zeff_gba_core::emulator::Emulator::new(&self.rom_data, self.sample_rate)
-                {
-                    self.core = ActiveCore::Gba(Box::new(emu));
-                }
-            }
+            ActiveCore::Gba(emu) => emu.reset(),
             ActiveCore::Nes(emu) => emu.reset(),
             ActiveCore::Sega8(emu) => emu.reset(),
             ActiveCore::Ws(emu) => emu.reset(),
         }
     }
+}
+
+fn local_rtc_date_time() -> Option<RtcDateTime> {
+    let now = Local::now();
+    RtcDateTime::new(
+        u16::try_from(now.year()).ok()?,
+        now.month() as u8,
+        now.day() as u8,
+        now.weekday().num_days_from_sunday() as u8,
+        [now.hour() as u8, now.minute() as u8, now.second() as u8],
+    )
+    .ok()
 }

@@ -40,8 +40,9 @@ pub struct Apu {
     pub frame_irq: bool,
     pub frame_cycle: u64,
     pub frame_reset_delay: u8,
-    frame_irq_repeat: u8,
-    frame_irq_suppression_ticks: u8,
+    pending_frame_counter_value: Option<u8>,
+    frame_clock_block: u8,
+    clock_half_rate_timers: bool,
 
     pub sample_buffer: Vec<f32>,
     pub output_sample_rate: f64,
@@ -70,10 +71,11 @@ impl Apu {
             five_step_mode: false,
             irq_inhibit: false,
             frame_irq: false,
-            frame_cycle: 8,
+            frame_cycle: 9,
             frame_reset_delay: 0,
-            frame_irq_repeat: 0,
-            frame_irq_suppression_ticks: 0,
+            pending_frame_counter_value: None,
+            frame_clock_block: 0,
+            clock_half_rate_timers: false,
             sample_buffer: Vec::with_capacity(INITIAL_SAMPLE_CAPACITY),
             output_sample_rate,
             sample_accumulator: 0.0,
@@ -117,8 +119,9 @@ impl Apu {
         self.frame_irq = r.read_bool()?;
         self.frame_cycle = r.read_u64()?;
         self.frame_reset_delay = 0;
-        self.frame_irq_repeat = 0;
-        self.frame_irq_suppression_ticks = 0;
+        self.pending_frame_counter_value = None;
+        self.frame_clock_block = 0;
+        self.clock_half_rate_timers = self.frame_cycle.is_multiple_of(2);
         let _saved_output_sample_rate = r.read_f64()?;
         let _saved_sample_accumulator = r.read_f64()?;
         self.output_sample_rate = runtime_output_sample_rate;
@@ -133,6 +136,41 @@ impl Apu {
         self.noise_debug_samples.clear();
         Ok(())
     }
+
+    pub(crate) fn write_frame_counter_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_u8(self.frame_reset_delay);
+        w.write_bool(self.pending_frame_counter_value.is_some());
+        w.write_u8(self.pending_frame_counter_value.unwrap_or(0));
+        w.write_u8(self.frame_clock_block);
+        w.write_bool(self.clock_half_rate_timers);
+    }
+
+    pub(crate) fn read_frame_counter_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        let frame_reset_delay = r.read_u8()?;
+        let has_pending_value = r.read_bool()?;
+        let pending_value = r.read_u8()?;
+        let frame_clock_block = r.read_u8()?;
+        let clock_half_rate_timers = r.read_bool()?;
+
+        if frame_reset_delay > 4 {
+            anyhow::bail!("invalid APU frame reset delay in save-state: {frame_reset_delay}");
+        }
+        if has_pending_value != (frame_reset_delay != 0) {
+            anyhow::bail!("inconsistent pending APU frame-counter write in save-state");
+        }
+        if frame_clock_block > 2 {
+            anyhow::bail!("invalid APU frame clock block in save-state: {frame_clock_block}");
+        }
+
+        self.frame_reset_delay = frame_reset_delay;
+        self.pending_frame_counter_value = has_pending_value.then_some(pending_value);
+        self.frame_clock_block = frame_clock_block;
+        self.clock_half_rate_timers = clock_half_rate_timers;
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Apu {
@@ -142,7 +180,11 @@ impl fmt::Debug for Apu {
             .field("frame_irq", &self.frame_irq)
             .field("frame_cycle", &self.frame_cycle)
             .field("frame_reset_delay", &self.frame_reset_delay)
-            .field("frame_irq_repeat", &self.frame_irq_repeat)
+            .field(
+                "pending_frame_counter_value",
+                &self.pending_frame_counter_value,
+            )
+            .field("frame_clock_block", &self.frame_clock_block)
             .field("buffered_samples", &self.sample_buffer.len())
             .finish_non_exhaustive()
     }

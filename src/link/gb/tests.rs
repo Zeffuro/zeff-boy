@@ -255,9 +255,11 @@ fn game_boy_replay_link_completes_passive_transfer() {
     let mut gb = gb_emulator();
     gb.write_byte(SERIAL_SB, 0xAB);
     gb.write_byte(SERIAL_SC, 0x80);
+    let start = gb.cpu_cycles();
 
     replay_link.poll_emulator(&mut gb).unwrap();
 
+    assert!(gb.cpu_cycles() >= start + 4096);
     assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
     assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
 }
@@ -672,6 +674,37 @@ fn game_boy_replay_link_tolerates_remote_master_local_reply_mismatch() {
 
     replay_link.poll_emulator(&mut gb).unwrap();
     assert!(replay_link.events.iter().all(|record| record.delivered));
+}
+
+#[test]
+fn game_boy_replay_link_rejects_remote_master_local_reply_mismatch_in_strict_mode() {
+    let mut replay_link = GameBoyReplayLink::new(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 0,
+            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                transfer_id: 0x0100_0000_0000_0000,
+                clock_period_t_cycles: 4096,
+                out_byte: 0x56,
+                serial_generation: 4,
+                local_reply: Some(ReplayGameBoyLinkReply {
+                    out_byte: 0x34,
+                    passive: true,
+                    serial_generation: 4,
+                }),
+            },
+        }],
+        0,
+        None,
+        0,
+    );
+    replay_link.set_strict_local_reply_validation(true);
+    let mut gb = gb_emulator();
+
+    let err = replay_link
+        .poll_emulator(&mut gb)
+        .expect_err("strict playback should reject a different local reply");
+    assert_eq!(err, LinkSessionError::MalformedPacketPayload);
 }
 
 #[test]

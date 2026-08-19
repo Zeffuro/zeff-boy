@@ -357,6 +357,10 @@ pub(crate) fn parse_args_from(
                 headless.expect_gb_link_events = parse_u64_arg(value, "--expect-gb-link-events")?;
                 i += 2;
             }
+            "--allow-gb-link-replay-divergence" => {
+                headless.allow_gb_link_replay_divergence = true;
+                i += 1;
+            }
             "--expect-replay-final-hash" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--expect-replay-final-hash requires a SHA-256 hex digest");

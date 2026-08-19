@@ -16,9 +16,25 @@ pub(crate) fn firmware_plan_for_active_system(
         ActiveSystem::GameBoyAdvance => ExistingCoreSystem::GameBoyAdvance,
         ActiveSystem::Nes => ExistingCoreSystem::Nes,
         ActiveSystem::WonderSwan => ExistingCoreSystem::WonderSwan,
-        ActiveSystem::MasterSystem | ActiveSystem::Sg1000 => ExistingCoreSystem::MasterSystem,
+        ActiveSystem::MasterSystem => ExistingCoreSystem::MasterSystem,
         ActiveSystem::GameGear => ExistingCoreSystem::GameGear,
+        ActiveSystem::Sg1000 => return Vec::new(),
     })
+}
+
+pub(crate) fn default_firmware_manifests_for_active_system(
+    system: ActiveSystem,
+) -> Vec<zeff_emu_common::replay::ReplayFirmwareManifest> {
+    let plan = firmware_plan_for_active_system(system);
+    zeff_firmware::FirmwareResolver::new(
+        zeff_firmware::catalog_specs(),
+        &zeff_firmware::FirmwareInventory::new(),
+    )
+    .resolve(&plan)
+    .manifests()
+    .into_iter()
+    .map(replay_firmware_manifest)
+    .collect()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,61 +50,13 @@ pub(crate) fn resolve_fds_bios_with_manifest(
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
-    use anyhow::Context;
-
     const FDS_BIOS_ID: &str = "nintendo.fds.bios";
 
-    let catalog = zeff_firmware::catalog_specs();
     let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
-    let expected_filenames = expected_filenames_for_plan(catalog, &plan);
-    let search_dirs = firmware_search_dirs(firmware_roots, content_path);
-    let mut candidate_summaries = Vec::new();
-
-    for search_dir in &search_dirs {
-        let inventory = match search_dir.mode {
-            FirmwareSearchMode::FullDirectory => {
-                zeff_firmware::FirmwareInventory::from_directory(&search_dir.path, catalog)
-                    .with_context(|| {
-                        format!(
-                            "failed to scan firmware directory {}",
-                            search_dir.path.display()
-                        )
-                    })?
-            }
-            FirmwareSearchMode::KnownFilenamesOnly => {
-                scan_known_firmware_filenames(&search_dir.path, &expected_filenames, catalog)
-            }
-        };
-        if inventory.entries().is_empty() {
-            continue;
-        }
-
-        let resolution = zeff_firmware::FirmwareResolver::new(catalog, &inventory).resolve(&plan);
-        for entry in &resolution.entries {
-            if entry.request.id.as_ref() != FDS_BIOS_ID {
-                continue;
-            }
-            if let zeff_firmware::FirmwareSelection::External(firmware) = &entry.selection {
-                log::info!(
-                    "Resolved FDS BIOS from {} in {}",
-                    firmware.original_filename.as_deref().unwrap_or("<unknown>"),
-                    search_dir.path.display()
-                );
-                return Ok(ResolvedFirmwareBytes {
-                    bytes: firmware.bytes.to_vec(),
-                    manifest: replay_firmware_manifest(firmware.selection_manifest()),
-                });
-            }
-
-            let candidate_summary = fds_firmware_candidate_summary(&entry.candidates);
-            if !candidate_summary.is_empty() {
-                candidate_summaries.push(format!(
-                    "{}: {}",
-                    search_dir.path.display(),
-                    candidate_summary
-                ));
-            }
-        }
+    let (resolved, search_dirs, candidate_summaries) =
+        find_external_firmware(FDS_BIOS_ID, &plan, firmware_roots, content_path)?;
+    if let Some(resolved) = resolved {
+        return Ok(resolved);
     }
 
     let searched = if search_dirs.is_empty() {
@@ -96,12 +64,7 @@ pub(crate) fn resolve_fds_bios_with_manifest(
     } else {
         search_dirs
             .iter()
-            .map(|dir| match dir.mode {
-                FirmwareSearchMode::FullDirectory => dir.path.display().to_string(),
-                FirmwareSearchMode::KnownFilenamesOnly => {
-                    format!("{} (known firmware filenames only)", dir.path.display())
-                }
-            })
+            .map(|dir| format!("{} (known firmware filenames only)", dir.path.display()))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -115,6 +78,156 @@ pub(crate) fn resolve_fds_bios_with_manifest(
         "Famicom Disk System firmware is required. No recognized {FDS_BIOS_ID} was found. Searched: {searched}. Expected a known 8192-byte disksys.rom. Set Settings > Firmware > Firmware directory; dedicated firmware roots named BIOS, firmware, or system also scan immediate system subfolders. Zeff-boy also checks non-recursive firmware folders near the loaded ROM.{}",
         candidate_summary
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_gba_bios_with_manifest(
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    const GBA_BIOS_ID: &str = "nintendo.gba.bios";
+    let plan = firmware_plan_for_active_system(ActiveSystem::GameBoyAdvance);
+    let (resolved, search_dirs, candidate_summaries) =
+        find_external_firmware(GBA_BIOS_ID, &plan, firmware_roots, content_path)?;
+    if let Some(resolved) = resolved {
+        return Ok(resolved);
+    }
+
+    let searched = searched_firmware_dirs(&search_dirs);
+    let candidates = candidate_summaries.join(" ");
+    anyhow::bail!(
+        "External GBA BIOS is enabled, but no recognized {GBA_BIOS_ID} was found. Searched: {searched}. Expected the known 16384-byte gba_bios.bin. {candidates}"
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_gb_boot_rom_with_manifest(
+    firmware_id: &str,
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    let plan = firmware_plan_for_active_system(ActiveSystem::GameBoy);
+    let (resolved, search_dirs, candidate_summaries) =
+        find_external_firmware(firmware_id, &plan, firmware_roots, content_path)?;
+    if let Some(resolved) = resolved {
+        return Ok(resolved);
+    }
+
+    let searched = searched_firmware_dirs(&search_dirs);
+    let candidates = candidate_summaries.join(" ");
+    let expected = if firmware_id.ends_with(".cgb") {
+        "the known 2304-byte cgb_boot.bin"
+    } else {
+        "the known 256-byte dmg_boot.bin"
+    };
+    anyhow::bail!(
+        "External Game Boy boot ROM is enabled, but no recognized {firmware_id} was found. Searched: {searched}. Expected {expected}. {candidates}"
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_sega8_boot_rom_with_manifest(
+    system: ActiveSystem,
+    region: Option<zeff_sega8_core::hardware::region::Sega8Region>,
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    let firmware_id = match system {
+        ActiveSystem::MasterSystem => "sega.sms.boot",
+        ActiveSystem::GameGear => "sega.gg.boot",
+        _ => anyhow::bail!("{system:?} does not use Sega 8-bit boot firmware"),
+    };
+    let mut plan = firmware_plan_for_active_system(system);
+    if system == ActiveSystem::MasterSystem
+        && let Some(request) = plan
+            .iter_mut()
+            .find(|request| request.id.as_ref() == firmware_id)
+    {
+        request.region = region.map(|region| match region {
+            zeff_sega8_core::hardware::region::Sega8Region::Export => "export".to_owned(),
+            zeff_sega8_core::hardware::region::Sega8Region::Japanese
+            | zeff_sega8_core::hardware::region::Sega8Region::JapanesePowerBaseConverter => {
+                "japan".to_owned()
+            }
+        });
+    }
+    let (resolved, search_dirs, candidate_summaries) =
+        find_external_firmware(firmware_id, &plan, firmware_roots, content_path)?;
+    if let Some(resolved) = resolved {
+        return Ok(resolved);
+    }
+
+    anyhow::bail!(
+        "External Sega boot ROM is enabled, but no recognized {firmware_id} was found. Searched: {}. {}",
+        searched_firmware_dirs(&search_dirs),
+        candidate_summaries.join(" ")
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn find_external_firmware(
+    firmware_id: &str,
+    plan: &[zeff_firmware::FirmwareRequest],
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<(
+    Option<ResolvedFirmwareBytes>,
+    Vec<FirmwareSearchDir>,
+    Vec<String>,
+)> {
+    let catalog = zeff_firmware::catalog_specs();
+    let expected_filenames = expected_filenames_for_plan(catalog, plan);
+    let search_dirs = firmware_search_dirs(firmware_roots, content_path);
+    let mut candidate_summaries = Vec::new();
+
+    for search_dir in &search_dirs {
+        let inventory =
+            scan_known_firmware_filenames(&search_dir.path, &expected_filenames, catalog);
+        if inventory.entries().is_empty() {
+            continue;
+        }
+
+        let resolution = zeff_firmware::FirmwareResolver::new(catalog, &inventory).resolve(plan);
+        for entry in &resolution.entries {
+            if entry.request.id.as_ref() != firmware_id {
+                continue;
+            }
+            if let zeff_firmware::FirmwareSelection::External(firmware) = &entry.selection {
+                log::info!(
+                    "Resolved {firmware_id} from {} in {}",
+                    firmware.original_filename.as_deref().unwrap_or("<unknown>"),
+                    search_dir.path.display()
+                );
+                return Ok((
+                    Some(ResolvedFirmwareBytes {
+                        bytes: firmware.bytes.to_vec(),
+                        manifest: replay_firmware_manifest(firmware.selection_manifest()),
+                    }),
+                    search_dirs,
+                    candidate_summaries,
+                ));
+            }
+
+            let summary = firmware_candidate_summary(&entry.candidates);
+            if !summary.is_empty() {
+                candidate_summaries.push(format!("{}: {summary}", search_dir.path.display()));
+            }
+        }
+    }
+
+    Ok((None, search_dirs, candidate_summaries))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn searched_firmware_dirs(search_dirs: &[FirmwareSearchDir]) -> String {
+    if search_dirs.is_empty() {
+        return "no firmware directories were available".to_owned();
+    }
+    search_dirs
+        .iter()
+        .map(|dir| format!("{} (known firmware filenames only)", dir.path.display()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -135,6 +248,33 @@ pub(crate) fn resolve_fds_bios_with_manifest(
     anyhow::bail!(
         "Famicom Disk System firmware is required, but browser firmware storage/import is not wired yet"
     )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_gba_bios_with_manifest(
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    anyhow::bail!("External GBA BIOS import is not available in the browser build")
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_gb_boot_rom_with_manifest(
+    _firmware_id: &str,
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    anyhow::bail!("External Game Boy boot ROM import is not available in the browser build")
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_sega8_boot_rom_with_manifest(
+    _system: ActiveSystem,
+    _region: Option<zeff_sega8_core::hardware::region::Sega8Region>,
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    anyhow::bail!("External Sega boot ROM import is not available in the browser build")
 }
 
 pub(crate) fn replay_firmware_manifest(
@@ -181,17 +321,9 @@ pub(crate) fn replay_firmware_manifest(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FirmwareSearchMode {
-    FullDirectory,
-    KnownFilenamesOnly,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FirmwareSearchDir {
     path: std::path::PathBuf,
-    mode: FirmwareSearchMode,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -205,31 +337,29 @@ fn firmware_search_dirs(
     }
 
     if let Some(content_parent) = content_path.and_then(std::path::Path::parent) {
-        push_firmware_search_dir(
-            &mut out,
-            Some(content_parent.to_path_buf()),
-            FirmwareSearchMode::KnownFilenamesOnly,
-        );
+        push_firmware_search_dir(&mut out, Some(content_parent.to_path_buf()));
         for name in FIRMWARE_ROOT_DIR_NAMES {
-            push_firmware_search_dir(
-                &mut out,
-                Some(content_parent.join(name)),
-                FirmwareSearchMode::KnownFilenamesOnly,
-            );
+            push_firmware_search_dir(&mut out, Some(content_parent.join(name)));
         }
 
         if let Some(collection_parent) = content_parent.parent() {
             for name in FIRMWARE_ROOT_DIR_NAMES {
-                push_firmware_search_dir(
-                    &mut out,
-                    Some(collection_parent.join(name)),
-                    FirmwareSearchMode::KnownFilenamesOnly,
-                );
+                push_firmware_search_dir(&mut out, Some(collection_parent.join(name)));
             }
         }
     }
 
     out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn configured_firmware_inventory_dirs(
+    firmware_roots: &[std::path::PathBuf],
+) -> Vec<std::path::PathBuf> {
+    firmware_search_dirs(firmware_roots, None)
+        .into_iter()
+        .map(|dir| dir.path)
+        .collect()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -248,7 +378,7 @@ fn push_configured_firmware_search_dirs(
     }
 
     let scan_immediate_subdirs = is_dedicated_firmware_root(&path);
-    push_firmware_search_dir(out, Some(path.clone()), FirmwareSearchMode::FullDirectory);
+    push_firmware_search_dir(out, Some(path.clone()));
 
     if !scan_immediate_subdirs {
         return;
@@ -269,7 +399,7 @@ fn push_configured_firmware_search_dirs(
     subdirs.sort();
 
     for subdir in subdirs {
-        push_firmware_search_dir(out, Some(subdir), FirmwareSearchMode::FullDirectory);
+        push_firmware_search_dir(out, Some(subdir));
     }
 }
 
@@ -284,11 +414,7 @@ fn is_dedicated_firmware_root(path: &std::path::Path) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn push_firmware_search_dir(
-    out: &mut Vec<FirmwareSearchDir>,
-    path: Option<std::path::PathBuf>,
-    mode: FirmwareSearchMode,
-) {
+fn push_firmware_search_dir(out: &mut Vec<FirmwareSearchDir>, path: Option<std::path::PathBuf>) {
     let Some(path) = path else {
         return;
     };
@@ -298,7 +424,7 @@ fn push_firmware_search_dir(
     if out.iter().any(|existing| existing.path == path) {
         return;
     }
-    out.push(FirmwareSearchDir { path, mode });
+    out.push(FirmwareSearchDir { path });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -360,7 +486,7 @@ fn scan_known_firmware_filenames(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn fds_firmware_candidate_summary(candidates: &[zeff_firmware::FirmwareCandidate]) -> String {
+fn firmware_candidate_summary(candidates: &[zeff_firmware::FirmwareCandidate]) -> String {
     if candidates.is_empty() {
         return String::new();
     }
@@ -384,6 +510,22 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires ZEFF_FIRMWARE_TEST_DIR with a retail GBA BIOS"]
+    fn configured_retail_gba_bios_resolves_as_external() {
+        let root = std::path::PathBuf::from(std::env::var("ZEFF_FIRMWARE_TEST_DIR").unwrap());
+        let resolved = resolve_gba_bios_with_manifest(&[root], None).unwrap();
+
+        assert_eq!(resolved.bytes.len(), 16_384);
+        assert!(matches!(
+            resolved.manifest,
+            zeff_emu_common::replay::ReplayFirmwareManifest::External {
+                ref firmware_id,
+                ..
+            } if firmware_id == "nintendo.gba.bios"
+        ));
+    }
+
+    #[test]
     fn content_near_firmware_search_is_nonrecursive_and_limited() {
         let dirs = firmware_search_dirs(
             &[],
@@ -394,19 +536,15 @@ mod tests {
 
         assert!(dirs.contains(&FirmwareSearchDir {
             path: std::path::PathBuf::from("Z:/Android/Roms/FDS"),
-            mode: FirmwareSearchMode::KnownFilenamesOnly,
         }));
         assert!(dirs.contains(&FirmwareSearchDir {
             path: std::path::PathBuf::from("Z:/Android/Roms/FDS/bios"),
-            mode: FirmwareSearchMode::KnownFilenamesOnly,
         }));
         assert!(dirs.contains(&FirmwareSearchDir {
             path: std::path::PathBuf::from("Z:/Android/Roms/FDS/BIOS Files"),
-            mode: FirmwareSearchMode::KnownFilenamesOnly,
         }));
         assert!(dirs.contains(&FirmwareSearchDir {
             path: std::path::PathBuf::from("Z:/Android/Roms/bios"),
-            mode: FirmwareSearchMode::KnownFilenamesOnly,
         }));
         assert!(
             !dirs
@@ -431,17 +569,12 @@ mod tests {
         let dirs = firmware_search_dirs(std::slice::from_ref(&root), None);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
 
-        assert!(dirs.contains(&FirmwareSearchDir {
-            path: root.clone(),
-            mode: FirmwareSearchMode::FullDirectory,
-        }));
+        assert!(dirs.contains(&FirmwareSearchDir { path: root.clone() }));
         assert!(dirs.contains(&FirmwareSearchDir {
             path: root.join("FDS"),
-            mode: FirmwareSearchMode::FullDirectory,
         }));
         assert!(dirs.contains(&FirmwareSearchDir {
             path: root.join("PlayStation"),
-            mode: FirmwareSearchMode::FullDirectory,
         }));
     }
 
@@ -456,13 +589,9 @@ mod tests {
         let dirs = firmware_search_dirs(std::slice::from_ref(&root), None);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
 
-        assert!(dirs.contains(&FirmwareSearchDir {
-            path: root.clone(),
-            mode: FirmwareSearchMode::FullDirectory,
-        }));
+        assert!(dirs.contains(&FirmwareSearchDir { path: root.clone() }));
         assert!(!dirs.contains(&FirmwareSearchDir {
             path: root.join("FDS"),
-            mode: FirmwareSearchMode::FullDirectory,
         }));
     }
 

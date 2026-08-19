@@ -22,6 +22,22 @@ impl Emulator {
         rom: &[u8],
         mode_preference: HardwareModePreference,
     ) -> anyhow::Result<Self> {
+        Self::from_rom_data_inner(rom, mode_preference, None)
+    }
+
+    pub fn from_rom_data_with_boot_rom(
+        rom: &[u8],
+        mode_preference: HardwareModePreference,
+        boot_rom: &[u8],
+    ) -> anyhow::Result<Self> {
+        Self::from_rom_data_inner(rom, mode_preference, Some(boot_rom))
+    }
+
+    fn from_rom_data_inner(
+        rom: &[u8],
+        mode_preference: HardwareModePreference,
+        boot_rom: Option<&[u8]>,
+    ) -> anyhow::Result<Self> {
         let rom_hash = Self::compute_rom_hash(rom);
         log::info!("ROM loaded: {} bytes", rom.len());
 
@@ -36,7 +52,24 @@ impl Emulator {
         {
             log::warn!("ForceCgb requested for DMG-only ROM; running in CGB mode anyway");
         }
-        let bus = Box::new(Bus::new(rom.to_vec(), &header, hardware_mode)?);
+        if let Some(boot_rom) = boot_rom {
+            let expected_len = if matches!(
+                hardware_mode,
+                HardwareMode::CGBNormal | HardwareMode::CGBDouble
+            ) {
+                0x900
+            } else {
+                0x100
+            };
+            anyhow::ensure!(
+                boot_rom.len() == expected_len,
+                "{} boot ROM must be {expected_len} bytes, got {}",
+                if expected_len == 0x900 { "CGB" } else { "DMG" },
+                boot_rom.len()
+            );
+        }
+        let mut bus = Box::new(Bus::new(rom.to_vec(), &header, hardware_mode)?);
+        bus.set_boot_rom(boot_rom.map(<[u8]>::to_vec), boot_rom.is_some());
 
         let emulator = Self {
             cpu: crate::hardware::cpu::Cpu::new(),
@@ -58,18 +91,27 @@ impl Emulator {
         };
 
         let mut emulator = emulator;
-        emulator.apply_post_boot_state();
+        if boot_rom.is_some() {
+            emulator.apply_power_on_state();
+        } else {
+            emulator.apply_post_boot_state();
+        }
         Ok(emulator)
     }
 
     pub fn reset(&mut self) {
         let rom = self.bus.cartridge.rom_bytes().to_vec();
         let sample_rate = self.bus.apu_sample_rate();
+        let boot_rom = self.bus.boot_rom_bytes().map(<[u8]>::to_vec);
         let mode_preference = self.hardware_mode_preference;
         let trace_enabled = self.instruction_trace.is_enabled();
         let trace_capacity = self.instruction_trace.capacity();
 
-        match Self::from_rom_data(&rom, mode_preference) {
+        let reset = match boot_rom.as_deref() {
+            Some(boot_rom) => Self::from_rom_data_with_boot_rom(&rom, mode_preference, boot_rom),
+            None => Self::from_rom_data(&rom, mode_preference),
+        };
+        match reset {
             Ok(mut emulator) => {
                 emulator.set_sample_rate(sample_rate);
                 emulator.instruction_trace.set_capacity(trace_capacity);
@@ -108,5 +150,12 @@ impl Emulator {
         ) {
             self.bus.apply_dmg_post_boot_io_state();
         }
+    }
+
+    fn apply_power_on_state(&mut self) {
+        self.cpu = crate::hardware::cpu::Cpu::new();
+        self.cpu.pc = 0;
+        self.cpu.sp = 0;
+        self.bus.apply_boot_rom_power_on_state();
     }
 }

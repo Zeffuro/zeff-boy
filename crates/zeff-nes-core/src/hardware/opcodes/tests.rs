@@ -45,6 +45,8 @@ struct FlatRam {
     accesses: Vec<FlatAccess>,
     delayed_accesses: Vec<DelayedAccess>,
     elapsed_cycles: u64,
+    nmi_edge_after_access: Option<u64>,
+    nmi_edge_pending: bool,
 }
 
 impl FlatRam {
@@ -58,20 +60,35 @@ impl FlatRam {
             accesses: Vec::new(),
             delayed_accesses: Vec::new(),
             elapsed_cycles: 0,
+            nmi_edge_after_access: None,
+            nmi_edge_pending: false,
+        }
+    }
+
+    fn with_nmi_edge(initial: &[(u16, u8)], after_access: u64) -> Self {
+        let mut bus = Self::new(initial);
+        bus.nmi_edge_after_access = Some(after_access);
+        bus
+    }
+
+    fn finish_access(&mut self) {
+        self.elapsed_cycles += 1;
+        if self.nmi_edge_after_access == Some(self.elapsed_cycles) {
+            self.nmi_edge_pending = true;
         }
     }
 
     fn read(&mut self, address: u16) -> u8 {
         let value = self.memory[usize::from(address)];
         self.accesses.push(FlatAccess::Read(address, value));
-        self.elapsed_cycles += 1;
+        self.finish_access();
         value
     }
 
     fn write(&mut self, address: u16, value: u8) {
         self.memory[usize::from(address)] = value;
         self.accesses.push(FlatAccess::Write(address, value));
-        self.elapsed_cycles += 1;
+        self.finish_access();
     }
 }
 
@@ -108,6 +125,10 @@ impl CpuBus for FlatRam {
         while self.elapsed_cycles < total_cycles {
             self.read(pc);
         }
+    }
+
+    fn take_nmi_edge_for_vector(&mut self) -> bool {
+        std::mem::take(&mut self.nmi_edge_pending)
     }
 }
 
@@ -450,6 +471,48 @@ fn brk_hijack_via_direct_call() {
         "BRK with NMI pending should hijack to NMI vector"
     );
     assert!(!cpu.nmi_pending, "NMI should be consumed");
+}
+
+#[test]
+fn nmi_vector_edge_is_sampled_after_the_fourth_interrupt_access() {
+    const MEMORY: &[(u16, u8)] = &[
+        (0x8000, 0x00),
+        (0xFFFA, 0x00),
+        (0xFFFB, 0xA0),
+        (0xFFFE, 0x00),
+        (0xFFFF, 0x90),
+    ];
+
+    for interrupt in [false, true] {
+        for (edge_access, expected_pc) in [(4, 0xA000), (5, 0x9000)] {
+            let mut cpu = Cpu::new();
+            cpu.pc = 0x8000;
+            cpu.regs.set_flag(StatusFlags::INTERRUPT, false);
+            cpu.irq_line = interrupt;
+            let mut bus = FlatRam::with_nmi_edge(MEMORY, edge_access);
+
+            cpu.step_with_bus(&mut bus);
+
+            assert_eq!(
+                cpu.pc, expected_pc,
+                "interrupt={interrupt}, edge={edge_access}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_vector_edge_is_consumed_when_nmi_was_already_pending() {
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x8000;
+    cpu.nmi_pending = true;
+    cpu.delay_nmi_poll_once();
+    let mut bus = FlatRam::with_nmi_edge(&[(0x8000, 0x00), (0xFFFA, 0x00), (0xFFFB, 0xA0)], 4);
+
+    cpu.step_with_bus(&mut bus);
+
+    assert_eq!(cpu.pc, 0xA000);
+    assert!(!bus.nmi_edge_pending);
 }
 
 #[test]

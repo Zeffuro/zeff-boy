@@ -10,6 +10,8 @@ mod public_api;
 mod runtime;
 mod state_io;
 
+pub use runtime::{FrameSliceCursor, FrameSliceOutcome};
+
 const CYCLES_PER_FRAME_NORMAL: u64 = 70224;
 const CYCLES_PER_FRAME_DOUBLE: u64 = 140448;
 type RegisterSeed = (u8, u8, u8, u8, u8, u8, u8, u8);
@@ -64,6 +66,106 @@ mod tests {
     use crate::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
     use zeff_emu_common::save_ram::SaveRamKind;
     use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks};
+
+    fn boot_test_rom(cgb: bool) -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        if cgb {
+            rom[0x143] = 0x80;
+        }
+        rom
+    }
+
+    #[test]
+    fn boot_rom_overlay_unmaps_and_reset_reenables_it() {
+        let rom = boot_test_rom(false);
+        let mut boot_rom = vec![0; 0x100];
+        boot_rom[0] = 0x31;
+        let mut emulator =
+            Emulator::from_rom_data_with_boot_rom(&rom, HardwareModePreference::Auto, &boot_rom)
+                .unwrap();
+
+        assert_eq!(emulator.cpu.pc, 0);
+        assert_eq!(emulator.cpu_peek8(0xFF40) & 0x80, 0);
+        assert_eq!(emulator.cpu_peek8(0), 0x31);
+        emulator.cpu_write8(crate::hardware::types::constants::BOOT_ROM_DISABLE, 1);
+        assert!(!emulator.boot_rom_enabled());
+        assert_eq!(emulator.cpu_peek8(0), 0);
+
+        emulator.reset();
+        assert!(emulator.boot_rom_enabled());
+        assert_eq!(emulator.cpu.pc, 0);
+        assert_eq!(emulator.cpu_peek8(0), 0x31);
+    }
+
+    #[test]
+    fn cgb_boot_rom_leaves_cartridge_header_window_visible() {
+        let mut rom = boot_test_rom(true);
+        rom[0x100] = 0xCC;
+        let mut boot_rom = vec![0; 0x900];
+        boot_rom[0] = 0x11;
+        boot_rom[0x100] = 0x22;
+        boot_rom[0x200] = 0x33;
+        let emulator =
+            Emulator::from_rom_data_with_boot_rom(&rom, HardwareModePreference::Auto, &boot_rom)
+                .unwrap();
+
+        assert_eq!(emulator.cpu_peek8(0), 0x11);
+        assert_eq!(emulator.cpu_peek8(0x100), 0xCC);
+        assert_eq!(emulator.cpu_peek8(0x200), 0x33);
+    }
+
+    #[test]
+    fn post_boot_state_does_not_require_boot_rom() {
+        let rom = boot_test_rom(false);
+        let boot_rom = vec![0; 0x100];
+        let mut with_boot =
+            Emulator::from_rom_data_with_boot_rom(&rom, HardwareModePreference::Auto, &boot_rom)
+                .unwrap();
+        let boot_state = with_boot.encode_state().unwrap();
+
+        let mut without_boot = Emulator::new(&rom, 48_000).unwrap();
+        assert!(without_boot.load_state(&boot_state).is_err());
+
+        with_boot.cpu_write8(crate::hardware::types::constants::BOOT_ROM_DISABLE, 1);
+        let post_boot_state = with_boot.encode_state().unwrap();
+        without_boot.load_state(&post_boot_state).unwrap();
+        assert!(!without_boot.has_boot_rom());
+        assert!(!without_boot.boot_rom_enabled());
+    }
+
+    #[test]
+    #[ignore = "requires ZEFF_GB_BOOT_ROM and ZEFF_GB_BOOT_TEST_ROM"]
+    fn external_boot_rom_reaches_cartridge_entry() {
+        let boot_rom = std::fs::read(std::env::var("ZEFF_GB_BOOT_ROM").unwrap()).unwrap();
+        let rom = std::fs::read(std::env::var("ZEFF_GB_BOOT_TEST_ROM").unwrap()).unwrap();
+        let mut emulator =
+            Emulator::from_rom_data_with_boot_rom(&rom, HardwareModePreference::Auto, &boot_rom)
+                .unwrap();
+
+        for _ in 0..5_000_000 {
+            if !emulator.boot_rom_enabled() {
+                break;
+            }
+            emulator.step_instruction();
+        }
+
+        assert!(!emulator.boot_rom_enabled());
+        assert!(emulator.cpu.pc >= 0x0100);
+
+        if boot_rom.len() == 0x100 {
+            let mut expected = Vec::with_capacity(0xC0);
+            for &source in &rom[0x0104..0x0134] {
+                for nibble in [source >> 4, source & 0x0F] {
+                    let mut expanded = 0;
+                    for bit in 0..4 {
+                        expanded |= ((nibble >> bit) & 1) * (3 << (bit * 2));
+                    }
+                    expected.extend_from_slice(&[expanded, 0, expanded, 0]);
+                }
+            }
+            assert_eq!(&emulator.vram_snapshot()[0x10..0x190], expected);
+        }
+    }
 
     #[test]
     fn master_timing_round_trips_through_save_state() {

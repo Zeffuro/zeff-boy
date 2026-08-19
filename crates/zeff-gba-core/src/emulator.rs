@@ -59,11 +59,23 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new(rom_data: &[u8], sample_rate: u32) -> anyhow::Result<Self> {
+        Self::new_inner(rom_data, sample_rate, None)
+    }
+
+    pub fn new_with_bios(rom_data: &[u8], bios: &[u8], sample_rate: u32) -> anyhow::Result<Self> {
+        Self::new_inner(rom_data, sample_rate, Some(bios))
+    }
+
+    fn new_inner(rom_data: &[u8], sample_rate: u32, bios: Option<&[u8]>) -> anyhow::Result<Self> {
         let cartridge = Cartridge::load(rom_data)?;
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
+        let bus = match bios {
+            Some(bios) => Bus::new_with_bios(cartridge, sample_rate, bios)?,
+            None => Bus::new(cartridge, sample_rate),
+        };
         let mut emu = Self {
             cpu: Cpu::new(),
-            bus: Bus::new(cartridge, sample_rate),
+            bus,
             rom_hash,
             frame_count: 0,
             debug: AddressDebugController::new(),
@@ -79,7 +91,11 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
-        self.cpu.reset();
+        if self.bus.has_external_bios() {
+            self.cpu.reset_with_bios();
+        } else {
+            self.cpu.reset();
+        }
         self.frame_count = 0;
         self.debug.clear_hits();
         self.opcode_log.clear();

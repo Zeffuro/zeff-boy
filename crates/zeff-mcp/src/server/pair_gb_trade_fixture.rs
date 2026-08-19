@@ -57,13 +57,13 @@ impl Server {
 
         self.prepare_gb_trade_fixture_room_entry(left_addr, right_addr, deadline)?;
         timings.mark("prepare_room_entry");
+        self.host_join_pair(left_addr, right_addr, &config.link_addr)?;
+        timings.mark("host_join_link");
         if config.record_replay {
             self.start_replay_pair(left_addr, right_addr, config)?;
             self.wait_pair_recording_progress(left_addr, right_addr, deadline)?;
             timings.mark("start_replay_recording");
         }
-        self.host_join_pair(left_addr, right_addr, &config.link_addr)?;
-        timings.mark("host_join_link");
         self.finish_gb_trade_fixture_room_entry(left_addr, right_addr, deadline)?;
         self.wait_for_position(left_addr, TRADE_ROOM_GROUP, TRADE_ROOM_MAP, deadline)
             .context("left/host did not enter the trade fixture room")?;

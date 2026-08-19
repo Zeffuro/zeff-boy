@@ -6,12 +6,15 @@ use crate::hardware::cpu::{Cpu, CpuBus};
 pub fn brk<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let _ = cpu.fetch8(bus);
     cpu.push16(bus, cpu.pc);
+    let vector_edge = bus.take_nmi_edge_for_vector();
+    let nmi_hijacked = cpu.nmi_pending || vector_edge;
     cpu.push8(bus, cpu.regs.status_for_push(true));
     cpu.regs.set_flag(StatusFlags::INTERRUPT, true);
     cpu.clear_irq_inhibit_delay();
 
-    let (vec_lo, vec_hi) = if cpu.nmi_pending {
+    let (vec_lo, vec_hi) = if nmi_hijacked {
         cpu.nmi_pending = false;
+        cpu.nmi_count = cpu.nmi_count.wrapping_add(1);
         (NMI_VECTOR_LO, NMI_VECTOR_HI)
     } else {
         (IRQ_VECTOR_LO, IRQ_VECTOR_HI)

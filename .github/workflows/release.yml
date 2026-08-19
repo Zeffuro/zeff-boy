@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -235,6 +237,19 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          CHECKSUMS="$(mktemp)"
+          find artifacts -maxdepth 1 -type f -printf '%f\0' \
+            | sort -z \
+            | (cd artifacts && xargs -0 sha256sum) > "$CHECKSUMS"
+          mv "$CHECKSUMS" artifacts/SHA256SUMS.txt
+
+      - name: Attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/*
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

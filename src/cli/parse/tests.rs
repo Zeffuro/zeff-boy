@@ -17,6 +17,7 @@ fn parses_headless_replay_options() {
         "12000",
         "--expect-gb-link-events",
         "2400",
+        "--allow-gb-link-replay-divergence",
         "--expect-replay-final-hash",
         "abc123",
         "game.gb",
@@ -35,6 +36,7 @@ fn parses_headless_replay_options() {
     assert!(headless.replay_peer_live_link);
     assert_eq!(headless.replay_tail_frames, 12_000);
     assert_eq!(headless.expect_gb_link_events, 2400);
+    assert!(headless.allow_gb_link_replay_divergence);
     assert_eq!(headless.expect_replay_final_hash.as_deref(), Some("abc123"));
     assert_eq!(args.rom_path.as_deref(), Some("game.gb"));
 }

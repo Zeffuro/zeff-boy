@@ -30,6 +30,8 @@ mod save_paths;
 mod settings;
 mod symbols;
 mod ui;
+#[cfg(not(target_arch = "wasm32"))]
+mod update;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::emu_backend::{BackendLoadConfig, EmuBackend, load_backend_from_rom_source};
@@ -85,6 +87,18 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),
             firmware_search_dirs: settings.emulation.firmware_search_dirs(),
+            gb_use_external_boot_rom: matches!(
+                settings.emulation.gb_boot_rom_mode,
+                crate::settings::GbBootRomMode::External
+            ),
+            gba_use_external_bios: matches!(
+                settings.emulation.gba_bios_mode,
+                crate::settings::GbaBiosMode::External
+            ),
+            sega8_use_external_boot_rom: matches!(
+                settings.emulation.sega_boot_rom_mode,
+                crate::settings::SegaBootRomMode::External
+            ),
             ..BackendLoadConfig::default()
         },
     )?;

@@ -64,6 +64,9 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.gamepad_bindings.get(BindingAction::R), "RightTrigger");
     assert_eq!(s.emulation.firmware_directory, "");
     assert_eq!(s.emulation.firmware_directory_path(), None);
+    assert_eq!(s.emulation.gba_bios_mode, GbaBiosMode::Hle);
+    assert_eq!(s.emulation.gb_boot_rom_mode, GbBootRomMode::Skip);
+    assert_eq!(s.emulation.sega_boot_rom_mode, SegaBootRomMode::Skip);
 }
 
 #[test]
@@ -88,10 +91,19 @@ fn firmware_directory_setting_roundtrip_and_trims_empty_path() {
     assert_eq!(s.emulation.firmware_directory_path(), None);
 
     s.emulation.firmware_directory = "F:/Firmware".to_string();
+    s.emulation.gba_bios_mode = GbaBiosMode::External;
+    s.emulation.gb_boot_rom_mode = GbBootRomMode::External;
+    s.emulation.sega_boot_rom_mode = SegaBootRomMode::External;
     let json = serde_json::to_string(&s).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
 
     assert_eq!(restored.emulation.firmware_directory, "F:/Firmware");
+    assert_eq!(restored.emulation.gba_bios_mode, GbaBiosMode::External);
+    assert_eq!(restored.emulation.gb_boot_rom_mode, GbBootRomMode::External);
+    assert_eq!(
+        restored.emulation.sega_boot_rom_mode,
+        SegaBootRomMode::External
+    );
     assert_eq!(
         restored.emulation.firmware_directory_path(),
         Some(PathBuf::from("F:/Firmware"))

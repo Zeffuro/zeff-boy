@@ -8,6 +8,9 @@ impl Bus {
     #[inline]
     #[allow(unreachable_patterns)]
     pub fn read_byte_raw(&self, addr: u16) -> u8 {
+        if let Some(value) = self.read_boot_rom(addr) {
+            return value;
+        }
         match addr {
             ROM_BANK_0_START..=ROM_BANK_N_END => self.cartridge.read_rom(addr),
             VRAM_START..=VRAM_END => {
@@ -47,6 +50,23 @@ impl Bus {
             IE_ADDR => self.ie,
             _ => 0xFF,
         }
+    }
+
+    fn read_boot_rom(&self, addr: u16) -> Option<u8> {
+        if !self.boot_rom_enabled {
+            return None;
+        }
+        let mapped = match self.hardware_mode {
+            crate::hardware::types::hardware_mode::HardwareMode::CGBNormal
+            | crate::hardware::types::hardware_mode::HardwareMode::CGBDouble => {
+                addr <= 0x00FF || (0x0200..=0x08FF).contains(&addr)
+            }
+            _ => addr <= 0x00FF,
+        };
+        if !mapped {
+            return None;
+        }
+        self.boot_rom.as_deref()?.get(addr as usize).copied()
     }
 
     #[inline]

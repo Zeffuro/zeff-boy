@@ -36,11 +36,9 @@ id = "sprdma_and_dmc_dma"
 archive_path = "nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes"
 sha256 = "db3199bc1b0bdc07a316b3ab999d8fd8bb361456d2154e364c132cb06a26a10f"
 legacy_paths = ["test-roms/nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes"]
-expectation = { kind = "known_fail", reason = "Current NES core does not arbitrate DMC reads during OAM DMA per CPU cycle." }
 
 [[test_groups.roms]]
 id = "sprdma_and_dmc_dma_512"
 archive_path = "nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes"
 sha256 = "3789f5134b0561b4344e3f4ce08b4d2a416f67435e083917a80d87fdb9d3583c"
 legacy_paths = ["test-roms/nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes"]
-expectation = { kind = "known_fail", reason = "Current NES core does not arbitrate DMC reads during OAM DMA per CPU cycle." }

@@ -201,6 +201,7 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         PPU_OBP0 => bus.io.ppu.obp0 = value,
         PPU_OBP1 => bus.io.ppu.obp1 = value,
         PPU_DMA => bus.start_oam_dma(value),
+        BOOT_ROM_DISABLE if value != 0 => bus.boot_rom_enabled = false,
         CGB_KEY1 if bus.is_cgb_mode() => {
             bus.key1 = (bus.key1 & 0x80) | (value & 0x01) | 0x7E;
         }

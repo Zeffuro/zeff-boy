@@ -400,6 +400,10 @@ fn default_settings_window_size() -> [u32; 2] {
 #[serde(default)]
 pub(crate) struct UiSettings {
     pub(crate) show_fps: bool,
+    #[serde(default = "default_true")]
+    pub(crate) check_for_updates: bool,
+    #[serde(default)]
+    pub(crate) skipped_update_version: Option<String>,
     pub(crate) enable_memory_editing: bool,
     #[serde(default)]
     pub(crate) autohide_menu_bar: bool,
@@ -444,6 +448,8 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             show_fps: true,
+            check_for_updates: true,
+            skipped_update_version: None,
             enable_memory_editing: false,
             autohide_menu_bar: false,
             ui_scale: default_ui_scale(),
@@ -565,6 +571,27 @@ impl Sega8ConsoleRegionPreference {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum GbaBiosMode {
+    #[default]
+    Hle,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum GbBootRomMode {
+    #[default]
+    Skip,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum SegaBootRomMode {
+    #[default]
+    Skip,
+    External,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct EmulationSettings {
@@ -592,6 +619,12 @@ pub(crate) struct EmulationSettings {
     pub(crate) pause_on_unfocus: bool,
     #[serde(default)]
     pub(crate) firmware_directory: String,
+    #[serde(default)]
+    pub(crate) gb_boot_rom_mode: GbBootRomMode,
+    #[serde(default)]
+    pub(crate) sega_boot_rom_mode: SegaBootRomMode,
+    #[serde(default)]
+    pub(crate) gba_bios_mode: GbaBiosMode,
 }
 
 fn default_slow_motion_divisor() -> usize {
@@ -624,6 +657,9 @@ impl Default for EmulationSettings {
             nes_zapper_enabled: false,
             pause_on_unfocus: true,
             firmware_directory: String::new(),
+            gb_boot_rom_mode: GbBootRomMode::Skip,
+            sega_boot_rom_mode: SegaBootRomMode::Skip,
+            gba_bios_mode: GbaBiosMode::Hle,
         }
     }
 }

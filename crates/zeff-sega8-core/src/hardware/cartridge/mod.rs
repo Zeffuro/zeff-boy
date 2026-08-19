@@ -109,6 +109,11 @@ impl Cartridge {
         self.normalized_crc32
     }
 
+    pub(crate) fn uses_sg_type_b_ram_extension(&self) -> bool {
+        self.system == Sega8System::Sg1000
+            && compat::uses_sg_type_b_ram_extension(self.normalized_crc32)
+    }
+
     pub fn save_ram_kind(&self) -> SaveRamKind {
         match self.mapper_kind {
             Sega8MapperKind::Sega => SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE),

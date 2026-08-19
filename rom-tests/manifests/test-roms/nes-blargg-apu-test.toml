@@ -60,7 +60,6 @@ id = "5-len_timing"
 archive_path = "nes-test-roms/apu_test/rom_singles/5-len_timing.nes"
 sha256 = "4d88f8cc0b21303dc151af4d0f4169d79284634a73082d7ea1ae5cfafedd1e46"
 legacy_paths = ["test-roms/nes-test-roms/apu_test/rom_singles/5-len_timing.nes"]
-expectation = { kind = "known_fail", reason = "Current NES APU length-counter frame timing fails blargg apu_test/5-len_timing with status=05." }
 
 [[test_groups.roms]]
 id = "6-irq_flag_timing"

@@ -16,7 +16,7 @@ use crate::hardware::cpu::Cpu;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 
 pub const SAVE_STATE_VERSION: u32 = 1;
-pub const SAVE_STATE_FORMAT_VERSION: u32 = 3;
+pub const SAVE_STATE_FORMAT_VERSION: u32 = 4;
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -55,6 +55,7 @@ pub struct SaveState {
     pub cycle_count: u64,
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
+    pub boot_rom_enabled: bool,
 }
 
 pub struct SaveStateRef<'a> {
@@ -67,6 +68,7 @@ pub struct SaveStateRef<'a> {
     pub cycle_count: u64,
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
+    pub boot_rom_enabled: bool,
 }
 
 pub fn encode_hardware_mode(mode: HardwareMode) -> u8 {

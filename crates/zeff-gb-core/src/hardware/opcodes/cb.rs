@@ -1,8 +1,7 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, GbCpuBus};
 use crate::hardware::opcodes::cycles::CB_CYCLE_TABLE;
 
-pub fn execute_cb_prefix(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn execute_cb_prefix(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     let opcode = cpu.fetch8_timed(bus);
 
     crate::hardware::opcodes::bitwise::execute_cb_op(cpu, bus, opcode);

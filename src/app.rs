@@ -64,6 +64,11 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         settings.ui.dock_layout(initial_debug_presentation),
         &settings.ui.open_debug_tabs,
     );
+    #[cfg(not(target_arch = "wasm32"))]
+    let update_checker = crate::update::UpdateChecker::new(
+        settings.ui.check_for_updates,
+        settings.ui.skipped_update_version.clone(),
+    );
 
     // Cache metadata before handing emulator to emu thread
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
@@ -169,6 +174,8 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         pending_debug_actions: DebugUiActions::none(),
         shutdown_performed: false,
         toast_manager: ToastManager::new(),
+        #[cfg(not(target_arch = "wasm32"))]
+        update_checker,
         recording: RecordingState {
             audio_recorder: None,
             replay_recorder: None,
@@ -310,6 +317,8 @@ struct App {
     pending_debug_actions: DebugUiActions,
     shutdown_performed: bool,
     toast_manager: ToastManager,
+    #[cfg(not(target_arch = "wasm32"))]
+    update_checker: crate::update::UpdateChecker,
     recording: RecordingState,
     rewind: RewindState,
     remote_debug_frames_remaining: usize,

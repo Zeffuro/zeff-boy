@@ -36,12 +36,13 @@ pub(super) fn run_loaded_replay_headless(
     }
     #[cfg(not(target_arch = "wasm32"))]
     let mut game_boy_replay_link = {
-        let link = crate::link::gb::GameBoyReplayLink::try_new(
+        let mut link = crate::link::gb::GameBoyReplayLink::try_new(
             player.metadata().events.clone(),
             backend.frame_count(),
             player.metadata().game_boy_link_start_tick,
             backend.game_boy_cpu_cycles().unwrap_or(0),
         )?;
+        link.set_strict_local_reply_validation(!opts.allow_gb_link_replay_divergence);
         (!link.is_empty()).then_some(link)
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -95,13 +96,11 @@ pub(super) fn run_loaded_replay_headless(
         backend.step_frame();
         if backend.frame_count() != frame_count_before {
             player.advance_frames(1);
-            if has_game_boy_link_events {
-                if let Err(err) = validate_replay_checkpoint(&player, &backend) {
-                    log::warn!("{err}");
-                }
-            } else {
-                validate_replay_checkpoint(&player, &backend)?;
-            }
+            handle_game_boy_link_validation(
+                validate_replay_checkpoint(&player, &backend),
+                has_game_boy_link_events,
+                opts.allow_gb_link_replay_divergence,
+            )?;
             stalled_slices = 0;
         } else {
             stalled_slices += 1;
@@ -145,21 +144,15 @@ pub(super) fn run_loaded_replay_headless(
     let final_state_hash = sha256_hex(&final_state);
     let final_framebuffer_hash = sha256_hex(backend.framebuffer());
 
-    if has_game_boy_link_events {
-        if let Err(err) = validate_embedded_final_state_hash(
-            "replay",
-            player.metadata().final_state_sha256,
-            &final_state_hash,
-        ) {
-            log::warn!("{err}");
-        }
-    } else {
+    handle_game_boy_link_validation(
         validate_embedded_final_state_hash(
             "replay",
             player.metadata().final_state_sha256,
             &final_state_hash,
-        )?;
-    }
+        ),
+        has_game_boy_link_events,
+        opts.allow_gb_link_replay_divergence,
+    )?;
 
     if let Some(expected) = opts.expect_replay_final_hash.as_deref()
         && !final_state_hash.eq_ignore_ascii_case(expected)
@@ -177,6 +170,28 @@ pub(super) fn run_loaded_replay_headless(
         final_state_hash,
         final_framebuffer_hash,
     })
+}
+
+fn handle_game_boy_link_validation(
+    result: anyhow::Result<()>,
+    has_game_boy_link_events: bool,
+    allow_divergence: bool,
+) -> anyhow::Result<()> {
+    if has_game_boy_link_events && allow_divergence {
+        if let Err(err) = result {
+            log::warn!("{err}");
+        }
+        return Ok(());
+    }
+    result
+}
+
+#[cfg(test)]
+pub(super) fn validate_game_boy_link_replay_result_for_test(
+    result: anyhow::Result<()>,
+    opts: &HeadlessOptions,
+) -> anyhow::Result<()> {
+    handle_game_boy_link_validation(result, true, opts.allow_gb_link_replay_divergence)
 }
 
 fn apply_replay_events_at_cursor(

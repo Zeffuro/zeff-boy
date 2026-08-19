@@ -13,6 +13,8 @@ impl Bus {
         let mut bus = Self {
             cartridge,
             hardware_mode,
+            boot_rom: None,
+            boot_rom_enabled: false,
             cgb_dmg_compat: matches!(
                 hardware_mode,
                 HardwareMode::CGBNormal | HardwareMode::CGBDouble
@@ -130,5 +132,30 @@ impl Bus {
         self.cartridge.step(system_t_cycles);
 
         system_t_cycles
+    }
+
+    pub(in crate::hardware) fn advance_cgb_speed_switch_delay(&mut self) -> (u64, u64) {
+        const DELAY_T_CYCLES: u64 = 8_200;
+
+        let double_speed = self.hardware_mode == HardwareMode::CGBDouble;
+        let system_t_cycles = if double_speed {
+            DELAY_T_CYCLES / 2
+        } else {
+            DELAY_T_CYCLES
+        };
+
+        self.step_apu(system_t_cycles);
+
+        let previous_ppu_mode = self.ppu_mode();
+        let (ppu_interrupt, current_ppu_mode) = self.step_ppu(system_t_cycles);
+        self.if_reg |= ppu_interrupt;
+        self.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
+
+        let cpu_t_cycles = if double_speed {
+            DELAY_T_CYCLES * 2
+        } else {
+            DELAY_T_CYCLES
+        };
+        (cpu_t_cycles, system_t_cycles)
     }
 }

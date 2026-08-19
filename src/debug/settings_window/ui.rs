@@ -48,6 +48,11 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.add_space(4.0);
 
     ui.checkbox(&mut settings.ui.show_fps, "Show FPS in debug panel");
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.checkbox(
+        &mut settings.ui.check_for_updates,
+        "Check for updates on startup",
+    );
     ui.checkbox(
         &mut settings.ui.enable_memory_editing,
         "Enable memory editing",

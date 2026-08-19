@@ -114,6 +114,18 @@ impl App {
                     .forced_standard(),
                 sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
                 firmware_search_dirs: self.settings.emulation.firmware_search_dirs(),
+                gb_use_external_boot_rom: matches!(
+                    self.settings.emulation.gb_boot_rom_mode,
+                    crate::settings::GbBootRomMode::External
+                ),
+                gba_use_external_bios: matches!(
+                    self.settings.emulation.gba_bios_mode,
+                    crate::settings::GbaBiosMode::External
+                ),
+                sega8_use_external_boot_rom: matches!(
+                    self.settings.emulation.sega_boot_rom_mode,
+                    crate::settings::SegaBootRomMode::External
+                ),
                 #[cfg(test)]
                 fds_bios_override: None,
             },

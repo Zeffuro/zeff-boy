@@ -41,6 +41,12 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) show_debug_dock: bool,
     pub(crate) debugger_window_open: bool,
     pub(crate) debug_presentation: crate::settings::DebugPresentation,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) update_info: Option<&'a crate::update::UpdateInfo>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) show_update_dialog: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) update_install_state: crate::update::UpdateInstallState,
 }
 
 pub(crate) struct RenderResult {
@@ -49,6 +55,8 @@ pub(crate) struct RenderResult {
     pub(crate) archive_selection_action: Option<ArchiveSelectionAction>,
     pub(crate) egui_wants_keyboard: bool,
     pub(crate) game_view_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) update_action: Option<crate::update::UpdateAction>,
 }
 
 const EMPTY_STATE_MESSAGE: &str = "Drag & drop a ROM file, or use File > Open";
@@ -179,6 +187,78 @@ impl Graphics {
                 }
             });
         ctx_egui.request_repaint();
+        action
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn draw_update_window(
+        &self,
+        info: &crate::update::UpdateInfo,
+        install_state: crate::update::UpdateInstallState,
+    ) -> Option<crate::update::UpdateAction> {
+        let mut action = None;
+        egui::Window::new("Update available")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .show(self.egui.context(), |ui| {
+                ui.label(format!(
+                    "zeff-boy {} is available. You are running {}.",
+                    info.version,
+                    env!("CARGO_PKG_VERSION")
+                ));
+                ui.add_space(8.0);
+                match &info.strategy {
+                    crate::update::UpdateStrategy::SelfUpdate(_) => match install_state {
+                        crate::update::UpdateInstallState::Idle => {
+                            if ui.button("Install Update").clicked() {
+                                action = Some(crate::update::UpdateAction::Install);
+                            }
+                        }
+                        crate::update::UpdateInstallState::Downloading => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Downloading and verifying update...");
+                            });
+                        }
+                        crate::update::UpdateInstallState::Ready => {
+                            if ui.button("Restart and Update").clicked() {
+                                action = Some(crate::update::UpdateAction::Restart);
+                            }
+                        }
+                    },
+                    crate::update::UpdateStrategy::PackageManager { name, command } => {
+                        ui.label(format!("This copy is managed by {name}."));
+                        if let Some(command) = command {
+                            ui.horizontal(|ui| {
+                                ui.code(command);
+                                if ui.button("Copy").clicked() {
+                                    ui.ctx().copy_text(command.clone());
+                                }
+                            });
+                        } else {
+                            ui.label("Install the update through that package manager.");
+                        }
+                    }
+                    crate::update::UpdateStrategy::Browser => {
+                        if ui.button("Download Update").clicked() {
+                            action = Some(crate::update::UpdateAction::Download);
+                        }
+                    }
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Release Notes").clicked() {
+                        action = Some(crate::update::UpdateAction::ReleaseNotes);
+                    }
+                    if ui.button("Later").clicked() {
+                        action = Some(crate::update::UpdateAction::Later);
+                    }
+                    if ui.button("Skip This Version").clicked() {
+                        action = Some(crate::update::UpdateAction::SkipVersion);
+                    }
+                });
+            });
         action
     }
 
@@ -450,6 +530,11 @@ impl Graphics {
         let archive_selection_action = ctx.archive_selection.and_then(|selection| {
             self.draw_archive_selection_window(self.egui.context(), selection)
         });
+        #[cfg(not(target_arch = "wasm32"))]
+        let update_action = ctx
+            .update_info
+            .filter(|_| ctx.show_update_dialog)
+            .and_then(|info| self.draw_update_window(info, ctx.update_install_state));
         ctx.toast_manager.draw(self.egui.context());
 
         if ctx.is_rewinding {
@@ -495,6 +580,8 @@ impl Graphics {
             archive_selection_action,
             egui_wants_keyboard,
             game_view_focused,
+            #[cfg(not(target_arch = "wasm32"))]
+            update_action,
         })
     }
 }

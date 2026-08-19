@@ -82,6 +82,7 @@ pub(super) fn run_live_link_paired_game_boy_replay_headless(
         Some(load.rom_data.clone()),
         BackendLoadConfig {
             firmware_search_dirs: load.firmware_search_dirs.clone(),
+            gb_use_external_boot_rom: super::replay_uses_external_gb_boot_rom(&left_player),
             ..BackendLoadConfig::default()
         },
     )?;
@@ -92,6 +93,7 @@ pub(super) fn run_live_link_paired_game_boy_replay_headless(
         Some(load.rom_data),
         BackendLoadConfig {
             firmware_search_dirs: load.firmware_search_dirs,
+            gb_use_external_boot_rom: super::replay_uses_external_gb_boot_rom(&right_player),
             ..BackendLoadConfig::default()
         },
     )?;

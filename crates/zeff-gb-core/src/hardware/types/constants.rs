@@ -54,6 +54,7 @@ pub const PPU_WY: u16 = 0xFF4A;
 pub const PPU_WX: u16 = 0xFF4B;
 pub const CGB_KEY1: u16 = 0xFF4D;
 pub const PPU_VBK: u16 = 0xFF4F;
+pub const BOOT_ROM_DISABLE: u16 = 0xFF50;
 pub const CGB_HDMA1: u16 = 0xFF51;
 pub const CGB_HDMA2: u16 = 0xFF52;
 pub const CGB_HDMA3: u16 = 0xFF53;

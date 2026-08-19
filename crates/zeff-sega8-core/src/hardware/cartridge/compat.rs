@@ -70,11 +70,23 @@ const MAPPER_OVERRIDES: &[MapperOverride] = &[
     },
 ];
 
+const SG_TYPE_B_RAM_EXTENSION_CRCS: &[u32] = &[
+    0x69FC_1494,
+    0xFFC4_EE3F,
+    0x2E36_6CCF,
+    0xAAAC_12CF,
+    0xD2ED_D329,
+];
+
 pub(super) fn mapper_kind_for_crc32(crc32: u32) -> Option<Sega8MapperKind> {
     MAPPER_OVERRIDES
         .iter()
         .find(|entry| entry.crc32 == crc32)
         .map(|entry| entry.mapper_kind)
+}
+
+pub(super) fn uses_sg_type_b_ram_extension(crc32: u32) -> bool {
+    SG_TYPE_B_RAM_EXTENSION_CRCS.contains(&crc32)
 }
 
 #[cfg(test)]
@@ -114,5 +126,12 @@ mod tests {
             None,
             "MSX 16 KiB variant is not implemented yet"
         );
+    }
+
+    #[test]
+    fn recognizes_sg_type_b_ram_extension_titles() {
+        assert!(uses_sg_type_b_ram_extension(0xD2ED_D329));
+        assert!(uses_sg_type_b_ram_extension(0x69FC_1494));
+        assert!(!uses_sg_type_b_ram_extension(0));
     }
 }

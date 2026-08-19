@@ -23,6 +23,7 @@ pub(crate) struct GameBoyReplayLink {
     passive_rearm_catchup_after_tick: Option<u64>,
     link_active: bool,
     local_master_armed: bool,
+    strict_local_reply_validation: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +129,12 @@ impl GameBoyReplayLink {
             passive_rearm_catchup_after_tick: None,
             link_active: false,
             local_master_armed: false,
+            strict_local_reply_validation: false,
         })
+    }
+
+    pub(crate) fn set_strict_local_reply_validation(&mut self, strict: bool) {
+        self.strict_local_reply_validation = strict;
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -434,6 +440,9 @@ impl GameBoyReplayLink {
                         || actual.out_byte != reply.out_byte
                         || actual.serial_generation != reply.serial_generation)
                 {
+                    if self.strict_local_reply_validation {
+                        return Err(LinkSessionError::MalformedPacketPayload);
+                    }
                     log::warn!(
                         "GB replay remote-master local reply mismatch: expected {}, actual {}",
                         format_replay_reply(reply),
@@ -441,9 +450,7 @@ impl GameBoyReplayLink {
                     );
                 }
                 if actual.passive {
-                    if !emulator.complete_game_boy_external_link_transfer(out_byte) {
-                        return Err(LinkSessionError::MalformedPacketPayload);
-                    }
+                    super::complete_passive_transfer(emulator, out_byte, clock_period_t_cycles)?;
                     self.passive_rearm_catchup_after_tick = Some(emulator.cpu_cycles());
                 }
                 Ok(())

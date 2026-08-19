@@ -50,6 +50,53 @@ pub(crate) struct DebugDataRefs<'a> {
 
 use crate::settings::{BindingAction, InputBindingAction, ShortcutAction, WonderSwanButton};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FirmwareInventoryStatusKind {
+    Recognized,
+    UnknownHash,
+    WrongSize,
+    NotFound,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FirmwareInventoryRow {
+    pub(crate) firmware_id: String,
+    pub(crate) system: String,
+    pub(crate) firmware: String,
+    pub(crate) path: Option<String>,
+    pub(crate) status: FirmwareInventoryStatusKind,
+    pub(crate) detail: String,
+    pub(crate) sha256_prefix: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct FirmwareInventoryScanResult {
+    pub(crate) directory: std::path::PathBuf,
+    pub(crate) result: Result<Vec<FirmwareInventoryRow>, String>,
+}
+
+pub(crate) struct FirmwareInventoryState {
+    pub(crate) directory: Option<std::path::PathBuf>,
+    pub(crate) rows: Vec<FirmwareInventoryRow>,
+    pub(crate) error: Option<String>,
+    pub(crate) needs_refresh: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) scan_receiver: Option<std::sync::mpsc::Receiver<FirmwareInventoryScanResult>>,
+}
+
+impl Default for FirmwareInventoryState {
+    fn default() -> Self {
+        Self {
+            directory: None,
+            rows: Vec::new(),
+            error: None,
+            needs_refresh: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            scan_receiver: None,
+        }
+    }
+}
+
 pub(crate) struct DebugWindowState {
     pub(crate) cpu_view: CpuDebugViewState,
     pub(crate) hardware_view: CpuDebugViewState,
@@ -79,6 +126,7 @@ pub(crate) struct DebugWindowState {
     pub(crate) trace: TraceViewerState,
     pub(crate) execution_coverage: ExecutionCoverage,
     pub(crate) settings_tab: usize,
+    pub(crate) firmware_inventory: FirmwareInventoryState,
     pub(crate) camera_devices: Vec<crate::camera::CameraDeviceInfo>,
     pub(crate) camera_device_error: Option<String>,
     pub(crate) camera_devices_needs_refresh: bool,
@@ -123,6 +171,7 @@ impl DebugWindowState {
             trace: TraceViewerState::new(),
             execution_coverage: ExecutionCoverage::default(),
             settings_tab: 0,
+            firmware_inventory: FirmwareInventoryState::default(),
             camera_devices: Vec::new(),
             camera_device_error: None,
             camera_devices_needs_refresh: true,

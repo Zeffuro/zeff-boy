@@ -9,6 +9,14 @@ use zeff_emu_common::time::{
 const MASTER_CLOCK_RATE: ClockRate = ClockRate::from_hz(4_194_304);
 
 impl Emulator {
+    pub fn has_boot_rom(&self) -> bool {
+        self.bus.boot_rom_bytes().is_some()
+    }
+
+    pub fn boot_rom_enabled(&self) -> bool {
+        self.bus.boot_rom_enabled()
+    }
+
     pub fn rom_hash(&self) -> [u8; 32] {
         self.rom_hash
     }

@@ -1,6 +1,8 @@
 use super::apu::Apu;
 use super::cartridge::Cartridge;
-use super::constants::{EWRAM_SIZE, IO_SIZE, IWRAM_SIZE, OAM_SIZE, PALETTE_RAM_SIZE, VRAM_SIZE};
+use super::constants::{
+    BIOS_SIZE, EWRAM_SIZE, IO_SIZE, IWRAM_SIZE, OAM_SIZE, PALETTE_RAM_SIZE, VRAM_SIZE,
+};
 use super::dma::DmaController;
 use super::keypad::Keypad;
 use super::ppu::{Ppu, PpuDebugSnapshot};
@@ -46,8 +48,10 @@ pub struct Bus {
     pub palette_ram: Vec<u8>,
     pub vram: Vec<u8>,
     pub oam: Vec<u8>,
+    bios: Option<Box<[u8]>>,
     pending_dma_cycles: u32,
     irq_delay_cycles: Option<u32>,
+    halt_requested: bool,
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_reads: bool,
     pub(crate) debug_trace_writes: bool,
@@ -56,6 +60,32 @@ pub struct Bus {
 
 impl Bus {
     pub fn new(cartridge: Cartridge, sample_rate: u32) -> Self {
+        Self::new_inner(cartridge, sample_rate, None, true)
+    }
+
+    pub fn new_with_bios(
+        cartridge: Cartridge,
+        sample_rate: u32,
+        bios: &[u8],
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bios.len() == BIOS_SIZE,
+            "GBA BIOS must be exactly {BIOS_SIZE} bytes"
+        );
+        Ok(Self::new_inner(
+            cartridge,
+            sample_rate,
+            Some(bios.to_vec().into_boxed_slice()),
+            false,
+        ))
+    }
+
+    fn new_inner(
+        cartridge: Cartridge,
+        sample_rate: u32,
+        bios: Option<Box<[u8]>>,
+        initialize_post_boot: bool,
+    ) -> Self {
         let mut bus = Self {
             cartridge,
             ppu: Ppu::new(),
@@ -69,15 +99,23 @@ impl Bus {
             palette_ram: vec![0; PALETTE_RAM_SIZE],
             vram: vec![0; VRAM_SIZE],
             oam: vec![0; OAM_SIZE],
+            bios,
             pending_dma_cycles: 0,
             irq_delay_cycles: None,
+            halt_requested: false,
             debug_trace_enabled: false,
             debug_trace_reads: false,
             debug_trace_writes: false,
             debug_trace_events: RefCell::new(Vec::new()),
         };
-        bus.initialize_post_boot_io_defaults();
+        if initialize_post_boot {
+            bus.initialize_post_boot_io_defaults();
+        }
         bus
+    }
+
+    pub fn has_external_bios(&self) -> bool {
+        self.bios.is_some()
     }
 
     fn initialize_post_boot_io_defaults(&mut self) {
@@ -108,7 +146,10 @@ impl Bus {
 
     fn read8_raw(&self, addr: u32) -> u8 {
         match addr {
-            0x0000_0000..=0x0000_3FFF => bios_stub_read8(addr),
+            0x0000_0000..=0x0000_3FFF => self
+                .bios
+                .as_deref()
+                .map_or_else(|| bios_stub_read8(addr), |bios| bios[addr as usize]),
             0x0200_0000..=0x02FF_FFFF => self.ewram[(addr as usize) & (EWRAM_SIZE - 1)],
             0x0300_0000..=0x03FF_FFFF => self.iwram[(addr as usize) & (IWRAM_SIZE - 1)],
             0x0400_0000..=0x0400_03FF => self.io_read8(addr),
@@ -309,6 +350,9 @@ impl Bus {
                 self.oam[index] = bytes[0];
                 self.oam[(index + 1) & (OAM_SIZE - 1)] = bytes[1];
             }
+            0x0800_0000..=0x0DFF_FFFF => {
+                self.cartridge.rom_write16(addr, u16::from_le_bytes(bytes));
+            }
             0x0E00_0000..=0x0FFF_FFFF => {
                 self.cartridge.backup_write8(addr, bytes[0]);
                 self.cartridge.backup_write8(addr.wrapping_add(1), bytes[1]);
@@ -347,6 +391,14 @@ impl Bus {
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.oam[(index + offset) & (OAM_SIZE - 1)] = byte;
                 }
+            }
+            0x0800_0000..=0x0DFF_FFFF => {
+                self.cartridge
+                    .rom_write16(addr, u16::from_le_bytes([bytes[0], bytes[1]]));
+                self.cartridge.rom_write16(
+                    addr.wrapping_add(2),
+                    u16::from_le_bytes([bytes[2], bytes[3]]),
+                );
             }
             0x0E00_0000..=0x0FFF_FFFF => {
                 for (offset, byte) in bytes.into_iter().enumerate() {
@@ -412,6 +464,10 @@ impl Bus {
 
     pub fn take_pending_dma_cycles(&mut self) -> u32 {
         std::mem::take(&mut self.pending_dma_cycles)
+    }
+
+    pub(crate) fn take_halt_request(&mut self) -> bool {
+        std::mem::take(&mut self.halt_requested)
     }
 
     pub fn cycles_until_next_halt_check(&self) -> u32 {

@@ -5,8 +5,11 @@ use zeff_emu_common::save_ram::SaveRamKind;
 use super::constants::{EEPROM_SIZE, FLASH_1M_SIZE, SRAM_SIZE};
 
 mod backup;
+mod rtc;
 
 use backup::{EepromState, FlashState, detect_backup_kind};
+pub use rtc::RtcDateTime;
+use rtc::RtcGpio;
 const HEADER_END: usize = 0xC0;
 const TITLE_START: usize = 0xA0;
 const TITLE_END: usize = 0xAC;
@@ -88,12 +91,14 @@ pub struct Cartridge {
     backup: Vec<u8>,
     flash: FlashState,
     eeprom: RefCell<EepromState>,
+    rtc: Option<RtcGpio>,
 }
 
 impl Cartridge {
     pub fn load(rom_data: &[u8]) -> anyhow::Result<Self> {
         let header = RomHeader::parse(rom_data).context("failed to parse GBA ROM header")?;
         let backup_kind = detect_backup_kind(rom_data);
+        let has_rtc = is_emerald_rtc(&header);
         Ok(Self {
             rom: rom_data.to_vec(),
             header,
@@ -101,6 +106,7 @@ impl Cartridge {
             backup: vec![0xFF; backup_kind.size()],
             flash: FlashState::default(),
             eeprom: RefCell::new(EepromState::default()),
+            rtc: has_rtc.then(RtcGpio::default),
         })
     }
 
@@ -124,6 +130,22 @@ impl Cartridge {
         self.backup_kind.save_ram_kind()
     }
 
+    pub fn has_rtc(&self) -> bool {
+        self.rtc.is_some()
+    }
+
+    pub fn rtc_date_time(&self) -> Option<RtcDateTime> {
+        self.rtc.as_ref().map(RtcGpio::date_time)
+    }
+
+    pub fn set_rtc_date_time(&mut self, date_time: RtcDateTime) -> bool {
+        let Some(rtc) = &mut self.rtc else {
+            return false;
+        };
+        rtc.set_date_time(date_time);
+        true
+    }
+
     pub fn dump_battery_data(&self) -> Option<Vec<u8>> {
         self.has_battery().then(|| self.backup.clone())
     }
@@ -144,6 +166,9 @@ impl Cartridge {
     }
 
     pub fn rom_read8(&self, addr: u32) -> u8 {
+        if let Some(value) = self.rtc.as_ref().and_then(|rtc| rtc.read8(addr)) {
+            return value;
+        }
         let Some(offset) = gba_rom_offset(addr) else {
             return 0xFF;
         };
@@ -152,6 +177,43 @@ impl Cartridge {
             .copied()
             .unwrap_or_else(|| gamepak_open_bus_read8(addr))
     }
+
+    pub fn rom_write16(&mut self, addr: u32, value: u16) -> bool {
+        self.rtc
+            .as_mut()
+            .is_some_and(|rtc| rtc.write16(addr, value))
+    }
+
+    pub(crate) fn write_rtc_state(&self, writer: &mut zeff_emu_common::save_state::StateWriter) {
+        writer.write_bool(self.rtc.is_some());
+        if let Some(rtc) = &self.rtc {
+            rtc.write_state(writer);
+        }
+    }
+
+    pub(crate) fn reset_rtc_state(&mut self) {
+        if let Some(rtc) = &mut self.rtc {
+            *rtc = RtcGpio::default();
+        }
+    }
+
+    pub(crate) fn read_rtc_state(
+        &mut self,
+        reader: &mut zeff_emu_common::save_state::StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        if !reader.read_bool()? {
+            return Ok(());
+        }
+        let rtc = RtcGpio::read_state(reader)?;
+        if let Some(current) = &mut self.rtc {
+            *current = rtc;
+        }
+        Ok(())
+    }
+}
+
+fn is_emerald_rtc(header: &RomHeader) -> bool {
+    header.game_code.as_bytes().starts_with(b"BPE")
 }
 
 fn gba_rom_offset(addr: u32) -> Option<usize> {
@@ -230,6 +292,22 @@ mod tests {
         assert_eq!(cart.save_ram_kind(), SaveRamKind::none());
         assert!(!cart.has_battery());
         assert_eq!(cart.dump_battery_data(), None);
+    }
+
+    #[test]
+    fn emerald_game_code_enables_gpio_without_intercepting_disabled_reads() {
+        let mut rom = minimal_rom();
+        rom.resize(0xCA, 0);
+        rom[GAME_CODE_START..GAME_CODE_END].copy_from_slice(b"BPEE");
+        rom[0xC4] = 0xA5;
+        let mut cart = Cartridge::load(&rom).unwrap();
+
+        assert_eq!(cart.rom_read8(0x0800_00C4), 0xA5);
+        assert!(cart.rom_write16(0x0800_00C8, 1));
+        assert_eq!(cart.rom_read8(0x0800_00C8), 1);
+
+        let mut other = Cartridge::load(&minimal_rom()).unwrap();
+        assert!(!other.rom_write16(0x0800_00C8, 1));
     }
 
     #[test]

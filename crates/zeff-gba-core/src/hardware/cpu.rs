@@ -178,6 +178,13 @@ impl Cpu {
         self.banked_sp[BANK_SUPERVISOR] = 0x0300_7FE0;
     }
 
+    pub(crate) fn reset_with_bios(&mut self) {
+        *self = Self::new();
+        self.cpsr = CPSR_IRQ_DISABLE | CPSR_FIQ_DISABLE | 0x13;
+        self.regs[15] = 0;
+        self.last_opcode_pc = 0;
+    }
+
     pub fn pc(&self) -> u32 {
         self.regs[15]
     }
@@ -292,6 +299,9 @@ impl Cpu {
             fetched,
             condition_passed,
         )));
+        if bus.take_halt_request() {
+            self.state = CpuState::Halted;
+        }
         if self.break_after_next_stub {
             self.break_after_next_stub = false;
             self.suspend();

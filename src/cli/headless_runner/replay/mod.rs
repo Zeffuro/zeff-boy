@@ -32,6 +32,43 @@ pub(super) fn run_replay_headless(
         .as_ref()
         .expect("run_replay_headless requires replay_path");
     let player = ReplayPlayer::load(replay_path)?;
+    let gba_use_external_bios = player.metadata().firmware.iter().any(|firmware| {
+        matches!(
+            firmware,
+            zeff_emu_common::replay::ReplayFirmwareManifest::External { firmware_id, .. }
+                if firmware_id == "nintendo.gba.bios"
+        )
+    });
+    let gb_use_external_boot_rom = replay_uses_external_gb_boot_rom(&player);
+    let sega8_use_external_boot_rom = player.metadata().firmware.iter().any(|firmware| {
+        matches!(
+            firmware,
+            zeff_emu_common::replay::ReplayFirmwareManifest::External { firmware_id, .. }
+                if firmware_id == "sega.sms.boot" || firmware_id == "sega.gg.boot"
+        )
+    });
+    let sega8_console_region =
+        player
+            .metadata()
+            .firmware
+            .iter()
+            .find_map(|firmware| match firmware {
+                zeff_emu_common::replay::ReplayFirmwareManifest::External {
+                    firmware_id,
+                    variant,
+                    ..
+                } if firmware_id == "sega.sms.boot" => Some(
+                    if variant
+                        .as_deref()
+                        .is_some_and(|variant| variant.ends_with(".japan"))
+                    {
+                        zeff_sega8_core::hardware::region::Sega8Region::Japanese
+                    } else {
+                        zeff_sega8_core::hardware::region::Sega8Region::Export
+                    },
+                ),
+                _ => None,
+            });
     if opts.replay_peer_path.is_some() {
         if opts.replay_peer_live_link {
             #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +95,10 @@ pub(super) fn run_replay_headless(
         Some(rom_data),
         BackendLoadConfig {
             firmware_search_dirs,
+            gb_use_external_boot_rom,
+            gba_use_external_bios,
+            sega8_use_external_boot_rom,
+            sega8_console_region,
             ..BackendLoadConfig::default()
         },
     )?;
@@ -76,4 +117,15 @@ pub(super) fn run_replay_headless(
     );
 
     Ok(())
+}
+
+fn replay_uses_external_gb_boot_rom(player: &ReplayPlayer) -> bool {
+    player.metadata().firmware.iter().any(|firmware| {
+        matches!(
+            firmware,
+            zeff_emu_common::replay::ReplayFirmwareManifest::External { firmware_id, .. }
+                if firmware_id == "nintendo.gb.boot.dmg"
+                    || firmware_id == "nintendo.gb.boot.cgb"
+        )
+    })
 }

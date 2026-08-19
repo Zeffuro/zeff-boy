@@ -1,11 +1,14 @@
 use super::Apu;
 use crate::hardware::constants::*;
 
+#[derive(Clone, Copy)]
+struct FrameClocks {
+    quarter: bool,
+    half: bool,
+}
+
 impl Apu {
     pub fn reset(&mut self) {
-        let frame_counter_value = (if self.five_step_mode { 0x80 } else { 0x00 })
-            | (if self.irq_inhibit { 0x40 } else { 0x00 });
-
         self.pulse1.set_enabled(false);
         self.pulse2.set_enabled(false);
         self.triangle.set_enabled(false);
@@ -13,23 +16,24 @@ impl Apu {
         self.dmc.set_enabled(false);
 
         self.frame_irq = false;
-        self.frame_irq_repeat = 0;
         self.frame_reset_delay = 0;
-        self.frame_cycle = 8;
-        self.write_register(0x4017, frame_counter_value, false);
-        self.frame_reset_delay = 0;
-        self.frame_cycle = 8;
-        self.frame_irq = false;
-        self.frame_irq_repeat = 0;
-        self.frame_irq_suppression_ticks = 0;
+        self.frame_cycle = 9;
+        self.pending_frame_counter_value = None;
+        self.frame_clock_block = 0;
+        self.clock_half_rate_timers = false;
+        self.pulse1.clear_length_clock_collision();
+        self.pulse2.clear_length_clock_collision();
+        self.triangle.clear_length_clock_collision();
+        self.noise.clear_length_clock_collision();
     }
 
     pub fn write_register(&mut self, addr: u16, val: u8, odd_cycle: bool) {
+        let length_clock_due = self.length_clock_due_this_tick();
         match addr {
-            0x4000..=0x4003 => self.pulse1.write(addr - 0x4000, val),
-            0x4004..=0x4007 => self.pulse2.write(addr - 0x4004, val),
-            0x4008..=0x400B => self.triangle.write(addr - 0x4008, val),
-            0x400C..=0x400F => self.noise.write(addr - 0x400C, val),
+            0x4000..=0x4003 => self.pulse1.write(addr - 0x4000, val, length_clock_due),
+            0x4004..=0x4007 => self.pulse2.write(addr - 0x4004, val, length_clock_due),
+            0x4008..=0x400B => self.triangle.write(addr - 0x4008, val, length_clock_due),
+            0x400C..=0x400F => self.noise.write(addr - 0x400C, val, length_clock_due),
             0x4010..=0x4013 => self.dmc.write(addr - 0x4010, val),
             0x4015 => {
                 self.pulse1.set_enabled(val & 0x01 != 0);
@@ -37,37 +41,20 @@ impl Apu {
                 self.triangle.set_enabled(val & 0x04 != 0);
                 self.noise.set_enabled(val & 0x08 != 0);
                 self.dmc.set_enabled(val & 0x10 != 0);
-                self.frame_irq = false;
             }
             0x4017 => {
-                self.five_step_mode = val & 0x80 != 0;
                 self.irq_inhibit = val & 0x40 != 0;
                 if self.irq_inhibit {
                     self.frame_irq = false;
-                    self.frame_irq_repeat = 0;
                 }
-                if self.five_step_mode {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                }
-
-                // The frame sequencer reset caused by $4017 is not immediate on
-                // hardware; it is delayed by 3 or 4 CPU clocks after the write
-                // cycle. This core invokes cpu_write() before ticking the CPU
-                // cycles consumed by the instruction, so include the usual
-                // store-instruction tail in the delay instead of resetting the
-                // sequencer at opcode dispatch time.
-                self.frame_reset_delay = if odd_cycle { 8 } else { 7 };
+                self.pending_frame_counter_value = Some(val);
+                self.frame_reset_delay = if odd_cycle { 4 } else { 3 };
             }
             _ => {}
         }
     }
 
     pub fn read_status(&mut self) -> u8 {
-        self.read_status_with_frame_irq_lookahead(0)
-    }
-
-    pub fn read_status_with_frame_irq_lookahead(&mut self, lookahead_cycles: u8) -> u8 {
         let mut status = 0u8;
         if self.pulse1.length_counter > 0 {
             status |= 0x01;
@@ -84,21 +71,13 @@ impl Apu {
         if self.dmc.bytes_remaining > 0 {
             status |= 0x10;
         }
-        let visible_future_frame_irq_ticks = self.frame_irq_visible_tick_count(lookahead_cycles);
-        let visible_frame_irq_ticks_through_next =
-            self.frame_irq_visible_tick_count(lookahead_cycles.saturating_add(1));
-        if self.frame_irq || visible_future_frame_irq_ticks > 0 {
+        if self.frame_irq {
             status |= 0x40;
         }
         if self.dmc.irq_flag {
             status |= 0x80;
         }
         self.frame_irq = false;
-        if visible_future_frame_irq_ticks > 0 {
-            self.frame_irq_suppression_ticks = self
-                .frame_irq_suppression_ticks
-                .max(visible_frame_irq_ticks_through_next);
-        }
         status
     }
 
@@ -133,11 +112,12 @@ impl Apu {
         self.triangle.tick();
         self.dmc.tick();
 
-        if self.frame_cycle.is_multiple_of(2) {
+        if self.clock_half_rate_timers {
             self.pulse1.tick();
             self.pulse2.tick();
             self.noise.tick();
         }
+        self.clock_half_rate_timers = !self.clock_half_rate_timers;
 
         self.step_frame_counter();
         self.generate_sample();
@@ -150,119 +130,93 @@ impl Apu {
     }
 
     fn step_frame_counter(&mut self) {
-        let suppress_frame_irq = self.frame_irq_suppression_ticks > 0;
-        self.frame_irq_suppression_ticks = self.frame_irq_suppression_ticks.saturating_sub(1);
-
-        if self.frame_irq_repeat > 0 {
-            if !self.irq_inhibit && !suppress_frame_irq {
-                self.frame_irq = true;
-            }
-            self.frame_irq_repeat -= 1;
+        if self.run_frame_event() {
+            self.frame_clock_block = 2;
         }
 
         if self.frame_reset_delay > 0 {
             self.frame_reset_delay -= 1;
             if self.frame_reset_delay == 0 {
+                let value = self.pending_frame_counter_value.take().unwrap_or(0);
+                self.five_step_mode = value & 0x80 != 0;
                 self.frame_cycle = 0;
+                if self.five_step_mode && self.frame_clock_block == 0 {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                    self.frame_clock_block = 2;
+                }
             }
+        }
+
+        self.frame_clock_block = self.frame_clock_block.saturating_sub(1);
+    }
+
+    fn run_frame_event(&mut self) -> bool {
+        let clocks = self.frame_clocks_this_tick();
+        if clocks.quarter {
+            self.clock_quarter_frame();
+        }
+        if clocks.half {
+            self.clock_half_frame();
         }
 
         if !self.five_step_mode {
             match self.frame_cycle {
-                FRAME_STEP_1 | FRAME_STEP_3 => self.clock_quarter_frame(),
-                FRAME_STEP_2 => {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                }
-                FRAME_STEP_4 => {
-                    if !self.irq_inhibit && !suppress_frame_irq {
+                FRAME_STEP_4_IRQ_START => {
+                    if !self.irq_inhibit {
                         self.frame_irq = true;
                     }
                 }
-                cycle if cycle == FRAME_STEP_4 + 1 => {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                    if !self.irq_inhibit && !suppress_frame_irq {
+                FRAME_STEP_4_CLOCK => {
+                    if !self.irq_inhibit {
                         self.frame_irq = true;
-                        self.frame_irq_repeat = 1;
                     }
                 }
                 FRAME_STEP_4_RESET => {
+                    if !self.irq_inhibit {
+                        self.frame_irq = true;
+                    }
                     self.frame_cycle = 0;
                 }
                 _ => {}
             }
         } else {
-            match self.frame_cycle {
-                FRAME_STEP_1 | FRAME_STEP_3 => self.clock_quarter_frame(),
-                FRAME_STEP_2 => {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                }
-                FRAME_STEP_5 => {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                }
-                FRAME_STEP_5_RESET => {
-                    self.frame_cycle = 0;
-                }
-                _ => {}
+            if self.frame_cycle == FRAME_STEP_5_RESET {
+                self.frame_cycle = 0;
             }
+        }
+
+        clocks.quarter
+    }
+
+    fn frame_clocks_this_tick(&self) -> FrameClocks {
+        match (self.five_step_mode, self.frame_cycle) {
+            (_, FRAME_STEP_1 | FRAME_STEP_3) => FrameClocks {
+                quarter: true,
+                half: false,
+            },
+            (false, FRAME_STEP_2 | FRAME_STEP_4_CLOCK) | (true, FRAME_STEP_2 | FRAME_STEP_5) => {
+                FrameClocks {
+                    quarter: true,
+                    half: true,
+                }
+            }
+            _ => FrameClocks {
+                quarter: false,
+                half: false,
+            },
         }
     }
 
-    fn frame_irq_visible_tick_count(&self, lookahead_cycles: u8) -> u8 {
-        if self.irq_inhibit || lookahead_cycles == 0 {
-            return 0;
-        }
-
-        self.frame_future_event_counts(lookahead_cycles)
-            .frame_irq_ticks
-    }
-
-    fn frame_future_event_counts(&self, lookahead_cycles: u8) -> FrameFutureEventCounts {
-        let mut frame_cycle = self.frame_cycle;
-        let mut frame_reset_delay = self.frame_reset_delay;
-        let mut frame_irq_repeat = self.frame_irq_repeat;
-        let mut counts = FrameFutureEventCounts::default();
-
-        for _ in 0..lookahead_cycles {
-            if frame_irq_repeat > 0 {
-                counts.frame_irq_ticks = counts.frame_irq_ticks.saturating_add(1);
-                frame_irq_repeat -= 1;
-            }
-
-            if frame_reset_delay > 0 {
-                frame_reset_delay -= 1;
-                if frame_reset_delay == 0 {
-                    frame_cycle = 0;
-                }
-            }
-
-            if !self.five_step_mode {
-                match frame_cycle {
-                    FRAME_STEP_4 => {
-                        counts.frame_irq_ticks = counts.frame_irq_ticks.saturating_add(1);
-                    }
-                    cycle if cycle == FRAME_STEP_4 + 1 => {
-                        counts.frame_irq_ticks = counts.frame_irq_ticks.saturating_add(1);
-                        frame_irq_repeat = 1;
-                    }
-                    _ => {}
-                }
-                if frame_cycle == FRAME_STEP_4_RESET {
-                    frame_cycle = 0;
-                }
-            } else {
-                if frame_cycle == FRAME_STEP_5_RESET {
-                    frame_cycle = 0;
-                }
-            }
-
-            frame_cycle += 1;
-        }
-
-        counts
+    fn length_clock_due_this_tick(&self) -> bool {
+        let clocks = self.frame_clocks_this_tick();
+        let delayed_five_step_clock = self.frame_reset_delay == 1
+            && self
+                .pending_frame_counter_value
+                .is_some_and(|value| value & 0x80 != 0)
+            && self.frame_clock_block == 0
+            && !clocks.quarter;
+        clocks.half || delayed_five_step_clock
     }
 
     fn clock_quarter_frame(&mut self) {
@@ -282,14 +236,29 @@ impl Apu {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct FrameFutureEventCounts {
-    frame_irq_ticks: u8,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn length_counter(apu: &Apu, channel: usize) -> u8 {
+        match channel {
+            0 => apu.pulse1.length_counter,
+            1 => apu.pulse2.length_counter,
+            2 => apu.triangle.length_counter,
+            3 => apu.noise.length_counter,
+            _ => unreachable!(),
+        }
+    }
+
+    fn set_length_counter(apu: &mut Apu, channel: usize, value: u8) {
+        match channel {
+            0 => apu.pulse1.length_counter = value,
+            1 => apu.pulse2.length_counter = value,
+            2 => apu.triangle.length_counter = value,
+            3 => apu.noise.length_counter = value,
+            _ => unreachable!(),
+        }
+    }
 
     #[test]
     fn five_step_write_clocks_half_frame_immediately_once() {
@@ -299,9 +268,14 @@ mod tests {
         assert_eq!(apu.pulse1.length_counter, 2);
 
         apu.write_register(0x4017, 0x80, false);
+        assert_eq!(apu.pulse1.length_counter, 2);
+
+        for _ in 0..3 {
+            apu.tick();
+        }
         assert_eq!(apu.pulse1.length_counter, 1);
 
-        for _ in 0..8 {
+        for _ in 0..5 {
             apu.tick();
         }
         assert_eq!(
@@ -321,9 +295,103 @@ mod tests {
     }
 
     #[test]
+    fn frame_event_precedes_a_colliding_delayed_write() {
+        let mut apu = Apu::new(44_100.0);
+        apu.write_register(0x4015, 0x01, false);
+        apu.write_register(0x4003, 0x18, false);
+        apu.write_register(0x4017, 0x80, false);
+        apu.frame_cycle = FRAME_STEP_2;
+        apu.frame_reset_delay = 1;
+
+        apu.tick();
+
+        assert!(apu.five_step_mode);
+        assert_eq!(apu.pulse1.length_counter, 1);
+    }
+
+    #[test]
+    fn frame_counter_reset_does_not_reset_half_rate_timer_phase() {
+        let mut apu = Apu::new(44_100.0);
+        let initial_phase = apu.clock_half_rate_timers;
+        apu.write_register(0x4017, 0x80, false);
+
+        for _ in 0..3 {
+            apu.tick();
+        }
+
+        assert_eq!(apu.clock_half_rate_timers, !initial_phase);
+    }
+
+    #[test]
+    fn length_reload_collision_uses_the_pre_clock_counter() {
+        for (channel, address) in [0x4003, 0x4007, 0x400B, 0x400F].into_iter().enumerate() {
+            let mut apu = Apu::new(44_100.0);
+            apu.write_register(0x4015, 0x0F, false);
+            set_length_counter(&mut apu, channel, 6);
+            apu.frame_cycle = FRAME_STEP_2;
+
+            apu.write_register(address, 0x18, false);
+            apu.tick();
+
+            assert_eq!(length_counter(&apu, channel), 5, "channel {channel}");
+        }
+    }
+
+    #[test]
+    fn zero_length_reload_collision_skips_the_same_clock() {
+        for (channel, address) in [0x4003, 0x4007, 0x400B, 0x400F].into_iter().enumerate() {
+            let mut apu = Apu::new(44_100.0);
+            apu.write_register(0x4015, 0x0F, false);
+            apu.frame_cycle = FRAME_STEP_2;
+
+            apu.write_register(address, 0x18, false);
+            apu.tick();
+
+            assert_eq!(length_counter(&apu, channel), 2, "channel {channel}");
+        }
+    }
+
+    #[test]
+    fn length_halt_collision_uses_the_previous_flag() {
+        let control_writes = [
+            (0x4000, 0x20),
+            (0x4004, 0x20),
+            (0x4008, 0x80),
+            (0x400C, 0x20),
+        ];
+        for (channel, (address, halt_value)) in control_writes.into_iter().enumerate() {
+            let mut apu = Apu::new(44_100.0);
+            set_length_counter(&mut apu, channel, 2);
+            apu.frame_cycle = FRAME_STEP_2;
+            apu.write_register(address, halt_value, false);
+            apu.tick();
+            assert_eq!(length_counter(&apu, channel), 1, "halt channel {channel}");
+
+            set_length_counter(&mut apu, channel, 2);
+            apu.frame_cycle = FRAME_STEP_2;
+            apu.write_register(address, 0, false);
+            apu.tick();
+            assert_eq!(length_counter(&apu, channel), 2, "resume channel {channel}");
+        }
+    }
+
+    #[test]
+    fn status_write_does_not_clear_frame_irq() {
+        let mut apu = Apu::new(44_100.0);
+        apu.frame_irq = true;
+
+        apu.write_register(0x4015, 0, false);
+
+        assert!(apu.frame_irq);
+    }
+
+    #[test]
     fn reset_clears_channel_enables_and_frame_irq_but_keeps_frame_mode() {
         let mut apu = Apu::new(44_100.0);
         apu.write_register(0x4017, 0x80, false);
+        for _ in 0..3 {
+            apu.tick();
+        }
         apu.write_register(0x4015, 0x0F, false);
         apu.write_register(0x4003, 0x18, false);
         apu.write_register(0x4007, 0x18, false);
@@ -335,7 +403,7 @@ mod tests {
 
         assert!(apu.five_step_mode);
         assert!(!apu.frame_irq);
-        assert_eq!(apu.frame_cycle, 8);
+        assert_eq!(apu.frame_cycle, 9);
         assert_eq!(apu.peek_status() & 0x0F, 0);
     }
 
@@ -350,7 +418,7 @@ mod tests {
         assert!(!apu.five_step_mode);
         assert!(!apu.irq_inhibit);
         assert!(!apu.frame_irq);
-        assert_eq!(apu.frame_cycle, 8);
+        assert_eq!(apu.frame_cycle, 9);
     }
 
     #[test]
@@ -359,9 +427,8 @@ mod tests {
         apu.write_register(0x4015, 0x01, false);
         apu.pulse1.length_counter = 1;
         apu.frame_irq = false;
-        apu.frame_irq_repeat = 0;
         apu.frame_reset_delay = 0;
-        apu.frame_cycle = FRAME_STEP_4;
+        apu.frame_cycle = FRAME_STEP_4_IRQ_START;
 
         apu.tick();
         assert_eq!(apu.peek_status() & 0x41, 0x41);

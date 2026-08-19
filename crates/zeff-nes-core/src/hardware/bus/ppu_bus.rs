@@ -10,11 +10,8 @@ impl Bus {
         let (result, refresh_mask) = match addr {
             0x2002 => {
                 let status = (self.ppu.regs.status & 0xE0) | (latch & 0x1F);
-                if self.ppu.scanline == VBLANK_SCANLINE && (1..=3).contains(&self.ppu.dot) {
-                    self.ppu_nmi_suppressed_by_status_read = true;
-                    if self.ppu.dot == 1 {
-                        self.ppu.suppress_vblank_edge = true;
-                    }
+                if self.ppu.scanline == VBLANK_SCANLINE && self.ppu.dot == 1 {
+                    self.ppu.suppress_vblank_edge = true;
                 }
                 self.ppu.regs.clear_vblank();
                 self.ppu.nmi_output = false;
@@ -45,7 +42,7 @@ impl Bus {
 
                 self.increment_v_after_ppudata_access();
                 if old_v & 0x1000 != self.ppu.v & 0x1000 {
-                    self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
+                    self.notify_ppu_address(self.ppu.v);
                 }
                 (data, refresh_mask)
             }
@@ -65,14 +62,10 @@ impl Bus {
         self.ppu.refresh_io_latch_bits(val, 0xFF, self.ppu_cycles);
         match addr {
             0x2000 => {
-                let old_nmi_output = self.ppu.nmi_output;
                 self.ppu.regs.ctrl = val;
                 self.ppu.t = (self.ppu.t & 0xF3FF) | ((val as u16 & 0x03) << 10);
                 self.ppu.nmi_output =
                     val & CTRL_NMI_ENABLE != 0 && self.ppu.regs.status & STATUS_VBLANK != 0;
-                if !old_nmi_output && self.ppu.nmi_output {
-                    self.ppu_nmi_pending_from_register_write = true;
-                }
             }
             0x2001 => {
                 self.ppu.write_mask(val);
@@ -102,7 +95,7 @@ impl Bus {
                     self.ppu.t = (self.ppu.t & 0xFF00) | val as u16;
                     self.ppu.v = self.ppu.t;
                     if old_v & 0x1000 != self.ppu.v & 0x1000 {
-                        self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
+                        self.notify_ppu_address(self.ppu.v);
                     }
                 }
                 self.ppu.w = !self.ppu.w;
@@ -113,7 +106,7 @@ impl Bus {
                 self.ppu_bus_write(addr, val);
                 self.increment_v_after_ppudata_access();
                 if old_v & 0x1000 != self.ppu.v & 0x1000 {
-                    self.cartridge.notify_ppu_a12(self.ppu.v & 0x1000 != 0);
+                    self.notify_ppu_address(self.ppu.v);
                 }
             }
             _ => {}
@@ -157,7 +150,7 @@ impl Bus {
         match addr {
             0x0000..=0x1FFF => {
                 if matches!(kind, ChrFetchKind::CpuData) {
-                    self.cartridge.notify_ppu_a12(addr & 0x1000 != 0);
+                    self.notify_ppu_address(addr);
                 }
                 self.cartridge.chr_read_with_kind(addr, kind)
             }
@@ -184,7 +177,7 @@ impl Bus {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                self.cartridge.notify_ppu_a12(addr & 0x1000 != 0);
+                self.notify_ppu_address(addr);
                 self.cartridge.chr_write(addr, val);
             }
             0x2000..=0x3EFF
@@ -201,6 +194,12 @@ impl Bus {
             }
             _ => {}
         }
+    }
+
+    #[inline]
+    pub(super) fn notify_ppu_address(&mut self, addr: u16) {
+        self.cartridge
+            .notify_ppu_a12(addr & 0x1000 != 0, self.ppu_cycles);
     }
 
     fn mirror_nametable_addr(&self, addr: u16) -> usize {
@@ -253,20 +252,78 @@ mod tests {
     fn enabling_nmi_during_vblank_raises_edge_once() {
         let mut bus = test_bus();
         bus.ppu.regs.set_vblank();
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
 
-        bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
+        bus.cpu_write_timed(0x2000, CTRL_NMI_ENABLE);
 
         assert!(bus.ppu.nmi_output);
-        assert!(bus.ppu_nmi_pending_from_register_write);
-
-        let events = bus.tick_peripherals(0);
+        let events = bus.finish_cpu_step_timing(1);
 
         assert!(events.nmi_raised);
-        assert_eq!(events.first_nmi_cpu_cycle, Some(0));
-        assert!(!bus.ppu_nmi_pending_from_register_write);
+        assert_eq!(events.first_nmi_cpu_cycle, Some(1));
 
-        let events = bus.tick_peripherals(0);
+        let events = bus.tick_peripherals(1);
         assert!(!events.nmi_raised);
+    }
+
+    #[test]
+    fn disabling_nmi_between_vblank_edge_and_cpu_sample_cancels_it() {
+        let mut bus = test_bus();
+        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.dot = 0;
+        bus.ppu.regs.ctrl = CTRL_NMI_ENABLE;
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        bus.cpu_write_timed(0x2000, 0);
+        let events = bus.finish_cpu_step_timing(1);
+
+        assert_eq!(bus.ppu.dot, 3);
+        assert!(!bus.ppu.nmi_output);
+        assert!(!events.nmi_raised);
+    }
+
+    #[test]
+    fn reading_status_between_vblank_edge_and_cpu_sample_cancels_it() {
+        let mut bus = test_bus();
+        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.dot = 0;
+        bus.ppu.regs.ctrl = CTRL_NMI_ENABLE;
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        let status = bus.cpu_read_timed(0x2002);
+        let events = bus.finish_cpu_step_timing(1);
+
+        assert_ne!(status & STATUS_VBLANK, 0);
+        assert!(!bus.ppu.nmi_output);
+        assert!(!events.nmi_raised);
+    }
+
+    #[test]
+    fn timed_ppumask_access_occurs_after_two_ppu_dots() {
+        let mut enable = test_bus();
+        enable.ppu.scanline = PRE_RENDER_SCANLINE;
+        enable.ppu.dot = 337;
+        enable.ppu.odd_frame = true;
+        enable.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        enable.cpu_write_timed(0x2001, 0x18);
+
+        assert_eq!(enable.ppu.scanline, PRE_RENDER_SCANLINE);
+        assert_eq!(enable.ppu.dot, 340);
+        assert!(enable.ppu.rendering_enabled());
+
+        let mut disable = test_bus();
+        disable.ppu.regs.mask = 0x18;
+        disable.ppu.scanline = PRE_RENDER_SCANLINE;
+        disable.ppu.dot = 337;
+        disable.ppu.odd_frame = true;
+        disable.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        disable.cpu_write_timed(0x2001, 0);
+
+        assert_eq!(disable.ppu.scanline, 0);
+        assert_eq!(disable.ppu.dot, 0);
+        assert!(!disable.ppu.rendering_enabled());
     }
 
     #[test]
@@ -274,7 +331,6 @@ mod tests {
         let mut bus = test_bus();
         bus.ppu.regs.set_vblank();
         bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
-        bus.ppu_nmi_pending_from_register_write = false;
 
         let status = bus.ppu_read_register(0x2002);
 
@@ -283,7 +339,7 @@ mod tests {
         assert!(!bus.ppu.nmi_output);
 
         bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
-        assert!(!bus.ppu_nmi_pending_from_register_write);
+        assert!(!bus.ppu.nmi_output);
     }
 
     #[test]
@@ -292,12 +348,10 @@ mod tests {
         bus.ppu.scanline = VBLANK_SCANLINE;
         bus.ppu.dot = 1;
         bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
-        bus.ppu_nmi_pending_from_register_write = false;
 
         let status = bus.ppu_read_register(0x2002);
         assert_eq!(status & STATUS_VBLANK, 0);
         assert!(bus.ppu.suppress_vblank_edge);
-        assert!(bus.ppu_nmi_suppressed_by_status_read);
 
         let events = bus.tick_peripherals(1);
         assert!(!events.nmi_raised);
@@ -307,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn reading_ppustatus_right_after_vblank_edge_marks_pending_nmi_suppressed() {
+    fn reading_ppustatus_right_after_vblank_edge_clears_the_nmi_line() {
         let mut bus = test_bus();
         bus.ppu.scanline = VBLANK_SCANLINE;
         bus.ppu.dot = 2;
@@ -318,8 +372,8 @@ mod tests {
 
         assert_ne!(status & STATUS_VBLANK, 0);
         assert_eq!(bus.ppu.regs.status & STATUS_VBLANK, 0);
-        assert!(bus.ppu_nmi_suppressed_by_status_read);
         assert!(!bus.ppu.suppress_vblank_edge);
+        assert!(!bus.ppu.nmi_output);
     }
 
     #[test]

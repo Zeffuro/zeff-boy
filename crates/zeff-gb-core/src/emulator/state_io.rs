@@ -75,6 +75,7 @@ impl Emulator {
             cycle_count: self.cycle_count,
             last_opcode: self.last_opcode,
             last_opcode_pc: self.last_opcode_pc,
+            boot_rom_enabled: self.bus.boot_rom_enabled(),
         }
     }
 
@@ -97,8 +98,13 @@ impl Emulator {
                     validate_compatibility(&state, self.rom_hash)?;
 
                     let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
+                    let boot_rom = self.bus.boot_rom_bytes().map(<[u8]>::to_vec);
                     let mut restored_bus = state.bus;
                     restored_bus.restore_cartridge_rom_bytes(rom_bytes, &self.header);
+                    if state.boot_rom_enabled && boot_rom.is_none() {
+                        bail!("save state is still executing the GB boot ROM, but none is loaded");
+                    }
+                    restored_bus.set_boot_rom(boot_rom, state.boot_rom_enabled);
                     Self::apply_bus_fixups(
                         &mut restored_bus,
                         self.bus.apu_sample_rate(),
@@ -125,9 +131,11 @@ impl Emulator {
 
         if has_bess_footer(&bytes) {
             let rom_bytes = self.bus.cartridge.rom_bytes().to_vec();
+            let boot_rom = self.bus.boot_rom_bytes().map(<[u8]>::to_vec);
             let import = import_bess(&bytes, &rom_bytes, &self.header)?;
 
             let mut restored_bus = import.bus;
+            restored_bus.set_boot_rom(boot_rom, false);
             Self::apply_bus_fixups(
                 &mut restored_bus,
                 self.bus.apu_sample_rate(),

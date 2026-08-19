@@ -1,4 +1,5 @@
 use crate::emulator::Emulator;
+use crate::hardware::constants::STACK_BASE;
 use crate::hardware::cpu::CpuState;
 use zeff_emu_common::cheats::CheatByteTarget;
 
@@ -181,7 +182,15 @@ impl Emulator {
             .get_flag(crate::hardware::cpu::StatusFlags::INTERRUPT);
         let saved_nmi = self.cpu.nmi_pending;
         let saved_irq = self.cpu.irq_line;
-        self.cpu.push16(&mut self.bus, return_pc.wrapping_sub(1));
+        let return_addr = return_pc.wrapping_sub(1);
+        self.bus.cpu_write(
+            STACK_BASE | u16::from(self.cpu.sp),
+            (return_addr >> 8) as u8,
+        );
+        self.cpu.sp = self.cpu.sp.wrapping_sub(1);
+        self.bus
+            .cpu_write(STACK_BASE | u16::from(self.cpu.sp), return_addr as u8);
+        self.cpu.sp = self.cpu.sp.wrapping_sub(1);
         self.cpu.pc = target;
         self.cpu
             .regs

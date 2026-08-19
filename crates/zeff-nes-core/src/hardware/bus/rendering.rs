@@ -16,6 +16,7 @@ const BG_FETCH_PATTERN_HI_DOT: u16 = 6;
 const BG_SCROLL_X_DOT: u16 = 7;
 const SCROLL_Y_DOT: u16 = 256;
 const SPRITE_EVALUATION_DOT: u16 = 257;
+const SPRITE_FETCH_END_DOT: u16 = 320;
 const VERTICAL_COPY_START_DOT: u16 = 280;
 const VERTICAL_COPY_END_DOT: u16 = 304;
 const MMC3_A12_RISING_BG_RIGHT_PATTERN_DOT: u16 = 260;
@@ -57,7 +58,9 @@ impl Bus {
         let pre_render = scanline == PRE_RENDER_SCANLINE;
         let render_line = visible_line || pre_render;
 
-        if rendering && render_line {
+        if rendering && render_line && self.qualified_ppu_a12 {
+            self.clock_qualified_ppu_a12(dot);
+        } else if rendering && render_line {
             let bg_hi = self.ppu.regs.bg_pattern_addr() != 0;
             let spr_hi = self.ppu.regs.sprite_pattern_addr() != 0;
             let notify_dot = if bg_hi && !spr_hi {
@@ -149,6 +152,37 @@ impl Bus {
         }
     }
 
+    fn clock_qualified_ppu_a12(&mut self, dot: u16) {
+        let bg_fetch = (FIRST_VISIBLE_DOT..=LAST_VISIBLE_DOT).contains(&dot)
+            || (BG_PREFETCH_START_DOT..=BG_PREFETCH_END_DOT).contains(&dot);
+        if bg_fetch {
+            let phase = (dot - FIRST_VISIBLE_DOT) % BG_FETCH_PHASE_DOTS;
+            if phase == 0 {
+                self.cartridge.notify_ppu_a12(false, self.ppu_cycles);
+            } else if phase == 1 {
+                let high = self.ppu.regs.bg_pattern_addr() != 0;
+                self.cartridge.notify_ppu_a12(high, self.ppu_cycles);
+            }
+            return;
+        }
+
+        if (SPRITE_EVALUATION_DOT..=SPRITE_FETCH_END_DOT).contains(&dot) {
+            let phase = (dot - SPRITE_EVALUATION_DOT) % BG_FETCH_PHASE_DOTS;
+            if phase == 0 {
+                self.cartridge.notify_ppu_a12(false, self.ppu_cycles);
+            } else if phase == 1 {
+                let slot = ((dot - SPRITE_EVALUATION_DOT) / BG_FETCH_PHASE_DOTS) as usize;
+                let high = self.sprite_fetch_a12[slot];
+                self.cartridge.notify_ppu_a12(high, self.ppu_cycles);
+            }
+            return;
+        }
+
+        if matches!(dot, 337 | 339) {
+            self.cartridge.notify_ppu_a12(false, self.ppu_cycles);
+        }
+    }
+
     #[inline]
     fn write_pixel(
         ppu: &mut Ppu,
@@ -179,6 +213,12 @@ impl Bus {
             SMALL_SPRITE_HEIGHT
         };
         let pattern_base = self.ppu.regs.sprite_pattern_addr();
+        let default_a12 = if sprite_height == TALL_SPRITE_HEIGHT {
+            true
+        } else {
+            pattern_base != 0
+        };
+        self.sprite_fetch_a12 = [default_a12; 8];
 
         self.ppu.sprite_count = 0;
         self.ppu.sprite_zero_rendering = false;
@@ -251,6 +291,7 @@ impl Bus {
             }
 
             let idx = count as usize;
+            self.sprite_fetch_a12[idx] = lo_addr & 0x1000 != 0;
             self.ppu.sprite_patterns_lo[idx] = lo;
             self.ppu.sprite_patterns_hi[idx] = hi;
             self.ppu.sprite_attribs[idx] = attributes;
@@ -276,6 +317,24 @@ mod tests {
 
         let cart = Cartridge::load(&rom).expect("test ROM should load");
         Bus::new(cart, 44_100.0)
+    }
+
+    fn mmc3_test_bus() -> Bus {
+        let mut rom = vec![0u8; 16 + 2 * 0x4000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2;
+        rom[5] = 1;
+        rom[6] = 0x40;
+
+        let cart = Cartridge::load(&rom).expect("test ROM should load");
+        Bus::new(cart, 44_100.0)
+    }
+
+    fn enable_mmc3_irq(bus: &mut Bus) {
+        bus.cartridge.cpu_write(0xC000, 0);
+        bus.cartridge.cpu_write(0xC001, 0);
+        bus.cartridge.cpu_write(0xE001, 0);
+        bus.ppu.regs.mask = 0x18;
     }
 
     #[test]
@@ -356,5 +415,73 @@ mod tests {
             &bus.ppu.framebuffer[pixel_128..pixel_128 + 4],
             &[48, 50, 236, 0xFF]
         );
+    }
+
+    #[test]
+    fn mmc3_sprite_table_edge_clocks_at_sprite_address_setup() {
+        let mut bus = mmc3_test_bus();
+        enable_mmc3_irq(&mut bus);
+        bus.ppu.regs.ctrl = 0x08;
+
+        for dot in 249..=257 {
+            bus.ppu.dot = dot;
+            bus.ppu_cycles = u64::from(dot);
+            bus.ppu_render_dot();
+        }
+        assert!(!bus.cartridge.irq_pending());
+
+        bus.ppu.dot = 258;
+        bus.ppu_cycles = 258;
+        bus.ppu_render_dot();
+        assert!(bus.cartridge.irq_pending());
+    }
+
+    #[test]
+    fn mmc3_background_table_edge_clocks_during_prefetch() {
+        let mut bus = mmc3_test_bus();
+        enable_mmc3_irq(&mut bus);
+        bus.ppu.regs.ctrl = 0x10;
+        bus.ppu.scanline = PRE_RENDER_SCANLINE;
+
+        for dot in 313..=321 {
+            bus.ppu.dot = dot;
+            bus.ppu_cycles = u64::from(dot);
+            bus.ppu_render_dot();
+        }
+        assert!(!bus.cartridge.irq_pending());
+
+        bus.ppu.dot = 322;
+        bus.ppu_cycles = 322;
+        bus.ppu_render_dot();
+        assert!(bus.cartridge.irq_pending());
+    }
+
+    #[test]
+    fn mmc3_tall_sprite_uses_tile_bank_for_a12() {
+        let mut low_bank = mmc3_test_bus();
+        enable_mmc3_irq(&mut low_bank);
+        low_bank.ppu.regs.ctrl = 0x20;
+        low_bank.ppu.oam = [0xFF; 256];
+        low_bank.ppu.oam[0] = 0;
+        low_bank.ppu.oam[1] = 0;
+        for dot in 249..=258 {
+            low_bank.ppu.dot = dot;
+            low_bank.ppu_cycles = u64::from(dot);
+            low_bank.ppu_render_dot();
+        }
+        assert!(!low_bank.cartridge.irq_pending());
+
+        let mut high_bank = mmc3_test_bus();
+        enable_mmc3_irq(&mut high_bank);
+        high_bank.ppu.regs.ctrl = 0x20;
+        high_bank.ppu.oam = [0xFF; 256];
+        high_bank.ppu.oam[0] = 0;
+        high_bank.ppu.oam[1] = 1;
+        for dot in 249..=258 {
+            high_bank.ppu.dot = dot;
+            high_bank.ppu_cycles = u64::from(dot);
+            high_bank.ppu_render_dot();
+        }
+        assert!(high_bank.cartridge.irq_pending());
     }
 }

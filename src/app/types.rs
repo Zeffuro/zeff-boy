@@ -273,6 +273,7 @@ pub(super) const MAX_IN_FLIGHT: usize = 2;
 pub(super) const MAX_FRAMES_PER_TICK: usize = 10;
 pub(super) const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 pub(super) const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33);
+pub(super) const SETTINGS_UPDATE_INTERVAL: Duration = Duration::from_millis(250);
 
 #[cfg(test)]
 mod tests {

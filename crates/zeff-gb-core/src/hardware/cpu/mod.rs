@@ -10,8 +10,128 @@ use crate::hardware::opcodes::dispatch::execute_opcode;
 use crate::hardware::types::CpuState;
 use crate::hardware::types::ImeState;
 use crate::hardware::types::constants::*;
+#[cfg(test)]
+use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateWriter};
 use anyhow::{Result, bail};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GbCpuTiming {
+    pub cpu_t_cycles: u64,
+    pub master_ticks: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GbCpuRead {
+    pub value: u8,
+    pub timing: GbCpuTiming,
+}
+
+pub trait GbCpuBus {
+    fn cpu_read_byte_timed(&mut self, addr: u16, access_start_master_ticks: u64) -> GbCpuRead;
+    fn cpu_write_byte_timed(
+        &mut self,
+        addr: u16,
+        value: u8,
+        access_start_master_ticks: u64,
+    ) -> GbCpuTiming;
+    fn advance_cpu_t_cycles(&mut self, cpu_t_cycles: u64) -> GbCpuTiming;
+    fn pending_interrupts_for_cpu(&self) -> u8;
+    fn pending_interrupts_for_halt(&self) -> u8;
+    fn clear_interrupt_bit(&mut self, bit: usize);
+    fn maybe_trigger_oam_write_corruption(&mut self, addr: u16);
+    fn try_cgb_speed_switch(&mut self) -> Option<GbCpuTiming>;
+}
+
+impl GbCpuBus for Bus {
+    #[inline]
+    fn cpu_read_byte_timed(&mut self, addr: u16, access_start_master_ticks: u64) -> GbCpuRead {
+        let blocked_by_oam_dma = Bus::oam_dma_blocks_cpu_access(self, addr);
+        let master_ticks = Bus::advance_cpu_t_cycles(self, 4);
+        let value = Bus::cpu_read_byte_after_oam_dma_check(
+            self,
+            addr,
+            blocked_by_oam_dma,
+            access_start_master_ticks.wrapping_add(master_ticks),
+        );
+        GbCpuRead {
+            value,
+            timing: GbCpuTiming {
+                cpu_t_cycles: 4,
+                master_ticks,
+            },
+        }
+    }
+
+    #[inline]
+    fn cpu_write_byte_timed(
+        &mut self,
+        addr: u16,
+        value: u8,
+        access_start_master_ticks: u64,
+    ) -> GbCpuTiming {
+        let blocked_by_oam_dma = Bus::oam_dma_blocks_cpu_access(self, addr);
+        let oam_accessible_at_access = (OAM_START..=OAM_END)
+            .contains(&addr)
+            .then(|| Bus::cpu_oam_write_accessible(self));
+        let access_master_ticks = Bus::advance_cpu_t_cycles(self, 4);
+        let extra_t_cycles = Bus::cpu_write_byte_after_oam_dma_and_oam_access_check(
+            self,
+            addr,
+            value,
+            blocked_by_oam_dma,
+            oam_accessible_at_access,
+            access_start_master_ticks.wrapping_add(access_master_ticks),
+        );
+        let extra_master_ticks = if extra_t_cycles == 0 {
+            0
+        } else {
+            Bus::advance_cpu_t_cycles(self, extra_t_cycles)
+        };
+        GbCpuTiming {
+            cpu_t_cycles: 4_u64.wrapping_add(extra_t_cycles),
+            master_ticks: access_master_ticks.wrapping_add(extra_master_ticks),
+        }
+    }
+
+    #[inline]
+    fn advance_cpu_t_cycles(&mut self, cpu_t_cycles: u64) -> GbCpuTiming {
+        GbCpuTiming {
+            cpu_t_cycles,
+            master_ticks: Bus::advance_cpu_t_cycles(self, cpu_t_cycles),
+        }
+    }
+
+    #[inline]
+    fn pending_interrupts_for_cpu(&self) -> u8 {
+        Bus::pending_interrupts_for_cpu(self)
+    }
+
+    #[inline]
+    fn pending_interrupts_for_halt(&self) -> u8 {
+        Bus::pending_interrupts_for_halt(self)
+    }
+
+    #[inline]
+    fn clear_interrupt_bit(&mut self, bit: usize) {
+        Bus::clear_interrupt_bit(self, bit);
+    }
+
+    #[inline]
+    fn maybe_trigger_oam_write_corruption(&mut self, addr: u16) {
+        Bus::maybe_trigger_oam_corruption(self, addr, OamCorruptionType::Write);
+    }
+
+    fn try_cgb_speed_switch(&mut self) -> Option<GbCpuTiming> {
+        Bus::maybe_switch_cgb_speed(self).then(|| {
+            let (cpu_t_cycles, master_ticks) = Bus::advance_cgb_speed_switch_delay(self);
+            GbCpuTiming {
+                cpu_t_cycles,
+                master_ticks,
+            }
+        })
+    }
+}
 
 #[derive(Debug)]
 pub struct Cpu {
@@ -53,6 +173,10 @@ impl Cpu {
 
     #[inline]
     pub fn step(&mut self, bus: &mut Bus) {
+        self.step_with_bus(bus);
+    }
+
+    pub fn step_with_bus(&mut self, bus: &mut impl GbCpuBus) {
         self.timed_cycles_accounted = 0;
         self.timed_master_ticks_accounted = 0;
 
@@ -99,7 +223,7 @@ impl Cpu {
         self.cycles += self.last_step_cycles;
     }
 
-    pub fn handle_interrupts(&mut self, bus: &mut Bus) -> bool {
+    pub fn handle_interrupts(&mut self, bus: &mut impl GbCpuBus) -> bool {
         let triggered = bus.pending_interrupts_for_cpu();
         if triggered == 0 || self.ime != ImeState::Enabled {
             return false;
@@ -130,26 +254,26 @@ impl Cpu {
     }
 
     #[inline]
-    pub fn fetch8_timed(&mut self, bus: &mut Bus) -> u8 {
+    pub fn fetch8_timed(&mut self, bus: &mut impl GbCpuBus) -> u8 {
         let val = self.bus_read_timed(bus, self.pc);
         self.advance_pc_after_fetch();
         val
     }
 
-    pub fn fetch16_timed(&mut self, bus: &mut Bus) -> u16 {
+    pub fn fetch16_timed(&mut self, bus: &mut impl GbCpuBus) -> u16 {
         let low = self.fetch8_timed(bus) as u16;
         let high = self.fetch8_timed(bus) as u16;
         low | (high << 8)
     }
 
-    pub fn push16_timed(&mut self, bus: &mut Bus, value: u16) {
+    pub fn push16_timed(&mut self, bus: &mut impl GbCpuBus, value: u16) {
         self.sp = self.sp.wrapping_sub(1);
         self.bus_write_timed(bus, self.sp, (value >> 8) as u8);
         self.sp = self.sp.wrapping_sub(1);
         self.bus_write_timed(bus, self.sp, (value & 0xFF) as u8);
     }
 
-    pub fn pop16_timed(&mut self, bus: &mut Bus) -> u16 {
+    pub fn pop16_timed(&mut self, bus: &mut impl GbCpuBus) -> u16 {
         let low = self.bus_read_timed(bus, self.sp) as u16;
         self.sp = self.sp.wrapping_add(1);
         let high = self.bus_read_timed(bus, self.sp) as u16;
@@ -157,12 +281,12 @@ impl Cpu {
         (high << 8) | low
     }
 
-    pub fn push16_timed_oam(&mut self, bus: &mut Bus, value: u16) {
-        bus.maybe_trigger_oam_corruption(self.sp, OamCorruptionType::Write);
+    pub fn push16_timed_oam(&mut self, bus: &mut impl GbCpuBus, value: u16) {
+        bus.maybe_trigger_oam_write_corruption(self.sp);
         self.push16_timed(bus, value);
     }
 
-    pub fn pop16_timed_oam(&mut self, bus: &mut Bus) -> u16 {
+    pub fn pop16_timed_oam(&mut self, bus: &mut impl GbCpuBus) -> u16 {
         self.pop16_timed(bus)
     }
 
@@ -175,38 +299,22 @@ impl Cpu {
     }
 
     #[inline]
-    pub fn bus_read_timed(&mut self, bus: &mut Bus, addr: u16) -> u8 {
-        let blocked_by_oam_dma = bus.oam_dma_blocks_cpu_access(addr);
-        self.tick_peripherals(bus, 4);
-        bus.cpu_read_byte_after_oam_dma_check(
-            addr,
-            blocked_by_oam_dma,
-            self.timed_master_ticks_accounted,
-        )
+    pub fn bus_read_timed(&mut self, bus: &mut impl GbCpuBus, addr: u16) -> u8 {
+        let read = bus.cpu_read_byte_timed(addr, self.timed_master_ticks_accounted);
+        self.account_timing(read.timing);
+        read.value
     }
 
     #[inline]
-    pub fn bus_write_timed(&mut self, bus: &mut Bus, addr: u16, value: u8) {
-        let blocked_by_oam_dma = bus.oam_dma_blocks_cpu_access(addr);
-        let oam_accessible_at_access = (OAM_START..=OAM_END)
-            .contains(&addr)
-            .then(|| bus.cpu_oam_write_accessible());
-        self.tick_peripherals(bus, 4);
-        let extra_t_cycles = bus.cpu_write_byte_after_oam_dma_and_oam_access_check(
-            addr,
-            value,
-            blocked_by_oam_dma,
-            oam_accessible_at_access,
-            self.timed_master_ticks_accounted,
-        );
-        if extra_t_cycles != 0 {
-            self.tick_peripherals(bus, extra_t_cycles);
-        }
+    pub fn bus_write_timed(&mut self, bus: &mut impl GbCpuBus, addr: u16, value: u8) {
+        let timing = bus.cpu_write_byte_timed(addr, value, self.timed_master_ticks_accounted);
+        self.account_timing(timing);
     }
 
     #[inline]
-    pub fn tick_internal_timed(&mut self, bus: &mut Bus, t_cycles: u64) {
-        self.tick_peripherals(bus, t_cycles);
+    pub fn tick_internal_timed(&mut self, bus: &mut impl GbCpuBus, t_cycles: u64) {
+        let timing = bus.advance_cpu_t_cycles(t_cycles);
+        self.account_timing(timing);
     }
 
     pub fn trigger_halt_bug(&mut self) {
@@ -214,16 +322,16 @@ impl Cpu {
     }
 
     #[inline]
-    pub fn inc_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
+    pub fn inc_rp_timed(&mut self, bus: &mut impl GbCpuBus, value: u16) -> u16 {
         self.tick_internal_timed(bus, 4);
-        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Write);
+        bus.maybe_trigger_oam_write_corruption(value);
         value.wrapping_add(1)
     }
 
     #[inline]
-    pub fn dec_rp_timed(&mut self, bus: &mut Bus, value: u16) -> u16 {
+    pub fn dec_rp_timed(&mut self, bus: &mut impl GbCpuBus, value: u16) -> u16 {
         self.tick_internal_timed(bus, 4);
-        bus.maybe_trigger_oam_corruption(value, OamCorruptionType::Write);
+        bus.maybe_trigger_oam_write_corruption(value);
         value.wrapping_sub(1)
     }
 
@@ -272,12 +380,13 @@ impl Cpu {
     }
 
     #[inline]
-    fn tick_peripherals(&mut self, bus: &mut Bus, t_cycles: u64) {
-        self.timed_cycles_accounted = self.timed_cycles_accounted.wrapping_add(t_cycles);
-        let system_t_cycles = bus.advance_cpu_t_cycles(t_cycles);
+    pub(in crate::hardware) fn account_timing(&mut self, timing: GbCpuTiming) {
+        self.timed_cycles_accounted = self
+            .timed_cycles_accounted
+            .wrapping_add(timing.cpu_t_cycles);
         self.timed_master_ticks_accounted = self
             .timed_master_ticks_accounted
-            .wrapping_add(system_t_cycles);
+            .wrapping_add(timing.master_ticks);
     }
 
     fn advance_pc_after_fetch(&mut self) {
@@ -289,12 +398,12 @@ impl Cpu {
     }
 }
 
-impl zeff_emu_common::cpu::CpuCore<Bus> for Cpu {
+impl<B: GbCpuBus> zeff_emu_common::cpu::CpuCore<B> for Cpu {
     type Step = u64;
 
     #[inline]
-    fn step_cpu(&mut self, bus: &mut Bus) -> Self::Step {
-        self.step(bus);
+    fn step_cpu(&mut self, bus: &mut B) -> Self::Step {
+        self.step_with_bus(bus);
         self.last_step_cycles
     }
 }

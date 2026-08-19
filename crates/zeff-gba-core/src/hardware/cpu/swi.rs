@@ -3,6 +3,11 @@ use crate::hardware::bus::Bus;
 
 impl Cpu {
     pub(super) fn execute_software_interrupt(&mut self, bus: &mut Bus, function: u32) {
+        if bus.has_external_bios() {
+            self.enter_software_interrupt_exception();
+            return;
+        }
+
         match function {
             0x00 => self.swi_soft_reset(bus),
             0x01 => bus.register_ram_reset(self.regs[0] as u8),
@@ -32,6 +37,21 @@ impl Cpu {
         }
         self.bios_protected_read_latch = super::POST_SWI_BIOS_READ_LATCH;
         self.cycles = self.cycles.wrapping_add(4);
+    }
+
+    fn enter_software_interrupt_exception(&mut self) {
+        let old_cpsr = self.cpsr;
+        let return_pc = self.pc();
+        self.set_cpsr(
+            (old_cpsr & !(super::CPSR_MODE_MASK | super::CPSR_THUMB))
+                | super::CPSR_IRQ_DISABLE
+                | 0x13,
+        );
+        self.spsr = old_cpsr;
+        self.regs[14] = return_pc;
+        self.set_pc(0x0000_0008);
+        self.next_fetch_sequential = false;
+        self.state = super::CpuState::Running;
     }
 
     fn swi_soft_reset(&mut self, bus: &mut Bus) {

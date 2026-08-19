@@ -13,6 +13,7 @@ use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::HeadlessOptions;
 use super::endpoint::run_loaded_replay_headless;
+use super::endpoint::validate_game_boy_link_replay_result_for_test;
 #[cfg(not(target_arch = "wasm32"))]
 use super::paired_live::ensure_replay_metadata_has_expected_gb_link_events;
 #[cfg(not(target_arch = "wasm32"))]
@@ -717,6 +718,30 @@ fn loaded_replay_rejects_embedded_final_state_hash_mismatch() -> anyhow::Result<
     );
 
     Ok(())
+}
+
+#[test]
+fn game_boy_link_replay_divergence_is_strict_unless_diagnostic_mode_is_explicit() {
+    let strict = HeadlessOptions {
+        expect_gb_link_events: 1,
+        ..HeadlessOptions::default()
+    };
+    let err = validate_game_boy_link_replay_result_for_test(
+        Err(anyhow::anyhow!("link checkpoint mismatch")),
+        &strict,
+    )
+    .expect_err("event-count expectations must not weaken replay validation");
+    assert!(err.to_string().contains("link checkpoint mismatch"));
+
+    let diagnostic = HeadlessOptions {
+        allow_gb_link_replay_divergence: true,
+        ..HeadlessOptions::default()
+    };
+    validate_game_boy_link_replay_result_for_test(
+        Err(anyhow::anyhow!("legacy link checkpoint mismatch")),
+        &diagnostic,
+    )
+    .expect("diagnostic mode should preserve warning-only legacy playback");
 }
 
 #[test]

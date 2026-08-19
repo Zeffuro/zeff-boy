@@ -54,7 +54,6 @@ id = "4-scanline_timing"
 archive_path = "nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes"
 sha256 = "14a220b9d1272acc7a820ab38e9762a7cdf2d54c65e753be87f23dfcaf1bb845"
 legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes"]
-expectation = { kind = "known_fail", reason = "Current NES MMC3 scanline IRQ timing fails mmc3_test_2/4-scanline_timing with status=02." }
 
 [[test_groups.roms]]
 id = "5-MMC3"
@@ -67,4 +66,4 @@ id = "6-MMC3_alt"
 archive_path = "nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
 sha256 = "56698b6918453d161a8d4e51f66e363d6966b054939c8176c53c401a6b55269b"
 legacy_paths = ["test-roms/nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes"]
-expectation = { kind = "known_fail", reason = "Current NES MMC3 IRQ reload-to-zero behavior fails mmc3_test_2/6-MMC3_alt with status=02." }
+expectation = { kind = "known_fail", reason = "Default MMC3 revision behavior intentionally differs from the mutually exclusive MMC3-alt reload-to-zero behavior (status=02)." }

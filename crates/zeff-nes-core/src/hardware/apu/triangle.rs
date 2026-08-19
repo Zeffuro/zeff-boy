@@ -12,6 +12,8 @@ pub struct Triangle {
     timer_period: u16,
     timer_counter: u16,
     sequence_pos: u8,
+    length_halt_override: Option<bool>,
+    skip_length_clock: bool,
 }
 
 #[rustfmt::skip]
@@ -32,12 +34,17 @@ impl Triangle {
             timer_period: 0,
             timer_counter: 0,
             sequence_pos: 0,
+            length_halt_override: None,
+            skip_length_clock: false,
         }
     }
 
-    pub fn write(&mut self, offset: u16, val: u8) {
+    pub fn write(&mut self, offset: u16, val: u8, length_clock_due: bool) {
         match offset {
             0 => {
+                if length_clock_due {
+                    self.length_halt_override = Some(self.control_flag);
+                }
                 self.control_flag = val & 0x80 != 0;
                 self.linear_counter_reload = val & 0x7F;
             }
@@ -45,10 +52,12 @@ impl Triangle {
                 self.timer_period = (self.timer_period & 0xFF00) | val as u16;
             }
             3 => {
+                let old_length = self.length_counter;
                 self.timer_period = (self.timer_period & 0x00FF) | ((val as u16 & 0x07) << 8);
-                if self.enabled {
+                if self.enabled && (!length_clock_due || old_length == 0) {
                     self.length_counter = LENGTH_TABLE[(val >> 3) as usize];
                 }
+                self.skip_length_clock = length_clock_due && self.enabled && old_length == 0;
                 self.linear_counter_reload_flag = true;
             }
             _ => {}
@@ -87,9 +96,19 @@ impl Triangle {
     }
 
     pub fn clock_length(&mut self) {
-        if !self.control_flag && self.length_counter > 0 {
+        let halted = self
+            .length_halt_override
+            .take()
+            .unwrap_or(self.control_flag);
+        if !self.skip_length_clock && !halted && self.length_counter > 0 {
             self.length_counter -= 1;
         }
+        self.skip_length_clock = false;
+    }
+
+    pub fn clear_length_clock_collision(&mut self) {
+        self.length_halt_override = None;
+        self.skip_length_clock = false;
     }
 
     #[inline]
@@ -131,6 +150,7 @@ impl Triangle {
         self.timer_period = r.read_u16()?;
         self.timer_counter = r.read_u16()?;
         self.sequence_pos = r.read_u8()? & 31;
+        self.clear_length_clock_collision();
         Ok(())
     }
 }

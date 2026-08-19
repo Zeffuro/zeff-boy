@@ -50,6 +50,7 @@ fn full_save_state_round_trip_handles_large_arrays() {
         cycle_count: 123,
         last_opcode: 0x00,
         last_opcode_pc: 0x0100,
+        boot_rom_enabled: false,
     };
 
     let bytes = encode_state_bytes(&state).expect("encode should succeed");
@@ -90,6 +91,7 @@ fn encoded_state_has_bess_footer() {
         cycle_count: 0,
         last_opcode: 0x00,
         last_opcode_pc: 0x0100,
+        boot_rom_enabled: false,
     };
 
     let bytes = encode_state_bytes(&state).expect("encode should succeed");
@@ -122,6 +124,7 @@ fn bess_footer_does_not_break_native_decode() {
         cycle_count: 42,
         last_opcode: 0x76,
         last_opcode_pc: 0x0200,
+        boot_rom_enabled: false,
     };
 
     let bytes = encode_state_bytes(&state).expect("encode should succeed");
@@ -151,6 +154,7 @@ fn native_decode_restores_cgb_dmg_compat_state_without_serialized_rom() {
         cycle_count: 99,
         last_opcode: 0x10,
         last_opcode_pc: 0x0300,
+        boot_rom_enabled: false,
     };
 
     let bytes = encode_state_bytes(&state).expect("encode should succeed");

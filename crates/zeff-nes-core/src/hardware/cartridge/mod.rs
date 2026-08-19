@@ -62,7 +62,20 @@ pub(crate) trait Mapper: Send {
 
     fn notify_scanline(&mut self) {}
 
-    fn notify_ppu_a12(&mut self, _high: bool) {}
+    fn uses_qualified_ppu_a12(&self) -> bool {
+        false
+    }
+
+    fn notify_ppu_a12(&mut self, _high: bool, _ppu_cycle: u64) {}
+
+    fn write_ppu_runtime_state(&self, _w: &mut crate::save_state::StateWriter) {}
+
+    fn read_ppu_runtime_state(
+        &mut self,
+        _r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     fn clock_cpu(&mut self) {}
 
@@ -682,8 +695,24 @@ impl Cartridge {
     }
 
     #[inline]
-    pub fn notify_ppu_a12(&mut self, high: bool) {
-        self.mapper.notify_ppu_a12(high);
+    pub fn uses_qualified_ppu_a12(&self) -> bool {
+        self.mapper.uses_qualified_ppu_a12()
+    }
+
+    #[inline]
+    pub fn notify_ppu_a12(&mut self, high: bool, ppu_cycle: u64) {
+        self.mapper.notify_ppu_a12(high, ppu_cycle);
+    }
+
+    pub(crate) fn write_ppu_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.mapper.write_ppu_runtime_state(w);
+    }
+
+    pub(crate) fn read_ppu_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.mapper.read_ppu_runtime_state(r)
     }
 
     #[inline]

@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use chrono::{Datelike, Timelike};
+
 pub(crate) struct FileDialog {
     inner: rfd::FileDialog,
 }
@@ -56,6 +58,18 @@ pub(crate) fn screenshots_dir() -> PathBuf {
 
 pub(crate) fn timestamp_string() -> String {
     chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+}
+
+pub(crate) fn local_gba_rtc_date_time() -> zeff_gba_core::hardware::cartridge::RtcDateTime {
+    let now = chrono::Local::now();
+    zeff_gba_core::hardware::cartridge::RtcDateTime::new(
+        now.year().clamp(2000, 2099) as u16,
+        now.month() as u8,
+        now.day() as u8,
+        now.weekday().num_days_from_sunday() as u8,
+        [now.hour() as u8, now.minute() as u8, now.second() as u8],
+    )
+    .expect("host-local date/time should be valid")
 }
 
 pub(crate) fn format_file_modified_time(meta: &std::fs::Metadata) -> Option<String> {

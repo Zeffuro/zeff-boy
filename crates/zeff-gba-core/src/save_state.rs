@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use crate::emulator::Emulator;
@@ -11,7 +11,7 @@ use crate::hardware::dma::{DmaChannel, DmaController};
 use crate::hardware::timer::{Timer, Timers};
 
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
-const VERSION: u32 = 4;
+const VERSION: u32 = 6;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
 const MAX_FIFO_SIZE: usize = 32;
 
@@ -110,6 +110,8 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u64(0);
     w.write_u64(0);
     w.write_u64(0);
+    emu.bus.cartridge.write_rtc_state(&mut w);
+    w.write_bool(emu.bus.has_external_bios());
 
     Ok(w.into_bytes())
 }
@@ -240,6 +242,19 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     };
     emu.bus.apu.load_save_state(apu_state);
 
+    if version >= 5 {
+        emu.bus.cartridge.read_rtc_state(&mut r)?;
+    } else {
+        emu.bus.cartridge.reset_rtc_state();
+    }
+    if version >= 6 {
+        let state_uses_external_bios = r.read_bool()?;
+        ensure!(
+            state_uses_external_bios == emu.bus.has_external_bios() || emu.cpu.pc() > 0x3FFF,
+            "GBA save state firmware mode does not match the loaded emulator"
+        );
+    }
+
     if !r.is_exhausted() {
         bail!("GBA save state has trailing bytes");
     }
@@ -278,6 +293,12 @@ mod tests {
         rom
     }
 
+    fn emerald_rom() -> Vec<u8> {
+        let mut rom = minimal_rom();
+        rom[0xAC..0xB0].copy_from_slice(b"BPEE");
+        rom
+    }
+
     #[test]
     fn roundtrips_state() {
         let rom = minimal_rom();
@@ -290,6 +311,33 @@ mod tests {
         decode_state(&mut restored, &bytes).unwrap();
         assert_eq!(restored.cpu_peek8(0x0200_0000), 0x55);
         assert_eq!(restored.frame_count(), 1);
+    }
+
+    #[test]
+    fn save_state_allows_post_boot_bios_mode_changes() {
+        let rom = minimal_rom();
+        let bios = vec![0; crate::hardware::constants::BIOS_SIZE];
+        let hle_state = encode_state(&Emulator::new(&rom, 48_000).unwrap()).unwrap();
+        let mut external = Emulator::new_with_bios(&rom, &bios, 48_000).unwrap();
+        external.cpu.set_pc(0x0800_0000);
+        let external_state = encode_state(&external).unwrap();
+
+        let mut hle = Emulator::new(&rom, 48_000).unwrap();
+        let mut external = Emulator::new_with_bios(&rom, &bios, 48_000).unwrap();
+        decode_state(&mut hle, &external_state).unwrap();
+        decode_state(&mut external, &hle_state).unwrap();
+        decode_state(&mut external, &external_state).unwrap();
+    }
+
+    #[test]
+    fn save_state_requires_matching_bios_while_executing_in_it() {
+        let rom = minimal_rom();
+        let bios = vec![0; crate::hardware::constants::BIOS_SIZE];
+        let external_state =
+            encode_state(&Emulator::new_with_bios(&rom, &bios, 48_000).unwrap()).unwrap();
+
+        let mut hle = Emulator::new(&rom, 48_000).unwrap();
+        assert!(decode_state(&mut hle, &external_state).is_err());
     }
 
     #[test]
@@ -345,5 +393,30 @@ mod tests {
         assert_eq!(apu.sample_rate, 48_000);
         assert!(!apu.sample_generation_enabled);
         assert_eq!(apu.channel_mutes, [false, true, false, true, false, true]);
+    }
+
+    #[test]
+    fn roundtrips_rtc_gpio_state_and_v4_defaults() {
+        let rom = emerald_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.bus.write16(0x0800_00C8, 1);
+        saved.bus.write32(0x0800_00C4, 0x0007_0005);
+        let state = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &state).unwrap();
+        assert_eq!(restored.bus.read16(0x0800_00C8), 1);
+        assert_eq!(restored.bus.read16(0x0800_00C6), 7);
+
+        let mut v4 = state[..state.len() - 34].to_vec();
+        v4[8..12].copy_from_slice(&4u32.to_le_bytes());
+        let mut legacy = Emulator::new(&rom, 48_000).unwrap();
+        legacy.set_rtc_date_time(
+            crate::hardware::cartridge::RtcDateTime::new(2031, 7, 8, 2, [12, 34, 56]).unwrap(),
+        );
+        let default_control = legacy.bus.read16(0x0800_00C8);
+        decode_state(&mut legacy, &v4).unwrap();
+        assert_eq!(legacy.bus.read16(0x0800_00C8), default_control);
+        assert_eq!(legacy.rtc_date_time().unwrap().year(), 2000);
     }
 }

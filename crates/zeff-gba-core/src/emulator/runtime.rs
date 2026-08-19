@@ -54,7 +54,9 @@ impl Emulator {
         let interrupt_pc = self.cpu.pc();
         let interrupt_cycle = self.cpu.cycles;
         let mut interrupt_serviced = false;
-        if self.bus.interrupt_ready() && self.bus.irq_handler_installed() {
+        if self.bus.interrupt_ready()
+            && (self.bus.has_external_bios() || self.bus.irq_handler_installed())
+        {
             let irq_delay_cycles = self.bus.take_irq_sample_delay_cycles();
             if irq_delay_cycles != 0 {
                 self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(irq_delay_cycles));

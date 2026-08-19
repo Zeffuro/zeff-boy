@@ -24,6 +24,8 @@ pub struct Pulse {
     envelope_start: bool,
     envelope_divider: u8,
     envelope_decay: u8,
+    length_halt_override: Option<bool>,
+    skip_length_clock: bool,
 }
 
 static DUTY_TABLE: [[u8; 8]; 4] = [
@@ -55,12 +57,17 @@ impl Pulse {
             envelope_start: false,
             envelope_divider: 0,
             envelope_decay: 0,
+            length_halt_override: None,
+            skip_length_clock: false,
         }
     }
 
-    pub fn write(&mut self, offset: u16, val: u8) {
+    pub fn write(&mut self, offset: u16, val: u8, length_clock_due: bool) {
         match offset {
             0 => {
+                if length_clock_due {
+                    self.length_halt_override = Some(self.length_halt);
+                }
                 self.duty = (val >> 6) & 0x03;
                 self.length_halt = val & 0x20 != 0;
                 self.constant_volume = val & 0x10 != 0;
@@ -77,10 +84,12 @@ impl Pulse {
                 self.timer_period = (self.timer_period & 0xFF00) | val as u16;
             }
             3 => {
+                let old_length = self.length_counter;
                 self.timer_period = (self.timer_period & 0x00FF) | ((val as u16 & 0x07) << 8);
-                if self.enabled {
+                if self.enabled && (!length_clock_due || old_length == 0) {
                     self.length_counter = LENGTH_TABLE[(val >> 3) as usize];
                 }
+                self.skip_length_clock = length_clock_due && self.enabled && old_length == 0;
                 self.sequence_pos = 0;
                 self.envelope_start = true;
             }
@@ -123,9 +132,16 @@ impl Pulse {
     }
 
     pub fn clock_length(&mut self) {
-        if !self.length_halt && self.length_counter > 0 {
+        let halted = self.length_halt_override.take().unwrap_or(self.length_halt);
+        if !self.skip_length_clock && !halted && self.length_counter > 0 {
             self.length_counter -= 1;
         }
+        self.skip_length_clock = false;
+    }
+
+    pub fn clear_length_clock_collision(&mut self) {
+        self.length_halt_override = None;
+        self.skip_length_clock = false;
     }
 
     pub fn clock_sweep(&mut self) {
@@ -238,6 +254,7 @@ impl Pulse {
         self.envelope_start = r.read_bool()?;
         self.envelope_divider = r.read_u8()?;
         self.envelope_decay = r.read_u8()?;
+        self.clear_length_clock_collision();
         Ok(())
     }
 }

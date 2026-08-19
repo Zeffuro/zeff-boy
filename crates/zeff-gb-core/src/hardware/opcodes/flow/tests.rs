@@ -1,4 +1,5 @@
 use super::*;
+use crate::hardware::types::hardware_mode::HardwareMode;
 
 fn make_test_bus(mode: HardwareMode) -> Bus {
     let mut rom = vec![0u8; 0x8000];
@@ -20,7 +21,23 @@ fn stop_switches_to_cgb_double_speed_when_key1_prepare_set() {
     assert_eq!(bus.hardware_mode, HardwareMode::CGBDouble);
     assert_eq!(bus.key1, 0xFE);
     assert!(matches!(cpu.running, CpuState::Running));
+    assert_eq!(cpu.timed_cycles_accounted, 16_404);
     assert_eq!(cpu.timed_master_ticks_accounted, 4_104);
+}
+
+#[test]
+fn stop_switches_back_to_cgb_normal_speed() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::CGBDouble);
+    bus.write_byte(0xFF4D, 0x01);
+
+    stop(&mut cpu, &mut bus);
+
+    assert_eq!(bus.hardware_mode, HardwareMode::CGBNormal);
+    assert_eq!(bus.key1, 0x7E);
+    assert!(matches!(cpu.running, CpuState::Running));
+    assert_eq!(cpu.timed_cycles_accounted, 8_204);
+    assert_eq!(cpu.timed_master_ticks_accounted, 8_202);
 }
 
 #[test]

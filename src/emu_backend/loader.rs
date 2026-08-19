@@ -17,6 +17,9 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
     pub(crate) sega8_console_region: Option<Sega8Region>,
     pub(crate) firmware_search_dirs: Vec<PathBuf>,
+    pub(crate) gb_use_external_boot_rom: bool,
+    pub(crate) gba_use_external_bios: bool,
+    pub(crate) sega8_use_external_boot_rom: bool,
     #[cfg(test)]
     pub(crate) fds_bios_override: Option<&'static [u8]>,
 }
@@ -31,6 +34,9 @@ impl Default for BackendLoadConfig {
             sega8_video_standard: None,
             sega8_console_region: None,
             firmware_search_dirs: Vec::new(),
+            gb_use_external_boot_rom: false,
+            gba_use_external_bios: false,
+            sega8_use_external_boot_rom: false,
             #[cfg(test)]
             fds_bios_override: None,
         }
@@ -61,14 +67,8 @@ pub(crate) fn load_backend_from_rom_source(
         crc32fast::hash(&rom_data)
     };
 
-    let firmware_plan = super::firmware::firmware_plan_for_active_system(system);
-    if !firmware_plan.is_empty() {
-        log::debug!(
-            "{} firmware plan has {} request(s); current load path preserves core defaults",
-            system_load_label(system),
-            firmware_plan.len()
-        );
-    }
+    let default_firmware_manifests =
+        super::firmware::default_firmware_manifests_for_active_system(system);
 
     let mut backend = match system {
         ActiveSystem::GameBoy => load_gb_backend(&rom_data, source_path, rom_path, &config)?,
@@ -81,6 +81,15 @@ pub(crate) fn load_backend_from_rom_source(
             load_sega8_backend(system, &rom_data, source_path, rom_path, &config)?
         }
     };
+
+    if !default_firmware_manifests.is_empty()
+        && !(system == ActiveSystem::GameBoy && config.gb_use_external_boot_rom)
+        && !(system == ActiveSystem::GameBoyAdvance && config.gba_use_external_bios)
+        && !(matches!(system, ActiveSystem::MasterSystem | ActiveSystem::GameGear)
+            && config.sega8_use_external_boot_rom)
+    {
+        backend.set_firmware_manifests(default_firmware_manifests);
+    }
 
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);
@@ -116,15 +125,63 @@ fn load_gb_backend(
     rom_path: &Path,
     config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
-    let mut emu = zeff_gb_core::emulator::Emulator::from_rom_data(
-        rom_data,
-        config.gb_hardware_mode_preference,
-    )?;
+    let external_boot_rom = if config.gb_use_external_boot_rom {
+        let header = zeff_gb_core::hardware::rom_header::RomHeader::from_rom(rom_data)?;
+        let mode = config.gb_hardware_mode_preference.resolve(
+            header.is_cgb_compatible,
+            header.is_sgb_supported,
+            header.old_licensee_code,
+        );
+        let firmware_id = if matches!(
+            mode,
+            zeff_gb_core::hardware::types::hardware_mode::HardwareMode::CGBNormal
+                | zeff_gb_core::hardware::types::hardware_mode::HardwareMode::CGBDouble
+        ) {
+            "nintendo.gb.boot.cgb"
+        } else {
+            "nintendo.gb.boot.dmg"
+        };
+        Some(super::firmware::resolve_gb_boot_rom_with_manifest(
+            firmware_id,
+            &config.firmware_search_dirs,
+            Some(rom_path),
+        )?)
+    } else {
+        None
+    };
+    let mut emu = match &external_boot_rom {
+        Some(boot_rom) => zeff_gb_core::emulator::Emulator::from_rom_data_with_boot_rom(
+            rom_data,
+            config.gb_hardware_mode_preference,
+            &boot_rom.bytes,
+        )?,
+        None => zeff_gb_core::emulator::Emulator::from_rom_data(
+            rom_data,
+            config.gb_hardware_mode_preference,
+        )?,
+    };
     if let Some(sample_rate) = config.sample_rate {
         emu.set_sample_rate(sample_rate);
     }
     log_sram_result(super::gb::try_load_battery_sram(&mut emu, rom_path));
-    Ok(wrap_gb_backend(emu, source_path, rom_path))
+    let mut backend = wrap_gb_backend(emu, source_path, rom_path);
+    if let Some(boot_rom) = external_boot_rom {
+        let mut manifests =
+            super::firmware::default_firmware_manifests_for_active_system(ActiveSystem::GameBoy);
+        let firmware_id = match &boot_rom.manifest {
+            zeff_emu_common::replay::ReplayFirmwareManifest::External { firmware_id, .. } => {
+                firmware_id.as_str()
+            }
+            _ => unreachable!("resolved GB boot ROM must be external"),
+        };
+        if let Some(manifest) = manifests.iter_mut().find(|manifest| {
+            matches!(manifest, zeff_emu_common::replay::ReplayFirmwareManifest::Skipped { firmware_id: id, .. } if id == firmware_id)
+        }) {
+            *manifest = boot_rom.manifest;
+        }
+        backend.set_firmware_manifests(manifests);
+    }
+    Ok(backend)
 }
 
 fn load_nes_backend(
@@ -188,9 +245,29 @@ fn load_gba_backend(
     let sample_rate = config
         .sample_rate
         .unwrap_or(zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE);
-    let mut emu = zeff_gba_core::emulator::Emulator::new(rom_data, sample_rate)?;
+    let external_bios = if config.gba_use_external_bios {
+        Some(super::firmware::resolve_gba_bios_with_manifest(
+            &config.firmware_search_dirs,
+            Some(rom_path),
+        )?)
+    } else {
+        None
+    };
+    let mut emu = match &external_bios {
+        Some(bios) => {
+            zeff_gba_core::emulator::Emulator::new_with_bios(rom_data, &bios.bytes, sample_rate)?
+        }
+        None => zeff_gba_core::emulator::Emulator::new(rom_data, sample_rate)?,
+    };
     log_sram_result(super::gba::try_load_battery_sram(&mut emu, rom_path));
-    Ok(wrap_gba_backend(emu, source_path, rom_path))
+    if emu.has_rtc() {
+        emu.set_rtc_date_time(crate::platform::local_gba_rtc_date_time());
+    }
+    let mut backend = wrap_gba_backend(emu, source_path, rom_path);
+    if let Some(bios) = external_bios {
+        backend.set_firmware_manifests(vec![bios.manifest]);
+    }
+    Ok(backend)
 }
 
 fn load_ws_backend(
@@ -231,9 +308,32 @@ fn load_sega8_backend(
         .with_video_standard(video_standard)
         .with_console_region(config.sega8_console_region)
         .with_console_region_fallback(console_region_fallback);
-    let mut emu = zeff_sega8_core::emulator::Emulator::new_with_config(rom_data, load_config)?;
+    let external_boot_rom = if config.sega8_use_external_boot_rom
+        && matches!(system, ActiveSystem::MasterSystem | ActiveSystem::GameGear)
+    {
+        Some(super::firmware::resolve_sega8_boot_rom_with_manifest(
+            system,
+            config.sega8_console_region.or(console_region_fallback),
+            &config.firmware_search_dirs,
+            Some(rom_path),
+        )?)
+    } else {
+        None
+    };
+    let mut emu = match &external_boot_rom {
+        Some(boot_rom) => zeff_sega8_core::emulator::Emulator::new_with_config_and_boot_rom(
+            rom_data,
+            load_config,
+            &boot_rom.bytes,
+        )?,
+        None => zeff_sega8_core::emulator::Emulator::new_with_config(rom_data, load_config)?,
+    };
     log_sram_result(super::sega8::try_load_battery_sram(&mut emu, rom_path));
-    Ok(wrap_sega8_backend(emu, source_path, rom_path))
+    let mut backend = wrap_sega8_backend(emu, source_path, rom_path);
+    if let Some(boot_rom) = external_boot_rom {
+        backend.set_firmware_manifests(vec![boot_rom.manifest]);
+    }
+    Ok(backend)
 }
 
 fn wrap_gb_backend(

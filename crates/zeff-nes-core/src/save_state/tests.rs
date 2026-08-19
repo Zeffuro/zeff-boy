@@ -29,6 +29,17 @@ fn make_jam_emulator() -> crate::emulator::Emulator {
     crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
 }
 
+fn make_mmc3_emulator() -> crate::emulator::Emulator {
+    let mut rom = vec![0u8; 16 + 2 * 0x4000 + 0x2000];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 2;
+    rom[5] = 1;
+    rom[6] = 0x40;
+    rom[16 + 0x7FFC] = 0x00;
+    rom[16 + 0x7FFD] = 0x80;
+    crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
+}
+
 #[test]
 fn save_state_roundtrip_preserves_cpu_state() {
     let mut emu = make_emulator();
@@ -85,6 +96,147 @@ fn save_state_roundtrip_preserves_bus_state() {
     assert_eq!(emu.bus.ram[0], 0x42);
     assert_eq!(emu.bus.ppu_cycles, ppu_cycles_before);
     assert_eq!(emu.bus.cpu_open_bus, open_bus_before);
+}
+
+#[test]
+fn save_state_v5_preserves_pending_dma() {
+    let mut emu = make_emulator();
+    emu.bus.cpu_write(crate::hardware::constants::OAM_DMA, 0x00);
+    let state = encode_state(&emu).expect("DMA state should encode");
+
+    let expected_cycles = emu.step_instruction().2;
+    let expected_oam = emu.bus.ppu.oam;
+
+    let mut restored = make_emulator();
+    decode_state(&mut restored, &state).expect("DMA state should decode");
+
+    assert_eq!(restored.step_instruction().2, expected_cycles);
+    assert_eq!(restored.bus.ppu.oam, expected_oam);
+}
+
+#[test]
+fn save_state_v5_preserves_pending_frame_counter_write() {
+    let mut emu = make_emulator();
+    emu.bus.apu.write_register(0x4015, 0x01, false);
+    emu.bus.apu.write_register(0x4003, 0x18, false);
+    emu.bus.cpu_write(0x4017, 0x80);
+    let state = encode_state(&emu).expect("APU runtime state should encode");
+
+    for _ in 0..3 {
+        emu.bus.apu.tick();
+    }
+    let expected = encode_state(&emu).expect("continued state should encode");
+
+    let mut restored = make_emulator();
+    decode_state(&mut restored, &state).expect("APU runtime state should decode");
+    for _ in 0..3 {
+        restored.bus.apu.tick();
+    }
+
+    assert_eq!(
+        encode_state(&restored).expect("restored continuation should encode"),
+        expected
+    );
+}
+
+#[test]
+fn save_state_v4_load_defaults_frame_counter_runtime() {
+    let emu = make_emulator();
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V4_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_emulator();
+    restored.bus.cpu_write(0x4017, 0x80);
+    decode_state(&mut restored, &state).expect("V4 state should load");
+
+    assert_eq!(restored.bus.apu.frame_reset_delay, 0);
+}
+
+#[test]
+fn save_state_v5_load_defaults_ppu_runtime() {
+    let emu = make_mmc3_emulator();
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    emu.bus.write_apu_runtime_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V5_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_mmc3_emulator();
+    restored.bus.cartridge.notify_ppu_a12(true, 100);
+    restored.bus.cartridge.notify_ppu_a12(false, 200);
+    decode_state(&mut restored, &state).expect("V5 state should load");
+    restored.bus.cartridge.cpu_write(0xC000, 0);
+    restored.bus.cartridge.cpu_write(0xC001, 0);
+    restored.bus.cartridge.cpu_write(0xE001, 0);
+    restored.bus.cartridge.notify_ppu_a12(true, 7);
+
+    assert!(!restored.bus.cartridge.irq_pending());
+    assert_eq!(restored.bus.sprite_fetch_a12, [false; 8]);
+}
+
+#[test]
+fn save_state_v6_roundtrips_mmc3_ppu_runtime() {
+    let mut emu = make_mmc3_emulator();
+    emu.bus.sprite_fetch_a12 = [true, false, true, false, true, false, true, false];
+    emu.bus.cartridge.notify_ppu_a12(true, 192);
+    emu.bus.cartridge.notify_ppu_a12(false, 200);
+    emu.bus.cartridge.cpu_write(0xC000, 0);
+    emu.bus.cartridge.cpu_write(0xC001, 0);
+    emu.bus.cartridge.cpu_write(0xE000, 0);
+    emu.bus.cartridge.cpu_write(0xE001, 0);
+    let state = encode_state(&emu).expect("V6 state should encode");
+
+    let mut restored = make_mmc3_emulator();
+    decode_state(&mut restored, &state).expect("V6 state should load");
+    assert_eq!(
+        restored.bus.sprite_fetch_a12,
+        [true, false, true, false, true, false, true, false]
+    );
+
+    restored.bus.cartridge.notify_ppu_a12(true, 207);
+    assert!(!restored.bus.cartridge.irq_pending());
+    restored.bus.cartridge.notify_ppu_a12(false, 208);
+    restored.bus.cartridge.notify_ppu_a12(true, 216);
+    assert!(restored.bus.cartridge.irq_pending());
+}
+
+#[test]
+fn save_state_v3_load_resets_dma_controller() {
+    let mut emu = make_emulator();
+    emu.bus.cpu_write(crate::hardware::constants::OAM_DMA, 0x00);
+
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V3_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_emulator();
+    restored.bus.dma_stall_cycles = 99;
+    decode_state(&mut restored, &state).expect("V3 state should load");
+    assert_eq!(restored.bus.dma_stall_cycles, 0);
+    assert!(restored.step_instruction().2 < 500);
 }
 
 #[test]

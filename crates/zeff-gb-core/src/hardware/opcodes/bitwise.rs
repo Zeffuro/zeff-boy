@@ -1,25 +1,24 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, GbCpuBus};
 
 // --- Non-CB-prefix rotate ops (0x07, 0x0F, 0x17, 0x1F) ---
 // These always clear the Zero flag, unlike their CB-prefix counterparts.
 
 // 0x07: RLCA
-pub fn rlca(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn rlca(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     let carry = (cpu.regs.a & 0x80) != 0;
     cpu.regs.a = cpu.regs.a.rotate_left(1);
     cpu.set_flags(false, false, false, carry);
 }
 
 // 0x0F: RRCA
-pub fn rrca(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn rrca(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     let carry = (cpu.regs.a & 0x01) != 0;
     cpu.regs.a = cpu.regs.a.rotate_right(1);
     cpu.set_flags(false, false, false, carry);
 }
 
 // 0x17: RLA
-pub fn rla(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn rla(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     let old_carry = cpu.get_c() as u8;
     let new_carry = (cpu.regs.a & 0x80) != 0;
     cpu.regs.a = (cpu.regs.a << 1) | old_carry;
@@ -27,7 +26,7 @@ pub fn rla(cpu: &mut Cpu, _bus: &mut Bus) {
 }
 
 // 0x1F: RRA
-pub fn rra(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn rra(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     let old_carry = if cpu.get_c() { 0x80 } else { 0 };
     let new_carry = (cpu.regs.a & 0x01) != 0;
     cpu.regs.a = (cpu.regs.a >> 1) | old_carry;
@@ -49,7 +48,7 @@ pub fn rra(cpu: &mut Cpu, _bus: &mut Bus) {
 /// Read a register value by CB-prefix register index.
 /// Index 6 = (HL) read with bus timing.
 #[inline(always)]
-fn read_reg(cpu: &mut Cpu, bus: &mut Bus, idx: u8) -> u8 {
+fn read_reg(cpu: &mut Cpu, bus: &mut impl GbCpuBus, idx: u8) -> u8 {
     match idx {
         0 => cpu.regs.b,
         1 => cpu.regs.c,
@@ -66,7 +65,7 @@ fn read_reg(cpu: &mut Cpu, bus: &mut Bus, idx: u8) -> u8 {
 /// Write a value to a register by CB-prefix register index.
 /// Index 6 = (HL) write with bus timing.
 #[inline(always)]
-fn write_reg(cpu: &mut Cpu, bus: &mut Bus, idx: u8, val: u8) {
+fn write_reg(cpu: &mut Cpu, bus: &mut impl GbCpuBus, idx: u8, val: u8) {
     match idx {
         0 => cpu.regs.b = val,
         1 => cpu.regs.c = val,
@@ -100,7 +99,7 @@ fn apply_shift_op(cpu: &mut Cpu, sub_op: u8, val: u8) -> u8 {
 }
 
 /// Execute a CB-prefixed opcode (called after the CB prefix byte is consumed).
-pub fn execute_cb_op(cpu: &mut Cpu, bus: &mut Bus, opcode: u8) {
+pub fn execute_cb_op(cpu: &mut Cpu, bus: &mut impl GbCpuBus, opcode: u8) {
     let reg_idx = opcode & 0x07;
     let sub_op = (opcode >> 3) & 0x07;
 

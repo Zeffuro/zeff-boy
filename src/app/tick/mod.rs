@@ -1,4 +1,7 @@
-use super::{App, MAX_IN_FLIGHT, SpeedMode, UI_RENDER_INTERVAL, VIEWER_UPDATE_INTERVAL};
+use super::{
+    App, MAX_IN_FLIGHT, SETTINGS_UPDATE_INTERVAL, SpeedMode, UI_RENDER_INTERVAL,
+    VIEWER_UPDATE_INTERVAL,
+};
 use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
 use crate::emu_thread::{AudioConfig, EmuCommand, FrameInput, JoypadInput};
 use crate::platform::Instant;
@@ -265,7 +268,21 @@ impl App {
         }
 
         let should_render = match self.speed_mode() {
-            SpeedMode::Normal | SpeedMode::SlowMotion => true,
+            SpeedMode::Normal | SpeedMode::SlowMotion => {
+                let background_ui = self.emu_thread.is_none() || {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.show_settings_window
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        false
+                    }
+                };
+                !background_ui
+                    || Instant::now().duration_since(self.timing.last_render_time)
+                        >= VIEWER_UPDATE_INTERVAL
+            }
             SpeedMode::FastForward | SpeedMode::Uncapped => {
                 let now = Instant::now();
                 if now.duration_since(self.timing.last_render_time) >= UI_RENDER_INTERVAL {
@@ -353,7 +370,7 @@ impl App {
                 .and_then(crate::graphics::Graphics::settings_window)
                 .is_some_and(|window| window.is_minimized() != Some(true));
         if settings_visible
-            && now.duration_since(self.last_settings_render) >= std::time::Duration::from_millis(66)
+            && now.duration_since(self.last_settings_render) >= SETTINGS_UPDATE_INTERVAL
         {
             let before = self.settings.clone();
             self.render_settings_frame(data);

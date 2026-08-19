@@ -250,24 +250,11 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                     },
                 );
                 if reply.passive {
-                    let start = emulator.cpu_cycles();
-                    if !emulator.schedule_game_boy_external_link_transfer(
+                    super::complete_passive_transfer(
+                        emulator,
                         action.out_byte,
                         action.clock_period_t_cycles,
-                    ) {
-                        return Err(LinkSessionError::MalformedPacketPayload);
-                    }
-                    let target = start.saturating_add(action.clock_period_t_cycles);
-                    while emulator.cpu_cycles() < target {
-                        let before = emulator.cpu_cycles();
-                        let (_, _, _, cycles) = emulator.step_instruction();
-                        if cycles == 0 || emulator.cpu_cycles() == before {
-                            return Err(LinkSessionError::MalformedPacketPayload);
-                        }
-                    }
-                    if emulator.game_boy_link_reply_to_master_start().passive {
-                        return Err(LinkSessionError::MalformedPacketPayload);
-                    }
+                    )?;
                     self.passive_rearm_catchup_after_tick = Some(emulator.cpu_cycles());
                     self.trace(format!(
                         "complete passive id={} tick={} in={:02X}",

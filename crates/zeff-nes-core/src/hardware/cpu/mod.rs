@@ -15,17 +15,20 @@ pub trait CpuBus {
     fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, value: u8, elapsed_cycles: u64);
     fn prepare_cpu_instruction_accesses(&mut self);
     fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16);
+    fn take_nmi_edge_for_vector(&mut self) -> bool {
+        false
+    }
 }
 
 impl CpuBus for Bus {
     #[inline]
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        Bus::cpu_read(self, addr)
+        Bus::cpu_read_timed(self, addr)
     }
 
     #[inline]
     fn cpu_write(&mut self, addr: u16, value: u8) {
-        Bus::cpu_write(self, addr, value);
+        Bus::cpu_write_timed(self, addr, value);
     }
 
     #[inline]
@@ -46,6 +49,11 @@ impl CpuBus for Bus {
     #[inline]
     fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16) {
         Bus::finish_cpu_instruction_accesses(self, total_cycles, pc);
+    }
+
+    #[inline]
+    fn take_nmi_edge_for_vector(&mut self) -> bool {
+        Bus::take_nmi_edge_for_vector(self)
     }
 }
 
@@ -209,7 +217,19 @@ impl Cpu {
 
     #[inline]
     pub fn step(&mut self, bus: &mut Bus) -> u64 {
-        self.step_with_bus(bus)
+        if bus.cpu_step_start_tick.is_some() {
+            return self.step_with_bus(bus);
+        }
+
+        bus.cpu_odd_cycle = self.cycles & 1 != 0;
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(self.cycles));
+        let cycles = self.step_with_bus(bus);
+        let dma_cycles = bus.dma_stall_cycles;
+        bus.dma_stall_cycles = 0;
+        self.cycles += dma_cycles;
+        let total_cycles = cycles + dma_cycles;
+        let _ = bus.finish_cpu_step_timing(total_cycles);
+        total_cycles
     }
 
     pub(crate) fn step_with_bus<B: CpuBus>(&mut self, bus: &mut B) -> u64 {
@@ -382,20 +402,23 @@ impl Cpu {
         let _ = bus.cpu_read(self.pc);
         let _ = bus.cpu_read(self.pc);
         self.push16(bus, self.pc);
+        let vector_edge = bus.take_nmi_edge_for_vector();
+        let nmi_hijacked = self.nmi_pending || vector_edge;
         self.push8(bus, self.regs.status_for_push(false));
         self.regs.set_flag(StatusFlags::INTERRUPT, true);
         self.clear_irq_inhibit_delay();
-        let lo = bus.cpu_read(IRQ_VECTOR_LO) as u16;
-        let hi = bus.cpu_read(IRQ_VECTOR_HI) as u16;
+        let (vector_lo, vector_hi) = if nmi_hijacked {
+            self.nmi_pending = false;
+            self.nmi_poll_delay = 0;
+            self.nmi_count = self.nmi_count.wrapping_add(1);
+            (NMI_VECTOR_LO, NMI_VECTOR_HI)
+        } else {
+            (IRQ_VECTOR_LO, IRQ_VECTOR_HI)
+        };
+        let lo = bus.cpu_read(vector_lo) as u16;
+        let hi = bus.cpu_read(vector_hi) as u16;
         self.pc = (hi << 8) | lo;
         7
-    }
-
-    pub(crate) fn redirect_to_nmi_vector(&mut self, bus: &mut Bus) {
-        self.nmi_count = self.nmi_count.wrapping_add(1);
-        let lo = bus.cpu_read(NMI_VECTOR_LO) as u16;
-        let hi = bus.cpu_read(NMI_VECTOR_HI) as u16;
-        self.pc = (hi << 8) | lo;
     }
 
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {

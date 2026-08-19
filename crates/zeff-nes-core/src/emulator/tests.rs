@@ -2,7 +2,10 @@ use super::{DEFAULT_SAMPLE_RATE, Emulator};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_HEADER_SIZE, FDS_SIDE_SIZE};
 use crate::hardware::cartridge::{NesMapper, RomFormat};
-use crate::hardware::constants::{APU_STATUS, FRAME_STEP_4, NMI_VECTOR_HI, NMI_VECTOR_LO, OAM_DMA};
+use crate::hardware::constants::{
+    APU_STATUS, CTRL_NMI_ENABLE, FRAME_STEP_4_IRQ_START, NMI_VECTOR_HI, NMI_VECTOR_LO, OAM_DMA,
+    PPU_REG_CTRL,
+};
 use crate::hardware::cpu::{CpuState, CpuStepKind, StatusFlags};
 use zeff_emu_common::debug::DebugEvent;
 use zeff_emu_common::save_ram::SaveRamKind;
@@ -22,6 +25,54 @@ fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {
 
 fn build_test_rom() -> Vec<u8> {
     build_test_rom_with_program(&[0xEA])
+}
+
+#[test]
+fn power_on_and_debug_writes_do_not_advance_the_bus_clock() {
+    let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).unwrap();
+    assert_eq!(emu.bus.ppu_cycles, 0);
+
+    emu.cpu_write(0x0000, 0x12);
+    emu.cpu_write8(0x0001, 0x34);
+
+    assert_eq!(emu.bus.ppu_cycles, 0);
+}
+
+#[test]
+fn direct_cpu_step_completes_oam_dma() {
+    let mut emu = Emulator::new(
+        &build_test_rom_with_program(&[0xA9, 0x00, 0x8D, 0x14, 0x40, 0xEA]),
+        DEFAULT_SAMPLE_RATE,
+    )
+    .unwrap();
+    for (index, byte) in emu.bus.ram.iter_mut().take(256).enumerate() {
+        *byte = index as u8;
+    }
+
+    assert_eq!(emu.cpu.step(&mut emu.bus), 2);
+    assert_eq!(emu.cpu.step(&mut emu.bus), 518);
+    assert_eq!(emu.bus.ppu.oam, std::array::from_fn(|index| index as u8));
+}
+
+#[test]
+fn nmi_raised_during_oam_dma_is_serviced_at_the_next_boundary() {
+    let mut emu = Emulator::new(
+        &build_test_rom_with_program(&[0xA9, 0x00, 0x8D, 0x14, 0x40, 0xEA]),
+        DEFAULT_SAMPLE_RATE,
+    )
+    .unwrap();
+
+    assert_eq!(emu.step_instruction().2, 2);
+    emu.bus.ppu.scanline = 240;
+    emu.bus.ppu.dot = 330;
+    emu.bus.cpu_write(PPU_REG_CTRL, CTRL_NMI_ENABLE);
+
+    assert_eq!(emu.step_instruction().2, 518);
+    assert!(emu.cpu.nmi_pending);
+    assert_eq!(emu.step_instruction().2, 7);
+    assert_eq!(emu.cpu.last_step_kind, CpuStepKind::Nmi);
+    let return_pc = u16::from_le_bytes([emu.bus.ram[0x01FC], emu.bus.ram[0x01FD]]);
+    assert_eq!(return_pc, 0x8005);
 }
 
 #[test]
@@ -231,12 +282,16 @@ fn guest_call_returns_to_suspended_context() {
     emu.debug_suspend();
     let pc = emu.cpu.pc;
     let sp = emu.cpu.sp;
+    let cpu_cycles = emu.cpu.cycles;
+    let ppu_cycles = emu.bus.ppu_cycles;
 
     assert_eq!(emu.debug_execute_guest_call(0x8006, 10), Ok(2));
     assert_eq!(emu.cpu.regs.a, 0x42);
     assert_eq!(emu.cpu.pc, pc);
     assert_eq!(emu.cpu.sp, sp);
     assert_eq!(emu.cpu.state, crate::hardware::cpu::CpuState::Suspended);
+    assert_eq!(emu.cpu.cycles - cpu_cycles, 8);
+    assert_eq!(emu.bus.ppu_cycles - ppu_cycles, 24);
 }
 
 #[test]
@@ -656,7 +711,7 @@ fn indexed_store_dummy_read_can_ack_frame_irq_edge() {
     emu.bus.apu.five_step_mode = false;
     emu.bus.apu.irq_inhibit = false;
     emu.bus.apu.frame_irq = false;
-    emu.bus.apu.frame_cycle = FRAME_STEP_4 - 3;
+    emu.bus.apu.frame_cycle = FRAME_STEP_4_IRQ_START;
     emu.bus.apu.frame_reset_delay = 0;
 
     let (_, _, _, events) = emu.step_instruction_with_bus_trace();

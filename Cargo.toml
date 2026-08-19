@@ -22,7 +22,7 @@ profile-cores = ["zeff-ws-core/profiling"]
 
 [package]
 name = "zeff-boy"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"

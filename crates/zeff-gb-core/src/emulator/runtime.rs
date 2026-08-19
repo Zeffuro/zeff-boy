@@ -8,6 +8,32 @@ use zeff_emu_common::debug::{
     TraceWriteWidth,
 };
 
+#[derive(Debug)]
+pub struct FrameSliceCursor {
+    mode: FrameSliceMode,
+    origin_frame: u64,
+    complete: bool,
+}
+
+#[derive(Clone, Debug)]
+enum FrameSliceMode {
+    LcdOff {
+        target_cycles: u64,
+    },
+    LcdOn {
+        start_cycles: u64,
+        max_cycles: u64,
+        previous_ly: u8,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameSliceOutcome {
+    Boundary,
+    FrameComplete,
+    Suspended,
+}
+
 impl Emulator {
     pub fn cycles_per_frame(mode: HardwareMode) -> u64 {
         if mode == HardwareMode::CGBDouble {
@@ -236,43 +262,77 @@ impl Emulator {
     where
         F: FnMut(&mut Self) -> bool,
     {
+        let mut cursor = self.begin_frame_slice();
+        let _ = self.step_frame_slice_or(&mut cursor, &mut should_stop);
+    }
+
+    pub fn begin_frame_slice(&self) -> FrameSliceCursor {
+        let mode = if self.bus.ppu_lcdc() & 0x80 == 0 {
+            FrameSliceMode::LcdOff {
+                target_cycles: self
+                    .cpu
+                    .cycles
+                    .wrapping_add(Self::cycles_per_frame(self.hardware_mode)),
+            }
+        } else {
+            FrameSliceMode::LcdOn {
+                start_cycles: self.cpu.cycles,
+                max_cycles: Self::cycles_per_frame(self.hardware_mode).saturating_mul(2),
+                previous_ly: self.bus.ppu_ly(),
+            }
+        };
+        FrameSliceCursor {
+            mode,
+            origin_frame: self.frame_count,
+            complete: false,
+        }
+    }
+
+    pub fn step_frame_slice_or<F>(
+        &mut self,
+        cursor: &mut FrameSliceCursor,
+        mut should_stop: F,
+    ) -> FrameSliceOutcome
+    where
+        F: FnMut(&mut Self) -> bool,
+    {
+        if cursor.complete {
+            return FrameSliceOutcome::FrameComplete;
+        }
+        assert_eq!(
+            self.frame_count, cursor.origin_frame,
+            "frame slice cursor resumed after its origin frame changed"
+        );
         if matches!(self.cpu.running, CpuState::Suspended) {
-            return;
+            return FrameSliceOutcome::Suspended;
         }
 
-        if self.bus.ppu_lcdc() & 0x80 == 0 {
-            let frame_cycles = Self::cycles_per_frame(self.hardware_mode);
-            let target = self.cpu.cycles.wrapping_add(frame_cycles);
-            while self.cpu.cycles < target && !matches!(self.cpu.running, CpuState::Suspended) {
-                self.step_runtime_instruction();
-                if should_stop(self) {
-                    return;
-                }
-            }
-            if !matches!(self.cpu.running, CpuState::Suspended) {
-                self.frame_count = self.frame_count.wrapping_add(1);
-            }
-            return;
-        }
-
-        let max_cycles = Self::cycles_per_frame(self.hardware_mode).saturating_mul(2);
-        let start_cycles = self.cpu.cycles;
-        let mut previous_ly = self.bus.ppu_ly();
-
-        while self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles
-            && !matches!(self.cpu.running, CpuState::Suspended)
-        {
+        loop {
             self.step_runtime_instruction();
-            if should_stop(self) {
-                return;
+            let stop_requested = should_stop(self);
+            if matches!(self.cpu.running, CpuState::Suspended) {
+                return FrameSliceOutcome::Suspended;
             }
-            if self.reached_vblank_start(&mut previous_ly) {
-                break;
-            }
-        }
 
-        if !matches!(self.cpu.running, CpuState::Suspended) {
-            self.frame_count = self.frame_count.wrapping_add(1);
+            let frame_complete = match &mut cursor.mode {
+                FrameSliceMode::LcdOff { target_cycles } => self.cpu.cycles >= *target_cycles,
+                FrameSliceMode::LcdOn {
+                    start_cycles,
+                    max_cycles,
+                    previous_ly,
+                } => {
+                    self.reached_vblank_start(previous_ly)
+                        || self.cpu.cycles.wrapping_sub(*start_cycles) >= *max_cycles
+                }
+            };
+            if frame_complete {
+                cursor.complete = true;
+                self.frame_count = self.frame_count.wrapping_add(1);
+                return FrameSliceOutcome::FrameComplete;
+            }
+            if stop_requested {
+                return FrameSliceOutcome::Boundary;
+            }
         }
     }
 
@@ -289,7 +349,7 @@ impl Emulator {
     }
 
     fn step_cpu(&mut self) {
-        let _ = zeff_emu_common::cpu::CpuCore::step_cpu(&mut self.cpu, &mut self.bus);
+        let _ = zeff_emu_common::cpu::CpuCore::step_cpu(&mut self.cpu, self.bus.as_mut());
         self.cycle_count = self
             .cycle_count
             .wrapping_add(self.cpu.last_step_master_ticks);
@@ -437,6 +497,83 @@ mod tests {
 
         emu.step_frame();
         assert_eq!(emu.ppu_ly(), 144);
+    }
+
+    #[test]
+    fn resumable_frame_slice_preserves_its_frame_origin() {
+        let rom = vec![0u8; 0x8000];
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        let start_cycles = emu.cpu.cycles;
+        let start_frame = emu.frame_count;
+        let mut cursor = emu.begin_frame_slice();
+
+        let first = emu.step_frame_slice_or(&mut cursor, |emu| {
+            emu.cpu.cycles.wrapping_sub(start_cycles) >= 1_000
+        });
+        assert_eq!(first, FrameSliceOutcome::Boundary);
+        assert_eq!(emu.frame_count, start_frame);
+
+        let second = emu.step_frame_slice_or(&mut cursor, |_| false);
+        assert_eq!(second, FrameSliceOutcome::FrameComplete);
+        assert_eq!(emu.frame_count, start_frame + 1);
+        assert_eq!(emu.ppu_ly(), 144);
+
+        assert_eq!(
+            emu.step_frame_slice_or(&mut cursor, |_| false),
+            FrameSliceOutcome::FrameComplete
+        );
+        assert_eq!(emu.frame_count, start_frame + 1);
+    }
+
+    #[test]
+    fn frame_completion_wins_over_a_same_instruction_stop_boundary() {
+        let rom = vec![0u8; 0x8000];
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        let start_frame = emu.frame_count;
+        let mut cursor = emu.begin_frame_slice();
+        let mut observed_vblank = false;
+
+        let outcome = emu.step_frame_slice_or(&mut cursor, |emu| {
+            observed_vblank = emu.ppu_ly() >= 144;
+            observed_vblank
+        });
+
+        assert_eq!(outcome, FrameSliceOutcome::FrameComplete);
+        assert_eq!(emu.frame_count, start_frame + 1);
+        assert!(observed_vblank);
+    }
+
+    #[test]
+    fn lcd_off_frame_slice_keeps_its_original_cycle_target() {
+        let rom = vec![0u8; 0x8000];
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        emu.bus.write_byte(0xFF40, 0);
+        let start_cycles = emu.cpu.cycles;
+        let frame_cycles = Emulator::cycles_per_frame(emu.hardware_mode);
+        let mut cursor = emu.begin_frame_slice();
+
+        assert_eq!(
+            emu.step_frame_slice_or(&mut cursor, |emu| {
+                emu.cpu.cycles.wrapping_sub(start_cycles) >= 1_000
+            }),
+            FrameSliceOutcome::Boundary
+        );
+        assert_eq!(
+            emu.step_frame_slice_or(&mut cursor, |_| false),
+            FrameSliceOutcome::FrameComplete
+        );
+        assert_eq!(emu.cpu.cycles.wrapping_sub(start_cycles), frame_cycles);
+    }
+
+    #[test]
+    #[should_panic(expected = "frame slice cursor resumed after its origin frame changed")]
+    fn incomplete_frame_slice_rejects_a_changed_origin_frame() {
+        let rom = vec![0u8; 0x8000];
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        let mut cursor = emu.begin_frame_slice();
+        emu.frame_count = emu.frame_count.wrapping_add(1);
+
+        let _ = emu.step_frame_slice_or(&mut cursor, |_| false);
     }
 
     #[test]

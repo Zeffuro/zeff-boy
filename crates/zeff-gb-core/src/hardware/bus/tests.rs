@@ -35,6 +35,7 @@ fn make_cgb_compat_test_bus() -> Bus {
 #[test]
 fn cpu_t_cycle_advance_uses_the_system_clock_domain() {
     let mut normal = make_cgb_test_bus();
+    normal.advance_cpu_t_cycles(4);
     let normal_ppu_cycles = normal.ppu_cycles();
     assert_eq!(normal.advance_cpu_t_cycles(8), 8);
     assert_eq!(normal.ppu_cycles(), normal_ppu_cycles + 8);
@@ -42,9 +43,28 @@ fn cpu_t_cycle_advance_uses_the_system_clock_domain() {
     let mut double = make_cgb_test_bus();
     double.write_byte(0xFF4D, 0x01);
     assert!(double.maybe_switch_cgb_speed());
+    double.advance_cpu_t_cycles(8);
     let double_ppu_cycles = double.ppu_cycles();
     assert_eq!(double.advance_cpu_t_cycles(8), 4);
     assert_eq!(double.ppu_cycles(), double_ppu_cycles + 4);
+}
+
+#[test]
+fn speed_switch_delay_skips_normal_cpu_clocked_devices() {
+    let mut bus = make_cgb_test_bus();
+    bus.write_byte(PPU_DMA, 0xC0);
+    bus.write_byte(0xFF4D, 0x01);
+    assert!(bus.maybe_switch_cgb_speed());
+
+    let timer_div = bus.timer_div();
+    let ppu_ly = bus.ppu_ly();
+    let pending_dma = bus.oam_dma_pending_source_base;
+    assert_eq!(bus.advance_cgb_speed_switch_delay(), (16_400, 4_100));
+
+    assert_eq!(bus.timer_div(), timer_div);
+    assert_ne!(bus.ppu_ly(), ppu_ly);
+    assert!(!bus.oam_dma_active);
+    assert_eq!(bus.oam_dma_pending_source_base, pending_dma);
 }
 
 #[test]

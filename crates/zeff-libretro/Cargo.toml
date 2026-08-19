@@ -17,5 +17,6 @@ zeff-nes-core = { path = "../zeff-nes-core" }
 zeff-sega8-core = { path = "../zeff-sega8-core" }
 zeff-ws-core = { path = "../zeff-ws-core" }
 anyhow = "1.0.104"
+chrono = "0.4.45"
 log = "0.4.33"
 env_logger = "0.11.11"

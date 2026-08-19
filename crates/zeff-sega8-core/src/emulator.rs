@@ -193,6 +193,22 @@ impl Emulator {
     }
 
     pub fn new_with_config(rom_data: &[u8], config: Sega8LoadConfig) -> anyhow::Result<Self> {
+        Self::new_with_config_inner(rom_data, config, None)
+    }
+
+    pub fn new_with_config_and_boot_rom(
+        rom_data: &[u8],
+        config: Sega8LoadConfig,
+        boot_rom: &[u8],
+    ) -> anyhow::Result<Self> {
+        Self::new_with_config_inner(rom_data, config, Some(boot_rom))
+    }
+
+    fn new_with_config_inner(
+        rom_data: &[u8],
+        config: Sega8LoadConfig,
+        boot_rom: Option<&[u8]>,
+    ) -> anyhow::Result<Self> {
         let sample_rate = if config.sample_rate == 0 {
             DEFAULT_SAMPLE_RATE
         } else {
@@ -213,16 +229,31 @@ impl Emulator {
             })
             .or(config.console_region_fallback)
             .unwrap_or_default();
+        if let Some(boot_rom) = boot_rom {
+            let expected_len = match cartridge.system() {
+                Sega8System::MasterSystem => 0x2000,
+                Sega8System::GameGear => 0x0400,
+                Sega8System::Sg1000 => anyhow::bail!("SG-1000 does not use a boot ROM"),
+            };
+            anyhow::ensure!(
+                boot_rom.len() == expected_len,
+                "{:?} boot ROM must be {expected_len} bytes, got {}",
+                cartridge.system(),
+                boot_rom.len()
+            );
+        }
         let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let framebuffer = vec![0; framebuffer_len(cartridge.system())];
+        let mut bus = Bus::new_with_sample_rate_video_standard_and_region(
+            cartridge,
+            sample_rate,
+            video_standard,
+            console_region,
+        );
+        bus.set_boot_rom(boot_rom.map(<[u8]>::to_vec));
         Ok(Self {
             cpu: Cpu::new(),
-            bus: Bus::new_with_sample_rate_video_standard_and_region(
-                cartridge,
-                sample_rate,
-                video_standard,
-                console_region,
-            ),
+            bus,
             rom_hash,
             frame_count: 0,
             framebuffer,

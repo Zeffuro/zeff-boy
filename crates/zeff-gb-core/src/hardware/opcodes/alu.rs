@@ -1,9 +1,8 @@
-use crate::hardware::bus::Bus;
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, GbCpuBus};
 
 macro_rules! alu_reg {
     ($name:ident, $method:ident, $reg:ident) => {
-        pub fn $name(cpu: &mut Cpu, _bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
             cpu.$method(cpu.regs.$reg);
         }
     };
@@ -11,7 +10,7 @@ macro_rules! alu_reg {
 
 macro_rules! alu_hl_mem {
     ($name:ident, $method:ident) => {
-        pub fn $name(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
             let value = cpu.bus_read_timed(bus, cpu.get_hl());
             cpu.$method(value);
         }
@@ -20,7 +19,7 @@ macro_rules! alu_hl_mem {
 
 macro_rules! alu_d8 {
     ($name:ident, $method:ident) => {
-        pub fn $name(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
             let value = cpu.fetch8_timed(bus);
             cpu.$method(value);
         }
@@ -29,7 +28,7 @@ macro_rules! alu_d8 {
 
 macro_rules! inc8 {
     ($name:ident, $reg:ident) => {
-        pub fn $name(cpu: &mut Cpu, _bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
             cpu.regs.$reg = cpu.inc(cpu.regs.$reg);
         }
     };
@@ -37,7 +36,7 @@ macro_rules! inc8 {
 
 macro_rules! dec8 {
     ($name:ident, $reg:ident) => {
-        pub fn $name(cpu: &mut Cpu, _bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
             cpu.regs.$reg = cpu.dec(cpu.regs.$reg);
         }
     };
@@ -45,7 +44,7 @@ macro_rules! dec8 {
 
 macro_rules! inc16 {
     ($name:ident, $get:ident, $set:ident) => {
-        pub fn $name(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
             let value = cpu.inc_rp_timed(bus, cpu.$get());
             cpu.$set(value);
         }
@@ -54,7 +53,7 @@ macro_rules! inc16 {
 
 macro_rules! dec16 {
     ($name:ident, $get:ident, $set:ident) => {
-        pub fn $name(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
             let value = cpu.dec_rp_timed(bus, cpu.$get());
             cpu.$set(value);
         }
@@ -63,7 +62,7 @@ macro_rules! dec16 {
 
 macro_rules! add_hl_rp {
     ($name:ident, $get:ident) => {
-        pub fn $name(cpu: &mut Cpu, bus: &mut Bus) {
+        pub fn $name(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
             cpu.tick_internal_timed(bus, 4);
             let hl = cpu.get_hl();
             let rp = cpu.$get();
@@ -96,7 +95,7 @@ inc16!(inc_hl, get_hl, set_hl);
 inc8!(inc_h, h);
 dec8!(dec_h, h);
 
-pub fn daa(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn daa(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     let mut a = cpu.regs.a;
     let mut adjust = if cpu.get_c() { 0x60 } else { 0x00 };
 
@@ -127,37 +126,37 @@ dec16!(dec_hl, get_hl, set_hl);
 inc8!(inc_l, l);
 dec8!(dec_l, l);
 
-pub fn cpl(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn cpl(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     cpu.regs.a = !cpu.regs.a;
     cpu.set_n(true);
     cpu.set_h(true);
 }
 
-pub fn inc_sp(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn inc_sp(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     cpu.sp = cpu.inc_rp_timed(bus, cpu.sp);
 }
 
-pub fn inc_hl_val(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn inc_hl_val(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     let addr = cpu.get_hl();
     let val = cpu.bus_read_timed(bus, addr);
     let new_val = cpu.inc(val);
     cpu.bus_write_timed(bus, addr, new_val);
 }
 
-pub fn dec_hl_val(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn dec_hl_val(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     let addr = cpu.get_hl();
     let val = cpu.bus_read_timed(bus, addr);
     let new_val = cpu.dec(val);
     cpu.bus_write_timed(bus, addr, new_val);
 }
 
-pub fn scf(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn scf(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     cpu.set_n(false);
     cpu.set_h(false);
     cpu.set_c(true);
 }
 
-pub fn add_hl_sp(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn add_hl_sp(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     cpu.tick_internal_timed(bus, 4);
     let hl = cpu.get_hl();
     let sp = cpu.sp;
@@ -168,14 +167,14 @@ pub fn add_hl_sp(cpu: &mut Cpu, bus: &mut Bus) {
     cpu.set_hl(result);
 }
 
-pub fn dec_sp(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn dec_sp(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     cpu.sp = cpu.dec_rp_timed(bus, cpu.sp);
 }
 
 inc8!(inc_a, a);
 dec8!(dec_a, a);
 
-pub fn ccf(cpu: &mut Cpu, _bus: &mut Bus) {
+pub fn ccf(cpu: &mut Cpu, _bus: &mut impl GbCpuBus) {
     cpu.set_n(false);
     cpu.set_h(false);
     cpu.set_c(!cpu.get_c());
@@ -259,7 +258,7 @@ alu_d8!(sub_d8, sub);
 alu_d8!(sbc_a_d8, sbc);
 alu_d8!(and_d8, logical_and);
 
-pub fn add_sp_r8(cpu: &mut Cpu, bus: &mut Bus) {
+pub fn add_sp_r8(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
     let offset = cpu.fetch8_timed(bus) as i8 as i16 as u16;
     cpu.tick_internal_timed(bus, 8);
     let sp = cpu.sp;

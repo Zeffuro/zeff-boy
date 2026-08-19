@@ -19,6 +19,7 @@ pub struct Mmc3 {
     irq_pending: bool,
     irq_zero_from_decrement: bool,
     last_ppu_a12: bool,
+    ppu_a12_low_since: u64,
 }
 
 impl Mmc3 {
@@ -40,6 +41,7 @@ impl Mmc3 {
             irq_pending: false,
             irq_zero_from_decrement: false,
             last_ppu_a12: false,
+            ppu_a12_low_since: 0,
         }
     }
 
@@ -233,11 +235,33 @@ impl Mapper for Mmc3 {
         self.irq_reload = false;
     }
 
-    fn notify_ppu_a12(&mut self, high: bool) {
+    fn uses_qualified_ppu_a12(&self) -> bool {
+        true
+    }
+
+    fn notify_ppu_a12(&mut self, high: bool, ppu_cycle: u64) {
         if high && !self.last_ppu_a12 {
-            self.notify_scanline();
+            if ppu_cycle.wrapping_sub(self.ppu_a12_low_since) >= 8 {
+                self.notify_scanline();
+            }
+        } else if !high && self.last_ppu_a12 {
+            self.ppu_a12_low_since = ppu_cycle;
         }
         self.last_ppu_a12 = high;
+    }
+
+    fn write_ppu_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bool(self.last_ppu_a12);
+        w.write_u64(self.ppu_a12_low_since);
+    }
+
+    fn read_ppu_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.last_ppu_a12 = r.read_bool()?;
+        self.ppu_a12_low_since = r.read_u64()?;
+        Ok(())
     }
 
     fn write_state(&self, w: &mut crate::save_state::StateWriter) {
@@ -277,6 +301,7 @@ impl Mapper for Mmc3 {
         self.irq_pending = r.read_bool()?;
         self.irq_zero_from_decrement = r.read_bool()?;
         self.last_ppu_a12 = false;
+        self.ppu_a12_low_since = 0;
 
         crate::save_state::read_chr_state(r, &mut self.chr, "MMC3")?;
         Ok(())
