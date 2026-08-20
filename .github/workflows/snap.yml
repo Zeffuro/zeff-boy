@@ -54,6 +54,8 @@ jobs:
         if: inputs.existing_revision == ''
         id: build
         uses: canonical/action-build@6d723b848ffb875da54b8fa7a8fe060e6c3f55a7
+        with:
+          snapcraft-args: pack
 
       - name: Inspect and install Snap
         if: inputs.existing_revision == ''

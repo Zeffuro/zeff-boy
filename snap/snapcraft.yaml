@@ -19,6 +19,10 @@ platforms:
     build-on: [amd64]
     build-for: [amd64]
 
+layout:
+  /usr/share/X11/xkb:
+    bind: $SNAP/usr/share/X11/xkb
+
 apps:
   zeff-boy:
     command: bin/zeff-boy
@@ -64,3 +68,4 @@ parts:
       - libxi6
       - libxkbcommon0
       - libxkbcommon-x11-0
+      - xkb-data
