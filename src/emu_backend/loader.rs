@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
@@ -17,6 +18,7 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
     pub(crate) sega8_console_region: Option<Sega8Region>,
     pub(crate) firmware_search_dirs: Vec<PathBuf>,
+    pub(crate) firmware_inventory: Option<Arc<zeff_firmware::FirmwareInventory>>,
     pub(crate) gb_use_external_boot_rom: bool,
     pub(crate) gba_use_external_bios: bool,
     pub(crate) sega8_use_external_boot_rom: bool,
@@ -34,6 +36,7 @@ impl Default for BackendLoadConfig {
             sega8_video_standard: None,
             sega8_console_region: None,
             firmware_search_dirs: Vec::new(),
+            firmware_inventory: None,
             gb_use_external_boot_rom: false,
             gba_use_external_bios: false,
             sega8_use_external_boot_rom: false,
@@ -143,6 +146,7 @@ fn load_gb_backend(
         };
         Some(super::firmware::resolve_gb_boot_rom_with_manifest(
             firmware_id,
+            config.firmware_inventory.as_deref(),
             &config.firmware_search_dirs,
             Some(rom_path),
         )?)
@@ -227,7 +231,11 @@ fn resolve_fds_bios(
         });
     }
 
-    super::firmware::resolve_fds_bios_with_manifest(&_config.firmware_search_dirs, Some(rom_path))
+    super::firmware::resolve_fds_bios_with_manifest(
+        _config.firmware_inventory.as_deref(),
+        &_config.firmware_search_dirs,
+        Some(rom_path),
+    )
 }
 
 fn is_fds_path(path: &Path) -> bool {
@@ -247,6 +255,7 @@ fn load_gba_backend(
         .unwrap_or(zeff_gba_core::emulator::DEFAULT_SAMPLE_RATE);
     let external_bios = if config.gba_use_external_bios {
         Some(super::firmware::resolve_gba_bios_with_manifest(
+            config.firmware_inventory.as_deref(),
             &config.firmware_search_dirs,
             Some(rom_path),
         )?)
@@ -314,6 +323,7 @@ fn load_sega8_backend(
         Some(super::firmware::resolve_sega8_boot_rom_with_manifest(
             system,
             config.sega8_console_region.or(console_region_fallback),
+            config.firmware_inventory.as_deref(),
             &config.firmware_search_dirs,
             Some(rom_path),
         )?)

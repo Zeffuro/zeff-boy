@@ -29,6 +29,7 @@ pub(crate) use viewers::{
 };
 
 use super::DisassemblyView;
+use std::sync::Arc;
 use zeff_emu_common::address::Address;
 
 #[derive(Clone, Copy)]
@@ -72,12 +73,19 @@ pub(crate) struct FirmwareInventoryRow {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct FirmwareInventoryScanResult {
     pub(crate) directory: std::path::PathBuf,
-    pub(crate) result: Result<Vec<FirmwareInventoryRow>, String>,
+    pub(crate) result: Result<
+        (
+            Vec<FirmwareInventoryRow>,
+            Arc<zeff_firmware::FirmwareInventory>,
+        ),
+        String,
+    >,
 }
 
 pub(crate) struct FirmwareInventoryState {
     pub(crate) directory: Option<std::path::PathBuf>,
     pub(crate) rows: Vec<FirmwareInventoryRow>,
+    pub(crate) inventory: Option<Arc<zeff_firmware::FirmwareInventory>>,
     pub(crate) error: Option<String>,
     pub(crate) needs_refresh: bool,
     #[cfg(not(target_arch = "wasm32"))]
@@ -89,6 +97,7 @@ impl Default for FirmwareInventoryState {
         Self {
             directory: None,
             rows: Vec::new(),
+            inventory: None,
             error: None,
             needs_refresh: true,
             #[cfg(not(target_arch = "wasm32"))]

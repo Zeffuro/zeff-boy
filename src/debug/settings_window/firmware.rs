@@ -47,6 +47,7 @@ fn draw_native(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWind
             .changed()
         {
             state.firmware_inventory.needs_refresh = true;
+            state.firmware_inventory.inventory = None;
         }
 
         if ui.button("Browse...").clicked() {
@@ -57,6 +58,7 @@ fn draw_native(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWind
             if let Some(path) = dialog.pick_folder() {
                 settings.emulation.firmware_directory = path.to_string_lossy().to_string();
                 state.firmware_inventory.needs_refresh = true;
+                state.firmware_inventory.inventory = None;
             }
         }
 
@@ -159,12 +161,14 @@ fn poll_scan(state: &mut DebugWindowState) {
             state.firmware_inventory.directory = Some(directory);
             state.firmware_inventory.needs_refresh = false;
             match result {
-                Ok(rows) => {
+                Ok((rows, inventory)) => {
                     state.firmware_inventory.rows = rows;
+                    state.firmware_inventory.inventory = Some(inventory);
                     state.firmware_inventory.error = None;
                 }
                 Err(err) => {
                     state.firmware_inventory.rows.clear();
+                    state.firmware_inventory.inventory = None;
                     state.firmware_inventory.error = Some(err);
                 }
             }
@@ -176,7 +180,15 @@ fn poll_scan(state: &mut DebugWindowState) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn scan_firmware_rows(root: &Path) -> Result<Vec<FirmwareInventoryRow>, String> {
+fn scan_firmware_rows(
+    root: &Path,
+) -> Result<
+    (
+        Vec<FirmwareInventoryRow>,
+        std::sync::Arc<zeff_firmware::FirmwareInventory>,
+    ),
+    String,
+> {
     if !root.is_dir() {
         return Err("Directory does not exist or is not accessible.".to_owned());
     }
@@ -187,6 +199,7 @@ fn scan_firmware_rows(root: &Path) -> Result<Vec<FirmwareInventoryRow>, String> 
         .filter_map(|id| catalog.iter().find(|spec| spec.id == *id))
         .collect::<Vec<_>>();
     let mut found = BTreeMap::<&str, Vec<FirmwareInventoryRow>>::new();
+    let mut inventory = zeff_firmware::FirmwareInventory::new();
 
     for directory in
         crate::emu_backend::firmware::configured_firmware_inventory_dirs(&[root.to_path_buf()])
@@ -219,6 +232,7 @@ fn scan_firmware_rows(root: &Path) -> Result<Vec<FirmwareInventoryRow>, String> 
                 .map_err(|err| format!("Failed to read {}: {err}", entry.path().display()))?;
             let inventory_entry =
                 zeff_firmware::FirmwareInventoryEntry::from_bytes(bytes, Some(filename), catalog);
+            inventory.add(inventory_entry.clone());
             found.entry(spec.id).or_default().push(row_for_entry(
                 root,
                 &entry.path(),
@@ -257,7 +271,7 @@ fn scan_firmware_rows(root: &Path) -> Result<Vec<FirmwareInventoryRow>, String> 
             });
         }
     }
-    Ok(rows)
+    Ok((rows, std::sync::Arc::new(inventory)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -440,7 +454,7 @@ mod tests {
         std::fs::write(dir.join("unrelated.bin"), vec![0; 1_000_000]).unwrap();
         std::fs::write(dir.join("gba_bios.bin"), vec![0; 16_384]).unwrap();
 
-        let rows = scan_firmware_rows(&dir).unwrap();
+        let (rows, inventory) = scan_firmware_rows(&dir).unwrap();
 
         assert!(
             !rows
@@ -451,6 +465,7 @@ mod tests {
             row.firmware_id == "nintendo.gba.bios"
                 && row.status == FirmwareInventoryStatusKind::UnknownHash
         }));
+        assert_eq!(inventory.entries().len(), 1);
         assert!(rows.iter().any(|row| {
             row.firmware_id == "nintendo.fds.bios"
                 && row.status == FirmwareInventoryStatusKind::NotFound
@@ -467,7 +482,7 @@ mod tests {
         std::fs::write(root.join("cgb_boot.bin"), vec![0; 2_304]).unwrap();
         std::fs::write(child.join("cgb_boot.bin"), vec![1; 2_304]).unwrap();
 
-        let rows = scan_firmware_rows(&root).unwrap();
+        let (rows, inventory) = scan_firmware_rows(&root).unwrap();
         let paths = rows
             .iter()
             .filter(|row| row.firmware_id == "nintendo.gb.boot.cgb")
@@ -481,6 +496,7 @@ mod tests {
                 PathBuf::from("SkyEmu").join("cgb_boot.bin"),
             ]
         );
+        assert_eq!(inventory.entries().len(), 2);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 }

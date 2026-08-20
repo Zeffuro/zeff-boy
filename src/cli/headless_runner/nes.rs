@@ -13,7 +13,7 @@ pub(super) fn run_nes_headless(
         .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"))
     {
         let bios =
-            crate::emu_backend::firmware::resolve_fds_bios(firmware_search_dirs, Some(path))?;
+            crate::emu_backend::firmware::resolve_fds_bios(None, firmware_search_dirs, Some(path))?;
         NesEmulator::new_fds(rom_data, bios, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?
     } else {
         NesEmulator::new(rom_data, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?

@@ -7,40 +7,19 @@ use std::fmt;
 mod dma;
 mod io_bus;
 mod lifecycle;
+mod link;
 mod mem_map;
 mod oam_corruption;
 mod state;
 mod trace;
 
+pub use link::{
+    GameBoyLinkAction, GameBoyLinkExchangeError, GameBoyLinkExchangeOutcome,
+    GameBoyLinkExchangeSide, GameBoyLinkReply, GameBoyLinkReplyDisposition, GameBoyLinkState,
+    GameBoyLinkTransferExchange,
+};
 pub use oam_corruption::OamCorruptionType;
 pub use trace::CpuAccessTraceEvent;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GameBoyLinkState {
-    pub pending_master_byte: Option<u8>,
-    pub external_clock_byte: Option<u8>,
-    pub output_byte: u8,
-}
-
-impl GameBoyLinkState {
-    pub fn is_idle(self) -> bool {
-        self.pending_master_byte.is_none() && self.external_clock_byte.is_none()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GameBoyLinkAction {
-    pub out_byte: u8,
-    pub clock_period_t_cycles: u64,
-    pub serial_generation: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GameBoyLinkReply {
-    pub out_byte: u8,
-    pub passive: bool,
-    pub serial_generation: u64,
-}
 
 pub struct Bus {
     pub cartridge: Cartridge,
@@ -476,127 +455,6 @@ impl Bus {
     pub(in crate::hardware) fn step_serial(&mut self, t_cycles: u64) {
         if self.io.serial.step(t_cycles, &mut self.io.printer) {
             self.if_reg |= 0x08;
-        }
-    }
-
-    pub fn set_game_boy_link_peer_present(&mut self, present: bool) {
-        self.io.serial.set_link_peer_present(present);
-    }
-
-    pub fn restore_game_boy_link_peer_present_without_action(&mut self, present: bool) {
-        self.io
-            .serial
-            .restore_link_peer_present_without_action(present);
-    }
-
-    pub fn game_boy_link_state(&self) -> GameBoyLinkState {
-        self.io.serial.link_state()
-    }
-
-    pub fn game_boy_link_pending_master_response(&self) -> bool {
-        self.io.serial.pending_link_byte().is_some()
-            && self.io.serial.pending_link_response().is_none()
-    }
-
-    pub fn game_boy_link_waiting_at_completion_boundary(&self) -> bool {
-        self.io.serial.waiting_at_link_completion_boundary()
-    }
-
-    pub fn take_game_boy_link_action(&mut self) -> Option<GameBoyLinkAction> {
-        self.io.serial.take_link_action()
-    }
-
-    pub fn game_boy_link_replay_state(&self) -> zeff_emu_common::replay::ReplayGameBoyLinkState {
-        self.io.serial.replay_link_state()
-    }
-
-    pub fn restore_game_boy_link_replay_state(
-        &mut self,
-        state: zeff_emu_common::replay::ReplayGameBoyLinkState,
-    ) {
-        self.io.serial.restore_replay_link_state(state);
-    }
-
-    pub fn game_boy_link_reply_to_master_start(&self) -> GameBoyLinkReply {
-        self.io.serial.reply_to_master_start()
-    }
-
-    pub fn apply_game_boy_link_reply(&mut self, reply: GameBoyLinkReply) -> bool {
-        let completed = self.io.serial.apply_link_reply(reply);
-        if completed && self.io.serial.pending_link_byte().is_none() {
-            self.if_reg |= 0x08;
-        }
-        completed
-    }
-
-    pub fn complete_game_boy_external_link_transfer(&mut self, peer_byte: u8) -> bool {
-        let completed = self.io.serial.complete_external_from_master(peer_byte);
-        if completed {
-            self.if_reg |= 0x08;
-        }
-        completed
-    }
-
-    pub fn schedule_game_boy_external_link_transfer(&mut self, peer_byte: u8, period: u64) -> bool {
-        self.io
-            .serial
-            .schedule_external_from_master(peer_byte, period)
-    }
-
-    pub fn sync_game_boy_remote_link_peer(&mut self, peer_state: GameBoyLinkState) -> bool {
-        self.sync_game_boy_remote_link_peer_with_idle_response(peer_state, None)
-    }
-
-    pub fn sync_game_boy_remote_link_peer_with_idle_response(
-        &mut self,
-        peer_state: GameBoyLinkState,
-        idle_master_response: Option<u8>,
-    ) -> bool {
-        self.io.serial.set_link_peer_present(true);
-        let completed = self
-            .io
-            .serial
-            .apply_remote_link_peer_state(peer_state, idle_master_response);
-        if completed {
-            self.if_reg |= 0x08;
-        }
-        completed
-    }
-
-    pub fn sync_game_boy_link_peer(&mut self, peer: &mut Self) {
-        self.io.serial.set_link_peer_present(true);
-        peer.io.serial.set_link_peer_present(true);
-
-        if let Some(action) = self.io.serial.take_link_action() {
-            let reply = peer.io.serial.reply_to_master_start();
-            let completed_self = self.io.serial.apply_link_reply(reply);
-            if completed_self && self.io.serial.pending_link_byte().is_none() {
-                self.if_reg |= 0x08;
-            }
-            if reply.passive
-                && peer
-                    .io
-                    .serial
-                    .complete_external_from_master(action.out_byte)
-            {
-                peer.if_reg |= 0x08;
-            }
-        }
-
-        if let Some(action) = peer.io.serial.take_link_action() {
-            let reply = self.io.serial.reply_to_master_start();
-            let completed_peer = peer.io.serial.apply_link_reply(reply);
-            if completed_peer && peer.io.serial.pending_link_byte().is_none() {
-                peer.if_reg |= 0x08;
-            }
-            if reply.passive
-                && self
-                    .io
-                    .serial
-                    .complete_external_from_master(action.out_byte)
-            {
-                self.if_reg |= 0x08;
-            }
         }
     }
 

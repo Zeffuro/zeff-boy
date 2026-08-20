@@ -13,6 +13,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build (${{ matrix.target }})
@@ -22,7 +26,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             artifact: zeff-boy
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -51,8 +55,8 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
         run: |
           cd target/${{ matrix.target }}/release
           cp ../../../packaging/zeff-boy.desktop .
@@ -61,6 +65,15 @@ jobs:
           cp ../../../assets/icon.png zeff-boy.png
           tar czf ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
             ${{ matrix.artifact }} zeff-boy.desktop LICENSE-MIT LICENSE-APACHE zeff-boy.png
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/package-macos.sh \
+            "${{ github.ref_name }}" \
+            "target/${{ matrix.target }}/release/${{ matrix.artifact }}" \
+            .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -225,9 +238,150 @@ jobs:
           name: zeff-boy-appimage
           path: zeff-boy-${{ github.ref_name }}-x86_64.AppImage
 
+  linux-packages:
+    name: Linux packages
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download Linux build
+        uses: actions/download-artifact@v8
+        with:
+          name: zeff-boy-x86_64-unknown-linux-gnu
+          path: linux-artifact
+
+      - name: Extract binary
+        run: |
+          cd linux-artifact
+          tar xzf zeff-boy-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y appstream desktop-file-utils lintian rpm
+
+      - name: Check Linux compatibility floor
+        run: |
+          MAX_GLIBC=$(objdump -T linux-artifact/zeff-boy \
+            | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -Vu | tail -n1)
+          echo "Maximum required GLIBC version: ${MAX_GLIBC}"
+          dpkg --compare-versions "${MAX_GLIBC}" le "2.35"
+
+      - name: Build and inspect packages
+        run: |
+          bash scripts/package-linux.sh \
+            "${{ github.ref_name }}" linux-artifact/zeff-boy linux-packages
+          desktop-file-validate packaging/zeff-boy.desktop
+          appstreamcli validate --no-net packaging/com.github.zeffuro.zeff-boy.metainfo.xml
+          lintian --pedantic --fail-on error linux-packages/*.deb
+
+      - name: Test package installation
+        run: |
+          docker run --rm -v "$PWD/linux-packages:/packages:ro" ubuntu:22.04 \
+            bash -c 'apt-get update && apt-get install -y /packages/*.deb xvfb mesa-vulkan-drivers && ! ldd /usr/bin/zeff-boy | grep -q "not found" && timeout 10s xvfb-run -a env ZEFF_MUTE_AUDIO=1 /usr/bin/zeff-boy >/tmp/zeff-boy.log 2>&1; test $? -eq 124'
+          docker run --rm -v "$PWD/linux-packages:/packages:ro" ubuntu:24.04 \
+            bash -c 'apt-get update && apt-get install -y /packages/*.deb && ! ldd /usr/bin/zeff-boy | grep -q "not found"'
+          docker run --rm -v "$PWD/linux-packages:/packages:ro" fedora:43 \
+            bash -c 'dnf install -y /packages/*.rpm && ! ldd /usr/bin/zeff-boy | grep -q "not found"'
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeff-boy-linux-packages
+          path: linux-packages/*
+
+  flatpak:
+    name: Flatpak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Flatpak toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:flatpak/stable
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder gnupg zstd
+          flatpak --version
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+      - name: Restore previous custom repository
+        id: previous-repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p previous-flatpak
+          while read -r TAG; do
+            rm -f previous-flatpak/zeff-boy-flatpak-repo.tar.zst
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern zeff-boy-flatpak-repo.tar.zst \
+              --dir previous-flatpak; then
+              echo "Restoring Flatpak repository from ${TAG}"
+              break
+            fi
+          done < <(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,publishedAt \
+            --jq 'sort_by(.publishedAt) | reverse | .[].tagName')
+          ARCHIVE=$(find previous-flatpak -type f -name '*.tar.zst' -print -quit)
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Flatpak artifacts
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+        run: |
+          bash scripts/package-flatpak.sh \
+            "${{ github.ref_name }}" flatpak-output \
+            "${{ steps.previous-repo.outputs.archive }}"
+
+      - name: Inspect Flatpak bundle
+        run: |
+          mkdir -p flatpak-test-site/flatpak
+          tar --zstd -xf flatpak-output/zeff-boy-flatpak-repo.tar.zst \
+            -C flatpak-test-site/flatpak
+          sed 's#^Url=.*#Url=http://127.0.0.1:18080/flatpak/repo/#' \
+            flatpak-output/com.github.zeffuro.zeff-boy.flatpakref \
+            > flatpak-output/test.flatpakref
+          python3 -m http.server 18080 --directory flatpak-test-site &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID"' EXIT
+          flatpak install --user --noninteractive -y flatpak-output/test.flatpakref
+          flatpak info --user com.github.zeffuro.zeff-boy
+          flatpak info --user --show-permissions com.github.zeffuro.zeff-boy
+          flatpak run --user --command=sh com.github.zeffuro.zeff-boy \
+            -c 'test -x /app/bin/zeff-boy'
+
+      - name: Upload Flatpak artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeff-boy-flatpak
+          path: flatpak-output/*
+
+  publish-pages:
+    name: Publish Flatpak repository
+    needs: [flatpak, release]
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-pages.yml
+    with:
+      flatpak_artifact: zeff-boy-flatpak
+
   release:
-    name: Create Release
-    needs: [build, libretro, appimage]
+    name: Create draft release
+    needs: [build, libretro, appimage, linux-packages, flatpak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -254,12 +408,32 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           generate_release_notes: true
           files: artifacts/*
 
+  publish-release:
+    name: Publish release
+    needs: publish-pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+
+  publish-snap:
+    name: Publish Snap
+    needs: publish-release
+    uses: ./.github/workflows/snap.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+
   update-scoop:
     name: Update Scoop manifest
-    needs: release
+    needs: publish-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -295,9 +469,27 @@ jobs:
           git diff --cached --quiet || git commit -m "Update zeff-boy to ${GITHUB_REF_NAME}"
           git push
 
+  update-winget:
+    name: Submit WinGet update
+    needs: publish-release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: winget-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Submit updated manifest
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: ./scripts/submit-winget.ps1 -Version "${{ github.ref_name }}"
+
   update-homebrew:
     name: Update Homebrew cask
-    needs: release
+    needs: publish-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -308,7 +500,7 @@ jobs:
       - name: Update cask
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          URL="https://github.com/Zeffuro/zeff-boy/releases/download/v${VERSION}/zeff-boy-v${VERSION}-aarch64-apple-darwin.tar.gz"
+          URL="https://github.com/Zeffuro/zeff-boy/releases/download/v${VERSION}/zeff-boy-v${VERSION}-aarch64-apple-darwin.dmg"
           SHA256=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
           python3 -c "
           v, s = '${VERSION}', '${SHA256}'
@@ -316,12 +508,14 @@ jobs:
             version \"{v}\"
             sha256 \"{s}\"
 
-            url \"https://github.com/Zeffuro/zeff-boy/releases/download/v#{{version}}/zeff-boy-v#{{version}}-aarch64-apple-darwin.tar.gz\"
+            url \"https://github.com/Zeffuro/zeff-boy/releases/download/v#{{version}}/zeff-boy-v#{{version}}-aarch64-apple-darwin.dmg\"
             name \"zeff-boy\"
             desc \"A Game Boy, Game Boy Color, and NES emulator written in Rust\"
             homepage \"https://github.com/Zeffuro/zeff-boy\"
 
-            binary \"zeff-boy\"
+            depends_on arch: :arm64
+
+            app \"Zeff Boy.app\"
 
             livecheck do
               url :url
@@ -340,7 +534,7 @@ jobs:
 
   update-aur:
     name: Update AUR
-    needs: release
+    needs: publish-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

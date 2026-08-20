@@ -37,22 +37,51 @@ pub(crate) fn default_firmware_manifests_for_active_system(
     .collect()
 }
 
+fn resolve_from_inventory(
+    firmware_id: &str,
+    plan: &[zeff_firmware::FirmwareRequest],
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
+) -> Option<ResolvedFirmwareBytes> {
+    let inventory = inventory?;
+    let resolution =
+        zeff_firmware::FirmwareResolver::new(zeff_firmware::catalog_specs(), inventory)
+            .resolve(plan);
+    resolution.entries.into_iter().find_map(|entry| {
+        (entry.request.id.as_ref() == firmware_id)
+            .then_some(entry)
+            .and_then(|entry| {
+                let zeff_firmware::FirmwareSelection::External(firmware) = entry.selection else {
+                    return None;
+                };
+                Some(ResolvedFirmwareBytes {
+                    bytes: firmware.bytes.to_vec(),
+                    manifest: replay_firmware_manifest(firmware.selection_manifest()),
+                })
+            })
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_fds_bios(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<Vec<u8>> {
-    Ok(resolve_fds_bios_with_manifest(firmware_roots, content_path)?.bytes)
+    Ok(resolve_fds_bios_with_manifest(inventory, firmware_roots, content_path)?.bytes)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_fds_bios_with_manifest(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
     const FDS_BIOS_ID: &str = "nintendo.fds.bios";
 
     let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
+    if let Some(resolved) = resolve_from_inventory(FDS_BIOS_ID, &plan, inventory) {
+        return Ok(resolved);
+    }
     let (resolved, search_dirs, candidate_summaries) =
         find_external_firmware(FDS_BIOS_ID, &plan, firmware_roots, content_path)?;
     if let Some(resolved) = resolved {
@@ -82,11 +111,15 @@ pub(crate) fn resolve_fds_bios_with_manifest(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_gba_bios_with_manifest(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
     const GBA_BIOS_ID: &str = "nintendo.gba.bios";
     let plan = firmware_plan_for_active_system(ActiveSystem::GameBoyAdvance);
+    if let Some(resolved) = resolve_from_inventory(GBA_BIOS_ID, &plan, inventory) {
+        return Ok(resolved);
+    }
     let (resolved, search_dirs, candidate_summaries) =
         find_external_firmware(GBA_BIOS_ID, &plan, firmware_roots, content_path)?;
     if let Some(resolved) = resolved {
@@ -103,10 +136,14 @@ pub(crate) fn resolve_gba_bios_with_manifest(
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_gb_boot_rom_with_manifest(
     firmware_id: &str,
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
     let plan = firmware_plan_for_active_system(ActiveSystem::GameBoy);
+    if let Some(resolved) = resolve_from_inventory(firmware_id, &plan, inventory) {
+        return Ok(resolved);
+    }
     let (resolved, search_dirs, candidate_summaries) =
         find_external_firmware(firmware_id, &plan, firmware_roots, content_path)?;
     if let Some(resolved) = resolved {
@@ -129,6 +166,7 @@ pub(crate) fn resolve_gb_boot_rom_with_manifest(
 pub(crate) fn resolve_sega8_boot_rom_with_manifest(
     system: ActiveSystem,
     region: Option<zeff_sega8_core::hardware::region::Sega8Region>,
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
@@ -150,6 +188,9 @@ pub(crate) fn resolve_sega8_boot_rom_with_manifest(
                 "japan".to_owned()
             }
         });
+    }
+    if let Some(resolved) = resolve_from_inventory(firmware_id, &plan, inventory) {
+        return Ok(resolved);
     }
     let (resolved, search_dirs, candidate_summaries) =
         find_external_firmware(firmware_id, &plan, firmware_roots, content_path)?;
@@ -232,9 +273,14 @@ fn searched_firmware_dirs(search_dirs: &[FirmwareSearchDir]) -> String {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_fds_bios(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     _firmware_roots: &[std::path::PathBuf],
     _content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<Vec<u8>> {
+    let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
+    if let Some(resolved) = resolve_from_inventory("nintendo.fds.bios", &plan, inventory) {
+        return Ok(resolved.bytes);
+    }
     anyhow::bail!(
         "Famicom Disk System firmware is required, but browser firmware storage/import is not wired yet"
     )
@@ -242,9 +288,14 @@ pub(crate) fn resolve_fds_bios(
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_fds_bios_with_manifest(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     _firmware_roots: &[std::path::PathBuf],
     _content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
+    let plan = zeff_firmware::firmware_plan_for_famicom_disk_system();
+    if let Some(resolved) = resolve_from_inventory("nintendo.fds.bios", &plan, inventory) {
+        return Ok(resolved);
+    }
     anyhow::bail!(
         "Famicom Disk System firmware is required, but browser firmware storage/import is not wired yet"
     )
@@ -252,28 +303,61 @@ pub(crate) fn resolve_fds_bios_with_manifest(
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_gba_bios_with_manifest(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     _firmware_roots: &[std::path::PathBuf],
     _content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
+    let plan = firmware_plan_for_active_system(ActiveSystem::GameBoyAdvance);
+    if let Some(resolved) = resolve_from_inventory("nintendo.gba.bios", &plan, inventory) {
+        return Ok(resolved);
+    }
     anyhow::bail!("External GBA BIOS import is not available in the browser build")
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_gb_boot_rom_with_manifest(
-    _firmware_id: &str,
+    firmware_id: &str,
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     _firmware_roots: &[std::path::PathBuf],
     _content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
+    let plan = firmware_plan_for_active_system(ActiveSystem::GameBoy);
+    if let Some(resolved) = resolve_from_inventory(firmware_id, &plan, inventory) {
+        return Ok(resolved);
+    }
     anyhow::bail!("External Game Boy boot ROM import is not available in the browser build")
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_sega8_boot_rom_with_manifest(
-    _system: ActiveSystem,
-    _region: Option<zeff_sega8_core::hardware::region::Sega8Region>,
+    system: ActiveSystem,
+    region: Option<zeff_sega8_core::hardware::region::Sega8Region>,
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
     _firmware_roots: &[std::path::PathBuf],
     _content_path: Option<&std::path::Path>,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
+    let firmware_id = match system {
+        ActiveSystem::MasterSystem => "sega.sms.boot",
+        ActiveSystem::GameGear => "sega.gg.boot",
+        _ => anyhow::bail!("{system:?} does not use Sega 8-bit boot firmware"),
+    };
+    let mut plan = firmware_plan_for_active_system(system);
+    if system == ActiveSystem::MasterSystem
+        && let Some(request) = plan
+            .iter_mut()
+            .find(|request| request.id.as_ref() == firmware_id)
+    {
+        request.region = region.map(|region| match region {
+            zeff_sega8_core::hardware::region::Sega8Region::Export => "export".to_owned(),
+            zeff_sega8_core::hardware::region::Sega8Region::Japanese
+            | zeff_sega8_core::hardware::region::Sega8Region::JapanesePowerBaseConverter => {
+                "japan".to_owned()
+            }
+        });
+    }
+    if let Some(resolved) = resolve_from_inventory(firmware_id, &plan, inventory) {
+        return Ok(resolved);
+    }
     anyhow::bail!("External Sega boot ROM import is not available in the browser build")
 }
 
@@ -513,7 +597,7 @@ mod tests {
     #[ignore = "requires ZEFF_FIRMWARE_TEST_DIR with a retail GBA BIOS"]
     fn configured_retail_gba_bios_resolves_as_external() {
         let root = std::path::PathBuf::from(std::env::var("ZEFF_FIRMWARE_TEST_DIR").unwrap());
-        let resolved = resolve_gba_bios_with_manifest(&[root], None).unwrap();
+        let resolved = resolve_gba_bios_with_manifest(None, &[root], None).unwrap();
 
         assert_eq!(resolved.bytes.len(), 16_384);
         assert!(matches!(
@@ -523,6 +607,48 @@ mod tests {
                 ..
             } if firmware_id == "nintendo.gba.bios"
         ));
+    }
+
+    #[test]
+    fn injected_inventory_resolves_before_missing_search_roots() {
+        let mut inventory = zeff_firmware::FirmwareInventory::new();
+        inventory.add(
+            zeff_firmware::FirmwareInventoryEntry::from_bytes_with_legacy_digests(
+                vec![0; 16_384],
+                Some("gba_bios.bin".to_owned()),
+                Some("a860e8c0b6d573d191e4ec7db1b1e4f6".to_owned()),
+                None,
+                zeff_firmware::catalog_specs(),
+            ),
+        );
+
+        let resolved = resolve_gba_bios_with_manifest(
+            Some(&inventory),
+            &[std::path::PathBuf::from("does-not-exist")],
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.bytes.len(), 16_384);
+        assert!(matches!(
+            resolved.manifest,
+            zeff_emu_common::replay::ReplayFirmwareManifest::External {
+                ref firmware_id,
+                ..
+            } if firmware_id == "nintendo.gba.bios"
+        ));
+    }
+
+    #[test]
+    fn empty_injected_inventory_keeps_native_search_fallback() {
+        let err = resolve_gba_bios_with_manifest(
+            Some(&zeff_firmware::FirmwareInventory::new()),
+            &[std::path::PathBuf::from("does-not-exist")],
+            None,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("does-not-exist"));
     }
 
     #[test]

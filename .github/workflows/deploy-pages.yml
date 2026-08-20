@@ -4,6 +4,13 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      flatpak_artifact:
+        description: Signed Flatpak repository artifact from the calling workflow
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -12,7 +19,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -35,6 +42,45 @@ jobs:
       - name: Build
         run: trunk build --release --public-url /zeff-boy/
 
+      - name: Download current Flatpak repository
+        if: inputs.flatpak_artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.flatpak_artifact }}
+          path: flatpak-release
+
+      - name: Add custom Flatpak repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_CURRENT_REPO: ${{ inputs.flatpak_artifact != '' }}
+        run: |
+          ARCHIVE=$(find flatpak-release -type f \
+            -name 'zeff-boy-flatpak-repo.tar.zst' -print -quit 2>/dev/null || true)
+          if [ -z "$ARCHIVE" ] && [ "$REQUIRE_CURRENT_REPO" != "true" ]; then
+            mkdir -p flatpak-release
+            while read -r TAG; do
+              rm -f flatpak-release/zeff-boy-flatpak-repo.tar.zst
+              if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern zeff-boy-flatpak-repo.tar.zst \
+                --dir flatpak-release; then
+                ARCHIVE=flatpak-release/zeff-boy-flatpak-repo.tar.zst
+                echo "Restored Flatpak repository from ${TAG}"
+                break
+              fi
+            done < <(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+              --json tagName,publishedAt \
+              --jq 'sort_by(.publishedAt) | reverse | .[].tagName')
+          fi
+          if [ -n "$ARCHIVE" ]; then
+            mkdir -p dist/flatpak
+            tar --zstd -xf "$ARCHIVE" -C dist/flatpak
+          elif [ "$REQUIRE_CURRENT_REPO" = "true" ]; then
+            echo "::error::The release did not produce a signed Flatpak repository"
+            exit 1
+          else
+            echo "No signed Flatpak repository release asset is available yet"
+          fi
+
       - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
@@ -48,3 +94,11 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Verify hosted Flatpak repository
+        if: inputs.flatpak_artifact != ''
+        run: |
+          curl --fail --retry 8 --retry-delay 5 \
+            "${{ steps.deployment.outputs.page_url }}flatpak/repo/summary" >/dev/null
+          curl --fail --retry 8 --retry-delay 5 \
+            "${{ steps.deployment.outputs.page_url }}flatpak/com.github.zeffuro.zeff-boy.flatpakref" >/dev/null

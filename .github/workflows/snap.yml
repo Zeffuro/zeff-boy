@@ -1,0 +1,118 @@
+name: Snap Store
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Published GitHub release tag to package
+        required: true
+        type: string
+      existing_revision:
+        description: Existing Store revision to release instead of rebuilding
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published GitHub release tag to package
+        required: true
+        default: v0.2.0
+        type: string
+      existing_revision:
+        description: Existing Store revision to release instead of rebuilding
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  attestations: read
+  contents: read
+
+concurrency:
+  group: snap-zeff-boy-stable
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.release_tag }}
+    runs-on: ubuntu-24.04
+    environment: snap-stable
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Prepare published release payload
+        if: inputs.existing_revision == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_GITHUB_ATTESTATION: "1"
+        run: bash scripts/prepare-snap.sh "${{ inputs.release_tag }}"
+
+      - name: Build Snap
+        if: inputs.existing_revision == ''
+        id: build
+        uses: canonical/action-build@6d723b848ffb875da54b8fa7a8fe060e6c3f55a7
+
+      - name: Inspect and install Snap
+        if: inputs.existing_revision == ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools xvfb
+          SNAP_FILE="${{ steps.build.outputs.snap }}"
+          VERSION="${{ inputs.release_tag }}"
+          VERSION="${VERSION#v}"
+          unsquashfs -cat "$SNAP_FILE" meta/snap.yaml | grep -F 'name: zeff-boy'
+          unsquashfs -cat "$SNAP_FILE" meta/snap.yaml | grep -Fx "version: '$VERSION'" \
+            || unsquashfs -cat "$SNAP_FILE" meta/snap.yaml | grep -Fx "version: $VERSION"
+          sudo snap install --dangerous "$SNAP_FILE"
+          snap run --shell zeff-boy -c 'test -x "$SNAP/bin/zeff-boy"'
+          snap run --shell zeff-boy -c \
+            'ldd "$SNAP/bin/zeff-boy" | tee /tmp/zeff-boy-ldd; ! grep -q "not found" /tmp/zeff-boy-ldd'
+          set +e
+          timeout 15s xvfb-run -a env ZEFF_MUTE_AUDIO=1 snap run zeff-boy \
+            > snap-smoke.log 2>&1
+          STATUS=$?
+          set -e
+          if [[ $STATUS -ne 124 ]]; then
+            cat snap-smoke.log
+            exit 1
+          fi
+
+      - name: Upload workflow artifact
+        if: inputs.existing_revision == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeff-boy-snap-${{ inputs.release_tag }}
+          path: ${{ steps.build.outputs.snap }}
+
+      - name: Upload and publish to stable
+        if: inputs.existing_revision == ''
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          test -n "$SNAPCRAFT_STORE_CREDENTIALS"
+          set -o pipefail
+          snapcraft upload "${{ steps.build.outputs.snap }}" --release=stable \
+            2>&1 | tee snapcraft-upload.log
+          cat snapcraft-upload.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save Store upload log
+        if: always() && inputs.existing_revision == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeff-boy-snap-store-${{ inputs.release_tag }}
+          path: snapcraft-upload.log
+          if-no-files-found: ignore
+
+      - name: Release an existing revision to stable
+        if: inputs.existing_revision != ''
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          REVISION: ${{ inputs.existing_revision }}
+        run: |
+          test -n "$SNAPCRAFT_STORE_CREDENTIALS"
+          [[ "$REVISION" =~ ^[0-9]+$ ]]
+          sudo snap install snapcraft --classic --channel=9.x/stable
+          snapcraft release zeff-boy "$REVISION" stable

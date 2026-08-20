@@ -201,6 +201,15 @@ impl Serial {
         self.queued_link_action.take()
     }
 
+    pub(super) fn link_action(&self) -> Option<GameBoyLinkAction> {
+        self.queued_link_action
+    }
+
+    pub(super) fn link_action_is_current(&self, action: GameBoyLinkAction) -> bool {
+        self.pending_link_byte == Some(action.out_byte)
+            && self.serial_generation == action.serial_generation
+    }
+
     pub(super) fn replay_link_state(&self) -> ReplayGameBoyLinkState {
         ReplayGameBoyLinkState {
             peer_present: self.link_peer_present,

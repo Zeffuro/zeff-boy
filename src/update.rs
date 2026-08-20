@@ -290,7 +290,7 @@ fn asset_matches_platform(name: &str) -> bool {
     #[cfg(target_os = "windows")]
     return name.ends_with("x86_64-pc-windows-msvc.zip");
     #[cfg(target_os = "macos")]
-    return name.ends_with("aarch64-apple-darwin.tar.gz");
+    return name.ends_with("aarch64-apple-darwin.dmg");
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return name.ends_with("x86_64.AppImage");
     #[allow(unreachable_code)]

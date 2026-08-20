@@ -97,6 +97,15 @@ impl App {
         rom_path: &Path,
         preloaded_data: Option<Vec<u8>>,
     ) -> anyhow::Result<(EmuBackend, u32)> {
+        let configured_firmware_dir = self.settings.emulation.firmware_directory_path();
+        let firmware_inventory = if !self.debug_windows.firmware_inventory.needs_refresh
+            && self.debug_windows.firmware_inventory.directory.as_deref()
+                == configured_firmware_dir.as_deref()
+        {
+            self.debug_windows.firmware_inventory.inventory.clone()
+        } else {
+            None
+        };
         let loaded = load_backend_from_rom_source(
             system,
             path,
@@ -114,6 +123,7 @@ impl App {
                     .forced_standard(),
                 sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
                 firmware_search_dirs: self.settings.emulation.firmware_search_dirs(),
+                firmware_inventory,
                 gb_use_external_boot_rom: matches!(
                     self.settings.emulation.gb_boot_rom_mode,
                     crate::settings::GbBootRomMode::External

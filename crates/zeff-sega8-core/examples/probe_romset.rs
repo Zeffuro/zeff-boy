@@ -1053,6 +1053,7 @@ fn system_label(system: Sega8System) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
     #[test]
     fn mapper_write_observation_classifies_known_registers() {
@@ -1061,9 +1062,14 @@ mod tests {
         record_observed_bus_event(
             &mut observations,
             CpuAccessTraceEvent::Write {
-                addr: MAPPER_SLOT1_BANK,
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: u32::from(MAPPER_SLOT1_BANK),
                 old_value: 0,
+                written_value: 3,
                 new_value: 3,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             },
         );
         assert!(observations.sega_mapper_write);
@@ -1072,9 +1078,14 @@ mod tests {
         record_observed_bus_event(
             &mut observations,
             CpuAccessTraceEvent::Write {
-                addr: SLOT1_START,
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: u32::from(SLOT1_START),
                 old_value: 0,
+                written_value: 2,
                 new_value: 2,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             },
         );
         assert!(observations.codemasters_like_mapper_write);
@@ -1082,9 +1093,14 @@ mod tests {
         record_observed_bus_event(
             &mut observations,
             CpuAccessTraceEvent::Write {
-                addr: SLOT1_START + 1,
+                at: None,
+                space: TraceWriteKind::Memory,
+                addr: u32::from(SLOT1_START + 1),
                 old_value: 0,
+                written_value: 2,
                 new_value: 2,
+                width: TraceWriteWidth::Byte,
+                mapped_addr: None,
             },
         );
         assert!(observations.other_rom_space_write);

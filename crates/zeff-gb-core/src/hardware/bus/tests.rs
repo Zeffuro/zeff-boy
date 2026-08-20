@@ -33,6 +33,139 @@ fn make_cgb_compat_test_bus() -> Bus {
 }
 
 #[test]
+fn link_exchange_accepts_simultaneous_master_replies_before_completion() {
+    let mut left = make_test_bus();
+    let mut right = make_test_bus();
+    assert_eq!(
+        left.try_sync_game_boy_link_peer(&mut right),
+        Ok(GameBoyLinkExchangeOutcome::Idle)
+    );
+
+    left.write_byte(SERIAL_SB, 0xAB);
+    right.write_byte(SERIAL_SB, 0x34);
+    left.write_byte(SERIAL_SC, 0x81);
+    right.write_byte(SERIAL_SC, 0x81);
+
+    let pending = GameBoyLinkTransferExchange {
+        reply: GameBoyLinkReplyDisposition::AcceptedPending,
+        passive_responder_completed: false,
+    };
+    assert_eq!(
+        left.try_sync_game_boy_link_peer(&mut right),
+        Ok(GameBoyLinkExchangeOutcome::Exchanged {
+            local_action: Some(pending),
+            peer_action: Some(pending),
+        })
+    );
+    assert_eq!(left.read_byte(SERIAL_SB), 0xAB);
+    assert_eq!(right.read_byte(SERIAL_SB), 0x34);
+
+    left.step_serial(4096);
+    right.step_serial(4096);
+    assert_eq!(left.read_byte(SERIAL_SB), 0x34);
+    assert_eq!(right.read_byte(SERIAL_SB), 0xAB);
+    assert_ne!(left.if_reg & 0x08, 0);
+    assert_ne!(right.if_reg & 0x08, 0);
+}
+
+#[test]
+fn link_exchange_snapshots_both_replies_for_ready_masters() {
+    let mut left = make_test_bus();
+    let mut right = make_test_bus();
+    left.try_sync_game_boy_link_peer(&mut right).unwrap();
+
+    left.write_byte(SERIAL_SB, 0xAB);
+    right.write_byte(SERIAL_SB, 0x34);
+    left.write_byte(SERIAL_SC, 0x81);
+    right.write_byte(SERIAL_SC, 0x81);
+    left.step_serial(4096);
+    right.step_serial(4096);
+
+    let completed = GameBoyLinkTransferExchange {
+        reply: GameBoyLinkReplyDisposition::Completed,
+        passive_responder_completed: false,
+    };
+    assert_eq!(
+        left.try_sync_game_boy_link_peer(&mut right),
+        Ok(GameBoyLinkExchangeOutcome::Exchanged {
+            local_action: Some(completed),
+            peer_action: Some(completed),
+        })
+    );
+    assert_eq!(left.read_byte(SERIAL_SB), 0x34);
+    assert_eq!(right.read_byte(SERIAL_SB), 0xAB);
+    assert_ne!(left.if_reg & 0x08, 0);
+    assert_ne!(right.if_reg & 0x08, 0);
+}
+
+#[test]
+fn link_exchange_completes_passive_responder_once() {
+    let mut master = make_test_bus();
+    let mut passive = make_test_bus();
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+
+    master.write_byte(SERIAL_SB, 0xAB);
+    passive.write_byte(SERIAL_SB, 0x34);
+    master.write_byte(SERIAL_SC, 0x81);
+    passive.write_byte(SERIAL_SC, 0x80);
+
+    assert_eq!(
+        master.try_sync_game_boy_link_peer(&mut passive),
+        Ok(GameBoyLinkExchangeOutcome::Exchanged {
+            local_action: Some(GameBoyLinkTransferExchange {
+                reply: GameBoyLinkReplyDisposition::AcceptedPending,
+                passive_responder_completed: true,
+            }),
+            peer_action: None,
+        })
+    );
+    assert_eq!(passive.read_byte(SERIAL_SB), 0xAB);
+    assert_eq!(passive.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_ne!(passive.if_reg & 0x08, 0);
+
+    master.step_serial(4096);
+    assert_eq!(master.read_byte(SERIAL_SB), 0x34);
+    assert_eq!(master.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_ne!(master.if_reg & 0x08, 0);
+}
+
+#[test]
+fn link_exchange_rejects_stale_queued_action_without_mutation() {
+    let mut left = make_test_bus();
+    let mut right = make_test_bus();
+    let stale = zeff_emu_common::replay::ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: Some(zeff_emu_common::replay::ReplayGameBoyLinkAction {
+            out_byte: 0xAB,
+            clock_period_t_cycles: 4096,
+            serial_generation: 7,
+        }),
+        serial_generation: 3,
+    };
+    left.restore_game_boy_link_replay_state(stale);
+    let right_state = zeff_emu_common::replay::ReplayGameBoyLinkState {
+        peer_present: true,
+        ..right.game_boy_link_replay_state()
+    };
+    right.restore_game_boy_link_replay_state(right_state);
+    let right_before = right.game_boy_link_replay_state();
+
+    assert_eq!(
+        left.try_sync_game_boy_link_peer(&mut right),
+        Err(GameBoyLinkExchangeError::RejectedReply {
+            side: GameBoyLinkExchangeSide::Local,
+            action_generation: 7,
+            serial_generation: 3,
+        })
+    );
+    assert_eq!(left.game_boy_link_replay_state(), stale);
+    assert_eq!(right.game_boy_link_replay_state(), right_before);
+}
+
+#[test]
 fn cpu_t_cycle_advance_uses_the_system_clock_domain() {
     let mut normal = make_cgb_test_bus();
     normal.advance_cpu_t_cycles(4);

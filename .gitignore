@@ -4,6 +4,9 @@
 /temp
 /.idea/
 /dist/
+/packaging/flatpak/vendor/
+/packaging/flatpak/cargo-config.toml
+/snap/local/
 /rom-tests/cache/
 /rom-tests/results/
 /rom-tests/manifests/compat-games/local*.toml

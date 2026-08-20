@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.zeffuro.zeff-boy</id>
+  <name>zeff-boy</name>
+  <summary>A multi-system emulator written in Rust</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <description>
+    <p>
+      zeff-boy emulates Game Boy, Game Boy Color, Game Boy Advance, NES,
+      WonderSwan, and Sega 8-bit systems.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.github.zeffuro.zeff-boy.desktop</launchable>
+  <url type="homepage">https://github.com/Zeffuro/zeff-boy</url>
+  <url type="bugtracker">https://github.com/Zeffuro/zeff-boy/issues</url>
+  <url type="vcs-browser">https://github.com/Zeffuro/zeff-boy</url>
+  <developer id="com.github.zeffuro">
+    <name>Zeffuro</name>
+  </developer>
+  <provides>
+    <binary>zeff-boy</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+</component>

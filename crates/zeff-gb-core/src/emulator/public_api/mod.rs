@@ -9,6 +9,16 @@ impl Emulator {
         self.bus.sync_game_boy_link_peer(&mut peer.bus);
     }
 
+    pub fn try_sync_game_boy_link_peer(
+        &mut self,
+        peer: &mut Self,
+    ) -> Result<
+        crate::hardware::bus::GameBoyLinkExchangeOutcome,
+        crate::hardware::bus::GameBoyLinkExchangeError,
+    > {
+        self.bus.try_sync_game_boy_link_peer(&mut peer.bus)
+    }
+
     pub fn set_game_boy_link_peer_present(&mut self, present: bool) {
         self.bus.set_game_boy_link_peer_present(present);
     }
