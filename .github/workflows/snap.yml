@@ -92,9 +92,11 @@ jobs:
       - name: Upload and publish to stable
         if: inputs.existing_revision == ''
         env:
+          SNAPCRAFT_STORE_AUTH: candid
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           test -n "$SNAPCRAFT_STORE_CREDENTIALS"
+          snapcraft whoami
           set -o pipefail
           snapcraft upload "${{ steps.build.outputs.snap }}" --release=stable \
             2>&1 | tee snapcraft-upload.log
@@ -111,10 +113,12 @@ jobs:
       - name: Release an existing revision to stable
         if: inputs.existing_revision != ''
         env:
+          SNAPCRAFT_STORE_AUTH: candid
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
           REVISION: ${{ inputs.existing_revision }}
         run: |
           test -n "$SNAPCRAFT_STORE_CREDENTIALS"
           [[ "$REVISION" =~ ^[0-9]+$ ]]
           sudo snap install snapcraft --classic --channel=9.x/stable
+          snapcraft whoami
           snapcraft release zeff-boy "$REVISION" stable
