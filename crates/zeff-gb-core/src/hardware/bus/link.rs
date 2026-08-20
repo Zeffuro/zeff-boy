@@ -38,7 +38,42 @@ pub enum GameBoyLinkReplyDisposition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameBoyLinkTransferExchange {
     pub reply: GameBoyLinkReplyDisposition,
-    pub passive_responder_completed: bool,
+    pub passive_responder_scheduled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameBoyLinkExchangePreview {
+    pub local_action: Option<GameBoyLinkAction>,
+    pub peer_action: Option<GameBoyLinkAction>,
+    pub local_reply: GameBoyLinkReply,
+    pub peer_reply: GameBoyLinkReply,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct GameBoyLinkPreparedTransfer {
+    action: GameBoyLinkAction,
+    reply: GameBoyLinkReply,
+    passive_responder_scheduled: bool,
+}
+
+impl GameBoyLinkPreparedTransfer {
+    pub fn action(&self) -> GameBoyLinkAction {
+        self.action
+    }
+
+    pub fn reply(&self) -> GameBoyLinkReply {
+        self.reply
+    }
+
+    pub fn passive_responder_scheduled(&self) -> bool {
+        self.passive_responder_scheduled
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct GameBoyLinkPreparedExchange {
+    pub local_action: Option<GameBoyLinkPreparedTransfer>,
+    pub peer_action: Option<GameBoyLinkPreparedTransfer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +98,7 @@ pub enum GameBoyLinkExchangeError {
         action_generation: u64,
         serial_generation: u64,
     },
-    RejectedPassiveCompletion {
+    RejectedPassiveScheduling {
         responder: GameBoyLinkExchangeSide,
     },
 }
@@ -79,8 +114,8 @@ impl fmt::Display for GameBoyLinkExchangeError {
                 f,
                 "{side:?} rejected link reply for action generation {action_generation} at serial generation {serial_generation}"
             ),
-            Self::RejectedPassiveCompletion { responder } => {
-                write!(f, "{responder:?} rejected passive link completion")
+            Self::RejectedPassiveScheduling { responder } => {
+                write!(f, "{responder:?} rejected passive link scheduling")
             }
         }
     }
@@ -177,56 +212,106 @@ impl Bus {
         let _ = self.try_sync_game_boy_link_peer(peer);
     }
 
+    pub fn preview_game_boy_link_peer(&self, peer: &Self) -> GameBoyLinkExchangePreview {
+        GameBoyLinkExchangePreview {
+            local_action: self.io.serial.link_action_after_peer_present(),
+            peer_action: peer.io.serial.link_action_after_peer_present(),
+            local_reply: self.io.serial.reply_to_master_start(),
+            peer_reply: peer.io.serial.reply_to_master_start(),
+        }
+    }
+
     pub fn try_sync_game_boy_link_peer(
         &mut self,
         peer: &mut Self,
     ) -> Result<GameBoyLinkExchangeOutcome, GameBoyLinkExchangeError> {
-        self.io.serial.set_link_peer_present(true);
-        peer.io.serial.set_link_peer_present(true);
-
-        let local_action = self.io.serial.link_action();
-        let peer_action = peer.io.serial.link_action();
-        if local_action.is_none() && peer_action.is_none() {
+        let prepared = self.try_prepare_game_boy_link_peer(peer)?;
+        if prepared.local_action.is_none() && prepared.peer_action.is_none() {
             return Ok(GameBoyLinkExchangeOutcome::Idle);
         }
-
-        Self::validate_link_action(self, local_action, GameBoyLinkExchangeSide::Local)?;
-        Self::validate_link_action(peer, peer_action, GameBoyLinkExchangeSide::Peer)?;
-
-        let local_reply = self.io.serial.reply_to_master_start();
-        let peer_reply = peer.io.serial.reply_to_master_start();
-        let _ = self.io.serial.take_link_action();
-        let _ = peer.io.serial.take_link_action();
-
-        let local_exchange = local_action
-            .map(|action| {
-                Self::apply_link_exchange(
-                    self,
-                    peer,
-                    action,
-                    peer_reply,
-                    GameBoyLinkExchangeSide::Local,
-                    GameBoyLinkExchangeSide::Peer,
-                )
-            })
-            .transpose()?;
-        let peer_exchange = peer_action
-            .map(|action| {
-                Self::apply_link_exchange(
-                    peer,
-                    self,
-                    action,
-                    local_reply,
-                    GameBoyLinkExchangeSide::Peer,
-                    GameBoyLinkExchangeSide::Local,
-                )
-            })
-            .transpose()?;
+        debug_assert!(
+            Self::validate_prepared_reply(
+                self,
+                prepared.local_action.as_ref(),
+                GameBoyLinkExchangeSide::Local,
+            )
+            .is_ok()
+        );
+        debug_assert!(
+            Self::validate_prepared_reply(
+                peer,
+                prepared.peer_action.as_ref(),
+                GameBoyLinkExchangeSide::Peer,
+            )
+            .is_ok()
+        );
+        let local_exchange = prepared
+            .local_action
+            .map(|transfer| Self::commit_prepared_reply(self, transfer));
+        let peer_exchange = prepared
+            .peer_action
+            .map(|transfer| Self::commit_prepared_reply(peer, transfer));
 
         Ok(GameBoyLinkExchangeOutcome::Exchanged {
             local_action: local_exchange,
             peer_action: peer_exchange,
         })
+    }
+
+    pub fn try_prepare_game_boy_link_peer(
+        &mut self,
+        peer: &mut Self,
+    ) -> Result<GameBoyLinkPreparedExchange, GameBoyLinkExchangeError> {
+        let preview = self.preview_game_boy_link_peer(peer);
+        if preview.local_action.is_none() && preview.peer_action.is_none() {
+            self.io.serial.set_link_peer_present(true);
+            peer.io.serial.set_link_peer_present(true);
+            return Ok(GameBoyLinkPreparedExchange::default());
+        }
+
+        Self::validate_link_action(self, preview.local_action, GameBoyLinkExchangeSide::Local)?;
+        Self::validate_link_action(peer, preview.peer_action, GameBoyLinkExchangeSide::Peer)?;
+        Self::validate_passive_schedule(
+            peer,
+            preview.local_action,
+            preview.peer_reply,
+            GameBoyLinkExchangeSide::Peer,
+        )?;
+        Self::validate_passive_schedule(
+            self,
+            preview.peer_action,
+            preview.local_reply,
+            GameBoyLinkExchangeSide::Local,
+        )?;
+
+        self.io.serial.set_link_peer_present(true);
+        peer.io.serial.set_link_peer_present(true);
+        debug_assert_eq!(self.io.serial.link_action(), preview.local_action);
+        debug_assert_eq!(peer.io.serial.link_action(), preview.peer_action);
+        let committed_local_action = self.io.serial.take_link_action();
+        let committed_peer_action = peer.io.serial.take_link_action();
+        debug_assert_eq!(committed_local_action, preview.local_action);
+        debug_assert_eq!(committed_peer_action, preview.peer_action);
+
+        let local_action = preview
+            .local_action
+            .map(|action| Self::prepare_link_transfer(peer, action, preview.peer_reply));
+        let peer_action = preview
+            .peer_action
+            .map(|action| Self::prepare_link_transfer(self, action, preview.local_reply));
+
+        Ok(GameBoyLinkPreparedExchange {
+            local_action,
+            peer_action,
+        })
+    }
+
+    pub fn try_apply_prepared_game_boy_link_reply(
+        &mut self,
+        transfer: GameBoyLinkPreparedTransfer,
+    ) -> Result<GameBoyLinkTransferExchange, GameBoyLinkExchangeError> {
+        Self::validate_prepared_reply(self, Some(&transfer), GameBoyLinkExchangeSide::Local)?;
+        Ok(Self::commit_prepared_reply(self, transfer))
     }
 
     fn validate_link_action(
@@ -246,47 +331,81 @@ impl Bus {
         Ok(())
     }
 
-    fn apply_link_exchange(
-        master: &mut Self,
+    fn validate_passive_schedule(
+        responder: &Self,
+        action: Option<GameBoyLinkAction>,
+        reply: GameBoyLinkReply,
+        responder_side: GameBoyLinkExchangeSide,
+    ) -> Result<(), GameBoyLinkExchangeError> {
+        if action.is_some()
+            && reply.passive
+            && !responder.io.serial.can_schedule_external_from_master()
+        {
+            return Err(GameBoyLinkExchangeError::RejectedPassiveScheduling {
+                responder: responder_side,
+            });
+        }
+        Ok(())
+    }
+
+    fn prepare_link_transfer(
         responder: &mut Self,
         action: GameBoyLinkAction,
         reply: GameBoyLinkReply,
-        master_side: GameBoyLinkExchangeSide,
-        responder_side: GameBoyLinkExchangeSide,
-    ) -> Result<GameBoyLinkTransferExchange, GameBoyLinkExchangeError> {
-        if !master.io.serial.apply_link_reply(reply) {
+    ) -> GameBoyLinkPreparedTransfer {
+        let passive_responder_scheduled = reply.passive;
+        if passive_responder_scheduled {
+            let scheduled = responder
+                .io
+                .serial
+                .schedule_external_from_master(action.out_byte, action.clock_period_t_cycles);
+            debug_assert!(scheduled);
+        }
+
+        GameBoyLinkPreparedTransfer {
+            action,
+            reply,
+            passive_responder_scheduled,
+        }
+    }
+
+    fn validate_prepared_reply(
+        master: &Self,
+        transfer: Option<&GameBoyLinkPreparedTransfer>,
+        side: GameBoyLinkExchangeSide,
+    ) -> Result<(), GameBoyLinkExchangeError> {
+        if let Some(transfer) = transfer
+            && !master
+                .io
+                .serial
+                .pending_link_action_is_current(transfer.action)
+        {
             return Err(GameBoyLinkExchangeError::RejectedReply {
-                side: master_side,
-                action_generation: action.serial_generation,
+                side,
+                action_generation: transfer.action.serial_generation,
                 serial_generation: master.io.serial.replay_link_state().serial_generation,
             });
         }
+        Ok(())
+    }
 
-        let reply_disposition = if master.io.serial.pending_link_byte().is_none() {
+    fn commit_prepared_reply(
+        master: &mut Self,
+        transfer: GameBoyLinkPreparedTransfer,
+    ) -> GameBoyLinkTransferExchange {
+        let accepted = master.io.serial.apply_link_reply(transfer.reply);
+        debug_assert!(accepted);
+
+        let reply = if master.io.serial.pending_link_byte().is_none() {
             master.if_reg |= 0x08;
             GameBoyLinkReplyDisposition::Completed
         } else {
             GameBoyLinkReplyDisposition::AcceptedPending
         };
-        let passive_responder_completed = if reply.passive {
-            if !responder
-                .io
-                .serial
-                .complete_external_from_master(action.out_byte)
-            {
-                return Err(GameBoyLinkExchangeError::RejectedPassiveCompletion {
-                    responder: responder_side,
-                });
-            }
-            responder.if_reg |= 0x08;
-            true
-        } else {
-            false
-        };
 
-        Ok(GameBoyLinkTransferExchange {
-            reply: reply_disposition,
-            passive_responder_completed,
-        })
+        GameBoyLinkTransferExchange {
+            reply,
+            passive_responder_scheduled: transfer.passive_responder_scheduled,
+        }
     }
 }

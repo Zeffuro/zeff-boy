@@ -219,6 +219,20 @@ fn finish_midi_produces_valid_smf_header() {
 }
 
 #[test]
+fn finish_empty_midi_produces_valid_single_track_smf() {
+    let path = std::env::temp_dir().join("test_empty_midi_output.mid");
+    finish_midi(path.clone(), &[]).unwrap();
+
+    let data = std::fs::read(&path).unwrap();
+    assert_eq!(&data[0..4], b"MThd");
+    assert_eq!(midi_header_track_count(&data), 1);
+    assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
+    assert_eq!(midi_tempo_us_per_beat(&data), NTSC_60_TEMPO_US_PER_BEAT);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn finish_midi_uses_semantic_frame_tempo() {
     let mut frames = vec![
         voice_frame(

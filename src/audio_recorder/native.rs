@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::AudioRecordingFormat;
 
-use crate::audio_tooling::AudioSemanticFrame;
+use crate::audio_tooling::{AudioRecordingContext, AudioSemanticFrame};
+
+use super::AudioTimelineDiscontinuity;
 
 const MIDI_INITIAL_SNAPSHOT_CAPACITY: usize = 3600;
 
@@ -32,6 +34,10 @@ enum RecorderInner {
     Midi {
         frames: Vec<AudioSemanticFrame>,
     },
+    ZeffEvents {
+        writer: Option<super::events::ZeffAudioEventWriter>,
+        error: Option<std::io::Error>,
+    },
 }
 
 impl AudioRecorder {
@@ -39,6 +45,7 @@ impl AudioRecorder {
         path: &Path,
         sample_rate: u32,
         format: AudioRecordingFormat,
+        context: Option<AudioRecordingContext>,
     ) -> std::io::Result<Self> {
         let inner = match format {
             AudioRecordingFormat::Wav16 | AudioRecordingFormat::WavFloat => {
@@ -78,6 +85,18 @@ impl AudioRecorder {
             }
             AudioRecordingFormat::Midi => RecorderInner::Midi {
                 frames: Vec::with_capacity(MIDI_INITIAL_SNAPSHOT_CAPACITY),
+            },
+            AudioRecordingFormat::ZeffEvents => RecorderInner::ZeffEvents {
+                writer: Some(super::events::ZeffAudioEventWriter::start(
+                    path,
+                    context.ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Zeff audio events require an explicit audio topology",
+                        )
+                    })?,
+                )?),
+                error: None,
             },
         };
 
@@ -127,18 +146,46 @@ impl AudioRecorder {
                     }
                 }
             }
-            RecorderInner::Midi { .. } => {}
+            RecorderInner::Midi { .. } | RecorderInner::ZeffEvents { .. } => {}
         }
     }
 
     pub(crate) fn write_audio_semantic_frame(&mut self, frame: AudioSemanticFrame) {
-        if let RecorderInner::Midi { frames } = &mut self.inner {
-            frames.push(frame);
+        match &mut self.inner {
+            RecorderInner::Midi { frames } => frames.push(frame),
+            RecorderInner::ZeffEvents { writer, error } if error.is_none() => {
+                if let Err(write_error) = writer
+                    .as_mut()
+                    .expect("active Zeff event recorder owns its writer")
+                    .write_frame(&frame)
+                {
+                    *error = Some(write_error);
+                }
+            }
+            RecorderInner::Wav { .. } | RecorderInner::ZeffEvents { .. } => {}
+            #[cfg(feature = "audio-recording")]
+            RecorderInner::Ogg { .. } => {}
         }
     }
 
-    pub(crate) fn is_midi(&self) -> bool {
-        self.format.is_midi()
+    pub(crate) fn begin_semantic_timeline_epoch(&mut self, reason: AudioTimelineDiscontinuity) {
+        if let RecorderInner::ZeffEvents { writer, error } = &mut self.inner
+            && error.is_none()
+            && let Err(write_error) = writer
+                .as_mut()
+                .expect("active Zeff event recorder owns its writer")
+                .begin_epoch(reason)
+        {
+            *error = Some(write_error);
+        }
+    }
+
+    pub(crate) fn captures_semantics(&self) -> bool {
+        self.format.captures_semantics()
+    }
+
+    pub(crate) fn supports_uncapped_recording(&self) -> bool {
+        self.format.supports_uncapped_recording()
     }
 
     pub(crate) fn finish(self) -> std::io::Result<PathBuf> {
@@ -165,6 +212,15 @@ impl AudioRecorder {
                 ..
             } => finish_ogg(self.path, writer, encoder, &buffer),
             RecorderInner::Midi { frames } => super::midi::finish_midi(self.path, &frames),
+            RecorderInner::ZeffEvents { writer, error } => {
+                if let Some(error) = error {
+                    Err(error)
+                } else {
+                    writer
+                        .expect("active Zeff event recorder owns its writer")
+                        .finish()
+                }
+            }
         }
     }
 }

@@ -8,11 +8,62 @@ use zeff_gba_core::emulator::Emulator as GbaEmulator;
 use zeff_gba_core::hardware::apu::ApuDebugSnapshot;
 
 use crate::audio_tooling::{
-    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState,
-    NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
+    AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
+    AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
 };
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
+
+const GBA_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
+    AudioChannelDescriptor {
+        id: AudioChannelId(0),
+        name: "GBA PSG 1 (Square + Sweep)",
+        group: "PSG",
+        class: AudioVoiceClass::Pulse,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(1),
+        name: "GBA PSG 2 (Square)",
+        group: "PSG",
+        class: AudioVoiceClass::Pulse,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(2),
+        name: "GBA PSG 3 (Wave)",
+        group: "PSG",
+        class: AudioVoiceClass::Wavetable,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(3),
+        name: "GBA PSG 4 (Noise)",
+        group: "PSG",
+        class: AudioVoiceClass::Noise,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(4),
+        name: "GBA FIFO A",
+        group: "Direct Sound",
+        class: AudioVoiceClass::Pcm,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(5),
+        name: "GBA FIFO B",
+        group: "Direct Sound",
+        class: AudioVoiceClass::Pcm,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+];
 
 impl crate::emu_core_trait::DebuggableEmulator for GbaEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -224,6 +275,13 @@ impl EmulatorCore for GbaBackend {
             self.emu.frame_count(),
             self.emu.apu_debug_snapshot(),
         ))
+    }
+
+    fn audio_topology(&self) -> Option<AudioTopology> {
+        Some(AudioTopology {
+            generation: 1,
+            channels: GBA_AUDIO_CHANNELS,
+        })
     }
 
     fn cpu_address_bits(&self) -> u8 {

@@ -10,7 +10,7 @@ mod public_api;
 mod runtime;
 mod state_io;
 
-pub use runtime::{FrameSliceCursor, FrameSliceOutcome};
+pub use runtime::{FrameSliceCursor, FrameSliceOutcome, FrameSliceProgress};
 
 const CYCLES_PER_FRAME_NORMAL: u64 = 70224;
 const CYCLES_PER_FRAME_DOUBLE: u64 = 140448;
@@ -344,6 +344,12 @@ mod tests {
         left.sync_game_boy_link_peer(&mut right);
 
         assert_eq!(left.cpu_peek8(SERIAL_SB), 0x34);
+        assert_eq!(right.cpu_peek8(SERIAL_SB), 0x34);
+        assert_ne!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+        assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
+
+        right.step_frame();
+
         assert_eq!(right.cpu_peek8(SERIAL_SB), 0xAB);
         assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0);
         assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);

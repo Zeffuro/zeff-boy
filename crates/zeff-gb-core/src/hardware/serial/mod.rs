@@ -205,9 +205,31 @@ impl Serial {
         self.queued_link_action
     }
 
+    pub(super) fn link_action_after_peer_present(&self) -> Option<GameBoyLinkAction> {
+        self.queued_link_action.or_else(|| {
+            (!self.link_peer_present
+                && self.pending_link_byte.is_none()
+                && (self.sc & 0x81) == 0x81)
+                .then(|| GameBoyLinkAction {
+                    out_byte: self.sb,
+                    clock_period_t_cycles: self.transfer_period(),
+                    serial_generation: self.serial_generation,
+                })
+        })
+    }
+
     pub(super) fn link_action_is_current(&self, action: GameBoyLinkAction) -> bool {
+        if let Some(queued) = self.queued_link_action {
+            self.pending_link_byte == Some(action.out_byte) && queued == action
+        } else {
+            self.link_action_after_peer_present() == Some(action)
+        }
+    }
+
+    pub(super) fn pending_link_action_is_current(&self, action: GameBoyLinkAction) -> bool {
         self.pending_link_byte == Some(action.out_byte)
             && self.serial_generation == action.serial_generation
+            && self.transfer_period() == action.clock_period_t_cycles
     }
 
     pub(super) fn replay_link_state(&self) -> ReplayGameBoyLinkState {
@@ -304,11 +326,15 @@ impl Serial {
     }
 
     pub(super) fn schedule_external_from_master(&mut self, peer_byte: u8, period: u64) -> bool {
-        if !self.external_clock_transfer_active() || self.pending_external_completion.is_some() {
+        if !self.can_schedule_external_from_master() {
             return false;
         }
         self.pending_external_completion = Some((peer_byte, period));
         true
+    }
+
+    pub(super) fn can_schedule_external_from_master(&self) -> bool {
+        self.external_clock_transfer_active() && self.pending_external_completion.is_none()
     }
 
     pub(super) fn apply_remote_link_peer_state(

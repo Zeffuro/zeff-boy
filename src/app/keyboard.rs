@@ -270,7 +270,7 @@ impl App {
                 self.settings.save();
                 if let Some(thread) = &self.emu_thread {
                     thread.send(EmuCommand::SetUncapped(
-                        self.timing.uncapped_speed && !self.recording.is_replay_active(),
+                        self.timing.uncapped_speed && self.recording.allows_uncapped_worker(),
                     ));
                 }
             }

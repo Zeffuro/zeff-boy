@@ -7,11 +7,46 @@ use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot
 use zeff_gb_core::emulator::Emulator as GbEmulator;
 
 use crate::audio_tooling::{
-    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, GB_TEMPO_US_PER_BEAT,
-    level_from_u4,
+    AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
+    AudioVoiceClass, AudioVoiceState, GB_TEMPO_US_PER_BEAT, level_from_u4,
 };
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
+
+const GB_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
+    AudioChannelDescriptor {
+        id: AudioChannelId(0),
+        name: "GB CH1 (Square 1)",
+        group: "Game Boy APU",
+        class: AudioVoiceClass::Pulse,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(1),
+        name: "GB CH2 (Square 2)",
+        group: "Game Boy APU",
+        class: AudioVoiceClass::Pulse,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(2),
+        name: "GB CH3 (Wave)",
+        group: "Game Boy APU",
+        class: AudioVoiceClass::Wavetable,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(3),
+        name: "GB CH4 (Noise)",
+        group: "Game Boy APU",
+        class: AudioVoiceClass::Noise,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+];
 
 impl crate::emu_core_trait::DebuggableEmulator for GbEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -240,6 +275,13 @@ impl EmulatorCore for GbBackend {
             self.emu.frame_count(),
             self.emu.apu_channel_snapshot(),
         ))
+    }
+
+    fn audio_topology(&self) -> Option<AudioTopology> {
+        Some(AudioTopology {
+            generation: 1,
+            channels: GB_AUDIO_CHANNELS,
+        })
     }
 
     #[inline]

@@ -10,11 +10,47 @@ use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 use crate::audio_tooling::{
-    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
+    AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
+    AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
 };
 use crate::emu_backend::ActiveSystem;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_slice_to_vec};
+
+const SEGA8_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
+    AudioChannelDescriptor {
+        id: AudioChannelId(0),
+        name: "Sega PSG Tone 0",
+        group: "SN76489 PSG",
+        class: AudioVoiceClass::Tone,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(1),
+        name: "Sega PSG Tone 1",
+        group: "SN76489 PSG",
+        class: AudioVoiceClass::Tone,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(2),
+        name: "Sega PSG Tone 2",
+        group: "SN76489 PSG",
+        class: AudioVoiceClass::Tone,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(3),
+        name: "Sega PSG Noise",
+        group: "SN76489 PSG",
+        class: AudioVoiceClass::Noise,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+];
 
 impl crate::emu_core_trait::DebuggableEmulator for Sega8Emulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -231,6 +267,13 @@ impl EmulatorCore for Sega8Backend {
             self.emu.frame_count(),
             self.emu.bus().apu().debug_snapshot(),
         ))
+    }
+
+    fn audio_topology(&self) -> Option<AudioTopology> {
+        Some(AudioTopology {
+            generation: 1,
+            channels: SEGA8_AUDIO_CHANNELS,
+        })
     }
 
     fn copy_memory_region(

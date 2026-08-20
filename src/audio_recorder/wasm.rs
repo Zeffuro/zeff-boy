@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::settings::AudioRecordingFormat;
 
-use crate::audio_tooling::AudioSemanticFrame;
+use crate::audio_tooling::{AudioRecordingContext, AudioSemanticFrame};
+
+use super::AudioTimelineDiscontinuity;
 
 pub(crate) struct AudioRecorder;
 
@@ -11,6 +13,7 @@ impl AudioRecorder {
         _path: &Path,
         _sample_rate: u32,
         _format: AudioRecordingFormat,
+        _context: Option<AudioRecordingContext>,
     ) -> std::io::Result<Self> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
@@ -22,7 +25,13 @@ impl AudioRecorder {
 
     pub(crate) fn write_audio_semantic_frame(&mut self, _frame: AudioSemanticFrame) {}
 
-    pub(crate) fn is_midi(&self) -> bool {
+    pub(crate) fn begin_semantic_timeline_epoch(&mut self, _reason: AudioTimelineDiscontinuity) {}
+
+    pub(crate) fn captures_semantics(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn supports_uncapped_recording(&self) -> bool {
         false
     }
 

@@ -54,15 +54,20 @@ impl Server {
         deadline: Instant,
     ) -> anyhow::Result<PairScreenScores> {
         let local_deadline = Instant::now() + timeout;
+        let mut last = PairScreenScores::default();
         loop {
             ensure_deadline(deadline)?;
             if Instant::now() >= local_deadline {
-                bail!("trade confirmation prompt not reached");
+                bail!(
+                    "trade confirmation prompt not reached; last scores={}",
+                    serde_json::to_string(&last.to_json())?
+                );
             }
             let left = self.frame_scores(left_addr, deadline)?;
             let right = self.frame_scores(right_addr, deadline)?;
+            last = PairScreenScores { left, right };
             if left.is_trade_confirm_prompt() && right.is_trade_confirm_prompt() {
-                return Ok(PairScreenScores { left, right });
+                return Ok(last);
             }
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -108,7 +113,7 @@ impl Server {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PairScreenScores {
     pub(super) left: FrameScores,
     pub(super) right: FrameScores,

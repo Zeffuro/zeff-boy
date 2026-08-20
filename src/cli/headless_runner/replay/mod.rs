@@ -9,9 +9,17 @@ pub(super) use super::HeadlessOptions;
 #[cfg(not(target_arch = "wasm32"))]
 mod diagnostics;
 mod endpoint;
+#[cfg(not(target_arch = "wasm32"))]
+mod paired_direct;
+#[cfg(not(target_arch = "wasm32"))]
+mod paired_lease;
 mod paired_legacy;
 #[cfg(not(target_arch = "wasm32"))]
 mod paired_live;
+#[cfg(not(target_arch = "wasm32"))]
+mod paired_plan;
+#[cfg(not(target_arch = "wasm32"))]
+mod paired_transport;
 #[cfg(not(target_arch = "wasm32"))]
 mod timeline;
 mod validation;

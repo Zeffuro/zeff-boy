@@ -43,6 +43,17 @@ impl App {
 
     pub(super) fn spawn_emu_thread(&mut self, backend: EmuBackend) {
         self.emu_thread = Some(EmuThread::spawn(backend));
+        if let (Some(thread), Some(recorder)) =
+            (&self.emu_thread, self.recording.audio_recorder.as_ref())
+        {
+            thread.send(EmuCommand::SetAudioRecordingCapture {
+                capture: crate::emu_thread::AudioRecordingCapture {
+                    active: true,
+                    semantic: recorder.captures_semantics(),
+                },
+                acknowledged: None,
+            });
+        }
         if let Some(thread) = &self.emu_thread {
             self.latest_frame = thread.shared_framebuffer().load_full();
         }
@@ -50,6 +61,7 @@ impl App {
         self.timing.last_frame_time = Instant::now();
 
         if self.timing.uncapped_speed
+            && self.recording.allows_uncapped_worker()
             && let Some(thread) = &self.emu_thread
         {
             thread.send(EmuCommand::SetUncapped(true));

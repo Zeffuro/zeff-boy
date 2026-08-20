@@ -37,7 +37,7 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
-        let midi_capture_active = input.audio.midi_capture_active;
+        let semantic_capture_active = input.audio.recording_capture.semantic;
         let mut audio_semantic_frames = Vec::new();
         let mut advanced_frames = 0;
         let stepped_frames = input.frames > 0 && backend.is_running();
@@ -46,7 +46,7 @@ impl EmuThread {
                 backend,
                 input.frames,
                 cheats,
-                midi_capture_active,
+                semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
             );
@@ -104,7 +104,7 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
-        let midi_capture_active = input.audio.midi_capture_active;
+        let semantic_capture_active = input.audio.recording_capture.semantic;
         let mut audio_semantic_frames = Vec::new();
         let mut advanced_frames = 0;
         let mut replay_error = None;
@@ -115,7 +115,7 @@ impl EmuThread {
                 input.frames,
                 cheats,
                 replay_link,
-                midi_capture_active,
+                semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
             );
@@ -177,7 +177,7 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
-        let midi_capture_active = input.audio.midi_capture_active;
+        let semantic_capture_active = input.audio.recording_capture.semantic;
         let mut audio_semantic_frames = Vec::new();
         let mut advanced_frames = 0;
         let mut replay_error = None;
@@ -188,7 +188,7 @@ impl EmuThread {
                 input.frames,
                 cheats,
                 replay_link,
-                midi_capture_active,
+                semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
             );
@@ -250,7 +250,7 @@ impl EmuThread {
             backend.set_apu_channel_mutes(mutes);
         }
 
-        let midi_capture_active = input.audio.midi_capture_active;
+        let semantic_capture_active = input.audio.recording_capture.semantic;
         let mut audio_semantic_frames = Vec::new();
         let mut advanced_frames = 0;
         let stepped_frames = input.frames > 0 && backend.is_running();
@@ -260,7 +260,7 @@ impl EmuThread {
                 input.frames,
                 cheats,
                 tcp_link.as_deref_mut(),
-                midi_capture_active,
+                semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
             );
@@ -431,7 +431,7 @@ impl EmuThread {
         backend: &mut EmuBackend,
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
-        midi_capture_active: bool,
+        semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
     ) -> usize {
@@ -459,9 +459,9 @@ impl EmuThread {
             let frame_count_before = backend.frame_count();
             backend.step_frame();
             backend.apply_ram_cheats(cheats);
-            Self::collect_midi_snapshot_if_frame_advanced(
+            Self::collect_semantic_snapshot_if_frame_advanced(
                 backend,
-                midi_capture_active.then_some(frame_count_before),
+                semantic_capture_active.then_some(frame_count_before),
                 audio_semantic_frames,
             );
             if backend.frame_count() != frame_count_before {
@@ -484,7 +484,7 @@ impl EmuThread {
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
         replay_link: &mut crate::link::gb::GameBoyReplayLink,
-        midi_capture_active: bool,
+        semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
     ) -> (usize, Option<String>) {
@@ -518,9 +518,9 @@ impl EmuThread {
                 );
             }
             backend.apply_ram_cheats(cheats);
-            Self::collect_midi_snapshot_if_frame_advanced(
+            Self::collect_semantic_snapshot_if_frame_advanced(
                 backend,
-                midi_capture_active.then_some(frame_count_before),
+                semantic_capture_active.then_some(frame_count_before),
                 audio_semantic_frames,
             );
             if backend.frame_count() != frame_count_before {
@@ -543,7 +543,7 @@ impl EmuThread {
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
         replay_link: &mut crate::link::ws_replay::WonderSwanReplayLink,
-        midi_capture_active: bool,
+        semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
     ) -> (usize, Option<String>) {
@@ -579,9 +579,9 @@ impl EmuThread {
                 );
             }
             backend.apply_ram_cheats(cheats);
-            Self::collect_midi_snapshot_if_frame_advanced(
+            Self::collect_semantic_snapshot_if_frame_advanced(
                 backend,
-                midi_capture_active.then_some(frame_count_before),
+                semantic_capture_active.then_some(frame_count_before),
                 audio_semantic_frames,
             );
             if backend.frame_count() != frame_count_before {
@@ -604,7 +604,7 @@ impl EmuThread {
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
         mut tcp_link: Option<&mut RemoteLink<TcpLinkTransport>>,
-        midi_capture_active: bool,
+        semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
     ) -> usize {
@@ -655,9 +655,9 @@ impl EmuThread {
                 std::thread::yield_now();
             }
             backend.apply_ram_cheats(cheats);
-            Self::collect_midi_snapshot_if_frame_advanced(
+            Self::collect_semantic_snapshot_if_frame_advanced(
                 backend,
-                midi_capture_active.then_some(frame_count_before),
+                semantic_capture_active.then_some(frame_count_before),
                 audio_semantic_frames,
             );
             if backend.frame_count() != frame_count_before {
@@ -708,10 +708,11 @@ impl EmuThread {
             is_pocket_camera,
             rewind_fill,
             audio_semantic_frames,
+            audio_timeline_discontinuities: Vec::new(),
         }
     }
 
-    fn collect_midi_snapshot_if_frame_advanced(
+    fn collect_semantic_snapshot_if_frame_advanced(
         backend: &EmuBackend,
         frame_count_before: Option<u64>,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,

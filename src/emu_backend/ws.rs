@@ -8,10 +8,54 @@ use zeff_ws_core::emulator::Emulator as WsEmulator;
 use zeff_ws_core::hardware::apu::ApuDebugSnapshot;
 
 use crate::audio_tooling::{
-    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, WS_TEMPO_US_PER_BEAT,
+    AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
+    AudioVoiceClass, AudioVoiceState, WS_TEMPO_US_PER_BEAT,
 };
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
+
+const WS_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
+    AudioChannelDescriptor {
+        id: AudioChannelId(0),
+        name: "WS CH0 Wave",
+        group: "WonderSwan APU",
+        class: AudioVoiceClass::Wavetable,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(1),
+        name: "WS CH1 Wave/Voice",
+        group: "WonderSwan APU",
+        class: AudioVoiceClass::Other,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(2),
+        name: "WS CH2 Wave/Sweep",
+        group: "WonderSwan APU",
+        class: AudioVoiceClass::Wavetable,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(3),
+        name: "WS CH3 Wave/Noise",
+        group: "WonderSwan APU",
+        class: AudioVoiceClass::Other,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(4),
+        name: "WS HyperVoice",
+        group: "WonderSwan APU",
+        class: AudioVoiceClass::Pcm,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: false,
+    },
+];
 
 impl crate::emu_core_trait::DebuggableEmulator for WsEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -218,6 +262,13 @@ impl EmulatorCore for WsBackend {
             self.emu.frame_count(),
             self.emu.apu_debug_snapshot(),
         ))
+    }
+
+    fn audio_topology(&self) -> Option<AudioTopology> {
+        Some(AudioTopology {
+            generation: 1,
+            channels: WS_AUDIO_CHANNELS,
+        })
     }
 
     fn copy_memory_region(

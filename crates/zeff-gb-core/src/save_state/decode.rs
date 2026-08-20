@@ -47,7 +47,7 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     let cycle_count = reader.read_u64()?;
     let last_opcode = reader.read_u8()?;
     let last_opcode_pc = reader.read_u16()?;
-    let bus = Bus::read_state(&mut reader)?;
+    let bus = Bus::read_state(&mut reader, format_version)?;
     let boot_rom_enabled = if format_version >= 4 {
         reader.read_bool()?
     } else {

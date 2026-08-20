@@ -577,6 +577,15 @@ fn backend_link_peer_sync_exchanges_game_boy_bytes() {
 
     assert!(left.sync_link_peer(&mut right));
 
+    let (EmuBackend::Gb(left_gb), EmuBackend::Gb(right_gb)) = (&left, &right) else {
+        panic!("expected GB backends");
+    };
+    assert_eq!(left_gb.emu.cpu_peek8(SERIAL_SB), 0x34);
+    assert_eq!(right_gb.emu.cpu_peek8(SERIAL_SB), 0x34);
+    assert_ne!(right_gb.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
+
+    right.step_frame();
+
     let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&left, &right) else {
         panic!("expected GB backends");
     };
@@ -752,6 +761,138 @@ fn assert_backend_state_decode_smoke(mut backend: EmuBackend) {
         .expect("backend should decode its own state");
     backend.step_frame();
     assert!(!backend.framebuffer().is_empty());
+}
+
+fn assert_audio_topology_contract(mut backend: EmuBackend, expected_channels: usize) {
+    let before = backend
+        .audio_topology()
+        .expect("audio-capable backend should expose a topology");
+    assert!(before.generation > 0);
+    assert_eq!(before.channels.len(), expected_channels);
+    let ids = before
+        .channels
+        .iter()
+        .map(|channel| channel.id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(ids.len(), before.channels.len());
+    assert!(
+        before
+            .channels
+            .iter()
+            .all(|channel| !channel.name.is_empty() && !channel.group.is_empty())
+    );
+
+    backend.step_frame();
+    let after = backend
+        .audio_topology()
+        .expect("audio topology should remain available after stepping");
+    assert_eq!(after, before);
+    let frame = backend
+        .audio_semantic_frame()
+        .expect("audio topology should have semantic state");
+    assert_eq!(frame.voices.len(), expected_channels);
+    let frame_ids = frame
+        .voices
+        .iter()
+        .map(|voice| voice.channel)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(frame_ids, ids);
+    for voice in frame.voices {
+        let descriptor = before
+            .channels
+            .iter()
+            .find(|channel| channel.id == voice.channel)
+            .expect("semantic voice ID should resolve in the topology");
+        if descriptor.class != crate::audio_tooling::AudioVoiceClass::Other {
+            assert_eq!(descriptor.class, voice.class);
+        }
+        assert!(
+            descriptor
+                .caps
+                .contains(crate::audio_tooling::AudioSemanticCaps::GATE)
+        );
+        if !descriptor
+            .caps
+            .contains(crate::audio_tooling::AudioSemanticCaps::PITCH)
+        {
+            assert_eq!(voice.pitch_hz, None);
+        }
+        if voice.level.is_some() {
+            assert!(
+                descriptor
+                    .caps
+                    .contains(crate::audio_tooling::AudioSemanticCaps::LEVEL)
+            );
+        }
+    }
+}
+
+#[test]
+fn every_audio_backend_exposes_a_stable_topology_contract() {
+    assert_audio_topology_contract(build_gb_backend(), 4);
+    assert_audio_topology_contract(build_gba_backend(), 6);
+    assert_audio_topology_contract(build_nes_backend(), 5);
+    assert_audio_topology_contract(build_sms_backend(), 4);
+    assert_audio_topology_contract(build_ws_backend(), 5);
+}
+
+#[test]
+fn nes_topology_and_semantic_frame_include_dmc() {
+    let mut backend = build_nes_backend();
+    let topology = backend.audio_topology().unwrap();
+    let dmc = &topology.channels[4];
+
+    assert_eq!(dmc.id, crate::audio_tooling::AudioChannelId(4));
+    assert_eq!(dmc.name, "NES DMC");
+    assert_eq!(dmc.class, crate::audio_tooling::AudioVoiceClass::Pcm);
+    assert_eq!(
+        dmc.caps,
+        crate::audio_tooling::AudioSemanticCaps::GATE_LEVEL
+    );
+    assert!(dmc.muteable);
+
+    backend.step_frame();
+    let frame = backend
+        .audio_semantic_frame()
+        .expect("NES should expose semantic audio data for recording/tooling");
+    let voice = &frame.voices[4];
+    assert_eq!(voice.channel, dmc.id);
+    assert_eq!(voice.name, dmc.name);
+    assert_eq!(voice.class, dmc.class);
+    assert!(!voice.active);
+    assert_eq!(voice.pitch_hz, None);
+    assert_eq!(voice.level, Some(0.0));
+}
+
+#[test]
+fn wonder_swan_topology_keeps_hybrid_channel_identities_stable() {
+    let topology = build_ws_backend().audio_topology().unwrap();
+    assert_eq!(topology.channels[1].name, "WS CH1 Wave/Voice");
+    assert_eq!(topology.channels[3].name, "WS CH3 Wave/Noise");
+    assert_eq!(
+        topology.channels[1].class,
+        crate::audio_tooling::AudioVoiceClass::Other
+    );
+    assert_eq!(
+        topology.channels[3].class,
+        crate::audio_tooling::AudioVoiceClass::Other
+    );
+    assert!(
+        topology.channels[1]
+            .caps
+            .contains(crate::audio_tooling::AudioSemanticCaps::PITCH)
+    );
+    assert!(
+        topology.channels[3]
+            .caps
+            .contains(crate::audio_tooling::AudioSemanticCaps::PITCH)
+    );
+    assert!(!topology.channels[4].muteable);
+    assert!(
+        !topology.channels[4]
+            .caps
+            .contains(crate::audio_tooling::AudioSemanticCaps::PITCH)
+    );
 }
 
 #[test]

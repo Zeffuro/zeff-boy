@@ -82,6 +82,9 @@ image = { version = "0.25.10", optional = true, default-features = false, featur
 object = { version = "0.39.1", default-features = false, features = ["read_core", "elf", "std", "compression"] }
 gimli = { version = "0.34.0", default-features = false, features = ["read", "std"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 gimli = { version = "0.34.0", default-features = false, features = ["write", "std"] }
 object = { version = "0.39.1", default-features = false, features = ["write", "elf", "std"] }

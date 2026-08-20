@@ -26,6 +26,8 @@ pub struct ApuChannelSnapshot {
     pub triangle_volume: u8,
     pub noise_enabled: bool,
     pub noise_volume: u8,
+    pub dmc_enabled: bool,
+    pub dmc_output_level: u8,
 }
 
 pub struct Apu {

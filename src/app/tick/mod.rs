@@ -3,7 +3,7 @@ use super::{
     VIEWER_UPDATE_INTERVAL,
 };
 use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
-use crate::emu_thread::{AudioConfig, EmuCommand, FrameInput, JoypadInput};
+use crate::emu_thread::{AudioConfig, AudioRecordingCapture, EmuCommand, FrameInput, JoypadInput};
 use crate::platform::Instant;
 
 mod input;
@@ -116,6 +116,10 @@ impl App {
                         frames_to_step = frames_to_step.min((checkpoint.frame - cursor) as usize);
                     }
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    frames_to_step = self.limit_frames_for_live_button_releases(frames_to_step);
+                }
 
                 let remote_capture_pending = self.remote_debug_frames_remaining > 0
                     || self.remote_memory_frames_remaining > 0
@@ -222,17 +226,24 @@ impl App {
                         audio: AudioConfig {
                             apu_capture_enabled: reqs.needs_apu && want_viewer_update,
                             skip_audio: match self.speed_mode() {
-                                SpeedMode::Uncapped => true,
+                                SpeedMode::Uncapped => self
+                                    .recording
+                                    .audio_recorder
+                                    .as_ref()
+                                    .is_none_or(|recorder| recorder.captures_semantics()),
                                 SpeedMode::FastForward => {
                                     self.settings.audio.mute_during_fast_forward
                                 }
                                 SpeedMode::Normal | SpeedMode::SlowMotion => false,
                             },
-                            midi_capture_active: self
-                                .recording
-                                .audio_recorder
-                                .as_ref()
-                                .is_some_and(|r| r.is_midi()),
+                            recording_capture: AudioRecordingCapture {
+                                active: self.recording.audio_recorder.is_some(),
+                                semantic: self
+                                    .recording
+                                    .audio_recorder
+                                    .as_ref()
+                                    .is_some_and(|recorder| recorder.captures_semantics()),
+                            },
                         },
                         debug_actions: std::mem::replace(
                             &mut self.pending_debug_actions,
@@ -258,6 +269,11 @@ impl App {
                         }
                         thread.send(EmuCommand::StepFrames(Box::new(input)));
                         self.frames_in_flight += 1;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if self.emu_thread.is_some() && frames_to_step > 0 {
+                        self.advance_live_button_releases(frames_to_step);
                     }
 
                     if frames_to_step > 0 {

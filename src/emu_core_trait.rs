@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::audio_tooling::AudioSemanticFrame;
+use crate::audio_tooling::{AudioSemanticFrame, AudioTopology};
 use zeff_emu_common::address::Address;
 use zeff_emu_common::memory::{
     ExtendedMemoryRegionSizes, MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region,
@@ -177,6 +177,10 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     fn set_input_p2(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}
     #[inline]
     fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
+        None
+    }
+    #[inline]
+    fn audio_topology(&self) -> Option<AudioTopology> {
         None
     }
     #[inline]

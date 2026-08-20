@@ -48,7 +48,7 @@ impl Bus {
         self.io.write_state(writer);
     }
 
-    pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+    pub fn read_state(reader: &mut StateReader<'_>, format_version: u32) -> Result<Self> {
         let hardware_mode = reader.read_hardware_mode()?;
         let cartridge = Cartridge::read_state(reader)?;
 
@@ -113,7 +113,7 @@ impl Bus {
         reader.read_exact(&mut bus.hram)?;
         bus.ie = reader.read_u8()?;
         bus.if_reg = reader.read_u8()?;
-        bus.io = IO::read_state(reader)?;
+        bus.io = IO::read_state(reader, format_version)?;
 
         bus.sync_timer_serial_mode();
         bus.trace_cpu_accesses = false;

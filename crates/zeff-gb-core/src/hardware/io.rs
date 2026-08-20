@@ -56,13 +56,13 @@ impl IO {
         self.printer.write_state(writer);
     }
 
-    pub fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+    pub fn read_state(reader: &mut StateReader<'_>, format_version: u32) -> Result<Self> {
         Ok(Self {
             joypad: Joypad::read_state(reader)?,
             serial: Serial::read_state(reader)?,
             timer: Timer::read_state(reader)?,
             ppu: PPU::read_state(reader)?,
-            apu: Apu::read_state(reader)?,
+            apu: Apu::read_state(reader, format_version)?,
             sgb: SgbState::read_state(reader)?,
             printer: GameboyPrinter::read_state(reader)?,
         })

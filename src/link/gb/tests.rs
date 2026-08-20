@@ -78,12 +78,16 @@ fn game_boy_remote_link_binds_reply_to_exact_transfer_id() {
     right_link.poll_emulator(&mut right).unwrap();
     left_link.poll_emulator(&mut left).unwrap();
 
-    assert_eq!(right.cpu_peek8(SERIAL_SB), 0xAB);
-    assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
-    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    assert_eq!(right.cpu_peek8(SERIAL_SB), 0x34);
+    assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
+    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
     assert_eq!(left.cpu_peek8(SERIAL_SB), 0xAB);
     assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
 
+    right.step_frame();
+    assert_eq!(right.cpu_peek8(SERIAL_SB), 0xAB);
+    assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
     left.step_frame();
     assert_eq!(left.cpu_peek8(SERIAL_SB), 0x34);
     assert_eq!(left.cpu_peek8(SERIAL_SC) & 0x80, 0);
@@ -235,19 +239,32 @@ fn game_boy_replay_link_applies_recorded_reply_without_tcp_peer() {
 }
 
 #[test]
-fn game_boy_replay_link_completes_passive_transfer() {
+fn game_boy_replay_link_schedules_passive_completion_without_advancing_frame_owner() {
     let mut replay_link = GameBoyReplayLink::new(
-        vec![ReplayEvent::GameBoyLink {
-            frame: 0,
-            tick: 0,
-            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
-                transfer_id: 0x0100_0000_0000_0000,
-                clock_period_t_cycles: 4096,
-                out_byte: 0x34,
-                serial_generation: 4,
-                local_reply: None,
+        vec![
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0x34,
+                    serial_generation: 4,
+                    local_reply: None,
+                },
             },
-        }],
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: 0x0100_0000_0000_0001,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0x56,
+                    serial_generation: 5,
+                    local_reply: None,
+                },
+            },
+        ],
         0,
         None,
         0,
@@ -259,9 +276,110 @@ fn game_boy_replay_link_completes_passive_transfer() {
 
     replay_link.poll_emulator(&mut gb).unwrap();
 
-    assert!(gb.cpu_cycles() >= start + 4096);
+    assert_eq!(replay_link.event_progress(), (1, 2));
+    assert_eq!(gb.cpu_cycles(), start);
+    assert_eq!(gb.frame_count(), 0);
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0xAB);
+    assert_ne!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(gb.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
+
+    while gb.cpu_cycles() - start < 4092 {
+        let _ = gb.step_instruction();
+    }
+    assert_eq!(gb.cpu_cycles() - start, 4092);
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0xAB);
+    assert_ne!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(gb.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
+
+    let _ = gb.step_instruction();
+    assert_eq!(gb.cpu_cycles() - start, 4096);
     assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
     assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(gb.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+
+    let frame_before = gb.frame_count();
+    let tick_before = gb.cpu_cycles();
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert_eq!(replay_link.event_progress(), (1, 2));
+    assert_eq!(gb.frame_count(), frame_before);
+    assert_eq!(gb.cpu_cycles(), tick_before);
+    while gb.cpu_cycles() - start < 8192 {
+        let _ = gb.step_instruction();
+    }
+    let frame_before = gb.frame_count();
+    let tick_before = gb.cpu_cycles();
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert_eq!(replay_link.event_progress(), (2, 2));
+    assert_eq!(gb.frame_count(), frame_before);
+    assert_eq!(gb.cpu_cycles(), tick_before);
+}
+
+#[test]
+fn game_boy_replay_link_defers_queued_remote_start_until_passive_rearm() {
+    let mut replay_link = GameBoyReplayLink::new(
+        vec![
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: 0x0100_0000_0000_0000,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0xAB,
+                    serial_generation: 4,
+                    local_reply: None,
+                },
+            },
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: 0x0100_0000_0000_0001,
+                    clock_period_t_cycles: 4096,
+                    out_byte: 0xCD,
+                    serial_generation: 5,
+                    local_reply: Some(ReplayGameBoyLinkReply {
+                        out_byte: 0x56,
+                        passive: true,
+                        serial_generation: 0,
+                    }),
+                },
+            },
+        ],
+        0,
+        None,
+        0,
+    );
+    let mut gb = gb_emulator_with_serial_rearm_isr(0x56);
+    gb.set_game_boy_link_peer_present(true);
+    gb.write_byte(SERIAL_SB, 0x34);
+    gb.write_byte(SERIAL_SC, 0x80);
+    let transfer_start_tick = gb.cpu_cycles();
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+
+    assert_eq!(replay_link.event_progress(), (1, 2));
+    while gb.cpu_cycles() - transfer_start_tick < 4096 {
+        let _ = gb.step_instruction();
+    }
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert_eq!(replay_link.event_progress(), (1, 2));
+    let mut instructions = 0usize;
+    while !gb.game_boy_link_reply_to_master_start().passive || gb.cpu_peek8(SERIAL_SB) != 0x56 {
+        let _ = gb.step_instruction();
+        instructions += 1;
+        assert!(instructions < 4096, "serial ISR did not rearm the port");
+    }
+    assert!(gb.cpu_cycles() < transfer_start_tick + 8192);
+    let frame_before = gb.frame_count();
+    let tick_before = gb.cpu_cycles();
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+
+    assert_eq!(replay_link.event_progress(), (2, 2));
+    assert_eq!(gb.frame_count(), frame_before);
+    assert_eq!(gb.cpu_cycles(), tick_before);
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x56);
+    assert_ne!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
 }
 
 #[test]
@@ -761,7 +879,77 @@ fn game_boy_remote_link_does_not_spin_wait_for_early_pending_reply() {
 }
 
 #[test]
-fn game_boy_remote_link_catches_up_passive_rearm_before_queued_master_start() {
+fn game_boy_remote_link_schedules_passive_completion_without_advancing_frame_owner() {
+    let (left_transport, right_transport) = LocalLinkTransport::pair();
+    let mut left_session =
+        LinkSession::new(left_transport, LinkSystemType::GameBoy, LinkEndpointId(1));
+    let mut right_link = GameBoyRemoteLink::new(LinkSession::new(
+        right_transport,
+        LinkSystemType::GameBoy,
+        LinkEndpointId(2),
+    ));
+    let mut right = gb_emulator();
+
+    right.set_game_boy_link_peer_present(true);
+    right.write_byte(SERIAL_SB, 0x34);
+    right.write_byte(SERIAL_SC, 0x80);
+    queue_master_start(&mut left_session, 0x0100_0000_0000_0000, 0xAB);
+    queue_master_start(&mut left_session, 0x0100_0000_0000_0001, 0xCD);
+    let frame_before = right.frame_count();
+    let tick_before = right.cpu_cycles();
+
+    right_link.poll_emulator(&mut right).unwrap();
+
+    let first = receive_reply(&mut left_session);
+    let GameBoyLinkEvent::TransferReply {
+        transfer_id, reply, ..
+    } = first
+    else {
+        panic!("expected first transfer reply, got {first:?}");
+    };
+    assert_eq!(transfer_id, GbTransferId(0x0100_0000_0000_0000));
+    assert_eq!(reply.out_byte, 0x34);
+    assert!(reply.passive);
+    assert!(left_session.try_receive_packet().unwrap().is_none());
+    assert_eq!(right.frame_count(), frame_before);
+    assert_eq!(right.cpu_cycles(), tick_before);
+    assert_eq!(right.cpu_peek8(SERIAL_SB), 0x34);
+    assert_ne!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
+
+    while right.cpu_cycles() - tick_before < 4092 {
+        let _ = right.step_instruction();
+    }
+    assert_eq!(right.cpu_cycles() - tick_before, 4092);
+    assert_eq!(right.cpu_peek8(SERIAL_SB), 0x34);
+    assert_ne!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0);
+
+    let _ = right.step_instruction();
+    assert_eq!(right.cpu_cycles() - tick_before, 4096);
+    assert_eq!(right.cpu_peek8(SERIAL_SB), 0xAB);
+    assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+
+    right_link.poll_emulator(&mut right).unwrap();
+    assert!(left_session.try_receive_packet().unwrap().is_none());
+    while right.cpu_cycles() - tick_before < 8192 {
+        let _ = right.step_instruction();
+    }
+    let frame_before = right.frame_count();
+    let tick_before = right.cpu_cycles();
+    right_link.poll_emulator(&mut right).unwrap();
+    let GameBoyLinkEvent::TransferReply { reply, .. } = receive_reply(&mut left_session) else {
+        unreachable!();
+    };
+    assert_eq!(reply.out_byte, 0xAB);
+    assert!(!reply.passive);
+    assert_eq!(right.frame_count(), frame_before);
+    assert_eq!(right.cpu_cycles(), tick_before);
+}
+
+#[test]
+fn game_boy_remote_link_defers_queued_master_start_until_passive_rearm() {
     let (left_transport, right_transport) = LocalLinkTransport::pair();
     let mut left_session =
         LinkSession::new(left_transport, LinkSystemType::GameBoy, LinkEndpointId(1));
@@ -777,33 +965,53 @@ fn game_boy_remote_link_catches_up_passive_rearm_before_queued_master_start() {
     right.write_byte(SERIAL_SC, 0x80);
     queue_master_start(&mut left_session, 0x0100_0000_0000_0000, 0xAB);
     queue_master_start(&mut left_session, 0x0100_0000_0000_0001, 0xCD);
+    let frame_before = right.frame_count();
+    let tick_before = right.cpu_cycles();
 
     right_link.poll_emulator(&mut right).unwrap();
 
-    let first = receive_reply(&mut left_session);
     let GameBoyLinkEvent::TransferReply {
         transfer_id, reply, ..
-    } = first
+    } = receive_reply(&mut left_session)
     else {
-        panic!("expected first transfer reply, got {first:?}");
+        unreachable!();
     };
     assert_eq!(transfer_id, GbTransferId(0x0100_0000_0000_0000));
     assert_eq!(reply.out_byte, 0x34);
     assert!(reply.passive);
+    assert!(left_session.try_receive_packet().unwrap().is_none());
+    assert_eq!(right.frame_count(), frame_before);
+    assert_eq!(right.cpu_cycles(), tick_before);
 
-    let second = receive_reply(&mut left_session);
+    while right.cpu_cycles() - tick_before < 4096 {
+        let _ = right.step_instruction();
+    }
+    right_link.poll_emulator(&mut right).unwrap();
+    assert!(left_session.try_receive_packet().unwrap().is_none());
+    let mut instructions = 0usize;
+    while !right.game_boy_link_reply_to_master_start().passive || right.cpu_peek8(SERIAL_SB) != 0x56
+    {
+        let _ = right.step_instruction();
+        instructions += 1;
+        assert!(instructions < 4096, "serial ISR did not rearm the port");
+    }
+    assert!(right.cpu_cycles() < tick_before + 8192);
+    let frame_before = right.frame_count();
+    let tick_before = right.cpu_cycles();
+
+    right_link.poll_emulator(&mut right).unwrap();
+
     let GameBoyLinkEvent::TransferReply {
         transfer_id, reply, ..
-    } = second
+    } = receive_reply(&mut left_session)
     else {
-        panic!("expected second transfer reply, got {second:?}");
+        unreachable!();
     };
     assert_eq!(transfer_id, GbTransferId(0x0100_0000_0000_0001));
     assert_eq!(reply.out_byte, 0x56);
     assert!(reply.passive);
-    assert_eq!(right.cpu_peek8(SERIAL_SB), 0xCD);
-    assert_eq!(right.cpu_peek8(SERIAL_SC) & 0x80, 0);
-    assert_eq!(right.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    assert_eq!(right.frame_count(), frame_before);
+    assert_eq!(right.cpu_cycles(), tick_before);
 }
 
 #[test]

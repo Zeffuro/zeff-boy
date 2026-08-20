@@ -4,13 +4,19 @@ use std::time::Instant;
 use crate::emu_backend::{
     ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
 };
+use crate::link::RemoteLink;
 use crate::link::transport::LocalLinkTransport;
-use crate::link::{LinkEndpointId, LinkSession, LinkSystemType, RemoteLink};
-use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent, ReplayPlayer};
+use zeff_emu_common::replay::{ReplayEvent, ReplayPlayer};
 use zeff_firmware::sha256_hex;
 
 use super::HeadlessOptions;
 use super::diagnostics::compare_game_boy_link_event_prefix;
+use super::paired_direct::run_direct_paired_replay;
+use super::paired_lease::{PairedGameBoyFrameLease, PairedGameBoyFrameLeaseOutcome};
+use super::paired_plan::validate_paired_transfer_plan;
+use super::paired_transport::{
+    game_boy_replay_inbound_schedule, game_boy_replay_state_schedule, local_game_boy_link_pair,
+};
 use super::timeline::{
     PairedGameBoyReplayTimeline, first_game_boy_peer_present_state, paired_game_boy_replay_timeline,
 };
@@ -229,21 +235,21 @@ fn validate_live_link_paired_final_state_hashes(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn log_live_link_replay_checkpoint(
+fn validate_live_link_replay_checkpoint(
     side: &str,
     player: &ReplayPlayer,
     backend: &EmuBackend,
     generated_link_events: &[ReplayEvent],
     peer_player: &ReplayPlayer,
     peer_generated_link_events: &[ReplayEvent],
-) {
-    if let Err(error) = validate_replay_checkpoint(player, backend) {
-        log::warn!(
+) -> anyhow::Result<()> {
+    validate_replay_checkpoint(player, backend).map_err(|error| {
+        anyhow::anyhow!(
             "GB live paired replay {side} checkpoint mismatch: {error}; {}; {}",
             compare_game_boy_link_event_prefix(side, player, generated_link_events),
             compare_game_boy_link_event_prefix("peer", peer_player, peer_generated_link_events)
-        );
-    }
+        )
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -254,19 +260,75 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
     mut right_player: ReplayPlayer,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<LiveLinkPairedGameBoyReplaySummary> {
+    let direct_plan = validate_paired_transfer_plan(&left_player, &right_player)?;
     validate_replay_playback(&left_player, &left)?;
     validate_replay_playback(&right_player, &right)?;
     left.load_state_from_bytes(left_player.save_state().to_vec())?;
     right.load_state_from_bytes(right_player.save_state().to_vec())?;
     validate_game_boy_replay_start_tick("left replay", &left, &left_player)?;
     validate_game_boy_replay_start_tick("right replay", &right, &right_player)?;
-    restore_live_pair_replay_link_start_state(&mut left, &left_player);
-    restore_live_pair_replay_link_start_state(&mut right, &right_player);
-
     let left_frame_base = left.frame_count();
     let right_frame_base = right.frame_count();
     let replay_tail_frames = usize::try_from(opts.replay_tail_frames).unwrap_or(usize::MAX);
     let timeline = paired_game_boy_replay_timeline(&left_player, &right_player, replay_tail_frames);
+    if std::env::var_os("ZEFF_BOY_PAIRED_REPLAY_LEGACY").is_none() {
+        let direct = run_direct_paired_replay(
+            left,
+            right,
+            left_player,
+            right_player,
+            direct_plan,
+            replay_tail_frames,
+        )?;
+        if opts.expect_gb_link_events > 0 {
+            let expected = opts.expect_gb_link_events as usize;
+            if direct.left_generated_link_events.len() < expected
+                || direct.right_generated_link_events.len() < expected
+            {
+                anyhow::bail!(
+                    "GB direct paired replay link event count below expectation: expected at least {expected} per side, got left={} right={}",
+                    direct.left_generated_link_events.len(),
+                    direct.right_generated_link_events.len()
+                );
+            }
+        }
+        validate_live_link_paired_final_state_hashes(
+            &direct.left_player,
+            &direct.right_player,
+            &timeline,
+            direct.left_recorded_link_events,
+            direct.right_recorded_link_events,
+            &direct.left_generated_link_events,
+            &direct.right_generated_link_events,
+            &[],
+            &direct.left_final_state_hash,
+            &direct.right_final_state_hash,
+        )?;
+        return Ok(LiveLinkPairedGameBoyReplaySummary {
+            frames: timeline.total_global_frames.max(direct.frames),
+            left_start_offset: timeline.left_start_offset,
+            right_start_offset: timeline.right_start_offset,
+            link_activation_frame: timeline.link_activation_frame,
+            left_link_activation_frame: timeline.left_link_activation_frame,
+            right_link_activation_frame: timeline.right_link_activation_frame,
+            left_link_activation_tick: timeline.left_link_activation_tick,
+            right_link_activation_tick: timeline.right_link_activation_tick,
+            left_replay_frames: direct.left_replay_frames,
+            right_replay_frames: direct.right_replay_frames,
+            replay_tail_frames,
+            left_recorded_link_events: direct.left_recorded_link_events,
+            right_recorded_link_events: direct.right_recorded_link_events,
+            left_link_events: direct.left_generated_link_events.len(),
+            right_link_events: direct.right_generated_link_events.len(),
+            stalled_rounds: 0,
+            left_final_state_hash: direct.left_final_state_hash,
+            right_final_state_hash: direct.right_final_state_hash,
+            left_final_framebuffer_hash: direct.left_final_framebuffer_hash,
+            right_final_framebuffer_hash: direct.right_final_framebuffer_hash,
+        });
+    }
+    restore_live_pair_replay_link_start_state(&mut left, &left_player);
+    restore_live_pair_replay_link_start_state(&mut right, &right_player);
     let left_tick_base = left_player
         .metadata()
         .game_boy_link_start_tick
@@ -301,6 +363,8 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
     let mut activation_diagnostics = Vec::new();
     let mut captured_left_activation_before = false;
     let mut captured_right_activation_before = false;
+    let mut left_frame_lease = PairedGameBoyFrameLease::default();
+    let mut right_frame_lease = PairedGameBoyFrameLease::default();
 
     let mut global_frame = 0usize;
     while left_frames < timeline.left_target_frames || right_frames < timeline.right_target_frames {
@@ -338,10 +402,11 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
             .and(timeline.right_link_activation_tick)
             .map(|tick| right_tick_base.saturating_add(tick));
 
-        if left_should_step {
+        if left_should_step && left_frame_lease.needs_frame_setup() {
             apply_paired_game_boy_frame_boundary_events(&mut left, &mut left_player)?;
         }
         if left_should_step
+            && left_frame_lease.needs_frame_setup()
             && global_frame == timeline.left_link_activation_frame
             && let Some((_, tick, state)) = left_peer_present_start_state
             && tick.is_none()
@@ -349,6 +414,7 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
             left.restore_game_boy_link_replay_state(state);
         }
         if left_should_step
+            && left_frame_lease.needs_frame_setup()
             && global_frame == timeline.left_link_activation_frame
             && !captured_left_activation_before
         {
@@ -366,9 +432,10 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
             &mut left,
             left_link_enabled.then_some(&mut left_link),
             &mut left_player,
+            &mut left_frame_lease,
             left_should_step,
             left_activation_tick,
-        );
+        )?;
         if left_should_step && left_advanced == 0 && right_link_enabled {
             poll_live_link_replay_side(&mut right, &mut right_link);
             poll_live_link_replay_side(&mut left, &mut left_link);
@@ -376,20 +443,21 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
                 &mut left,
                 Some(&mut left_link),
                 &mut left_player,
+                &mut left_frame_lease,
                 true,
                 None,
-            );
+            )?;
         }
         left_frames = left_frames.saturating_add(left_advanced);
         if left_advanced > 0 {
-            log_live_link_replay_checkpoint(
+            validate_live_link_replay_checkpoint(
                 "left",
                 &left_player,
                 &left,
                 &left_generated_link_events,
                 &right_player,
                 &right_generated_link_events,
-            );
+            )?;
         }
         left_generated_link_events.extend(drain_game_boy_link_events(
             &mut left_link,
@@ -398,10 +466,11 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
         ));
         ensure_live_pair_link_connected(&left_link)?;
 
-        if right_should_step {
+        if right_should_step && right_frame_lease.needs_frame_setup() {
             apply_paired_game_boy_frame_boundary_events(&mut right, &mut right_player)?;
         }
         if right_should_step
+            && right_frame_lease.needs_frame_setup()
             && global_frame == timeline.right_link_activation_frame
             && let Some((_, tick, state)) = right_peer_present_start_state
             && tick.is_none()
@@ -409,6 +478,7 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
             right.restore_game_boy_link_replay_state(state);
         }
         if right_should_step
+            && right_frame_lease.needs_frame_setup()
             && global_frame == timeline.right_link_activation_frame
             && !captured_right_activation_before
         {
@@ -426,9 +496,10 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
             &mut right,
             right_link_enabled.then_some(&mut right_link),
             &mut right_player,
+            &mut right_frame_lease,
             right_should_step,
             right_activation_tick,
-        );
+        )?;
         if right_should_step && right_advanced == 0 && left_link_enabled {
             poll_live_link_replay_side(&mut left, &mut left_link);
             poll_live_link_replay_side(&mut right, &mut right_link);
@@ -436,20 +507,21 @@ fn run_loaded_paired_game_boy_replay_live_link_headless(
                 &mut right,
                 Some(&mut right_link),
                 &mut right_player,
+                &mut right_frame_lease,
                 true,
                 None,
-            );
+            )?;
         }
         right_frames = right_frames.saturating_add(right_advanced);
         if right_advanced > 0 {
-            log_live_link_replay_checkpoint(
+            validate_live_link_replay_checkpoint(
                 "right",
                 &right_player,
                 &right,
                 &right_generated_link_events,
                 &left_player,
                 &left_generated_link_events,
-            );
+            )?;
         }
         right_generated_link_events.extend(drain_game_boy_link_events(
             &mut right_link,
@@ -613,61 +685,59 @@ fn step_live_link_replay_side<T: crate::link::LinkTransport>(
     backend: &mut EmuBackend,
     link: Option<&mut RemoteLink<T>>,
     player: &mut ReplayPlayer,
+    lease: &mut PairedGameBoyFrameLease,
     should_step: bool,
     activation_tick: Option<u64>,
-) -> usize {
+) -> anyhow::Result<usize> {
     if !should_step {
-        return 0;
-    }
-    let frame = player
-        .peek_joypad_frames(0, 1)
-        .into_iter()
-        .next()
-        .unwrap_or_default();
-    backend.set_input(frame.buttons, frame.dpad);
-    backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-    let zapper = crate::emu_thread::ZapperInput::from(frame.zapper);
-    backend.set_zapper_state(
-        zapper.enabled,
-        zapper.trigger,
-        zapper.hit,
-        zapper.screen_pos,
-    );
-    backend.set_replay_host_tilt(frame.host_tilt);
-    if let Some(camera_frame) = frame.camera_frame.as_deref() {
-        backend.set_replay_camera_frame(camera_frame);
+        return Ok(0);
     }
 
-    let frame_count_before = backend.frame_count();
-    if let Some(link) = link {
-        let result = match link {
-            RemoteLink::GameBoy(game_boy_link) => {
-                if let Some(activation_tick) = activation_tick {
-                    backend.step_game_boy_frame_with_remote_link_after_tick(
-                        game_boy_link,
-                        activation_tick,
-                    )
-                } else {
-                    backend.step_game_boy_frame_with_remote_link(game_boy_link)
-                }
-            }
-            RemoteLink::WonderSwan(_) => unreachable!("paired GB replay only uses Game Boy links"),
-        };
-        if result.is_err() {
-            link.disconnect();
-            backend.set_link_peer_present(false);
-            backend.step_frame();
+    if lease.needs_frame_setup() {
+        let frame = player
+            .peek_joypad_frames(0, 1)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        backend.set_input(frame.buttons, frame.dpad);
+        backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
+        let zapper = crate::emu_thread::ZapperInput::from(frame.zapper);
+        backend.set_zapper_state(
+            zapper.enabled,
+            zapper.trigger,
+            zapper.hit,
+            zapper.screen_pos,
+        );
+        backend.set_replay_host_tilt(frame.host_tilt);
+        if let Some(camera_frame) = frame.camera_frame.as_deref() {
+            backend.set_replay_camera_frame(camera_frame);
         }
-    } else {
-        backend.set_link_peer_present(false);
-        backend.step_frame();
+        lease.begin(backend, activation_tick).map_err(|error| {
+            anyhow::anyhow!("failed to begin paired replay frame lease: {error:?}")
+        })?;
     }
 
-    let advanced = usize::from(backend.frame_count() != frame_count_before);
-    if advanced > 0 && !player.is_finished() {
-        player.advance_frames(1);
+    let outcome = match link {
+        Some(link) => lease
+            .step(backend, Some(&mut *link))
+            .map_err(|error| anyhow::anyhow!("live paired replay link failed: {error}"))?,
+        None => lease
+            .step::<LocalLinkTransport>(backend, None)
+            .map_err(|error| anyhow::anyhow!("paired replay frame step failed: {error}"))?,
+    };
+    match outcome {
+        PairedGameBoyFrameLeaseOutcome::FrameComplete => {
+            if !player.is_finished() {
+                player.advance_frames(1);
+            }
+            lease.commit_frame();
+            Ok(1)
+        }
+        PairedGameBoyFrameLeaseOutcome::Boundary => Ok(0),
+        PairedGameBoyFrameLeaseOutcome::Suspended => {
+            anyhow::bail!("live paired replay side suspended before completing its frame")
+        }
     }
-    advanced
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -729,72 +799,5 @@ fn ensure_live_pair_link_connected<T: crate::link::LinkTransport>(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn local_game_boy_link_pair(
-    left_schedule: Vec<(u64, u64)>,
-    right_schedule: Vec<(u64, u64)>,
-    left_state_schedule: Vec<(u64, u64, zeff_emu_common::replay::ReplayGameBoyLinkState)>,
-    right_state_schedule: Vec<(u64, u64, zeff_emu_common::replay::ReplayGameBoyLinkState)>,
-) -> (
-    RemoteLink<LocalLinkTransport>,
-    RemoteLink<LocalLinkTransport>,
-) {
-    let (host, client) = LocalLinkTransport::pair();
-    (
-        RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::with_replay_schedules(
-            LinkSession::new(host, LinkSystemType::GameBoy, LinkEndpointId(1)),
-            left_schedule,
-            left_state_schedule,
-        )),
-        RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::with_replay_schedules(
-            LinkSession::new(client, LinkSystemType::GameBoy, LinkEndpointId(2)),
-            right_schedule,
-            right_state_schedule,
-        )),
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn game_boy_replay_inbound_schedule(
-    player: &ReplayPlayer,
-    frame_base: u64,
-    tick_base: u64,
-) -> Vec<(u64, u64)> {
-    player
-        .metadata()
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            ReplayEvent::GameBoyLink {
-                frame,
-                tick,
-                event: ReplayGameBoyLinkEvent::RemoteMasterStart { .. },
-            } => Some((frame_base + frame, tick_base + tick)),
-            ReplayEvent::GameBoyLink {
-                frame,
-                tick,
-                event: ReplayGameBoyLinkEvent::RemoteReply { .. },
-            } => Some((frame_base + frame, tick_base + tick)),
-            _ => None,
-        })
-        .collect()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn game_boy_replay_state_schedule(
-    player: &ReplayPlayer,
-    frame_base: u64,
-    tick_base: u64,
-) -> Vec<(u64, u64, zeff_emu_common::replay::ReplayGameBoyLinkState)> {
-    player
-        .metadata()
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            ReplayEvent::GameBoyLinkStateAtTick { frame, tick, state } => state
-                .peer_present
-                .then_some((frame_base + frame, tick_base + tick, *state)),
-            _ => None,
-        })
-        .collect()
-}
+#[cfg(test)]
+mod tests;

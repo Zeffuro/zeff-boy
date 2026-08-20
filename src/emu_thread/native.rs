@@ -5,6 +5,7 @@ use crossbeam_channel::{self as chan, Receiver, Sender};
 use super::emu_loop;
 use super::types::{self, EmuCommand, EmuResponse, FrameResult, SharedFramebuffer};
 use crate::emu_backend::EmuBackend;
+use zeff_emu_common::time::MachineTiming;
 
 // Keep in sync with the app's frame-step in-flight limit.
 const FRAME_CHANNEL_CAPACITY: usize = 2;
@@ -16,10 +17,19 @@ pub(crate) struct EmuThread {
     resp_rx: Receiver<EmuResponse>,
     join: Option<JoinHandle<()>>,
     shared_framebuffer: SharedFramebuffer,
+    audio_recording_context: Option<crate::audio_tooling::AudioRecordingContext>,
 }
 
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
+        let audio_recording_context =
+            backend
+                .audio_topology()
+                .map(|topology| crate::audio_tooling::AudioRecordingContext {
+                    system: backend.system(),
+                    topology,
+                    clock_rate: backend.timing_snapshot().rate(),
+                });
         let (cmd_tx, cmd_rx) = chan::unbounded();
         let (frame_tx, frame_rx) = chan::bounded::<FrameResult>(FRAME_CHANNEL_CAPACITY);
         let (resp_tx, resp_rx) = chan::unbounded();
@@ -42,7 +52,14 @@ impl EmuThread {
             resp_rx,
             join: Some(join),
             shared_framebuffer: shared_fb,
+            audio_recording_context,
         }
+    }
+
+    pub(crate) fn audio_recording_context(
+        &self,
+    ) -> Option<crate::audio_tooling::AudioRecordingContext> {
+        self.audio_recording_context
     }
 
     pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {

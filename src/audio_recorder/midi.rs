@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::audio_tooling::{AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState};
+use crate::audio_tooling::{
+    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
+};
 
 pub(super) const MIDI_TICKS_PER_QUARTER: u16 = 960;
 pub(super) const MIDI_TICKS_PER_FRAME: u32 = 16;
@@ -17,12 +19,9 @@ pub(super) fn finish_midi(
     path: PathBuf,
     frames: &[AudioSemanticFrame],
 ) -> std::io::Result<PathBuf> {
-    if frames.is_empty() {
-        std::fs::write(&path, [])?;
-        return Ok(path);
-    }
-
-    let tempo_us = frames[0].tempo_us_per_beat;
+    let tempo_us = frames
+        .first()
+        .map_or(NTSC_60_TEMPO_US_PER_BEAT, |frame| frame.tempo_us_per_beat);
     let exported_voices = exportable_voices(frames);
     let track_data = exported_voices
         .iter()
@@ -102,7 +101,7 @@ fn midi_program_for_voice(class: AudioVoiceClass) -> Option<u8> {
     match class {
         AudioVoiceClass::Pulse | AudioVoiceClass::Tone => Some(80),
         AudioVoiceClass::Triangle | AudioVoiceClass::Wavetable => Some(81),
-        AudioVoiceClass::Noise | AudioVoiceClass::Pcm => None,
+        AudioVoiceClass::Noise | AudioVoiceClass::Pcm | AudioVoiceClass::Other => None,
     }
 }
 

@@ -5,6 +5,13 @@ mod queries;
 use super::Emulator;
 
 impl Emulator {
+    pub fn preview_game_boy_link_peer(
+        &self,
+        peer: &Self,
+    ) -> crate::hardware::bus::GameBoyLinkExchangePreview {
+        self.bus.preview_game_boy_link_peer(&peer.bus)
+    }
+
     pub fn sync_game_boy_link_peer(&mut self, peer: &mut Self) {
         self.bus.sync_game_boy_link_peer(&mut peer.bus);
     }
@@ -17,6 +24,26 @@ impl Emulator {
         crate::hardware::bus::GameBoyLinkExchangeError,
     > {
         self.bus.try_sync_game_boy_link_peer(&mut peer.bus)
+    }
+
+    pub fn try_prepare_game_boy_link_peer(
+        &mut self,
+        peer: &mut Self,
+    ) -> Result<
+        crate::hardware::bus::GameBoyLinkPreparedExchange,
+        crate::hardware::bus::GameBoyLinkExchangeError,
+    > {
+        self.bus.try_prepare_game_boy_link_peer(&mut peer.bus)
+    }
+
+    pub fn try_apply_prepared_game_boy_link_reply(
+        &mut self,
+        transfer: crate::hardware::bus::GameBoyLinkPreparedTransfer,
+    ) -> Result<
+        crate::hardware::bus::GameBoyLinkTransferExchange,
+        crate::hardware::bus::GameBoyLinkExchangeError,
+    > {
+        self.bus.try_apply_prepared_game_boy_link_reply(transfer)
     }
 
     pub fn set_game_boy_link_peer_present(&mut self, present: bool) {

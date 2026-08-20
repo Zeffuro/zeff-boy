@@ -329,7 +329,15 @@ impl EmuBackend {
     }
 
     pub(crate) fn audio_semantic_frame(&self) -> Option<crate::audio_tooling::AudioSemanticFrame> {
-        dispatch!(self, audio_semantic_frame())
+        let frame = dispatch!(self, audio_semantic_frame());
+        if let (Some(topology), Some(frame)) = (self.audio_topology(), frame.as_ref()) {
+            crate::audio_tooling::debug_assert_frame_matches_topology(topology, frame);
+        }
+        frame
+    }
+
+    pub(crate) fn audio_topology(&self) -> Option<crate::audio_tooling::AudioTopology> {
+        dispatch!(self, audio_topology())
     }
 
     #[inline]
@@ -357,81 +365,85 @@ impl EmuBackend {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn begin_game_boy_frame_slice(
+        &self,
+    ) -> Result<zeff_gb_core::emulator::FrameSliceCursor, crate::link::LinkSessionError> {
+        let Self::Gb(gb) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+        Ok(gb.emu.begin_frame_slice())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_game_boy_frame_slice_until(
+        &mut self,
+        cursor: &mut zeff_gb_core::emulator::FrameSliceCursor,
+        target_tick: Option<u64>,
+        stop_on_link_action: bool,
+    ) -> Result<zeff_gb_core::emulator::FrameSliceProgress, crate::link::LinkSessionError> {
+        let Self::Gb(gb) = self else {
+            return Err(crate::link::LinkSessionError::IncompatibleSystems);
+        };
+        if !cursor.is_complete()
+            && (target_tick.is_some_and(|tick| gb.emu.cpu_cycles() >= tick)
+                || (stop_on_link_action
+                    && gb
+                        .emu
+                        .game_boy_link_replay_state()
+                        .queued_master_action
+                        .is_some()))
+        {
+            return Ok(zeff_gb_core::emulator::FrameSliceProgress {
+                outcome: zeff_gb_core::emulator::FrameSliceOutcome::Boundary,
+                boundary_reached: true,
+            });
+        }
+        Ok(gb.emu.step_frame_slice_until(cursor, |emulator| {
+            target_tick.is_some_and(|tick| emulator.cpu_cycles() >= tick)
+                || (stop_on_link_action
+                    && emulator
+                        .game_boy_link_replay_state()
+                        .queued_master_action
+                        .is_some())
+        }))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn step_game_boy_frame_with_remote_link<T: crate::link::LinkTransport>(
         &mut self,
         link: &mut crate::link::gb::GameBoyRemoteLink<T>,
     ) -> Result<(), crate::link::LinkSessionError> {
-        let Self::Gb(gb) = self else {
-            return Err(crate::link::LinkSessionError::IncompatibleSystems);
-        };
-
-        link.poll_emulator(&mut gb.emu)?;
-        if gb.emu.game_boy_link_pending_master_response() {
-            link.trace_wait_pending_master(gb.emu.cpu_cycles(), "frame_start");
-            return Ok(());
-        }
-
-        let mut link_error = None;
-        gb.emu.step_until_frame_or(|emulator| {
-            if let Err(err) = link.poll_emulator(emulator) {
-                link_error = Some(err);
-                return true;
-            }
-            if emulator.game_boy_link_pending_master_response() {
-                link.trace_wait_pending_master(emulator.cpu_cycles(), "mid_frame");
-                return true;
-            }
-            false
-        });
-
-        if let Some(err) = link_error {
-            return Err(err);
-        }
-        link.poll_emulator(&mut gb.emu)
+        let mut cursor = self.begin_game_boy_frame_slice()?;
+        let _ = self.step_game_boy_frame_slice_with_remote_link(link, &mut cursor, None)?;
+        Ok(())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn step_game_boy_frame_with_remote_link_after_tick<T: crate::link::LinkTransport>(
+    pub(crate) fn step_game_boy_frame_slice_with_remote_link<T: crate::link::LinkTransport>(
         &mut self,
         link: &mut crate::link::gb::GameBoyRemoteLink<T>,
-        activation_tick: u64,
-    ) -> Result<(), crate::link::LinkSessionError> {
+        cursor: &mut zeff_gb_core::emulator::FrameSliceCursor,
+        activation_tick: Option<u64>,
+    ) -> Result<zeff_gb_core::emulator::FrameSliceOutcome, crate::link::LinkSessionError> {
         let Self::Gb(gb) = self else {
             return Err(crate::link::LinkSessionError::IncompatibleSystems);
         };
 
-        if gb.emu.cpu_cycles() >= activation_tick {
-            return link.poll_emulator(&mut gb.emu).and_then(|_| {
-                if gb.emu.game_boy_link_pending_master_response() {
-                    link.trace_wait_pending_master(gb.emu.cpu_cycles(), "frame_start");
-                    Ok(())
-                } else {
-                    let mut link_error = None;
-                    gb.emu.step_until_frame_or(|emulator| {
-                        if let Err(err) = link.poll_emulator(emulator) {
-                            link_error = Some(err);
-                            return true;
-                        }
-                        if emulator.game_boy_link_pending_master_response() {
-                            link.trace_wait_pending_master(emulator.cpu_cycles(), "mid_frame");
-                            return true;
-                        }
-                        false
-                    });
-
-                    if let Some(err) = link_error {
-                        return Err(err);
-                    }
-                    link.poll_emulator(&mut gb.emu)
-                }
-            });
+        let link_is_active = activation_tick.is_none_or(|tick| gb.emu.cpu_cycles() >= tick);
+        if link_is_active {
+            link.poll_emulator(&mut gb.emu)?;
+            if gb.emu.game_boy_link_pending_master_response() {
+                link.trace_wait_pending_master(gb.emu.cpu_cycles(), "frame_start");
+                return Ok(zeff_gb_core::emulator::FrameSliceOutcome::Boundary);
+            }
+        } else {
+            gb.emu
+                .restore_game_boy_link_peer_present_without_action(false);
         }
 
-        gb.emu
-            .restore_game_boy_link_peer_present_without_action(false);
         let mut link_error = None;
-        gb.emu.step_until_frame_or(|emulator| {
-            if emulator.cpu_cycles() < activation_tick {
+        let outcome = gb.emu.step_frame_slice_or(cursor, |emulator| {
+            if activation_tick.is_some_and(|tick| emulator.cpu_cycles() < tick) {
                 return false;
             }
             if let Err(err) = link.poll_emulator(emulator) {
@@ -448,7 +460,8 @@ impl EmuBackend {
         if let Some(err) = link_error {
             return Err(err);
         }
-        link.poll_emulator(&mut gb.emu)
+        link.poll_emulator(&mut gb.emu)?;
+        Ok(outcome)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -689,6 +702,49 @@ impl EmuBackend {
                 true
             }
             _ => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn preview_game_boy_link_peer(
+        &self,
+        peer: &Self,
+    ) -> Option<zeff_gb_core::hardware::bus::GameBoyLinkExchangePreview> {
+        match (self, peer) {
+            (Self::Gb(left), Self::Gb(right)) => {
+                Some(left.emu.preview_game_boy_link_peer(&right.emu))
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn try_prepare_game_boy_link_peer(
+        &mut self,
+        peer: &mut Self,
+    ) -> Result<
+        zeff_gb_core::hardware::bus::GameBoyLinkPreparedExchange,
+        zeff_gb_core::hardware::bus::GameBoyLinkExchangeError,
+    > {
+        match (self, peer) {
+            (Self::Gb(left), Self::Gb(right)) => {
+                left.emu.try_prepare_game_boy_link_peer(&mut right.emu)
+            }
+            _ => unreachable!("paired Game Boy exchange requires two GB backends"),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn try_apply_prepared_game_boy_link_reply(
+        &mut self,
+        transfer: zeff_gb_core::hardware::bus::GameBoyLinkPreparedTransfer,
+    ) -> Result<
+        zeff_gb_core::hardware::bus::GameBoyLinkTransferExchange,
+        zeff_gb_core::hardware::bus::GameBoyLinkExchangeError,
+    > {
+        match self {
+            Self::Gb(gb) => gb.emu.try_apply_prepared_game_boy_link_reply(transfer),
+            _ => unreachable!("paired Game Boy reply requires a GB backend"),
         }
     }
 

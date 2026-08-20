@@ -33,6 +33,82 @@ fn make_cgb_compat_test_bus() -> Bus {
 }
 
 #[test]
+fn disconnected_link_preview_does_not_mutate_either_side() {
+    let left = make_test_bus();
+    let right = make_test_bus();
+    let left_before = left.game_boy_link_replay_state();
+    let right_before = right.game_boy_link_replay_state();
+
+    assert_eq!(
+        left.preview_game_boy_link_peer(&right),
+        GameBoyLinkExchangePreview {
+            local_action: None,
+            peer_action: None,
+            local_reply: left.game_boy_link_reply_to_master_start(),
+            peer_reply: right.game_boy_link_reply_to_master_start(),
+        }
+    );
+    assert_eq!(left.game_boy_link_replay_state(), left_before);
+    assert_eq!(right.game_boy_link_replay_state(), right_before);
+}
+
+#[test]
+fn disconnected_preview_exposes_prospective_single_master_action() {
+    let mut master = make_test_bus();
+    let passive = make_test_bus();
+    master.write_byte(SERIAL_SB, 0xAB);
+    master.write_byte(SERIAL_SC, 0x81);
+    let master_before = master.game_boy_link_replay_state();
+    let passive_before = passive.game_boy_link_replay_state();
+
+    let preview = master.preview_game_boy_link_peer(&passive);
+    assert_eq!(
+        preview.local_action,
+        Some(GameBoyLinkAction {
+            out_byte: 0xAB,
+            clock_period_t_cycles: 4096,
+            serial_generation: master_before.serial_generation,
+        })
+    );
+    assert_eq!(preview.peer_action, None);
+    assert_eq!(master.game_boy_link_replay_state(), master_before);
+    assert_eq!(passive.game_boy_link_replay_state(), passive_before);
+}
+
+#[test]
+fn preview_snapshots_crossed_master_inputs_committed_by_exchange() {
+    let mut left = make_test_bus();
+    let mut right = make_test_bus();
+    left.write_byte(SERIAL_SB, 0xAB);
+    right.write_byte(SERIAL_SB, 0x34);
+    left.write_byte(SERIAL_SC, 0x81);
+    right.write_byte(SERIAL_SC, 0x81);
+
+    let preview = left.preview_game_boy_link_peer(&right);
+    assert!(preview.local_action.is_some());
+    assert!(preview.peer_action.is_some());
+    assert_eq!(preview.local_reply.out_byte, 0xAB);
+    assert_eq!(preview.peer_reply.out_byte, 0x34);
+    assert!(matches!(
+        left.try_sync_game_boy_link_peer(&mut right),
+        Ok(GameBoyLinkExchangeOutcome::Exchanged {
+            local_action: Some(_),
+            peer_action: Some(_),
+        })
+    ));
+    let left_state = left.game_boy_link_replay_state();
+    let right_state = right.game_boy_link_replay_state();
+    assert_eq!(
+        left_state.pending_master_response,
+        Some(preview.peer_reply.out_byte)
+    );
+    assert_eq!(
+        right_state.pending_master_response,
+        Some(preview.local_reply.out_byte)
+    );
+}
+
+#[test]
 fn link_exchange_accepts_simultaneous_master_replies_before_completion() {
     let mut left = make_test_bus();
     let mut right = make_test_bus();
@@ -48,7 +124,7 @@ fn link_exchange_accepts_simultaneous_master_replies_before_completion() {
 
     let pending = GameBoyLinkTransferExchange {
         reply: GameBoyLinkReplyDisposition::AcceptedPending,
-        passive_responder_completed: false,
+        passive_responder_scheduled: false,
     };
     assert_eq!(
         left.try_sync_game_boy_link_peer(&mut right),
@@ -83,7 +159,7 @@ fn link_exchange_snapshots_both_replies_for_ready_masters() {
 
     let completed = GameBoyLinkTransferExchange {
         reply: GameBoyLinkReplyDisposition::Completed,
-        passive_responder_completed: false,
+        passive_responder_scheduled: false,
     };
     assert_eq!(
         left.try_sync_game_boy_link_peer(&mut right),
@@ -99,7 +175,7 @@ fn link_exchange_snapshots_both_replies_for_ready_masters() {
 }
 
 #[test]
-fn link_exchange_completes_passive_responder_once() {
+fn link_exchange_schedules_passive_responder_once() {
     let mut master = make_test_bus();
     let mut passive = make_test_bus();
     master.try_sync_game_boy_link_peer(&mut passive).unwrap();
@@ -114,14 +190,30 @@ fn link_exchange_completes_passive_responder_once() {
         Ok(GameBoyLinkExchangeOutcome::Exchanged {
             local_action: Some(GameBoyLinkTransferExchange {
                 reply: GameBoyLinkReplyDisposition::AcceptedPending,
-                passive_responder_completed: true,
+                passive_responder_scheduled: true,
             }),
             peer_action: None,
         })
     );
+    assert_eq!(passive.read_byte(SERIAL_SB), 0x34);
+    assert_ne!(passive.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(passive.if_reg & 0x08, 0);
+
+    passive.step_serial(4095);
+    assert_eq!(passive.read_byte(SERIAL_SB), 0x34);
+    assert_ne!(passive.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(passive.if_reg & 0x08, 0);
+
+    passive.step_serial(1);
     assert_eq!(passive.read_byte(SERIAL_SB), 0xAB);
     assert_eq!(passive.read_byte(SERIAL_SC) & 0x80, 0);
     assert_ne!(passive.if_reg & 0x08, 0);
+
+    let completed_state = passive.game_boy_link_replay_state();
+    passive.if_reg &= !0x08;
+    passive.step_serial(4096);
+    assert_eq!(passive.game_boy_link_replay_state(), completed_state);
+    assert_eq!(passive.if_reg & 0x08, 0);
 
     master.step_serial(4096);
     assert_eq!(master.read_byte(SERIAL_SB), 0x34);
@@ -130,11 +222,138 @@ fn link_exchange_completes_passive_responder_once() {
 }
 
 #[test]
+fn prepared_exchange_schedules_responder_but_defers_master_reply() {
+    let mut master = make_test_bus();
+    let mut passive = make_test_bus();
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+
+    master.write_byte(SERIAL_SB, 0xAB);
+    passive.write_byte(SERIAL_SB, 0x34);
+    master.write_byte(SERIAL_SC, 0x81);
+    passive.write_byte(SERIAL_SC, 0x80);
+    let preview = master.preview_game_boy_link_peer(&passive);
+    let prepared = master.try_prepare_game_boy_link_peer(&mut passive).unwrap();
+    let transfer = prepared.local_action.unwrap();
+
+    assert_eq!(transfer.action(), preview.local_action.unwrap());
+    assert_eq!(transfer.reply(), preview.peer_reply);
+    assert!(transfer.passive_responder_scheduled());
+    assert_eq!(prepared.peer_action, None);
+    assert_eq!(
+        master.game_boy_link_replay_state().pending_master_response,
+        None
+    );
+
+    passive.step_serial(4096);
+    assert_eq!(passive.read_byte(SERIAL_SB), 0xAB);
+    master.step_serial(4096);
+    assert_ne!(master.read_byte(SERIAL_SC) & 0x80, 0);
+
+    assert_eq!(
+        master
+            .try_apply_prepared_game_boy_link_reply(transfer)
+            .unwrap(),
+        GameBoyLinkTransferExchange {
+            reply: GameBoyLinkReplyDisposition::Completed,
+            passive_responder_scheduled: true,
+        }
+    );
+    assert_eq!(master.read_byte(SERIAL_SB), 0x34);
+}
+
+#[test]
+fn stale_prepared_reply_is_rejected_without_mutation() {
+    let mut master = make_test_bus();
+    let mut passive = make_test_bus();
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+    master.write_byte(SERIAL_SB, 0xAB);
+    passive.write_byte(SERIAL_SB, 0x34);
+    master.write_byte(SERIAL_SC, 0x81);
+    passive.write_byte(SERIAL_SC, 0x80);
+    let transfer = master
+        .try_prepare_game_boy_link_peer(&mut passive)
+        .unwrap()
+        .local_action
+        .unwrap();
+
+    let mut stale = master.game_boy_link_replay_state();
+    stale.serial_generation = stale.serial_generation.wrapping_add(1);
+    master.restore_game_boy_link_replay_state(stale);
+    let before = master.game_boy_link_replay_state();
+    assert!(matches!(
+        master.try_apply_prepared_game_boy_link_reply(transfer),
+        Err(GameBoyLinkExchangeError::RejectedReply {
+            side: GameBoyLinkExchangeSide::Local,
+            ..
+        })
+    ));
+    assert_eq!(master.game_boy_link_replay_state(), before);
+}
+
+#[test]
+fn crossed_prepare_retains_both_preview_snapshots_without_replies() {
+    let mut left = make_test_bus();
+    let mut right = make_test_bus();
+    left.write_byte(SERIAL_SB, 0xAB);
+    right.write_byte(SERIAL_SB, 0x34);
+    left.write_byte(SERIAL_SC, 0x81);
+    right.write_byte(SERIAL_SC, 0x81);
+    let preview = left.preview_game_boy_link_peer(&right);
+
+    let prepared = left.try_prepare_game_boy_link_peer(&mut right).unwrap();
+    let left_transfer = prepared.local_action.unwrap();
+    let right_transfer = prepared.peer_action.unwrap();
+    assert_eq!(left_transfer.action(), preview.local_action.unwrap());
+    assert_eq!(left_transfer.reply(), preview.peer_reply);
+    assert_eq!(right_transfer.action(), preview.peer_action.unwrap());
+    assert_eq!(right_transfer.reply(), preview.local_reply);
+    assert_eq!(
+        left.game_boy_link_replay_state().pending_master_response,
+        None
+    );
+    assert_eq!(
+        right.game_boy_link_replay_state().pending_master_response,
+        None
+    );
+}
+
+#[test]
+fn link_exchange_preflight_rejection_preserves_both_sides() {
+    let mut master = make_test_bus();
+    let mut passive = make_test_bus();
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+
+    passive.write_byte(SERIAL_SB, 0x34);
+    passive.write_byte(SERIAL_SC, 0x80);
+    assert!(passive.schedule_game_boy_external_link_transfer(0x55, 4096));
+    master.write_byte(SERIAL_SB, 0xAB);
+    master.write_byte(SERIAL_SC, 0x81);
+    master.if_reg = 0x05;
+    passive.if_reg = 0x12;
+
+    let master_state = master.game_boy_link_replay_state();
+    let passive_state = passive.game_boy_link_replay_state();
+    let master_if = master.if_reg;
+    let passive_if = passive.if_reg;
+
+    assert_eq!(
+        master.try_sync_game_boy_link_peer(&mut passive),
+        Err(GameBoyLinkExchangeError::RejectedPassiveScheduling {
+            responder: GameBoyLinkExchangeSide::Peer,
+        })
+    );
+    assert_eq!(master.game_boy_link_replay_state(), master_state);
+    assert_eq!(passive.game_boy_link_replay_state(), passive_state);
+    assert_eq!(master.if_reg, master_if);
+    assert_eq!(passive.if_reg, passive_if);
+}
+
+#[test]
 fn link_exchange_rejects_stale_queued_action_without_mutation() {
     let mut left = make_test_bus();
     let mut right = make_test_bus();
     let stale = zeff_emu_common::replay::ReplayGameBoyLinkState {
-        peer_present: true,
+        peer_present: false,
         pending_master_byte: None,
         pending_master_response: None,
         pending_master_completion_ready: false,
@@ -146,11 +365,7 @@ fn link_exchange_rejects_stale_queued_action_without_mutation() {
         serial_generation: 3,
     };
     left.restore_game_boy_link_replay_state(stale);
-    let right_state = zeff_emu_common::replay::ReplayGameBoyLinkState {
-        peer_present: true,
-        ..right.game_boy_link_replay_state()
-    };
-    right.restore_game_boy_link_replay_state(right_state);
+    let left_before = left.game_boy_link_replay_state();
     let right_before = right.game_boy_link_replay_state();
 
     assert_eq!(
@@ -161,7 +376,7 @@ fn link_exchange_rejects_stale_queued_action_without_mutation() {
             serial_generation: 3,
         })
     );
-    assert_eq!(left.game_boy_link_replay_state(), stale);
+    assert_eq!(left.game_boy_link_replay_state(), left_before);
     assert_eq!(right.game_boy_link_replay_state(), right_before);
 }
 

@@ -105,6 +105,8 @@ impl Apu {
             triangle_volume: self.triangle.midi_volume(),
             noise_enabled: self.noise.midi_active(),
             noise_volume: self.noise.midi_volume(),
+            dmc_enabled: self.dmc.enabled,
+            dmc_output_level: self.dmc.output_level,
         }
     }
 
@@ -150,5 +152,22 @@ impl Apu {
             3 => self.noise_debug_samples.iter().copied().collect(),
             _ => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Apu;
+
+    #[test]
+    fn channel_snapshot_includes_dmc_gate_and_dac_level() {
+        let mut apu = Apu::new(44_100.0);
+        apu.dmc.write(1, 0x55);
+        apu.dmc.set_enabled(true);
+
+        let snapshot = apu.channel_snapshot();
+
+        assert!(snapshot.dmc_enabled);
+        assert_eq!(snapshot.dmc_output_level, 0x55);
     }
 }

@@ -8,6 +8,7 @@ use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, Share
 use super::{DEFAULT_REWIND_SECONDS, REWIND_SNAPSHOTS_PER_SECOND};
 use crate::cheats::CheatPatch;
 use crate::emu_backend::EmuBackend;
+use zeff_emu_common::time::MachineTiming;
 
 struct Inner {
     backend: EmuBackend,
@@ -17,15 +18,26 @@ struct Inner {
     rewind_buffer: RewindBuffer,
     rewind_seconds: usize,
     last_cheats: Vec<CheatPatch>,
+    audio_recording_capture: super::AudioRecordingCapture,
+    pending_audio_discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
 }
 
 pub(crate) struct EmuThread {
     inner: RefCell<Inner>,
     shared_framebuffer: SharedFramebuffer,
+    audio_recording_context: Option<crate::audio_tooling::AudioRecordingContext>,
 }
 
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
+        let audio_recording_context =
+            backend
+                .audio_topology()
+                .map(|topology| crate::audio_tooling::AudioRecordingContext {
+                    system: backend.system(),
+                    topology,
+                    clock_rate: backend.timing_snapshot().rate(),
+                });
         let shared_framebuffer = types::new_shared_framebuffer();
         types::publish_framebuffer(&shared_framebuffer, backend.framebuffer());
         Self {
@@ -40,9 +52,18 @@ impl EmuThread {
                 ),
                 rewind_seconds: DEFAULT_REWIND_SECONDS,
                 last_cheats: Vec::new(),
+                audio_recording_capture: super::AudioRecordingCapture::default(),
+                pending_audio_discontinuities: Vec::new(),
             }),
             shared_framebuffer,
+            audio_recording_context,
         }
+    }
+
+    pub(crate) fn audio_recording_context(
+        &self,
+    ) -> Option<crate::audio_tooling::AudioRecordingContext> {
+        self.audio_recording_context
     }
 
     pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
@@ -59,19 +80,45 @@ impl EmuThread {
             rewind_buffer,
             rewind_seconds,
             last_cheats,
+            audio_recording_capture,
+            pending_audio_discontinuities,
         } = inner;
         match cmd {
             EmuCommand::StepFrames(input) => {
-                let result = Self::handle_step_frames(
+                let input = *input;
+                *audio_recording_capture = input.audio.recording_capture;
+                let debugger_mutation = !input.debug_actions.memory_writes.is_empty();
+                let mut result = Self::handle_step_frames(
                     backend,
-                    *input,
+                    input,
                     last_cheats,
                     *uncapped_mode,
                     rewind_buffer,
                     rewind_seconds,
                     &self.shared_framebuffer,
                 );
+                if debugger_mutation && audio_recording_capture.semantic {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation);
+                }
+                if !result.audio_semantic_frames.is_empty() {
+                    result
+                        .audio_timeline_discontinuities
+                        .append(pending_audio_discontinuities);
+                }
                 pending_frames.push_back(result);
+            }
+            EmuCommand::SetAudioRecordingCapture {
+                capture,
+                acknowledged,
+            } => {
+                if capture.semantic && !audio_recording_capture.semantic {
+                    pending_audio_discontinuities.clear();
+                }
+                *audio_recording_capture = capture;
+                if let Some(acknowledged) = acknowledged {
+                    let _ = acknowledged.send(());
+                }
             }
             EmuCommand::SetSampleRate(rate) => {
                 backend.set_sample_rate(rate);
@@ -106,6 +153,12 @@ impl EmuThread {
                     &self.shared_framebuffer,
                 );
                 Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                if matches!(&resp, EmuResponse::LoadStateOk { .. })
+                    && audio_recording_capture.semantic
+                {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::SaveStateToPath(path) => {
@@ -127,6 +180,12 @@ impl EmuThread {
                     &self.shared_framebuffer,
                 );
                 Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                if matches!(&resp, EmuResponse::LoadStateOk { .. })
+                    && audio_recording_capture.semantic
+                {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::AutoSaveState => {
@@ -155,6 +214,12 @@ impl EmuThread {
                     None => EmuResponse::LoadStateFailed("no auto-save path".to_string()),
                 };
                 Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                if matches!(&resp, EmuResponse::LoadStateOk { .. })
+                    && audio_recording_capture.semantic
+                {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::CaptureStateBytes => {
@@ -178,6 +243,12 @@ impl EmuThread {
                     },
                 };
                 types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
+                if matches!(&resp, EmuResponse::GuestCallCompleted { .. })
+                    && audio_recording_capture.semantic
+                {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation);
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::UndoGuestCall(state) => {
@@ -186,6 +257,11 @@ impl EmuThread {
                     Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
                 };
                 types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
+                if matches!(&resp, EmuResponse::GuestCallUndone) && audio_recording_capture.semantic
+                {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo);
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::CaptureReplayStart { capture_id } => {
@@ -236,6 +312,12 @@ impl EmuThread {
                     &self.shared_framebuffer,
                 );
                 Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                if matches!(&resp, EmuResponse::LoadStateOk { .. })
+                    && audio_recording_capture.semantic
+                {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::RestoreGameBoyLinkState(state) => {
@@ -249,6 +331,10 @@ impl EmuThread {
                 let resp = Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer);
                 if matches!(&resp, EmuResponse::RewindOk) {
                     backend.install_rom_patches(last_cheats);
+                    if audio_recording_capture.semantic {
+                        pending_audio_discontinuities
+                            .push(crate::audio_recorder::AudioTimelineDiscontinuity::Rewind);
+                    }
                 }
                 pending_responses.push_back(resp);
             }

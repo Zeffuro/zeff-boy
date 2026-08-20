@@ -7,6 +7,7 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 use crate::rom_archive::PendingArchiveSelection;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
+use zeff_emu_common::time::MachineTiming;
 use zeff_ws_core::hardware::cartridge::RomOrientation;
 
 fn is_zip_path(path: &Path) -> bool {
@@ -97,7 +98,9 @@ impl App {
         rom_path: &Path,
         preloaded_data: Option<Vec<u8>>,
     ) -> anyhow::Result<(EmuBackend, u32)> {
+        #[cfg(not(target_arch = "wasm32"))]
         let configured_firmware_dir = self.settings.emulation.firmware_directory_path();
+        #[cfg(not(target_arch = "wasm32"))]
         let firmware_inventory = if !self.debug_windows.firmware_inventory.needs_refresh
             && self.debug_windows.firmware_inventory.directory.as_deref()
                 == configured_firmware_dir.as_deref()
@@ -106,6 +109,8 @@ impl App {
         } else {
             None
         };
+        #[cfg(target_arch = "wasm32")]
+        let firmware_inventory = Some(crate::platform::firmware_inventory_snapshot());
         let loaded = load_backend_from_rom_source(
             system,
             path,
@@ -151,6 +156,13 @@ impl App {
         system: ActiveSystem,
         auto_load_state: bool,
     ) {
+        let is_same_rom_reset = !auto_load_state
+            && self.rom_info.source_path.as_deref() == Some(source_path)
+            && self.rom_info.rom_path.as_deref() == Some(rom_path.as_path());
+        let previous_audio_context = self
+            .emu_thread
+            .as_ref()
+            .and_then(crate::emu_thread::EmuThread::audio_recording_context);
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.tcp_link_active = false;
@@ -175,11 +187,31 @@ impl App {
             match self.init_backend(system, source_path, &rom_path, preloaded_data) {
                 Ok(result) => result,
                 Err(e) => {
+                    self.stop_audio_recording();
                     log::error!("Failed to load ROM '{}': {}", source_path.display(), e);
                     self.toast_manager.error(format!("Failed to load ROM: {e}"));
                     return;
                 }
             };
+
+        if self.recording.audio_recorder.is_some() {
+            let next_audio_context = backend.audio_topology().map(|topology| {
+                crate::audio_tooling::AudioRecordingContext {
+                    system: backend.system(),
+                    topology,
+                    clock_rate: backend.timing_snapshot().rate(),
+                }
+            });
+            if is_same_rom_reset && previous_audio_context == next_audio_context {
+                if let Some(recorder) = &mut self.recording.audio_recorder {
+                    recorder.begin_semantic_timeline_epoch(
+                        crate::audio_recorder::AudioTimelineDiscontinuity::Reset,
+                    );
+                }
+            } else {
+                self.stop_audio_recording();
+            }
+        }
 
         let rom_name = rom_path
             .file_name()
@@ -333,6 +365,7 @@ impl App {
         self.save_current_cheats();
 
         self.stop_emu_thread();
+        self.stop_audio_recording();
         self.stop_camera_capture();
         #[cfg(not(target_arch = "wasm32"))]
         {

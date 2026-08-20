@@ -15,7 +15,8 @@ mod trace;
 
 pub use link::{
     GameBoyLinkAction, GameBoyLinkExchangeError, GameBoyLinkExchangeOutcome,
-    GameBoyLinkExchangeSide, GameBoyLinkReply, GameBoyLinkReplyDisposition, GameBoyLinkState,
+    GameBoyLinkExchangePreview, GameBoyLinkExchangeSide, GameBoyLinkPreparedExchange,
+    GameBoyLinkPreparedTransfer, GameBoyLinkReply, GameBoyLinkReplyDisposition, GameBoyLinkState,
     GameBoyLinkTransferExchange,
 };
 pub use oam_corruption::OamCorruptionType;

@@ -68,11 +68,12 @@ pub(crate) struct FirmwareInventoryRow {
     pub(crate) status: FirmwareInventoryStatusKind,
     pub(crate) detail: String,
     pub(crate) sha256_prefix: Option<String>,
+    pub(crate) managed_key: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct FirmwareInventoryScanResult {
-    pub(crate) directory: std::path::PathBuf,
+    pub(crate) configured_directory: Option<std::path::PathBuf>,
     pub(crate) result: Result<
         (
             Vec<FirmwareInventoryRow>,
@@ -88,8 +89,18 @@ pub(crate) struct FirmwareInventoryState {
     pub(crate) inventory: Option<Arc<zeff_firmware::FirmwareInventory>>,
     pub(crate) error: Option<String>,
     pub(crate) needs_refresh: bool,
+    pub(crate) pending_removal: Option<String>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) scan_receiver: Option<std::sync::mpsc::Receiver<FirmwareInventoryScanResult>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) import_receiver:
+        Option<std::sync::mpsc::Receiver<Result<crate::platform::NativeFirmwareImport, String>>>,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) pending_file: crate::platform::FileDataSlot,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) web_operation_pending: bool,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) web_operation_result: std::rc::Rc<std::cell::RefCell<Option<Result<(), String>>>>,
 }
 
 impl Default for FirmwareInventoryState {
@@ -100,8 +111,17 @@ impl Default for FirmwareInventoryState {
             inventory: None,
             error: None,
             needs_refresh: true,
+            pending_removal: None,
             #[cfg(not(target_arch = "wasm32"))]
             scan_receiver: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            import_receiver: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_file: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            web_operation_pending: false,
+            #[cfg(target_arch = "wasm32")]
+            web_operation_result: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
     }
 }

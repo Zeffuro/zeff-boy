@@ -109,7 +109,13 @@ impl From<zeff_emu_common::replay::ReplayZapperFrame> for ZapperInput {
 pub(crate) struct AudioConfig {
     pub(crate) apu_capture_enabled: bool,
     pub(crate) skip_audio: bool,
-    pub(crate) midi_capture_active: bool,
+    pub(crate) recording_capture: AudioRecordingCapture,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AudioRecordingCapture {
+    pub(crate) active: bool,
+    pub(crate) semantic: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +157,8 @@ pub(crate) struct FrameResult {
     pub(crate) is_pocket_camera: bool,
     pub(crate) rewind_fill: f32,
     pub(crate) audio_semantic_frames: Vec<crate::audio_tooling::AudioSemanticFrame>,
+    pub(crate) audio_timeline_discontinuities:
+        Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +170,10 @@ pub(crate) enum TcpLinkMode {
 
 pub(crate) enum EmuCommand {
     StepFrames(Box<FrameInput>),
+    SetAudioRecordingCapture {
+        capture: AudioRecordingCapture,
+        acknowledged: Option<std::sync::mpsc::Sender<()>>,
+    },
     SaveStateSlot(u8),
     LoadStateSlot {
         slot: u8,

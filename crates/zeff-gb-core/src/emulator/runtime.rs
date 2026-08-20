@@ -15,6 +15,12 @@ pub struct FrameSliceCursor {
     complete: bool,
 }
 
+impl FrameSliceCursor {
+    pub fn is_complete(&self) -> bool {
+        self.complete
+    }
+}
+
 #[derive(Clone, Debug)]
 enum FrameSliceMode {
     LcdOff {
@@ -32,6 +38,12 @@ pub enum FrameSliceOutcome {
     Boundary,
     FrameComplete,
     Suspended,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameSliceProgress {
+    pub outcome: FrameSliceOutcome,
+    pub boundary_reached: bool,
 }
 
 impl Emulator {
@@ -291,27 +303,47 @@ impl Emulator {
     pub fn step_frame_slice_or<F>(
         &mut self,
         cursor: &mut FrameSliceCursor,
-        mut should_stop: F,
+        should_stop: F,
     ) -> FrameSliceOutcome
     where
         F: FnMut(&mut Self) -> bool,
     {
+        self.step_frame_slice_until(cursor, should_stop).outcome
+    }
+
+    pub fn step_frame_slice_until<F>(
+        &mut self,
+        cursor: &mut FrameSliceCursor,
+        mut should_stop: F,
+    ) -> FrameSliceProgress
+    where
+        F: FnMut(&mut Self) -> bool,
+    {
         if cursor.complete {
-            return FrameSliceOutcome::FrameComplete;
+            return FrameSliceProgress {
+                outcome: FrameSliceOutcome::FrameComplete,
+                boundary_reached: false,
+            };
         }
         assert_eq!(
             self.frame_count, cursor.origin_frame,
             "frame slice cursor resumed after its origin frame changed"
         );
         if matches!(self.cpu.running, CpuState::Suspended) {
-            return FrameSliceOutcome::Suspended;
+            return FrameSliceProgress {
+                outcome: FrameSliceOutcome::Suspended,
+                boundary_reached: false,
+            };
         }
 
         loop {
             self.step_runtime_instruction();
             let stop_requested = should_stop(self);
             if matches!(self.cpu.running, CpuState::Suspended) {
-                return FrameSliceOutcome::Suspended;
+                return FrameSliceProgress {
+                    outcome: FrameSliceOutcome::Suspended,
+                    boundary_reached: stop_requested,
+                };
             }
 
             let frame_complete = match &mut cursor.mode {
@@ -328,10 +360,16 @@ impl Emulator {
             if frame_complete {
                 cursor.complete = true;
                 self.frame_count = self.frame_count.wrapping_add(1);
-                return FrameSliceOutcome::FrameComplete;
+                return FrameSliceProgress {
+                    outcome: FrameSliceOutcome::FrameComplete,
+                    boundary_reached: stop_requested,
+                };
             }
             if stop_requested {
-                return FrameSliceOutcome::Boundary;
+                return FrameSliceProgress {
+                    outcome: FrameSliceOutcome::Boundary,
+                    boundary_reached: true,
+                };
             }
         }
     }
@@ -533,14 +571,38 @@ mod tests {
         let mut cursor = emu.begin_frame_slice();
         let mut observed_vblank = false;
 
-        let outcome = emu.step_frame_slice_or(&mut cursor, |emu| {
+        let progress = emu.step_frame_slice_until(&mut cursor, |emu| {
             observed_vblank = emu.ppu_ly() >= 144;
             observed_vblank
         });
 
-        assert_eq!(outcome, FrameSliceOutcome::FrameComplete);
+        assert_eq!(progress.outcome, FrameSliceOutcome::FrameComplete);
+        assert!(progress.boundary_reached);
         assert_eq!(emu.frame_count, start_frame + 1);
         assert!(observed_vblank);
+    }
+
+    #[test]
+    fn frame_slice_point_reports_exact_and_overshot_instruction_boundaries() {
+        let rom = vec![0u8; 0x8000];
+        let mut exact = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        let exact_target = exact.cpu.cycles + 4;
+        let mut exact_cursor = exact.begin_frame_slice();
+        let exact_progress =
+            exact.step_frame_slice_until(&mut exact_cursor, |emu| emu.cpu.cycles >= exact_target);
+        assert_eq!(exact_progress.outcome, FrameSliceOutcome::Boundary);
+        assert!(exact_progress.boundary_reached);
+        assert_eq!(exact.cpu.cycles, exact_target);
+
+        let mut overshot = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        let overshot_target = overshot.cpu.cycles + 1;
+        let mut overshot_cursor = overshot.begin_frame_slice();
+        let overshot_progress = overshot.step_frame_slice_until(&mut overshot_cursor, |emu| {
+            emu.cpu.cycles >= overshot_target
+        });
+        assert_eq!(overshot_progress.outcome, FrameSliceOutcome::Boundary);
+        assert!(overshot_progress.boundary_reached);
+        assert!(overshot.cpu.cycles > overshot_target);
     }
 
     #[test]

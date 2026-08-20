@@ -18,22 +18,20 @@ use json_helpers::{cpu_debug_json, live_speed_mode_name, live_system_name};
 
 impl App {
     pub(super) fn drain_live_control(&mut self) {
-        self.update_live_button_releases();
-
         while let Some(request) = self.live_control.try_recv() {
             request.respond_with(|command| self.handle_live_command(command));
         }
     }
 
-    fn update_live_button_releases(&mut self) {
-        for release in &mut self.live_button_releases {
-            release.frames_remaining = release.frames_remaining.saturating_sub(1);
-            if release.frames_remaining == 0 {
-                set_remote_player(&mut self.host_input, release.player, release.key, false);
-            }
+    pub(super) fn limit_frames_for_live_button_releases(&self, frames: usize) -> usize {
+        pending_release_frame_limit(&self.live_button_releases, frames)
+    }
+
+    pub(super) fn advance_live_button_releases(&mut self, frames: usize) {
+        for (player, key) in advance_pending_button_releases(&mut self.live_button_releases, frames)
+        {
+            set_remote_player(&mut self.host_input, player, key, false);
         }
-        self.live_button_releases
-            .retain(|release| release.frames_remaining > 0);
     }
 
     fn handle_live_command(&mut self, command: LiveCommand) -> LiveReply {
@@ -82,7 +80,7 @@ impl App {
                 self.settings.emulation.uncapped_speed = enabled;
                 if let Some(thread) = &self.emu_thread {
                     thread.send(EmuCommand::SetUncapped(
-                        enabled && !self.recording.is_replay_active(),
+                        enabled && self.recording.allows_uncapped_worker(),
                     ));
                 }
                 LiveReply::ok(self.live_status_json())
@@ -448,9 +446,61 @@ fn same_joypad_key(a: HostButton, b: HostButton) -> bool {
     a == b
 }
 
+fn pending_release_frame_limit(releases: &[PendingButtonRelease], frames: usize) -> usize {
+    releases
+        .iter()
+        .map(|release| release.frames_remaining)
+        .min()
+        .map_or(frames, |remaining| frames.min(remaining))
+}
+
+fn advance_pending_button_releases(
+    releases: &mut Vec<PendingButtonRelease>,
+    frames: usize,
+) -> Vec<(u8, HostButton)> {
+    let mut expired = Vec::new();
+    for release in releases.iter_mut() {
+        release.frames_remaining = release.frames_remaining.saturating_sub(frames);
+        if release.frames_remaining == 0 {
+            expired.push((release.player, release.key));
+        }
+    }
+    releases.retain(|release| release.frames_remaining > 0);
+    expired
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_button_release_limits_frame_batches() {
+        let mut releases = vec![
+            PendingButtonRelease {
+                player: 1,
+                key: HostButton::A,
+                frames_remaining: 3,
+            },
+            PendingButtonRelease {
+                player: 2,
+                key: HostButton::B,
+                frames_remaining: 1,
+            },
+        ];
+
+        assert_eq!(pending_release_frame_limit(&releases, 4), 1);
+        assert_eq!(pending_release_frame_limit(&[], 4), 4);
+        assert_eq!(
+            advance_pending_button_releases(&mut releases, 1),
+            vec![(2, HostButton::B)]
+        );
+        assert_eq!(releases[0].frames_remaining, 2);
+        assert_eq!(
+            advance_pending_button_releases(&mut releases, 2),
+            vec![(1, HostButton::A)]
+        );
+        assert!(releases.is_empty());
+    }
 
     #[test]
     fn core_features_json_exposes_opcode_history_support() {

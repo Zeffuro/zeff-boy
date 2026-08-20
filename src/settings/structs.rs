@@ -684,18 +684,21 @@ impl EmulationSettings {
         {
             const LEGACY_ENV_VAR: &str = "ZEFF_FIRMWARE_DIR";
 
-            self.firmware_search_dirs_with_env(
+            self.firmware_search_dirs_with_roots(
+                crate::platform::managed_firmware_dir(),
                 std::env::var_os(LEGACY_ENV_VAR).map(std::path::PathBuf::from),
             )
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn firmware_search_dirs_with_env(
+    pub(crate) fn firmware_search_dirs_with_roots(
         &self,
+        managed_dir: std::path::PathBuf,
         legacy_env_dir: Option<std::path::PathBuf>,
     ) -> Vec<std::path::PathBuf> {
         let mut dirs = Vec::new();
+        push_unique_firmware_dir(&mut dirs, managed_dir);
         if let Some(path) = self.firmware_directory_path() {
             push_unique_firmware_dir(&mut dirs, path);
         }

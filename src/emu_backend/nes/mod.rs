@@ -7,11 +7,54 @@ use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot
 use zeff_nes_core::emulator::Emulator as NesEmulator;
 
 use crate::audio_tooling::{
-    AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState,
-    NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
+    AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
+    AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
 };
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
+
+const NES_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
+    AudioChannelDescriptor {
+        id: AudioChannelId(0),
+        name: "NES Pulse 1",
+        group: "2A03 APU",
+        class: AudioVoiceClass::Pulse,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(1),
+        name: "NES Pulse 2",
+        group: "2A03 APU",
+        class: AudioVoiceClass::Pulse,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(2),
+        name: "NES Triangle",
+        group: "2A03 APU",
+        class: AudioVoiceClass::Triangle,
+        caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(3),
+        name: "NES Noise",
+        group: "2A03 APU",
+        class: AudioVoiceClass::Noise,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+    AudioChannelDescriptor {
+        id: AudioChannelId(4),
+        name: "NES DMC",
+        group: "2A03 APU",
+        class: AudioVoiceClass::Pcm,
+        caps: AudioSemanticCaps::GATE_LEVEL,
+        muteable: true,
+    },
+];
 
 impl crate::emu_core_trait::DebuggableEmulator for NesEmulator {
     fn add_breakpoint(&mut self, addr: Address) {
@@ -236,6 +279,13 @@ impl EmulatorCore for NesBackend {
         ))
     }
 
+    fn audio_topology(&self) -> Option<AudioTopology> {
+        Some(AudioTopology {
+            generation: 1,
+            channels: NES_AUDIO_CHANNELS,
+        })
+    }
+
     fn copy_memory_region(
         &mut self,
         id_or_alias: &str,
@@ -341,6 +391,14 @@ fn nes_audio_semantic_frame(
                 active: snap.noise_enabled,
                 pitch_hz: None,
                 level: Some(level_from_u4(snap.noise_volume)),
+            },
+            AudioVoiceState {
+                channel: AudioChannelId(4),
+                name: "NES DMC",
+                class: AudioVoiceClass::Pcm,
+                active: snap.dmc_enabled,
+                pitch_hz: None,
+                level: Some(f32::from(snap.dmc_output_level) / 127.0),
             },
         ],
     }

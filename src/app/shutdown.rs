@@ -4,6 +4,16 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 impl App {
     pub(super) fn stop_emu_thread(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
+        if self.recording.audio_recorder.is_some()
+            && !self.synchronize_audio_recording_capture(
+                crate::emu_thread::AudioRecordingCapture::default(),
+            )
+        {
+            self.recording.audio_recorder.take();
+            self.toast_manager
+                .error("Audio recording aborted while stopping emulation");
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         {
             self.recording.pending_replay_start = None;
         }

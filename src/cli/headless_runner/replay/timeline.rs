@@ -90,13 +90,28 @@ fn first_common_game_boy_transfer_frames(
 )> {
     let mut left_transfers = std::collections::HashMap::new();
     for (frame, tick, event) in left_player.game_boy_link_events() {
-        left_transfers
-            .entry(game_boy_link_transfer_id(event))
-            .or_insert((frame, tick, event));
+        if matches!(
+            event,
+            ReplayGameBoyLinkEvent::LocalMasterStart { .. }
+                | ReplayGameBoyLinkEvent::RemoteMasterStart { .. }
+        ) {
+            left_transfers
+                .entry(game_boy_link_transfer_id(event))
+                .or_insert((frame, tick, event));
+        }
     }
     for (right_frame, right_tick, event) in right_player.game_boy_link_events() {
+        if !matches!(
+            event,
+            ReplayGameBoyLinkEvent::LocalMasterStart { .. }
+                | ReplayGameBoyLinkEvent::RemoteMasterStart { .. }
+        ) {
+            continue;
+        }
         let transfer_id = game_boy_link_transfer_id(event);
-        if let Some((left_frame, left_tick, left_event)) = left_transfers.get(&transfer_id) {
+        if let Some((left_frame, left_tick, left_event)) = left_transfers.get(&transfer_id)
+            && complementary_transfer_starts(*left_event, event)
+        {
             return Some((
                 *left_frame as usize,
                 *left_tick,
@@ -108,6 +123,23 @@ fn first_common_game_boy_transfer_frames(
         }
     }
     None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn complementary_transfer_starts(
+    left: ReplayGameBoyLinkEvent,
+    right: ReplayGameBoyLinkEvent,
+) -> bool {
+    matches!(
+        (left, right),
+        (
+            ReplayGameBoyLinkEvent::LocalMasterStart { .. },
+            ReplayGameBoyLinkEvent::RemoteMasterStart { .. }
+        ) | (
+            ReplayGameBoyLinkEvent::RemoteMasterStart { .. },
+            ReplayGameBoyLinkEvent::LocalMasterStart { .. }
+        )
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]

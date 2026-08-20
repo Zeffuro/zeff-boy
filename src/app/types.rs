@@ -91,6 +91,14 @@ impl RecordingState {
         !self.is_replay_active()
     }
 
+    pub(super) fn allows_uncapped_worker(&self) -> bool {
+        !self.is_replay_active()
+            && self
+                .audio_recorder
+                .as_ref()
+                .is_none_or(|recorder| recorder.supports_uncapped_recording())
+    }
+
     pub(super) fn should_stage_replay_recording_input(&self) -> bool {
         self.replay_recorder.is_some() || self.is_replay_start_pending()
     }
@@ -371,5 +379,86 @@ mod tests {
         assert_ne!(first, second);
         assert!(!state.replay_start_matches(first));
         assert!(state.replay_start_matches(second));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn uncapped_worker_is_gated_only_by_pcm_recording() {
+        use crate::audio_tooling::{
+            AudioChannelDescriptor, AudioChannelId, AudioRecordingContext, AudioSemanticCaps,
+            AudioTopology, AudioVoiceClass,
+        };
+        use crate::settings::AudioRecordingFormat;
+        use zeff_emu_common::system::System;
+        use zeff_emu_common::time::ClockRate;
+
+        const CHANNELS: &[AudioChannelDescriptor] = &[AudioChannelDescriptor {
+            id: AudioChannelId(0),
+            name: "Test tone",
+            group: "Test",
+            class: AudioVoiceClass::Tone,
+            caps: AudioSemanticCaps::GATE_PITCH_LEVEL,
+            muteable: true,
+        }];
+        let context = AudioRecordingContext {
+            system: System::Sms,
+            topology: AudioTopology {
+                generation: 1,
+                channels: CHANNELS,
+            },
+            clock_rate: ClockRate::from_hz(1),
+        };
+        let unique = format!(
+            "zeff-audio-capture-policy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let mut state = recording_state();
+        let wav_path = std::env::temp_dir().join(format!("{unique}.wav"));
+        state.audio_recorder = Some(
+            crate::audio_recorder::AudioRecorder::start(
+                &wav_path,
+                48_000,
+                AudioRecordingFormat::Wav16,
+                None,
+            )
+            .unwrap(),
+        );
+        assert!(!state.allows_uncapped_worker());
+        state.audio_recorder.take().unwrap().finish().unwrap();
+
+        let midi_path = std::env::temp_dir().join(format!("{unique}.mid"));
+        state.audio_recorder = Some(
+            crate::audio_recorder::AudioRecorder::start(
+                &midi_path,
+                48_000,
+                AudioRecordingFormat::Midi,
+                Some(context),
+            )
+            .unwrap(),
+        );
+        assert!(!state.allows_uncapped_worker());
+        state.audio_recorder.take().unwrap().finish().unwrap();
+
+        let events_path = std::env::temp_dir().join(format!("{unique}.zaudio"));
+        state.audio_recorder = Some(
+            crate::audio_recorder::AudioRecorder::start(
+                &events_path,
+                48_000,
+                AudioRecordingFormat::ZeffEvents,
+                Some(context),
+            )
+            .unwrap(),
+        );
+        assert!(state.allows_uncapped_worker());
+        state.audio_recorder.take().unwrap().finish().unwrap();
+
+        let _ = std::fs::remove_file(wav_path);
+        let _ = std::fs::remove_file(midi_path);
+        let _ = std::fs::remove_file(events_path);
     }
 }

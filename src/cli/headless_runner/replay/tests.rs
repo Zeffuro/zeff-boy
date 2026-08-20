@@ -387,6 +387,44 @@ fn paired_game_boy_replay_timeline_defaults_without_common_transfer_ids() -> any
 }
 
 #[test]
+fn paired_game_boy_replay_timeline_ignores_same_role_transfer_ids() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_pair_timeline_same_role")?;
+    let event = ReplayGameBoyLinkEvent::LocalMasterStart {
+        transfer_id: 0x0100_0000_0000_0007,
+        clock_period_t_cycles: 4096,
+        out_byte: 0x42,
+        serial_generation: 3,
+    };
+    let left = replay_player_with_gb_events(
+        temp.path(),
+        "left.zrpl",
+        12,
+        vec![ReplayEvent::GameBoyLink {
+            frame: 4,
+            tick: 100,
+            event,
+        }],
+    )?;
+    let right = replay_player_with_gb_events(
+        temp.path(),
+        "right.zrpl",
+        10,
+        vec![ReplayEvent::GameBoyLink {
+            frame: 2,
+            tick: 50,
+            event,
+        }],
+    )?;
+
+    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
+
+    assert_eq!(timeline.left_start_offset, 0);
+    assert_eq!(timeline.right_start_offset, 0);
+    assert_eq!(timeline.link_activation_frame, 0);
+    Ok(())
+}
+
+#[test]
 fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::Result<()> {
     let temp = test_temp_dir("zeff_headless_replay_route")?;
     let rom_path = temp.path().join("test.nes");

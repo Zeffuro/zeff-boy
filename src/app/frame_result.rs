@@ -188,6 +188,9 @@ impl App {
 
         if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
+            for reason in result.audio_timeline_discontinuities {
+                recorder.begin_semantic_timeline_epoch(reason);
+            }
             for frame in result.audio_semantic_frames {
                 recorder.write_audio_semantic_frame(frame);
             }

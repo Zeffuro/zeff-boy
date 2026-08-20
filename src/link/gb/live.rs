@@ -18,8 +18,7 @@ use super::protocol::{
 use super::trace::LinkTrace;
 
 const MASTER_REPLY_SPIN_LIMIT: usize = 64;
-const PASSIVE_REARM_CATCHUP_T_CYCLES: u64 = 4096;
-const PASSIVE_REARM_CATCHUP_INSTRUCTIONS: usize = 256;
+const PASSIVE_REARM_GRACE_T_CYCLES: u64 = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PendingGameBoyMasterTransfer {
@@ -31,11 +30,17 @@ struct PendingGameBoyMasterTransfer {
     boundary_waits: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PassiveDrainGate {
+    completion_tick: u64,
+    rearm_deadline_tick: u64,
+}
+
 pub(crate) struct GameBoyRemoteLink<T: LinkTransport> {
     session: LinkSession<T>,
     next_transfer_id: u64,
     pending_master_transfer: Option<PendingGameBoyMasterTransfer>,
-    passive_rearm_catchup_after_tick: Option<u64>,
+    passive_drain_gate: Option<PassiveDrainGate>,
     replay_inbound_schedule: Option<VecDeque<(u64, u64)>>,
     replay_state_schedule: Option<VecDeque<(u64, u64, ReplayGameBoyLinkState)>>,
     recorded_replay_events: Vec<ReplayEvent>,
@@ -51,7 +56,7 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             session,
             next_transfer_id: 0,
             pending_master_transfer: None,
-            passive_rearm_catchup_after_tick: None,
+            passive_drain_gate: None,
             replay_inbound_schedule: None,
             replay_state_schedule: None,
             recorded_replay_events: Vec::new(),
@@ -187,6 +192,9 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
 
     fn drain_incoming(&mut self, emulator: &mut GameBoyEmulator) -> Result<(), LinkSessionError> {
         loop {
+            if !self.passive_completion_allows_next_packet(emulator) {
+                return Ok(());
+            }
             if !self.replay_inbound_event_is_due(emulator) {
                 return Ok(());
             }
@@ -224,7 +232,6 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                 start_tick,
                 action,
             } => {
-                self.catch_up_after_passive_completion(emulator, action.clock_period_t_cycles);
                 let reply = emulator.game_boy_link_reply_to_master_start();
                 self.trace(format!(
                     "recv master_start id={} tick={} out={:02X} period={} gen={} reply={}",
@@ -250,16 +257,35 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                     },
                 );
                 if reply.passive {
-                    super::complete_passive_transfer(
-                        emulator,
+                    if action.clock_period_t_cycles == 0 {
+                        return Err(LinkSessionError::MalformedPacketPayload);
+                    }
+                    let completion_tick = emulator
+                        .cpu_cycles()
+                        .checked_add(action.clock_period_t_cycles)
+                        .ok_or(LinkSessionError::MalformedPacketPayload)?;
+                    let rearm_deadline_tick = completion_tick
+                        .checked_add(
+                            action
+                                .clock_period_t_cycles
+                                .max(PASSIVE_REARM_GRACE_T_CYCLES),
+                        )
+                        .ok_or(LinkSessionError::MalformedPacketPayload)?;
+                    if !emulator.schedule_game_boy_external_link_transfer(
                         action.out_byte,
                         action.clock_period_t_cycles,
-                    )?;
-                    self.passive_rearm_catchup_after_tick = Some(emulator.cpu_cycles());
+                    ) {
+                        return Err(LinkSessionError::MalformedPacketPayload);
+                    }
+                    self.passive_drain_gate = Some(PassiveDrainGate {
+                        completion_tick,
+                        rearm_deadline_tick,
+                    });
                     self.trace(format!(
-                        "complete passive id={} tick={} in={:02X}",
+                        "schedule passive id={} tick={} period={} in={:02X}",
                         transfer_id.0,
                         emulator.cpu_cycles(),
+                        action.clock_period_t_cycles,
                         action.out_byte
                     ));
                 }
@@ -363,54 +389,15 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         })
     }
 
-    fn catch_up_after_passive_completion(
-        &mut self,
-        emulator: &mut GameBoyEmulator,
-        clock_period_t_cycles: u64,
-    ) {
-        let Some(completed_tick) = self.passive_rearm_catchup_after_tick else {
-            return;
-        };
-
-        if emulator.game_boy_link_reply_to_master_start().passive {
-            self.passive_rearm_catchup_after_tick = None;
-            return;
-        }
-
-        let start_tick = emulator.cpu_cycles();
-        let target_tick =
-            start_tick.saturating_add(clock_period_t_cycles.max(PASSIVE_REARM_CATCHUP_T_CYCLES));
-        let mut instructions = 0usize;
-        while emulator.cpu_cycles() < target_tick
-            && instructions < PASSIVE_REARM_CATCHUP_INSTRUCTIONS
-            && !emulator.is_cpu_suspended()
-            && !emulator.game_boy_link_reply_to_master_start().passive
-        {
-            let before = emulator.cpu_cycles();
-            let (_, _, _, cycles) = emulator.step_instruction();
-            instructions += 1;
-            if cycles == 0 || emulator.cpu_cycles() == before {
-                break;
-            }
-        }
-
-        self.trace(format!(
-            "catchup passive_rearm completed_tick={} start_tick={} end_tick={} instructions={} passive={}",
-            completed_tick,
-            start_tick,
-            emulator.cpu_cycles(),
-            instructions,
-            emulator.game_boy_link_reply_to_master_start().passive
-        ));
-        self.passive_rearm_catchup_after_tick = None;
-    }
-
     fn poll_for_pending_master_reply(
         &mut self,
         emulator: &mut GameBoyEmulator,
     ) -> Result<(), LinkSessionError> {
         for _ in 0..MASTER_REPLY_SPIN_LIMIT {
             if self.pending_master_transfer.is_none() {
+                return Ok(());
+            }
+            if !self.passive_completion_allows_next_packet(emulator) {
                 return Ok(());
             }
             if !self.replay_inbound_event_is_due(emulator) {
@@ -440,6 +427,21 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         }
 
         Ok(())
+    }
+
+    fn passive_completion_allows_next_packet(&mut self, emulator: &GameBoyEmulator) -> bool {
+        let Some(gate) = self.passive_drain_gate else {
+            return true;
+        };
+        let tick = emulator.cpu_cycles();
+        if tick < gate.completion_tick
+            || (tick < gate.rearm_deadline_tick
+                && !emulator.game_boy_link_reply_to_master_start().passive)
+        {
+            return false;
+        }
+        self.passive_drain_gate = None;
+        true
     }
 
     fn send_event(&mut self, event: GameBoyLinkEvent) -> Result<(), LinkSessionError> {

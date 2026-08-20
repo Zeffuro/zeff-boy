@@ -116,16 +116,33 @@ fn firmware_search_dirs_use_configured_dir_before_legacy_env_fallback() {
     let mut s = Settings::default();
     s.emulation.firmware_directory = "F:/Firmware".to_string();
 
-    let dirs = s
-        .emulation
-        .firmware_search_dirs_with_env(Some(PathBuf::from("F:/EnvFirmware")));
+    let dirs = s.emulation.firmware_search_dirs_with_roots(
+        PathBuf::from("F:/ManagedFirmware"),
+        Some(PathBuf::from("F:/EnvFirmware")),
+    );
 
     assert_eq!(
         dirs,
         vec![
+            PathBuf::from("F:/ManagedFirmware"),
             PathBuf::from("F:/Firmware"),
             PathBuf::from("F:/EnvFirmware")
         ]
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn firmware_search_dirs_deduplicate_the_managed_root() {
+    let mut s = Settings::default();
+    s.emulation.firmware_directory = "F:/ManagedFirmware".to_string();
+
+    assert_eq!(
+        s.emulation.firmware_search_dirs_with_roots(
+            PathBuf::from("F:/ManagedFirmware"),
+            Some(PathBuf::from("F:/ManagedFirmware")),
+        ),
+        vec![PathBuf::from("F:/ManagedFirmware")]
     );
 }
 

@@ -6,27 +6,38 @@ fn nestest_rom_path() -> PathBuf {
     path
 }
 
-#[test]
-fn nestest_official_opcodes_pass() {
+fn run_nestest_automation() -> Option<zeff_nes_core::emulator::Emulator> {
     let rom_path = nestest_rom_path();
     if !rom_path.exists() {
         eprintln!("Skipping nestest: ROM not found at {}", rom_path.display());
-        return;
+        return None;
     }
 
     let rom_data = std::fs::read(&rom_path).expect("failed to read nestest.nes");
     let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, 48000.0)
         .expect("failed to create emulator");
 
+    // nestest's automation mode treats zero as the passing default and only
+    // writes a non-zero failure code. Real NES work RAM has no fixed power-on
+    // value, so establish the test ROM's documented harness precondition.
+    emu.bus_mut().ram.fill(0);
     emu.set_cpu_pc(0xC000);
 
     for _ in 0..30_000 {
         emu.step_instruction();
-
-        if emu.cpu_pc() == emu.last_opcode_pc() {
-            break;
+        if emu.last_opcode_pc() == 0xC66E {
+            return Some(emu);
         }
     }
+
+    panic!("nestest automation did not reach its final RTS");
+}
+
+#[test]
+fn nestest_official_opcodes_pass() {
+    let Some(emu) = run_nestest_automation() else {
+        return;
+    };
 
     let official_result = emu.bus().ram[0x02];
     let unofficial_result = emu.bus().ram[0x03];
@@ -49,24 +60,9 @@ fn nestest_official_opcodes_pass() {
 
 #[test]
 fn nestest_unofficial_opcodes_pass() {
-    let rom_path = nestest_rom_path();
-    if !rom_path.exists() {
-        eprintln!("Skipping nestest: ROM not found at {}", rom_path.display());
+    let Some(emu) = run_nestest_automation() else {
         return;
-    }
-
-    let rom_data = std::fs::read(&rom_path).expect("failed to read nestest.nes");
-    let mut emu = zeff_nes_core::emulator::Emulator::new(&rom_data, 48000.0)
-        .expect("failed to create emulator");
-
-    emu.set_cpu_pc(0xC000);
-
-    for _ in 0..30_000 {
-        emu.step_instruction();
-        if emu.cpu_pc() == emu.last_opcode_pc() {
-            break;
-        }
-    }
+    };
 
     let unofficial_result = emu.bus().ram[0x03];
     assert_eq!(

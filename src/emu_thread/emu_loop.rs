@@ -12,7 +12,7 @@ use crate::link::{
 };
 
 use super::{
-    DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
+    AudioRecordingCapture, DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
     REWIND_SNAPSHOTS_PER_SECOND, ReplayStartState, SharedFramebuffer, TcpLinkMode,
 };
 
@@ -33,6 +33,8 @@ pub(super) struct EmuLoop {
     pub(super) resp_tx: Sender<EmuResponse>,
     pub(super) shared_framebuffer: SharedFramebuffer,
     uncapped_mode: bool,
+    audio_recording_capture: AudioRecordingCapture,
+    pending_audio_discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
     last_cheats: Vec<CheatPatch>,
     tcp_link: Option<RemoteLink<TcpLinkTransport>>,
     pending_tcp_link: Option<PendingTcpLink>,
@@ -59,6 +61,8 @@ impl EmuLoop {
             resp_tx,
             shared_framebuffer,
             uncapped_mode: false,
+            audio_recording_capture: AudioRecordingCapture::default(),
+            pending_audio_discontinuities: Vec::new(),
             last_cheats: Vec::new(),
             tcp_link: None,
             pending_tcp_link: None,
@@ -109,6 +113,8 @@ impl EmuLoop {
                     &self.rewind_buffer,
                     &self.frame_tx,
                     &self.drain_rx,
+                    self.audio_recording_capture,
+                    &mut self.pending_audio_discontinuities,
                 );
             }
         }
@@ -116,6 +122,19 @@ impl EmuLoop {
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
         match command {
+            EmuCommand::SetAudioRecordingCapture {
+                capture,
+                acknowledged,
+            } => {
+                if capture.semantic && !self.audio_recording_capture.semantic {
+                    self.pending_audio_discontinuities.clear();
+                }
+                self.audio_recording_capture = capture;
+                if let Some(acknowledged) = acknowledged {
+                    let _ = acknowledged.send(());
+                }
+            }
+
             EmuCommand::SetUncapped(on) => {
                 self.uncapped_mode = on;
                 self.backend.set_apu_sample_generation_enabled(!on);
@@ -147,6 +166,8 @@ impl EmuLoop {
 
             EmuCommand::StepFrames(input) => {
                 let input = *input;
+                self.audio_recording_capture = input.audio.recording_capture;
+                let debugger_mutation = !input.debug_actions.memory_writes.is_empty();
                 let result = if let Some(replay_link) = self.game_boy_replay_link.as_mut() {
                     EmuThread::handle_step_frames_with_game_boy_replay_link(
                         &mut self.backend,
@@ -183,7 +204,19 @@ impl EmuLoop {
                     self.clear_disconnected_tcp_link();
                     result
                 };
-                if !EmuThread::send_frame(&self.frame_tx, &self.drain_rx, result) {
+                if debugger_mutation {
+                    self.mark_audio_discontinuity(
+                        crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation,
+                    );
+                }
+                let mut result = result;
+                self.attach_audio_discontinuities(&mut result);
+                if !EmuThread::send_frame(
+                    &self.frame_tx,
+                    &self.drain_rx,
+                    result,
+                    self.audio_recording_capture.active,
+                ) {
                     return false;
                 }
             }
@@ -212,12 +245,14 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state(slot);
+                let state_loaded = result.is_ok();
                 let label = result.as_ref().ok().cloned().unwrap_or_default();
                 if !self.finalize_load_state(
                     result.map(|_| ()),
                     label,
                     buttons_pressed,
                     dpad_pressed,
+                    state_loaded,
                 ) {
                     return false;
                 }
@@ -241,7 +276,14 @@ impl EmuLoop {
             } => {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                if !self.finalize_load_state(result, label, buttons_pressed, dpad_pressed) {
+                let state_loaded = result.is_ok();
+                if !self.finalize_load_state(
+                    result,
+                    label,
+                    buttons_pressed,
+                    dpad_pressed,
+                    state_loaded,
+                ) {
                     return false;
                 }
             }
@@ -294,6 +336,11 @@ impl EmuLoop {
                     &self.shared_framebuffer,
                     self.backend.framebuffer(),
                 );
+                if matches!(&resp, EmuResponse::GuestCallCompleted { .. }) {
+                    self.mark_audio_discontinuity(
+                        crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation,
+                    );
+                }
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -308,6 +355,11 @@ impl EmuLoop {
                     &self.shared_framebuffer,
                     self.backend.framebuffer(),
                 );
+                if matches!(&resp, EmuResponse::GuestCallUndone) {
+                    self.mark_audio_discontinuity(
+                        crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo,
+                    );
+                }
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -366,6 +418,7 @@ impl EmuLoop {
                 wonder_swan_link_start_tick,
             } => {
                 let mut result = self.backend.load_state_from_bytes(state_bytes);
+                let state_loaded = result.is_ok();
                 if result.is_ok()
                     && let Some(expected_tick) = game_boy_link_start_tick
                 {
@@ -454,6 +507,7 @@ impl EmuLoop {
                     "(replay)".to_string(),
                     buttons_pressed,
                     dpad_pressed,
+                    state_loaded,
                 ) {
                     return false;
                 }
@@ -491,6 +545,9 @@ impl EmuLoop {
                 );
                 if matches!(&resp, EmuResponse::RewindOk) {
                     self.backend.install_rom_patches(&self.last_cheats);
+                    self.mark_audio_discontinuity(
+                        crate::audio_recorder::AudioTimelineDiscontinuity::Rewind,
+                    );
                 }
                 if !self.send_resp(resp) {
                     return false;
@@ -661,8 +718,8 @@ impl EmuLoop {
         label: String,
         buttons_pressed: u8,
         dpad_pressed: u8,
+        state_loaded: bool,
     ) -> bool {
-        let loaded = result.is_ok();
         let resp = EmuThread::respond_load_state(
             &mut self.backend,
             result,
@@ -671,11 +728,31 @@ impl EmuLoop {
             dpad_pressed,
             &self.shared_framebuffer,
         );
-        if loaded {
+        if state_loaded {
             self.rewind_buffer.clear();
             self.backend.install_rom_patches(&self.last_cheats);
+            self.mark_audio_discontinuity(
+                crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad,
+            );
         }
         self.send_resp(resp)
+    }
+
+    fn mark_audio_discontinuity(
+        &mut self,
+        reason: crate::audio_recorder::AudioTimelineDiscontinuity,
+    ) {
+        if self.audio_recording_capture.semantic {
+            self.pending_audio_discontinuities.push(reason);
+        }
+    }
+
+    fn attach_audio_discontinuities(&mut self, result: &mut FrameResult) {
+        if !result.audio_semantic_frames.is_empty() {
+            result
+                .audio_timeline_discontinuities
+                .append(&mut self.pending_audio_discontinuities);
+        }
     }
 
     fn handle_auto_load(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
@@ -683,7 +760,8 @@ impl EmuLoop {
             if path.exists() {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                self.finalize_load_state(result, label, buttons_pressed, dpad_pressed)
+                let state_loaded = result.is_ok();
+                self.finalize_load_state(result, label, buttons_pressed, dpad_pressed, state_loaded)
             } else {
                 self.send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string()))
             }
@@ -736,7 +814,63 @@ fn game_boy_replay_start_capture_blocker(
 
 #[cfg(test)]
 mod tests {
-    use super::game_boy_replay_start_capture_blocker;
+    use super::{EmuLoop, game_boy_replay_start_capture_blocker};
+    use crate::audio_tooling::{
+        AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState,
+        NTSC_60_TEMPO_US_PER_BEAT,
+    };
+    use crate::emu_backend::EmuBackend;
+    use crate::emu_thread::{AudioRecordingCapture, EmuCommand, FrameResult};
+    use std::path::PathBuf;
+
+    fn test_loop() -> (
+        EmuLoop,
+        crossbeam_channel::Receiver<crate::emu_thread::EmuResponse>,
+    ) {
+        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
+            &[0x00],
+            44_100,
+            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        )
+        .unwrap();
+        let backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
+        let (_cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (frame_tx, frame_rx) = crossbeam_channel::bounded(2);
+        let drain_rx = frame_rx.clone();
+        let (resp_tx, resp_rx) = crossbeam_channel::unbounded();
+        let shared = crate::emu_thread::types::new_shared_framebuffer();
+        (
+            EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, shared),
+            resp_rx,
+        )
+    }
+
+    fn semantic_result() -> FrameResult {
+        FrameResult {
+            advanced_frames: 1,
+            replay_events: Vec::new(),
+            replay_error: None,
+            rumble: false,
+            audio_samples: Vec::new(),
+            ui_data: crate::ui::UiFrameData::default(),
+            is_mbc7: false,
+            is_pocket_camera: false,
+            rewind_fill: 0.0,
+            audio_semantic_frames: vec![AudioSemanticFrame {
+                frame: 1,
+                tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
+                voices: vec![AudioVoiceState {
+                    channel: AudioChannelId(0),
+                    name: "Test",
+                    class: AudioVoiceClass::Tone,
+                    active: false,
+                    pitch_hz: Some(440.0),
+                    level: Some(0.0),
+                }],
+            }],
+            audio_timeline_discontinuities: Vec::new(),
+        }
+    }
 
     fn replay_link_state(
         pending_master_byte: Option<u8>,
@@ -790,5 +924,67 @@ mod tests {
             game_boy_replay_start_capture_blocker(None, Some(replied)),
             None
         );
+    }
+
+    #[test]
+    fn state_load_discontinuity_survives_post_load_validation_failure() {
+        let (mut emu_loop, _responses) = test_loop();
+        emu_loop.audio_recording_capture = AudioRecordingCapture {
+            active: true,
+            semantic: true,
+        };
+        let state_bytes = emu_loop.backend.encode_state_bytes().unwrap();
+
+        assert!(emu_loop.handle_command(EmuCommand::LoadStateBytes {
+            state_bytes,
+            buttons_pressed: 0,
+            dpad_pressed: 0,
+            replay_events: None,
+            game_boy_link_start_state: None,
+            game_boy_link_start_tick: Some(1),
+            wonder_swan_link_start_tick: None,
+        }));
+        assert_eq!(
+            emu_loop.pending_audio_discontinuities,
+            vec![crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad]
+        );
+
+        let mut pre_mutation_result = semantic_result();
+        pre_mutation_result.audio_semantic_frames.clear();
+        emu_loop.attach_audio_discontinuities(&mut pre_mutation_result);
+        assert!(
+            pre_mutation_result
+                .audio_timeline_discontinuities
+                .is_empty()
+        );
+        assert_eq!(emu_loop.pending_audio_discontinuities.len(), 1);
+
+        let mut post_mutation_result = semantic_result();
+        emu_loop.attach_audio_discontinuities(&mut post_mutation_result);
+        assert_eq!(
+            post_mutation_result.audio_timeline_discontinuities,
+            vec![crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad]
+        );
+        assert!(emu_loop.pending_audio_discontinuities.is_empty());
+    }
+
+    #[test]
+    fn failed_state_decode_does_not_start_a_semantic_epoch() {
+        let (mut emu_loop, _responses) = test_loop();
+        emu_loop.audio_recording_capture = AudioRecordingCapture {
+            active: true,
+            semantic: true,
+        };
+
+        assert!(emu_loop.handle_command(EmuCommand::LoadStateBytes {
+            state_bytes: vec![0xFF],
+            buttons_pressed: 0,
+            dpad_pressed: 0,
+            replay_events: None,
+            game_boy_link_start_state: None,
+            game_boy_link_start_tick: None,
+            wonder_swan_link_start_tick: None,
+        }));
+        assert!(emu_loop.pending_audio_discontinuities.is_empty());
     }
 }
