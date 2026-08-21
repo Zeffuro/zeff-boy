@@ -158,8 +158,8 @@ impl Bus {
     pub fn restore_game_boy_link_replay_state(
         &mut self,
         state: zeff_emu_common::replay::ReplayGameBoyLinkState,
-    ) {
-        self.io.serial.restore_replay_link_state(state);
+    ) -> bool {
+        self.io.serial.restore_replay_link_state(state)
     }
 
     pub fn game_boy_link_reply_to_master_start(&self) -> GameBoyLinkReply {

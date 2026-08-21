@@ -10,6 +10,9 @@ pub(super) struct FileMenuState<'a> {
     pub is_recording_audio: bool,
     pub is_recording_replay: bool,
     pub is_playing_replay: bool,
+    pub supports_save_states: bool,
+    pub supports_replay: bool,
+    pub supports_audio: bool,
 }
 
 pub(super) fn draw(
@@ -53,53 +56,60 @@ pub(super) fn draw(
         actions.push(MenuAction::OpenSettings);
         ui.close();
     }
-    ui.separator();
-    ui.menu_button("Save State", |ui| {
-        draw_slot_menu(ui, actions, state, false, MenuAction::SaveStateSlot);
+    if state.supports_save_states {
         ui.separator();
-        if ui.button("Save to File...").clicked() {
-            actions.push(MenuAction::SaveStateFile);
+        ui.menu_button("Save State", |ui| {
+            draw_slot_menu(ui, actions, state, false, MenuAction::SaveStateSlot);
+            ui.separator();
+            if ui.button("Save to File...").clicked() {
+                actions.push(MenuAction::SaveStateFile);
+                ui.close();
+            }
+        });
+        ui.menu_button("Load State", |ui| {
+            draw_slot_menu(ui, actions, state, true, MenuAction::LoadStateSlot);
+            ui.separator();
+            if ui.button("Load from File...").clicked() {
+                actions.push(MenuAction::LoadStateFile);
+                ui.close();
+            }
+        });
+        if ui
+            .add_enabled(
+                state.can_undo_load_state,
+                egui::Button::new("Undo Last Load State"),
+            )
+            .on_hover_text("Restore the emulator state from before the last successful load")
+            .clicked()
+        {
+            actions.push(MenuAction::UndoLoadState);
             ui.close();
         }
-    });
-    ui.menu_button("Load State", |ui| {
-        draw_slot_menu(ui, actions, state, true, MenuAction::LoadStateSlot);
-        ui.separator();
-        if ui.button("Load from File...").clicked() {
-            actions.push(MenuAction::LoadStateFile);
-            ui.close();
-        }
-    });
-    if ui
-        .add_enabled(
-            state.can_undo_load_state,
-            egui::Button::new("Undo Last Load State"),
-        )
-        .on_hover_text("Restore the emulator state from before the last successful load")
-        .clicked()
-    {
-        actions.push(MenuAction::UndoLoadState);
-        ui.close();
     }
-    ui.separator();
     if state.is_recording_audio {
+        ui.separator();
         if ui.button("⏹ Stop Recording").clicked() {
             actions.push(MenuAction::StopAudioRecording);
             ui.close();
         }
-    } else if ui.button("⏺ Record Audio...").clicked() {
-        actions.push(MenuAction::StartAudioRecording);
-        ui.close();
+    } else if state.supports_audio {
+        ui.separator();
+        if ui.button("⏺ Record Audio...").clicked() {
+            actions.push(MenuAction::StartAudioRecording);
+            ui.close();
+        }
     }
-    ui.separator();
     if state.is_recording_replay {
+        ui.separator();
         if ui.button("⏹ Stop Replay Recording").clicked() {
             actions.push(MenuAction::StopReplayRecording);
             ui.close();
         }
     } else if state.is_playing_replay {
+        ui.separator();
         ui.label("▶ Replay playing...");
-    } else {
+    } else if state.supports_replay {
+        ui.separator();
         if ui.button("⏺ Record Replay...").clicked() {
             actions.push(MenuAction::StartReplayRecording);
             ui.close();

@@ -78,6 +78,7 @@ pub(crate) struct DisassemblerActions {
 pub(super) fn draw_disassembler_content(
     ui: &mut egui::Ui,
     view: &DisassemblyView,
+    supports_rewind: bool,
 ) -> DisassemblerActions {
     let mut actions = DisassemblerActions {
         toggle_breakpoints: Vec::new(),
@@ -109,7 +110,7 @@ pub(super) fn draw_disassembler_content(
         }
         ui.separator();
         if ui
-            .button("Step Back")
+            .add_enabled(supports_rewind, egui::Button::new("Step Back"))
             .on_hover_text("Rewind one snapshot (~4 frames) and pause")
             .clicked()
         {

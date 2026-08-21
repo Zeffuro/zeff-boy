@@ -45,6 +45,8 @@ fn snapshot_request() -> SnapshotRequest {
             dmg_palette_preset: DmgPalettePreset::default(),
             nes_palette_mode: NesPaletteMode::default(),
             nes_custom_palette: None,
+            pce_overscan_mode: crate::settings::PceOverscanMode::default(),
+            pce_palette_mode: crate::settings::PcePaletteMode::default(),
             sgb_border_enabled: false,
         },
     }

@@ -64,6 +64,7 @@ impl MemoryAddressSpace {
         match system {
             ActiveSystem::GameBoy
             | ActiveSystem::Nes
+            | ActiveSystem::Pce
             | ActiveSystem::MasterSystem
             | ActiveSystem::GameGear
             | ActiveSystem::Sg1000 => Self::GB_NES,

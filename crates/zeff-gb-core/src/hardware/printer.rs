@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 const DEVICE_ID: u8 = 0x81;
 const BUFFER_CAPACITY: usize = 8 * 1024;
 const MAX_PACKET_PAYLOAD: usize = u16::MAX as usize;
-const MAX_SAVED_IMAGES: usize = 1024;
+const MAX_SAVED_JOBS: usize = 1024;
 const DMG_CLOCK_HZ: u64 = 4_194_304;
 const PRINT_BANDS_PER_SECOND_NUMERATOR: u64 = 11;
 const PRINT_BANDS_PER_SECOND_DENOMINATOR: u64 = 10;
@@ -16,21 +16,51 @@ const STATUS_UNPROCESSED_DATA: u8 = 0x08;
 const STATUS_PACKET_ERROR: u8 = 0x10;
 const TRANSIENT_ERROR_MASK: u8 = STATUS_CHECKSUM_ERROR | STATUS_PACKET_ERROR;
 
-const PRINTER_TILE_ROWS: usize = 18;
 const PRINTER_TILES_PER_ROW: usize = 20;
 const BYTES_PER_TILE: usize = 16;
 const BYTES_PER_TILE_ROW: usize = PRINTER_TILES_PER_ROW * BYTES_PER_TILE;
+const LEGACY_PRINTER_IMAGE_W: usize = 176;
+const LEGACY_PRINTER_IMAGE_H: usize = 160;
+const LEGACY_PRINTER_RGBA_SIZE: usize = LEGACY_PRINTER_IMAGE_W * LEGACY_PRINTER_IMAGE_H * 4;
+const LEGACY_STATE_FORMAT_MARKER: u8 = 0x80;
+const LOGICAL_STATE_FORMAT_MARKER: u8 = 0xC0;
 
-const PRINTER_MARGIN_TOP: usize = 8;
-const PRINTER_MARGIN_BOTTOM: usize = 8;
-const PRINTER_MARGIN_LEFT: usize = 8;
-const PRINTER_MARGIN_RIGHT: usize = 8;
+pub const GAME_BOY_PRINTER_WIDTH: usize = PRINTER_TILES_PER_ROW * 8;
+pub const GAME_BOY_PRINTER_MAX_HEIGHT: usize = BUFFER_CAPACITY / BYTES_PER_TILE_ROW * 8;
+pub const GAME_BOY_PRINTER_FEED_HEIGHT: usize = 16;
 
-const PRINTER_IMAGE_W: usize =
-    PRINTER_TILES_PER_ROW * 8 + PRINTER_MARGIN_LEFT + PRINTER_MARGIN_RIGHT;
-const PRINTER_IMAGE_H: usize = PRINTER_TILE_ROWS * 8 + PRINTER_MARGIN_TOP + PRINTER_MARGIN_BOTTOM;
-const PRINTER_RGBA_SIZE: usize = PRINTER_IMAGE_W * PRINTER_IMAGE_H * 4;
-const STATE_FORMAT_MARKER: u8 = 0x80;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameBoyPrinterJob {
+    pub pixels: Vec<u8>,
+    pub height: usize,
+    pub copies: u8,
+    pub feed_before: u8,
+    pub feed_after: u8,
+    pub palette: u8,
+    pub density: u8,
+}
+
+impl GameBoyPrinterJob {
+    pub fn validate(&self) -> Result<()> {
+        if self.height > GAME_BOY_PRINTER_MAX_HEIGHT || !self.height.is_multiple_of(8) {
+            bail!("invalid Game Boy Printer job height: {}", self.height);
+        }
+        let expected = GAME_BOY_PRINTER_WIDTH
+            .checked_mul(self.height)
+            .ok_or_else(|| anyhow::anyhow!("Game Boy Printer job dimensions overflow"))?;
+        if self.pixels.len() != expected || self.pixels.iter().any(|pixel| *pixel > 3) {
+            bail!("invalid Game Boy Printer logical pixel data");
+        }
+        if self.feed_before > 0x0F || self.feed_after > 0x0F || self.density > 0x7F {
+            bail!("invalid Game Boy Printer job parameters");
+        }
+        Ok(())
+    }
+
+    pub fn has_image(&self) -> bool {
+        self.copies != 0 && self.height != 0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ParserState {
@@ -89,7 +119,7 @@ pub struct GameboyPrinter {
     busy_cycles_remaining: u64,
     data_buffer: Vec<u8>,
     data_end_seen: bool,
-    images: Vec<Vec<u8>>,
+    jobs: Vec<GameBoyPrinterJob>,
 }
 
 impl GameboyPrinter {
@@ -109,7 +139,7 @@ impl GameboyPrinter {
             busy_cycles_remaining: 0,
             data_buffer: Vec::with_capacity(BUFFER_CAPACITY),
             data_end_seen: false,
-            images: Vec::new(),
+            jobs: Vec::new(),
         }
     }
 
@@ -285,13 +315,17 @@ impl GameboyPrinter {
             return;
         }
 
-        let copies = self.payload[0];
-        if copies != 0 && !self.data_buffer.is_empty() {
-            let palette = self.payload[2];
-            if self.images.len() == MAX_SAVED_IMAGES {
-                self.images.remove(0);
+        let mut job = self.build_job();
+        if !job.has_image() {
+            job.pixels.clear();
+            job.height = 0;
+            job.feed_before = 0;
+        }
+        if job.has_image() || job.feed_after != 0 {
+            if self.jobs.len() == MAX_SAVED_JOBS {
+                self.jobs.remove(0);
             }
-            self.images.push(self.render_rgba(palette));
+            self.jobs.push(job);
         }
         self.status |= STATUS_BUFFER_FULL;
         self.busy_cycles_remaining = self.print_duration_cycles();
@@ -339,49 +373,63 @@ impl GameboyPrinter {
         }
     }
 
-    fn render_rgba(&self, palette: u8) -> Vec<u8> {
-        let mut output = vec![0xFF; PRINTER_RGBA_SIZE];
-        let tile_rows = (self.data_buffer.len() / BYTES_PER_TILE_ROW).min(PRINTER_TILE_ROWS);
+    fn build_job(&self) -> GameBoyPrinterJob {
+        let tile_rows = self
+            .data_buffer
+            .len()
+            .div_ceil(BYTES_PER_TILE_ROW)
+            .min(GAME_BOY_PRINTER_MAX_HEIGHT / 8);
+        let height = tile_rows * 8;
+        let mut pixels = vec![0; GAME_BOY_PRINTER_WIDTH * height];
         for tile_row in 0..tile_rows {
             for tile_col in 0..PRINTER_TILES_PER_ROW {
                 let tile_offset = (tile_row * PRINTER_TILES_PER_ROW + tile_col) * BYTES_PER_TILE;
                 for row in 0..8 {
-                    let lo = self.data_buffer[tile_offset + row * 2];
-                    let hi = self.data_buffer[tile_offset + row * 2 + 1];
+                    let lo = self
+                        .data_buffer
+                        .get(tile_offset + row * 2)
+                        .copied()
+                        .unwrap_or(0);
+                    let hi = self
+                        .data_buffer
+                        .get(tile_offset + row * 2 + 1)
+                        .copied()
+                        .unwrap_or(0);
                     for col in 0..8 {
                         let bit = 7 - col;
                         let color = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-                        let mapped = (palette >> (color * 2)) & 0x03;
-                        let gray = [255, 192, 64, 0][usize::from(mapped)];
-                        let x = PRINTER_MARGIN_LEFT + tile_col * 8 + col;
-                        let y = PRINTER_MARGIN_TOP + tile_row * 8 + row;
-                        let offset = (y * PRINTER_IMAGE_W + x) * 4;
-                        output[offset..offset + 3].fill(gray);
+                        let x = tile_col * 8 + col;
+                        let y = tile_row * 8 + row;
+                        pixels[y * GAME_BOY_PRINTER_WIDTH + x] = color;
                     }
                 }
             }
         }
-        output
+        GameBoyPrinterJob {
+            pixels,
+            height,
+            copies: self.payload[0],
+            feed_before: self.payload[1] >> 4,
+            feed_after: self.payload[1] & 0x0F,
+            palette: self.payload[2],
+            density: self.payload[3] & 0x7F,
+        }
     }
 
-    pub(super) fn latest_image(&self) -> Option<&[u8]> {
-        self.images.last().map(Vec::as_slice)
+    pub(super) fn latest_job(&self) -> Option<&GameBoyPrinterJob> {
+        self.jobs.last()
     }
 
-    pub(super) fn image_count(&self) -> usize {
-        self.images.len()
+    pub(super) fn job_count(&self) -> usize {
+        self.jobs.len()
     }
 
-    pub(super) fn take_images(&mut self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut self.images)
-    }
-
-    pub fn image_dimensions() -> (usize, usize) {
-        (PRINTER_IMAGE_W, PRINTER_IMAGE_H)
+    pub(super) fn take_jobs(&mut self) -> Vec<GameBoyPrinterJob> {
+        std::mem::take(&mut self.jobs)
     }
 
     pub(super) fn clear(&mut self) {
-        self.images.clear();
+        self.jobs.clear();
     }
 
     pub(super) fn reconnect(&mut self) {

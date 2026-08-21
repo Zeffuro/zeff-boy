@@ -103,11 +103,7 @@ impl<'a> FirmwareResolver<'a> {
         };
 
         let mut candidates = self.candidates_for_request(spec, &request);
-        candidates.sort_by(|left, right| {
-            left.sort_key
-                .cmp(&right.sort_key)
-                .then_with(|| left.entry.digests.sha256.cmp(&right.entry.digests.sha256))
-        });
+        candidates.sort_by(|left, right| left.sort_key.cmp(&right.sort_key));
 
         let diagnostic_candidates = candidates
             .iter()
@@ -240,11 +236,6 @@ fn variant_matches_request(
     variant: &crate::catalog::FirmwareVariantSpec,
     request: &FirmwareRequest,
 ) -> bool {
-    if let Some(preferred) = &request.preferred_variant
-        && preferred.as_ref() != variant.id
-    {
-        return false;
-    }
     if region_penalty(request.region.as_deref(), variant.region) >= 2 {
         return false;
     }
@@ -387,6 +378,91 @@ mod tests {
         assert_eq!(
             selected.variant.as_ref().unwrap().as_ref(),
             "test.firmware.usa"
+        );
+    }
+
+    #[test]
+    fn equal_candidates_preserve_inventory_root_order() {
+        let mut inventory = FirmwareInventory::new();
+        inventory.add(entry("usa.bin", "md5-usa", b"one1"));
+        inventory.add(entry("usa.bin", "md5-usa", b"two2"));
+        let plan = [FirmwareRequest::new(
+            "test.firmware",
+            RequirementLevel::Required,
+            FallbackKind::None,
+            FirmwareDependency::RuntimeMapped,
+        )
+        .with_region("usa")];
+
+        let resolution = FirmwareResolver::new(TEST_CATALOG, &inventory).resolve(&plan);
+        let FirmwareSelection::External(selected) = &resolution.entries[0].selection else {
+            panic!("expected external firmware");
+        };
+        assert_eq!(&*selected.bytes, b"one1");
+    }
+
+    #[test]
+    fn preferred_variant_ranks_without_excluding_known_fallback() {
+        let mut inventory = FirmwareInventory::new();
+        inventory.add(entry("japan.bin", "md5-japan", b"jpaa"));
+        let plan = [FirmwareRequest::new(
+            "test.firmware",
+            RequirementLevel::Required,
+            FallbackKind::None,
+            FirmwareDependency::RuntimeMapped,
+        )
+        .with_preferred_variant("test.firmware.usa")];
+
+        let resolution = FirmwareResolver::new(TEST_CATALOG, &inventory).resolve(&plan);
+        let FirmwareSelection::External(selected) = &resolution.entries[0].selection else {
+            panic!("expected fallback external firmware");
+        };
+        assert_eq!(
+            selected.variant.as_ref().unwrap().as_ref(),
+            "test.firmware.japan"
+        );
+    }
+
+    #[test]
+    fn pce_plan_prefers_regional_v3_and_accepts_exact_v2_fallback() {
+        let catalog = crate::catalog::catalog_specs();
+        let v2 = FirmwareInventoryEntry::from_bytes_with_legacy_digests(
+            vec![2; 262_144],
+            Some("syscard2.pce".to_owned()),
+            Some("3cdd6614a918616bfc41c862e889dd79".to_owned()),
+            None,
+            catalog,
+        );
+        let v3 = FirmwareInventoryEntry::from_bytes_with_legacy_digests(
+            vec![3; 262_144],
+            Some("syscard3.pce".to_owned()),
+            Some("38179df8f4ac870017db21ebcbf53114".to_owned()),
+            None,
+            catalog,
+        );
+        let plan = crate::catalog::firmware_plan_for_pce_cdrom2_region("japan");
+
+        let mut inventory = FirmwareInventory::new();
+        inventory.add(v2.clone());
+        inventory.add(v3);
+        let resolution = FirmwareResolver::new(catalog, &inventory).resolve(&plan);
+        let FirmwareSelection::External(selected) = &resolution.entries[0].selection else {
+            panic!("expected preferred v3 firmware");
+        };
+        assert_eq!(
+            selected.variant.as_ref().unwrap().as_ref(),
+            "nec.pce.cd.system_card.v3"
+        );
+
+        let mut inventory = FirmwareInventory::new();
+        inventory.add(v2);
+        let resolution = FirmwareResolver::new(catalog, &inventory).resolve(&plan);
+        let FirmwareSelection::External(selected) = &resolution.entries[0].selection else {
+            panic!("expected exact v2 fallback firmware");
+        };
+        assert_eq!(
+            selected.variant.as_ref().unwrap().as_ref(),
+            "nec.pce.cd.system_card.v2"
         );
     }
 

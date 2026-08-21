@@ -22,6 +22,8 @@ pub(crate) struct AudioQueueConfig {
     pub low_pass_cutoff_hz: u32,
 }
 
+pub(crate) const DEFAULT_AUDIO_SAMPLE_RATE: u32 = 48_000;
+
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 mod tests;

@@ -55,6 +55,7 @@ fn try_parse_single_for_system(
         ActiveSystem::Nes => zeff_gb_core::cheats::parse_cheat(input)
             .ok()
             .or_else(|| try_parse_nes_game_genie(input)),
+        ActiveSystem::Pce => None,
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             zeff_sega8_core::cheats::parse_cheat(input).ok()
         }

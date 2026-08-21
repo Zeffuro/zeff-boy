@@ -17,6 +17,8 @@ pub(super) use archive_and_slots::{
     extract_rom_entry_from_zip, extract_rom_entry_path_from_zip, list_rom_entries_in_zip,
 };
 pub(crate) use rom_loading::detect_and_extract_rom;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use rom_loading::is_native_seven_zip_path;
 
 use crate::debug::FpsTracker;
 use crate::emu_backend::EmuBackend;

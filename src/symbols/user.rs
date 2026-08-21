@@ -298,6 +298,7 @@ fn system_code(system: System) -> &'static str {
         System::Gb => "gb",
         System::Gba => "gba",
         System::Nes => "nes",
+        System::Pce => "pce",
         System::Ws => "ws",
         System::Sms => "sms",
         System::Gg => "gg",

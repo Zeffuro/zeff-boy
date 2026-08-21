@@ -230,6 +230,18 @@ mod tests {
     }
 
     #[test]
+    fn extracts_pce_rom_from_zip() {
+        let rom = [0x12, 0x34, 0x56];
+        let zip = zip_with_file("folder/game.pce", &rom);
+
+        let (path, data) = extract_rom_from_zip_bytes(&zip, "archive.zip")
+            .expect("PCE ROM inside ZIP should be supported");
+
+        assert_eq!(path, PathBuf::from("archive.zip").join("folder/game.pce"));
+        assert_eq!(data, rom);
+    }
+
+    #[test]
     fn missing_rom_error_mentions_gba() {
         let zip = zip_with_file("readme.txt", b"not a rom");
 

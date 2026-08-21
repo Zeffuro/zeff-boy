@@ -107,11 +107,12 @@ pub(super) fn draw_cpu_debug_content(
     info: &CpuDebugSnapshot,
     state: &mut CpuDebugViewState,
     actions: &mut DebugUiActions,
+    supports_rewind: bool,
 ) {
     state.sync(info);
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        draw_cpu_debug_rows(ui, info, state, actions);
+        draw_cpu_debug_rows(ui, info, state, actions, supports_rewind);
     });
 }
 
@@ -120,6 +121,7 @@ fn draw_cpu_debug_rows(
     info: &CpuDebugSnapshot,
     state: &CpuDebugViewState,
     actions: &mut DebugUiActions,
+    supports_rewind: bool,
 ) {
     let colors = crate::debug::common::debug_colors(ui);
     let changed = crate::debug::common::color32(colors.changed);
@@ -152,7 +154,10 @@ fn draw_cpu_debug_rows(
         if ui.button("Next Frame").clicked() {
             actions.next_frame_requested = true;
         }
-        if ui.button("Step Back").clicked() {
+        if ui
+            .add_enabled(supports_rewind, egui::Button::new("Step Back"))
+            .clicked()
+        {
             actions.backstep_requested = true;
         }
         ui.separator();

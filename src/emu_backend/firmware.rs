@@ -3,6 +3,7 @@ use super::ActiveSystem;
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedFirmwareBytes {
     pub(crate) bytes: Vec<u8>,
+    pub(crate) sha256: [u8; 32],
     pub(crate) manifest: zeff_emu_common::replay::ReplayFirmwareManifest,
 }
 
@@ -15,6 +16,7 @@ pub(crate) fn firmware_plan_for_active_system(
         ActiveSystem::GameBoy => ExistingCoreSystem::GameBoy,
         ActiveSystem::GameBoyAdvance => ExistingCoreSystem::GameBoyAdvance,
         ActiveSystem::Nes => ExistingCoreSystem::Nes,
+        ActiveSystem::Pce => return Vec::new(),
         ActiveSystem::WonderSwan => ExistingCoreSystem::WonderSwan,
         ActiveSystem::MasterSystem => ExistingCoreSystem::MasterSystem,
         ActiveSystem::GameGear => ExistingCoreSystem::GameGear,
@@ -55,6 +57,7 @@ fn resolve_from_inventory(
                 };
                 Some(ResolvedFirmwareBytes {
                     bytes: firmware.bytes.to_vec(),
+                    sha256: firmware.sha256,
                     manifest: replay_firmware_manifest(firmware.selection_manifest()),
                 })
             })
@@ -106,6 +109,42 @@ pub(crate) fn resolve_fds_bios_with_manifest(
     anyhow::bail!(
         "Famicom Disk System firmware is required. No recognized {FDS_BIOS_ID} was found. Searched: {searched}. Expected a known 8192-byte disksys.rom. Set Settings > Firmware > Firmware directory; dedicated firmware roots named BIOS, firmware, or system also scan immediate system subfolders. Zeff-boy also checks non-recursive firmware folders near the loaded ROM.{}",
         candidate_summary
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_pce_cd_system_card_with_manifest(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+    console_wiring: zeff_pce_core::hardware::PceConsoleWiring,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    const FIRMWARE_ID: &str = "nec.pce.cd.system_card";
+    let (region, console_name, preferred_filename) = match console_wiring {
+        zeff_pce_core::hardware::PceConsoleWiring::PcEngine => {
+            ("japan", "PC Engine CD-ROM2", "syscard3.pce")
+        }
+        zeff_pce_core::hardware::PceConsoleWiring::TurboGrafx16 => {
+            ("usa", "TurboGrafx-CD", "syscard3u.pce")
+        }
+    };
+    let plan = zeff_firmware::firmware_plan_for_pce_cdrom2_region(region);
+    if let Some(resolved) = resolve_from_inventory(FIRMWARE_ID, &plan, inventory) {
+        return Ok(resolved);
+    }
+    let (resolved, search_dirs, candidate_summaries) =
+        find_external_firmware(FIRMWARE_ID, &plan, firmware_roots, content_path)?;
+    if let Some(resolved) = resolved {
+        return Ok(resolved);
+    }
+    let searched = search_dirs
+        .iter()
+        .map(|dir| dir.path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "{console_name} requires a recognized 262144-byte {region} System Card firmware; {preferred_filename} Super System Card v3 is preferred. Searched: {searched}. {}",
+        candidate_summaries.join(" ")
     )
 }
 
@@ -220,43 +259,83 @@ fn find_external_firmware(
     let expected_filenames = expected_filenames_for_plan(catalog, plan);
     let search_dirs = firmware_search_dirs(firmware_roots, content_path);
     let mut candidate_summaries = Vec::new();
+    let mut inventory = zeff_firmware::FirmwareInventory::new();
+    let mut candidate_sources = std::collections::BTreeMap::new();
 
     for search_dir in &search_dirs {
-        let inventory =
+        let directory_inventory =
             scan_known_firmware_filenames(&search_dir.path, &expected_filenames, catalog);
-        if inventory.entries().is_empty() {
+        if directory_inventory.entries().is_empty() {
             continue;
         }
 
-        let resolution = zeff_firmware::FirmwareResolver::new(catalog, &inventory).resolve(plan);
+        let resolution =
+            zeff_firmware::FirmwareResolver::new(catalog, &directory_inventory).resolve(plan);
         for entry in &resolution.entries {
             if entry.request.id.as_ref() != firmware_id {
                 continue;
             }
-            if let zeff_firmware::FirmwareSelection::External(firmware) = &entry.selection {
-                log::info!(
-                    "Resolved {firmware_id} from {} in {}",
-                    firmware.original_filename.as_deref().unwrap_or("<unknown>"),
-                    search_dir.path.display()
-                );
-                return Ok((
-                    Some(ResolvedFirmwareBytes {
-                        bytes: firmware.bytes.to_vec(),
-                        manifest: replay_firmware_manifest(firmware.selection_manifest()),
-                    }),
-                    search_dirs,
-                    candidate_summaries,
-                ));
+            if !matches!(
+                &entry.selection,
+                zeff_firmware::FirmwareSelection::External(_)
+            ) {
+                let summary = firmware_candidate_summary(&entry.candidates);
+                if !summary.is_empty() {
+                    candidate_summaries.push(format!("{}: {summary}", search_dir.path.display()));
+                }
             }
+        }
+        merge_firmware_inventory(
+            &mut inventory,
+            &mut candidate_sources,
+            &search_dir.path,
+            &directory_inventory,
+        );
+    }
 
-            let summary = firmware_candidate_summary(&entry.candidates);
-            if !summary.is_empty() {
-                candidate_summaries.push(format!("{}: {summary}", search_dir.path.display()));
-            }
+    let resolution = zeff_firmware::FirmwareResolver::new(catalog, &inventory).resolve(plan);
+    for entry in &resolution.entries {
+        if entry.request.id.as_ref() != firmware_id {
+            continue;
+        }
+        if let zeff_firmware::FirmwareSelection::External(firmware) = &entry.selection {
+            let source = candidate_sources.get(&firmware.sha256);
+            log::info!(
+                "Resolved {firmware_id} from {} in {}",
+                firmware.original_filename.as_deref().unwrap_or("<unknown>"),
+                source.map_or_else(
+                    || "<injected inventory>".to_owned(),
+                    |path| path.display().to_string()
+                )
+            );
+            return Ok((
+                Some(ResolvedFirmwareBytes {
+                    bytes: firmware.bytes.to_vec(),
+                    sha256: firmware.sha256,
+                    manifest: replay_firmware_manifest(firmware.selection_manifest()),
+                }),
+                search_dirs,
+                candidate_summaries,
+            ));
         }
     }
 
     Ok((None, search_dirs, candidate_summaries))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn merge_firmware_inventory(
+    inventory: &mut zeff_firmware::FirmwareInventory,
+    candidate_sources: &mut std::collections::BTreeMap<[u8; 32], std::path::PathBuf>,
+    source: &std::path::Path,
+    directory_inventory: &zeff_firmware::FirmwareInventory,
+) {
+    for entry in directory_inventory.entries() {
+        candidate_sources
+            .entry(entry.digests.sha256)
+            .or_insert_with(|| source.to_path_buf());
+        inventory.add(entry.clone());
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -299,6 +378,15 @@ pub(crate) fn resolve_fds_bios_with_manifest(
     anyhow::bail!(
         "Famicom Disk System firmware is required, but browser firmware storage/import is not wired yet"
     )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_pce_cd_system_card_with_manifest(
+    _inventory: Option<&zeff_firmware::FirmwareInventory>,
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    anyhow::bail!("PC Engine CD-ROM2 direct CUE sets are not available in the browser build")
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -649,6 +737,127 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("does-not-exist"));
+    }
+
+    #[test]
+    fn missing_system_card_message_names_the_selected_console_region() {
+        for (wiring, region, filename) in [
+            (
+                zeff_pce_core::hardware::PceConsoleWiring::PcEngine,
+                "japan",
+                "syscard3.pce",
+            ),
+            (
+                zeff_pce_core::hardware::PceConsoleWiring::TurboGrafx16,
+                "usa",
+                "syscard3u.pce",
+            ),
+        ] {
+            let error = resolve_pce_cd_system_card_with_manifest(
+                Some(&zeff_firmware::FirmwareInventory::new()),
+                &[],
+                None,
+                wiring,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(region));
+            assert!(error.contains(filename));
+        }
+    }
+
+    fn system_card_entry(
+        filename: &str,
+        md5: &str,
+        fill: u8,
+    ) -> zeff_firmware::FirmwareInventoryEntry {
+        zeff_firmware::FirmwareInventoryEntry::from_bytes_with_legacy_digests(
+            vec![fill; 262_144],
+            Some(filename.to_owned()),
+            Some(md5.to_owned()),
+            None,
+            zeff_firmware::catalog_specs(),
+        )
+    }
+
+    #[test]
+    fn global_system_card_search_prefers_later_v3_over_earlier_v2() {
+        let mut first = zeff_firmware::FirmwareInventory::new();
+        first.add(system_card_entry(
+            "syscard2.pce",
+            "3cdd6614a918616bfc41c862e889dd79",
+            2,
+        ));
+        let mut second = zeff_firmware::FirmwareInventory::new();
+        second.add(system_card_entry(
+            "syscard3.pce",
+            "38179df8f4ac870017db21ebcbf53114",
+            3,
+        ));
+        let mut inventory = zeff_firmware::FirmwareInventory::new();
+        let mut sources = std::collections::BTreeMap::new();
+        merge_firmware_inventory(
+            &mut inventory,
+            &mut sources,
+            std::path::Path::new("root-a"),
+            &first,
+        );
+        merge_firmware_inventory(
+            &mut inventory,
+            &mut sources,
+            std::path::Path::new("root-b"),
+            &second,
+        );
+        let plan = zeff_firmware::firmware_plan_for_pce_cdrom2_region("japan");
+        let resolution =
+            zeff_firmware::FirmwareResolver::new(zeff_firmware::catalog_specs(), &inventory)
+                .resolve(&plan);
+        let zeff_firmware::FirmwareSelection::External(selected) = &resolution.entries[0].selection
+        else {
+            panic!("expected system card firmware");
+        };
+        assert_eq!(
+            selected.variant.as_ref().unwrap().as_ref(),
+            "nec.pce.cd.system_card.v3"
+        );
+        assert_eq!(
+            sources.get(&selected.sha256).unwrap(),
+            std::path::Path::new("root-b")
+        );
+    }
+
+    #[test]
+    fn global_system_card_search_accepts_v2_when_it_is_the_only_exact_match() {
+        let mut directory = zeff_firmware::FirmwareInventory::new();
+        directory.add(system_card_entry(
+            "syscard2.pce",
+            "3cdd6614a918616bfc41c862e889dd79",
+            2,
+        ));
+        let mut inventory = zeff_firmware::FirmwareInventory::new();
+        let mut sources = std::collections::BTreeMap::new();
+        merge_firmware_inventory(
+            &mut inventory,
+            &mut sources,
+            std::path::Path::new("root-a"),
+            &directory,
+        );
+        let plan = zeff_firmware::firmware_plan_for_pce_cdrom2_region("japan");
+        let resolution =
+            zeff_firmware::FirmwareResolver::new(zeff_firmware::catalog_specs(), &inventory)
+                .resolve(&plan);
+        let zeff_firmware::FirmwareSelection::External(selected) = &resolution.entries[0].selection
+        else {
+            panic!("expected system card firmware");
+        };
+        assert_eq!(
+            selected.variant.as_ref().unwrap().as_ref(),
+            "nec.pce.cd.system_card.v2"
+        );
+        assert_eq!(
+            sources.get(&selected.sha256).unwrap(),
+            std::path::Path::new("root-a")
+        );
     }
 
     #[test]

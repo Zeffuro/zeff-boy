@@ -38,6 +38,7 @@ pub(crate) struct DebugTabViewer<'a> {
     pub(crate) data: DebugDataRefs<'a>,
     pub(crate) window_state: &'a mut DebugWindowState,
     pub(crate) actions: DebugUiActions,
+    pub(crate) supports_rewind: bool,
     pub(crate) game_texture_id: Option<egui::TextureId>,
     pub(crate) game_native_size: (u32, u32),
     pub(crate) aspect_ratio_mode: AspectRatioMode,
@@ -103,6 +104,7 @@ impl TabViewer for DebugTabViewer<'_> {
                         info,
                         &mut self.window_state.cpu_view,
                         &mut self.actions,
+                        self.supports_rewind,
                     );
                 }
             }
@@ -135,7 +137,7 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::Disassembler => {
                 if let Some(view) = self.data.disassembly_view {
-                    let disasm_actions = draw_disassembler_content(ui, view);
+                    let disasm_actions = draw_disassembler_content(ui, view, self.supports_rewind);
                     self.actions
                         .toggle_breakpoints
                         .extend(disasm_actions.toggle_breakpoints);

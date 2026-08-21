@@ -1,9 +1,9 @@
 use super::App;
 use crate::platform::Instant;
 use winit::{
-    event::{ElementState, MouseButton, WindowEvent},
+    event::{DeviceEvent, ElementState, MouseButton, WindowEvent},
     event_loop::ActiveEventLoop,
-    window::WindowId,
+    window::{CursorGrabMode, WindowId},
 };
 
 impl App {
@@ -413,11 +413,26 @@ impl App {
     fn update_pointer_and_window_state(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_pos = Some((position.x as f32, position.y as f32));
+                let next = (position.x as f32, position.y as f32);
+                if self.active_system == crate::emu_backend::ActiveSystem::Pce
+                    && !self.pce_mouse_captured
+                    && self.game_view_focused
+                    && let Some(previous) = self.cursor_pos
+                    && let Some(gfx) = self.gfx.as_ref()
+                    && let (Some(_), Some(_)) = (
+                        gfx.game_pixel_at_window_pos(previous.0, previous.1),
+                        gfx.game_pixel_at_window_pos(next.0, next.1),
+                    )
+                {
+                    self.pce_mouse_motion.0 += f64::from(next.0 - previous.0);
+                    self.pce_mouse_motion.1 += f64::from(next.1 - previous.1);
+                }
+                self.cursor_pos = Some(next);
             }
             WindowEvent::CursorLeft { .. } => {
                 self.cursor_pos = None;
                 self.mouse_left_pressed = false;
+                self.mouse_right_pressed = false;
             }
             WindowEvent::Resized(size) => {
                 self.window_size = (size.width as f32, size.height as f32);
@@ -427,24 +442,34 @@ impl App {
     }
 
     fn handle_mouse_input_for_zapper(&mut self, event: &WindowEvent, event_consumed_by_egui: bool) {
-        let WindowEvent::MouseInput {
-            state,
-            button: MouseButton::Left,
-            ..
-        } = event
-        else {
+        let WindowEvent::MouseInput { state, button, .. } = event else {
             return;
         };
+
+        if !matches!(button, MouseButton::Left | MouseButton::Right) {
+            return;
+        }
 
         match state {
             ElementState::Pressed => {
                 let pointer_over_direct_game = self.pointer_over_direct_game_view();
-                self.mouse_left_pressed =
+                #[cfg(not(target_arch = "wasm32"))]
+                if *button == MouseButton::Left && pointer_over_direct_game {
+                    self.capture_pce_mouse();
+                }
+                let pressed =
                     self.game_view_focused && (!event_consumed_by_egui || pointer_over_direct_game);
+                match button {
+                    MouseButton::Left => self.mouse_left_pressed = pressed,
+                    MouseButton::Right => self.mouse_right_pressed = pressed,
+                    _ => unreachable!(),
+                }
             }
-            ElementState::Released => {
-                self.mouse_left_pressed = false;
-            }
+            ElementState::Released => match button {
+                MouseButton::Left => self.mouse_left_pressed = false,
+                MouseButton::Right => self.mouse_right_pressed = false,
+                _ => unreachable!(),
+            },
         }
     }
 
@@ -493,8 +518,73 @@ impl App {
     }
 
     pub(super) fn handle_focus_change(&mut self, focused: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !focused {
+            self.release_pce_mouse(false);
+        }
         self.game_window_focused = focused;
         self.focus_state_dirty = true;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn handle_device_event(&mut self, event: DeviceEvent) {
+        if !self.pce_mouse_captured
+            || !self.game_window_focused
+            || self.active_system != crate::emu_backend::ActiveSystem::Pce
+        {
+            return;
+        }
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.pce_mouse_motion.0 += delta.0;
+            self.pce_mouse_motion.1 += delta.1;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn capture_pce_mouse(&mut self) {
+        if self.pce_mouse_captured
+            || self.active_system != crate::emu_backend::ActiveSystem::Pce
+            || self.settings.emulation.pce_mouse_cursor_mode
+                != crate::settings::PceMouseCursorMode::Captured
+        {
+            return;
+        }
+        let Some(window) = self.gfx.as_ref().map(crate::graphics::Graphics::window) else {
+            return;
+        };
+        let grabbed = window
+            .set_cursor_grab(CursorGrabMode::Locked)
+            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+        if let Err(error) = grabbed {
+            log::warn!("Failed to capture the mouse cursor: {error}");
+            self.toast_manager
+                .error("Couldn't capture the mouse cursor");
+            return;
+        }
+        window.set_cursor_visible(false);
+        self.pce_mouse_captured = true;
+        self.cursor_pos = None;
+        self.pce_mouse_motion = (0.0, 0.0);
+        self.toast_manager
+            .info("Mouse captured. Press Escape or Alt to release");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn release_pce_mouse(&mut self, notify: bool) {
+        if !self.pce_mouse_captured {
+            return;
+        }
+        if let Some(window) = self.gfx.as_ref().map(crate::graphics::Graphics::window) {
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            window.set_cursor_visible(true);
+        }
+        self.pce_mouse_captured = false;
+        self.pce_mouse_motion = (0.0, 0.0);
+        self.mouse_left_pressed = false;
+        self.mouse_right_pressed = false;
+        if notify {
+            self.toast_manager.info("Mouse released");
+        }
     }
 
     pub(super) fn apply_focus_state(&mut self) {

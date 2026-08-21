@@ -254,4 +254,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify archive dependency notices
+        shell: bash
+        run: |
+          test -s THIRD_PARTY_NOTICES.md
+          grep -Fq 'sevenz-rust2 0.21.5' THIRD_PARTY_NOTICES.md
+          grep -Fq 'lzma-rust2 0.19.0' THIRD_PARTY_NOTICES.md
+          grep -Fq 'liblzma and liblzma-sys 0.4.8' THIRD_PARTY_NOTICES.md
+          grep -Fq 'XZ Utils liblzma 5.8.3' THIRD_PARTY_NOTICES.md
+          grep -Fq 'e8994adc584650d7b179f4d1d68685e064cc7534' third_party/sevenz-rust2/ZEFF_PATCH.md
+          for file in \
+            third_party/sevenz-rust2/src/archive.rs \
+            third_party/sevenz-rust2/src/decoder.rs \
+            third_party/sevenz-rust2/src/lib.rs \
+            third_party/sevenz-rust2/src/reader.rs \
+            third_party/sevenz-rust2/src/writer/unpack_info.rs; do
+            grep -Fq 'Modified by Zeff Boy' "$file"
+          done
+
       - uses: EmbarkStudios/cargo-deny-action@v2

@@ -570,12 +570,25 @@ fn libretro_valid_extensions_include_gba_and_sega8() {
 }
 
 #[test]
+fn libretro_does_not_register_pce() {
+    let extensions = crate::callbacks::VALID_EXTENSIONS
+        .to_str()
+        .expect("valid extensions should be UTF-8");
+
+    assert!(!extensions.split('|').any(|entry| entry == "pce"));
+    assert!(CoreState::from_rom(&[0xEA; 0x2000], "test.pce").is_err());
+}
+
+#[test]
 fn system_specs_map_to_libretro_core_state() {
     let valid_extensions = crate::callbacks::VALID_EXTENSIONS
         .to_str()
         .expect("valid extensions should be UTF-8");
 
-    for spec in System::specs() {
+    for spec in System::specs()
+        .iter()
+        .filter(|spec| spec.system != System::Pce)
+    {
         for extension in spec.rom_extensions {
             assert!(
                 valid_extensions.split('|').any(|entry| entry == *extension),
@@ -660,6 +673,7 @@ fn rom_for_system(system: System) -> Vec<u8> {
         System::Gb => gb_rom(),
         System::Gba => gba_rom(),
         System::Nes => nes_rom(),
+        System::Pce => panic!("PC Engine is not registered in libretro"),
         System::Ws => ws_rom(),
         System::Sms | System::Gg | System::Sg => vec![0x76],
     }
@@ -680,6 +694,7 @@ fn expected_system_label(system: System) -> &'static str {
         System::Gb => "GB/GBC",
         System::Gba => "GBA",
         System::Nes => "NES",
+        System::Pce => panic!("PC Engine is not registered in libretro"),
         System::Ws => "WonderSwan",
         System::Sms => "SMS",
         System::Gg => "Game Gear",
@@ -695,6 +710,7 @@ fn expected_system_ram_size(system: System) -> usize {
                 + zeff_gba_core::hardware::constants::IWRAM_SIZE
         }
         System::Nes => 0x800,
+        System::Pce => panic!("PC Engine is not registered in libretro"),
         System::Ws => zeff_ws_core::hardware::constants::WSC_INTERNAL_RAM_SIZE,
         System::Sms | System::Gg => zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
         System::Sg => zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,

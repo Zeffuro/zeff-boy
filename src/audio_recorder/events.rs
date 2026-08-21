@@ -357,6 +357,7 @@ fn class_name(class: AudioVoiceClass) -> &'static str {
         AudioVoiceClass::Noise => "noise",
         AudioVoiceClass::Pcm => "pcm",
         AudioVoiceClass::Wavetable => "wavetable",
+        AudioVoiceClass::WavetableNoise => "wavetable_noise",
         AudioVoiceClass::Other => "other",
     }
 }

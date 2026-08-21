@@ -2,6 +2,31 @@ use super::App;
 use crate::debug::{DebugDataRefs, DebugUiActions, MenuAction};
 use crate::graphics;
 
+#[cfg(not(target_arch = "wasm32"))]
+fn estimate_load_eta(
+    elapsed: std::time::Duration,
+    completed_bytes: u64,
+    total_bytes: u64,
+) -> Option<String> {
+    if elapsed < std::time::Duration::from_secs(1)
+        || completed_bytes == 0
+        || completed_bytes >= total_bytes
+    {
+        return None;
+    }
+    let seconds =
+        elapsed.as_secs_f64() * (total_bytes - completed_bytes) as f64 / completed_bytes as f64;
+    let seconds = seconds.ceil().min(24.0 * 60.0 * 60.0) as u64;
+    let text = if seconds < 60 {
+        format!("About {seconds}s remaining")
+    } else if seconds < 60 * 60 {
+        format!("About {}m {}s remaining", seconds / 60, seconds % 60)
+    } else {
+        format!("About {}h {}m remaining", seconds / 3600, seconds / 60 % 60)
+    };
+    Some(text)
+}
+
 impl App {
     pub(super) fn render_frame(&mut self, ui_frame_data: Option<&crate::ui::UiFrameData>) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -27,6 +52,51 @@ impl App {
                 }
             }
         }
+        let supports_save_states = self.core_supports_save_states();
+        let supports_replay = self.core_supports_replay();
+        let supports_audio = self.core_supports_audio();
+        let supports_rewind = self.core_supports_rewind();
+        let supports_debugger = self.core_supports_debugger();
+        #[cfg(not(target_arch = "wasm32"))]
+        let package_load = self.pending_rom_preparation.as_ref().map(|pending| {
+            let completed_bytes = pending.progress.completed_bytes();
+            let total_bytes = pending.progress.total_bytes();
+            let elapsed = pending.started_at.elapsed();
+            let eta = estimate_load_eta(elapsed, completed_bytes, total_bytes);
+            let phase = match pending.progress.phase() {
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::Inspecting => {
+                    "Inspecting archive"
+                }
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::ReadingCue => {
+                    "Reading CUE and validating package"
+                }
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::ReadingData => {
+                    "Reading disc data"
+                }
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::ReadingRom => {
+                    "Extracting ROM"
+                }
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::Firmware => {
+                    "Resolving System Card"
+                }
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::Building => {
+                    "Building emulator"
+                }
+                crate::emu_backend::pce_cd_archive::PceCdPackageLoadPhase::Complete => "Finishing",
+            };
+            crate::graphics::PackageLoadView {
+                filename: pending
+                    .source_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("archive")
+                    .to_owned(),
+                phase,
+                completed_bytes,
+                total_bytes,
+                eta,
+            }
+        });
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
@@ -59,7 +129,7 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let game_boy_serial_device_change_allowed =
             self.emu_thread.is_some() && !self.recording.is_replay_active();
-        let is_rewinding = self.rewind.held && self.settings.rewind.enabled;
+        let is_rewinding = self.rewind.held && supports_rewind && self.settings.rewind.enabled;
         let autohide_menu_bar = self.settings.ui.autohide_menu_bar;
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back =
@@ -90,6 +160,11 @@ impl App {
             is_recording_audio: is_recording,
             is_recording_replay,
             is_playing_replay,
+            supports_save_states,
+            supports_rewind,
+            supports_replay,
+            supports_audio,
+            supports_debugger,
             is_rewinding,
             rewind_seconds_back,
             is_paused: self.speed.paused,
@@ -103,6 +178,8 @@ impl App {
             active_save_slot: self.active_save_slot,
             can_undo_load_state: self.undo_load_state.is_some(),
             archive_selection: self.pending_archive_selection.as_ref(),
+            #[cfg(not(target_arch = "wasm32"))]
+            package_load,
             show_debug_dock: self.active_debug_presentation
                 != crate::settings::DebugPresentation::GameAndDebugger,
             debugger_window_open,
@@ -121,9 +198,13 @@ impl App {
                         MenuAction::OpenFile => self.open_file_dialog(),
                         MenuAction::LoadSymbolFile => {
                             #[cfg(not(target_arch = "wasm32"))]
-                            self.open_symbol_file_dialog();
+                            if supports_debugger {
+                                self.open_symbol_file_dialog();
+                            }
                             #[cfg(target_arch = "wasm32")]
-                            self.toast_manager.error("Symbol files are native-only");
+                            if supports_debugger {
+                                self.toast_manager.error("Symbol files are native-only");
+                            }
                         }
                         MenuAction::ResetGame => self.reset_game(),
                         MenuAction::StopGame => self.stop_game(),
@@ -182,6 +263,24 @@ impl App {
                                 );
                             } else {
                                 self.scan_bardigun_barcode_file_dialog();
+                            }
+                        }
+                        MenuAction::OpenBarcodeBoyScan => {
+                            if !game_boy_serial_device_change_allowed {
+                                self.toast_manager.error(
+                                    "Disconnect the link and stop replay activity before scanning a card",
+                                );
+                            } else {
+                                self.debug_windows.barcode_boy_scan_open = true;
+                            }
+                        }
+                        MenuAction::TriggerBarcodeBoyScan(digits) => {
+                            if !game_boy_serial_device_change_allowed {
+                                self.toast_manager.error(
+                                    "Disconnect the link and stop replay activity before scanning a card",
+                                );
+                            } else {
+                                self.trigger_barcode_boy_scan(digits.clone());
                             }
                         }
                         MenuAction::HostTcpLink => {
@@ -294,6 +393,10 @@ impl App {
                         }
                     }
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if result.cancel_package_load {
+                    self.cancel_pending_rom_preparation(true);
+                }
                 if settings_dirty {
                     self.settings.save();
                 }
@@ -342,6 +445,7 @@ impl App {
         &mut self,
         ui_frame_data: Option<&crate::ui::UiFrameData>,
     ) -> bool {
+        let supports_rewind = self.core_supports_rewind();
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
@@ -350,6 +454,7 @@ impl App {
             debug_windows: &mut self.debug_windows,
             settings: &self.settings,
             dock_state: &mut self.debug_dock,
+            supports_rewind,
         }) {
             Ok(result) => {
                 crate::ui::apply_debug_actions(
@@ -434,12 +539,15 @@ impl App {
     }
 
     fn merge_debug_actions(&mut self, actions: DebugUiActions) {
-        if let Some(request) = actions.guest_call
+        let supports_guest_calls = self.core_supports_guest_calls();
+        if supports_guest_calls
+            && let Some(request) = actions.guest_call
             && let Some(thread) = &self.emu_thread
         {
             thread.send(crate::emu_thread::EmuCommand::ExecuteGuestCall(request));
         }
-        if let Some(state) = actions.undo_guest_call
+        if supports_guest_calls
+            && let Some(state) = actions.undo_guest_call
             && let Some(thread) = &self.emu_thread
         {
             thread.send(crate::emu_thread::EmuCommand::UndoGuestCall(state));
@@ -589,6 +697,27 @@ impl App {
         self.debug_windows.disasm_target = target;
         self.debug_windows.last_disasm_pc = None;
         self.debug_windows.last_disasm_mapping = None;
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod load_eta_tests {
+    use std::time::Duration;
+
+    use super::estimate_load_eta;
+
+    #[test]
+    fn archive_eta_waits_for_a_stable_sample_and_formats_remaining_time() {
+        assert_eq!(estimate_load_eta(Duration::from_millis(900), 50, 100), None);
+        assert_eq!(
+            estimate_load_eta(Duration::from_secs(10), 25, 100).as_deref(),
+            Some("About 30s remaining")
+        );
+        assert_eq!(
+            estimate_load_eta(Duration::from_secs(90), 25, 100).as_deref(),
+            Some("About 4m 30s remaining")
+        );
+        assert_eq!(estimate_load_eta(Duration::from_secs(10), 100, 100), None);
     }
 }
 

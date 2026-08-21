@@ -47,6 +47,8 @@ DEB_ROOT="$WORK_DIR/deb"
 install_payload "$DEB_ROOT"
 install -Dm644 "$ROOT_DIR/LICENSE-MIT" "$DEB_ROOT/usr/share/doc/zeff-boy/LICENSE-MIT"
 install -Dm644 "$ROOT_DIR/LICENSE-APACHE" "$DEB_ROOT/usr/share/doc/zeff-boy/LICENSE-APACHE"
+install -Dm644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" \
+  "$DEB_ROOT/usr/share/doc/zeff-boy/THIRD_PARTY_NOTICES.md"
 cat > "$DEB_ROOT/usr/share/doc/zeff-boy/copyright" <<'EOF'
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: zeff-boy
@@ -56,6 +58,7 @@ Files: *
 Copyright: 2026 Zeffuro
 License: MIT or Apache-2.0
  The complete license texts are installed as LICENSE-MIT and LICENSE-APACHE.
+ Third-party attributions are installed as THIRD_PARTY_NOTICES.md.
 EOF
 CHANGELOG_DATE="$(LC_ALL=C date -u -R)"
 printf 'zeff-boy (%s) stable; urgency=medium\n\n  * Package zeff-boy %s.\n\n -- Zeffuro <Jeffroiscool@gmail.com>  %s\n' \
@@ -88,6 +91,7 @@ install -m644 "$ROOT_DIR/packaging/com.github.zeffuro.zeff-boy.metainfo.xml" \
 install -m644 "$ROOT_DIR/assets/icon.png" "$RPM_TOP/SOURCES/zeff-boy.png"
 install -m644 "$ROOT_DIR/LICENSE-MIT" "$RPM_TOP/SOURCES/LICENSE-MIT"
 install -m644 "$ROOT_DIR/LICENSE-APACHE" "$RPM_TOP/SOURCES/LICENSE-APACHE"
+install -m644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$RPM_TOP/SOURCES/THIRD_PARTY_NOTICES.md"
 
 cat > "$RPM_TOP/SPECS/zeff-boy.spec" <<EOF
 Name: zeff-boy
@@ -121,6 +125,7 @@ install -Dm644 %{_sourcedir}/com.github.zeffuro.zeff-boy.metainfo.xml %{buildroo
 install -Dm644 %{_sourcedir}/zeff-boy.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/zeff-boy.png
 install -Dm644 %{_sourcedir}/LICENSE-MIT %{buildroot}%{_datadir}/licenses/zeff-boy/LICENSE-MIT
 install -Dm644 %{_sourcedir}/LICENSE-APACHE %{buildroot}%{_datadir}/licenses/zeff-boy/LICENSE-APACHE
+install -Dm644 %{_sourcedir}/THIRD_PARTY_NOTICES.md %{buildroot}%{_datadir}/licenses/zeff-boy/THIRD_PARTY_NOTICES.md
 
 %files
 %{_bindir}/zeff-boy
@@ -129,6 +134,7 @@ install -Dm644 %{_sourcedir}/LICENSE-APACHE %{buildroot}%{_datadir}/licenses/zef
 %{_datadir}/icons/hicolor/512x512/apps/zeff-boy.png
 %license %{_datadir}/licenses/zeff-boy/LICENSE-MIT
 %license %{_datadir}/licenses/zeff-boy/LICENSE-APACHE
+%license %{_datadir}/licenses/zeff-boy/THIRD_PARTY_NOTICES.md
 
 %changelog
 * $(LC_ALL=C date -u '+%a %b %d %Y') Zeffuro <Jeffroiscool@gmail.com> - $RPM_VERSION-$RPM_RELEASE

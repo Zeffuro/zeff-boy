@@ -143,12 +143,20 @@ impl App {
                 Err(err) => LiveReply::error(err.to_string()),
             },
             LiveCommand::SaveStateSlot { slot } => {
-                self.save_state_slot(slot);
-                LiveReply::ok(self.live_status_json())
+                if self.core_supports_save_states() {
+                    self.save_state_slot(slot);
+                    LiveReply::ok(self.live_status_json())
+                } else {
+                    LiveReply::error("the active core does not support save states")
+                }
             }
             LiveCommand::LoadStateSlot { slot } => {
-                self.load_state_slot(slot);
-                LiveReply::ok(self.live_status_json())
+                if self.core_supports_save_states() {
+                    self.load_state_slot(slot);
+                    LiveReply::ok(self.live_status_json())
+                } else {
+                    LiveReply::error("the active core does not support save states")
+                }
             }
             LiveCommand::StartReplayRecording { path } => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -339,7 +347,12 @@ fn core_features_json(features: &CoreCapabilities) -> Value {
         "input": input_features_json(&features.input_features),
         "cheats": cheat_features_json(&features.cheat_features),
         "supports_save_states": features.supports_save_states,
+        "supports_state_capture": features.supports_state_capture,
         "supports_rewind": features.supports_rewind,
+        "supports_replay": features.supports_replay,
+        "supports_audio": features.supports_audio,
+        "supports_cheats": features.supports_cheats,
+        "supports_guest_calls": features.supports_guest_calls,
         "supports_debugger": features.supports_debugger,
         "supports_opcode_history": features.supports_opcode_history,
     })
@@ -369,6 +382,7 @@ fn core_family_label(family: CoreFamily) -> &'static str {
         CoreFamily::GameBoy => "game_boy",
         CoreFamily::GameBoyAdvance => "game_boy_advance",
         CoreFamily::Nes => "nes",
+        CoreFamily::PcEngine => "pc_engine",
         CoreFamily::WonderSwan => "wonder_swan",
         CoreFamily::Sega8 => "sega8",
     }
@@ -524,7 +538,12 @@ mod tests {
                 crate::emu_backend::ActiveSystem::MasterSystem,
             ),
             supports_save_states: true,
+            supports_state_capture: true,
             supports_rewind: true,
+            supports_replay: true,
+            supports_audio: true,
+            supports_cheats: true,
+            supports_guest_calls: true,
             supports_debugger: true,
             supports_opcode_history: true,
         };
@@ -534,6 +553,13 @@ mod tests {
         assert_eq!(json["core_family"], "sega8");
         assert_eq!(json["supports_debugger"], true);
         assert_eq!(json["supports_opcode_history"], true);
+        assert_eq!(json["supports_save_states"], true);
+        assert_eq!(json["supports_state_capture"], true);
+        assert_eq!(json["supports_rewind"], true);
+        assert_eq!(json["supports_replay"], true);
+        assert_eq!(json["supports_audio"], true);
+        assert_eq!(json["supports_cheats"], true);
+        assert_eq!(json["supports_guest_calls"], true);
         assert_eq!(json["input"]["supports_player_two"], true);
         assert_eq!(json["input"]["supports_lightgun"], false);
         assert_eq!(json["input"]["buttons"][0], "Up");

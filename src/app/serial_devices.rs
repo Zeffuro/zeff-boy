@@ -1,12 +1,10 @@
 use super::App;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::emu_thread::EmuCommand;
-use crate::emu_thread::EmuResponse;
+use crate::emu_thread::{EmuCommand, EmuResponse};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 
 impl App {
-    pub(super) fn consume_bardigun_response(
+    pub(super) fn consume_serial_device_response(
         &mut self,
         response: EmuResponse,
     ) -> Option<EmuResponse> {
@@ -19,6 +17,17 @@ impl App {
             EmuResponse::BardigunBarcodeScanFailed(error) => {
                 self.toast_manager
                     .error(format!("Could not scan Bardigun card: {error}"));
+                None
+            }
+            EmuResponse::BarcodeBoyScanStarted => {
+                self.debug_windows.barcode_boy_digits.clear();
+                self.toast_manager.success("Barcode Boy scan started");
+                None
+            }
+            EmuResponse::BarcodeBoyScanFailed(error) => {
+                self.debug_windows.barcode_boy_scan_open = true;
+                self.toast_manager
+                    .error(format!("Could not scan Barcode Boy card: {error}"));
                 None
             }
             response => Some(response),
@@ -72,6 +81,16 @@ impl App {
             Err(err) => self
                 .toast_manager
                 .error(format!("Could not read Bardigun card data: {err}")),
+        }
+    }
+
+    pub(super) fn trigger_barcode_boy_scan(&mut self, digits: String) {
+        if self.game_boy_serial_device != zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy {
+            self.toast_manager.error("Attach Barcode Boy first");
+            return;
+        }
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::TriggerBarcodeBoyScan(digits));
         }
     }
 }

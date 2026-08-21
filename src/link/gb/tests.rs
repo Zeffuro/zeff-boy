@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply};
+use zeff_emu_common::replay::{
+    ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkCoordinatorOwner,
+    ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,
+};
 use zeff_gb_core::emulator::Emulator as GameBoyEmulator;
 use zeff_gb_core::hardware::bus::{GameBoyLinkAction, GameBoyLinkReply};
 use zeff_gb_core::hardware::types::constants::{IE_ADDR, INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
@@ -206,6 +209,260 @@ fn game_boy_remote_link_records_replay_events_for_endpoint() {
             },
         }]
     );
+}
+
+#[test]
+fn game_boy_remote_link_captures_master_continuation_before_and_after_reply() {
+    let (left_transport, right_transport) = LocalLinkTransport::pair();
+    let mut left_link = GameBoyRemoteLink::new(LinkSession::new(
+        left_transport,
+        LinkSystemType::GameBoy,
+        LinkEndpointId(1),
+    ));
+    let mut right_link = GameBoyRemoteLink::new(LinkSession::new(
+        right_transport,
+        LinkSystemType::GameBoy,
+        LinkEndpointId(2),
+    ));
+    let mut left = gb_emulator();
+    let mut right = gb_emulator();
+
+    left.set_game_boy_link_peer_present(true);
+    right.set_game_boy_link_peer_present(true);
+    left.write_byte(SERIAL_SB, 0xAB);
+    right.write_byte(SERIAL_SB, 0x34);
+    left.write_byte(SERIAL_SC, 0x81);
+    right.write_byte(SERIAL_SC, 0x80);
+
+    left_link.poll_emulator(&mut left).unwrap();
+    let awaiting = left_link
+        .replay_coordinator_state(left.game_boy_link_replay_state())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        awaiting.owner,
+        ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply
+    );
+    assert_eq!(awaiting.transfer_id, 0x0100_0000_0000_0000);
+    assert_eq!(awaiting.reply, None);
+
+    left_link.discard_replay_events_before_capture();
+    assert!(left_link.take_replay_events().is_empty());
+    right_link.poll_emulator(&mut right).unwrap();
+    left_link.poll_emulator(&mut left).unwrap();
+
+    let applied = left_link
+        .replay_coordinator_state(left.game_boy_link_replay_state())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        applied.owner,
+        ReplayGameBoyLinkCoordinatorOwner::CoreHasReply
+    );
+    assert_eq!(applied.transfer_id, awaiting.transfer_id);
+    assert_eq!(applied.reply.unwrap().out_byte, 0x34);
+
+    left.step_frame();
+    assert_eq!(
+        left_link
+            .replay_coordinator_state(left.game_boy_link_replay_state())
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn game_boy_replay_link_resumes_replay_owned_master_with_exact_transfer_id() {
+    let transfer_id = 0x0100_0000_0000_0042;
+    let action = ReplayGameBoyLinkAction {
+        out_byte: 0xAB,
+        clock_period_t_cycles: 4096,
+        serial_generation: 4,
+    };
+    let coordinator = ReplayGameBoyLinkCoordinatorState {
+        transfer_id,
+        action,
+        owner: ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply,
+        reply: None,
+    };
+    let mut replay_link = GameBoyReplayLink::try_new_with_start(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 0,
+            event: ReplayGameBoyLinkEvent::RemoteReply {
+                transfer_id,
+                out_byte: 0x34,
+                passive: true,
+                serial_generation: 4,
+            },
+        }],
+        0,
+        Some(0),
+        0,
+        Some(coordinator),
+    )
+    .unwrap();
+    let mut gb = gb_emulator();
+    gb.set_game_boy_link_peer_present(true);
+    gb.write_byte(SERIAL_SB, action.out_byte);
+    gb.write_byte(SERIAL_SC, 0x81);
+    assert_eq!(
+        gb.take_game_boy_link_action().unwrap().out_byte,
+        action.out_byte
+    );
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert_eq!(
+        gb.game_boy_link_replay_state().pending_master_response,
+        Some(0x34)
+    );
+    assert_eq!(replay_link.event_progress(), (1, 1));
+    gb.step_frame();
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
+    assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+}
+
+#[test]
+fn game_boy_replay_continuation_binds_future_observation_at_capture_origin() {
+    let transfer_id = 0x0100_0000_0000_0043;
+    let action = ReplayGameBoyLinkAction {
+        out_byte: 0xAB,
+        clock_period_t_cycles: 4096,
+        serial_generation: 4,
+    };
+    let mut replay_link = GameBoyReplayLink::try_new_with_start(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 8,
+            event: ReplayGameBoyLinkEvent::RemoteReply {
+                transfer_id,
+                out_byte: 0x34,
+                passive: true,
+                serial_generation: 4,
+            },
+        }],
+        0,
+        Some(0),
+        0,
+        Some(ReplayGameBoyLinkCoordinatorState {
+            transfer_id,
+            action,
+            owner: ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply,
+            reply: None,
+        }),
+    )
+    .unwrap();
+    let mut gb = gb_emulator();
+    gb.set_game_boy_link_peer_present(true);
+    gb.write_byte(SERIAL_SB, action.out_byte);
+    gb.write_byte(SERIAL_SC, 0x81);
+    assert!(gb.take_game_boy_link_action().is_some());
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert_eq!(
+        gb.game_boy_link_replay_state().pending_master_response,
+        Some(0x34)
+    );
+}
+
+#[test]
+fn game_boy_replay_continuation_completes_waiting_boundary_immediately() {
+    let transfer_id = 0x0100_0000_0000_0044;
+    let action = ReplayGameBoyLinkAction {
+        out_byte: 0xAB,
+        clock_period_t_cycles: 4096,
+        serial_generation: 4,
+    };
+    let mut replay_link = GameBoyReplayLink::try_new_with_start(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 0,
+            event: ReplayGameBoyLinkEvent::RemoteReply {
+                transfer_id,
+                out_byte: 0x34,
+                passive: true,
+                serial_generation: 4,
+            },
+        }],
+        0,
+        Some(0),
+        0,
+        Some(ReplayGameBoyLinkCoordinatorState {
+            transfer_id,
+            action,
+            owner: ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply,
+            reply: None,
+        }),
+    )
+    .unwrap();
+    let mut gb = gb_emulator();
+    gb.write_byte(SERIAL_SB, action.out_byte);
+    gb.write_byte(SERIAL_SC, 0x81);
+    let mut state = gb.game_boy_link_replay_state();
+    state.peer_present = true;
+    state.pending_master_byte = Some(action.out_byte);
+    state.pending_master_completion_ready = true;
+    state.queued_master_action = None;
+    assert!(gb.restore_game_boy_link_replay_state(state));
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0x34);
+    assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+    assert_eq!(gb.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
+    assert_eq!(replay_link.event_progress(), (1, 1));
+}
+
+#[test]
+fn core_owned_master_continuation_needs_no_replay_link_events() {
+    let transfer_id = 0x0100_0000_0000_0045;
+    let action = ReplayGameBoyLinkAction {
+        out_byte: 0xAB,
+        clock_period_t_cycles: 4096,
+        serial_generation: 4,
+    };
+    let reply = ReplayGameBoyLinkReply {
+        out_byte: 0x34,
+        passive: true,
+        serial_generation: 4,
+    };
+    let replay_link = GameBoyReplayLink::try_new_with_start(
+        Vec::new(),
+        0,
+        Some(0),
+        0,
+        Some(ReplayGameBoyLinkCoordinatorState {
+            transfer_id,
+            action,
+            owner: ReplayGameBoyLinkCoordinatorOwner::CoreHasReply,
+            reply: Some(reply),
+        }),
+    )
+    .unwrap();
+    assert!(replay_link.is_empty());
+
+    let mut restored = gb_emulator();
+    restored.write_byte(SERIAL_SB, action.out_byte);
+    restored.write_byte(SERIAL_SC, 0x81);
+    let mut state = restored.game_boy_link_replay_state();
+    state.peer_present = true;
+    state.pending_master_byte = Some(action.out_byte);
+    state.pending_master_response = Some(reply.out_byte);
+    state.queued_master_action = None;
+    assert!(restored.restore_game_boy_link_replay_state(state));
+    let mut oracle = gb_emulator();
+    oracle.write_byte(SERIAL_SB, action.out_byte);
+    oracle.write_byte(SERIAL_SC, 0x81);
+    assert!(oracle.restore_game_boy_link_replay_state(state));
+
+    restored.step_frame();
+    oracle.step_frame();
+    assert_eq!(
+        restored.game_boy_link_replay_state(),
+        oracle.game_boy_link_replay_state()
+    );
+    assert_eq!(restored.cpu_peek8(SERIAL_SB), reply.out_byte);
+    assert_eq!(restored.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
 }
 
 #[test]
@@ -488,6 +745,7 @@ fn game_boy_replay_link_keeps_link_state_before_future_local_master() {
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 0,
     });
 
@@ -504,6 +762,7 @@ fn game_boy_replay_link_applies_timed_link_state_at_recorded_tick() {
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 7,
     };
     let mut replay_link = GameBoyReplayLink::new(
@@ -531,6 +790,70 @@ fn game_boy_replay_link_applies_timed_link_state_at_recorded_tick() {
 }
 
 #[test]
+fn passive_start_continuation_completes_before_later_remote_master() {
+    let mut gb = gb_emulator();
+    gb.write_byte(SERIAL_SB, 0x34);
+    gb.write_byte(SERIAL_SC, 0x80);
+    let state = zeff_emu_common::replay::ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        pending_passive_completion: Some(zeff_emu_common::replay::ReplayGameBoyPassiveCompletion {
+            peer_byte: 0xAB,
+            remaining_t_cycles: 4,
+        }),
+        serial_generation: 0,
+    };
+    assert!(gb.restore_game_boy_link_replay_state(state));
+    let mut replay_link = GameBoyReplayLink::new(
+        vec![ReplayEvent::GameBoyLink {
+            frame: 0,
+            tick: 8,
+            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                transfer_id: 0x0100_0000_0000_0001,
+                clock_period_t_cycles: 4096,
+                out_byte: 0xCD,
+                serial_generation: 9,
+                local_reply: Some(ReplayGameBoyLinkReply {
+                    out_byte: 0x56,
+                    passive: true,
+                    serial_generation: 1,
+                }),
+            },
+        }],
+        0,
+        Some(0),
+        0,
+    );
+
+    replay_link.poll_emulator(&mut gb).unwrap();
+    gb.step_instruction();
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0xAB);
+    assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+
+    gb.write_byte(SERIAL_SB, 0x56);
+    gb.write_byte(SERIAL_SC, 0x80);
+    while gb.cpu_cycles() < 8 {
+        gb.step_instruction();
+    }
+    replay_link.poll_emulator(&mut gb).unwrap();
+    assert!(replay_link.events[0].delivered);
+    assert!(
+        gb.game_boy_link_replay_state()
+            .pending_passive_completion
+            .is_some()
+    );
+
+    while gb.cpu_cycles() < 4104 {
+        gb.step_instruction();
+    }
+    assert_eq!(gb.cpu_peek8(SERIAL_SB), 0xCD);
+    assert_eq!(gb.cpu_peek8(SERIAL_SC) & 0x80, 0);
+}
+
+#[test]
 fn game_boy_replay_link_preserves_recorded_peer_presence_before_remote_master() {
     let mut replay_link = GameBoyReplayLink::new(
         vec![ReplayEvent::GameBoyLink {
@@ -555,6 +878,7 @@ fn game_boy_replay_link_preserves_recorded_peer_presence_before_remote_master() 
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 0,
     });
 

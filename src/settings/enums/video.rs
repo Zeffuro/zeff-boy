@@ -2,6 +2,50 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use zeff_nes_core::hardware::ppu::NesPaletteMode;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PceOverscanMode {
+    Conservative,
+    TvSafe,
+    #[default]
+    Full,
+}
+
+impl crate::debug::ui_helpers::EnumLabel for PceOverscanMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Conservative => "Conservative CRT",
+            Self::TvSafe => "TV safe",
+            Self::Full => "Full active area",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Conservative, Self::TvSafe, Self::Full]
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PcePaletteMode {
+    Composite,
+    #[default]
+    RawRgb,
+}
+
+impl crate::debug::ui_helpers::EnumLabel for PcePaletteMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Composite => "Composite corrected",
+            Self::RawRgb => "Raw RGB",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Composite, Self::RawRgb]
+    }
+}
+
 impl crate::debug::ui_helpers::EnumLabel for NesPaletteMode {
     fn label(self) -> &'static str {
         match self {

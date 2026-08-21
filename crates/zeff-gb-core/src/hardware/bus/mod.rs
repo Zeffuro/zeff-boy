@@ -455,6 +455,15 @@ impl Bus {
     #[inline]
     pub(in crate::hardware) fn step_serial(&mut self, t_cycles: u64) {
         crate::hardware::serial::SerialDevice::step(&mut self.io.serial_device, t_cycles);
+        let active_device_armed = self.io.serial.active_device_can_clock_external_transfer();
+        if let Some(response) = self
+            .io
+            .serial_device
+            .clock_active_external_device(t_cycles, active_device_armed)
+            && self.io.serial.complete_external_from_master(response)
+        {
+            self.if_reg |= 0x08;
+        }
         if self.io.serial.step(t_cycles, &mut self.io.serial_device) {
             self.if_reg |= 0x08;
         }
@@ -469,19 +478,19 @@ impl Bus {
         self.io.serial.output_bytes()
     }
 
-    pub fn printer_latest_image(&self) -> Option<&[u8]> {
-        self.io.serial_device.printer().latest_image()
+    pub fn printer_latest_job(&self) -> Option<&crate::hardware::GameBoyPrinterJob> {
+        self.io.serial_device.printer().latest_job()
     }
 
-    pub fn printer_image_count(&self) -> usize {
-        self.io.serial_device.printer().image_count()
+    pub fn printer_job_count(&self) -> usize {
+        self.io.serial_device.printer().job_count()
     }
 
-    pub fn take_printer_images(&mut self) -> Vec<Vec<u8>> {
-        self.io.serial_device.printer_mut().take_images()
+    pub fn take_printer_jobs(&mut self) -> Vec<crate::hardware::GameBoyPrinterJob> {
+        self.io.serial_device.printer_mut().take_jobs()
     }
 
-    pub fn clear_printer_images(&mut self) {
+    pub fn clear_printer_jobs(&mut self) {
         self.io.serial_device.printer_mut().clear();
     }
 
@@ -495,6 +504,10 @@ impl Bus {
 
     pub fn queue_bardigun_barcode_scan(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.io.serial_device.queue_bardigun_barcode_scan(bytes)
+    }
+
+    pub fn trigger_barcode_boy_scan(&mut self, digits: &str) -> anyhow::Result<()> {
+        self.io.serial_device.trigger_barcode_boy_scan(digits)
     }
 
     #[cfg(test)]

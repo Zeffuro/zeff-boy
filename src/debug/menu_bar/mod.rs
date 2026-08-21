@@ -44,6 +44,8 @@ pub(crate) enum MenuAction {
     SetGameBoySerialDevice(zeff_gb_core::hardware::GameBoySerialDevice),
     #[cfg(not(target_arch = "wasm32"))]
     ScanBardigunBarcodeFile,
+    OpenBarcodeBoyScan,
+    TriggerBarcodeBoyScan(String),
     HostTcpLink,
     JoinTcpLink,
     DisconnectLink,
@@ -74,6 +76,10 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) is_recording_audio: bool,
     pub(crate) is_recording_replay: bool,
     pub(crate) is_playing_replay: bool,
+    pub(crate) supports_save_states: bool,
+    pub(crate) supports_replay: bool,
+    pub(crate) supports_audio: bool,
+    pub(crate) supports_debugger: bool,
     pub(crate) is_paused: bool,
     pub(crate) active_system: ActiveSystem,
     pub(crate) media_slot_snapshot: Option<&'a zeff_emu_common::media::MediaSlotSnapshot>,
@@ -120,6 +126,9 @@ pub(crate) fn draw_menu_bar(
                             is_recording_audio: mb.is_recording_audio,
                             is_recording_replay: mb.is_recording_replay,
                             is_playing_replay: mb.is_playing_replay,
+                            supports_save_states: mb.supports_save_states,
+                            supports_replay: mb.supports_replay,
+                            supports_audio: mb.supports_audio,
                         },
                     );
                 });
@@ -133,28 +142,36 @@ pub(crate) fn draw_menu_bar(
                         ui,
                         &mut actions,
                         dock_state,
-                        mb.external_debugger,
-                        mb.debugger_window_open,
-                        mb.debug_presentation,
-                    );
-                });
-
-                ui.menu_button("Tools", |ui| {
-                    tools_menu::draw(
-                        ui,
-                        &mut actions,
-                        dock_state,
-                        debug_windows,
-                        tools_menu::ToolsMenuState {
-                            active_system: mb.active_system,
-                            media_slot_snapshot: mb.media_slot_snapshot,
-                            media_event_change_allowed: mb.media_event_change_allowed,
-                            game_boy_serial_device: mb.game_boy_serial_device,
-                            game_boy_serial_device_change_allowed: mb
-                                .game_boy_serial_device_change_allowed,
+                        debug_menu::DebugMenuState {
+                            external_debugger: mb.external_debugger,
+                            debugger_window_open: mb.debugger_window_open,
+                            presentation: mb.debug_presentation,
+                            supports_debugger: mb.supports_debugger,
                         },
                     );
                 });
+
+                egui::containers::menu::MenuButton::new("Tools")
+                    .config(
+                        egui::containers::menu::MenuConfig::new()
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                    )
+                    .ui(ui, |ui| {
+                        tools_menu::draw(
+                            ui,
+                            &mut actions,
+                            dock_state,
+                            debug_windows,
+                            tools_menu::ToolsMenuState {
+                                active_system: mb.active_system,
+                                media_slot_snapshot: mb.media_slot_snapshot,
+                                media_event_change_allowed: mb.media_event_change_allowed,
+                                game_boy_serial_device: mb.game_boy_serial_device,
+                                game_boy_serial_device_change_allowed: mb
+                                    .game_boy_serial_device_change_allowed,
+                            },
+                        );
+                    });
 
                 ui.menu_button("Help", |ui| {
                     ui.label(format!("zeff-boy v{}", env!("CARGO_PKG_VERSION")));

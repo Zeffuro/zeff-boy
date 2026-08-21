@@ -5,6 +5,7 @@ mod gb_snapshot;
 mod gba_snapshot;
 mod nes_snapshot;
 mod opcodes;
+mod pce_snapshot;
 mod sega8_snapshot;
 mod snapshot_common;
 mod ws_snapshot;
@@ -15,6 +16,7 @@ pub(crate) use frame_data::{InstructionTraceBatch, UiFrameData};
 pub(crate) use gb_snapshot::collect_emu_snapshot;
 pub(crate) use gba_snapshot::collect_gba_snapshot;
 pub(crate) use nes_snapshot::collect_nes_snapshot;
+pub(crate) use pce_snapshot::collect_pce_snapshot;
 pub(crate) use sega8_snapshot::collect_sega8_snapshot;
 pub(crate) use snapshot_common::{
     DebugControlSources, build_debug_control_snapshot, build_disassembly_view,

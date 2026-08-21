@@ -75,6 +75,8 @@ impl App {
                 dmg_palette_preset: self.settings.video.gb_dmg_palette_preset,
                 nes_palette_mode: self.settings.video.nes_palette_mode,
                 nes_custom_palette,
+                pce_overscan_mode: self.settings.video.pce_overscan_mode,
+                pce_palette_mode: self.settings.video.pce_palette_mode,
                 sgb_border_enabled: self.settings.emulation.sgb_border_enabled,
             },
         }

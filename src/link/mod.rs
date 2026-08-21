@@ -24,6 +24,7 @@ pub(crate) fn remote_link_system_for_active_system(
         ActiveSystem::WonderSwan => Some(LinkSystemType::WonderSwan),
         ActiveSystem::GameBoyAdvance
         | ActiveSystem::Nes
+        | ActiveSystem::Pce
         | ActiveSystem::MasterSystem
         | ActiveSystem::GameGear
         | ActiveSystem::Sg1000 => None,

@@ -702,19 +702,7 @@ fn step_live_link_replay_side<T: crate::link::LinkTransport>(
             .into_iter()
             .next()
             .unwrap_or_default();
-        backend.set_input(frame.buttons, frame.dpad);
-        backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-        let zapper = crate::emu_thread::ZapperInput::from(frame.zapper);
-        backend.set_zapper_state(
-            zapper.enabled,
-            zapper.trigger,
-            zapper.hit,
-            zapper.screen_pos,
-        );
-        backend.set_replay_host_tilt(frame.host_tilt);
-        if let Some(camera_frame) = frame.camera_frame.as_deref() {
-            backend.set_replay_camera_frame(camera_frame);
-        }
+        backend.apply_replay_input(&frame);
         lease.begin(backend, activation_tick).map_err(|error| {
             anyhow::anyhow!("failed to begin paired replay frame lease: {error:?}")
         })?;

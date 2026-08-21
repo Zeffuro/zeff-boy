@@ -28,12 +28,19 @@ impl App {
         }
         self.shutdown_performed = true;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        self.release_pce_mouse(false);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cancel_pending_rom_preparation(false);
+
         self.stop_audio_recording();
         self.stop_replay_recording();
         #[cfg(not(target_arch = "wasm32"))]
         self.wait_for_replay_finalization_on_shutdown();
 
         if self.settings.emulation.auto_save_state
+            && self.core_supports_save_states()
             && let Some(thread) = &self.emu_thread
         {
             thread.send(EmuCommand::AutoSaveState);

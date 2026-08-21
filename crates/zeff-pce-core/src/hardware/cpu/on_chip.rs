@@ -1,0 +1,510 @@
+use super::super::bus::{OPEN_BUS_VALUE, PhysicalRegion, decode_physical_region};
+use super::{Cpu, CpuBus, CpuStep, CpuTrap, IrqPort, StatusFlags, TimerPort, VdcPort};
+
+pub const TIMER_MASTER_TICKS: u64 = 3_072;
+pub const UNINITIALIZED_TIMER_COUNTER_READ: u8 = 0;
+pub const PROVISIONAL_INTERRUPT_ENTRY_CYCLES: u32 = 8;
+
+const INTERRUPT_MASK: u8 = 0x07;
+const IRQ2_BIT: u8 = 1 << 0;
+const IRQ1_BIT: u8 = 1 << 1;
+const TIMER_BIT: u8 = 1 << 2;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineLevel {
+    Low,
+    #[default]
+    High,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterruptSource {
+    Nmi,
+    Timer,
+    Irq1,
+    Irq2,
+}
+
+impl InterruptSource {
+    #[inline]
+    const fn vector_low(self) -> u16 {
+        match self {
+            Self::Nmi => 0xFFFC,
+            Self::Timer => 0xFFFA,
+            Self::Irq1 => 0xFFF8,
+            Self::Irq2 => 0xFFF6,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InterruptStep {
+    pub source: InterruptSource,
+    pub cycles: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OnChipIo {
+    timer_reload: u8,
+    timer_counter: Option<u8>,
+    timer_running: bool,
+    timer_prescaler: u16,
+    timer_irq_pending: bool,
+    interrupt_disable: u8,
+    irq1_line: LineLevel,
+    irq2_line: LineLevel,
+    nmi_line: LineLevel,
+    nmi_pending: bool,
+}
+
+impl Default for OnChipIo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OnChipIo {
+    pub const fn new() -> Self {
+        Self {
+            timer_reload: 0,
+            timer_counter: None,
+            timer_running: false,
+            timer_prescaler: 0,
+            timer_irq_pending: false,
+            interrupt_disable: 0,
+            irq1_line: LineLevel::High,
+            irq2_line: LineLevel::High,
+            nmi_line: LineLevel::High,
+            nmi_pending: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        let irq1_line = self.irq1_line;
+        let irq2_line = self.irq2_line;
+        let nmi_line = self.nmi_line;
+        *self = Self {
+            irq1_line,
+            irq2_line,
+            nmi_line,
+            ..Self::new()
+        };
+    }
+
+    pub fn advance_master_ticks(&mut self, ticks: u64) {
+        if !self.timer_running {
+            return;
+        }
+
+        let phase = u64::from(self.timer_prescaler) + ticks % TIMER_MASTER_TICKS;
+        let decrements = ticks / TIMER_MASTER_TICKS + phase / TIMER_MASTER_TICKS;
+        self.timer_prescaler = (phase % TIMER_MASTER_TICKS) as u16;
+        if decrements == 0 {
+            return;
+        }
+
+        let counter = u64::from(
+            self.timer_counter
+                .expect("running timer always has a counter"),
+        );
+        if decrements <= counter {
+            self.timer_counter = Some((counter - decrements) as u8);
+            return;
+        }
+
+        self.timer_irq_pending = true;
+        let remaining = decrements - counter - 1;
+        let period = u64::from(self.timer_reload) + 1;
+        let phase = remaining % period;
+        self.timer_counter = Some((u64::from(self.timer_reload) - phase) as u8);
+    }
+
+    #[inline]
+    pub fn read_timer_counter(&self) -> u8 {
+        self.timer_counter
+            .unwrap_or(UNINITIALIZED_TIMER_COUNTER_READ)
+    }
+
+    pub fn write_timer(&mut self, port: TimerPort, value: u8) {
+        match port {
+            TimerPort::CounterReload => self.timer_reload = value & 0x7F,
+            TimerPort::Control => {
+                let running = value & 1 != 0;
+                if running && !self.timer_running {
+                    self.timer_counter = Some(self.timer_reload);
+                }
+                if !running {
+                    self.timer_prescaler = 0;
+                }
+                self.timer_running = running;
+            }
+        }
+    }
+
+    #[inline]
+    pub const fn timer_reload(&self) -> u8 {
+        self.timer_reload
+    }
+
+    #[inline]
+    pub const fn timer_running(&self) -> bool {
+        self.timer_running
+    }
+
+    #[inline]
+    pub const fn timer_prescaler_ticks(&self) -> u16 {
+        self.timer_prescaler
+    }
+
+    #[inline]
+    pub const fn timer_irq_pending(&self) -> bool {
+        self.timer_irq_pending
+    }
+
+    #[inline]
+    pub const fn read_irq(&self, port: IrqPort) -> u8 {
+        match port {
+            IrqPort::Disable => self.interrupt_disable,
+            IrqPort::Request => {
+                (if matches!(self.irq2_line, LineLevel::Low) {
+                    IRQ2_BIT
+                } else {
+                    0
+                }) | (if matches!(self.irq1_line, LineLevel::Low) {
+                    IRQ1_BIT
+                } else {
+                    0
+                }) | (if self.timer_irq_pending { TIMER_BIT } else { 0 })
+            }
+        }
+    }
+
+    pub fn write_irq(&mut self, port: IrqPort, value: u8) {
+        match port {
+            IrqPort::Disable => self.interrupt_disable = value & INTERRUPT_MASK,
+            IrqPort::Request => self.timer_irq_pending = false,
+        }
+    }
+
+    #[inline]
+    pub fn set_irq1_line(&mut self, level: LineLevel) {
+        self.irq1_line = level;
+    }
+
+    #[inline]
+    pub fn set_irq2_line(&mut self, level: LineLevel) {
+        self.irq2_line = level;
+    }
+
+    pub fn set_nmi_line(&mut self, level: LineLevel) {
+        if self.nmi_line == LineLevel::High && level == LineLevel::Low {
+            self.nmi_pending = true;
+        }
+        self.nmi_line = level;
+    }
+
+    #[inline]
+    pub const fn unmasked_request_pending(&self, source: InterruptSource) -> bool {
+        match source {
+            InterruptSource::Nmi => self.nmi_pending,
+            InterruptSource::Timer => {
+                self.timer_irq_pending && self.interrupt_disable & TIMER_BIT == 0
+            }
+            InterruptSource::Irq1 => {
+                matches!(self.irq1_line, LineLevel::Low) && self.interrupt_disable & IRQ1_BIT == 0
+            }
+            InterruptSource::Irq2 => {
+                matches!(self.irq2_line, LineLevel::Low) && self.interrupt_disable & IRQ2_BIT == 0
+            }
+        }
+    }
+
+    pub const fn highest_priority_unmasked_request(&self) -> Option<InterruptSource> {
+        if self.unmasked_request_pending(InterruptSource::Nmi) {
+            Some(InterruptSource::Nmi)
+        } else if self.unmasked_request_pending(InterruptSource::Timer) {
+            Some(InterruptSource::Timer)
+        } else if self.unmasked_request_pending(InterruptSource::Irq1) {
+            Some(InterruptSource::Irq1)
+        } else if self.unmasked_request_pending(InterruptSource::Irq2) {
+            Some(InterruptSource::Irq2)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn nmi_pending(&self) -> bool {
+        self.nmi_pending
+    }
+
+    fn consume_nmi_pending(&mut self) -> bool {
+        std::mem::take(&mut self.nmi_pending)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HuC6280 {
+    cpu: Cpu,
+    on_chip_io: OnChipIo,
+    interrupt_poll_disable: Option<bool>,
+    sampled_interrupt: Option<InterruptSource>,
+}
+
+impl Default for HuC6280 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HuC6280 {
+    pub fn new() -> Self {
+        Self {
+            cpu: Cpu::new(),
+            on_chip_io: OnChipIo::new(),
+            interrupt_poll_disable: None,
+            sampled_interrupt: None,
+        }
+    }
+
+    pub fn reset<B: CpuBus>(&mut self, bus: &mut B) {
+        self.on_chip_io.reset();
+        self.interrupt_poll_disable = None;
+        self.sampled_interrupt = None;
+        let mut bus = OnChipBus::new(&mut self.on_chip_io, bus);
+        self.cpu.reset(&mut bus);
+    }
+
+    pub(crate) fn step_instruction<B: CpuBus>(&mut self, bus: &mut B) -> Result<CpuStep, CpuTrap> {
+        assert!(self.interrupt_poll_disable.is_none());
+        assert!(self.sampled_interrupt.is_none());
+        let old_interrupt_disable = self.cpu.registers().status.contains(StatusFlags::INTERRUPT);
+        let mut bus = OnChipBus::new(&mut self.on_chip_io, bus);
+        let step = self.cpu.step(&mut bus)?;
+        let final_interrupt_disable = self.cpu.registers().status.contains(StatusFlags::INTERRUPT);
+        self.interrupt_poll_disable = Some(match step.opcode {
+            0x28 | 0x58 | 0x78 => old_interrupt_disable,
+            0x40 => final_interrupt_disable,
+            _ => final_interrupt_disable,
+        });
+        Ok(step)
+    }
+
+    pub(crate) fn service_interrupt_boundary<B: CpuBus>(
+        &mut self,
+        bus: &mut B,
+    ) -> Option<InterruptStep> {
+        assert!(self.interrupt_poll_disable.is_none());
+        let source = self.sampled_interrupt.take()?;
+
+        let mut bus = OnChipBus::new(&mut self.on_chip_io, bus);
+        self.cpu
+            .enter_hardware_interrupt_provisional(&mut bus, source.vector_low());
+        self.interrupt_poll_disable = Some(true);
+        Some(InterruptStep {
+            source,
+            cycles: PROVISIONAL_INTERRUPT_ENTRY_CYCLES,
+        })
+    }
+
+    pub(crate) fn sample_interrupts_after_action(&mut self) {
+        let interrupt_disable = self
+            .interrupt_poll_disable
+            .take()
+            .expect("completed CPU action provides an interrupt poll state");
+        self.sample_interrupts(interrupt_disable);
+    }
+
+    fn sample_interrupts(&mut self, interrupt_disable: bool) {
+        assert!(self.sampled_interrupt.is_none());
+        self.sampled_interrupt = if self.on_chip_io.nmi_pending() {
+            let consumed = self.on_chip_io.consume_nmi_pending();
+            debug_assert!(consumed);
+            Some(InterruptSource::Nmi)
+        } else if interrupt_disable {
+            None
+        } else {
+            self.on_chip_io.highest_priority_unmasked_request()
+        };
+    }
+
+    #[cfg(test)]
+    pub(super) fn sample_interrupts_for_test(&mut self, interrupt_disable: bool) {
+        self.interrupt_poll_disable = None;
+        self.sample_interrupts(interrupt_disable);
+    }
+
+    #[inline]
+    pub const fn sampled_interrupt(&self) -> Option<InterruptSource> {
+        self.sampled_interrupt
+    }
+
+    #[inline]
+    pub const fn cpu(&self) -> &Cpu {
+        &self.cpu
+    }
+
+    #[inline]
+    pub fn cpu_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
+    }
+
+    #[inline]
+    pub const fn on_chip_io(&self) -> &OnChipIo {
+        &self.on_chip_io
+    }
+
+    #[inline]
+    pub fn on_chip_io_mut(&mut self) -> &mut OnChipIo {
+        &mut self.on_chip_io
+    }
+
+    #[inline]
+    pub fn advance_master_ticks(&mut self, ticks: u64) {
+        self.on_chip_io.advance_master_ticks(ticks);
+    }
+
+    #[inline]
+    pub fn set_irq1_line(&mut self, level: LineLevel) {
+        self.on_chip_io.set_irq1_line(level);
+    }
+
+    #[inline]
+    pub fn set_irq2_line(&mut self, level: LineLevel) {
+        self.on_chip_io.set_irq2_line(level);
+    }
+
+    #[inline]
+    pub fn set_nmi_line(&mut self, level: LineLevel) {
+        self.on_chip_io.set_nmi_line(level);
+    }
+
+    #[inline]
+    pub const fn highest_priority_unmasked_request(&self) -> Option<InterruptSource> {
+        self.on_chip_io.highest_priority_unmasked_request()
+    }
+}
+
+struct OnChipBus<'a, B> {
+    on_chip_io: &'a mut OnChipIo,
+    inner: &'a mut B,
+}
+
+impl<'a, B> OnChipBus<'a, B> {
+    #[inline]
+    fn new(on_chip_io: &'a mut OnChipIo, inner: &'a mut B) -> Self {
+        Self { on_chip_io, inner }
+    }
+}
+
+impl<B: CpuBus> OnChipBus<'_, B> {
+    fn advance_elapsed_time(&mut self) {
+        self.on_chip_io
+            .advance_master_ticks(self.inner.take_elapsed_master_ticks());
+    }
+
+    fn internal_read(&mut self, physical_addr: u32, dummy: bool) -> Option<u8> {
+        if !matches!(
+            decode_physical_region(physical_addr),
+            PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)
+        ) {
+            return None;
+        }
+        let completed = self.inner.advance_internal_access(physical_addr, false);
+        self.advance_elapsed_time();
+        if !completed {
+            return Some(OPEN_BUS_VALUE);
+        }
+        let value = match decode_physical_region(physical_addr) {
+            PhysicalRegion::Timer(TimerPort::CounterReload) => self.on_chip_io.read_timer_counter(),
+            PhysicalRegion::Timer(TimerPort::Control) => OPEN_BUS_VALUE,
+            PhysicalRegion::Irq(port) => self.on_chip_io.read_irq(port),
+            _ => unreachable!(),
+        };
+        self.inner
+            .observe_internal_read(physical_addr, value, dummy);
+        Some(value)
+    }
+
+    fn internal_write(&mut self, physical_addr: u32, value: u8, dummy: bool) -> bool {
+        if !matches!(
+            decode_physical_region(physical_addr),
+            PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)
+        ) {
+            return false;
+        }
+        let completed = self.inner.advance_internal_access(physical_addr, true);
+        self.advance_elapsed_time();
+        if !completed {
+            return true;
+        }
+        match decode_physical_region(physical_addr) {
+            PhysicalRegion::Timer(port) => self.on_chip_io.write_timer(port, value),
+            PhysicalRegion::Irq(port) => self.on_chip_io.write_irq(port, value),
+            _ => unreachable!(),
+        }
+        self.inner
+            .observe_internal_write(physical_addr, value, dummy);
+        true
+    }
+}
+
+impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
+    fn read(&mut self, physical_addr: u32) -> u8 {
+        if let Some(value) = self.internal_read(physical_addr, false) {
+            value
+        } else {
+            let value = self.inner.read(physical_addr);
+            self.advance_elapsed_time();
+            value
+        }
+    }
+
+    fn write(&mut self, physical_addr: u32, value: u8) {
+        if !self.internal_write(physical_addr, value, false) {
+            self.inner.write(physical_addr, value);
+            self.advance_elapsed_time();
+        }
+    }
+
+    fn dummy_read(&mut self, physical_addr: u32) -> u8 {
+        if let Some(value) = self.internal_read(physical_addr, true) {
+            value
+        } else {
+            let value = self.inner.dummy_read(physical_addr);
+            self.advance_elapsed_time();
+            value
+        }
+    }
+
+    fn dummy_write(&mut self, physical_addr: u32, value: u8) {
+        if !self.internal_write(physical_addr, value, true) {
+            self.inner.dummy_write(physical_addr, value);
+            self.advance_elapsed_time();
+        }
+    }
+
+    #[inline]
+    fn write_vdc(&mut self, port: VdcPort, value: u8) {
+        self.inner.write_vdc(port, value);
+        self.advance_elapsed_time();
+    }
+
+    #[inline]
+    fn observe_internal_read(&mut self, physical_addr: u32, value: u8, dummy: bool) {
+        self.inner
+            .observe_internal_read(physical_addr, value, dummy);
+    }
+
+    #[inline]
+    fn observe_internal_write(&mut self, physical_addr: u32, value: u8, dummy: bool) {
+        self.inner
+            .observe_internal_write(physical_addr, value, dummy);
+    }
+
+    #[inline]
+    fn idle(&mut self) {
+        self.inner.idle();
+        self.advance_elapsed_time();
+    }
+}

@@ -187,6 +187,9 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             ActiveSystem::Nes => {
                 ui.label("NES");
             }
+            ActiveSystem::Pce => {
+                ui.label("PC Engine");
+            }
             ActiveSystem::GameBoyAdvance => {
                 ui.label("GBA");
             }

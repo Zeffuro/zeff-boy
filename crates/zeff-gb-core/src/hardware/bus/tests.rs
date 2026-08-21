@@ -56,6 +56,18 @@ fn exchange_printer_packet(bus: &mut Bus, command: u8, payload: &[u8]) -> Vec<u8
         .collect()
 }
 
+fn exchange_internal_serial(bus: &mut Bus, bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .iter()
+        .map(|&byte| {
+            bus.write_byte(SERIAL_SB, byte);
+            bus.write_byte(SERIAL_SC, 0x81);
+            bus.step_serial(4096);
+            bus.read_byte(SERIAL_SB)
+        })
+        .collect()
+}
+
 #[test]
 fn disconnected_link_preview_does_not_mutate_either_side() {
     let left = make_test_bus();
@@ -146,6 +158,104 @@ fn bardigun_bus_api_rejects_scans_while_another_device_is_selected() {
 }
 
 #[test]
+fn barcode_boy_clocks_exact_external_ean_transcript_after_handshake() {
+    let mut bus = make_test_bus();
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BarcodeBoy);
+    assert!(bus.trigger_barcode_boy_scan("1234567890123").is_err());
+    assert_eq!(
+        exchange_internal_serial(&mut bus, &[0x10, 0x07, 0x10, 0x07]),
+        [0xFF, 0xFF, 0x10, 0x07]
+    );
+    bus.trigger_barcode_boy_scan("1234567890123").unwrap();
+
+    let mut transcript = Vec::new();
+    for _ in 0..crate::hardware::barcode_boy::BARCODE_BOY_PAYLOAD_BYTES {
+        bus.if_reg &= !0x08;
+        bus.write_byte(SERIAL_SB, 0xFF);
+        bus.write_byte(SERIAL_SC, 0x80);
+        bus.step_serial(crate::hardware::barcode_boy::BARCODE_BOY_BYTE_PERIOD_T_CYCLES - 1);
+        assert_ne!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+        assert_eq!(bus.if_reg & 0x08, 0);
+        bus.step_serial(1);
+        transcript.push(bus.read_byte(SERIAL_SB));
+        assert_eq!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+        assert_ne!(bus.if_reg & 0x08, 0);
+    }
+
+    let expected = b"\x021234567890123\x03";
+    assert_eq!(&transcript[..15], expected);
+    assert_eq!(&transcript[15..], expected);
+
+    bus.if_reg &= !0x08;
+    bus.write_byte(SERIAL_SC, 0x80);
+    bus.step_serial(100_000);
+    assert_ne!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(bus.if_reg & 0x08, 0);
+}
+
+#[test]
+fn barcode_boy_active_clock_yields_to_link_peer_without_consuming_scan() {
+    let mut bus = make_test_bus();
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BarcodeBoy);
+    assert_eq!(
+        exchange_internal_serial(&mut bus, &[0x10, 0x07, 0x10, 0x07]),
+        [0xFF, 0xFF, 0x10, 0x07]
+    );
+    bus.trigger_barcode_boy_scan("1234567890123").unwrap();
+    bus.if_reg &= !0x08;
+    bus.write_byte(SERIAL_SC, 0x80);
+    bus.step_serial(1234);
+    bus.set_game_boy_link_peer_present(true);
+
+    bus.step_serial(100_000);
+    assert_ne!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+    assert!(bus.complete_game_boy_external_link_transfer(0xA5));
+    assert_eq!(bus.read_byte(SERIAL_SB), 0xA5);
+
+    bus.set_game_boy_link_peer_present(false);
+    bus.write_byte(SERIAL_SC, 0x80);
+    bus.step_serial(crate::hardware::barcode_boy::BARCODE_BOY_BYTE_PERIOD_T_CYCLES - 1);
+    assert_ne!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(bus.read_byte(SERIAL_SB), 0xA5);
+    bus.step_serial(1);
+    assert_eq!(bus.read_byte(SERIAL_SB), 0x02);
+    assert_eq!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+}
+
+#[test]
+fn barcode_boy_bus_state_restores_mid_external_byte_exactly_once() {
+    let mut bus = make_test_bus();
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BarcodeBoy);
+    assert_eq!(
+        exchange_internal_serial(&mut bus, &[0x10, 0x07, 0x10, 0x07]),
+        [0xFF, 0xFF, 0x10, 0x07]
+    );
+    bus.trigger_barcode_boy_scan("1234567890123").unwrap();
+    bus.if_reg &= !0x08;
+    bus.write_byte(SERIAL_SC, 0x80);
+    bus.step_serial(1234);
+
+    let mut writer = crate::save_state::StateWriter::new();
+    bus.write_state(&mut writer);
+    let bytes = writer.into_bytes();
+    let mut reader = crate::save_state::StateReader::new(&bytes);
+    let mut restored = Bus::read_state(&mut reader, 9).unwrap();
+
+    assert!(reader.is_exhausted());
+    assert_ne!(restored.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(restored.if_reg & 0x08, 0);
+    restored.step_serial(crate::hardware::barcode_boy::BARCODE_BOY_BYTE_PERIOD_T_CYCLES - 1234);
+    assert_eq!(restored.read_byte(SERIAL_SB), 0x02);
+    assert_eq!(restored.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_ne!(restored.if_reg & 0x08, 0);
+
+    restored.if_reg &= !0x08;
+    restored.step_serial(crate::hardware::barcode_boy::BARCODE_BOY_BYTE_PERIOD_T_CYCLES);
+    assert_eq!(restored.read_byte(SERIAL_SB), 0x02);
+    assert_eq!(restored.if_reg & 0x08, 0);
+}
+
+#[test]
 fn camera_sized_print_has_documented_status_sequence_on_serial_registers() {
     let mut bus = make_test_bus();
     bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
@@ -164,7 +274,7 @@ fn camera_sized_print_has_documented_status_sequence_on_serial_registers() {
 
     let print = exchange_printer_packet(&mut bus, 0x02, &[1, 0, 0xE4, 0x40]);
     assert_eq!(&print[print.len() - 2..], &[0x81, 0x08]);
-    assert_eq!(bus.printer_image_count(), 1);
+    assert_eq!(bus.printer_job_count(), 1);
 
     let printing = exchange_printer_packet(&mut bus, 0x0F, &[]);
     assert_eq!(&printing[printing.len() - 2..], &[0x81, 0x06]);
@@ -193,8 +303,8 @@ fn direct_link_takes_precedence_over_selected_printers() {
     assert_eq!(passive.read_byte(SERIAL_SB), 0xAB);
     assert_eq!(master.read_byte(SERIAL_SC) & 0x80, 0);
     assert_eq!(passive.read_byte(SERIAL_SC) & 0x80, 0);
-    assert_eq!(master.printer_image_count(), 0);
-    assert_eq!(passive.printer_image_count(), 0);
+    assert_eq!(master.printer_job_count(), 0);
+    assert_eq!(passive.printer_job_count(), 0);
 }
 
 #[test]
@@ -395,6 +505,82 @@ fn link_exchange_schedules_passive_responder_once() {
 }
 
 #[test]
+fn replay_state_restores_passive_completion_byte_delay_and_interrupt() {
+    let mut master = make_test_bus();
+    let mut passive = make_cgb_test_bus();
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+    master.write_byte(SERIAL_SB, 0xAB);
+    passive.write_byte(SERIAL_SB, 0x34);
+    master.write_byte(SERIAL_SC, 0x81);
+    passive.write_byte(SERIAL_SC, 0x82);
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+    passive.step_serial(1024);
+    let state = passive.game_boy_link_replay_state();
+    assert_eq!(
+        state.pending_passive_completion,
+        Some(zeff_emu_common::replay::ReplayGameBoyPassiveCompletion {
+            peer_byte: 0xAB,
+            remaining_t_cycles: 3072,
+        })
+    );
+
+    let mut restored = make_cgb_test_bus();
+    restored.write_byte(SERIAL_SB, 0x34);
+    restored.write_byte(SERIAL_SC, 0x82);
+    assert!(restored.restore_game_boy_link_replay_state(state));
+
+    restored.step_serial(3071);
+    assert_eq!(restored.read_byte(SERIAL_SB), 0x34);
+    assert_ne!(restored.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(restored.if_reg & 0x08, 0);
+
+    restored.step_serial(1);
+    assert_eq!(restored.read_byte(SERIAL_SB), 0xAB);
+    assert_eq!(restored.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_ne!(restored.if_reg & 0x08, 0);
+    assert_eq!(
+        restored
+            .game_boy_link_replay_state()
+            .pending_passive_completion,
+        None
+    );
+}
+
+#[test]
+fn replay_state_rejects_passive_completion_without_matching_external_transfer() {
+    let mut bus = make_cgb_test_bus();
+    bus.write_byte(SERIAL_SC, 0x02);
+    let state = zeff_emu_common::replay::ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        pending_passive_completion: Some(zeff_emu_common::replay::ReplayGameBoyPassiveCompletion {
+            peer_byte: 0xAB,
+            remaining_t_cycles: 129,
+        }),
+        serial_generation: 0,
+    };
+
+    assert!(!bus.restore_game_boy_link_replay_state(state));
+    assert_eq!(
+        bus.game_boy_link_replay_state().pending_passive_completion,
+        None
+    );
+
+    bus.write_byte(SERIAL_SC, 0x83);
+    let state = zeff_emu_common::replay::ReplayGameBoyLinkState {
+        pending_passive_completion: Some(zeff_emu_common::replay::ReplayGameBoyPassiveCompletion {
+            peer_byte: 0xAB,
+            remaining_t_cycles: 128,
+        }),
+        ..state
+    };
+    assert!(!bus.restore_game_boy_link_replay_state(state));
+}
+
+#[test]
 fn prepared_exchange_schedules_responder_but_defers_master_reply() {
     let mut master = make_test_bus();
     let mut passive = make_test_bus();
@@ -535,6 +721,7 @@ fn link_exchange_rejects_stale_queued_action_without_mutation() {
             clock_period_t_cycles: 4096,
             serial_generation: 7,
         }),
+        pending_passive_completion: None,
         serial_generation: 3,
     };
     left.restore_game_boy_link_replay_state(stale);

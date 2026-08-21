@@ -1,7 +1,9 @@
 use super::{
     ReplayCheckpoint, ReplayEvent, ReplayFirmwareManifest, ReplayGameBoyLinkAction,
-    ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply, ReplayGameBoyLinkState, ReplayJoypadFrame,
-    ReplayMetadata, ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent, ReplayZapperFrame,
+    ReplayGameBoyLinkCoordinatorOwner, ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkEvent,
+    ReplayGameBoyLinkReply, ReplayGameBoyLinkState, ReplayGameBoyPassiveCompletion,
+    ReplayJoypadFrame, ReplayMetadata, ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent,
+    ReplayZapperFrame,
 };
 use crate::media::{MediaEvent, MediaObjectId, MediaSlotId};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -68,14 +70,11 @@ fn replay_roundtrip_with_metadata() {
         final_state_sha256: Some([0x33; 32]),
         game_boy_link_start_state: Some(ReplayGameBoyLinkState {
             peer_present: true,
-            pending_master_byte: Some(0x12),
-            pending_master_response: Some(0x34),
+            pending_master_byte: None,
+            pending_master_response: None,
             pending_master_completion_ready: false,
-            queued_master_action: Some(ReplayGameBoyLinkAction {
-                out_byte: 0x12,
-                clock_period_t_cycles: 4096,
-                serial_generation: 7,
-            }),
+            queued_master_action: None,
+            pending_passive_completion: None,
             serial_generation: 7,
         }),
         game_boy_link_start_tick: Some(123_456),
@@ -84,6 +83,7 @@ fn replay_roundtrip_with_metadata() {
             frame: 1,
             state_sha256: [0x55; 32],
         }],
+        game_boy_link_coordinator_start_state: None,
     };
 
     let mut recorder =
@@ -108,10 +108,426 @@ fn idle_game_boy_link_state_requires_initial_serial_generation() {
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 1,
     };
 
     assert!(!state.is_idle());
+}
+
+fn passive_link_state(remaining_t_cycles: u64) -> ReplayGameBoyLinkState {
+    ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        pending_passive_completion: Some(ReplayGameBoyPassiveCompletion {
+            peer_byte: 0xA5,
+            remaining_t_cycles,
+        }),
+        serial_generation: 3,
+    }
+}
+
+#[test]
+fn metadata_v2_roundtrips_passive_completion_in_all_link_state_locations() {
+    let state = passive_link_state(2048);
+    let metadata = ReplayMetadata {
+        game_boy_link_start_state: Some(state),
+        events: vec![
+            ReplayEvent::GameBoyLinkState { frame: 1, state },
+            ReplayEvent::GameBoyLinkStateAtTick {
+                frame: 2,
+                tick: 123,
+                state,
+            },
+        ],
+        ..ReplayMetadata::default()
+    };
+
+    let decoded = ReplayMetadata::decode(&metadata.encode()).unwrap();
+
+    assert_eq!(decoded, metadata);
+}
+
+#[test]
+fn metadata_v1_defaults_passive_completion_to_none() {
+    let state = ReplayGameBoyLinkState {
+        pending_passive_completion: None,
+        ..passive_link_state(2048)
+    };
+    let metadata = ReplayMetadata {
+        game_boy_link_start_state: Some(state),
+        events: vec![ReplayEvent::GameBoyLinkStateAtTick {
+            frame: 2,
+            tick: 123,
+            state,
+        }],
+        ..ReplayMetadata::default()
+    };
+
+    let decoded = ReplayMetadata::decode(&metadata.encode_with_version(1)).unwrap();
+
+    assert_eq!(decoded.game_boy_link_start_state, Some(state));
+    assert_eq!(decoded.events, metadata.events);
+}
+
+fn master_continuation(
+    owner: ReplayGameBoyLinkCoordinatorOwner,
+) -> (ReplayGameBoyLinkState, ReplayGameBoyLinkCoordinatorState) {
+    let action = ReplayGameBoyLinkAction {
+        out_byte: 0x3C,
+        clock_period_t_cycles: 4096,
+        serial_generation: 9,
+    };
+    let reply = (owner == ReplayGameBoyLinkCoordinatorOwner::CoreHasReply).then_some(
+        ReplayGameBoyLinkReply {
+            out_byte: 0xA7,
+            passive: false,
+            serial_generation: 12,
+        },
+    );
+    (
+        ReplayGameBoyLinkState {
+            peer_present: true,
+            pending_master_byte: Some(action.out_byte),
+            pending_master_response: reply.map(|reply| reply.out_byte),
+            pending_master_completion_ready: false,
+            queued_master_action: None,
+            pending_passive_completion: None,
+            serial_generation: action.serial_generation,
+        },
+        ReplayGameBoyLinkCoordinatorState {
+            transfer_id: 0x0100_0000_0000_002A,
+            action,
+            owner,
+            reply,
+        },
+    )
+}
+
+fn continuation_reply_event(coordinator: ReplayGameBoyLinkCoordinatorState) -> ReplayEvent {
+    ReplayEvent::GameBoyLink {
+        frame: 0,
+        tick: 100,
+        event: ReplayGameBoyLinkEvent::RemoteReply {
+            transfer_id: coordinator.transfer_id,
+            out_byte: 0xA7,
+            passive: false,
+            serial_generation: 12,
+        },
+    }
+}
+
+#[test]
+fn metadata_v3_roundtrips_both_master_continuation_owners() {
+    for owner in [
+        ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply,
+        ReplayGameBoyLinkCoordinatorOwner::CoreHasReply,
+    ] {
+        let (state, coordinator) = master_continuation(owner);
+        let metadata = ReplayMetadata {
+            game_boy_link_start_state: Some(state),
+            game_boy_link_start_tick: Some(99),
+            game_boy_link_coordinator_start_state: Some(coordinator),
+            events: (owner == ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply)
+                .then(|| continuation_reply_event(coordinator))
+                .into_iter()
+                .collect(),
+            ..ReplayMetadata::default()
+        };
+
+        assert_eq!(
+            ReplayMetadata::decode(&metadata.encode()).unwrap(),
+            metadata
+        );
+    }
+}
+
+#[test]
+fn metadata_v1_and_v2_default_master_continuation_to_none() {
+    let (state, coordinator) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply);
+    let metadata = ReplayMetadata {
+        game_boy_link_start_state: Some(state),
+        game_boy_link_start_tick: Some(99),
+        game_boy_link_coordinator_start_state: Some(coordinator),
+        events: vec![continuation_reply_event(coordinator)],
+        ..ReplayMetadata::default()
+    };
+
+    for version in [1, 2] {
+        let decoded = ReplayMetadata::decode(&metadata.encode_with_version(version)).unwrap();
+        assert_eq!(decoded.game_boy_link_coordinator_start_state, None);
+    }
+}
+
+#[test]
+fn metadata_v3_rejects_malformed_master_continuations() {
+    let (awaiting_state, awaiting) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply);
+    let (_, applied) = master_continuation(ReplayGameBoyLinkCoordinatorOwner::CoreHasReply);
+    let invalid = [
+        (None, Some(99), awaiting),
+        (Some(awaiting_state), None, awaiting),
+        (
+            Some(awaiting_state),
+            Some(99),
+            ReplayGameBoyLinkCoordinatorState {
+                reply: applied.reply,
+                ..awaiting
+            },
+        ),
+        (Some(awaiting_state), Some(99), applied),
+        (
+            Some(ReplayGameBoyLinkState {
+                queued_master_action: Some(awaiting.action),
+                ..awaiting_state
+            }),
+            Some(99),
+            awaiting,
+        ),
+        (
+            Some(ReplayGameBoyLinkState {
+                serial_generation: awaiting.action.serial_generation + 1,
+                ..awaiting_state
+            }),
+            Some(99),
+            awaiting,
+        ),
+    ];
+
+    for (game_boy_link_start_state, game_boy_link_start_tick, coordinator) in invalid {
+        let metadata = ReplayMetadata {
+            game_boy_link_start_state,
+            game_boy_link_start_tick,
+            game_boy_link_coordinator_start_state: Some(coordinator),
+            ..ReplayMetadata::default()
+        };
+        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+    }
+}
+
+#[test]
+fn metadata_v3_rejects_missing_duplicate_or_reapplied_continuation_replies() {
+    let (awaiting_state, awaiting) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply);
+    let (applied_state, applied) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::CoreHasReply);
+    let reply = continuation_reply_event(awaiting);
+    let reused_start = ReplayEvent::GameBoyLink {
+        frame: 1,
+        tick: 1,
+        event: ReplayGameBoyLinkEvent::LocalMasterStart {
+            transfer_id: awaiting.transfer_id,
+            clock_period_t_cycles: awaiting.action.clock_period_t_cycles,
+            out_byte: awaiting.action.out_byte,
+            serial_generation: awaiting.action.serial_generation,
+        },
+    };
+    let invalid = [
+        (awaiting_state, awaiting, Vec::new()),
+        (awaiting_state, awaiting, vec![reply.clone(), reply]),
+        (
+            awaiting_state,
+            awaiting,
+            vec![continuation_reply_event(
+                ReplayGameBoyLinkCoordinatorState {
+                    transfer_id: awaiting.transfer_id + 1,
+                    ..awaiting
+                },
+            )],
+        ),
+        (
+            applied_state,
+            applied,
+            vec![continuation_reply_event(applied)],
+        ),
+        (
+            awaiting_state,
+            awaiting,
+            vec![continuation_reply_event(awaiting), reused_start.clone()],
+        ),
+        (applied_state, applied, vec![reused_start]),
+    ];
+
+    for (state, coordinator, events) in invalid {
+        let metadata = ReplayMetadata {
+            game_boy_link_start_state: Some(state),
+            game_boy_link_start_tick: Some(99),
+            game_boy_link_coordinator_start_state: Some(coordinator),
+            events,
+            ..ReplayMetadata::default()
+        };
+        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+    }
+}
+
+#[test]
+fn metadata_v3_rejects_zero_id_and_impossible_applied_completion_boundary() {
+    let (state, coordinator) = master_continuation(ReplayGameBoyLinkCoordinatorOwner::CoreHasReply);
+    for coordinator in [
+        ReplayGameBoyLinkCoordinatorState {
+            transfer_id: 0,
+            ..coordinator
+        },
+        coordinator,
+    ] {
+        let state = if coordinator.transfer_id == 0 {
+            state
+        } else {
+            ReplayGameBoyLinkState {
+                pending_master_completion_ready: true,
+                ..state
+            }
+        };
+        let metadata = ReplayMetadata {
+            game_boy_link_start_state: Some(state),
+            game_boy_link_start_tick: Some(99),
+            game_boy_link_coordinator_start_state: Some(coordinator),
+            ..ReplayMetadata::default()
+        };
+        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+    }
+}
+
+#[test]
+fn metadata_v3_requires_an_owner_or_matching_future_start_for_master_state() {
+    let (consumed, coordinator) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply);
+    let matching_start = ReplayEvent::GameBoyLink {
+        frame: 0,
+        tick: 0,
+        event: ReplayGameBoyLinkEvent::LocalMasterStart {
+            transfer_id: coordinator.transfer_id,
+            clock_period_t_cycles: coordinator.action.clock_period_t_cycles,
+            out_byte: coordinator.action.out_byte,
+            serial_generation: coordinator.action.serial_generation,
+        },
+    };
+    let queued = ReplayGameBoyLinkState {
+        queued_master_action: Some(coordinator.action),
+        ..consumed
+    };
+    let valid = ReplayMetadata {
+        game_boy_link_start_state: Some(queued),
+        game_boy_link_start_tick: Some(99),
+        events: vec![matching_start.clone()],
+        ..ReplayMetadata::default()
+    };
+    assert_eq!(ReplayMetadata::decode(&valid.encode()).unwrap(), valid);
+
+    for (state, events) in [
+        (consumed, Vec::new()),
+        (queued, Vec::new()),
+        (
+            queued,
+            vec![ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                    transfer_id: coordinator.transfer_id,
+                    clock_period_t_cycles: coordinator.action.clock_period_t_cycles,
+                    out_byte: coordinator.action.out_byte ^ 0xFF,
+                    serial_generation: coordinator.action.serial_generation,
+                },
+            }],
+        ),
+    ] {
+        let metadata = ReplayMetadata {
+            game_boy_link_start_state: Some(state),
+            game_boy_link_start_tick: Some(99),
+            events,
+            ..ReplayMetadata::default()
+        };
+        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+    }
+}
+
+#[test]
+fn metadata_v3_rejects_invalid_master_continuation_tags_and_truncation() {
+    let (state, coordinator) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply);
+    let metadata = ReplayMetadata {
+        game_boy_link_start_state: Some(state),
+        game_boy_link_start_tick: Some(99),
+        game_boy_link_coordinator_start_state: Some(coordinator),
+        ..ReplayMetadata::default()
+    };
+
+    let mut invalid_owner = metadata.encode();
+    let owner_index = invalid_owner.len() - 2;
+    invalid_owner[owner_index] = 2;
+    assert!(ReplayMetadata::decode(&invalid_owner).is_err());
+
+    let mut invalid_reply_presence = metadata.encode();
+    *invalid_reply_presence.last_mut().unwrap() = 2;
+    assert!(ReplayMetadata::decode(&invalid_reply_presence).is_err());
+
+    let mut truncated = ReplayMetadata::default().encode();
+    truncated.pop();
+    assert!(ReplayMetadata::decode(&truncated).is_err());
+}
+
+#[test]
+fn master_continuation_alone_marks_metadata_non_empty_but_is_incomplete() {
+    let (_, coordinator) =
+        master_continuation(ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply);
+    let metadata = ReplayMetadata {
+        game_boy_link_coordinator_start_state: Some(coordinator),
+        ..ReplayMetadata::default()
+    };
+    assert!(!metadata.is_empty());
+
+    let path = unique_path("link_coordinator_only");
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), vec![], metadata);
+    recorder.record_frame(0, 0);
+    recorder.finish().unwrap();
+    assert!(ReplayPlayer::load(&path).is_err());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn start_state_without_events_is_still_a_game_boy_link_replay() {
+    let path = unique_path("link_start_only");
+    let metadata = ReplayMetadata {
+        game_boy_link_start_state: Some(passive_link_state(4)),
+        game_boy_link_start_tick: Some(0),
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), vec![], metadata);
+    recorder.record_frame(0, 0);
+    recorder.finish().unwrap();
+
+    let player = ReplayPlayer::load(&path).unwrap();
+
+    assert!(player.uses_game_boy_link());
+    assert!(!player.uses_game_boy_link_events());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn metadata_v2_rejects_invalid_passive_completion_states() {
+    let conflicting = ReplayGameBoyLinkState {
+        pending_master_byte: Some(0x12),
+        ..passive_link_state(1)
+    };
+    for state in [
+        passive_link_state(0),
+        passive_link_state(4097),
+        ReplayGameBoyLinkState {
+            peer_present: false,
+            ..passive_link_state(1)
+        },
+        conflicting,
+    ] {
+        let metadata = ReplayMetadata {
+            game_boy_link_start_state: Some(state),
+            ..ReplayMetadata::default()
+        };
+        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+    }
 }
 
 #[test]
@@ -346,6 +762,7 @@ fn replay_finish_does_not_pad_terminal_frame_boundary_event() {
                 pending_master_response: None,
                 pending_master_completion_ready: false,
                 queued_master_action: None,
+                pending_passive_completion: None,
                 serial_generation: 0,
             },
         }],
@@ -369,6 +786,7 @@ fn replay_finish_does_not_pad_terminal_frame_boundary_event() {
                 pending_master_response: None,
                 pending_master_completion_ready: false,
                 queued_master_action: None,
+                pending_passive_completion: None,
                 serial_generation: 0,
             },
         }]
@@ -387,6 +805,7 @@ fn replay_tick_link_state_roundtrips_without_frame_boundary_delivery() {
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 7,
     };
     let metadata = ReplayMetadata {

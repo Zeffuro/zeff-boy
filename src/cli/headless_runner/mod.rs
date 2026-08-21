@@ -76,6 +76,7 @@ pub(crate) fn run_headless(
         ActiveSystem::GameBoy => run_gb_headless(&rom_path, &rom_data, mode_preference, opts),
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
         ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts),
+        ActiveSystem::Pce => anyhow::bail!("PC Engine headless mode is not supported yet"),
         ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             run_sega8_headless(&rom_path, &rom_data, system, opts)

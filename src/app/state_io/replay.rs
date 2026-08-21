@@ -11,7 +11,7 @@ const REPLAY_CHECKPOINT_INTERVAL_FRAMES: usize = 300;
 
 impl App {
     pub(in crate::app) fn start_replay_recording(&mut self) {
-        if self.emu_thread.is_none() {
+        if !self.core_supports_replay() {
             return;
         }
 
@@ -63,8 +63,8 @@ impl App {
         &mut self,
         path: PathBuf,
     ) -> anyhow::Result<()> {
-        if self.emu_thread.is_none() {
-            anyhow::bail!("no ROM is running");
+        if !self.core_supports_replay() {
+            anyhow::bail!("the active core does not support replay capture");
         }
         if self.recording.is_replay_finalizing() {
             anyhow::bail!("replay save is still finishing");
@@ -147,7 +147,7 @@ impl App {
     }
 
     pub(in crate::app) fn load_and_play_replay(&mut self) {
-        if self.emu_thread.is_none() {
+        if !self.core_supports_replay() {
             return;
         }
 
@@ -193,6 +193,9 @@ impl App {
                             dpad_pressed: 0,
                             replay_events: Some(player.metadata().events.clone()),
                             game_boy_link_start_state: player.metadata().game_boy_link_start_state,
+                            game_boy_link_coordinator_start_state: player
+                                .metadata()
+                                .game_boy_link_coordinator_start_state,
                             game_boy_link_start_tick: player.metadata().game_boy_link_start_tick,
                             wonder_swan_link_start_tick: player
                                 .metadata()
@@ -313,7 +316,7 @@ impl App {
         {
             anyhow::bail!("replay contains NES Zapper input but current ROM is not a NES game");
         }
-        if player.uses_game_boy_link_events()
+        if player.uses_game_boy_link()
             && self.active_system != crate::emu_backend::ActiveSystem::GameBoy
         {
             anyhow::bail!(
@@ -488,7 +491,7 @@ impl App {
             .recording
             .replay_player
             .as_ref()
-            .is_some_and(zeff_emu_common::replay::ReplayPlayer::uses_game_boy_link_events);
+            .is_some_and(zeff_emu_common::replay::ReplayPlayer::uses_game_boy_link);
         match response {
             EmuResponse::ReplayCheckpointCaptured {
                 frame,
@@ -751,6 +754,8 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         EmuResponse::MediaEventFailed { .. } => "MediaEventFailed",
         EmuResponse::BardigunBarcodeScanStarted(_) => "BardigunBarcodeScanStarted",
         EmuResponse::BardigunBarcodeScanFailed(_) => "BardigunBarcodeScanFailed",
+        EmuResponse::BarcodeBoyScanStarted => "BarcodeBoyScanStarted",
+        EmuResponse::BarcodeBoyScanFailed(_) => "BarcodeBoyScanFailed",
         #[cfg(not(target_arch = "wasm32"))]
         EmuResponse::LinkPending(_) => "LinkPending",
         #[cfg(not(target_arch = "wasm32"))]

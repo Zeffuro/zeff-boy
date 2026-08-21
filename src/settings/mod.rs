@@ -10,10 +10,10 @@ mod tilt_bindings;
 pub(crate) use binding_actions::{BindingAction, InputBindingAction, WonderSwanButton};
 pub(crate) use enums::{
     AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset, EffectPreset,
-    EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode, ScalingMode,
-    TiltInputMode, UiDensity, UiThemePreset, VsyncMode, WonderSwanColorCorrection,
-    build_gpu_params, default_color_correction_matrix, default_offscreen_scale,
-    effective_gb_color_correction, effective_gba_color_correction,
+    EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode, PceOverscanMode,
+    PcePaletteMode, ScalingMode, TiltInputMode, UiDensity, UiThemePreset, VsyncMode,
+    WonderSwanColorCorrection, build_gpu_params, default_color_correction_matrix,
+    default_offscreen_scale, effective_gb_color_correction, effective_gba_color_correction,
     effective_wonderswan_color_correction,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
@@ -22,8 +22,9 @@ pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
     AudioSettings, CameraSettings, DebugColors, EmulationSettings, GbBootRomMode, GbaBiosMode,
-    RecentRomEntry, RewindSettings, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference,
-    SegaBootRomMode, TiltSettings, UiSettings, VideoSettings,
+    PceCdArchiveMemoryLimit, PceConsoleWiringPreference, PceControllerPreference,
+    PceMouseCursorMode, RecentRomEntry, RewindSettings, Sega8ConsoleRegionPreference,
+    Sega8VideoStandardPreference, SegaBootRomMode, TiltSettings, UiSettings, VideoSettings,
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 

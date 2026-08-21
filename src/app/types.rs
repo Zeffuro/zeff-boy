@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use crate::camera::CameraCapture;
@@ -206,6 +208,39 @@ pub(super) struct ReplaySaveResult {
 pub(super) struct PendingSymbolLoad {
     pub(super) request_id: u64,
     pub(super) receiver: mpsc::Receiver<SymbolLoadResult>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct PendingRomPreparation {
+    pub(super) request_id: u64,
+    pub(super) source_path: PathBuf,
+    pub(super) started_at: Instant,
+    pub(super) cancel: Arc<AtomicBool>,
+    pub(super) progress: Arc<crate::emu_backend::pce_cd_archive::PceCdPackageProgress>,
+    pub(super) receiver: mpsc::Receiver<RomPreparationResult>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct RomPreparationResult {
+    pub(super) request_id: u64,
+    pub(super) outcome: RomPreparationOutcome,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) enum RomPreparationOutcome {
+    Ready {
+        source_path: PathBuf,
+        rom_path: PathBuf,
+        system: crate::emu_backend::ActiveSystem,
+        auto_load_state: bool,
+        loaded: crate::emu_backend::loader::LoadedBackend,
+    },
+    ArchiveSelection {
+        source_path: PathBuf,
+        entries: Vec<crate::rom_archive::ArchiveRomEntry>,
+    },
+    Failed(String),
+    Cancelled,
 }
 
 #[cfg(not(target_arch = "wasm32"))]

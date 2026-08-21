@@ -209,6 +209,15 @@ impl ReplayPlayer {
         })
     }
 
+    pub fn uses_game_boy_link(&self) -> bool {
+        self.metadata.game_boy_link_start_state.is_some()
+            || self
+                .metadata
+                .game_boy_link_coordinator_start_state
+                .is_some()
+            || self.uses_game_boy_link_events()
+    }
+
     pub fn uses_wonder_swan_link_events(&self) -> bool {
         self.metadata
             .events
@@ -335,7 +344,9 @@ fn decode_legacy_v1_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFr
     }
 
     Ok(input_data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| ReplayJoypadFrame::p1(chunk[0], chunk[1]))
         .collect())
 }

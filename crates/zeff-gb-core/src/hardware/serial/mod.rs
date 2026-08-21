@@ -3,7 +3,9 @@ use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 use std::fmt;
-use zeff_emu_common::replay::{ReplayGameBoyLinkAction, ReplayGameBoyLinkState};
+use zeff_emu_common::replay::{
+    ReplayGameBoyLinkAction, ReplayGameBoyLinkState, ReplayGameBoyPassiveCompletion,
+};
 
 pub(super) trait SerialDevice {
     fn exchange_byte(&mut self, byte: u8) -> u8;
@@ -250,22 +252,39 @@ impl Serial {
                     clock_period_t_cycles: action.clock_period_t_cycles,
                     serial_generation: action.serial_generation,
                 }),
+            pending_passive_completion: self.pending_external_completion.map(
+                |(peer_byte, remaining_t_cycles)| ReplayGameBoyPassiveCompletion {
+                    peer_byte,
+                    remaining_t_cycles,
+                },
+            ),
             serial_generation: self.serial_generation,
         }
     }
 
-    pub(super) fn restore_replay_link_state(&mut self, state: ReplayGameBoyLinkState) {
+    pub(super) fn restore_replay_link_state(&mut self, state: ReplayGameBoyLinkState) -> bool {
+        if state.validate().is_err()
+            || state
+                .pending_passive_completion
+                .is_some_and(|_| (self.sc & 0x81) != 0x80)
+        {
+            return false;
+        }
+
         self.link_peer_present = state.peer_present;
         self.pending_link_byte = state.pending_master_byte;
         self.pending_link_response = state.pending_master_response;
         self.pending_link_completion_ready = state.pending_master_completion_ready;
-        self.pending_external_completion = None;
+        self.pending_external_completion = state
+            .pending_passive_completion
+            .map(|completion| (completion.peer_byte, completion.remaining_t_cycles));
         self.queued_link_action = state.queued_master_action.map(|action| GameBoyLinkAction {
             out_byte: action.out_byte,
             clock_period_t_cycles: action.clock_period_t_cycles,
             serial_generation: action.serial_generation,
         });
         self.serial_generation = state.serial_generation;
+        true
     }
 
     pub(super) fn link_state(&self) -> GameBoyLinkState {
@@ -280,6 +299,12 @@ impl Serial {
 
     pub(super) fn external_clock_transfer_active(&self) -> bool {
         self.pending_link_byte.is_none() && (self.sc & 0x81) == 0x80
+    }
+
+    pub(super) fn active_device_can_clock_external_transfer(&self) -> bool {
+        !self.link_peer_present
+            && self.pending_external_completion.is_none()
+            && self.external_clock_transfer_active()
     }
 
     pub(super) fn link_transfer_byte(&self) -> u8 {

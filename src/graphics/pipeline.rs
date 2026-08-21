@@ -163,3 +163,48 @@ pub(super) fn create_texture_bind_group(
         ],
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::effect_shader_source;
+    use crate::settings::EffectPreset;
+
+    const BORDER_SIZE: f32 = 0.12;
+
+    fn periodic_border_integral(position: f32) -> f32 {
+        let shifted = position + BORDER_SIZE;
+        let fractional = shifted - shifted.floor();
+        shifted.floor() * (2.0 * BORDER_SIZE) + fractional.min(2.0 * BORDER_SIZE)
+    }
+
+    fn edge_coverage(position: f32, footprint: f32) -> f32 {
+        let half_footprint = footprint * 0.5;
+        let covered = periodic_border_integral(position + half_footprint)
+            - periodic_border_integral(position - half_footprint);
+        (covered / footprint).clamp(0.0, 1.0)
+    }
+
+    #[test]
+    fn lcd_grid_box_filter_preserves_coverage_at_visible_integer_scales() {
+        for scale in 3..=8 {
+            let footprint = 1.0 / scale as f32;
+            let samples: Vec<_> = (0..scale)
+                .map(|index| edge_coverage((index as f32 + 0.5) * footprint, footprint))
+                .collect();
+            let average = samples.iter().sum::<f32>() / scale as f32;
+            let contrast = samples.iter().copied().fold(f32::MIN, f32::max)
+                - samples.iter().copied().fold(f32::MAX, f32::min);
+
+            assert!((average - 2.0 * BORDER_SIZE).abs() < 1e-5, "scale {scale}");
+            assert!(contrast > 0.0, "scale {scale}");
+        }
+    }
+
+    #[test]
+    fn lcd_grid_shader_uses_fragment_footprint_coverage() {
+        let source = effect_shader_source(EffectPreset::LcdGrid);
+        assert!(source.contains("periodic_border_integral"));
+        assert!(source.contains("fwidth(pixelX)"));
+        assert!(source.contains("1.0 - (1.0 - gridX) * (1.0 - gridY)"));
+    }
+}

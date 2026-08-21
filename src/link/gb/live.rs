@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use zeff_emu_common::replay::{
-    ReplayEvent, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply, ReplayGameBoyLinkState,
+    ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkCoordinatorOwner,
+    ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,
+    ReplayGameBoyLinkState,
 };
 use zeff_gb_core::emulator::Emulator as GameBoyEmulator;
 
@@ -40,6 +42,7 @@ pub(crate) struct GameBoyRemoteLink<T: LinkTransport> {
     session: LinkSession<T>,
     next_transfer_id: u64,
     pending_master_transfer: Option<PendingGameBoyMasterTransfer>,
+    applied_master_continuation: Option<ReplayGameBoyLinkCoordinatorState>,
     passive_drain_gate: Option<PassiveDrainGate>,
     replay_inbound_schedule: Option<VecDeque<(u64, u64)>>,
     replay_state_schedule: Option<VecDeque<(u64, u64, ReplayGameBoyLinkState)>>,
@@ -56,6 +59,7 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
             session,
             next_transfer_id: 0,
             pending_master_transfer: None,
+            applied_master_continuation: None,
             passive_drain_gate: None,
             replay_inbound_schedule: None,
             replay_state_schedule: None,
@@ -140,8 +144,53 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         self.pending_master_transfer.map(|pending| pending.id.0)
     }
 
+    pub(crate) fn replay_coordinator_state(
+        &mut self,
+        link_state: ReplayGameBoyLinkState,
+    ) -> Result<Option<ReplayGameBoyLinkCoordinatorState>, String> {
+        if self.applied_master_continuation.is_some() && !link_state.has_master_owned_transfer() {
+            self.applied_master_continuation = None;
+        }
+
+        let state = if let Some(pending) = self.pending_master_transfer {
+            Some(ReplayGameBoyLinkCoordinatorState {
+                transfer_id: pending.id.0,
+                action: ReplayGameBoyLinkAction {
+                    out_byte: pending.out_byte,
+                    clock_period_t_cycles: pending.clock_period_t_cycles,
+                    serial_generation: pending.serial_generation,
+                },
+                owner: ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply,
+                reply: None,
+            })
+        } else {
+            self.applied_master_continuation
+        };
+
+        if let Some(state) = state {
+            state.validate_against(link_state).map_err(|error| {
+                format!(
+                    "GB live link transfer {} cannot be captured: {error}",
+                    state.transfer_id
+                )
+            })?;
+            return Ok(Some(state));
+        }
+        if link_state.pending_master_byte.is_some() && link_state.queued_master_action.is_none() {
+            return Err(
+                "GB live link local master transfer has no retained coordinator ownership"
+                    .to_string(),
+            );
+        }
+        Ok(None)
+    }
+
     pub(crate) fn take_replay_events(&mut self) -> Vec<ReplayEvent> {
         std::mem::take(&mut self.recorded_replay_events)
+    }
+
+    pub(crate) fn discard_replay_events_before_capture(&mut self) {
+        self.recorded_replay_events.clear();
     }
 
     pub(crate) fn trace_wait_boundary(&mut self, cycle: u64, context: &str) {
@@ -315,6 +364,9 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                     return Err(LinkSessionError::MalformedPacketPayload);
                 }
                 if emulator.apply_game_boy_link_reply(reply) {
+                    let pending = self
+                        .pending_master_transfer
+                        .expect("validated reply must have a pending transfer");
                     self.record_replay_event(
                         emulator,
                         ReplayGameBoyLinkEvent::RemoteReply {
@@ -324,6 +376,20 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
                             serial_generation: reply.serial_generation,
                         },
                     );
+                    self.applied_master_continuation = Some(ReplayGameBoyLinkCoordinatorState {
+                        transfer_id: pending.id.0,
+                        action: ReplayGameBoyLinkAction {
+                            out_byte: pending.out_byte,
+                            clock_period_t_cycles: pending.clock_period_t_cycles,
+                            serial_generation: pending.serial_generation,
+                        },
+                        owner: ReplayGameBoyLinkCoordinatorOwner::CoreHasReply,
+                        reply: Some(ReplayGameBoyLinkReply {
+                            out_byte: reply.out_byte,
+                            passive: reply.passive,
+                            serial_generation: reply.serial_generation,
+                        }),
+                    });
                     self.pending_master_transfer = None;
                     self.trace(format!(
                         "bound reply id={} in={:02X} passive={}",
@@ -357,6 +423,7 @@ impl<T: LinkTransport> GameBoyRemoteLink<T> {
         }
 
         let transfer_id = self.allocate_transfer_id();
+        self.applied_master_continuation = None;
         self.pending_master_transfer = Some(PendingGameBoyMasterTransfer {
             id: transfer_id,
             start_tick: emulator.cpu_cycles(),

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use zeff_emu_common::memory::MemoryRegionDescriptor;
+use zeff_emu_common::replay::ReplayJoypadFrame;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::system::CoreFamily;
 use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
@@ -11,6 +12,7 @@ pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
 pub(crate) use self::nes::NesBackend;
+pub(crate) use self::pce::PceBackend;
 pub(crate) use self::runtime::BackendRuntimeConfig;
 pub(crate) use self::sega8::Sega8Backend;
 pub(crate) use self::system::{
@@ -33,6 +35,13 @@ pub(crate) mod gba;
 pub(crate) mod loader;
 pub(crate) mod nes;
 pub(crate) mod paths;
+pub(crate) mod pce;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pce_cd;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pce_cd_archive;
+mod pce_display;
+mod pce_palette;
 pub(crate) mod runtime;
 pub(crate) mod sega8;
 pub(crate) mod system;
@@ -42,6 +51,7 @@ pub(crate) enum EmuBackend {
     Gb(Box<GbBackend>),
     Gba(Box<GbaBackend>),
     Nes(Box<NesBackend>),
+    Pce(Box<PceBackend>),
     Sega8(Box<Sega8Backend>),
     Ws(Box<WsBackend>),
 }
@@ -52,6 +62,7 @@ macro_rules! dispatch {
             EmuBackend::Gb(b) => b.$method($($arg),*),
             EmuBackend::Gba(b) => b.$method($($arg),*),
             EmuBackend::Nes(b) => b.$method($($arg),*),
+            EmuBackend::Pce(b) => b.$method($($arg),*),
             EmuBackend::Sega8(b) => b.$method($($arg),*),
             EmuBackend::Ws(b) => b.$method($($arg),*),
         }
@@ -93,6 +104,10 @@ impl EmuBackend {
 
     pub(crate) fn from_nes(emu: zeff_nes_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Nes(Box::new(NesBackend::new(emu, rom_path)))
+    }
+
+    pub(crate) fn from_pce(backend: PceBackend) -> Self {
+        Self::Pce(Box::new(backend))
     }
 
     pub(crate) fn from_nes_with_source(
@@ -144,6 +159,7 @@ impl EmuBackend {
             Self::Gb(..) => ActiveSystem::GameBoy,
             Self::Gba(..) => ActiveSystem::GameBoyAdvance,
             Self::Nes(..) => ActiveSystem::Nes,
+            Self::Pce(..) => ActiveSystem::Pce,
             Self::Sega8(b) => b.system(),
             Self::Ws(..) => ActiveSystem::WonderSwan,
         }
@@ -205,16 +221,23 @@ impl EmuBackend {
     }
 
     pub(crate) fn debug_suspend(&mut self) {
+        if !self.supports_debugger() {
+            return;
+        }
         match self {
             Self::Gb(backend) => backend.emu.debug_suspend(),
             Self::Gba(backend) => backend.emu.debug_suspend(),
             Self::Nes(backend) => backend.emu.debug_suspend(),
+            Self::Pce(_) => {}
             Self::Sega8(backend) => backend.emu.debug_suspend(),
             Self::Ws(backend) => backend.emu.debug_suspend(),
         }
     }
 
     pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        if !self.supports_state_capture() {
+            anyhow::bail!("state capture is not supported by this core");
+        }
         dispatch!(self, encode_state_bytes())
     }
 
@@ -242,6 +265,7 @@ impl EmuBackend {
             cheat_sha256: None,
             final_state_sha256: None,
             game_boy_link_start_state: None,
+            game_boy_link_coordinator_start_state: None,
             game_boy_link_start_tick: None,
             wonder_swan_link_start_tick: None,
             checkpoints: Vec::new(),
@@ -283,6 +307,38 @@ impl EmuBackend {
         dispatch!(self, supports_opcode_history())
     }
 
+    pub(crate) fn supports_save_states(&self) -> bool {
+        dispatch!(self, supports_save_states())
+    }
+
+    pub(crate) fn supports_state_capture(&self) -> bool {
+        dispatch!(self, supports_state_capture())
+    }
+
+    pub(crate) fn supports_rewind(&self) -> bool {
+        dispatch!(self, supports_rewind())
+    }
+
+    pub(crate) fn supports_replay(&self) -> bool {
+        dispatch!(self, supports_replay())
+    }
+
+    pub(crate) fn supports_audio(&self) -> bool {
+        dispatch!(self, supports_audio())
+    }
+
+    pub(crate) fn supports_cheats(&self) -> bool {
+        dispatch!(self, supports_cheats())
+    }
+
+    pub(crate) fn supports_guest_calls(&self) -> bool {
+        dispatch!(self, supports_guest_calls())
+    }
+
+    pub(crate) fn take_runtime_fault(&mut self) -> Option<String> {
+        dispatch!(self, take_runtime_fault())
+    }
+
     pub(crate) fn capabilities(&self) -> CoreCapabilities {
         CoreCapabilities {
             core_family: self.core_family(),
@@ -293,8 +349,13 @@ impl EmuBackend {
             memory_regions: self.memory_regions(),
             input_features: capabilities::InputCapabilities::for_system(self.system()),
             cheat_features: CheatCapabilities::for_system(self.system()),
-            supports_save_states: true,
-            supports_rewind: true,
+            supports_save_states: self.supports_save_states(),
+            supports_state_capture: self.supports_state_capture(),
+            supports_rewind: self.supports_rewind(),
+            supports_replay: self.supports_replay(),
+            supports_audio: self.supports_audio(),
+            supports_cheats: self.supports_cheats(),
+            supports_guest_calls: self.supports_guest_calls(),
             supports_debugger: self.supports_debugger(),
             supports_opcode_history: self.supports_opcode_history(),
         }
@@ -329,6 +390,9 @@ impl EmuBackend {
     }
 
     pub(crate) fn audio_semantic_frame(&self) -> Option<crate::audio_tooling::AudioSemanticFrame> {
+        if !self.supports_audio() {
+            return None;
+        }
         let frame = dispatch!(self, audio_semantic_frame());
         if let (Some(topology), Some(frame)) = (self.audio_topology(), frame.as_ref()) {
             crate::audio_tooling::debug_assert_frame_matches_topology(topology, frame);
@@ -337,7 +401,9 @@ impl EmuBackend {
     }
 
     pub(crate) fn audio_topology(&self) -> Option<crate::audio_tooling::AudioTopology> {
-        dispatch!(self, audio_topology())
+        self.supports_audio()
+            .then(|| dispatch!(self, audio_topology()))
+            .flatten()
     }
 
     #[inline]
@@ -601,24 +667,60 @@ impl EmuBackend {
 
     #[inline]
     pub(crate) fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
-        dispatch!(self, drain_audio_samples_into(buf))
+        if self.supports_audio() {
+            dispatch!(self, drain_audio_samples_into(buf))
+        }
     }
 
     pub(crate) fn set_sample_rate(&mut self, rate: u32) {
-        dispatch!(self, set_sample_rate(rate))
+        if self.supports_audio() {
+            dispatch!(self, set_sample_rate(rate))
+        }
     }
 
     pub(crate) fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
-        dispatch!(self, set_apu_sample_generation_enabled(enabled))
+        if self.supports_audio() {
+            dispatch!(self, set_apu_sample_generation_enabled(enabled))
+        }
     }
 
     pub(crate) fn set_apu_channel_mutes(&mut self, mutes: &[bool]) {
-        dispatch!(self, set_apu_channel_mutes(mutes))
+        if self.supports_audio() {
+            dispatch!(self, set_apu_channel_mutes(mutes))
+        }
     }
 
     #[inline]
     pub(crate) fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         dispatch!(self, set_input(buttons_pressed, dpad_pressed))
+    }
+
+    pub(crate) fn set_pce_mouse_state(
+        &mut self,
+        mode: zeff_pce_core::hardware::PceControllerMode,
+        delta_x: i16,
+        delta_y: i16,
+        buttons_pressed: u8,
+    ) {
+        dispatch!(
+            self,
+            set_pce_mouse_state(mode, delta_x, delta_y, buttons_pressed)
+        )
+    }
+
+    pub(crate) fn apply_replay_input(&mut self, frame: &ReplayJoypadFrame) {
+        self.set_input(frame.buttons, frame.dpad);
+        self.set_input_p2(frame.buttons_p2, frame.dpad_p2);
+        self.set_zapper_state(
+            frame.zapper.enabled,
+            frame.zapper.trigger,
+            frame.zapper.hit,
+            frame.zapper.screen_pos,
+        );
+        self.set_replay_host_tilt(frame.host_tilt);
+        if let Some(camera_frame) = frame.camera_frame.as_deref() {
+            self.set_replay_camera_frame(camera_frame);
+        }
     }
 
     #[inline]
@@ -709,16 +811,25 @@ impl EmuBackend {
         }
     }
 
-    pub(crate) fn take_game_boy_printer_images(&mut self) -> Vec<Vec<u8>> {
+    pub(crate) fn trigger_barcode_boy_scan(&mut self, digits: &str) -> anyhow::Result<()> {
         match self {
-            Self::Gb(gb) => gb.emu.take_printer_images(),
+            Self::Gb(gb) => gb.emu.trigger_barcode_boy_scan(digits),
+            _ => anyhow::bail!("current system has no Game Boy serial device"),
+        }
+    }
+
+    pub(crate) fn take_game_boy_printer_jobs(
+        &mut self,
+    ) -> Vec<zeff_gb_core::hardware::GameBoyPrinterJob> {
+        match self {
+            Self::Gb(gb) => gb.emu.take_printer_jobs(),
             _ => Vec::new(),
         }
     }
 
-    pub(crate) fn discard_game_boy_printer_images(&mut self) {
+    pub(crate) fn discard_game_boy_printer_jobs(&mut self) {
         if let Self::Gb(gb) = self {
-            gb.emu.clear_printer_images();
+            gb.emu.clear_printer_jobs();
         }
     }
 
@@ -757,9 +868,24 @@ impl EmuBackend {
         state: zeff_emu_common::replay::ReplayGameBoyLinkState,
     ) -> bool {
         match self {
+            Self::Gb(gb) => gb.emu.restore_game_boy_link_replay_state(state),
+            _ => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn apply_game_boy_link_reply(
+        &mut self,
+        reply: zeff_emu_common::replay::ReplayGameBoyLinkReply,
+    ) -> bool {
+        match self {
             Self::Gb(gb) => {
-                gb.emu.restore_game_boy_link_replay_state(state);
-                true
+                gb.emu
+                    .apply_game_boy_link_reply(zeff_gb_core::hardware::bus::GameBoyLinkReply {
+                        out_byte: reply.out_byte,
+                        passive: reply.passive,
+                        serial_generation: reply.serial_generation,
+                    })
             }
             _ => false,
         }
@@ -850,6 +976,9 @@ impl EmuBackend {
     }
 
     pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        if !self.supports_state_capture() {
+            anyhow::bail!("state restore is not supported by this core");
+        }
         dispatch!(self, load_state_from_bytes(bytes))
     }
 
@@ -858,6 +987,9 @@ impl EmuBackend {
     }
 
     pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<PathBuf> {
+        if !self.supports_save_states() {
+            anyhow::bail!("save states are not supported by this core");
+        }
         crate::save_paths::slot_path(
             self.system().storage_subdir(),
             self.state_extension(),
@@ -867,11 +999,13 @@ impl EmuBackend {
     }
 
     pub(crate) fn auto_save_path(&self) -> Option<PathBuf> {
-        Some(crate::save_paths::auto_save_path(
-            self.system().storage_subdir(),
-            self.state_extension(),
-            self.rom_hash(),
-        ))
+        self.supports_save_states().then(|| {
+            crate::save_paths::auto_save_path(
+                self.system().storage_subdir(),
+                self.state_extension(),
+                self.rom_hash(),
+            )
+        })
     }
 
     pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
@@ -884,6 +1018,9 @@ impl EmuBackend {
     }
 
     pub(crate) fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
+        if !self.supports_save_states() {
+            anyhow::bail!("save states are not supported by this core");
+        }
         let bytes = crate::platform::read_save_data(path)
             .with_context(|| format!("failed to read save state: {}", path.display()))?
             .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;

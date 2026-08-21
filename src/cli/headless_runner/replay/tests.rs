@@ -9,6 +9,7 @@ use zeff_emu_common::replay::{
     ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent,
 };
 use zeff_firmware::sha256_hex;
+use zeff_gb_core::hardware::types::constants::{SERIAL_SB, SERIAL_SC};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::HeadlessOptions;
@@ -240,6 +241,7 @@ fn paired_game_boy_replay_timeline_uses_recorded_link_state_frames() -> anyhow::
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 0,
     };
     let left = replay_player_with_gb_events(
@@ -299,6 +301,7 @@ fn paired_game_boy_replay_timeline_uses_recorded_link_state_ticks() -> anyhow::R
         pending_master_response: None,
         pending_master_completion_ready: false,
         queued_master_action: None,
+        pending_passive_completion: None,
         serial_generation: 0,
     };
     let left = replay_player_with_gb_events(
@@ -602,6 +605,66 @@ fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
         sha256_hex(&expected_backend.encode_state_bytes()?)
     );
 
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_restores_start_only_passive_game_boy_completion() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_gb_passive_start_replay")?;
+    let replay_path = temp.path().join("passive-start.zrpl");
+    let rom_path = temp.path().join("plain.gb");
+    let load_backend = || -> anyhow::Result<EmuBackend> {
+        Ok(load_backend_from_rom_source(
+            ActiveSystem::GameBoy,
+            &rom_path,
+            &rom_path,
+            Some(vec![0u8; 0x8000]),
+            BackendLoadConfig::default(),
+        )?
+        .backend)
+    };
+    let mut expected_backend = load_backend()?;
+    let runner_backend = load_backend()?;
+    let EmuBackend::Gb(gb) = &mut expected_backend else {
+        panic!("expected Game Boy backend");
+    };
+    gb.emu.write_byte(SERIAL_SB, 0x34);
+    gb.emu.write_byte(SERIAL_SC, 0x80);
+    let start_state = expected_backend.encode_state_bytes()?;
+    let link_state = ReplayGameBoyLinkState {
+        peer_present: true,
+        pending_master_byte: None,
+        pending_master_response: None,
+        pending_master_completion_ready: false,
+        queued_master_action: None,
+        pending_passive_completion: Some(zeff_emu_common::replay::ReplayGameBoyPassiveCompletion {
+            peer_byte: 0xAB,
+            remaining_t_cycles: 8,
+        }),
+        serial_generation: 0,
+    };
+    let mut metadata = expected_backend.replay_metadata();
+    metadata.game_boy_link_start_state = Some(link_state);
+    metadata.game_boy_link_start_tick = expected_backend.game_boy_cpu_cycles();
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state.clone(), metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame::default());
+    recorder.finish()?;
+
+    expected_backend.load_state_from_bytes(start_state)?;
+    assert!(expected_backend.restore_game_boy_link_replay_state(link_state));
+    expected_backend.step_frame();
+    let expected_hash = sha256_hex(&expected_backend.encode_replay_hash_state_bytes()?);
+
+    let summary = run_loaded_replay_headless(
+        runner_backend,
+        ReplayPlayer::load(&replay_path)?,
+        &HeadlessOptions::default(),
+    )?;
+
+    assert_eq!(summary.frames, 1);
+    assert_eq!(summary.game_boy_link_events_total, 0);
+    assert_eq!(summary.final_state_hash, expected_hash);
     Ok(())
 }
 

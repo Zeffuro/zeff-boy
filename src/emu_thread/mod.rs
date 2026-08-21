@@ -21,9 +21,9 @@ pub(crate) use wasm::EmuThread;
 pub(crate) use types::TcpLinkMode;
 pub(crate) use types::{
     AudioConfig, AudioRecordingCapture, EmuCommand, EmuResponse, FrameInput, FrameResult,
-    GameBoyPrinterImage, GuestCallRequest, JoypadInput, MemorySearchRequest, RenderSettings,
+    GuestCallRequest, JoypadInput, MemorySearchRequest, PceMouseInput, RenderSettings,
     ReplayJoypadFrame, ReplayStartState, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
-    ZapperInput,
+    WorkerRuntimeFault, ZapperInput,
 };
 
 pub(crate) const DEFAULT_REWIND_SECONDS: usize = 10;

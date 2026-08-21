@@ -423,6 +423,7 @@ fn exec_mode(system: System) -> ExecMode {
         System::Gb => ExecMode::Sm83,
         System::Gba => ExecMode::Arm,
         System::Nes => ExecMode::Mos6502,
+        System::Pce => ExecMode::Unknown,
         System::Ws => ExecMode::V30,
         System::Sms | System::Gg | System::Sg => ExecMode::Z80,
     }

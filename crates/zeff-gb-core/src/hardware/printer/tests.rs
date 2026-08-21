@@ -41,7 +41,7 @@ fn roundtrip(printer: &GameboyPrinter) -> GameboyPrinter {
     printer.write_state(&mut writer);
     let bytes = writer.into_bytes();
     let mut reader = StateReader::new(&bytes);
-    let restored = GameboyPrinter::read_state(&mut reader).unwrap();
+    let restored = GameboyPrinter::read_state(&mut reader, 9).unwrap();
     assert!(reader.is_exhausted());
     restored
 }
@@ -56,7 +56,7 @@ fn init_golden_transcript_returns_device_id_and_ready_status() {
 }
 
 #[test]
-fn raw_data_end_and_print_render_a_fixed_rgba_job() {
+fn raw_data_end_and_print_emit_a_logical_job() {
     let mut printer = GameboyPrinter::new();
     let mut tile_row = vec![0; BYTES_PER_TILE_ROW];
     tile_row[0] = 0x80;
@@ -69,12 +69,15 @@ fn raw_data_end_and_print_render_a_fixed_rgba_job() {
 
     let print_replies = exchange_packet(&mut printer, 0x02, 0, &[1, 0, 0xE4, 0x40]);
     assert_eq!(print_replies.last(), Some(&STATUS_UNPROCESSED_DATA));
-    assert_eq!(printer.image_count(), 1);
-    let image = printer.latest_image().unwrap();
-    assert_eq!(image.len(), PRINTER_RGBA_SIZE);
-    let first_pixel = (PRINTER_MARGIN_TOP * PRINTER_IMAGE_W + PRINTER_MARGIN_LEFT) * 4;
-    assert_eq!(&image[first_pixel..first_pixel + 4], &[192, 192, 192, 255]);
-    assert_eq!(&image[..4], &[255, 255, 255, 255]);
+    assert_eq!(printer.job_count(), 1);
+    let job = printer.latest_job().unwrap();
+    assert_eq!(job.height, 8);
+    assert_eq!(job.pixels.len(), GAME_BOY_PRINTER_WIDTH * 8);
+    assert_eq!(job.pixels[0], 1);
+    assert!(job.pixels[1..].iter().all(|pixel| *pixel == 0));
+    assert_eq!(job.copies, 1);
+    assert_eq!(job.palette, 0xE4);
+    assert_eq!(job.density, 0x40);
     assert!(printer.data_buffer.is_empty());
     assert_eq!(printer.status, STATUS_BUSY | STATUS_BUFFER_FULL);
     let busy_cycles = printer.busy_cycles_remaining;
@@ -85,6 +88,50 @@ fn raw_data_end_and_print_render_a_fixed_rgba_job() {
 
     let status_replies = exchange_packet(&mut printer, 0x0F, 0, &[]);
     assert_eq!(status_replies.last(), Some(&STATUS_BUFFER_FULL));
+}
+
+#[test]
+fn logical_jobs_zero_pad_partial_rows_and_cap_the_printable_height() {
+    let mut partial = GameboyPrinter::new();
+    let mut data = vec![0; BYTES_PER_TILE_ROW + 1];
+    data[BYTES_PER_TILE_ROW] = 0x80;
+    exchange_packet(&mut partial, 0x04, 0, &data);
+    exchange_packet(&mut partial, 0x04, 0, &[]);
+    exchange_packet(&mut partial, 0x02, 0, &[1, 0, 0xE4, 0x40]);
+    let job = partial.latest_job().unwrap();
+    assert_eq!(job.height, 16);
+    assert_eq!(job.pixels[GAME_BOY_PRINTER_WIDTH * 8], 1);
+    assert!(
+        job.pixels[GAME_BOY_PRINTER_WIDTH * 8 + 1..]
+            .iter()
+            .all(|pixel| *pixel == 0)
+    );
+
+    let mut full = GameboyPrinter::new();
+    exchange_packet(&mut full, 0x04, 0, &vec![0; BUFFER_CAPACITY]);
+    exchange_packet(&mut full, 0x04, 0, &[]);
+    exchange_packet(&mut full, 0x02, 0, &[1, 0, 0xE4, 0x40]);
+    let job = full.latest_job().unwrap();
+    assert_eq!(job.height, GAME_BOY_PRINTER_MAX_HEIGHT);
+    assert_eq!(
+        job.pixels.len(),
+        GAME_BOY_PRINTER_WIDTH * GAME_BOY_PRINTER_MAX_HEIGHT
+    );
+}
+
+#[test]
+fn logical_job_preserves_all_print_parameters() {
+    let mut printer = GameboyPrinter::new();
+    exchange_packet(&mut printer, 0x04, 0, &[0x80]);
+    exchange_packet(&mut printer, 0x04, 0, &[]);
+    exchange_packet(&mut printer, 0x02, 0, &[3, 0xA7, 0x1B, 0xFF]);
+
+    let job = printer.latest_job().unwrap();
+    assert_eq!(job.copies, 3);
+    assert_eq!(job.feed_before, 10);
+    assert_eq!(job.feed_after, 7);
+    assert_eq!(job.palette, 0x1B);
+    assert_eq!(job.density, 0x7F);
 }
 
 #[test]
@@ -190,12 +237,7 @@ fn print_busy_time_uses_image_bands_copies_and_feed() {
 #[test]
 fn camera_image_uses_physical_printer_band_timing() {
     let mut printer = GameboyPrinter::new();
-    exchange_packet(
-        &mut printer,
-        0x04,
-        0,
-        &vec![0; PRINTER_TILE_ROWS * BYTES_PER_TILE_ROW],
-    );
+    exchange_packet(&mut printer, 0x04, 0, &vec![0; 18 * BYTES_PER_TILE_ROW]);
     exchange_packet(&mut printer, 0x04, 0, &[]);
     exchange_packet(&mut printer, 0x02, 0, &[1, 0x13, 0xE4, 0x40]);
 
@@ -215,7 +257,7 @@ fn print_requires_an_end_of_data_packet() {
 
     assert_eq!(replies.last(), Some(&STATUS_UNPROCESSED_DATA));
     assert_eq!(printer.status, STATUS_UNPROCESSED_DATA);
-    assert_eq!(printer.image_count(), 0);
+    assert_eq!(printer.job_count(), 0);
     assert_eq!(printer.busy_cycles_remaining, 0);
 }
 
@@ -227,7 +269,19 @@ fn empty_buffer_and_zero_copy_prints_are_feed_only() {
     let fifteen_feeds = (15 * DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
         .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR);
     assert_eq!(empty.busy_cycles_remaining, fifteen_feeds);
-    assert_eq!(empty.image_count(), 0);
+    assert_eq!(empty.job_count(), 1);
+    assert_eq!(
+        empty.latest_job().unwrap(),
+        &GameBoyPrinterJob {
+            pixels: Vec::new(),
+            height: 0,
+            copies: 5,
+            feed_before: 0,
+            feed_after: 3,
+            palette: 0xE4,
+            density: 0x40,
+        }
+    );
 
     let mut zero_copy = GameboyPrinter::new();
     exchange_packet(&mut zero_copy, 0x04, 0, &vec![0; BYTES_PER_TILE_ROW]);
@@ -236,19 +290,33 @@ fn empty_buffer_and_zero_copy_prints_are_feed_only() {
     let three_feeds = (3 * DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
         .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR);
     assert_eq!(zero_copy.busy_cycles_remaining, three_feeds);
-    assert_eq!(zero_copy.image_count(), 0);
+    assert_eq!(zero_copy.job_count(), 1);
+    let job = zero_copy.latest_job().unwrap();
+    assert_eq!(job.height, 0);
+    assert!(job.pixels.is_empty());
+    assert_eq!(job.copies, 0);
+    assert_eq!(job.feed_before, 0);
+    assert_eq!(job.feed_after, 3);
 }
 
 #[test]
-fn clearing_host_images_does_not_disturb_an_in_flight_packet() {
+fn clearing_host_jobs_does_not_disturb_an_in_flight_packet() {
     let data = packet(0x04, 0, &[0x11, 0x22]);
     let mut printer = GameboyPrinter::new();
-    printer.images.push(vec![0; PRINTER_RGBA_SIZE]);
+    printer.jobs.push(GameBoyPrinterJob {
+        pixels: vec![0; GAME_BOY_PRINTER_WIDTH * 8],
+        height: 8,
+        copies: 1,
+        feed_before: 0,
+        feed_after: 0,
+        palette: 0xE4,
+        density: 0x40,
+    });
     exchange(&mut printer, &data[..7]);
     let before_clear = roundtrip(&printer);
 
     printer.clear();
-    assert!(printer.images.is_empty());
+    assert!(printer.jobs.is_empty());
     assert_eq!(printer.state, before_clear.state);
     assert_eq!(printer.payload, before_clear.payload);
     let replies = exchange(&mut printer, &data[7..]);
@@ -278,7 +346,7 @@ fn save_state_restores_mid_payload_and_response_pipeline() {
     let mut restored = roundtrip(&printer);
     let tail = &print_packet[print_packet.len() - 2..];
     assert_eq!(exchange(&mut printer, tail), exchange(&mut restored, tail));
-    assert_eq!(printer.latest_image(), restored.latest_image());
+    assert_eq!(printer.latest_job(), restored.latest_job());
     assert!(printer.data_buffer.is_empty());
     assert!(restored.data_buffer.is_empty());
 }
@@ -311,10 +379,18 @@ fn save_state_restores_busy_timing_and_completed_status() {
 }
 
 #[test]
-fn completed_image_queue_stays_within_the_state_limit() {
+fn completed_job_queue_stays_within_the_state_limit() {
     let mut printer = GameboyPrinter::new();
-    printer.images = (0..MAX_SAVED_IMAGES)
-        .map(|index| vec![(index & 0xFF) as u8])
+    printer.jobs = (0..MAX_SAVED_JOBS)
+        .map(|index| GameBoyPrinterJob {
+            pixels: Vec::new(),
+            height: 0,
+            copies: 0,
+            feed_before: 0,
+            feed_after: (index & 0x0F) as u8,
+            palette: 0xE4,
+            density: 0x40,
+        })
         .collect();
     printer.payload = vec![1, 0, 0xE4, 0x40];
     printer.data_buffer = vec![0; BYTES_PER_TILE_ROW];
@@ -322,9 +398,9 @@ fn completed_image_queue_stays_within_the_state_limit() {
 
     printer.print();
 
-    assert_eq!(printer.images.len(), MAX_SAVED_IMAGES);
-    assert_eq!(printer.images[0], vec![1]);
-    assert_eq!(printer.images.last().unwrap().len(), PRINTER_RGBA_SIZE);
+    assert_eq!(printer.jobs.len(), MAX_SAVED_JOBS);
+    assert_eq!(printer.jobs[0].feed_after, 1);
+    assert_eq!(printer.jobs.last().unwrap().height, 8);
 }
 
 #[test]
@@ -340,7 +416,54 @@ fn save_state_rejects_inconsistent_parser_positions() {
     printer.write_state(&mut writer);
     let bytes = writer.into_bytes();
     let mut reader = StateReader::new(&bytes);
-    assert!(GameboyPrinter::read_state(&mut reader).is_err());
+    assert!(GameboyPrinter::read_state(&mut reader, 9).is_err());
+}
+
+#[test]
+fn save_state_rejects_malformed_logical_jobs() {
+    let mut printer = GameboyPrinter::new();
+    printer.jobs.push(GameBoyPrinterJob {
+        pixels: vec![4; GAME_BOY_PRINTER_WIDTH * 8],
+        height: 8,
+        copies: 1,
+        feed_before: 0,
+        feed_after: 0,
+        palette: 0xE4,
+        density: 0x40,
+    });
+    let mut writer = StateWriter::new();
+    printer.write_state(&mut writer);
+    let bytes = writer.into_bytes();
+    let mut reader = StateReader::new(&bytes);
+
+    assert!(GameboyPrinter::read_state(&mut reader, 9).is_err());
+}
+
+#[test]
+fn format_eight_rgba_output_migrates_to_an_identity_logical_job() {
+    let printer = GameboyPrinter::new();
+    let mut writer = StateWriter::new();
+    printer.write_legacy_current_state(&mut writer);
+    let mut bytes = writer.into_bytes();
+    bytes.truncate(bytes.len() - 8);
+    let mut image = vec![0xFF; LEGACY_PRINTER_RGBA_SIZE];
+    let first_body_pixel = (8 * LEGACY_PRINTER_IMAGE_W + 8) * 4;
+    image[first_body_pixel..first_body_pixel + 3].fill(192);
+    let mut suffix = StateWriter::new();
+    suffix.write_u64(1);
+    suffix.write_u64(image.len() as u64);
+    suffix.write_bytes(&image);
+    bytes.extend_from_slice(&suffix.into_bytes());
+
+    let mut reader = StateReader::new(&bytes);
+    let restored = GameboyPrinter::read_state(&mut reader, 8).unwrap();
+
+    assert!(reader.is_exhausted());
+    let job = restored.latest_job().unwrap();
+    assert_eq!(job.height, 144);
+    assert_eq!(job.pixels[0], 1);
+    assert_eq!(job.palette, 0xE4);
+    assert_eq!(job.density, 0x40);
 }
 
 #[test]
@@ -353,8 +476,8 @@ fn legacy_state_decoder_consumes_the_v3_to_v5_layout() {
     writer.write_u64(2);
     writer.write_u8(STATUS_UNPROCESSED_DATA);
     writer.write_u64(1);
-    writer.write_u64(PRINTER_RGBA_SIZE as u64);
-    writer.write_bytes(&vec![0xA5; PRINTER_RGBA_SIZE]);
+    writer.write_u64(LEGACY_PRINTER_RGBA_SIZE as u64);
+    writer.write_bytes(&vec![0xA5; LEGACY_PRINTER_RGBA_SIZE]);
 
     let bytes = writer.into_bytes();
     let mut reader = StateReader::new(&bytes);
@@ -363,5 +486,6 @@ fn legacy_state_decoder_consumes_the_v3_to_v5_layout() {
     assert_eq!(printer.state, ParserState::Magic1);
     assert!(printer.data_buffer.is_empty());
     assert_eq!(printer.status, STATUS_UNPROCESSED_DATA);
-    assert_eq!(printer.image_count(), 1);
+    assert_eq!(printer.job_count(), 1);
+    assert_eq!(printer.latest_job().unwrap().height, 144);
 }

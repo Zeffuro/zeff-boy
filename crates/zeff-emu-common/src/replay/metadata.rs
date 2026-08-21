@@ -1,11 +1,13 @@
 use anyhow::{Result, bail};
 
 use super::{
-    MetadataCursor, ReplayEvent, ReplayGameBoyLinkState, read_bool, write_optional_hash,
-    write_optional_string, write_optional_u64, write_string, write_u32,
+    MetadataCursor, ReplayEvent, ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkState,
+    read_bool, write_optional_hash, write_optional_string, write_optional_u64, write_string,
+    write_u32,
 };
 
-const METADATA_VERSION: u32 = 1;
+const METADATA_VERSION: u32 = 3;
+const MIN_METADATA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayCheckpoint {
@@ -26,6 +28,7 @@ pub struct ReplayMetadata {
     pub game_boy_link_start_tick: Option<u64>,
     pub wonder_swan_link_start_tick: Option<u64>,
     pub checkpoints: Vec<ReplayCheckpoint>,
+    pub game_boy_link_coordinator_start_state: Option<ReplayGameBoyLinkCoordinatorState>,
 }
 
 impl ReplayMetadata {
@@ -41,11 +44,16 @@ impl ReplayMetadata {
             && self.game_boy_link_start_tick.is_none()
             && self.wonder_swan_link_start_tick.is_none()
             && self.checkpoints.is_empty()
+            && self.game_boy_link_coordinator_start_state.is_none()
     }
 
     pub(super) fn encode(&self) -> Vec<u8> {
+        self.encode_with_version(METADATA_VERSION)
+    }
+
+    pub(super) fn encode_with_version(&self, version: u32) -> Vec<u8> {
         let mut out = Vec::new();
-        write_u32(&mut out, METADATA_VERSION);
+        write_u32(&mut out, version);
         write_optional_string(&mut out, self.system.as_deref());
         write_optional_string(&mut out, self.core_family.as_deref());
         write_optional_hash(&mut out, self.rom_sha256);
@@ -57,11 +65,11 @@ impl ReplayMetadata {
         events.sort_by_key(ReplayEvent::sort_key);
         write_u32(&mut out, events.len() as u32);
         for event in &events {
-            event.encode(&mut out);
+            event.encode(&mut out, version);
         }
         write_optional_hash(&mut out, self.cheat_sha256);
         write_optional_hash(&mut out, self.final_state_sha256);
-        write_optional_game_boy_link_state(&mut out, self.game_boy_link_start_state);
+        write_optional_game_boy_link_state(&mut out, self.game_boy_link_start_state, version);
         write_optional_u64(&mut out, self.game_boy_link_start_tick);
         write_optional_u64(&mut out, self.wonder_swan_link_start_tick);
         let mut checkpoints = self.checkpoints.clone();
@@ -71,13 +79,19 @@ impl ReplayMetadata {
             out.extend_from_slice(&checkpoint.frame.to_le_bytes());
             out.extend_from_slice(&checkpoint.state_sha256);
         }
+        if version >= 3 {
+            write_optional_game_boy_link_coordinator_state(
+                &mut out,
+                self.game_boy_link_coordinator_start_state,
+            );
+        }
         out
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
         let mut cursor = MetadataCursor::new(bytes);
         let version = cursor.read_u32()?;
-        if version != METADATA_VERSION {
+        if !(MIN_METADATA_VERSION..=METADATA_VERSION).contains(&version) {
             bail!("unsupported replay metadata version: {version}");
         }
 
@@ -92,16 +106,37 @@ impl ReplayMetadata {
         let event_count = cursor.read_u32()? as usize;
         let mut events = Vec::with_capacity(event_count);
         for _ in 0..event_count {
-            events.push(ReplayEvent::decode(&mut cursor)?);
+            events.push(ReplayEvent::decode(&mut cursor, version)?);
         }
         events.sort_by_key(ReplayEvent::sort_key);
         let cheat_sha256 = read_optional_hash_if_present(&mut cursor)?;
         let final_state_sha256 = read_optional_hash_if_present(&mut cursor)?;
-        let game_boy_link_start_state = read_optional_game_boy_link_state_if_present(&mut cursor)?;
+        let game_boy_link_start_state =
+            read_optional_game_boy_link_state_if_present(&mut cursor, version)?;
         let game_boy_link_start_tick = read_optional_u64_if_present(&mut cursor)?;
         let wonder_swan_link_start_tick = read_optional_u64_if_present(&mut cursor)?;
         let checkpoints = read_checkpoints_if_present(&mut cursor)?;
+        let game_boy_link_coordinator_start_state = if version >= 3 {
+            read_optional_game_boy_link_coordinator_state(&mut cursor)?
+        } else {
+            None
+        };
         cursor.finish()?;
+
+        if let Some(coordinator_state) = game_boy_link_coordinator_start_state {
+            let link_state = game_boy_link_start_state.ok_or_else(|| {
+                anyhow::anyhow!("GB master continuation is missing its core link start state")
+            })?;
+            if game_boy_link_start_tick.is_none() {
+                bail!("GB master continuation is missing its link start tick");
+            }
+            coordinator_state.validate_against(link_state)?;
+            validate_game_boy_link_coordinator_events(coordinator_state, &events)?;
+        } else if version >= 3
+            && let Some(link_state) = game_boy_link_start_state
+        {
+            validate_uncoordinated_game_boy_link_start(link_state, &events)?;
+        }
 
         Ok(Self {
             system,
@@ -115,8 +150,141 @@ impl ReplayMetadata {
             game_boy_link_start_tick,
             wonder_swan_link_start_tick,
             checkpoints,
+            game_boy_link_coordinator_start_state,
         })
     }
+}
+
+fn validate_uncoordinated_game_boy_link_start(
+    state: ReplayGameBoyLinkState,
+    events: &[ReplayEvent],
+) -> Result<()> {
+    if !state.has_master_owned_transfer() {
+        return Ok(());
+    }
+    let Some(action) = state.queued_master_action else {
+        bail!("GB master start state has no coordinator ownership");
+    };
+    if state.pending_master_byte != Some(action.out_byte)
+        || state.pending_master_response.is_some()
+        || state.pending_master_completion_ready
+        || state.serial_generation != action.serial_generation
+        || action.clock_period_t_cycles == 0
+        || action.clock_period_t_cycles > 4096
+    {
+        bail!("GB queued master start state is internally inconsistent");
+    }
+    let first_local_start = events.iter().find_map(|event| {
+        let ReplayEvent::GameBoyLink {
+            event:
+                super::ReplayGameBoyLinkEvent::LocalMasterStart {
+                    clock_period_t_cycles,
+                    out_byte,
+                    serial_generation,
+                    ..
+                },
+            ..
+        } = event
+        else {
+            return None;
+        };
+        Some(super::ReplayGameBoyLinkAction {
+            out_byte: *out_byte,
+            clock_period_t_cycles: *clock_period_t_cycles,
+            serial_generation: *serial_generation,
+        })
+    });
+    if first_local_start != Some(action) {
+        bail!("GB queued master start state has no matching future local-start event");
+    }
+    Ok(())
+}
+
+fn validate_game_boy_link_coordinator_events(
+    coordinator: ReplayGameBoyLinkCoordinatorState,
+    events: &[ReplayEvent],
+) -> Result<()> {
+    let matching_events: Vec<_> = events
+        .iter()
+        .enumerate()
+        .filter(|event| {
+            let (_, event) = event;
+            matches!(
+                event,
+                ReplayEvent::GameBoyLink {
+                    event:
+                        super::ReplayGameBoyLinkEvent::LocalMasterStart { transfer_id, .. }
+                        | super::ReplayGameBoyLinkEvent::RemoteMasterStart { transfer_id, .. }
+                        | super::ReplayGameBoyLinkEvent::RemoteReply { transfer_id, .. },
+                    ..
+                } if *transfer_id == coordinator.transfer_id
+            )
+        })
+        .collect();
+    let reply_count = matching_events
+        .iter()
+        .filter(|(_, event)| {
+            matches!(
+                event,
+                ReplayEvent::GameBoyLink {
+                    event: super::ReplayGameBoyLinkEvent::RemoteReply { .. },
+                    ..
+                }
+            )
+        })
+        .count();
+    let first_link_ordinal = events.iter().position(|event| {
+        matches!(
+            event,
+            ReplayEvent::GameBoyLink { .. }
+                | ReplayEvent::GameBoyLinkState { .. }
+                | ReplayEvent::GameBoyLinkStateAtTick { .. }
+        )
+    });
+
+    match coordinator.owner {
+        super::ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply
+            if matching_events.len() != 1
+                || reply_count != 1
+                || matching_events.first().map(|(ordinal, _)| *ordinal) != first_link_ordinal =>
+        {
+            bail!(
+                "GB replay-owned master continuation requires exactly one future event, a reply for transfer {}; found {} matching events and {reply_count} replies",
+                coordinator.transfer_id,
+                matching_events.len()
+            )
+        }
+        super::ReplayGameBoyLinkCoordinatorOwner::CoreHasReply if !matching_events.is_empty() => {
+            bail!(
+                "GB core-owned master continuation repeats transfer {} in {} future events",
+                coordinator.transfer_id,
+                matching_events.len()
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn write_optional_game_boy_link_coordinator_state(
+    out: &mut Vec<u8>,
+    state: Option<ReplayGameBoyLinkCoordinatorState>,
+) {
+    match state {
+        Some(state) => {
+            out.push(1);
+            state.encode(out);
+        }
+        None => out.push(0),
+    }
+}
+
+fn read_optional_game_boy_link_coordinator_state(
+    cursor: &mut MetadataCursor<'_>,
+) -> Result<Option<ReplayGameBoyLinkCoordinatorState>> {
+    if !read_bool(cursor, "GB master continuation present flag")? {
+        return Ok(None);
+    }
+    Ok(Some(ReplayGameBoyLinkCoordinatorState::decode(cursor)?))
 }
 
 fn read_optional_hash_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Option<[u8; 32]>> {
@@ -127,11 +295,15 @@ fn read_optional_hash_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Opti
     }
 }
 
-fn write_optional_game_boy_link_state(out: &mut Vec<u8>, state: Option<ReplayGameBoyLinkState>) {
+fn write_optional_game_boy_link_state(
+    out: &mut Vec<u8>,
+    state: Option<ReplayGameBoyLinkState>,
+    metadata_version: u32,
+) {
     match state {
         Some(state) => {
             out.push(1);
-            state.encode(out);
+            state.encode(out, metadata_version);
         }
         None => out.push(0),
     }
@@ -139,6 +311,7 @@ fn write_optional_game_boy_link_state(out: &mut Vec<u8>, state: Option<ReplayGam
 
 fn read_optional_game_boy_link_state_if_present(
     cursor: &mut MetadataCursor<'_>,
+    metadata_version: u32,
 ) -> Result<Option<ReplayGameBoyLinkState>> {
     if cursor.is_finished() {
         return Ok(None);
@@ -146,7 +319,10 @@ fn read_optional_game_boy_link_state_if_present(
     if !read_bool(cursor, "GB link start state present flag")? {
         return Ok(None);
     }
-    Ok(Some(ReplayGameBoyLinkState::decode(cursor)?))
+    Ok(Some(ReplayGameBoyLinkState::decode(
+        cursor,
+        metadata_version,
+    )?))
 }
 
 fn read_optional_u64_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Option<u64>> {

@@ -1,6 +1,9 @@
 use crate::debug::ui_helpers::{EnumLabel, enum_combo_box};
 use crate::emu_backend::ActiveSystem;
-use crate::settings::{Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings};
+use crate::settings::{
+    PceCdArchiveMemoryLimit, PceConsoleWiringPreference, PceControllerPreference,
+    PceMouseCursorMode, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings,
+};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 impl EnumLabel for HardwareModePreference {
@@ -52,6 +55,69 @@ impl EnumLabel for Sega8ConsoleRegionPreference {
     }
 }
 
+impl EnumLabel for PceConsoleWiringPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::PcEngine => "PC Engine",
+            Self::TurboGrafx16 => "TurboGrafx-16",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::PcEngine, Self::TurboGrafx16]
+    }
+}
+
+impl EnumLabel for PceControllerPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::TwoButton => "2-button pad",
+            Self::Multitap => "5-port multitap",
+            Self::Mouse => "Mouse",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::TwoButton, Self::Multitap, Self::Mouse]
+    }
+}
+
+impl EnumLabel for PceMouseCursorMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Free => "Free cursor",
+            Self::Captured => "Captured cursor",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            &[Self::Free, Self::Captured]
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            &[Self::Free]
+        }
+    }
+}
+
+impl EnumLabel for PceCdArchiveMemoryLimit {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MiB64 => "64 MiB",
+            Self::MiB128 => "128 MiB",
+            Self::MiB256 => "256 MiB",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::MiB64, Self::MiB128, Self::MiB256]
+    }
+}
+
 pub(super) fn draw(
     ui: &mut egui::Ui,
     settings: &mut Settings,
@@ -99,6 +165,22 @@ pub(super) fn draw(
     .on_hover_text(
         "Automatically pause emulation when the window or browser tab \
              loses focus, and resume when it regains focus.",
+    );
+
+    ui.separator();
+    ui.heading("Archives");
+    enum_combo_box(
+        ui,
+        "7z decoder memory limit",
+        &mut settings.emulation.pce_cd_archive_memory_limit,
+    );
+    ui.label(
+        egui::RichText::new(
+            "Higher limits admit archives made with larger LZMA dictionaries. The decoder still \
+             retains only selected ROMs or the track files referenced by a CUE sheet.",
+        )
+        .weak()
+        .small(),
     );
 
     ui.separator();
@@ -165,6 +247,32 @@ pub(super) fn draw(
     .on_hover_text(
         "When enabled, replaces Player 2 controller with a Zapper light gun. \
          Click the game screen to fire. Only works with NES games that support the Zapper.",
+    );
+
+    ui.separator();
+    super::draw_console_section_header(ui, "PC Engine", active_system, ActiveSystem::Pce);
+    enum_combo_box(
+        ui,
+        "Console wiring",
+        &mut settings.emulation.pce_console_wiring,
+    );
+    ui.label(
+        egui::RichText::new(
+            "Auto uses exact cartridge metadata when known and otherwise defaults to PC Engine. \
+             Force TurboGrafx-16 for unrecognized North American HuCards.",
+        )
+        .weak()
+        .small(),
+    );
+    enum_combo_box(ui, "Controller", &mut settings.emulation.pce_controller);
+    enum_combo_box(
+        ui,
+        "Mouse cursor",
+        &mut settings.emulation.pce_mouse_cursor_mode,
+    );
+    ui.add(
+        egui::Slider::new(&mut settings.emulation.pce_mouse_sensitivity, 0.25..=4.0)
+            .text("Mouse sensitivity"),
     );
 
     ui.separator();

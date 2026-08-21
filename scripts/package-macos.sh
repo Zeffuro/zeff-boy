@@ -37,6 +37,8 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/licenses"
 install -m755 "$BINARY" "$CONTENTS/MacOS/zeff-boy"
 install -m644 "$ROOT_DIR/LICENSE-MIT" "$CONTENTS/Resources/licenses/LICENSE-MIT"
 install -m644 "$ROOT_DIR/LICENSE-APACHE" "$CONTENTS/Resources/licenses/LICENSE-APACHE"
+install -m644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" \
+  "$CONTENTS/Resources/licenses/THIRD_PARTY_NOTICES.md"
 
 ICONSET="$WORK_DIR/zeff-boy.iconset"
 mkdir -p "$ICONSET"
@@ -98,7 +100,8 @@ for path in \
   "Contents/MacOS/zeff-boy" \
   "Contents/Resources/zeff-boy.icns" \
   "Contents/Resources/licenses/LICENSE-MIT" \
-  "Contents/Resources/licenses/LICENSE-APACHE"; do
+  "Contents/Resources/licenses/LICENSE-APACHE" \
+  "Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"; do
   test -e "$MOUNTED_APP/$path"
 done
 plutil -lint "$MOUNTED_APP/Contents/Info.plist"

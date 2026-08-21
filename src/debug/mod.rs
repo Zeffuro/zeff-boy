@@ -1,4 +1,5 @@
 mod apu_viewer;
+mod barcode_boy;
 mod breakpoints_window;
 mod call_stack;
 mod cheats_window;
@@ -43,6 +44,7 @@ pub(crate) mod types;
 mod ui;
 pub(crate) mod ui_helpers;
 
+pub(crate) use barcode_boy::draw_scan_window as draw_barcode_boy_scan_window;
 pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};
 pub(crate) use disassembler::{
     DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,

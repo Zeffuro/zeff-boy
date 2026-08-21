@@ -1,4 +1,5 @@
 use super::{App, SpeedMode, UI_RENDER_INTERVAL};
+use crate::audio::DEFAULT_AUDIO_SAMPLE_RATE;
 use crate::{
     audio::AudioOutput,
     emu_thread::{EmuCommand, EmuThread},
@@ -12,14 +13,18 @@ impl App {
     pub(super) fn reset_audio_output(&mut self) {
         if std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1") {
             self.audio = None;
-            return;
+        } else {
+            let preferred = self.settings.audio.output_sample_rate;
+            self.audio = AudioOutput::new(Some(preferred))
+                .map_err(|e| log::warn!("Audio init failed: {e}"))
+                .ok();
         }
-        let preferred = self.settings.audio.output_sample_rate;
-        self.audio = AudioOutput::new(Some(preferred))
-            .map_err(|e| log::warn!("Audio init failed: {e}"))
-            .ok();
-        if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
-            thread.send(EmuCommand::SetSampleRate(audio.sample_rate()));
+        let sample_rate = self
+            .audio
+            .as_ref()
+            .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::sample_rate);
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::SetSampleRate(sample_rate));
         }
     }
 
@@ -54,8 +59,17 @@ impl App {
 
         self.ensure_emu_thread();
 
-        if let (Some(audio), Some(thread)) = (self.audio.as_ref(), &self.emu_thread) {
-            thread.send(EmuCommand::SetSampleRate(audio.sample_rate()));
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = self.deferred_initial_rom_load.take() {
+            self.load_rom(&path);
+        }
+
+        if let Some(thread) = &self.emu_thread {
+            let sample_rate = self
+                .audio
+                .as_ref()
+                .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::sample_rate);
+            thread.send(EmuCommand::SetSampleRate(sample_rate));
         }
 
         let window = match Graphics::create_window(event_loop) {

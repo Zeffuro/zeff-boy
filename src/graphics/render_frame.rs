@@ -11,6 +11,15 @@ pub(crate) enum FrameError {
     Lost,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct PackageLoadView {
+    pub(crate) filename: String,
+    pub(crate) phase: &'static str,
+    pub(crate) completed_bytes: u64,
+    pub(crate) total_bytes: u64,
+    pub(crate) eta: Option<String>,
+}
+
 pub(crate) struct RenderContext<'a> {
     pub(crate) data: DebugDataRefs<'a>,
     pub(crate) active_system: Option<crate::emu_backend::ActiveSystem>,
@@ -31,6 +40,11 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) is_recording_audio: bool,
     pub(crate) is_recording_replay: bool,
     pub(crate) is_playing_replay: bool,
+    pub(crate) supports_save_states: bool,
+    pub(crate) supports_rewind: bool,
+    pub(crate) supports_replay: bool,
+    pub(crate) supports_audio: bool,
+    pub(crate) supports_debugger: bool,
     pub(crate) is_rewinding: bool,
     pub(crate) rewind_seconds_back: f32,
     pub(crate) is_paused: bool,
@@ -44,6 +58,8 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) active_save_slot: u8,
     pub(crate) can_undo_load_state: bool,
     pub(crate) archive_selection: Option<&'a PendingArchiveSelection>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) package_load: Option<PackageLoadView>,
     pub(crate) show_debug_dock: bool,
     pub(crate) debugger_window_open: bool,
     pub(crate) debug_presentation: crate::settings::DebugPresentation,
@@ -59,6 +75,8 @@ pub(crate) struct RenderResult {
     pub(crate) actions: Vec<MenuAction>,
     pub(crate) debug_actions: DebugUiActions,
     pub(crate) archive_selection_action: Option<ArchiveSelectionAction>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) cancel_package_load: bool,
     pub(crate) egui_wants_keyboard: bool,
     pub(crate) game_view_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
@@ -194,6 +212,53 @@ impl Graphics {
             });
         ctx_egui.request_repaint();
         action
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn draw_package_load_modal(&self, ctx_egui: &egui::Context, load: &PackageLoadView) -> bool {
+        let mut cancel = false;
+        let confirm_id = egui::Id::new("archive_load_cancel_confirmation");
+        egui::Modal::new(egui::Id::new("archive_load")).show(ctx_egui, |ui| {
+            ui.set_min_width(360.0);
+            ui.heading("Loading archive");
+            ui.label(&load.filename);
+            ui.add_space(8.0);
+            ui.label(load.phase);
+            if load.total_bytes == 0 {
+                ui.spinner();
+            } else {
+                let fraction = load.completed_bytes as f32 / load.total_bytes as f32;
+                ui.add(
+                    egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
+                        .show_percentage()
+                        .animate(true),
+                );
+            }
+            if let Some(eta) = &load.eta {
+                ui.label(eta);
+            }
+            ui.add_space(8.0);
+            let confirming = ui
+                .ctx()
+                .data(|data| data.get_temp::<bool>(confirm_id))
+                .unwrap_or(false);
+            if confirming {
+                ui.label("Cancel this load?");
+                ui.horizontal(|ui| {
+                    if ui.button("Keep loading").clicked() {
+                        ui.ctx().data_mut(|data| data.remove::<bool>(confirm_id));
+                    }
+                    if ui.button("Cancel load").clicked() {
+                        ui.ctx().data_mut(|data| data.remove::<bool>(confirm_id));
+                        cancel = true;
+                    }
+                });
+            } else if ui.button("Cancel").clicked() {
+                ui.ctx().data_mut(|data| data.insert_temp(confirm_id, true));
+            }
+        });
+        ctx_egui.request_repaint();
+        cancel
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -410,6 +475,10 @@ impl Graphics {
                     is_recording_audio: ctx.is_recording_audio,
                     is_recording_replay: ctx.is_recording_replay,
                     is_playing_replay: ctx.is_playing_replay,
+                    supports_save_states: ctx.supports_save_states,
+                    supports_replay: ctx.supports_replay,
+                    supports_audio: ctx.supports_audio,
+                    supports_debugger: ctx.supports_debugger,
                     is_paused: ctx.is_paused,
                     active_system: ctx
                         .active_system
@@ -443,6 +512,18 @@ impl Graphics {
                 MenuAction::OpenSettings => *ctx.show_settings_window = true,
                 other => forwarded_actions.push(other),
             }
+        }
+
+        let barcode_boy_selected =
+            ctx.game_boy_serial_device == zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy;
+        if !barcode_boy_selected {
+            ctx.debug_windows.barcode_boy_scan_open = false;
+        } else if let Some(digits) = debug::draw_barcode_boy_scan_window(
+            self.egui.context(),
+            ctx.debug_windows,
+            ctx.game_boy_serial_device_change_allowed,
+        ) {
+            forwarded_actions.push(MenuAction::TriggerBarcodeBoyScan(digits));
         }
 
         let content_rect = root_ui.available_rect_before_wrap();
@@ -504,6 +585,7 @@ impl Graphics {
                 data: ctx.data,
                 window_state: ctx.debug_windows,
                 actions: DebugUiActions::none(),
+                supports_rewind: ctx.supports_rewind,
                 game_texture_id,
                 game_native_size: self.framebuffer.native_size(),
                 aspect_ratio_mode: self.aspect_ratio_mode,
@@ -552,6 +634,17 @@ impl Graphics {
             self.draw_archive_selection_window(self.egui.context(), selection)
         });
         #[cfg(not(target_arch = "wasm32"))]
+        if ctx.package_load.is_none() {
+            self.egui.context().data_mut(|data| {
+                data.remove::<bool>(egui::Id::new("archive_load_cancel_confirmation"));
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let cancel_package_load = ctx
+            .package_load
+            .as_ref()
+            .is_some_and(|load| self.draw_package_load_modal(self.egui.context(), load));
+        #[cfg(not(target_arch = "wasm32"))]
         let update_action = ctx
             .update_info
             .filter(|_| ctx.show_update_dialog)
@@ -599,6 +692,8 @@ impl Graphics {
             actions: forwarded_actions,
             debug_actions,
             archive_selection_action,
+            #[cfg(not(target_arch = "wasm32"))]
+            cancel_package_load,
             egui_wants_keyboard,
             game_view_focused,
             #[cfg(not(target_arch = "wasm32"))]

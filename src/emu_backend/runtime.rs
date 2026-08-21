@@ -1,6 +1,6 @@
 use crate::debug::DebugUiActions;
-use crate::emu_core_trait::DebuggableEmulator;
-use crate::settings::{DmgPalettePreset, NesPaletteMode};
+use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore};
+use crate::settings::{DmgPalettePreset, NesPaletteMode, PceOverscanMode, PcePaletteMode};
 use zeff_emu_common::address::Address;
 use zeff_emu_common::debug::WatchType;
 use zeff_nes_core::hardware::ppu::NesPalette;
@@ -22,6 +22,8 @@ pub(crate) struct BackendRuntimeConfig<'a> {
     pub(crate) sgb_border_enabled: bool,
     pub(crate) nes_palette_mode: NesPaletteMode,
     pub(crate) nes_custom_palette: Option<&'a NesPalette>,
+    pub(crate) pce_overscan_mode: PceOverscanMode,
+    pub(crate) pce_palette_mode: PcePaletteMode,
 }
 
 impl<'a> BackendRuntimeConfig<'a> {
@@ -40,6 +42,8 @@ impl<'a> BackendRuntimeConfig<'a> {
             sgb_border_enabled: false,
             nes_palette_mode: NesPaletteMode::default(),
             nes_custom_palette: None,
+            pce_overscan_mode: PceOverscanMode::default(),
+            pce_palette_mode: PcePaletteMode::default(),
         }
     }
 }
@@ -61,10 +65,13 @@ impl EmuBackend {
         if let Some(mutes) = &config.debug_actions.apu_channel_mutes {
             self.set_apu_channel_mutes(mutes);
         }
+        let supports_debugger = self.supports_debugger();
 
         match self {
             Self::Gb(gb) => {
-                apply_gb_debug_actions(&mut gb.emu, config.debug_actions);
+                if supports_debugger {
+                    apply_gb_debug_actions(&mut gb.emu, config.debug_actions);
+                }
                 gb.emu
                     .set_mbc7_host_tilt(config.host_tilt.0, config.host_tilt.1);
                 gb.emu.set_dmg_palette_preset(config.dmg_palette_preset);
@@ -77,42 +84,66 @@ impl EmuBackend {
                 if !config.uncapped_mode {
                     gb.emu.set_apu_sample_generation_enabled(!config.skip_audio);
                 }
-                apply_debug_controls(&mut gb.emu, &config);
+                if supports_debugger {
+                    apply_debug_controls(&mut gb.emu, &config);
+                }
             }
             Self::Nes(nes) => {
-                apply_debug_actions_to(&mut nes.emu, config.debug_actions);
+                if supports_debugger {
+                    apply_debug_actions_to(&mut nes.emu, config.debug_actions);
+                }
                 nes.emu
                     .set_custom_palette(config.nes_custom_palette.cloned());
                 nes.emu.set_palette_mode(config.nes_palette_mode);
                 nes.emu
                     .set_apu_debug_collection_enabled(config.apu_capture_enabled);
-                apply_debug_controls(&mut nes.emu, &config);
+                if supports_debugger {
+                    apply_debug_controls(&mut nes.emu, &config);
+                }
+            }
+            Self::Pce(pce) => {
+                pce.set_display_config(config.pce_overscan_mode, config.pce_palette_mode);
+                if !config.uncapped_mode {
+                    pce.set_apu_sample_generation_enabled(!config.skip_audio);
+                }
             }
             Self::Gba(gba) => {
-                apply_gba_debug_actions(&mut gba.emu, config.debug_actions);
+                if supports_debugger {
+                    apply_gba_debug_actions(&mut gba.emu, config.debug_actions);
+                }
                 gba.emu
                     .set_apu_debug_capture_enabled(config.apu_capture_enabled);
                 if !config.uncapped_mode {
                     gba.emu
                         .set_apu_sample_generation_enabled(!config.skip_audio);
                 }
-                apply_debug_controls(&mut gba.emu, &config);
+                if supports_debugger {
+                    apply_debug_controls(&mut gba.emu, &config);
+                }
             }
             Self::Ws(ws) => {
-                apply_debug_actions_to(&mut ws.emu, config.debug_actions);
+                if supports_debugger {
+                    apply_debug_actions_to(&mut ws.emu, config.debug_actions);
+                }
                 if !config.uncapped_mode {
                     ws.emu.set_apu_sample_generation_enabled(!config.skip_audio);
                 }
-                apply_debug_controls(&mut ws.emu, &config);
+                if supports_debugger {
+                    apply_debug_controls(&mut ws.emu, &config);
+                }
             }
             Self::Sega8(sega8) => {
-                apply_debug_actions_to(&mut sega8.emu, config.debug_actions);
+                if supports_debugger {
+                    apply_debug_actions_to(&mut sega8.emu, config.debug_actions);
+                }
                 if !config.uncapped_mode {
                     sega8
                         .emu
                         .set_apu_sample_generation_enabled(!config.skip_audio);
                 }
-                apply_debug_controls(&mut sega8.emu, &config);
+                if supports_debugger {
+                    apply_debug_controls(&mut sega8.emu, &config);
+                }
             }
         }
     }
@@ -121,6 +152,10 @@ impl EmuBackend {
         &mut self,
         request: &GuestCallRequest,
     ) -> anyhow::Result<(u64, Vec<u8>)> {
+        anyhow::ensure!(
+            self.supports_guest_calls(),
+            "guest calls are not supported by this core"
+        );
         anyhow::ensure!(self.is_suspended(), "CPU must be suspended");
         self.validate_guest_call_target(request)?;
         let saved = self.encode_state_bytes()?;
@@ -147,6 +182,7 @@ impl EmuBackend {
                     .emu
                     .debug_execute_guest_call(target, request.instruction_budget)
             }
+            Self::Pce(_) => anyhow::bail!("guest calls are not supported by PC Engine"),
             Self::Sega8(backend) => {
                 let target = u16::try_from(request.target)
                     .map_err(|_| anyhow::anyhow!("target is out of range"))?;
@@ -205,6 +241,7 @@ impl EmuBackend {
             Self::Nes(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
+            Self::Pce(_) => None,
             Self::Sega8(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),

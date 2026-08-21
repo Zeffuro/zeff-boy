@@ -16,7 +16,7 @@ use crate::hardware::cpu::Cpu;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 
 pub const SAVE_STATE_VERSION: u32 = 1;
-pub const SAVE_STATE_FORMAT_VERSION: u32 = 7;
+pub const SAVE_STATE_FORMAT_VERSION: u32 = 9;
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 

@@ -17,7 +17,12 @@ pub(crate) struct CoreCapabilities {
     pub(crate) input_features: InputCapabilities,
     pub(crate) cheat_features: CheatCapabilities,
     pub(crate) supports_save_states: bool,
+    pub(crate) supports_state_capture: bool,
     pub(crate) supports_rewind: bool,
+    pub(crate) supports_replay: bool,
+    pub(crate) supports_audio: bool,
+    pub(crate) supports_cheats: bool,
+    pub(crate) supports_guest_calls: bool,
     pub(crate) supports_debugger: bool,
     pub(crate) supports_opcode_history: bool,
 }
@@ -56,6 +61,12 @@ impl InputCapabilities {
                 supports_player_two: false,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: true,
+            },
+            ActiveSystem::Pce => Self {
+                buttons: HostButton::STANDARD,
+                supports_player_two: false,
+                supports_lightgun: false,
+                supports_wonderswan_direct_buttons: false,
             },
             ActiveSystem::GameBoy | ActiveSystem::GameGear => Self {
                 buttons: HostButton::STANDARD,
@@ -120,6 +131,13 @@ impl CheatCapabilities {
                 supports_ram_writes: true,
                 supports_rom_patches: false,
                 formats: &["Raw"],
+            },
+            ActiveSystem::Pce => Self {
+                supports_user_cheats: false,
+                supports_libretro_database: false,
+                supports_ram_writes: false,
+                supports_rom_patches: false,
+                formats: &[],
             },
         }
     }

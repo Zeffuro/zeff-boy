@@ -16,6 +16,7 @@ impl CoreState {
         let sample_rate = 48000u32;
 
         let core = match ext.as_str() {
+            "pce" => anyhow::bail!("PC Engine is not supported by the libretro core"),
             "gba" => {
                 let mut emu = zeff_gba_core::emulator::Emulator::new(data, sample_rate)?;
                 if emu.has_rtc()

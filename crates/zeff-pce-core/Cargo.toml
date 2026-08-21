@@ -1,0 +1,12 @@
+[package]
+name = "zeff-pce-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "PC Engine / TurboGrafx-16 emulation core library."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+bitflags = "2.13.1"
+blip_buf = "0.2.1"

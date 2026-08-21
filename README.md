@@ -18,6 +18,9 @@ Licensed under either of:
 
 at your option.
 
+Third-party components and their licenses are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted

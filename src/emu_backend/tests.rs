@@ -12,6 +12,7 @@ use crate::symbols::ExecMode;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use zeff_emu_common::debug::{DebugEvent, WatchType};
+use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset};
 use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
@@ -45,6 +46,10 @@ fn active_system_detects_supported_rom_extensions() {
     assert_eq!(
         ActiveSystem::from_path(&PathBuf::from("game.fds")),
         Some(ActiveSystem::Nes)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.pce")),
+        Some(ActiveSystem::Pce)
     );
     assert_eq!(
         ActiveSystem::from_path(&PathBuf::from("game.ws")),
@@ -115,6 +120,12 @@ fn shared_backend_loader_covers_every_supported_core() {
             ActiveSystem::Nes,
         ),
         (
+            ActiveSystem::Pce,
+            "test.pce",
+            build_pce_test_rom(),
+            ActiveSystem::Pce,
+        ),
+        (
             ActiveSystem::WonderSwan,
             "test.ws",
             build_ws_test_rom(),
@@ -154,6 +165,13 @@ fn assert_frame_lifecycle_roundtrip(mut backend: EmuBackend) {
             .elapsed_since(before_timing)
             .is_some_and(|ticks| ticks.get() > 0)
     );
+
+    if !backend.supports_state_capture() {
+        Reset::reset(&mut backend);
+        assert_eq!(FrameLifecycle::frame_count(&backend), before_frame);
+        assert_eq!(backend.timing_snapshot(), before_timing);
+        return;
+    }
 
     let state = backend.encode_state_bytes().unwrap();
     FrameLifecycle::step_frame(&mut backend);
@@ -357,7 +375,7 @@ fn system_specs_map_to_shared_backend_loader() {
             let rom = test_rom_for_system(spec.system);
             let rom_name = format!("matrix.{extension}");
             let rom_path = PathBuf::from(&rom_name);
-            let loaded = load_backend_from_rom_source(
+            let result = load_backend_from_rom_source(
                 spec.system,
                 &rom_path,
                 &rom_path,
@@ -366,8 +384,16 @@ fn system_specs_map_to_shared_backend_loader() {
                     sample_rate: Some(44_100),
                     ..BackendLoadConfig::default()
                 },
-            )
-            .unwrap_or_else(|err| {
+            );
+            if *extension == "cue" {
+                let error = match result {
+                    Ok(_) => panic!("packaged CUE unexpectedly loaded"),
+                    Err(error) => error,
+                };
+                assert!(error.to_string().contains("PackagedCdSetUnsupported"));
+                continue;
+            }
+            let loaded = result.unwrap_or_else(|err| {
                 panic!(
                     "shared backend loader should initialize {} ROM {rom_name}: {err}",
                     spec.code
@@ -388,6 +414,7 @@ fn active_system_firmware_plans_preserve_current_core_defaults() {
     assert!(firmware_plan_for_active_system(ActiveSystem::Nes).is_empty());
     assert!(firmware_plan_for_active_system(ActiveSystem::WonderSwan).is_empty());
     assert!(firmware_plan_for_active_system(ActiveSystem::Sg1000).is_empty());
+    assert!(firmware_plan_for_active_system(ActiveSystem::Pce).is_empty());
 
     let gba_plan = firmware_plan_for_active_system(ActiveSystem::GameBoyAdvance);
     assert_eq!(gba_plan.len(), 1);
@@ -416,6 +443,7 @@ fn shared_backend_loader_records_default_firmware_manifests() {
         ActiveSystem::GameBoy,
         ActiveSystem::GameBoyAdvance,
         ActiveSystem::Nes,
+        ActiveSystem::Pce,
         ActiveSystem::WonderSwan,
         ActiveSystem::MasterSystem,
         ActiveSystem::GameGear,
@@ -425,6 +453,7 @@ fn shared_backend_loader_records_default_firmware_manifests() {
             ActiveSystem::GameBoy => "firmware.gb",
             ActiveSystem::GameBoyAdvance => "firmware.gba",
             ActiveSystem::Nes => "firmware.nes",
+            ActiveSystem::Pce => "firmware.pce",
             ActiveSystem::WonderSwan => "firmware.ws",
             ActiveSystem::MasterSystem => "firmware.sms",
             ActiveSystem::GameGear => "firmware.gg",
@@ -690,6 +719,7 @@ fn test_rom_for_system(system: ActiveSystem) -> Vec<u8> {
         ActiveSystem::GameBoy => build_gb_test_rom(),
         ActiveSystem::GameBoyAdvance => build_gba_test_rom(),
         ActiveSystem::Nes => build_nes_test_rom(),
+        ActiveSystem::Pce => build_pce_test_rom(),
         ActiveSystem::WonderSwan => build_ws_test_rom(),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             build_sms_test_rom()
@@ -746,6 +776,265 @@ fn backend_feature_contract_covers_every_supported_core() {
         zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
+}
+
+#[test]
+fn pce_backend_exposes_bounded_frontend_and_read_only_debug_capabilities() {
+    let backend = build_pce_backend();
+    let features = backend.capabilities();
+
+    assert_eq!(backend.system(), ActiveSystem::Pce);
+    assert_eq!(
+        backend.core_family(),
+        zeff_emu_common::system::CoreFamily::PcEngine
+    );
+    assert_eq!(
+        backend.framebuffer().len(),
+        ActiveSystem::Pce.framebuffer_len()
+    );
+    assert_eq!(
+        features.system_ram_len,
+        zeff_pce_core::hardware::WORK_RAM_LEN
+    );
+    assert_eq!(features.video_ram_len, 0);
+    assert_eq!(
+        features.memory_regions,
+        vec![
+            MemoryRegionDescriptor::read_only_cpu_address_space(16),
+            MemoryRegionDescriptor::system_ram(zeff_pce_core::hardware::WORK_RAM_LEN),
+            MemoryRegionDescriptor::framebuffer(ActiveSystem::Pce.framebuffer_len()),
+        ]
+    );
+    assert_eq!(
+        features.input_features,
+        crate::emu_backend::InputCapabilities::for_system(ActiveSystem::Pce)
+    );
+    assert!(!features.input_features.supports_player_two);
+    assert!(!features.supports_save_states);
+    assert!(!features.supports_state_capture);
+    assert!(!features.supports_rewind);
+    assert!(!features.supports_replay);
+    assert!(features.supports_audio);
+    assert!(!features.supports_cheats);
+    assert!(!features.supports_guest_calls);
+    assert!(!features.supports_debugger);
+    assert!(!features.supports_opcode_history);
+    assert!(!features.cheat_features.supports_user_cheats);
+    assert!(matches!(backend, EmuBackend::Pce(_)));
+}
+
+#[test]
+fn pce_loader_preserves_direct_and_archive_paths() {
+    let rom = build_pce_test_rom();
+    let direct = load_backend_from_rom_source(
+        ActiveSystem::Pce,
+        &PathBuf::from("direct.pce"),
+        &PathBuf::from("direct.pce"),
+        Some(rom.clone()),
+        BackendLoadConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(direct.backend.rom_path(), PathBuf::from("direct.pce"));
+    assert_eq!(direct.backend.source_path(), PathBuf::from("direct.pce"));
+
+    let archive = PathBuf::from("collection.zip");
+    let virtual_path = archive.join("folder/game.pce");
+    let archived = load_backend_from_rom_source(
+        ActiveSystem::Pce,
+        &archive,
+        &virtual_path,
+        Some(rom),
+        BackendLoadConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(archived.backend.rom_path(), virtual_path);
+    assert_eq!(archived.backend.source_path(), archive);
+}
+
+#[test]
+fn pce_loader_classifies_structural_sf2_identically_for_direct_and_archive_sources() {
+    let mut rom = build_pce_test_rom();
+    rom.resize(zeff_pce_core::hardware::SF2_CE_HUCARD_IMAGE_LEN, 0xEA);
+    for (source_path, rom_path) in [
+        (PathBuf::from("sf2.pce"), PathBuf::from("sf2.pce")),
+        (
+            PathBuf::from("sf2.zip"),
+            PathBuf::from("sf2.zip").join("Street Fighter II.pce"),
+        ),
+    ] {
+        let loaded = load_backend_from_rom_source(
+            ActiveSystem::Pce,
+            &source_path,
+            &rom_path,
+            Some(rom.clone()),
+            BackendLoadConfig::default(),
+        )
+        .unwrap();
+        let EmuBackend::Pce(backend) = loaded.backend else {
+            panic!("PCE loader returned a different backend");
+        };
+        assert_eq!(
+            backend.hucard_board(),
+            zeff_pce_core::hardware::PceHuCardBoard::Sf2Ce
+        );
+        assert_eq!(backend.hucard_rom().len(), 0x28_0000);
+    }
+}
+
+#[test]
+fn pce_loader_applies_board_override_identically_for_direct_and_archive_sources() {
+    let mut rom = build_pce_test_rom();
+    rom.resize(zeff_pce_core::hardware::POPULOUS_HUCARD_IMAGE_LEN, 0xEA);
+    for (source_path, rom_path) in [
+        (
+            PathBuf::from("synthetic.pce"),
+            PathBuf::from("synthetic.pce"),
+        ),
+        (
+            PathBuf::from("synthetic.zip"),
+            PathBuf::from("synthetic.zip").join("game.pce"),
+        ),
+    ] {
+        let plain = load_backend_from_rom_source(
+            ActiveSystem::Pce,
+            &source_path,
+            &rom_path,
+            Some(rom.clone()),
+            BackendLoadConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(plain.backend.save_ram_kind(), SaveRamKind::none());
+        let EmuBackend::Pce(plain) = plain.backend else {
+            panic!("PCE loader returned a different backend");
+        };
+        assert_eq!(
+            plain.hucard_board(),
+            zeff_pce_core::hardware::PceHuCardBoard::Plain
+        );
+
+        let mut populous = load_backend_from_rom_source(
+            ActiveSystem::Pce,
+            &source_path,
+            &rom_path,
+            Some(rom.clone()),
+            BackendLoadConfig {
+                pce_hucard_board: Some(zeff_pce_core::hardware::PceHuCardBoard::Populous),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            populous.backend.save_ram_kind(),
+            SaveRamKind::mapper_ram_unknown(zeff_pce_core::hardware::POPULOUS_HUCARD_RAM_LEN)
+        );
+        assert!(!populous.backend.save_ram_kind().is_battery_backed());
+        let mut ram = Vec::new();
+        assert_eq!(
+            populous
+                .backend
+                .copy_memory_region("save_ram", &mut ram)
+                .unwrap(),
+            MemoryRegionDescriptor::save_ram(zeff_pce_core::hardware::POPULOUS_HUCARD_RAM_LEN)
+        );
+        assert_eq!(
+            ram,
+            vec![0; zeff_pce_core::hardware::POPULOUS_HUCARD_RAM_LEN]
+        );
+        let EmuBackend::Pce(populous) = populous.backend else {
+            panic!("PCE loader returned a different backend");
+        };
+        assert_eq!(
+            populous.hucard_board(),
+            zeff_pce_core::hardware::PceHuCardBoard::Populous
+        );
+    }
+}
+
+fn build_pce_263_line_test_rom() -> Vec<u8> {
+    let mut rom = vec![0xEA; 0x2000];
+    rom[..13].copy_from_slice(&[
+        0xA9, 0xFF, 0x53, 0x01, 0xA9, 0x04, 0x8D, 0x00, 0x04, 0xD4, 0xEA, 0x80, 0xFD,
+    ]);
+    rom[0x1FFE..0x2000].copy_from_slice(&0xE000_u16.to_le_bytes());
+    rom
+}
+
+#[test]
+fn pce_loader_applies_requested_audio_rate_for_direct_and_archive_sources() {
+    let rom = build_pce_263_line_test_rom();
+    for (source_path, rom_path) in [
+        (PathBuf::from("rate.pce"), PathBuf::from("rate.pce")),
+        (
+            PathBuf::from("rate.zip"),
+            PathBuf::from("rate.zip").join("game.pce"),
+        ),
+    ] {
+        let mut loaded = load_backend_from_rom_source(
+            ActiveSystem::Pce,
+            &source_path,
+            &rom_path,
+            Some(rom.clone()),
+            BackendLoadConfig {
+                sample_rate: Some(48_000),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap();
+        let mut frame_counts = Vec::with_capacity(120);
+        let mut total_frames = 0;
+        for _ in 0..120 {
+            loaded.backend.step_frame();
+            let mut samples = Vec::new();
+            loaded.backend.drain_audio_samples_into(&mut samples);
+            let frames = samples.len() / 2;
+            frame_counts.push(frames);
+            total_frames += frames;
+        }
+
+        assert_eq!(total_frames, 96_279);
+        assert!(frame_counts.iter().all(|count| matches!(count, 802 | 803)));
+    }
+}
+
+#[test]
+fn pce_loader_rejects_invalid_plain_hucard_lengths() {
+    for rom in [
+        Vec::new(),
+        vec![0; zeff_pce_core::hardware::HUCARD_ROM_REGION_LEN + 1],
+        vec![0; zeff_pce_core::hardware::HUCARD_ROM_REGION_LEN + 0x2000],
+    ] {
+        assert!(
+            load_backend_from_rom_source(
+                ActiveSystem::Pce,
+                &PathBuf::from("invalid.pce"),
+                &PathBuf::from("invalid.pce"),
+                Some(rom),
+                BackendLoadConfig::default(),
+            )
+            .is_err()
+        );
+    }
+
+    let header_shaped = vec![0; 0x2000 + 512];
+    for (source_path, rom_path) in [
+        (PathBuf::from("headered.pce"), PathBuf::from("headered.pce")),
+        (
+            PathBuf::from("headered.zip"),
+            PathBuf::from("headered.zip").join("game.pce"),
+        ),
+    ] {
+        let result = load_backend_from_rom_source(
+            ActiveSystem::Pce,
+            &source_path,
+            &rom_path,
+            Some(header_shaped.clone()),
+            BackendLoadConfig::default(),
+        );
+        let Err(error) = result else {
+            panic!("header-shaped HuCard image must be rejected");
+        };
+        assert!(error.to_string().contains("multiple of 8192 bytes"));
+    }
 }
 
 #[test]
@@ -878,8 +1167,29 @@ fn every_audio_backend_exposes_a_stable_topology_contract() {
     assert_audio_topology_contract(build_gb_backend(), 4);
     assert_audio_topology_contract(build_gba_backend(), 6);
     assert_audio_topology_contract(build_nes_backend(), 5);
+    assert_audio_topology_contract(build_pce_backend(), 6);
     assert_audio_topology_contract(build_sms_backend(), 4);
     assert_audio_topology_contract(build_ws_backend(), 5);
+}
+
+#[test]
+fn pce_audio_semantics_keep_zero_pitch_and_wave_noise_identity() {
+    let backend = build_pce_backend();
+    let topology = backend.audio_topology().unwrap();
+    assert_eq!(
+        topology.channels[4].class,
+        crate::audio_tooling::AudioVoiceClass::WavetableNoise
+    );
+    assert_eq!(
+        topology.channels[5].class,
+        crate::audio_tooling::AudioVoiceClass::WavetableNoise
+    );
+
+    let frame = backend.audio_semantic_frame().unwrap();
+    let expected = (zeff_pce_core::hardware::PSG_CLOCK_NUMERATOR as f64
+        / zeff_pce_core::hardware::PSG_CLOCK_DENOMINATOR as f64)
+        / (4096.0 * 32.0);
+    assert!((frame.voices[0].pitch_hz.unwrap() - expected).abs() < 1e-9);
 }
 
 #[test]

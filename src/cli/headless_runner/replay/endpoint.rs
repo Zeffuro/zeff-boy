@@ -24,23 +24,25 @@ pub(super) fn run_loaded_replay_headless(
     opts: &HeadlessOptions,
 ) -> anyhow::Result<ReplayHeadlessSummary> {
     validate_replay_playback(&player, &backend)?;
-    let has_game_boy_link_events = player.uses_game_boy_link_events();
+    let has_game_boy_link_events = player.uses_game_boy_link();
     backend.load_state_from_bytes(player.save_state().to_vec())?;
     validate_game_boy_replay_start_tick("replay", &backend, &player)?;
     validate_wonder_swan_replay_start_tick("replay", &backend, &player)?;
     #[cfg(not(target_arch = "wasm32"))]
-    if player.uses_game_boy_link_events()
+    if player.uses_game_boy_link()
         && let Some(state) = player.metadata().game_boy_link_start_state
+        && !backend.restore_game_boy_link_replay_state(state)
     {
-        backend.restore_game_boy_link_replay_state(state);
+        anyhow::bail!("replay contains an invalid Game Boy link start state");
     }
     #[cfg(not(target_arch = "wasm32"))]
     let mut game_boy_replay_link = {
-        let mut link = crate::link::gb::GameBoyReplayLink::try_new(
+        let mut link = crate::link::gb::GameBoyReplayLink::try_new_with_start(
             player.metadata().events.clone(),
             backend.frame_count(),
             player.metadata().game_boy_link_start_tick,
             backend.game_boy_cpu_cycles().unwrap_or(0),
+            player.metadata().game_boy_link_coordinator_start_state,
         )?;
         link.set_strict_local_reply_validation(!opts.allow_gb_link_replay_divergence);
         (!link.is_empty()).then_some(link)
@@ -63,18 +65,7 @@ pub(super) fn run_loaded_replay_headless(
         let Some(frame) = player.peek_joypad_frames(0, 1).into_iter().next() else {
             break;
         };
-        backend.set_input(frame.buttons, frame.dpad);
-        backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-        backend.set_zapper_state(
-            frame.zapper.enabled,
-            frame.zapper.trigger,
-            frame.zapper.hit,
-            frame.zapper.screen_pos,
-        );
-        backend.set_replay_host_tilt(frame.host_tilt);
-        if let Some(camera_frame) = frame.camera_frame.as_deref() {
-            backend.set_replay_camera_frame(camera_frame);
-        }
+        backend.apply_replay_input(&frame);
         let frame_count_before = backend.frame_count();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(link) = game_boy_replay_link.as_mut() {
@@ -210,7 +201,9 @@ fn apply_replay_events_at_cursor(
                 *events_applied += 1;
             }
             ReplayEvent::GameBoyLinkState { state, .. } => {
-                backend.restore_game_boy_link_replay_state(state);
+                if !backend.restore_game_boy_link_replay_state(state) {
+                    anyhow::bail!("replay contains an invalid Game Boy link state event");
+                }
                 *events_applied += 1;
             }
             ReplayEvent::GameBoyLinkStateAtTick { .. } => {}

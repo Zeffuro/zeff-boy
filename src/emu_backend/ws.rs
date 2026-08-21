@@ -245,6 +245,18 @@ impl EmulatorCore for WsBackend {
         self.emu.video_ram_snapshot().len()
     }
 
+    fn supports_save_states(&self) -> bool {
+        true
+    }
+
+    fn supports_audio(&self) -> bool {
+        true
+    }
+
+    fn supports_cheats(&self) -> bool {
+        true
+    }
+
     fn supports_debugger(&self) -> bool {
         true
     }

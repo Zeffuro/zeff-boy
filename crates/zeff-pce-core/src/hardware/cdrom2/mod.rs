@@ -1,0 +1,570 @@
+mod audio;
+mod scsi;
+
+use std::collections::VecDeque;
+
+use super::bus::OPEN_BUS_VALUE;
+use super::cd_media::{CD_USER_SECTOR_BYTES, CdDisc};
+use super::cpu::LineLevel;
+
+pub const CDROM2_WORK_RAM_LEN: usize = 0x1_0000;
+pub const CDROM2_BRAM_LEN: usize = 0x0800;
+pub const CDROM2_ADPCM_RAM_LEN: usize = 0x1_0000;
+pub const CDROM2_REGISTER_START: u32 = 0x1F_F800;
+pub const CDROM2_REGISTER_END: u32 = 0x1F_F80F;
+pub const SUPER_SYSTEM_CARD_ID_START: u32 = 0x1F_F8C0;
+pub const SUPER_SYSTEM_CARD_ID_END: u32 = 0x1F_F8C3;
+pub const CDROM2_WORK_RAM_START: u32 = 0x10_0000;
+pub const CDROM2_WORK_RAM_END: u32 = 0x10_FFFF;
+pub const CDROM2_BRAM_START: u32 = 0x1E_E000;
+pub const CDROM2_BRAM_END: u32 = 0x1E_E7FF;
+pub const PROVISIONAL_CDROM2_SELECTION_TICKS: u64 = 75_000;
+pub const PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS: u64 = 3_000;
+pub const PROVISIONAL_CDROM2_PHASE_TICKS: u64 = 1_500;
+pub const PROVISIONAL_CDROM2_AUTO_ACK_TICKS: u64 = 21;
+pub const PROVISIONAL_CDROM2_READ_STARTUP_SECTORS: u8 = 3;
+pub const PROVISIONAL_CDROM2_ADPCM_MIX_GAIN: f32 = 0.5;
+pub const PROVISIONAL_CDROM2_ADPCM_RATE_WRITE_PRESERVES_PHASE: bool = true;
+pub const PROVISIONAL_CDROM2_ADPCM_STOP_AT_NEXT_NIBBLE_BOUNDARY: bool = true;
+pub const PROVISIONAL_CDROM2_ADPCM_RESTART_REQUIRES_END_CLEAR_OR_D6_CLEAR: bool = true;
+pub const PROVISIONAL_CDROM2_FADE_LONG_STEP_TICKS: u64 = 1_965;
+pub const PROVISIONAL_CDROM2_FADE_SHORT_STEP_TICKS: u64 = 819;
+
+const CDROM2_SECTOR_TICKS_NUMERATOR: u64 = 3_150_000;
+const CDROM2_SECTOR_TICKS_DENOMINATOR: u64 = 11;
+const CDDA_TICK_NUMERATOR: u64 = 77;
+const CDDA_TICK_DENOMINATOR: u64 = 37_500;
+const CDDA_SOURCE_RATE: f64 = 44_100.0;
+const CDDA_MIX_GAIN: f32 = 0.5;
+const CD_COMMAND_TRACE_CAPACITY: usize = 128;
+const ADPCM_CLOCK_NUMERATOR: u64 = 176;
+const ADPCM_CLOCK_DENOMINATOR: u64 = 118_125;
+const CDROM2_MASTER_CLOCK_NUMERATOR: u64 = 315_000_000 * 6;
+const CDROM2_MASTER_CLOCK_DENOMINATOR: u64 = 88;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CdCommandTrace {
+    bytes: [u8; 10],
+    len: u8,
+}
+
+impl CdCommandTrace {
+    #[inline]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CdScsiPhase {
+    #[default]
+    BusFree,
+    Selection,
+    Command,
+    DataIn,
+    Busy,
+    Status,
+    MessageIn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CdEvent {
+    EnterCommand,
+    RaiseRequest,
+    ExecuteCommand,
+    EnterStatus,
+    EnterMessage,
+    EnterBusFree,
+    CompleteAutoAck,
+    CompleteAudioStart,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CdAudioStatus {
+    Playing = 0,
+    #[default]
+    Inactive = 1,
+    Paused = 2,
+    Stopped = 3,
+}
+
+fn formatted_bram() -> Box<[u8; CDROM2_BRAM_LEN]> {
+    let mut bram = Box::new([0; CDROM2_BRAM_LEN]);
+    bram[..8].copy_from_slice(b"HUBM\x00\xA0\x10\x80");
+    bram
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CdAudioEndBehavior {
+    #[default]
+    Stop,
+    Loop,
+    SignalCompletion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CdFadeTarget {
+    Cdda,
+    Adpcm,
+}
+
+#[derive(Debug)]
+pub struct CdRom2 {
+    disc: CdDisc,
+    super_system_card: bool,
+    work_ram: Box<[u8; CDROM2_WORK_RAM_LEN]>,
+    bram: Box<[u8; CDROM2_BRAM_LEN]>,
+    adpcm_ram: Box<[u8; CDROM2_ADPCM_RAM_LEN]>,
+    bram_unlocked: bool,
+    reset_asserted: bool,
+    phase: CdScsiPhase,
+    request: bool,
+    acknowledge: bool,
+    auto_acknowledge: bool,
+    acknowledged_request: bool,
+    request_pending: bool,
+    data_ready_irq_enabled: bool,
+    status_irq_enabled: bool,
+    audio_end_irq_enabled: bool,
+    audio_half_irq_enabled: bool,
+    output_latch: u8,
+    command: Vec<u8>,
+    command_trace: VecDeque<CdCommandTrace>,
+    response: Vec<u8>,
+    response_index: usize,
+    response_available: usize,
+    status: u8,
+    sense_key: u8,
+    additional_sense_code: u8,
+    event: Option<(CdEvent, u64)>,
+    sector_arrival_ticks: Option<u64>,
+    sectors_pending: u16,
+    sector_tick_remainder: u64,
+    audio_status: CdAudioStatus,
+    audio_start_lba: u32,
+    audio_end_lba: u32,
+    audio_current_lba: u32,
+    audio_current_sample: usize,
+    audio_end_behavior: CdAudioEndBehavior,
+    audio_tick_accumulator: u64,
+    audio_left_sample: i16,
+    audio_right_sample: i16,
+    audio_source_frames: VecDeque<[f32; 2]>,
+    audio_resample_position: f64,
+    audio_sample_rate: u32,
+    audio_sample_generation_enabled: bool,
+    adpcm_address_latch: u16,
+    adpcm_read_address: u16,
+    adpcm_write_address: u16,
+    adpcm_read_buffer: u8,
+    adpcm_dma_control: u8,
+    adpcm_address_control: u8,
+    adpcm_playback_rate: u8,
+    adpcm_fade_control: u8,
+    audio_fade_target: Option<CdFadeTarget>,
+    audio_fade_level_q16: u32,
+    audio_fade_step_ticks: u64,
+    audio_fade_ticks_to_next: u64,
+    adpcm_length: u32,
+    adpcm_playing: bool,
+    adpcm_stop_pending: bool,
+    adpcm_high_nibble_next: bool,
+    adpcm_clock_accumulator: u64,
+    adpcm_predictor: u16,
+    adpcm_step_index: u8,
+    adpcm_end_irq: bool,
+    adpcm_half_irq: bool,
+    adpcm_resampler: audio::MonoBlipResampler,
+    adpcm_audio_samples: Vec<i16>,
+}
+
+impl CdRom2 {
+    pub fn new(disc: CdDisc) -> Self {
+        Self::with_super_system_card(disc, false)
+    }
+
+    pub(crate) fn with_super_system_card(disc: CdDisc, super_system_card: bool) -> Self {
+        Self {
+            disc,
+            super_system_card,
+            work_ram: Box::new([0; CDROM2_WORK_RAM_LEN]),
+            bram: formatted_bram(),
+            adpcm_ram: Box::new([0; CDROM2_ADPCM_RAM_LEN]),
+            bram_unlocked: false,
+            reset_asserted: false,
+            phase: CdScsiPhase::BusFree,
+            request: false,
+            acknowledge: false,
+            auto_acknowledge: false,
+            acknowledged_request: false,
+            request_pending: false,
+            data_ready_irq_enabled: false,
+            status_irq_enabled: false,
+            audio_end_irq_enabled: false,
+            audio_half_irq_enabled: false,
+            output_latch: 0,
+            command: Vec::with_capacity(10),
+            command_trace: VecDeque::with_capacity(CD_COMMAND_TRACE_CAPACITY),
+            response: Vec::new(),
+            response_index: 0,
+            response_available: 0,
+            status: 0,
+            sense_key: 0,
+            additional_sense_code: 0,
+            event: None,
+            sector_arrival_ticks: None,
+            sectors_pending: 0,
+            sector_tick_remainder: 0,
+            audio_status: CdAudioStatus::Inactive,
+            audio_start_lba: 0,
+            audio_end_lba: 0,
+            audio_current_lba: 0,
+            audio_current_sample: 0,
+            audio_end_behavior: CdAudioEndBehavior::Stop,
+            audio_tick_accumulator: 0,
+            audio_left_sample: 0,
+            audio_right_sample: 0,
+            audio_source_frames: VecDeque::new(),
+            audio_resample_position: 0.0,
+            audio_sample_rate: 44_100,
+            audio_sample_generation_enabled: true,
+            adpcm_address_latch: 0,
+            adpcm_read_address: 0,
+            adpcm_write_address: 0,
+            adpcm_read_buffer: 0,
+            adpcm_dma_control: 0,
+            adpcm_address_control: 0,
+            adpcm_playback_rate: 0x0F,
+            adpcm_fade_control: 0,
+            audio_fade_target: None,
+            audio_fade_level_q16: 0x1_0000,
+            audio_fade_step_ticks: 0,
+            audio_fade_ticks_to_next: 0,
+            adpcm_length: 0,
+            adpcm_playing: false,
+            adpcm_stop_pending: false,
+            adpcm_high_nibble_next: true,
+            adpcm_clock_accumulator: 0,
+            adpcm_predictor: audio::ADPCM_RESET_PREDICTOR,
+            adpcm_step_index: 0,
+            adpcm_end_irq: false,
+            adpcm_half_irq: false,
+            adpcm_resampler: audio::MonoBlipResampler::new(44_100),
+            adpcm_audio_samples: Vec::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.work_ram.fill(0);
+        self.bram_unlocked = false;
+        self.reset_asserted = false;
+        self.data_ready_irq_enabled = false;
+        self.status_irq_enabled = false;
+        self.audio_end_irq_enabled = false;
+        self.audio_half_irq_enabled = false;
+        self.sector_tick_remainder = 0;
+        self.stop_audio(CdAudioStatus::Inactive);
+        self.audio_tick_accumulator = 0;
+        self.audio_source_frames.clear();
+        self.audio_resample_position = 0.0;
+        self.adpcm_address_latch = 0;
+        self.adpcm_read_address = 0;
+        self.adpcm_write_address = 0;
+        self.adpcm_dma_control = 0;
+        self.adpcm_address_control = 0;
+        self.adpcm_playback_rate = 0x0F;
+        self.adpcm_fade_control = 0;
+        self.audio_fade_target = None;
+        self.audio_fade_level_q16 = 0x1_0000;
+        self.audio_fade_step_ticks = 0;
+        self.audio_fade_ticks_to_next = 0;
+        self.adpcm_length = 0;
+        self.adpcm_playing = false;
+        self.adpcm_stop_pending = false;
+        self.adpcm_high_nibble_next = true;
+        self.adpcm_clock_accumulator = 0;
+        self.adpcm_predictor = audio::ADPCM_RESET_PREDICTOR;
+        self.adpcm_step_index = 0;
+        self.adpcm_end_irq = false;
+        self.adpcm_half_irq = false;
+        self.adpcm_resampler = audio::MonoBlipResampler::new(self.audio_sample_rate);
+        self.adpcm_audio_samples.clear();
+        self.command_trace.clear();
+        self.enter_bus_free();
+    }
+
+    #[inline]
+    pub const fn phase(&self) -> CdScsiPhase {
+        self.phase
+    }
+
+    #[inline]
+    pub const fn bram_unlocked(&self) -> bool {
+        self.bram_unlocked
+    }
+
+    #[inline]
+    pub const fn audio_status(&self) -> CdAudioStatus {
+        self.audio_status
+    }
+
+    #[inline]
+    pub const fn disc(&self) -> &CdDisc {
+        &self.disc
+    }
+
+    #[inline]
+    pub fn command_trace(&self) -> &VecDeque<CdCommandTrace> {
+        &self.command_trace
+    }
+
+    #[cfg(test)]
+    pub(super) fn audio_transport_for_test(&self) -> (u32, u32, u32, usize, u8) {
+        let behavior = match self.audio_end_behavior {
+            CdAudioEndBehavior::Stop => 0,
+            CdAudioEndBehavior::Loop => 1,
+            CdAudioEndBehavior::SignalCompletion => 2,
+        };
+        (
+            self.audio_start_lba,
+            self.audio_end_lba,
+            self.audio_current_lba,
+            self.audio_current_sample,
+            behavior,
+        )
+    }
+
+    #[inline]
+    pub fn work_ram(&self) -> &[u8; CDROM2_WORK_RAM_LEN] {
+        &self.work_ram
+    }
+
+    #[inline]
+    pub fn bram(&self) -> &[u8; CDROM2_BRAM_LEN] {
+        &self.bram
+    }
+
+    #[inline]
+    pub fn bram_mut(&mut self) -> &mut [u8; CDROM2_BRAM_LEN] {
+        &mut self.bram
+    }
+
+    #[inline]
+    pub fn adpcm_ram(&self) -> &[u8; CDROM2_ADPCM_RAM_LEN] {
+        &self.adpcm_ram
+    }
+
+    #[inline]
+    pub fn irq2_level(&self) -> LineLevel {
+        if (self.data_ready_irq_enabled && self.data_ready_condition())
+            || (self.status_irq_enabled && self.status_condition())
+            || (self.audio_end_irq_enabled && self.adpcm_end_irq)
+            || (self.audio_half_irq_enabled && self.adpcm_half_irq)
+        {
+            LineLevel::Low
+        } else {
+            LineLevel::High
+        }
+    }
+
+    pub fn peek_physical(&self, physical_addr: u32) -> Option<u8> {
+        match physical_addr {
+            CDROM2_WORK_RAM_START..=CDROM2_WORK_RAM_END => {
+                Some(self.work_ram[(physical_addr - CDROM2_WORK_RAM_START) as usize])
+            }
+            CDROM2_BRAM_START..=CDROM2_BRAM_END => Some(if self.bram_unlocked {
+                self.bram[(physical_addr - CDROM2_BRAM_START) as usize]
+            } else {
+                OPEN_BUS_VALUE
+            }),
+            CDROM2_REGISTER_START..=CDROM2_REGISTER_END => {
+                Some(self.peek_register((physical_addr - CDROM2_REGISTER_START) as u8))
+            }
+            SUPER_SYSTEM_CARD_ID_START..=SUPER_SYSTEM_CARD_ID_END => {
+                Some(self.system_card_id(physical_addr))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn read_physical(&mut self, physical_addr: u32) -> Option<u8> {
+        match physical_addr {
+            CDROM2_WORK_RAM_START..=CDROM2_WORK_RAM_END => {
+                Some(self.work_ram[(physical_addr - CDROM2_WORK_RAM_START) as usize])
+            }
+            CDROM2_BRAM_START..=CDROM2_BRAM_END => Some(if self.bram_unlocked {
+                self.bram[(physical_addr - CDROM2_BRAM_START) as usize]
+            } else {
+                OPEN_BUS_VALUE
+            }),
+            CDROM2_REGISTER_START..=CDROM2_REGISTER_END => {
+                Some(self.read_register((physical_addr - CDROM2_REGISTER_START) as u8))
+            }
+            SUPER_SYSTEM_CARD_ID_START..=SUPER_SYSTEM_CARD_ID_END => {
+                Some(self.system_card_id(physical_addr))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn write_physical(&mut self, physical_addr: u32, value: u8) -> bool {
+        match physical_addr {
+            CDROM2_WORK_RAM_START..=CDROM2_WORK_RAM_END => {
+                self.work_ram[(physical_addr - CDROM2_WORK_RAM_START) as usize] = value;
+                true
+            }
+            CDROM2_BRAM_START..=CDROM2_BRAM_END => {
+                if self.bram_unlocked {
+                    self.bram[(physical_addr - CDROM2_BRAM_START) as usize] = value;
+                }
+                true
+            }
+            CDROM2_REGISTER_START..=CDROM2_REGISTER_END => {
+                self.write_register((physical_addr - CDROM2_REGISTER_START) as u8, value);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn advance_master_ticks(&mut self, mut ticks: u64) {
+        loop {
+            if self.event.is_some_and(|(_, remaining)| remaining == 0) {
+                let (event, _) = self.event.take().unwrap();
+                self.handle_event(event);
+                continue;
+            }
+            if self.sector_arrival_ticks == Some(0) {
+                self.sector_arrival_ticks = None;
+                self.handle_sector_arrival();
+                continue;
+            }
+            if ticks == 0 {
+                return;
+            }
+
+            let protocol_ticks = self.event.map(|(_, remaining)| remaining);
+            let next = match (protocol_ticks, self.sector_arrival_ticks) {
+                (Some(protocol), Some(sector)) => protocol.min(sector),
+                (Some(protocol), None) => protocol,
+                (None, Some(sector)) => sector,
+                (None, None) => ticks,
+            };
+            let step = ticks.min(next);
+            self.advance_audio(step);
+            ticks -= step;
+            if let Some((event, remaining)) = self.event {
+                self.event = Some((event, remaining - step));
+            }
+            if let Some(remaining) = self.sector_arrival_ticks {
+                self.sector_arrival_ticks = Some(remaining - step);
+            }
+        }
+    }
+
+    #[inline]
+    fn system_card_id(&self, physical_addr: u32) -> u8 {
+        if self.super_system_card {
+            [0x00, 0xAA, 0x55, 0x03][(physical_addr - SUPER_SYSTEM_CARD_ID_START) as usize]
+        } else {
+            OPEN_BUS_VALUE
+        }
+    }
+
+    fn peek_register(&self, offset: u8) -> u8 {
+        match offset {
+            0 => self.bus_status(),
+            1 => self.data_register(),
+            8 => self.current_input_data(),
+            2 => {
+                u8::from(self.acknowledge) << 7
+                    | u8::from(self.data_ready_irq_enabled) << 6
+                    | u8::from(self.status_irq_enabled) << 5
+                    | u8::from(self.audio_end_irq_enabled) << 3
+                    | u8::from(self.audio_half_irq_enabled) << 2
+            }
+            3 => {
+                u8::from(self.data_ready_condition()) << 6
+                    | u8::from(self.status_condition()) << 5
+                    | u8::from(self.adpcm_end_irq) << 3
+                    | u8::from(self.adpcm_half_irq) << 2
+            }
+            4 => u8::from(self.reset_asserted) << 1,
+            5 | 6 => 0,
+            7 => u8::from(self.bram_unlocked) << 7,
+            9 => self.adpcm_address_latch.to_le_bytes()[1],
+            10 => self.adpcm_read_buffer,
+            11 => self.adpcm_dma_control,
+            12 => {
+                u8::from(self.adpcm_playing) << 3
+                    | u8::from(!self.adpcm_playing) << 1
+                    | u8::from(self.adpcm_end_irq)
+            }
+            13 => self.adpcm_address_control,
+            14 => self.adpcm_playback_rate,
+            15 => self.adpcm_fade_control,
+            _ => 0,
+        }
+    }
+
+    fn read_register(&mut self, offset: u8) -> u8 {
+        let value = self.peek_register(offset);
+        match offset {
+            3 => self.bram_unlocked = false,
+            8 if self.phase == CdScsiPhase::DataIn && self.request => {
+                self.acknowledge = true;
+                self.auto_acknowledge = true;
+                self.request = false;
+                self.schedule(CdEvent::CompleteAutoAck, PROVISIONAL_CDROM2_AUTO_ACK_TICKS);
+            }
+            10 => {
+                let value = self.adpcm_read_buffer;
+                self.adpcm_read_buffer = self.adpcm_ram[usize::from(self.adpcm_read_address)];
+                self.adpcm_read_address = self.adpcm_read_address.wrapping_add(1);
+                return value;
+            }
+            _ => {}
+        }
+        value
+    }
+
+    fn write_register(&mut self, offset: u8, value: u8) {
+        match offset {
+            0 if !self.reset_asserted && self.phase == CdScsiPhase::BusFree => {
+                self.phase = CdScsiPhase::Selection;
+                self.schedule(CdEvent::EnterCommand, PROVISIONAL_CDROM2_SELECTION_TICKS);
+            }
+            1 => self.output_latch = value,
+            2 => self.write_control(value),
+            4 => {
+                self.reset_asserted = value & 2 != 0;
+                if self.reset_asserted {
+                    self.enter_bus_free();
+                }
+            }
+            7 => self.bram_unlocked = value & 0x80 != 0,
+            8 => {
+                self.adpcm_address_latch = (self.adpcm_address_latch & 0xFF00) | u16::from(value);
+                self.reload_adpcm_length_if_held();
+            }
+            9 => {
+                self.adpcm_address_latch =
+                    (self.adpcm_address_latch & 0x00FF) | (u16::from(value) << 8);
+                self.reload_adpcm_length_if_held();
+            }
+            10 => {
+                self.adpcm_ram[usize::from(self.adpcm_write_address)] = value;
+                self.adpcm_write_address = self.adpcm_write_address.wrapping_add(1);
+            }
+            11 => {
+                self.adpcm_dma_control = value & 3;
+                self.service_adpcm_dma();
+            }
+            13 => self.write_adpcm_address_control(value),
+            14 => self.write_adpcm_playback_rate(value),
+            15 => self.write_audio_fade_control(value),
+            _ => {}
+        }
+    }
+}

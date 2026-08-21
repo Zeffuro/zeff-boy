@@ -6,8 +6,9 @@ mod reader;
 mod validation;
 mod writer;
 pub use events::{
-    ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,
-    ReplayGameBoyLinkState, ReplayWonderSwanLinkEvent,
+    ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkCoordinatorOwner,
+    ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,
+    ReplayGameBoyLinkState, ReplayGameBoyPassiveCompletion, ReplayWonderSwanLinkEvent,
 };
 pub(crate) use format::{
     CAMERA_REPEAT_SENTINEL, FRAME_FIXED_BYTES, LEGACY_GB_SAVE_STATE_MAGIC,

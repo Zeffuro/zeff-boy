@@ -18,7 +18,8 @@ pub(crate) use shader::{
 pub(crate) use theme::{UiDensity, UiThemePreset};
 pub(crate) use ui::DebugPresentation;
 pub(crate) use video::{
-    EffectPreset, NesPaletteMode, ScalingMode, ShaderPreset, default_offscreen_scale,
+    EffectPreset, NesPaletteMode, PceOverscanMode, PcePaletteMode, ScalingMode, ShaderPreset,
+    default_offscreen_scale,
 };
 
 #[cfg(test)]

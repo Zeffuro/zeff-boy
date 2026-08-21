@@ -5,9 +5,9 @@ use zeff_emu_common::rewind::RewindBuffer;
 
 use super::ReplayStartState;
 use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, SharedFramebuffer};
-use super::{DEFAULT_REWIND_SECONDS, REWIND_SNAPSHOTS_PER_SECOND};
+use super::{DEFAULT_REWIND_SECONDS, REWIND_SNAPSHOTS_PER_SECOND, WorkerRuntimeFault};
 use crate::cheats::CheatPatch;
-use crate::emu_backend::EmuBackend;
+use crate::emu_backend::{CoreCapabilities, EmuBackend};
 use zeff_emu_common::time::MachineTiming;
 
 struct Inner {
@@ -20,16 +20,19 @@ struct Inner {
     last_cheats: Vec<CheatPatch>,
     audio_recording_capture: super::AudioRecordingCapture,
     pending_audio_discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
+    runtime_fault: WorkerRuntimeFault,
 }
 
 pub(crate) struct EmuThread {
     inner: RefCell<Inner>,
     shared_framebuffer: SharedFramebuffer,
+    capabilities: CoreCapabilities,
     audio_recording_context: Option<crate::audio_tooling::AudioRecordingContext>,
 }
 
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
+        let capabilities = backend.capabilities();
         let audio_recording_context =
             backend
                 .audio_topology()
@@ -54,8 +57,10 @@ impl EmuThread {
                 last_cheats: Vec::new(),
                 audio_recording_capture: super::AudioRecordingCapture::default(),
                 pending_audio_discontinuities: Vec::new(),
+                runtime_fault: WorkerRuntimeFault::default(),
             }),
             shared_framebuffer,
+            capabilities,
             audio_recording_context,
         }
     }
@@ -64,6 +69,10 @@ impl EmuThread {
         &self,
     ) -> Option<crate::audio_tooling::AudioRecordingContext> {
         self.audio_recording_context
+    }
+
+    pub(crate) fn capabilities(&self) -> &CoreCapabilities {
+        &self.capabilities
     }
 
     pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
@@ -82,6 +91,7 @@ impl EmuThread {
             last_cheats,
             audio_recording_capture,
             pending_audio_discontinuities,
+            runtime_fault,
         } = inner;
         match cmd {
             EmuCommand::StepFrames(input) => {
@@ -96,8 +106,13 @@ impl EmuThread {
                     rewind_buffer,
                     rewind_seconds,
                     &self.shared_framebuffer,
+                    runtime_fault,
                 );
-                if debugger_mutation && audio_recording_capture.semantic {
+                if !runtime_fault.can_step() {
+                    *uncapped_mode = false;
+                }
+                if debugger_mutation && runtime_fault.can_step() && audio_recording_capture.semantic
+                {
                     pending_audio_discontinuities
                         .push(crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation);
                 }
@@ -124,8 +139,8 @@ impl EmuThread {
                 backend.set_sample_rate(rate);
             }
             EmuCommand::SetUncapped(on) => {
-                *uncapped_mode = on;
-                backend.set_apu_sample_generation_enabled(!on);
+                *uncapped_mode = on && runtime_fault.can_step();
+                backend.set_apu_sample_generation_enabled(!*uncapped_mode);
             }
             EmuCommand::ApplyMediaEvent(event) => {
                 let resp = match backend.apply_media_event(&event) {
@@ -263,9 +278,15 @@ impl EmuThread {
                 pending_responses.push_back(resp);
             }
             EmuCommand::UndoGuestCall(state) => {
-                let resp = match backend.load_state_from_bytes(state) {
-                    Ok(()) => EmuResponse::GuestCallUndone,
-                    Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
+                let resp = if backend.supports_guest_calls() {
+                    match backend.load_state_from_bytes(state) {
+                        Ok(()) => EmuResponse::GuestCallUndone,
+                        Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
+                    }
+                } else {
+                    EmuResponse::GuestCallUndoFailed(
+                        "guest calls are not supported by this core".to_string(),
+                    )
                 };
                 types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
                 if matches!(&resp, EmuResponse::GuestCallUndone) && audio_recording_capture.semantic
@@ -274,36 +295,52 @@ impl EmuThread {
                         .push(crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo);
                 }
                 if matches!(&resp, EmuResponse::GuestCallUndone) {
-                    backend.discard_game_boy_printer_images();
+                    backend.discard_game_boy_printer_jobs();
                 }
                 pending_responses.push_back(resp);
             }
             EmuCommand::CaptureReplayStart { capture_id } => {
-                let resp = match backend.encode_state_bytes() {
-                    Ok(bytes) => EmuResponse::ReplayStartCaptured {
+                let resp = if !backend.supports_replay() {
+                    EmuResponse::ReplayStartCaptureFailed {
                         capture_id,
-                        start: Box::new(ReplayStartState {
-                            state_bytes: bytes,
-                            frame_count: backend.frame_count(),
-                            game_boy_cpu_cycles: backend.game_boy_cpu_cycles(),
-                            wonder_swan_cpu_cycles: backend.wonder_swan_cpu_cycles(),
-                            metadata: backend.replay_metadata(),
-                        }),
-                    },
-                    Err(e) => EmuResponse::ReplayStartCaptureFailed {
-                        capture_id,
-                        error: e.to_string(),
-                    },
+                        error: "replay capture is not supported by this core".to_string(),
+                    }
+                } else {
+                    match backend.encode_state_bytes() {
+                        Ok(bytes) => EmuResponse::ReplayStartCaptured {
+                            capture_id,
+                            start: Box::new(ReplayStartState {
+                                state_bytes: bytes,
+                                frame_count: backend.frame_count(),
+                                game_boy_cpu_cycles: backend.game_boy_cpu_cycles(),
+                                wonder_swan_cpu_cycles: backend.wonder_swan_cpu_cycles(),
+                                metadata: backend.replay_metadata(),
+                            }),
+                        },
+                        Err(e) => EmuResponse::ReplayStartCaptureFailed {
+                            capture_id,
+                            error: e.to_string(),
+                        },
+                    }
                 };
                 pending_responses.push_back(resp);
             }
             EmuCommand::CaptureReplayCheckpoint { frame } => {
-                let resp = match backend.encode_state_bytes() {
-                    Ok(state_bytes) => EmuResponse::ReplayCheckpointCaptured { frame, state_bytes },
-                    Err(error) => EmuResponse::ReplayCheckpointCaptureFailed {
+                let resp = if backend.supports_replay() {
+                    match backend.encode_state_bytes() {
+                        Ok(state_bytes) => {
+                            EmuResponse::ReplayCheckpointCaptured { frame, state_bytes }
+                        }
+                        Err(error) => EmuResponse::ReplayCheckpointCaptureFailed {
+                            frame,
+                            error: error.to_string(),
+                        },
+                    }
+                } else {
+                    EmuResponse::ReplayCheckpointCaptureFailed {
                         frame,
-                        error: error.to_string(),
-                    },
+                        error: "replay capture is not supported by this core".to_string(),
+                    }
                 };
                 pending_responses.push_back(resp);
             }
@@ -313,6 +350,7 @@ impl EmuThread {
                 dpad_pressed,
                 replay_events: _,
                 game_boy_link_start_state: _,
+                game_boy_link_coordinator_start_state: _,
                 game_boy_link_start_tick: _,
                 wonder_swan_link_start_tick: _,
             } => {
@@ -345,17 +383,28 @@ impl EmuThread {
                 };
                 pending_responses.push_back(response);
             }
+            EmuCommand::TriggerBarcodeBoyScan(digits) => {
+                let response = match backend.trigger_barcode_boy_scan(&digits) {
+                    Ok(()) => EmuResponse::BarcodeBoyScanStarted,
+                    Err(err) => EmuResponse::BarcodeBoyScanFailed(err.to_string()),
+                };
+                pending_responses.push_back(response);
+            }
             EmuCommand::RestoreGameBoyLinkState(state) => {
                 backend.restore_game_boy_link_replay_state(state);
             }
             EmuCommand::UpdateCheats(patches) => {
-                *last_cheats = patches;
-                backend.install_rom_patches(last_cheats);
+                if backend.supports_cheats() {
+                    *last_cheats = patches;
+                    backend.install_rom_patches(last_cheats);
+                } else {
+                    last_cheats.clear();
+                }
             }
             EmuCommand::Rewind => {
                 let resp = Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer);
                 if matches!(&resp, EmuResponse::RewindOk { .. }) {
-                    backend.discard_game_boy_printer_images();
+                    backend.discard_game_boy_printer_jobs();
                     backend.install_rom_patches(last_cheats);
                     if audio_recording_capture.semantic {
                         pending_audio_discontinuities

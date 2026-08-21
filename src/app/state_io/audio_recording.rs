@@ -1,9 +1,13 @@
+use crate::audio::DEFAULT_AUDIO_SAMPLE_RATE;
 use crate::debug::ui_helpers::EnumLabel;
 
 use super::App;
 
 impl App {
     pub(in crate::app) fn start_audio_recording(&mut self) {
+        if !self.core_supports_audio() {
+            return;
+        }
         #[cfg(target_arch = "wasm32")]
         {
             self.toast_manager
@@ -16,7 +20,7 @@ impl App {
                 .audio
                 .as_ref()
                 .map(|a| a.sample_rate())
-                .unwrap_or(48_000);
+                .unwrap_or(DEFAULT_AUDIO_SAMPLE_RATE);
 
             let format = self.settings.audio.recording_format;
             let captures_semantics = format.captures_semantics();

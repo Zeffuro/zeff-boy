@@ -76,12 +76,33 @@ pub struct ReplayGameBoyLinkAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayGameBoyLinkCoordinatorOwner {
+    ReplayAwaitingReply,
+    CoreHasReply,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayGameBoyLinkCoordinatorState {
+    pub transfer_id: u64,
+    pub action: ReplayGameBoyLinkAction,
+    pub owner: ReplayGameBoyLinkCoordinatorOwner,
+    pub reply: Option<ReplayGameBoyLinkReply>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayGameBoyPassiveCompletion {
+    pub peer_byte: u8,
+    pub remaining_t_cycles: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplayGameBoyLinkState {
     pub peer_present: bool,
     pub pending_master_byte: Option<u8>,
     pub pending_master_response: Option<u8>,
     pub pending_master_completion_ready: bool,
     pub queued_master_action: Option<ReplayGameBoyLinkAction>,
+    pub pending_passive_completion: Option<ReplayGameBoyPassiveCompletion>,
     pub serial_generation: u64,
 }
 
@@ -132,7 +153,7 @@ impl ReplayEvent {
         )
     }
 
-    pub(super) fn encode(&self, out: &mut Vec<u8>) {
+    pub(super) fn encode(&self, out: &mut Vec<u8>, metadata_version: u32) {
         match self {
             Self::FdsDiskSide { frame, side } => {
                 out.push(0);
@@ -158,13 +179,13 @@ impl ReplayEvent {
             Self::GameBoyLinkState { frame, state } => {
                 out.push(3);
                 write_u64(out, *frame);
-                state.encode(out);
+                state.encode(out, metadata_version);
             }
             Self::GameBoyLinkStateAtTick { frame, tick, state } => {
                 out.push(4);
                 write_u64(out, *frame);
                 write_u64(out, *tick);
-                state.encode(out);
+                state.encode(out, metadata_version);
             }
             Self::WonderSwanLink {
                 frame,
@@ -179,7 +200,7 @@ impl ReplayEvent {
         }
     }
 
-    pub(super) fn decode(cursor: &mut MetadataCursor<'_>) -> Result<Self> {
+    pub(super) fn decode(cursor: &mut MetadataCursor<'_>, metadata_version: u32) -> Result<Self> {
         match cursor.read_u8()? {
             0 => Ok(Self::FdsDiskSide {
                 frame: cursor.read_u64()?,
@@ -197,12 +218,12 @@ impl ReplayEvent {
             }),
             3 => Ok(Self::GameBoyLinkState {
                 frame: cursor.read_u64()?,
-                state: ReplayGameBoyLinkState::decode(cursor)?,
+                state: ReplayGameBoyLinkState::decode(cursor, metadata_version)?,
             }),
             4 => Ok(Self::GameBoyLinkStateAtTick {
                 frame: cursor.read_u64()?,
                 tick: cursor.read_u64()?,
-                state: ReplayGameBoyLinkState::decode(cursor)?,
+                state: ReplayGameBoyLinkState::decode(cursor, metadata_version)?,
             }),
             2 => Ok(Self::WonderSwanLink {
                 frame: cursor.read_u64()?,
@@ -397,6 +418,102 @@ impl ReplayGameBoyLinkAction {
     }
 }
 
+impl ReplayGameBoyLinkCoordinatorState {
+    pub fn validate_against(self, link_state: ReplayGameBoyLinkState) -> Result<()> {
+        link_state.validate()?;
+        if self.transfer_id == 0 {
+            bail!("GB master continuation has transfer ID zero");
+        }
+        if !link_state.peer_present {
+            bail!("GB master continuation requires a connected link peer");
+        }
+        if link_state.pending_master_byte != Some(self.action.out_byte) {
+            bail!("GB master continuation action does not match the pending core byte");
+        }
+        if link_state.queued_master_action.is_some() {
+            bail!("GB master continuation cannot also have a queued core action");
+        }
+        if link_state.pending_passive_completion.is_some() {
+            bail!("GB master continuation cannot also have a passive completion");
+        }
+        if link_state.serial_generation != self.action.serial_generation {
+            bail!("GB master continuation action has a stale serial generation");
+        }
+        if self.action.clock_period_t_cycles == 0 || self.action.clock_period_t_cycles > 4096 {
+            bail!(
+                "GB master continuation period {} is outside the supported serial range",
+                self.action.clock_period_t_cycles
+            );
+        }
+
+        match (self.owner, self.reply, link_state.pending_master_response) {
+            (ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply, None, None) => Ok(()),
+            (ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply, Some(_), _) => {
+                bail!("GB replay-owned master continuation already contains a reply")
+            }
+            (ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply, None, Some(_)) => {
+                bail!("GB replay-owned master continuation conflicts with a core reply")
+            }
+            (ReplayGameBoyLinkCoordinatorOwner::CoreHasReply, Some(reply), Some(core_reply))
+                if reply.out_byte == core_reply =>
+            {
+                if link_state.pending_master_completion_ready {
+                    bail!(
+                        "GB core-owned master continuation cannot remain at the completion boundary"
+                    );
+                }
+                Ok(())
+            }
+            (ReplayGameBoyLinkCoordinatorOwner::CoreHasReply, None, _) => {
+                bail!("GB core-owned master continuation is missing its applied reply")
+            }
+            (ReplayGameBoyLinkCoordinatorOwner::CoreHasReply, Some(_), None) => {
+                bail!("GB core-owned master continuation has no applied core reply")
+            }
+            (ReplayGameBoyLinkCoordinatorOwner::CoreHasReply, Some(_), Some(_)) => {
+                bail!("GB core-owned master continuation reply does not match the core response")
+            }
+        }
+    }
+
+    pub(super) fn encode(self, out: &mut Vec<u8>) {
+        write_u64(out, self.transfer_id);
+        self.action.encode(out);
+        out.push(match self.owner {
+            ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply => 0,
+            ReplayGameBoyLinkCoordinatorOwner::CoreHasReply => 1,
+        });
+        match self.reply {
+            Some(reply) => {
+                out.push(1);
+                reply.encode(out);
+            }
+            None => out.push(0),
+        }
+    }
+
+    pub(super) fn decode(cursor: &mut MetadataCursor<'_>) -> Result<Self> {
+        let transfer_id = cursor.read_u64()?;
+        let action = ReplayGameBoyLinkAction::decode(cursor)?;
+        let owner = match cursor.read_u8()? {
+            0 => ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply,
+            1 => ReplayGameBoyLinkCoordinatorOwner::CoreHasReply,
+            tag => bail!("unknown GB master continuation owner tag: {tag}"),
+        };
+        let reply = if read_bool(cursor, "GB master continuation reply present flag")? {
+            Some(ReplayGameBoyLinkReply::decode(cursor)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            transfer_id,
+            action,
+            owner,
+            reply,
+        })
+    }
+}
+
 impl ReplayGameBoyLinkState {
     pub fn is_idle(self) -> bool {
         !self.peer_present
@@ -404,10 +521,40 @@ impl ReplayGameBoyLinkState {
             && self.pending_master_response.is_none()
             && !self.pending_master_completion_ready
             && self.queued_master_action.is_none()
+            && self.pending_passive_completion.is_none()
             && self.serial_generation == 0
     }
 
-    pub(super) fn encode(self, out: &mut Vec<u8>) {
+    pub fn has_master_owned_transfer(self) -> bool {
+        self.pending_master_byte.is_some()
+            || self.pending_master_response.is_some()
+            || self.pending_master_completion_ready
+            || self.queued_master_action.is_some()
+    }
+
+    pub fn validate(self) -> Result<()> {
+        let Some(completion) = self.pending_passive_completion else {
+            return Ok(());
+        };
+        if !self.peer_present {
+            bail!("GB passive completion requires a connected link peer");
+        }
+        if completion.remaining_t_cycles == 0 {
+            bail!("GB passive completion has zero remaining T-cycles");
+        }
+        if completion.remaining_t_cycles > 4096 {
+            bail!(
+                "GB passive completion delay {} exceeds the maximum serial period",
+                completion.remaining_t_cycles
+            );
+        }
+        if self.has_master_owned_transfer() {
+            bail!("GB link state combines passive completion with master-owned transfer state");
+        }
+        Ok(())
+    }
+
+    pub(super) fn encode(self, out: &mut Vec<u8>, metadata_version: u32) {
         out.push(u8::from(self.peer_present));
         write_optional_u8(out, self.pending_master_byte);
         write_optional_u8(out, self.pending_master_response);
@@ -420,10 +567,20 @@ impl ReplayGameBoyLinkState {
             None => out.push(0),
         }
         write_u64(out, self.serial_generation);
+        if metadata_version >= 2 {
+            match self.pending_passive_completion {
+                Some(completion) => {
+                    out.push(1);
+                    out.push(completion.peer_byte);
+                    write_u64(out, completion.remaining_t_cycles);
+                }
+                None => out.push(0),
+            }
+        }
     }
 
-    pub(super) fn decode(cursor: &mut MetadataCursor<'_>) -> Result<Self> {
-        Ok(Self {
+    pub(super) fn decode(cursor: &mut MetadataCursor<'_>, metadata_version: u32) -> Result<Self> {
+        let mut state = Self {
             peer_present: read_bool(cursor, "GB link start peer-present flag")?,
             pending_master_byte: read_optional_u8(cursor, "GB link start pending master byte")?,
             pending_master_response: read_optional_u8(
@@ -440,7 +597,16 @@ impl ReplayGameBoyLinkState {
                 None
             },
             serial_generation: cursor.read_u64()?,
-        })
+            pending_passive_completion: None,
+        };
+        if metadata_version >= 2 && read_bool(cursor, "GB link passive completion present flag")? {
+            state.pending_passive_completion = Some(ReplayGameBoyPassiveCompletion {
+                peer_byte: cursor.read_u8()?,
+                remaining_t_cycles: cursor.read_u64()?,
+            });
+        }
+        state.validate()?;
+        Ok(state)
     }
 }
 

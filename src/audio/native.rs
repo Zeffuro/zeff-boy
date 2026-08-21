@@ -1,18 +1,26 @@
 use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig, SupportedStreamConfig};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use super::AudioQueueConfig;
 use super::resampler;
 
 const NORMAL_QUEUE_MS: usize = 200;
 const FAST_FORWARD_QUEUE_MS: usize = 40;
+const MAX_STAGED_AUDIO_MS: usize = 10_000;
 const STEREO_MIX_FACTOR: f32 = 0.5;
 const AUDIO_LOW_PASS_MIN_CUTOFF_HZ: u32 = 20;
 const AUDIO_LOW_PASS_MAX_CUTOFF_HZ: u32 = 20_000;
 
 pub(super) fn ring_buffer_capacity(sample_rate: u32) -> usize {
     sample_rate as usize * 2 * NORMAL_QUEUE_MS / 1000
+}
+
+pub(super) fn playback_preroll_samples(sample_rate: u32, queue_ms: usize) -> usize {
+    sample_rate as usize * 2 * (queue_ms / 2) / 1000
 }
 
 pub(super) fn sample_format_rank(format: SampleFormat) -> u8 {
@@ -33,11 +41,85 @@ fn same_config(a: &SupportedStreamConfig, b: &SupportedStreamConfig) -> bool {
 
 pub(crate) struct AudioOutput {
     _stream: cpal::Stream,
-    producer: rtrb::Producer<f32>,
+    producer: rtrb::Producer<QueuedAudioSample>,
+    staged_samples: VecDeque<f32>,
     sample_rate: u32,
     capacity: usize,
     low_pass_filter: OnePoleLowPass,
     resampler: Option<resampler::AudioResampler>,
+    underruns: Arc<AtomicU64>,
+    playback_preroll_samples: Arc<AtomicUsize>,
+    session_generation: u64,
+    playback_generation: Arc<AtomicU64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct QueuedAudioSample {
+    pub(super) generation: u64,
+    pub(super) value: f32,
+}
+
+pub(super) struct AudioPlaybackState {
+    primed: bool,
+    observed_preroll_samples: usize,
+    preroll_samples: Arc<AtomicUsize>,
+    underruns: Arc<AtomicU64>,
+    generation: Arc<AtomicU64>,
+    observed_generation: u64,
+}
+
+impl AudioPlaybackState {
+    pub(super) fn new(
+        preroll_samples: Arc<AtomicUsize>,
+        underruns: Arc<AtomicU64>,
+        generation: Arc<AtomicU64>,
+    ) -> Self {
+        let observed_preroll_samples = preroll_samples.load(Ordering::Relaxed);
+        let observed_generation = generation.load(Ordering::Acquire);
+        Self {
+            primed: false,
+            observed_preroll_samples,
+            preroll_samples,
+            underruns,
+            generation,
+            observed_generation,
+        }
+    }
+
+    fn discard_stale_samples(&mut self, consumer: &mut rtrb::Consumer<QueuedAudioSample>) {
+        let generation = self.generation.load(Ordering::Acquire);
+        if generation != self.observed_generation {
+            self.observed_generation = generation;
+            self.primed = false;
+        }
+        while consumer
+            .peek()
+            .is_ok_and(|sample| sample.generation != generation)
+        {
+            let _ = consumer.pop();
+        }
+    }
+
+    fn ready(&mut self, available: usize, needed: usize) -> bool {
+        let preroll_samples = self.preroll_samples.load(Ordering::Relaxed);
+        if preroll_samples > self.observed_preroll_samples {
+            self.primed = false;
+        }
+        self.observed_preroll_samples = preroll_samples;
+        if self.primed {
+            if available >= needed {
+                return true;
+            }
+            self.primed = false;
+            self.underruns.fetch_add(1, Ordering::Relaxed);
+        }
+        if available >= preroll_samples.max(needed) {
+            self.primed = true;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Default)]
@@ -87,8 +169,19 @@ impl AudioOutput {
             let channels = config.channels();
             let capacity = ring_buffer_capacity(sample_rate);
             let (producer, consumer) = rtrb::RingBuffer::new(capacity);
+            let underruns = Arc::new(AtomicU64::new(0));
+            let playback_generation = Arc::new(AtomicU64::new(0));
+            let playback_preroll_samples = Arc::new(AtomicUsize::new(playback_preroll_samples(
+                sample_rate,
+                NORMAL_QUEUE_MS,
+            )));
+            let playback_state = AudioPlaybackState::new(
+                Arc::clone(&playback_preroll_samples),
+                Arc::clone(&underruns),
+                Arc::clone(&playback_generation),
+            );
 
-            match Self::build_stream_for_config(&device, &config, consumer) {
+            match Self::build_stream_for_config(&device, &config, consumer, playback_state) {
                 Ok(stream) => {
                     stream.play().context("failed to start audio playback")?;
                     if let Some(target) = preferred_sample_rate
@@ -110,10 +203,15 @@ impl AudioOutput {
                     return Ok(Self {
                         _stream: stream,
                         producer,
+                        staged_samples: VecDeque::new(),
                         sample_rate,
                         capacity,
                         low_pass_filter: OnePoleLowPass::default(),
                         resampler,
+                        underruns,
+                        playback_preroll_samples,
+                        session_generation: 0,
+                        playback_generation,
                     });
                 }
                 Err(err) => {
@@ -188,31 +286,43 @@ impl AudioOutput {
     fn build_stream_for_config(
         device: &cpal::Device,
         config: &SupportedStreamConfig,
-        consumer: rtrb::Consumer<f32>,
+        consumer: rtrb::Consumer<QueuedAudioSample>,
+        playback_state: AudioPlaybackState,
     ) -> anyhow::Result<cpal::Stream> {
         let channels = config.channels();
         let stream_config: StreamConfig = (*config).into();
         match config.sample_format() {
-            SampleFormat::F32 => Self::build_stream_f32(device, stream_config, channels, consumer)
-                .context("failed to build F32 audio stream"),
-            SampleFormat::I16 => {
-                Self::build_stream_converting(device, stream_config, channels, consumer, |s| {
-                    (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
-                })
-                .context("failed to build I16 audio stream")
+            SampleFormat::F32 => {
+                Self::build_stream_f32(device, stream_config, channels, consumer, playback_state)
+                    .context("failed to build F32 audio stream")
             }
-            SampleFormat::U16 => {
-                Self::build_stream_converting(device, stream_config, channels, consumer, |s| {
-                    ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16
-                })
-                .context("failed to build U16 audio stream")
-            }
-            SampleFormat::U8 => {
-                Self::build_stream_converting(device, stream_config, channels, consumer, |s| {
-                    ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u8::MAX as f32) as u8
-                })
-                .context("failed to build U8 audio stream")
-            }
+            SampleFormat::I16 => Self::build_stream_converting(
+                device,
+                stream_config,
+                channels,
+                consumer,
+                playback_state,
+                |s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16,
+            )
+            .context("failed to build I16 audio stream"),
+            SampleFormat::U16 => Self::build_stream_converting(
+                device,
+                stream_config,
+                channels,
+                consumer,
+                playback_state,
+                |s| ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16,
+            )
+            .context("failed to build U16 audio stream"),
+            SampleFormat::U8 => Self::build_stream_converting(
+                device,
+                stream_config,
+                channels,
+                consumer,
+                playback_state,
+                |s| ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u8::MAX as f32) as u8,
+            )
+            .context("failed to build U8 audio stream"),
             other => anyhow::bail!("unsupported audio sample format: {other:?}"),
         }
     }
@@ -221,9 +331,32 @@ impl AudioOutput {
         self.sample_rate
     }
 
+    pub(crate) fn discard_queued_samples(&mut self) {
+        self.session_generation = self.session_generation.wrapping_add(1);
+        self.playback_generation
+            .store(self.session_generation, Ordering::Release);
+        self.staged_samples.clear();
+        self.low_pass_filter.reset();
+        if let Some(resampler) = &mut self.resampler {
+            resampler.reset();
+        }
+        self.underruns.store(0, Ordering::Relaxed);
+    }
+
     pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
+        flush_staged_samples(
+            &mut self.producer,
+            &mut self.staged_samples,
+            self.session_generation,
+        );
+
         if config.fast_forward_active && config.mute_during_fast_forward {
             return;
+        }
+
+        let underruns = self.underruns.swap(0, Ordering::Relaxed);
+        if underruns != 0 {
+            log::warn!("audio output underrun ({underruns}); rebuffering before playback resumes");
         }
 
         let gain = config.master_volume.clamp(0.0, 1.0);
@@ -233,6 +366,10 @@ impl AudioOutput {
         } else {
             NORMAL_QUEUE_MS
         };
+        self.playback_preroll_samples.store(
+            playback_preroll_samples(self.sample_rate, queue_ms),
+            Ordering::Relaxed,
+        );
         let max_queued = (self.sample_rate as usize * 2 * queue_ms / 1000).max(2);
 
         let occupied = self.capacity - self.producer.slots();
@@ -240,7 +377,8 @@ impl AudioOutput {
             return;
         }
 
-        let fill_ratio = occupied as f32 / self.capacity as f32;
+        let buffered = occupied.saturating_add(self.staged_samples.len());
+        let fill_ratio = buffered as f32 / self.capacity as f32;
 
         let resampled;
         let samples = if let Some(ref mut resampler) = self.resampler {
@@ -250,8 +388,7 @@ impl AudioOutput {
             samples
         };
 
-        let available = self.producer.slots().min(samples.len());
-        if available == 0 {
+        if samples.is_empty() {
             return;
         }
 
@@ -260,39 +397,61 @@ impl AudioOutput {
         }
         let alpha = low_pass_alpha(self.sample_rate, config.low_pass_cutoff_hz);
 
-        if let Ok(mut chunk) = self.producer.write_chunk_uninit(available) {
-            let (first, second) = chunk.as_mut_slices();
-            let first_len = first.len();
-            let mut global_idx = 0usize;
-            for slices in [
-                first.iter_mut().zip(&samples[..first_len]),
-                second.iter_mut().zip(&samples[first_len..available]),
-            ] {
-                for (dst, &src) in slices {
-                    let mut out = src * gain;
-                    if config.low_pass_enabled {
-                        out = self.low_pass_filter.apply_sample(out, global_idx, alpha);
-                    }
-                    dst.write(out);
-                    global_idx += 1;
-                }
-            }
-            unsafe {
-                chunk.commit_all();
-            }
+        if config.fast_forward_active {
+            let available = self.producer.slots().min(samples.len());
+            write_processed_samples(
+                &mut self.producer,
+                &samples[..available],
+                &mut self.low_pass_filter,
+                ProcessedSampleConfig {
+                    gain,
+                    low_pass_enabled: config.low_pass_enabled,
+                    alpha,
+                    generation: self.session_generation,
+                },
+            );
+            return;
         }
+
+        let max_staged = self.sample_rate as usize * 2 * MAX_STAGED_AUDIO_MS / 1000;
+        let retain = samples
+            .len()
+            .min(max_staged.saturating_sub(self.staged_samples.len()));
+        if retain < samples.len() {
+            log::error!(
+                "audio staging exceeded {MAX_STAGED_AUDIO_MS} ms; dropping {} samples",
+                samples.len() - retain
+            );
+        }
+        if self.staged_samples.try_reserve(retain).is_err() {
+            log::error!("failed to reserve audio staging buffer; dropping {retain} samples");
+            return;
+        }
+        for (index, &sample) in samples[..retain].iter().enumerate() {
+            let mut out = sample * gain;
+            if config.low_pass_enabled {
+                out = self.low_pass_filter.apply_sample(out, index, alpha);
+            }
+            self.staged_samples.push_back(out);
+        }
+        flush_staged_samples(
+            &mut self.producer,
+            &mut self.staged_samples,
+            self.session_generation,
+        );
     }
 
     fn build_stream_f32(
         device: &cpal::Device,
         config: StreamConfig,
         channels: u16,
-        mut consumer: rtrb::Consumer<f32>,
+        mut consumer: rtrb::Consumer<QueuedAudioSample>,
+        mut playback_state: AudioPlaybackState,
     ) -> Result<cpal::Stream, cpal::Error> {
         device.build_output_stream(
             config,
             move |data: &mut [f32], _| {
-                fill_output_f32(data, channels, &mut consumer);
+                fill_output_f32(data, channels, &mut consumer, &mut playback_state);
             },
             |err| log::error!("audio stream error: {err}"),
             None,
@@ -303,7 +462,8 @@ impl AudioOutput {
         device: &cpal::Device,
         config: StreamConfig,
         channels: u16,
-        mut consumer: rtrb::Consumer<f32>,
+        mut consumer: rtrb::Consumer<QueuedAudioSample>,
+        mut playback_state: AudioPlaybackState,
         convert: fn(f32) -> S,
     ) -> Result<cpal::Stream, cpal::Error> {
         let mut scratch = Vec::<f32>::with_capacity(4096);
@@ -311,7 +471,7 @@ impl AudioOutput {
             config,
             move |data: &mut [S], _| {
                 scratch.resize(data.len(), 0.0);
-                fill_output_f32(&mut scratch, channels, &mut consumer);
+                fill_output_f32(&mut scratch, channels, &mut consumer, &mut playback_state);
                 for (dst, &sample) in data.iter_mut().zip(scratch.iter()) {
                     *dst = convert(sample);
                 }
@@ -322,17 +482,95 @@ impl AudioOutput {
     }
 }
 
-pub(super) fn fill_output_f32(data: &mut [f32], channels: u16, consumer: &mut rtrb::Consumer<f32>) {
-    if channels < 2 {
-        let available = consumer.slots().min(data.len());
-        if let Ok(chunk) = consumer.read_chunk(available) {
-            let (first, second) = chunk.as_slices();
-            data[..first.len()].copy_from_slice(first);
-            data[first.len()..first.len() + second.len()].copy_from_slice(second);
+#[derive(Clone, Copy)]
+struct ProcessedSampleConfig {
+    gain: f32,
+    low_pass_enabled: bool,
+    alpha: f32,
+    generation: u64,
+}
+
+fn write_processed_samples(
+    producer: &mut rtrb::Producer<QueuedAudioSample>,
+    samples: &[f32],
+    low_pass_filter: &mut OnePoleLowPass,
+    config: ProcessedSampleConfig,
+) {
+    if let Ok(mut chunk) = producer.write_chunk_uninit(samples.len()) {
+        let (first, second) = chunk.as_mut_slices();
+        let first_len = first.len();
+        for (index, (dst, &src)) in first.iter_mut().zip(samples).enumerate() {
+            let out = if config.low_pass_enabled {
+                low_pass_filter.apply_sample(src * config.gain, index, config.alpha)
+            } else {
+                src * config.gain
+            };
+            dst.write(QueuedAudioSample {
+                generation: config.generation,
+                value: out,
+            });
+        }
+        for (offset, (dst, &src)) in second.iter_mut().zip(&samples[first_len..]).enumerate() {
+            let index = first_len + offset;
+            let out = if config.low_pass_enabled {
+                low_pass_filter.apply_sample(src * config.gain, index, config.alpha)
+            } else {
+                src * config.gain
+            };
+            dst.write(QueuedAudioSample {
+                generation: config.generation,
+                value: out,
+            });
+        }
+        unsafe {
             chunk.commit_all();
-            for sample in &mut data[available..] {
-                *sample = 0.0;
+        }
+    }
+}
+
+pub(super) fn flush_staged_samples(
+    producer: &mut rtrb::Producer<QueuedAudioSample>,
+    staged_samples: &mut VecDeque<f32>,
+    generation: u64,
+) {
+    let available = producer.slots().min(staged_samples.len());
+    if available == 0 {
+        return;
+    }
+    if let Ok(mut chunk) = producer.write_chunk_uninit(available) {
+        let (first, second) = chunk.as_mut_slices();
+        for dst in first.iter_mut().chain(second.iter_mut()) {
+            dst.write(QueuedAudioSample {
+                generation,
+                value: staged_samples
+                    .pop_front()
+                    .expect("staged audio length was checked before reserving the ring chunk"),
+            });
+        }
+        unsafe {
+            chunk.commit_all();
+        }
+    }
+}
+
+pub(super) fn fill_output_f32(
+    data: &mut [f32],
+    channels: u16,
+    consumer: &mut rtrb::Consumer<QueuedAudioSample>,
+    playback_state: &mut AudioPlaybackState,
+) {
+    playback_state.discard_stale_samples(consumer);
+    if channels < 2 {
+        if !playback_state.ready(consumer.slots(), data.len()) {
+            data.fill(0.0);
+            return;
+        }
+        if let Ok(chunk) = consumer.read_chunk(data.len()) {
+            let (first, second) = chunk.as_slices();
+            for (dst, src) in data.iter_mut().zip(first.iter().chain(second.iter())) {
+                *dst = src.value;
             }
+            chunk.commit_all();
         } else {
             data.fill(0.0);
         }
@@ -340,17 +578,16 @@ pub(super) fn fill_output_f32(data: &mut [f32], channels: u16, consumer: &mut rt
     }
 
     let stereo_samples_needed = data.len() / channels as usize * 2;
-    let available = consumer.slots().min(stereo_samples_needed);
-    let even_available = available & !1;
+    let even_needed = stereo_samples_needed & !1;
 
-    if even_available > 0 {
-        if let Ok(chunk) = consumer.read_chunk(even_available) {
+    if even_needed > 0 && playback_state.ready(consumer.slots(), even_needed) {
+        if let Ok(chunk) = consumer.read_chunk(even_needed) {
             let (first, second) = chunk.as_slices();
             let mut src_iter = first.iter().chain(second.iter());
-            let frames_from_chunk = even_available / 2;
+            let frames_from_chunk = even_needed / 2;
             for frame in data.chunks_mut(channels as usize).take(frames_from_chunk) {
-                let left = *src_iter.next().unwrap_or(&0.0);
-                let right = *src_iter.next().unwrap_or(&left);
+                let left = src_iter.next().map_or(0.0, |sample| sample.value);
+                let right = src_iter.next().map_or(left, |sample| sample.value);
                 frame[0] = left;
                 frame[1] = right;
                 for channel in frame.iter_mut().skip(2) {

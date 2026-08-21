@@ -30,6 +30,8 @@ use gpu::GpuContext;
 pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use printer_window::PrinterRenderContext;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use render_frame::PackageLoadView;
 pub(crate) use render_frame::{FrameError, RenderContext};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use settings_window::SettingsRenderContext;

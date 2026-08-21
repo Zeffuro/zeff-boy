@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use zeff_emu_common::replay::{
-    ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,
+    ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkCoordinatorOwner,
+    ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,
     ReplayPlayer,
 };
 
@@ -10,6 +11,15 @@ use zeff_emu_common::replay::{
 pub(super) enum Side {
     Left,
     Right,
+}
+
+impl Side {
+    pub(super) fn peer(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
 }
 
 impl fmt::Display for Side {
@@ -35,6 +45,16 @@ pub(super) struct LocatedEvent {
     pub(super) event: ReplayGameBoyLinkEvent,
 }
 
+impl LocatedEvent {
+    pub(super) fn action(self) -> ReplayGameBoyLinkAction {
+        action(self.event).expect("transfer start has an action")
+    }
+
+    pub(super) fn reply(self) -> ReplayGameBoyLinkReply {
+        reply(self.event).expect("transfer reply has reply data")
+    }
+}
+
 #[derive(Clone, Default)]
 struct EndpointTransfer {
     local: Option<LocatedEvent>,
@@ -51,9 +71,25 @@ pub(super) struct Transfer {
     pub(super) master_reply: LocatedEvent,
 }
 
+impl Transfer {
+    pub(super) fn start(&self, side: Side) -> LocatedEvent {
+        match side {
+            Side::Left => self.left_start,
+            Side::Right => self.right_start,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct TransferBatch {
     pub(super) transfers: Vec<Transfer>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct InitialMasterContinuation {
+    pub(super) master: Side,
+    pub(super) state: ReplayGameBoyLinkCoordinatorState,
+    pub(super) reply_event: Option<LocatedEvent>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,18 +98,39 @@ pub(super) struct PairedTransferPlan {
     pub(super) left_anchor_tick: u64,
     pub(super) right_anchor_tick: u64,
     pub(super) batches: Vec<TransferBatch>,
+    pub(super) initial_master: Option<InitialMasterContinuation>,
 }
 
 pub(super) fn validate_paired_transfer_plan(
     left: &ReplayPlayer,
     right: &ReplayPlayer,
 ) -> Result<PairedTransferPlan, PairedPlanError> {
-    let plan = PairedTransferPlan::build(
-        &left.metadata().events,
-        left.metadata().game_boy_link_start_tick,
-        &right.metadata().events,
-        right.metadata().game_boy_link_start_tick,
-    )?;
+    let initial_master = validate_initial_master_continuation(left, right)?;
+    let ignored_reply = initial_master.and_then(|initial| {
+        initial
+            .reply_event
+            .map(|event| (initial.master, event.ordinal))
+    });
+    let plan = if !has_link_events_except(&left.metadata().events, Side::Left, ignored_reply)
+        && !has_link_events_except(&right.metadata().events, Side::Right, ignored_reply)
+        && (left.metadata().game_boy_link_start_state.is_some()
+            || right.metadata().game_boy_link_start_state.is_some())
+    {
+        let mut plan = PairedTransferPlan::start_only(
+            left.metadata().game_boy_link_start_tick,
+            right.metadata().game_boy_link_start_tick,
+        )?;
+        plan.initial_master = initial_master;
+        plan
+    } else {
+        PairedTransferPlan::build_with_initial(
+            &left.metadata().events,
+            left.metadata().game_boy_link_start_tick,
+            &right.metadata().events,
+            right.metadata().game_boy_link_start_tick,
+            initial_master,
+        )?
+    };
     log::debug!(
         "paired GB replay plan: anchor={:#018X} left_tick={} right_tick={} batches={}",
         plan.anchor_id,
@@ -85,21 +142,60 @@ pub(super) fn validate_paired_transfer_plan(
 }
 
 impl PairedTransferPlan {
+    pub(super) fn start_only(
+        left_start_tick: Option<u64>,
+        right_start_tick: Option<u64>,
+    ) -> Result<Self, PairedPlanError> {
+        Ok(Self {
+            anchor_id: 0,
+            left_anchor_tick: left_start_tick
+                .ok_or(PairedPlanError::MissingStartTick { side: Side::Left })?,
+            right_anchor_tick: right_start_tick
+                .ok_or(PairedPlanError::MissingStartTick { side: Side::Right })?,
+            batches: Vec::new(),
+            initial_master: None,
+        })
+    }
+
+    #[cfg(test)]
     pub(super) fn build(
         left_events: &[ReplayEvent],
         left_start_tick: Option<u64>,
         right_events: &[ReplayEvent],
         right_start_tick: Option<u64>,
     ) -> Result<Self, PairedPlanError> {
-        if !has_link_events(left_events) && !has_link_events(right_events) {
+        Self::build_with_initial(
+            left_events,
+            left_start_tick,
+            right_events,
+            right_start_tick,
+            None,
+        )
+    }
+
+    fn build_with_initial(
+        left_events: &[ReplayEvent],
+        left_start_tick: Option<u64>,
+        right_events: &[ReplayEvent],
+        right_start_tick: Option<u64>,
+        initial_master: Option<InitialMasterContinuation>,
+    ) -> Result<Self, PairedPlanError> {
+        let ignored_reply = initial_master.and_then(|initial| {
+            initial
+                .reply_event
+                .map(|event| (initial.master, event.ordinal))
+        });
+        if !has_link_events_except(left_events, Side::Left, ignored_reply)
+            && !has_link_events_except(right_events, Side::Right, ignored_reply)
+        {
             return Err(PairedPlanError::Empty);
         }
         let left_start_tick =
             left_start_tick.ok_or(PairedPlanError::MissingStartTick { side: Side::Left })?;
         let right_start_tick =
             right_start_tick.ok_or(PairedPlanError::MissingStartTick { side: Side::Right })?;
-        let left = index_endpoint(Side::Left, left_events, left_start_tick)?;
-        let right = index_endpoint(Side::Right, right_events, right_start_tick)?;
+        let left = index_endpoint(Side::Left, left_events, left_start_tick, ignored_reply)?;
+        let right = index_endpoint(Side::Right, right_events, right_start_tick, ignored_reply)?;
 
         let mut ids: Vec<_> = left.keys().chain(right.keys()).copied().collect();
         ids.sort_unstable();
@@ -108,7 +204,7 @@ impl PairedTransferPlan {
         for id in ids {
             transfers.push(validate_transfer(id, left.get(&id), right.get(&id))?);
         }
-        validate_endpoint_ids(&transfers)?;
+        validate_endpoint_ids(&transfers, initial_master)?;
 
         let anchor = first_common_transfer_in_stream_order(right_events, &transfers)
             .ok_or(PairedPlanError::Empty)?;
@@ -137,23 +233,32 @@ impl PairedTransferPlan {
             left_anchor_tick,
             right_anchor_tick,
             batches,
+            initial_master,
         })
     }
 }
 
-fn has_link_events(events: &[ReplayEvent]) -> bool {
-    events
-        .iter()
-        .any(|event| matches!(event, ReplayEvent::GameBoyLink { .. }))
+fn has_link_events_except(
+    events: &[ReplayEvent],
+    side: Side,
+    ignored_reply: Option<(Side, usize)>,
+) -> bool {
+    events.iter().enumerate().any(|(ordinal, event)| {
+        matches!(event, ReplayEvent::GameBoyLink { .. }) && ignored_reply != Some((side, ordinal))
+    })
 }
 
 fn index_endpoint(
     side: Side,
     events: &[ReplayEvent],
     start_tick: u64,
+    ignored_reply: Option<(Side, usize)>,
 ) -> Result<HashMap<u64, EndpointTransfer>, PairedPlanError> {
     let mut indexed = HashMap::<u64, EndpointTransfer>::new();
     for (ordinal, event) in events.iter().enumerate() {
+        if ignored_reply == Some((side, ordinal)) {
+            continue;
+        }
         let ReplayEvent::GameBoyLink { frame, tick, event } = event else {
             continue;
         };
@@ -254,9 +359,96 @@ fn validate_transfer(
     })
 }
 
-fn validate_endpoint_ids(transfers: &[Transfer]) -> Result<(), PairedPlanError> {
+fn validate_initial_master_continuation(
+    left: &ReplayPlayer,
+    right: &ReplayPlayer,
+) -> Result<Option<InitialMasterContinuation>, PairedPlanError> {
+    let left_coordinator = left.metadata().game_boy_link_coordinator_start_state;
+    let right_coordinator = right.metadata().game_boy_link_coordinator_start_state;
+    let (master, state, master_player, peer_player) = match (left_coordinator, right_coordinator) {
+        (None, None) => return Ok(None),
+        (Some(state), None) => (Side::Left, state, left, right),
+        (None, Some(state)) => (Side::Right, state, right, left),
+        (Some(_), Some(_)) => return Err(PairedPlanError::ConflictingInitialMasters),
+    };
+    let peer_completion = peer_player
+        .metadata()
+        .game_boy_link_start_state
+        .and_then(|state| state.pending_passive_completion)
+        .ok_or(PairedPlanError::InvalidInitialContinuation { side: master })?;
+    if peer_completion.peer_byte != state.action.out_byte
+        || peer_completion.remaining_t_cycles > state.action.clock_period_t_cycles
+    {
+        return Err(PairedPlanError::InvalidInitialContinuation { side: master });
+    }
+
+    let reply_event = if state.owner == ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply {
+        master_player
+            .metadata()
+            .events
+            .iter()
+            .enumerate()
+            .find_map(|(ordinal, event)| {
+                let ReplayEvent::GameBoyLink { frame, tick, event } = event else {
+                    return None;
+                };
+                matches!(
+                    event,
+                    ReplayGameBoyLinkEvent::RemoteReply { transfer_id, .. }
+                        if *transfer_id == state.transfer_id
+                )
+                .then_some((ordinal, *frame, *tick, *event))
+            })
+            .map(|(ordinal, frame, tick, event)| {
+                let start_tick = master_player
+                    .metadata()
+                    .game_boy_link_start_tick
+                    .ok_or(PairedPlanError::MissingStartTick { side: master })?;
+                Ok(LocatedEvent {
+                    ordinal,
+                    point: Point {
+                        frame,
+                        tick,
+                        absolute_tick: start_tick
+                            .checked_add(tick)
+                            .ok_or(PairedPlanError::TickOverflow { side: master, tick })?,
+                    },
+                    event,
+                })
+            })
+            .transpose()?
+            .ok_or(PairedPlanError::InvalidInitialContinuation { side: master })?
+            .into()
+    } else {
+        None
+    };
+    let expected_reply = reply_event
+        .map(LocatedEvent::reply)
+        .or(state.reply)
+        .ok_or(PairedPlanError::InvalidInitialContinuation { side: master })?;
+    if !expected_reply.passive {
+        return Err(PairedPlanError::InvalidInitialContinuation { side: master });
+    }
+    Ok(Some(InitialMasterContinuation {
+        master,
+        state,
+        reply_event,
+    }))
+}
+
+fn validate_endpoint_ids(
+    transfers: &[Transfer],
+    initial_master: Option<InitialMasterContinuation>,
+) -> Result<(), PairedPlanError> {
     let mut endpoints = HashMap::<Side, u8>::new();
     let mut counters = HashMap::<Side, u64>::new();
+    if let Some(initial) = initial_master {
+        endpoints.insert(initial.master, (initial.state.transfer_id >> 56) as u8);
+        counters.insert(
+            initial.master,
+            initial.state.transfer_id & 0x00FF_FFFF_FFFF_FFFF,
+        );
+    }
     let mut local_order: Vec<_> = transfers.iter().collect();
     local_order.sort_by_key(|transfer| match transfer.master {
         Side::Left => transfer.left_start.ordinal,
@@ -461,6 +653,10 @@ pub(super) enum PairedPlanError {
         first: u64,
         second: u64,
     },
+    ConflictingInitialMasters,
+    InvalidInitialContinuation {
+        side: Side,
+    },
 }
 
 impl fmt::Display for PairedPlanError {
@@ -510,6 +706,13 @@ impl fmt::Display for PairedPlanError {
             Self::PassiveCrossedBatch { first, second } => write!(
                 f,
                 "crossed GB transfers {first:#018X} and {second:#018X} require non-passive replies"
+            ),
+            Self::ConflictingInitialMasters => {
+                f.write_str("both paired GB replay endpoints own an in-flight master transfer")
+            }
+            Self::InvalidInitialContinuation { side } => write!(
+                f,
+                "{side} GB replay master continuation has no matching passive peer state"
             ),
         }
     }

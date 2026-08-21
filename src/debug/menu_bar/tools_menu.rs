@@ -60,6 +60,10 @@ pub(super) fn draw(
                     zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
                     "Bardigun Barcode Reader",
                 ),
+                (
+                    zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy,
+                    "Barcode Boy",
+                ),
             ] {
                 if ui.radio(game_boy_serial_device == device, label).clicked()
                     && game_boy_serial_device != device
@@ -91,6 +95,19 @@ pub(super) fn draw(
     if game_boy_serial_device == zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
     {
         ui.label("Card-file scanning is native-only");
+    }
+    if ui
+        .add_enabled(
+            gb_enabled
+                && game_boy_serial_device_change_allowed
+                && game_boy_serial_device
+                    == zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy,
+            egui::Button::new("Scan Barcode Boy..."),
+        )
+        .clicked()
+    {
+        actions.push(MenuAction::OpenBarcodeBoyScan);
+        ui.close();
     }
     if ui
         .add_enabled(

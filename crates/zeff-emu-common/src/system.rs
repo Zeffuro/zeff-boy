@@ -4,20 +4,32 @@ use std::path::Path;
 const GB_ROM_EXTENSIONS: [&str; 3] = ["gb", "gbc", "sgb"];
 const GBA_ROM_EXTENSIONS: [&str; 1] = ["gba"];
 const NES_ROM_EXTENSIONS: [&str; 2] = ["nes", "fds"];
+#[cfg(not(target_arch = "wasm32"))]
+const PCE_ROM_EXTENSIONS: &[&str] = &["pce", "cue"];
+#[cfg(target_arch = "wasm32")]
+const PCE_ROM_EXTENSIONS: &[&str] = &["pce"];
 const WS_ROM_EXTENSIONS: [&str; 2] = ["ws", "wsc"];
 const SMS_ROM_EXTENSIONS: [&str; 1] = ["sms"];
 const GG_ROM_EXTENSIONS: [&str; 1] = ["gg"];
 const SG_ROM_EXTENSIONS: [&str; 2] = ["sg", "sc"];
+#[cfg(not(target_arch = "wasm32"))]
+const ARCHIVE_EXTENSION_LIST: [&str; 2] = ["zip", "7z"];
+#[cfg(target_arch = "wasm32")]
 const ARCHIVE_EXTENSION_LIST: [&str; 1] = ["zip"];
+#[cfg(not(target_arch = "wasm32"))]
 const SUPPORTED_EXTENSIONS_LABEL: &str =
-    ".gb, .gbc, .sgb, .gba, .nes, .fds, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
-const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|ws|sms|gg|sg";
+    ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .cue, .ws, .wsc, .sms, .gg, .sg, .sc, .zip, .7z";
+#[cfg(target_arch = "wasm32")]
+const SUPPORTED_EXTENSIONS_LABEL: &str =
+    ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
+const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|pce|ws|sms|gg|sg";
 
 pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 pub const GAME_BOY_SCREEN_SIZE: (u32, u32) = (160, 144);
 pub const SUPER_GAME_BOY_SCREEN_SIZE: (u32, u32) = (256, 224);
 pub const GBA_SCREEN_SIZE: (u32, u32) = (240, 160);
 pub const NES_SCREEN_SIZE: (u32, u32) = (256, 240);
+pub const PCE_SCREEN_SIZE: (u32, u32) = (640, 480);
 pub const WS_SCREEN_SIZE: (u32, u32) = (224, 144);
 pub const SMS_SCREEN_SIZE: (u32, u32) = (256, 192);
 pub const GG_SCREEN_SIZE: (u32, u32) = (160, 144);
@@ -27,6 +39,7 @@ pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 pub const GAME_BOY_FRAME_DURATION_NS: u64 = 16_742_706;
 pub const GBA_FRAME_DURATION_NS: u64 = GAME_BOY_FRAME_DURATION_NS;
 pub const NES_FRAME_DURATION_NS: u64 = 16_639_267;
+pub const PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS: u64 = 16_715_111;
 pub const WS_FRAME_DURATION_NS: u64 = 13_250_298;
 pub const SMS_FRAME_DURATION_NS: u64 = 16_666_667;
 pub const GG_FRAME_DURATION_NS: u64 = SMS_FRAME_DURATION_NS;
@@ -43,6 +56,9 @@ pub const ROM_EXTENSIONS: &[&str] = &[
     GBA_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[1],
+    PCE_ROM_EXTENSIONS[0],
+    #[cfg(not(target_arch = "wasm32"))]
+    PCE_ROM_EXTENSIONS[1],
     WS_ROM_EXTENSIONS[0],
     WS_ROM_EXTENSIONS[1],
     SMS_ROM_EXTENSIONS[0],
@@ -57,6 +73,9 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     GBA_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[1],
+    PCE_ROM_EXTENSIONS[0],
+    #[cfg(not(target_arch = "wasm32"))]
+    PCE_ROM_EXTENSIONS[1],
     WS_ROM_EXTENSIONS[0],
     WS_ROM_EXTENSIONS[1],
     SMS_ROM_EXTENSIONS[0],
@@ -64,6 +83,8 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     SG_ROM_EXTENSIONS[0],
     SG_ROM_EXTENSIONS[1],
     ARCHIVE_EXTENSION_LIST[0],
+    #[cfg(not(target_arch = "wasm32"))]
+    ARCHIVE_EXTENSION_LIST[1],
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -76,6 +97,7 @@ pub enum System {
     Gb,
     Gba,
     Nes,
+    Pce,
     Ws,
     Sms,
     Gg,
@@ -92,6 +114,7 @@ pub enum CoreFamily {
     GameBoy,
     GameBoyAdvance,
     Nes,
+    PcEngine,
     WonderSwan,
     Sega8,
 }
@@ -101,6 +124,7 @@ impl System {
     pub const GameBoy: Self = Self::Gb;
     pub const GameBoyAdvance: Self = Self::Gba;
     pub const WonderSwan: Self = Self::Ws;
+    pub const PcEngine: Self = Self::Pce;
     pub const MasterSystem: Self = Self::Sms;
     pub const GameGear: Self = Self::Gg;
     pub const Sg1000: Self = Self::Sg;
@@ -156,6 +180,18 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
         screen_size: NES_SCREEN_SIZE,
         frame_duration_ns: NES_FRAME_DURATION_NS,
         rom_extensions: &NES_ROM_EXTENSIONS,
+    },
+    SystemSpec {
+        system: System::Pce,
+        core_family: CoreFamily::PcEngine,
+        file_dialog_filter_name: "PC Engine ROMs",
+        code: "pce",
+        short_code: "pce",
+        storage_subdir: "pce",
+        state_extension: "pcestate",
+        screen_size: PCE_SCREEN_SIZE,
+        frame_duration_ns: PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS,
+        rom_extensions: PCE_ROM_EXTENSIONS,
     },
     SystemSpec {
         system: System::Ws,
@@ -355,6 +391,15 @@ mod tests {
             Some(System::Nes)
         );
         assert_eq!(
+            System::from_path(&PathBuf::from("game.pce")),
+            Some(System::Pce)
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(
+            System::from_path(&PathBuf::from("game.cue")),
+            Some(System::Pce)
+        );
+        assert_eq!(
             System::from_path(&PathBuf::from("game.ws")),
             Some(System::Ws)
         );
@@ -378,6 +423,22 @@ mod tests {
             System::from_path(&PathBuf::from("game.sc")),
             Some(System::Sg)
         );
+    }
+
+    #[test]
+    fn package_archive_is_native_only_and_never_a_rom_extension() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            assert_eq!(archive_extensions(), &["zip", "7z"]);
+            assert!(ROM_AND_ARCHIVE_EXTENSIONS.contains(&"7z"));
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            assert_eq!(archive_extensions(), &["zip"]);
+            assert!(!ROM_AND_ARCHIVE_EXTENSIONS.contains(&"7z"));
+        }
+        assert!(!ROM_EXTENSIONS.contains(&"7z"));
+        assert_eq!(System::from_path(Path::new("disc.7z")), None);
     }
 
     #[test]
@@ -409,6 +470,7 @@ mod tests {
         assert_eq!(System::GameBoy, System::Gb);
         assert_eq!(System::GameBoyAdvance, System::Gba);
         assert_eq!(System::WonderSwan, System::Ws);
+        assert_eq!(System::PcEngine, System::Pce);
         assert_eq!(System::MasterSystem, System::Sms);
         assert_eq!(System::GameGear, System::Gg);
         assert_eq!(System::Sg1000, System::Sg);
@@ -419,9 +481,19 @@ mod tests {
         assert_eq!(System::Gb.core_family(), CoreFamily::GameBoy);
         assert_eq!(System::Gba.core_family(), CoreFamily::GameBoyAdvance);
         assert_eq!(System::Nes.core_family(), CoreFamily::Nes);
+        assert_eq!(System::Pce.core_family(), CoreFamily::PcEngine);
         assert_eq!(System::Ws.core_family(), CoreFamily::WonderSwan);
         assert_eq!(System::Sms.core_family(), CoreFamily::Sega8);
         assert_eq!(System::Gg.core_family(), CoreFamily::Sega8);
         assert_eq!(System::Sg.core_family(), CoreFamily::Sega8);
+    }
+
+    #[test]
+    fn pce_uses_the_provisional_263_line_nominal_frame_duration() {
+        assert_eq!(
+            System::Pce.frame_duration_ns(),
+            PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS
+        );
+        assert_eq!(PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS, 16_715_111);
     }
 }

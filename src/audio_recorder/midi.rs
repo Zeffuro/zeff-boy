@@ -117,7 +117,10 @@ fn midi_program_for_voice(class: AudioVoiceClass) -> Option<u8> {
     match class {
         AudioVoiceClass::Pulse | AudioVoiceClass::Tone => Some(80),
         AudioVoiceClass::Triangle | AudioVoiceClass::Wavetable => Some(81),
-        AudioVoiceClass::Noise | AudioVoiceClass::Pcm | AudioVoiceClass::Other => None,
+        AudioVoiceClass::Noise
+        | AudioVoiceClass::WavetableNoise
+        | AudioVoiceClass::Pcm
+        | AudioVoiceClass::Other => None,
     }
 }
 

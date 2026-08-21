@@ -4,6 +4,7 @@ use crate::ui;
 use super::types::{publish_framebuffer, publish_owned_framebuffer};
 use super::{
     EmuResponse, EmuThread, FrameInput, FrameResult, ReplayJoypadFrame, SharedFramebuffer,
+    WorkerRuntimeFault,
 };
 use crate::audio_tooling::AudioSemanticFrame;
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,9 +22,26 @@ impl EmuThread {
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
         shared_fb: &SharedFramebuffer,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> FrameResult {
+        runtime_fault.latch(backend.take_runtime_fault());
+        if !runtime_fault.can_step() {
+            return Self::build_inert_frame_result(
+                backend,
+                input,
+                rewind_buffer.fill_ratio(),
+                shared_fb,
+                runtime_fault,
+            );
+        }
         Self::configure_system(backend, &input, uncapped_mode);
 
+        backend.set_pce_mouse_state(
+            input.pce_mouse.mode,
+            input.pce_mouse.delta_x,
+            input.pce_mouse.delta_y,
+            input.pce_mouse.buttons,
+        );
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -42,25 +60,31 @@ impl EmuThread {
         let mut advanced_frames = 0;
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
-            advanced_frames = Self::step_n_frames(
+            advanced_frames = Self::step_n_frames_with_runtime_fault(
                 backend,
                 input.frames,
                 cheats,
                 semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
+                runtime_fault,
             );
         }
-        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
-        if input.rewind_seconds != *rewind_seconds {
-            *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
-                *rewind_seconds,
-                super::REWIND_SNAPSHOTS_PER_SECOND,
+        if runtime_fault.can_step() {
+            Self::suspend_after_debug_frame(
+                backend,
+                input.debug_suspend_after_frame,
+                advanced_frames,
             );
+            if input.rewind_seconds != *rewind_seconds {
+                *rewind_seconds = input.rewind_seconds;
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                    *rewind_seconds,
+                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                );
+            }
+            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
         }
-
-        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
@@ -69,6 +93,7 @@ impl EmuThread {
 
         Self::build_frame_result(
             backend,
+            runtime_fault,
             reusable_audio,
             ui_data,
             audio_semantic_frames,
@@ -88,9 +113,26 @@ impl EmuThread {
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
         shared_fb: &SharedFramebuffer,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> FrameResult {
+        runtime_fault.latch(backend.take_runtime_fault());
+        if !runtime_fault.can_step() {
+            return Self::build_inert_frame_result(
+                backend,
+                input,
+                rewind_buffer.fill_ratio(),
+                shared_fb,
+                runtime_fault,
+            );
+        }
         Self::configure_system(backend, &input, uncapped_mode);
 
+        backend.set_pce_mouse_state(
+            input.pce_mouse.mode,
+            input.pce_mouse.delta_x,
+            input.pce_mouse.delta_y,
+            input.pce_mouse.buttons,
+        );
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -118,20 +160,26 @@ impl EmuThread {
                 semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
+                runtime_fault,
             );
             advanced_frames = result.0;
             replay_error = result.1;
         }
-        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
-        if input.rewind_seconds != *rewind_seconds {
-            *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
-                *rewind_seconds,
-                super::REWIND_SNAPSHOTS_PER_SECOND,
+        if runtime_fault.can_step() {
+            Self::suspend_after_debug_frame(
+                backend,
+                input.debug_suspend_after_frame,
+                advanced_frames,
             );
+            if input.rewind_seconds != *rewind_seconds {
+                *rewind_seconds = input.rewind_seconds;
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                    *rewind_seconds,
+                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                );
+            }
+            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
         }
-
-        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
@@ -140,6 +188,7 @@ impl EmuThread {
 
         let mut result = Self::build_frame_result(
             backend,
+            runtime_fault,
             reusable_audio,
             ui_data,
             audio_semantic_frames,
@@ -161,9 +210,26 @@ impl EmuThread {
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
         shared_fb: &SharedFramebuffer,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> FrameResult {
+        runtime_fault.latch(backend.take_runtime_fault());
+        if !runtime_fault.can_step() {
+            return Self::build_inert_frame_result(
+                backend,
+                input,
+                rewind_buffer.fill_ratio(),
+                shared_fb,
+                runtime_fault,
+            );
+        }
         Self::configure_system(backend, &input, uncapped_mode);
 
+        backend.set_pce_mouse_state(
+            input.pce_mouse.mode,
+            input.pce_mouse.delta_x,
+            input.pce_mouse.delta_y,
+            input.pce_mouse.buttons,
+        );
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -191,20 +257,26 @@ impl EmuThread {
                 semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
+                runtime_fault,
             );
             advanced_frames = result.0;
             replay_error = result.1;
         }
-        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
-        if input.rewind_seconds != *rewind_seconds {
-            *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
-                *rewind_seconds,
-                super::REWIND_SNAPSHOTS_PER_SECOND,
+        if runtime_fault.can_step() {
+            Self::suspend_after_debug_frame(
+                backend,
+                input.debug_suspend_after_frame,
+                advanced_frames,
             );
+            if input.rewind_seconds != *rewind_seconds {
+                *rewind_seconds = input.rewind_seconds;
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                    *rewind_seconds,
+                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                );
+            }
+            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
         }
-
-        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
@@ -213,6 +285,7 @@ impl EmuThread {
 
         let mut result = Self::build_frame_result(
             backend,
+            runtime_fault,
             reusable_audio,
             ui_data,
             audio_semantic_frames,
@@ -234,9 +307,26 @@ impl EmuThread {
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: &mut usize,
         shared_fb: &SharedFramebuffer,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> FrameResult {
+        runtime_fault.latch(backend.take_runtime_fault());
+        if !runtime_fault.can_step() {
+            return Self::build_inert_frame_result(
+                backend,
+                input,
+                rewind_buffer.fill_ratio(),
+                shared_fb,
+                runtime_fault,
+            );
+        }
         Self::configure_system(backend, &input, uncapped_mode);
 
+        backend.set_pce_mouse_state(
+            input.pce_mouse.mode,
+            input.pce_mouse.delta_x,
+            input.pce_mouse.delta_y,
+            input.pce_mouse.buttons,
+        );
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -255,7 +345,7 @@ impl EmuThread {
         let mut advanced_frames = 0;
         let stepped_frames = input.frames > 0 && backend.is_running();
         if stepped_frames {
-            advanced_frames = Self::step_n_frames_with_tcp_link(
+            advanced_frames = Self::step_n_frames_with_tcp_link_and_runtime_fault(
                 backend,
                 input.frames,
                 cheats,
@@ -263,22 +353,30 @@ impl EmuThread {
                 semantic_capture_active,
                 &mut audio_semantic_frames,
                 input.replay_joypad_frames.as_deref(),
+                runtime_fault,
             );
         }
-        Self::suspend_after_debug_frame(backend, input.debug_suspend_after_frame, advanced_frames);
+        if runtime_fault.can_step() {
+            Self::suspend_after_debug_frame(
+                backend,
+                input.debug_suspend_after_frame,
+                advanced_frames,
+            );
+        }
         let replay_events = tcp_link
             .as_mut()
             .map(|link| link.take_replay_events())
             .unwrap_or_default();
-        if input.rewind_seconds != *rewind_seconds {
-            *rewind_seconds = input.rewind_seconds;
-            *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
-                *rewind_seconds,
-                super::REWIND_SNAPSHOTS_PER_SECOND,
-            );
+        if runtime_fault.can_step() {
+            if input.rewind_seconds != *rewind_seconds {
+                *rewind_seconds = input.rewind_seconds;
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                    *rewind_seconds,
+                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                );
+            }
+            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
         }
-
-        Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
 
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
@@ -287,6 +385,7 @@ impl EmuThread {
 
         let mut result = Self::build_frame_result(
             backend,
+            runtime_fault,
             reusable_audio,
             ui_data,
             audio_semantic_frames,
@@ -295,6 +394,27 @@ impl EmuThread {
         );
         result.replay_events = replay_events;
         result
+    }
+
+    fn build_inert_frame_result(
+        backend: &mut EmuBackend,
+        mut input: FrameInput,
+        rewind_fill: f32,
+        shared_fb: &SharedFramebuffer,
+        runtime_fault: &mut WorkerRuntimeFault,
+    ) -> FrameResult {
+        let reusable_audio = input.buffers.audio.take();
+        let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
+        publish_framebuffer(shared_fb, backend.framebuffer());
+        Self::build_frame_result(
+            backend,
+            runtime_fault,
+            reusable_audio,
+            ui_data,
+            Vec::new(),
+            rewind_fill,
+            0,
+        )
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -321,7 +441,7 @@ impl EmuThread {
         cheats: &[crate::cheats::CheatPatch],
     ) {
         if matches!(resp, EmuResponse::LoadStateOk { .. }) {
-            backend.discard_game_boy_printer_images();
+            backend.discard_game_boy_printer_jobs();
             rewind_buffer.clear();
             backend.install_rom_patches(cheats);
         }
@@ -354,6 +474,9 @@ impl EmuThread {
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         shared_fb: &SharedFramebuffer,
     ) -> EmuResponse {
+        if !backend.supports_rewind() {
+            return EmuResponse::RewindFailed("rewind is not supported by this core".to_string());
+        }
         let current_state = Self::encode_current_state(backend).ok();
         while let Some(rewind_frame) = rewind_buffer.pop() {
             if let Some(current) = current_state.as_ref()
@@ -395,6 +518,7 @@ impl EmuThread {
         enabled: bool,
     ) {
         if enabled
+            && backend.supports_rewind()
             && rewind_buffer.tick()
             && let Ok(bytes) = Self::encode_current_state(backend)
         {
@@ -420,6 +544,8 @@ impl EmuThread {
             sgb_border_enabled: input.snapshot.render.sgb_border_enabled,
             nes_palette_mode: input.snapshot.render.nes_palette_mode,
             nes_custom_palette: input.snapshot.render.nes_custom_palette.as_ref(),
+            pce_overscan_mode: input.snapshot.render.pce_overscan_mode,
+            pce_palette_mode: input.snapshot.render.pce_palette_mode,
             ..BackendRuntimeConfig::new(&input.debug_actions)
         };
         backend.apply_runtime_config(runtime_config);
@@ -435,6 +561,7 @@ impl EmuThread {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn step_n_frames(
         backend: &mut EmuBackend,
         n: usize,
@@ -443,29 +570,42 @@ impl EmuThread {
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
     ) -> usize {
+        let mut runtime_fault = WorkerRuntimeFault::default();
+        Self::step_n_frames_with_runtime_fault(
+            backend,
+            n,
+            cheats,
+            semantic_capture_active,
+            audio_semantic_frames,
+            replay_joypad_frames,
+            &mut runtime_fault,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn step_n_frames_with_runtime_fault(
+        backend: &mut EmuBackend,
+        n: usize,
+        cheats: &[crate::cheats::CheatPatch],
+        semantic_capture_active: bool,
+        audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
+        replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+        runtime_fault: &mut WorkerRuntimeFault,
+    ) -> usize {
         let mut advanced_frames = 0;
         let mut replay_frame_index = 0;
         for _ in 0..n {
             if let Some(frame) =
                 replay_joypad_frames.and_then(|frames| frames.get(replay_frame_index))
             {
-                backend.set_input(frame.buttons, frame.dpad);
-                backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-                let zapper = super::ZapperInput::from(frame.zapper);
-                backend.set_zapper_state(
-                    zapper.enabled,
-                    zapper.trigger,
-                    zapper.hit,
-                    zapper.screen_pos,
-                );
-                backend.set_replay_host_tilt(frame.host_tilt);
-                if let Some(camera_frame) = frame.camera_frame.as_deref() {
-                    backend.set_replay_camera_frame(camera_frame);
-                }
+                backend.apply_replay_input(frame);
             }
 
             let frame_count_before = backend.frame_count();
             backend.step_frame();
+            if runtime_fault.latch(backend.take_runtime_fault()) {
+                break;
+            }
             backend.apply_ram_cheats(cheats);
             Self::collect_semantic_snapshot_if_frame_advanced(
                 backend,
@@ -495,6 +635,7 @@ impl EmuThread {
         semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> (usize, Option<String>) {
         let mut advanced_frames = 0;
         let mut replay_frame_index = 0;
@@ -502,19 +643,7 @@ impl EmuThread {
             if let Some(frame) =
                 replay_joypad_frames.and_then(|frames| frames.get(replay_frame_index))
             {
-                backend.set_input(frame.buttons, frame.dpad);
-                backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-                let zapper = super::ZapperInput::from(frame.zapper);
-                backend.set_zapper_state(
-                    zapper.enabled,
-                    zapper.trigger,
-                    zapper.hit,
-                    zapper.screen_pos,
-                );
-                backend.set_replay_host_tilt(frame.host_tilt);
-                if let Some(camera_frame) = frame.camera_frame.as_deref() {
-                    backend.set_replay_camera_frame(camera_frame);
-                }
+                backend.apply_replay_input(frame);
             }
 
             let frame_count_before = backend.frame_count();
@@ -524,6 +653,9 @@ impl EmuThread {
                     advanced_frames,
                     Some(format!("GB link replay event failed: {err:?}; {summary}")),
                 );
+            }
+            if runtime_fault.latch(backend.take_runtime_fault()) {
+                break;
             }
             backend.apply_ram_cheats(cheats);
             Self::collect_semantic_snapshot_if_frame_advanced(
@@ -554,6 +686,7 @@ impl EmuThread {
         semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> (usize, Option<String>) {
         let mut advanced_frames = 0;
         let mut replay_frame_index = 0;
@@ -561,19 +694,7 @@ impl EmuThread {
             if let Some(frame) =
                 replay_joypad_frames.and_then(|frames| frames.get(replay_frame_index))
             {
-                backend.set_input(frame.buttons, frame.dpad);
-                backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-                let zapper = super::ZapperInput::from(frame.zapper);
-                backend.set_zapper_state(
-                    zapper.enabled,
-                    zapper.trigger,
-                    zapper.hit,
-                    zapper.screen_pos,
-                );
-                backend.set_replay_host_tilt(frame.host_tilt);
-                if let Some(camera_frame) = frame.camera_frame.as_deref() {
-                    backend.set_replay_camera_frame(camera_frame);
-                }
+                backend.apply_replay_input(frame);
             }
 
             let frame_count_before = backend.frame_count();
@@ -585,6 +706,9 @@ impl EmuThread {
                         replay_link.debug_summary()
                     )),
                 );
+            }
+            if runtime_fault.latch(backend.take_runtime_fault()) {
+                break;
             }
             backend.apply_ram_cheats(cheats);
             Self::collect_semantic_snapshot_if_frame_advanced(
@@ -606,8 +730,33 @@ impl EmuThread {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn step_n_frames_with_tcp_link(
+        backend: &mut EmuBackend,
+        n: usize,
+        cheats: &[crate::cheats::CheatPatch],
+        tcp_link: Option<&mut RemoteLink<TcpLinkTransport>>,
+        semantic_capture_active: bool,
+        audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
+        replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+    ) -> usize {
+        let mut runtime_fault = WorkerRuntimeFault::default();
+        Self::step_n_frames_with_tcp_link_and_runtime_fault(
+            backend,
+            n,
+            cheats,
+            tcp_link,
+            semantic_capture_active,
+            audio_semantic_frames,
+            replay_joypad_frames,
+            &mut runtime_fault,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn step_n_frames_with_tcp_link_and_runtime_fault(
         backend: &mut EmuBackend,
         n: usize,
         cheats: &[crate::cheats::CheatPatch],
@@ -615,26 +764,15 @@ impl EmuThread {
         semantic_capture_active: bool,
         audio_semantic_frames: &mut Vec<AudioSemanticFrame>,
         replay_joypad_frames: Option<&[ReplayJoypadFrame]>,
+        runtime_fault: &mut WorkerRuntimeFault,
     ) -> usize {
         let mut advanced_frames = 0;
         let mut replay_frame_index = 0;
-        for _ in 0..n {
+        'frames: for _ in 0..n {
             if let Some(frame) =
                 replay_joypad_frames.and_then(|frames| frames.get(replay_frame_index))
             {
-                backend.set_input(frame.buttons, frame.dpad);
-                backend.set_input_p2(frame.buttons_p2, frame.dpad_p2);
-                let zapper = super::ZapperInput::from(frame.zapper);
-                backend.set_zapper_state(
-                    zapper.enabled,
-                    zapper.trigger,
-                    zapper.hit,
-                    zapper.screen_pos,
-                );
-                backend.set_replay_host_tilt(frame.host_tilt);
-                if let Some(camera_frame) = frame.camera_frame.as_deref() {
-                    backend.set_replay_camera_frame(camera_frame);
-                }
+                backend.apply_replay_input(frame);
             }
 
             let frame_count_before = backend.frame_count();
@@ -648,6 +786,10 @@ impl EmuThread {
                     }
                 } else {
                     backend.step_frame();
+                }
+
+                if runtime_fault.latch(backend.take_runtime_fault()) {
+                    break 'frames;
                 }
 
                 if backend.frame_count() != frame_count_before
@@ -690,8 +832,10 @@ impl EmuThread {
         ui::collect_backend_snapshot(backend, snapshot, buffers)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn build_frame_result(
         backend: &mut EmuBackend,
+        runtime_fault: &mut WorkerRuntimeFault,
         reusable_audio: Option<Vec<f32>>,
         ui_data: ui::UiFrameData,
         audio_semantic_frames: Vec<AudioSemanticFrame>,
@@ -705,20 +849,24 @@ impl EmuThread {
         let is_mbc7 = backend.is_mbc7();
         let is_pocket_camera = backend.is_pocket_camera();
         let game_boy_serial_device = backend.game_boy_serial_device();
-        let game_boy_printer_images = Self::take_game_boy_printer_images(backend);
+        let game_boy_printer_jobs = Self::take_game_boy_printer_jobs(backend);
         let media_slot_snapshot = backend.media_slot_snapshot();
+        runtime_fault.latch(backend.take_runtime_fault());
+        let runtime_fault = runtime_fault.take_pending_delivery();
 
         FrameResult {
             advanced_frames,
+            delivery_merged: false,
             replay_events: Vec::new(),
             replay_error: None,
+            runtime_fault,
             rumble,
             audio_samples,
             ui_data,
             is_mbc7,
             is_pocket_camera,
             game_boy_serial_device,
-            game_boy_printer_images,
+            game_boy_printer_jobs,
             media_slot_snapshot,
             rewind_fill,
             audio_semantic_frames,
@@ -726,20 +874,13 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn take_game_boy_printer_images(
+    pub(crate) fn take_game_boy_printer_jobs(
         backend: &mut EmuBackend,
-    ) -> Vec<super::types::GameBoyPrinterImage> {
-        let (width, height) = zeff_gb_core::emulator::Emulator::printer_image_dimensions();
+    ) -> Vec<zeff_gb_core::hardware::GameBoyPrinterJob> {
         backend
-            .take_game_boy_printer_images()
+            .take_game_boy_printer_jobs()
             .into_iter()
-            .filter_map(|rgba| {
-                (rgba.len() == width * height * 4).then_some(super::types::GameBoyPrinterImage {
-                    width,
-                    height,
-                    rgba,
-                })
-            })
+            .filter(|job| job.validate().is_ok())
             .collect()
     }
 
@@ -761,590 +902,4 @@ impl EmuThread {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::debug::DebugUiActions;
-    #[cfg(not(target_arch = "wasm32"))]
-    use crate::link::LinkSession;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::net::TcpListener;
-    use std::path::PathBuf;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::thread;
-    #[cfg(not(target_arch = "wasm32"))]
-    use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
-    use zeff_ws_core::hardware::cartridge::compute_footer_checksum;
-
-    fn minimal_ws_rom() -> Vec<u8> {
-        let mut rom = vec![0xFF; 0x10000];
-        let reset_vector = rom.len() - 16;
-        rom[reset_vector..reset_vector + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
-        rom[0] = 0xF4;
-        let footer = rom.len() - 10;
-        rom[footer] = 0x01;
-        rom[footer + 1] = 0x00;
-        rom[footer + 2] = 0x23;
-        rom[footer + 4] = 0x01;
-        let checksum = compute_footer_checksum(&rom);
-        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
-        rom
-    }
-
-    #[test]
-    fn build_frame_result_does_not_republish_stale_recycled_audio() {
-        let rom = minimal_ws_rom();
-        let emu = zeff_ws_core::emulator::Emulator::from_rom_data(&rom).unwrap();
-        let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.wsc"));
-
-        let result = EmuThread::build_frame_result(
-            &mut backend,
-            Some(vec![0.25, -0.25, 0.5, -0.5]),
-            ui::UiFrameData::default(),
-            Vec::new(),
-            0.0,
-            0,
-        );
-
-        assert!(
-            result.audio_samples.is_empty(),
-            "stale recycled audio samples must be cleared before draining new core audio"
-        );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn load_state_response_reports_authoritative_game_boy_serial_device() {
-        let mut backend = gb_backend();
-        backend.set_game_boy_serial_device(
-            zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
-        );
-        let shared_fb: SharedFramebuffer = Default::default();
-
-        let response = EmuThread::respond_load_state(
-            &mut backend,
-            Ok(()),
-            "test state".to_string(),
-            0,
-            0,
-            &shared_fb,
-        );
-
-        assert!(matches!(
-            response,
-            EmuResponse::LoadStateOk {
-                game_boy_serial_device: Some(
-                    zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
-                ),
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
-        let rom = minimal_ws_rom();
-        let emu = zeff_ws_core::emulator::Emulator::from_rom_data(&rom).unwrap();
-        let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.wsc"));
-        let shared_fb: SharedFramebuffer = Default::default();
-
-        let response = EmuThread::respond_load_state(
-            &mut backend,
-            Ok(()),
-            "test state".to_string(),
-            0,
-            0,
-            &shared_fb,
-        );
-
-        assert!(matches!(
-            response,
-            EmuResponse::LoadStateOk {
-                game_boy_serial_device: None,
-                ..
-            }
-        ));
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn rewind_response_reports_serial_device_restored_from_state() {
-        let mut backend = gb_backend();
-        backend.set_game_boy_serial_device(
-            zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
-        );
-        let state = EmuThread::encode_current_state(&backend).unwrap();
-        backend
-            .set_game_boy_serial_device(zeff_gb_core::hardware::GameBoySerialDevice::Disconnected);
-        let mut rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(1, 1);
-        rewind_buffer.push(&state, &[]);
-        let shared_fb: SharedFramebuffer = Default::default();
-
-        let response = EmuThread::handle_rewind(&mut backend, &mut rewind_buffer, &shared_fb);
-
-        assert!(matches!(
-            response,
-            EmuResponse::RewindOk {
-                game_boy_serial_device: Some(
-                    zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
-                ),
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn step_n_frames_collects_midi_snapshot_per_emulated_frame() {
-        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
-            &[0x00],
-            44_100,
-            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
-        )
-        .unwrap();
-        let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
-        let mut audio_semantic_frames = Vec::new();
-
-        let advanced_frames =
-            EmuThread::step_n_frames(&mut backend, 3, &[], true, &mut audio_semantic_frames, None);
-
-        assert_eq!(backend.frame_count(), 3);
-        assert_eq!(advanced_frames, 3);
-        assert_eq!(audio_semantic_frames.len(), 3);
-    }
-
-    #[test]
-    fn next_frame_resumes_for_one_frame_then_suspends() {
-        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
-            &[0x00],
-            44_100,
-            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
-        )
-        .unwrap();
-        let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
-        backend.debug_suspend();
-
-        let actions = DebugUiActions::none();
-        let mut config = BackendRuntimeConfig::new(&actions);
-        config.debug_continue = true;
-        backend.apply_runtime_config(config);
-        let before = backend.frame_count();
-        let advanced = EmuThread::step_n_frames(&mut backend, 1, &[], false, &mut Vec::new(), None);
-        EmuThread::suspend_after_debug_frame(&mut backend, true, advanced);
-
-        assert_eq!(advanced, 1);
-        assert_eq!(backend.frame_count(), before + 1);
-        assert!(backend.is_suspended());
-    }
-
-    #[test]
-    fn step_n_frames_applies_replay_joypad_input_per_emulated_frame() {
-        let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
-            &[0x00],
-            44_100,
-            zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
-        )
-        .unwrap();
-        let mut backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
-        let replay_frames = [
-            ReplayJoypadFrame {
-                buttons: 0x01,
-                dpad: 0x00,
-                buttons_p2: 0x02,
-                dpad_p2: 0x00,
-                zapper: Default::default(),
-                host_tilt: (0.0, 0.0),
-                camera_frame: None,
-            },
-            ReplayJoypadFrame {
-                buttons: 0x00,
-                dpad: 0x01,
-                buttons_p2: 0x00,
-                dpad_p2: 0x02,
-                zapper: Default::default(),
-                host_tilt: (0.0, 0.0),
-                camera_frame: None,
-            },
-        ];
-        let mut audio_semantic_frames = Vec::new();
-
-        let advanced_frames = EmuThread::step_n_frames(
-            &mut backend,
-            2,
-            &[],
-            false,
-            &mut audio_semantic_frames,
-            Some(&replay_frames),
-        );
-
-        assert_eq!(advanced_frames, 2);
-        let EmuBackend::Sega8(sega8) = &backend else {
-            panic!("expected Sega8 backend");
-        };
-        let raw = sega8
-            .emu
-            .bus()
-            .input()
-            .read_controller(zeff_sega8_core::hardware::input::ControllerPort::One);
-        assert_ne!(raw & (1 << 4), 0, "button 1 should be released");
-        assert_eq!(raw & (1 << 3), 0, "right should be pressed");
-
-        let raw_p2 = sega8
-            .emu
-            .bus()
-            .input()
-            .read_controller(zeff_sega8_core::hardware::input::ControllerPort::Two);
-        assert_ne!(raw_p2 & (1 << 5), 0, "P2 button 2 should be released");
-        assert_eq!(raw_p2 & (1 << 2), 0, "P2 left should be pressed");
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn tcp_link_stepper_exchanges_game_boy_bytes_between_backends() {
-        let (mut left_link, mut right_link) = tcp_link_pair();
-        let mut left = gb_backend();
-        let mut right = gb_backend();
-
-        {
-            let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&mut left, &mut right) else {
-                panic!("expected GB backends");
-            };
-            left.emu.write_byte(SERIAL_SB, 0xAB);
-            right.emu.write_byte(SERIAL_SB, 0x34);
-            left.emu.write_byte(SERIAL_SC, 0x81);
-            right.emu.write_byte(SERIAL_SC, 0x80);
-        }
-
-        for _ in 0..50 {
-            let mut left_snapshots = Vec::new();
-            EmuThread::step_n_frames_with_tcp_link(
-                &mut left,
-                1,
-                &[],
-                Some(&mut left_link),
-                false,
-                &mut left_snapshots,
-                None,
-            );
-            let mut right_snapshots = Vec::new();
-            EmuThread::step_n_frames_with_tcp_link(
-                &mut right,
-                1,
-                &[],
-                Some(&mut right_link),
-                false,
-                &mut right_snapshots,
-                None,
-            );
-            let (EmuBackend::Gb(left_gb), EmuBackend::Gb(right_gb)) = (&left, &right) else {
-                panic!("expected GB backends");
-            };
-            if left_gb.emu.cpu_peek8(SERIAL_SC) & 0x80 == 0
-                && right_gb.emu.cpu_peek8(SERIAL_SC) & 0x80 == 0
-            {
-                break;
-            }
-            std::thread::yield_now();
-        }
-
-        let (EmuBackend::Gb(left), EmuBackend::Gb(right)) = (&left, &right) else {
-            panic!("expected GB backends");
-        };
-        assert_eq!(left.emu.cpu_peek8(SERIAL_SB), 0x34);
-        assert_eq!(right.emu.cpu_peek8(SERIAL_SB), 0xAB);
-        assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
-        assert_eq!(right.emu.cpu_peek8(SERIAL_SC) & 0x80, 0);
-        assert_eq!(left.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
-        assert_eq!(right.emu.cpu_peek8(INTERRUPT_IF) & 0x08, 0x08);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn tcp_link_stepper_stops_after_game_boy_master_start_until_peer_replies() {
-        let (mut left_link, _right_link) = tcp_link_pair();
-        let mut left = gb_backend();
-
-        {
-            let EmuBackend::Gb(left) = &mut left else {
-                panic!("expected GB backend");
-            };
-            left.emu.write_byte(SERIAL_SB, 0xAB);
-            left.emu.write_byte(SERIAL_SC, 0x81);
-        }
-
-        let mut audio_semantic_frames = Vec::new();
-        let advanced_frames = EmuThread::step_n_frames_with_tcp_link(
-            &mut left,
-            5,
-            &[],
-            Some(&mut left_link),
-            true,
-            &mut audio_semantic_frames,
-            None,
-        );
-
-        let EmuBackend::Gb(left) = &left else {
-            panic!("expected GB backend");
-        };
-        assert_eq!(left.emu.frame_count(), 0);
-        assert_eq!(advanced_frames, 0);
-        assert!(
-            audio_semantic_frames.is_empty(),
-            "GB link waits must not record audio-tooling time when no emulated frame advanced"
-        );
-        assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
-        assert_eq!(
-            left.emu.game_boy_link_state().pending_master_byte,
-            Some(0xAB)
-        );
-        assert!(
-            !left.emu.game_boy_link_waiting_at_completion_boundary(),
-            "live TCP stepping must yield before the serial completion boundary"
-        );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn tcp_link_stepper_reuses_replay_input_when_game_boy_link_slice_does_not_advance_frame() {
-        let (mut left_link, _right_link) = tcp_link_pair();
-        let mut left = gb_backend();
-        let replay_frames = [
-            ReplayJoypadFrame {
-                buttons: 0x01,
-                dpad: 0x00,
-                buttons_p2: 0,
-                dpad_p2: 0,
-                zapper: Default::default(),
-                host_tilt: (0.0, 0.0),
-                camera_frame: None,
-            },
-            ReplayJoypadFrame {
-                buttons: 0x02,
-                dpad: 0x00,
-                buttons_p2: 0,
-                dpad_p2: 0,
-                zapper: Default::default(),
-                host_tilt: (0.0, 0.0),
-                camera_frame: None,
-            },
-        ];
-
-        {
-            let EmuBackend::Gb(left) = &mut left else {
-                panic!("expected GB backend");
-            };
-            left.emu.write_byte(SERIAL_SB, 0xAB);
-            left.emu.write_byte(SERIAL_SC, 0x81);
-        }
-
-        let mut audio_semantic_frames = Vec::new();
-        let advanced_frames = EmuThread::step_n_frames_with_tcp_link(
-            &mut left,
-            2,
-            &[],
-            Some(&mut left_link),
-            false,
-            &mut audio_semantic_frames,
-            Some(&replay_frames),
-        );
-
-        assert_eq!(advanced_frames, 0);
-        let EmuBackend::Gb(left) = &mut left else {
-            panic!("expected GB backend");
-        };
-        left.emu.write_byte(0xFF00, 0x10);
-        assert_eq!(
-            left.emu.cpu_peek8(0xFF00) & 0x0F,
-            0x0E,
-            "second replay input must not be applied until an emulated frame advances"
-        );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn tcp_link_stepper_does_not_stop_at_game_boy_external_clock_wait() {
-        let (mut left_link, _right_link) = tcp_link_pair();
-        let mut left = gb_backend();
-
-        {
-            let EmuBackend::Gb(left) = &mut left else {
-                panic!("expected GB backend");
-            };
-            left.emu.write_byte(SERIAL_SB, 0x02);
-            left.emu.write_byte(SERIAL_SC, 0x80);
-        }
-
-        let mut audio_semantic_frames = Vec::new();
-        let advanced_frames = EmuThread::step_n_frames_with_tcp_link(
-            &mut left,
-            1,
-            &[],
-            Some(&mut left_link),
-            false,
-            &mut audio_semantic_frames,
-            None,
-        );
-
-        let EmuBackend::Gb(left) = &left else {
-            panic!("expected GB backend");
-        };
-        assert!(advanced_frames > 0);
-        assert!(
-            left.emu.frame_count() > 0,
-            "external-clock readiness must not deadlock the frame stepper"
-        );
-        assert_eq!(left.emu.cpu_peek8(SERIAL_SC) & 0x80, 0x80);
-        assert_eq!(
-            left.emu.game_boy_link_state().external_clock_byte,
-            Some(0x02)
-        );
-        assert_eq!(left.emu.game_boy_link_state().pending_master_byte, None);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn tcp_link_pair() -> (
-        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
-        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
-    ) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let host_thread = thread::spawn(move || {
-            crate::link::transport::TcpLinkTransport::accept_once(listener).unwrap()
-        });
-
-        let client = crate::link::transport::TcpLinkTransport::connect(addr).unwrap();
-        let host = host_thread.join().unwrap();
-
-        (
-            crate::link::RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::new(
-                LinkSession::new(
-                    host,
-                    crate::link::LinkSystemType::GameBoy,
-                    crate::link::LinkEndpointId(1),
-                ),
-            )),
-            crate::link::RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::new(
-                LinkSession::new(
-                    client,
-                    crate::link::LinkSystemType::GameBoy,
-                    crate::link::LinkEndpointId(2),
-                ),
-            )),
-        )
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn tcp_link_stepper_exchanges_wonder_swan_uart_bytes_between_backends() {
-        let (mut left_link, mut right_link) = tcp_wonder_swan_link_pair();
-        let mut left = ws_backend();
-        let mut right = ws_backend();
-
-        {
-            let (EmuBackend::Ws(left), EmuBackend::Ws(right)) = (&mut left, &mut right) else {
-                panic!("expected WS backends");
-            };
-            left.emu.io_write8(0x00B3, 0x80);
-            right.emu.io_write8(0x00B3, 0x80);
-            left.emu.io_write8(0x00B1, 0x5A);
-        }
-
-        for _ in 0..50 {
-            let mut left_snapshots = Vec::new();
-            EmuThread::step_n_frames_with_tcp_link(
-                &mut left,
-                1,
-                &[],
-                Some(&mut left_link),
-                false,
-                &mut left_snapshots,
-                None,
-            );
-            let mut right_snapshots = Vec::new();
-            EmuThread::step_n_frames_with_tcp_link(
-                &mut right,
-                1,
-                &[],
-                Some(&mut right_link),
-                false,
-                &mut right_snapshots,
-                None,
-            );
-            let EmuBackend::Ws(right_ws) = &right else {
-                panic!("expected WS backend");
-            };
-            if right_ws.emu.io_peek8(0x00B3) & 0x01 != 0 {
-                break;
-            }
-            std::thread::yield_now();
-        }
-
-        let EmuBackend::Ws(right) = &right else {
-            panic!("expected WS backend");
-        };
-        assert_eq!(right.emu.io_peek8(0x00B3) & 0x01, 0x01);
-        assert_eq!(right.emu.io_peek8(0x00B1), 0x5A);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn tcp_wonder_swan_link_pair() -> (
-        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
-        crate::link::RemoteLink<crate::link::transport::TcpLinkTransport>,
-    ) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let host_thread = thread::spawn(move || {
-            crate::link::transport::TcpLinkTransport::accept_once(listener).unwrap()
-        });
-
-        let client = crate::link::transport::TcpLinkTransport::connect(addr).unwrap();
-        let host = host_thread.join().unwrap();
-
-        (
-            crate::link::RemoteLink::WonderSwan(crate::link::ws::WonderSwanRemoteLink::new(
-                LinkSession::new(
-                    host,
-                    crate::link::LinkSystemType::WonderSwan,
-                    crate::link::LinkEndpointId(1),
-                ),
-            )),
-            crate::link::RemoteLink::WonderSwan(crate::link::ws::WonderSwanRemoteLink::new(
-                LinkSession::new(
-                    client,
-                    crate::link::LinkSystemType::WonderSwan,
-                    crate::link::LinkEndpointId(2),
-                ),
-            )),
-        )
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn ws_backend() -> EmuBackend {
-        let ws = zeff_ws_core::emulator::Emulator::from_rom_data(&minimal_running_ws_rom())
-            .expect("WS emulator should initialize");
-        EmuBackend::from_ws(ws, PathBuf::from("test.ws"))
-    }
-
-    fn minimal_running_ws_rom() -> Vec<u8> {
-        let mut rom = vec![0x90; 0x10000];
-        rom[0] = 0x90;
-        rom[1] = 0xEB;
-        rom[2] = 0xFC;
-        let reset_vector = rom.len() - 16;
-        rom[reset_vector..reset_vector + 5].copy_from_slice(&[0xEA, 0x00, 0x00, 0x00, 0xF0]);
-        let footer = rom.len() - 10;
-        rom[footer] = 0x01;
-        rom[footer + 1] = 0x00;
-        rom[footer + 2] = 0x23;
-        rom[footer + 4] = 0x01;
-        let checksum = compute_footer_checksum(&rom);
-        rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
-        rom
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn gb_backend() -> EmuBackend {
-        let rom = vec![0u8; 0x8000];
-        let gb = zeff_gb_core::emulator::Emulator::new(&rom, 44_100)
-            .expect("GB emulator should initialize");
-        EmuBackend::from_gb(gb, PathBuf::from("test.gb"))
-    }
-}
+mod tests;

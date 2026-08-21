@@ -17,6 +17,10 @@ impl Emulator {
         self.bus.queue_bardigun_barcode_scan(bytes)
     }
 
+    pub fn trigger_barcode_boy_scan(&mut self, digits: &str) -> anyhow::Result<()> {
+        self.bus.trigger_barcode_boy_scan(digits)
+    }
+
     pub fn preview_game_boy_link_peer(
         &self,
         peer: &Self,
@@ -90,8 +94,8 @@ impl Emulator {
     pub fn restore_game_boy_link_replay_state(
         &mut self,
         state: zeff_emu_common::replay::ReplayGameBoyLinkState,
-    ) {
-        self.bus.restore_game_boy_link_replay_state(state);
+    ) -> bool {
+        self.bus.restore_game_boy_link_replay_state(state)
     }
 
     pub fn game_boy_link_reply_to_master_start(&self) -> crate::hardware::bus::GameBoyLinkReply {

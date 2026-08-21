@@ -38,6 +38,13 @@ impl AudioOutput {
         self.sample_rate
     }
 
+    pub(crate) fn discard_queued_samples(&mut self) {
+        self.buffer.clear();
+        self.left.clear();
+        self.right.clear();
+        self.next_play_time = self.ctx.current_time();
+    }
+
     pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
         if config.fast_forward_active && config.mute_during_fast_forward {
             self.buffer.clear();

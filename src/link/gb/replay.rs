@@ -1,4 +1,7 @@
-use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent};
+use zeff_emu_common::replay::{
+    ReplayEvent, ReplayGameBoyLinkCoordinatorOwner, ReplayGameBoyLinkCoordinatorState,
+    ReplayGameBoyLinkEvent,
+};
 use zeff_gb_core::emulator::Emulator as GameBoyEmulator;
 use zeff_gb_core::hardware::bus::{GameBoyLinkAction, GameBoyLinkReply};
 
@@ -64,6 +67,22 @@ impl GameBoyReplayLink {
         replay_start_tick: Option<u64>,
         playback_start_tick: u64,
     ) -> anyhow::Result<Self> {
+        Self::try_new_with_start(
+            events,
+            base_frame,
+            replay_start_tick,
+            playback_start_tick,
+            None,
+        )
+    }
+
+    pub(crate) fn try_new_with_start(
+        events: Vec<ReplayEvent>,
+        base_frame: u64,
+        replay_start_tick: Option<u64>,
+        playback_start_tick: u64,
+        coordinator_start_state: Option<ReplayGameBoyLinkCoordinatorState>,
+    ) -> anyhow::Result<Self> {
         let base_tick = replay_start_tick.map(|_| playback_start_tick).unwrap_or(0);
         let mut records = Vec::new();
         let mut state_records = Vec::new();
@@ -120,6 +139,10 @@ impl GameBoyReplayLink {
                 ReplayGameBoyLinkEvent::RemoteReply { .. } => reply_indices.push(index),
             }
         }
+        let pending_master_transfer = coordinator_start_state.and_then(|state| {
+            (state.owner == ReplayGameBoyLinkCoordinatorOwner::ReplayAwaitingReply)
+                .then_some(state.transfer_id)
+        });
         Ok(Self {
             events: records,
             state_events: state_records,
@@ -130,9 +153,9 @@ impl GameBoyReplayLink {
             local_master_cursor: 0,
             remote_master_cursor: 0,
             reply_cursor: 0,
-            pending_master_transfer: None,
+            pending_master_transfer,
             passive_drain_gate: None,
-            link_active: false,
+            link_active: coordinator_start_state.is_some(),
             local_master_armed: false,
             strict_local_reply_validation: false,
         })
@@ -161,7 +184,7 @@ impl GameBoyReplayLink {
         &mut self,
         emulator: &mut GameBoyEmulator,
     ) -> Result<(), LinkSessionError> {
-        self.apply_due_state_events(emulator);
+        self.apply_due_state_events(emulator)?;
         self.sync_peer_presence_for_next_event(emulator);
         self.apply_due_remote_master_starts(emulator)?;
         self.sync_peer_presence_for_next_event(emulator);
@@ -214,7 +237,10 @@ impl GameBoyReplayLink {
         }
     }
 
-    fn apply_due_state_events(&mut self, emulator: &mut GameBoyEmulator) {
+    fn apply_due_state_events(
+        &mut self,
+        emulator: &mut GameBoyEmulator,
+    ) -> Result<(), LinkSessionError> {
         for record in &mut self.state_events {
             if record.delivered
                 || record.frame > emulator.frame_count()
@@ -222,9 +248,12 @@ impl GameBoyReplayLink {
             {
                 continue;
             }
-            emulator.restore_game_boy_link_replay_state(record.state);
+            if !emulator.restore_game_boy_link_replay_state(record.state) {
+                return Err(LinkSessionError::MalformedPacketPayload);
+            }
             record.delivered = true;
         }
+        Ok(())
     }
 
     fn event_is_due(&self, emulator: &GameBoyEmulator, record: ReplayGameBoyLinkRecord) -> bool {
@@ -421,9 +450,9 @@ impl GameBoyReplayLink {
         let Some(index) = self.find_pending_reply_index(transfer_id) else {
             return Ok(());
         };
-        let event = self.events[index].event;
+        let record = self.events[index];
         self.mark_event_delivered(index);
-        self.apply_event(emulator, event)
+        self.apply_event(emulator, record.event)
     }
 
     fn apply_event(

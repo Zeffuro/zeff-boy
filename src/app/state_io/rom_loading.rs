@@ -7,6 +7,11 @@ use crate::emu_thread::{EmuCommand, EmuResponse};
 use crate::rom_archive::PendingArchiveSelection;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use zeff_emu_common::time::MachineTiming;
 use zeff_ws_core::hardware::cartridge::RomOrientation;
 
@@ -14,6 +19,71 @@ fn is_zip_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn is_native_seven_zip_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("7z"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum RomPreparationPoll {
+    Pending,
+    Complete(super::super::RomPreparationOutcome),
+    Disconnected,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn cancel_rom_preparation_slot(slot: &mut Option<super::super::PendingRomPreparation>) -> bool {
+    let Some(pending) = slot.take() else {
+        return false;
+    };
+    pending.cancel.store(true, Ordering::Release);
+    true
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn poll_rom_preparation_slot(
+    slot: &mut Option<super::super::PendingRomPreparation>,
+) -> RomPreparationPoll {
+    loop {
+        let Some(pending) = slot.as_ref() else {
+            return RomPreparationPoll::Pending;
+        };
+        match pending.receiver.try_recv() {
+            Ok(result) if result.request_id == pending.request_id => {
+                slot.take();
+                return RomPreparationPoll::Complete(result.outcome);
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                return RomPreparationPoll::Pending;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                slot.take();
+                return RomPreparationPoll::Disconnected;
+            }
+        }
+    }
+}
+
+fn automatic_symbol_loading_available(backend: &EmuBackend) -> bool {
+    backend.supports_debugger()
+}
+
+struct PreparedRomLoad {
+    source_path: PathBuf,
+    rom_path: PathBuf,
+    system: ActiveSystem,
+    auto_load_state: bool,
+    backend: EmuBackend,
+    original_crc: u32,
+}
+
+fn dismiss_archive_selection_for_new_load(slot: &mut Option<PendingArchiveSelection>) {
+    *slot = None;
 }
 
 pub(crate) fn detect_and_extract_rom(
@@ -91,13 +161,7 @@ fn detect_system_for_loaded_path(
 }
 
 impl App {
-    pub(super) fn init_backend(
-        &self,
-        system: ActiveSystem,
-        path: &Path,
-        rom_path: &Path,
-        preloaded_data: Option<Vec<u8>>,
-    ) -> anyhow::Result<(EmuBackend, u32)> {
+    fn backend_load_config(&self, system: ActiveSystem) -> BackendLoadConfig {
         #[cfg(not(target_arch = "wasm32"))]
         let configured_firmware_dir = self.settings.emulation.firmware_directory_path();
         #[cfg(not(target_arch = "wasm32"))]
@@ -111,39 +175,61 @@ impl App {
         };
         #[cfg(target_arch = "wasm32")]
         let firmware_inventory = Some(crate::platform::firmware_inventory_snapshot());
+
+        BackendLoadConfig {
+            gb_hardware_mode_preference: self.settings.emulation.hardware_mode_preference,
+            sample_rate: self.audio.as_ref().map(|audio| audio.sample_rate()),
+            apply_mods: true,
+            initial_input: Some(self.host_joypad_input_for_system(system)),
+            sega8_video_standard: self
+                .settings
+                .emulation
+                .sega8_video_standard
+                .forced_standard(),
+            sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
+            pce_console_wiring: self.settings.emulation.pce_console_wiring.forced_wiring(),
+            pce_hucard_board: None,
+            pce_cd_archive_memory_limit_mib: self
+                .settings
+                .emulation
+                .pce_cd_archive_memory_limit
+                .mib(),
+            firmware_search_dirs: self.settings.emulation.firmware_search_dirs(),
+            firmware_inventory,
+            gb_use_external_boot_rom: matches!(
+                self.settings.emulation.gb_boot_rom_mode,
+                crate::settings::GbBootRomMode::External
+            ),
+            gba_use_external_bios: matches!(
+                self.settings.emulation.gba_bios_mode,
+                crate::settings::GbaBiosMode::External
+            ),
+            sega8_use_external_boot_rom: matches!(
+                self.settings.emulation.sega_boot_rom_mode,
+                crate::settings::SegaBootRomMode::External
+            ),
+            #[cfg(test)]
+            fds_bios_override: None,
+            #[cfg(test)]
+            pce_cd_system_card_override: None,
+            #[cfg(test)]
+            pce_cd_system_card_sha256_override: None,
+        }
+    }
+
+    pub(super) fn init_backend(
+        &self,
+        system: ActiveSystem,
+        path: &Path,
+        rom_path: &Path,
+        preloaded_data: Option<Vec<u8>>,
+    ) -> anyhow::Result<(EmuBackend, u32)> {
         let loaded = load_backend_from_rom_source(
             system,
             path,
             rom_path,
             preloaded_data,
-            BackendLoadConfig {
-                gb_hardware_mode_preference: self.settings.emulation.hardware_mode_preference,
-                sample_rate: self.audio.as_ref().map(|audio| audio.sample_rate()),
-                apply_mods: true,
-                initial_input: Some(self.host_joypad_input_for_system(system)),
-                sega8_video_standard: self
-                    .settings
-                    .emulation
-                    .sega8_video_standard
-                    .forced_standard(),
-                sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
-                firmware_search_dirs: self.settings.emulation.firmware_search_dirs(),
-                firmware_inventory,
-                gb_use_external_boot_rom: matches!(
-                    self.settings.emulation.gb_boot_rom_mode,
-                    crate::settings::GbBootRomMode::External
-                ),
-                gba_use_external_bios: matches!(
-                    self.settings.emulation.gba_bios_mode,
-                    crate::settings::GbaBiosMode::External
-                ),
-                sega8_use_external_boot_rom: matches!(
-                    self.settings.emulation.sega_boot_rom_mode,
-                    crate::settings::SegaBootRomMode::External
-                ),
-                #[cfg(test)]
-                fds_bios_override: None,
-            },
+            self.backend_load_config(system),
         )?;
         Ok((loaded.backend, loaded.original_crc32))
     }
@@ -156,8 +242,38 @@ impl App {
         system: ActiveSystem,
         auto_load_state: bool,
     ) {
+        let (backend, original_crc) =
+            match self.init_backend(system, source_path, &rom_path, preloaded_data) {
+                Ok(result) => result,
+                Err(e) => {
+                    log::error!("Failed to load ROM '{}': {}", source_path.display(), e);
+                    self.toast_manager.error(format!("Failed to load ROM: {e}"));
+                    return;
+                }
+            };
+        self.commit_prepared_rom(PreparedRomLoad {
+            source_path: source_path.to_path_buf(),
+            rom_path,
+            system,
+            auto_load_state,
+            backend,
+            original_crc,
+        });
+    }
+
+    fn commit_prepared_rom(&mut self, prepared: PreparedRomLoad) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.release_pce_mouse(false);
+        let PreparedRomLoad {
+            source_path,
+            rom_path,
+            system,
+            auto_load_state,
+            backend,
+            original_crc,
+        } = prepared;
         let is_same_rom_reset = !auto_load_state
-            && self.rom_info.source_path.as_deref() == Some(source_path)
+            && self.rom_info.source_path.as_deref() == Some(source_path.as_path())
             && self.rom_info.rom_path.as_deref() == Some(rom_path.as_path());
         let previous_audio_context = self
             .emu_thread
@@ -168,6 +284,9 @@ impl App {
             self.tcp_link_active = false;
         }
         self.stop_emu_thread();
+        if let Some(audio) = &mut self.audio {
+            audio.discard_queued_samples();
+        }
         self.stop_camera_capture();
         self.media_slot_snapshot = None;
         self.recording.pending_media_commands.clear();
@@ -184,17 +303,6 @@ impl App {
         self.debug_windows.last_disasm_mapping = None;
         self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
-
-        let (backend, original_crc) =
-            match self.init_backend(system, source_path, &rom_path, preloaded_data) {
-                Ok(result) => result,
-                Err(e) => {
-                    self.stop_audio_recording();
-                    log::error!("Failed to load ROM '{}': {}", source_path.display(), e);
-                    self.toast_manager.error(format!("Failed to load ROM: {e}"));
-                    return;
-                }
-            };
 
         if self.recording.audio_recorder.is_some() {
             let next_audio_context = backend.audio_topology().map(|topology| {
@@ -235,11 +343,18 @@ impl App {
 
         self.spawn_emu_thread(backend);
 
-        self.settings.add_recent_rom(source_path);
+        self.settings.add_recent_rom(&source_path);
         self.settings.save();
-        self.toast_manager.info(format!("Loaded {rom_name}"));
+        if is_same_rom_reset {
+            self.toast_manager.success("Game reset");
+        } else {
+            self.toast_manager.info(format!("Loaded {rom_name}"));
+        }
 
-        if auto_load_state && self.settings.emulation.auto_save_state {
+        if auto_load_state
+            && self.settings.emulation.auto_save_state
+            && self.core_supports_save_states()
+        {
             if let Some(thread) = &self.emu_thread {
                 let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
                 thread.send(EmuCommand::AutoLoadState {
@@ -270,7 +385,159 @@ impl App {
         self.refresh_slot_info();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn cancel_pending_rom_preparation(&mut self, notify: bool) {
+        if cancel_rom_preparation_slot(&mut self.pending_rom_preparation) && notify {
+            self.toast_manager.info("Archive load canceled");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin_seven_zip_preparation(
+        &mut self,
+        source_path: &Path,
+        selected_entry_index: Option<usize>,
+        expected_rom_path: Option<PathBuf>,
+        auto_load_state: bool,
+    ) {
+        self.cancel_pending_rom_preparation(false);
+        let request_id = self.next_rom_preparation_id;
+        self.next_rom_preparation_id = self.next_rom_preparation_id.wrapping_add(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress =
+            Arc::new(crate::emu_backend::pce_cd_archive::PceCdPackageProgress::default());
+        let mut config = self.backend_load_config(ActiveSystem::Pce);
+        config.initial_input = None;
+        let source_path = source_path.to_path_buf();
+        let worker_source_path = source_path.clone();
+        let worker_cancel = Arc::clone(&cancel);
+        let worker_progress = Arc::clone(&progress);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("zeff-seven-zip-load".to_owned())
+            .spawn(move || {
+                let result = crate::emu_backend::loader::prepare_seven_zip_backend(
+                    &worker_source_path,
+                    selected_entry_index,
+                    expected_rom_path.as_deref(),
+                    &config,
+                    &worker_cancel,
+                    &worker_progress,
+                );
+                let outcome = if worker_cancel.load(Ordering::Acquire) {
+                    super::super::RomPreparationOutcome::Cancelled
+                } else {
+                    match result {
+                        Ok(crate::emu_backend::loader::PreparedSevenZipBackend::Ready {
+                            rom_path,
+                            system,
+                            loaded,
+                        }) => super::super::RomPreparationOutcome::Ready {
+                            source_path: worker_source_path,
+                            rom_path,
+                            system,
+                            auto_load_state,
+                            loaded,
+                        },
+                        Ok(crate::emu_backend::loader::PreparedSevenZipBackend::Selection(
+                            entries,
+                        )) => super::super::RomPreparationOutcome::ArchiveSelection {
+                            source_path: worker_source_path,
+                            entries,
+                        },
+                        Err(error) => {
+                            super::super::RomPreparationOutcome::Failed(format!("{error:#}"))
+                        }
+                    }
+                };
+                let _ = sender.send(super::super::RomPreparationResult {
+                    request_id,
+                    outcome,
+                });
+            });
+        match worker {
+            Ok(_) => {
+                self.pending_rom_preparation = Some(super::super::PendingRomPreparation {
+                    request_id,
+                    source_path,
+                    started_at: std::time::Instant::now(),
+                    cancel,
+                    progress,
+                    receiver,
+                });
+            }
+            Err(error) => {
+                self.toast_manager
+                    .error(format!("Couldn't start archive loader: {error}"));
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn poll_rom_preparation(&mut self) {
+        let outcome = match poll_rom_preparation_slot(&mut self.pending_rom_preparation) {
+            RomPreparationPoll::Pending => return,
+            RomPreparationPoll::Complete(outcome) => outcome,
+            RomPreparationPoll::Disconnected => {
+                self.toast_manager
+                    .error("Archive loader stopped unexpectedly");
+                return;
+            }
+        };
+        match outcome {
+            super::super::RomPreparationOutcome::Ready {
+                source_path,
+                rom_path,
+                system,
+                auto_load_state,
+                mut loaded,
+            } => {
+                let sample_rate = self
+                    .audio
+                    .as_ref()
+                    .map_or(crate::audio::DEFAULT_AUDIO_SAMPLE_RATE, |audio| {
+                        audio.sample_rate()
+                    });
+                loaded.backend.set_sample_rate(sample_rate);
+                let (buttons, dpad) = self.host_joypad_input_for_system(system);
+                loaded.backend.set_input(buttons, dpad);
+                self.commit_prepared_rom(PreparedRomLoad {
+                    source_path,
+                    rom_path,
+                    system,
+                    auto_load_state,
+                    backend: loaded.backend,
+                    original_crc: loaded.original_crc32,
+                });
+            }
+            super::super::RomPreparationOutcome::ArchiveSelection {
+                source_path,
+                entries,
+            } => {
+                self.pending_archive_selection = Some(PendingArchiveSelection {
+                    archive_path: source_path,
+                    entries,
+                });
+                self.toast_manager
+                    .info("Archive contains multiple ROMs; choose one to load");
+            }
+            super::super::RomPreparationOutcome::Failed(error) => {
+                log::error!("Failed to load archive: {error}");
+                self.toast_manager
+                    .error(format!("Failed to load archive: {error}"));
+            }
+            super::super::RomPreparationOutcome::Cancelled => {}
+        }
+    }
+
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_native_seven_zip_path(path) {
+            self.begin_seven_zip_preparation(path, None, None, auto_load_state);
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cancel_pending_rom_preparation(false);
         let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
             Ok(result) => result,
             Err(e) => {
@@ -296,6 +563,18 @@ impl App {
         entry_index: usize,
         auto_load_state: bool,
     ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_native_seven_zip_path(archive_path) {
+            self.begin_seven_zip_preparation(
+                archive_path,
+                Some(entry_index),
+                None,
+                auto_load_state,
+            );
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cancel_pending_rom_preparation(false);
         let (rom_path, preloaded_data, system) =
             match detect_and_extract_archive_entry(archive_path, entry_index) {
                 Ok(result) => result,
@@ -322,6 +601,18 @@ impl App {
         virtual_rom_path: &Path,
         auto_load_state: bool,
     ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_native_seven_zip_path(archive_path) {
+            self.begin_seven_zip_preparation(
+                archive_path,
+                None,
+                Some(virtual_rom_path.to_path_buf()),
+                auto_load_state,
+            );
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cancel_pending_rom_preparation(false);
         let (rom_path, preloaded_data, system) =
             match detect_and_extract_archive_entry_path(archive_path, virtual_rom_path) {
                 Ok(result) => result,
@@ -343,6 +634,9 @@ impl App {
     }
 
     pub(in crate::app) fn load_rom(&mut self, path: &Path) {
+        dismiss_archive_selection_for_new_load(&mut self.pending_archive_selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cancel_pending_rom_preparation(false);
         if self.begin_archive_selection_if_needed(path) {
             return;
         }
@@ -355,6 +649,12 @@ impl App {
             return;
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_native_seven_zip_path(&path) {
+            self.begin_seven_zip_preparation(&path, None, self.rom_info.rom_path.clone(), false);
+            return;
+        }
+
         if is_zip_path(&path)
             && let Some(rom_path) = self.rom_info.rom_path.clone()
             && rom_path != path
@@ -363,18 +663,29 @@ impl App {
         } else {
             self.load_rom_with_options(&path, false);
         }
-        self.toast_manager.success("Game reset");
     }
 
     pub(in crate::app) fn stop_game(&mut self) {
-        if self.rom_info.rom_path.is_none() && self.emu_thread.is_none() {
+        #[cfg(not(target_arch = "wasm32"))]
+        let preparation_pending = self.pending_rom_preparation.is_some();
+        #[cfg(target_arch = "wasm32")]
+        let preparation_pending = false;
+        if self.rom_info.rom_path.is_none() && self.emu_thread.is_none() && !preparation_pending {
             self.toast_manager.info("No ROM loaded");
             return;
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cancel_pending_rom_preparation(false);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.release_pce_mouse(false);
+
         self.save_current_cheats();
 
         self.stop_emu_thread();
+        if let Some(audio) = &mut self.audio {
+            audio.discard_queued_samples();
+        }
         self.stop_audio_recording();
         self.stop_camera_capture();
         #[cfg(not(target_arch = "wasm32"))]
@@ -450,7 +761,7 @@ impl App {
                 dialog = dialog.add_filter(spec.file_dialog_filter_name, spec.rom_extensions);
             }
             let file = dialog
-                .add_filter("ZIP Archives", archive_extensions())
+                .add_filter("Archives", archive_extensions())
                 .add_filter("All files", &["*"])
                 .set_title("Open ROM")
                 .pick_file();
@@ -511,7 +822,11 @@ impl App {
         self.start_symbol_load(backend);
         #[cfg(target_arch = "wasm32")]
         {
-            self.symbols = crate::symbols::SymbolSession::load_for_backend(backend);
+            self.symbols = if automatic_symbol_loading_available(backend) {
+                crate::symbols::SymbolSession::load_for_backend(backend)
+            } else {
+                crate::symbols::SymbolSession::default()
+            };
         }
         self.active_system = system;
         self.ws_display_rotated = backend
@@ -542,6 +857,7 @@ impl App {
             backend.rom_path().to_path_buf(),
             backend.source_path().to_path_buf(),
             backend.rom_hash(),
+            automatic_symbol_loading_available(backend),
         );
     }
 
@@ -552,7 +868,13 @@ impl App {
         rom_path: PathBuf,
         source_path: PathBuf,
         rom_hash: [u8; 32],
+        supports_debugger: bool,
     ) {
+        if !supports_debugger {
+            self.pending_symbol_load = None;
+            self.symbols = crate::symbols::SymbolSession::default();
+            return;
+        }
         self.start_symbol_load_request(system, rom_path, source_path, rom_hash, None);
     }
 
@@ -617,6 +939,11 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(in crate::app) fn open_symbol_file_dialog(&mut self) {
+        if !self.core_supports_debugger() {
+            self.pending_symbol_load = None;
+            self.symbols = crate::symbols::SymbolSession::default();
+            return;
+        }
         let (Some(rom_path), Some(source_path), Some(rom_hash)) = (
             self.rom_info.rom_path.clone(),
             self.rom_info.source_path.clone(),
@@ -683,5 +1010,137 @@ impl App {
             self.toast_manager
                 .info(format!("Symbol load skipped: {diagnostic}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RomPreparationPoll, automatic_symbol_loading_available, cancel_rom_preparation_slot,
+        dismiss_archive_selection_for_new_load, is_native_seven_zip_path,
+        poll_rom_preparation_slot,
+    };
+    use crate::emu_backend::{EmuBackend, PceBackend};
+    use std::path::PathBuf;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+
+    fn pending_preparation(
+        request_id: u64,
+        cancel: Arc<AtomicBool>,
+        receiver: mpsc::Receiver<super::super::super::RomPreparationResult>,
+    ) -> super::super::super::PendingRomPreparation {
+        super::super::super::PendingRomPreparation {
+            request_id,
+            source_path: PathBuf::from("disc.7z"),
+            started_at: std::time::Instant::now(),
+            cancel,
+            progress: Arc::new(crate::emu_backend::pce_cd_archive::PceCdPackageProgress::default()),
+            receiver,
+        }
+    }
+
+    #[test]
+    fn pce_debugger_capability_disables_automatic_symbol_loading() {
+        let mut rom = vec![0xEA; 0x2000];
+        rom[..4].copy_from_slice(&[0xD4, 0xEA, 0x80, 0xFD]);
+        rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
+        let backend =
+            EmuBackend::from_pce(PceBackend::new(rom, PathBuf::from("symbols.pce")).unwrap());
+
+        assert!(!automatic_symbol_loading_available(&backend));
+    }
+
+    #[test]
+    fn native_seven_zip_route_is_separate_from_system_detection() {
+        assert!(is_native_seven_zip_path(&PathBuf::from("games.7Z")));
+        assert_eq!(
+            crate::emu_backend::ActiveSystem::from_path(&PathBuf::from("disc.7z")),
+            None
+        );
+    }
+
+    #[test]
+    fn newer_top_level_load_dismisses_an_open_zip_chooser() {
+        let mut selection = Some(crate::rom_archive::PendingArchiveSelection {
+            archive_path: PathBuf::from("older.zip"),
+            entries: Vec::new(),
+        });
+
+        dismiss_archive_selection_for_new_load(&mut selection);
+
+        assert!(selection.is_none());
+    }
+
+    #[test]
+    fn replacing_or_stopping_preparation_cancels_and_drops_its_receiver() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = mpsc::channel();
+        let mut slot = Some(pending_preparation(3, Arc::clone(&cancel), receiver));
+
+        assert!(cancel_rom_preparation_slot(&mut slot));
+        assert!(cancel.load(Ordering::Acquire));
+        assert!(slot.is_none());
+        assert!(
+            sender
+                .send(super::super::super::RomPreparationResult {
+                    request_id: 3,
+                    outcome: super::super::super::RomPreparationOutcome::Cancelled,
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn coordinator_drops_stale_results_and_delivers_current_once() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = mpsc::channel();
+        let mut slot = Some(pending_preparation(8, cancel, receiver));
+        sender
+            .send(super::super::super::RomPreparationResult {
+                request_id: 7,
+                outcome: super::super::super::RomPreparationOutcome::Failed("stale".to_owned()),
+            })
+            .unwrap();
+        sender
+            .send(super::super::super::RomPreparationResult {
+                request_id: 8,
+                outcome: super::super::super::RomPreparationOutcome::Cancelled,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            poll_rom_preparation_slot(&mut slot),
+            RomPreparationPoll::Complete(super::super::super::RomPreparationOutcome::Cancelled)
+        ));
+        assert!(slot.is_none());
+        assert!(matches!(
+            poll_rom_preparation_slot(&mut slot),
+            RomPreparationPoll::Pending
+        ));
+    }
+
+    #[test]
+    fn failed_preparation_is_reported_without_a_commit_payload() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = mpsc::channel();
+        let mut slot = Some(pending_preparation(11, cancel, receiver));
+        sender
+            .send(super::super::super::RomPreparationResult {
+                request_id: 11,
+                outcome: super::super::super::RomPreparationOutcome::Failed("broken".to_owned()),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            poll_rom_preparation_slot(&mut slot),
+            RomPreparationPoll::Complete(super::super::super::RomPreparationOutcome::Failed(
+                error
+            )) if error == "broken"
+        ));
+        assert!(slot.is_none());
     }
 }

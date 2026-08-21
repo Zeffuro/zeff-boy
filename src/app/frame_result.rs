@@ -48,7 +48,7 @@ impl App {
                 Some(resp) => resp,
                 None => continue,
             };
-            let resp = match self.consume_bardigun_response(resp) {
+            let resp = match self.consume_serial_device_response(resp) {
                 Some(resp) => resp,
                 None => continue,
             };
@@ -138,6 +138,17 @@ impl App {
 
     pub(super) fn process_frame_result(&mut self, mut result: FrameResult) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
+        if let Some(fault) = result.runtime_fault.take() {
+            log::error!("Emulation stopped: {fault}");
+            self.speed.paused = true;
+            self.rewind.held = false;
+            if let Some(thread) = &self.emu_thread {
+                thread.send(crate::emu_thread::EmuCommand::SetUncapped(false));
+            }
+            self.toast_manager.set_paused(true);
+            self.toast_manager
+                .error(format!("Emulation stopped: {fault}"));
+        }
         self.record_replay_events(result.replay_events);
         self.commit_replay_batch(result.advanced_frames);
         #[cfg(not(target_arch = "wasm32"))]
@@ -165,7 +176,7 @@ impl App {
         let printout_count = self
             .debug_windows
             .printer
-            .append(std::mem::take(&mut result.game_boy_printer_images));
+            .append(std::mem::take(&mut result.game_boy_printer_jobs));
         if printout_count != 0 {
             self.show_printer_window = true;
             #[cfg(not(target_arch = "wasm32"))]

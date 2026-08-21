@@ -27,6 +27,8 @@ pub(crate) struct RenderSettings {
     pub(crate) dmg_palette_preset: crate::settings::DmgPalettePreset,
     pub(crate) nes_palette_mode: crate::settings::NesPaletteMode,
     pub(crate) nes_custom_palette: Option<zeff_nes_core::hardware::ppu::NesPalette>,
+    pub(crate) pce_overscan_mode: crate::settings::PceOverscanMode,
+    pub(crate) pce_palette_mode: crate::settings::PcePaletteMode,
     pub(crate) sgb_border_enabled: bool,
 }
 
@@ -72,6 +74,14 @@ pub(crate) struct JoypadInput {
     pub(crate) dpad: u8,
     pub(crate) buttons_p2: u8,
     pub(crate) dpad_p2: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PceMouseInput {
+    pub(crate) mode: zeff_pce_core::hardware::PceControllerMode,
+    pub(crate) delta_x: i16,
+    pub(crate) delta_y: i16,
+    pub(crate) buttons: u8,
 }
 
 pub(crate) type ReplayJoypadFrame = zeff_emu_common::replay::ReplayJoypadFrame;
@@ -134,6 +144,7 @@ pub(crate) struct FrameInput {
     pub(crate) host_tilt: (f32, f32),
     pub(crate) host_camera_frame: Option<Vec<u8>>,
     pub(crate) joypad: JoypadInput,
+    pub(crate) pce_mouse: PceMouseInput,
     pub(crate) zapper: ZapperInput,
     pub(crate) debug_step: bool,
     pub(crate) debug_continue: bool,
@@ -148,15 +159,17 @@ pub(crate) struct FrameInput {
 
 pub(crate) struct FrameResult {
     pub(crate) advanced_frames: usize,
+    pub(crate) delivery_merged: bool,
     pub(crate) replay_events: Vec<zeff_emu_common::replay::ReplayEvent>,
     pub(crate) replay_error: Option<String>,
+    pub(crate) runtime_fault: Option<String>,
     pub(crate) rumble: bool,
     pub(crate) audio_samples: Vec<f32>,
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) is_pocket_camera: bool,
     pub(crate) game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
-    pub(crate) game_boy_printer_images: Vec<GameBoyPrinterImage>,
+    pub(crate) game_boy_printer_jobs: Vec<zeff_gb_core::hardware::GameBoyPrinterJob>,
     pub(crate) media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
     pub(crate) rewind_fill: f32,
     pub(crate) audio_semantic_frames: Vec<crate::audio_tooling::AudioSemanticFrame>,
@@ -164,11 +177,31 @@ pub(crate) struct FrameResult {
         Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GameBoyPrinterImage {
-    pub(crate) width: usize,
-    pub(crate) height: usize,
-    pub(crate) rgba: Vec<u8>,
+#[derive(Default)]
+pub(crate) struct WorkerRuntimeFault {
+    faulted: bool,
+    pending_delivery: Option<String>,
+}
+
+impl WorkerRuntimeFault {
+    pub(crate) fn can_step(&self) -> bool {
+        !self.faulted
+    }
+
+    pub(crate) fn latch(&mut self, fault: Option<String>) -> bool {
+        let Some(fault) = fault else {
+            return false;
+        };
+        self.faulted = true;
+        if self.pending_delivery.is_none() {
+            self.pending_delivery = Some(fault);
+        }
+        true
+    }
+
+    pub(crate) fn take_pending_delivery(&mut self) -> Option<String> {
+        self.pending_delivery.take()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -216,6 +249,8 @@ pub(crate) enum EmuCommand {
         dpad_pressed: u8,
         replay_events: Option<Vec<zeff_emu_common::replay::ReplayEvent>>,
         game_boy_link_start_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+        game_boy_link_coordinator_start_state:
+            Option<zeff_emu_common::replay::ReplayGameBoyLinkCoordinatorState>,
         game_boy_link_start_tick: Option<u64>,
         wonder_swan_link_start_tick: Option<u64>,
     },
@@ -224,6 +259,7 @@ pub(crate) enum EmuCommand {
     ApplyMediaEvent(zeff_emu_common::media::MediaEvent),
     SetGameBoySerialDevice(zeff_gb_core::hardware::GameBoySerialDevice),
     QueueBardigunBarcodeScan(Vec<u8>),
+    TriggerBarcodeBoyScan(String),
     RestoreGameBoyLinkState(zeff_emu_common::replay::ReplayGameBoyLinkState),
     UpdateCheats(Vec<crate::cheats::CheatPatch>),
     #[cfg(not(target_arch = "wasm32"))]
@@ -288,6 +324,8 @@ pub(crate) enum EmuResponse {
     },
     BardigunBarcodeScanStarted(usize),
     BardigunBarcodeScanFailed(String),
+    BarcodeBoyScanStarted,
+    BarcodeBoyScanFailed(String),
     #[cfg(not(target_arch = "wasm32"))]
     LinkPending(String),
     #[cfg(not(target_arch = "wasm32"))]
@@ -341,5 +379,18 @@ mod tests {
 
         let stored = shared_fb.load_full().expect("framebuffer should be stored");
         assert_eq!(&**stored, &[5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn runtime_fault_is_one_shot_but_keeps_worker_faulted() {
+        let mut fault = WorkerRuntimeFault::default();
+        assert!(fault.can_step());
+
+        assert!(fault.latch(Some("first".to_string())));
+        assert!(fault.latch(Some("second".to_string())));
+        assert!(!fault.can_step());
+        assert_eq!(fault.take_pending_delivery().as_deref(), Some("first"));
+        assert_eq!(fault.take_pending_delivery(), None);
+        assert!(!fault.can_step());
     }
 }

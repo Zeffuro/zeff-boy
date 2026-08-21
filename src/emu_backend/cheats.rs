@@ -3,6 +3,9 @@ use crate::cheats::CheatPatch;
 
 impl EmuBackend {
     pub(crate) fn install_rom_patches(&mut self, cheats: &[CheatPatch]) {
+        if !self.supports_cheats() {
+            return;
+        }
         match self {
             Self::Gb(gb) => {
                 gb.emu.clear_rom_patches();
@@ -26,6 +29,7 @@ impl EmuBackend {
                     }
                 }
             }
+            Self::Pce(_) => {}
             Self::Sega8(sega8) => {
                 sega8.emu.clear_rom_patches();
                 for patch in cheats.iter().copied() {
@@ -39,6 +43,9 @@ impl EmuBackend {
     }
 
     pub(crate) fn apply_ram_cheats(&mut self, cheats: &[CheatPatch]) {
+        if !self.supports_cheats() {
+            return;
+        }
         match self {
             Self::Gb(gb) => {
                 zeff_emu_common::cheats::apply_ram_cheats_16(&mut gb.emu, cheats);
@@ -49,6 +56,7 @@ impl EmuBackend {
             Self::Nes(nes) => {
                 zeff_emu_common::cheats::apply_ram_cheats_16(&mut nes.emu, cheats);
             }
+            Self::Pce(_) => {}
             Self::Sega8(sega8) => {
                 zeff_emu_common::cheats::apply_ram_cheats_16(&mut sega8.emu, cheats);
             }

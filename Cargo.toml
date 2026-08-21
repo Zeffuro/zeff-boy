@@ -6,6 +6,7 @@ members = [
     "crates/zeff-gb-core",
     "crates/zeff-gba-core",
     "crates/zeff-nes-core",
+    "crates/zeff-pce-core",
     "crates/zeff-sega8-core",
     "crates/zeff-ws-core",
     "crates/zeff-libretro",
@@ -26,7 +27,7 @@ version = "0.2.0"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
-description = "A Game Boy, Game Boy Color, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust."
+description = "A Game Boy, Game Boy Color, Game Boy Advance, NES, PC Engine, WonderSwan, and Sega 8-bit emulator written in Rust."
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
@@ -35,6 +36,7 @@ zeff-firmware = { path = "crates/zeff-firmware" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }
+zeff-pce-core = { path = "crates/zeff-pce-core" }
 zeff-sega8-core = { path = "crates/zeff-sega8-core" }
 zeff-ws-core = { path = "crates/zeff-ws-core" }
 anyhow = "1.0.104"
@@ -46,6 +48,7 @@ egui = "0.35.0"
 egui-wgpu = "0.35.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.11.0"
 rtrb = "0.3.4"
 arc-swap = "1.9.2"
 egui_dock = { version = "0.20.1", features = ["serde"] }
@@ -75,6 +78,7 @@ rubato = "4.0.0"
 crossbeam-channel = "0.5.16"
 open = "5.4.0"
 chrono = "0.4.45"
+sevenz-rust2 = { version = "0.21.5", path = "third_party/sevenz-rust2", default-features = false }
 ureq = "3.3.0"
 vorbis-encoder = { version = "0.1.4", optional = true }
 nokhwa = { version = "0.10.11", optional = true, default-features = false, features = ["input-native"] }
@@ -88,6 +92,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 gimli = { version = "0.34.0", default-features = false, features = ["write", "std"] }
 object = { version = "0.39.1", default-features = false, features = ["write", "elf", "std"] }
+sevenz-rust2 = { version = "0.21.5", path = "third_party/sevenz-rust2", default-features = false, features = ["compress"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.126"
@@ -110,6 +115,12 @@ web-time = "1"
 
 [profile.dev]
 opt-level = 1
+debug = 1
+incremental = false
+
+[profile.test]
+inherits = "dev"
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 3

@@ -55,6 +55,9 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(headless_opts) = args.headless {
         let rom_path_arg = args.rom_path.context("--headless requires a ROM path")?;
+        if app::is_native_seven_zip_path(Path::new(&rom_path_arg)) {
+            anyhow::bail!("7z archives are not supported in headless mode");
+        }
         return cli::run_headless(
             Path::new(&rom_path_arg),
             settings.emulation.hardware_mode_preference,
@@ -63,12 +66,13 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let backend = args
-        .rom_path
-        .map(|rom_path_arg| create_backend(&rom_path_arg, &settings))
-        .transpose()?;
+    let (backend, deferred_initial_rom_load) = match args.rom_path {
+        Some(path) if app::is_native_seven_zip_path(Path::new(&path)) => (None, Some(path.into())),
+        Some(path) => (Some(create_backend(&path, &settings)?), None),
+        None => (None, None),
+    };
 
-    app::run(backend, settings)?;
+    app::run(backend, settings, deferred_initial_rom_load)?;
 
     Ok(())
 }
@@ -86,6 +90,7 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             gb_hardware_mode_preference: settings.emulation.hardware_mode_preference,
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),
+            pce_console_wiring: settings.emulation.pce_console_wiring.forced_wiring(),
             firmware_search_dirs: settings.emulation.firmware_search_dirs(),
             gb_use_external_boot_rom: matches!(
                 settings.emulation.gb_boot_rom_mode,

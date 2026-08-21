@@ -132,7 +132,7 @@ fn validate_replay_input_devices(
     if player.uses_zapper_input() && backend.system() != ActiveSystem::Nes {
         anyhow::bail!("replay contains NES Zapper input but current ROM is not a NES game");
     }
-    if player.uses_game_boy_link_events() && backend.system() != ActiveSystem::GameBoy {
+    if player.uses_game_boy_link() && backend.system() != ActiveSystem::GameBoy {
         anyhow::bail!("replay contains Game Boy link events but current ROM is not a GB/GBC game");
     }
     if player.uses_wonder_swan_link_events() && backend.system() != ActiveSystem::WonderSwan {

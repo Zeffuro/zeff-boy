@@ -9,6 +9,7 @@ pub(crate) enum AudioVoiceClass {
     Noise,
     Pcm,
     Wavetable,
+    WavetableNoise,
     Other,
 }
 

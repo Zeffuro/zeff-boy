@@ -1,6 +1,132 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PceSystemCardRegion {
+    Japan,
+    Usa,
+}
+
+impl PceSystemCardRegion {
+    pub const fn catalog_name(self) -> &'static str {
+        match self {
+            Self::Japan => "japan",
+            Self::Usa => "usa",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PceSystemCardTier {
+    Version1,
+    Version2,
+    Version3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PceSystemCardBoard {
+    OriginalCdRom2,
+    SuperCdRom2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PceSystemCardFirmware {
+    variant_id: &'static str,
+    region: PceSystemCardRegion,
+    tier: PceSystemCardTier,
+    board: PceSystemCardBoard,
+}
+
+impl PceSystemCardFirmware {
+    pub const fn variant_id(self) -> &'static str {
+        self.variant_id
+    }
+
+    pub const fn region(self) -> PceSystemCardRegion {
+        self.region
+    }
+
+    pub const fn tier(self) -> PceSystemCardTier {
+        self.tier
+    }
+
+    pub const fn board(self) -> PceSystemCardBoard {
+        self.board
+    }
+}
+
+pub const PCE_SYSTEM_CARD_V1_JAPAN_SHA256: [u8; 32] =
+    decode_sha256(b"afe9f27f91ac918348555b86298b4f984643eafa2773196f2c5441ea84f0c3bb");
+pub const PCE_SYSTEM_CARD_V2_JAPAN_SHA256: [u8; 32] =
+    decode_sha256(b"0deb13845c7e44ea78a25bbbe324afd60a0ec29ea5a4cf5780349f1598d24cd3");
+pub const PCE_SYSTEM_CARD_V2_USA_SHA256: [u8; 32] =
+    decode_sha256(b"edba5be43803b180e1d64ca678c3f8bdbf07180c9e2a65a5db69ad635951e6cc");
+pub const PCE_SYSTEM_CARD_V3_JAPAN_SHA256: [u8; 32] =
+    decode_sha256(b"e11527b3b96ce112a037138988ca72fd117a6b0779c2480d9e03eaebece3d9ce");
+pub const PCE_SYSTEM_CARD_V3_USA_SHA256: [u8; 32] =
+    decode_sha256(b"cadac2725711b3c442bcf237b02f5a5210c96f17625c35fa58f009e0ed39e4db");
+
+pub fn classify_pce_system_card_sha256(sha256: [u8; 32]) -> Option<PceSystemCardFirmware> {
+    let (variant_id, region, tier, board) = match sha256 {
+        PCE_SYSTEM_CARD_V1_JAPAN_SHA256 => (
+            "nec.pce.cd.system_card.v1",
+            PceSystemCardRegion::Japan,
+            PceSystemCardTier::Version1,
+            PceSystemCardBoard::OriginalCdRom2,
+        ),
+        PCE_SYSTEM_CARD_V2_JAPAN_SHA256 => (
+            "nec.pce.cd.system_card.v2",
+            PceSystemCardRegion::Japan,
+            PceSystemCardTier::Version2,
+            PceSystemCardBoard::OriginalCdRom2,
+        ),
+        PCE_SYSTEM_CARD_V2_USA_SHA256 => (
+            "nec.pce.cd.system_card.v2u",
+            PceSystemCardRegion::Usa,
+            PceSystemCardTier::Version2,
+            PceSystemCardBoard::OriginalCdRom2,
+        ),
+        PCE_SYSTEM_CARD_V3_JAPAN_SHA256 => (
+            "nec.pce.cd.system_card.v3",
+            PceSystemCardRegion::Japan,
+            PceSystemCardTier::Version3,
+            PceSystemCardBoard::SuperCdRom2,
+        ),
+        PCE_SYSTEM_CARD_V3_USA_SHA256 => (
+            "nec.pce.cd.system_card.v3u",
+            PceSystemCardRegion::Usa,
+            PceSystemCardTier::Version3,
+            PceSystemCardBoard::SuperCdRom2,
+        ),
+        _ => return None,
+    };
+    Some(PceSystemCardFirmware {
+        variant_id,
+        region,
+        tier,
+        board,
+    })
+}
+
+const fn decode_sha256(hex: &[u8; 64]) -> [u8; 32] {
+    let mut output = [0; 32];
+    let mut index = 0;
+    while index < output.len() {
+        output[index] =
+            (decode_hex_digit(hex[index * 2]) << 4) | decode_hex_digit(hex[index * 2 + 1]);
+        index += 1;
+    }
+    output
+}
+
+const fn decode_hex_digit(value: u8) -> u8 {
+    match value {
+        b'0'..=b'9' => value - b'0',
+        b'a'..=b'f' => value - b'a' + 10,
+        _ => panic!("invalid hexadecimal digest"),
+    }
+}
+
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FirmwareId(pub String);
@@ -250,6 +376,28 @@ pub fn firmware_plan_for_famicom_disk_system() -> Vec<FirmwareRequest> {
     ]
 }
 
+pub fn firmware_plan_for_pce_cdrom2() -> Vec<FirmwareRequest> {
+    firmware_plan_for_pce_cdrom2_region("usa")
+}
+
+pub fn firmware_plan_for_pce_cdrom2_region(region: &'static str) -> Vec<FirmwareRequest> {
+    let preferred = if region == "japan" {
+        "nec.pce.cd.system_card.v3"
+    } else {
+        "nec.pce.cd.system_card.v3u"
+    };
+    vec![
+        FirmwareRequest::new(
+            "nec.pce.cd.system_card",
+            RequirementLevel::Required,
+            FallbackKind::None,
+            FirmwareDependency::RuntimeMapped,
+        )
+        .with_region(region)
+        .with_preferred_variant(preferred),
+    ]
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExistingCoreSystem {
     GameBoy,
@@ -456,19 +604,83 @@ const CATALOG_SPECS: &[FirmwareSpec] = &[
         display_name: "PC Engine CD System Card",
         system: "PC Engine / TurboGrafx-CD",
         purpose: "CD-ROM System Card",
-        variants: &[FirmwareVariantSpec {
-            id: "nec.pce.cd.system_card.v3",
-            display_name: "PC Engine CD System Card v3",
-            region: "any",
-            model: Some("v3"),
-            filenames: &["syscard3.pce"],
-            size: SizeRule::Exact(262_144),
-            hashes: KnownHashes {
-                md5: Some("38179df8f4ac870017db21ebcbf53114"),
-                sha1: None,
-                sha256: None,
+        variants: &[
+            FirmwareVariantSpec {
+                id: "nec.pce.cd.system_card.v1",
+                display_name: "PC Engine CD System Card v1",
+                region: "japan",
+                model: Some("v1"),
+                filenames: &["syscard1.pce"],
+                size: SizeRule::Exact(262_144),
+                hashes: KnownHashes {
+                    md5: Some("2b7ccb3d86baa18f6402c176f3065082"),
+                    sha1: None,
+                    sha256: Some(
+                        "afe9f27f91ac918348555b86298b4f984643eafa2773196f2c5441ea84f0c3bb",
+                    ),
+                },
             },
-        }],
+            FirmwareVariantSpec {
+                id: "nec.pce.cd.system_card.v2",
+                display_name: "PC Engine CD System Card v2",
+                region: "japan",
+                model: Some("v2"),
+                filenames: &["syscard2.pce"],
+                size: SizeRule::Exact(262_144),
+                hashes: KnownHashes {
+                    md5: Some("3cdd6614a918616bfc41c862e889dd79"),
+                    sha1: None,
+                    sha256: Some(
+                        "0deb13845c7e44ea78a25bbbe324afd60a0ec29ea5a4cf5780349f1598d24cd3",
+                    ),
+                },
+            },
+            FirmwareVariantSpec {
+                id: "nec.pce.cd.system_card.v2u",
+                display_name: "TurboGrafx-CD System Card v2",
+                region: "usa",
+                model: Some("v2"),
+                filenames: &["syscard2u.pce"],
+                size: SizeRule::Exact(262_144),
+                hashes: KnownHashes {
+                    md5: Some("94279f315e8b52904f65ab3108542afe"),
+                    sha1: None,
+                    sha256: Some(
+                        "edba5be43803b180e1d64ca678c3f8bdbf07180c9e2a65a5db69ad635951e6cc",
+                    ),
+                },
+            },
+            FirmwareVariantSpec {
+                id: "nec.pce.cd.system_card.v3",
+                display_name: "PC Engine CD System Card v3",
+                region: "japan",
+                model: Some("v3"),
+                filenames: &["syscard3.pce"],
+                size: SizeRule::Exact(262_144),
+                hashes: KnownHashes {
+                    md5: Some("38179df8f4ac870017db21ebcbf53114"),
+                    sha1: None,
+                    sha256: Some(
+                        "e11527b3b96ce112a037138988ca72fd117a6b0779c2480d9e03eaebece3d9ce",
+                    ),
+                },
+            },
+            FirmwareVariantSpec {
+                id: "nec.pce.cd.system_card.v3u",
+                display_name: "TurboGrafx-CD Super System Card v3",
+                region: "usa",
+                model: Some("v3"),
+                filenames: &["syscard3u.pce"],
+                size: SizeRule::Exact(262_144),
+                hashes: KnownHashes {
+                    md5: Some("0754f903b52e3b3342202bdafb13efa5"),
+                    sha1: None,
+                    sha256: Some(
+                        "cadac2725711b3c442bcf237b02f5a5210c96f17625c35fa58f009e0ed39e4db",
+                    ),
+                },
+            },
+        ],
     },
 ];
 
@@ -500,6 +712,86 @@ mod tests {
         assert_eq!(plan[0].fallback, FallbackKind::None);
         assert_eq!(plan[0].dependency, FirmwareDependency::RuntimeMapped);
         assert_eq!(plan[0].region.as_deref(), Some("japan"));
+    }
+
+    #[test]
+    fn pce_cdrom2_plan_prefers_exact_super_system_card_v3u() {
+        let plan = firmware_plan_for_pce_cdrom2();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].id.as_ref(), "nec.pce.cd.system_card");
+        assert_eq!(plan[0].requirement, RequirementLevel::Required);
+        assert_eq!(plan[0].fallback, FallbackKind::None);
+        assert_eq!(plan[0].region.as_deref(), Some("usa"));
+        assert_eq!(plan[0].model, None);
+        assert_eq!(
+            plan[0]
+                .preferred_variant
+                .as_ref()
+                .map(|variant| variant.0.as_str()),
+            Some("nec.pce.cd.system_card.v3u")
+        );
+        let variant = catalog_specs()
+            .iter()
+            .find(|spec| spec.id == "nec.pce.cd.system_card")
+            .unwrap()
+            .variants
+            .iter()
+            .find(|variant| variant.id == "nec.pce.cd.system_card.v3u")
+            .unwrap();
+        assert_eq!(variant.size, SizeRule::Exact(262_144));
+        assert_eq!(variant.hashes.md5, Some("0754f903b52e3b3342202bdafb13efa5"));
+        assert_eq!(
+            variant.hashes.sha256,
+            Some("cadac2725711b3c442bcf237b02f5a5210c96f17625c35fa58f009e0ed39e4db")
+        );
+    }
+
+    #[test]
+    fn exact_system_card_hashes_classify_region_tier_and_board() {
+        for (sha256, variant_id, region, tier, board) in [
+            (
+                PCE_SYSTEM_CARD_V1_JAPAN_SHA256,
+                "nec.pce.cd.system_card.v1",
+                PceSystemCardRegion::Japan,
+                PceSystemCardTier::Version1,
+                PceSystemCardBoard::OriginalCdRom2,
+            ),
+            (
+                PCE_SYSTEM_CARD_V2_JAPAN_SHA256,
+                "nec.pce.cd.system_card.v2",
+                PceSystemCardRegion::Japan,
+                PceSystemCardTier::Version2,
+                PceSystemCardBoard::OriginalCdRom2,
+            ),
+            (
+                PCE_SYSTEM_CARD_V2_USA_SHA256,
+                "nec.pce.cd.system_card.v2u",
+                PceSystemCardRegion::Usa,
+                PceSystemCardTier::Version2,
+                PceSystemCardBoard::OriginalCdRom2,
+            ),
+            (
+                PCE_SYSTEM_CARD_V3_JAPAN_SHA256,
+                "nec.pce.cd.system_card.v3",
+                PceSystemCardRegion::Japan,
+                PceSystemCardTier::Version3,
+                PceSystemCardBoard::SuperCdRom2,
+            ),
+            (
+                PCE_SYSTEM_CARD_V3_USA_SHA256,
+                "nec.pce.cd.system_card.v3u",
+                PceSystemCardRegion::Usa,
+                PceSystemCardTier::Version3,
+                PceSystemCardBoard::SuperCdRom2,
+            ),
+        ] {
+            let firmware = classify_pce_system_card_sha256(sha256).unwrap();
+            assert_eq!(firmware.variant_id(), variant_id);
+            assert_eq!(firmware.region(), region);
+            assert_eq!(firmware.tier(), tier);
+            assert_eq!(firmware.board(), board);
+        }
+        assert_eq!(classify_pce_system_card_sha256([0; 32]), None);
     }
 
     #[test]

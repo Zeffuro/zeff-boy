@@ -6,6 +6,8 @@ use super::*;
 #[test]
 fn settings_default_roundtrip() {
     let defaults = Settings::default();
+    assert_eq!(defaults.video.pce_overscan_mode, PceOverscanMode::Full);
+    assert_eq!(defaults.video.pce_palette_mode, PcePaletteMode::RawRgb);
     let json = serde_json::to_string_pretty(&defaults).unwrap();
     let restored: Settings = serde_json::from_str(&json).unwrap();
     assert_eq!(defaults, restored);
@@ -172,6 +174,65 @@ fn sega8_console_region_preference_serde_roundtrip() {
     assert_eq!(
         restored.emulation.sega8_console_region,
         Sega8ConsoleRegionPreference::JapanesePowerBaseConverter
+    );
+}
+
+#[test]
+fn pce_console_wiring_preference_serde_roundtrip() {
+    let mut settings = Settings::default();
+    settings.emulation.pce_console_wiring = PceConsoleWiringPreference::TurboGrafx16;
+    settings.emulation.pce_cd_archive_memory_limit = PceCdArchiveMemoryLimit::MiB256;
+
+    let json = serde_json::to_string(&settings).unwrap();
+    let restored: Settings = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        restored.emulation.pce_console_wiring,
+        PceConsoleWiringPreference::TurboGrafx16
+    );
+    assert_eq!(
+        restored.emulation.pce_console_wiring.forced_wiring(),
+        Some(zeff_pce_core::hardware::PceConsoleWiring::TurboGrafx16)
+    );
+    assert_eq!(
+        restored.emulation.pce_cd_archive_memory_limit,
+        PceCdArchiveMemoryLimit::MiB256
+    );
+    assert_eq!(restored.emulation.pce_cd_archive_memory_limit.mib(), 256);
+}
+
+#[test]
+fn pce_controller_settings_serde_roundtrip() {
+    let mut settings = Settings::default();
+    settings.emulation.pce_controller = PceControllerPreference::Mouse;
+    settings.emulation.pce_mouse_sensitivity = 2.5;
+    settings.emulation.pce_mouse_cursor_mode = PceMouseCursorMode::Captured;
+
+    let encoded = serde_json::to_string(&settings).unwrap();
+    let restored: Settings = serde_json::from_str(&encoded).unwrap();
+
+    assert_eq!(
+        restored.emulation.pce_controller,
+        PceControllerPreference::Mouse
+    );
+    assert_eq!(restored.emulation.pce_mouse_sensitivity, 2.5);
+    assert_eq!(
+        restored.emulation.pce_mouse_cursor_mode,
+        PceMouseCursorMode::Captured
+    );
+}
+
+#[test]
+fn pce_multitap_setting_serde_roundtrip() {
+    let mut settings = Settings::default();
+    settings.emulation.pce_controller = PceControllerPreference::Multitap;
+
+    let encoded = serde_json::to_string(&settings).unwrap();
+    let restored: Settings = serde_json::from_str(&encoded).unwrap();
+
+    assert_eq!(
+        restored.emulation.pce_controller,
+        PceControllerPreference::Multitap
     );
 }
 

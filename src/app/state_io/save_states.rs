@@ -21,6 +21,9 @@ impl App {
     }
 
     fn capture_current_state_for_undo(&mut self) -> Option<Vec<u8>> {
+        if !self.core_supports_state_capture() {
+            return None;
+        }
         let Some(thread) = &self.emu_thread else {
             return None;
         };
@@ -36,6 +39,10 @@ impl App {
     }
 
     pub(in crate::app) fn undo_load_state(&mut self) {
+        if !self.core_supports_state_capture() {
+            self.undo_load_state = None;
+            return;
+        }
         let Some(state_bytes) = self.undo_load_state.take() else {
             self.toast_manager.info("No loaded state to undo");
             return;
@@ -55,6 +62,7 @@ impl App {
                 dpad_pressed,
                 replay_events: None,
                 game_boy_link_start_state: None,
+                game_boy_link_coordinator_start_state: None,
                 game_boy_link_start_tick: None,
                 wonder_swan_link_start_tick: None,
             });
@@ -87,7 +95,7 @@ impl App {
     }
 
     pub(in crate::app) fn save_state_slot(&mut self, slot: u8) {
-        if self.emu_thread.is_none() {
+        if !self.core_supports_save_states() {
             return;
         }
         if let Some(thread) = &self.emu_thread {
@@ -108,7 +116,7 @@ impl App {
     }
 
     pub(in crate::app) fn load_state_slot(&mut self, slot: u8) {
-        if self.emu_thread.is_none() {
+        if !self.core_supports_save_states() {
             return;
         }
         let undo_state = self.capture_current_state_for_undo();
@@ -180,7 +188,7 @@ impl App {
     }
 
     pub(in crate::app) fn save_state_file_dialog(&mut self) {
-        if self.emu_thread.is_none() {
+        if !self.core_supports_save_states() {
             return;
         }
 
@@ -238,7 +246,7 @@ impl App {
     }
 
     pub(in crate::app) fn load_state_file_dialog(&mut self) {
-        if self.emu_thread.is_none() {
+        if !self.core_supports_save_states() {
             return;
         }
 
@@ -306,9 +314,9 @@ impl App {
     pub(in crate::app) fn check_pending_state_load(&mut self) {
         let data = self.pending_state_load.borrow_mut().take();
         if let Some((name, bytes)) = data {
-            if self.emu_thread.is_none() {
+            if !self.core_supports_save_states() {
                 self.toast_manager
-                    .error("No game running — cannot load state");
+                    .error("The active core does not support save states");
                 return;
             }
             let undo_state = self.capture_current_state_for_undo();
@@ -320,6 +328,7 @@ impl App {
                     dpad_pressed,
                     replay_events: None,
                     game_boy_link_start_state: None,
+                    game_boy_link_coordinator_start_state: None,
                     game_boy_link_start_tick: None,
                     wonder_swan_link_start_tick: None,
                 });

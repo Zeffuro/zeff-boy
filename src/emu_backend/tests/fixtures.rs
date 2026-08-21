@@ -40,6 +40,17 @@ pub(super) fn build_nes_test_rom() -> Vec<u8> {
     rom
 }
 
+pub(super) fn build_pce_test_rom() -> Vec<u8> {
+    let mut rom = vec![0xEA; 0x2000];
+    rom[..4].copy_from_slice(&[0xD4, 0xEA, 0x80, 0xFD]);
+    rom[0x1FFE..0x2000].copy_from_slice(&0xE000_u16.to_le_bytes());
+    rom
+}
+
+pub(super) fn build_pce_backend() -> EmuBackend {
+    load_test_backend_with_shared_loader(ActiveSystem::Pce, "test.pce", build_pce_test_rom())
+}
+
 pub(super) fn build_gba_test_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 0xC0];
     rom[0xA0..0xA4].copy_from_slice(b"TEST");
@@ -286,7 +297,12 @@ pub(super) fn assert_app_snapshot_core_features(
         crate::emu_backend::InputCapabilities::for_system(expected_system)
     );
     assert!(features.supports_save_states);
+    assert!(features.supports_state_capture);
     assert!(features.supports_rewind);
+    assert!(features.supports_replay);
+    assert!(features.supports_audio);
+    assert!(features.supports_cheats);
+    assert!(features.supports_guest_calls);
     assert!(features.supports_debugger);
     assert_eq!(
         features.supports_opcode_history,
@@ -544,6 +560,8 @@ fn snapshot_request() -> SnapshotRequest {
             dmg_palette_preset: DmgPalettePreset::default(),
             nes_palette_mode: NesPaletteMode::default(),
             nes_custom_palette: None,
+            pce_overscan_mode: crate::settings::PceOverscanMode::default(),
+            pce_palette_mode: crate::settings::PcePaletteMode::default(),
             sgb_border_enabled: false,
         },
     }

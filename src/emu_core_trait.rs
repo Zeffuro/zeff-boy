@@ -60,6 +60,15 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     fn set_apu_channel_mutes(&mut self, mutes: &[bool]);
     fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8);
     #[inline]
+    fn set_pce_mouse_state(
+        &mut self,
+        _mode: zeff_pce_core::hardware::PceControllerMode,
+        _delta_x: i16,
+        _delta_y: i16,
+        _buttons_pressed: u8,
+    ) {
+    }
+    #[inline]
     fn set_zapper_state(
         &mut self,
         _enabled: bool,
@@ -74,6 +83,46 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()>;
     fn rom_path(&self) -> &Path;
     fn rom_hash(&self) -> [u8; 32];
+
+    #[inline]
+    fn supports_save_states(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    fn supports_state_capture(&self) -> bool {
+        self.supports_save_states()
+    }
+
+    #[inline]
+    fn supports_rewind(&self) -> bool {
+        self.supports_state_capture()
+    }
+
+    #[inline]
+    fn supports_replay(&self) -> bool {
+        self.supports_state_capture()
+    }
+
+    #[inline]
+    fn supports_audio(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    fn supports_cheats(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    fn supports_guest_calls(&self) -> bool {
+        self.supports_debugger() && self.supports_state_capture()
+    }
+
+    #[inline]
+    fn take_runtime_fault(&mut self) -> Option<String> {
+        None
+    }
 
     #[inline]
     fn save_ram_kind(&self) -> SaveRamKind {

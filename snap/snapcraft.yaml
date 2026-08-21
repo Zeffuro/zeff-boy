@@ -56,6 +56,7 @@ parts:
       zeff-boy.png: usr/share/icons/hicolor/512x512/apps/zeff-boy.png
       LICENSE-MIT: usr/share/doc/zeff-boy/LICENSE-MIT
       LICENSE-APACHE: usr/share/doc/zeff-boy/LICENSE-APACHE
+      THIRD_PARTY_NOTICES.md: usr/share/doc/zeff-boy/THIRD_PARTY_NOTICES.md
     stage-packages:
       - libasound2t64
       - libdbus-1-3

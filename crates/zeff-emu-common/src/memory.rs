@@ -66,6 +66,22 @@ const SAVE_RAM_ALIASES: &[&str] = &["saveram", "sram", "battery"];
 const FRAMEBUFFER_ALIASES: &[&str] = &["frame", "fb"];
 
 impl MemoryRegionDescriptor {
+    pub const fn read_only_cpu_address_space(address_bits: u8) -> Self {
+        Self {
+            id: "cpu",
+            label: "CPU address space (read-only)",
+            kind: MemoryRegionKind::CpuAddressSpace,
+            size: None,
+            address_bits: Some(address_bits),
+            readable: true,
+            writable: false,
+            side_effect_free: true,
+            copyable: false,
+            view: MemoryRegionView::AddressSpace,
+            aliases: CPU_ALIASES,
+        }
+    }
+
     pub const fn cpu_address_space(address_bits: u8) -> Self {
         Self {
             id: "cpu",
@@ -448,6 +464,17 @@ mod tests {
         assert!(regions.iter().any(|region| region.id == "video_ram"));
         assert!(regions.iter().any(|region| region.id == "save_ram"));
         assert!(regions.iter().any(|region| region.id == "framebuffer"));
+    }
+
+    #[test]
+    fn read_only_cpu_region_disallows_mutating_operations() {
+        let region = MemoryRegionDescriptor::read_only_cpu_address_space(16);
+        assert_eq!(region.kind, MemoryRegionKind::CpuAddressSpace);
+        assert_eq!(region.address_bits, Some(16));
+        assert!(region.readable);
+        assert!(!region.writable);
+        assert!(region.side_effect_free);
+        assert!(!region.copyable);
     }
 
     #[test]

@@ -72,6 +72,19 @@ pub(super) fn draw(
         #[cfg(target_arch = "wasm32")]
         nes_palette_file_slot,
     );
+
+    ui.separator();
+    draw_pce_display_section(ui, settings, active_system);
+}
+
+fn draw_pce_display_section(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    active_system: Option<ActiveSystem>,
+) {
+    super::draw_console_section_header(ui, "PC Engine", active_system, ActiveSystem::Pce);
+    enum_combo_box(ui, "Visible area", &mut settings.video.pce_overscan_mode);
+    enum_combo_box(ui, "Color output", &mut settings.video.pce_palette_mode);
 }
 
 fn draw_gb_palette_section(

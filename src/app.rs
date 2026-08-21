@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     window::WindowId,
 };
@@ -53,8 +53,14 @@ use types::*;
 type PendingGfx = Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Graphics>>>>>;
 
 pub(crate) use state_io::detect_and_extract_rom;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use state_io::is_native_seven_zip_path;
 
-pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()> {
+pub(crate) fn run(
+    backend: Option<EmuBackend>,
+    settings: Settings,
+    #[cfg(not(target_arch = "wasm32"))] deferred_initial_rom_load: Option<std::path::PathBuf>,
+) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.emulation.uncapped_speed;
     let vsync_mode = settings.video.vsync_mode;
@@ -135,6 +141,9 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         host_input: HostInputState::new(),
         cursor_pos: None,
         mouse_left_pressed: false,
+        mouse_right_pressed: false,
+        pce_mouse_motion: (0.0, 0.0),
+        pce_mouse_captured: false,
         window_size: (160.0, 144.0),
         tilt: TiltState {
             smoothed: (0.0, 0.0),
@@ -176,6 +185,12 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         pending_symbol_load: None,
         #[cfg(not(target_arch = "wasm32"))]
         next_symbol_load_id: 0,
+        #[cfg(not(target_arch = "wasm32"))]
+        pending_rom_preparation: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        next_rom_preparation_id: 0,
+        #[cfg(not(target_arch = "wasm32"))]
+        deferred_initial_rom_load,
         nes_palette_cache: NesPaletteFileCache::default(),
         pending_archive_selection: None,
         pending_debug_actions: DebugUiActions::none(),
@@ -254,15 +269,18 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
 
     app.debug_windows.memory.configure_for_system(active_system);
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some((system, rom_path, source_path, rom_hash)) = app.initial_backend.as_ref().map(|b| {
-        (
-            b.system(),
-            b.rom_path().to_path_buf(),
-            b.source_path().to_path_buf(),
-            b.rom_hash(),
-        )
-    }) {
-        app.start_symbol_load_for_paths(system, rom_path, source_path, rom_hash);
+    if let Some((system, rom_path, source_path, rom_hash, supports_debugger)) =
+        app.initial_backend.as_ref().map(|b| {
+            (
+                b.system(),
+                b.rom_path().to_path_buf(),
+                b.source_path().to_path_buf(),
+                b.rom_hash(),
+                b.supports_debugger(),
+            )
+        })
+    {
+        app.start_symbol_load_for_paths(system, rom_path, source_path, rom_hash, supports_debugger);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -309,6 +327,9 @@ struct App {
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
     mouse_left_pressed: bool,
+    mouse_right_pressed: bool,
+    pce_mouse_motion: (f64, f64),
+    pce_mouse_captured: bool,
     window_size: (f32, f32),
     tilt: TiltState,
     camera: CameraState,
@@ -329,6 +350,12 @@ struct App {
     pending_symbol_load: Option<PendingSymbolLoad>,
     #[cfg(not(target_arch = "wasm32"))]
     next_symbol_load_id: u64,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_rom_preparation: Option<PendingRomPreparation>,
+    #[cfg(not(target_arch = "wasm32"))]
+    next_rom_preparation_id: u64,
+    #[cfg(not(target_arch = "wasm32"))]
+    deferred_initial_rom_load: Option<std::path::PathBuf>,
     nes_palette_cache: NesPaletteFileCache,
     pending_archive_selection: Option<PendingArchiveSelection>,
     pending_debug_actions: DebugUiActions,
@@ -390,6 +417,56 @@ fn effective_debug_presentation(presentation: DebugPresentation) -> DebugPresent
     }
 
     presentation
+}
+
+impl App {
+    pub(super) fn core_supports_save_states(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_save_states)
+    }
+
+    pub(super) fn core_supports_state_capture(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_state_capture)
+    }
+
+    pub(super) fn core_supports_rewind(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_rewind)
+    }
+
+    pub(super) fn core_supports_replay(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_replay)
+    }
+
+    pub(super) fn core_supports_audio(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_audio)
+    }
+
+    pub(super) fn core_supports_cheats(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_cheats)
+    }
+
+    pub(super) fn core_supports_guest_calls(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_guest_calls)
+    }
+
+    pub(super) fn core_supports_debugger(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_debugger)
+    }
 }
 
 fn activate_debug_presentation_state(
@@ -587,7 +664,7 @@ impl App {
                 Some(response) => response,
                 None => continue,
             };
-            let response = match self.consume_bardigun_response(response) {
+            let response = match self.consume_serial_device_response(response) {
                 Some(response) => response,
                 None => continue,
             };
@@ -608,6 +685,16 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         self.handle_window_event(event_loop, window_id, event);
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.handle_device_event(event);
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {

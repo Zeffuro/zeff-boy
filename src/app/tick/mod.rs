@@ -13,6 +13,29 @@ mod snapshot;
 mod timing;
 mod zapper;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AudioSampleRateChange {
+    Unchanged,
+    Rejected,
+    Applied,
+}
+
+fn reconcile_audio_sample_rate(
+    last_sample_rate: u32,
+    configured_sample_rate: &mut u32,
+    recording_active: bool,
+) -> AudioSampleRateChange {
+    if last_sample_rate == *configured_sample_rate {
+        return AudioSampleRateChange::Unchanged;
+    }
+    if recording_active {
+        *configured_sample_rate = last_sample_rate;
+        AudioSampleRateChange::Rejected
+    } else {
+        AudioSampleRateChange::Applied
+    }
+}
+
 impl App {
     pub(super) fn update_debug_cache_edges(&mut self) {
         if is_tab_open(&self.debug_dock, DebugTab::TileViewer)
@@ -28,17 +51,41 @@ impl App {
     }
 
     pub(super) fn tick(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.pce_mouse_captured
+            && (self.active_system != crate::emu_backend::ActiveSystem::Pce
+                || self.settings.emulation.pce_mouse_cursor_mode
+                    != crate::settings::PceMouseCursorMode::Captured)
+        {
+            self.release_pce_mouse(false);
+        }
         self.sync_speed_setting();
-        if self.last_audio_output_sample_rate != self.settings.audio.output_sample_rate {
-            self.last_audio_output_sample_rate = self.settings.audio.output_sample_rate;
-            self.reset_audio_output();
-            self.settings.save();
+        match reconcile_audio_sample_rate(
+            self.last_audio_output_sample_rate,
+            &mut self.settings.audio.output_sample_rate,
+            self.recording.audio_recorder.is_some(),
+        ) {
+            AudioSampleRateChange::Rejected => {
+                self.toast_manager
+                    .error("Stop audio recording before changing output sample rate");
+            }
+            AudioSampleRateChange::Applied => {
+                self.last_audio_output_sample_rate = self.settings.audio.output_sample_rate;
+                self.reset_audio_output();
+                self.settings.save();
+            }
+            AudioSampleRateChange::Unchanged => {}
         }
         self.poll_gamepad();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_rom_preparation();
 
         let host_tilt = self.update_host_tilt_and_stick_mode();
 
         self.drain_emu_responses();
+        let supports_rewind = self.core_supports_rewind();
+        let supports_audio = self.core_supports_audio();
+        let supports_cheats = self.core_supports_cheats();
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_symbol_load();
         #[cfg(not(target_arch = "wasm32"))]
@@ -46,6 +93,7 @@ impl App {
 
         // Handle backstep: pop one rewind snapshot and pause
         if std::mem::take(&mut self.debug_requests.backstep)
+            && supports_rewind
             && self.settings.rewind.enabled
             && !self.rewind.pending
             && !self.rewind.backstep_pending
@@ -55,7 +103,7 @@ impl App {
             self.rewind.backstep_pending = true;
         }
 
-        if self.rewind.held && self.settings.rewind.enabled {
+        if self.rewind.held && supports_rewind && self.settings.rewind.enabled {
             self.rewind.throttle += 1;
             let pop_interval = self.settings.rewind.speed.max(1);
             if self.rewind.throttle >= pop_interval
@@ -194,6 +242,7 @@ impl App {
                             .map(|frame| frame.host_tilt)
                             .unwrap_or((0.0, 0.0))
                     });
+                    let pce_mouse = self.pce_mouse_input(frames_to_step > 0);
                     let host_camera_frame = replay_joypad_frames
                         .as_ref()
                         .map_or(host_camera_frame, |frames| {
@@ -218,31 +267,36 @@ impl App {
                             buttons_p2: buttons_pressed_p2,
                             dpad_p2: dpad_pressed_p2,
                         },
+                        pce_mouse,
                         zapper,
                         debug_step: std::mem::take(&mut self.debug_requests.step),
                         debug_continue: std::mem::take(&mut self.debug_requests.continue_)
                             || next_frame_requested,
                         debug_suspend_after_frame: next_frame_requested,
                         audio: AudioConfig {
-                            apu_capture_enabled: reqs.needs_apu && want_viewer_update,
-                            skip_audio: match self.speed_mode() {
-                                SpeedMode::Uncapped => self
-                                    .recording
-                                    .audio_recorder
-                                    .as_ref()
-                                    .is_none_or(|recorder| recorder.captures_semantics()),
-                                SpeedMode::FastForward => {
-                                    self.settings.audio.mute_during_fast_forward
-                                }
-                                SpeedMode::Normal | SpeedMode::SlowMotion => false,
-                            },
+                            apu_capture_enabled: supports_audio
+                                && reqs.needs_apu
+                                && want_viewer_update,
+                            skip_audio: !supports_audio
+                                || match self.speed_mode() {
+                                    SpeedMode::Uncapped => self
+                                        .recording
+                                        .audio_recorder
+                                        .as_ref()
+                                        .is_none_or(|recorder| recorder.captures_semantics()),
+                                    SpeedMode::FastForward => {
+                                        self.settings.audio.mute_during_fast_forward
+                                    }
+                                    SpeedMode::Normal | SpeedMode::SlowMotion => false,
+                                },
                             recording_capture: AudioRecordingCapture {
-                                active: self.recording.audio_recorder.is_some(),
-                                semantic: self
-                                    .recording
-                                    .audio_recorder
-                                    .as_ref()
-                                    .is_some_and(|recorder| recorder.captures_semantics()),
+                                active: supports_audio && self.recording.audio_recorder.is_some(),
+                                semantic: supports_audio
+                                    && self
+                                        .recording
+                                        .audio_recorder
+                                        .as_ref()
+                                        .is_some_and(|recorder| recorder.captures_semantics()),
                             },
                         },
                         debug_actions: std::mem::replace(
@@ -251,7 +305,9 @@ impl App {
                         ),
                         snapshot,
                         buffers,
-                        rewind_enabled: self.settings.rewind.enabled && !self.rewind.held,
+                        rewind_enabled: supports_rewind
+                            && self.settings.rewind.enabled
+                            && !self.rewind.held,
                         rewind_seconds: self.settings.rewind.seconds,
                     };
 
@@ -260,12 +316,14 @@ impl App {
                             && self.recording.allows_cheat_updates()
                         {
                             self.debug_windows.cheat.cheats_dirty = false;
-                            thread.send(EmuCommand::UpdateCheats(
-                                crate::cheats::collect_enabled_patches(
-                                    &self.debug_windows.cheat.user_codes,
-                                    &self.debug_windows.cheat.libretro_codes,
-                                ),
-                            ));
+                            if supports_cheats {
+                                thread.send(EmuCommand::UpdateCheats(
+                                    crate::cheats::collect_enabled_patches(
+                                        &self.debug_windows.cheat.user_codes,
+                                        &self.debug_windows.cheat.libretro_codes,
+                                    ),
+                                ));
+                            }
                         }
                         thread.send(EmuCommand::StepFrames(Box::new(input)));
                         self.frames_in_flight += 1;
@@ -407,5 +465,44 @@ impl App {
             self.render_printer_frame();
             self.last_printer_render = now;
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::audio_recorder::AudioRecorder;
+    use crate::settings::AudioRecordingFormat;
+
+    #[test]
+    fn recording_rate_change_is_rejected_and_wav_metadata_stays_at_core_rate() {
+        let core_rate = 48_000;
+        let mut configured_rate = 96_000;
+        assert_eq!(
+            reconcile_audio_sample_rate(core_rate, &mut configured_rate, true),
+            AudioSampleRateChange::Rejected
+        );
+        assert_eq!(configured_rate, core_rate);
+
+        let path = std::env::temp_dir().join(format!(
+            "zeff-audio-rate-policy-{}-{}.wav",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut recorder =
+            AudioRecorder::start(&path, configured_rate, AudioRecordingFormat::Wav16, None)
+                .unwrap();
+        recorder.write_samples(&[0.0, 0.0]);
+        recorder.finish().unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(data[24..28].try_into().unwrap()),
+            core_rate
+        );
+        let _ = std::fs::remove_file(path);
     }
 }

@@ -68,7 +68,7 @@ mkdir -p "$LOCAL_DIR/payload"
 tar -xzf "$WORK_DIR/$ASSET" -C "$LOCAL_DIR/payload"
 printf '%s\n' "$VERSION" > "$LOCAL_DIR/version"
 
-for file in zeff-boy zeff-boy.desktop zeff-boy.png LICENSE-MIT LICENSE-APACHE; do
+for file in zeff-boy zeff-boy.desktop zeff-boy.png LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md; do
   test -f "$LOCAL_DIR/payload/$file"
 done
 chmod 0755 "$LOCAL_DIR/payload/zeff-boy"

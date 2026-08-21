@@ -34,6 +34,10 @@ impl App {
         requested_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<Value> {
         anyhow::ensure!(self.emu_thread.is_some(), "no ROM is running");
+        anyhow::ensure!(
+            self.core_supports_save_states(),
+            "the active core does not support save states"
+        );
 
         let path = resolve_state_path(requested_path)?;
         if let Some(parent) = path.parent() {
@@ -60,6 +64,10 @@ impl App {
         requested_path: std::path::PathBuf,
     ) -> anyhow::Result<Value> {
         anyhow::ensure!(self.emu_thread.is_some(), "no ROM is running");
+        anyhow::ensure!(
+            self.core_supports_save_states(),
+            "the active core does not support save states"
+        );
 
         let path = resolve_state_path(Some(requested_path))?;
         if let Some(thread) = &self.emu_thread {

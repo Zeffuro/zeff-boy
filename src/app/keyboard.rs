@@ -27,6 +27,18 @@ impl App {
             self.modifiers.alt = key_event.state == ElementState::Pressed;
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        if key_event.state == ElementState::Pressed
+            && matches!(
+                key_code,
+                KeyCode::Escape | KeyCode::AltLeft | KeyCode::AltRight
+            )
+            && self.pce_mouse_captured
+        {
+            self.release_pce_mouse(true);
+            return;
+        }
+
         let egui_has_kb_focus = self.egui_wants_keyboard;
 
         if egui_has_kb_focus && event_consumed_by_egui {
@@ -179,9 +191,13 @@ impl App {
         }
 
         if !egui_kb && key_code == self.settings.rewind.key_code() {
-            match key_event.state {
-                ElementState::Pressed => self.rewind.held = true,
-                ElementState::Released => self.rewind.held = false,
+            if self.core_supports_rewind() {
+                match key_event.state {
+                    ElementState::Pressed => self.rewind.held = true,
+                    ElementState::Released => self.rewind.held = false,
+                }
+            } else {
+                self.rewind.held = false;
             }
             return true;
         }

@@ -31,6 +31,7 @@ modules:
       - install -Dm644 assets/icon.png /app/share/icons/hicolor/512x512/apps/com.github.zeffuro.zeff-boy.png
       - install -Dm644 LICENSE-MIT /app/share/licenses/zeff-boy/LICENSE-MIT
       - install -Dm644 LICENSE-APACHE /app/share/licenses/zeff-boy/LICENSE-APACHE
+      - install -Dm644 THIRD_PARTY_NOTICES.md /app/share/licenses/zeff-boy/THIRD_PARTY_NOTICES.md
     sources:
       - type: dir
         path: ../..

@@ -10,6 +10,7 @@ pub(crate) fn symbols(system: System) -> Vec<SymbolRecord> {
         System::Gb => (&GB_REGISTERS, ExecMode::Sm83, "Game Boy hardware"),
         System::Gba => (&GBA_REGISTERS, ExecMode::Arm, "Game Boy Advance hardware"),
         System::Nes => (&NES_REGISTERS, ExecMode::Mos6502, "NES hardware"),
+        System::Pce => (&[], ExecMode::Unknown, "PC Engine"),
         System::Sms | System::Gg | System::Sg => {
             (&SEGA8_MAPPER, ExecMode::Z80, "Sega 8-bit mapper")
         }

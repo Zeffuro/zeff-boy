@@ -62,9 +62,11 @@ jobs:
           cp ../../../packaging/zeff-boy.desktop .
           cp ../../../LICENSE-MIT .
           cp ../../../LICENSE-APACHE .
+          cp ../../../THIRD_PARTY_NOTICES.md .
           cp ../../../assets/icon.png zeff-boy.png
           tar czf ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
-            ${{ matrix.artifact }} zeff-boy.desktop LICENSE-MIT LICENSE-APACHE zeff-boy.png
+            ${{ matrix.artifact }} zeff-boy.desktop LICENSE-MIT LICENSE-APACHE \
+            THIRD_PARTY_NOTICES.md zeff-boy.png
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -79,7 +81,10 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.zip ${{ matrix.artifact }}
+          cp ../../../LICENSE-MIT .
+          cp ../../../LICENSE-APACHE .
+          cp ../../../THIRD_PARTY_NOTICES.md .
+          7z a ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.zip ${{ matrix.artifact }} LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -186,6 +191,7 @@ jobs:
           mkdir -p AppDir/usr/share/applications
           mkdir -p AppDir/usr/share/metainfo
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/doc/zeff-boy
 
           cp linux-artifact/zeff-boy AppDir/usr/bin/zeff-boy
           chmod +x AppDir/usr/bin/zeff-boy
@@ -195,6 +201,7 @@ jobs:
           cp packaging/com.github.zeffuro.zeff-boy.metainfo.xml AppDir/usr/share/metainfo/com.github.zeffuro.zeff-boy.appdata.xml
 
           cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png
+          cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md AppDir/usr/share/doc/zeff-boy/
 
           cp AppDir/usr/share/applications/zeff-boy.desktop AppDir/zeff-boy.desktop
           cp AppDir/usr/share/icons/hicolor/256x256/apps/zeff-boy.png AppDir/zeff-boy.png

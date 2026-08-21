@@ -113,7 +113,7 @@ mod tests {
             emulator.game_boy_serial_device(),
             crate::hardware::GameBoySerialDevice::Printer
         );
-        assert_eq!(emulator.printer_image_count(), 0);
+        assert_eq!(emulator.printer_job_count(), 0);
 
         emulator.set_game_boy_serial_device(
             crate::hardware::GameBoySerialDevice::BardigunBarcodeReader,

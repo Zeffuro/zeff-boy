@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
+use zeff_pce_core::hardware::PceConsoleWiring;
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -7,8 +8,8 @@ use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::enums::{
     AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset, EffectPreset,
-    EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, ShaderParams, ShaderPreset,
-    UiDensity, UiThemePreset, VsyncMode, WonderSwanColorCorrection,
+    EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, PceOverscanMode, PcePaletteMode,
+    ShaderParams, ShaderPreset, UiDensity, UiThemePreset, VsyncMode, WonderSwanColorCorrection,
 };
 use super::keycode_serde::keycode_from_string;
 use super::tilt_bindings::TiltKeyBindings;
@@ -306,6 +307,10 @@ pub(crate) struct VideoSettings {
     pub(crate) nes_custom_palette_name: String,
     #[serde(default)]
     pub(crate) nes_custom_palette_bytes: Vec<u8>,
+    #[serde(default)]
+    pub(crate) pce_overscan_mode: PceOverscanMode,
+    #[serde(default)]
+    pub(crate) pce_palette_mode: PcePaletteMode,
     pub(crate) vsync_mode: VsyncMode,
 }
 
@@ -329,6 +334,8 @@ impl Default for VideoSettings {
             nes_custom_palette_path: String::new(),
             nes_custom_palette_name: String::new(),
             nes_custom_palette_bytes: Vec::new(),
+            pce_overscan_mode: PceOverscanMode::default(),
+            pce_palette_mode: PcePaletteMode::default(),
             vsync_mode: VsyncMode::default(),
         }
     }
@@ -369,6 +376,7 @@ impl VideoSettings {
             }
             Some(
                 crate::emu_backend::ActiveSystem::Nes
+                | crate::emu_backend::ActiveSystem::Pce
                 | crate::emu_backend::ActiveSystem::MasterSystem
                 | crate::emu_backend::ActiveSystem::GameGear
                 | crate::emu_backend::ActiveSystem::Sg1000,
@@ -585,6 +593,69 @@ impl Sega8ConsoleRegionPreference {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum PceConsoleWiringPreference {
+    #[default]
+    Auto,
+    PcEngine,
+    TurboGrafx16,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum PceControllerPreference {
+    #[default]
+    Auto,
+    TwoButton,
+    Multitap,
+    Mouse,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum PceMouseCursorMode {
+    #[default]
+    Free,
+    Captured,
+}
+
+impl PceControllerPreference {
+    pub(crate) const fn core_mode(self) -> zeff_pce_core::hardware::PceControllerMode {
+        match self {
+            Self::Auto => zeff_pce_core::hardware::PceControllerMode::Automatic,
+            Self::TwoButton => zeff_pce_core::hardware::PceControllerMode::TwoButton,
+            Self::Multitap => zeff_pce_core::hardware::PceControllerMode::Multitap,
+            Self::Mouse => zeff_pce_core::hardware::PceControllerMode::Mouse,
+        }
+    }
+}
+
+impl PceConsoleWiringPreference {
+    pub(crate) fn forced_wiring(self) -> Option<PceConsoleWiring> {
+        match self {
+            Self::Auto => None,
+            Self::PcEngine => Some(PceConsoleWiring::PcEngine),
+            Self::TurboGrafx16 => Some(PceConsoleWiring::TurboGrafx16),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum PceCdArchiveMemoryLimit {
+    MiB64,
+    #[default]
+    MiB128,
+    MiB256,
+}
+
+impl PceCdArchiveMemoryLimit {
+    pub(crate) const fn mib(self) -> usize {
+        match self {
+            Self::MiB64 => 64,
+            Self::MiB128 => 128,
+            Self::MiB256 => 256,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) enum GbaBiosMode {
     #[default]
     Hle,
@@ -613,6 +684,16 @@ pub(crate) struct EmulationSettings {
     pub(crate) sega8_video_standard: Sega8VideoStandardPreference,
     #[serde(default)]
     pub(crate) sega8_console_region: Sega8ConsoleRegionPreference,
+    #[serde(default)]
+    pub(crate) pce_console_wiring: PceConsoleWiringPreference,
+    #[serde(default)]
+    pub(crate) pce_controller: PceControllerPreference,
+    #[serde(default = "default_pce_mouse_sensitivity")]
+    pub(crate) pce_mouse_sensitivity: f32,
+    #[serde(default)]
+    pub(crate) pce_mouse_cursor_mode: PceMouseCursorMode,
+    #[serde(default)]
+    pub(crate) pce_cd_archive_memory_limit: PceCdArchiveMemoryLimit,
     pub(crate) fast_forward_multiplier: usize,
     #[serde(default = "default_slow_motion_divisor")]
     pub(crate) slow_motion_divisor: usize,
@@ -644,6 +725,10 @@ fn default_slow_motion_divisor() -> usize {
     4
 }
 
+fn default_pce_mouse_sensitivity() -> f32 {
+    1.25
+}
+
 fn default_pause_on_unfocus() -> bool {
     true
 }
@@ -658,6 +743,11 @@ impl Default for EmulationSettings {
             hardware_mode_preference: HardwareModePreference::Auto,
             sega8_video_standard: Sega8VideoStandardPreference::Auto,
             sega8_console_region: Sega8ConsoleRegionPreference::Auto,
+            pce_console_wiring: PceConsoleWiringPreference::Auto,
+            pce_controller: PceControllerPreference::Auto,
+            pce_mouse_sensitivity: default_pce_mouse_sensitivity(),
+            pce_mouse_cursor_mode: PceMouseCursorMode::default(),
+            pce_cd_archive_memory_limit: PceCdArchiveMemoryLimit::default(),
             fast_forward_multiplier: 4,
             slow_motion_divisor: default_slow_motion_divisor(),
             slow_motion_enabled: false,

@@ -1,10 +1,43 @@
 use super::super::App;
 use super::super::PendingReplayBatch;
+use crate::emu_thread::PceMouseInput;
 use crate::emu_thread::ReplayJoypadFrame;
 use crate::settings::GamepadAction;
 
+fn encode_pce_mouse_axis(delta: f64, sensitivity: f32) -> i16 {
+    (-delta * f64::from(sensitivity.clamp(0.25, 4.0)))
+        .round()
+        .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+}
+
 impl App {
+    pub(super) fn pce_mouse_input(&mut self, consume_motion: bool) -> PceMouseInput {
+        let mode = self.settings.emulation.pce_controller.core_mode();
+        if self.active_system != crate::emu_backend::ActiveSystem::Pce {
+            self.pce_mouse_motion = (0.0, 0.0);
+            return PceMouseInput {
+                mode,
+                ..Default::default()
+            };
+        }
+
+        let motion = if consume_motion {
+            std::mem::replace(&mut self.pce_mouse_motion, (0.0, 0.0))
+        } else {
+            (0.0, 0.0)
+        };
+        let sensitivity = self.settings.emulation.pce_mouse_sensitivity;
+        let buttons = u8::from(self.mouse_left_pressed) | (u8::from(self.mouse_right_pressed) << 1);
+        PceMouseInput {
+            mode,
+            delta_x: encode_pce_mouse_axis(motion.0, sensitivity),
+            delta_y: encode_pce_mouse_axis(motion.1, sensitivity),
+            buttons,
+        }
+    }
+
     pub(super) fn poll_gamepad(&mut self) {
+        let supports_rewind = self.core_supports_rewind();
         if let Some(gamepad) = &mut self.gamepad {
             let poll = gamepad.poll(&self.settings.gamepad_bindings);
 
@@ -50,7 +83,7 @@ impl App {
                             self.speed.fast_forward_held = pressed;
                         }
                         GamepadAction::Rewind => {
-                            self.rewind.held = pressed;
+                            self.rewind.held = supports_rewind && pressed;
                         }
                         GamepadAction::Pause => {
                             if pressed {
@@ -162,5 +195,19 @@ impl App {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_pce_mouse_axis;
+
+    #[test]
+    fn pce_mouse_axis_uses_host_relative_sign_sensitivity_and_saturation() {
+        assert_eq!(encode_pce_mouse_axis(8.0, 1.25), -10);
+        assert_eq!(encode_pce_mouse_axis(-8.0, 1.25), 10);
+        assert_eq!(encode_pce_mouse_axis(8.0, 0.0), -2);
+        assert_eq!(encode_pce_mouse_axis(8.0, 99.0), -32);
+        assert_eq!(encode_pce_mouse_axis(-1_000_000.0, 1.0), i16::MAX);
     }
 }

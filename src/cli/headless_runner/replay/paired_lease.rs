@@ -315,6 +315,7 @@ mod tests {
             pending_master_response: None,
             pending_master_completion_ready: false,
             queued_master_action: None,
+            pending_passive_completion: None,
             serial_generation: 7,
         };
         let activation_tick = backend.game_boy_cpu_cycles().unwrap() + 4;
