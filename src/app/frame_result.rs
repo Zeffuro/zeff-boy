@@ -1,4 +1,3 @@
-use super::media::fds_side_label;
 use super::{App, SpeedMode};
 use crate::debug::{ConsoleGraphicsData, DebugTab, RomInfoSection, is_tab_open};
 use crate::emu_thread::{EmuResponse, FrameResult};
@@ -45,6 +44,14 @@ impl App {
                 Some(resp) => resp,
                 None => continue,
             };
+            let resp = match self.consume_media_response(resp) {
+                Some(resp) => resp,
+                None => continue,
+            };
+            let resp = match self.consume_bardigun_response(resp) {
+                Some(resp) => resp,
+                None => continue,
+            };
             match resp {
                 EmuResponse::GuestCallCompleted {
                     name,
@@ -88,31 +95,16 @@ impl App {
                 }
                 _ => {}
             }
-            match resp {
-                EmuResponse::FdsDiskSideChanged(side) => {
-                    if self.recording.replay_media_events_pending > 0 {
-                        self.recording.replay_media_events_pending -= 1;
-                        log::debug!("Replay selected FDS side {}", fds_side_label(side));
-                        continue;
-                    }
-                    self.toast_manager
-                        .success(format!("FDS side {} selected", fds_side_label(side)));
-                    continue;
-                }
-                EmuResponse::FdsDiskSideChangeFailed(message) => {
-                    if self.recording.replay_media_events_pending > 0 {
-                        self.recording.replay_media_events_pending -= 1;
-                        self.recording.replay_player = None;
-                    }
-                    self.toast_manager
-                        .error(format!("FDS side change failed: {message}"));
-                    continue;
-                }
-                _ => {}
-            }
             if self.rewind.pending || self.rewind.backstep_pending {
                 match resp {
-                    EmuResponse::RewindOk => {
+                    EmuResponse::RewindOk {
+                        media_slot_snapshot,
+                        game_boy_serial_device,
+                    } => {
+                        self.media_slot_snapshot = media_slot_snapshot;
+                        if let Some(device) = game_boy_serial_device {
+                            self.game_boy_serial_device = device;
+                        }
                         if let Some(thread) = &self.emu_thread {
                             self.latest_frame = thread.shared_framebuffer().load_full();
                         }
@@ -166,6 +158,27 @@ impl App {
 
         self.rom_info.is_mbc7 = result.is_mbc7;
         self.rom_info.is_pocket_camera = result.is_pocket_camera;
+        if let Some(device) = result.game_boy_serial_device {
+            self.game_boy_serial_device = device;
+        }
+        self.media_slot_snapshot = result.media_slot_snapshot;
+        let printout_count = self
+            .debug_windows
+            .printer
+            .append(std::mem::take(&mut result.game_boy_printer_images));
+        if printout_count != 0 {
+            self.show_printer_window = true;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.focus_printer_window_pending = true;
+            }
+            let message = if printout_count == 1 {
+                "Game Boy printout ready".to_string()
+            } else {
+                format!("{printout_count} Game Boy printouts ready")
+            };
+            self.toast_manager.success(message);
+        }
         self.rewind.fill = result.rewind_fill;
 
         if let Some(gamepad) = &mut self.gamepad {

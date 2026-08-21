@@ -32,6 +32,30 @@ fn make_cgb_compat_test_bus() -> Bus {
     Bus::new(rom, &header, HardwareMode::CGBNormal).expect("test bus should initialize")
 }
 
+fn printer_packet(command: u8, payload: &[u8]) -> Vec<u8> {
+    let len = u16::try_from(payload.len()).unwrap();
+    let mut bytes = vec![0x88, 0x33, command, 0, len as u8, (len >> 8) as u8];
+    bytes.extend_from_slice(payload);
+    let checksum = bytes[2..]
+        .iter()
+        .fold(0u16, |sum, byte| sum.wrapping_add(u16::from(*byte)));
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    bytes.extend_from_slice(&[0, 0]);
+    bytes
+}
+
+fn exchange_printer_packet(bus: &mut Bus, command: u8, payload: &[u8]) -> Vec<u8> {
+    printer_packet(command, payload)
+        .into_iter()
+        .map(|byte| {
+            bus.write_byte(SERIAL_SB, byte);
+            bus.write_byte(SERIAL_SC, 0x81);
+            bus.step_serial(4096);
+            bus.read_byte(SERIAL_SB)
+        })
+        .collect()
+}
+
 #[test]
 fn disconnected_link_preview_does_not_mutate_either_side() {
     let left = make_test_bus();
@@ -50,6 +74,155 @@ fn disconnected_link_preview_does_not_mutate_either_side() {
     );
     assert_eq!(left.game_boy_link_replay_state(), left_before);
     assert_eq!(right.game_boy_link_replay_state(), right_before);
+}
+
+#[test]
+fn disconnected_serial_transfer_completes_with_ff_and_interrupt() {
+    let mut bus = make_test_bus();
+    assert_eq!(
+        bus.game_boy_serial_device(),
+        crate::hardware::GameBoySerialDevice::Disconnected
+    );
+
+    bus.write_byte(SERIAL_SB, 0x42);
+    bus.write_byte(SERIAL_SC, 0x81);
+    bus.step_serial(4096);
+
+    assert_eq!(bus.read_byte(SERIAL_SB), 0xFF);
+    assert_eq!(bus.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_ne!(bus.if_reg & 0x08, 0);
+}
+
+#[test]
+fn selected_printer_receives_real_serial_register_transcript() {
+    let mut bus = make_test_bus();
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
+    let transcript = [0x88, 0x33, 0x01, 0, 0, 0, 0x01, 0, 0, 0];
+    let replies: Vec<u8> = transcript
+        .into_iter()
+        .map(|byte| {
+            bus.write_byte(SERIAL_SB, byte);
+            bus.write_byte(SERIAL_SC, 0x81);
+            bus.step_serial(4096);
+            bus.read_byte(SERIAL_SB)
+        })
+        .collect();
+
+    assert_eq!(&replies[replies.len() - 2..], &[0x81, 0]);
+    assert_ne!(bus.if_reg & 0x08, 0);
+}
+
+#[test]
+fn selected_bardigun_reader_receives_real_serial_register_transcript() {
+    let mut bus = make_test_bus();
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BardigunBarcodeReader);
+    bus.queue_bardigun_barcode_scan(vec![0x81, 0x24, 0xA5])
+        .unwrap();
+
+    let replies: Vec<u8> = [0xFF; 5]
+        .into_iter()
+        .map(|byte| {
+            bus.write_byte(SERIAL_SB, byte);
+            bus.write_byte(SERIAL_SC, 0x81);
+            bus.step_serial(4096);
+            bus.read_byte(SERIAL_SB)
+        })
+        .collect();
+
+    assert_eq!(replies, [0x81, 0x24, 0xA5, 0, 0]);
+    assert_ne!(bus.if_reg & 0x08, 0);
+}
+
+#[test]
+fn bardigun_bus_api_rejects_scans_while_another_device_is_selected() {
+    let mut bus = make_test_bus();
+    assert!(bus.queue_bardigun_barcode_scan(vec![0x81]).is_err());
+
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
+    assert!(bus.queue_bardigun_barcode_scan(vec![0x81]).is_err());
+
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BardigunBarcodeReader);
+    assert!(bus.queue_bardigun_barcode_scan(vec![0x81]).is_ok());
+}
+
+#[test]
+fn camera_sized_print_has_documented_status_sequence_on_serial_registers() {
+    let mut bus = make_test_bus();
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
+
+    let init = exchange_printer_packet(&mut bus, 0x01, &[]);
+    assert_eq!(&init[init.len() - 2..], &[0x81, 0x00]);
+
+    let band = [0; 0x280];
+    for index in 0..9 {
+        let data = exchange_printer_packet(&mut bus, 0x04, &band);
+        assert_eq!(data[data.len() - 2], 0x81);
+        assert_eq!(data[data.len() - 1], if index == 0 { 0x00 } else { 0x08 });
+    }
+    let data_end = exchange_printer_packet(&mut bus, 0x04, &[]);
+    assert_eq!(&data_end[data_end.len() - 2..], &[0x81, 0x08]);
+
+    let print = exchange_printer_packet(&mut bus, 0x02, &[1, 0, 0xE4, 0x40]);
+    assert_eq!(&print[print.len() - 2..], &[0x81, 0x08]);
+    assert_eq!(bus.printer_image_count(), 1);
+
+    let printing = exchange_printer_packet(&mut bus, 0x0F, &[]);
+    assert_eq!(&printing[printing.len() - 2..], &[0x81, 0x06]);
+    bus.step_serial(100_000_000);
+    let done = exchange_printer_packet(&mut bus, 0x0F, &[]);
+    assert_eq!(&done[done.len() - 2..], &[0x81, 0x04]);
+}
+
+#[test]
+fn direct_link_takes_precedence_over_selected_printers() {
+    let mut master = make_test_bus();
+    let mut passive = make_test_bus();
+    master.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
+    passive.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
+
+    master.write_byte(SERIAL_SB, 0xAB);
+    passive.write_byte(SERIAL_SB, 0x34);
+    master.write_byte(SERIAL_SC, 0x81);
+    passive.write_byte(SERIAL_SC, 0x80);
+
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+    master.step_serial(4096);
+    passive.step_serial(4096);
+
+    assert_eq!(master.read_byte(SERIAL_SB), 0x34);
+    assert_eq!(passive.read_byte(SERIAL_SB), 0xAB);
+    assert_eq!(master.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(passive.read_byte(SERIAL_SC) & 0x80, 0);
+    assert_eq!(master.printer_image_count(), 0);
+    assert_eq!(passive.printer_image_count(), 0);
+}
+
+#[test]
+fn direct_link_takes_precedence_over_selected_bardigun_readers() {
+    let mut master = make_test_bus();
+    let mut passive = make_test_bus();
+    master.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BardigunBarcodeReader);
+    passive.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::BardigunBarcodeReader);
+    master.queue_bardigun_barcode_scan(vec![0x11]).unwrap();
+    passive.queue_bardigun_barcode_scan(vec![0x22]).unwrap();
+
+    master.write_byte(SERIAL_SB, 0xAB);
+    passive.write_byte(SERIAL_SB, 0x34);
+    master.write_byte(SERIAL_SC, 0x81);
+    passive.write_byte(SERIAL_SC, 0x80);
+
+    master.try_sync_game_boy_link_peer(&mut passive).unwrap();
+    master.step_serial(4096);
+    passive.step_serial(4096);
+
+    assert_eq!(master.read_byte(SERIAL_SB), 0x34);
+    assert_eq!(passive.read_byte(SERIAL_SB), 0xAB);
+
+    master.set_game_boy_link_peer_present(false);
+    master.write_byte(SERIAL_SB, 0xFF);
+    master.write_byte(SERIAL_SC, 0x81);
+    master.step_serial(4096);
+    assert_eq!(master.read_byte(SERIAL_SB), 0x11);
 }
 
 #[test]

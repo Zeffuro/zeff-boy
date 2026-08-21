@@ -211,12 +211,10 @@ impl EmuLoop {
                 }
                 let mut result = result;
                 self.attach_audio_discontinuities(&mut result);
-                if !EmuThread::send_frame(
-                    &self.frame_tx,
-                    &self.drain_rx,
-                    result,
-                    self.audio_recording_capture.active,
-                ) {
+                let preserve_delivery = self.audio_recording_capture.active
+                    || !result.game_boy_printer_images.is_empty();
+                if !EmuThread::send_frame(&self.frame_tx, &self.drain_rx, result, preserve_delivery)
+                {
                     return false;
                 }
             }
@@ -292,15 +290,40 @@ impl EmuLoop {
                 self.backend.set_sample_rate(rate);
             }
 
-            EmuCommand::SetFdsDiskSide(side) => {
-                let resp = match self.backend.set_fds_disk_side(side) {
-                    Ok(()) => {
-                        let selected = self.backend.fds_disk_side().unwrap_or(side);
-                        EmuResponse::FdsDiskSideChanged(selected)
-                    }
-                    Err(err) => EmuResponse::FdsDiskSideChangeFailed(err.to_string()),
+            EmuCommand::ApplyMediaEvent(event) => {
+                let resp = match self.backend.apply_media_event(&event) {
+                    Ok(()) => match self.backend.media_slot_snapshot() {
+                        Some(snapshot) => EmuResponse::MediaEventApplied {
+                            event,
+                            snapshot,
+                            frame_count: self.backend.frame_count(),
+                        },
+                        None => EmuResponse::MediaEventFailed {
+                            event,
+                            error: "media slot disappeared after applying event".to_string(),
+                        },
+                    },
+                    Err(err) => EmuResponse::MediaEventFailed {
+                        event,
+                        error: err.to_string(),
+                    },
                 };
                 if !self.send_resp(resp) {
+                    return false;
+                }
+            }
+
+            EmuCommand::SetGameBoySerialDevice(device) => {
+                self.backend.set_game_boy_serial_device(device);
+            }
+
+            EmuCommand::QueueBardigunBarcodeScan(bytes) => {
+                let byte_count = bytes.len();
+                let response = match self.backend.queue_bardigun_barcode_scan(bytes) {
+                    Ok(()) => EmuResponse::BardigunBarcodeScanStarted(byte_count),
+                    Err(err) => EmuResponse::BardigunBarcodeScanFailed(err.to_string()),
+                };
+                if !self.send_resp(response) {
                     return false;
                 }
             }
@@ -356,6 +379,7 @@ impl EmuLoop {
                     self.backend.framebuffer(),
                 );
                 if matches!(&resp, EmuResponse::GuestCallUndone) {
+                    self.backend.discard_game_boy_printer_images();
                     self.mark_audio_discontinuity(
                         crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo,
                     );
@@ -543,7 +567,8 @@ impl EmuLoop {
                     &mut self.rewind_buffer,
                     &self.shared_framebuffer,
                 );
-                if matches!(&resp, EmuResponse::RewindOk) {
+                if matches!(&resp, EmuResponse::RewindOk { .. }) {
+                    self.backend.discard_game_boy_printer_images();
                     self.backend.install_rom_patches(&self.last_cheats);
                     self.mark_audio_discontinuity(
                         crate::audio_recorder::AudioTimelineDiscontinuity::Rewind,
@@ -729,6 +754,7 @@ impl EmuLoop {
             &self.shared_framebuffer,
         );
         if state_loaded {
+            self.backend.discard_game_boy_printer_images();
             self.rewind_buffer.clear();
             self.backend.install_rom_patches(&self.last_cheats);
             self.mark_audio_discontinuity(
@@ -845,6 +871,29 @@ mod tests {
         )
     }
 
+    fn test_fds_loop() -> (
+        EmuLoop,
+        crossbeam_channel::Receiver<crate::emu_thread::EmuResponse>,
+    ) {
+        use zeff_nes_core::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_SIDE_SIZE};
+
+        let mut disk = vec![0; FDS_SIDE_SIZE];
+        disk[0] = 1;
+        let emu =
+            zeff_nes_core::emulator::Emulator::new_fds(&disk, vec![0xFF; FDS_BIOS_SIZE], 44_100.0)
+                .unwrap();
+        let backend = EmuBackend::from_nes(emu, PathBuf::from("test.fds"));
+        let (_cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (frame_tx, frame_rx) = crossbeam_channel::bounded(2);
+        let drain_rx = frame_rx.clone();
+        let (resp_tx, resp_rx) = crossbeam_channel::unbounded();
+        let shared = crate::emu_thread::types::new_shared_framebuffer();
+        (
+            EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, shared),
+            resp_rx,
+        )
+    }
+
     fn semantic_result() -> FrameResult {
         FrameResult {
             advanced_frames: 1,
@@ -855,6 +904,9 @@ mod tests {
             ui_data: crate::ui::UiFrameData::default(),
             is_mbc7: false,
             is_pocket_camera: false,
+            game_boy_serial_device: None,
+            game_boy_printer_images: Vec::new(),
+            media_slot_snapshot: None,
             rewind_fill: 0.0,
             audio_semantic_frames: vec![AudioSemanticFrame {
                 frame: 1,
@@ -924,6 +976,32 @@ mod tests {
             game_boy_replay_start_capture_blocker(None, Some(replied)),
             None
         );
+    }
+
+    #[test]
+    fn media_ack_uses_apply_boundary_after_already_advanced_frames() {
+        use crate::emu_thread::EmuResponse;
+        use zeff_emu_common::media::MediaEvent;
+
+        let (mut emu_loop, responses) = test_fds_loop();
+        emu_loop.backend.step_frame();
+        let apply_frame = emu_loop.backend.frame_count();
+        let snapshot = emu_loop.backend.media_slot_snapshot().unwrap();
+
+        assert!(emu_loop.handle_command(EmuCommand::ApplyMediaEvent(
+            MediaEvent::SetWriteProtected {
+                slot: snapshot.state.slot,
+                write_protected: true,
+            }
+        )));
+        assert!(matches!(
+            responses.recv().unwrap(),
+            EmuResponse::MediaEventApplied {
+                frame_count,
+                snapshot,
+                ..
+            } if frame_count == apply_frame && snapshot.state.write_protected
+        ));
     }
 
     #[test]

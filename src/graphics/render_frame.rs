@@ -14,11 +14,17 @@ pub(crate) enum FrameError {
 pub(crate) struct RenderContext<'a> {
     pub(crate) data: DebugDataRefs<'a>,
     pub(crate) active_system: Option<crate::emu_backend::ActiveSystem>,
+    pub(crate) media_slot_snapshot: Option<&'a zeff_emu_common::media::MediaSlotSnapshot>,
+    pub(crate) media_event_change_allowed: bool,
+    pub(crate) game_boy_serial_device: zeff_gb_core::hardware::GameBoySerialDevice,
+    pub(crate) game_boy_serial_device_change_allowed: bool,
     pub(crate) debug_windows: &'a mut DebugWindowState,
     pub(crate) settings: &'a mut crate::settings::Settings,
     #[cfg(target_arch = "wasm32")]
     pub(crate) nes_palette_file_slot: crate::platform::FileDataSlot,
     pub(crate) show_settings_window: &'a mut bool,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) show_printer_window: &'a mut bool,
     pub(crate) dock_state: &'a mut egui_dock::DockState<DebugTab>,
     pub(crate) toast_manager: &'a mut ToastManager,
     pub(crate) speed_mode_label: Option<&'a str>,
@@ -408,6 +414,11 @@ impl Graphics {
                     active_system: ctx
                         .active_system
                         .unwrap_or(crate::emu_backend::ActiveSystem::GameBoy),
+                    media_slot_snapshot: ctx.media_slot_snapshot,
+                    media_event_change_allowed: ctx.media_event_change_allowed,
+                    game_boy_serial_device: ctx.game_boy_serial_device,
+                    game_boy_serial_device_change_allowed: ctx
+                        .game_boy_serial_device_change_allowed,
                     ws_display_rotated: ctx.ws_display_rotated,
                     slot_labels: ctx.slot_labels,
                     slot_occupied: &ctx.slot_occupied,
@@ -464,6 +475,16 @@ impl Graphics {
                     #[cfg(target_arch = "wasm32")]
                     nes_palette_file_slot: ctx.nes_palette_file_slot.clone(),
                 },
+            );
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if *ctx.show_printer_window {
+            debug::draw_printer_window(
+                self.egui.context(),
+                &mut ctx.debug_windows.printer,
+                ctx.show_printer_window,
+                content_bounds,
             );
         }
 

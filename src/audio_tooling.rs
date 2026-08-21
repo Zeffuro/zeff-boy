@@ -70,6 +70,8 @@ impl AudioVoiceState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AudioSemanticFrame {
+    // The v1 recording contract is an end-of-frame snapshot. Trigger and timbre edges require a
+    // versioned event schema; adding them here would not recover same-frame events cores omit.
     pub(crate) frame: u64,
     pub(crate) tempo_us_per_beat: u32,
     pub(crate) voices: Vec<AudioVoiceState>,

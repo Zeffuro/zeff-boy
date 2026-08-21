@@ -37,6 +37,7 @@ mod media;
 #[cfg(not(target_arch = "wasm32"))]
 mod remote;
 mod render;
+mod serial_devices;
 mod shutdown;
 mod state_io;
 mod tick;
@@ -78,6 +79,11 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
     let initial_ws_display_rotated = backend.as_ref().and_then(|b| b.ws()).is_some_and(|ws| {
         ws.preferred_orientation() == zeff_ws_core::hardware::cartridge::RomOrientation::Vertical
     });
+    let initial_game_boy_serial_device = backend
+        .as_ref()
+        .and_then(EmuBackend::game_boy_serial_device)
+        .unwrap_or_default();
+    let initial_media_slot_snapshot = backend.as_ref().and_then(EmuBackend::media_slot_snapshot);
     let active_system = backend
         .as_ref()
         .map(|b| b.system())
@@ -141,6 +147,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         },
         last_state_dir: None,
         show_settings_window: false,
+        show_printer_window: false,
         debug_requests: DebugRequests::default(),
         active_save_slot: 0,
         latest_frame: None,
@@ -190,6 +197,7 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
             queued_replay_playback_frames: 0,
             replay_recording_origin: ReplayCaptureOrigin::default(),
             replay_media_events_pending: 0,
+            pending_media_commands: std::collections::VecDeque::new(),
             last_replay_checkpoint_frame: 0,
             pending_replay_checkpoint_hashes: std::collections::BTreeMap::new(),
         },
@@ -218,14 +226,22 @@ pub(crate) fn run(backend: Option<EmuBackend>, settings: Settings) -> Result<()>
         debugger_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
         settings_window_focused: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        printer_window_focused: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        focus_printer_window_pending: false,
         focus_state_dirty: false,
         #[cfg(not(target_arch = "wasm32"))]
         last_debugger_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_settings_render: Instant::now(),
+        #[cfg(not(target_arch = "wasm32"))]
+        last_printer_render: Instant::now(),
         egui_wants_keyboard: false,
         game_view_focused: true,
         active_system,
+        game_boy_serial_device: initial_game_boy_serial_device,
+        media_slot_snapshot: initial_media_slot_snapshot,
         ws_display_rotated: initial_ws_display_rotated,
         cached_slot_info: state_io::SlotInfo {
             labels: std::array::from_fn(|i| format!("Slot {i}  (empty)")),
@@ -298,6 +314,7 @@ struct App {
     camera: CameraState,
     last_state_dir: Option<std::path::PathBuf>,
     show_settings_window: bool,
+    show_printer_window: bool,
     debug_requests: DebugRequests,
     active_save_slot: u8,
     latest_frame: Option<Arc<Vec<u8>>>,
@@ -338,14 +355,22 @@ struct App {
     debugger_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
     settings_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    printer_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    focus_printer_window_pending: bool,
     focus_state_dirty: bool,
     #[cfg(not(target_arch = "wasm32"))]
     last_debugger_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_settings_render: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_printer_render: Instant,
     egui_wants_keyboard: bool,
     game_view_focused: bool,
     active_system: ActiveSystem,
+    game_boy_serial_device: zeff_gb_core::hardware::GameBoySerialDevice,
+    media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
     ws_display_rotated: bool,
     cached_slot_info: state_io::SlotInfo,
     undo_load_state: Option<Vec<u8>>,
@@ -558,6 +583,14 @@ impl App {
                 Some(response) => response,
                 None => continue,
             };
+            let response = match self.consume_media_response(response) {
+                Some(response) => response,
+                None => continue,
+            };
+            let response = match self.consume_bardigun_response(response) {
+                Some(response) => response,
+                None => continue,
+            };
             return Some(response);
         }
     }
@@ -584,6 +617,7 @@ impl ApplicationHandler for App {
             self.drain_live_control();
             self.sync_debug_presentation(event_loop);
             self.sync_settings_window(event_loop);
+            self.sync_printer_window(event_loop);
         }
         self.apply_focus_state();
         self.schedule_next_frame(event_loop);

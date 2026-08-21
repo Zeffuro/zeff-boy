@@ -1,8 +1,7 @@
 use crate::hardware::apu::Apu;
 use crate::hardware::joypad::Joypad;
 use crate::hardware::ppu::PPU;
-use crate::hardware::printer::GameboyPrinter;
-use crate::hardware::serial::Serial;
+use crate::hardware::serial::{Serial, SerialDevicePort};
 use crate::hardware::sgb::SgbState;
 use crate::hardware::timer::Timer;
 use crate::save_state::{StateReader, StateWriter};
@@ -16,7 +15,7 @@ pub struct IO {
     pub(super) ppu: PPU,
     pub(super) apu: Apu,
     pub(super) sgb: SgbState,
-    pub(super) printer: GameboyPrinter,
+    pub(super) serial_device: SerialDevicePort,
 }
 
 impl fmt::Debug for IO {
@@ -28,7 +27,7 @@ impl fmt::Debug for IO {
             .field("ppu", &self.ppu)
             .field("apu", &self.apu)
             .field("sgb", &self.sgb)
-            .field("printer", &self.printer)
+            .field("serial_device", &self.serial_device)
             .finish()
     }
 }
@@ -42,7 +41,7 @@ impl IO {
             ppu: PPU::new(),
             apu: Apu::new(),
             sgb: SgbState::new(),
-            printer: GameboyPrinter::new(),
+            serial_device: SerialDevicePort::new(),
         }
     }
 
@@ -53,7 +52,7 @@ impl IO {
         self.ppu.write_state(writer);
         self.apu.write_state(writer);
         self.sgb.write_state(writer);
-        self.printer.write_state(writer);
+        self.serial_device.write_state(writer);
     }
 
     pub fn read_state(reader: &mut StateReader<'_>, format_version: u32) -> Result<Self> {
@@ -64,7 +63,7 @@ impl IO {
             ppu: PPU::read_state(reader)?,
             apu: Apu::read_state(reader, format_version)?,
             sgb: SgbState::read_state(reader)?,
-            printer: GameboyPrinter::read_state(reader)?,
+            serial_device: SerialDevicePort::read_state(reader, format_version)?,
         })
     }
 }

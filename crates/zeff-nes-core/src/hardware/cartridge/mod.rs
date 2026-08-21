@@ -94,6 +94,25 @@ pub(crate) trait Mapper: Send {
     fn load_battery_data(&mut self, _bytes: &[u8]) -> anyhow::Result<()> {
         Ok(())
     }
+
+    fn dump_persistent_data(&self) -> Option<Vec<u8>> {
+        self.dump_battery_data()
+    }
+
+    fn load_persistent_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.load_battery_data(bytes)
+    }
+
+    fn write_mutable_media_state(&self, _w: &mut crate::save_state::StateWriter) {}
+
+    fn read_mutable_media_state(
+        &mut self,
+        _r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn reset_mutable_media_to_source(&mut self) {}
 }
 
 pub struct Cartridge {
@@ -733,12 +752,46 @@ impl Cartridge {
         self.mapper.load_battery_data(bytes)
     }
 
+    pub(crate) fn dump_persistent_data(&self) -> Option<Vec<u8>> {
+        self.mapper.dump_persistent_data()
+    }
+
+    pub(crate) fn load_persistent_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.mapper.load_persistent_data(bytes)
+    }
+
+    pub(crate) fn write_mutable_media_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.mapper.write_mutable_media_state(w);
+    }
+
+    pub(crate) fn read_mutable_media_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.mapper.read_mutable_media_state(r)
+    }
+
+    pub(crate) fn reset_mutable_media_to_source(&mut self) {
+        self.mapper.reset_mutable_media_to_source();
+    }
+
     pub fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
         self.mapper.set_fds_disk_side(side)
     }
 
     pub fn fds_disk_side(&self) -> Option<u8> {
         self.mapper.fds_disk_side()
+    }
+
+    pub fn media_slot_snapshot(&self) -> Option<zeff_emu_common::media::MediaSlotSnapshot> {
+        self.mapper.media_slot_snapshot()
+    }
+
+    pub fn apply_media_event(
+        &mut self,
+        event: &zeff_emu_common::media::MediaEvent,
+    ) -> anyhow::Result<()> {
+        self.mapper.apply_media_event(event)
     }
 
     pub fn write_state(&self, w: &mut crate::save_state::StateWriter) {

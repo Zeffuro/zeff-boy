@@ -40,6 +40,21 @@ fn make_mmc3_emulator() -> crate::emulator::Emulator {
     crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
 }
 
+fn make_fds_emulator() -> crate::emulator::Emulator {
+    make_fds_emulator_with_sides(1)
+}
+
+fn make_fds_emulator_with_sides(side_count: usize) -> crate::emulator::Emulator {
+    use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_SIDE_SIZE};
+
+    let mut disk = vec![0u8; FDS_SIDE_SIZE * side_count];
+    disk[0] = 0x01;
+    let mut bios = vec![0xEA; FDS_BIOS_SIZE];
+    bios[FDS_BIOS_SIZE - 4] = 0x00;
+    bios[FDS_BIOS_SIZE - 3] = 0xE0;
+    crate::emulator::Emulator::new_fds(&disk, bios, 44_100.0).expect("test FDS image should load")
+}
+
 #[test]
 fn save_state_roundtrip_preserves_cpu_state() {
     let mut emu = make_emulator();
@@ -214,6 +229,116 @@ fn save_state_v6_roundtrips_mmc3_ppu_runtime() {
     restored.bus.cartridge.notify_ppu_a12(false, 208);
     restored.bus.cartridge.notify_ppu_a12(true, 216);
     assert!(restored.bus.cartridge.irq_pending());
+}
+
+#[test]
+fn save_state_v8_roundtrips_mutated_fds_media() {
+    let mut emu = make_fds_emulator();
+    let pristine = emu
+        .dump_persistent_data()
+        .expect("FDS media should persist");
+    emu.bus.cpu_write(0x4023, 0x01);
+    emu.bus.cpu_write(0x4025, 0xC1);
+    emu.bus.cpu_write(0x4024, 0xA5);
+    for _ in 0..700_000 {
+        emu.bus.cartridge.clock_cpu();
+        if emu.bus.cartridge.irq_pending() {
+            break;
+        }
+    }
+    let mutated = emu
+        .dump_persistent_data()
+        .expect("FDS media should persist");
+    assert_ne!(mutated, pristine);
+
+    let state = encode_state(&emu).expect("FDS state should encode");
+    let mut restored = make_fds_emulator();
+    let mut competing_media = restored.dump_persistent_data().unwrap();
+    *competing_media.last_mut().unwrap() = 0x7C;
+    restored.load_persistent_data(&competing_media).unwrap();
+    assert_ne!(restored.dump_persistent_data().unwrap(), mutated);
+    decode_state(&mut restored, &state).expect("FDS state should decode");
+
+    assert_eq!(restored.dump_persistent_data().unwrap(), mutated);
+}
+
+#[test]
+fn save_state_v8_roundtrips_fds_media_attachment_and_protection() {
+    use zeff_emu_common::media::MediaEvent;
+
+    let mut protected = make_fds_emulator();
+    let snapshot = protected.media_slot_snapshot().unwrap();
+    protected
+        .apply_media_event(&MediaEvent::SetWriteProtected {
+            slot: snapshot.state.slot.clone(),
+            write_protected: true,
+        })
+        .unwrap();
+    let protected_state = encode_state(&protected).unwrap();
+    let mut restored = make_fds_emulator();
+    decode_state(&mut restored, &protected_state).unwrap();
+    let restored_snapshot = restored.media_slot_snapshot().unwrap();
+    assert!(restored_snapshot.inserted());
+    assert!(restored_snapshot.state.write_protected);
+
+    protected
+        .apply_media_event(&MediaEvent::Eject {
+            slot: snapshot.state.slot,
+        })
+        .unwrap();
+    let ejected_state = encode_state(&protected).unwrap();
+    decode_state(&mut restored, &ejected_state).unwrap();
+    let restored_snapshot = restored.media_slot_snapshot().unwrap();
+    assert!(!restored_snapshot.inserted());
+    assert_eq!(restored_snapshot.state.side, None);
+    assert!(!restored_snapshot.state.write_protected);
+    assert!(restored_snapshot.source_media_id.is_some());
+}
+
+#[test]
+fn save_state_v7_with_mutable_media_remains_readable() {
+    let emu = make_fds_emulator();
+    let mut state = encode_state(&emu).unwrap();
+    state[8..12].copy_from_slice(&FORMAT_VERSION_V7_COMPRESSED.to_le_bytes());
+
+    let mut restored = make_fds_emulator();
+    decode_state(&mut restored, &state).expect("V7 FDS state should load");
+    assert!(restored.media_slot_snapshot().unwrap().inserted());
+}
+
+#[test]
+fn save_state_v6_fds_load_preserves_source_media() {
+    use zeff_emu_common::media::MediaEvent;
+
+    let mut emu = make_fds_emulator_with_sides(2);
+    emu.apply_media_event(&MediaEvent::SelectSide {
+        slot: "fds.drive0".into(),
+        side: 1,
+    })
+    .unwrap();
+    let expected_media = emu.dump_persistent_data().unwrap();
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    emu.bus.write_apu_runtime_state(&mut payload);
+    emu.bus.write_ppu_runtime_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V6_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_fds_emulator_with_sides(2);
+    let mut competing_media = restored.dump_persistent_data().unwrap();
+    *competing_media.last_mut().unwrap() = 0x7C;
+    restored.load_persistent_data(&competing_media).unwrap();
+    assert_ne!(restored.dump_persistent_data().unwrap(), expected_media);
+    decode_state(&mut restored, &state).expect("V6 FDS state should load");
+    assert_eq!(restored.dump_persistent_data().unwrap(), expected_media);
+    assert_eq!(restored.media_slot_snapshot().unwrap().state.side, Some(1));
 }
 
 #[test]

@@ -395,5 +395,17 @@ impl App {
             }
             self.last_settings_render = now;
         }
+
+        let printer_visible = self.show_printer_window
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::printer_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if printer_visible && now.duration_since(self.last_printer_render) >= VIEWER_UPDATE_INTERVAL
+        {
+            self.render_printer_frame();
+            self.last_printer_render = now;
+        }
     }
 }

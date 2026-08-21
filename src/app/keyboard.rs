@@ -190,16 +190,26 @@ impl App {
             return false;
         }
 
-        if self.modifiers.ctrl && self.modifiers.alt && self.active_system == ActiveSystem::Nes {
+        if self.modifiers.ctrl && self.modifiers.alt && self.media_slot_snapshot.is_some() {
             match key_code {
                 KeyCode::KeyA => {
-                    if pressed {
+                    if pressed
+                        && self
+                            .media_slot_snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.side_count > 0)
+                    {
                         self.set_fds_disk_side(0);
                     }
                     return true;
                 }
                 KeyCode::KeyB => {
-                    if pressed {
+                    if pressed
+                        && self
+                            .media_slot_snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.side_count > 1)
+                    {
                         self.set_fds_disk_side(1);
                     }
                     return true;

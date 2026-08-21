@@ -434,6 +434,21 @@ impl Bus {
         }
         self.cartridge.read_ppu_runtime_state(r)
     }
+
+    pub(crate) fn write_mutable_media_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.cartridge.write_mutable_media_state(w);
+    }
+
+    pub(crate) fn read_mutable_media_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.cartridge.read_mutable_media_state(r)
+    }
+
+    pub(crate) fn reset_mutable_media_to_source(&mut self) {
+        self.cartridge.reset_mutable_media_to_source();
+    }
 }
 
 impl fmt::Debug for Bus {

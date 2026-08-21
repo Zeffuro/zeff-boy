@@ -155,10 +155,20 @@ pub(crate) struct FrameResult {
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) is_pocket_camera: bool,
+    pub(crate) game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
+    pub(crate) game_boy_printer_images: Vec<GameBoyPrinterImage>,
+    pub(crate) media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
     pub(crate) rewind_fill: f32,
     pub(crate) audio_semantic_frames: Vec<crate::audio_tooling::AudioSemanticFrame>,
     pub(crate) audio_timeline_discontinuities:
         Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GameBoyPrinterImage {
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) rgba: Vec<u8>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -211,7 +221,9 @@ pub(crate) enum EmuCommand {
     },
     SetSampleRate(u32),
     SetUncapped(bool),
-    SetFdsDiskSide(u8),
+    ApplyMediaEvent(zeff_emu_common::media::MediaEvent),
+    SetGameBoySerialDevice(zeff_gb_core::hardware::GameBoySerialDevice),
+    QueueBardigunBarcodeScan(Vec<u8>),
     RestoreGameBoyLinkState(zeff_emu_common::replay::ReplayGameBoyLinkState),
     UpdateCheats(Vec<crate::cheats::CheatPatch>),
     #[cfg(not(target_arch = "wasm32"))]
@@ -227,9 +239,14 @@ pub(crate) enum EmuResponse {
     SaveStateFailed(String),
     LoadStateOk {
         path: String,
+        media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
+        game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
     },
     LoadStateFailed(String),
-    RewindOk,
+    RewindOk {
+        media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
+        game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
+    },
     RewindFailed(String),
     StateCaptured(Vec<u8>),
     ReplayStartCaptured {
@@ -260,8 +277,17 @@ pub(crate) enum EmuResponse {
     },
     GuestCallUndone,
     GuestCallUndoFailed(String),
-    FdsDiskSideChanged(u8),
-    FdsDiskSideChangeFailed(String),
+    MediaEventApplied {
+        event: zeff_emu_common::media::MediaEvent,
+        snapshot: zeff_emu_common::media::MediaSlotSnapshot,
+        frame_count: u64,
+    },
+    MediaEventFailed {
+        event: zeff_emu_common::media::MediaEvent,
+        error: String,
+    },
+    BardigunBarcodeScanStarted(usize),
+    BardigunBarcodeScanFailed(String),
     #[cfg(not(target_arch = "wasm32"))]
     LinkPending(String),
     #[cfg(not(target_arch = "wasm32"))]

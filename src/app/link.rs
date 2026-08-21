@@ -5,6 +5,23 @@ use crate::emu_thread::{EmuCommand, EmuResponse, TcpLinkMode};
 
 impl App {
     #[cfg(not(target_arch = "wasm32"))]
+    fn detach_game_boy_serial_device_for_link(&mut self) {
+        if self.active_system != crate::emu_backend::ActiveSystem::GameBoy
+            || self.game_boy_serial_device
+                == zeff_gb_core::hardware::GameBoySerialDevice::Disconnected
+        {
+            return;
+        }
+
+        self.game_boy_serial_device = zeff_gb_core::hardware::GameBoySerialDevice::Disconnected;
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::SetGameBoySerialDevice(
+                zeff_gb_core::hardware::GameBoySerialDevice::Disconnected,
+            ));
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn tcp_link_addr(&self) -> String {
         let addr = self.settings.emulation.tcp_link_addr.trim();
         if addr.is_empty() {
@@ -77,45 +94,59 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn host_tcp_link(&mut self) {
+    pub(super) fn host_tcp_link(&mut self) -> bool {
         if self.emu_thread.is_none() {
             self.toast_manager
                 .error("Load a GB/GBC or WonderSwan/WSC ROM before hosting link");
-            return;
+            return false;
         }
         if crate::link::remote_link_system_for_active_system(self.active_system).is_none() {
             self.toast_manager
                 .error("TCP link currently supports GB/GBC and WonderSwan/WSC only");
-            return;
+            return false;
+        }
+        if self.recording.is_replay_active() {
+            self.toast_manager
+                .error("Stop replay activity before starting a TCP link");
+            return false;
         }
 
         let bind_addr = self.tcp_link_addr();
+        self.detach_game_boy_serial_device_for_link();
         self.tcp_link_active = true;
         self.resume_if_paused_by_unfocus_for_link();
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::StartTcpLink(TcpLinkMode::Host { bind_addr }));
         }
+        true
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn join_tcp_link(&mut self) {
+    pub(super) fn join_tcp_link(&mut self) -> bool {
         if self.emu_thread.is_none() {
             self.toast_manager
                 .error("Load a GB/GBC or WonderSwan/WSC ROM before joining link");
-            return;
+            return false;
         }
         if crate::link::remote_link_system_for_active_system(self.active_system).is_none() {
             self.toast_manager
                 .error("TCP link currently supports GB/GBC and WonderSwan/WSC only");
-            return;
+            return false;
+        }
+        if self.recording.is_replay_active() {
+            self.toast_manager
+                .error("Stop replay activity before starting a TCP link");
+            return false;
         }
 
         let connect_addr = self.tcp_link_addr();
+        self.detach_game_boy_serial_device_for_link();
         self.tcp_link_active = true;
         self.resume_if_paused_by_unfocus_for_link();
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::StartTcpLink(TcpLinkMode::Join { connect_addr }));
         }
+        true
     }
 
     #[cfg(not(target_arch = "wasm32"))]

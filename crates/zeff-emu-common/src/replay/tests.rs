@@ -3,6 +3,7 @@ use super::{
     ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply, ReplayGameBoyLinkState, ReplayJoypadFrame,
     ReplayMetadata, ReplayPlayer, ReplayRecorder, ReplayWonderSwanLinkEvent, ReplayZapperFrame,
 };
+use crate::media::{MediaEvent, MediaObjectId, MediaSlotId};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -138,6 +139,51 @@ fn replay_roundtrip_with_fds_side_events() {
     assert_eq!(player.frames_until_next_event(10), 10);
     assert_eq!(player.next_frame(), Some((0x03, 0x04)));
     assert!(player.take_events_at_cursor().is_empty());
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_roundtrip_preserves_sequenced_generic_media_events() {
+    let path = unique_path("generic_media_events");
+    let slot = MediaSlotId::from("fds.drive0");
+    let media_id = MediaObjectId::from("sha256:test-disk");
+    let events = vec![
+        MediaEvent::Eject { slot: slot.clone() },
+        MediaEvent::Insert {
+            slot: slot.clone(),
+            media_id,
+            side: Some(1),
+            write_protected: false,
+        },
+        MediaEvent::SelectSide {
+            slot: slot.clone(),
+            side: 0,
+        },
+        MediaEvent::SetWriteProtected {
+            slot,
+            write_protected: true,
+        },
+    ];
+    let mut recorder = ReplayRecorder::new(path.clone(), Vec::new());
+    for event in events.iter().cloned() {
+        recorder.record_media_event(0, event);
+    }
+    recorder.finish().unwrap();
+
+    let mut player = ReplayPlayer::load(&path).unwrap();
+    let decoded = player.take_events_at_cursor();
+    assert_eq!(decoded.len(), events.len());
+    for (sequence, (decoded, expected)) in decoded.into_iter().zip(events).enumerate() {
+        assert_eq!(
+            decoded,
+            ReplayEvent::Media {
+                frame: 0,
+                sequence: sequence as u32,
+                event: expected,
+            }
+        );
+    }
 
     let _ = std::fs::remove_file(&path);
 }

@@ -69,8 +69,15 @@ pub(super) struct RecordingState {
     pub(super) queued_replay_playback_frames: usize,
     pub(super) replay_recording_origin: ReplayCaptureOrigin,
     pub(super) replay_media_events_pending: usize,
+    pub(super) pending_media_commands: VecDeque<PendingMediaCommand>,
     pub(super) last_replay_checkpoint_frame: usize,
     pub(super) pending_replay_checkpoint_hashes: BTreeMap<u64, [u8; 32]>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PendingMediaCommand {
+    pub(super) replay_origin_frame: Option<u64>,
+    pub(super) event: zeff_emu_common::media::MediaEvent,
 }
 
 impl RecordingState {
@@ -299,6 +306,7 @@ mod tests {
             queued_replay_playback_frames: 0,
             replay_recording_origin: ReplayCaptureOrigin::default(),
             replay_media_events_pending: 0,
+            pending_media_commands: VecDeque::new(),
             last_replay_checkpoint_frame: 0,
             pending_replay_checkpoint_hashes: BTreeMap::new(),
         }

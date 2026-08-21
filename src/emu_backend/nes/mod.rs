@@ -169,8 +169,20 @@ impl NesBackend {
         self.emu.set_fds_disk_side(side)
     }
 
+    #[cfg(test)]
     pub(crate) fn fds_disk_side(&self) -> Option<u8> {
         self.emu.fds_disk_side()
+    }
+
+    pub(crate) fn media_slot_snapshot(&self) -> Option<zeff_emu_common::media::MediaSlotSnapshot> {
+        self.emu.media_slot_snapshot()
+    }
+
+    pub(crate) fn apply_media_event(
+        &mut self,
+        event: &zeff_emu_common::media::MediaEvent,
+    ) -> anyhow::Result<()> {
+        self.emu.apply_media_event(event)
     }
 }
 
@@ -220,7 +232,10 @@ impl EmulatorCore for NesBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        crate::save_paths::flush_battery_sram(self.paths.rom_path(), self.emu.dump_battery_sram())
+        crate::save_paths::flush_battery_sram(
+            self.paths.rom_path(),
+            self.emu.dump_persistent_data(),
+        )
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -419,6 +434,6 @@ pub(crate) fn try_load_battery_sram(
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
     crate::save_paths::try_load_battery_sram(rom_path, "NES", emu.has_battery(), |bytes| {
-        emu.load_battery_sram(bytes)
+        emu.load_persistent_data(bytes)
     })
 }

@@ -104,6 +104,7 @@ impl Emulator {
         let sample_rate = self.bus.apu_sample_rate();
         let boot_rom = self.bus.boot_rom_bytes().map(<[u8]>::to_vec);
         let mode_preference = self.hardware_mode_preference;
+        let serial_device = self.game_boy_serial_device();
         let trace_enabled = self.instruction_trace.is_enabled();
         let trace_capacity = self.instruction_trace.capacity();
 
@@ -114,6 +115,7 @@ impl Emulator {
         match reset {
             Ok(mut emulator) => {
                 emulator.set_sample_rate(sample_rate);
+                emulator.set_game_boy_serial_device(serial_device);
                 emulator.instruction_trace.set_capacity(trace_capacity);
                 emulator.instruction_trace.set_enabled(trace_enabled);
                 *self = emulator;

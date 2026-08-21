@@ -25,35 +25,44 @@ pub(crate) fn export_color_image_as_png(path: &Path, image: &ColorImage) -> anyh
 
 pub(crate) fn export_png_button(ui: &mut egui::Ui, default_name: &str, image: &ColorImage) -> bool {
     if ui.button("Export PNG").clicked() {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(path) = crate::platform::FileDialog::new()
-            .set_title("Export as PNG")
-            .add_filter("PNG Image", &["png"])
-            .set_file_name(default_name)
-            .save_file()
-        {
-            match export_color_image_as_png(&path, image) {
-                Ok(()) => {
-                    log::info!("Exported PNG to {}", path.display());
-                    return true;
-                }
-                Err(err) => {
-                    log::error!("Failed to export PNG: {}", err);
-                }
-            }
-        }
+        return export_color_image_as_png_interactive(default_name, image);
+    }
+    false
+}
 
-        #[cfg(target_arch = "wasm32")]
-        match encode_color_image_as_png_bytes(image) {
-            Ok(bytes) => {
-                crate::platform::download_file(default_name, &bytes);
-                log::info!("Triggered PNG download: {default_name}");
+pub(crate) fn export_color_image_as_png_interactive(
+    default_name: &str,
+    image: &ColorImage,
+) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(path) = crate::platform::FileDialog::new()
+        .set_title("Export as PNG")
+        .add_filter("PNG Image", &["png"])
+        .set_file_name(default_name)
+        .save_file()
+    {
+        match export_color_image_as_png(&path, image) {
+            Ok(()) => {
+                log::info!("Exported PNG to {}", path.display());
                 return true;
             }
             Err(err) => {
-                log::error!("Failed to encode PNG: {}", err);
+                log::error!("Failed to export PNG: {}", err);
             }
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    match encode_color_image_as_png_bytes(image) {
+        Ok(bytes) => {
+            crate::platform::download_file(default_name, &bytes);
+            log::info!("Triggered PNG download: {default_name}");
+            return true;
+        }
+        Err(err) => {
+            log::error!("Failed to encode PNG: {}", err);
+        }
+    }
+
     false
 }

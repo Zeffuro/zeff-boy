@@ -127,12 +127,23 @@ impl EmuThread {
                 *uncapped_mode = on;
                 backend.set_apu_sample_generation_enabled(!on);
             }
-            EmuCommand::SetFdsDiskSide(side) => {
-                let resp = match backend.set_fds_disk_side(side) {
-                    Ok(()) => {
-                        EmuResponse::FdsDiskSideChanged(backend.fds_disk_side().unwrap_or(side))
-                    }
-                    Err(err) => EmuResponse::FdsDiskSideChangeFailed(err.to_string()),
+            EmuCommand::ApplyMediaEvent(event) => {
+                let resp = match backend.apply_media_event(&event) {
+                    Ok(()) => match backend.media_slot_snapshot() {
+                        Some(snapshot) => EmuResponse::MediaEventApplied {
+                            event,
+                            snapshot,
+                            frame_count: backend.frame_count(),
+                        },
+                        None => EmuResponse::MediaEventFailed {
+                            event,
+                            error: "media slot disappeared after applying event".to_string(),
+                        },
+                    },
+                    Err(err) => EmuResponse::MediaEventFailed {
+                        event,
+                        error: err.to_string(),
+                    },
                 };
                 pending_responses.push_back(resp);
             }
@@ -262,6 +273,9 @@ impl EmuThread {
                     pending_audio_discontinuities
                         .push(crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo);
                 }
+                if matches!(&resp, EmuResponse::GuestCallUndone) {
+                    backend.discard_game_boy_printer_images();
+                }
                 pending_responses.push_back(resp);
             }
             EmuCommand::CaptureReplayStart { capture_id } => {
@@ -320,6 +334,17 @@ impl EmuThread {
                 }
                 pending_responses.push_back(resp);
             }
+            EmuCommand::SetGameBoySerialDevice(device) => {
+                backend.set_game_boy_serial_device(device);
+            }
+            EmuCommand::QueueBardigunBarcodeScan(bytes) => {
+                let byte_count = bytes.len();
+                let response = match backend.queue_bardigun_barcode_scan(bytes) {
+                    Ok(()) => EmuResponse::BardigunBarcodeScanStarted(byte_count),
+                    Err(err) => EmuResponse::BardigunBarcodeScanFailed(err.to_string()),
+                };
+                pending_responses.push_back(response);
+            }
             EmuCommand::RestoreGameBoyLinkState(state) => {
                 backend.restore_game_boy_link_replay_state(state);
             }
@@ -329,7 +354,8 @@ impl EmuThread {
             }
             EmuCommand::Rewind => {
                 let resp = Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer);
-                if matches!(&resp, EmuResponse::RewindOk) {
+                if matches!(&resp, EmuResponse::RewindOk { .. }) {
+                    backend.discard_game_boy_printer_images();
                     backend.install_rom_patches(last_cheats);
                     if audio_recording_capture.semantic {
                         pending_audio_discontinuities

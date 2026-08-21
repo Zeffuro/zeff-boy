@@ -60,7 +60,15 @@ impl App {
             });
         }
         match self.recv_cold_response() {
-            Some(EmuResponse::LoadStateOk { path }) => {
+            Some(EmuResponse::LoadStateOk {
+                path,
+                media_slot_snapshot,
+                game_boy_serial_device,
+            }) => {
+                self.media_slot_snapshot = media_slot_snapshot;
+                if let Some(device) = game_boy_serial_device {
+                    self.game_boy_serial_device = device;
+                }
                 self.refresh_framebuffer_after_load();
                 log::info!("Undid loaded state via {path}");
                 self.undo_load_state = redo_state;
@@ -113,7 +121,15 @@ impl App {
             });
         }
         match self.recv_cold_response() {
-            Some(EmuResponse::LoadStateOk { path }) => {
+            Some(EmuResponse::LoadStateOk {
+                path,
+                media_slot_snapshot,
+                game_boy_serial_device,
+            }) => {
+                self.media_slot_snapshot = media_slot_snapshot;
+                if let Some(device) = game_boy_serial_device {
+                    self.game_boy_serial_device = device;
+                }
                 self.refresh_framebuffer_after_load();
                 log::info!("Loaded state from {}", path);
                 self.undo_load_state = undo_state;
@@ -253,7 +269,15 @@ impl App {
                 });
             }
             match self.recv_cold_response() {
-                Some(EmuResponse::LoadStateOk { path: p }) => {
+                Some(EmuResponse::LoadStateOk {
+                    path: p,
+                    media_slot_snapshot,
+                    game_boy_serial_device,
+                }) => {
+                    self.media_slot_snapshot = media_slot_snapshot;
+                    if let Some(device) = game_boy_serial_device {
+                        self.game_boy_serial_device = device;
+                    }
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from {}", p);
                     self.undo_load_state = undo_state;
@@ -301,7 +325,15 @@ impl App {
                 });
             }
             match self.recv_cold_response() {
-                Some(EmuResponse::LoadStateOk { path }) => {
+                Some(EmuResponse::LoadStateOk {
+                    path,
+                    media_slot_snapshot,
+                    game_boy_serial_device,
+                }) => {
+                    self.media_slot_snapshot = media_slot_snapshot;
+                    if let Some(device) = game_boy_serial_device {
+                        self.game_boy_serial_device = device;
+                    }
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from file: {name}");
                     self.undo_load_state = undo_state;

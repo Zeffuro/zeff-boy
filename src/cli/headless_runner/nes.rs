@@ -268,7 +268,7 @@ pub(super) fn run_nes_headless(
         }
     }
     if !opts.no_sram {
-        flush_battery(path, emulator.dump_battery_sram());
+        flush_battery(path, emulator.dump_persistent_data());
     }
     fail_on_stuck_if_needed("nes", stuck.as_ref(), opts)?;
 

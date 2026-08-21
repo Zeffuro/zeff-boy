@@ -174,8 +174,11 @@ impl App {
                     if let Some(addr) = addr {
                         self.settings.emulation.tcp_link_addr = addr;
                     }
-                    self.host_tcp_link();
-                    LiveReply::ok(self.live_status_json())
+                    if self.host_tcp_link() {
+                        LiveReply::ok(self.live_status_json())
+                    } else {
+                        LiveReply::error("TCP link could not be hosted")
+                    }
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -189,8 +192,11 @@ impl App {
                     if let Some(addr) = addr {
                         self.settings.emulation.tcp_link_addr = addr;
                     }
-                    self.join_tcp_link();
-                    LiveReply::ok(self.live_status_json())
+                    if self.join_tcp_link() {
+                        LiveReply::ok(self.live_status_json())
+                    } else {
+                        LiveReply::error("TCP link could not be joined")
+                    }
                 }
                 #[cfg(target_arch = "wasm32")]
                 {

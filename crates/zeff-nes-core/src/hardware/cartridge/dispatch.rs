@@ -262,6 +262,29 @@ impl MapperImpl {
         dispatch_mapper!(self, load_battery_data, bytes)
     }
 
+    pub(super) fn dump_persistent_data(&self) -> Option<Vec<u8>> {
+        dispatch_mapper!(self, dump_persistent_data)
+    }
+
+    pub(super) fn load_persistent_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        dispatch_mapper!(self, load_persistent_data, bytes)
+    }
+
+    pub(super) fn write_mutable_media_state(&self, w: &mut crate::save_state::StateWriter) {
+        dispatch_mapper!(self, write_mutable_media_state, w)
+    }
+
+    pub(super) fn read_mutable_media_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        dispatch_mapper!(self, read_mutable_media_state, r)
+    }
+
+    pub(super) fn reset_mutable_media_to_source(&mut self) {
+        dispatch_mapper!(self, reset_mutable_media_to_source)
+    }
+
     pub(super) fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
         match self {
             Self::Fds(mapper) => mapper.select_side(side),
@@ -273,6 +296,23 @@ impl MapperImpl {
         match self {
             Self::Fds(mapper) => mapper.selected_side(),
             _ => None,
+        }
+    }
+
+    pub(super) fn media_slot_snapshot(&self) -> Option<zeff_emu_common::media::MediaSlotSnapshot> {
+        match self {
+            Self::Fds(mapper) => Some(mapper.media_slot_snapshot()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn apply_media_event(
+        &mut self,
+        event: &zeff_emu_common::media::MediaEvent,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Fds(mapper) => mapper.apply_media_event(event),
+            _ => anyhow::bail!("current NES cartridge has no removable media slot"),
         }
     }
 }

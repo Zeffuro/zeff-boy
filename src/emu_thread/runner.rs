@@ -23,8 +23,15 @@ impl EmuThread {
         }
         match frame_tx.try_send(result) {
             Ok(()) => true,
-            Err(TrySendError::Full(result)) => {
-                let _ = drain_rx.try_recv();
+            Err(TrySendError::Full(mut result)) => {
+                if let Ok(mut replaced) = drain_rx.try_recv()
+                    && !replaced.game_boy_printer_images.is_empty()
+                {
+                    replaced
+                        .game_boy_printer_images
+                        .append(&mut result.game_boy_printer_images);
+                    result.game_boy_printer_images = replaced.game_boy_printer_images;
+                }
                 frame_tx.try_send(result).is_ok()
             }
             Err(TrySendError::Disconnected(_)) => false,
@@ -81,6 +88,9 @@ impl EmuThread {
             ui_data: ui::UiFrameData::default(),
             is_mbc7: backend.is_mbc7(),
             is_pocket_camera: backend.is_pocket_camera(),
+            game_boy_serial_device: backend.game_boy_serial_device(),
+            game_boy_printer_images: Self::take_game_boy_printer_images(backend),
+            media_slot_snapshot: backend.media_slot_snapshot(),
             rewind_fill: rewind_buffer.fill_ratio(),
             audio_semantic_frames,
             audio_timeline_discontinuities: Vec::new(),
@@ -91,7 +101,9 @@ impl EmuThread {
                 .append(pending_discontinuities);
         }
 
-        Self::send_frame(frame_tx, drain_rx, result, recording_capture.active);
+        let preserve_delivery =
+            recording_capture.active || !result.game_boy_printer_images.is_empty();
+        Self::send_frame(frame_tx, drain_rx, result, preserve_delivery);
 
         std::thread::yield_now();
     }
@@ -112,6 +124,9 @@ mod tests {
             ui_data: ui::UiFrameData::default(),
             is_mbc7: false,
             is_pocket_camera: false,
+            game_boy_serial_device: None,
+            game_boy_printer_images: Vec::new(),
+            media_slot_snapshot: None,
             rewind_fill: 0.0,
             audio_semantic_frames: Vec::new(),
             audio_timeline_discontinuities: Vec::new(),
@@ -143,6 +158,32 @@ mod tests {
         );
         assert!(frame_rx.recv().is_ok());
         sender.join().unwrap();
+    }
+
+    #[test]
+    fn replaceable_frames_carry_forward_completed_printer_images() {
+        let (frame_tx, frame_rx) = crossbeam_channel::bounded(1);
+        let drain_rx = frame_rx.clone();
+        let mut completed = empty_result();
+        completed
+            .game_boy_printer_images
+            .push(super::super::GameBoyPrinterImage {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 4],
+            });
+        frame_tx.send(completed).unwrap();
+
+        assert!(EmuThread::send_frame(
+            &frame_tx,
+            &drain_rx,
+            empty_result(),
+            false
+        ));
+
+        let delivered = frame_rx.recv().unwrap();
+        assert_eq!(delivered.game_boy_printer_images.len(), 1);
+        assert_eq!(delivered.game_boy_printer_images[0].rgba, [1, 2, 3, 4]);
     }
 
     #[test]

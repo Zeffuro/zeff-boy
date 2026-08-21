@@ -396,6 +396,10 @@ fn default_settings_window_size() -> [u32; 2] {
     [760, 680]
 }
 
+fn default_printer_window_size() -> [u32; 2] {
+    [520, 720]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct UiSettings {
@@ -437,6 +441,12 @@ pub(crate) struct UiSettings {
     #[serde(default)]
     pub(crate) settings_window_maximized: bool,
     #[serde(default)]
+    pub(crate) printer_window_position: Option<[i32; 2]>,
+    #[serde(default = "default_printer_window_size")]
+    pub(crate) printer_window_size: [u32; 2],
+    #[serde(default)]
+    pub(crate) printer_window_maximized: bool,
+    #[serde(default)]
     pub(crate) debugger_dock_layout: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) floating_dock_layout: Option<serde_json::Value>,
@@ -467,6 +477,9 @@ impl Default for UiSettings {
             settings_window_position: None,
             settings_window_size: default_settings_window_size(),
             settings_window_maximized: false,
+            printer_window_position: None,
+            printer_window_size: default_printer_window_size(),
+            printer_window_maximized: false,
             debugger_dock_layout: None,
             floating_dock_layout: None,
             ide_dock_layout: None,

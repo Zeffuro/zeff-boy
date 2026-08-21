@@ -172,6 +172,10 @@ impl Emulator {
         self.bus.printer_image_count()
     }
 
+    pub fn take_printer_images(&mut self) -> Vec<Vec<u8>> {
+        self.bus.take_printer_images()
+    }
+
     pub fn printer_image_dimensions() -> (usize, usize) {
         crate::hardware::printer::GameboyPrinter::image_dimensions()
     }

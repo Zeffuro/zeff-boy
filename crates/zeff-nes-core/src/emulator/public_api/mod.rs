@@ -119,6 +119,17 @@ impl Emulator {
     pub fn fds_disk_side(&self) -> Option<u8> {
         self.bus.cartridge.fds_disk_side()
     }
+
+    pub fn media_slot_snapshot(&self) -> Option<zeff_emu_common::media::MediaSlotSnapshot> {
+        self.bus.cartridge.media_slot_snapshot()
+    }
+
+    pub fn apply_media_event(
+        &mut self,
+        event: &zeff_emu_common::media::MediaEvent,
+    ) -> anyhow::Result<()> {
+        self.bus.cartridge.apply_media_event(event)
+    }
 }
 
 fn map_host_to_nes_byte(buttons_pressed: u8, dpad_pressed: u8) -> u8 {

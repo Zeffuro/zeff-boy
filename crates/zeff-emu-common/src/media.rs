@@ -106,6 +106,20 @@ pub struct MediaSlotState {
     pub mutation_counter: u64,
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaSlotSnapshot {
+    pub state: MediaSlotState,
+    pub source_media_id: Option<MediaObjectId>,
+    pub side_count: u8,
+}
+
+impl MediaSlotSnapshot {
+    pub fn inserted(&self) -> bool {
+        self.state.inserted()
+    }
+}
+
 impl MediaSlotState {
     pub fn empty(slot: impl Into<MediaSlotId>) -> Self {
         Self {

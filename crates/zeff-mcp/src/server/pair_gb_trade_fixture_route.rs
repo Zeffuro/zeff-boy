@@ -15,6 +15,9 @@ use super::pair_gb_trade_fixture_screen::PairScreenScores;
 const TRADE_CONSOLE_Y: u8 = 4;
 const LEFT_CONSOLE_STAND_X: u8 = 3;
 const RIGHT_CONSOLE_STAND_X: u8 = 6;
+const LEFT_CONSOLE_ROUTE: &[(u8, u8)] = &[(2, 5), (2, 4), (LEFT_CONSOLE_STAND_X, TRADE_CONSOLE_Y)];
+const RIGHT_CONSOLE_ROUTE: &[(u8, u8)] =
+    &[(7, 5), (7, 4), (RIGHT_CONSOLE_STAND_X, TRADE_CONSOLE_Y)];
 
 impl Server {
     pub(super) fn prepare_gb_trade_fixture_room_entry(
@@ -55,10 +58,19 @@ impl Server {
         right_addr: &str,
         deadline: Instant,
     ) -> anyhow::Result<()> {
+        ensure_trade_room(self.read_gb_trade_position(left_addr, deadline)?)?;
+        ensure_trade_room(self.read_gb_trade_position(right_addr, deadline)?)?;
         self.wait_for_screen_settle(left_addr, deadline)?;
         self.wait_for_screen_settle(right_addr, deadline)?;
         std::thread::sleep(Duration::from_millis(2_000));
-        self.walk_gb_trade_fixture_pair_to_consoles(left_addr, right_addr, deadline)
+        for &(x, y) in LEFT_CONSOLE_ROUTE {
+            self.walk_gb_trade_fixture_to_coord(left_addr, x, y, deadline)?;
+        }
+        for &(x, y) in RIGHT_CONSOLE_ROUTE {
+            self.walk_gb_trade_fixture_to_coord(right_addr, x, y, deadline)?;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        self.ensure_gb_trade_fixture_console_positions(left_addr, right_addr, deadline)
     }
 
     pub(super) fn trigger_trade_consoles(
@@ -113,34 +125,33 @@ impl Server {
         }
     }
 
-    fn walk_gb_trade_fixture_pair_to_consoles(
+    fn walk_gb_trade_fixture_to_coord(
         &self,
-        left_addr: &str,
-        right_addr: &str,
+        addr: &str,
+        target_x: u8,
+        target_y: u8,
         deadline: Instant,
     ) -> anyhow::Result<()> {
-        for _ in 0..96 {
+        for _ in 0..48 {
             ensure_deadline(deadline)?;
-            let left = self.read_gb_trade_position(left_addr, deadline)?;
-            let right = self.read_gb_trade_position(right_addr, deadline)?;
-            ensure_trade_room(left)?;
-            ensure_trade_room(right)?;
-            let left_button = movement_toward(left, LEFT_CONSOLE_STAND_X, TRADE_CONSOLE_Y);
-            let right_button = movement_toward(right, RIGHT_CONSOLE_STAND_X, TRADE_CONSOLE_Y);
-            if left_button.is_none() && right_button.is_none() {
-                std::thread::sleep(Duration::from_millis(750));
-                if self
-                    .ensure_gb_trade_fixture_console_positions(left_addr, right_addr, deadline)
-                    .is_ok()
-                {
-                    return Ok(());
-                }
-                continue;
+            let position = self.read_gb_trade_position(addr, deadline)?;
+            ensure_trade_room(position)?;
+            if position.x == target_x && position.y == target_y {
+                return Ok(());
             }
-            self.tap_pair(left_addr, right_addr, left_button, right_button, 1)?;
-            std::thread::sleep(Duration::from_millis(600));
+
+            let button = movement_toward(position, target_x, target_y)
+                .expect("non-target position requires a movement direction");
+            self.tap_button(addr, button, 2)?;
+            self.wait_for_screen_settle(addr, deadline)?;
         }
-        self.ensure_gb_trade_fixture_console_positions(left_addr, right_addr, deadline)
+
+        let position = self.read_gb_trade_position(addr, deadline)?;
+        bail!(
+            "could not walk GB trade fixture actor to ({target_x},{target_y}); got ({},{})",
+            position.x,
+            position.y
+        )
     }
 
     pub(super) fn select_trade_mon(
@@ -306,6 +317,26 @@ impl Server {
         length: usize,
         deadline: Instant,
     ) -> anyhow::Result<Vec<u8>> {
+        if space == "cpu" {
+            self.wait_for_memory_bytes(
+                addr,
+                space,
+                freshness_probe_start(start, length),
+                1,
+                deadline,
+            )?;
+        }
+        self.wait_for_memory_bytes(addr, space, start, length, deadline)
+    }
+
+    fn wait_for_memory_bytes(
+        &self,
+        addr: &str,
+        space: &str,
+        start: u32,
+        length: usize,
+        deadline: Instant,
+    ) -> anyhow::Result<Vec<u8>> {
         loop {
             ensure_deadline(deadline)?;
             let response = self.call_live_at(
@@ -331,35 +362,12 @@ impl Server {
         button: &str,
         frames: u64,
     ) -> anyhow::Result<()> {
-        self.tap_pair(left_addr, right_addr, Some(button), Some(button), frames)?;
-        Ok(())
-    }
-
-    fn tap_pair(
-        &self,
-        left_addr: &str,
-        right_addr: &str,
-        left_button: Option<&str>,
-        right_button: Option<&str>,
-        frames: u64,
-    ) -> anyhow::Result<()> {
-        if let Some(button) = left_button {
-            self.send_tap(left_addr, button, frames)?;
-        }
-        if let Some(button) = right_button {
-            self.send_tap(right_addr, button, frames)?;
-        }
-        std::thread::sleep(Duration::from_millis(frame_wait_ms(frames)));
+        self.tap_button(left_addr, button, frames)?;
+        self.tap_button(right_addr, button, frames)?;
         Ok(())
     }
 
     pub(super) fn tap_button(&self, addr: &str, button: &str, frames: u64) -> anyhow::Result<()> {
-        self.send_tap(addr, button, frames)?;
-        std::thread::sleep(Duration::from_millis(frame_wait_ms(frames)));
-        Ok(())
-    }
-
-    fn send_tap(&self, addr: &str, button: &str, frames: u64) -> anyhow::Result<()> {
         self.call_live_at(
             addr,
             json!({
@@ -368,20 +376,54 @@ impl Server {
                 "frames": frames,
             }),
         )?;
+        std::thread::sleep(Duration::from_millis(frame_wait_ms(frames)));
         Ok(())
     }
 }
 
 fn movement_toward(position: GbTradePosition, target_x: u8, target_y: u8) -> Option<&'static str> {
-    if position.x < target_x {
-        Some("right")
-    } else if position.x > target_x {
-        Some("left")
-    } else if position.y < target_y {
+    if position.y < target_y {
         Some("down")
     } else if position.y > target_y {
         Some("up")
+    } else if position.x < target_x {
+        Some("right")
+    } else if position.x > target_x {
+        Some("left")
     } else {
         None
+    }
+}
+
+fn freshness_probe_start(start: u32, length: usize) -> u32 {
+    start
+        .checked_add(u32::try_from(length).unwrap_or(u32::MAX))
+        .filter(|&probe| probe <= u32::from(u16::MAX))
+        .unwrap_or_else(|| start.saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_finishes_vertical_movement_before_horizontal_approach() {
+        let position = GbTradePosition::new(TRADE_ROOM_GROUP, TRADE_ROOM_MAP, 5, 4);
+
+        assert_eq!(movement_toward(position, 3, 4), Some("up"));
+        assert_eq!(movement_toward(position, 6, 5), Some("right"));
+        assert_eq!(movement_toward(position, 4, 5), None);
+    }
+
+    #[test]
+    fn console_routes_use_clear_outer_lanes() {
+        assert_eq!(LEFT_CONSOLE_ROUTE, &[(2, 5), (2, 4), (3, 4)]);
+        assert_eq!(RIGHT_CONSOLE_ROUTE, &[(7, 5), (7, 4), (6, 4)]);
+    }
+
+    #[test]
+    fn freshness_probe_uses_a_different_cpu_page_start() {
+        assert_eq!(freshness_probe_start(0xDCB5, 4), 0xDCB9);
+        assert_eq!(freshness_probe_start(0xFFFF, 1), 0xFFFE);
     }
 }

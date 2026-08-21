@@ -200,7 +200,9 @@ fn load_nes_backend(
             .map(f64::from)
             .unwrap_or(zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE);
         let bios = resolve_fds_bios(config, rom_path)?;
-        let emu = zeff_nes_core::emulator::Emulator::new_fds(rom_data, bios.bytes, sample_rate)?;
+        let mut emu =
+            zeff_nes_core::emulator::Emulator::new_fds(rom_data, bios.bytes, sample_rate)?;
+        log_sram_result(super::nes::try_load_battery_sram(&mut emu, rom_path));
         let mut backend = wrap_nes_backend(emu, source_path, rom_path);
         backend.set_firmware_manifests(vec![bios.manifest]);
         return Ok(backend);

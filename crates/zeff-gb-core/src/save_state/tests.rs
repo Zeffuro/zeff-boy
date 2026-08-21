@@ -37,7 +37,8 @@ fn decode_rejects_unknown_format_version() {
 fn full_save_state_round_trip_handles_large_arrays() {
     let rom = vec![0u8; 0x8000];
     let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
-    let bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+    let mut bus = Bus::new(rom, &header, HardwareMode::DMG).expect("test bus should initialize");
+    bus.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
 
     let cpu = Cpu::new();
     let state = SaveStateRef {
@@ -72,6 +73,10 @@ fn full_save_state_round_trip_handles_large_arrays() {
     assert_eq!(restored.hardware_mode, state.hardware_mode);
     assert_eq!(restored.bus.vram, bus.vram);
     assert_eq!(restored.bus.wram, bus.wram);
+    assert_eq!(
+        restored.bus.game_boy_serial_device(),
+        crate::hardware::GameBoySerialDevice::Printer
+    );
     assert!(restored.bus.ppu_framebuffer().iter().all(|&b| b == 0));
 }
 

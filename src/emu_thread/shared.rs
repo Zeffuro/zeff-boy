@@ -321,6 +321,7 @@ impl EmuThread {
         cheats: &[crate::cheats::CheatPatch],
     ) {
         if matches!(resp, EmuResponse::LoadStateOk { .. }) {
+            backend.discard_game_boy_printer_images();
             rewind_buffer.clear();
             backend.install_rom_patches(cheats);
         }
@@ -338,7 +339,11 @@ impl EmuThread {
             Ok(()) => {
                 backend.set_input(buttons_pressed, dpad_pressed);
                 publish_framebuffer(shared_fb, backend.framebuffer());
-                EmuResponse::LoadStateOk { path: path_label }
+                EmuResponse::LoadStateOk {
+                    path: path_label,
+                    media_slot_snapshot: backend.media_slot_snapshot(),
+                    game_boy_serial_device: backend.game_boy_serial_device(),
+                }
             }
             Err(err) => EmuResponse::LoadStateFailed(err.to_string()),
         }
@@ -365,7 +370,10 @@ impl EmuThread {
                         rewind_frame.framebuffer
                     };
                     publish_owned_framebuffer(shared_fb, fb);
-                    return EmuResponse::RewindOk;
+                    return EmuResponse::RewindOk {
+                        media_slot_snapshot: backend.media_slot_snapshot(),
+                        game_boy_serial_device: backend.game_boy_serial_device(),
+                    };
                 }
                 Err(err) => {
                     log::warn!("Rewind restore failed: {}", err);
@@ -696,6 +704,9 @@ impl EmuThread {
         backend.drain_audio_samples_into(&mut audio_samples);
         let is_mbc7 = backend.is_mbc7();
         let is_pocket_camera = backend.is_pocket_camera();
+        let game_boy_serial_device = backend.game_boy_serial_device();
+        let game_boy_printer_images = Self::take_game_boy_printer_images(backend);
+        let media_slot_snapshot = backend.media_slot_snapshot();
 
         FrameResult {
             advanced_frames,
@@ -706,10 +717,30 @@ impl EmuThread {
             ui_data,
             is_mbc7,
             is_pocket_camera,
+            game_boy_serial_device,
+            game_boy_printer_images,
+            media_slot_snapshot,
             rewind_fill,
             audio_semantic_frames,
             audio_timeline_discontinuities: Vec::new(),
         }
+    }
+
+    pub(crate) fn take_game_boy_printer_images(
+        backend: &mut EmuBackend,
+    ) -> Vec<super::types::GameBoyPrinterImage> {
+        let (width, height) = zeff_gb_core::emulator::Emulator::printer_image_dimensions();
+        backend
+            .take_game_boy_printer_images()
+            .into_iter()
+            .filter_map(|rgba| {
+                (rgba.len() == width * height * 4).then_some(super::types::GameBoyPrinterImage {
+                    width,
+                    height,
+                    rgba,
+                })
+            })
+            .collect()
     }
 
     fn collect_semantic_snapshot_if_frame_advanced(
@@ -778,6 +809,87 @@ mod tests {
             result.audio_samples.is_empty(),
             "stale recycled audio samples must be cleared before draining new core audio"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn load_state_response_reports_authoritative_game_boy_serial_device() {
+        let mut backend = gb_backend();
+        backend.set_game_boy_serial_device(
+            zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
+        );
+        let shared_fb: SharedFramebuffer = Default::default();
+
+        let response = EmuThread::respond_load_state(
+            &mut backend,
+            Ok(()),
+            "test state".to_string(),
+            0,
+            0,
+            &shared_fb,
+        );
+
+        assert!(matches!(
+            response,
+            EmuResponse::LoadStateOk {
+                game_boy_serial_device: Some(
+                    zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
+                ),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
+        let rom = minimal_ws_rom();
+        let emu = zeff_ws_core::emulator::Emulator::from_rom_data(&rom).unwrap();
+        let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.wsc"));
+        let shared_fb: SharedFramebuffer = Default::default();
+
+        let response = EmuThread::respond_load_state(
+            &mut backend,
+            Ok(()),
+            "test state".to_string(),
+            0,
+            0,
+            &shared_fb,
+        );
+
+        assert!(matches!(
+            response,
+            EmuResponse::LoadStateOk {
+                game_boy_serial_device: None,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn rewind_response_reports_serial_device_restored_from_state() {
+        let mut backend = gb_backend();
+        backend.set_game_boy_serial_device(
+            zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
+        );
+        let state = EmuThread::encode_current_state(&backend).unwrap();
+        backend
+            .set_game_boy_serial_device(zeff_gb_core::hardware::GameBoySerialDevice::Disconnected);
+        let mut rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(1, 1);
+        rewind_buffer.push(&state, &[]);
+        let shared_fb: SharedFramebuffer = Default::default();
+
+        let response = EmuThread::handle_rewind(&mut backend, &mut rewind_buffer, &shared_fb);
+
+        assert!(matches!(
+            response,
+            EmuResponse::RewindOk {
+                game_boy_serial_device: Some(
+                    zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
+                ),
+                ..
+            }
+        ));
     }
 
     #[test]

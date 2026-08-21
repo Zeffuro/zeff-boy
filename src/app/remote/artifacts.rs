@@ -72,7 +72,15 @@ impl App {
         }
 
         match self.recv_cold_response() {
-            Some(EmuResponse::LoadStateOk { path: loaded }) => {
+            Some(EmuResponse::LoadStateOk {
+                path: loaded,
+                media_slot_snapshot,
+                game_boy_serial_device,
+            }) => {
+                self.media_slot_snapshot = media_slot_snapshot;
+                if let Some(device) = game_boy_serial_device {
+                    self.game_boy_serial_device = device;
+                }
                 if let Some(thread) = &self.emu_thread {
                     self.latest_frame = thread.shared_framebuffer().load_full();
                 }

@@ -655,10 +655,70 @@ impl EmuBackend {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn fds_disk_side(&self) -> Option<u8> {
         match self {
             Self::Nes(nes) => nes.fds_disk_side(),
             _ => None,
+        }
+    }
+
+    pub(crate) fn media_slot_snapshot(&self) -> Option<zeff_emu_common::media::MediaSlotSnapshot> {
+        match self {
+            Self::Nes(nes) => nes.media_slot_snapshot(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn apply_media_event(
+        &mut self,
+        event: &zeff_emu_common::media::MediaEvent,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Nes(nes) => nes.apply_media_event(event),
+            _ => anyhow::bail!("current system has no removable media slot"),
+        }
+    }
+
+    pub(crate) fn game_boy_serial_device(
+        &self,
+    ) -> Option<zeff_gb_core::hardware::GameBoySerialDevice> {
+        match self {
+            Self::Gb(gb) => Some(gb.emu.game_boy_serial_device()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_game_boy_serial_device(
+        &mut self,
+        device: zeff_gb_core::hardware::GameBoySerialDevice,
+    ) -> bool {
+        match self {
+            Self::Gb(gb) => {
+                gb.emu.set_game_boy_serial_device(device);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn queue_bardigun_barcode_scan(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        match self {
+            Self::Gb(gb) => gb.emu.queue_bardigun_barcode_scan(bytes),
+            _ => anyhow::bail!("current system has no Game Boy serial device"),
+        }
+    }
+
+    pub(crate) fn take_game_boy_printer_images(&mut self) -> Vec<Vec<u8>> {
+        match self {
+            Self::Gb(gb) => gb.emu.take_printer_images(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn discard_game_boy_printer_images(&mut self) {
+        if let Self::Gb(gb) = self {
+            gb.emu.clear_printer_images();
         }
     }
 

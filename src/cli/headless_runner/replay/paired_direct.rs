@@ -48,11 +48,15 @@ pub(super) fn run_direct_paired_replay(
     let mut right = DirectSide::new(Side::Right, right, right_player, tail_frames)?;
 
     for batch in &plan.batches {
-        let transfer = batch
-            .transfers
-            .first()
-            .expect("validated transfer batch is non-empty");
-        execute_singleton_transfer(&mut left, &mut right, transfer)?;
+        match batch.transfers.as_slice() {
+            [transfer] => execute_singleton_transfer(&mut left, &mut right, transfer)?,
+            [first, second] => execute_crossed_transfers(&mut left, &mut right, first, second)?,
+            transfers => {
+                return Err(DirectCoordinatorError::UnsupportedCrossedBatch {
+                    transfers: transfers.len(),
+                });
+            }
+        }
     }
 
     left.finish()?;
@@ -117,39 +121,14 @@ fn validate_supported_plan(
         }
     }
     for batch in &plan.batches {
-        if batch.transfers.len() != 1 {
-            return Err(DirectCoordinatorError::UnsupportedCrossedBatch {
-                transfers: batch.transfers.len(),
-            });
-        }
-        let transfer = &batch.transfers[0];
-        let local_start = transfer.start(transfer.master);
-        let next_frame = local_start.point.frame.checked_add(1);
-        let safe_reply_observation = transfer.master_reply.point.absolute_tick
-            == local_start.point.absolute_tick
-            && (transfer.master_reply.point.frame == local_start.point.frame
-                || next_frame == Some(transfer.master_reply.point.frame));
-        if !safe_reply_observation {
-            return Err(DirectCoordinatorError::DelayedReply {
-                side: transfer.master,
-                id: transfer.id,
-                start: local_start.point,
-                reply: transfer.master_reply.point,
-            });
-        }
-        let expected_reply_ordinal =
-            local_start
-                .ordinal
-                .checked_add(1)
-                .ok_or(DirectCoordinatorError::GeneratedOrder {
-                    side: transfer.master,
-                })?;
-        if transfer.master_reply.ordinal != expected_reply_ordinal {
-            return Err(DirectCoordinatorError::StateDuringPreparedTransfer {
-                side: transfer.master,
-                id: transfer.id,
-                ordinal: expected_reply_ordinal,
-            });
+        match batch.transfers.as_slice() {
+            [transfer] => validate_singleton_shape(transfer)?,
+            [first, second] => validate_crossed_shape(first, second)?,
+            transfers => {
+                return Err(DirectCoordinatorError::UnsupportedCrossedBatch {
+                    transfers: transfers.len(),
+                });
+            }
         }
     }
     Ok(())
@@ -170,20 +149,141 @@ fn validate_planned_sequence(
         .collect();
     let mut planned = Vec::new();
     for batch in &plan.batches {
-        let transfer = &batch.transfers[0];
-        let start = transfer.start(side);
-        planned.push((start.ordinal, located_event(start)));
-        if transfer.master == side {
-            planned.push((
-                transfer.master_reply.ordinal,
-                located_event(transfer.master_reply),
-            ));
+        for transfer in &batch.transfers {
+            let start = transfer.start(side);
+            planned.push((start.ordinal, located_event(start)));
+            if transfer.master == side {
+                planned.push((
+                    transfer.master_reply.ordinal,
+                    located_event(transfer.master_reply),
+                ));
+            }
         }
     }
+    planned.sort_by_key(|(ordinal, _)| *ordinal);
     if planned != expected {
         return Err(DirectCoordinatorError::GeneratedOrder { side });
     }
     Ok(())
+}
+
+fn validate_singleton_shape(transfer: &Transfer) -> Result<(), DirectCoordinatorError> {
+    let local_start = transfer.start(transfer.master);
+    validate_observation_point(
+        transfer.master,
+        transfer.id,
+        local_start,
+        transfer.master_reply,
+    )?;
+    let expected_reply_ordinal =
+        local_start
+            .ordinal
+            .checked_add(1)
+            .ok_or(DirectCoordinatorError::GeneratedOrder {
+                side: transfer.master,
+            })?;
+    if transfer.master_reply.ordinal != expected_reply_ordinal {
+        return Err(DirectCoordinatorError::StateDuringPreparedTransfer {
+            side: transfer.master,
+            id: transfer.id,
+            ordinal: expected_reply_ordinal,
+        });
+    }
+    Ok(())
+}
+
+fn validate_crossed_shape(
+    first: &Transfer,
+    second: &Transfer,
+) -> Result<(), DirectCoordinatorError> {
+    let (left_master, right_master) = crossed_masters(first, second)?;
+    for (side, local, remote, reply) in [
+        (
+            Side::Left,
+            left_master.left_start,
+            right_master.left_start,
+            left_master.master_reply,
+        ),
+        (
+            Side::Right,
+            right_master.right_start,
+            left_master.right_start,
+            right_master.master_reply,
+        ),
+    ] {
+        validate_observation_point(
+            side,
+            local_id(left_master, right_master, side),
+            local,
+            remote,
+        )?;
+        validate_observation_point(
+            side,
+            local_id(left_master, right_master, side),
+            local,
+            reply,
+        )?;
+        let remote_ordinal = local
+            .ordinal
+            .checked_add(1)
+            .ok_or(DirectCoordinatorError::GeneratedOrder { side })?;
+        let reply_ordinal = local
+            .ordinal
+            .checked_add(2)
+            .ok_or(DirectCoordinatorError::GeneratedOrder { side })?;
+        if remote.ordinal != remote_ordinal || reply.ordinal != reply_ordinal {
+            return Err(DirectCoordinatorError::StateDuringPreparedTransfer {
+                side,
+                id: local_id(left_master, right_master, side),
+                ordinal: if remote.ordinal != remote_ordinal {
+                    remote_ordinal
+                } else {
+                    reply_ordinal
+                },
+            });
+        }
+    }
+    Ok(())
+}
+
+fn crossed_masters<'a>(
+    first: &'a Transfer,
+    second: &'a Transfer,
+) -> Result<(&'a Transfer, &'a Transfer), DirectCoordinatorError> {
+    match (first.master, second.master) {
+        (Side::Left, Side::Right) => Ok((first, second)),
+        (Side::Right, Side::Left) => Ok((second, first)),
+        _ => Err(DirectCoordinatorError::InvalidCrossedBatch),
+    }
+}
+
+fn local_id(left_master: &Transfer, right_master: &Transfer, side: Side) -> u64 {
+    match side {
+        Side::Left => left_master.id,
+        Side::Right => right_master.id,
+    }
+}
+
+fn validate_observation_point(
+    side: Side,
+    id: u64,
+    start: LocatedEvent,
+    observation: LocatedEvent,
+) -> Result<(), DirectCoordinatorError> {
+    let next_frame = start.point.frame.checked_add(1);
+    let safe = observation.point.absolute_tick == start.point.absolute_tick
+        && (observation.point.frame == start.point.frame
+            || next_frame == Some(observation.point.frame));
+    if safe {
+        Ok(())
+    } else {
+        Err(DirectCoordinatorError::DelayedReply {
+            side,
+            id,
+            start: start.point,
+            reply: observation.point,
+        })
+    }
 }
 
 fn execute_singleton_transfer(
@@ -269,6 +369,95 @@ fn execute_singleton_transfer(
     }
     left.settle_frame()?;
     right.settle_frame()?;
+    Ok(())
+}
+
+fn execute_crossed_transfers(
+    left: &mut DirectSide,
+    right: &mut DirectSide,
+    first: &Transfer,
+    second: &Transfer,
+) -> Result<(), DirectCoordinatorError> {
+    let (left_master, right_master) = crossed_masters(first, second)?;
+    let left_action = replay_action(left_master.left_start.event);
+    let right_action = replay_action(right_master.right_start.event);
+
+    left.reach(&left_master.left_start, Some(left_action))?;
+    right.reach(&right_master.right_start, Some(right_action))?;
+    left.validate_reply_observation_shape(&right_master.left_start)?;
+    left.validate_reply_observation_shape(&left_master.master_reply)?;
+    right.validate_reply_observation_shape(&left_master.right_start)?;
+    right.validate_reply_observation_shape(&right_master.master_reply)?;
+
+    let preview = left
+        .backend
+        .preview_game_boy_link_peer(&right.backend)
+        .ok_or(DirectCoordinatorError::IncompatibleBackends)?;
+    let left_reply = replay_reply(left_master.master_reply.event);
+    let right_reply = replay_reply(right_master.master_reply.event);
+    validate_crossed_preview(preview, left_action, right_action, left_reply, right_reply)?;
+    let mut prepared = left
+        .backend
+        .try_prepare_game_boy_link_peer(&mut right.backend)
+        .map_err(|error| DirectCoordinatorError::Exchange(error.to_string()))?;
+
+    left.mark_owned_transfer(Some(left_action.clock_period_t_cycles))?;
+    right.mark_owned_transfer(Some(right_action.clock_period_t_cycles))?;
+    left.record_validated(left_master.left_start)?;
+    right.record_validated(right_master.right_start)?;
+    left.record_validated(right_master.left_start)?;
+    right.record_validated(left_master.right_start)?;
+
+    let left_token = prepared
+        .local_action
+        .take()
+        .ok_or(DirectCoordinatorError::MissingPreparedToken { side: Side::Left })?;
+    let right_token = prepared
+        .peer_action
+        .take()
+        .ok_or(DirectCoordinatorError::MissingPreparedToken { side: Side::Right })?;
+    validate_token(&left_token, left_action, left_reply, Side::Left)?;
+    validate_token(&right_token, right_action, right_reply, Side::Right)?;
+    left.apply_reply(left_token)?;
+    right.apply_reply(right_token)?;
+    left.record_validated(left_master.master_reply)?;
+    right.record_validated(right_master.master_reply)?;
+    left.settle_frame()?;
+    right.settle_frame()?;
+    Ok(())
+}
+
+fn validate_crossed_preview(
+    preview: GameBoyLinkExchangePreview,
+    left_action: ReplayGameBoyLinkAction,
+    right_action: ReplayGameBoyLinkAction,
+    left_reply: ReplayGameBoyLinkReply,
+    right_reply: ReplayGameBoyLinkReply,
+) -> Result<(), DirectCoordinatorError> {
+    for (side, expected, actual) in [
+        (Side::Left, left_action, preview.local_action),
+        (Side::Right, right_action, preview.peer_action),
+    ] {
+        if actual != Some(core_action(expected)) {
+            return Err(DirectCoordinatorError::ActionMismatch {
+                side,
+                expected,
+                actual,
+            });
+        }
+    }
+    for (side, expected, actual) in [
+        (Side::Right, left_reply, preview.peer_reply),
+        (Side::Left, right_reply, preview.local_reply),
+    ] {
+        if actual != core_reply(expected) {
+            return Err(DirectCoordinatorError::ReplyMismatch {
+                side,
+                expected,
+                actual,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -897,6 +1086,7 @@ pub(super) enum DirectCoordinatorError {
     UnsupportedCrossedBatch {
         transfers: usize,
     },
+    InvalidCrossedBatch,
     MissingStartTick {
         side: Side,
     },
@@ -1005,6 +1195,9 @@ impl fmt::Display for DirectCoordinatorError {
                 f,
                 "direct paired replay does not yet support a crossed batch of {transfers} transfers"
             ),
+            Self::InvalidCrossedBatch => {
+                f.write_str("direct paired replay crossed batch does not have one master per side")
+            }
             Self::MissingStartTick { side } => {
                 write!(
                     f,
@@ -1148,6 +1341,7 @@ mod tests {
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
     const TRANSFER_ID: u64 = 0x0100_0000_0000_0001;
+    const RIGHT_TRANSFER_ID: u64 = 0x0200_0000_0000_0001;
 
     fn backend(path: &str) -> EmuBackend {
         backend_from_rom(path, vec![0u8; 0x8000])
@@ -1206,6 +1400,115 @@ mod tests {
         right_gb.emu.write_byte(SERIAL_SB, 0x34);
         right_gb.emu.write_byte(SERIAL_SC, 0x80);
         (left, right)
+    }
+
+    fn configured_crossed_pair() -> (EmuBackend, EmuBackend) {
+        let mut left = backend("crossed-left.gb");
+        let mut right = backend("crossed-right.gb");
+        let EmuBackend::Gb(left_gb) = &mut left else {
+            unreachable!();
+        };
+        left_gb.emu.write_byte(SERIAL_SB, 0xAB);
+        left_gb.emu.write_byte(SERIAL_SC, 0x81);
+        let EmuBackend::Gb(right_gb) = &mut right else {
+            unreachable!();
+        };
+        right_gb.emu.write_byte(SERIAL_SB, 0x34);
+        right_gb.emu.write_byte(SERIAL_SC, 0x81);
+        (left, right)
+    }
+
+    fn crossed_fixture() -> (EmuBackend, EmuBackend, ReplayPlayer, ReplayPlayer) {
+        let (left, right) = configured_crossed_pair();
+
+        let start_tick = left.game_boy_cpu_cycles().unwrap();
+        assert_eq!(right.game_boy_cpu_cycles(), Some(start_tick));
+        let preview = left.preview_game_boy_link_peer(&right).unwrap();
+        let left_action = preview.local_action.unwrap();
+        let right_action = preview.peer_action.unwrap();
+        assert!(!preview.local_reply.passive);
+        assert!(!preview.peer_reply.passive);
+
+        let left_events = vec![
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                    transfer_id: TRANSFER_ID,
+                    clock_period_t_cycles: left_action.clock_period_t_cycles,
+                    out_byte: left_action.out_byte,
+                    serial_generation: left_action.serial_generation,
+                },
+            },
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: RIGHT_TRANSFER_ID,
+                    clock_period_t_cycles: right_action.clock_period_t_cycles,
+                    out_byte: right_action.out_byte,
+                    serial_generation: right_action.serial_generation,
+                    local_reply: Some(ReplayGameBoyLinkReply {
+                        out_byte: preview.local_reply.out_byte,
+                        passive: preview.local_reply.passive,
+                        serial_generation: preview.local_reply.serial_generation,
+                    }),
+                },
+            },
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: TRANSFER_ID,
+                    out_byte: preview.peer_reply.out_byte,
+                    passive: preview.peer_reply.passive,
+                    serial_generation: preview.peer_reply.serial_generation,
+                },
+            },
+        ];
+        let right_events = vec![
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::LocalMasterStart {
+                    transfer_id: RIGHT_TRANSFER_ID,
+                    clock_period_t_cycles: right_action.clock_period_t_cycles,
+                    out_byte: right_action.out_byte,
+                    serial_generation: right_action.serial_generation,
+                },
+            },
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
+                    transfer_id: TRANSFER_ID,
+                    clock_period_t_cycles: left_action.clock_period_t_cycles,
+                    out_byte: left_action.out_byte,
+                    serial_generation: left_action.serial_generation,
+                    local_reply: Some(ReplayGameBoyLinkReply {
+                        out_byte: preview.peer_reply.out_byte,
+                        passive: preview.peer_reply.passive,
+                        serial_generation: preview.peer_reply.serial_generation,
+                    }),
+                },
+            },
+            ReplayEvent::GameBoyLink {
+                frame: 0,
+                tick: 0,
+                event: ReplayGameBoyLinkEvent::RemoteReply {
+                    transfer_id: RIGHT_TRANSFER_ID,
+                    out_byte: preview.local_reply.out_byte,
+                    passive: preview.local_reply.passive,
+                    serial_generation: preview.local_reply.serial_generation,
+                },
+            },
+        ];
+        (
+            left,
+            right,
+            player(left_events, start_tick, "crossed-left", None),
+            player(right_events, start_tick, "crossed-right", None),
+        )
     }
 
     fn fixture(
@@ -1292,6 +1595,113 @@ mod tests {
         );
         assert_eq!(first.left_final_state_hash, second.left_final_state_hash);
         assert_eq!(first.right_final_state_hash, second.right_final_state_hash);
+    }
+
+    #[test]
+    fn crossed_master_result_matches_core_exchange_oracle() {
+        let (left, right, left_player, right_player) = crossed_fixture();
+        let plan = PairedTransferPlan::build(
+            &left_player.metadata().events,
+            left_player.metadata().game_boy_link_start_tick,
+            &right_player.metadata().events,
+            right_player.metadata().game_boy_link_start_tick,
+        )
+        .unwrap();
+        let result =
+            run_direct_paired_replay(left, right, left_player, right_player, plan, 0).unwrap();
+
+        let (mut oracle_left, mut oracle_right) = configured_crossed_pair();
+        let (EmuBackend::Gb(left_gb), EmuBackend::Gb(right_gb)) =
+            (&mut oracle_left, &mut oracle_right)
+        else {
+            unreachable!();
+        };
+        left_gb
+            .emu
+            .try_sync_game_boy_link_peer(&mut right_gb.emu)
+            .unwrap();
+        oracle_left.step_frame();
+        oracle_right.step_frame();
+
+        assert_eq!(
+            result.left_final_state_hash,
+            sha256_hex(&oracle_left.encode_replay_hash_state_bytes().unwrap())
+        );
+        assert_eq!(
+            result.right_final_state_hash,
+            sha256_hex(&oracle_right.encode_replay_hash_state_bytes().unwrap())
+        );
+        assert_eq!(
+            result.left_final_framebuffer_hash,
+            sha256_hex(oracle_left.framebuffer())
+        );
+        assert_eq!(
+            result.right_final_framebuffer_hash,
+            sha256_hex(oracle_right.framebuffer())
+        );
+    }
+
+    #[test]
+    fn crossed_masters_execute_atomically_and_deterministically() {
+        fn run() -> DirectPairedReplayResult {
+            let (left, right, left_player, right_player) = crossed_fixture();
+            let plan = PairedTransferPlan::build(
+                &left_player.metadata().events,
+                left_player.metadata().game_boy_link_start_tick,
+                &right_player.metadata().events,
+                right_player.metadata().game_boy_link_start_tick,
+            )
+            .unwrap();
+            assert_eq!(plan.batches.len(), 1);
+            assert_eq!(plan.batches[0].transfers.len(), 2);
+            run_direct_paired_replay(left, right, left_player, right_player, plan, 0).unwrap()
+        }
+
+        let first = run();
+        let second = run();
+        assert_eq!(first.left_generated_link_events.len(), 3);
+        assert_eq!(first.right_generated_link_events.len(), 3);
+        assert_eq!(
+            first.left_generated_link_events,
+            second.left_generated_link_events
+        );
+        assert_eq!(
+            first.right_generated_link_events,
+            second.right_generated_link_events
+        );
+        assert_eq!(first.left_final_state_hash, second.left_final_state_hash);
+        assert_eq!(first.right_final_state_hash, second.right_final_state_hash);
+    }
+
+    #[test]
+    fn crossed_master_batch_rejects_delayed_remote_observation() {
+        let (left, right, left_player, right_player) = crossed_fixture();
+        let mut left_events = left_player.metadata().events.clone();
+        for event in &mut left_events[1..=2] {
+            let ReplayEvent::GameBoyLink { frame, tick, .. } = event else {
+                unreachable!();
+            };
+            *frame = 1;
+            *tick = 4;
+        }
+        let start_tick = left_player.metadata().game_boy_link_start_tick.unwrap();
+        let left_player = player(left_events, start_tick, "crossed-delayed-left", None);
+        let plan = PairedTransferPlan::build(
+            &left_player.metadata().events,
+            left_player.metadata().game_boy_link_start_tick,
+            &right_player.metadata().events,
+            right_player.metadata().game_boy_link_start_tick,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            run_direct_paired_replay(left, right, left_player, right_player, plan, 0),
+            Err(DirectCoordinatorError::DelayedReply {
+                side: Side::Left,
+                id: TRANSFER_ID,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -52,6 +52,7 @@ impl App {
         {
             self.persist_debugger_window_geometry();
             self.persist_settings_window_geometry();
+            self.persist_printer_window_geometry();
         }
         self.persist_current_dock_layout();
         self.settings.ui.open_debug_tabs = crate::debug::save_open_tabs(&self.debug_dock);

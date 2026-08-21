@@ -302,6 +302,52 @@ fn shared_backend_loader_initializes_fds_with_resolved_bios() {
 }
 
 #[test]
+fn shared_backend_loader_restores_fds_persistent_media_container() {
+    static TEST_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
+        [0xFF; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
+    let mut fds_image = vec![0x55; zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE];
+    fds_image[0] = 0x01;
+    let seed = zeff_nes_core::emulator::Emulator::new_fds(
+        &fds_image,
+        TEST_FDS_BIOS.to_vec(),
+        zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE,
+    )
+    .unwrap();
+    let mut persistent = seed.dump_persistent_data().unwrap();
+    *persistent.last_mut().unwrap() = 0xA7;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "zeff_boy_fds_persistence_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let rom_path = temp_dir.join("media.fds");
+    std::fs::write(rom_path.with_extension("sav"), &persistent).unwrap();
+
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        &rom_path,
+        &rom_path,
+        Some(fds_image),
+        BackendLoadConfig {
+            fds_bios_override: Some(&TEST_FDS_BIOS),
+            ..BackendLoadConfig::default()
+        },
+    )
+    .expect("FDS loader should restore its persistent media container");
+
+    let EmuBackend::Nes(backend) = loaded.backend else {
+        panic!("FDS content should use the NES backend");
+    };
+    assert_eq!(backend.emu.dump_persistent_data().unwrap(), persistent);
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
 fn system_specs_map_to_shared_backend_loader() {
     for spec in system_specs() {
         for extension in spec.rom_extensions {

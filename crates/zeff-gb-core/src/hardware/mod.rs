@@ -1,4 +1,5 @@
 pub mod apu;
+pub mod bardigun;
 pub mod bus;
 pub mod cartridge;
 pub mod cpu;
@@ -12,3 +13,6 @@ pub(crate) mod serial;
 mod sgb;
 mod timer;
 pub mod types;
+
+pub use bardigun::MAX_BARDIGUN_SCAN_BYTES;
+pub use serial::GameBoySerialDevice;

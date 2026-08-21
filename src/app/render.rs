@@ -48,6 +48,17 @@ impl App {
         let is_recording_replay =
             self.recording.replay_recorder.is_some() || self.recording.is_replay_start_pending();
         let is_playing_replay = self.recording.replay_player.is_some();
+        let media_event_change_allowed = self.emu_thread.is_some()
+            && !is_playing_replay
+            && self.recording.pending_media_commands.is_empty()
+            && (self.recording.replay_recorder.is_some() || !self.recording.is_replay_active());
+        #[cfg(not(target_arch = "wasm32"))]
+        let game_boy_serial_device_change_allowed = self.emu_thread.is_some()
+            && !self.recording.is_replay_active()
+            && !self.tcp_link_active;
+        #[cfg(target_arch = "wasm32")]
+        let game_boy_serial_device_change_allowed =
+            self.emu_thread.is_some() && !self.recording.is_replay_active();
         let is_rewinding = self.rewind.held && self.settings.rewind.enabled;
         let autohide_menu_bar = self.settings.ui.autohide_menu_bar;
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
@@ -62,11 +73,17 @@ impl App {
         match gfx.render(graphics::RenderContext {
             data: debug_data_refs(ui_frame_data, &self.symbols),
             active_system: Some(self.active_system),
+            media_slot_snapshot: self.media_slot_snapshot.as_ref(),
+            media_event_change_allowed,
+            game_boy_serial_device: self.game_boy_serial_device,
+            game_boy_serial_device_change_allowed,
             debug_windows: &mut self.debug_windows,
             settings: &mut self.settings,
             #[cfg(target_arch = "wasm32")]
             nes_palette_file_slot: self.pending_nes_palette_load.clone(),
             show_settings_window: &mut self.show_settings_window,
+            #[cfg(target_arch = "wasm32")]
+            show_printer_window: &mut self.show_printer_window,
             dock_state: &mut self.debug_dock,
             toast_manager: &mut self.toast_manager,
             speed_mode_label: speed_label,
@@ -138,7 +155,35 @@ impl App {
                         MenuAction::StopReplayRecording => self.stop_replay_recording(),
                         MenuAction::LoadReplay => self.load_and_play_replay(),
                         MenuAction::TakeScreenshot => self.take_screenshot(),
-                        MenuAction::SetFdsDiskSide(side) => self.set_fds_disk_side(*side),
+                        MenuAction::ApplyMediaEvent(event) => {
+                            self.request_media_event(event.clone())
+                        }
+                        MenuAction::SetGameBoySerialDevice(device) => {
+                            if !game_boy_serial_device_change_allowed {
+                                self.toast_manager.error(
+                                    "Disconnect the link and stop replay activity before changing the serial device",
+                                );
+                            } else {
+                                self.game_boy_serial_device = *device;
+                                if let Some(thread) = &self.emu_thread {
+                                    thread.send(
+                                        crate::emu_thread::EmuCommand::SetGameBoySerialDevice(
+                                            *device,
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        MenuAction::ScanBardigunBarcodeFile => {
+                            if !game_boy_serial_device_change_allowed {
+                                self.toast_manager.error(
+                                    "Disconnect the link and stop replay activity before scanning a card",
+                                );
+                            } else {
+                                self.scan_bardigun_barcode_file_dialog();
+                            }
+                        }
                         MenuAction::HostTcpLink => {
                             #[cfg(not(target_arch = "wasm32"))]
                             self.host_tcp_link();
@@ -172,6 +217,13 @@ impl App {
                                 focus_debugger_window = true;
                             }
                             settings_dirty = true;
+                        }
+                        MenuAction::OpenPrinterWindow => {
+                            self.show_printer_window = true;
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                self.focus_printer_window_pending = true;
+                            }
                         }
                         MenuAction::SetDebugPresentation(presentation) => {
                             self.settings.ui.debug_presentation = *presentation;
@@ -343,6 +395,26 @@ impl App {
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 if let Some(size) = gfx.settings_window().map(winit::window::Window::inner_size) {
                     gfx.resize_settings_window(size.width, size.height);
+                }
+                false
+            }
+            Err(graphics::FrameError::Timeout) => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn render_printer_frame(&mut self) -> bool {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
+        match gfx.render_printer_window(graphics::PrinterRenderContext {
+            settings: &self.settings,
+            state: &mut self.debug_windows.printer,
+        }) {
+            Ok(()) => true,
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
+                if let Some(size) = gfx.printer_window().map(winit::window::Window::inner_size) {
+                    gfx.resize_printer_window(size.width, size.height);
                 }
                 false
             }

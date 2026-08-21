@@ -454,7 +454,8 @@ impl Bus {
 
     #[inline]
     pub(in crate::hardware) fn step_serial(&mut self, t_cycles: u64) {
-        if self.io.serial.step(t_cycles, &mut self.io.printer) {
+        crate::hardware::serial::SerialDevice::step(&mut self.io.serial_device, t_cycles);
+        if self.io.serial.step(t_cycles, &mut self.io.serial_device) {
             self.if_reg |= 0x08;
         }
     }
@@ -469,15 +470,36 @@ impl Bus {
     }
 
     pub fn printer_latest_image(&self) -> Option<&[u8]> {
-        self.io.printer.latest_image()
+        self.io.serial_device.printer().latest_image()
     }
 
     pub fn printer_image_count(&self) -> usize {
-        self.io.printer.image_count()
+        self.io.serial_device.printer().image_count()
+    }
+
+    pub fn take_printer_images(&mut self) -> Vec<Vec<u8>> {
+        self.io.serial_device.printer_mut().take_images()
     }
 
     pub fn clear_printer_images(&mut self) {
-        self.io.printer.clear();
+        self.io.serial_device.printer_mut().clear();
+    }
+
+    pub fn game_boy_serial_device(&self) -> crate::hardware::GameBoySerialDevice {
+        self.io.serial_device.selected()
+    }
+
+    pub fn set_game_boy_serial_device(&mut self, device: crate::hardware::GameBoySerialDevice) {
+        self.io.serial_device.select(device);
+    }
+
+    pub fn queue_bardigun_barcode_scan(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.io.serial_device.queue_bardigun_barcode_scan(bytes)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bardigun_pending_bytes(&self) -> usize {
+        self.io.serial_device.bardigun_pending_bytes()
     }
 
     pub fn sync_timer_serial_mode(&mut self) {

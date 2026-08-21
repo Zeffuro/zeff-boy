@@ -169,6 +169,8 @@ impl App {
         }
         self.stop_emu_thread();
         self.stop_camera_capture();
+        self.media_slot_snapshot = None;
+        self.recording.pending_media_commands.clear();
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
@@ -246,7 +248,15 @@ impl App {
                 });
             }
             match self.recv_cold_response() {
-                Some(EmuResponse::LoadStateOk { path: p }) => {
+                Some(EmuResponse::LoadStateOk {
+                    path: p,
+                    media_slot_snapshot,
+                    game_boy_serial_device,
+                }) => {
+                    self.media_slot_snapshot = media_slot_snapshot;
+                    if let Some(device) = game_boy_serial_device {
+                        self.game_boy_serial_device = device;
+                    }
                     if let Some(thread) = &self.emu_thread {
                         self.latest_frame = thread.shared_framebuffer().load_full();
                     }
@@ -385,6 +395,8 @@ impl App {
         self.last_core_frame = None;
         self.last_displayed_frame = None;
         self.undo_load_state = None;
+        self.media_slot_snapshot = None;
+        self.recording.pending_media_commands.clear();
         self.rom_info.rom_path = None;
         self.rom_info.source_path = None;
         self.rom_info.rom_hash = None;
@@ -494,6 +506,7 @@ impl App {
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.rom_info.replay_metadata = Some(backend.replay_metadata());
+        self.media_slot_snapshot = backend.media_slot_snapshot();
         #[cfg(not(target_arch = "wasm32"))]
         self.start_symbol_load(backend);
         #[cfg(target_arch = "wasm32")]

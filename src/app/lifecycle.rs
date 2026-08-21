@@ -324,4 +324,36 @@ impl App {
             self.focus_state_dirty = true;
         }
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn sync_printer_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if self.show_printer_window {
+            if gfx.printer_window_id().is_none()
+                && let Err(err) = gfx.open_printer_window(event_loop, &self.settings)
+            {
+                log::error!("Failed to open Game Boy Printer window: {err}");
+                self.show_printer_window = false;
+                self.focus_printer_window_pending = false;
+                self.toast_manager
+                    .error("Failed to open Game Boy Printer window");
+            }
+            if self.focus_printer_window_pending
+                && let Some(window) = gfx.printer_window()
+            {
+                window.set_minimized(false);
+                window.focus_window();
+                window.request_redraw();
+                self.focus_printer_window_pending = false;
+            }
+        } else if gfx.printer_window_id().is_some() {
+            gfx.close_printer_window();
+            self.debug_windows.printer.clear_textures();
+            self.printer_window_focused = false;
+            self.focus_printer_window_pending = false;
+            self.focus_state_dirty = true;
+        }
+    }
 }

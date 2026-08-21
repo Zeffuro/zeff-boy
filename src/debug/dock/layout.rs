@@ -3,9 +3,7 @@ use egui_dock::DockState;
 use super::tabs::DebugTab;
 
 pub(crate) fn create_default_dock_state() -> DockState<DebugTab> {
-    let mut dock = DockState::new(vec![]);
-    dock.add_window(vec![DebugTab::CpuDebug]);
-    dock
+    DockState::new(vec![])
 }
 
 pub(crate) fn create_ide_dock_state() -> DockState<DebugTab> {
@@ -227,6 +225,7 @@ pub(crate) fn is_tab_open(dock: &DockState<DebugTab>, tab: DebugTab) -> bool {
 mod tests {
     use super::{
         create_dock_for_presentation, is_tab_open, restore_dock_layout, serialize_dock_layout,
+        toggle_dock_tab,
     };
     use crate::debug::{DebugTab, compute_tab_requirements};
     use crate::settings::DebugPresentation;
@@ -240,6 +239,22 @@ mod tests {
         assert!(!is_tab_open(&debugger, DebugTab::GameView));
         assert!(!is_tab_open(&floating, DebugTab::GameView));
         assert!(is_tab_open(&ide, DebugTab::GameView));
+    }
+
+    #[test]
+    fn floating_layout_starts_without_debug_tools() {
+        let mut dock = create_dock_for_presentation(DebugPresentation::Floating);
+        let requirements = compute_tab_requirements(&dock);
+
+        assert!(!is_tab_open(&dock, DebugTab::CpuDebug));
+        assert!(!requirements.needs_debug_info);
+        assert!(!requirements.needs_disassembly);
+        assert!(!requirements.needs_memory_page);
+        assert!(!requirements.needs_viewer_data);
+
+        toggle_dock_tab(&mut dock, DebugTab::CpuDebug);
+        assert!(is_tab_open(&dock, DebugTab::CpuDebug));
+        assert!(compute_tab_requirements(&dock).needs_debug_info);
     }
 
     #[test]

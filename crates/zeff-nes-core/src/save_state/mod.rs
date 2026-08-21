@@ -2,13 +2,15 @@ use anyhow::{Result, anyhow, bail};
 pub use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const NES_SAVE_STATE_MAGIC: [u8; 8] = *b"ZBNSTATE";
-pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 6;
+pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 8;
 
 const FORMAT_VERSION_V1_UNCOMPRESSED: u32 = 1;
 const FORMAT_VERSION_V2_COMPRESSED: u32 = 2;
 const FORMAT_VERSION_V3_COMPRESSED: u32 = 3;
 const FORMAT_VERSION_V4_COMPRESSED: u32 = 4;
 const FORMAT_VERSION_V5_COMPRESSED: u32 = 5;
+const FORMAT_VERSION_V6_COMPRESSED: u32 = 6;
+const FORMAT_VERSION_V7_COMPRESSED: u32 = 7;
 
 const CHR_MAX_SIZE: usize = 2 * 1024 * 1024;
 
@@ -64,6 +66,7 @@ pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
     emu.bus.write_dma_state(&mut payload);
     emu.bus.write_apu_runtime_state(&mut payload);
     emu.bus.write_ppu_runtime_state(&mut payload);
+    emu.bus.write_mutable_media_state(&mut payload);
     let raw_bytes = payload.into_bytes();
 
     // Compress payload with lz4
@@ -90,21 +93,24 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
 
     // Get the payload bytes (either raw or lz4-decompressed)
     let payload: Vec<u8>;
-    let (payload_ref, has_jam_state, has_dma_state, has_apu_runtime_state, has_ppu_runtime_state): (
-        &[u8],
-        bool,
-        bool,
-        bool,
-        bool,
-    ) = match format_version {
+    let (
+        payload_ref,
+        has_jam_state,
+        has_dma_state,
+        has_apu_runtime_state,
+        has_ppu_runtime_state,
+        has_mutable_media_state,
+    ): (&[u8], bool, bool, bool, bool, bool) = match format_version {
         FORMAT_VERSION_V1_UNCOMPRESSED => {
             // V1: raw bytes after magic(8) + version(4)
-            (&bytes[12..], false, false, false, false)
+            (&bytes[12..], false, false, false, false, false)
         }
         FORMAT_VERSION_V2_COMPRESSED
         | FORMAT_VERSION_V3_COMPRESSED
         | FORMAT_VERSION_V4_COMPRESSED
         | FORMAT_VERSION_V5_COMPRESSED
+        | FORMAT_VERSION_V6_COMPRESSED
+        | FORMAT_VERSION_V7_COMPRESSED
         | NES_SAVE_STATE_FORMAT_VERSION => {
             payload = lz4_flex::decompress_size_prepended(&bytes[12..])
                 .map_err(|e| anyhow!("failed to decompress save-state: {e}"))?;
@@ -113,18 +119,21 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
                 format_version >= FORMAT_VERSION_V3_COMPRESSED,
                 format_version >= FORMAT_VERSION_V4_COMPRESSED,
                 format_version >= FORMAT_VERSION_V5_COMPRESSED,
-                format_version == NES_SAVE_STATE_FORMAT_VERSION,
+                format_version >= FORMAT_VERSION_V6_COMPRESSED,
+                format_version >= FORMAT_VERSION_V7_COMPRESSED,
             )
         }
         other => {
             bail!(
-                "unsupported NES save-state format version {} (expected {}, {}, {}, {}, {}, or {})",
+                "unsupported NES save-state format version {} (expected {}, {}, {}, {}, {}, {}, {}, or {})",
                 other,
                 FORMAT_VERSION_V1_UNCOMPRESSED,
                 FORMAT_VERSION_V2_COMPRESSED,
                 FORMAT_VERSION_V3_COMPRESSED,
                 FORMAT_VERSION_V4_COMPRESSED,
                 FORMAT_VERSION_V5_COMPRESSED,
+                FORMAT_VERSION_V6_COMPRESSED,
+                FORMAT_VERSION_V7_COMPRESSED,
                 NES_SAVE_STATE_FORMAT_VERSION
             );
         }
@@ -153,6 +162,11 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
     }
     if has_ppu_runtime_state {
         emu.bus.read_ppu_runtime_state(&mut r)?;
+    }
+    if has_mutable_media_state {
+        emu.bus.read_mutable_media_state(&mut r)?;
+    } else {
+        emu.bus.reset_mutable_media_to_source();
     }
 
     if !r.is_exhausted() {

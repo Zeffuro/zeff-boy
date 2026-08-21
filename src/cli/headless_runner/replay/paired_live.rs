@@ -674,6 +674,9 @@ fn apply_paired_game_boy_frame_boundary_events(
             ReplayEvent::FdsDiskSide { side, .. } => {
                 backend.set_fds_disk_side(side)?;
             }
+            ReplayEvent::Media { event, .. } => {
+                backend.apply_media_event(&event)?;
+            }
             ReplayEvent::GameBoyLink { .. } | ReplayEvent::WonderSwanLink { .. } => {}
         }
     }

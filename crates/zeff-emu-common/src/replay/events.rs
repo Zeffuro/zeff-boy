@@ -1,12 +1,21 @@
+use crate::media::{MediaEvent, MediaObjectId, MediaSlotId};
 use anyhow::{Result, bail};
 
-use super::{MetadataCursor, read_bool, read_optional_u8, write_optional_u8, write_u32, write_u64};
+use super::{
+    MetadataCursor, read_bool, read_optional_u8, write_optional_u8, write_string, write_u32,
+    write_u64,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayEvent {
     FdsDiskSide {
         frame: u64,
         side: u8,
+    },
+    Media {
+        frame: u64,
+        sequence: u32,
+        event: MediaEvent,
     },
     GameBoyLink {
         frame: u64,
@@ -89,6 +98,7 @@ impl ReplayEvent {
     pub fn frame(&self) -> u64 {
         match self {
             Self::FdsDiskSide { frame, .. } => *frame,
+            Self::Media { frame, .. } => *frame,
             Self::GameBoyLink { frame, .. } => *frame,
             Self::GameBoyLinkState { frame, .. } => *frame,
             Self::GameBoyLinkStateAtTick { frame, .. } => *frame,
@@ -96,26 +106,29 @@ impl ReplayEvent {
         }
     }
 
-    pub(super) fn sort_key(&self) -> (u64, u64, u8) {
+    pub(super) fn sort_key(&self) -> (u64, u64, u8, u32) {
         match self {
-            Self::FdsDiskSide { frame, .. } => (*frame, 0, 0),
-            Self::GameBoyLinkState { frame, .. } => (*frame, 0, 1),
-            Self::GameBoyLinkStateAtTick { frame, tick, .. } => (*frame, *tick, 2),
+            Self::FdsDiskSide { frame, .. } => (*frame, 0, 0, 0),
+            Self::Media {
+                frame, sequence, ..
+            } => (*frame, 0, 0, *sequence),
+            Self::GameBoyLinkState { frame, .. } => (*frame, 0, 1, 0),
+            Self::GameBoyLinkStateAtTick { frame, tick, .. } => (*frame, *tick, 2, 0),
             Self::GameBoyLink { frame, tick, event } => {
-                (*frame, *tick, 3 + event.sort_discriminant())
+                (*frame, *tick, 3 + event.sort_discriminant(), 0)
             }
             Self::WonderSwanLink {
                 frame,
                 session_cycle,
                 ..
-            } => (*frame, *session_cycle, 5),
+            } => (*frame, *session_cycle, 5, 0),
         }
     }
 
     pub(super) fn is_frame_boundary_event(&self) -> bool {
         matches!(
             self,
-            Self::FdsDiskSide { .. } | Self::GameBoyLinkState { .. }
+            Self::FdsDiskSide { .. } | Self::Media { .. } | Self::GameBoyLinkState { .. }
         )
     }
 
@@ -125,6 +138,16 @@ impl ReplayEvent {
                 out.push(0);
                 write_u64(out, *frame);
                 out.push(*side);
+            }
+            Self::Media {
+                frame,
+                sequence,
+                event,
+            } => {
+                out.push(5);
+                write_u64(out, *frame);
+                write_u32(out, *sequence);
+                encode_media_event(out, event);
             }
             Self::GameBoyLink { frame, tick, event } => {
                 out.push(1);
@@ -162,6 +185,11 @@ impl ReplayEvent {
                 frame: cursor.read_u64()?,
                 side: cursor.read_u8()?,
             }),
+            5 => Ok(Self::Media {
+                frame: cursor.read_u64()?,
+                sequence: cursor.read_u32()?,
+                event: decode_media_event(cursor)?,
+            }),
             1 => Ok(Self::GameBoyLink {
                 frame: cursor.read_u64()?,
                 tick: cursor.read_u64()?,
@@ -183,6 +211,63 @@ impl ReplayEvent {
             }),
             tag => bail!("unknown replay event tag: {tag}"),
         }
+    }
+}
+
+fn encode_media_event(out: &mut Vec<u8>, event: &MediaEvent) {
+    match event {
+        MediaEvent::Insert {
+            slot,
+            media_id,
+            side,
+            write_protected,
+        } => {
+            out.push(0);
+            write_string(out, slot.as_ref());
+            write_string(out, media_id.as_ref());
+            write_optional_u8(out, *side);
+            out.push(u8::from(*write_protected));
+        }
+        MediaEvent::Eject { slot } => {
+            out.push(1);
+            write_string(out, slot.as_ref());
+        }
+        MediaEvent::SelectSide { slot, side } => {
+            out.push(2);
+            write_string(out, slot.as_ref());
+            out.push(*side);
+        }
+        MediaEvent::SetWriteProtected {
+            slot,
+            write_protected,
+        } => {
+            out.push(3);
+            write_string(out, slot.as_ref());
+            out.push(u8::from(*write_protected));
+        }
+    }
+}
+
+fn decode_media_event(cursor: &mut MetadataCursor<'_>) -> Result<MediaEvent> {
+    match cursor.read_u8()? {
+        0 => Ok(MediaEvent::Insert {
+            slot: MediaSlotId::new(cursor.read_string()?),
+            media_id: MediaObjectId::new(cursor.read_string()?),
+            side: read_optional_u8(cursor, "media insert side")?,
+            write_protected: read_bool(cursor, "media insert write-protected flag")?,
+        }),
+        1 => Ok(MediaEvent::Eject {
+            slot: MediaSlotId::new(cursor.read_string()?),
+        }),
+        2 => Ok(MediaEvent::SelectSide {
+            slot: MediaSlotId::new(cursor.read_string()?),
+            side: cursor.read_u8()?,
+        }),
+        3 => Ok(MediaEvent::SetWriteProtected {
+            slot: MediaSlotId::new(cursor.read_string()?),
+            write_protected: read_bool(cursor, "media write-protected flag")?,
+        }),
+        tag => bail!("unknown replay media event tag: {tag}"),
     }
 }
 

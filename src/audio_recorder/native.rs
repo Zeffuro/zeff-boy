@@ -35,7 +35,7 @@ enum RecorderInner {
         frames: Vec<AudioSemanticFrame>,
     },
     ZeffEvents {
-        writer: Option<super::events::ZeffAudioEventWriter>,
+        writer: Option<Box<super::events::ZeffAudioEventWriter>>,
         error: Option<std::io::Error>,
     },
 }
@@ -87,7 +87,7 @@ impl AudioRecorder {
                 frames: Vec::with_capacity(MIDI_INITIAL_SNAPSHOT_CAPACITY),
             },
             AudioRecordingFormat::ZeffEvents => RecorderInner::ZeffEvents {
-                writer: Some(super::events::ZeffAudioEventWriter::start(
+                writer: Some(Box::new(super::events::ZeffAudioEventWriter::start(
                     path,
                     context.ok_or_else(|| {
                         std::io::Error::new(
@@ -95,7 +95,7 @@ impl AudioRecorder {
                             "Zeff audio events require an explicit audio topology",
                         )
                     })?,
-                )?),
+                )?)),
                 error: None,
             },
         };
@@ -216,9 +216,7 @@ impl AudioRecorder {
                 if let Some(error) = error {
                     Err(error)
                 } else {
-                    writer
-                        .expect("active Zeff event recorder owns its writer")
-                        .finish()
+                    (*writer.expect("active Zeff event recorder owns its writer")).finish()
                 }
             }
         }

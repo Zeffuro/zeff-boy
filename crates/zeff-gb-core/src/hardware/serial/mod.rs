@@ -1,18 +1,23 @@
-use std::fmt;
-use std::io::{self, Write};
-
 use super::bus::{GameBoyLinkAction, GameBoyLinkReply, GameBoyLinkState};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::save_state::{StateReader, StateReaderGbExt, StateWriter, StateWriterGbExt};
 use anyhow::Result;
+use std::fmt;
 use zeff_emu_common::replay::{ReplayGameBoyLinkAction, ReplayGameBoyLinkState};
 
-pub trait SerialDevice {
+pub(super) trait SerialDevice {
     fn exchange_byte(&mut self, byte: u8) -> u8;
+
+    fn step(&mut self, _t_cycles: u64) {}
 }
 
-#[allow(dead_code)]
-pub struct DisconnectedDevice;
+mod device;
+
+pub use device::GameBoySerialDevice;
+pub(super) use device::SerialDevicePort;
+
+#[derive(Debug)]
+pub(super) struct DisconnectedDevice;
 
 impl SerialDevice for DisconnectedDevice {
     fn exchange_byte(&mut self, _byte: u8) -> u8 {
@@ -387,8 +392,6 @@ impl Serial {
 
             let response = device.exchange_byte(self.sb);
             self.output_log.push(self.sb);
-            print!("{}", self.sb as char);
-            let _ = io::stdout().flush();
 
             self.sb = response;
             self.sc &= !0x80;

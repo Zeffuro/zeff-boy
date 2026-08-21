@@ -205,6 +205,10 @@ fn apply_replay_events_at_cursor(
                 backend.set_fds_disk_side(side)?;
                 *events_applied += 1;
             }
+            ReplayEvent::Media { event, .. } => {
+                backend.apply_media_event(&event)?;
+                *events_applied += 1;
+            }
             ReplayEvent::GameBoyLinkState { state, .. } => {
                 backend.restore_game_boy_link_replay_state(state);
                 *events_applied += 1;

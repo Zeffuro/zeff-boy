@@ -5,6 +5,18 @@ mod queries;
 use super::Emulator;
 
 impl Emulator {
+    pub fn game_boy_serial_device(&self) -> crate::hardware::GameBoySerialDevice {
+        self.bus.game_boy_serial_device()
+    }
+
+    pub fn set_game_boy_serial_device(&mut self, device: crate::hardware::GameBoySerialDevice) {
+        self.bus.set_game_boy_serial_device(device);
+    }
+
+    pub fn queue_bardigun_barcode_scan(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.bus.queue_bardigun_barcode_scan(bytes)
+    }
+
     pub fn preview_game_boy_link_peer(
         &self,
         peer: &Self,

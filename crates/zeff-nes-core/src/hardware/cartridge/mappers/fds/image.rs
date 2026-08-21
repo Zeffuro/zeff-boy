@@ -96,8 +96,26 @@ impl FdsImage {
         self.sides.get(index).map(Vec::as_slice)
     }
 
+    pub(super) fn side_mut(&mut self, index: usize) -> Option<&mut [u8]> {
+        self.sides.get_mut(index).map(Vec::as_mut_slice)
+    }
+
     pub fn sides(&self) -> impl Iterator<Item = &[u8]> {
         self.sides.iter().map(Vec::as_slice)
+    }
+
+    pub(super) fn replace_sides(&mut self, sides: Vec<Vec<u8>>) -> Result<(), FdsImageError> {
+        if sides.len() != self.sides.len() {
+            return Err(FdsImageError::ReplacementSideCountMismatch {
+                expected: self.sides.len(),
+                actual: sides.len(),
+            });
+        }
+        if let Some(side) = sides.iter().find(|side| side.len() != FDS_SIDE_SIZE) {
+            return Err(FdsImageError::SideDataLength { actual: side.len() });
+        }
+        self.sides = sides;
+        Ok(())
     }
 
     pub fn into_sides(self) -> Vec<Vec<u8>> {
@@ -124,6 +142,7 @@ pub enum FdsImageError {
     SideDataLength { actual: usize },
     HeaderSideCountMismatch { declared: usize, actual: usize },
     TooManySides(usize),
+    ReplacementSideCountMismatch { expected: usize, actual: usize },
 }
 
 impl fmt::Display for FdsImageError {
@@ -152,6 +171,10 @@ impl fmt::Display for FdsImageError {
                     "FDS image has too many sides for fwNES metadata: {actual}"
                 )
             }
+            Self::ReplacementSideCountMismatch { expected, actual } => write!(
+                f,
+                "FDS replacement media has {actual} side(s), expected {expected}"
+            ),
         }
     }
 }

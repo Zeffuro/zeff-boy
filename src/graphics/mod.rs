@@ -13,6 +13,8 @@ mod egui_integration;
 mod framebuffer;
 mod gpu;
 mod pipeline;
+#[cfg(not(target_arch = "wasm32"))]
+mod printer_window;
 mod render_frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod settings_window;
@@ -26,6 +28,8 @@ use gpu::GpuContext;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use printer_window::PrinterRenderContext;
 pub(crate) use render_frame::{FrameError, RenderContext};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use settings_window::SettingsRenderContext;
@@ -47,6 +51,8 @@ pub(crate) struct Graphics {
     debugger: Option<debugger_window::DebuggerWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     settings_window: Option<settings_window::SettingsWindow>,
+    #[cfg(not(target_arch = "wasm32"))]
+    printer_window: Option<printer_window::PrinterWindow>,
 }
 
 impl Graphics {
@@ -137,6 +143,8 @@ impl Graphics {
             debugger: None,
             #[cfg(not(target_arch = "wasm32"))]
             settings_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            printer_window: None,
         })
     }
 
@@ -283,6 +291,66 @@ impl Graphics {
         ctx: SettingsRenderContext<'_>,
     ) -> Result<(), FrameError> {
         self.settings_window
+            .as_mut()
+            .ok_or(FrameError::Lost)?
+            .render(ctx)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_printer_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::Settings,
+    ) -> Result<WindowId> {
+        if let Some(window) = self.printer_window.as_ref() {
+            window.window().focus_window();
+            return Ok(window.id());
+        }
+        let window = printer_window::PrinterWindow::new(event_loop, &self.gpu, settings)?;
+        let id = window.id();
+        self.printer_window = Some(window);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_printer_window(&mut self) {
+        self.printer_window = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn printer_window_id(&self) -> Option<WindowId> {
+        self.printer_window
+            .as_ref()
+            .map(printer_window::PrinterWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn printer_window(&self) -> Option<&Window> {
+        self.printer_window
+            .as_ref()
+            .map(printer_window::PrinterWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn printer_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.printer_window
+            .as_mut()
+            .is_some_and(|window| window.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_printer_window(&mut self, width: u32, height: u32) {
+        if let Some(window) = self.printer_window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_printer_window(
+        &mut self,
+        ctx: PrinterRenderContext<'_>,
+    ) -> Result<(), FrameError> {
+        self.printer_window
             .as_mut()
             .ok_or(FrameError::Lost)?
             .render(ctx)

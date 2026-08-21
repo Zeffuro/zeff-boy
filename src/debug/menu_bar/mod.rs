@@ -19,6 +19,7 @@ pub(crate) enum MenuAction {
     ResetGame,
     StopGame,
     OpenSettings,
+    OpenPrinterWindow,
     LoadSymbolFile,
     SetDebugPresentation(DebugPresentation),
     OpenDebuggerWindow,
@@ -39,7 +40,10 @@ pub(crate) enum MenuAction {
     StopReplayRecording,
     LoadReplay,
     TakeScreenshot,
-    SetFdsDiskSide(u8),
+    ApplyMediaEvent(zeff_emu_common::media::MediaEvent),
+    SetGameBoySerialDevice(zeff_gb_core::hardware::GameBoySerialDevice),
+    #[cfg(not(target_arch = "wasm32"))]
+    ScanBardigunBarcodeFile,
     HostTcpLink,
     JoinTcpLink,
     DisconnectLink,
@@ -72,6 +76,10 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) is_playing_replay: bool,
     pub(crate) is_paused: bool,
     pub(crate) active_system: ActiveSystem,
+    pub(crate) media_slot_snapshot: Option<&'a zeff_emu_common::media::MediaSlotSnapshot>,
+    pub(crate) media_event_change_allowed: bool,
+    pub(crate) game_boy_serial_device: zeff_gb_core::hardware::GameBoySerialDevice,
+    pub(crate) game_boy_serial_device_change_allowed: bool,
     pub(crate) ws_display_rotated: bool,
     pub(crate) slot_labels: &'a [String; 10],
     pub(crate) slot_occupied: &'a [bool; 10],
@@ -137,7 +145,14 @@ pub(crate) fn draw_menu_bar(
                         &mut actions,
                         dock_state,
                         debug_windows,
-                        mb.active_system,
+                        tools_menu::ToolsMenuState {
+                            active_system: mb.active_system,
+                            media_slot_snapshot: mb.media_slot_snapshot,
+                            media_event_change_allowed: mb.media_event_change_allowed,
+                            game_boy_serial_device: mb.game_boy_serial_device,
+                            game_boy_serial_device_change_allowed: mb
+                                .game_boy_serial_device_change_allowed,
+                        },
                     );
                 });
 

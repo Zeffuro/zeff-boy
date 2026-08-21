@@ -27,6 +27,14 @@ impl Emulator {
         self.bus.cartridge.load_battery_data(bytes)
     }
 
+    pub fn dump_persistent_data(&self) -> Option<Vec<u8>> {
+        self.bus.cartridge.dump_persistent_data()
+    }
+
+    pub fn load_persistent_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.bus.cartridge.load_persistent_data(bytes)
+    }
+
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {
         crate::save_state::encode_state(self)
     }

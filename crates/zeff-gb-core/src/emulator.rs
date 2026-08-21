@@ -98,6 +98,39 @@ mod tests {
     }
 
     #[test]
+    fn reset_preserves_selected_serial_device_with_fresh_device_state() {
+        let rom = boot_test_rom(false);
+        let mut emulator = Emulator::new(&rom, 48_000).unwrap();
+        assert_eq!(
+            emulator.game_boy_serial_device(),
+            crate::hardware::GameBoySerialDevice::Disconnected
+        );
+
+        emulator.set_game_boy_serial_device(crate::hardware::GameBoySerialDevice::Printer);
+        emulator.reset();
+
+        assert_eq!(
+            emulator.game_boy_serial_device(),
+            crate::hardware::GameBoySerialDevice::Printer
+        );
+        assert_eq!(emulator.printer_image_count(), 0);
+
+        emulator.set_game_boy_serial_device(
+            crate::hardware::GameBoySerialDevice::BardigunBarcodeReader,
+        );
+        emulator
+            .queue_bardigun_barcode_scan(vec![0x81, 0x24])
+            .unwrap();
+        emulator.reset();
+
+        assert_eq!(
+            emulator.game_boy_serial_device(),
+            crate::hardware::GameBoySerialDevice::BardigunBarcodeReader
+        );
+        assert_eq!(emulator.bus.bardigun_pending_bytes(), 0);
+    }
+
+    #[test]
     fn cgb_boot_rom_leaves_cartridge_header_window_visible() {
         let mut rom = boot_test_rom(true);
         rom[0x100] = 0xCC;

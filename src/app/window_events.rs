@@ -30,6 +30,13 @@ impl App {
             } else if self
                 .gfx
                 .as_ref()
+                .and_then(crate::graphics::Graphics::printer_window_id)
+                == Some(window_id)
+            {
+                self.handle_printer_window_event(event);
+            } else if self
+                .gfx
+                .as_ref()
                 .and_then(crate::graphics::Graphics::debugger_window_id)
                 == Some(window_id)
             {
@@ -226,6 +233,83 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn handle_printer_window_event(&mut self, event: WindowEvent) {
+        let window_interaction = matches!(&event, WindowEvent::Resized(_) | WindowEvent::Moved(_));
+        let needs_repaint = self
+            .gfx
+            .as_mut()
+            .is_some_and(|gfx| gfx.printer_handles_event(&event));
+
+        match event {
+            WindowEvent::CloseRequested => {
+                self.persist_printer_window_geometry();
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.close_printer_window();
+                }
+                self.debug_windows.printer.clear_textures();
+                self.show_printer_window = false;
+                self.focus_printer_window_pending = false;
+                self.settings.save();
+                self.printer_window_focused = false;
+                self.focus_state_dirty = true;
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.resize_printer_window(size.width, size.height);
+                    if gfx.printer_window().is_some_and(|window| {
+                        crate::graphics::window_geometry::can_persist_size(
+                            window,
+                            size,
+                            crate::graphics::window_geometry::PRINTER_MIN_SIZE,
+                        )
+                    }) {
+                        self.settings.ui.printer_window_size = [size.width, size.height];
+                    }
+                    if let Some(window) = gfx.printer_window() {
+                        window.request_redraw();
+                    }
+                }
+            }
+            WindowEvent::Moved(position) => {
+                if self
+                    .gfx
+                    .as_ref()
+                    .and_then(crate::graphics::Graphics::printer_window)
+                    .is_some_and(|window| {
+                        crate::graphics::window_geometry::can_persist_position(window, position)
+                    })
+                {
+                    self.settings.ui.printer_window_position = Some([position.x, position.y]);
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                self.render_printer_frame();
+                self.last_printer_render = Instant::now();
+            }
+            WindowEvent::Focused(focused) => {
+                self.printer_window_focused = focused;
+                self.focus_state_dirty = true;
+            }
+            _ if needs_repaint
+                && Instant::now().duration_since(self.last_printer_render)
+                    >= std::time::Duration::from_millis(16) =>
+            {
+                if let Some(window) = self
+                    .gfx
+                    .as_ref()
+                    .and_then(crate::graphics::Graphics::printer_window)
+                {
+                    window.request_redraw();
+                }
+            }
+            _ => {}
+        }
+        if window_interaction {
+            self.tick_during_window_interaction();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn tick_during_window_interaction(&mut self) {
         self.apply_focus_state();
         if Instant::now().duration_since(self.timing.last_render_time) >= super::UI_RENDER_INTERVAL
@@ -286,6 +370,34 @@ impl App {
                 && crate::graphics::window_geometry::can_persist_position(window, position)
             {
                 self.settings.ui.settings_window_position = Some([position.x, position.y]);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn persist_printer_window_geometry(&mut self) {
+        let Some(window) = self
+            .gfx
+            .as_ref()
+            .and_then(crate::graphics::Graphics::printer_window)
+        else {
+            return;
+        };
+        if window.is_minimized() == Some(true) {
+            return;
+        }
+        self.settings.ui.printer_window_maximized = window.is_maximized();
+        let size = window.inner_size();
+        if crate::graphics::window_geometry::can_persist_size(
+            window,
+            size,
+            crate::graphics::window_geometry::PRINTER_MIN_SIZE,
+        ) {
+            self.settings.ui.printer_window_size = [size.width, size.height];
+            if let Ok(position) = window.outer_position()
+                && crate::graphics::window_geometry::can_persist_position(window, position)
+            {
+                self.settings.ui.printer_window_position = Some([position.x, position.y]);
             }
         }
     }
@@ -398,10 +510,15 @@ impl App {
         let settings_window_focused = self.settings_window_focused;
         #[cfg(target_arch = "wasm32")]
         let settings_window_focused = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let printer_window_focused = self.printer_window_focused;
+        #[cfg(target_arch = "wasm32")]
+        let printer_window_focused = false;
         let focused = any_app_window_focused(
             self.game_window_focused,
             debugger_window_focused,
             settings_window_focused,
+            printer_window_focused,
         );
 
         self.window_focused = focused;
@@ -434,8 +551,12 @@ fn any_app_window_focused(
     game_window_focused: bool,
     debugger_window_focused: bool,
     settings_window_focused: bool,
+    printer_window_focused: bool,
 ) -> bool {
-    game_window_focused || debugger_window_focused || settings_window_focused
+    game_window_focused
+        || debugger_window_focused
+        || settings_window_focused
+        || printer_window_focused
 }
 
 fn should_pause_on_unfocus(
@@ -455,11 +576,12 @@ mod tests {
     use super::{any_app_window_focused, should_pause_on_unfocus};
 
     #[test]
-    fn either_native_window_keeps_the_app_focused() {
-        assert!(any_app_window_focused(true, false, false));
-        assert!(any_app_window_focused(false, true, false));
-        assert!(any_app_window_focused(false, false, true));
-        assert!(!any_app_window_focused(false, false, false));
+    fn any_native_window_keeps_the_app_focused() {
+        assert!(any_app_window_focused(true, false, false, false));
+        assert!(any_app_window_focused(false, true, false, false));
+        assert!(any_app_window_focused(false, false, true, false));
+        assert!(any_app_window_focused(false, false, false, true));
+        assert!(!any_app_window_focused(false, false, false, false));
     }
 
     #[test]

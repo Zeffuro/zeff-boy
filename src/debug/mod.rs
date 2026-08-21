@@ -26,6 +26,7 @@ mod nes_tilemap_viewer;
 mod oam_viewer;
 mod palette_viewer;
 pub(crate) mod perf_monitor;
+mod printer_viewer;
 mod rom_info;
 mod rom_viewer;
 mod sega8_tile_viewer;
@@ -54,6 +55,9 @@ pub(crate) use dock::{
     save_open_tabs, serialize_dock_layout,
 };
 pub(crate) use fps::FpsTracker;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use printer_viewer::draw_printer_window;
+pub(crate) use printer_viewer::{PrinterViewerState, draw_printer_viewer_content};
 pub(crate) use toast::ToastManager;
 pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,

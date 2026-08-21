@@ -24,14 +24,14 @@ use crate::emu_thread::{EmuCommand, EmuThread};
 use crate::platform::Instant;
 
 impl App {
-    fn pause_for_dialog(&mut self) -> bool {
+    pub(super) fn pause_for_dialog(&mut self) -> bool {
         let was_paused = self.speed.paused;
         self.suppress_unfocus_pause_until_focus = true;
         self.speed.paused = true;
         was_paused
     }
 
-    fn resume_after_dialog(&mut self, was_paused: bool) {
+    pub(super) fn resume_after_dialog(&mut self, was_paused: bool) {
         let was_paused_by_unfocus = self.paused_by_unfocus;
         self.speed.paused = was_paused;
         self.paused_by_unfocus = false;

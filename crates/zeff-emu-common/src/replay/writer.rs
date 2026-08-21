@@ -9,6 +9,7 @@ use super::{
     CAMERA_REPEAT_SENTINEL, MAGIC, ReplayCheckpoint, ReplayEvent, ReplayJoypadFrame,
     ReplayMetadata, VERSION,
 };
+use crate::media::MediaEvent;
 
 pub struct ReplayRecorder {
     path: PathBuf,
@@ -46,6 +47,28 @@ impl ReplayRecorder {
 
     pub fn record_event(&mut self, event: ReplayEvent) {
         self.metadata.events.push(event);
+    }
+
+    pub fn record_media_event(&mut self, frame: u64, event: MediaEvent) {
+        let sequence = self
+            .metadata
+            .events
+            .iter()
+            .filter_map(|candidate| match candidate {
+                ReplayEvent::Media {
+                    frame: candidate_frame,
+                    sequence,
+                    ..
+                } if *candidate_frame == frame => Some(*sequence),
+                _ => None,
+            })
+            .max()
+            .map_or(0, |sequence| sequence.saturating_add(1));
+        self.record_event(ReplayEvent::Media {
+            frame,
+            sequence,
+            event,
+        });
     }
 
     pub fn set_final_state_sha256(&mut self, hash: [u8; 32]) {

@@ -200,7 +200,15 @@ impl App {
                         });
                     }
                     match self.recv_cold_response() {
-                        Some(EmuResponse::LoadStateOk { .. }) => {
+                        Some(EmuResponse::LoadStateOk {
+                            media_slot_snapshot,
+                            game_boy_serial_device,
+                            ..
+                        }) => {
+                            self.media_slot_snapshot = media_slot_snapshot;
+                            if let Some(device) = game_boy_serial_device {
+                                self.game_boy_serial_device = device;
+                            }
                             if let Some(thread) = &self.emu_thread {
                                 self.latest_frame = thread.shared_framebuffer().load_full();
                             }
@@ -727,7 +735,7 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         EmuResponse::SaveStateFailed(_) => "SaveStateFailed",
         EmuResponse::LoadStateOk { .. } => "LoadStateOk",
         EmuResponse::LoadStateFailed(_) => "LoadStateFailed",
-        EmuResponse::RewindOk => "RewindOk",
+        EmuResponse::RewindOk { .. } => "RewindOk",
         EmuResponse::RewindFailed(_) => "RewindFailed",
         EmuResponse::StateCaptured(_) => "StateCaptured",
         EmuResponse::ReplayStartCaptured { .. } => "ReplayStartCaptured",
@@ -739,8 +747,10 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         EmuResponse::GuestCallFailed { .. } => "GuestCallFailed",
         EmuResponse::GuestCallUndone => "GuestCallUndone",
         EmuResponse::GuestCallUndoFailed(_) => "GuestCallUndoFailed",
-        EmuResponse::FdsDiskSideChanged(_) => "FdsDiskSideChanged",
-        EmuResponse::FdsDiskSideChangeFailed(_) => "FdsDiskSideChangeFailed",
+        EmuResponse::MediaEventApplied { .. } => "MediaEventApplied",
+        EmuResponse::MediaEventFailed { .. } => "MediaEventFailed",
+        EmuResponse::BardigunBarcodeScanStarted(_) => "BardigunBarcodeScanStarted",
+        EmuResponse::BardigunBarcodeScanFailed(_) => "BardigunBarcodeScanFailed",
         #[cfg(not(target_arch = "wasm32"))]
         EmuResponse::LinkPending(_) => "LinkPending",
         #[cfg(not(target_arch = "wasm32"))]
