@@ -11,12 +11,14 @@ use super::super::gba_tile_viewer::draw_gba_tile_viewer_content;
 use super::super::gba_tilemap_viewer::draw_gba_tilemap_viewer_content;
 use super::super::hardware_io::draw_hardware_io_content;
 use super::super::input_viewer::draw_input_viewer_content;
-use super::super::memory_viewer::draw_memory_viewer_content;
+use super::super::memory_viewer::{MemoryViewerDebugContext, draw_memory_viewer_content};
 use super::super::mods_window::draw_mods_content;
 use super::super::nes_tile_viewer::draw_nes_tile_viewer_content;
 use super::super::nes_tilemap_viewer::draw_nes_tilemap_viewer_content;
 use super::super::oam_viewer::draw_oam_viewer_content;
 use super::super::palette_viewer::draw_palette_viewer_content;
+use super::super::pce_tile_viewer::draw_pce_tile_viewer_content;
+use super::super::pce_tilemap_viewer::draw_pce_tilemap_viewer_content;
 use super::super::perf_monitor::draw_performance_content;
 use super::super::rom_info::draw_rom_info_content;
 use super::super::rom_viewer::draw_rom_viewer_content;
@@ -39,6 +41,8 @@ pub(crate) struct DebugTabViewer<'a> {
     pub(crate) window_state: &'a mut DebugWindowState,
     pub(crate) actions: DebugUiActions,
     pub(crate) supports_rewind: bool,
+    pub(crate) supports_debugger: bool,
+    pub(crate) supports_execution_controls: bool,
     pub(crate) game_texture_id: Option<egui::TextureId>,
     pub(crate) game_native_size: (u32, u32),
     pub(crate) aspect_ratio_mode: AspectRatioMode,
@@ -105,6 +109,7 @@ impl TabViewer for DebugTabViewer<'_> {
                         &mut self.window_state.cpu_view,
                         &mut self.actions,
                         self.supports_rewind,
+                        self.supports_execution_controls,
                     );
                 }
             }
@@ -137,7 +142,13 @@ impl TabViewer for DebugTabViewer<'_> {
             }
             DebugTab::Disassembler => {
                 if let Some(view) = self.data.disassembly_view {
-                    let disasm_actions = draw_disassembler_content(ui, view, self.supports_rewind);
+                    let disasm_actions = draw_disassembler_content(
+                        ui,
+                        view,
+                        self.supports_rewind,
+                        self.supports_debugger,
+                        self.supports_execution_controls,
+                    );
                     self.actions
                         .toggle_breakpoints
                         .extend(disasm_actions.toggle_breakpoints);
@@ -166,9 +177,12 @@ impl TabViewer for DebugTabViewer<'_> {
                         ui,
                         &mut self.window_state.memory,
                         page,
-                        self.data.symbols,
-                        self.data.cpu_debug,
                         &mut self.actions,
+                        MemoryViewerDebugContext {
+                            symbols: self.data.symbols,
+                            cpu: self.data.cpu_debug,
+                            enabled: self.supports_debugger,
+                        },
                     );
                     self.actions.memory_writes.extend(writes);
                 }
@@ -185,6 +199,8 @@ impl TabViewer for DebugTabViewer<'_> {
                     );
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tile_viewer_content(ui, data, &mut self.window_state.tiles);
+                } else if let Some(ConsoleGraphicsData::Pce(data)) = self.data.graphics_data {
+                    draw_pce_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Sega8(data)) = self.data.graphics_data {
                     draw_sega8_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
@@ -202,6 +218,14 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_gba_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 } else if let Some(ConsoleGraphicsData::Nes(data)) = self.data.graphics_data {
                     draw_nes_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
+                } else if let Some(ConsoleGraphicsData::Pce(data)) = self.data.graphics_data {
+                    draw_pce_tilemap_viewer_content(
+                        ui,
+                        data,
+                        &mut self.window_state.tilemap,
+                        &mut self.window_state.tiles,
+                        &mut self.actions,
+                    );
                 } else if let Some(ConsoleGraphicsData::Sega8(data)) = self.data.graphics_data
                     && !data.mode4.enabled
                 {
@@ -237,7 +261,9 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::Breakpoints => {
-                if let Some(info) = self.data.cpu_debug {
+                if !self.supports_debugger {
+                    ui.weak("Breakpoints and watchpoints are unavailable for this core.");
+                } else if let Some(info) = self.data.cpu_debug {
                     draw_breakpoints_content(
                         ui,
                         info,

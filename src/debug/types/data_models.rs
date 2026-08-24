@@ -246,6 +246,7 @@ pub(crate) enum ConsoleGraphicsData {
     Gb(GbGraphicsData),
     Gba(GbaGraphicsData),
     Nes(Box<NesGraphicsData>),
+    Pce(Box<PceGraphicsData>),
     Sega8(Box<Sega8GraphicsData>),
 }
 
@@ -266,6 +267,17 @@ pub(crate) struct NesGraphicsData {
     pub(crate) mirroring: zeff_nes_core::hardware::cartridge::Mirroring,
     pub(crate) scroll_t: u16,
     pub(crate) fine_x: u8,
+}
+
+pub(crate) struct PceGraphicsData {
+    pub(crate) vdc1: PceVdcGraphicsData,
+    pub(crate) vdc2: Option<PceVdcGraphicsData>,
+    pub(crate) palette: [zeff_pce_core::hardware::VceColor; 512],
+}
+
+pub(crate) struct PceVdcGraphicsData {
+    pub(crate) vram: Vec<u16>,
+    pub(crate) registers: [u16; 0x14],
 }
 
 pub(crate) struct Sega8GraphicsData {

@@ -70,7 +70,7 @@ fn poll_rom_preparation_slot(
 }
 
 fn automatic_symbol_loading_available(backend: &EmuBackend) -> bool {
-    backend.supports_debugger()
+    backend.supports_symbol_loading()
 }
 
 struct PreparedRomLoad {
@@ -189,6 +189,7 @@ impl App {
             sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
             pce_console_wiring: self.settings.emulation.pce_console_wiring.forced_wiring(),
             pce_hucard_board: None,
+            pce_arcade_card_mode: self.settings.emulation.pce_arcade_card.core_mode(),
             pce_cd_archive_memory_limit_mib: self
                 .settings
                 .emulation
@@ -869,9 +870,9 @@ impl App {
         rom_path: PathBuf,
         source_path: PathBuf,
         rom_hash: [u8; 32],
-        supports_debugger: bool,
+        supports_symbol_loading: bool,
     ) {
-        if !supports_debugger {
+        if !supports_symbol_loading {
             self.pending_symbol_load = None;
             self.symbols = crate::symbols::SymbolSession::default();
             return;
@@ -1045,14 +1046,14 @@ mod tests {
     }
 
     #[test]
-    fn pce_debugger_capability_disables_automatic_symbol_loading() {
+    fn pce_disassembly_capability_enables_automatic_symbol_loading() {
         let mut rom = vec![0xEA; 0x2000];
         rom[..4].copy_from_slice(&[0xD4, 0xEA, 0x80, 0xFD]);
         rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
         let backend =
             EmuBackend::from_pce(PceBackend::new(rom, PathBuf::from("symbols.pce")).unwrap());
 
-        assert!(!automatic_symbol_loading_available(&backend));
+        assert!(automatic_symbol_loading_available(&backend));
     }
 
     #[test]

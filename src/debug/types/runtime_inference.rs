@@ -92,6 +92,18 @@ pub(super) fn direct_call_target(entry: &InstructionTraceRecord) -> Option<u32> 
                 *bytes.get(2)?,
             ])))
         }
+        TraceExecMode::HuC6280 => {
+            let target = match opcode {
+                0x20 => u32::from(u16::from_le_bytes([*bytes.get(1)?, *bytes.get(2)?])),
+                0x44 => u32::from(
+                    (entry.pc as u16)
+                        .wrapping_add(2)
+                        .wrapping_add_signed(i16::from(*bytes.get(1)? as i8)),
+                ),
+                _ => return None,
+            };
+            call_was_taken(entry, 4, target).then_some(target)
+        }
         TraceExecMode::Z80 => {
             let target = match opcode {
                 0xC7 => 0x00,
@@ -187,6 +199,7 @@ pub(super) fn mapped_target(entry: &InstructionTraceRecord, target: u32) -> Opti
         TraceExecMode::Sm83 if target < 0x4000 => u64::from(target),
         TraceExecMode::Sm83 => same_window_offset(entry.pc, source, target, 0x4000)?,
         TraceExecMode::Mos6502 => same_window_offset(entry.pc, source, target, 0x2000)?,
+        TraceExecMode::HuC6280 => same_window_offset(entry.pc, source, target, 0x2000)?,
         TraceExecMode::Z80 => same_window_offset(entry.pc, source, target, 0x2000)?,
         TraceExecMode::Arm | TraceExecMode::Thumb => gba_rom_offset(target)?,
         TraceExecMode::V30 => same_window_offset(entry.pc, source, target, 0x1_0000)?,
@@ -201,7 +214,11 @@ pub(super) fn mapped_target(entry: &InstructionTraceRecord, target: u32) -> Opti
             region: RegionId(0),
             offset,
         }),
-        bank: (entry.mode == TraceExecMode::Sm83).then_some((offset / 0x4000) as u32),
+        bank: match entry.mode {
+            TraceExecMode::Sm83 => Some((offset / 0x4000) as u32),
+            TraceExecMode::HuC6280 => entry.bank,
+            _ => None,
+        },
         exec_mode: trace_exec_mode(entry.mode),
     })
 }
@@ -230,5 +247,6 @@ fn trace_exec_mode(mode: TraceExecMode) -> crate::symbols::ExecMode {
         TraceExecMode::Mos6502 => crate::symbols::ExecMode::Mos6502,
         TraceExecMode::Z80 => crate::symbols::ExecMode::Z80,
         TraceExecMode::V30 => crate::symbols::ExecMode::V30,
+        TraceExecMode::HuC6280 => crate::symbols::ExecMode::HuC6280,
     }
 }

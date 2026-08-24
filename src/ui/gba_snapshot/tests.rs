@@ -148,6 +148,7 @@ fn gba_symbol_navigation_uses_the_symbol_instruction_set() {
     request.disasm_target = Some(crate::debug::DisassemblyTarget {
         cpu_address: 0x0800_0000,
         storage_offset: Some(0),
+        bank: None,
         thumb: Some(true),
     });
 

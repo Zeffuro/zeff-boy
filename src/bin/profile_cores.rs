@@ -122,6 +122,36 @@ fn profile_wonderswan_frames(
     );
 }
 
+fn profile_pce_frames(label: &str, frames: u32, machine: &mut zeff_pce_core::hardware::PceMachine) {
+    for _ in 0..10 {
+        machine.run_until_frame().expect("synthetic PCE frame");
+    }
+
+    reset_allocation_counts();
+    let start = Instant::now();
+    let mut master_ticks = 0_u64;
+    for _ in 0..frames {
+        master_ticks += machine
+            .run_until_frame()
+            .expect("synthetic PCE frame")
+            .master_ticks();
+    }
+    let elapsed = start.elapsed();
+    let (allocations, reallocations, allocated_bytes) = allocation_counts();
+    let fps = f64::from(frames) / elapsed.as_secs_f64();
+    let million_ticks_per_second = master_ticks as f64 / elapsed.as_secs_f64() / 1_000_000.0;
+    println!(
+        "{label:30} {frames:5} frames  {elapsed:>9.2?}  {fps:>8.0} fps  {million_ticks_per_second:>8.2} M master ticks / s"
+    );
+    println!(
+        "{:30} {:9} alloc  {:7} realloc  {:9.1} KiB",
+        "",
+        allocations,
+        reallocations,
+        allocated_bytes as f64 / 1024.0
+    );
+}
+
 fn profile_trace_store() {
     use std::hint::black_box;
     use zeff_emu_common::debug::{
@@ -213,6 +243,13 @@ fn sega8_rom() -> Vec<u8> {
     rom
 }
 
+fn pce_rom() -> Vec<u8> {
+    let mut rom = vec![0xEA; 0x2000];
+    rom[..4].copy_from_slice(&[0xD4, 0xEA, 0x80, 0xFD]);
+    rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
+    rom
+}
+
 fn ws_rom() -> Vec<u8> {
     use zeff_ws_core::hardware::cartridge::compute_footer_checksum;
 
@@ -254,6 +291,11 @@ fn profile_synthetic(
     nes.set_apu_sample_generation_enabled(sample_generation_enabled);
     nes.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_frames(&format!("NES synthetic{suffix}"), frames, &mut nes);
+
+    let mut pce = zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE ROM");
+    pce.set_sample_generation_enabled(sample_generation_enabled);
+    pce.set_instruction_trace_enabled(instruction_trace_enabled);
+    profile_pce_frames(&format!("PC Engine synthetic{suffix}"), frames, &mut pce);
 
     let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
         &sega8_rom(),

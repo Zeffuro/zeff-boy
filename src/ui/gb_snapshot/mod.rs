@@ -225,6 +225,7 @@ mod tests {
         let target = crate::debug::DisassemblyTarget {
             cpu_address: 0x4560,
             storage_offset: Some(0x8560),
+            bank: None,
             thumb: None,
         };
         assert_eq!(target_rom_offset(target, 0x4560, 0x4000), Some(0x8000));

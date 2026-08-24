@@ -223,6 +223,17 @@ impl SymbolStore {
             .filter_map(|id| self.symbol(*id))
     }
 
+    pub(crate) fn lookup_cpu_mapped(
+        &self,
+        location: CpuLocation,
+        bank: Option<u32>,
+    ) -> impl Iterator<Item = &SymbolRecord> {
+        self.lookup_cpu(location).filter(move |symbol| {
+            bank.zip(symbol.location.bank)
+                .is_none_or(|(mapped, symbol)| mapped == symbol)
+        })
+    }
+
     pub(crate) fn lookup_storage(
         &self,
         location: StorageLocation,

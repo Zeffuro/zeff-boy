@@ -389,6 +389,7 @@ fn draw_runtime_candidate(
             actions.disasm_target = Some(DisassemblyTarget {
                 cpu_address,
                 storage_offset: candidate.location.storage.map(|storage| storage.offset),
+                bank: candidate.location.bank,
                 thumb: match candidate.location.exec_mode {
                     ExecMode::Thumb => Some(true),
                     ExecMode::Arm => Some(false),
@@ -568,16 +569,17 @@ fn draw_symbol_row(
             ui.monospace(format!("CPU {:X}", cpu.address));
             if (runtime_cpu.is_some()
                 || symbol.location.exec_mode == ExecMode::Sm83 && cpu.address < 0x8000
+                || symbol.location.bank.is_some()
                 || row.exec_mode == ExecMode::Arm
                     && (0x0800_0000..=0x0DFF_FFFF).contains(&cpu.address)
                 || symbol.location.exec_mode == ExecMode::V30 && cpu.address <= 0x0F_FFFF)
-                && let Some(storage) = symbol.location.storage
                 && let Ok(cpu_address) = u32::try_from(cpu.address)
                 && ui.small_button("Code").clicked()
             {
                 row.actions.disasm_target = Some(DisassemblyTarget {
                     cpu_address,
-                    storage_offset: Some(storage.offset),
+                    storage_offset: symbol.location.storage.map(|storage| storage.offset),
+                    bank: symbol.location.bank,
                     thumb: match symbol.location.exec_mode {
                         ExecMode::Thumb => Some(true),
                         ExecMode::Arm => Some(false),

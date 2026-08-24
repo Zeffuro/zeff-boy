@@ -14,9 +14,11 @@ macro_rules! mn {
 pub(crate) struct DisassembledLine {
     pub(crate) address: Address,
     pub(crate) storage_offset: Option<u64>,
+    pub(crate) bank: Option<u32>,
     pub(crate) symbol: Option<String>,
     pub(crate) control_target: Option<Address>,
     pub(crate) control_target_storage: Option<u64>,
+    pub(crate) control_target_bank: Option<u32>,
     pub(crate) control_target_symbol: Option<String>,
     pub(crate) source: Option<String>,
     pub(crate) bytes: InstructionBytes,
@@ -41,11 +43,13 @@ pub(crate) struct DisassemblyView {
 pub(crate) struct DisassemblyTarget {
     pub(crate) cpu_address: Address,
     pub(crate) storage_offset: Option<u64>,
+    pub(crate) bank: Option<u32>,
     pub(crate) thumb: Option<bool>,
 }
 
 mod gb;
 mod gba;
+mod huc6280;
 mod nes;
 mod v30;
 mod z80;
@@ -74,6 +78,21 @@ pub(crate) fn nes_disassemble_around(
     disassemble_around_with(
         |addr| nes::instruction_len(&bus_read, addr),
         |addr| nes::decode_instruction(&bus_read, addr),
+        pc,
+        lines_before_pc,
+        total_lines,
+    )
+}
+
+pub(crate) fn huc6280_disassemble_around(
+    bus_read: impl Fn(u16) -> u8,
+    pc: u16,
+    lines_before_pc: usize,
+    total_lines: usize,
+) -> Vec<DisassembledLine> {
+    disassemble_around_with(
+        |addr| huc6280::instruction_len(&bus_read, addr),
+        |addr| huc6280::decode_instruction(&bus_read, addr),
         pc,
         lines_before_pc,
         total_lines,

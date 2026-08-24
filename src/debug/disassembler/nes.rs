@@ -47,9 +47,11 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
         return DisassembledLine {
             address: addr.into(),
             storage_offset: None,
+            bank: None,
             symbol: None,
             control_target: None,
             control_target_storage: None,
+            control_target_bank: None,
             control_target_symbol: None,
             source: None,
             bytes,
@@ -91,9 +93,11 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
     DisassembledLine {
         address: addr.into(),
         storage_offset: None,
+        bank: None,
         symbol: None,
         control_target: None,
         control_target_storage: None,
+        control_target_bank: None,
         control_target_symbol: None,
         source: None,
         bytes,

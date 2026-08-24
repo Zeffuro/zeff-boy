@@ -49,7 +49,7 @@ impl AudioResampler {
     }
 
     pub(crate) fn process(&mut self, interleaved: &[f32], fill_ratio: f32) -> Vec<f32> {
-        for pair in interleaved.chunks_exact(2) {
+        for pair in interleaved.as_chunks::<2>().0 {
             self.pending_left.push(pair[0]);
             self.pending_right.push(pair[1]);
         }

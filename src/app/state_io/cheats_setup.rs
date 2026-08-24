@@ -129,10 +129,12 @@ impl App {
     pub(in crate::app) fn setup_mods_for_rom(&mut self, system: ActiveSystem, original_crc: u32) {
         let dir = crate::mods::mods_dir_for_rom(system, original_crc);
         let entries = crate::mods::load_mod_config(&dir);
+        let warnings = crate::mods::mod_advisories(&dir, &entries);
         self.debug_windows.mod_state.entries = entries;
         self.debug_windows.mod_state.mods_dir = Some(dir);
         self.debug_windows.mod_state.needs_reload = false;
-        self.debug_windows.mod_state.status_message = None;
+        self.debug_windows.mod_state.status_message =
+            (!warnings.is_empty()).then(|| warnings.join("\n"));
     }
 }
 

@@ -7,6 +7,8 @@ use super::vdc_render::{BackgroundRenderError, BackgroundScanlineStatus};
 use super::vdc_scanline::VdcActiveDisplayLine;
 use super::vdc_sprite_render::{SpritePixel, SpriteRenderError, SpriteScanlineStatus};
 use super::vpc::{HuC6202, VpcVdc, VpcVdcPixel};
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const PCE_ACTIVE_FRAME_WIDTH: usize = 1024;
 pub const PCE_ACTIVE_FRAME_HEIGHT: usize = 512;
@@ -180,10 +182,53 @@ impl PceActiveOnlyVideoFrame {
     }
 
     pub fn begin_frame(&mut self) {
-        for pixel in self.framebuffer.chunks_exact_mut(4) {
+        for pixel in self.framebuffer.as_chunks_mut::<4>().0 {
             pixel.copy_from_slice(&PCE_ACTIVE_FRAME_UNUSED_RGBA);
         }
         self.rows.fill(PceVideoRowMetadata::default());
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_bytes(&self.framebuffer);
+        for row in self.rows.iter().copied() {
+            writer.write_u16(row.active_x_origin);
+            writer.write_u16(row.active_width);
+            writer.write_u8(match row.pixel_clock {
+                None => 0,
+                Some(VcePixelClock::DivideByFour) => 1,
+                Some(VcePixelClock::DivideByThree) => 2,
+                Some(VcePixelClock::DivideByTwo) => 3,
+            });
+        }
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        let mut restored = Self::new();
+        reader.read_exact(&mut restored.framebuffer)?;
+        for row in restored.rows.iter_mut() {
+            let active_x_origin = reader.read_u16()?;
+            let active_width = reader.read_u16()?;
+            let pixel_clock = match reader.read_u8()? {
+                0 => None,
+                1 => Some(VcePixelClock::DivideByFour),
+                2 => Some(VcePixelClock::DivideByThree),
+                3 => Some(VcePixelClock::DivideByTwo),
+                tag => bail!("invalid VCE pixel-clock tag in video frame save-state: {tag}"),
+            };
+            if usize::from(active_x_origin) >= PCE_ACTIVE_FRAME_WIDTH && pixel_clock.is_some() {
+                bail!("invalid active video origin in save-state: {active_x_origin}");
+            }
+            if usize::from(active_width) > PCE_ACTIVE_FRAME_WIDTH {
+                bail!("invalid active video width in save-state: {active_width}");
+            }
+            *row = PceVideoRowMetadata {
+                active_x_origin,
+                active_width,
+                pixel_clock,
+            };
+        }
+        *self = restored;
+        Ok(())
     }
 
     pub fn render_active_line(
@@ -218,10 +263,13 @@ impl PceActiveOnlyVideoFrame {
         let row_start = line * PCE_ACTIVE_FRAME_WIDTH * 4;
         let row_end = row_start + PCE_ACTIVE_FRAME_WIDTH * 4;
         let row = &mut self.framebuffer[row_start..row_end];
-        for pixel in row.chunks_exact_mut(4) {
+        for pixel in row.as_chunks_mut::<4>().0 {
             pixel.copy_from_slice(&PCE_ACTIVE_FRAME_UNUSED_RGBA);
         }
-        for (source, destination) in self.composited[..width].iter().zip(row.chunks_exact_mut(4)) {
+        for (source, destination) in self.composited[..width]
+            .iter()
+            .zip(row.as_chunks_mut::<4>().0)
+        {
             let [red, green, blue] = source.rgb8();
             destination.copy_from_slice(&[red, green, blue, 0xFF]);
         }
@@ -298,10 +346,13 @@ impl PceActiveOnlyVideoFrame {
         let row_start = line * PCE_ACTIVE_FRAME_WIDTH * 4;
         let row_end = row_start + PCE_ACTIVE_FRAME_WIDTH * 4;
         let row = &mut self.framebuffer[row_start..row_end];
-        for pixel in row.chunks_exact_mut(4) {
+        for pixel in row.as_chunks_mut::<4>().0 {
             pixel.copy_from_slice(&PCE_ACTIVE_FRAME_UNUSED_RGBA);
         }
-        for (source, destination) in self.composited[..width].iter().zip(row.chunks_exact_mut(4)) {
+        for (source, destination) in self.composited[..width]
+            .iter()
+            .zip(row.as_chunks_mut::<4>().0)
+        {
             let [red, green, blue] = source.rgb8();
             destination.copy_from_slice(&[red, green, blue, 0xFF]);
         }

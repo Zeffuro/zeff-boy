@@ -5,6 +5,7 @@ mod identity;
 pub(crate) mod import;
 mod model;
 mod nes;
+pub(crate) mod pce;
 mod platform;
 mod sega8;
 mod session;

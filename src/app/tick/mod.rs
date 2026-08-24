@@ -349,7 +349,7 @@ impl App {
                 let background_ui = self.emu_thread.is_none() || {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        self.show_settings_window
+                        self.show_settings_window || self.show_mods_window
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -455,6 +455,17 @@ impl App {
                 self.settings.save();
             }
             self.last_settings_render = now;
+        }
+
+        let mods_visible = self.show_mods_window
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::mods_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if mods_visible && now.duration_since(self.last_mods_render) >= SETTINGS_UPDATE_INTERVAL {
+            self.render_mods_frame();
+            self.last_mods_render = now;
         }
 
         let printer_visible = self.show_printer_window

@@ -71,7 +71,9 @@ pub(in crate::cli::headless_runner) fn nes_debug_state(
     let palette = emulator.ppu_palette_ram().to_vec();
     let oam = emulator.ppu_oam().to_vec();
     let active_oam = oam
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .enumerate()
         .filter(|(_, sprite)| sprite[0] < 0xEF)
         .map(|(index, sprite)| {

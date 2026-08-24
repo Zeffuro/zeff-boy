@@ -1,6 +1,8 @@
+use super::blip_buf::BlipBuf;
 use super::bus::{BaseBusDevices, OPEN_BUS_VALUE, PsgPort};
-use blip_buf::BlipBuf;
+use anyhow::bail;
 use std::fmt;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const PSG_CHANNEL_COUNT: usize = 6;
 pub const PSG_WAVEFORM_WORDS: usize = 32;
@@ -11,6 +13,8 @@ pub const PSG_CLOCK_DENOMINATOR: u64 = 88;
 pub const PSG_INTERNAL_CLOCK_NUMERATOR: u64 = PSG_CLOCK_NUMERATOR * 2;
 pub const DEFAULT_PSG_SAMPLE_RATE: u32 = 44_100;
 pub const MAX_PSG_SAMPLE_RATE: u32 = 192_000;
+pub const PSG_DEBUG_WAVEFORM_SAMPLE_COUNT: usize = 512;
+pub const PSG_DEBUG_WAVEFORM_RATE_HZ: u32 = 44_100;
 pub const PSG_UNAVAILABLE_READ_VALUE: u8 = OPEN_BUS_VALUE;
 pub const DETERMINISTIC_PSG_RESET_VALUE: u8 = 0;
 pub const DETERMINISTIC_PSG_RESET_CLEARS_WAVE_RAM: bool = true;
@@ -39,12 +43,55 @@ const BLIP_LEVEL_MAX: i64 = i16::MAX as i64;
 const BLIP_BUFFER_MIN_SAMPLES: u32 = 2_048;
 const BLIP_BUFFER_MARGIN: u32 = 64;
 const BLIP_FRAME_CLOCKS: u32 = 65_536;
+const MAX_PSG_STATE_AUDIO_SAMPLES: usize = MAX_PSG_SAMPLE_RATE as usize * 2;
+pub(super) const MAX_PSG_STATE_SECTION_BYTES: usize = 1024 * 1024;
 const PROVISIONAL_PSG_GAIN_COMPONENT_CLOCKS: u16 = PROVISIONAL_PSG_GAIN_LATCH_DELAY_CLOCKS + 1;
 const ATTENUATION_GAIN: [i32; 32] = [
     1_000_000, 841_395, 707_946, 595_662, 501_187, 421_697, 354_813, 298_538, 251_189, 211_349,
     177_828, 149_624, 125_893, 105_925, 89_125, 74_989, 63_096, 53_088, 44_668, 37_584, 31_623,
     26_607, 22_387, 18_836, 15_849, 13_335, 11_220, 9_441, 7_943, 6_683, 0, 0,
 ];
+
+#[derive(Debug)]
+struct DebugWaveformHistory {
+    samples: [f32; PSG_DEBUG_WAVEFORM_SAMPLE_COUNT],
+    cursor: usize,
+    count: usize,
+}
+
+impl Default for DebugWaveformHistory {
+    fn default() -> Self {
+        Self {
+            samples: [0.0; PSG_DEBUG_WAVEFORM_SAMPLE_COUNT],
+            cursor: 0,
+            count: 0,
+        }
+    }
+}
+
+impl DebugWaveformHistory {
+    fn push(&mut self, sample: f32) {
+        self.samples[self.cursor] = sample;
+        self.cursor = (self.cursor + 1) % PSG_DEBUG_WAVEFORM_SAMPLE_COUNT;
+        self.count = (self.count + 1).min(PSG_DEBUG_WAVEFORM_SAMPLE_COUNT);
+    }
+
+    fn ordered(&self) -> Vec<f32> {
+        let start = if self.count == PSG_DEBUG_WAVEFORM_SAMPLE_COUNT {
+            self.cursor
+        } else {
+            0
+        };
+        (0..self.count)
+            .map(|index| self.samples[(start + index) % PSG_DEBUG_WAVEFORM_SAMPLE_COUNT])
+            .collect()
+    }
+
+    fn clear(&mut self) {
+        self.cursor = 0;
+        self.count = 0;
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PsgChannel {
@@ -196,6 +243,68 @@ impl PsgChannel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PsgChannelDebugSnapshot {
+    pub frequency: u16,
+    pub control: u8,
+    pub balance: u8,
+    pub waveform: [u8; PSG_WAVEFORM_WORDS],
+    pub wave_index: u8,
+    pub dda_hold: u8,
+    pub noise_control: u8,
+    pub wave_counter: i32,
+    pub noise_counter: u16,
+    pub noise_seed: u32,
+    pub effective_left_attenuation: u8,
+    pub effective_right_attenuation: u8,
+}
+
+impl PsgChannel {
+    #[inline]
+    pub const fn debug_snapshot(&self) -> PsgChannelDebugSnapshot {
+        PsgChannelDebugSnapshot {
+            frequency: self.frequency,
+            control: self.control,
+            balance: self.balance,
+            waveform: self.waveform,
+            wave_index: self.wave_index,
+            dda_hold: self.dda_hold,
+            noise_control: self.noise_control,
+            wave_counter: self.wave_counter,
+            noise_counter: self.noise_counter,
+            noise_seed: self.noise_seed,
+            effective_left_attenuation: self.effective_left_attenuation,
+            effective_right_attenuation: self.effective_right_attenuation,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PsgDebugSnapshot {
+    pub revision: PsgRevision,
+    pub channels: [PsgChannelDebugSnapshot; PSG_CHANNEL_COUNT],
+    pub selected_channel: u8,
+    pub main_amplitude: u8,
+    pub lfo_frequency: u8,
+    pub lfo_control: u8,
+    pub lfo_counter: i32,
+    pub lfo_phase_valid: bool,
+    pub gain_scan_clock: u16,
+    pub gain_scan_active: bool,
+    pub gain_scan_queued: bool,
+    pub attenuation_latch: u8,
+    pub master_tick_remainder: u8,
+    pub sample_rate: u32,
+    pub sample_generation_enabled: bool,
+    pub channel_mutes: [bool; PSG_CHANNEL_COUNT],
+    pub resampler_clock: u32,
+    pub resampler_levels: [i32; 2],
+    pub buffered_sample_frames: usize,
+    pub mixed_output: [i64; 2],
+    pub debug_capture_enabled: bool,
+    pub debug_waveform_samples: usize,
+}
+
 #[derive(Debug)]
 pub struct HuC6280Psg {
     revision: PsgRevision,
@@ -216,6 +325,10 @@ pub struct HuC6280Psg {
     channel_mutes: [bool; PSG_CHANNEL_COUNT],
     resampler: StereoBlipResampler,
     audio_samples: Vec<i16>,
+    debug_capture_enabled: bool,
+    debug_capture_phase: u64,
+    debug_master_history: DebugWaveformHistory,
+    debug_channel_history: [DebugWaveformHistory; PSG_CHANNEL_COUNT],
 }
 
 struct StereoBlipResampler {
@@ -245,6 +358,10 @@ impl StereoBlipResampler {
     }
 
     fn at_level(sample_rate: u32, left_level: i64, right_level: i64) -> Self {
+        Self::at_blip_level(sample_rate, blip_level(left_level), blip_level(right_level))
+    }
+
+    fn at_blip_level(sample_rate: u32, left_level: i32, right_level: i32) -> Self {
         let sample_rate = sample_rate.clamp(1, MAX_PSG_SAMPLE_RATE);
         let buffer_samples = blip_buffer_samples(sample_rate);
         let mut left = BlipBuf::new(buffer_samples);
@@ -256,8 +373,8 @@ impl StereoBlipResampler {
             left,
             right,
             clocks: 0,
-            left_level: blip_level(left_level),
-            right_level: blip_level(right_level),
+            left_level,
+            right_level,
             #[cfg(test)]
             last_delta_clock: None,
         }
@@ -274,18 +391,16 @@ impl StereoBlipResampler {
     fn refresh_level(&mut self, left: i64, right: i64) {
         let left = blip_level(left);
         let right = blip_level(right);
+        let left_delta = left - self.left_level;
+        let right_delta = right - self.right_level;
         #[cfg(test)]
-        let changed = left != self.left_level || right != self.right_level;
-        if left != self.left_level {
-            self.left
-                .add_delta(self.clocks, left - self.left_level)
-                .unwrap();
+        let changed = left_delta != 0 || right_delta != 0;
+        if left_delta != 0 {
+            self.left.add_delta(self.clocks, left_delta).unwrap();
             self.left_level = left;
         }
-        if right != self.right_level {
-            self.right
-                .add_delta(self.clocks, right - self.right_level)
-                .unwrap();
+        if right_delta != 0 {
+            self.right.add_delta(self.clocks, right_delta).unwrap();
             self.right_level = right;
         }
         #[cfg(test)]
@@ -298,23 +413,63 @@ impl StereoBlipResampler {
         if self.clocks == 0 {
             return;
         }
-        self.left.end_frame(self.clocks).unwrap();
-        self.right.end_frame(self.clocks).unwrap();
+        flush_blip_pair(&mut self.left, &mut self.right, self.clocks, output);
         self.clocks = 0;
-
-        let available = self.left.samples_avail().min(self.right.samples_avail()) as usize;
-        let start = output.len();
-        output.resize(start + available * 2 + 1, 0);
-        let left = self
-            .left
-            .read_samples(&mut output[start..start + available * 2], true);
-        let right = self
-            .right
-            .read_samples(&mut output[start + 1..start + 1 + available * 2], true);
-        debug_assert_eq!(left, available);
-        debug_assert_eq!(right, available);
-        output.truncate(start + available * 2);
     }
+
+    fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u32(self.clocks);
+        writer.write_u32(self.left_level as u32);
+        writer.write_u32(self.right_level as u32);
+        self.left.write_state(writer);
+        self.right.write_state(writer);
+    }
+
+    fn read_state(sample_rate: u32, reader: &mut StateReader<'_>) -> anyhow::Result<Self> {
+        let clocks = reader.read_u32()?;
+        if clocks >= BLIP_FRAME_CLOCKS {
+            bail!("invalid PSG resampler clock in save-state: {clocks}");
+        }
+        let saved_left_level = reader.read_u32()? as i32;
+        let saved_right_level = reader.read_u32()? as i32;
+        validate_blip_level(saved_left_level)?;
+        validate_blip_level(saved_right_level)?;
+        let mut restored = Self::at_blip_level(sample_rate, saved_left_level, saved_right_level);
+        restored.left.read_state(reader)?;
+        restored.right.read_state(reader)?;
+        if !restored.left.timing_matches(&restored.right) {
+            bail!("PSG stereo resampler timing differs between channels");
+        }
+        restored.clocks = clocks;
+        Ok(restored)
+    }
+}
+
+fn flush_blip_pair(
+    left_buffer: &mut BlipBuf,
+    right_buffer: &mut BlipBuf,
+    clocks: u32,
+    output: &mut Vec<i16>,
+) {
+    left_buffer.end_frame(clocks).unwrap();
+    right_buffer.end_frame(clocks).unwrap();
+    let available = left_buffer
+        .samples_avail()
+        .min(right_buffer.samples_avail()) as usize;
+    let start = output.len();
+    output.resize(start + available * 2 + 1, 0);
+    let left = left_buffer.read_samples(&mut output[start..start + available * 2], true);
+    let right = right_buffer.read_samples(&mut output[start + 1..start + 1 + available * 2], true);
+    debug_assert_eq!(left, available);
+    debug_assert_eq!(right, available);
+    output.truncate(start + available * 2);
+}
+
+fn validate_blip_level(level: i32) -> anyhow::Result<()> {
+    if !(-(i16::MAX as i32)..=i16::MAX as i32).contains(&level) {
+        bail!("invalid PSG resampler level in save-state: {level}");
+    }
+    Ok(())
 }
 
 impl Default for HuC6280Psg {
@@ -348,6 +503,10 @@ impl HuC6280Psg {
             channel_mutes: [false; PSG_CHANNEL_COUNT],
             resampler: StereoBlipResampler::new(DEFAULT_PSG_SAMPLE_RATE),
             audio_samples: Vec::new(),
+            debug_capture_enabled: false,
+            debug_capture_phase: 0,
+            debug_master_history: DebugWaveformHistory::default(),
+            debug_channel_history: std::array::from_fn(|_| DebugWaveformHistory::default()),
         }
     }
 
@@ -356,11 +515,41 @@ impl HuC6280Psg {
         let sample_rate = self.sample_rate;
         let sample_generation_enabled = self.sample_generation_enabled;
         let channel_mutes = self.channel_mutes;
+        let debug_capture_enabled = self.debug_capture_enabled;
         *self = Self::with_revision(revision);
         self.sample_rate = sample_rate;
         self.sample_generation_enabled = sample_generation_enabled;
         self.channel_mutes = channel_mutes;
+        self.debug_capture_enabled = debug_capture_enabled;
         self.resampler = StereoBlipResampler::new(sample_rate);
+    }
+
+    pub fn debug_snapshot(&self) -> PsgDebugSnapshot {
+        let (left, right) = self.mix_output();
+        PsgDebugSnapshot {
+            revision: self.revision,
+            channels: std::array::from_fn(|index| self.channels[index].debug_snapshot()),
+            selected_channel: self.selected_channel,
+            main_amplitude: self.main_amplitude,
+            lfo_frequency: self.lfo_frequency,
+            lfo_control: self.lfo_control,
+            lfo_counter: self.lfo_counter,
+            lfo_phase_valid: self.lfo_phase_valid,
+            gain_scan_clock: self.gain_scan_clock,
+            gain_scan_active: self.gain_scan_active,
+            gain_scan_queued: self.gain_scan_queued,
+            attenuation_latch: self.attenuation_latch,
+            master_tick_remainder: self.master_tick_remainder,
+            sample_rate: self.sample_rate,
+            sample_generation_enabled: self.sample_generation_enabled,
+            channel_mutes: self.channel_mutes,
+            resampler_clock: self.resampler.clocks,
+            resampler_levels: [self.resampler.left_level, self.resampler.right_level],
+            buffered_sample_frames: self.audio_samples.len() / 2,
+            mixed_output: [left, right],
+            debug_capture_enabled: self.debug_capture_enabled,
+            debug_waveform_samples: self.debug_master_history.count,
+        }
     }
 
     #[inline]
@@ -433,10 +622,217 @@ impl HuC6280Psg {
         }
     }
 
+    pub fn set_debug_capture_enabled(&mut self, enabled: bool) {
+        self.debug_capture_enabled = enabled;
+    }
+
+    pub const fn debug_capture_enabled(&self) -> bool {
+        self.debug_capture_enabled
+    }
+
+    pub fn master_debug_samples_ordered(&self) -> Vec<f32> {
+        self.debug_master_history.ordered()
+    }
+
+    pub fn channel_debug_samples_ordered(&self, channel: usize) -> Vec<f32> {
+        self.debug_channel_history
+            .get(channel)
+            .map_or_else(Vec::new, DebugWaveformHistory::ordered)
+    }
+
     pub fn set_channel_mutes(&mut self, mutes: &[bool]) {
         self.channel_mutes =
             std::array::from_fn(|index| mutes.get(index).copied().unwrap_or(false));
         self.refresh_mixer_output();
+    }
+
+    pub(super) fn validate_v1_state(&self) -> anyhow::Result<()> {
+        if self.audio_samples.len() > MAX_PSG_STATE_AUDIO_SAMPLES {
+            bail!("PC Engine PSG queued audio exceeds its save-state bound");
+        }
+        if !self.audio_samples.len().is_multiple_of(2) {
+            bail!("PC Engine PSG queued audio is not stereo-aligned");
+        }
+        if !self.sample_generation_enabled && !self.audio_samples.is_empty() {
+            bail!("disabled PC Engine PSG has queued audio in save-state");
+        }
+        Ok(())
+    }
+
+    pub(super) const fn runtime_config(&self) -> (u32, bool, [bool; PSG_CHANNEL_COUNT], bool) {
+        (
+            self.sample_rate,
+            self.sample_generation_enabled,
+            self.channel_mutes,
+            self.debug_capture_enabled,
+        )
+    }
+
+    pub(super) fn apply_runtime_config(
+        &mut self,
+        sample_rate: u32,
+        sample_generation_enabled: bool,
+        channel_mutes: [bool; PSG_CHANNEL_COUNT],
+        debug_capture_enabled: bool,
+    ) {
+        self.set_sample_rate(sample_rate);
+        self.set_sample_generation_enabled(sample_generation_enabled);
+        self.set_channel_mutes(&channel_mutes);
+        self.set_debug_capture_enabled(debug_capture_enabled);
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        for channel in &self.channels {
+            writer.write_u16(channel.frequency);
+            writer.write_u8(channel.control);
+            writer.write_u8(channel.balance);
+            writer.write_bytes(&channel.waveform);
+            writer.write_u8(channel.wave_index);
+            writer.write_u8(channel.dda_hold);
+            writer.write_u8(channel.noise_control);
+            writer.write_u32(channel.wave_counter as u32);
+            writer.write_u16(channel.noise_counter);
+            writer.write_u32(channel.noise_seed);
+            writer.write_u8(channel.effective_left_attenuation);
+            writer.write_u8(channel.effective_right_attenuation);
+        }
+        writer.write_u8(self.selected_channel);
+        writer.write_u8(self.main_amplitude);
+        writer.write_u8(self.lfo_frequency);
+        writer.write_u8(self.lfo_control);
+        writer.write_u32(self.lfo_counter as u32);
+        writer.write_bool(self.lfo_phase_valid);
+        writer.write_u16(self.gain_scan_clock);
+        writer.write_bool(self.gain_scan_active);
+        writer.write_bool(self.gain_scan_queued);
+        writer.write_u8(self.attenuation_latch);
+        writer.write_u8(self.master_tick_remainder);
+        writer.write_u32(self.sample_rate);
+        writer.write_bool(self.sample_generation_enabled);
+        self.resampler.write_state(writer);
+        writer.write_u32(self.audio_samples.len() as u32);
+        for sample in &self.audio_samples {
+            writer.write_u16(*sample as u16);
+        }
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        let target_generation_enabled = self.sample_generation_enabled;
+        let mut channels = [const { PsgChannel::new() }; PSG_CHANNEL_COUNT];
+        for channel in &mut channels {
+            channel.frequency = reader.read_u16()?;
+            if channel.frequency > 0x0FFF {
+                bail!("invalid PSG channel frequency in save-state");
+            }
+            channel.control = reader.read_u8()?;
+            if channel.control & !CHANNEL_CONTROL_MASK != 0 {
+                bail!("invalid PSG channel control in save-state");
+            }
+            channel.balance = reader.read_u8()?;
+            reader.read_exact(&mut channel.waveform)?;
+            if channel.waveform.iter().any(|&sample| sample > 0x1F) {
+                bail!("invalid PSG waveform sample in save-state");
+            }
+            channel.wave_index = reader.read_u8()?;
+            channel.dda_hold = reader.read_u8()?;
+            if channel.wave_index > 0x1F || channel.dda_hold > 0x1F {
+                bail!("invalid PSG waveform cursor or DDA value in save-state");
+            }
+            channel.noise_control = reader.read_u8()?;
+            if channel.noise_control & !NOISE_CONTROL_MASK != 0 {
+                bail!("invalid PSG noise control in save-state");
+            }
+            channel.wave_counter = reader.read_u32()? as i32;
+            channel.noise_counter = reader.read_u16()?;
+            channel.noise_seed = reader.read_u32()?;
+            if channel.noise_seed == 0 || channel.noise_seed > 0x3_FFFF {
+                bail!("invalid PSG noise seed in save-state");
+            }
+            channel.effective_left_attenuation = reader.read_u8()?;
+            channel.effective_right_attenuation = reader.read_u8()?;
+            if channel.effective_left_attenuation > 31 || channel.effective_right_attenuation > 31 {
+                bail!("invalid PSG attenuation in save-state");
+            }
+        }
+
+        let selected_channel = reader.read_u8()?;
+        if selected_channel > 7 {
+            bail!("invalid PSG selected channel in save-state: {selected_channel}");
+        }
+        let main_amplitude = reader.read_u8()?;
+        let lfo_frequency = reader.read_u8()?;
+        let lfo_control = reader.read_u8()?;
+        if lfo_control & !LFO_CONTROL_MASK != 0 {
+            bail!("invalid PSG LFO control in save-state");
+        }
+        let lfo_counter = reader.read_u32()? as i32;
+        let lfo_phase_valid = reader.read_bool()?;
+        let gain_scan_clock = reader.read_u16()?;
+        if gain_scan_clock >= PROVISIONAL_PSG_GAIN_SCAN_CLOCKS_PER_PASS {
+            bail!("invalid PSG gain-scan clock in save-state: {gain_scan_clock}");
+        }
+        let gain_scan_active = reader.read_bool()?;
+        let gain_scan_queued = reader.read_bool()?;
+        if gain_scan_queued && !gain_scan_active {
+            bail!("queued PSG gain scan is inactive in save-state");
+        }
+        let attenuation_latch = reader.read_u8()?;
+        if attenuation_latch > 31 {
+            bail!("invalid PSG attenuation latch in save-state: {attenuation_latch}");
+        }
+        let master_tick_remainder = reader.read_u8()?;
+        if master_tick_remainder >= PSG_MASTER_CLOCK_DIVISOR as u8 {
+            bail!("invalid PSG master-clock remainder in save-state: {master_tick_remainder}");
+        }
+        let saved_sample_rate = reader.read_u32()?;
+        if saved_sample_rate != self.sample_rate {
+            bail!(
+                "PC Engine PSG save-state sample rate mismatch: state is {saved_sample_rate} Hz, destination is {} Hz",
+                self.sample_rate
+            );
+        }
+        let saved_generation_enabled = reader.read_bool()?;
+        let saved_resampler = StereoBlipResampler::read_state(saved_sample_rate, reader)?;
+        let audio_sample_count = reader.read_u32()? as usize;
+        if audio_sample_count > MAX_PSG_STATE_AUDIO_SAMPLES {
+            bail!("PSG queued-audio sample count exceeds save-state bound: {audio_sample_count}");
+        }
+        if !audio_sample_count.is_multiple_of(2) {
+            bail!("PSG queued audio is not stereo-aligned in save-state");
+        }
+        if !saved_generation_enabled && audio_sample_count != 0 {
+            bail!("disabled PSG has queued audio in save-state");
+        }
+        let mut saved_audio_samples = Vec::with_capacity(audio_sample_count);
+        for _ in 0..audio_sample_count {
+            saved_audio_samples.push(reader.read_u16()? as i16);
+        }
+
+        self.channels = channels;
+        self.selected_channel = selected_channel;
+        self.main_amplitude = main_amplitude;
+        self.lfo_frequency = lfo_frequency;
+        self.lfo_control = lfo_control;
+        self.lfo_counter = lfo_counter;
+        self.lfo_phase_valid = lfo_phase_valid;
+        self.gain_scan_clock = gain_scan_clock;
+        self.gain_scan_active = gain_scan_active;
+        self.gain_scan_queued = gain_scan_queued;
+        self.attenuation_latch = attenuation_latch;
+        self.master_tick_remainder = master_tick_remainder;
+        if target_generation_enabled && saved_generation_enabled {
+            self.resampler = saved_resampler;
+            self.audio_samples = saved_audio_samples;
+            self.refresh_mixer_output();
+        } else if target_generation_enabled {
+            self.resampler = self.resampler_at_current_level();
+            self.audio_samples.clear();
+        } else {
+            self.resampler = StereoBlipResampler::new(self.sample_rate);
+            self.audio_samples.clear();
+        }
+        self.clear_debug_sample_history();
+        Ok(())
     }
 
     pub fn drain_audio_samples_into(&mut self, output: &mut Vec<f32>) {
@@ -593,12 +989,64 @@ impl HuC6280Psg {
         if advance_oscillators {
             self.advance_oscillators();
         }
+        self.advance_debug_capture();
         if !self.sample_generation_enabled {
             return;
         }
         let (left, right) = self.mix_output();
         self.resampler
             .push_level(left, right, &mut self.audio_samples);
+    }
+
+    fn advance_debug_capture(&mut self) {
+        if !self.debug_capture_enabled {
+            return;
+        }
+        self.debug_capture_phase += u64::from(PSG_DEBUG_WAVEFORM_RATE_HZ) * PSG_CLOCK_DENOMINATOR;
+        if self.debug_capture_phase < PSG_INTERNAL_CLOCK_NUMERATOR {
+            return;
+        }
+        self.debug_capture_phase -= PSG_INTERNAL_CLOCK_NUMERATOR;
+        let channels = self.debug_channel_samples();
+        for (history, sample) in self.debug_channel_history.iter_mut().zip(channels) {
+            history.push(sample);
+        }
+        let (left, right) = self.mix_output();
+        let master = (left + right) as f32 / (2 * MIX_SCALE) as f32;
+        self.debug_master_history.push(master.clamp(-1.0, 1.0));
+    }
+
+    fn debug_channel_samples(&self) -> [f32; PSG_CHANNEL_COUNT] {
+        std::array::from_fn(|index| {
+            let channel = &self.channels[index];
+            if !channel.key_on() || self.channel_mutes[index] {
+                return 0.0;
+            }
+            let dac = if channel.noise_enabled() {
+                if channel.noise_seed & 1 != 0 { 31 } else { 0 }
+            } else if channel.dda_enabled() {
+                channel.dda_hold()
+            } else {
+                channel.waveform[usize::from(channel.wave_index)]
+            };
+            let sample = match self.revision {
+                PsgRevision::HuC6280 => i64::from(dac),
+                PsgRevision::HuC6280A => i64::from(dac) - 16,
+            };
+            let left = sample
+                * i64::from(ATTENUATION_GAIN[usize::from(channel.effective_left_attenuation)]);
+            let right = sample
+                * i64::from(ATTENUATION_GAIN[usize::from(channel.effective_right_attenuation)]);
+            ((left + right) as f32 / (2 * 31_000_000) as f32).clamp(-1.0, 1.0)
+        })
+    }
+
+    fn clear_debug_sample_history(&mut self) {
+        self.debug_capture_phase = 0;
+        self.debug_master_history.clear();
+        for history in &mut self.debug_channel_history {
+            history.clear();
+        }
     }
 
     fn advance_gain_scan(&mut self) {
@@ -841,11 +1289,14 @@ impl BaseBusDevices for HuC6280Psg {
 mod tests {
     use super::{
         ATTENUATION_GAIN, BLIP_FRAME_CLOCKS, DETERMINISTIC_PSG_RESET_ATTENUATION_SLOT, HuC6280Psg,
-        MIX_SCALE, PROVISIONAL_PSG_GAIN_SCAN_CLOCKS_PER_PASS, PROVISIONAL_PSG_NOISE_ZERO_PERIOD,
-        PSG_CHANNEL_COUNT, PSG_INTERNAL_MASTER_CLOCK_DIVISOR, PsgRevision, StereoBlipResampler,
-        attenuation_slot, blip_level, effective_period, lfo_target_period,
+        MAX_PSG_STATE_AUDIO_SAMPLES, MAX_PSG_STATE_SECTION_BYTES, MIX_SCALE,
+        PROVISIONAL_PSG_GAIN_SCAN_CLOCKS_PER_PASS, PROVISIONAL_PSG_NOISE_ZERO_PERIOD,
+        PSG_CHANNEL_COUNT, PSG_CLOCK_DENOMINATOR, PSG_INTERNAL_CLOCK_NUMERATOR,
+        PSG_INTERNAL_MASTER_CLOCK_DIVISOR, PsgRevision, StereoBlipResampler, attenuation_slot,
+        blip_level, effective_period, lfo_target_period,
     };
     use crate::hardware::PsgPort;
+    use zeff_emu_common::save_state::{StateReader, StateWriter};
 
     fn phase_state(psg: &HuC6280Psg) -> [(u8, i32, u16, u32); 6] {
         std::array::from_fn(|index| {
@@ -1027,6 +1478,120 @@ mod tests {
         assert_eq!(resampler.clocks, 1);
         assert_eq!(resampler.last_delta_clock, Some(0));
         resampler.flush(&mut samples);
+    }
+
+    #[test]
+    fn resampler_state_size_stays_fixed_across_multi_hour_clock_history() {
+        const SIMULATED_SECONDS: u64 = 3 * 60 * 60;
+        let frame_count = (SIMULATED_SECONDS * PSG_INTERNAL_CLOCK_NUMERATOR)
+            .div_ceil(u64::from(BLIP_FRAME_CLOCKS) * PSG_CLOCK_DENOMINATOR);
+        let mut resampler = StereoBlipResampler::new(1);
+        let sample_cells = (
+            resampler.left.state_sample_count(),
+            resampler.right.state_sample_count(),
+        );
+        let mut initial_writer = StateWriter::new();
+        resampler.write_state(&mut initial_writer);
+        let initial_len = initial_writer.position();
+        let mut output = Vec::new();
+
+        for frame in 0..frame_count {
+            resampler.clocks = BLIP_FRAME_CLOCKS - 1;
+            let level = if frame & 1 == 0 {
+                MIX_SCALE
+            } else {
+                -MIX_SCALE
+            };
+            resampler.push_level(level, -level, &mut output);
+            output.clear();
+        }
+
+        let mut final_writer = StateWriter::new();
+        resampler.write_state(&mut final_writer);
+        assert_eq!(final_writer.position(), initial_len);
+        assert_eq!(
+            (
+                resampler.left.state_sample_count(),
+                resampler.right.state_sample_count()
+            ),
+            sample_cells
+        );
+    }
+
+    #[test]
+    fn resampler_state_rejects_malformed_fixed_buffer_metadata() {
+        let resampler = StereoBlipResampler::new(44_100);
+        let mut writer = StateWriter::new();
+        resampler.write_state(&mut writer);
+        let bytes = writer.into_bytes();
+
+        let mut bad_clock = bytes.clone();
+        bad_clock[..4].copy_from_slice(&BLIP_FRAME_CLOCKS.to_le_bytes());
+        assert!(
+            StereoBlipResampler::read_state(44_100, &mut StateReader::new(&bad_clock)).is_err()
+        );
+
+        let mut bad_factor = bytes.clone();
+        bad_factor[12..20].copy_from_slice(&0_u64.to_le_bytes());
+        assert!(
+            StereoBlipResampler::read_state(44_100, &mut StateReader::new(&bad_factor))
+                .unwrap_err()
+                .to_string()
+                .contains("factor")
+        );
+
+        let mut oversized = bytes.clone();
+        oversized[36..40].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            StereoBlipResampler::read_state(44_100, &mut StateReader::new(&oversized))
+                .unwrap_err()
+                .to_string()
+                .contains("buffer length")
+        );
+
+        let mut bad_available = bytes.clone();
+        bad_available[32..36].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            StereoBlipResampler::read_state(44_100, &mut StateReader::new(&bad_available))
+                .unwrap_err()
+                .to_string()
+                .contains("available-sample")
+        );
+
+        let left_cells = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
+        let right_offset = 12 + 28 + left_cells * 4 + 8;
+        let mut mismatched_stereo = bytes.clone();
+        mismatched_stereo[right_offset..right_offset + 8].copy_from_slice(&0_u64.to_le_bytes());
+        assert!(
+            StereoBlipResampler::read_state(44_100, &mut StateReader::new(&mismatched_stereo))
+                .unwrap_err()
+                .to_string()
+                .contains("differs between channels")
+        );
+
+        let mut truncated = bytes;
+        truncated.pop();
+        assert!(
+            StereoBlipResampler::read_state(44_100, &mut StateReader::new(&truncated)).is_err()
+        );
+    }
+
+    #[test]
+    fn psg_state_rejects_oversized_queued_pcm() {
+        let mut psg = HuC6280Psg::new();
+        psg.set_sample_rate(192_000);
+        psg.audio_samples.resize(MAX_PSG_STATE_AUDIO_SAMPLES, 0);
+        let mut writer = StateWriter::new();
+        psg.write_state(&mut writer);
+        assert!(writer.position() <= MAX_PSG_STATE_SECTION_BYTES);
+
+        psg.audio_samples.resize(MAX_PSG_STATE_AUDIO_SAMPLES + 2, 0);
+        assert!(
+            psg.validate_v1_state()
+                .unwrap_err()
+                .to_string()
+                .contains("queued audio")
+        );
     }
 
     #[test]

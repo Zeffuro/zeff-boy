@@ -354,6 +354,7 @@ fn core_features_json(features: &CoreCapabilities) -> Value {
         "supports_cheats": features.supports_cheats,
         "supports_guest_calls": features.supports_guest_calls,
         "supports_debugger": features.supports_debugger,
+        "supports_execution_controls": features.supports_execution_controls,
         "supports_opcode_history": features.supports_opcode_history,
     })
 }
@@ -545,6 +546,7 @@ mod tests {
             supports_cheats: true,
             supports_guest_calls: true,
             supports_debugger: true,
+            supports_execution_controls: true,
             supports_opcode_history: true,
         };
 
@@ -552,6 +554,7 @@ mod tests {
 
         assert_eq!(json["core_family"], "sega8");
         assert_eq!(json["supports_debugger"], true);
+        assert_eq!(json["supports_execution_controls"], true);
         assert_eq!(json["supports_opcode_history"], true);
         assert_eq!(json["supports_save_states"], true);
         assert_eq!(json["supports_state_capture"], true);

@@ -79,6 +79,17 @@ fn all_buttons_and_dpad() {
 }
 
 #[test]
+fn extended_host_buttons_fill_the_high_input_bits() {
+    let mut state = HostInputState::new();
+    state.set_keyboard(HostButton::L, true);
+    state.set_keyboard(HostButton::R, true);
+    state.set_keyboard(HostButton::X, true);
+    state.set_keyboard(HostButton::Y, true);
+
+    assert_eq!(state.buttons_pressed(), 0xF0);
+}
+
+#[test]
 fn p2_shoulders_use_same_button_bits_as_p1() {
     let mut state = HostInputState::new();
     state.set_keyboard_p2(HostButton::L, true);

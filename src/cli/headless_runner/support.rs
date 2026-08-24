@@ -51,6 +51,12 @@ pub(super) fn ensure_system_headless_options(
     if opts.pce_controller_mode.is_some() && system != "pce" {
         anyhow::bail!("--pce-controller is only supported for PC Engine headless runs");
     }
+    if opts.pce_memory_base_mode.is_some() && system != "pce" {
+        anyhow::bail!("--pce-memory-base is only supported for PC Engine headless runs");
+    }
+    if opts.pce_arcade_card_mode.is_some() && system != "pce" {
+        anyhow::bail!("--pce-arcade-card is only supported for PC Engine headless runs");
+    }
     if !opts.input_events_p2.is_empty()
         && !(matches!(system, "nes" | "pce" | "sms" | "gg" | "sg")
             || (system == "ws" && opts.ws_link_peer_path.is_some()))
@@ -64,8 +70,8 @@ pub(super) fn ensure_system_headless_options(
             "--dump-mem is only supported for GB/GBC, PC Engine, and WonderSwan headless runs"
         );
     }
-    if opts.break_at.is_some() {
-        anyhow::bail!("--break-at is only supported for GB/GBC headless runs");
+    if opts.break_at.is_some() && system != "pce" {
+        anyhow::bail!("--break-at is only supported for GB/GBC and PC Engine headless runs");
     }
 
     if system == "gba" {

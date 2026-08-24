@@ -86,6 +86,13 @@ pub enum VpcPixelSelection {
     VdcTwo(VpcVdcPixel),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VpcDebugSnapshot {
+    pub priority_control: [u8; 2],
+    pub window_width: [u16; 2],
+    pub direct_vdc: VpcVdc,
+}
+
 impl VpcPixelSelection {
     #[inline]
     pub const fn palette_index(self) -> u16 {
@@ -134,6 +141,15 @@ impl HuC6202 {
     #[inline]
     pub fn reset(&mut self) {
         *self = Self::new();
+    }
+
+    #[inline]
+    pub const fn debug_snapshot(&self) -> VpcDebugSnapshot {
+        VpcDebugSnapshot {
+            priority_control: self.priority,
+            window_width: self.windows,
+            direct_vdc: self.direct_vdc,
+        }
     }
 
     #[inline]
@@ -189,6 +205,34 @@ impl HuC6202 {
             }
             _ => {}
         }
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_bytes(&self.priority);
+        writer.write_u16(self.windows[0]);
+        writer.write_u16(self.windows[1]);
+        writer.write_u8(match self.direct_vdc {
+            VpcVdc::One => 0,
+            VpcVdc::Two => 1,
+        });
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        let mut priority = [0; 2];
+        reader.read_exact(&mut priority)?;
+        let windows = [reader.read_u16()?, reader.read_u16()?];
+        if windows.iter().any(|&width| width > 0x03FF) {
+            bail!("invalid VPC window width in save-state: {windows:?}");
+        }
+        let direct_vdc = match reader.read_u8()? {
+            0 => VpcVdc::One,
+            1 => VpcVdc::Two,
+            tag => bail!("invalid VPC direct-VDC tag in save-state: {tag}"),
+        };
+        self.priority = priority;
+        self.windows = windows;
+        self.direct_vdc = direct_vdc;
+        Ok(())
     }
 
     #[inline]
@@ -252,3 +296,5 @@ impl HuC6202 {
 const fn window_active(width: u16, physical_x: u16) -> bool {
     width >= 0x40 && physical_x <= width - 0x40
 }
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};

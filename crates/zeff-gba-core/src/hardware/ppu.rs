@@ -59,7 +59,7 @@ impl Default for Ppu {
 impl Ppu {
     pub fn new() -> Self {
         let mut framebuffer = vec![0; FRAMEBUFFER_LEN];
-        for px in framebuffer.chunks_exact_mut(4) {
+        for px in framebuffer.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[0, 0, 0, 0xFF]);
         }
         Self {
@@ -139,7 +139,9 @@ impl Ppu {
             debug_flags: self.debug_flags,
             non_black_pixels: self
                 .framebuffer
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|px| px[0] != 0 || px[1] != 0 || px[2] != 0)
                 .count(),
         }

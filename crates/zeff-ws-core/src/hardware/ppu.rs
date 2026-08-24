@@ -49,7 +49,7 @@ impl Default for Ppu {
 impl Ppu {
     pub fn new() -> Self {
         let mut framebuffer = vec![0; FRAMEBUFFER_LEN];
-        for px in framebuffer.chunks_exact_mut(4) {
+        for px in framebuffer.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[0xC8, 0xD0, 0xB0, 0xFF]);
         }
         Self {
@@ -178,7 +178,7 @@ impl Ppu {
     }
 
     fn render_power_on_frame(&mut self) {
-        for px in self.framebuffer.chunks_exact_mut(4) {
+        for px in self.framebuffer.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[0xC8, 0xD0, 0xB0, 0xFF]);
         }
     }
@@ -290,7 +290,10 @@ fn render_scanline(
 
 fn fill_scanline(framebuffer: &mut [u8], y: usize, color: [u8; 4]) {
     let row = y * SCREEN_WIDTH * 4;
-    for pixel in framebuffer[row..row + SCREEN_WIDTH * 4].chunks_exact_mut(4) {
+    for pixel in framebuffer[row..row + SCREEN_WIDTH * 4]
+        .as_chunks_mut::<4>()
+        .0
+    {
         pixel.copy_from_slice(&color);
     }
 }

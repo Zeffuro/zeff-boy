@@ -11,25 +11,37 @@ fn discover_empty_dir() {
                 m.filename.ends_with(".ips")
                     || m.filename.ends_with(".bps")
                     || m.filename.ends_with(".ups")
+                    || m.filename.ends_with(".ppf")
+                    || m.filename.ends_with(".xdelta")
+                    || m.filename.ends_with(".xdelta3")
+                    || m.filename.ends_with(".vcdiff")
             })
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn discover_finds_ips_and_bps_files() {
+fn discover_finds_supported_patch_files() {
     let dir = std::env::temp_dir().join("zeff_test_mods_discover_both");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     std::fs::write(dir.join("patch_a.ips"), b"PATCHEOF").unwrap();
     std::fs::write(dir.join("patch_b.IPS"), b"PATCHEOF").unwrap();
     std::fs::write(dir.join("patch_c.bps"), make_test_bps(&[0; 4], &[0; 4])).unwrap();
+    std::fs::write(dir.join("patch_d.ppf"), b"PPF30\x02").unwrap();
+    std::fs::write(dir.join("patch_e.xdelta"), b"\xD6\xC3\xC4\0\0").unwrap();
+    std::fs::write(dir.join("patch_f.xdelta3"), b"\xD6\xC3\xC4\0\0").unwrap();
+    std::fs::write(dir.join("patch_g.vcdiff"), b"\xD6\xC3\xC4\0\0").unwrap();
     std::fs::write(dir.join("readme.txt"), b"not a patch").unwrap();
     let mods = discover_mods(&dir);
     let names: Vec<&str> = mods.iter().map(|m| m.filename.as_str()).collect();
     assert!(names.contains(&"patch_a.ips"));
     assert!(names.contains(&"patch_b.IPS"));
     assert!(names.contains(&"patch_c.bps"));
+    assert!(names.contains(&"patch_d.ppf"));
+    assert!(names.contains(&"patch_e.xdelta"));
+    assert!(names.contains(&"patch_f.xdelta3"));
+    assert!(names.contains(&"patch_g.vcdiff"));
     assert!(!names.iter().any(|n| n.contains("readme")));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -64,11 +76,13 @@ fn load_save_roundtrip() {
     assert!(!mods[0].enabled);
 
     mods[0].enabled = true;
+    mods[0].target = Some("Track 02.bin".to_owned());
     save_mod_config(&dir, &mods);
 
     let reloaded = load_mod_config(&dir);
     assert_eq!(reloaded.len(), 1);
     assert!(reloaded[0].enabled);
+    assert_eq!(reloaded[0].target.as_deref(), Some("Track 02.bin"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -88,12 +102,41 @@ fn apply_enabled_mods_applies_ips_patches() {
     let entries = vec![ModEntry {
         filename: "test.ips".to_string(),
         enabled: true,
+        target: None,
     }];
     let mut rom = vec![0u8; 16];
     let warnings = apply_enabled_mods(&mut rom, &dir, &entries);
     assert!(warnings.is_empty());
     assert_eq!(rom[2], 0xFF);
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn apply_enabled_pce_cd_mods_targets_track_from_xdelta_filename() {
+    let dir = std::env::temp_dir().join("zeff_test_mods_apply_pce_cd_xdelta");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = b"original data track".to_vec();
+    let target = b"translated data track".to_vec();
+    let patch = xdelta3::encode(&target, &source).unwrap();
+    std::fs::write(dir.join("translation-track02.xdelta"), patch).unwrap();
+    let entries = vec![ModEntry {
+        filename: "translation-track02.xdelta".to_owned(),
+        enabled: true,
+        target: None,
+    }];
+    let mut files = vec![vec![0; source.len()], source];
+    let references = vec![
+        "Game (Track 01).bin".to_owned(),
+        "Game (Track 02).bin".to_owned(),
+    ];
+
+    let warnings = apply_enabled_pce_cd_mods(&mut files, &references, &dir, &entries);
+
+    assert!(warnings.is_empty());
+    assert_eq!(files[1], target);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -111,6 +154,7 @@ fn apply_enabled_mods_applies_bps_patches() {
     let entries = vec![ModEntry {
         filename: "test.bps".to_string(),
         enabled: true,
+        target: None,
     }];
     let mut rom = source;
     let warnings = apply_enabled_mods(&mut rom, &dir, &entries);
@@ -134,11 +178,41 @@ fn apply_enabled_mods_applies_ups_patches() {
     let entries = vec![ModEntry {
         filename: "test.ups".to_string(),
         enabled: true,
+        target: None,
     }];
     let mut rom = source;
     let warnings = apply_enabled_mods(&mut rom, &dir, &entries);
     assert!(warnings.is_empty());
     assert_eq!(rom, target);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn apply_enabled_pce_cd_mods_treats_cue_files_as_one_image() {
+    let dir = std::env::temp_dir().join("zeff_test_mods_apply_pce_cd_ppf");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut patch = b"PPF30\x02".to_vec();
+    patch.resize(60, 0);
+    patch.extend_from_slice(&3_u64.to_le_bytes());
+    patch.push(3);
+    patch.extend_from_slice(&[1, 2, 3]);
+    std::fs::write(dir.join("disc.ppf"), patch).unwrap();
+
+    let entries = vec![ModEntry {
+        filename: "disc.ppf".to_owned(),
+        enabled: true,
+        target: None,
+    }];
+    assert_eq!(mod_advisories(&dir, &entries).len(), 1);
+    let mut files = vec![vec![0; 4], vec![0; 4]];
+    let references = vec!["Track 01.bin".to_owned(), "Track 02.bin".to_owned()];
+    let warnings = apply_enabled_pce_cd_mods(&mut files, &references, &dir, &entries);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("no source check"));
+    assert_eq!(files, vec![vec![0, 0, 0, 1], vec![2, 3, 0, 0]]);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

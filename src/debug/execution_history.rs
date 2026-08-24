@@ -207,6 +207,7 @@ pub(super) fn draw_execution_history_content(
                     actions.disasm_target = Some(DisassemblyTarget {
                         cpu_address: entry.address,
                         storage_offset: entry.storage_offset,
+                        bank: None,
                         thumb: entry.thumb,
                     });
                     actions.focus_tab = Some(DebugTab::Disassembler);

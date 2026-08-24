@@ -136,6 +136,8 @@ fn joypad_label(action: BindingAction) -> &'static str {
         BindingAction::Right => "Right",
         BindingAction::A => "A",
         BindingAction::B => "B",
+        BindingAction::X => "X",
+        BindingAction::Y => "Y",
         BindingAction::L => "L",
         BindingAction::R => "R",
         BindingAction::Start => "Start",

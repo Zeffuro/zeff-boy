@@ -98,7 +98,10 @@ fn fill_backdrop_rgba(
     }
 
     let rgba = vdp.mode4_color_rgba(vdp.mode4_backdrop_color_index(), color_mode);
-    for pixel in framebuffer[..expected_len].chunks_exact_mut(RGBA_CHANNELS) {
+    for pixel in framebuffer[..expected_len]
+        .as_chunks_mut::<RGBA_CHANNELS>()
+        .0
+    {
         pixel.copy_from_slice(&rgba);
     }
 }
@@ -116,7 +119,10 @@ fn fill_disabled_scanlines_backdrop_rgba(
         }
         let row_start = y * area.width * RGBA_CHANNELS;
         let row_end = row_start + area.width * RGBA_CHANNELS;
-        for pixel in framebuffer[row_start..row_end].chunks_exact_mut(RGBA_CHANNELS) {
+        for pixel in framebuffer[row_start..row_end]
+            .as_chunks_mut::<RGBA_CHANNELS>()
+            .0
+        {
             pixel.copy_from_slice(&rgba);
         }
     }

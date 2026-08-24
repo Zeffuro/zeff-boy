@@ -20,11 +20,16 @@ pub(crate) const PCE_CD_PATH_COMPONENT_BYTES_LIMIT: usize = 255;
 pub(crate) const PCE_CD_PATH_DEPTH_LIMIT: usize = 16;
 
 const CONTENT_ID_DOMAIN: &[u8] = b"zeff-boy:pce-cd-data:v2";
+pub(super) const ADPCM_FIXTURE_DISC_SHA256: [u8; 32] = [
+    0xC8, 0xC7, 0x42, 0x6B, 0x3F, 0x91, 0xD7, 0xBF, 0xB5, 0xF5, 0x02, 0x9F, 0xFE, 0x18, 0xD8, 0xE2,
+    0x60, 0x41, 0x95, 0xDA, 0xF8, 0xF5, 0x4C, 0x8B, 0x24, 0x94, 0xC2, 0x98, 0x1E, 0x8F, 0x68, 0xA2,
+];
 
 pub(crate) struct LoadedPceCd {
     pub(crate) disc: CdDisc,
     pub(crate) content_sha256: [u8; 32],
     pub(crate) content_crc32: u32,
+    pub(crate) source_disc_sha256: [u8; 32],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,7 +136,15 @@ struct CueTrack {
     index1: Option<u32>,
 }
 
+#[cfg(test)]
 pub(crate) fn load_direct_cue(cue_path: &Path) -> Result<LoadedPceCd, PceCdLoadError> {
+    load_direct_cue_with_mods(cue_path, false)
+}
+
+pub(crate) fn load_direct_cue_with_mods(
+    cue_path: &Path,
+    apply_mods: bool,
+) -> Result<LoadedPceCd, PceCdLoadError> {
     let cue_metadata = std::fs::metadata(cue_path)
         .map_err(|_| PceCdLoadError::CueUnreadable(cue_path.to_path_buf()))?;
     if cue_metadata.len() > PCE_CD_CUE_BYTES_LIMIT as u64 {
@@ -155,7 +168,7 @@ pub(crate) fn load_direct_cue(cue_path: &Path) -> Result<LoadedPceCd, PceCdLoadE
         }
         data.push(std::fs::read(&path).map_err(|_| PceCdLoadError::BinUnreadable(path.clone()))?);
     }
-    build_disc(cue_bytes, &sheet, data)
+    build_disc_with_mods(cue_bytes, &sheet, data, apply_mods)
 }
 
 pub(super) fn parse_cue_bytes(cue_bytes: &[u8]) -> Result<CueSheet, PceCdLoadError> {
@@ -338,10 +351,20 @@ pub(super) fn normalize_portable_path(value: &str) -> Result<String, ()> {
     Ok(components.join("/"))
 }
 
+#[cfg(test)]
 pub(super) fn build_disc(
     cue_bytes: Vec<u8>,
     sheet: &CueSheet,
     files: Vec<Vec<u8>>,
+) -> Result<LoadedPceCd, PceCdLoadError> {
+    build_disc_with_mods(cue_bytes, sheet, files, false)
+}
+
+pub(super) fn build_disc_with_mods(
+    cue_bytes: Vec<u8>,
+    sheet: &CueSheet,
+    mut files: Vec<Vec<u8>>,
+    apply_mods: bool,
 ) -> Result<LoadedPceCd, PceCdLoadError> {
     if files.len() != sheet.files.len() {
         return Err(PceCdLoadError::MissingFile);
@@ -356,6 +379,29 @@ pub(super) fn build_disc(
     }
 
     let (content_sha256, content_crc32) = content_identity(&cue_bytes, sheet, &files);
+    let mut source_disc_sha256 = None;
+    if apply_mods {
+        let dir = crate::mods::mods_dir_for_rom(super::ActiveSystem::Pce, content_crc32);
+        let mods = crate::mods::load_mod_config(&dir);
+        let enabled = mods.iter().filter(|entry| entry.enabled).count();
+        if enabled != 0 {
+            source_disc_sha256 = Some(normalized_disc_identity(sheet, &files)?);
+            let file_references = sheet
+                .files
+                .iter()
+                .map(|file| file.reference.clone())
+                .collect::<Vec<_>>();
+            let warnings =
+                crate::mods::apply_enabled_pce_cd_mods(&mut files, &file_references, &dir, &mods);
+            for warning in &warnings {
+                log::warn!("Mod warning: {warning}");
+            }
+            log::info!(
+                "Applied {enabled} mod(s) to PC Engine CD set ({} warnings)",
+                warnings.len()
+            );
+        }
+    }
     let mut cursor = 0_u32;
     let mut normalized = Vec::with_capacity(sheet.tracks.len());
 
@@ -461,11 +507,124 @@ pub(super) fn build_disc(
             .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
 
+    let disc = CdDisc::new(normalized).map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
     Ok(LoadedPceCd {
-        disc: CdDisc::new(normalized).map_err(|error| PceCdLoadError::Disc(error.to_string()))?,
+        source_disc_sha256: source_disc_sha256.unwrap_or_else(|| disc.content_hash()),
+        disc,
         content_sha256,
         content_crc32,
     })
+}
+
+fn normalized_disc_identity(
+    sheet: &CueSheet,
+    files: &[Vec<u8>],
+) -> Result<[u8; 32], PceCdLoadError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"zeff-boy:pce-core-cd-disc:v1\0");
+    hasher.update((sheet.tracks.len() as u32).to_le_bytes());
+    let mut cursor = 0_u32;
+
+    for (file_index, (cue_file, bytes)) in sheet.files.iter().zip(files).enumerate() {
+        let file_tracks = cue_file
+            .track_indices
+            .iter()
+            .map(|index| &sheet.tracks[*index])
+            .collect::<Vec<_>>();
+        let sector_len = sector_bytes(file_tracks[0].mode);
+        if file_tracks
+            .iter()
+            .any(|track| sector_bytes(track.mode) != sector_len)
+        {
+            return Err(PceCdLoadError::MixedSectorSizes);
+        }
+        if !bytes.len().is_multiple_of(sector_len) {
+            return Err(PceCdLoadError::MisalignedBin {
+                bytes: bytes.len(),
+                sector_bytes: sector_len,
+            });
+        }
+        let total_sectors = u32::try_from(bytes.len() / sector_len)
+            .map_err(|_| PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
+        let anchor = if file_index == 0 {
+            file_tracks[0]
+                .index1
+                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
+        } else {
+            file_tracks[0]
+                .index0
+                .or(file_tracks[0].index1)
+                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
+        };
+        if anchor >= total_sectors {
+            return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
+        }
+
+        for (track_offset, track) in file_tracks.iter().enumerate() {
+            let raw_index1 = track
+                .index1
+                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
+            let end = file_tracks
+                .get(track_offset + 1)
+                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
+                .unwrap_or(total_sectors);
+            let index1 = raw_index1
+                .checked_sub(anchor)
+                .and_then(|index| cursor.checked_add(index))
+                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
+            if track.index0.is_some_and(|index0| index0 > raw_index1) {
+                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
+            }
+            let index0 = track
+                .index0
+                .and_then(|index| index.checked_sub(anchor))
+                .map(|index| {
+                    cursor
+                        .checked_add(index)
+                        .ok_or(PceCdLoadError::InvalidTrackOrder)
+                })
+                .transpose()?;
+            let stored_start = index0.unwrap_or(index1);
+            let raw_start = track.index0.unwrap_or(raw_index1);
+            let start_byte = raw_start as usize * sector_len;
+            let end_byte = end as usize * sector_len;
+            if raw_index1 >= end || end > total_sectors || end_byte > bytes.len() {
+                return Err(PceCdLoadError::TrackOutsideBin(track.number));
+            }
+            let stored_data = &bytes[start_byte..end_byte];
+            let control = if track.mode == CdTrackMode::Audio {
+                0
+            } else {
+                4
+            };
+
+            hasher.update([track.number, control]);
+            match index0 {
+                Some(index0) => {
+                    hasher.update([1]);
+                    hasher.update(index0.to_le_bytes());
+                }
+                None => hasher.update([0]),
+            }
+            hasher.update(index1.to_le_bytes());
+            hasher.update(stored_start.to_le_bytes());
+            hasher.update([match track.mode {
+                CdTrackMode::Audio => 0,
+                CdTrackMode::Mode1_2048 => 1,
+                CdTrackMode::Mode1_2352 => 2,
+            }]);
+            hasher.update((stored_data.len() as u64).to_le_bytes());
+            hasher.update(stored_data);
+        }
+        cursor = cursor
+            .checked_add(
+                total_sectors
+                    .checked_sub(anchor)
+                    .ok_or(PceCdLoadError::InvalidTrackOrder)?,
+            )
+            .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
+    }
+    Ok(hasher.finalize().into())
 }
 
 fn content_identity(cue_bytes: &[u8], sheet: &CueSheet, files: &[Vec<u8>]) -> ([u8; 32], u32) {
@@ -746,6 +905,17 @@ mod tests {
         let second = build_disc(cue.to_vec(), &sheet, vec![vec![2; 2_048]]).unwrap();
         assert_ne!(first.content_sha256, second.content_sha256);
         assert_ne!(first.content_crc32, second.content_crc32);
+    }
+
+    #[test]
+    fn borrowed_source_disc_identity_matches_the_built_disc() {
+        let cue = b"FILE \"one.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nFILE \"two.bin\" BINARY\nTRACK 02 AUDIO\nINDEX 00 00:00:00\nINDEX 01 00:00:01\n";
+        let sheet = parse_cue_bytes(cue).unwrap();
+        let files = vec![vec![0x11; 2 * 2_048], vec![0x22; 3 * 2_352]];
+        let source_hash = normalized_disc_identity(&sheet, &files).unwrap();
+        let loaded = build_disc(cue.to_vec(), &sheet, files).unwrap();
+        assert_eq!(source_hash, loaded.disc.content_hash());
+        assert_eq!(source_hash, loaded.source_disc_sha256);
     }
 
     #[test]

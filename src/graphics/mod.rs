@@ -12,6 +12,8 @@ mod debugger_window;
 mod egui_integration;
 mod framebuffer;
 mod gpu;
+#[cfg(not(target_arch = "wasm32"))]
+mod mods_window;
 mod pipeline;
 #[cfg(not(target_arch = "wasm32"))]
 mod printer_window;
@@ -28,6 +30,8 @@ use gpu::GpuContext;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use mods_window::ModsRenderContext;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use printer_window::PrinterRenderContext;
 #[cfg(not(target_arch = "wasm32"))]
@@ -53,6 +57,8 @@ pub(crate) struct Graphics {
     debugger: Option<debugger_window::DebuggerWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     settings_window: Option<settings_window::SettingsWindow>,
+    #[cfg(not(target_arch = "wasm32"))]
+    mods_window: Option<mods_window::ModsWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     printer_window: Option<printer_window::PrinterWindow>,
 }
@@ -110,7 +116,7 @@ impl Graphics {
             png::ColorType::Rgba => buf,
             png::ColorType::Rgb => {
                 let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
-                for chunk in buf.chunks_exact(3) {
+                for chunk in buf.as_chunks::<3>().0 {
                     rgba.extend_from_slice(chunk);
                     rgba.push(255);
                 }
@@ -145,6 +151,8 @@ impl Graphics {
             debugger: None,
             #[cfg(not(target_arch = "wasm32"))]
             settings_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            mods_window: None,
             #[cfg(not(target_arch = "wasm32"))]
             printer_window: None,
         })
@@ -293,6 +301,64 @@ impl Graphics {
         ctx: SettingsRenderContext<'_>,
     ) -> Result<(), FrameError> {
         self.settings_window
+            .as_mut()
+            .ok_or(FrameError::Lost)?
+            .render(ctx)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_mods_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::Settings,
+    ) -> Result<WindowId> {
+        if let Some(window) = self.mods_window.as_ref() {
+            window.window().focus_window();
+            return Ok(window.id());
+        }
+        let window = mods_window::ModsWindow::new(event_loop, &self.gpu, settings)?;
+        let id = window.id();
+        self.mods_window = Some(window);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_mods_window(&mut self) {
+        self.mods_window = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn mods_window_id(&self) -> Option<WindowId> {
+        self.mods_window.as_ref().map(mods_window::ModsWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn mods_window(&self) -> Option<&Window> {
+        self.mods_window
+            .as_ref()
+            .map(mods_window::ModsWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn mods_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.mods_window
+            .as_mut()
+            .is_some_and(|window| window.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_mods_window(&mut self, width: u32, height: u32) {
+        if let Some(window) = self.mods_window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_mods_window(
+        &mut self,
+        ctx: ModsRenderContext<'_>,
+    ) -> Result<(), FrameError> {
+        self.mods_window
             .as_mut()
             .ok_or(FrameError::Lost)?
             .render(ctx)

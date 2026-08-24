@@ -1,4 +1,6 @@
 use super::{HuC6270, VdcRegister, VdcStatus};
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const VDC_SATB_WORDS: usize = 256;
 pub const DETERMINISTIC_VDC_INITIAL_SATB_WORD: u16 = 0;
@@ -246,4 +248,94 @@ impl HuC6270 {
             next_word: 0,
         });
     }
+
+    pub(super) fn write_dma_state(&self, writer: &mut StateWriter) {
+        write_vram_dma(writer, self.vram_dma_pending);
+        write_vram_dma(writer, self.vram_dma_active);
+        write_satb_dma(writer, self.satb_dma_pending);
+        write_satb_dma(writer, self.satb_dma_active);
+    }
+
+    pub(super) fn read_dma_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        self.vram_dma_pending = read_vram_dma(reader)?;
+        self.vram_dma_active = read_vram_dma(reader)?;
+        self.satb_dma_pending = read_satb_dma(reader)?;
+        self.satb_dma_active = read_satb_dma(reader)?;
+        Ok(())
+    }
+}
+
+fn write_vram_dma(writer: &mut StateWriter, state: Option<VramDmaState>) {
+    let Some(state) = state else {
+        writer.write_u8(0);
+        return;
+    };
+    writer.write_u8(1);
+    writer.write_u16(state.source);
+    writer.write_u16(state.destination);
+    writer.write_u32(state.remaining_words);
+    writer.write_u8(direction_to_tag(state.source_direction));
+    writer.write_u8(direction_to_tag(state.destination_direction));
+}
+
+fn read_vram_dma(reader: &mut StateReader<'_>) -> anyhow::Result<Option<VramDmaState>> {
+    Ok(match reader.read_u8()? {
+        0 => None,
+        1 => {
+            let source = reader.read_u16()?;
+            let destination = reader.read_u16()?;
+            let remaining_words = reader.read_u32()?;
+            if !(1..=0x1_0000).contains(&remaining_words) {
+                bail!("invalid VDC VRAM-DMA length in save-state: {remaining_words}");
+            }
+            Some(VramDmaState {
+                source,
+                destination,
+                remaining_words,
+                source_direction: tag_to_direction(reader.read_u8()?)?,
+                destination_direction: tag_to_direction(reader.read_u8()?)?,
+            })
+        }
+        tag => bail!("invalid VDC VRAM-DMA option tag in save-state: {tag}"),
+    })
+}
+
+fn write_satb_dma(writer: &mut StateWriter, state: Option<VramSatbDmaState>) {
+    let Some(state) = state else {
+        writer.write_u8(0);
+        return;
+    };
+    writer.write_u8(1);
+    writer.write_u16(state.source);
+    writer.write_u16(state.next_word);
+}
+
+fn read_satb_dma(reader: &mut StateReader<'_>) -> anyhow::Result<Option<VramSatbDmaState>> {
+    Ok(match reader.read_u8()? {
+        0 => None,
+        1 => {
+            let source = reader.read_u16()?;
+            let next_word = reader.read_u16()?;
+            if usize::from(next_word) >= VDC_SATB_WORDS {
+                bail!("invalid VDC SATB-DMA cursor in save-state: {next_word}");
+            }
+            Some(VramSatbDmaState { source, next_word })
+        }
+        tag => bail!("invalid VDC SATB-DMA option tag in save-state: {tag}"),
+    })
+}
+
+const fn direction_to_tag(direction: VdcDmaDirection) -> u8 {
+    match direction {
+        VdcDmaDirection::Increment => 0,
+        VdcDmaDirection::Decrement => 1,
+    }
+}
+
+fn tag_to_direction(tag: u8) -> anyhow::Result<VdcDmaDirection> {
+    Ok(match tag {
+        0 => VdcDmaDirection::Increment,
+        1 => VdcDmaDirection::Decrement,
+        _ => bail!("invalid VDC DMA-direction tag in save-state: {tag}"),
+    })
 }

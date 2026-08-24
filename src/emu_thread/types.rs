@@ -79,6 +79,7 @@ pub(crate) struct JoypadInput {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PceMouseInput {
     pub(crate) mode: zeff_pce_core::hardware::PceControllerMode,
+    pub(crate) memory_base_mode: zeff_pce_core::hardware::PceMemoryBaseMode,
     pub(crate) delta_x: i16,
     pub(crate) delta_y: i16,
     pub(crate) buttons: u8,

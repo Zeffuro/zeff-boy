@@ -45,7 +45,9 @@ pub(crate) fn hex_eq_digest(hex: &str, digest: &[u8]) -> bool {
         return false;
     }
     hex.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .zip(digest.iter().copied())
         .all(|(pair, byte)| decode_hex_pair(pair) == Some(byte))
 }

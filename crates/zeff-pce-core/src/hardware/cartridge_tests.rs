@@ -62,12 +62,19 @@ fn sf2_fixed_and_banked_windows_use_only_the_four_exact_selectors() {
     assert_eq!(bus.read(0x07_FFFF), 0x10);
     assert_eq!(bus.read(0x08_0000), 0x20);
     assert_eq!(bus.read(0x0F_FFFF), 0x20);
+    assert_eq!(bus.hucard_rom_offset(0x08_0000), Some(0x08_0000));
+    assert_eq!(bus.hucard_mapping_token(), 0);
 
     for bank in 0..4_u32 {
         bus.write(0x001FF0 + bank, 0xFF - bank as u8);
         assert_eq!(bus.read(0x08_0000), 0x20 + bank as u8);
         assert_eq!(bus.read(0x0F_FFFF), 0x20 + bank as u8);
         assert_eq!(bus.read(0x001FF0 + bank), 0xA0 + bank as u8);
+        assert_eq!(
+            bus.hucard_rom_offset(0x08_0000),
+            Some(0x08_0000 + bank * 0x08_0000)
+        );
+        assert_eq!(bus.hucard_mapping_token(), bank as u8);
     }
 
     bus.write(0x001FF2, 0);
@@ -105,6 +112,8 @@ fn populous_ram_is_exactly_bounded_zeroed_and_preserved_by_reset() {
     assert_eq!(bus.read(0x08_7FFF), 0);
     assert_eq!(bus.read(0x08_8000), 0xFF);
     assert_eq!(bus.read(0x0F_FFFF), 0xFF);
+    assert_eq!(bus.hucard_rom_offset(0x07_FFFF), Some(0x07_FFFF));
+    assert_eq!(bus.hucard_rom_offset(0x08_0000), None);
 
     bus.write(0x07_FFFF, 0x11);
     bus.write(0x08_0000, 0x22);
@@ -125,4 +134,19 @@ fn populous_ram_is_exactly_bounded_zeroed_and_preserved_by_reset() {
     )
     .unwrap();
     assert_eq!(fresh.hucard_ram(), Some(&[0; POPULOUS_HUCARD_RAM_LEN]));
+}
+
+#[test]
+fn system_card_rom_offsets_follow_the_physical_mirror() {
+    let bus = BaseBus::with_hucard(
+        vec![0; super::SYSTEM_CARD_V1_V2_IMAGE_LEN],
+        PceHuCardBoard::SystemCardV3,
+        (),
+    )
+    .unwrap();
+
+    assert_eq!(bus.hucard_rom_offset(0x03_FFFF), Some(0x03_FFFF));
+    assert_eq!(bus.hucard_rom_offset(0x04_0000), Some(0));
+    assert_eq!(bus.hucard_rom_offset(0x07_FFFF), Some(0x03_FFFF));
+    assert_eq!(bus.hucard_rom_offset(0x0D_0000), None);
 }

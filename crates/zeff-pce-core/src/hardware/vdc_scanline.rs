@@ -1,6 +1,8 @@
 use super::vdc::{HuC6270, VdcRegister, VdcStatus};
 use super::vdc_render::BackgroundRenderState;
 use super::vdc_sprite_render::{SpriteRenderState, SpriteScanlineStatus};
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 const RASTER_COUNTER_MASK: u16 = 0x03FF;
 const BACKGROUND_SCROLL_Y_MASK: u16 = 0x01FF;
@@ -304,9 +306,137 @@ impl VdcScanlineState {
     pub(super) const fn current_phase(&self) -> VdcVerticalPhase {
         self.phase
     }
+
+    pub(super) fn write_state(self, writer: &mut StateWriter) {
+        writer.write_u8(vertical_phase_to_tag(self.phase));
+        writer.write_u16(self.phase_line);
+        writer.write_u16(self.phase_duration);
+        writer.write_u16(self.frame_line);
+        writer.write_u16(self.raster_counter);
+        writer.write_bool(self.vertical_blank_pending);
+        writer.write_u16(self.latched_memory_width);
+        writer.write_u16(self.effective_background_scroll_y);
+        writer.write_bool(self.background_scroll_y_reload_pending);
+        match self.external_profile {
+            None => writer.write_u8(0),
+            Some(profile) => {
+                writer.write_u8(1);
+                writer.write_u16(profile.vertical_sync);
+                writer.write_u16(profile.display_start);
+                writer.write_u16(profile.active_display);
+                writer.write_u16(profile.display_end);
+            }
+        }
+    }
+
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> anyhow::Result<Self> {
+        let phase = tag_to_vertical_phase(reader.read_u8()?)?;
+        let phase_line = reader.read_u16()?;
+        let phase_duration = reader.read_u16()?;
+        if phase_duration != 0 && phase_line >= phase_duration {
+            bail!("invalid VDC vertical phase position in save-state");
+        }
+        let frame_line = reader.read_u16()?;
+        if frame_line >= 512 {
+            bail!("invalid VDC frame line in save-state: {frame_line}");
+        }
+        let raster_counter = reader.read_u16()?;
+        if raster_counter > RASTER_COUNTER_MASK {
+            bail!("invalid VDC raster counter in save-state: {raster_counter}");
+        }
+        let vertical_blank_pending = reader.read_bool()?;
+        let latched_memory_width = reader.read_u16()?;
+        if latched_memory_width > 0x00FF {
+            bail!("invalid VDC latched memory width in save-state");
+        }
+        let effective_background_scroll_y = reader.read_u16()?;
+        if effective_background_scroll_y > BACKGROUND_SCROLL_Y_MASK {
+            bail!("invalid VDC effective background scroll in save-state");
+        }
+        let background_scroll_y_reload_pending = reader.read_bool()?;
+        let external_profile = match reader.read_u8()? {
+            0 => None,
+            1 => {
+                let profile = ExternalVerticalProfile {
+                    vertical_sync: reader.read_u16()?,
+                    display_start: reader.read_u16()?,
+                    active_display: reader.read_u16()?,
+                    display_end: reader.read_u16()?,
+                };
+                if profile.vertical_sync == 0
+                    || profile.display_start == 0
+                    || profile.active_display == 0
+                    || profile.vertical_sync > 512
+                    || profile.display_start > 512
+                    || profile.active_display > 512
+                    || profile.display_end > 512
+                {
+                    bail!("invalid VDC external vertical profile in save-state");
+                }
+                Some(profile)
+            }
+            tag => bail!("invalid VDC external-profile tag in save-state: {tag}"),
+        };
+        Ok(Self {
+            phase,
+            phase_line,
+            phase_duration,
+            frame_line,
+            raster_counter,
+            vertical_blank_pending,
+            latched_memory_width,
+            effective_background_scroll_y,
+            background_scroll_y_reload_pending,
+            external_profile,
+        })
+    }
+}
+
+const fn vertical_phase_to_tag(phase: VdcVerticalPhase) -> u8 {
+    match phase {
+        VdcVerticalPhase::VerticalSync => 0,
+        VdcVerticalPhase::DisplayStart => 1,
+        VdcVerticalPhase::ActiveDisplay => 2,
+        VdcVerticalPhase::DisplayEnd => 3,
+    }
+}
+
+fn tag_to_vertical_phase(tag: u8) -> anyhow::Result<VdcVerticalPhase> {
+    Ok(match tag {
+        0 => VdcVerticalPhase::VerticalSync,
+        1 => VdcVerticalPhase::DisplayStart,
+        2 => VdcVerticalPhase::ActiveDisplay,
+        3 => VdcVerticalPhase::DisplayEnd,
+        _ => bail!("invalid VDC vertical-phase tag in save-state: {tag}"),
+    })
 }
 
 impl HuC6270 {
+    #[inline]
+    pub const fn vertical_phase(&self) -> VdcVerticalPhase {
+        self.scanline_state.phase
+    }
+
+    #[inline]
+    pub const fn vertical_phase_line(&self) -> u16 {
+        self.scanline_state.phase_line
+    }
+
+    #[inline]
+    pub const fn current_vertical_phase_duration(&self) -> u16 {
+        self.scanline_state.phase_duration
+    }
+
+    #[inline]
+    pub const fn frame_line(&self) -> u16 {
+        self.scanline_state.frame_line
+    }
+
+    #[inline]
+    pub const fn raster_counter(&self) -> u16 {
+        self.scanline_state.raster_counter
+    }
+
     #[inline]
     pub fn sync_mode(&self) -> VdcSyncMode {
         match (self.register(VdcRegister::Control) >> 4) & 3 {

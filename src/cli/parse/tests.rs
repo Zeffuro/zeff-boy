@@ -1,9 +1,10 @@
 use super::input::parse_zapper_event_arg;
 use super::parse_args_from;
 use super::values::{
-    parse_pce_controller_mode_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
+    parse_pce_arcade_card_mode_arg, parse_pce_controller_mode_arg, parse_pce_memory_base_mode_arg,
+    parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
 };
-use zeff_pce_core::hardware::PceControllerMode;
+use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBaseMode};
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -121,8 +122,67 @@ fn pce_controller_values_accept_host_facing_aliases() {
         PceControllerMode::Mouse
     );
     assert_eq!(
+        parse_pce_controller_mode_arg("6-button", "--pce-controller").unwrap(),
+        PceControllerMode::SixButton
+    );
+    assert_eq!(
         parse_pce_controller_mode_arg("tap", "--pce-controller").unwrap(),
         PceControllerMode::Multitap
     );
     assert!(parse_pce_controller_mode_arg("bad", "--pce-controller").is_err());
+}
+
+#[test]
+fn pce_memory_base_values_accept_host_facing_aliases() {
+    assert_eq!(
+        parse_pce_memory_base_mode_arg("auto", "--pce-memory-base").unwrap(),
+        PceMemoryBaseMode::Automatic
+    );
+    assert_eq!(
+        parse_pce_memory_base_mode_arg("on", "--pce-memory-base").unwrap(),
+        PceMemoryBaseMode::Enabled
+    );
+    assert_eq!(
+        parse_pce_memory_base_mode_arg("disabled", "--pce-memory-base").unwrap(),
+        PceMemoryBaseMode::Disabled
+    );
+    assert!(parse_pce_memory_base_mode_arg("bad", "--pce-memory-base").is_err());
+}
+
+#[test]
+fn parses_pce_memory_base_headless_option() {
+    let args = parse_args_from(["--headless", "--pce-memory-base", "enabled", "game.pce"]).unwrap();
+    assert_eq!(
+        args.headless.unwrap().pce_memory_base_mode,
+        Some(PceMemoryBaseMode::Enabled)
+    );
+}
+
+#[test]
+fn parses_headless_apply_mods_option() {
+    let args = parse_args_from(["--headless", "--apply-mods", "game.pce"]).unwrap();
+    assert!(args.headless.unwrap().apply_mods);
+}
+
+#[test]
+fn pce_arcade_card_values_and_headless_option_accept_host_facing_aliases() {
+    assert_eq!(
+        parse_pce_arcade_card_mode_arg("auto", "--pce-arcade-card").unwrap(),
+        PceArcadeCardMode::Automatic
+    );
+    assert_eq!(
+        parse_pce_arcade_card_mode_arg("on", "--pce-arcade-card").unwrap(),
+        PceArcadeCardMode::Enabled
+    );
+    assert_eq!(
+        parse_pce_arcade_card_mode_arg("disabled", "--pce-arcade-card").unwrap(),
+        PceArcadeCardMode::Disabled
+    );
+    assert!(parse_pce_arcade_card_mode_arg("bad", "--pce-arcade-card").is_err());
+
+    let args = parse_args_from(["--headless", "--pce-arcade-card", "enabled", "game.cue"]).unwrap();
+    assert_eq!(
+        args.headless.unwrap().pce_arcade_card_mode,
+        Some(PceArcadeCardMode::Enabled)
+    );
 }

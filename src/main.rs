@@ -88,6 +88,7 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),
             pce_console_wiring: settings.emulation.pce_console_wiring.forced_wiring(),
+            pce_arcade_card_mode: settings.emulation.pce_arcade_card.core_mode(),
             firmware_search_dirs: settings.emulation.firmware_search_dirs(),
             gb_use_external_boot_rom: matches!(
                 settings.emulation.gb_boot_rom_mode,

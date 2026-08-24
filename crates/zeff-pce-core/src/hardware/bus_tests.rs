@@ -182,6 +182,55 @@ fn plain_hucard_and_unmapped_accesses_are_bounded() {
     assert_eq!(error.rom_len(), HUCARD_ROM_REGION_LEN + 1);
 }
 
+#[derive(Default)]
+struct HuCardWindowExpansion {
+    value: u8,
+    reads: usize,
+    writes: usize,
+}
+
+impl BaseBusDevices for HuCardWindowExpansion {
+    fn peek_expansion(&self, physical_addr: u32) -> Option<u8> {
+        (physical_addr == 0x08_0000).then_some(self.value)
+    }
+
+    fn read_expansion(&mut self, physical_addr: u32) -> Option<u8> {
+        if physical_addr != 0x08_0000 {
+            return None;
+        }
+        self.reads += 1;
+        Some(self.value)
+    }
+
+    fn write_expansion(&mut self, physical_addr: u32, value: u8) -> bool {
+        if physical_addr != 0x08_0000 {
+            return false;
+        }
+        self.value = value;
+        self.writes += 1;
+        true
+    }
+}
+
+#[test]
+fn expansion_can_override_a_hucard_physical_window_without_claiming_other_rom() {
+    let mut rom = vec![0x33; 0x08_0001];
+    rom[0x08_0000] = 0x44;
+    let devices = HuCardWindowExpansion {
+        value: 0x55,
+        ..HuCardWindowExpansion::default()
+    };
+    let mut bus = BaseBus::new(rom, devices).unwrap();
+
+    assert_eq!(bus.peek(0x08_0000), 0x55);
+    assert_eq!(bus.read(0x08_0000), 0x55);
+    assert_eq!(bus.read(0x07_FFFF), 0x33);
+    bus.write(0x08_0000, 0x66);
+    assert_eq!(bus.read(0x08_0000), 0x66);
+    assert_eq!(bus.devices().reads, 2);
+    assert_eq!(bus.devices().writes, 1);
+}
+
 #[test]
 fn eight_kibibytes_of_work_ram_repeat_across_all_four_cer_banks() {
     let mut bus = BaseBus::new(Vec::new(), ()).unwrap();

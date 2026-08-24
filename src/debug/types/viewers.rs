@@ -115,6 +115,7 @@ pub(crate) enum TileViewerPlatform {
     Gb,
     Gba,
     Nes,
+    Pce,
     Sega8,
 }
 
@@ -135,6 +136,10 @@ pub(crate) enum TileViewerRequest {
         tile: usize,
         color_256: bool,
         palette: usize,
+    },
+    Pce {
+        tile: usize,
+        vdc2: bool,
     },
     Sega8 {
         tile: usize,

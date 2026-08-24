@@ -1,20 +1,30 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use zeff_emu_common::address::Address;
-use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region};
+use zeff_emu_common::debug::{
+    AddressWatchHit, AddressWatchpoint, BreakpointHitCondition, DebugEvent, InstructionTraceStore,
+    WatchType,
+};
+use zeff_emu_common::memory::{
+    MemoryRegionDescriptor, MemoryRegionKind, MemoryRegionView, resolve_memory_region,
+};
 use zeff_emu_common::save_ram::SaveRamKind;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 use zeff_emu_common::time::{
     ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
 };
 #[cfg(test)]
 use zeff_pce_core::hardware::PCE_ACTIVE_FRAME_WIDTH;
 use zeff_pce_core::hardware::{
-    CDROM2_BRAM_LEN, CdDisc, ControllerPort, FivePortMultitap,
-    PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER, PCE_NTSC_REFERENCE_MHZ_DENOMINATOR,
-    PCE_NTSC_REFERENCE_MHZ_NUMERATOR, POPULOUS_HUCARD_RAM_LEN, PSG_CLOCK_DENOMINATOR,
-    PSG_CLOCK_NUMERATOR, PSG_ZERO_FREQUENCY_PERIOD, PadButtons, PceCartridgeDescriptor,
-    PceConsoleWiring, PceControllerMode, PceCpuDebugSnapshot, PceHardwareTopology, PceHuCardBoard,
-    PceMachine,
+    ARCADE_CARD_RAM_LEN, CDROM2_BRAM_LEN, CdDisc, ControllerPort, FivePortMultitap,
+    MEMORY_BASE128_RAM_LEN, PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER,
+    PCE_NTSC_REFERENCE_MHZ_DENOMINATOR, PCE_NTSC_REFERENCE_MHZ_NUMERATOR, POPULOUS_HUCARD_RAM_LEN,
+    PSG_CLOCK_DENOMINATOR, PSG_CLOCK_NUMERATOR, PSG_ZERO_FREQUENCY_PERIOD, PadButtons,
+    PceArcadeCardMode, PceCartridgeDescriptor, PceConsoleWiring, PceControllerMode,
+    PceCpuDebugSnapshot, PceHardwareDebugSnapshot, PceHardwareTopology, PceHuCardBoard, PceMachine,
+    PceMemoryBaseMode, SixButtonExtraButtons, VCE_PALETTE_COLORS, VDC_SATB_WORDS, VDC_VRAM_BYTES,
+    VceColor,
 };
 
 use super::pce_display::project_presented_frame;
@@ -27,7 +37,7 @@ use crate::audio_tooling::{
     AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
 };
 use crate::emu_backend::paths::BackendPaths;
-use crate::emu_core_trait::EmulatorCore;
+use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore};
 use crate::settings::{PceOverscanMode, PcePaletteMode};
 
 pub(crate) const PCE_PRESENTED_WIDTH: usize = 640;
@@ -35,6 +45,48 @@ pub(crate) const PCE_PRESENTED_HEIGHT: usize = 480;
 pub(crate) const PCE_PRESENTED_RGBA_BYTES: usize = PCE_PRESENTED_WIDTH * PCE_PRESENTED_HEIGHT * 4;
 const HUCARD_BANK_LEN: usize = 0x2000;
 const PCEAS_HEADER_LEN: usize = 0x200;
+const BACKEND_STATE_MAGIC: &[u8; 8] = b"ZBPCEBE\0";
+const BACKEND_STATE_VERSION: u32 = 1;
+const MAX_CORE_STATE_BYTES: usize = 8 * 1024 * 1024;
+const MEMORY_BASE128_ALIASES: &[&str] = &["mb128", "memorybase128", "memory_base"];
+const MEMORY_BASE128_REGION: MemoryRegionDescriptor = MemoryRegionDescriptor {
+    id: "memory_base_128",
+    label: "Memory Base 128 RAM",
+    kind: MemoryRegionKind::SaveRam,
+    size: Some(MEMORY_BASE128_RAM_LEN),
+    address_bits: None,
+    readable: true,
+    writable: false,
+    side_effect_free: true,
+    copyable: true,
+    view: MemoryRegionView::Physical,
+    aliases: MEMORY_BASE128_ALIASES,
+};
+const ARCADE_CARD_RAM_ALIASES: &[&str] = &["arcade", "acram", "arcade_card"];
+const ARCADE_CARD_RAM_REGION: MemoryRegionDescriptor = MemoryRegionDescriptor {
+    id: "arcade_card_ram",
+    label: "Arcade Card RAM",
+    kind: MemoryRegionKind::ExternalWorkRam,
+    size: Some(ARCADE_CARD_RAM_LEN),
+    address_bits: Some(21),
+    readable: true,
+    writable: false,
+    side_effect_free: true,
+    copyable: true,
+    view: MemoryRegionView::Physical,
+    aliases: ARCADE_CARD_RAM_ALIASES,
+};
+
+pub(crate) struct PceGraphicsSnapshot {
+    pub(crate) vdc1: PceVdcGraphicsSnapshot,
+    pub(crate) vdc2: Option<PceVdcGraphicsSnapshot>,
+    pub(crate) palette: [VceColor; 512],
+}
+
+pub(crate) struct PceVdcGraphicsSnapshot {
+    pub(crate) vram: Vec<u16>,
+    pub(crate) registers: [u16; 0x14],
+}
 pub(crate) const LEMMINGS_JAPAN_CANONICAL_DISC_SHA256: [u8; 32] = [
     0x0f, 0x29, 0x95, 0xc0, 0x20, 0xab, 0x89, 0x33, 0x6c, 0x1e, 0x6d, 0xba, 0x49, 0xc6, 0x3a, 0xd8,
     0x80, 0x5a, 0xad, 0xd2, 0x01, 0xb9, 0x21, 0x87, 0xf8, 0x1d, 0x53, 0xa1, 0x77, 0x04, 0x9a, 0x52,
@@ -42,6 +94,14 @@ pub(crate) const LEMMINGS_JAPAN_CANONICAL_DISC_SHA256: [u8; 32] = [
 pub(crate) const TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256: [u8; 32] = [
     0x18, 0x14, 0xb8, 0xb2, 0x56, 0x34, 0x70, 0x8b, 0x4b, 0x00, 0xef, 0x3f, 0xa0, 0x49, 0xef, 0xb3,
     0x3d, 0xfd, 0xb5, 0x44, 0x20, 0xf0, 0x46, 0x05, 0xed, 0x11, 0xd5, 0xb0, 0x24, 0x1b, 0xe7, 0xc0,
+];
+pub(crate) const SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256: [u8; 32] = [
+    0x6d, 0x9c, 0x62, 0x34, 0x57, 0x8f, 0x65, 0x3d, 0x4c, 0x81, 0x37, 0x9e, 0x0b, 0xef, 0xfb, 0x4b,
+    0x80, 0xbe, 0x18, 0x16, 0xf6, 0x61, 0x42, 0xfd, 0x08, 0x63, 0xa7, 0x79, 0xe6, 0x8f, 0xab, 0x8f,
+];
+pub(crate) const GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256: [u8; 32] = [
+    0xa3, 0x88, 0x7d, 0xa6, 0x25, 0xbb, 0x8d, 0xee, 0x4f, 0xe3, 0x44, 0x76, 0x51, 0x52, 0xab, 0x43,
+    0x73, 0xe8, 0xc5, 0x3d, 0x80, 0xda, 0x78, 0x1b, 0x1a, 0xc9, 0x3e, 0x7d, 0x0e, 0x6d, 0xb8, 0xb2,
 ];
 
 pub(crate) fn automatic_controller_mode(content_hash: [u8; 32]) -> PceControllerMode {
@@ -52,6 +112,20 @@ pub(crate) fn automatic_controller_mode(content_hash: [u8; 32]) -> PceController
     } else {
         PceControllerMode::TwoButton
     }
+}
+
+pub(crate) const fn automatic_memory_base_enabled(normalized_disc_hash: Option<[u8; 32]>) -> bool {
+    matches!(
+        normalized_disc_hash,
+        Some(SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256)
+    )
+}
+
+pub(crate) const fn automatic_arcade_card_enabled(normalized_disc_hash: Option<[u8; 32]>) -> bool {
+    matches!(
+        normalized_disc_hash,
+        Some(GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256)
+    )
 }
 const PCE_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
@@ -108,12 +182,16 @@ pub(crate) struct PceBackend {
     machine: PceMachine,
     paths: BackendPaths,
     rom_hash: [u8; 32],
+    source_crc32: Option<u32>,
+    source_disc_hash: Option<[u8; 32]>,
     framebuffer: Box<[u8]>,
     frame_count: u64,
     pending_runtime_fault: Option<String>,
     overscan_mode: PceOverscanMode,
     palette_mode: PcePaletteMode,
     pce_controller_mode: PceControllerMode,
+    pce_memory_base_mode: PceMemoryBaseMode,
+    pce_arcade_card_mode: PceArcadeCardMode,
     mouse_host_buttons: PadButtons,
 }
 
@@ -122,7 +200,10 @@ pub(crate) struct PceCdBackendConfig {
     pub(crate) cue_path: PathBuf,
     pub(crate) source_path: PathBuf,
     pub(crate) content_hash: [u8; 32],
+    pub(crate) content_crc32: u32,
+    pub(crate) source_disc_hash: [u8; 32],
     pub(crate) console_wiring: PceConsoleWiring,
+    pub(crate) arcade_card_mode: PceArcadeCardMode,
 }
 
 impl PceBackend {
@@ -131,27 +212,48 @@ impl PceBackend {
         disc: CdDisc,
         config: PceCdBackendConfig,
     ) -> anyhow::Result<Self> {
-        let machine = PceMachine::with_cdrom2_system_card_and_controller(
+        let arcade_card_enabled = match config.arcade_card_mode {
+            PceArcadeCardMode::Automatic => {
+                automatic_arcade_card_enabled(Some(config.source_disc_hash))
+            }
+            PceArcadeCardMode::Enabled => true,
+            PceArcadeCardMode::Disabled => false,
+        };
+        anyhow::ensure!(
+            !arcade_card_enabled || config.system_card_board == PceHuCardBoard::SystemCardV3,
+            "Arcade Card requires a System Card v3 CD environment"
+        );
+        let machine = PceMachine::with_cdrom2_system_card_controller_and_arcade_card(
             system_card_rom,
             config.system_card_board,
             disc,
             config.console_wiring,
             ControllerPort::two_button(),
+            arcade_card_enabled,
         )?;
         let mut backend = Self {
             machine,
             paths: BackendPaths::with_source_path(config.cue_path, config.source_path),
             rom_hash: config.content_hash,
+            source_crc32: Some(config.content_crc32),
+            source_disc_hash: Some(config.source_disc_hash),
             framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
             frame_count: 0,
             pending_runtime_fault: None,
             overscan_mode: PceOverscanMode::default(),
             palette_mode: PcePaletteMode::default(),
             pce_controller_mode: PceControllerMode::Automatic,
+            pce_memory_base_mode: PceMemoryBaseMode::Automatic,
+            pce_arcade_card_mode: if arcade_card_enabled {
+                PceArcadeCardMode::Enabled
+            } else {
+                PceArcadeCardMode::Disabled
+            },
             mouse_host_buttons: PadButtons::empty(),
         };
         backend.project_presented_frame();
         backend.update_controller_mode(PceControllerMode::Automatic);
+        backend.update_memory_base_mode(PceMemoryBaseMode::Automatic);
         Ok(backend)
     }
 
@@ -248,16 +350,21 @@ impl PceBackend {
             machine,
             paths,
             rom_hash,
+            source_crc32: None,
+            source_disc_hash: None,
             framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
             frame_count: 0,
             pending_runtime_fault: None,
             overscan_mode: PceOverscanMode::default(),
             palette_mode: PcePaletteMode::default(),
             pce_controller_mode: PceControllerMode::Automatic,
+            pce_memory_base_mode: PceMemoryBaseMode::Automatic,
+            pce_arcade_card_mode: PceArcadeCardMode::Disabled,
             mouse_host_buttons: PadButtons::empty(),
         };
         backend.project_presented_frame();
         backend.update_controller_mode(PceControllerMode::Automatic);
+        backend.update_memory_base_mode(PceMemoryBaseMode::Automatic);
         Ok(backend)
     }
 
@@ -269,10 +376,139 @@ impl PceBackend {
         self.machine.debug_snapshot()
     }
 
+    pub(crate) fn debug_suspend(&mut self) {
+        self.machine.debug_suspend();
+    }
+
+    pub(crate) fn debug_continue(&mut self) {
+        self.machine.debug_continue();
+    }
+
+    pub(crate) fn debug_step(&mut self) {
+        self.machine.debug_step();
+    }
+
+    pub(crate) fn is_cpu_suspended(&self) -> bool {
+        self.machine.is_cpu_suspended()
+    }
+
+    pub(crate) fn set_opcode_history_enabled(&mut self, enabled: bool) {
+        self.machine.set_opcode_history_enabled(enabled);
+    }
+
+    pub(crate) fn recent_opcodes(
+        &self,
+        count: usize,
+    ) -> Vec<zeff_pce_core::hardware::PceOpcodeHistoryEntry> {
+        self.machine.recent_opcodes(count)
+    }
+
+    pub(crate) fn iter_breakpoints(&self) -> impl Iterator<Item = Address> + '_ {
+        self.machine.iter_breakpoints()
+    }
+
+    pub(crate) fn iter_one_shot_breakpoints(&self) -> impl Iterator<Item = Address> + '_ {
+        self.machine.iter_one_shot_breakpoints()
+    }
+
+    pub(crate) fn iter_breakpoint_hit_conditions(
+        &self,
+    ) -> impl Iterator<Item = BreakpointHitCondition> + '_ {
+        self.machine.iter_breakpoint_hit_conditions()
+    }
+
+    pub(crate) fn debug_watchpoints(&self) -> &[AddressWatchpoint] {
+        self.machine.debug_watchpoints()
+    }
+
+    pub(crate) fn debug_hit_breakpoint(&self) -> Option<Address> {
+        self.machine.debug_hit_breakpoint()
+    }
+
+    pub(crate) fn debug_hit_watchpoint(&self) -> Option<&AddressWatchHit> {
+        self.machine.debug_hit_watchpoint()
+    }
+
+    pub(crate) fn iter_event_breakpoints(&self) -> impl Iterator<Item = DebugEvent> + '_ {
+        self.machine.iter_event_breakpoints()
+    }
+
+    pub(crate) fn debug_hit_event(&self) -> Option<DebugEvent> {
+        self.machine.debug_hit_event()
+    }
+
+    pub(crate) fn instruction_trace(&self) -> &InstructionTraceStore {
+        self.machine.instruction_trace()
+    }
+
+    pub(crate) fn debug_hardware_snapshot(&self) -> PceHardwareDebugSnapshot {
+        self.machine.devices().debug_snapshot()
+    }
+
+    pub(crate) fn set_apu_debug_capture_enabled(&mut self, enabled: bool) {
+        self.machine
+            .devices_mut()
+            .psg_mut()
+            .set_debug_capture_enabled(enabled);
+    }
+
+    pub(crate) fn psg_master_debug_samples_ordered(&self) -> Vec<f32> {
+        self.machine.devices().psg().master_debug_samples_ordered()
+    }
+
+    pub(crate) fn psg_channel_debug_samples_ordered(&self, channel: usize) -> Vec<f32> {
+        self.machine
+            .devices()
+            .psg()
+            .channel_debug_samples_ordered(channel)
+    }
+
+    pub(crate) fn debug_graphics_snapshot(&self) -> PceGraphicsSnapshot {
+        let devices = self.machine.devices();
+        let vdc_snapshot = |vdc: &zeff_pce_core::hardware::HuC6270| PceVdcGraphicsSnapshot {
+            vram: vdc.vram().to_vec(),
+            registers: vdc.debug_snapshot().registers,
+        };
+        PceGraphicsSnapshot {
+            vdc1: vdc_snapshot(devices.vdc()),
+            vdc2: devices
+                .supergrafx_video()
+                .map(|video| vdc_snapshot(video.vdc2())),
+            palette: *devices.vce().palette(),
+        }
+    }
+
     pub(crate) fn debug_peek8(&self, address: Address) -> u8 {
         u16::try_from(address)
             .ok()
             .map_or(0xFF, |address| self.machine.debug_peek_cpu8(address))
+    }
+
+    pub(crate) fn debug_peek_physical8(&self, address: u32) -> u8 {
+        self.machine.debug_peek_physical8(address)
+    }
+
+    pub(crate) fn debug_write8(&mut self, address: Address, value: u8) {
+        if let Ok(address) = u16::try_from(address) {
+            self.machine.debug_write_cpu8(address, value);
+        }
+    }
+
+    pub(crate) fn rom_offset_for_cpu_address(&self, address: u16) -> Option<u32> {
+        self.machine.rom_offset_for_cpu_address(address)
+    }
+
+    pub(crate) fn debug_execute_guest_call(
+        &mut self,
+        target: u16,
+        instruction_budget: u64,
+    ) -> Result<u64, String> {
+        self.machine
+            .debug_execute_guest_call(target, instruction_budget)
+    }
+
+    pub(crate) fn rom_mapping_token(&self) -> u64 {
+        self.machine.rom_mapping_token()
     }
 
     pub(crate) fn hucard_rom(&self) -> &[u8] {
@@ -293,6 +529,26 @@ impl PceBackend {
 
     pub(crate) const fn controller_mode(&self) -> PceControllerMode {
         self.pce_controller_mode
+    }
+
+    pub(crate) const fn memory_base_mode(&self) -> PceMemoryBaseMode {
+        self.pce_memory_base_mode
+    }
+
+    pub(crate) const fn arcade_card_mode(&self) -> PceArcadeCardMode {
+        self.pce_arcade_card_mode
+    }
+
+    pub(crate) fn normalized_disc_hash(&self) -> Option<[u8; 32]> {
+        self.cdrom2().map(|cdrom| cdrom.disc().content_hash())
+    }
+
+    pub(crate) const fn source_crc32(&self) -> Option<u32> {
+        self.source_crc32
+    }
+
+    pub(crate) const fn source_disc_hash(&self) -> Option<[u8; 32]> {
+        self.source_disc_hash
     }
 
     pub(crate) fn cdrom2(&self) -> Option<&zeff_pce_core::hardware::CdRom2> {
@@ -344,6 +600,19 @@ impl PceBackend {
             })?;
         cdrom.bram_mut().copy_from_slice(bytes);
         Ok(())
+    }
+
+    pub(crate) fn load_memory_base128(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.machine
+            .devices_mut()
+            .controller_mut()
+            .memory_base128_mut()
+            .load_ram(bytes)
+    }
+
+    pub(crate) fn try_load_memory_base128(&mut self) -> anyhow::Result<Option<String>> {
+        let path = memory_base128_path();
+        self.try_load_memory_base128_from_path(&path)
     }
 
     pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
@@ -399,15 +668,14 @@ impl PceBackend {
         ) {
             return;
         }
-        let Some(pad) = self
-            .machine
-            .devices_mut()
-            .controller_mut()
-            .two_button_pad_mut()
-        else {
-            return;
-        };
-        pad.set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
+        let controller = self.machine.devices_mut().controller_mut();
+        if let Some(pad) = controller.six_button_pad_mut() {
+            pad.standard_pad_mut()
+                .set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
+            pad.set_extra_buttons(map_six_button_extra_buttons(buttons_pressed));
+        } else if let Some(pad) = controller.two_button_pad_mut() {
+            pad.set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
+        }
     }
 
     fn set_multitap_pad_input(
@@ -419,15 +687,25 @@ impl PceBackend {
         let Some(multitap) = self.machine.devices_mut().controller_mut().multitap_mut() else {
             return false;
         };
-        if let zeff_pce_core::hardware::MultitapDevice::TwoButton(pad) = multitap.port_mut(port) {
-            pad.set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
+        match multitap.port_mut(port) {
+            zeff_pce_core::hardware::MultitapDevice::TwoButton(pad) => {
+                pad.set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
+            }
+            zeff_pce_core::hardware::MultitapDevice::SixButton(pad) => {
+                pad.standard_pad_mut()
+                    .set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
+                pad.set_extra_buttons(map_six_button_extra_buttons(buttons_pressed));
+            }
+            zeff_pce_core::hardware::MultitapDevice::Disconnected => {}
         }
         true
     }
 
     fn effective_controller_mode(&self, requested: PceControllerMode) -> PceControllerMode {
         match requested {
-            PceControllerMode::Automatic => automatic_controller_mode(self.rom_hash),
+            PceControllerMode::Automatic => {
+                automatic_controller_mode(self.source_disc_hash.unwrap_or(self.rom_hash))
+            }
             explicit => explicit,
         }
     }
@@ -440,6 +718,9 @@ impl PceBackend {
         let device = match effective {
             PceControllerMode::Mouse => zeff_pce_core::hardware::ControllerDevice::Mouse(
                 zeff_pce_core::hardware::PceMouse::new(),
+            ),
+            PceControllerMode::SixButton => zeff_pce_core::hardware::ControllerDevice::SixButton(
+                zeff_pce_core::hardware::SixButtonPad::new(),
             ),
             PceControllerMode::Multitap => {
                 zeff_pce_core::hardware::ControllerDevice::Multitap(FivePortMultitap::new([
@@ -463,6 +744,65 @@ impl PceBackend {
         self.machine.devices_mut().set_controller_device(device);
         self.pce_controller_mode = effective;
     }
+
+    fn update_memory_base_mode(&mut self, requested: PceMemoryBaseMode) {
+        let enabled = match requested {
+            PceMemoryBaseMode::Automatic => automatic_memory_base_enabled(self.source_disc_hash()),
+            PceMemoryBaseMode::Enabled => true,
+            PceMemoryBaseMode::Disabled => false,
+        };
+        self.machine
+            .devices_mut()
+            .controller_mut()
+            .set_memory_base128_connected(enabled);
+        self.pce_memory_base_mode = if enabled {
+            PceMemoryBaseMode::Enabled
+        } else {
+            PceMemoryBaseMode::Disabled
+        };
+    }
+
+    fn try_load_memory_base128_from_path(&mut self, path: &Path) -> anyhow::Result<Option<String>> {
+        let Some(bytes) = crate::platform::read_save_data(path)
+            .with_context(|| format!("failed to read Memory Base 128 save {}", path.display()))?
+        else {
+            return Ok(None);
+        };
+        self.load_memory_base128(&bytes)?;
+        Ok(Some(path.display().to_string()))
+    }
+
+    fn flush_memory_base128_to_path(&mut self, path: &Path) -> anyhow::Result<Option<String>> {
+        let memory_base = self
+            .machine
+            .devices_mut()
+            .controller_mut()
+            .memory_base128_mut();
+        if !memory_base.is_dirty() {
+            return Ok(None);
+        }
+        crate::platform::write_save_data(path, memory_base.ram())
+            .with_context(|| format!("failed to write Memory Base 128 save {}", path.display()))?;
+        memory_base.clear_dirty();
+        Ok(Some(path.display().to_string()))
+    }
+
+    fn flush_persistent_data(&mut self, memory_base_path: &Path) -> anyhow::Result<Option<String>> {
+        let bram_path = crate::save_paths::flush_battery_sram(
+            self.paths.rom_path(),
+            self.cdrom2().map(|cdrom| cdrom.bram().to_vec()),
+        )?;
+        let memory_base_path = self.flush_memory_base128_to_path(memory_base_path)?;
+        Ok(match (bram_path, memory_base_path) {
+            (None, None) => None,
+            (Some(path), None) | (None, Some(path)) => Some(path),
+            (Some(bram), Some(memory_base)) => Some(format!("{bram}, {memory_base}")),
+        })
+    }
+}
+
+fn memory_base128_path() -> PathBuf {
+    crate::platform::save_dir("pce").join("mb128.sav")
 }
 
 fn normalize_hucard_image(hucard_rom: Vec<u8>) -> anyhow::Result<Vec<u8>> {
@@ -481,6 +821,96 @@ fn normalize_hucard_image(hucard_rom: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         "PC Engine HuCard image length must be a multiple of {HUCARD_BANK_LEN} bytes or carry a valid PCEAS header"
     );
     Ok(hucard_rom[PCEAS_HEADER_LEN..].to_vec())
+}
+
+impl DebuggableEmulator for PceBackend {
+    fn add_breakpoint(&mut self, addr: Address) {
+        if let Ok(addr) = u16::try_from(addr) {
+            self.machine.add_breakpoint(addr);
+        }
+    }
+
+    fn add_one_shot_breakpoint(&mut self, addr: Address) {
+        if let Ok(addr) = u16::try_from(addr) {
+            self.machine.add_one_shot_breakpoint(addr);
+        }
+    }
+
+    fn add_breakpoint_after(&mut self, addr: Address, target_hits: u64) {
+        if let Ok(addr) = u16::try_from(addr) {
+            self.machine.add_breakpoint_after(addr, target_hits);
+        }
+    }
+
+    fn set_event_breakpoint(&mut self, event: zeff_emu_common::debug::DebugEvent, enabled: bool) {
+        if matches!(event, DebugEvent::Interrupt | DebugEvent::Dma) {
+            self.machine.set_event_breakpoint(event, enabled);
+        }
+    }
+
+    fn add_watchpoint_range(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        if let (Ok(start), Ok(end)) = (u16::try_from(start), u16::try_from(end)) {
+            self.machine.add_watchpoint_range(start, end, watch_type);
+        }
+    }
+
+    fn remove_watchpoint(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        if let (Ok(start), Ok(end)) = (u16::try_from(start), u16::try_from(end)) {
+            self.machine.remove_watchpoint(start, end, watch_type);
+        }
+    }
+
+    fn remove_breakpoint(&mut self, addr: Address) {
+        if let Ok(addr) = u16::try_from(addr) {
+            self.machine.remove_breakpoint(addr);
+        }
+    }
+
+    fn toggle_breakpoint(&mut self, addr: Address) {
+        if let Ok(addr) = u16::try_from(addr) {
+            self.machine.toggle_breakpoint(addr);
+        }
+    }
+
+    fn cpu_peek8(&self, addr: Address) -> u8 {
+        self.debug_peek8(addr)
+    }
+
+    fn cpu_write8(&mut self, addr: Address, val: u8) {
+        self.debug_write8(addr, val);
+    }
+
+    fn is_cpu_suspended(&self) -> bool {
+        self.is_cpu_suspended()
+    }
+
+    fn debug_continue(&mut self) {
+        self.debug_continue();
+    }
+
+    fn debug_step(&mut self) {
+        self.debug_step();
+    }
+
+    fn supports_opcode_history(&self) -> bool {
+        true
+    }
+
+    fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.set_opcode_history_enabled(enabled);
+    }
+
+    fn set_instruction_trace_enabled(&mut self, enabled: bool) {
+        self.machine.set_instruction_trace_enabled(enabled);
+    }
+
+    fn set_instruction_trace_capacity(&mut self, capacity: usize) {
+        self.machine.set_instruction_trace_capacity(capacity);
+    }
+
+    fn clear_instruction_trace(&mut self) {
+        self.machine.clear_instruction_trace();
+    }
 }
 
 impl EmulatorCore for PceBackend {
@@ -530,15 +960,17 @@ impl EmulatorCore for PceBackend {
         }
     }
 
+    fn set_pce_memory_base_mode(&mut self, mode: PceMemoryBaseMode) {
+        self.update_memory_base_mode(mode);
+    }
+
     fn is_suspended(&self) -> bool {
-        self.machine.faulted()
+        self.machine.faulted() || self.machine.is_cpu_suspended()
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        crate::save_paths::flush_battery_sram(
-            self.paths.rom_path(),
-            self.cdrom2().map(|cdrom| cdrom.bram().to_vec()),
-        )
+        let memory_base_path = memory_base128_path();
+        self.flush_persistent_data(&memory_base_path)
     }
 
     fn save_ram_kind(&self) -> SaveRamKind {
@@ -549,17 +981,88 @@ impl EmulatorCore for PceBackend {
             {
                 SaveRamKind::known_battery_backed(CDROM2_BRAM_LEN)
             }
+            PceHuCardBoard::Plain | PceHuCardBoard::Sf2Ce
+                if self
+                    .machine
+                    .devices()
+                    .controller()
+                    .memory_base128()
+                    .is_connected() =>
+            {
+                SaveRamKind::known_battery_backed(MEMORY_BASE128_RAM_LEN)
+            }
             PceHuCardBoard::Plain | PceHuCardBoard::Sf2Ce => SaveRamKind::none(),
             PceHuCardBoard::SystemCardV1V2 | PceHuCardBoard::SystemCardV3 => SaveRamKind::none(),
         }
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        anyhow::bail!("PC Engine save states are not supported")
+        anyhow::ensure!(
+            self.pending_runtime_fault.is_none(),
+            "faulted PC Engine backends cannot be saved"
+        );
+        let core_state = zeff_pce_core::hardware::save_state::encode_state(&self.machine)
+            .context("failed to encode PC Engine core state")?;
+        let mut writer = StateWriter::with_capacity(core_state.len() + 32);
+        writer.write_bytes(BACKEND_STATE_MAGIC);
+        writer.write_u32(BACKEND_STATE_VERSION);
+        writer.write_u64(self.frame_count);
+        writer.write_u8(self.mouse_host_buttons.bits());
+        writer.write_vec(&core_state);
+        Ok(writer.into_bytes())
     }
 
-    fn load_state_from_bytes(&mut self, _bytes: Vec<u8>) -> anyhow::Result<()> {
-        anyhow::bail!("PC Engine save states are not supported")
+    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        let mut reader = StateReader::new(&bytes);
+        let mut magic = [0; 8];
+        reader.read_exact(&mut magic)?;
+        anyhow::ensure!(
+            &magic == BACKEND_STATE_MAGIC,
+            "not a valid PC Engine backend save-state"
+        );
+        let version = reader.read_u32()?;
+        anyhow::ensure!(
+            version == BACKEND_STATE_VERSION,
+            "unsupported PC Engine backend save-state version {version}"
+        );
+        let frame_count = reader.read_u64()?;
+        let mouse_host_buttons = PadButtons::from_bits_retain(reader.read_u8()?);
+        let core_state = reader.read_vec(MAX_CORE_STATE_BYTES)?;
+        anyhow::ensure!(
+            reader.is_exhausted(),
+            "PC Engine backend save-state has unexpected trailing data"
+        );
+
+        zeff_pce_core::hardware::save_state::decode_state(&mut self.machine, &core_state)
+            .context("failed to decode PC Engine core state")?;
+        self.frame_count = frame_count;
+        self.mouse_host_buttons = mouse_host_buttons;
+        self.pce_controller_mode = match self.machine.devices().controller().device() {
+            zeff_pce_core::hardware::ControllerDevice::Disconnected => PceControllerMode::Automatic,
+            zeff_pce_core::hardware::ControllerDevice::TwoButton(_) => PceControllerMode::TwoButton,
+            zeff_pce_core::hardware::ControllerDevice::SixButton(_) => PceControllerMode::SixButton,
+            zeff_pce_core::hardware::ControllerDevice::Multitap(_) => PceControllerMode::Multitap,
+            zeff_pce_core::hardware::ControllerDevice::Mouse(_) => PceControllerMode::Mouse,
+        };
+        self.pce_memory_base_mode = if self
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .is_connected()
+        {
+            PceMemoryBaseMode::Enabled
+        } else {
+            PceMemoryBaseMode::Disabled
+        };
+        self.pce_arcade_card_mode = if self.machine.devices().arcade_card().is_some() {
+            PceArcadeCardMode::Enabled
+        } else {
+            PceArcadeCardMode::Disabled
+        };
+        self.pending_runtime_fault = None;
+        self.project_presented_frame();
+        Ok(())
     }
 
     fn rom_path(&self) -> &Path {
@@ -571,15 +1074,37 @@ impl EmulatorCore for PceBackend {
     }
 
     fn memory_regions(&self) -> Vec<MemoryRegionDescriptor> {
+        let supergrafx = self.machine.devices().supergrafx_video().is_some();
+        let mut video_ram = MemoryRegionDescriptor::video_ram(self.video_ram_len());
+        let mut oam = MemoryRegionDescriptor::oam(self.oam_len());
+        if supergrafx {
+            video_ram.view = MemoryRegionView::Aggregate;
+            oam.view = MemoryRegionView::Aggregate;
+        }
         let mut regions = vec![
-            MemoryRegionDescriptor::read_only_cpu_address_space(16),
+            MemoryRegionDescriptor::cpu_address_space(16),
             MemoryRegionDescriptor::system_ram(self.machine.mapped_work_ram().len()),
+            video_ram,
+            MemoryRegionDescriptor::palette_ram(self.palette_ram_len()),
+            oam,
             MemoryRegionDescriptor::framebuffer(self.framebuffer.len()),
         ];
         if self.cdrom2().is_some() {
             regions.insert(2, MemoryRegionDescriptor::save_ram(CDROM2_BRAM_LEN));
         } else if self.machine.hucard_ram().is_some() {
             regions.insert(2, MemoryRegionDescriptor::save_ram(POPULOUS_HUCARD_RAM_LEN));
+        }
+        if self
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .is_connected()
+        {
+            regions.insert(regions.len() - 1, MEMORY_BASE128_REGION);
+        }
+        if self.machine.devices().arcade_card().is_some() {
+            regions.insert(regions.len() - 1, ARCADE_CARD_RAM_REGION);
         }
         regions
     }
@@ -588,7 +1113,57 @@ impl EmulatorCore for PceBackend {
         self.machine.mapped_work_ram().len()
     }
 
+    fn video_ram_len(&self) -> usize {
+        let vdc_count = 1 + usize::from(self.machine.devices().supergrafx_video().is_some());
+        VDC_VRAM_BYTES * vdc_count
+    }
+
+    fn palette_ram_len(&self) -> usize {
+        VCE_PALETTE_COLORS * size_of::<u16>()
+    }
+
+    fn oam_len(&self) -> usize {
+        let vdc_count = 1 + usize::from(self.machine.devices().supergrafx_video().is_some());
+        VDC_SATB_WORDS * size_of::<u16>() * vdc_count
+    }
+
     fn supports_audio(&self) -> bool {
+        true
+    }
+
+    fn supports_cheats(&self) -> bool {
+        true
+    }
+
+    fn apply_ram_cheats(&mut self, cheats: &[crate::cheats::CheatPatch]) {
+        zeff_emu_common::cheats::apply_ram_cheats_16(&mut self.machine, cheats);
+    }
+
+    fn debug_suspend(&mut self) {
+        self.machine.debug_suspend();
+    }
+
+    fn supports_save_states(&self) -> bool {
+        true
+    }
+
+    fn supports_guest_calls(&self) -> bool {
+        true
+    }
+
+    fn supports_debugger(&self) -> bool {
+        true
+    }
+
+    fn supports_symbol_loading(&self) -> bool {
+        true
+    }
+
+    fn supports_execution_controls(&self) -> bool {
+        true
+    }
+
+    fn supports_opcode_history(&self) -> bool {
         true
     }
 
@@ -619,6 +1194,40 @@ impl EmulatorCore for PceBackend {
                 out.extend_from_slice(self.machine.mapped_work_ram());
                 Ok(region)
             }
+            MemoryRegionKind::VideoRam => {
+                out.clear();
+                append_words_le(out, self.machine.devices().vdc().vram());
+                if let Some(video) = self.machine.devices().supergrafx_video() {
+                    append_words_le(out, video.vdc2().vram());
+                }
+                Ok(region)
+            }
+            MemoryRegionKind::PaletteRam => {
+                out.clear();
+                for color in self.machine.devices().vce().palette() {
+                    out.extend_from_slice(&color.raw().to_le_bytes());
+                }
+                Ok(region)
+            }
+            MemoryRegionKind::Oam => {
+                out.clear();
+                append_words_le(out, self.machine.devices().vdc().satb());
+                if let Some(video) = self.machine.devices().supergrafx_video() {
+                    append_words_le(out, video.vdc2().satb());
+                }
+                Ok(region)
+            }
+            MemoryRegionKind::ExternalWorkRam if region.id == ARCADE_CARD_RAM_REGION.id => {
+                out.clear();
+                out.extend_from_slice(
+                    self.machine
+                        .devices()
+                        .arcade_card()
+                        .expect("Arcade Card RAM region requires Arcade Card hardware")
+                        .ram(),
+                );
+                Ok(region)
+            }
             MemoryRegionKind::Framebuffer => {
                 out.clear();
                 out.extend_from_slice(&self.framebuffer);
@@ -626,7 +1235,11 @@ impl EmulatorCore for PceBackend {
             }
             MemoryRegionKind::SaveRam => {
                 out.clear();
-                if let Some(cdrom) = self.cdrom2() {
+                if region.id == MEMORY_BASE128_REGION.id {
+                    out.extend_from_slice(
+                        self.machine.devices().controller().memory_base128().ram(),
+                    );
+                } else if let Some(cdrom) = self.cdrom2() {
                     out.extend_from_slice(cdrom.bram());
                 } else {
                     out.extend_from_slice(
@@ -637,9 +1250,9 @@ impl EmulatorCore for PceBackend {
                 }
                 Ok(region)
             }
-            MemoryRegionKind::CpuAddressSpace => anyhow::bail!(
-                "CPU address space is read-only and debugger-addressable, not copyable"
-            ),
+            MemoryRegionKind::CpuAddressSpace => {
+                anyhow::bail!("CPU address space is debugger-addressable, not copyable")
+            }
             _ => anyhow::bail!(
                 "memory region '{}' is not available for PC Engine",
                 region.id
@@ -732,6 +1345,13 @@ fn pce_audio_semantic_frame(
     }
 }
 
+fn append_words_le(out: &mut Vec<u8>, words: &[u16]) {
+    out.reserve(size_of_val(words));
+    for &word in words {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+}
+
 fn map_pad_buttons(buttons: u8, dpad: u8) -> PadButtons {
     let mut mapped = PadButtons::empty();
     mapped.set(PadButtons::I, buttons & (1 << 0) != 0);
@@ -742,6 +1362,15 @@ fn map_pad_buttons(buttons: u8, dpad: u8) -> PadButtons {
     mapped.set(PadButtons::LEFT, dpad & (1 << 1) != 0);
     mapped.set(PadButtons::UP, dpad & (1 << 2) != 0);
     mapped.set(PadButtons::DOWN, dpad & (1 << 3) != 0);
+    mapped
+}
+
+fn map_six_button_extra_buttons(buttons: u8) -> SixButtonExtraButtons {
+    let mut mapped = SixButtonExtraButtons::empty();
+    mapped.set(SixButtonExtraButtons::III, buttons & (1 << 4) != 0);
+    mapped.set(SixButtonExtraButtons::IV, buttons & (1 << 5) != 0);
+    mapped.set(SixButtonExtraButtons::V, buttons & (1 << 6) != 0);
+    mapped.set(SixButtonExtraButtons::VI, buttons & (1 << 7) != 0);
     mapped
 }
 

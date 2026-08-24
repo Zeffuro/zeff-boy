@@ -246,9 +246,14 @@ impl CdRom2 {
                 self.response.push(0);
             }
             mode @ (2 | 3) => {
-                let Some(number) = checked_from_bcd(command[2]) else {
+                let Some(requested_number) = checked_from_bcd(command[2]) else {
                     self.check_condition(0x05, 0x21);
                     return;
+                };
+                let number = if requested_number == 0 {
+                    self.disc.first_track()
+                } else {
+                    requested_number
                 };
                 let Some(track) = self.disc.track(number) else {
                     self.check_condition(0x05, 0x21);

@@ -19,6 +19,8 @@ pub(crate) enum MenuAction {
     ResetGame,
     StopGame,
     OpenSettings,
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenMods,
     OpenPrinterWindow,
     LoadSymbolFile,
     SetDebugPresentation(DebugPresentation),

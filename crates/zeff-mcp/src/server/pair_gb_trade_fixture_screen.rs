@@ -139,7 +139,7 @@ pub(super) struct FrameScores {
 
 impl FrameScores {
     fn add_row(&mut self, bytes: &[u8]) {
-        for pixel in bytes.chunks_exact(4).step_by(4) {
+        for pixel in bytes.as_chunks::<4>().0.iter().step_by(4) {
             let r = usize::from(pixel[0]);
             let g = usize::from(pixel[1]);
             let b = usize::from(pixel[2]);

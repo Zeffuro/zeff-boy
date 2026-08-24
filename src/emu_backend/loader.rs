@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
-use zeff_pce_core::hardware::{PceConsoleWiring, PceHuCardBoard};
+use zeff_pce_core::hardware::{PceArcadeCardMode, PceConsoleWiring, PceHuCardBoard};
 use zeff_sega8_core::emulator::Sega8LoadConfig;
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
@@ -23,6 +23,7 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) sega8_console_region: Option<Sega8Region>,
     pub(crate) pce_console_wiring: Option<PceConsoleWiring>,
     pub(crate) pce_hucard_board: Option<PceHuCardBoard>,
+    pub(crate) pce_arcade_card_mode: PceArcadeCardMode,
     pub(crate) pce_cd_archive_memory_limit_mib: usize,
     pub(crate) pce_load_battery_bram: bool,
     pub(crate) firmware_search_dirs: Vec<PathBuf>,
@@ -49,6 +50,7 @@ impl Default for BackendLoadConfig {
             sega8_console_region: None,
             pce_console_wiring: None,
             pce_hucard_board: None,
+            pce_arcade_card_mode: PceArcadeCardMode::Automatic,
             pce_cd_archive_memory_limit_mib: 128,
             pce_load_battery_bram: true,
             firmware_search_dirs: Vec::new(),
@@ -155,15 +157,16 @@ fn load_pce_cd_backend(
         return Err(super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
     }
     let loaded_disc = if source_path == cue_path {
-        super::pce_cd::load_direct_cue(cue_path)?
+        super::pce_cd::load_direct_cue_with_mods(cue_path, config.apply_mods)?
     } else if path_extension_is(source_path, "7z") {
         let cancel = AtomicBool::new(false);
         let progress = super::pce_cd_archive::PceCdPackageProgress::default();
-        let (actual, loaded) = super::pce_cd_archive::load_7z_cue_with_control(
+        let (actual, loaded) = super::pce_cd_archive::load_7z_cue_with_control_and_mods(
             source_path,
             &cancel,
             &progress,
             config.pce_cd_archive_memory_limit_mib,
+            config.apply_mods,
         )?;
         if actual != cue_path {
             return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
@@ -173,7 +176,12 @@ fn load_pce_cd_backend(
         return Err(super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
     };
     let console_wiring = pce_cd_console_wiring(config, loaded_disc.content_sha256);
-    let system_card = resolve_pce_cd_system_card(config, source_path, console_wiring)?;
+    let system_card = resolve_pce_cd_system_card(
+        config,
+        source_path,
+        console_wiring,
+        loaded_disc.disc.content_hash() == super::pce_cd::ADPCM_FIXTURE_DISC_SHA256,
+    )?;
     let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
     let system_card_board = pce_system_card_board(system_card_profile);
     let mut backend = super::PceBackend::new_cdrom2(
@@ -184,7 +192,10 @@ fn load_pce_cd_backend(
             cue_path: cue_path.to_path_buf(),
             source_path: source_path.to_path_buf(),
             content_hash: loaded_disc.content_sha256,
+            content_crc32: loaded_disc.content_crc32,
+            source_disc_hash: loaded_disc.source_disc_sha256,
             console_wiring,
+            arcade_card_mode: config.pce_arcade_card_mode,
         },
     )?;
     if let Some(sample_rate) = config.sample_rate {
@@ -192,6 +203,7 @@ fn load_pce_cd_backend(
     }
     if config.pce_load_battery_bram {
         load_pce_cd_bram(&mut backend);
+        log_sram_result(backend.try_load_memory_base128());
     }
     backend.set_firmware_manifests(vec![system_card.manifest]);
     if let Some((buttons, dpad)) = config.initial_input {
@@ -212,11 +224,12 @@ pub(crate) fn prepare_pce_cd_7z_backend(
     progress: &super::pce_cd_archive::PceCdPackageProgress,
 ) -> anyhow::Result<(PathBuf, LoadedBackend)> {
     check_package_cancel(cancel)?;
-    let (cue_path, loaded_disc) = super::pce_cd_archive::load_7z_cue_with_control(
+    let (cue_path, loaded_disc) = super::pce_cd_archive::load_7z_cue_with_control_and_mods(
         source_path,
         cancel,
         progress,
         config.pce_cd_archive_memory_limit_mib,
+        config.apply_mods,
     )?;
     if expected_cue_path.is_some_and(|expected| expected != cue_path) {
         return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
@@ -224,7 +237,12 @@ pub(crate) fn prepare_pce_cd_7z_backend(
     check_package_cancel(cancel)?;
     progress.set_phase(super::pce_cd_archive::PceCdPackageLoadPhase::Firmware);
     let console_wiring = pce_cd_console_wiring(config, loaded_disc.content_sha256);
-    let system_card = resolve_pce_cd_system_card(config, source_path, console_wiring)?;
+    let system_card = resolve_pce_cd_system_card(
+        config,
+        source_path,
+        console_wiring,
+        loaded_disc.disc.content_hash() == super::pce_cd::ADPCM_FIXTURE_DISC_SHA256,
+    )?;
     let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
     let system_card_board = pce_system_card_board(system_card_profile);
     check_package_cancel(cancel)?;
@@ -237,7 +255,10 @@ pub(crate) fn prepare_pce_cd_7z_backend(
             cue_path: cue_path.clone(),
             source_path: source_path.to_path_buf(),
             content_hash: loaded_disc.content_sha256,
+            content_crc32: loaded_disc.content_crc32,
+            source_disc_hash: loaded_disc.source_disc_sha256,
             console_wiring,
+            arcade_card_mode: config.pce_arcade_card_mode,
         },
     )?;
     if let Some(sample_rate) = config.sample_rate {
@@ -245,6 +266,7 @@ pub(crate) fn prepare_pce_cd_7z_backend(
     }
     if config.pce_load_battery_bram {
         load_pce_cd_bram(&mut backend);
+        log_sram_result(backend.try_load_memory_base128());
     }
     backend.set_firmware_manifests(vec![system_card.manifest]);
     if let Some((buttons, dpad)) = config.initial_input {
@@ -414,6 +436,7 @@ fn resolve_pce_cd_system_card(
     _config: &BackendLoadConfig,
     cue_path: &Path,
     console_wiring: PceConsoleWiring,
+    require_open_fixture: bool,
 ) -> anyhow::Result<super::firmware::ResolvedFirmwareBytes> {
     #[cfg(test)]
     if let Some(bytes) = _config.pce_cd_system_card_override {
@@ -436,6 +459,7 @@ fn resolve_pce_cd_system_card(
         &_config.firmware_search_dirs,
         Some(cue_path),
         console_wiring,
+        require_open_fixture,
     )
 }
 
@@ -568,6 +592,10 @@ fn load_pce_backend(
     rom_path: &Path,
     config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
+    anyhow::ensure!(
+        config.pce_arcade_card_mode != PceArcadeCardMode::Enabled,
+        "Arcade Card requires CD media and a System Card v3 environment"
+    );
     if rom_data.is_empty() {
         anyhow::bail!("PC Engine HuCard ROM is empty");
     }
@@ -589,6 +617,9 @@ fn load_pce_backend(
     };
     if let Some(sample_rate) = config.sample_rate {
         backend.set_sample_rate(sample_rate);
+    }
+    if config.pce_load_battery_bram {
+        log_sram_result(backend.try_load_memory_base128());
     }
     Ok(EmuBackend::from_pce(backend))
 }

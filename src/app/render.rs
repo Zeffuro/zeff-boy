@@ -57,6 +57,7 @@ impl App {
         let supports_audio = self.core_supports_audio();
         let supports_rewind = self.core_supports_rewind();
         let supports_debugger = self.core_supports_debugger();
+        let supports_execution_controls = self.core_supports_execution_controls();
         #[cfg(not(target_arch = "wasm32"))]
         let package_load = self.pending_rom_preparation.as_ref().map(|pending| {
             let completed_bytes = pending.progress.completed_bytes();
@@ -152,6 +153,8 @@ impl App {
             #[cfg(target_arch = "wasm32")]
             nes_palette_file_slot: self.pending_nes_palette_load.clone(),
             show_settings_window: &mut self.show_settings_window,
+            #[cfg(not(target_arch = "wasm32"))]
+            show_mods_window: &mut self.show_mods_window,
             #[cfg(target_arch = "wasm32")]
             show_printer_window: &mut self.show_printer_window,
             dock_state: &mut self.debug_dock,
@@ -165,6 +168,7 @@ impl App {
             supports_replay,
             supports_audio,
             supports_debugger,
+            supports_execution_controls,
             is_rewinding,
             rewind_seconds_back,
             is_paused: self.speed.paused,
@@ -337,6 +341,8 @@ impl App {
                         #[cfg(not(target_arch = "wasm32"))]
                         MenuAction::CheckForUpdates => self.update_checker.request(true),
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
+                        #[cfg(not(target_arch = "wasm32"))]
+                        MenuAction::OpenMods => {}
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -446,6 +452,8 @@ impl App {
         ui_frame_data: Option<&crate::ui::UiFrameData>,
     ) -> bool {
         let supports_rewind = self.core_supports_rewind();
+        let supports_debugger = self.core_supports_debugger();
+        let supports_execution_controls = self.core_supports_execution_controls();
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
@@ -455,6 +463,8 @@ impl App {
             settings: &self.settings,
             dock_state: &mut self.debug_dock,
             supports_rewind,
+            supports_debugger,
+            supports_execution_controls,
         }) {
             Ok(result) => {
                 crate::ui::apply_debug_actions(
@@ -500,6 +510,26 @@ impl App {
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 if let Some(size) = gfx.settings_window().map(winit::window::Window::inner_size) {
                     gfx.resize_settings_window(size.width, size.height);
+                }
+                false
+            }
+            Err(graphics::FrameError::Timeout) => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn render_mods_frame(&mut self) -> bool {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
+        match gfx.render_mods_window(graphics::ModsRenderContext {
+            settings: &self.settings,
+            state: &mut self.debug_windows.mod_state,
+        }) {
+            Ok(()) => true,
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
+                if let Some(size) = gfx.mods_window().map(winit::window::Window::inner_size) {
+                    gfx.resize_mods_window(size.width, size.height);
                 }
                 false
             }

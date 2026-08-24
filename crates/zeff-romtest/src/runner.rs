@@ -280,7 +280,8 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
         | PassKind::GbMemoryStatus
         | PassKind::Nes6000Status
         | PassKind::GbaScreenText
-        | PassKind::GbaMgbaSuiteSram => {
+        | PassKind::GbaMgbaSuiteSram
+        | PassKind::PceMemoryStatus => {
             zeff_args.push("--expect-test-pass".to_string());
         }
         PassKind::GbSerialContains => {
@@ -603,6 +604,22 @@ mod tests {
             invocation
                 .display_args
                 .contains(&"--expect-sega8-audio".to_string())
+        );
+    }
+
+    #[test]
+    fn pce_memory_status_invocations_forward_expected_flag() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.core = Core::Pce;
+        test.rom.path = PathBuf::from("rom-tests/cache/pce/test.cue");
+        test.pass.kind = PassKind::PceMemoryStatus;
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(
+            invocation
+                .display_args
+                .contains(&"--expect-test-pass".to_string())
         );
     }
 }

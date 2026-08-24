@@ -79,6 +79,8 @@ pub(super) fn draw_disassembler_content(
     ui: &mut egui::Ui,
     view: &DisassemblyView,
     supports_rewind: bool,
+    supports_breakpoints: bool,
+    supports_execution_controls: bool,
 ) -> DisassemblerActions {
     let mut actions = DisassemblerActions {
         toggle_breakpoints: Vec::new(),
@@ -99,13 +101,25 @@ pub(super) fn draw_disassembler_content(
     let mut rom_breakpoints: HashSet<u64> = view.rom_breakpoints.iter().copied().collect();
 
     ui.horizontal(|ui| {
-        if ui.button("Continue (F9)").clicked() {
+        if ui
+            .add_enabled(
+                supports_execution_controls,
+                egui::Button::new("Continue (F9)"),
+            )
+            .clicked()
+        {
             actions.continue_requested = true;
         }
-        if ui.button("Step (F7)").clicked() {
+        if ui
+            .add_enabled(supports_execution_controls, egui::Button::new("Step (F7)"))
+            .clicked()
+        {
             actions.step_requested = true;
         }
-        if ui.button("Next Frame").clicked() {
+        if ui
+            .add_enabled(supports_execution_controls, egui::Button::new("Next Frame"))
+            .clicked()
+        {
             actions.next_frame_requested = true;
         }
         ui.separator();
@@ -135,13 +149,19 @@ pub(super) fn draw_disassembler_content(
                 actions.follow_pc_requested = true;
             }
         });
-        ui.label(if view.is_static_target {
+        ui.label(if supports_breakpoints && view.is_static_target {
             "Click toggles a ROM breakpoint. Right-click for more."
-        } else {
+        } else if supports_breakpoints {
             "Click toggles a breakpoint. Right-click for more."
+        } else {
+            "Breakpoints are unavailable for this core."
         });
     } else {
-        ui.label("Click toggles a breakpoint. Right-click for more.");
+        ui.label(if supports_breakpoints {
+            "Click toggles a breakpoint. Right-click for more."
+        } else {
+            "Breakpoints are unavailable for this core."
+        });
     }
     if let Some(symbol) = &view.location_symbol {
         ui.horizontal(|ui| {
@@ -291,7 +311,10 @@ pub(super) fn draw_disassembler_content(
                 } else {
                     "Add breakpoint"
                 };
-                if ui.button(toggle_label).clicked() {
+                if ui
+                    .add_enabled(supports_breakpoints, egui::Button::new(toggle_label))
+                    .clicked()
+                {
                     if view.is_static_target {
                         if let Some(offset) = line.storage_offset {
                             actions.toggle_rom_breakpoints.push(offset);
@@ -302,23 +325,30 @@ pub(super) fn draw_disassembler_content(
                     ui.close();
                 }
                 if !view.is_static_target {
-                    if ui.button("Break once").clicked() {
+                    if ui
+                        .add_enabled(supports_breakpoints, egui::Button::new("Break once"))
+                        .clicked()
+                    {
                         actions.add_one_shot_breakpoint = Some(line.address);
                         ui.close();
                     }
-                    if ui.button("Run to cursor").clicked() {
+                    if ui
+                        .add_enabled(supports_breakpoints, egui::Button::new("Run to cursor"))
+                        .clicked()
+                    {
                         actions.add_one_shot_breakpoint = Some(line.address);
                         actions.continue_requested = true;
                         ui.close();
                     }
                 }
-                if let (Some(cpu_address), Some(storage_offset)) =
-                    (line.control_target, line.control_target_storage)
+                if let Some(cpu_address) = line.control_target
+                    && (line.control_target_storage.is_some() || line.control_target_bank.is_some())
                     && ui.button("Follow target").clicked()
                 {
                     actions.disasm_target = Some(DisassemblyTarget {
                         cpu_address,
-                        storage_offset: Some(storage_offset),
+                        storage_offset: line.control_target_storage,
+                        bank: line.control_target_bank,
                         thumb: None,
                     });
                     ui.close();
@@ -336,15 +366,16 @@ pub(super) fn draw_disassembler_content(
                 }
             });
             if label.double_clicked()
-                && let (Some(cpu_address), Some(storage_offset)) =
-                    (line.control_target, line.control_target_storage)
+                && let Some(cpu_address) = line.control_target
+                && (line.control_target_storage.is_some() || line.control_target_bank.is_some())
             {
                 actions.disasm_target = Some(DisassemblyTarget {
                     cpu_address,
-                    storage_offset: Some(storage_offset),
+                    storage_offset: line.control_target_storage,
+                    bank: line.control_target_bank,
                     thumb: None,
                 });
-            } else if label.clicked() {
+            } else if supports_breakpoints && label.clicked() {
                 if view.is_static_target {
                     if let Some(offset) = line.storage_offset {
                         actions.toggle_rom_breakpoints.push(offset);

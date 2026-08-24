@@ -175,6 +175,7 @@ fn wonder_swan_static_disassembly_reads_the_target_rom_offset() {
         disasm_target: Some(crate::debug::DisassemblyTarget {
             cpu_address: 0x4_0020,
             storage_offset: Some(0x20),
+            bank: None,
             thumb: None,
         }),
         ..snapshot_request()

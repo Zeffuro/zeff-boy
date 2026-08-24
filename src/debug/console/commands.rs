@@ -438,7 +438,7 @@ fn goto_target(
     };
     if let Some((symbol, cpu_address)) = exact_symbols(symbols, value)
         .into_iter()
-        .filter(|symbol| symbol.location.storage.is_some())
+        .filter(|symbol| symbol.location.storage.is_some() || symbol.location.bank.is_some())
         .find_map(|symbol| {
             let cpu = symbol
                 .location
@@ -447,22 +447,21 @@ fn goto_target(
                 .or(symbol.location.cpu)?;
             Some((symbol, cpu.address))
         })
+        && let Ok(cpu_address) = u32::try_from(cpu_address)
     {
-        let storage_offset = symbol.location.storage.unwrap().offset;
-        if let Ok(cpu_address) = u32::try_from(cpu_address) {
-            actions.disasm_target = Some(DisassemblyTarget {
-                cpu_address,
-                storage_offset: Some(storage_offset),
-                thumb: match symbol.location.exec_mode {
-                    ExecMode::Thumb => Some(true),
-                    ExecMode::Arm => Some(false),
-                    _ => None,
-                },
-            });
-            actions.focus_tab = Some(DebugTab::Disassembler);
-            state.push(format!("Opened {} in Disassembler", symbol.name));
-            return;
-        }
+        actions.disasm_target = Some(DisassemblyTarget {
+            cpu_address,
+            storage_offset: symbol.location.storage.map(|storage| storage.offset),
+            bank: symbol.location.bank,
+            thumb: match symbol.location.exec_mode {
+                ExecMode::Thumb => Some(true),
+                ExecMode::Arm => Some(false),
+                _ => None,
+            },
+        });
+        actions.focus_tab = Some(DebugTab::Disassembler);
+        state.push(format!("Opened {} in Disassembler", symbol.name));
+        return;
     }
     open_memory(state, symbols, Some(value), views, actions);
 }

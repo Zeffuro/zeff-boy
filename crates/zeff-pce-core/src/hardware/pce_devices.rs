@@ -1,15 +1,16 @@
+use super::arcade_card::{ArcadeCard, ArcadeCardDebugSnapshot};
 use super::bus::{BaseBusDevices, PceHardwareTopology, PsgPort, VcePort};
 use super::cartridge::PceConsoleWiring;
 use super::cd_media::CdDisc;
-use super::cdrom2::CdRom2;
-use super::controller::{ControllerDevice, ControllerPort};
+use super::cdrom2::{CdRom2, CdRom2DebugSnapshot};
+use super::controller::{ControllerDevice, ControllerPort, ControllerPortDebugSnapshot};
 use super::cpu::{LineLevel, VdcPort};
-use super::psg::{HuC6280Psg, PsgRevision};
-use super::vce::HuC6260;
-use super::vdc::{HuC6270, VdcDmaError};
+use super::psg::{HuC6280Psg, PsgDebugSnapshot, PsgRevision};
+use super::vce::{HuC6260, VceDebugSnapshot};
+use super::vdc::{HuC6270, VdcDebugSnapshot, VdcDmaError};
 use super::vdc_horizontal::VdcHorizontalAdvance;
 use super::vdc_scanline::{VdcExternalVceScanline, VdcScanlineAdvanceError, VdcScanlineBoundary};
-use super::vpc::{HuC6202, VpcPort, VpcVdc};
+use super::vpc::{HuC6202, VpcDebugSnapshot, VpcPort, VpcVdc};
 
 pub const BASE_PCE_NO_CD_CONTROLLER_UPPER_BITS: u8 =
     PceConsoleWiring::PcEngine.controller_upper_bits();
@@ -17,6 +18,18 @@ pub const BASE_TURBOGRAFX16_NO_CD_CONTROLLER_UPPER_BITS: u8 =
     PceConsoleWiring::TurboGrafx16.controller_upper_bits();
 pub const BASE_PCE_CDROM2_CONTROLLER_UPPER_BITS: u8 = 0x70;
 pub const BASE_TURBOGRAFX16_CDROM2_CONTROLLER_UPPER_BITS: u8 = 0x30;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PceHardwareDebugSnapshot {
+    pub vdc: VdcDebugSnapshot,
+    pub vdc2: Option<VdcDebugSnapshot>,
+    pub vce: VceDebugSnapshot,
+    pub vpc: Option<VpcDebugSnapshot>,
+    pub psg: PsgDebugSnapshot,
+    pub controller: ControllerPortDebugSnapshot,
+    pub cdrom2: Option<CdRom2DebugSnapshot>,
+    pub arcade_card: Option<ArcadeCardDebugSnapshot>,
+}
 
 #[derive(Debug)]
 pub struct PceDevices {
@@ -27,6 +40,8 @@ pub struct PceDevices {
     controller: ControllerPort,
     console_wiring: PceConsoleWiring,
     cdrom2: Option<CdRom2>,
+    arcade_card: Option<ArcadeCard>,
+    debug_dma_completed: bool,
 }
 
 #[derive(Debug)]
@@ -108,6 +123,8 @@ impl PceDevices {
             controller,
             console_wiring,
             cdrom2: None,
+            arcade_card: None,
+            debug_dma_completed: false,
         }
     }
 
@@ -125,8 +142,25 @@ impl PceDevices {
         disc: CdDisc,
         super_system_card: bool,
     ) -> Self {
+        Self::with_cdrom2_system_card_and_arcade_card(
+            controller,
+            console_wiring,
+            disc,
+            super_system_card,
+            false,
+        )
+    }
+
+    pub(crate) fn with_cdrom2_system_card_and_arcade_card(
+        controller: ControllerPort,
+        console_wiring: PceConsoleWiring,
+        disc: CdDisc,
+        super_system_card: bool,
+        arcade_card: bool,
+    ) -> Self {
         let mut devices = Self::with_console_wiring(controller, console_wiring);
         devices.cdrom2 = Some(CdRom2::with_super_system_card(disc, super_system_card));
+        devices.arcade_card = arcade_card.then(ArcadeCard::new);
         devices
     }
 
@@ -142,6 +176,29 @@ impl PceDevices {
         if let Some(cdrom2) = &mut self.cdrom2 {
             cdrom2.reset();
         }
+        if let Some(arcade_card) = &mut self.arcade_card {
+            arcade_card.reset();
+        }
+        self.debug_dma_completed = false;
+    }
+
+    pub fn debug_snapshot(&self) -> PceHardwareDebugSnapshot {
+        PceHardwareDebugSnapshot {
+            vdc: self.vdc.debug_snapshot(),
+            vdc2: self
+                .supergrafx
+                .as_ref()
+                .map(|video| video.vdc2.debug_snapshot()),
+            vce: self.vce.debug_snapshot(),
+            vpc: self
+                .supergrafx
+                .as_ref()
+                .map(|video| video.vpc.debug_snapshot()),
+            psg: self.psg.debug_snapshot(),
+            controller: self.controller.debug_snapshot(),
+            cdrom2: self.cdrom2.as_ref().map(CdRom2::debug_snapshot),
+            arcade_card: self.arcade_card.as_ref().map(ArcadeCard::debug_snapshot),
+        }
     }
 
     pub fn advance_master_ticks(&mut self, master_ticks: u64) {
@@ -149,7 +206,15 @@ impl PceDevices {
         self.controller.advance_master_ticks(master_ticks);
         if let Some(cdrom2) = &mut self.cdrom2 {
             cdrom2.advance_master_ticks(master_ticks);
+            self.debug_dma_completed |= cdrom2.take_debug_dma_completed();
         }
+    }
+
+    pub(crate) fn take_debug_dma_completed(&mut self) -> bool {
+        if let Some(cdrom2) = &mut self.cdrom2 {
+            self.debug_dma_completed |= cdrom2.take_debug_dma_completed();
+        }
+        std::mem::take(&mut self.debug_dma_completed)
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
@@ -260,6 +325,8 @@ impl PceDevices {
             .as_mut()
             .map(|video| video.vdc2.advance_horizontal_pixels(pixel_clocks))
             .transpose()?;
+        self.debug_dma_completed |= first.dma_completions() != 0
+            || second.is_some_and(|advance| advance.dma_completions() != 0);
         Ok((first, second))
     }
 
@@ -335,6 +402,16 @@ impl PceDevices {
     #[inline]
     pub fn cdrom2_mut(&mut self) -> Option<&mut CdRom2> {
         self.cdrom2.as_mut()
+    }
+
+    #[inline]
+    pub const fn arcade_card(&self) -> Option<&ArcadeCard> {
+        self.arcade_card.as_ref()
+    }
+
+    #[inline]
+    pub fn arcade_card_mut(&mut self) -> Option<&mut ArcadeCard> {
+        self.arcade_card.as_mut()
     }
 
     #[inline]
@@ -457,16 +534,120 @@ impl BaseBusDevices for PceDevices {
     }
 
     fn peek_expansion(&self, physical_addr: u32) -> Option<u8> {
-        self.cdrom2.as_ref()?.peek_physical(physical_addr)
+        self.arcade_card
+            .as_ref()
+            .and_then(|arcade_card| arcade_card.peek_physical(physical_addr))
+            .or_else(|| {
+                self.cdrom2
+                    .as_ref()
+                    .and_then(|cdrom2| cdrom2.peek_physical(physical_addr))
+            })
     }
 
     fn read_expansion(&mut self, physical_addr: u32) -> Option<u8> {
-        self.cdrom2.as_mut()?.read_physical(physical_addr)
+        if let Some(value) = self
+            .arcade_card
+            .as_mut()
+            .and_then(|arcade_card| arcade_card.read_physical(physical_addr))
+        {
+            return Some(value);
+        }
+        self.cdrom2
+            .as_mut()
+            .and_then(|cdrom2| cdrom2.read_physical(physical_addr))
     }
 
     fn write_expansion(&mut self, physical_addr: u32, value: u8) -> bool {
+        if self
+            .arcade_card
+            .as_mut()
+            .is_some_and(|arcade_card| arcade_card.write_physical(physical_addr, value))
+        {
+            return true;
+        }
         self.cdrom2
             .as_mut()
             .is_some_and(|cdrom2| cdrom2.write_physical(physical_addr, value))
+    }
+}
+
+#[cfg(test)]
+mod debug_snapshot_tests {
+    use super::*;
+    use crate::hardware::{
+        CDROM2_REGISTER_START, CdTrack, CdTrackMode, ControllerDeviceDebugSnapshot, PadButtons,
+        VdcRegister,
+    };
+
+    #[test]
+    fn aggregate_snapshot_captures_live_video_audio_and_controller_state() {
+        let mut devices = PceDevices::with_topology_console_wiring_and_psg_revision(
+            PceHardwareTopology::SuperGrafx,
+            ControllerPort::two_button(),
+            PceConsoleWiring::PcEngine,
+            PsgRevision::HuC6280,
+        );
+        devices
+            .vdc_mut()
+            .write_port(VdcPort::SelectOrStatus, VdcRegister::Control as u8);
+        devices.vdc_mut().write_port(VdcPort::DataLow, 0xC5);
+        devices.vdc_mut().write_port(VdcPort::DataHigh, 0x10);
+        devices
+            .supergrafx_video_mut()
+            .unwrap()
+            .vpc_mut()
+            .write_port(VpcPort::from_offset(6), 1);
+        devices.vce_mut().write_port(VcePort::from_offset(0), 0x81);
+        devices.psg_mut().write_port(PsgPort::from_offset(1), 0xFF);
+        devices
+            .controller_mut()
+            .two_button_pad_mut()
+            .unwrap()
+            .set_buttons(PadButtons::RUN | PadButtons::I);
+
+        let snapshot = devices.debug_snapshot();
+
+        assert_eq!(
+            snapshot.vdc.registers[VdcRegister::Control as usize],
+            0x10C5
+        );
+        assert_eq!(snapshot.vdc.selected_register, Some(VdcRegister::Control));
+        assert!(snapshot.vdc2.is_some());
+        assert_eq!(snapshot.vpc.unwrap().direct_vdc, VpcVdc::Two);
+        assert_eq!(snapshot.vce.control, 0x81);
+        assert_eq!(snapshot.psg.main_amplitude, 0xFF);
+        assert!(matches!(
+            snapshot.controller.device,
+            ControllerDeviceDebugSnapshot::TwoButton { buttons }
+                if buttons == PadButtons::RUN | PadButtons::I
+        ));
+    }
+
+    #[test]
+    fn aggregate_snapshot_captures_cd_protocol_and_adpcm_registers() {
+        let disc = CdDisc::new(vec![
+            CdTrack::from_index1_data(1, 4, None, 0, CdTrackMode::Mode1_2048, vec![0; 2048])
+                .unwrap(),
+        ])
+        .unwrap();
+        let mut devices = PceDevices::with_cdrom2(
+            ControllerPort::two_button(),
+            PceConsoleWiring::PcEngine,
+            disc,
+        );
+        let cdrom2 = devices.cdrom2_mut().unwrap();
+        cdrom2.write_physical(CDROM2_REGISTER_START + 8, 0x34);
+        cdrom2.write_physical(CDROM2_REGISTER_START + 9, 0x12);
+        cdrom2.write_physical(CDROM2_REGISTER_START, 0);
+
+        let snapshot = devices.debug_snapshot().cdrom2.unwrap();
+
+        assert_eq!(snapshot.phase, super::super::cdrom2::CdScsiPhase::Selection);
+        assert_eq!(snapshot.adpcm_address_latch, 0x1234);
+        assert!(snapshot.pending_event.is_some());
+        assert_eq!(
+            snapshot.audio.status,
+            super::super::cdrom2::CdAudioStatus::Inactive
+        );
     }
 }

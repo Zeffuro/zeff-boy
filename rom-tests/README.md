@@ -15,6 +15,7 @@ just romtest-status-local
 
 # generated local Sega 8-bit smoke ROMs
 just romtest-build-sega8-smoke
+just romtest-build-pce-cd-fixture
 just romtest-fetch-sega8
 just romtest-run-sega8
 just romtest-run-local-sega8
@@ -37,6 +38,7 @@ corresponding local tests:
 just romtest-build-ws-suite
 just romtest-run-local-ws
 just romtest-build-sega8-smoke
+just romtest-build-pce-cd-fixture
 just romtest-run-local-sega8
 ```
 
@@ -47,6 +49,14 @@ just romtest-run-local-sega8
 run it from a Wonderful Toolchain shell with `-Builder local` if you prefer a local toolchain.
 Generated ROMs remain out of git. If you redistribute them elsewhere, include the upstream MIT
 license notice copied into the cache as `LICENSE.ws-test-suite.txt`.
+
+`scripts/build-pce-cd-adpcm-fixture.ps1` generates a redistributable mini System Card and
+Mode1/2048 CUE set under `rom-tests/cache/pce/generated/cd-adpcm-irq/`. The card uses the ordinary
+public PCE-CD loader and register interface: it sends a 17-sector READ6, enables CD-to-ADPCM DMA,
+checks the first and last transferred bytes, then records live IRQ2 half/end events and broad
+cycle-derived timing windows. It publishes `ZPCE` plus status/counters in work RAM; the
+`pce_memory_status` romtest pass kind maps that record to the public `--expect-test-pass` contract.
+Build it before `just romtest-run-local`.
 
 `scripts/build-sega8-smoke-roms.ps1` generates tiny local Sega 8-bit smoke ROMs into
 `rom-tests/cache/sega8/generated/`. These ROMs are generated from tracked source, remain out of git,

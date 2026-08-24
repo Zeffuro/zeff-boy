@@ -221,17 +221,10 @@ impl EmuBackend {
     }
 
     pub(crate) fn debug_suspend(&mut self) {
-        if !self.supports_debugger() {
+        if !self.supports_execution_controls() {
             return;
         }
-        match self {
-            Self::Gb(backend) => backend.emu.debug_suspend(),
-            Self::Gba(backend) => backend.emu.debug_suspend(),
-            Self::Nes(backend) => backend.emu.debug_suspend(),
-            Self::Pce(_) => {}
-            Self::Sega8(backend) => backend.emu.debug_suspend(),
-            Self::Ws(backend) => backend.emu.debug_suspend(),
-        }
+        dispatch!(self, debug_suspend())
     }
 
     pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -303,6 +296,14 @@ impl EmuBackend {
         dispatch!(self, supports_debugger())
     }
 
+    pub(crate) fn supports_execution_controls(&self) -> bool {
+        dispatch!(self, supports_execution_controls())
+    }
+
+    pub(crate) fn supports_symbol_loading(&self) -> bool {
+        dispatch!(self, supports_symbol_loading())
+    }
+
     pub(crate) fn supports_opcode_history(&self) -> bool {
         dispatch!(self, supports_opcode_history())
     }
@@ -357,6 +358,7 @@ impl EmuBackend {
             supports_cheats: self.supports_cheats(),
             supports_guest_calls: self.supports_guest_calls(),
             supports_debugger: self.supports_debugger(),
+            supports_execution_controls: self.supports_execution_controls(),
             supports_opcode_history: self.supports_opcode_history(),
         }
     }
@@ -706,6 +708,13 @@ impl EmuBackend {
             self,
             set_pce_mouse_state(mode, delta_x, delta_y, buttons_pressed)
         )
+    }
+
+    pub(crate) fn set_pce_memory_base_mode(
+        &mut self,
+        mode: zeff_pce_core::hardware::PceMemoryBaseMode,
+    ) {
+        dispatch!(self, set_pce_memory_base_mode(mode))
     }
 
     pub(crate) fn apply_replay_input(&mut self, frame: &ReplayJoypadFrame) {

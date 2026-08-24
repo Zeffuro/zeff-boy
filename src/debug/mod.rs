@@ -26,6 +26,9 @@ mod nes_tile_viewer;
 mod nes_tilemap_viewer;
 mod oam_viewer;
 mod palette_viewer;
+mod pce_graphics;
+mod pce_tile_viewer;
+mod pce_tilemap_viewer;
 pub(crate) mod perf_monitor;
 mod printer_viewer;
 mod rom_info;
@@ -48,7 +51,8 @@ pub(crate) use barcode_boy::draw_scan_window as draw_barcode_boy_scan_window;
 pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};
 pub(crate) use disassembler::{
     DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,
-    gba_disassemble_around, nes_disassemble_around, v30_disassemble_around, z80_disassemble_around,
+    gba_disassemble_around, huc6280_disassemble_around, nes_disassemble_around,
+    v30_disassemble_around, z80_disassemble_around,
 };
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, DebugWorkspacePreset, activate_dock_tab, compute_tab_requirements,
@@ -57,6 +61,7 @@ pub(crate) use dock::{
     save_open_tabs, serialize_dock_layout,
 };
 pub(crate) use fps::FpsTracker;
+pub(crate) use mods_window::draw_mods_content;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use printer_viewer::draw_printer_window;
 pub(crate) use printer_viewer::{PrinterViewerState, draw_printer_viewer_content};
@@ -65,8 +70,8 @@ pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,
     DebugSection, GbGraphicsData, GbaGraphicsData, InputDebugInfo, IoBitDisplay, IoRegisterDisplay,
     NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug,
-    RecentOpcodeDisplay, RomDebugInfo, RomInfoSection, Sega8GraphicsData, WatchHitDisplay,
-    WatchpointDisplay,
+    PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay, RomDebugInfo, RomInfoSection,
+    Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use types::{
     BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,

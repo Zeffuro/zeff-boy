@@ -84,6 +84,11 @@ romtest-build-ws-suite:
 romtest-build-sega8-smoke:
     powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
 
+# Build the generated PC Engine CD READ6/ADPCM/IRQ fixture into the ignored cache.
+[windows]
+romtest-build-pce-cd-fixture:
+    powershell -ExecutionPolicy Bypass -File scripts/build-pce-cd-adpcm-fixture.ps1
+
 # Validate the asiekierka WonderSwan test-suite build plan without downloading/building.
 [windows]
 romtest-build-ws-suite-dry-run:
@@ -95,6 +100,7 @@ romtest-build-local-suites:
     powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
     powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
     powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
+    powershell -ExecutionPolicy Bypass -File scripts/build-pce-cd-adpcm-fixture.ps1
 
 # Download local-only test ROM sources and extract them into the ignored cache.
 # These may include unclear-license public test collections and stay out of default CI.
@@ -217,6 +223,20 @@ lint-wasm:
 # Run Clippy lints with all feature sets (matches CI)
 lint-all: lint lint-minimal lint-wasm
 
+# CI follows the latest stable Rust release.
+sync-ci-toolchain:
+    rustup update stable
+
+[windows]
+ci-tools:
+    if (-not (Get-Command cargo-nextest -ErrorAction SilentlyContinue)) { cargo install cargo-nextest --locked }
+    if (-not (Get-Command cargo-deny -ErrorAction SilentlyContinue)) { cargo install cargo-deny --locked }
+
+[unix]
+ci-tools:
+    command -v cargo-nextest >/dev/null || cargo install cargo-nextest --locked
+    command -v cargo-deny >/dev/null || cargo install cargo-deny --locked
+
 # Check that no native-only APIs leaked into shared code
 [unix]
 lint-platform-leaks:
@@ -227,10 +247,10 @@ lint-platform-leaks:
     $hits = Get-ChildItem -Path src -Recurse -Filter *.rs | Where-Object { $_.FullName -notmatch '\\(platform|input\\native|audio\\native|audio\\tests|camera|cli|mods\\native|libretro_common)' -and $_.Name -ne 'native.rs' } | Select-String -Pattern 'rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::' | Where-Object { $_.Line -notmatch '// platform-ok' }; if ($hits) { $hits; exit 1 } else { Write-Host 'No platform leaks found.' }
 
 # Run full CI pipeline locally (fmt + lint + platform check + test + deny)
-ci-local: fmt-check lint-all lint-platform-leaks test-all deny
+ci-local: sync-ci-toolchain ci-tools fmt-check lint-all lint-platform-leaks test-all deny
 
 # Run WASM CI check locally (requires wasm32 target and Trunk)
-ci-local-wasm: lint-wasm check-wasm build-wasm-ghpages
+ci-local-wasm: sync-ci-toolchain lint-wasm check-wasm build-wasm-ghpages
 
 # Check that fuzz targets compile (requires nightly)
 fuzz-check:

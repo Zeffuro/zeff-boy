@@ -342,9 +342,11 @@ fn annotates_disassembly_by_physical_rom_offset() {
         lines: vec![crate::debug::DisassembledLine {
             address: 0x4560,
             storage_offset: Some(0x8560),
+            bank: None,
             symbol: None,
             control_target: Some(0x4660),
             control_target_storage: Some(0x8660),
+            control_target_bank: None,
             control_target_symbol: None,
             source: None,
             bytes: Default::default(),
@@ -401,9 +403,11 @@ fn annotates_disassembly_with_wla_source_location() {
         lines: vec![crate::debug::DisassembledLine {
             address: 0x4560,
             storage_offset: Some(0x8560),
+            bank: None,
             symbol: None,
             control_target: None,
             control_target_storage: None,
+            control_target_bank: None,
             control_target_symbol: None,
             source: None,
             bytes: Default::default(),
@@ -437,6 +441,54 @@ fn annotates_disassembly_with_wla_source_location() {
         session.source_breakpoint_addresses(source.source_file, 42),
         [0x4560]
     );
+}
+
+#[test]
+fn annotates_pce_disassembly_with_the_active_physical_page() {
+    let mut session = SymbolSession::default();
+    let module = import_symbols(
+        "game.sym",
+        b"01 A123 first\n02 A123 second",
+        &ImportContext {
+            target: TargetInfo {
+                system: System::Pce,
+            },
+            image: ImageId(0),
+            rom_region: RegionId(0),
+            cpu_space: AddressSpaceId(0),
+            source_name: None,
+        },
+    )
+    .unwrap();
+    session.store.extend(module.symbols);
+    let mut view = crate::debug::DisassemblyView {
+        pc: 0xA123,
+        mapping: None,
+        is_navigation_target: false,
+        is_static_target: false,
+        location_symbol: None,
+        lines: vec![crate::debug::DisassembledLine {
+            address: 0xA123,
+            storage_offset: None,
+            bank: Some(2),
+            symbol: None,
+            control_target: None,
+            control_target_storage: None,
+            control_target_bank: None,
+            control_target_symbol: None,
+            source: None,
+            bytes: Default::default(),
+            mnemonic: Default::default(),
+        }],
+        breakpoints: Vec::new(),
+        one_shot_breakpoints: Vec::new(),
+        rom_breakpoints: Vec::new(),
+        hit_rom_breakpoint: None,
+    };
+
+    session.annotate_disassembly(&mut view);
+
+    assert_eq!(view.lines[0].symbol.as_deref(), Some("second"));
 }
 
 #[test]
@@ -518,9 +570,11 @@ fn resolves_explicit_overlay_instances() {
         lines: vec![crate::debug::DisassembledLine {
             address: 0xC000,
             storage_offset: None,
+            bank: None,
             symbol: None,
             control_target: None,
             control_target_storage: None,
+            control_target_bank: None,
             control_target_symbol: None,
             source: None,
             bytes: Default::default(),

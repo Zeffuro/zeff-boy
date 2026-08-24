@@ -17,6 +17,10 @@ pub(crate) fn load_mod_config(_dir: &Path) -> Vec<ModEntry> {
 
 pub(crate) fn save_mod_config(_dir: &Path, _entries: &[ModEntry]) {}
 
+pub(crate) fn mod_advisories(_dir: &Path, _entries: &[ModEntry]) -> Vec<String> {
+    Vec::new()
+}
+
 pub(crate) fn apply_enabled_mods(
     _rom_data: &mut Vec<u8>,
     _dir: &Path,

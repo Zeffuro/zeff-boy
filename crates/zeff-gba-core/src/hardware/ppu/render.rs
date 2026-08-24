@@ -389,7 +389,7 @@ impl Ppu {
     }
 
     fn fill_forced_blank(&mut self) {
-        for px in self.framebuffer.chunks_exact_mut(4) {
+        for px in self.framebuffer.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
         }
     }
@@ -397,7 +397,7 @@ impl Ppu {
     fn fill_forced_blank_line(&mut self, y: usize) {
         let start = y * SCREEN_WIDTH * 4;
         let end = start + SCREEN_WIDTH * 4;
-        for px in self.framebuffer[start..end].chunks_exact_mut(4) {
+        for px in self.framebuffer[start..end].as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
         }
     }
@@ -411,7 +411,13 @@ impl Ppu {
         pixel_colors: &mut [u16],
     ) {
         let raw_color = read_le16(palette_ram, 0);
-        for (index, px) in self.framebuffer.chunks_exact_mut(4).enumerate() {
+        for (index, px) in self
+            .framebuffer
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             let x = index % SCREEN_WIDTH;
             let y = index / SCREEN_WIDTH;
             let color = effects.apply_pixel(

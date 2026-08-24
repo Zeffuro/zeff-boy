@@ -92,11 +92,23 @@ fn request_sense(cd: &mut CdRom2, allocation_length: u8) -> Vec<u8> {
 
 fn audio_disc(sectors: usize) -> CdDisc {
     let mut raw = vec![0; sectors * 2_352];
-    for (index, frame) in raw.chunks_exact_mut(4).enumerate() {
+    for (index, frame) in raw.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let left = (0x1000_i16).wrapping_add(index as i16);
         let right = -left;
         frame[..2].copy_from_slice(&left.to_le_bytes());
         frame[2..].copy_from_slice(&right.to_le_bytes());
+    }
+    CdDisc::new(vec![
+        CdTrack::from_index1_data(1, 0, None, 0, CdTrackMode::Audio, raw).unwrap(),
+    ])
+    .unwrap()
+}
+
+fn constant_audio_disc() -> CdDisc {
+    let mut raw = vec![0; 2_352];
+    for frame in raw.as_chunks_mut::<4>().0 {
+        frame[..2].copy_from_slice(&0x1234_i16.to_le_bytes());
+        frame[2..].copy_from_slice(&(-0x1235_i16).to_le_bytes());
     }
     CdDisc::new(vec![
         CdTrack::from_index1_data(1, 0, None, 0, CdTrackMode::Audio, raw).unwrap(),
@@ -188,6 +200,28 @@ fn cd_work_ram_is_unique_and_bram_lock_survives_reset() {
     cd.write_physical(CDROM2_REGISTER_START + 7, 0x80);
     assert_eq!(cd.read_physical(CDROM2_BRAM_START), Some(0x55));
     assert_eq!(cd.read_physical(CDROM2_WORK_RAM_START), Some(0));
+}
+
+#[test]
+fn cdda_sample_latch_reads_little_endian_and_ignores_read_only_writes() {
+    let mut cd = CdRom2::new(constant_audio_disc());
+    start_audio_track_one(&mut cd);
+    cd.advance_master_ticks(700);
+    cd.write_physical(CDROM2_REGISTER_START + 5, 0);
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 5), Some(0xCB));
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 6), Some(0xED));
+
+    cd.advance_master_ticks(700);
+    cd.write_physical(CDROM2_REGISTER_START + 5, 0);
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 5), Some(0x34));
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 6), Some(0x12));
+
+    cd.write_physical(CDROM2_REGISTER_START + 7, 0x80);
+    cd.write_physical(CDROM2_REGISTER_START + 3, 0xFF);
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 7), Some(0x80));
+    cd.write_physical(CDROM2_REGISTER_START + 6, 0xFF);
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 5), Some(0x34));
+    assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 6), Some(0x12));
 }
 
 #[test]
@@ -887,7 +921,7 @@ fn stopped_audio_does_not_accumulate_or_repeat_pcm() {
 }
 
 #[test]
-fn directory_info_modes_return_exact_four_byte_records() {
+fn directory_info_modes_and_track_zero_alias_return_exact_four_byte_records() {
     let info_disc = CdDisc::new(vec![
         CdTrack::from_index1_data(
             1,
@@ -912,6 +946,14 @@ fn directory_info_modes_return_exact_four_byte_records() {
         send_command(&mut cd, &[0xDE, mode as u8, 0x01, 0, 0, 0, 0, 0, 0, 0]);
         cd.advance_master_ticks(PROVISIONAL_CDROM2_PHASE_TICKS);
         assert_eq!(manual_response(&mut cd, 4), expected);
+    }
+
+    for mode in [2, 3] {
+        let mut cd = CdRom2::new(info_disc.clone());
+        select(&mut cd);
+        send_command(&mut cd, &[0xDE, mode, 0, 0, 0, 0, 0, 0, 0, 0]);
+        cd.advance_master_ticks(PROVISIONAL_CDROM2_PHASE_TICKS);
+        assert_eq!(manual_response(&mut cd, 4), expected[mode as usize]);
     }
 }
 
@@ -1009,11 +1051,14 @@ fn cd_to_adpcm_dma_consumes_arriving_sectors_and_wraps_its_write_pointer() {
 
     cd.advance_master_ticks(PROVISIONAL_CDROM2_PHASE_TICKS + READ_STARTUP_TICKS);
     assert_eq!(cd.phase(), CdScsiPhase::DataIn);
+    assert!(!cd.take_debug_dma_completed());
     assert_eq!(&cd.adpcm_ram()[0xFC00..0xFC04], &[0, 1, 2, 3]);
     assert_eq!(cd.read_physical(CDROM2_REGISTER_START).unwrap() & 0x40, 0);
 
     cd.advance_master_ticks(286_364);
     assert_eq!(cd.phase(), CdScsiPhase::Status);
+    assert!(cd.take_debug_dma_completed());
+    assert!(!cd.take_debug_dma_completed());
     assert_eq!(&cd.adpcm_ram()[0x0400..0x0404], &[0, 1, 2, 3]);
     assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 11), Some(2));
 }

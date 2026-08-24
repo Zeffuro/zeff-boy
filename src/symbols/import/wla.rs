@@ -487,6 +487,32 @@ mod tests {
     }
 
     #[test]
+    fn preserves_pce_physical_pages_and_only_explicit_storage() {
+        let module = WlaSymImporter
+            .import(
+                b"[information]\nversion 3\nwlasymbol true\n[labels]\n2A:6123 MappedRoutine\nF8:6123 WorkRoutine\n[sections]\n00054123 2A:6123 6123 00000010 Program",
+                &context(System::Pce),
+            )
+            .unwrap();
+        let mapped = module
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "MappedRoutine")
+            .unwrap();
+        let work = module
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "WorkRoutine")
+            .unwrap();
+
+        assert_eq!(mapped.location.bank, Some(0x2A));
+        assert_eq!(mapped.location.cpu.unwrap().address, 0x6123);
+        assert_eq!(mapped.location.storage.unwrap().offset, 0x054123);
+        assert_eq!(work.location.bank, Some(0xF8));
+        assert!(work.location.storage.is_none());
+    }
+
+    #[test]
     fn imports_wla_v2_source_lines() {
         let module = WlaSymImporter
             .import(

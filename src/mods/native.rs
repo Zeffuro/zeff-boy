@@ -26,6 +26,12 @@ pub(crate) fn discover_mods(dir: &Path) -> Vec<ModEntry> {
                 Some("ips") => has_header(&path, b"PATCH"),
                 Some("bps") => has_header(&path, b"BPS1"),
                 Some("ups") => has_header(&path, b"UPS1"),
+                Some("ppf") => {
+                    has_header(&path, b"PPF10")
+                        || has_header(&path, b"PPF20")
+                        || has_header(&path, b"PPF30")
+                }
+                Some("xdelta" | "xdelta3" | "vcdiff") => has_header(&path, b"\xD6\xC3\xC4\0"),
                 _ => false,
             }
         })
@@ -33,6 +39,7 @@ pub(crate) fn discover_mods(dir: &Path) -> Vec<ModEntry> {
             e.file_name().to_str().map(|name| ModEntry {
                 filename: name.to_string(),
                 enabled: false,
+                target: None,
             })
         })
         .collect();
@@ -63,6 +70,10 @@ pub(crate) fn load_mod_config(dir: &Path) -> Vec<ModEntry> {
         merged.push(ModEntry {
             filename: disc.filename.clone(),
             enabled,
+            target: saved
+                .iter()
+                .find(|saved| saved.filename == disc.filename)
+                .and_then(|saved| saved.target.clone()),
         });
     }
     merged
@@ -84,6 +95,27 @@ pub(crate) fn save_mod_config(dir: &Path, mods: &[ModEntry]) {
     }
 }
 
+pub(crate) fn mod_advisories(dir: &Path, mods: &[ModEntry]) -> Vec<String> {
+    mods.iter()
+        .filter(|entry| entry.enabled)
+        .filter(|entry| {
+            Path::new(&entry.filename)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("ppf"))
+        })
+        .filter_map(|entry| {
+            let patch = std::fs::read(dir.join(&entry.filename)).ok()?;
+            (!crate::patching::ppf_has_source_validation(&patch)).then(|| {
+                format!(
+                    "{} has no source check; verify the exact disc revision",
+                    entry.filename
+                )
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn apply_enabled_mods(rom: &mut Vec<u8>, dir: &Path, mods: &[ModEntry]) -> Vec<String> {
     let mut warnings = Vec::new();
     for entry in mods.iter().filter(|m| m.enabled) {
@@ -101,6 +133,10 @@ pub(crate) fn apply_enabled_mods(rom: &mut Vec<u8>, dir: &Path, mods: &[ModEntry
                     Some("ups") => crate::patching::apply_ups_patch(rom, &patch_data).map(|new| {
                         *rom = new;
                     }),
+                    Some("ppf") => crate::patching::apply_ppf_patch(rom, &patch_data),
+                    Some("xdelta" | "xdelta3" | "vcdiff") => {
+                        crate::patching::apply_xdelta_patch(rom, &patch_data).map(|new| *rom = new)
+                    }
                     _ => crate::patching::apply_ips_patch(rom, &patch_data),
                 };
                 match result {
@@ -120,6 +156,118 @@ pub(crate) fn apply_enabled_mods(rom: &mut Vec<u8>, dir: &Path, mods: &[ModEntry
         }
     }
     warnings
+}
+
+pub(crate) fn apply_enabled_pce_cd_mods(
+    files: &mut [Vec<u8>],
+    file_references: &[String],
+    dir: &Path,
+    mods: &[ModEntry],
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for entry in mods.iter().filter(|entry| entry.enabled) {
+        let extension = Path::new(&entry.filename)
+            .extension()
+            .and_then(|extension| extension.to_str());
+        if !extension.is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "ppf" | "xdelta" | "xdelta3" | "vcdiff"
+            )
+        }) {
+            let message = format!(
+                "{}: PC Engine CD sets require a PPF or xdelta patch",
+                entry.filename
+            );
+            log::warn!("Mod apply failed: {message}");
+            warnings.push(message);
+            continue;
+        }
+
+        let patch_path = dir.join(&entry.filename);
+        let mut missing_ppf_validation = false;
+        let result = std::fs::read(&patch_path)
+            .map_err(anyhow::Error::from)
+            .and_then(|patch| {
+                if extension.is_some_and(|extension| extension.eq_ignore_ascii_case("ppf")) {
+                    missing_ppf_validation = !crate::patching::ppf_has_source_validation(&patch);
+                    crate::patching::apply_ppf_patch_segments(files, &patch)
+                } else {
+                    let index = xdelta_target_index(entry, file_references)?;
+                    let patched = crate::patching::apply_xdelta_patch(&files[index], &patch)?;
+                    files[index] = patched;
+                    Ok(())
+                }
+            });
+        match result {
+            Ok(()) => {
+                log::info!("Applied PC Engine CD mod: {}", entry.filename);
+                if missing_ppf_validation {
+                    let message = format!(
+                        "{}: patch has no source check; verify the exact disc revision",
+                        entry.filename
+                    );
+                    log::warn!("Mod warning: {message}");
+                    warnings.push(message);
+                }
+            }
+            Err(error) => {
+                let message = format!("{}: {error}", entry.filename);
+                log::warn!("Mod apply failed: {message}");
+                warnings.push(message);
+            }
+        }
+    }
+    warnings
+}
+
+fn xdelta_target_index(entry: &ModEntry, references: &[String]) -> anyhow::Result<usize> {
+    if references.len() == 1 {
+        return Ok(0);
+    }
+
+    let hint = entry
+        .target
+        .as_deref()
+        .filter(|target| !target.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| infer_track_hint(&entry.filename));
+    let Some(hint) = hint else {
+        anyhow::bail!(
+            "xdelta target is ambiguous; include Track NN in the patch filename or set target in mods.json"
+        );
+    };
+    let normalized_hint = normalize_target(&hint);
+    let matches = references
+        .iter()
+        .enumerate()
+        .filter(|(_, reference)| normalize_target(reference).contains(&normalized_hint))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        matches.len() == 1,
+        "xdelta target '{hint}' did not match one CUE file"
+    );
+    Ok(matches[0])
+}
+
+fn infer_track_hint(filename: &str) -> Option<String> {
+    let lower = filename.to_ascii_lowercase();
+    let start = lower.find("track")? + "track".len();
+    let digits = lower[start..]
+        .trim_start_matches(|character: char| !character.is_ascii_digit())
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    (!digits.is_empty()).then(|| format!("track{digits}"))
+}
+
+fn normalize_target(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn mods_root() -> PathBuf {

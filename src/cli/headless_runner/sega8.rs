@@ -285,7 +285,7 @@ fn sega8_wait_classification(emulator: &Sega8Emulator) -> Option<&'static str> {
 }
 
 fn sega8_framebuffer_has_visible_content(framebuffer: &[u8]) -> bool {
-    let mut chunks = framebuffer.chunks_exact(4);
+    let mut chunks = framebuffer.as_chunks::<4>().0.iter();
     let Some(first) = chunks.next() else {
         return false;
     };

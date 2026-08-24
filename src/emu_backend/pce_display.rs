@@ -281,7 +281,7 @@ fn base_visible_span(
 
 fn clear_output(output: &mut [u8]) {
     debug_assert_eq!(output.len(), PCE_PRESENTED_RGBA_BYTES);
-    for pixel in output.chunks_exact_mut(4) {
+    for pixel in output.as_chunks_mut::<4>().0 {
         pixel.copy_from_slice(&OPAQUE_BLACK);
     }
 }

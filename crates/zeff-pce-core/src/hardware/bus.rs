@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use super::cartridge::{
     POPULOUS_HUCARD_IMAGE_LEN, PceHuCard, PceHuCardBoard, SF2_CE_HUCARD_IMAGE_LEN,
@@ -421,6 +422,19 @@ impl<D> BaseBus<D> {
     }
 
     #[inline]
+    pub fn hucard_rom_offset(&self, physical_addr: u32) -> Option<u32> {
+        match self.decode_physical_region(physical_addr) {
+            PhysicalRegion::HuCard(offset) => self.hucard.rom_offset(offset),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn hucard_mapping_token(&self) -> u8 {
+        self.hucard.mapping_token()
+    }
+
+    #[inline]
     pub fn hucard_ram(&self) -> Option<&[u8; super::cartridge::POPULOUS_HUCARD_RAM_LEN]> {
         self.hucard.ram()
     }
@@ -476,12 +490,25 @@ impl<D> BaseBus<D> {
     pub fn into_devices(self) -> D {
         self.devices
     }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_bytes(self.work_ram.mapped());
+        self.hucard.write_state(writer);
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        reader.read_exact(self.work_ram.mapped_mut())?;
+        self.hucard.read_state(reader)
+    }
 }
 
 impl<D: BaseBusDevices> BaseBus<D> {
     pub fn peek(&self, physical_addr: u32) -> u8 {
         match self.decode_physical_region(physical_addr) {
-            PhysicalRegion::HuCard(offset) => self.hucard.read(offset),
+            PhysicalRegion::HuCard(offset) => self
+                .devices
+                .peek_expansion(physical_addr & PHYSICAL_ADDRESS_MASK)
+                .unwrap_or_else(|| self.hucard.read(offset)),
             PhysicalRegion::WorkRam(offset) => self.work_ram.mapped()[usize::from(offset)],
             PhysicalRegion::Vdc(_)
             | PhysicalRegion::Vpc(_)
@@ -500,7 +527,10 @@ impl<D: BaseBusDevices> BaseBus<D> {
 
     pub fn read(&mut self, physical_addr: u32) -> u8 {
         match self.decode_physical_region(physical_addr) {
-            PhysicalRegion::HuCard(offset) => self.hucard.read(offset),
+            PhysicalRegion::HuCard(offset) => self
+                .devices
+                .read_expansion(physical_addr & PHYSICAL_ADDRESS_MASK)
+                .unwrap_or_else(|| self.hucard.read(offset)),
             PhysicalRegion::WorkRam(offset) => self.work_ram.mapped()[usize::from(offset)],
             PhysicalRegion::Vdc(offset) => self.devices.read_vdc(offset),
             PhysicalRegion::Vpc(offset) => self.devices.read_vpc(offset),
@@ -531,7 +561,14 @@ impl<D: BaseBusDevices> BaseBus<D> {
             PhysicalRegion::Timer(offset) => self.devices.write_timer(offset, value),
             PhysicalRegion::Controller => self.devices.write_controller(value),
             PhysicalRegion::Irq(offset) => self.devices.write_irq(offset, value),
-            PhysicalRegion::HuCard(offset) => self.hucard.write(offset, value),
+            PhysicalRegion::HuCard(offset) => {
+                if !self
+                    .devices
+                    .write_expansion(physical_addr & PHYSICAL_ADDRESS_MASK, value)
+                {
+                    self.hucard.write(offset, value);
+                }
+            }
             PhysicalRegion::Unmapped => {
                 self.devices
                     .write_expansion(physical_addr & PHYSICAL_ADDRESS_MASK, value);

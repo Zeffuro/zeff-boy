@@ -108,9 +108,11 @@ fn scheduler_gives_satb_every_shared_slot_before_vram_dma() {
     let satb_tail = vdc.advance_horizontal_pixels(255 * 4).unwrap();
     assert_eq!(satb_tail.satb_words(), 255);
     assert_eq!(satb_tail.vram_words(), 0);
+    assert_eq!(satb_tail.dma_completions(), 1);
     let vram = vdc.advance_horizontal_pixels(4).unwrap();
     assert_eq!(vram.satb_words(), 0);
     assert_eq!(vram.vram_words(), 1);
+    assert_eq!(vram.dma_completions(), 1);
     assert_eq!(vdc.vram()[1], 0x1111);
 }
 
@@ -126,6 +128,7 @@ fn maximum_length_dma_wraps_and_completes_at_four_pixels_per_word() {
         .advance_horizontal_pixels(65_536 * u64::from(VDC_DMA_PIXELS_PER_WORD))
         .unwrap();
     assert_eq!(advance.vram_words(), 65_536);
+    assert_eq!(advance.dma_completions(), 1);
     assert_eq!(vdc.active_vram_dma(), None);
     assert_eq!(vdc.register(VdcRegister::DmaSource), 0xFFFF);
     assert_eq!(vdc.register(VdcRegister::DmaDestination), 0x7FFF);

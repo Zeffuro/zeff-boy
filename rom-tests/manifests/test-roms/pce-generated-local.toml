@@ -1,0 +1,32 @@
+manifest_version = 1
+
+[suite]
+id = "pce-generated-local"
+name = "Generated PC Engine CD local fixtures"
+license = "MIT OR Apache-2.0"
+
+[[tests]]
+id = "pce/generated/cd-adpcm-dma-irq"
+core = "pce"
+tier = "local"
+max_frames = 180
+tags = ["pce", "pce-cd", "generated", "local-only", "read6", "adpcm", "dma", "irq2"]
+notes = "Generated mini System Card issues a 17-sector READ6 through the public CD register handshake, streams it into ADPCM RAM, verifies transferred boundary bytes, and validates ordered half/end IRQ2 timing before publishing the ZPCE work-RAM status record."
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT OR Apache-2.0"
+license_confidence = "verified"
+redistributable = true
+source_url = "scripts/build-pce-cd-adpcm-fixture.ps1"
+source_version = "repository script"
+
+[tests.rom]
+path = "rom-tests/cache/pce/generated/cd-adpcm-irq/cd-adpcm-irq.cue"
+sha256 = "bb8a1c396d686ee02f52a4122f538a2107f35bca29e26625727093a14584cb4d"
+
+[tests.pass]
+kind = "pce_memory_status"
+
+[tests.expectation]
+kind = "pass"

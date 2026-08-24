@@ -7,13 +7,18 @@ use zeff_emu_common::address::Address;
 
 const FLASH_DURATION_TICKS: u8 = 12;
 
+pub(super) struct MemoryViewerDebugContext<'a> {
+    pub(super) symbols: &'a crate::symbols::SymbolSession,
+    pub(super) cpu: Option<&'a CpuDebugSnapshot>,
+    pub(super) enabled: bool,
+}
+
 pub(super) fn draw_memory_viewer_content(
     ui: &mut egui::Ui,
     state: &mut MemoryViewerState,
     memory_page: &[(Address, u8)],
-    symbols: &crate::symbols::SymbolSession,
-    cpu_debug: Option<&CpuDebugSnapshot>,
     actions: &mut DebugUiActions,
+    debug: MemoryViewerDebugContext<'_>,
 ) -> Vec<(Address, u8)> {
     let mut writes = Vec::new();
     let address_space = state.address_space;
@@ -32,7 +37,8 @@ pub(super) fn draw_memory_viewer_content(
         let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Go").clicked() || pressed_enter)
             && let Some(addr) = parse_hex_u32(&state.jump_input).or_else(|| {
-                symbols
+                debug
+                    .symbols
                     .resolve_cpu_name(state.jump_input.trim())
                     .and_then(|address| u32::try_from(address).ok())
             })
@@ -66,7 +72,10 @@ pub(super) fn draw_memory_viewer_content(
         address_space.format(address_space.min),
         address_space.format(address_space.max_start.saturating_add(0xFF))
     ));
-    if let Some(name) = symbols.symbol_name_at_cpu_address(state.view_start as u64) {
+    if let Some(name) = debug
+        .symbols
+        .symbol_name_at_cpu_address(state.view_start as u64)
+    {
         ui.monospace(name);
     }
 
@@ -85,9 +94,12 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
-    draw_watch_range(ui, state, memory_page, cpu_debug, actions);
+    if debug.enabled {
+        draw_watch_range(ui, state, memory_page, debug.cpu, actions);
+    }
 
-    let watched_ranges = cpu_debug
+    let watched_ranges = debug
+        .cpu
         .map(|info| {
             info.watchpoints
                 .iter()
@@ -128,7 +140,7 @@ pub(super) fn draw_memory_viewer_content(
         state.jump_input = address_space.format(state.view_start);
     }
 
-    if state.enable_editing {
+    if debug.enabled && state.enable_editing {
         ui.separator();
         if let Some(addr) = state.edit_addr {
             ui.horizontal(|ui| {
@@ -335,9 +347,7 @@ fn sync_flash_state(state: &mut MemoryViewerState, memory_page: &[(Address, u8)]
         }
     } else {
         state.recent_diffs.clear();
-        for tick in &mut state.flash_ticks {
-            *tick = 0;
-        }
+        state.flash_ticks.fill(0);
     }
 
     state.prev_start = page_addr;

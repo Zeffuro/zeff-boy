@@ -38,7 +38,7 @@ impl FlatBus {
     }
 
     fn take_accesses(&mut self) -> Vec<FlatAccess> {
-        self.accesses.get_mut().drain(..).collect()
+        std::mem::take(self.accesses.get_mut())
     }
 }
 

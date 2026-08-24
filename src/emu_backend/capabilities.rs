@@ -24,6 +24,7 @@ pub(crate) struct CoreCapabilities {
     pub(crate) supports_cheats: bool,
     pub(crate) supports_guest_calls: bool,
     pub(crate) supports_debugger: bool,
+    pub(crate) supports_execution_controls: bool,
     pub(crate) supports_opcode_history: bool,
 }
 
@@ -63,8 +64,8 @@ impl InputCapabilities {
                 supports_wonderswan_direct_buttons: true,
             },
             ActiveSystem::Pce => Self {
-                buttons: HostButton::STANDARD,
-                supports_player_two: false,
+                buttons: HostButton::WITH_SIX_BUTTONS,
+                supports_player_two: true,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: false,
             },
@@ -133,11 +134,11 @@ impl CheatCapabilities {
                 formats: &["Raw"],
             },
             ActiveSystem::Pce => Self {
-                supports_user_cheats: false,
+                supports_user_cheats: true,
                 supports_libretro_database: false,
-                supports_ram_writes: false,
+                supports_ram_writes: true,
                 supports_rom_patches: false,
-                formats: &[],
+                formats: &["Raw"],
             },
         }
     }

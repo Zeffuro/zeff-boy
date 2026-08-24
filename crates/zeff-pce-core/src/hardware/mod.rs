@@ -1,3 +1,5 @@
+mod arcade_card;
+mod blip_buf;
 mod bus;
 mod cartridge;
 mod cd_media;
@@ -7,6 +9,7 @@ pub mod cpu;
 mod machine;
 mod pce_devices;
 mod psg;
+pub mod save_state;
 mod vce;
 mod vdc;
 mod vdc_composite;
@@ -17,6 +20,10 @@ mod vdc_sprite_render;
 mod vdc_video;
 mod vpc;
 
+pub use arcade_card::{
+    ARCADE_CARD_RAM_LEN, ArcadeCard, ArcadeCardDebugSnapshot, ArcadeCardPortDebugSnapshot,
+    PceArcadeCardMode,
+};
 pub use bus::{
     BaseBus, BaseBusDevices, BaseBusError, BaseBusErrorKind, HUCARD_ROM_REGION_LEN, OPEN_BUS_VALUE,
     PceHardwareTopology, PhysicalRegion, PsgPort, SUPERGRAFX_WORK_RAM_LEN, VcePort, WORK_RAM_LEN,
@@ -35,8 +42,10 @@ pub use cd_media::{
 pub use cdrom2::{
     CDROM2_ADPCM_RAM_LEN, CDROM2_BRAM_END, CDROM2_BRAM_LEN, CDROM2_BRAM_START, CDROM2_REGISTER_END,
     CDROM2_REGISTER_START, CDROM2_WORK_RAM_END, CDROM2_WORK_RAM_LEN, CDROM2_WORK_RAM_START,
-    CdAudioDebugSnapshot, CdAudioEndMode, CdAudioFadeTarget, CdAudioStatus, CdRom2, CdScsiPhase,
-    PROVISIONAL_CDROM2_ADPCM_MIX_GAIN, PROVISIONAL_CDROM2_ADPCM_RATE_WRITE_PRESERVES_PHASE,
+    CdAudioDebugSnapshot, CdAudioEndMode, CdAudioFadeTarget, CdAudioStatus,
+    CdProtocolEventDebugKind, CdProtocolEventDebugSnapshot, CdRom2, CdRom2DebugSnapshot,
+    CdScsiPhase, PROVISIONAL_CDROM2_ADPCM_MIX_GAIN,
+    PROVISIONAL_CDROM2_ADPCM_RATE_WRITE_PRESERVES_PHASE,
     PROVISIONAL_CDROM2_ADPCM_RESTART_REQUIRES_END_CLEAR_OR_D6_CLEAR,
     PROVISIONAL_CDROM2_ADPCM_STOP_AT_NEXT_NIBBLE_BOUNDARY, PROVISIONAL_CDROM2_AUTO_ACK_TICKS,
     PROVISIONAL_CDROM2_FADE_LONG_STEP_TICKS, PROVISIONAL_CDROM2_FADE_SHORT_STEP_TICKS,
@@ -44,13 +53,15 @@ pub use cdrom2::{
     PROVISIONAL_CDROM2_READ_STARTUP_SECTORS, PROVISIONAL_CDROM2_SELECTION_TICKS,
 };
 pub use controller::{
-    ControllerDevice, ControllerPort, DETERMINISTIC_SIX_BUTTON_RESET_PHASE, FivePortMultitap,
-    MULTITAP_EXHAUSTED_NIBBLE, MultitapDevice, MultitapPort,
+    ControllerDevice, ControllerDeviceDebugSnapshot, ControllerPort, ControllerPortDebugSnapshot,
+    DETERMINISTIC_SIX_BUTTON_RESET_PHASE, FivePortMultitap, MAX_CONTROLLER_STATE_SECTION_BYTES,
+    MEMORY_BASE128_RAM_LEN, MULTITAP_EXHAUSTED_NIBBLE, MemoryBase128, MemoryBase128DebugSnapshot,
+    MemoryBase128Phase, MouseScanPhase, MultitapDevice, MultitapDeviceDebugSnapshot, MultitapPort,
     PROVISIONAL_MOUSE_CLEAR_TIMEOUT_MASTER_TICKS, PROVISIONAL_MOUSE_SELECT_TIMEOUT_MASTER_TICKS,
-    PadButtons, PceControllerMode, PceMouse, SixButtonExtraButtons, SixButtonPad, SixButtonPhase,
-    TwoButtonPad,
+    PadButtons, PceControllerMode, PceMemoryBaseMode, PceMouse, PceMouseDebugSnapshot,
+    SixButtonExtraButtons, SixButtonPad, SixButtonPhase, TwoButtonPad,
 };
-pub use cpu::{IrqPort, TimerPort};
+pub use cpu::{IrqPort, TimerPort, physical_address_for_page};
 pub use machine::{
     PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER, PCE_NTSC_REFERENCE_MHZ_DENOMINATOR,
     PCE_NTSC_REFERENCE_MHZ_NUMERATOR, PCE_VDC_VCE_ACCESS_WAIT_CYCLES,
@@ -60,12 +71,13 @@ pub use machine::{
     PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE,
     PROVISIONAL_PCE_NON_PSG_DEVICE_ADVANCEMENT_IS_INSTRUCTION_ATOMIC,
     PROVISIONAL_PCE_VSYNC_ASSERT_NORMALIZED_TO_LINE_ZERO, PceClockCounter, PceCpuAction,
-    PceCpuDebugSnapshot, PceFrameRun, PceMachine, PceMachineError, PceMachineStep,
+    PceCpuDebugSnapshot, PceExecutionState, PceFrameRun, PceMachine, PceMachineError,
+    PceMachineStep, PceOpcodeHistoryEntry,
 };
 pub use pce_devices::{
     BASE_PCE_CDROM2_CONTROLLER_UPPER_BITS, BASE_PCE_NO_CD_CONTROLLER_UPPER_BITS,
     BASE_TURBOGRAFX16_CDROM2_CONTROLLER_UPPER_BITS, BASE_TURBOGRAFX16_NO_CD_CONTROLLER_UPPER_BITS,
-    PceDevices, SuperGrafxVideo,
+    PceDevices, PceHardwareDebugSnapshot, SuperGrafxVideo,
 };
 pub use psg::{
     DEFAULT_PSG_SAMPLE_RATE, DETERMINISTIC_PSG_RESET_ATTENUATION_SLOT,
@@ -73,22 +85,23 @@ pub use psg::{
     MAX_PSG_SAMPLE_RATE, PROVISIONAL_HUC6280_KEYED_WAVE_WRITE_MATCHES_HUC6280A,
     PROVISIONAL_PSG_GAIN_LATCH_DELAY_CLOCKS, PROVISIONAL_PSG_GAIN_SCAN_CLOCKS_PER_PASS,
     PROVISIONAL_PSG_NOISE_ZERO_PERIOD, PSG_CHANNEL_COUNT, PSG_CLOCK_DENOMINATOR,
-    PSG_CLOCK_NUMERATOR, PSG_INTERNAL_CLOCK_NUMERATOR, PSG_INTERNAL_MASTER_CLOCK_DIVISOR,
-    PSG_MASTER_CLOCK_DIVISOR, PSG_UNAVAILABLE_READ_VALUE, PSG_WAVEFORM_WORDS,
-    PSG_ZERO_FREQUENCY_PERIOD, PsgChannel, PsgRevision,
+    PSG_CLOCK_NUMERATOR, PSG_DEBUG_WAVEFORM_RATE_HZ, PSG_DEBUG_WAVEFORM_SAMPLE_COUNT,
+    PSG_INTERNAL_CLOCK_NUMERATOR, PSG_INTERNAL_MASTER_CLOCK_DIVISOR, PSG_MASTER_CLOCK_DIVISOR,
+    PSG_UNAVAILABLE_READ_VALUE, PSG_WAVEFORM_WORDS, PSG_ZERO_FREQUENCY_PERIOD, PsgChannel,
+    PsgChannelDebugSnapshot, PsgDebugSnapshot, PsgRevision,
 };
 pub use vce::{
     DETERMINISTIC_VCE_INITIAL_COLOR, DETERMINISTIC_VCE_RESET_PRESERVES_PALETTE,
     DETERMINISTIC_VCE_RESET_VALUE, HuC6260, VCE_PALETTE_COLORS, VCE_UNAVAILABLE_READ_VALUE,
-    VceColor, VcePixelClock,
+    VceColor, VceDebugSnapshot, VcePixelClock,
 };
 pub use vdc::{
     DETERMINISTIC_VDC_INITIAL_SATB_WORD, DETERMINISTIC_VDC_INITIAL_VRAM_WORD,
     DETERMINISTIC_VDC_RESET_CLEARS_SATB, DETERMINISTIC_VDC_RESET_PRESERVES_VRAM,
     DETERMINISTIC_VDC_RESET_VALUE, HuC6270, VDC_SATB_WORDS, VDC_UNAVAILABLE_READ_VALUE,
-    VDC_VRAM_BYTES, VDC_VRAM_WORD_ADDRESS_MASK, VDC_VRAM_WORDS, VdcDmaAccess, VdcDmaChannel,
-    VdcDmaDirection, VdcDmaError, VdcDmaProgress, VdcRegister, VdcStatus, VramDmaState,
-    VramSatbDmaState,
+    VDC_VRAM_BYTES, VDC_VRAM_WORD_ADDRESS_MASK, VDC_VRAM_WORDS, VdcDebugSnapshot, VdcDmaAccess,
+    VdcDmaChannel, VdcDmaDirection, VdcDmaError, VdcDmaProgress, VdcRegister, VdcStatus,
+    VramDmaState, VramSatbDmaState,
 };
 pub use vdc_composite::{
     CompositedPixel, DisplayCompositionError, DisplayLayerLine, compose_vdc_output_scanline,
@@ -122,10 +135,13 @@ pub use vdc_video::{
 };
 pub use vpc::{
     DETERMINISTIC_VPC_RESET_REGISTERS, HuC6202, PROVISIONAL_VPC_PRIORITY_MODE_POLICY,
-    PROVISIONAL_VPC_WINDOW_ORIGIN_AND_THRESHOLD, VpcPixelSelection, VpcPixelSource, VpcPort,
-    VpcPriorityModePolicy, VpcVdc, VpcVdcPixel, VpcWindow, VpcWindowRegion,
+    PROVISIONAL_VPC_WINDOW_ORIGIN_AND_THRESHOLD, VpcDebugSnapshot, VpcPixelSelection,
+    VpcPixelSource, VpcPort, VpcPriorityModePolicy, VpcVdc, VpcVdcPixel, VpcWindow,
+    VpcWindowRegion,
 };
 
+#[cfg(test)]
+mod arcade_card_tests;
 #[cfg(test)]
 mod bus_tests;
 #[cfg(test)]

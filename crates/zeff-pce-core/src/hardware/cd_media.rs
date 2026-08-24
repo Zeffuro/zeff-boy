@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -154,6 +155,7 @@ impl CdTrack {
 pub struct CdDisc {
     tracks: Box<[CdTrack]>,
     leadout_lba: u32,
+    content_hash: [u8; 32],
 }
 
 impl CdDisc {
@@ -174,10 +176,18 @@ impl CdDisc {
             }
         }
         let leadout_lba = tracks.iter().map(CdTrack::end_lba).max().unwrap();
+        let tracks = tracks.into_boxed_slice();
+        let content_hash = hash_disc(&tracks);
         Ok(Self {
-            tracks: tracks.into_boxed_slice(),
+            tracks,
             leadout_lba,
+            content_hash,
         })
+    }
+
+    #[inline]
+    pub const fn content_hash(&self) -> [u8; 32] {
+        self.content_hash
     }
 
     #[inline]
@@ -211,9 +221,12 @@ impl CdDisc {
     }
 
     fn stored_track_at_lba(&self, lba: u32) -> Option<&CdTrack> {
-        self.tracks
-            .iter()
-            .find(|track| (track.stored_start_lba..track.end_lba()).contains(&lba))
+        let index = self
+            .tracks
+            .partition_point(|track| track.stored_start_lba <= lba)
+            .checked_sub(1)?;
+        let track = &self.tracks[index];
+        (lba < track.end_lba()).then_some(track)
     }
 
     pub fn read_audio_sample(&self, lba: u32, sample: usize) -> Result<(i16, i16), CdReadError> {
@@ -267,6 +280,32 @@ impl CdDisc {
         };
         Ok(source.try_into().unwrap())
     }
+}
+
+fn hash_disc(tracks: &[CdTrack]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"zeff-boy:pce-core-cd-disc:v1\0");
+    hasher.update((tracks.len() as u32).to_le_bytes());
+    for track in tracks {
+        hasher.update([track.number, track.control]);
+        match track.index0_lba {
+            Some(lba) => {
+                hasher.update([1]);
+                hasher.update(lba.to_le_bytes());
+            }
+            None => hasher.update([0]),
+        }
+        hasher.update(track.index1_lba.to_le_bytes());
+        hasher.update(track.stored_start_lba.to_le_bytes());
+        hasher.update([match track.mode {
+            CdTrackMode::Audio => 0,
+            CdTrackMode::Mode1_2048 => 1,
+            CdTrackMode::Mode1_2352 => 2,
+        }]);
+        hasher.update((track.stored_data.len() as u64).to_le_bytes());
+        hasher.update(&track.stored_data);
+    }
+    hasher.finalize().into()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

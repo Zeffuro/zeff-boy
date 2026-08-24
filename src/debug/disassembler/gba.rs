@@ -292,9 +292,11 @@ fn line<const N: usize>(address: u32, bytes: [u8; N]) -> DisassembledLine {
     DisassembledLine {
         address,
         storage_offset: rom_offset(address),
+        bank: None,
         symbol: None,
         control_target: None,
         control_target_storage: None,
+        control_target_bank: None,
         control_target_symbol: None,
         source: None,
         bytes: bytes.into_iter().collect(),

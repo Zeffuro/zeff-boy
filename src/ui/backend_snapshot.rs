@@ -35,7 +35,7 @@ pub(crate) fn collect_backend_snapshot(
         let store = match backend {
             EmuBackend::Gb(gb) => Some(gb.emu.instruction_trace()),
             EmuBackend::Nes(nes) => Some(nes.emu.instruction_trace()),
-            EmuBackend::Pce(_) => None,
+            EmuBackend::Pce(pce) => Some(pce.instruction_trace()),
             EmuBackend::Gba(gba) => Some(gba.emu.instruction_trace()),
             EmuBackend::Ws(ws) => Some(ws.emu.instruction_trace()),
             EmuBackend::Sega8(sega8) => Some(sega8.emu.instruction_trace()),

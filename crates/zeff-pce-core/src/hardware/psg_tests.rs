@@ -1,9 +1,12 @@
 use super::cpu::Cpu;
 use super::{
     BaseBus, DETERMINISTIC_PSG_RESET_CLEARS_WAVE_RAM, DETERMINISTIC_PSG_RESET_VALUE, HuC6280Psg,
-    MAX_PSG_SAMPLE_RATE, PSG_CHANNEL_COUNT, PSG_UNAVAILABLE_READ_VALUE, PSG_WAVEFORM_WORDS,
-    PsgPort, PsgRevision,
+    MAX_PSG_SAMPLE_RATE, PROVISIONAL_PSG_GAIN_SCAN_CLOCKS_PER_PASS, PSG_CHANNEL_COUNT,
+    PSG_CLOCK_DENOMINATOR, PSG_DEBUG_WAVEFORM_RATE_HZ, PSG_DEBUG_WAVEFORM_SAMPLE_COUNT,
+    PSG_INTERNAL_CLOCK_NUMERATOR, PSG_INTERNAL_MASTER_CLOCK_DIVISOR, PSG_UNAVAILABLE_READ_VALUE,
+    PSG_WAVEFORM_WORDS, PsgPort, PsgRevision,
 };
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 fn port(offset: u8) -> PsgPort {
     PsgPort::from_offset(offset)
@@ -303,8 +306,8 @@ fn dda_audio_holds_the_written_five_bit_value() {
     psg.drain_audio_samples_into(&mut samples);
     assert!(!samples.is_empty());
     assert!(samples.iter().any(|sample| *sample > 0.01));
-    assert!(samples.chunks_exact(2).any(|pair| pair[0] > 0.01));
-    assert!(samples.chunks_exact(2).any(|pair| pair[1] > 0.01));
+    assert!(samples.as_chunks::<2>().0.iter().any(|pair| pair[0] > 0.01));
+    assert!(samples.as_chunks::<2>().0.iter().any(|pair| pair[1] > 0.01));
 }
 
 #[test]
@@ -455,7 +458,9 @@ fn capture_square_wave(sample_rate: u32, frequency: u16, master_ticks: u64) -> V
 
 fn mono_samples(samples: &[f32], skipped_frames: usize) -> impl Iterator<Item = f64> + '_ {
     samples
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .skip(skipped_frames)
         .map(|pair| f64::from(pair[0]))
 }
@@ -613,4 +618,87 @@ fn audio_controls_preserve_oscillator_and_reset_policies() {
     psg.advance_master_ticks(100_000);
     psg.drain_audio_samples_into(&mut samples);
     assert!(samples.iter().any(|sample| *sample != 0.0));
+}
+
+#[test]
+fn debug_waveform_capture_is_opt_in_and_uses_a_fixed_cadence() {
+    const MASTER_TICKS: u64 = 60_000;
+    let mut psg = HuC6280Psg::new();
+    psg.set_sample_rate(96_000);
+    psg.set_sample_generation_enabled(false);
+    psg.advance_master_ticks(MASTER_TICKS);
+    assert!(psg.master_debug_samples_ordered().is_empty());
+
+    psg.set_debug_capture_enabled(true);
+    psg.advance_master_ticks(MASTER_TICKS);
+    let internal_clocks = MASTER_TICKS / PSG_INTERNAL_MASTER_CLOCK_DIVISOR;
+    let expected = (internal_clocks * u64::from(PSG_DEBUG_WAVEFORM_RATE_HZ) * PSG_CLOCK_DENOMINATOR
+        / PSG_INTERNAL_CLOCK_NUMERATOR) as usize;
+    assert_eq!(psg.master_debug_samples_ordered().len(), expected);
+    for channel in 0..PSG_CHANNEL_COUNT {
+        assert_eq!(psg.channel_debug_samples_ordered(channel).len(), expected);
+    }
+}
+
+#[test]
+fn debug_waveform_history_is_bounded_and_covers_all_six_channels() {
+    let mut psg = HuC6280Psg::new();
+    psg.write_port(port(1), 0xFF);
+    for (channel, dda) in [1, 5, 10, 15, 20, 31].into_iter().enumerate() {
+        select(&mut psg, channel as u8);
+        psg.write_port(port(5), 0xFF);
+        psg.write_port(port(4), 0xDF);
+        psg.write_port(port(6), dda);
+    }
+    psg.advance_master_ticks(
+        u64::from(PROVISIONAL_PSG_GAIN_SCAN_CLOCKS_PER_PASS) * PSG_INTERNAL_MASTER_CLOCK_DIVISOR,
+    );
+    psg.set_sample_generation_enabled(false);
+    psg.set_debug_capture_enabled(true);
+    psg.advance_master_ticks(300_000);
+
+    assert_eq!(
+        psg.master_debug_samples_ordered().len(),
+        PSG_DEBUG_WAVEFORM_SAMPLE_COUNT
+    );
+    let samples = (0..PSG_CHANNEL_COUNT)
+        .map(|channel| {
+            let waveform = psg.channel_debug_samples_ordered(channel);
+            assert_eq!(waveform.len(), PSG_DEBUG_WAVEFORM_SAMPLE_COUNT);
+            waveform[PSG_DEBUG_WAVEFORM_SAMPLE_COUNT - 1]
+        })
+        .collect::<Vec<_>>();
+    assert!(samples.windows(2).all(|pair| pair[0] < pair[1]));
+}
+
+#[test]
+fn debug_waveforms_do_not_affect_state_and_clear_on_reset_or_load() {
+    let mut captured = HuC6280Psg::new();
+    let mut uncaptured = HuC6280Psg::new();
+    configure_square_wave(&mut captured, 64);
+    configure_square_wave(&mut uncaptured, 64);
+    captured.set_debug_capture_enabled(true);
+    captured.advance_master_ticks(60_000);
+    uncaptured.advance_master_ticks(60_000);
+    assert!(!captured.master_debug_samples_ordered().is_empty());
+
+    let mut captured_writer = StateWriter::new();
+    captured.write_state(&mut captured_writer);
+    let captured_state = captured_writer.into_bytes();
+    let mut uncaptured_writer = StateWriter::new();
+    uncaptured.write_state(&mut uncaptured_writer);
+    assert_eq!(captured_state, uncaptured_writer.into_bytes());
+
+    captured.reset();
+    assert!(captured.debug_capture_enabled());
+    assert!(captured.master_debug_samples_ordered().is_empty());
+    assert!(captured.channel_debug_samples_ordered(5).is_empty());
+    captured.advance_master_ticks(60_000);
+    assert!(!captured.master_debug_samples_ordered().is_empty());
+    captured
+        .read_state(&mut StateReader::new(&captured_state))
+        .unwrap();
+    assert!(captured.debug_capture_enabled());
+    assert!(captured.master_debug_samples_ordered().is_empty());
+    assert!(captured.channel_debug_samples_ordered(5).is_empty());
 }

@@ -78,7 +78,7 @@ impl AudioOutput {
 
             self.left.clear();
             self.right.clear();
-            for pair in self.buffer[..BUFFER_FRAMES * 2].chunks_exact(2) {
+            for pair in self.buffer[..BUFFER_FRAMES * 2].as_chunks::<2>().0 {
                 self.left.push(pair[0]);
                 self.right.push(pair[1]);
             }

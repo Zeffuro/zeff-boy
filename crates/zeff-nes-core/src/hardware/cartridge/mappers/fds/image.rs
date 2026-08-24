@@ -60,7 +60,9 @@ impl FdsImage {
         }
 
         let sides = side_bytes
-            .chunks_exact(FDS_SIDE_SIZE)
+            .as_chunks::<FDS_SIDE_SIZE>()
+            .0
+            .iter()
             .map(|side| side.to_vec())
             .collect();
 

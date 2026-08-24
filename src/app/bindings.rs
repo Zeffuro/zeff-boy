@@ -33,13 +33,15 @@ impl App {
 }
 
 fn map_key_bindings(kb: &crate::settings::KeyBindings, key: KeyCode) -> Option<HostButton> {
-    let bindings: [(KeyCode, HostButton); 10] = [
+    let bindings: [(KeyCode, HostButton); 12] = [
         (kb.right, HostButton::Right),
         (kb.left, HostButton::Left),
         (kb.up, HostButton::Up),
         (kb.down, HostButton::Down),
         (kb.a, HostButton::A),
         (kb.b, HostButton::B),
+        (kb.x, HostButton::X),
+        (kb.y, HostButton::Y),
         (kb.l, HostButton::L),
         (kb.r, HostButton::R),
         (kb.start, HostButton::Start),

@@ -1,5 +1,6 @@
 mod audio;
 mod scsi;
+pub(crate) mod state;
 
 use std::collections::VecDeque;
 
@@ -36,6 +37,7 @@ const CDDA_TICK_NUMERATOR: u64 = 77;
 const CDDA_TICK_DENOMINATOR: u64 = 37_500;
 const CDDA_SOURCE_RATE: f64 = 44_100.0;
 const CDDA_MIX_GAIN: f32 = 0.5;
+const CDDA_SAMPLE_LATCH_TICKS: u64 = 700;
 const CD_COMMAND_TRACE_CAPACITY: usize = 128;
 const ADPCM_CLOCK_NUMERATOR: u64 = 176;
 const ADPCM_CLOCK_DENOMINATOR: u64 = 118_125;
@@ -79,6 +81,39 @@ enum CdEvent {
     CompleteAudioStart,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CdProtocolEventDebugKind {
+    EnterCommand,
+    RaiseRequest,
+    ExecuteCommand,
+    EnterStatus,
+    EnterMessage,
+    EnterBusFree,
+    CompleteAutoAck,
+    CompleteAudioStart,
+}
+
+impl CdProtocolEventDebugKind {
+    const fn from_event(event: CdEvent) -> Self {
+        match event {
+            CdEvent::EnterCommand => Self::EnterCommand,
+            CdEvent::RaiseRequest => Self::RaiseRequest,
+            CdEvent::ExecuteCommand => Self::ExecuteCommand,
+            CdEvent::EnterStatus => Self::EnterStatus,
+            CdEvent::EnterMessage => Self::EnterMessage,
+            CdEvent::EnterBusFree => Self::EnterBusFree,
+            CdEvent::CompleteAutoAck => Self::CompleteAutoAck,
+            CdEvent::CompleteAudioStart => Self::CompleteAudioStart,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CdProtocolEventDebugSnapshot {
+    pub kind: CdProtocolEventDebugKind,
+    pub ticks_remaining: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CdAudioStatus {
@@ -102,7 +137,6 @@ pub enum CdAudioFadeTarget {
     Adpcm,
 }
 
-/// Read-only CD audio state intended for debuggers and headless tooling.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CdAudioDebugSnapshot {
     pub status: CdAudioStatus,
@@ -118,6 +152,65 @@ pub struct CdAudioDebugSnapshot {
     pub fade_level_q16: u32,
     pub fade_step_ticks: u64,
     pub fade_ticks_to_next: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CdRom2DebugSnapshot {
+    pub phase: CdScsiPhase,
+    pub bus_status: u8,
+    pub request: bool,
+    pub acknowledge: bool,
+    pub auto_acknowledge: bool,
+    pub acknowledged_request: bool,
+    pub request_pending: bool,
+    pub reset_asserted: bool,
+    pub output_latch: u8,
+    pub current_input_data: u8,
+    pub data_register: u8,
+    pub command: Vec<u8>,
+    pub response: Vec<u8>,
+    pub response_index: usize,
+    pub response_available: usize,
+    pub status: u8,
+    pub sense_key: u8,
+    pub additional_sense_code: u8,
+    pub pending_event: Option<CdProtocolEventDebugSnapshot>,
+    pub sector_arrival_ticks: Option<u64>,
+    pub sectors_pending: u16,
+    pub sector_tick_remainder: u64,
+    pub data_ready_irq_enabled: bool,
+    pub status_irq_enabled: bool,
+    pub audio_end_irq_enabled: bool,
+    pub audio_half_irq_enabled: bool,
+    pub data_ready_condition: bool,
+    pub status_condition: bool,
+    pub irq2_asserted: bool,
+    pub bram_unlocked: bool,
+    pub recent_commands: Vec<CdCommandTrace>,
+    pub audio: CdAudioDebugSnapshot,
+    pub audio_left_sample: i16,
+    pub audio_right_sample: i16,
+    pub audio_sample_latch: i16,
+    pub audio_sample_latch_right: bool,
+    pub audio_sample_rate: u32,
+    pub audio_sample_generation_enabled: bool,
+    pub adpcm_address_latch: u16,
+    pub adpcm_read_address: u16,
+    pub adpcm_write_address: u16,
+    pub adpcm_read_buffer: u8,
+    pub adpcm_dma_control: u8,
+    pub adpcm_address_control: u8,
+    pub adpcm_playback_rate: u8,
+    pub adpcm_length: u32,
+    pub adpcm_playing: bool,
+    pub adpcm_stop_pending: bool,
+    pub adpcm_high_nibble_next: bool,
+    pub adpcm_clock_accumulator: u64,
+    pub adpcm_predictor: u16,
+    pub adpcm_step_index: u8,
+    pub adpcm_end_irq: bool,
+    pub adpcm_half_irq: bool,
+    pub adpcm_buffered_samples: usize,
 }
 
 fn formatted_bram() -> Box<[u8; CDROM2_BRAM_LEN]> {
@@ -181,6 +274,10 @@ pub struct CdRom2 {
     audio_tick_accumulator: u64,
     audio_left_sample: i16,
     audio_right_sample: i16,
+    audio_sample_latch: i16,
+    audio_sample_latch_right: bool,
+    audio_sample_latch_clock: u64,
+    audio_sample_latch_last_clock: u64,
     audio_source_frames: VecDeque<[f32; 2]>,
     audio_resample_position: f64,
     audio_sample_rate: u32,
@@ -208,6 +305,7 @@ pub struct CdRom2 {
     adpcm_half_irq: bool,
     adpcm_resampler: audio::MonoBlipResampler,
     adpcm_audio_samples: Vec<i16>,
+    debug_adpcm_dma_completed: bool,
 }
 
 impl CdRom2 {
@@ -256,6 +354,10 @@ impl CdRom2 {
             audio_tick_accumulator: 0,
             audio_left_sample: 0,
             audio_right_sample: 0,
+            audio_sample_latch: 0,
+            audio_sample_latch_right: false,
+            audio_sample_latch_clock: 0,
+            audio_sample_latch_last_clock: 0,
             audio_source_frames: VecDeque::new(),
             audio_resample_position: 0.0,
             audio_sample_rate: 44_100,
@@ -283,6 +385,7 @@ impl CdRom2 {
             adpcm_half_irq: false,
             adpcm_resampler: audio::MonoBlipResampler::new(44_100),
             adpcm_audio_samples: Vec::new(),
+            debug_adpcm_dma_completed: false,
         }
     }
 
@@ -297,6 +400,10 @@ impl CdRom2 {
         self.sector_tick_remainder = 0;
         self.stop_audio(CdAudioStatus::Inactive);
         self.audio_tick_accumulator = 0;
+        self.audio_sample_latch = 0;
+        self.audio_sample_latch_right = false;
+        self.audio_sample_latch_clock = 0;
+        self.audio_sample_latch_last_clock = 0;
         self.audio_source_frames.clear();
         self.audio_resample_position = 0.0;
         self.adpcm_address_latch = 0;
@@ -322,8 +429,13 @@ impl CdRom2 {
         self.adpcm_half_irq = false;
         self.adpcm_resampler = audio::MonoBlipResampler::new(self.audio_sample_rate);
         self.adpcm_audio_samples.clear();
+        self.debug_adpcm_dma_completed = false;
         self.command_trace.clear();
         self.enter_bus_free();
+    }
+
+    pub(crate) fn take_debug_dma_completed(&mut self) -> bool {
+        std::mem::take(&mut self.debug_adpcm_dma_completed)
     }
 
     #[inline]
@@ -349,6 +461,71 @@ impl CdRom2 {
     #[inline]
     pub fn command_trace(&self) -> &VecDeque<CdCommandTrace> {
         &self.command_trace
+    }
+
+    pub fn debug_snapshot(&self) -> CdRom2DebugSnapshot {
+        CdRom2DebugSnapshot {
+            phase: self.phase,
+            bus_status: self.bus_status(),
+            request: self.request,
+            acknowledge: self.acknowledge,
+            auto_acknowledge: self.auto_acknowledge,
+            acknowledged_request: self.acknowledged_request,
+            request_pending: self.request_pending,
+            reset_asserted: self.reset_asserted,
+            output_latch: self.output_latch,
+            current_input_data: self.current_input_data(),
+            data_register: self.data_register(),
+            command: self.command.clone(),
+            response: self.response.clone(),
+            response_index: self.response_index,
+            response_available: self.response_available,
+            status: self.status,
+            sense_key: self.sense_key,
+            additional_sense_code: self.additional_sense_code,
+            pending_event: self.event.map(|(event, ticks_remaining)| {
+                CdProtocolEventDebugSnapshot {
+                    kind: CdProtocolEventDebugKind::from_event(event),
+                    ticks_remaining,
+                }
+            }),
+            sector_arrival_ticks: self.sector_arrival_ticks,
+            sectors_pending: self.sectors_pending,
+            sector_tick_remainder: self.sector_tick_remainder,
+            data_ready_irq_enabled: self.data_ready_irq_enabled,
+            status_irq_enabled: self.status_irq_enabled,
+            audio_end_irq_enabled: self.audio_end_irq_enabled,
+            audio_half_irq_enabled: self.audio_half_irq_enabled,
+            data_ready_condition: self.data_ready_condition(),
+            status_condition: self.status_condition(),
+            irq2_asserted: self.irq2_level() == LineLevel::Low,
+            bram_unlocked: self.bram_unlocked,
+            recent_commands: self.command_trace.iter().copied().collect(),
+            audio: self.audio_debug_snapshot(),
+            audio_left_sample: self.audio_left_sample,
+            audio_right_sample: self.audio_right_sample,
+            audio_sample_latch: self.audio_sample_latch,
+            audio_sample_latch_right: self.audio_sample_latch_right,
+            audio_sample_rate: self.audio_sample_rate,
+            audio_sample_generation_enabled: self.audio_sample_generation_enabled,
+            adpcm_address_latch: self.adpcm_address_latch,
+            adpcm_read_address: self.adpcm_read_address,
+            adpcm_write_address: self.adpcm_write_address,
+            adpcm_read_buffer: self.adpcm_read_buffer,
+            adpcm_dma_control: self.adpcm_dma_control,
+            adpcm_address_control: self.adpcm_address_control,
+            adpcm_playback_rate: self.adpcm_playback_rate,
+            adpcm_length: self.adpcm_length,
+            adpcm_playing: self.adpcm_playing,
+            adpcm_stop_pending: self.adpcm_stop_pending,
+            adpcm_high_nibble_next: self.adpcm_high_nibble_next,
+            adpcm_clock_accumulator: self.adpcm_clock_accumulator,
+            adpcm_predictor: self.adpcm_predictor,
+            adpcm_step_index: self.adpcm_step_index,
+            adpcm_end_irq: self.adpcm_end_irq,
+            adpcm_half_irq: self.adpcm_half_irq,
+            adpcm_buffered_samples: self.adpcm_audio_samples.len(),
+        }
     }
 
     pub fn audio_debug_snapshot(&self) -> CdAudioDebugSnapshot {
@@ -533,7 +710,6 @@ impl CdRom2 {
         match offset {
             0 => self.bus_status(),
             1 => self.data_register(),
-            8 => self.current_input_data(),
             2 => {
                 u8::from(self.acknowledge) << 7
                     | u8::from(self.data_ready_irq_enabled) << 6
@@ -548,8 +724,10 @@ impl CdRom2 {
                     | u8::from(self.adpcm_half_irq) << 2
             }
             4 => u8::from(self.reset_asserted) << 1,
-            5 | 6 => 0,
+            5 => self.audio_sample_latch.to_le_bytes()[0],
+            6 => self.audio_sample_latch.to_le_bytes()[1],
             7 => u8::from(self.bram_unlocked) << 7,
+            8 => self.current_input_data(),
             9 => self.adpcm_address_latch.to_le_bytes()[1],
             10 => self.adpcm_read_buffer,
             11 => self.adpcm_dma_control,
@@ -588,22 +766,24 @@ impl CdRom2 {
 
     fn write_register(&mut self, offset: u8, value: u8) {
         match offset {
+            // D9 modes 1/2 keep the bus busy during playback.
             0 if !self.reset_asserted
-                && (self.phase == CdScsiPhase::BusFree
-                    || (self.phase == CdScsiPhase::Busy
-                        && self.audio_status == CdAudioStatus::Playing)) =>
+                && matches!(self.phase, CdScsiPhase::BusFree | CdScsiPhase::Busy) =>
             {
                 self.phase = CdScsiPhase::Selection;
                 self.schedule(CdEvent::EnterCommand, PROVISIONAL_CDROM2_SELECTION_TICKS);
             }
             1 => self.output_latch = value,
             2 => self.write_control(value),
+            3 => {}
             4 => {
                 self.reset_asserted = value & 2 != 0;
                 if self.reset_asserted {
                     self.enter_bus_free();
                 }
             }
+            5 => self.latch_cdda_sample(),
+            6 => {}
             7 => self.bram_unlocked = value & 0x80 != 0,
             8 => {
                 self.adpcm_address_latch = (self.adpcm_address_latch & 0xFF00) | u16::from(value);
@@ -621,6 +801,7 @@ impl CdRom2 {
                 self.adpcm_dma_control = value & 3;
                 self.service_adpcm_dma();
             }
+            12 => {}
             13 => self.write_adpcm_address_control(value),
             14 => self.write_adpcm_playback_rate(value),
             15 => self.write_audio_fade_control(value),

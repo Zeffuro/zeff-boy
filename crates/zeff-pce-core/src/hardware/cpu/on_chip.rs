@@ -1,5 +1,7 @@
 use super::super::bus::{OPEN_BUS_VALUE, PhysicalRegion, decode_physical_region};
 use super::{Cpu, CpuBus, CpuStep, CpuTrap, IrqPort, StatusFlags, TimerPort, VdcPort};
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const TIMER_MASTER_TICKS: u64 = 3_072;
 pub const UNINITIALIZED_TIMER_COUNTER_READ: u8 = 0;
@@ -290,6 +292,11 @@ impl HuC6280 {
         Ok(step)
     }
 
+    pub fn debug_write_logical<B: CpuBus>(&mut self, bus: &mut B, logical_addr: u16, value: u8) {
+        let mut bus = OnChipBus::new(&mut self.on_chip_io, bus);
+        self.cpu.write(&mut bus, logical_addr, value);
+    }
+
     pub(crate) fn service_interrupt_boundary<B: CpuBus>(
         &mut self,
         bus: &mut B,
@@ -339,6 +346,13 @@ impl HuC6280 {
         self.sampled_interrupt
     }
 
+    pub(crate) fn replace_sampled_interrupt(
+        &mut self,
+        sampled_interrupt: Option<InterruptSource>,
+    ) -> Option<InterruptSource> {
+        std::mem::replace(&mut self.sampled_interrupt, sampled_interrupt)
+    }
+
     #[inline]
     pub const fn cpu(&self) -> &Cpu {
         &self.cpu
@@ -383,6 +397,166 @@ impl HuC6280 {
     pub const fn highest_priority_unmasked_request(&self) -> Option<InterruptSource> {
         self.on_chip_io.highest_priority_unmasked_request()
     }
+
+    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+        let registers = self.cpu.registers();
+        writer.write_u8(registers.a);
+        writer.write_u8(registers.x);
+        writer.write_u8(registers.y);
+        writer.write_u8(registers.sp);
+        writer.write_u16(registers.pc);
+        writer.write_u8(registers.status.bits());
+        writer.write_bytes(&self.cpu.mapping_registers());
+        writer.write_u8(match self.cpu.speed_mode() {
+            super::SpeedMode::Low => 0,
+            super::SpeedMode::High => 1,
+        });
+
+        writer.write_u8(self.on_chip_io.timer_reload);
+        write_option_u8(writer, self.on_chip_io.timer_counter);
+        writer.write_bool(self.on_chip_io.timer_running);
+        writer.write_u16(self.on_chip_io.timer_prescaler);
+        writer.write_bool(self.on_chip_io.timer_irq_pending);
+        writer.write_u8(self.on_chip_io.interrupt_disable);
+        writer.write_u8(line_level_to_tag(self.on_chip_io.irq1_line));
+        writer.write_u8(line_level_to_tag(self.on_chip_io.irq2_line));
+        writer.write_u8(line_level_to_tag(self.on_chip_io.nmi_line));
+        writer.write_bool(self.on_chip_io.nmi_pending);
+        write_option_bool(writer, self.interrupt_poll_disable);
+        writer.write_u8(interrupt_to_tag(self.sampled_interrupt));
+    }
+
+    pub(crate) const fn at_action_boundary(&self) -> bool {
+        self.interrupt_poll_disable.is_none()
+    }
+
+    pub(crate) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        let registers = self.cpu.registers_mut();
+        registers.a = reader.read_u8()?;
+        registers.x = reader.read_u8()?;
+        registers.y = reader.read_u8()?;
+        registers.sp = reader.read_u8()?;
+        registers.pc = reader.read_u16()?;
+        registers.status = StatusFlags::from_bits_retain(reader.read_u8()?);
+        let mut mpr = [0; 8];
+        reader.read_exact(&mut mpr)?;
+        for (index, value) in mpr.into_iter().enumerate() {
+            self.cpu.set_mapping_register(index, value);
+        }
+        self.cpu.set_speed_mode(match reader.read_u8()? {
+            0 => super::SpeedMode::Low,
+            1 => super::SpeedMode::High,
+            tag => bail!("invalid HuC6280 speed-mode tag in save-state: {tag}"),
+        });
+
+        let timer_reload = reader.read_u8()?;
+        if timer_reload > 0x7F {
+            bail!("invalid HuC6280 timer reload in save-state: {timer_reload}");
+        }
+        let timer_counter = read_option_u8(reader)?;
+        if timer_counter.is_some_and(|counter| counter > 0x7F) {
+            bail!("invalid HuC6280 timer counter in save-state");
+        }
+        let timer_running = reader.read_bool()?;
+        if timer_running && timer_counter.is_none() {
+            bail!("running HuC6280 timer has no counter in save-state");
+        }
+        let timer_prescaler = reader.read_u16()?;
+        if timer_prescaler >= TIMER_MASTER_TICKS as u16 {
+            bail!("invalid HuC6280 timer prescaler in save-state: {timer_prescaler}");
+        }
+        let timer_irq_pending = reader.read_bool()?;
+        let interrupt_disable = reader.read_u8()?;
+        if interrupt_disable & !INTERRUPT_MASK != 0 {
+            bail!("invalid HuC6280 interrupt mask in save-state: {interrupt_disable}");
+        }
+        self.on_chip_io = OnChipIo {
+            timer_reload,
+            timer_counter,
+            timer_running,
+            timer_prescaler,
+            timer_irq_pending,
+            interrupt_disable,
+            irq1_line: tag_to_line_level(reader.read_u8()?)?,
+            irq2_line: tag_to_line_level(reader.read_u8()?)?,
+            nmi_line: tag_to_line_level(reader.read_u8()?)?,
+            nmi_pending: reader.read_bool()?,
+        };
+        self.interrupt_poll_disable = read_option_bool(reader)?;
+        self.sampled_interrupt = tag_to_interrupt(reader.read_u8()?)?;
+        Ok(())
+    }
+}
+
+fn write_option_u8(writer: &mut StateWriter, value: Option<u8>) {
+    match value {
+        None => writer.write_u8(0),
+        Some(value) => {
+            writer.write_u8(1);
+            writer.write_u8(value);
+        }
+    }
+}
+
+fn read_option_u8(reader: &mut StateReader<'_>) -> anyhow::Result<Option<u8>> {
+    Ok(match reader.read_u8()? {
+        0 => None,
+        1 => Some(reader.read_u8()?),
+        tag => bail!("invalid optional-byte tag in HuC6280 save-state: {tag}"),
+    })
+}
+
+fn write_option_bool(writer: &mut StateWriter, value: Option<bool>) {
+    writer.write_u8(match value {
+        None => 0,
+        Some(false) => 1,
+        Some(true) => 2,
+    });
+}
+
+fn read_option_bool(reader: &mut StateReader<'_>) -> anyhow::Result<Option<bool>> {
+    Ok(match reader.read_u8()? {
+        0 => None,
+        1 => Some(false),
+        2 => Some(true),
+        tag => bail!("invalid optional-boolean tag in HuC6280 save-state: {tag}"),
+    })
+}
+
+const fn line_level_to_tag(level: LineLevel) -> u8 {
+    match level {
+        LineLevel::Low => 0,
+        LineLevel::High => 1,
+    }
+}
+
+fn tag_to_line_level(tag: u8) -> anyhow::Result<LineLevel> {
+    Ok(match tag {
+        0 => LineLevel::Low,
+        1 => LineLevel::High,
+        _ => bail!("invalid HuC6280 line-level tag in save-state: {tag}"),
+    })
+}
+
+const fn interrupt_to_tag(source: Option<InterruptSource>) -> u8 {
+    match source {
+        None => 0,
+        Some(InterruptSource::Nmi) => 1,
+        Some(InterruptSource::Timer) => 2,
+        Some(InterruptSource::Irq1) => 3,
+        Some(InterruptSource::Irq2) => 4,
+    }
+}
+
+fn tag_to_interrupt(tag: u8) -> anyhow::Result<Option<InterruptSource>> {
+    Ok(match tag {
+        0 => None,
+        1 => Some(InterruptSource::Nmi),
+        2 => Some(InterruptSource::Timer),
+        3 => Some(InterruptSource::Irq1),
+        4 => Some(InterruptSource::Irq2),
+        _ => bail!("invalid HuC6280 sampled-interrupt tag in save-state: {tag}"),
+    })
 }
 
 struct OnChipBus<'a, B> {
@@ -500,6 +674,36 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
     fn observe_internal_write(&mut self, physical_addr: u32, value: u8, dummy: bool) {
         self.inner
             .observe_internal_write(physical_addr, value, dummy);
+    }
+
+    #[inline]
+    fn observe_logical_read(
+        &mut self,
+        logical_addr: u16,
+        physical_addr: u32,
+        value: u8,
+        dummy: bool,
+    ) {
+        self.inner
+            .observe_logical_read(logical_addr, physical_addr, value, dummy);
+    }
+
+    #[inline]
+    fn observe_logical_write(
+        &mut self,
+        logical_addr: u16,
+        physical_addr: u32,
+        value: u8,
+        dummy: bool,
+    ) {
+        self.inner
+            .observe_logical_write(logical_addr, physical_addr, value, dummy);
+    }
+
+    #[inline]
+    fn observe_instruction_byte(&mut self, logical_addr: u16, physical_addr: u32, value: u8) {
+        self.inner
+            .observe_instruction_byte(logical_addr, physical_addr, value);
     }
 
     #[inline]

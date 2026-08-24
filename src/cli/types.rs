@@ -1,6 +1,6 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
-use zeff_pce_core::hardware::PceControllerMode;
+use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBaseMode};
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -65,6 +65,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) break_at: Option<u16>,
     pub(crate) no_apu: bool,
     pub(crate) no_sram: bool,
+    pub(crate) apply_mods: bool,
     pub(crate) gb_dmg_palette_preset: Option<DmgPalettePreset>,
     pub(crate) stuck_window_frames: u64,
     pub(crate) stuck_pc_threshold: usize,
@@ -95,6 +96,8 @@ pub(crate) struct HeadlessOptions {
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
     pub(crate) sega8_console_region: Option<Sega8Region>,
     pub(crate) pce_controller_mode: Option<PceControllerMode>,
+    pub(crate) pce_memory_base_mode: Option<PceMemoryBaseMode>,
+    pub(crate) pce_arcade_card_mode: Option<PceArcadeCardMode>,
 }
 
 impl Default for HeadlessOptions {
@@ -121,6 +124,7 @@ impl Default for HeadlessOptions {
             break_at: None,
             no_apu: false,
             no_sram: false,
+            apply_mods: false,
             gb_dmg_palette_preset: None,
             stuck_window_frames: 0,
             stuck_pc_threshold: 8,
@@ -151,6 +155,8 @@ impl Default for HeadlessOptions {
             sega8_video_standard: None,
             sega8_console_region: None,
             pce_controller_mode: None,
+            pce_memory_base_mode: None,
+            pce_arcade_card_mode: None,
         }
     }
 }

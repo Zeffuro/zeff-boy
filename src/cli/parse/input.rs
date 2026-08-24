@@ -18,15 +18,17 @@ fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, bool)> {
             "b" | "ii" => buttons |= 0x02,
             "select" | "sel" => buttons |= 0x04,
             "start" | "run" => buttons |= 0x08,
-            "l" | "leftshoulder" | "shoulderl" => buttons |= 0x10,
-            "r" | "rightshoulder" | "shoulderr" => buttons |= 0x20,
+            "l" | "leftshoulder" | "shoulderl" | "iii" => buttons |= 0x10,
+            "r" | "rightshoulder" | "shoulderr" | "iv" => buttons |= 0x20,
+            "x" | "v" => buttons |= 0x40,
+            "y" | "vi" => buttons |= 0x80,
             "right" => dpad |= 0x01,
             "left" => dpad |= 0x02,
             "up" => dpad |= 0x04,
             "down" => dpad |= 0x08,
             "reset" | "softreset" | "softresetbutton" => reset = true,
             _ => anyhow::bail!(
-                "{flag} has unknown key {:?}; expected a/i,b/ii,select,start/run,l,r,up,down,left,right,reset",
+                "{flag} has unknown key {:?}; expected a/i,b/ii,select,start/run,l/iii,r/iv,x/v,y/vi,up,down,left,right,reset",
                 raw_key
             ),
         }
@@ -171,10 +173,10 @@ mod tests {
 
     #[test]
     fn pce_button_names_alias_the_generic_host_buttons() {
-        let events = parse_input_event_arg("i+ii+run@10-11", "--press").unwrap();
+        let events = parse_input_event_arg("i+ii+iii+iv+v+vi+run@10-11", "--press").unwrap();
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].buttons, 0x0B);
+        assert_eq!(events[0].buttons, 0xFB);
         assert_eq!((events[0].start_frame, events[0].end_frame), (10, 11));
     }
 }

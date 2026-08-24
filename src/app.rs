@@ -156,6 +156,7 @@ pub(crate) fn run(
         },
         last_state_dir: None,
         show_settings_window: false,
+        show_mods_window: false,
         show_printer_window: false,
         debug_requests: DebugRequests::default(),
         active_save_slot: 0,
@@ -242,6 +243,8 @@ pub(crate) fn run(
         #[cfg(not(target_arch = "wasm32"))]
         settings_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
+        mods_window_focused: false,
+        #[cfg(not(target_arch = "wasm32"))]
         printer_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
         focus_printer_window_pending: false,
@@ -250,6 +253,8 @@ pub(crate) fn run(
         last_debugger_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_settings_render: Instant::now(),
+        #[cfg(not(target_arch = "wasm32"))]
+        last_mods_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_printer_render: Instant::now(),
         egui_wants_keyboard: false,
@@ -269,18 +274,24 @@ pub(crate) fn run(
 
     app.debug_windows.memory.configure_for_system(active_system);
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some((system, rom_path, source_path, rom_hash, supports_debugger)) =
+    if let Some((system, rom_path, source_path, rom_hash, supports_symbol_loading)) =
         app.initial_backend.as_ref().map(|b| {
             (
                 b.system(),
                 b.rom_path().to_path_buf(),
                 b.source_path().to_path_buf(),
                 b.rom_hash(),
-                b.supports_debugger(),
+                b.supports_symbol_loading(),
             )
         })
     {
-        app.start_symbol_load_for_paths(system, rom_path, source_path, rom_hash, supports_debugger);
+        app.start_symbol_load_for_paths(
+            system,
+            rom_path,
+            source_path,
+            rom_hash,
+            supports_symbol_loading,
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -335,6 +346,7 @@ struct App {
     camera: CameraState,
     last_state_dir: Option<std::path::PathBuf>,
     show_settings_window: bool,
+    show_mods_window: bool,
     show_printer_window: bool,
     debug_requests: DebugRequests,
     active_save_slot: u8,
@@ -383,6 +395,8 @@ struct App {
     #[cfg(not(target_arch = "wasm32"))]
     settings_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
+    mods_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     printer_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
     focus_printer_window_pending: bool,
@@ -391,6 +405,8 @@ struct App {
     last_debugger_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_settings_render: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_mods_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_printer_render: Instant,
     egui_wants_keyboard: bool,
@@ -466,6 +482,12 @@ impl App {
         self.emu_thread
             .as_ref()
             .is_some_and(|thread| thread.capabilities().supports_debugger)
+    }
+
+    pub(super) fn core_supports_execution_controls(&self) -> bool {
+        self.emu_thread
+            .as_ref()
+            .is_some_and(|thread| thread.capabilities().supports_execution_controls)
     }
 }
 
@@ -704,6 +726,7 @@ impl ApplicationHandler for App {
             self.drain_live_control();
             self.sync_debug_presentation(event_loop);
             self.sync_settings_window(event_loop);
+            self.sync_mods_window(event_loop);
             self.sync_printer_window(event_loop);
         }
         self.apply_focus_state();

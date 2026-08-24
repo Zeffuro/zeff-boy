@@ -154,6 +154,7 @@ pub(crate) fn draw_trace_content(
                     actions.disasm_target = Some(DisassemblyTarget {
                         cpu_address: Address::from(entry.pc),
                         storage_offset: entry.physical_rom_offset,
+                        bank: entry.bank,
                         thumb: match entry.mode {
                             TraceExecMode::Thumb => Some(true),
                             TraceExecMode::Arm => Some(false),
@@ -240,6 +241,17 @@ fn trace_symbol_context(
         .physical_rom_offset
         .and_then(|offset| symbols.symbol_context_at_rom_offset(offset))
         .or_else(|| {
+            if entry.mode == TraceExecMode::HuC6280 {
+                return entry
+                    .bank
+                    .and_then(|bank| u8::try_from(bank).ok())
+                    .and_then(|page| {
+                        symbols.symbol_name_at_debug_location(
+                            crate::symbols::pce::pce_static_location(entry.pc as u16, page),
+                        )
+                    })
+                    .map(str::to_owned);
+            }
             symbols
                 .unique_symbol_name_at_cpu_address(u64::from(entry.pc))
                 .map(str::to_owned)
@@ -269,6 +281,12 @@ fn decode_entry(entry: &InstructionTraceRecord) -> DecodedTrace {
             1,
         ),
         TraceExecMode::Mos6502 => super::nes_disassemble_around(
+            |address| trace_read16(bytes, entry.pc as u16, address),
+            entry.pc as u16,
+            0,
+            1,
+        ),
+        TraceExecMode::HuC6280 => super::huc6280_disassemble_around(
             |address| trace_read16(bytes, entry.pc as u16, address),
             entry.pc as u16,
             0,
@@ -380,6 +398,10 @@ fn format_write(write: &TraceWrite) -> String {
 fn register_name(mode: TraceExecMode, register: u8) -> &'static str {
     const GB: [&str; 10] = ["A", "F", "B", "C", "D", "E", "H", "L", "SP", "PC"];
     const NES: [&str; 6] = ["A", "X", "Y", "SP", "P", "PC"];
+    const HUC6280: [&str; 15] = [
+        "A", "X", "Y", "SP", "PC", "P", "MPR0", "MPR1", "MPR2", "MPR3", "MPR4", "MPR5", "MPR6",
+        "MPR7", "SPD",
+    ];
     const Z80: [&str; 14] = [
         "A", "F", "B", "C", "D", "E", "H", "L", "IX", "IY", "SP", "PC", "I", "R",
     ];
@@ -389,6 +411,7 @@ fn register_name(mode: TraceExecMode, register: u8) -> &'static str {
     match mode {
         TraceExecMode::Sm83 => GB.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::Mos6502 => NES.get(register as usize).copied().unwrap_or("?"),
+        TraceExecMode::HuC6280 => HUC6280.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::Z80 => Z80.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::V30 => V30.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::Arm | TraceExecMode::Thumb => match register {
@@ -444,4 +467,29 @@ fn colored_sized_label(ui: &mut egui::Ui, width: f32, text: &str, color: egui::C
         [width, 18.0],
         egui::Label::new(egui::RichText::new(text).color(color)),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn huc6280_trace_entries_decode_and_name_mapping_registers() {
+        let mut entry = InstructionTraceRecord::new(
+            TraceExecMode::HuC6280,
+            0xE000,
+            Some(0x20_000),
+            3,
+            45,
+            &[0x73, 0x34, 0x12, 0x78, 0x56, 0xBC, 0x9A],
+        );
+        entry.bank = Some(0x10);
+
+        let decoded = decode_entry(&entry);
+        assert_eq!(decoded.bytes, "73 34 12 78 56 BC 9A");
+        assert_eq!(decoded.mnemonic, "TII $1234,$5678,$9ABC");
+        assert_eq!(register_name(TraceExecMode::HuC6280, 6), "MPR0");
+        assert_eq!(register_name(TraceExecMode::HuC6280, 14), "SPD");
+        assert_eq!(format_pc(&entry), "E000");
+    }
 }

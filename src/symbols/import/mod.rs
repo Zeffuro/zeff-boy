@@ -1,9 +1,11 @@
 pub(crate) mod ca65;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod elf;
+pub(crate) mod etripator;
 pub(crate) mod fceux;
 pub(crate) mod gnu_nm;
 pub(crate) mod nocash;
+pub(crate) mod pceas;
 pub(crate) mod rgbds;
 pub(crate) mod rgbds_map;
 pub(crate) mod wla;
@@ -69,18 +71,21 @@ pub(crate) fn import_symbols(
     #[cfg(not(target_arch = "wasm32"))]
     let elf = elf::ElfImporter;
     let fceux = fceux::FceuxNameListImporter;
+    let etripator = etripator::EtripatorLabelImporter;
     let gnu_nm = gnu_nm::GnuNmSymImporter;
     let rgbds = rgbds::RgbdsSymImporter;
     let nocash = nocash::NoCashSymImporter;
+    let pceas = pceas::PceasSymImporter;
     let rgbds_map = rgbds_map::RgbdsMapImporter;
     let wla = wla::WlaSymImporter;
     #[cfg(not(target_arch = "wasm32"))]
-    let importers: [&dyn SymbolImporter; 8] = [
-        &elf, &ca65, &fceux, &gnu_nm, &rgbds, &nocash, &rgbds_map, &wla,
+    let importers: [&dyn SymbolImporter; 10] = [
+        &elf, &ca65, &etripator, &fceux, &gnu_nm, &rgbds, &nocash, &pceas, &rgbds_map, &wla,
     ];
     #[cfg(target_arch = "wasm32")]
-    let importers: [&dyn SymbolImporter; 7] =
-        [&ca65, &fceux, &gnu_nm, &rgbds, &nocash, &rgbds_map, &wla];
+    let importers: [&dyn SymbolImporter; 9] = [
+        &ca65, &etripator, &fceux, &gnu_nm, &rgbds, &nocash, &pceas, &rgbds_map, &wla,
+    ];
     let Some((confidence, importer)) = importers
         .into_iter()
         .map(|importer| (importer.probe(file_name, data, &ctx.target), importer))
@@ -181,5 +186,39 @@ mod tests {
         .unwrap();
         assert_eq!(imported.format, "GNU nm .sym");
         assert_eq!(imported.symbols.len(), 2);
+    }
+
+    #[test]
+    fn registry_selects_etripator_labels_for_pce() {
+        let mut pce = context();
+        pce.target.system = System::Pce;
+        let imported = import_symbols(
+            "labels.json",
+            br#"[{"name":"entry","logical":"e000","page":"00"}]"#,
+            &pce,
+        )
+        .unwrap();
+        assert_eq!(imported.format, "Etripator labels");
+        assert_eq!(imported.symbols[0].location.bank, Some(0));
+    }
+
+    #[test]
+    fn registry_distinguishes_pceas_from_wla() {
+        let mut pce = context();
+        pce.target.system = System::Pce;
+        for data in [
+            b"Bank Addr Label\n---- ---- -----\n00 E000 reset".as_slice(),
+            b"00:E000 0010 0:42:3 reset".as_slice(),
+        ] {
+            assert_eq!(
+                import_symbols("game.sym", data, &pce).unwrap().format,
+                "PCEAS .sym"
+            );
+        }
+        let wla = b"[information]\nversion 3\nwlasymbol true\n[labels]\n00:E000 reset";
+        assert_eq!(
+            import_symbols("game.sym", wla, &pce).unwrap().format,
+            "WLA .sym"
+        );
     }
 }

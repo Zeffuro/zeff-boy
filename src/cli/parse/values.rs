@@ -1,5 +1,5 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
-use zeff_pce_core::hardware::PceControllerMode;
+use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBaseMode};
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -93,11 +93,42 @@ pub(super) fn parse_pce_controller_mode_arg(
     match token.as_str() {
         "auto" | "automatic" => Ok(PceControllerMode::Automatic),
         "pad" | "twobutton" | "2button" => Ok(PceControllerMode::TwoButton),
+        "sixbutton" | "6button" | "6btn" => Ok(PceControllerMode::SixButton),
         "mouse" => Ok(PceControllerMode::Mouse),
         "multitap" | "tap" => Ok(PceControllerMode::Multitap),
         _ => anyhow::bail!(
-            "{flag} has unknown mode {value:?}; expected auto, pad, mouse, or multitap"
+            "{flag} has unknown mode {value:?}; expected auto, pad, six-button, mouse, or multitap"
         ),
+    }
+}
+
+pub(super) fn parse_pce_memory_base_mode_arg(
+    value: &str,
+    flag: &str,
+) -> anyhow::Result<PceMemoryBaseMode> {
+    let token = value.trim().to_ascii_lowercase().replace(['_', '-'], "");
+    match token.as_str() {
+        "auto" | "automatic" => Ok(PceMemoryBaseMode::Automatic),
+        "on" | "enabled" | "enable" => Ok(PceMemoryBaseMode::Enabled),
+        "off" | "disabled" | "disable" => Ok(PceMemoryBaseMode::Disabled),
+        _ => {
+            anyhow::bail!("{flag} has unknown mode {value:?}; expected auto, enabled, or disabled")
+        }
+    }
+}
+
+pub(super) fn parse_pce_arcade_card_mode_arg(
+    value: &str,
+    flag: &str,
+) -> anyhow::Result<PceArcadeCardMode> {
+    let token = value.trim().to_ascii_lowercase().replace(['_', '-'], "");
+    match token.as_str() {
+        "auto" | "automatic" => Ok(PceArcadeCardMode::Automatic),
+        "on" | "enabled" | "enable" => Ok(PceArcadeCardMode::Enabled),
+        "off" | "disabled" | "disable" => Ok(PceArcadeCardMode::Disabled),
+        _ => {
+            anyhow::bail!("{flag} has unknown mode {value:?}; expected auto, enabled, or disabled")
+        }
     }
 }
 

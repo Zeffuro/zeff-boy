@@ -65,6 +65,8 @@ pub const PCE_SYSTEM_CARD_V3_JAPAN_SHA256: [u8; 32] =
     decode_sha256(b"e11527b3b96ce112a037138988ca72fd117a6b0779c2480d9e03eaebece3d9ce");
 pub const PCE_SYSTEM_CARD_V3_USA_SHA256: [u8; 32] =
     decode_sha256(b"cadac2725711b3c442bcf237b02f5a5210c96f17625c35fa58f009e0ed39e4db");
+pub const PCE_SYSTEM_CARD_ADPCM_FIXTURE_SHA256: [u8; 32] =
+    decode_sha256(b"a0a2c6a9e647f97cb531aa7c6b59e105e3681666c456e24c82075a9a5f777c52");
 
 pub fn classify_pce_system_card_sha256(sha256: [u8; 32]) -> Option<PceSystemCardFirmware> {
     let (variant_id, region, tier, board) = match sha256 {
@@ -95,6 +97,12 @@ pub fn classify_pce_system_card_sha256(sha256: [u8; 32]) -> Option<PceSystemCard
         PCE_SYSTEM_CARD_V3_USA_SHA256 => (
             "nec.pce.cd.system_card.v3u",
             PceSystemCardRegion::Usa,
+            PceSystemCardTier::Version3,
+            PceSystemCardBoard::SuperCdRom2,
+        ),
+        PCE_SYSTEM_CARD_ADPCM_FIXTURE_SHA256 => (
+            "zeff.pce.cd.adpcm_fixture.v1",
+            PceSystemCardRegion::Japan,
             PceSystemCardTier::Version3,
             PceSystemCardBoard::SuperCdRom2,
         ),
@@ -398,6 +406,18 @@ pub fn firmware_plan_for_pce_cdrom2_region(region: &'static str) -> Vec<Firmware
     ]
 }
 
+pub fn firmware_plan_for_pce_cdrom2_fixture() -> Vec<FirmwareRequest> {
+    vec![
+        FirmwareRequest::new(
+            "zeff.pce.cd.adpcm_fixture_card",
+            RequirementLevel::Required,
+            FallbackKind::None,
+            FirmwareDependency::RuntimeMapped,
+        )
+        .with_preferred_variant("zeff.pce.cd.adpcm_fixture.v1"),
+    ]
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExistingCoreSystem {
     GameBoy,
@@ -682,6 +702,25 @@ const CATALOG_SPECS: &[FirmwareSpec] = &[
             },
         ],
     },
+    FirmwareSpec {
+        id: "zeff.pce.cd.adpcm_fixture_card",
+        display_name: "Zeff PC Engine CD ADPCM Fixture Card",
+        system: "PC Engine CD-ROM2",
+        purpose: "Open end-to-end ADPCM fixture boot card",
+        variants: &[FirmwareVariantSpec {
+            id: "zeff.pce.cd.adpcm_fixture.v1",
+            display_name: "Zeff PC Engine CD ADPCM Fixture Card",
+            region: "japan",
+            model: Some("fixture-v1"),
+            filenames: &["syscard3.pce"],
+            size: SizeRule::Exact(262_144),
+            hashes: KnownHashes {
+                md5: None,
+                sha1: None,
+                sha256: Some("a0a2c6a9e647f97cb531aa7c6b59e105e3681666c456e24c82075a9a5f777c52"),
+            },
+        }],
+    },
 ];
 
 #[cfg(test)]
@@ -747,6 +786,17 @@ mod tests {
     }
 
     #[test]
+    fn pce_cdrom2_fixture_plan_only_matches_the_open_fixture_card() {
+        let plan = firmware_plan_for_pce_cdrom2_fixture();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].id.as_ref(), "zeff.pce.cd.adpcm_fixture_card");
+        assert_eq!(
+            plan[0].preferred_variant.as_ref().map(AsRef::as_ref),
+            Some("zeff.pce.cd.adpcm_fixture.v1")
+        );
+    }
+
+    #[test]
     fn exact_system_card_hashes_classify_region_tier_and_board() {
         for (sha256, variant_id, region, tier, board) in [
             (
@@ -781,6 +831,13 @@ mod tests {
                 PCE_SYSTEM_CARD_V3_USA_SHA256,
                 "nec.pce.cd.system_card.v3u",
                 PceSystemCardRegion::Usa,
+                PceSystemCardTier::Version3,
+                PceSystemCardBoard::SuperCdRom2,
+            ),
+            (
+                PCE_SYSTEM_CARD_ADPCM_FIXTURE_SHA256,
+                "zeff.pce.cd.adpcm_fixture.v1",
+                PceSystemCardRegion::Japan,
                 PceSystemCardTier::Version3,
                 PceSystemCardBoard::SuperCdRom2,
             ),

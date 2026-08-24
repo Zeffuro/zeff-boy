@@ -172,6 +172,7 @@ fn trace_exec_mode(mode: TraceExecMode) -> crate::symbols::ExecMode {
         TraceExecMode::Mos6502 => crate::symbols::ExecMode::Mos6502,
         TraceExecMode::Z80 => crate::symbols::ExecMode::Z80,
         TraceExecMode::V30 => crate::symbols::ExecMode::V30,
+        TraceExecMode::HuC6280 => crate::symbols::ExecMode::HuC6280,
     }
 }
 
@@ -183,6 +184,7 @@ fn stored_exec_mode(mode: u8) -> crate::symbols::ExecMode {
         value if value == TraceExecMode::Mos6502 as u8 => crate::symbols::ExecMode::Mos6502,
         value if value == TraceExecMode::Z80 as u8 => crate::symbols::ExecMode::Z80,
         value if value == TraceExecMode::V30 as u8 => crate::symbols::ExecMode::V30,
+        value if value == TraceExecMode::HuC6280 as u8 => crate::symbols::ExecMode::HuC6280,
         _ => crate::symbols::ExecMode::Unknown,
     }
 }
@@ -372,6 +374,24 @@ mod tests {
             mapped_target(&nes, 0x8110).unwrap().storage.unwrap().offset,
             0x0110
         );
+
+        let mut huc6280 = InstructionTraceRecord::new(
+            TraceExecMode::HuC6280,
+            0xE100,
+            Some(0x2100),
+            0,
+            0,
+            &[0x20, 0x20, 0xE1],
+        );
+        huc6280.bank = Some(1);
+        huc6280.push_register_delta(RegisterDelta {
+            register: 4,
+            value: 0xE120,
+        });
+        assert_eq!(direct_call_target(&huc6280), Some(0xE120));
+        let mapped_huc6280 = mapped_target(&huc6280, 0xE120).unwrap();
+        assert_eq!(mapped_huc6280.storage.unwrap().offset, 0x2120);
+        assert_eq!(mapped_huc6280.bank, Some(1));
 
         let mut z80 = InstructionTraceRecord::new(
             TraceExecMode::Z80,

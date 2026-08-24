@@ -32,6 +32,8 @@ pub(crate) struct RenderContext<'a> {
     #[cfg(target_arch = "wasm32")]
     pub(crate) nes_palette_file_slot: crate::platform::FileDataSlot,
     pub(crate) show_settings_window: &'a mut bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) show_mods_window: &'a mut bool,
     #[cfg(target_arch = "wasm32")]
     pub(crate) show_printer_window: &'a mut bool,
     pub(crate) dock_state: &'a mut egui_dock::DockState<DebugTab>,
@@ -45,6 +47,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) supports_replay: bool,
     pub(crate) supports_audio: bool,
     pub(crate) supports_debugger: bool,
+    pub(crate) supports_execution_controls: bool,
     pub(crate) is_rewinding: bool,
     pub(crate) rewind_seconds_back: f32,
     pub(crate) is_paused: bool,
@@ -510,6 +513,8 @@ impl Graphics {
             match action {
                 MenuAction::SetAspectRatio(mode) => self.aspect_ratio_mode = mode,
                 MenuAction::OpenSettings => *ctx.show_settings_window = true,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::OpenMods => *ctx.show_mods_window = true,
                 other => forwarded_actions.push(other),
             }
         }
@@ -586,6 +591,8 @@ impl Graphics {
                 window_state: ctx.debug_windows,
                 actions: DebugUiActions::none(),
                 supports_rewind: ctx.supports_rewind,
+                supports_debugger: ctx.supports_debugger,
+                supports_execution_controls: ctx.supports_execution_controls,
                 game_texture_id,
                 game_native_size: self.framebuffer.native_size(),
                 aspect_ratio_mode: self.aspect_ratio_mode,

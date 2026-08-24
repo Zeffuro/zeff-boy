@@ -1,5 +1,6 @@
 use super::EmuBackend;
 use crate::cheats::CheatPatch;
+use crate::emu_core_trait::EmulatorCore;
 
 impl EmuBackend {
     pub(crate) fn install_rom_patches(&mut self, cheats: &[CheatPatch]) {
@@ -7,38 +8,12 @@ impl EmuBackend {
             return;
         }
         match self {
-            Self::Gb(gb) => {
-                gb.emu.clear_rom_patches();
-                for patch in cheats.iter().copied() {
-                    if patch.is_rom_patch() {
-                        gb.emu.add_rom_patch(patch);
-                    }
-                }
-            }
-            Self::Gba(_) => {}
-            Self::Nes(nes) => {
-                nes.emu.clear_game_genie();
-                for patch in cheats.iter().copied() {
-                    if let Some((address, value, compare)) = patch.constant_rom_write() {
-                        nes.emu
-                            .add_game_genie_patch(zeff_nes_core::cheats::NesGameGeniePatch {
-                                address,
-                                value,
-                                compare,
-                            });
-                    }
-                }
-            }
-            Self::Pce(_) => {}
-            Self::Sega8(sega8) => {
-                sega8.emu.clear_rom_patches();
-                for patch in cheats.iter().copied() {
-                    if patch.is_rom_patch() {
-                        sega8.emu.add_rom_patch(patch);
-                    }
-                }
-            }
-            Self::Ws(_) => {}
+            Self::Gb(backend) => backend.install_rom_patches(cheats),
+            Self::Gba(backend) => backend.install_rom_patches(cheats),
+            Self::Nes(backend) => backend.install_rom_patches(cheats),
+            Self::Pce(backend) => backend.install_rom_patches(cheats),
+            Self::Sega8(backend) => backend.install_rom_patches(cheats),
+            Self::Ws(backend) => backend.install_rom_patches(cheats),
         }
     }
 
@@ -47,22 +22,12 @@ impl EmuBackend {
             return;
         }
         match self {
-            Self::Gb(gb) => {
-                zeff_emu_common::cheats::apply_ram_cheats_16(&mut gb.emu, cheats);
-            }
-            Self::Gba(gba) => {
-                zeff_emu_common::cheats::apply_wide_ram_cheats(&mut gba.emu, cheats);
-            }
-            Self::Nes(nes) => {
-                zeff_emu_common::cheats::apply_ram_cheats_16(&mut nes.emu, cheats);
-            }
-            Self::Pce(_) => {}
-            Self::Sega8(sega8) => {
-                zeff_emu_common::cheats::apply_ram_cheats_16(&mut sega8.emu, cheats);
-            }
-            Self::Ws(ws) => {
-                zeff_emu_common::cheats::apply_wide_ram_cheats(&mut ws.emu, cheats);
-            }
+            Self::Gb(backend) => backend.apply_ram_cheats(cheats),
+            Self::Gba(backend) => backend.apply_ram_cheats(cheats),
+            Self::Nes(backend) => backend.apply_ram_cheats(cheats),
+            Self::Pce(backend) => backend.apply_ram_cheats(cheats),
+            Self::Sega8(backend) => backend.apply_ram_cheats(cheats),
+            Self::Ws(backend) => backend.apply_ram_cheats(cheats),
         }
     }
 }
@@ -71,6 +36,8 @@ impl EmuBackend {
 mod tests {
     use super::EmuBackend;
     use crate::cheats::{CheatCode, CheatPatch, CheatType, CheatValue, collect_enabled_patches};
+    use crate::emu_backend::PceBackend;
+    use crate::emu_core_trait::DebuggableEmulator;
     use zeff_sega8_core::hardware::cartridge::SystemHint;
 
     fn gba_rom() -> Vec<u8> {
@@ -149,6 +116,17 @@ mod tests {
         )
         .expect("Sega 8-bit emulator should initialize");
         EmuBackend::from_sega8(emu, std::path::PathBuf::from("test.sms"))
+    }
+
+    fn pce_backend() -> EmuBackend {
+        let mut rom = vec![0xEA; 0x2000];
+        rom[..6].copy_from_slice(&[0xA9, 0xF8, 0x53, 0x02, 0x80, 0xFE]);
+        rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
+        let backend = PceBackend::new(rom, std::path::PathBuf::from("test.pce"))
+            .expect("PCE should initialize");
+        let mut backend = EmuBackend::from_pce(backend);
+        backend.step_frame();
+        backend
     }
 
     #[test]
@@ -359,6 +337,47 @@ mod tests {
         }]);
 
         assert_eq!(backend.sega8().unwrap().emu.cpu_peek8(0xC123), 0x42);
+    }
+
+    #[test]
+    fn pce_raw_cheats_write_mapped_cpu_ram() {
+        let mut backend = pce_backend();
+        if let EmuBackend::Pce(pce) = &mut backend {
+            DebuggableEmulator::add_watchpoint_range(
+                pce.as_mut(),
+                0x2000,
+                0x2000,
+                zeff_emu_common::debug::WatchType::Write,
+            );
+        } else {
+            panic!("expected PCE backend");
+        }
+
+        backend.apply_ram_cheats(&[CheatPatch::RamWrite {
+            address: 0x2000,
+            value: CheatValue::Constant(0x42),
+        }]);
+        let EmuBackend::Pce(pce) = &backend else {
+            panic!("expected PCE backend");
+        };
+        assert_eq!(
+            pce.debug_peek8(zeff_emu_common::address::Address::from(0x2000_u16)),
+            0x42
+        );
+        assert!(pce.debug_hit_watchpoint().is_none());
+
+        backend.apply_ram_cheats(&[CheatPatch::RamWriteIfEquals {
+            address: 0x2000,
+            value: CheatValue::Constant(0x7F),
+            compare: CheatValue::Constant(0x99),
+        }]);
+        let EmuBackend::Pce(pce) = &backend else {
+            panic!("expected PCE backend");
+        };
+        assert_eq!(
+            pce.debug_peek8(zeff_emu_common::address::Address::from(0x2000_u16)),
+            0x42
+        );
     }
 
     #[test]

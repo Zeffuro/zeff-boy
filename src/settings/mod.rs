@@ -22,9 +22,10 @@ pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
     AudioSettings, CameraSettings, DebugColors, EmulationSettings, GbBootRomMode, GbaBiosMode,
-    PceCdArchiveMemoryLimit, PceConsoleWiringPreference, PceControllerPreference,
-    PceMouseCursorMode, RecentRomEntry, RewindSettings, Sega8ConsoleRegionPreference,
-    Sega8VideoStandardPreference, SegaBootRomMode, TiltSettings, UiSettings, VideoSettings,
+    PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
+    PceControllerPreference, PceMemoryBasePreference, PceMouseCursorMode, RecentRomEntry,
+    RewindSettings, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, SegaBootRomMode,
+    TiltSettings, UiSettings, VideoSettings,
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 

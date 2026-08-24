@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::audio_tooling::{AudioSemanticFrame, AudioTopology};
+use crate::cheats::CheatPatch;
 use zeff_emu_common::address::Address;
 use zeff_emu_common::memory::{
     ExtendedMemoryRegionSizes, MemoryRegionDescriptor, MemoryRegionKind, resolve_memory_region,
@@ -69,6 +70,8 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     ) {
     }
     #[inline]
+    fn set_pce_memory_base_mode(&mut self, _mode: zeff_pce_core::hardware::PceMemoryBaseMode) {}
+    #[inline]
     fn set_zapper_state(
         &mut self,
         _enabled: bool,
@@ -113,6 +116,12 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     fn supports_cheats(&self) -> bool {
         false
     }
+
+    #[inline]
+    fn install_rom_patches(&mut self, _cheats: &[CheatPatch]) {}
+
+    #[inline]
+    fn apply_ram_cheats(&mut self, _cheats: &[CheatPatch]) {}
 
     #[inline]
     fn supports_guest_calls(&self) -> bool {
@@ -167,6 +176,18 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     #[inline]
     fn supports_debugger(&self) -> bool {
         false
+    }
+
+    fn debug_suspend(&mut self);
+
+    #[inline]
+    fn supports_execution_controls(&self) -> bool {
+        self.supports_debugger()
+    }
+
+    #[inline]
+    fn supports_symbol_loading(&self) -> bool {
+        self.supports_debugger()
     }
 
     #[inline]

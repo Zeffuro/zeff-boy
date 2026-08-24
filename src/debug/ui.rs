@@ -108,11 +108,19 @@ pub(super) fn draw_cpu_debug_content(
     state: &mut CpuDebugViewState,
     actions: &mut DebugUiActions,
     supports_rewind: bool,
+    supports_execution_controls: bool,
 ) {
     state.sync(info);
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        draw_cpu_debug_rows(ui, info, state, actions, supports_rewind);
+        draw_cpu_debug_rows(
+            ui,
+            info,
+            state,
+            actions,
+            supports_rewind,
+            supports_execution_controls,
+        );
     });
 }
 
@@ -122,6 +130,7 @@ fn draw_cpu_debug_rows(
     state: &CpuDebugViewState,
     actions: &mut DebugUiActions,
     supports_rewind: bool,
+    supports_execution_controls: bool,
 ) {
     let colors = crate::debug::common::debug_colors(ui);
     let changed = crate::debug::common::color32(colors.changed);
@@ -144,14 +153,26 @@ fn draw_cpu_debug_rows(
     ui.horizontal_wrapped(|ui| {
         if suspended {
             let button = egui::Button::new("Continue (F5)").fill(COLOR_CONTINUE_BUTTON);
-            if ui.add(button).clicked() {
+            if ui
+                .add_enabled(supports_execution_controls, button)
+                .clicked()
+            {
                 actions.continue_requested = true;
             }
         }
-        if ui.button("Step (F7)").clicked() {
+        if ui
+            .add_enabled(
+                supports_execution_controls && suspended,
+                egui::Button::new("Step (F7)"),
+            )
+            .clicked()
+        {
             actions.step_requested = true;
         }
-        if ui.button("Next Frame").clicked() {
+        if ui
+            .add_enabled(supports_execution_controls, egui::Button::new("Next Frame"))
+            .clicked()
+        {
             actions.next_frame_requested = true;
         }
         if ui

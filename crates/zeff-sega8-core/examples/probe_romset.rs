@@ -840,7 +840,7 @@ fn framebuffer_fingerprint(framebuffer: &[u8]) -> u64 {
 }
 
 fn classify_framebuffer(framebuffer: &[u8]) -> FramebufferQuality {
-    let mut pixels = framebuffer.chunks_exact(4);
+    let mut pixels = framebuffer.as_chunks::<4>().0.iter();
     let Some(first) = pixels.next() else {
         return FramebufferQuality::default();
     };

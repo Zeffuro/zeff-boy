@@ -13,10 +13,12 @@ fn encode_pce_mouse_axis(delta: f64, sensitivity: f32) -> i16 {
 impl App {
     pub(super) fn pce_mouse_input(&mut self, consume_motion: bool) -> PceMouseInput {
         let mode = self.settings.emulation.pce_controller.core_mode();
+        let memory_base_mode = self.settings.emulation.pce_memory_base.core_mode();
         if self.active_system != crate::emu_backend::ActiveSystem::Pce {
             self.pce_mouse_motion = (0.0, 0.0);
             return PceMouseInput {
                 mode,
+                memory_base_mode,
                 ..Default::default()
             };
         }
@@ -30,6 +32,7 @@ impl App {
         let buttons = u8::from(self.mouse_left_pressed) | (u8::from(self.mouse_right_pressed) << 1);
         PceMouseInput {
             mode,
+            memory_base_mode,
             delta_x: encode_pce_mouse_axis(motion.0, sensitivity),
             delta_y: encode_pce_mouse_axis(motion.1, sensitivity),
             buttons,

@@ -25,6 +25,24 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
 ) -> serde_json::Value {
     let snapshot = request.backend.debug_cpu_snapshot();
     let registers = snapshot.registers();
+    let hardware = request.backend.debug_hardware_snapshot();
+    let memory_base = hardware.controller.memory_base;
+    let arcade_card = hardware.arcade_card.map(|arcade| {
+        serde_json::json!({
+            "present": true,
+            "mode": format!("{:?}", request.backend.arcade_card_mode()),
+            "ports": arcade.ports.map(|port| serde_json::json!({
+                "base": port.base,
+                "offset": port.offset,
+                "increment": port.increment,
+                "control": port.control,
+                "effective_address": port.effective_address,
+            })),
+            "value": arcade.value,
+            "shift": arcade.shift,
+            "rotate": arcade.rotate,
+        })
+    });
     let cd = request.backend.cdrom2().map(|cdrom| {
         let audio = cdrom.audio_debug_snapshot();
         let commands = cdrom
@@ -88,6 +106,17 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
             "mpr": snapshot.mapping_registers(),
             "mpr_hex": snapshot.mapping_registers().map(|byte| format!("{byte:02X}")),
             "speed": format!("{:?}", snapshot.speed_mode()),
+            "timer": {
+                "counter": snapshot.timer_counter(),
+                "reload": snapshot.timer_reload(),
+                "running": snapshot.timer_running(),
+                "prescaler_ticks": snapshot.timer_prescaler_ticks(),
+            },
+            "irq": {
+                "disable": snapshot.irq_disable(),
+                "request": snapshot.irq_request(),
+                "sampled": snapshot.sampled_interrupt().map(|source| format!("{source:?}")),
+            },
             "vce_line": snapshot.vce_line_index(),
         },
         "hardware": {
@@ -95,9 +124,25 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
             "console_wiring": format!("{:?}", request.backend.console_wiring()),
             "hucard_board": format!("{:?}", request.backend.hucard_board()),
             "controller_mode": format!("{:?}", request.backend.controller_mode()),
+            "normalized_disc_sha256": request.backend.normalized_disc_hash().map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+            "memory_base_128": {
+                "mode": format!("{:?}", request.backend.memory_base_mode()),
+                "connected": memory_base.connected,
+                "active": memory_base.active,
+                "phase": format!("{:?}", memory_base.phase),
+                "address": memory_base.address,
+                "remaining_bits": memory_base.remaining_bits,
+                "dirty": memory_base.dirty,
+            },
             "content_sha256": request.backend.rom_hash().iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+            "source_crc32": request.backend.source_crc32().map(|crc| format!("{crc:08x}")),
+            "source_normalized_disc_sha256": request.backend.source_disc_hash().map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
         },
         "cdrom2": cd.unwrap_or_else(|| serde_json::json!({ "present": false })),
+        "arcade_card": arcade_card.unwrap_or_else(|| serde_json::json!({
+            "present": false,
+            "mode": format!("{:?}", request.backend.arcade_card_mode()),
+        })),
         "audio": {
             "samples": request.audio_samples,
             "nonzero_samples": request.audio_nonzero_samples,

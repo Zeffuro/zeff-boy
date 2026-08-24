@@ -3,6 +3,17 @@
 Zeff Boy includes or links the archive components listed below. These notices
 supplement Zeff Boy's own MIT OR Apache-2.0 license.
 
+## xdelta3-rs 0.1.5 / xdelta3 3.0.12
+
+- Sources: https://github.com/liushuyu/xdelta3-rs and https://github.com/jmacd/xdelta
+- License: Apache License 2.0
+- Local source: `third_party/xdelta3`
+
+Zeff Boy distributes a modified copy so xdelta patches using DJW compression
+build without libclang. The changes are documented in
+`third_party/xdelta3/ZEFF_PATCH.md`. License texts are preserved in
+`third_party/xdelta3/LICENSE` and `third_party/xdelta3/xdelta3/xdelta3/LICENSE`.
+
 ## sevenz-rust2 0.21.5
 
 - Source: https://github.com/hasenbanck/sevenz-rust2

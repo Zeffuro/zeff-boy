@@ -232,7 +232,10 @@ fn fill_disabled_scanlines_rgba(
         }
         let row_start = y * area.width * RGBA_CHANNELS;
         let row_end = row_start + area.width * RGBA_CHANNELS;
-        for pixel in framebuffer[row_start..row_end].chunks_exact_mut(RGBA_CHANNELS) {
+        for pixel in framebuffer[row_start..row_end]
+            .as_chunks_mut::<RGBA_CHANNELS>()
+            .0
+        {
             pixel.copy_from_slice(&color);
         }
     }
@@ -336,7 +339,10 @@ fn fill_rgba(framebuffer: &mut [u8], area: Mode4RenderArea, color: [u8; RGBA_CHA
     if framebuffer.len() < expected_len {
         return;
     }
-    for pixel in framebuffer[..expected_len].chunks_exact_mut(RGBA_CHANNELS) {
+    for pixel in framebuffer[..expected_len]
+        .as_chunks_mut::<RGBA_CHANNELS>()
+        .0
+    {
         pixel.copy_from_slice(&color);
     }
 }

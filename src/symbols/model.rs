@@ -46,6 +46,7 @@ pub(crate) enum ExecMode {
     Arm,
     Thumb,
     V30,
+    HuC6280,
     Unknown,
 }
 

@@ -177,7 +177,7 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
         if mbc.len() % 3 != 0 {
             bail!("BESS MBC block length not a multiple of 3");
         }
-        for chunk in mbc.chunks_exact(3) {
+        for chunk in mbc.as_chunks::<3>().0 {
             let addr = read_u16_le(chunk);
             let val = chunk[2];
             if addr <= 0x7FFF || (0xA000..=0xBFFF).contains(&addr) {

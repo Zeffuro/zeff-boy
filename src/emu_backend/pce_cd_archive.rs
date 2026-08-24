@@ -11,8 +11,8 @@ use sevenz_rust2::{
 
 use super::ActiveSystem;
 use super::pce_cd::{
-    LoadedPceCd, PCE_CD_CUE_BYTES_LIMIT, PCE_CD_DATA_BYTES_LIMIT, PceCdLoadError, build_disc,
-    normalize_portable_path, parse_cue_bytes,
+    LoadedPceCd, PCE_CD_CUE_BYTES_LIMIT, PCE_CD_DATA_BYTES_LIMIT, PceCdLoadError,
+    build_disc_with_mods, normalize_portable_path, parse_cue_bytes,
 };
 use crate::rom_archive::ArchiveRomEntry;
 
@@ -173,11 +173,22 @@ pub(crate) fn load_7z_cue(path: &Path) -> Result<LoadedPceCd, PceCdLoadError> {
         .map(|(_, loaded)| loaded)
 }
 
+#[cfg(test)]
 pub(crate) fn load_7z_cue_with_control(
     path: &Path,
     cancel: &AtomicBool,
     progress: &PceCdPackageProgress,
     decoder_memory_limit_mib: usize,
+) -> Result<(PathBuf, LoadedPceCd), PceCdLoadError> {
+    load_7z_cue_with_control_and_mods(path, cancel, progress, decoder_memory_limit_mib, false)
+}
+
+pub(crate) fn load_7z_cue_with_control_and_mods(
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+    apply_mods: bool,
 ) -> Result<(PathBuf, LoadedPceCd), PceCdLoadError> {
     check_cancelled(cancel)?;
     progress.set_phase(PceCdPackageLoadPhase::Inspecting);
@@ -262,7 +273,7 @@ pub(crate) fn load_7z_cue_with_control(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let virtual_path = virtual_member_path(path, &cue_name);
-    let loaded = build_disc(cue_bytes, &sheet, files)?;
+    let loaded = build_disc_with_mods(cue_bytes, &sheet, files, apply_mods)?;
     check_cancelled(cancel)?;
     Ok((virtual_path, loaded))
 }

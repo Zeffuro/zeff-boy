@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::app::App;
-use crate::debug::ConsoleGraphicsData;
+use crate::debug::{ConsoleGraphicsData, PceVdcGraphicsData};
 
 use super::json_helpers::{buffer_summary_json, gb_ppu_json};
 
@@ -77,6 +77,13 @@ impl App {
                     "palette": buffer_summary_json(&nes.palette_ram),
                 },
             }),
+            ConsoleGraphicsData::Pce(pce) => json!({
+                "ready": true,
+                "system": "pce",
+                "vdc1": pce_vdc_json(&pce.vdc1),
+                "vdc2": pce.vdc2.as_ref().map(pce_vdc_json),
+                "palette_colors": pce.palette.len(),
+            }),
             ConsoleGraphicsData::Sega8(sega8) => json!({
                 "ready": true,
                 "system": match sega8.system {
@@ -135,4 +142,17 @@ impl App {
             }),
         }
     }
+}
+
+fn pce_vdc_json(vdc: &PceVdcGraphicsData) -> Value {
+    let mut hasher = crc32fast::Hasher::new();
+    for word in &vdc.vram {
+        hasher.update(&word.to_le_bytes());
+    }
+    json!({
+        "vram_words": vdc.vram.len(),
+        "vram_bytes": vdc.vram.len() * size_of::<u16>(),
+        "vram_crc32": format!("{:08x}", hasher.finalize()),
+        "registers": vdc.registers,
+    })
 }

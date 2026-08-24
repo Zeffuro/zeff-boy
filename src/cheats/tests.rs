@@ -201,6 +201,26 @@ fn parse_cheat_for_system_sega8_raw() {
 }
 
 #[test]
+fn parse_cheat_for_system_pce_raw_multi_code() {
+    let (patches, ty) = parse_cheat_for_system("$2000:42+0x2001=7F", ActiveSystem::Pce)
+        .expect("PCE raw cheats should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert_eq!(
+        patches,
+        [
+            CheatPatch::RamWrite {
+                address: 0x2000,
+                value: CheatValue::Constant(0x42),
+            },
+            CheatPatch::RamWrite {
+                address: 0x2001,
+                value: CheatValue::Constant(0x7F),
+            },
+        ]
+    );
+}
+
+#[test]
 fn parse_cheat_for_system_sega8_raw_multi_code() {
     let result = parse_cheat_for_system("$C000:01+0xD000=02", ActiveSystem::GameGear);
     let (patches, ty) = result.expect("Sega 8-bit raw multi-code should parse");

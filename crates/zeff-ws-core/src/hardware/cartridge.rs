@@ -316,7 +316,7 @@ impl Cartridge {
             return;
         }
         let [lo, hi] = value.to_le_bytes();
-        for word in self.save_data.chunks_exact_mut(2) {
+        for word in self.save_data.as_chunks_mut::<2>().0 {
             word[0] = lo;
             word[1] = hi;
         }

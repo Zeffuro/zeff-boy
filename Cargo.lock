@@ -489,6 +489,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1012,6 +1018,21 @@ checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "crc32fast"
@@ -2445,6 +2466,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297e814c836ae64db86b36cf2a557ba54368d03f6afcd7d947c266692f71115e"
+dependencies = [
+ "byteorder",
+ "crc",
+]
+
+[[package]]
 name = "lzma-rust2"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3246,6 +3277,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "oxidelta"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1754ebd72de1f61efc690ca75beb1f46b07cba4c37c02879c11d1940dd1556f2"
+dependencies = [
+ "bitflags 2.13.1",
+ "log",
+ "lzma-rs",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -5735,6 +5778,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
 
 [[package]]
+name = "xdelta3"
+version = "0.1.5"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "xkbcommon-dl"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5810,6 +5861,7 @@ dependencies = [
  "nokhwa",
  "object",
  "open",
+ "oxidelta",
  "phf",
  "png",
  "pollster 1.0.1",
@@ -5830,6 +5882,7 @@ dependencies = [
  "wgpu",
  "windows-sys 0.61.2",
  "winit",
+ "xdelta3",
  "zeff-emu-common",
  "zeff-firmware",
  "zeff-gb-core",
@@ -5936,8 +5989,11 @@ dependencies = [
 name = "zeff-pce-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bitflags 2.13.1",
  "blip_buf",
+ "sha2",
+ "zeff-emu-common",
 ]
 
 [[package]]

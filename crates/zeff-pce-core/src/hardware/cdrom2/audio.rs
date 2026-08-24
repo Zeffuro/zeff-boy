@@ -1,6 +1,8 @@
 use super::*;
-use blip_buf::BlipBuf;
+use crate::hardware::blip_buf::BlipBuf;
+use anyhow::bail;
 use std::fmt;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub(super) const ADPCM_RESET_PREDICTOR: u16 = 0x0800;
 
@@ -36,7 +38,7 @@ impl MonoBlipResampler {
         Self::at_level(sample_rate, 0)
     }
 
-    fn at_level(sample_rate: u32, level: i32) -> Self {
+    pub(super) fn at_level(sample_rate: u32, level: i32) -> Self {
         let sample_rate = sample_rate.clamp(1, super::super::psg::MAX_PSG_SAMPLE_RATE);
         let mut buffer = BlipBuf::new(adpcm_blip_buffer_samples(sample_rate));
         buffer
@@ -85,6 +87,34 @@ impl MonoBlipResampler {
         let read = self.buffer.read_samples(&mut output[start..], false);
         debug_assert_eq!(read, available);
     }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u32(self.clocks);
+        writer.write_u32(self.level as u32);
+        self.buffer.write_state(writer);
+    }
+
+    pub(super) fn read_state(
+        sample_rate: u32,
+        reader: &mut StateReader<'_>,
+    ) -> anyhow::Result<Self> {
+        let clocks = reader.read_u32()?;
+        if clocks >= ADPCM_BLIP_FRAME_CLOCKS {
+            bail!("invalid ADPCM resampler clock in save-state: {clocks}");
+        }
+        let level = reader.read_u32()? as i32;
+        if !(-0x8000..=0x7FC0).contains(&level) {
+            bail!("invalid ADPCM resampler level in save-state: {level}");
+        }
+        let mut restored = Self::at_level(sample_rate, level);
+        restored.clocks = clocks;
+        restored.buffer.read_state(reader)?;
+        Ok(restored)
+    }
+
+    pub(super) const fn level(&self) -> i32 {
+        self.level
+    }
 }
 
 impl CdRom2 {
@@ -119,7 +149,7 @@ impl CdRom2 {
         }
         let adpcm_available = (output.len() / 2).min(self.adpcm_audio_samples.len());
         let step = CDDA_SOURCE_RATE / f64::from(self.audio_sample_rate);
-        for (index, frame) in output.chunks_exact_mut(2).enumerate() {
+        for (index, frame) in output.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let cdda_available = !self.audio_source_frames.is_empty();
             while self.audio_resample_position >= 1.0 && self.audio_source_frames.len() > 1 {
                 self.audio_source_frames.pop_front();
@@ -189,6 +219,7 @@ impl CdRom2 {
     }
 
     pub(super) fn advance_audio(&mut self, mut ticks: u64) {
+        self.audio_sample_latch_clock = self.audio_sample_latch_clock.wrapping_add(ticks);
         while ticks != 0 {
             let step = if self.audio_fade_target.is_some() && self.audio_fade_level_q16 != 0 {
                 ticks.min(self.audio_fade_ticks_to_next)
@@ -214,6 +245,23 @@ impl CdRom2 {
                 self.refresh_adpcm_output();
             }
         }
+    }
+
+    pub(super) fn latch_cdda_sample(&mut self) {
+        if self
+            .audio_sample_latch_clock
+            .wrapping_sub(self.audio_sample_latch_last_clock)
+            < CDDA_SAMPLE_LATCH_TICKS
+        {
+            return;
+        }
+        self.audio_sample_latch_last_clock = self.audio_sample_latch_clock;
+        self.audio_sample_latch_right = !self.audio_sample_latch_right;
+        self.audio_sample_latch = if self.audio_sample_latch_right {
+            self.audio_right_sample
+        } else {
+            self.audio_left_sample
+        };
     }
 
     pub(super) fn write_adpcm_address_control(&mut self, value: u8) {
@@ -371,7 +419,7 @@ impl CdRom2 {
         self.adpcm_write_address = self.adpcm_write_address.wrapping_add(1);
     }
 
-    fn current_adpcm_output_level(&self) -> i32 {
+    pub(super) fn current_adpcm_output_level(&self) -> i32 {
         if self.adpcm_playing {
             let level =
                 (i32::from(self.adpcm_predictor & 0x0FFC) - 0x0800) * ADPCM_BLIP_LEVEL_SCALE;
@@ -477,6 +525,7 @@ impl CdRom2 {
             return;
         }
 
+        let response_index_before = self.response_index;
         while self.response_index < self.response_available {
             self.complete_adpcm_write(self.response[self.response_index]);
             self.response_index += 1;
@@ -488,6 +537,7 @@ impl CdRom2 {
         self.request_pending = false;
 
         if self.response_index == self.response.len() {
+            self.debug_adpcm_dma_completed |= response_index_before < self.response_index;
             self.enter_status_after(PROVISIONAL_CDROM2_PHASE_TICKS);
         }
     }
@@ -525,7 +575,7 @@ mod tests {
 
     fn audio_cdrom() -> CdRom2 {
         let mut raw = vec![0; 2_352];
-        for frame in raw.chunks_exact_mut(4) {
+        for frame in raw.as_chunks_mut::<4>().0 {
             frame[..2].copy_from_slice(&0x4000_i16.to_le_bytes());
             frame[2..].copy_from_slice(&(-0x4000_i16).to_le_bytes());
         }
@@ -891,7 +941,13 @@ mod tests {
             let mut output = vec![0.0; frames * 2];
             cd.mix_audio_samples_into(&mut output);
             assert!(output.iter().any(|sample| *sample != 0.0));
-            assert!(output.chunks_exact(2).all(|frame| frame[0] == frame[1]));
+            assert!(
+                output
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .all(|frame| frame[0] == frame[1])
+            );
             assert!(output.iter().all(|sample| sample.is_finite()));
         }
     }

@@ -340,6 +340,26 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn sync_mods_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if self.show_mods_window {
+            if gfx.mods_window_id().is_none()
+                && let Err(err) = gfx.open_mods_window(event_loop, &self.settings)
+            {
+                log::error!("Failed to open Mods window: {err}");
+                self.show_mods_window = false;
+                self.toast_manager.error("Failed to open Mods window");
+            }
+        } else if gfx.mods_window_id().is_some() {
+            gfx.close_mods_window();
+            self.mods_window_focused = false;
+            self.focus_state_dirty = true;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn sync_printer_window(&mut self, event_loop: &ActiveEventLoop) {
         let Some(gfx) = self.gfx.as_mut() else {
             return;

@@ -1,5 +1,7 @@
 use super::bus::{BaseBusDevices, VcePort};
 use super::vdc_scanline::VceFrameLength;
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const VCE_PALETTE_COLORS: usize = 512;
 pub const VCE_UNAVAILABLE_READ_VALUE: u8 = 0xFF;
@@ -8,6 +10,17 @@ pub const DETERMINISTIC_VCE_INITIAL_COLOR: VceColor = VceColor::new(0);
 pub const DETERMINISTIC_VCE_RESET_PRESERVES_PALETTE: bool = true;
 
 const CONTROL_MASK: u8 = 0x87;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VceDebugSnapshot {
+    pub control: u8,
+    pub color_table_address: u16,
+    pub pixel_clock: VcePixelClock,
+    pub blur_enabled: bool,
+    pub frame_length: VceFrameLength,
+    pub monochrome_enabled: bool,
+    pub palette: [VceColor; VCE_PALETTE_COLORS],
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VcePixelClock {
@@ -96,6 +109,18 @@ impl HuC6260 {
     pub fn reset(&mut self) {
         self.control = DETERMINISTIC_VCE_RESET_VALUE as u8;
         self.color_table_address = DETERMINISTIC_VCE_RESET_VALUE;
+    }
+
+    pub fn debug_snapshot(&self) -> VceDebugSnapshot {
+        VceDebugSnapshot {
+            control: self.control,
+            color_table_address: self.color_table_address,
+            pixel_clock: self.pixel_clock(),
+            blur_enabled: self.blur_enabled(),
+            frame_length: self.frame_length(),
+            monochrome_enabled: self.monochrome_enabled(),
+            palette: *self.palette,
+        }
     }
 
     #[inline]
@@ -191,6 +216,35 @@ impl HuC6260 {
     #[inline]
     fn increment_color_table_address(&mut self) {
         self.color_table_address = self.color_table_address.wrapping_add(1) & 0x01FF;
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(self.control);
+        writer.write_u16(self.color_table_address);
+        for color in self.palette.iter().copied() {
+            writer.write_u16(color.raw());
+        }
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        let control = reader.read_u8()?;
+        if control & !CONTROL_MASK != 0 {
+            bail!("invalid VCE control register in save-state: {control:#04X}");
+        }
+        let color_table_address = reader.read_u16()?;
+        if color_table_address >= VCE_PALETTE_COLORS as u16 {
+            bail!("invalid VCE color-table address in save-state: {color_table_address}");
+        }
+        for color in self.palette.iter_mut() {
+            let raw = reader.read_u16()?;
+            if raw > 0x01FF {
+                bail!("invalid VCE palette color in save-state: {raw:#06X}");
+            }
+            *color = VceColor::new(raw);
+        }
+        self.control = control;
+        self.color_table_address = color_table_address;
+        Ok(())
     }
 }
 

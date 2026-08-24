@@ -31,6 +31,9 @@ pub(super) fn draw(
         ui.close();
     }
     if ui.button("Mods").clicked() {
+        #[cfg(not(target_arch = "wasm32"))]
+        actions.push(MenuAction::OpenMods);
+        #[cfg(target_arch = "wasm32")]
         toggle_dock_tab(dock_state, DebugTab::Mods);
         ui.close();
     }

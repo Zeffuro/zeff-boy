@@ -66,6 +66,7 @@ impl EmuBackend {
             self.set_apu_channel_mutes(mutes);
         }
         let supports_debugger = self.supports_debugger();
+        let supports_execution_controls = self.supports_execution_controls();
 
         match self {
             Self::Gb(gb) => {
@@ -103,8 +104,15 @@ impl EmuBackend {
             }
             Self::Pce(pce) => {
                 pce.set_display_config(config.pce_overscan_mode, config.pce_palette_mode);
+                pce.set_apu_debug_capture_enabled(config.apu_capture_enabled);
                 if !config.uncapped_mode {
                     pce.set_apu_sample_generation_enabled(!config.skip_audio);
+                }
+                if supports_debugger {
+                    apply_debug_actions_to(pce.as_mut(), config.debug_actions);
+                }
+                if supports_execution_controls {
+                    apply_debug_controls(pce.as_mut(), &config);
                 }
             }
             Self::Gba(gba) => {
@@ -182,7 +190,15 @@ impl EmuBackend {
                     .emu
                     .debug_execute_guest_call(target, request.instruction_budget)
             }
-            Self::Pce(_) => anyhow::bail!("guest calls are not supported by PC Engine"),
+            Self::Pce(backend) => {
+                let target = u16::try_from(request.target)
+                    .map_err(|_| anyhow::anyhow!("target is out of range"))?;
+                anyhow::ensure!(
+                    request.exec_mode == crate::symbols::ExecMode::HuC6280,
+                    "expected HuC6280 code"
+                );
+                backend.debug_execute_guest_call(target, request.instruction_budget)
+            }
             Self::Sega8(backend) => {
                 let target = u16::try_from(request.target)
                     .map_err(|_| anyhow::anyhow!("target is out of range"))?;
@@ -241,7 +257,10 @@ impl EmuBackend {
             Self::Nes(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
-            Self::Pce(_) => None,
+            Self::Pce(backend) => u16::try_from(request.target)
+                .ok()
+                .and_then(|target| backend.rom_offset_for_cpu_address(target))
+                .map(|offset| offset as usize),
             Self::Sega8(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),

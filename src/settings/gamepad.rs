@@ -22,6 +22,14 @@ fn default_gp_b() -> String {
     "East".to_string()
 }
 
+fn default_gp_x() -> String {
+    "West".to_string()
+}
+
+fn default_gp_y() -> String {
+    "North".to_string()
+}
+
 fn default_gp_l() -> String {
     "LeftTrigger".to_string()
 }
@@ -67,6 +75,10 @@ pub(crate) enum GamepadAction {
 pub(crate) struct GamepadBindings {
     pub(crate) a: String,
     pub(crate) b: String,
+    #[serde(default = "default_gp_x")]
+    pub(crate) x: String,
+    #[serde(default = "default_gp_y")]
+    pub(crate) y: String,
     pub(crate) l: String,
     pub(crate) r: String,
     pub(crate) start: String,
@@ -79,6 +91,10 @@ pub(crate) struct GamepadBindings {
     pub(crate) p2_a: String,
     #[serde(default = "default_gp_b")]
     pub(crate) p2_b: String,
+    #[serde(default = "default_gp_x")]
+    pub(crate) p2_x: String,
+    #[serde(default = "default_gp_y")]
+    pub(crate) p2_y: String,
     #[serde(default = "default_gp_l")]
     pub(crate) p2_l: String,
     #[serde(default = "default_gp_r")]
@@ -134,6 +150,8 @@ impl Default for GamepadBindings {
         Self {
             a: default_gp_a(),
             b: default_gp_b(),
+            x: default_gp_x(),
+            y: default_gp_y(),
             l: default_gp_l(),
             r: default_gp_r(),
             start: default_gp_start(),
@@ -144,6 +162,8 @@ impl Default for GamepadBindings {
             right: default_gp_right(),
             p2_a: default_gp_a(),
             p2_b: default_gp_b(),
+            p2_x: default_gp_x(),
+            p2_y: default_gp_y(),
             p2_l: default_gp_l(),
             p2_r: default_gp_r(),
             p2_start: default_gp_start(),
@@ -244,6 +264,12 @@ impl GamepadBindings {
         if name == self.get_for_player(BindingAction::B, player) {
             return Some(HostButton::B);
         }
+        if name == self.get_for_player(BindingAction::X, player) {
+            return Some(HostButton::X);
+        }
+        if name == self.get_for_player(BindingAction::Y, player) {
+            return Some(HostButton::Y);
+        }
         if name == self.get_for_player(BindingAction::L, player) {
             return Some(HostButton::L);
         }
@@ -310,6 +336,8 @@ impl GamepadBindings {
             return match action {
                 BindingAction::A => &self.p2_a,
                 BindingAction::B => &self.p2_b,
+                BindingAction::X => &self.p2_x,
+                BindingAction::Y => &self.p2_y,
                 BindingAction::L => &self.p2_l,
                 BindingAction::R => &self.p2_r,
                 BindingAction::Start => &self.p2_start,
@@ -324,6 +352,8 @@ impl GamepadBindings {
         match action {
             BindingAction::A => &self.a,
             BindingAction::B => &self.b,
+            BindingAction::X => &self.x,
+            BindingAction::Y => &self.y,
             BindingAction::L => &self.l,
             BindingAction::R => &self.r,
             BindingAction::Start => &self.start,
@@ -340,6 +370,8 @@ impl GamepadBindings {
         match action {
             BindingAction::A => self.a = s,
             BindingAction::B => self.b = s,
+            BindingAction::X => self.x = s,
+            BindingAction::Y => self.y = s,
             BindingAction::L => self.l = s,
             BindingAction::R => self.r = s,
             BindingAction::Start => self.start = s,
@@ -356,6 +388,8 @@ impl GamepadBindings {
         match action {
             BindingAction::A => self.p2_a = s,
             BindingAction::B => self.p2_b = s,
+            BindingAction::X => self.p2_x = s,
+            BindingAction::Y => self.p2_y = s,
             BindingAction::L => self.p2_l = s,
             BindingAction::R => self.p2_r = s,
             BindingAction::Start => self.p2_start = s,

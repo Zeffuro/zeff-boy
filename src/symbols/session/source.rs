@@ -3,8 +3,30 @@ use std::path::PathBuf;
 use super::{SourceReference, SymbolSession};
 use crate::symbols::{
     AddressSpaceId, CpuLocation, DebugSegment, ImageId, LoadInstance, RegionId,
-    ResolvedLoadInstance, SegmentId, SourceFile, SourceLine, StorageLocation,
+    ResolvedDebugLocation, ResolvedLoadInstance, SegmentId, SourceFile, SourceLine,
+    StorageLocation,
 };
+
+fn disassembly_location(
+    address: zeff_emu_common::address::Address,
+    storage_offset: Option<u64>,
+    bank: Option<u32>,
+) -> ResolvedDebugLocation {
+    ResolvedDebugLocation {
+        cpu: CpuLocation {
+            space: AddressSpaceId(0),
+            address: address.into(),
+        },
+        storage: storage_offset.map(|offset| StorageLocation {
+            image: ImageId(0),
+            region: RegionId(0),
+            offset,
+        }),
+        bank,
+        exec_mode: super::super::ExecMode::Unknown,
+        mapping_epoch: 0,
+    }
+}
 
 impl SymbolSession {
     pub(crate) fn annotate_disassembly(&self, view: &mut crate::debug::DisassemblyView) {
@@ -27,21 +49,40 @@ impl SymbolSession {
                 });
             }
             if line.symbol.is_none()
-                && let Some(name) = line
-                    .storage_offset
-                    .and_then(|offset| self.symbol_name_at_rom_offset(offset))
-                    .or_else(|| self.unique_symbol_name_at_cpu_address(line.address.into()))
+                && let Some(name) = line.bank.map_or_else(
+                    || {
+                        line.storage_offset
+                            .and_then(|offset| self.symbol_name_at_rom_offset(offset))
+                            .or_else(|| self.unique_symbol_name_at_cpu_address(line.address.into()))
+                    },
+                    |_| {
+                        self.symbol_name_at_debug_location(disassembly_location(
+                            line.address,
+                            line.storage_offset,
+                            line.bank,
+                        ))
+                    },
+                )
             {
                 line.symbol = Some(name.to_owned());
             }
             if line.control_target_symbol.is_none() {
-                let name = line
-                    .control_target_storage
-                    .and_then(|offset| self.symbol_name_at_rom_offset(offset))
-                    .or_else(|| {
-                        line.control_target
-                            .and_then(|address| self.symbol_name_at_cpu_address(address.into()))
-                    });
+                let name = line.control_target.and_then(|address| {
+                    line.control_target_bank.map_or_else(
+                        || {
+                            line.control_target_storage
+                                .and_then(|offset| self.symbol_name_at_rom_offset(offset))
+                                .or_else(|| self.symbol_name_at_cpu_address(address.into()))
+                        },
+                        |_| {
+                            self.symbol_name_at_debug_location(disassembly_location(
+                                address,
+                                line.control_target_storage,
+                                line.control_target_bank,
+                            ))
+                        },
+                    )
+                });
                 if let Some(name) = name {
                     line.control_target_symbol = Some(name.to_owned());
                 }

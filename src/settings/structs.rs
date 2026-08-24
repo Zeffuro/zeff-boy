@@ -408,6 +408,10 @@ fn default_printer_window_size() -> [u32; 2] {
     [520, 720]
 }
 
+fn default_mods_window_size() -> [u32; 2] {
+    [620, 520]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct UiSettings {
@@ -449,6 +453,12 @@ pub(crate) struct UiSettings {
     #[serde(default)]
     pub(crate) settings_window_maximized: bool,
     #[serde(default)]
+    pub(crate) mods_window_position: Option<[i32; 2]>,
+    #[serde(default = "default_mods_window_size")]
+    pub(crate) mods_window_size: [u32; 2],
+    #[serde(default)]
+    pub(crate) mods_window_maximized: bool,
+    #[serde(default)]
     pub(crate) printer_window_position: Option<[i32; 2]>,
     #[serde(default = "default_printer_window_size")]
     pub(crate) printer_window_size: [u32; 2],
@@ -485,6 +495,9 @@ impl Default for UiSettings {
             settings_window_position: None,
             settings_window_size: default_settings_window_size(),
             settings_window_maximized: false,
+            mods_window_position: None,
+            mods_window_size: default_mods_window_size(),
+            mods_window_maximized: false,
             printer_window_position: None,
             printer_window_size: default_printer_window_size(),
             printer_window_maximized: false,
@@ -605,8 +618,25 @@ pub(crate) enum PceControllerPreference {
     #[default]
     Auto,
     TwoButton,
+    SixButton,
     Multitap,
     Mouse,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum PceMemoryBasePreference {
+    #[default]
+    Auto,
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum PceArcadeCardPreference {
+    #[default]
+    Auto,
+    Enabled,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -621,8 +651,29 @@ impl PceControllerPreference {
         match self {
             Self::Auto => zeff_pce_core::hardware::PceControllerMode::Automatic,
             Self::TwoButton => zeff_pce_core::hardware::PceControllerMode::TwoButton,
+            Self::SixButton => zeff_pce_core::hardware::PceControllerMode::SixButton,
             Self::Multitap => zeff_pce_core::hardware::PceControllerMode::Multitap,
             Self::Mouse => zeff_pce_core::hardware::PceControllerMode::Mouse,
+        }
+    }
+}
+
+impl PceMemoryBasePreference {
+    pub(crate) const fn core_mode(self) -> zeff_pce_core::hardware::PceMemoryBaseMode {
+        match self {
+            Self::Auto => zeff_pce_core::hardware::PceMemoryBaseMode::Automatic,
+            Self::Enabled => zeff_pce_core::hardware::PceMemoryBaseMode::Enabled,
+            Self::Disabled => zeff_pce_core::hardware::PceMemoryBaseMode::Disabled,
+        }
+    }
+}
+
+impl PceArcadeCardPreference {
+    pub(crate) const fn core_mode(self) -> zeff_pce_core::hardware::PceArcadeCardMode {
+        match self {
+            Self::Auto => zeff_pce_core::hardware::PceArcadeCardMode::Automatic,
+            Self::Enabled => zeff_pce_core::hardware::PceArcadeCardMode::Enabled,
+            Self::Disabled => zeff_pce_core::hardware::PceArcadeCardMode::Disabled,
         }
     }
 }
@@ -688,6 +739,10 @@ pub(crate) struct EmulationSettings {
     pub(crate) pce_console_wiring: PceConsoleWiringPreference,
     #[serde(default)]
     pub(crate) pce_controller: PceControllerPreference,
+    #[serde(default)]
+    pub(crate) pce_memory_base: PceMemoryBasePreference,
+    #[serde(default)]
+    pub(crate) pce_arcade_card: PceArcadeCardPreference,
     #[serde(default = "default_pce_mouse_sensitivity")]
     pub(crate) pce_mouse_sensitivity: f32,
     #[serde(default)]
@@ -745,6 +800,8 @@ impl Default for EmulationSettings {
             sega8_console_region: Sega8ConsoleRegionPreference::Auto,
             pce_console_wiring: PceConsoleWiringPreference::Auto,
             pce_controller: PceControllerPreference::Auto,
+            pce_memory_base: PceMemoryBasePreference::Auto,
+            pce_arcade_card: PceArcadeCardPreference::Auto,
             pce_mouse_sensitivity: default_pce_mouse_sensitivity(),
             pce_mouse_cursor_mode: PceMouseCursorMode::default(),
             pce_cd_archive_memory_limit: PceCdArchiveMemoryLimit::default(),

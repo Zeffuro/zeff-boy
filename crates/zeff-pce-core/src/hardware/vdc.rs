@@ -1,10 +1,13 @@
+use anyhow::bail;
 use bitflags::bitflags;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use super::bus::BaseBusDevices;
 use super::cpu::{LineLevel, VdcPort};
+use super::vdc_horizontal::VdcHorizontalPhase;
 use super::vdc_horizontal::VdcHorizontalState;
 use super::vdc_horizontal::VdcPortWriteResult;
-use super::vdc_scanline::VdcScanlineState;
+use super::vdc_scanline::{VdcScanlineState, VdcSyncMode, VdcVerticalPhase};
 
 mod dma;
 
@@ -21,6 +24,31 @@ pub const VDC_UNAVAILABLE_READ_VALUE: u8 = 0xFF;
 pub const DETERMINISTIC_VDC_RESET_VALUE: u16 = 0;
 pub const DETERMINISTIC_VDC_INITIAL_VRAM_WORD: u16 = 0;
 pub const DETERMINISTIC_VDC_RESET_PRESERVES_VRAM: bool = true;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VdcDebugSnapshot {
+    pub selected_register_id: u8,
+    pub selected_register: Option<VdcRegister>,
+    pub registers: [u16; 0x14],
+    pub vram_read_buffer: u16,
+    pub status: VdcStatus,
+    pub irq_asserted: bool,
+    pub pending_vram_dma: Option<VramDmaState>,
+    pub active_vram_dma: Option<VramDmaState>,
+    pub pending_satb_dma: Option<VramSatbDmaState>,
+    pub active_satb_dma: Option<VramSatbDmaState>,
+    pub horizontal_phase: VdcHorizontalPhase,
+    pub horizontal_pixels_remaining: u16,
+    pub dma_pixel_remainder: u8,
+    pub frame_burst: bool,
+    pub sync_mode: VdcSyncMode,
+    pub vertical_phase: VdcVerticalPhase,
+    pub vertical_phase_line: u16,
+    pub vertical_phase_duration: u16,
+    pub frame_line: u16,
+    pub raster_counter: u16,
+    pub satb: [u16; VDC_SATB_WORDS],
+}
 
 bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -159,6 +187,32 @@ impl HuC6270 {
         self.scanline_state = VdcScanlineState::default();
         if DETERMINISTIC_VDC_RESET_CLEARS_SATB {
             self.satb.fill(DETERMINISTIC_VDC_INITIAL_SATB_WORD);
+        }
+    }
+
+    pub fn debug_snapshot(&self) -> VdcDebugSnapshot {
+        VdcDebugSnapshot {
+            selected_register_id: self.selected_register_id,
+            selected_register: self.selected_register(),
+            registers: self.registers,
+            vram_read_buffer: self.vram_read_buffer,
+            status: self.status,
+            irq_asserted: self.irq_level() == LineLevel::Low,
+            pending_vram_dma: self.pending_vram_dma(),
+            active_vram_dma: self.active_vram_dma(),
+            pending_satb_dma: self.pending_satb_dma(),
+            active_satb_dma: self.active_satb_dma(),
+            horizontal_phase: self.horizontal_phase(),
+            horizontal_pixels_remaining: self.horizontal_phase_pixels_remaining(),
+            dma_pixel_remainder: self.dma_pixel_remainder(),
+            frame_burst: self.frame_burst_enabled(),
+            sync_mode: self.sync_mode(),
+            vertical_phase: self.vertical_phase(),
+            vertical_phase_line: self.vertical_phase_line(),
+            vertical_phase_duration: self.current_vertical_phase_duration(),
+            frame_line: self.frame_line(),
+            raster_counter: self.raster_counter(),
+            satb: self.satb,
         }
     }
 
@@ -343,6 +397,63 @@ impl HuC6270 {
             _ => 0x80,
         };
         self.registers[register as usize] = self.register(register).wrapping_add(increment);
+    }
+
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        for word in self.vram.iter().copied() {
+            writer.write_u16(word);
+        }
+        for word in self.satb {
+            writer.write_u16(word);
+        }
+        for register in self.registers {
+            writer.write_u16(register);
+        }
+        writer.write_u8(self.selected_register_id);
+        writer.write_u16(self.vram_read_buffer);
+        writer.write_u8(self.status.bits());
+        self.write_dma_state(writer);
+        self.horizontal_state.write_state(writer);
+        self.scanline_state.write_state(writer);
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        for word in self.vram.iter_mut() {
+            *word = reader.read_u16()?;
+        }
+        for word in &mut self.satb {
+            *word = reader.read_u16()?;
+        }
+        for (id, register) in self.registers.iter_mut().enumerate() {
+            let value = reader.read_u16()?;
+            match VdcRegister::from_id(id as u8) {
+                Some(register_id) if value & !register_id.writable_mask() != 0 => {
+                    bail!("invalid VDC register {id:#04X} in save-state: {value:#06X}");
+                }
+                None if value != 0 => {
+                    bail!("nonzero unavailable VDC register {id:#04X} in save-state");
+                }
+                _ => {}
+            }
+            *register = value;
+        }
+        self.selected_register_id = reader.read_u8()?;
+        if self.selected_register_id > 0x1F {
+            bail!(
+                "invalid VDC selected-register id in save-state: {}",
+                self.selected_register_id
+            );
+        }
+        self.vram_read_buffer = reader.read_u16()?;
+        let status = reader.read_u8()?;
+        let Some(status) = VdcStatus::from_bits(status) else {
+            bail!("invalid VDC status bits in save-state: {status:#04X}");
+        };
+        self.status = status;
+        self.read_dma_state(reader)?;
+        self.horizontal_state = VdcHorizontalState::read_state(reader)?;
+        self.scanline_state = VdcScanlineState::read_state(reader)?;
+        Ok(())
     }
 }
 

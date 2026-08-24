@@ -46,6 +46,7 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert!(s.ui.debugger_window_open);
     assert_eq!(s.ui.debugger_window_size, [1100, 760]);
     assert_eq!(s.ui.settings_window_size, [760, 680]);
+    assert_eq!(s.ui.mods_window_size, [620, 520]);
     assert_eq!(s.ui.printer_window_size, [520, 720]);
     assert_eq!(s.emulation.slow_motion_divisor, 4);
     assert!(!s.emulation.slow_motion_enabled);
@@ -60,11 +61,17 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.key_bindings_p2.up, KeyCode::Numpad8);
     assert_eq!(s.key_bindings.l, KeyCode::KeyA);
     assert_eq!(s.key_bindings.r, KeyCode::KeyS);
+    assert_eq!(s.key_bindings.x, KeyCode::KeyC);
+    assert_eq!(s.key_bindings.y, KeyCode::KeyV);
     assert_eq!(s.key_bindings_p2.l, KeyCode::Numpad7);
     assert_eq!(s.key_bindings_p2.r, KeyCode::Numpad9);
+    assert_eq!(s.key_bindings_p2.x, KeyCode::Numpad3);
+    assert_eq!(s.key_bindings_p2.y, KeyCode::NumpadDecimal);
     assert_eq!(s.gamepad_bindings.get_p2(BindingAction::A), "South");
     assert_eq!(s.gamepad_bindings.get(BindingAction::L), "LeftTrigger");
     assert_eq!(s.gamepad_bindings.get(BindingAction::R), "RightTrigger");
+    assert_eq!(s.gamepad_bindings.get(BindingAction::X), "West");
+    assert_eq!(s.gamepad_bindings.get(BindingAction::Y), "North");
     assert_eq!(s.emulation.firmware_directory, "");
     assert_eq!(s.emulation.firmware_directory_path(), None);
     assert_eq!(s.emulation.gba_bios_mode, GbaBiosMode::Hle);
@@ -205,6 +212,8 @@ fn pce_console_wiring_preference_serde_roundtrip() {
 fn pce_controller_settings_serde_roundtrip() {
     let mut settings = Settings::default();
     settings.emulation.pce_controller = PceControllerPreference::Mouse;
+    settings.emulation.pce_memory_base = PceMemoryBasePreference::Enabled;
+    settings.emulation.pce_arcade_card = PceArcadeCardPreference::Enabled;
     settings.emulation.pce_mouse_sensitivity = 2.5;
     settings.emulation.pce_mouse_cursor_mode = PceMouseCursorMode::Captured;
 
@@ -214,6 +223,22 @@ fn pce_controller_settings_serde_roundtrip() {
     assert_eq!(
         restored.emulation.pce_controller,
         PceControllerPreference::Mouse
+    );
+    assert_eq!(
+        restored.emulation.pce_memory_base,
+        PceMemoryBasePreference::Enabled
+    );
+    assert_eq!(
+        restored.emulation.pce_memory_base.core_mode(),
+        zeff_pce_core::hardware::PceMemoryBaseMode::Enabled
+    );
+    assert_eq!(
+        restored.emulation.pce_arcade_card,
+        PceArcadeCardPreference::Enabled
+    );
+    assert_eq!(
+        restored.emulation.pce_arcade_card.core_mode(),
+        zeff_pce_core::hardware::PceArcadeCardMode::Enabled
     );
     assert_eq!(restored.emulation.pce_mouse_sensitivity, 2.5);
     assert_eq!(
@@ -233,6 +258,24 @@ fn pce_multitap_setting_serde_roundtrip() {
     assert_eq!(
         restored.emulation.pce_controller,
         PceControllerPreference::Multitap
+    );
+}
+
+#[test]
+fn pce_six_button_setting_serde_roundtrip() {
+    let mut settings = Settings::default();
+    settings.emulation.pce_controller = PceControllerPreference::SixButton;
+
+    let encoded = serde_json::to_string(&settings).unwrap();
+    let restored: Settings = serde_json::from_str(&encoded).unwrap();
+
+    assert_eq!(
+        restored.emulation.pce_controller,
+        PceControllerPreference::SixButton
+    );
+    assert_eq!(
+        restored.emulation.pce_controller.core_mode(),
+        zeff_pce_core::hardware::PceControllerMode::SixButton
     );
 }
 
@@ -257,6 +300,8 @@ fn key_bindings_deserialize_unknown_falls_back_to_defaults() {
     assert_eq!(bindings.up, KeyCode::ArrowUp);
     assert_eq!(bindings.l, KeyCode::KeyA);
     assert_eq!(bindings.r, KeyCode::KeyS);
+    assert_eq!(bindings.x, KeyCode::KeyC);
+    assert_eq!(bindings.y, KeyCode::KeyV);
 }
 
 #[test]
@@ -270,6 +315,8 @@ fn player_two_key_bindings_use_numpad_defaults() {
     assert_eq!(bindings.b, KeyCode::Numpad2);
     assert_eq!(bindings.l, KeyCode::Numpad7);
     assert_eq!(bindings.r, KeyCode::Numpad9);
+    assert_eq!(bindings.x, KeyCode::Numpad3);
+    assert_eq!(bindings.y, KeyCode::NumpadDecimal);
     assert_eq!(bindings.start, KeyCode::NumpadEnter);
     assert_eq!(bindings.select, KeyCode::Numpad0);
 }
@@ -332,10 +379,14 @@ fn gamepad_bindings_roundtrip() {
     let restored: GamepadBindings = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.get(BindingAction::A), "West");
     assert_eq!(restored.get(BindingAction::B), "East");
+    assert_eq!(restored.get(BindingAction::X), "West");
+    assert_eq!(restored.get(BindingAction::Y), "North");
     assert_eq!(restored.get(BindingAction::L), "LeftTrigger");
     assert_eq!(restored.get(BindingAction::R), "RightTrigger2");
     assert_eq!(restored.get_p2(BindingAction::A), "South");
     assert_eq!(restored.get_p2(BindingAction::B), "North");
+    assert_eq!(restored.get_p2(BindingAction::X), "West");
+    assert_eq!(restored.get_p2(BindingAction::Y), "North");
     assert_eq!(restored.get_p2(BindingAction::L), "LeftTrigger2");
     assert_eq!(restored.get_p2(BindingAction::R), "RightTrigger");
     assert!(matches!(
@@ -381,7 +432,17 @@ fn gamepad_bindings_deserialize_missing_ws_buttons_to_defaults() {
     assert_eq!(restored.get_p2(BindingAction::B), "East");
     assert_eq!(restored.get_p2(BindingAction::L), "LeftTrigger");
     assert_eq!(restored.get_p2(BindingAction::R), "RightTrigger");
+    assert_eq!(restored.get_p2(BindingAction::X), "West");
+    assert_eq!(restored.get_p2(BindingAction::Y), "North");
     assert_eq!(restored.get_p2(BindingAction::Up), "DPadUp");
+    assert_eq!(
+        restored.map_button_name("West"),
+        Some(crate::input::HostButton::X)
+    );
+    assert_eq!(
+        restored.map_button_name("North"),
+        Some(crate::input::HostButton::Y)
+    );
     assert_eq!(restored.get_ws(WonderSwanButton::A), "South");
     assert_eq!(restored.get_ws(WonderSwanButton::B), "East");
     assert_eq!(restored.get_ws(WonderSwanButton::Start), "Start");

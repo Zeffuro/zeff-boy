@@ -234,6 +234,44 @@ kind = "ws_pass_fail_tiles"
 }
 
 #[test]
+fn parses_pce_memory_status_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "pce-sample"
+name = "PCE Sample"
+core = "pce"
+
+[[tests]]
+id = "pce/sample/status"
+core = "pce"
+tier = "local"
+max_frames = 180
+
+[tests.artifact]
+kind = "test_rom"
+license = "MIT OR Apache-2.0"
+license_confidence = "verified"
+redistributable = true
+source_url = "scripts/build-pce-cd-adpcm-fixture.ps1"
+source_version = "repository script"
+
+[tests.rom]
+path = "rom-tests/cache/pce/sample.cue"
+
+[tests.pass]
+kind = "pce_memory_status"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].core, Core::Pce);
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::PceMemoryStatus);
+}
+
+#[test]
 fn parses_sega8_sdsc_contains_pass_kind() {
     let manifest: Manifest = toml::from_str(
         r#"

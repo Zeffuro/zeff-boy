@@ -118,8 +118,13 @@ pub(crate) fn resolve_pce_cd_system_card_with_manifest(
     firmware_roots: &[std::path::PathBuf],
     content_path: Option<&std::path::Path>,
     console_wiring: zeff_pce_core::hardware::PceConsoleWiring,
+    require_open_fixture: bool,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
-    const FIRMWARE_ID: &str = "nec.pce.cd.system_card";
+    let firmware_id = if require_open_fixture {
+        "zeff.pce.cd.adpcm_fixture_card"
+    } else {
+        "nec.pce.cd.system_card"
+    };
     let (region, console_name, preferred_filename) = match console_wiring {
         zeff_pce_core::hardware::PceConsoleWiring::PcEngine => {
             ("japan", "PC Engine CD-ROM2", "syscard3.pce")
@@ -128,12 +133,16 @@ pub(crate) fn resolve_pce_cd_system_card_with_manifest(
             ("usa", "TurboGrafx-CD", "syscard3u.pce")
         }
     };
-    let plan = zeff_firmware::firmware_plan_for_pce_cdrom2_region(region);
-    if let Some(resolved) = resolve_from_inventory(FIRMWARE_ID, &plan, inventory) {
+    let plan = if require_open_fixture {
+        zeff_firmware::firmware_plan_for_pce_cdrom2_fixture()
+    } else {
+        zeff_firmware::firmware_plan_for_pce_cdrom2_region(region)
+    };
+    if let Some(resolved) = resolve_from_inventory(firmware_id, &plan, inventory) {
         return Ok(resolved);
     }
     let (resolved, search_dirs, candidate_summaries) =
-        find_external_firmware(FIRMWARE_ID, &plan, firmware_roots, content_path)?;
+        find_external_firmware(firmware_id, &plan, firmware_roots, content_path)?;
     if let Some(resolved) = resolved {
         return Ok(resolved);
     }
@@ -142,6 +151,12 @@ pub(crate) fn resolve_pce_cd_system_card_with_manifest(
         .map(|dir| dir.path.display().to_string())
         .collect::<Vec<_>>()
         .join(", ");
+    if require_open_fixture {
+        anyhow::bail!(
+            "The generated PC Engine CD ADPCM fixture requires its exact open syscard3.pce. Searched: {searched}. {}",
+            candidate_summaries.join(" ")
+        );
+    }
     anyhow::bail!(
         "{console_name} requires a recognized 262144-byte {region} System Card firmware; {preferred_filename} Super System Card v3 is preferred. Searched: {searched}. {}",
         candidate_summaries.join(" ")
@@ -385,6 +400,8 @@ pub(crate) fn resolve_pce_cd_system_card_with_manifest(
     _inventory: Option<&zeff_firmware::FirmwareInventory>,
     _firmware_roots: &[std::path::PathBuf],
     _content_path: Option<&std::path::Path>,
+    _console_wiring: zeff_pce_core::hardware::PceConsoleWiring,
+    _require_open_fixture: bool,
 ) -> anyhow::Result<ResolvedFirmwareBytes> {
     anyhow::bail!("PC Engine CD-ROM2 direct CUE sets are not available in the browser build")
 }
@@ -758,6 +775,7 @@ mod tests {
                 &[],
                 None,
                 wiring,
+                false,
             )
             .unwrap_err()
             .to_string();

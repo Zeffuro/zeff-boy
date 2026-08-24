@@ -11,7 +11,7 @@ use crate::emu_thread::GuestCallRequest;
 use crate::symbols::ExecMode;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use zeff_emu_common::debug::{DebugEvent, WatchType};
+use zeff_emu_common::debug::{DebugEvent, TraceExecMode, WatchType};
 use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset};
@@ -225,6 +225,53 @@ fn guest_call_rejects_a_stale_rom_mapping() {
         .unwrap_err();
 
     assert!(error.to_string().contains("no longer maps"));
+}
+
+#[test]
+fn pce_guest_call_returns_to_suspended_context_and_produces_undo_state() {
+    let mut rom = build_pce_test_rom();
+    rom[6..13].copy_from_slice(&[0xBA, 0xE8, 0xE8, 0x9A, 0x4C, 0x00, 0xE0]);
+    let mut backend = load_test_backend_with_shared_loader(ActiveSystem::Pce, "call.pce", rom);
+    backend.debug_suspend();
+
+    let (instructions, undo_state) = backend
+        .execute_guest_call(&GuestCallRequest {
+            name: "GuestRoutine".to_owned(),
+            target: 0xE006,
+            storage_offset: Some(6),
+            explicit_overlay: false,
+            exec_mode: ExecMode::HuC6280,
+            instruction_budget: 10,
+        })
+        .unwrap();
+
+    assert_eq!(instructions, 5);
+    assert!(!undo_state.is_empty());
+    assert!(backend.is_suspended());
+    let EmuBackend::Pce(pce) = &backend else {
+        panic!("PCE backend changed systems");
+    };
+    assert_eq!(pce.debug_cpu_snapshot().registers().pc, 0xE000);
+}
+
+#[test]
+fn failed_pce_guest_call_restores_the_full_state() {
+    let mut backend = build_pce_backend();
+    backend.debug_suspend();
+    let before = backend.encode_state_bytes().unwrap();
+    let error = backend
+        .execute_guest_call(&GuestCallRequest {
+            name: "NeverReturns".to_owned(),
+            target: 0xE001,
+            storage_offset: Some(1),
+            explicit_overlay: false,
+            exec_mode: ExecMode::HuC6280,
+            instruction_budget: 3,
+        })
+        .unwrap_err();
+
+    assert!(error.to_string().contains("state restored"));
+    assert_eq!(backend.encode_state_bytes().unwrap(), before);
 }
 
 #[test]
@@ -768,6 +815,19 @@ fn backend_feature_contract_covers_every_supported_core() {
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
     assert_backend_feature_contract(
+        load_test_backend_with_shared_loader(
+            ActiveSystem::GameGear,
+            "test.gg",
+            build_sms_test_rom(),
+        ),
+        ActiveSystem::GameGear,
+        SaveRamKind::mapper_ram_unknown(
+            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
+        ),
+        zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
+        zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
+    assert_backend_feature_contract(
         load_test_backend_with_shared_loader(ActiveSystem::Sg1000, "test.sg", build_sms_test_rom()),
         ActiveSystem::Sg1000,
         SaveRamKind::mapper_ram_unknown(
@@ -776,10 +836,17 @@ fn backend_feature_contract_covers_every_supported_core() {
         zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
+    assert_backend_feature_contract(
+        build_pce_backend(),
+        ActiveSystem::Pce,
+        SaveRamKind::none(),
+        zeff_pce_core::hardware::WORK_RAM_LEN,
+        zeff_pce_core::hardware::VDC_VRAM_BYTES,
+    );
 }
 
 #[test]
-fn pce_backend_exposes_bounded_frontend_and_read_only_debug_capabilities() {
+fn pce_backend_exposes_bounded_frontend_and_debugger_capabilities() {
     let backend = build_pce_backend();
     let features = backend.capabilities();
 
@@ -796,12 +863,18 @@ fn pce_backend_exposes_bounded_frontend_and_read_only_debug_capabilities() {
         features.system_ram_len,
         zeff_pce_core::hardware::WORK_RAM_LEN
     );
-    assert_eq!(features.video_ram_len, 0);
+    assert_eq!(
+        features.video_ram_len,
+        zeff_pce_core::hardware::VDC_VRAM_BYTES
+    );
     assert_eq!(
         features.memory_regions,
         vec![
-            MemoryRegionDescriptor::read_only_cpu_address_space(16),
+            MemoryRegionDescriptor::cpu_address_space(16),
             MemoryRegionDescriptor::system_ram(zeff_pce_core::hardware::WORK_RAM_LEN),
+            MemoryRegionDescriptor::video_ram(zeff_pce_core::hardware::VDC_VRAM_BYTES),
+            MemoryRegionDescriptor::palette_ram(zeff_pce_core::hardware::VCE_PALETTE_COLORS * 2,),
+            MemoryRegionDescriptor::oam(zeff_pce_core::hardware::VDC_SATB_WORDS * 2),
             MemoryRegionDescriptor::framebuffer(ActiveSystem::Pce.framebuffer_len()),
         ]
     );
@@ -809,17 +882,20 @@ fn pce_backend_exposes_bounded_frontend_and_read_only_debug_capabilities() {
         features.input_features,
         crate::emu_backend::InputCapabilities::for_system(ActiveSystem::Pce)
     );
-    assert!(!features.input_features.supports_player_two);
-    assert!(!features.supports_save_states);
-    assert!(!features.supports_state_capture);
-    assert!(!features.supports_rewind);
-    assert!(!features.supports_replay);
+    assert!(features.input_features.supports_player_two);
+    assert!(features.supports_save_states);
+    assert!(features.supports_state_capture);
+    assert!(features.supports_rewind);
+    assert!(features.supports_replay);
     assert!(features.supports_audio);
-    assert!(!features.supports_cheats);
-    assert!(!features.supports_guest_calls);
-    assert!(!features.supports_debugger);
-    assert!(!features.supports_opcode_history);
-    assert!(!features.cheat_features.supports_user_cheats);
+    assert!(features.supports_cheats);
+    assert!(features.supports_guest_calls);
+    assert!(features.supports_debugger);
+    assert!(features.supports_execution_controls);
+    assert!(features.supports_opcode_history);
+    assert!(features.cheat_features.supports_user_cheats);
+    assert!(features.cheat_features.supports_ram_writes);
+    assert!(!features.cheat_features.supports_rom_patches);
     assert!(matches!(backend, EmuBackend::Pce(_)));
 }
 
@@ -1068,12 +1144,30 @@ fn app_ui_snapshot_reports_core_features_for_every_supported_core() {
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
     assert_app_snapshot_core_features(
+        load_test_backend_with_shared_loader(
+            ActiveSystem::GameGear,
+            "test.gg",
+            build_sms_test_rom(),
+        ),
+        SaveRamKind::mapper_ram_unknown(
+            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
+        ),
+        zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
+        zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
+    assert_app_snapshot_core_features(
         load_test_backend_with_shared_loader(ActiveSystem::Sg1000, "test.sg", build_sms_test_rom()),
         SaveRamKind::mapper_ram_unknown(
             zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
         ),
         zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
+    );
+    assert_app_snapshot_core_features(
+        build_pce_backend(),
+        SaveRamKind::none(),
+        zeff_pce_core::hardware::WORK_RAM_LEN,
+        zeff_pce_core::hardware::VDC_VRAM_BYTES,
     );
 }
 
@@ -1082,6 +1176,7 @@ fn backend_state_decode_smoke_covers_every_supported_core() {
     assert_backend_state_decode_smoke(build_gb_backend());
     assert_backend_state_decode_smoke(build_gba_backend());
     assert_backend_state_decode_smoke(build_nes_backend());
+    assert_backend_state_decode_smoke(build_pce_backend());
     assert_backend_state_decode_smoke(build_ws_backend());
     assert_backend_state_decode_smoke(build_sms_backend());
 }
@@ -1347,6 +1442,122 @@ fn debuggable_adapter_exposes_uniform_cpu_peek_write() {
     assert_debuggable_cpu_byte_access(&mut sega8, 0xC123, 0x9A);
 }
 
+#[test]
+fn pce_execution_controls_step_and_record_history_through_the_backend_runtime() {
+    let mut backend = build_pce_backend();
+    assert!(backend.supports_debugger());
+    assert!(backend.supports_execution_controls());
+    assert!(backend.supports_opcode_history());
+
+    backend.debug_suspend();
+    assert!(backend.is_suspended());
+
+    let actions = DebugUiActions::none();
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.opcode_log_enabled = true;
+    config.debug_step = true;
+    backend.apply_runtime_config(config);
+    backend.step_frame();
+
+    let EmuBackend::Pce(pce) = &backend else {
+        panic!("PCE backend changed systems");
+    };
+    assert!(pce.is_cpu_suspended());
+    assert_eq!(pce.debug_cpu_snapshot().registers().pc, 0xE001);
+    let history = pce.recent_opcodes(1);
+    assert_eq!(history[0].logical_pc(), 0xE000);
+    assert_eq!(history[0].opcode(), 0xD4);
+
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.debug_continue = true;
+    backend.apply_runtime_config(config);
+    assert!(!backend.is_suspended());
+}
+
+#[test]
+fn pce_runtime_routes_logical_breakpoint_and_watchpoint_actions() {
+    let mut backend = build_pce_backend();
+    let mut actions = DebugUiActions::none();
+    actions.add_breakpoint = Some(0xE000);
+    actions.add_watchpoint = Some((0x4000, 0x400F, WatchType::ReadWrite));
+    actions
+        .event_breakpoint_changes
+        .push((DebugEvent::Interrupt, true));
+
+    backend.apply_runtime_config(BackendRuntimeConfig::new(&actions));
+    backend.step_frame();
+
+    let EmuBackend::Pce(pce) = &backend else {
+        panic!("PCE backend changed systems");
+    };
+    assert!(pce.is_cpu_suspended());
+    assert_eq!(pce.debug_hit_breakpoint(), Some(0xE000));
+    assert_eq!(pce.debug_watchpoints().len(), 1);
+    assert_eq!(pce.debug_watchpoints()[0].address, 0x4000);
+    assert_eq!(
+        pce.iter_event_breakpoints().collect::<Vec<_>>(),
+        [DebugEvent::Interrupt]
+    );
+}
+
+#[test]
+fn pce_runtime_routes_trace_configuration_and_dma_events() {
+    let mut backend = build_pce_backend();
+    backend.debug_suspend();
+    let mut actions = DebugUiActions::none();
+    actions.trace_enabled = Some(true);
+    actions.trace_capacity = Some(3_000);
+    actions
+        .event_breakpoint_changes
+        .extend([(DebugEvent::Interrupt, true), (DebugEvent::Dma, true)]);
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.debug_step = true;
+
+    backend.apply_runtime_config(config);
+    backend.step_frame();
+
+    let EmuBackend::Pce(pce) = &backend else {
+        panic!("PCE backend changed systems");
+    };
+    assert_eq!(
+        pce.iter_event_breakpoints().collect::<Vec<_>>(),
+        [DebugEvent::Interrupt, DebugEvent::Dma]
+    );
+    assert_eq!(pce.instruction_trace().capacity(), 3_000);
+    let entries = pce.instruction_trace().iter().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].mode, TraceExecMode::HuC6280);
+    assert_eq!(entries[0].pc, 0xE000);
+    assert_eq!(entries[0].instruction_bytes(), &[0xD4]);
+}
+
+#[test]
+fn pce_runtime_only_collects_waveforms_while_apu_capture_is_requested() {
+    let mut backend = build_pce_backend();
+    let actions = DebugUiActions::none();
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.apu_capture_enabled = true;
+    config.skip_audio = true;
+    backend.apply_runtime_config(config);
+    backend.step_frame();
+
+    let EmuBackend::Pce(pce) = &backend else {
+        panic!("PCE backend changed systems");
+    };
+    assert!(pce.debug_hardware_snapshot().psg.debug_capture_enabled);
+    let retained = pce.psg_master_debug_samples_ordered().len();
+    assert!(retained > 0);
+    assert_eq!(pce.psg_channel_debug_samples_ordered(5).len(), retained);
+
+    backend.apply_runtime_config(BackendRuntimeConfig::new(&actions));
+    backend.step_frame();
+    let EmuBackend::Pce(pce) = &backend else {
+        panic!("PCE backend changed systems");
+    };
+    assert!(!pce.debug_hardware_snapshot().psg.debug_capture_enabled);
+    assert_eq!(pce.psg_master_debug_samples_ordered().len(), retained);
+}
+
 fn assert_debuggable_cpu_byte_access(
     emu: &mut impl DebuggableEmulator,
     address: zeff_emu_common::address::Address,
@@ -1558,6 +1769,11 @@ fn gb_rtc_replay_hash_ignores_bess_wall_clock_timestamp() {
 #[test]
 fn nes_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_nes_backend(), 1, 2);
+}
+
+#[test]
+fn pce_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_pce_backend(), 1, 2);
 }
 
 #[test]

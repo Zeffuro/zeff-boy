@@ -16,9 +16,12 @@ use super::{
     PROVISIONAL_STOCK_MACHINE_VCE_BOUNDARIES_DRIVE_VDC_HORIZONTAL_AND_VERTICAL_SYNC,
     PSG_CLOCK_DENOMINATOR, PSG_CLOCK_NUMERATOR, PSG_INTERNAL_MASTER_CLOCK_DIVISOR,
     PSG_MASTER_CLOCK_DIVISOR, PceCartridgeDescriptor, PceCartridgeHardware, PceClockCounter,
-    PceConsoleWiring, PceCpuAction, PceDevices, PceMachine, PceMachineError, PsgPort, PsgRevision,
-    VDC_SATB_WORDS, VceFrameLength, VcePixelClock, VcePort, VdcDmaChannel, VdcDmaProgress,
-    VdcRegister, VdcScanlineAdvanceError, VdcStatus,
+    PceConsoleWiring, PceCpuAction, PceDevices, PceExecutionState, PceMachine, PceMachineError,
+    PsgPort, PsgRevision, VDC_SATB_WORDS, VceFrameLength, VcePixelClock, VcePort, VdcDmaChannel,
+    VdcDmaProgress, VdcRegister, VdcScanlineAdvanceError, VdcStatus,
+};
+use zeff_emu_common::debug::{
+    DebugEvent, TraceExecMode, TraceWriteKind, TraceWriteWidth, WatchType,
 };
 
 const RESET_PC: u16 = 0xE000;
@@ -38,7 +41,7 @@ fn set_vector(rom: &mut [u8], offset: usize, address: u16) {
 
 fn sha256(hex: &str) -> [u8; 32] {
     let mut hash = [0; 32];
-    for (byte, digits) in hash.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+    for (byte, digits) in hash.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
         *byte = u8::from_str_radix(std::str::from_utf8(digits).unwrap(), 16).unwrap();
     }
     hash
@@ -197,10 +200,381 @@ fn read_only_debug_snapshot_exposes_cpu_mapping_and_side_effect_free_rom_peeks()
 
     assert_eq!(snapshot.registers().pc, RESET_PC);
     assert_eq!(snapshot.mapping_registers()[7], 0);
+    assert_eq!(snapshot.physical_page(RESET_PC), 0);
+    assert_eq!(snapshot.physical_address(RESET_PC), 0);
+    assert_eq!(snapshot.physical_pc(), 0);
     assert_eq!(snapshot.speed_mode(), SpeedMode::Low);
+    assert_eq!(snapshot.timer_counter(), 0);
+    assert_eq!(snapshot.timer_reload(), 0);
+    assert!(!snapshot.timer_running());
+    assert_eq!(snapshot.timer_prescaler_ticks(), 0);
+    assert_eq!(snapshot.irq_disable(), 0);
+    assert_eq!(snapshot.irq_request(), 0);
+    assert_eq!(snapshot.sampled_interrupt(), None);
+    assert_eq!(snapshot.execution_state(), PceExecutionState::Running);
     assert_eq!(machine.debug_peek_cpu8(0), 0xEA);
     assert_eq!(machine.debug_peek_cpu8(1), 0xD4);
+    assert_eq!(machine.rom_offset_for_cpu_address(RESET_PC), Some(0));
     assert_eq!(machine.master_ticks(), snapshot.master_ticks());
+}
+
+#[test]
+fn debugger_controls_suspend_and_step_a_single_instruction() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xEA, 0xEA])).unwrap();
+
+    machine.debug_suspend();
+    let suspended = machine.run_until_frame().unwrap();
+    assert_eq!(suspended.cpu_boundaries(), 0);
+    assert_eq!(suspended.master_ticks(), 0);
+    assert_eq!(machine.debug_snapshot().registers().pc, RESET_PC);
+
+    machine.debug_step();
+    let stepped = machine.run_until_frame().unwrap();
+    assert_eq!(stepped.cpu_boundaries(), 1);
+    assert!(machine.is_cpu_suspended());
+    assert_eq!(machine.debug_snapshot().registers().pc, RESET_PC + 1);
+
+    machine.debug_continue();
+    assert_eq!(machine.execution_state(), PceExecutionState::Running);
+}
+
+#[test]
+fn debugger_step_runs_pending_interrupt_then_one_instruction() {
+    let mut rom = rom_with_program(&[0xEA, 0xEA]);
+    rom[0x10] = 0xEA;
+    set_vector(&mut rom, 0x1FFC, RESET_PC + 0x10);
+    let mut machine = PceMachine::new(rom).unwrap();
+
+    machine.cpu_mut().set_nmi_line(LineLevel::Low);
+    machine.step_boundary().unwrap();
+    machine.debug_suspend();
+    machine.debug_step();
+
+    let stepped = machine.run_until_frame().unwrap();
+    assert_eq!(stepped.cpu_boundaries(), 2);
+    assert!(machine.is_cpu_suspended());
+    assert_eq!(machine.debug_snapshot().registers().pc, RESET_PC + 0x11);
+}
+
+#[test]
+fn guest_call_returns_to_the_suspended_huc6280_context() {
+    let mut machine = PceMachine::new(rom_with_program(&[
+        0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xA9, 0x42, 0x60,
+    ]))
+    .unwrap();
+    machine.cpu_mut().cpu_mut().set_mapping_register(1, 0xF8);
+    machine
+        .cpu_mut()
+        .cpu_mut()
+        .registers_mut()
+        .status
+        .remove(StatusFlags::INTERRUPT);
+    machine.debug_suspend();
+    let before = machine.debug_snapshot();
+
+    assert_eq!(machine.debug_execute_guest_call(RESET_PC + 6, 10), Ok(2));
+
+    let after = machine.debug_snapshot();
+    assert_eq!(after.registers().a, 0x42);
+    assert_eq!(after.registers().pc, before.registers().pc);
+    assert_eq!(after.registers().sp, before.registers().sp);
+    assert!(!after.registers().status.contains(StatusFlags::INTERRUPT));
+    assert_eq!(after.mapping_registers(), before.mapping_registers());
+    assert!(machine.is_cpu_suspended());
+    assert!(after.master_ticks() > before.master_ticks());
+}
+
+#[test]
+fn guest_call_preserves_a_sampled_interrupt_until_return() {
+    let mut rom = rom_with_program(&[0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xA9, 0x24, 0x60]);
+    rom[0x10] = 0xEA;
+    set_vector(&mut rom, 0x1FFC, RESET_PC + 0x10);
+    let mut machine = PceMachine::new(rom).unwrap();
+    machine.cpu_mut().cpu_mut().set_mapping_register(1, 0xF8);
+    machine.cpu_mut().set_nmi_line(LineLevel::Low);
+    machine.step_boundary().unwrap();
+    assert_eq!(
+        machine.debug_snapshot().sampled_interrupt(),
+        Some(InterruptSource::Nmi)
+    );
+    machine.debug_suspend();
+
+    assert_eq!(machine.debug_execute_guest_call(RESET_PC + 6, 10), Ok(2));
+    assert_eq!(
+        machine.debug_snapshot().sampled_interrupt(),
+        Some(InterruptSource::Nmi)
+    );
+    assert_eq!(machine.debug_snapshot().registers().pc, RESET_PC + 1);
+}
+
+#[test]
+fn logical_breakpoints_stop_before_execution_and_continue_past_the_hit() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xEA, 0xEA])).unwrap();
+    machine.add_breakpoint(RESET_PC);
+    machine.add_breakpoint(RESET_PC + 1);
+
+    let first = machine.run_until_frame().unwrap();
+    assert_eq!(first.cpu_boundaries(), 0);
+    assert_eq!(machine.debug_snapshot().registers().pc, RESET_PC);
+    assert_eq!(machine.debug_hit_breakpoint(), Some(u32::from(RESET_PC)));
+
+    machine.debug_continue();
+    let second = machine.run_until_frame().unwrap();
+    assert_eq!(second.cpu_boundaries(), 1);
+    assert_eq!(machine.debug_snapshot().registers().pc, RESET_PC + 1);
+    assert_eq!(
+        machine.debug_hit_breakpoint(),
+        Some(u32::from(RESET_PC + 1))
+    );
+}
+
+#[test]
+fn one_shot_and_hit_count_breakpoints_use_logical_cpu_addresses() {
+    let mut one_shot = PceMachine::new(rom_with_program(&[0xEA])).unwrap();
+    one_shot.add_one_shot_breakpoint(RESET_PC);
+    one_shot.run_until_frame().unwrap();
+    assert_eq!(one_shot.debug_hit_breakpoint(), Some(u32::from(RESET_PC)));
+    assert!(one_shot.iter_breakpoints().next().is_none());
+    assert!(one_shot.iter_one_shot_breakpoints().next().is_none());
+
+    let mut counted = PceMachine::new(rom_with_program(&[0x80, 0xFE])).unwrap();
+    counted.add_breakpoint_after(RESET_PC, 3);
+    let run = counted.run_until_frame().unwrap();
+    assert_eq!(run.cpu_boundaries(), 2);
+    assert_eq!(counted.debug_hit_breakpoint(), Some(u32::from(RESET_PC)));
+    let condition = counted.iter_breakpoint_hit_conditions().next().unwrap();
+    assert_eq!(condition.target_hits, 3);
+    assert_eq!(condition.hits, 3);
+}
+
+#[test]
+fn logical_watchpoints_distinguish_mpr_aliases_and_suspend_after_access() {
+    let mut machine = PceMachine::new(rom_with_program(&[
+        0xA9, 0x5A, 0x8D, 0x00, 0x60, 0xA9, 0xA5, 0x8D, 0x00, 0x40,
+    ]))
+    .unwrap();
+    machine.cpu_mut().cpu_mut().set_mapping_register(2, 0xF8);
+    machine.cpu_mut().cpu_mut().set_mapping_register(3, 0xF8);
+    machine.add_watchpoint_range(0x4000, 0x4000, WatchType::Write);
+
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+    assert!(machine.debug_hit_watchpoint().is_none());
+    assert_eq!(machine.work_ram()[0], 0x5A);
+
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+    let hit = machine
+        .debug_hit_watchpoint()
+        .expect("logical write watchpoint should hit");
+    assert!(machine.is_cpu_suspended());
+    assert_eq!(hit.address, 0x4000);
+    assert_eq!(hit.old_value, 0x5A);
+    assert_eq!(hit.new_value, 0xA5);
+}
+
+#[test]
+fn read_watchpoints_include_dummy_cpu_bus_cycles() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xEA, 0xEA])).unwrap();
+    machine.add_watchpoint_range(RESET_PC + 1, RESET_PC + 1, WatchType::Read);
+
+    let run = machine.run_until_frame().unwrap();
+    assert_eq!(run.cpu_boundaries(), 1);
+    let hit = machine
+        .debug_hit_watchpoint()
+        .expect("NOP dummy fetch should hit read watchpoint");
+    assert_eq!(hit.address, u32::from(RESET_PC + 1));
+    assert_eq!(hit.watch_type, WatchType::Read);
+}
+
+#[test]
+fn write_watchpoint_old_value_peek_does_not_clear_vdc_status() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xA9, 0x00, 0x8D, 0x00, 0x40])).unwrap();
+    machine.cpu_mut().cpu_mut().set_mapping_register(2, 0xFF);
+    machine
+        .devices_mut()
+        .vdc_mut()
+        .latch_status(VdcStatus::RASTER_MATCH);
+    machine.add_watchpoint_range(0x4000, 0x4000, WatchType::Write);
+
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+
+    assert!(
+        machine
+            .devices()
+            .vdc()
+            .status()
+            .contains(VdcStatus::RASTER_MATCH)
+    );
+    let hit = machine
+        .debug_hit_watchpoint()
+        .expect("VDC write watchpoint should hit");
+    assert_eq!(hit.old_value, 0xFF);
+    assert_eq!(hit.new_value, 0x00);
+}
+
+#[test]
+fn logical_debug_writes_route_on_chip_without_advancing_time_and_hit_watchpoints() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xEA])).unwrap();
+    machine.cpu_mut().cpu_mut().set_mapping_register(2, 0xFF);
+    machine.add_watchpoint_range(0x4C00, 0x4C00, WatchType::Write);
+    let ticks = machine.master_ticks();
+
+    machine.debug_write_cpu8(0x4C00, 0x2A);
+
+    assert_eq!(machine.master_ticks(), ticks);
+    assert_eq!(machine.debug_snapshot().timer_reload(), 0x2A);
+    assert!(machine.is_cpu_suspended());
+    let hit = machine
+        .debug_hit_watchpoint()
+        .expect("debug timer write should hit watchpoint");
+    assert_eq!(hit.address, 0x4C00);
+    assert_eq!(hit.old_value, 0xFF);
+    assert_eq!(hit.new_value, 0x2A);
+}
+
+#[test]
+fn instruction_trace_records_exact_fetches_mapping_registers_and_logical_writes() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xA9, 0x5A, 0x8D, 0x00, 0x40])).unwrap();
+    machine.cpu_mut().cpu_mut().set_mapping_register(2, 0xF8);
+    machine.set_instruction_trace_enabled(true);
+
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+
+    let entries = machine.instruction_trace().iter().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].mode, TraceExecMode::HuC6280);
+    assert_eq!(entries[0].pc, u32::from(RESET_PC));
+    assert_eq!(entries[0].physical_rom_offset, Some(0));
+    assert_eq!(entries[0].bank, Some(0));
+    assert_eq!(entries[0].instruction_bytes(), &[0xA9, 0x5A]);
+    assert_eq!(entries[0].register_deltas()[0].register, 0);
+    assert_eq!(entries[0].register_deltas()[0].value, 0x5A);
+    assert!(entries[0].cycle < entries[1].cycle);
+
+    assert_eq!(entries[1].pc, u32::from(RESET_PC + 2));
+    assert_eq!(entries[1].physical_rom_offset, Some(2));
+    assert_eq!(entries[1].bank, Some(0));
+    assert_eq!(entries[1].instruction_bytes(), &[0x8D, 0x00, 0x40]);
+    assert_eq!(entries[1].writes().len(), 1);
+    assert_eq!(entries[1].writes()[0].address, 0x4000);
+    assert_eq!(entries[1].writes()[0].old_value, 0);
+    assert_eq!(entries[1].writes()[0].new_value, 0x5A);
+    assert_eq!(entries[1].writes()[0].width, TraceWriteWidth::Byte);
+    assert_eq!(entries[1].writes()[0].kind, TraceWriteKind::Memory);
+}
+
+#[test]
+fn instruction_trace_captures_mpr_changes_after_the_original_fetch_mapping() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xA9, 0x2A, 0x53, 0x04])).unwrap();
+    machine.set_instruction_trace_enabled(true);
+
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+
+    let entry = machine.instruction_trace().iter().nth(1).unwrap();
+    assert_eq!(entry.pc, u32::from(RESET_PC + 2));
+    assert_eq!(entry.bank, Some(0));
+    assert_eq!(entry.physical_rom_offset, Some(2));
+    assert_eq!(entry.instruction_bytes(), &[0x53, 0x04]);
+    assert!(
+        entry
+            .register_deltas()
+            .iter()
+            .any(|delta| delta.register == 8 && delta.value == 0x2A)
+    );
+}
+
+#[test]
+fn instruction_trace_records_direct_vdc_port_writes_as_io() {
+    let mut machine = PceMachine::new(rom_with_program(&[0x03, 0x0C])).unwrap();
+    machine.set_instruction_trace_enabled(true);
+
+    machine.step_boundary().unwrap();
+
+    let entry = machine.instruction_trace().iter().next().unwrap();
+    assert_eq!(entry.instruction_bytes(), &[0x03, 0x0C]);
+    assert_eq!(entry.writes().len(), 1);
+    assert_eq!(entry.writes()[0].address, 0);
+    assert_eq!(entry.writes()[0].old_value, 0xFF);
+    assert_eq!(entry.writes()[0].new_value, 0x0C);
+    assert_eq!(entry.writes()[0].kind, TraceWriteKind::Io);
+}
+
+#[test]
+fn interrupt_event_breakpoint_suspends_after_service_and_emits_trace_event() {
+    let mut rom = rom_with_program(&[0xEA, 0xEA]);
+    rom[0x10] = 0xEA;
+    set_vector(&mut rom, 0x1FFC, RESET_PC + 0x10);
+    let mut machine = PceMachine::new(rom).unwrap();
+    machine.set_instruction_trace_enabled(true);
+    machine.set_event_breakpoint(DebugEvent::Interrupt, true);
+    machine.set_event_breakpoint(DebugEvent::Dma, true);
+    assert_eq!(
+        machine.iter_event_breakpoints().collect::<Vec<_>>(),
+        [DebugEvent::Interrupt, DebugEvent::Dma]
+    );
+
+    machine.cpu_mut().set_nmi_line(LineLevel::Low);
+    machine.step_boundary().unwrap();
+    let run = machine.run_until_frame().unwrap();
+
+    assert_eq!(run.cpu_boundaries(), 1);
+    assert!(machine.is_cpu_suspended());
+    assert_eq!(machine.debug_hit_event(), Some(DebugEvent::Interrupt));
+    let entry = machine.instruction_trace().iter().last().unwrap();
+    assert_eq!(entry.pc, u32::from(RESET_PC + 1));
+    assert_eq!(entry.bank, Some(0));
+    assert_eq!(entry.physical_rom_offset, Some(1));
+    assert!(entry.instruction_bytes().is_empty());
+    assert_eq!(entry.event, Some(DebugEvent::Interrupt));
+    assert_eq!(machine.cpu().cpu().registers().pc, RESET_PC + 0x10);
+
+    machine.debug_continue();
+    assert_eq!(machine.debug_hit_event(), None);
+    assert_eq!(machine.execution_state(), PceExecutionState::Running);
+}
+
+#[test]
+fn opcode_history_records_instruction_fetch_mapping_and_keeps_recent_entries() {
+    let mut machine = PceMachine::new(rom_with_program(&[0xEA, 0xD4, 0x54])).unwrap();
+    machine.set_opcode_history_enabled(true);
+
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+    machine.step_boundary().unwrap();
+
+    let history = machine.recent_opcodes(2);
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].logical_pc(), RESET_PC + 2);
+    assert_eq!(history[0].physical_pc(), 2);
+    assert_eq!(history[0].opcode(), 0x54);
+    assert!(history[0].master_ticks() > history[1].master_ticks());
+    assert_eq!(history[1].logical_pc(), RESET_PC + 1);
+    assert_eq!(history[1].opcode(), 0xD4);
+
+    machine.reset();
+    assert!(machine.recent_opcodes(32).is_empty());
+}
+
+#[test]
+fn debug_rom_resolution_tracks_mprs_and_ignores_non_hucard_pages() {
+    let mut rom = vec![0xEA; 0x60_000];
+    rom[0x1FFE..0x2000].copy_from_slice(&RESET_PC.to_le_bytes());
+    let mut machine = PceMachine::new(rom).unwrap();
+    let initial_token = machine.rom_mapping_token();
+
+    machine.cpu_mut().cpu_mut().set_mapping_register(3, 0x2A);
+    let snapshot = machine.debug_snapshot();
+    assert_eq!(snapshot.physical_page(0x6123), 0x2A);
+    assert_eq!(snapshot.physical_address(0x6123), 0x054123);
+    assert_eq!(machine.rom_offset_for_cpu_address(0x6123), Some(0x054123));
+    assert_ne!(machine.rom_mapping_token(), initial_token);
+
+    machine.cpu_mut().cpu_mut().set_mapping_register(3, 0xF8);
+    assert_eq!(machine.rom_offset_for_cpu_address(0x6123), None);
 }
 
 #[test]
@@ -219,8 +593,10 @@ fn reset_presented_frame_is_empty_and_describes_fixed_storage() {
     assert!(
         frame
             .rgba()
-            .chunks_exact(4)
-            .all(|pixel| pixel == PCE_ACTIVE_FRAME_UNUSED_RGBA)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == PCE_ACTIVE_FRAME_UNUSED_RGBA)
     );
 }
 
@@ -1307,11 +1683,19 @@ fn block_transfer_defers_a_pending_irq_until_its_completion_poll() {
 #[test]
 fn machine_services_pending_vram_dma_on_scheduled_pixel_slots() {
     let mut machine = PceMachine::new(high_speed_loop_rom()).unwrap();
+    machine.set_instruction_trace_enabled(true);
+    machine.set_event_breakpoint(DebugEvent::Dma, true);
     configure_external_262(machine.devices_mut(), 0);
     write_vdc_register(machine.devices_mut(), VdcRegister::DmaSource, 0x0100);
     write_vdc_register(machine.devices_mut(), VdcRegister::DmaDestination, 0x0200);
     write_vdc_register(machine.devices_mut(), VdcRegister::DmaLength, 3);
     machine.run_until_frame().unwrap();
+    assert!(machine.is_cpu_suspended());
+    assert_eq!(machine.debug_hit_event(), Some(DebugEvent::Dma));
+    assert_eq!(
+        machine.instruction_trace().iter().last().unwrap().event,
+        Some(DebugEvent::Dma)
+    );
     assert_eq!(machine.devices().vdc().pending_vram_dma(), None);
     assert!(machine.devices().vdc().active_vram_dma().is_none());
     assert_eq!(machine.devices().vdc().vram()[0x0200..=0x0203], [0; 4]);

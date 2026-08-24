@@ -22,6 +22,10 @@ fn try_parse_wide_raw(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     zeff_emu_common::cheats::parse_wide_raw_cheats(input).map(|patches| (patches, CheatType::Raw))
 }
 
+fn try_parse_raw16(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
+    zeff_emu_common::cheats::parse_raw16_cheats(input).map(|patches| (patches, CheatType::Raw))
+}
+
 fn try_parse_gba_codebreaker(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     zeff_emu_common::cheats::parse_gba_codebreaker_cheats(input)
         .map(|patches| (patches, CheatType::XPloder))
@@ -55,7 +59,7 @@ fn try_parse_single_for_system(
         ActiveSystem::Nes => zeff_gb_core::cheats::parse_cheat(input)
             .ok()
             .or_else(|| try_parse_nes_game_genie(input)),
-        ActiveSystem::Pce => None,
+        ActiveSystem::Pce => try_parse_raw16(input),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             zeff_sega8_core::cheats::parse_cheat(input).ok()
         }
@@ -103,7 +107,7 @@ pub(crate) fn parse_cheat_for_system(
                 all_patches.extend(patches);
             } else {
                 return Err(
-                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
+                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For PCE: raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
                 );
             }
         }
@@ -116,7 +120,7 @@ pub(crate) fn parse_cheat_for_system(
     }
 
     Err(
-        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
+        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For PCE: raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
     )
 }
 

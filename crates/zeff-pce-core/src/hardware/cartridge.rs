@@ -35,7 +35,12 @@ pub const POPULOUS_CANONICAL_SHA256: [u8; 32] = [
     0x16, 0xA7, 0x96, 0x63, 0x4A, 0x2B, 0x3D, 0xA4, 0x17, 0xA7, 0x75, 0xCB, 0x64, 0xFF, 0xA3, 0x32,
     0x2A, 0xD7, 0xBA, 0xF9, 0x01, 0xC2, 0x88, 0x93, 0x4D, 0x28, 0xDF, 0x96, 0x7F, 0x79, 0x77, 0xF6,
 ];
-const TURBOGRAFX16_WIRING_SHA256: [[u8; 32]; 2] = [
+const TURBOGRAFX16_WIRING_SHA256: [[u8; 32]; 3] = [
+    [
+        0x60, 0xC6, 0x9E, 0xE6, 0x80, 0x6A, 0xA6, 0x14, 0x45, 0x95, 0x49, 0x63, 0x3B, 0xDC, 0x72,
+        0x8E, 0x10, 0x5F, 0x85, 0x92, 0xE5, 0x35, 0xFC, 0xC7, 0x96, 0xC2, 0x4C, 0xD6, 0xD7, 0x6A,
+        0x6B, 0xD1,
+    ],
     [
         0x90, 0xE0, 0x4D, 0x9F, 0xCD, 0x0A, 0x57, 0xAD, 0x07, 0xBA, 0x99, 0x53, 0x52, 0xF0, 0x06,
         0x1E, 0x39, 0x6E, 0x8A, 0x51, 0xC4, 0x70, 0xE1, 0xF1, 0x64, 0x73, 0x9F, 0xB4, 0xB8, 0x61,
@@ -195,6 +200,29 @@ impl PceHuCard {
         }
     }
 
+    pub(crate) fn rom_offset(&self, physical_offset: u32) -> Option<u32> {
+        match self {
+            Self::Plain(rom) => ((physical_offset as usize) < rom.len()).then_some(physical_offset),
+            Self::Sf2Ce { bank, .. } => match physical_offset {
+                0..=0x07_FFFF => Some(physical_offset),
+                0x08_0000..=0x0F_FFFF => {
+                    Some(0x08_0000 + u32::from(*bank) * 0x08_0000 + (physical_offset - 0x08_0000))
+                }
+                _ => None,
+            },
+            Self::Populous { .. } => (physical_offset <= 0x07_FFFF).then_some(physical_offset),
+            Self::SystemCardV1V2(_) | Self::SystemCardV3 { .. } => (physical_offset <= 0x07_FFFF)
+                .then_some(physical_offset & (SYSTEM_CARD_V1_V2_IMAGE_LEN as u32 - 1)),
+        }
+    }
+
+    pub(crate) fn mapping_token(&self) -> u8 {
+        match self {
+            Self::Sf2Ce { bank, .. } => *bank,
+            _ => 0,
+        }
+    }
+
     pub(crate) fn read(&self, offset: u32) -> u8 {
         match self {
             Self::Plain(rom) => rom.get(offset as usize).copied().unwrap_or(0xFF),
@@ -256,6 +284,31 @@ impl PceHuCard {
         }
     }
 
+    pub(super) fn write_state(&self, writer: &mut StateWriter) {
+        match self {
+            Self::Plain(_) | Self::SystemCardV1V2(_) => {}
+            Self::Sf2Ce { bank, .. } => writer.write_u8(*bank),
+            Self::Populous { ram, .. } => writer.write_bytes(&ram[..]),
+            Self::SystemCardV3 { ram, .. } => writer.write_bytes(&ram[..]),
+        }
+    }
+
+    pub(super) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+        match self {
+            Self::Plain(_) | Self::SystemCardV1V2(_) => {}
+            Self::Sf2Ce { bank, .. } => {
+                let saved_bank = reader.read_u8()?;
+                if saved_bank > 3 {
+                    bail!("invalid Street Fighter II HuCard bank in save-state: {saved_bank}");
+                }
+                *bank = saved_bank;
+            }
+            Self::Populous { ram, .. } => reader.read_exact(&mut ram[..])?,
+            Self::SystemCardV3 { ram, .. } => reader.read_exact(&mut ram[..])?,
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn system_card_ram_mut(&mut self) -> Option<&mut [u8; SUPER_SYSTEM_CARD_RAM_LEN]> {
         match self {
@@ -291,3 +344,5 @@ const SUPERGRAFX_REQUIRED_SHA256: [[u8; 32]; 5] = [
         0x02, 0x6D,
     ],
 ];
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};

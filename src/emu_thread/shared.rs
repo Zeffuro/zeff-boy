@@ -42,6 +42,7 @@ impl EmuThread {
             input.pce_mouse.delta_y,
             input.pce_mouse.buttons,
         );
+        backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -133,6 +134,7 @@ impl EmuThread {
             input.pce_mouse.delta_y,
             input.pce_mouse.buttons,
         );
+        backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -230,6 +232,7 @@ impl EmuThread {
             input.pce_mouse.delta_y,
             input.pce_mouse.buttons,
         );
+        backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(
@@ -327,6 +330,7 @@ impl EmuThread {
             input.pce_mouse.delta_y,
             input.pce_mouse.buttons,
         );
+        backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
         backend.set_zapper_state(

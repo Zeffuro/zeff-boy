@@ -157,6 +157,23 @@ impl App {
                     "unsupported NES memory space",
                 ),
             },
+            ConsoleGraphicsData::Pce(pce) => match space {
+                "vram" | "vram1" => slice_word_memory_json(space, start, length, &pce.vdc1.vram),
+                "vram2" => pce.vdc2.as_ref().map_or_else(
+                    || memory_not_ready_json(space, start as u32, length, "VDC2 is unavailable"),
+                    |vdc2| slice_word_memory_json(space, start, length, &vdc2.vram),
+                ),
+                "palette" | "paletteram" => {
+                    let palette = pce.palette.map(zeff_pce_core::hardware::VceColor::raw);
+                    slice_word_memory_json(space, start, length, &palette)
+                }
+                _ => memory_not_ready_json(
+                    space,
+                    start as u32,
+                    length,
+                    "unsupported PC Engine memory space",
+                ),
+            },
             ConsoleGraphicsData::Sega8(sega8) => match space {
                 "vram" => slice_memory_json(space, start, length, &sega8.vram),
                 "cram" | "palette" | "paletteram" => {
@@ -174,6 +191,14 @@ impl App {
             },
         }
     }
+}
+
+fn slice_word_memory_json(space: &str, start: usize, length: usize, words: &[u16]) -> Value {
+    let bytes = words
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect::<Vec<_>>();
+    slice_memory_json(space, start, length, &bytes)
 }
 
 fn canonical_cached_memory_space(

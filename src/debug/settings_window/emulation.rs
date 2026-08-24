@@ -1,8 +1,9 @@
 use crate::debug::ui_helpers::{EnumLabel, enum_combo_box};
 use crate::emu_backend::ActiveSystem;
 use crate::settings::{
-    PceCdArchiveMemoryLimit, PceConsoleWiringPreference, PceControllerPreference,
-    PceMouseCursorMode, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings,
+    PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
+    PceControllerPreference, PceMemoryBasePreference, PceMouseCursorMode,
+    Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings,
 };
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -74,13 +75,48 @@ impl EnumLabel for PceControllerPreference {
         match self {
             Self::Auto => "Auto",
             Self::TwoButton => "2-button pad",
+            Self::SixButton => "6-button pad",
             Self::Multitap => "5-port multitap",
             Self::Mouse => "Force mouse",
         }
     }
 
     fn all_variants() -> &'static [Self] {
-        &[Self::Auto, Self::TwoButton, Self::Multitap, Self::Mouse]
+        &[
+            Self::Auto,
+            Self::TwoButton,
+            Self::SixButton,
+            Self::Multitap,
+            Self::Mouse,
+        ]
+    }
+}
+
+impl EnumLabel for PceMemoryBasePreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Enabled => "Enabled",
+            Self::Disabled => "Disabled",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::Enabled, Self::Disabled]
+    }
+}
+
+impl EnumLabel for PceArcadeCardPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Enabled => "Enabled",
+            Self::Disabled => "Disabled",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::Enabled, Self::Disabled]
     }
 }
 
@@ -267,7 +303,27 @@ pub(super) fn draw(
     enum_combo_box(ui, "Controller", &mut settings.emulation.pce_controller);
     ui.label(
         egui::RichText::new(
-            "Auto enables special controllers only for recognized disc images. Force mouse may break games that do not support it.",
+            "Auto enables special controllers only for recognized disc images. Six-button is manual and maps A/B/L/R/X/Y to I/II/III/IV/V/VI. Force mouse may break games that do not support it.",
+        )
+        .weak()
+        .small(),
+    );
+    enum_combo_box(ui, "Arcade Card", &mut settings.emulation.pce_arcade_card);
+    ui.label(
+        egui::RichText::new(
+            "Applied when CD content is loaded. Auto enables the 2 MiB expansion only for cataloged normalized disc identities; Enabled requires System Card v3.",
+        )
+        .weak()
+        .small(),
+    );
+    enum_combo_box(
+        ui,
+        "Memory Base 128",
+        &mut settings.emulation.pce_memory_base,
+    );
+    ui.label(
+        egui::RichText::new(
+            "Auto connects the 128 KiB save accessory only for cataloged normalized disc identities. Enabled forces it for compatible software; Disabled leaves it disconnected.",
         )
         .weak()
         .small(),

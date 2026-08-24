@@ -240,6 +240,10 @@ pub(super) fn assert_backend_feature_contract(
     );
     assert_eq!(backend.system_ram_len(), expected_system_ram_len);
     assert_eq!(backend.video_ram_len(), expected_video_ram_len);
+    assert_eq!(
+        backend.supports_cheats(),
+        crate::emu_backend::CheatCapabilities::for_system(system).supports_user_cheats
+    );
     assert_memory_regions(
         &backend.memory_regions(),
         system,
@@ -260,6 +264,8 @@ pub(super) fn assert_backend_feature_contract(
             .expect("backend should encode save-state")
             .is_empty()
     );
+    backend.debug_suspend();
+    assert!(backend.is_suspended());
 }
 
 pub(super) fn assert_app_snapshot_core_features(
@@ -302,6 +308,10 @@ pub(super) fn assert_app_snapshot_core_features(
     assert!(features.supports_replay);
     assert!(features.supports_audio);
     assert!(features.supports_cheats);
+    assert_eq!(
+        features.supports_cheats,
+        features.cheat_features.supports_user_cheats
+    );
     assert!(features.supports_guest_calls);
     assert!(features.supports_debugger);
     assert_eq!(
@@ -320,6 +330,7 @@ fn expected_opcode_history_support(system: ActiveSystem) -> bool {
         ActiveSystem::Gb
             | ActiveSystem::Gba
             | ActiveSystem::Nes
+            | ActiveSystem::Pce
             | ActiveSystem::Ws
             | ActiveSystem::Sms
             | ActiveSystem::Gg
@@ -439,6 +450,23 @@ fn assert_extended_memory_regions(regions: &[MemoryRegionDescriptor], system: Ac
                 None,
             );
             assert_no_region_kind(regions, MemoryRegionKind::Oam);
+            assert_no_region_kind(regions, MemoryRegionKind::IoRegisters);
+        }
+        ActiveSystem::Pce => {
+            assert_region(
+                regions,
+                "palette_ram",
+                MemoryRegionKind::PaletteRam,
+                Some(zeff_pce_core::hardware::VCE_PALETTE_COLORS * 2),
+                None,
+            );
+            assert_region(
+                regions,
+                "oam",
+                MemoryRegionKind::Oam,
+                Some(zeff_pce_core::hardware::VDC_SATB_WORDS * 2),
+                None,
+            );
             assert_no_region_kind(regions, MemoryRegionKind::IoRegisters);
         }
         _ => {

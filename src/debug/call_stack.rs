@@ -130,6 +130,7 @@ fn navigate(
     actions.disasm_target = Some(DisassemblyTarget {
         cpu_address,
         storage_offset,
+        bank: None,
         thumb: None,
     });
     actions.focus_tab = Some(DebugTab::Disassembler);

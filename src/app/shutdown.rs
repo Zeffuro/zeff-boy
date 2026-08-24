@@ -59,6 +59,7 @@ impl App {
         {
             self.persist_debugger_window_geometry();
             self.persist_settings_window_geometry();
+            self.persist_mods_window_geometry();
             self.persist_printer_window_geometry();
         }
         self.persist_current_dock_layout();

@@ -27,6 +27,11 @@ pub const PHYSICAL_ADDRESS_MASK: u32 = (1 << PHYSICAL_ADDRESS_BITS) - 1;
 pub const RESET_VECTOR_LOW: u32 = 0x0000_1FFE;
 pub const RESET_VECTOR_HIGH: u32 = 0x0000_1FFF;
 
+#[inline]
+pub const fn physical_address_for_page(logical_addr: u16, physical_page: u8) -> u32 {
+    (physical_page as u32) << LOGICAL_PAGE_SHIFT | (logical_addr & LOGICAL_PAGE_MASK) as u32
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum VdcPort {
@@ -58,6 +63,26 @@ impl VdcPort {
 pub trait CpuBus {
     fn read(&mut self, physical_addr: u32) -> u8;
     fn write(&mut self, physical_addr: u32, value: u8);
+
+    fn observe_logical_read(
+        &mut self,
+        _logical_addr: u16,
+        _physical_addr: u32,
+        _value: u8,
+        _dummy: bool,
+    ) {
+    }
+
+    fn observe_logical_write(
+        &mut self,
+        _logical_addr: u16,
+        _physical_addr: u32,
+        _value: u8,
+        _dummy: bool,
+    ) {
+    }
+
+    fn observe_instruction_byte(&mut self, _logical_addr: u16, _physical_addr: u32, _value: u8) {}
 
     fn dummy_read(&mut self, physical_addr: u32) -> u8 {
         self.read(physical_addr)
@@ -238,18 +263,22 @@ impl Cpu {
     #[inline]
     pub fn logical_to_physical(&self, logical_addr: u16) -> u32 {
         let page = usize::from(logical_addr >> LOGICAL_PAGE_SHIFT);
-        (u32::from(self.mpr[page]) << LOGICAL_PAGE_SHIFT)
-            | u32::from(logical_addr & LOGICAL_PAGE_MASK)
+        physical_address_for_page(logical_addr, self.mpr[page])
     }
 
     #[inline]
     pub fn read<B: CpuBus>(&self, bus: &mut B, logical_addr: u16) -> u8 {
-        bus.read(self.logical_to_physical(logical_addr))
+        let physical_addr = self.logical_to_physical(logical_addr);
+        let value = bus.read(physical_addr);
+        bus.observe_logical_read(logical_addr, physical_addr, value, false);
+        value
     }
 
     #[inline]
     pub fn write<B: CpuBus>(&self, bus: &mut B, logical_addr: u16, value: u8) {
-        bus.write(self.logical_to_physical(logical_addr), value);
+        let physical_addr = self.logical_to_physical(logical_addr);
+        bus.write(physical_addr, value);
+        bus.observe_logical_write(logical_addr, physical_addr, value, false);
     }
 
     fn execute_tma<B: CpuBus>(&mut self, bus: &mut B) -> u32 {
@@ -282,14 +311,25 @@ impl Cpu {
 
     #[inline]
     pub(super) fn fetch<B: CpuBus>(&mut self, bus: &mut B) -> u8 {
-        let value = self.read(bus, self.registers.pc);
+        let logical_addr = self.registers.pc;
+        let physical_addr = self.logical_to_physical(logical_addr);
+        let value = bus.read(physical_addr);
+        bus.observe_logical_read(logical_addr, physical_addr, value, false);
+        bus.observe_instruction_byte(logical_addr, physical_addr, value);
         self.registers.pc = self.registers.pc.wrapping_add(1);
         value
     }
 
     #[inline]
     pub(super) fn dummy_fetch<B: CpuBus>(&self, bus: &mut B) {
-        bus.dummy_read(self.logical_to_physical(self.registers.pc));
+        self.dummy_read(bus, self.registers.pc);
+    }
+
+    #[inline]
+    pub(super) fn dummy_read<B: CpuBus>(&self, bus: &mut B, logical_addr: u16) {
+        let physical_addr = self.logical_to_physical(logical_addr);
+        let value = bus.dummy_read(physical_addr);
+        bus.observe_logical_read(logical_addr, physical_addr, value, true);
     }
 }
 

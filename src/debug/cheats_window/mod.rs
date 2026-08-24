@@ -12,7 +12,7 @@ pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
         crate::emu_backend::ActiveSystem::Nes => {
             "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)"
         }
-        crate::emu_backend::ActiveSystem::Pce => "PC Engine cheats are not supported",
+        crate::emu_backend::ActiveSystem::Pce => "PC Engine raw RAM cheats (AAAA:VV)",
         crate::emu_backend::ActiveSystem::GameBoy => {
             "GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)"
         }

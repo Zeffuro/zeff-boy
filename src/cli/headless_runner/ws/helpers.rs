@@ -128,7 +128,7 @@ pub(super) fn ws_wait_classification(emulator: &WsEmulator) -> Option<&'static s
 }
 
 fn ws_framebuffer_has_visible_content(framebuffer: &[u8]) -> bool {
-    let mut chunks = framebuffer.chunks_exact(4);
+    let mut chunks = framebuffer.as_chunks::<4>().0.iter();
     let Some(first) = chunks.next() else {
         return false;
     };

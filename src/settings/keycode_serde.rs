@@ -78,6 +78,7 @@ static KEYCODE_MAP: phf::Map<&'static str, KeyCode> = phf::phf_map! {
     "Numpad7" => KeyCode::Numpad7,
     "Numpad8" => KeyCode::Numpad8,
     "Numpad9" => KeyCode::Numpad9,
+    "NumpadDecimal" => KeyCode::NumpadDecimal,
     "NumpadEnter" => KeyCode::NumpadEnter,
     "F1" => KeyCode::F1,
     "F2" => KeyCode::F2,

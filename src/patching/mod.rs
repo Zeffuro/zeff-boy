@@ -1,10 +1,16 @@
 mod bps;
 mod ips;
+mod ppf;
 pub(crate) mod ups;
+#[cfg(not(target_arch = "wasm32"))]
+mod xdelta;
 
 pub(crate) use bps::apply_bps_patch;
 pub(crate) use ips::apply_ips_patch;
+pub(crate) use ppf::{apply_ppf_patch, apply_ppf_patch_segments, ppf_has_source_validation};
 pub(crate) use ups::apply_ups_patch;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use xdelta::apply_xdelta_patch;
 
 fn decode_varint(data: &[u8], pos: &mut usize, label: &str) -> anyhow::Result<u64> {
     let mut result = 0u64;

@@ -166,6 +166,45 @@ impl SymbolSession {
         symbols.next().is_none().then_some(symbol.name.as_str())
     }
 
+    pub(crate) fn symbol_name_at_debug_location(
+        &self,
+        location: super::ResolvedDebugLocation,
+    ) -> Option<&str> {
+        location
+            .storage
+            .and_then(|storage| {
+                self.store
+                    .lookup_storage(storage)
+                    .max_by_key(|symbol| symbol_priority(symbol.provenance.kind))
+            })
+            .or_else(|| {
+                self.store
+                    .lookup_cpu_mapped(location.cpu, location.bank)
+                    .max_by_key(|symbol| {
+                        (
+                            symbol_priority(symbol.provenance.kind),
+                            symbol.location.bank == location.bank,
+                        )
+                    })
+            })
+            .map(|symbol| symbol.name.as_str())
+    }
+
+    pub(crate) fn unique_symbol_name_at_debug_location(
+        &self,
+        location: super::ResolvedDebugLocation,
+    ) -> Option<&str> {
+        if let Some(storage) = location.storage {
+            let mut symbols = self.store.lookup_storage(storage);
+            if let Some(symbol) = symbols.next() {
+                return symbols.next().is_none().then_some(symbol.name.as_str());
+            }
+        }
+        let mut symbols = self.store.lookup_cpu_mapped(location.cpu, location.bank);
+        let symbol = symbols.next()?;
+        symbols.next().is_none().then_some(symbol.name.as_str())
+    }
+
     pub(crate) fn execution_symbol_ids(
         &self,
         physical_rom_offset: Option<u64>,
@@ -223,11 +262,13 @@ impl SymbolSession {
             return true;
         }
         location.cpu.is_some_and(|cpu| {
-            self.store.lookup_cpu(cpu).any(|symbol| {
-                matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label)
-                    && (symbol.location.exec_mode == location.exec_mode
-                        || symbol.location.exec_mode == super::ExecMode::Unknown)
-            })
+            self.store
+                .lookup_cpu_mapped(cpu, location.bank)
+                .any(|symbol| {
+                    matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label)
+                        && (symbol.location.exec_mode == location.exec_mode
+                            || symbol.location.exec_mode == super::ExecMode::Unknown)
+                })
         })
     }
 

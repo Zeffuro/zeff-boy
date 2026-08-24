@@ -65,9 +65,11 @@ fn decode(bus_read: &impl Fn(u32) -> u8, address: u32) -> DisassembledLine {
     let mut line = DisassembledLine {
         address,
         storage_offset: None,
+        bank: None,
         symbol: None,
         control_target: None,
         control_target_storage: None,
+        control_target_bank: None,
         control_target_symbol: None,
         source: None,
         bytes,

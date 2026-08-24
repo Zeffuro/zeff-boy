@@ -11,6 +11,7 @@ use crate::audio_tooling::{
     AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
     AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT, level_from_u4,
 };
+use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
@@ -272,6 +273,14 @@ impl EmulatorCore for GbaBackend {
 
     fn supports_cheats(&self) -> bool {
         true
+    }
+
+    fn apply_ram_cheats(&mut self, cheats: &[CheatPatch]) {
+        zeff_emu_common::cheats::apply_wide_ram_cheats(&mut self.emu, cheats);
+    }
+
+    fn debug_suspend(&mut self) {
+        self.emu.debug_suspend();
     }
 
     fn supports_debugger(&self) -> bool {

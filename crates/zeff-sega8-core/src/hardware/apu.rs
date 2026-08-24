@@ -752,11 +752,15 @@ mod tests {
         psg.drain_audio_samples_into(&mut samples);
 
         let left_peak = samples
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|lr| lr[0].abs())
             .fold(0.0, f32::max);
         let right_peak = samples
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|lr| lr[1].abs())
             .fold(0.0, f32::max);
 

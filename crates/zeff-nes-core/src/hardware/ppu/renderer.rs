@@ -100,7 +100,7 @@ fn parse_nes_base_palette(bytes: &[u8]) -> anyhow::Result<NesBasePalette> {
     );
 
     let mut palette = [(0u8, 0u8, 0u8); NES_PALETTE_COLOR_COUNT];
-    for (entry, rgb) in palette.iter_mut().zip(bytes.chunks_exact(RGB_CHANNELS)) {
+    for (entry, rgb) in palette.iter_mut().zip(bytes.as_chunks::<RGB_CHANNELS>().0) {
         *entry = (rgb[0], rgb[1], rgb[2]);
     }
     Ok(palette)

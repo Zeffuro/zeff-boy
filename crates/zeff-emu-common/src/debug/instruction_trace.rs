@@ -18,6 +18,7 @@ pub enum TraceExecMode {
     Mos6502,
     Z80,
     V30,
+    HuC6280,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,6 +59,7 @@ pub struct InstructionTraceRecord {
     pub frame: u64,
     pub cycle: u64,
     pub physical_rom_offset: Option<u64>,
+    pub bank: Option<u32>,
     pub pc: u32,
     pub mode: TraceExecMode,
     pub instruction: [u8; MAX_TRACE_INSTRUCTION_BYTES],
@@ -92,6 +94,7 @@ impl InstructionTraceRecord {
             frame,
             cycle,
             physical_rom_offset,
+            bank: None,
             pc,
             mode,
             instruction: [0; MAX_TRACE_INSTRUCTION_BYTES],

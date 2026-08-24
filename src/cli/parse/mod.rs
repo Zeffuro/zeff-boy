@@ -9,8 +9,8 @@ use self::numbers::{
 };
 use self::values::{
     parse_dmg_palette_arg, parse_gba_audio_mute_list_arg, parse_gba_bg_layer_list_arg,
-    parse_memory_dump_arg, parse_pce_controller_mode_arg, parse_sega8_console_region_arg,
-    parse_sega8_video_standard_arg,
+    parse_memory_dump_arg, parse_pce_arcade_card_mode_arg, parse_pce_controller_mode_arg,
+    parse_pce_memory_base_mode_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
 };
 use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 
@@ -219,6 +219,10 @@ pub(crate) fn parse_args_from(
                 headless.no_sram = true;
                 i += 1;
             }
+            "--apply-mods" => {
+                headless.apply_mods = true;
+                i += 1;
+            }
             "--gb-dmg-palette" | "--dmg-palette" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!(
@@ -256,10 +260,28 @@ pub(crate) fn parse_args_from(
             }
             "--pce-controller" => {
                 let Some(value) = args.get(i + 1) else {
-                    anyhow::bail!("--pce-controller requires auto, pad, mouse, or multitap");
+                    anyhow::bail!(
+                        "--pce-controller requires auto, pad, six-button, mouse, or multitap"
+                    );
                 };
                 headless.pce_controller_mode =
                     Some(parse_pce_controller_mode_arg(value, "--pce-controller")?);
+                i += 2;
+            }
+            "--pce-memory-base" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--pce-memory-base requires auto, enabled, or disabled");
+                };
+                headless.pce_memory_base_mode =
+                    Some(parse_pce_memory_base_mode_arg(value, "--pce-memory-base")?);
+                i += 2;
+            }
+            "--pce-arcade-card" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--pce-arcade-card requires auto, enabled, or disabled");
+                };
+                headless.pce_arcade_card_mode =
+                    Some(parse_pce_arcade_card_mode_arg(value, "--pce-arcade-card")?);
                 i += 2;
             }
             "--detect-stuck" => {

@@ -138,7 +138,7 @@ impl Cpu {
         vector_low: u16,
     ) {
         self.dummy_fetch(bus);
-        bus.dummy_read(self.logical_to_physical(self.registers.pc.wrapping_add(1)));
+        self.dummy_read(bus, self.registers.pc.wrapping_add(1));
         let return_address = self.registers.pc;
         self.push(bus, (return_address >> 8) as u8);
         self.push(bus, return_address as u8);

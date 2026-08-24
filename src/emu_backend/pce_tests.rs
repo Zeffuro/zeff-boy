@@ -9,6 +9,36 @@ fn rom_with_program(program: &[u8]) -> Vec<u8> {
     rom
 }
 
+fn memory_base_clock(controller: &mut ControllerPort, bit: bool) {
+    controller.write_lines(bit, false);
+    controller.write_lines(bit, true);
+}
+
+fn memory_base_send(controller: &mut ControllerPort, value: u32, bit_count: u8) {
+    for bit in 0..bit_count {
+        memory_base_clock(controller, value & (1 << bit) != 0);
+    }
+}
+
+fn memory_base_write_byte(backend: &mut PceBackend, value: u8) {
+    let controller = backend.machine.devices_mut().controller_mut();
+    memory_base_send(controller, 0xA8, 8);
+    memory_base_clock(controller, false);
+    memory_base_clock(controller, false);
+    memory_base_clock(controller, false);
+    memory_base_send(controller, 0, 10);
+    memory_base_send(controller, 8, 20);
+    memory_base_send(controller, u32::from(value), 8);
+}
+
+fn unique_temp_dir(label: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("zeff-pce-{label}-{}-{nonce}", std::process::id()))
+}
+
 fn backend_with_board(board: PceHuCardBoard, image_len: usize) -> PceBackend {
     let mut rom = rom_with_program(&[0xA9, 0x5A, 0x8D, 0x00, 0x40]);
     rom.resize(image_len, 0xEA);
@@ -20,16 +50,77 @@ fn backend_with_board(board: PceHuCardBoard, image_len: usize) -> PceBackend {
         machine,
         paths: BackendPaths::new(PathBuf::from("board.pce")),
         rom_hash: [0; 32],
+        source_crc32: None,
+        source_disc_hash: None,
         framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
         frame_count: 0,
         pending_runtime_fault: None,
         overscan_mode: PceOverscanMode::default(),
         palette_mode: PcePaletteMode::default(),
-        pce_controller_mode: PceControllerMode::Automatic,
+        pce_controller_mode: PceControllerMode::TwoButton,
+        pce_memory_base_mode: PceMemoryBaseMode::Disabled,
+        pce_arcade_card_mode: PceArcadeCardMode::Disabled,
         mouse_host_buttons: PadButtons::empty(),
     };
     backend.project_presented_frame();
     backend
+}
+
+#[test]
+fn debuggable_adapter_exposes_logical_breakpoints_watchpoints_and_writes() {
+    let mut backend =
+        PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("debug.pce")).unwrap();
+    backend
+        .machine
+        .cpu_mut()
+        .cpu_mut()
+        .set_mapping_register(2, 0xF8);
+
+    DebuggableEmulator::add_breakpoint(&mut backend, Address::from(RESET_PC));
+    DebuggableEmulator::add_watchpoint_range(&mut backend, 0x4000, 0x4000, WatchType::Write);
+    DebuggableEmulator::cpu_write8(&mut backend, 0x4000, 0x5A);
+
+    assert_eq!(DebuggableEmulator::cpu_peek8(&backend, 0x4000), 0x5A);
+    assert_eq!(backend.iter_breakpoints().collect::<Vec<_>>(), [0xE000]);
+    let hit = backend
+        .debug_hit_watchpoint()
+        .expect("debug write should hit logical watchpoint");
+    assert_eq!(hit.address, 0x4000);
+    assert_eq!(hit.old_value, 0);
+    assert_eq!(hit.new_value, 0x5A);
+    assert!(backend.is_cpu_suspended());
+
+    DebuggableEmulator::add_breakpoint(&mut backend, 0x1_0000);
+    assert_eq!(backend.iter_breakpoints().collect::<Vec<_>>(), [0xE000]);
+}
+
+#[test]
+fn debuggable_adapter_routes_events_and_instruction_trace() {
+    let mut backend =
+        PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("trace.pce")).unwrap();
+    DebuggableEmulator::set_event_breakpoint(&mut backend, DebugEvent::Interrupt, true);
+    DebuggableEmulator::set_event_breakpoint(&mut backend, DebugEvent::Dma, true);
+    DebuggableEmulator::set_instruction_trace_capacity(&mut backend, 2_500);
+    DebuggableEmulator::set_instruction_trace_enabled(&mut backend, true);
+
+    backend.debug_suspend();
+    backend.debug_step();
+    backend.step_frame();
+
+    assert_eq!(
+        backend.iter_event_breakpoints().collect::<Vec<_>>(),
+        [DebugEvent::Interrupt, DebugEvent::Dma]
+    );
+    assert!(backend.instruction_trace().is_enabled());
+    assert_eq!(backend.instruction_trace().capacity(), 2_500);
+    let entry = backend.instruction_trace().iter().next().unwrap();
+    assert_eq!(entry.mode, zeff_emu_common::debug::TraceExecMode::HuC6280);
+    assert_eq!(entry.pc, u32::from(RESET_PC));
+    assert_eq!(entry.bank, Some(0));
+    assert_eq!(entry.instruction_bytes(), &[0xEA]);
+
+    DebuggableEmulator::clear_instruction_trace(&mut backend);
+    assert!(backend.instruction_trace().is_empty());
 }
 
 #[test]
@@ -47,7 +138,7 @@ fn structural_sf2_image_is_admitted_without_relaxing_plain_cards() {
 #[test]
 fn exact_lemmings_disc_automatically_selects_mouse_but_force_pad_wins() {
     let mut backend = backend_with_board(PceHuCardBoard::SystemCardV3, 0x40_000);
-    backend.rom_hash = LEMMINGS_JAPAN_CANONICAL_DISC_SHA256;
+    backend.source_disc_hash = Some(LEMMINGS_JAPAN_CANONICAL_DISC_SHA256);
 
     backend.set_pce_mouse_state(PceControllerMode::Automatic, 1, 2, 1);
     assert!(matches!(
@@ -65,7 +156,7 @@ fn exact_lemmings_disc_automatically_selects_mouse_but_force_pad_wins() {
 #[test]
 fn exact_deden_disc_automatically_selects_multitap_with_independent_second_pad() {
     let mut backend = backend_with_board(PceHuCardBoard::SystemCardV3, 0x40_000);
-    backend.rom_hash = TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256;
+    backend.source_disc_hash = Some(TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256);
 
     backend.set_pce_mouse_state(PceControllerMode::Automatic, 0, 0, 0);
     backend.set_input(1, 0);
@@ -91,6 +182,46 @@ fn exact_deden_disc_automatically_selects_multitap_with_independent_second_pad()
 }
 
 #[test]
+fn manual_six_button_mode_maps_all_host_button_bits() {
+    let mut backend = PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("six.pce")).unwrap();
+
+    backend.set_pce_mouse_state(PceControllerMode::SixButton, 0, 0, 0);
+    backend.set_input(0xFF, 0x0F);
+
+    let zeff_pce_core::hardware::ControllerDevice::SixButton(pad) =
+        backend.machine.devices().controller().device()
+    else {
+        panic!("manual six-button mode did not install a six-button pad");
+    };
+    assert_eq!(
+        pad.standard_pad().buttons(),
+        PadButtons::I
+            | PadButtons::II
+            | PadButtons::SELECT
+            | PadButtons::RUN
+            | PadButtons::UP
+            | PadButtons::RIGHT
+            | PadButtons::DOWN
+            | PadButtons::LEFT
+    );
+    assert_eq!(
+        pad.extra_buttons(),
+        zeff_pce_core::hardware::SixButtonExtraButtons::III
+            | zeff_pce_core::hardware::SixButtonExtraButtons::IV
+            | zeff_pce_core::hardware::SixButtonExtraButtons::V
+            | zeff_pce_core::hardware::SixButtonExtraButtons::VI
+    );
+    assert_eq!(backend.controller_mode(), PceControllerMode::SixButton);
+    assert!(matches!(
+        backend.debug_hardware_snapshot().controller.device,
+        zeff_pce_core::hardware::ControllerDeviceDebugSnapshot::SixButton {
+            extra_buttons,
+            ..
+        } if extra_buttons == zeff_pce_core::hardware::SixButtonExtraButtons::all()
+    ));
+}
+
+#[test]
 fn pceas_development_header_is_validated_and_removed_before_hashing() {
     let mut payload = rom_with_program(&[0xEA]);
     payload.resize(3 * HUCARD_BANK_LEN, 0xEA);
@@ -110,7 +241,7 @@ fn pceas_development_header_is_validated_and_removed_before_hashing() {
 }
 
 #[test]
-fn populous_ram_is_nonbattery_copyable_mapper_ram_without_state_capabilities() {
+fn populous_ram_is_nonbattery_copyable_mapper_ram_with_state_capabilities() {
     let mut backend = backend_with_board(
         PceHuCardBoard::Populous,
         zeff_pce_core::hardware::POPULOUS_HUCARD_IMAGE_LEN,
@@ -120,9 +251,10 @@ fn populous_ram_is_nonbattery_copyable_mapper_ram_without_state_capabilities() {
         SaveRamKind::mapper_ram_unknown(POPULOUS_HUCARD_RAM_LEN)
     );
     assert!(!backend.save_ram_kind().is_battery_backed());
-    assert!(!backend.supports_save_states());
-    assert!(!backend.supports_rewind());
-    assert!(!backend.supports_replay());
+    assert!(backend.supports_save_states());
+    assert!(backend.supports_rewind());
+    assert!(backend.supports_replay());
+    assert!(backend.supports_guest_calls());
     assert_eq!(backend.flush_battery_sram().unwrap(), None);
 
     backend
@@ -165,7 +297,10 @@ fn cd_backup_ram_is_formatted_battery_backed_and_copyable() {
             cue_path: PathBuf::from("disc.cue"),
             source_path: PathBuf::from("disc.cue"),
             content_hash: [0; 32],
+            content_crc32: 0,
+            source_disc_hash: [0; 32],
             console_wiring: PceConsoleWiring::PcEngine,
+            arcade_card_mode: PceArcadeCardMode::Disabled,
         },
     )
     .unwrap();
@@ -189,6 +324,388 @@ fn cd_backup_ram_is_formatted_battery_backed_and_copyable() {
     );
 }
 
+#[test]
+fn memory_base_manual_mode_exposes_copyable_battery_ram() {
+    let mut backend =
+        PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("mb128.pce")).unwrap();
+    assert!(automatic_memory_base_enabled(Some(
+        SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256
+    )));
+    assert!(!automatic_memory_base_enabled(Some([0x55; 32])));
+    assert!(!automatic_memory_base_enabled(None));
+    assert_eq!(backend.memory_base_mode(), PceMemoryBaseMode::Disabled);
+    assert!(
+        backend
+            .memory_regions()
+            .iter()
+            .all(|region| region.id != "memory_base_128")
+    );
+
+    backend.update_memory_base_mode(PceMemoryBaseMode::Enabled);
+    assert_eq!(backend.memory_base_mode(), PceMemoryBaseMode::Enabled);
+    assert_eq!(
+        backend.save_ram_kind(),
+        SaveRamKind::known_battery_backed(MEMORY_BASE128_RAM_LEN)
+    );
+    let mut image = vec![0; MEMORY_BASE128_RAM_LEN];
+    image[0x1234] = 0xA5;
+    backend.load_memory_base128(&image).unwrap();
+    let mut copied = Vec::new();
+    let region = backend.copy_memory_region("mb128", &mut copied).unwrap();
+    assert_eq!(region, MEMORY_BASE128_REGION);
+    assert_eq!(copied, image);
+
+    backend.update_memory_base_mode(PceMemoryBaseMode::Disabled);
+    assert_eq!(backend.memory_base_mode(), PceMemoryBaseMode::Disabled);
+    assert_eq!(backend.save_ram_kind(), SaveRamKind::none());
+    assert_eq!(
+        backend
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .ram()[0x1234],
+        0xA5
+    );
+}
+
+#[test]
+fn memory_base_persistence_is_exact_transactional_and_coexists_with_cd_bram() {
+    let temp_dir = unique_temp_dir("memory-base-persistence");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let mut backend = synthetic_cd_backend(PceHuCardBoard::SystemCardV1V2);
+    backend.paths = BackendPaths::new(temp_dir.join("disc.cue"));
+    let bram = vec![0x3C; CDROM2_BRAM_LEN];
+    backend.load_cd_bram(&bram).unwrap();
+    backend.update_memory_base_mode(PceMemoryBaseMode::Enabled);
+    memory_base_write_byte(&mut backend, 0xA5);
+    let memory_base_path = temp_dir.join("mb128.sav");
+
+    let flushed = backend
+        .flush_persistent_data(&memory_base_path)
+        .unwrap()
+        .unwrap();
+    let bram_path = temp_dir.join("disc.sav");
+    assert!(flushed.contains(&bram_path.display().to_string()));
+    assert!(flushed.contains(&memory_base_path.display().to_string()));
+    assert_eq!(std::fs::read(&bram_path).unwrap(), bram);
+    let persisted = std::fs::read(&memory_base_path).unwrap();
+    assert_eq!(persisted.len(), MEMORY_BASE128_RAM_LEN);
+    assert_eq!(persisted[0], 0xA5);
+    assert!(
+        !backend
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .is_dirty()
+    );
+
+    let replacement = vec![0xCC; MEMORY_BASE128_RAM_LEN];
+    backend.load_memory_base128(&replacement).unwrap();
+    std::fs::write(&memory_base_path, &persisted[..MEMORY_BASE128_RAM_LEN - 1]).unwrap();
+    assert!(
+        backend
+            .try_load_memory_base128_from_path(&memory_base_path)
+            .is_err()
+    );
+    assert_eq!(
+        backend
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .ram(),
+        replacement
+    );
+
+    std::fs::remove_dir_all(temp_dir).unwrap();
+}
+
+fn synthetic_supergrafx_backend() -> PceBackend {
+    let descriptor = PceCartridgeDescriptor::default()
+        .with_required_hardware(zeff_pce_core::hardware::PceCartridgeHardware::SuperGrafx);
+    let machine = PceMachine::with_cartridge_and_controller(
+        rom_with_program(&[0xD4, 0xEA, 0x80, 0xFD]),
+        descriptor,
+        ControllerPort::two_button(),
+    )
+    .unwrap();
+    let mut backend = PceBackend {
+        machine,
+        paths: BackendPaths::new(PathBuf::from("synthetic-sgx.pce")),
+        rom_hash: [0x53; 32],
+        source_crc32: None,
+        source_disc_hash: None,
+        framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
+        frame_count: 0,
+        pending_runtime_fault: None,
+        overscan_mode: PceOverscanMode::default(),
+        palette_mode: PcePaletteMode::default(),
+        pce_controller_mode: PceControllerMode::TwoButton,
+        pce_memory_base_mode: PceMemoryBaseMode::Disabled,
+        pce_arcade_card_mode: PceArcadeCardMode::Disabled,
+        mouse_host_buttons: PadButtons::empty(),
+    };
+    backend.project_presented_frame();
+    backend
+}
+
+fn synthetic_cd_backend(board: PceHuCardBoard) -> PceBackend {
+    synthetic_cd_backend_with_arcade_card(board, PceArcadeCardMode::Disabled).unwrap()
+}
+
+fn synthetic_cd_backend_with_arcade_card(
+    board: PceHuCardBoard,
+    arcade_card_mode: PceArcadeCardMode,
+) -> anyhow::Result<PceBackend> {
+    let mut system_card = vec![0xEA; zeff_pce_core::hardware::SYSTEM_CARD_V1_V2_IMAGE_LEN];
+    system_card[0x1FFE..0x2000].copy_from_slice(&RESET_PC.to_le_bytes());
+    let mut sectors = vec![0; 2 * zeff_pce_core::hardware::CD_USER_SECTOR_BYTES];
+    for (index, byte) in sectors.iter_mut().enumerate() {
+        *byte = index as u8;
+    }
+    let disc = CdDisc::new(vec![
+        zeff_pce_core::hardware::CdTrack::from_index1_data(
+            1,
+            4,
+            None,
+            0,
+            zeff_pce_core::hardware::CdTrackMode::Mode1_2048,
+            sectors,
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    PceBackend::new_cdrom2(
+        system_card,
+        disc,
+        PceCdBackendConfig {
+            system_card_board: board,
+            cue_path: PathBuf::from("synthetic.cue"),
+            source_path: PathBuf::from("synthetic.cue"),
+            content_hash: [board as u8; 32],
+            content_crc32: board as u32,
+            source_disc_hash: [board as u8; 32],
+            console_wiring: PceConsoleWiring::PcEngine,
+            arcade_card_mode,
+        },
+    )
+}
+
+fn assert_pce_backend_replay_is_deterministic(mut backend: PceBackend) {
+    backend.set_apu_sample_generation_enabled(false);
+    backend.step_frame_bounded().unwrap();
+    let checkpoint_frame = backend.framebuffer().to_vec();
+    let checkpoint = backend.encode_state_bytes().unwrap();
+
+    backend.step_frame_bounded().unwrap();
+    backend.step_frame_bounded().unwrap();
+    let expected_frame = backend.framebuffer().to_vec();
+    let expected = backend.encode_state_bytes().unwrap();
+
+    backend.load_state_from_bytes(checkpoint).unwrap();
+    assert_eq!(backend.framebuffer(), checkpoint_frame);
+    backend.step_frame_bounded().unwrap();
+    backend.step_frame_bounded().unwrap();
+    assert_eq!(backend.framebuffer(), expected_frame);
+    assert_eq!(backend.encode_state_bytes().unwrap(), expected);
+}
+
+#[test]
+fn backend_state_replay_is_deterministic_for_every_supported_pce_topology() {
+    assert_pce_backend_replay_is_deterministic(
+        PceBackend::new(
+            rom_with_program(&[0xD4, 0xEA, 0x80, 0xFD]),
+            PathBuf::from("synthetic-base.pce"),
+        )
+        .unwrap(),
+    );
+    assert_pce_backend_replay_is_deterministic(synthetic_supergrafx_backend());
+    assert_pce_backend_replay_is_deterministic(synthetic_cd_backend(
+        PceHuCardBoard::SystemCardV1V2,
+    ));
+    assert_pce_backend_replay_is_deterministic(synthetic_cd_backend(PceHuCardBoard::SystemCardV3));
+    let mut arcade = synthetic_cd_backend_with_arcade_card(
+        PceHuCardBoard::SystemCardV3,
+        PceArcadeCardMode::Enabled,
+    )
+    .unwrap();
+    arcade
+        .machine
+        .devices_mut()
+        .arcade_card_mut()
+        .unwrap()
+        .write_physical(0x1F_FA09, 0x13);
+    assert_pce_backend_replay_is_deterministic(arcade);
+}
+
+#[test]
+fn arcade_card_selection_rejects_incompatible_topology_and_exposes_volatile_ram() {
+    assert!(!automatic_arcade_card_enabled(None));
+    assert!(!automatic_arcade_card_enabled(Some([0x55; 32])));
+    assert!(automatic_arcade_card_enabled(Some(
+        GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256
+    )));
+    let error = synthetic_cd_backend_with_arcade_card(
+        PceHuCardBoard::SystemCardV1V2,
+        PceArcadeCardMode::Enabled,
+    )
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("System Card v3"));
+
+    let mut backend = synthetic_cd_backend_with_arcade_card(
+        PceHuCardBoard::SystemCardV3,
+        PceArcadeCardMode::Enabled,
+    )
+    .unwrap();
+    assert_eq!(backend.arcade_card_mode(), PceArcadeCardMode::Enabled);
+    assert!(backend.machine.devices().arcade_card().is_some());
+    let region = backend
+        .memory_regions()
+        .into_iter()
+        .find(|region| region.id == "arcade_card_ram")
+        .unwrap();
+    assert_eq!(region.kind, MemoryRegionKind::ExternalWorkRam);
+    assert_eq!(region.size, Some(ARCADE_CARD_RAM_LEN));
+    backend
+        .machine
+        .devices_mut()
+        .arcade_card_mut()
+        .unwrap()
+        .ram_mut()[0x1F_FFFF] = 0xA5;
+    let mut ram = Vec::new();
+    backend.copy_memory_region("acram", &mut ram).unwrap();
+    assert_eq!(ram.len(), ARCADE_CARD_RAM_LEN);
+    assert_eq!(ram[0x1F_FFFF], 0xA5);
+}
+
+#[test]
+fn backend_state_restores_owned_state_reprojects_and_clears_debug_history() {
+    let mut backend = PceBackend::new(
+        rom_with_program(&[0xD4, 0xEA, 0x80, 0xFD]),
+        PathBuf::from("backend-state.pce"),
+    )
+    .unwrap();
+    backend.set_pce_mouse_state(PceControllerMode::Mouse, 9, -7, 1);
+    backend.set_opcode_history_enabled(true);
+    backend.set_apu_debug_capture_enabled(true);
+    DebuggableEmulator::set_instruction_trace_capacity(&mut backend, 64);
+    DebuggableEmulator::set_instruction_trace_enabled(&mut backend, true);
+    let trace_capacity = backend.instruction_trace().capacity();
+    backend.step_frame_bounded().unwrap();
+    assert!(!backend.recent_opcodes(1).is_empty());
+    assert!(!backend.instruction_trace().is_empty());
+    assert!(!backend.psg_master_debug_samples_ordered().is_empty());
+    let saved_frame_count = backend.frame_count;
+    let saved_framebuffer = backend.framebuffer().to_vec();
+    let state = backend.encode_state_bytes().unwrap();
+
+    backend.frame_count = 99;
+    backend.framebuffer.fill(0x7F);
+    backend.mouse_host_buttons = PadButtons::empty();
+    backend.update_controller_mode(PceControllerMode::TwoButton);
+    backend.pending_runtime_fault = Some("stale runtime fault".to_owned());
+    backend.load_state_from_bytes(state).unwrap();
+
+    assert_eq!(backend.frame_count, saved_frame_count);
+    assert_eq!(backend.framebuffer(), saved_framebuffer);
+    assert_eq!(backend.controller_mode(), PceControllerMode::Mouse);
+    assert_eq!(backend.mouse_host_buttons, PadButtons::I);
+    assert!(backend.pending_runtime_fault.is_none());
+    assert!(backend.recent_opcodes(1).is_empty());
+    assert!(backend.instruction_trace().is_enabled());
+    assert_eq!(backend.instruction_trace().capacity(), trace_capacity);
+    assert!(backend.instruction_trace().is_empty());
+    assert!(backend.debug_hardware_snapshot().psg.debug_capture_enabled);
+    assert!(backend.psg_master_debug_samples_ordered().is_empty());
+    backend.machine.step_boundary().unwrap();
+    assert!(!backend.recent_opcodes(1).is_empty());
+    assert!(!backend.instruction_trace().is_empty());
+}
+
+#[test]
+fn backend_state_rejection_is_transactional_and_fault_policy_is_explicit() {
+    let saved =
+        PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("saved-state.pce")).unwrap();
+    let state = saved.encode_state_bytes().unwrap();
+
+    let mut target_rom = rom_with_program(&[0xEA]);
+    target_rom[0x100] ^= 0xFF;
+    let mut target = PceBackend::new(target_rom, PathBuf::from("target.pce")).unwrap();
+    target.step_frame_bounded().unwrap();
+    let before = target.encode_state_bytes().unwrap();
+    let before_frame = target.framebuffer().to_vec();
+    target.pending_runtime_fault = Some("preserve on failed load".to_owned());
+    assert!(target.load_state_from_bytes(state).is_err());
+    assert_eq!(
+        target.pending_runtime_fault.as_deref(),
+        Some("preserve on failed load")
+    );
+    target.pending_runtime_fault = None;
+    assert_eq!(target.encode_state_bytes().unwrap(), before);
+    assert_eq!(target.framebuffer(), before_frame);
+
+    let mut malformed = before.clone();
+    malformed.pop();
+    assert!(target.load_state_from_bytes(malformed).is_err());
+    assert_eq!(target.encode_state_bytes().unwrap(), before);
+
+    target.pending_runtime_fault = Some("pending".to_owned());
+    assert!(
+        target
+            .encode_state_bytes()
+            .unwrap_err()
+            .to_string()
+            .contains("faulted")
+    );
+}
+
+#[test]
+fn backend_state_roundtrips_connected_memory_base_ram_and_live_protocol() {
+    let mut backend = PceBackend::new(
+        rom_with_program(&[0xEA]),
+        PathBuf::from("memory-base-state.pce"),
+    )
+    .unwrap();
+    let mut ram = vec![0; zeff_pce_core::hardware::MEMORY_BASE128_RAM_LEN];
+    for (index, byte) in ram.iter_mut().enumerate() {
+        *byte = (index as u8).wrapping_mul(17);
+    }
+    let controller = backend.machine.devices_mut().controller_mut();
+    controller.memory_base128_mut().load_ram(&ram).unwrap();
+    controller.set_memory_base128_connected(true);
+    for bit in [false, false, false, true, false, true, false, true] {
+        controller.write_lines(bit, false);
+        controller.write_lines(bit, true);
+    }
+    controller.write_lines(true, false);
+    controller.write_lines(true, true);
+    assert_eq!(
+        controller.memory_base128().debug_snapshot().phase,
+        zeff_pce_core::hardware::MemoryBase128Phase::IdentifySecond
+    );
+    let state = backend.encode_state_bytes().unwrap();
+
+    let controller = backend.machine.devices_mut().controller_mut();
+    controller.set_memory_base128_connected(false);
+    controller
+        .memory_base128_mut()
+        .load_ram(&vec![0xFF; zeff_pce_core::hardware::MEMORY_BASE128_RAM_LEN])
+        .unwrap();
+    backend.load_state_from_bytes(state.clone()).unwrap();
+    let restored = backend.machine.devices().controller().memory_base128();
+    assert!(restored.is_connected());
+    assert_eq!(backend.memory_base_mode(), PceMemoryBaseMode::Enabled);
+    assert_eq!(restored.ram(), ram);
+    assert_eq!(
+        restored.debug_snapshot().phase,
+        zeff_pce_core::hardware::MemoryBase128Phase::IdentifySecond
+    );
+    assert_eq!(backend.encode_state_bytes().unwrap(), state);
+}
+
 fn pixel(frame: &[u8], x: usize, y: usize) -> [u8; 4] {
     frame[(y * PCE_PRESENTED_WIDTH + x) * 4..][..4]
         .try_into()
@@ -208,7 +725,7 @@ fn projection_maps_variable_active_rows_without_sampling_padding() {
         [0xEE, 0, 0, 0xFF],
         [0xEF, 0, 0, 0xFF],
     ];
-    for (pixel, color) in source.chunks_exact_mut(4).zip(colors) {
+    for (pixel, color) in source.as_chunks_mut::<4>().0.iter_mut().zip(colors) {
         pixel.copy_from_slice(&color);
     }
     let rows = [
@@ -251,7 +768,7 @@ fn base_projection_scales_each_active_row_without_black_side_bars() {
         [0xEE, 0, 0, 0xFF],
         [0xEF, 0, 0, 0xFF],
     ];
-    for (pixel, color) in source.chunks_exact_mut(4).zip(colors) {
+    for (pixel, color) in source.as_chunks_mut::<4>().0.iter_mut().zip(colors) {
         pixel.copy_from_slice(&color);
     }
     let rows = [
@@ -327,7 +844,7 @@ fn projection_aligns_rows_in_one_master_dot_domain() {
         [0xB0, 0, 0, 0xFF],
         [8, 0, 0, 0xFF],
     ];
-    for (pixel, color) in source.chunks_exact_mut(4).zip(colors) {
+    for (pixel, color) in source.as_chunks_mut::<4>().0.iter_mut().zip(colors) {
         pixel.copy_from_slice(&color);
     }
     let rows = [
@@ -374,7 +891,13 @@ fn projection_keeps_empty_and_inactive_rows_opaque_black() {
     let mut output = vec![0; PCE_PRESENTED_RGBA_BYTES];
 
     project_sgx_rgba_rows(&source, 4, &rows, None, &mut output);
-    assert!(output.chunks_exact(4).all(|pixel| pixel == OPAQUE_BLACK));
+    assert!(
+        output
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == OPAQUE_BLACK)
+    );
 
     project_sgx_rgba_rows(&source, 4, &rows, Some((0, 2)), &mut output);
     assert_eq!(pixel(&output, 10, 10), OPAQUE_BLACK);
@@ -419,6 +942,11 @@ fn explicit_console_wiring_overrides_auto_detection() {
 
 #[test]
 fn curated_wiring_hash_propagates_for_direct_and_archive_paths() {
+    let world_court_tennis_sha256 = [
+        0x60, 0xC6, 0x9E, 0xE6, 0x80, 0x6A, 0xA6, 0x14, 0x45, 0x95, 0x49, 0x63, 0x3B, 0xDC, 0x72,
+        0x8E, 0x10, 0x5F, 0x85, 0x92, 0xE5, 0x35, 0xFC, 0xC7, 0x96, 0xC2, 0x4C, 0xD6, 0xD7, 0x6A,
+        0x6B, 0xD1,
+    ];
     let magical_chase_sha256 = [
         0xC5, 0xA3, 0x9C, 0x9D, 0x9B, 0x2D, 0x75, 0x32, 0x44, 0x81, 0x6E, 0xAF, 0xD6, 0x8F, 0x50,
         0x4A, 0x85, 0x59, 0x08, 0xEE, 0xBA, 0xB1, 0xB1, 0xC8, 0xFE, 0xA2, 0xBB, 0xF7, 0xA4, 0xA8,
@@ -451,9 +979,21 @@ fn curated_wiring_hash_propagates_for_direct_and_archive_paths() {
         magical_chase_sha256,
     )
     .unwrap();
+    let world_court_tennis = PceBackend::with_validated_paths_and_hash(
+        rom_with_program(&[0xEA]),
+        BackendPaths::new(PathBuf::from("world-court-tennis.pce")),
+        None,
+        None,
+        world_court_tennis_sha256,
+    )
+    .unwrap();
 
     assert_eq!(
         direct.machine.devices().console_wiring(),
+        PceConsoleWiring::TurboGrafx16
+    );
+    assert_eq!(
+        world_court_tennis.machine.devices().console_wiring(),
         PceConsoleWiring::TurboGrafx16
     );
     assert_eq!(
@@ -468,13 +1008,71 @@ fn curated_wiring_hash_propagates_for_direct_and_archive_paths() {
 }
 
 #[test]
-fn read_only_debug_surface_reports_registers_and_rom_bytes() {
+fn debugger_surface_reports_registers_rom_bytes_and_writable_cpu_space() {
     let backend = PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("debug.pce")).unwrap();
     assert_eq!(backend.debug_cpu_snapshot().registers().pc, RESET_PC);
     assert_eq!(backend.debug_peek8(0), 0xEA);
     assert_eq!(
         backend.memory_regions()[0],
-        MemoryRegionDescriptor::read_only_cpu_address_space(16)
+        MemoryRegionDescriptor::cpu_address_space(16)
+    );
+}
+
+#[test]
+fn generic_memory_regions_expose_pce_video_state() {
+    let mut backend =
+        PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("memory.pce")).unwrap();
+    backend.machine.devices_mut().vdc_mut().vram_mut()[0] = 0x1234;
+    let vce = backend.machine.devices_mut().vce_mut();
+    vce.write_port(zeff_pce_core::hardware::VcePort::from_offset(4), 0x56);
+    vce.write_port(zeff_pce_core::hardware::VcePort::from_offset(5), 0x01);
+
+    let mut copied = Vec::new();
+    backend
+        .copy_memory_region("video_ram", &mut copied)
+        .unwrap();
+    assert_eq!(copied.len(), zeff_pce_core::hardware::VDC_VRAM_BYTES);
+    assert_eq!(&copied[..2], &[0x34, 0x12]);
+
+    backend
+        .copy_memory_region("palette_ram", &mut copied)
+        .unwrap();
+    assert_eq!(
+        copied.len(),
+        zeff_pce_core::hardware::VCE_PALETTE_COLORS * 2
+    );
+    assert_eq!(&copied[..2], &[0x56, 0x01]);
+
+    backend.copy_memory_region("oam", &mut copied).unwrap();
+    assert_eq!(copied.len(), zeff_pce_core::hardware::VDC_SATB_WORDS * 2);
+
+    let mut supergrafx = synthetic_supergrafx_backend();
+    supergrafx.machine.devices_mut().vdc_mut().vram_mut()[0] = 0x1122;
+    supergrafx
+        .machine
+        .devices_mut()
+        .supergrafx_video_mut()
+        .unwrap()
+        .vdc2_mut()
+        .vram_mut()[0] = 0x3344;
+    supergrafx
+        .copy_memory_region("video_ram", &mut copied)
+        .unwrap();
+    assert_eq!(copied.len(), zeff_pce_core::hardware::VDC_VRAM_BYTES * 2);
+    assert_eq!(&copied[..2], &[0x22, 0x11]);
+    assert_eq!(
+        &copied
+            [zeff_pce_core::hardware::VDC_VRAM_BYTES..zeff_pce_core::hardware::VDC_VRAM_BYTES + 2],
+        &[0x44, 0x33]
+    );
+    let regions = supergrafx.memory_regions();
+    assert_eq!(
+        resolve_memory_region(&regions, "video_ram").unwrap().view,
+        MemoryRegionView::Aggregate
+    );
+    assert_eq!(
+        resolve_memory_region(&regions, "oam").unwrap().view,
+        MemoryRegionView::Aggregate
     );
 }
 

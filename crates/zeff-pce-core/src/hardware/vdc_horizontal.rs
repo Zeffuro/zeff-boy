@@ -1,5 +1,7 @@
 use super::vdc::{HuC6270, VdcDmaChannel, VdcDmaError, VdcDmaProgress, VdcRegister};
 use super::vdc_scanline::VdcVerticalPhase;
+use anyhow::bail;
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const VDC_DMA_PIXELS_PER_WORD: u8 = 4;
 pub const DETERMINISTIC_VDC_RESET_FRAME_BURST: bool = false;
@@ -49,6 +51,7 @@ pub struct VdcHorizontalAdvance {
     dma_slots: u64,
     satb_words: u64,
     vram_words: u64,
+    dma_completions: u64,
 }
 
 impl VdcHorizontalAdvance {
@@ -76,6 +79,11 @@ impl VdcHorizontalAdvance {
     pub const fn vram_words(self) -> u64 {
         self.vram_words
     }
+
+    #[inline]
+    pub const fn dma_completions(self) -> u64 {
+        self.dma_completions
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +110,52 @@ impl Default for VdcHorizontalState {
             latched_active_display_pixels: 8,
             display_control_latched_for_line: false,
         }
+    }
+}
+
+impl VdcHorizontalState {
+    pub(super) fn write_state(self, writer: &mut StateWriter) {
+        writer.write_u8(match self.phase {
+            VdcHorizontalPhase::DisplayStart => 0,
+            VdcHorizontalPhase::ActiveDisplay => 1,
+            VdcHorizontalPhase::DisplayEnd => 2,
+            VdcHorizontalPhase::Sync => 3,
+        });
+        writer.write_u16(self.phase_pixels_remaining);
+        writer.write_u8(self.dma_pixel_remainder);
+        writer.write_bool(self.frame_burst);
+        writer.write_u16(self.latched_display_start_pixels);
+        writer.write_u16(self.latched_display_control);
+        writer.write_u16(self.latched_active_display_pixels);
+        writer.write_bool(self.display_control_latched_for_line);
+    }
+
+    pub(super) fn read_state(reader: &mut StateReader<'_>) -> anyhow::Result<Self> {
+        let phase = match reader.read_u8()? {
+            0 => VdcHorizontalPhase::DisplayStart,
+            1 => VdcHorizontalPhase::ActiveDisplay,
+            2 => VdcHorizontalPhase::DisplayEnd,
+            3 => VdcHorizontalPhase::Sync,
+            tag => bail!("invalid VDC horizontal-phase tag in save-state: {tag}"),
+        };
+        let phase_pixels_remaining = reader.read_u16()?;
+        if phase_pixels_remaining == 0 {
+            bail!("VDC horizontal phase has no remaining pixels in save-state");
+        }
+        let dma_pixel_remainder = reader.read_u8()?;
+        if dma_pixel_remainder >= VDC_DMA_PIXELS_PER_WORD {
+            bail!("invalid VDC DMA pixel remainder in save-state: {dma_pixel_remainder}");
+        }
+        Ok(Self {
+            phase,
+            phase_pixels_remaining,
+            dma_pixel_remainder,
+            frame_burst: reader.read_bool()?,
+            latched_display_start_pixels: reader.read_u16()?,
+            latched_display_control: reader.read_u16()?,
+            latched_active_display_pixels: reader.read_u16()?,
+            display_control_latched_for_line: reader.read_bool()?,
+        })
     }
 }
 
@@ -200,10 +254,15 @@ impl HuC6270 {
         };
         match self.service_dma_slot(channel)? {
             VdcDmaProgress::Idle => {}
-            VdcDmaProgress::Transferred { .. } | VdcDmaProgress::Complete => match channel {
-                VdcDmaChannel::Satb => advance.satb_words += 1,
-                VdcDmaChannel::Vram => advance.vram_words += 1,
-            },
+            progress @ (VdcDmaProgress::Transferred { .. } | VdcDmaProgress::Complete) => {
+                match channel {
+                    VdcDmaChannel::Satb => advance.satb_words += 1,
+                    VdcDmaChannel::Vram => advance.vram_words += 1,
+                }
+                if progress == VdcDmaProgress::Complete {
+                    advance.dma_completions += 1;
+                }
+            }
         }
         Ok(())
     }

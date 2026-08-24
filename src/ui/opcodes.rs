@@ -1,6 +1,7 @@
 use crate::debug::RecentOpcodeDisplay;
 use zeff_emu_common::address::Address;
 use zeff_gba_core::emulator::GbaOpcodeRecord;
+use zeff_pce_core::hardware::PceOpcodeHistoryEntry;
 use zeff_ws_core::emulator::WsOpcodeRecord;
 
 pub(super) const RECENT_OPCODE_LINE_COUNT: usize = 16;
@@ -57,6 +58,34 @@ pub(super) fn nes_recent_opcode_display(
             storage_offset: storage_offset.and_then(|value| u64::try_from(value).ok()),
             bytes: vec![opcode],
             detail: None,
+            repeat_count,
+            thumb: None,
+        },
+    )
+}
+
+pub(super) fn pce_recent_opcode_display(
+    entries: impl IntoIterator<Item = PceOpcodeHistoryEntry>,
+) -> Vec<RecentOpcodeDisplay> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct Record {
+        logical_pc: u16,
+        physical_pc: u32,
+        opcode: u8,
+    }
+
+    build_recent_opcode_display(
+        entries.into_iter().map(|entry| Record {
+            logical_pc: entry.logical_pc(),
+            physical_pc: entry.physical_pc(),
+            opcode: entry.opcode(),
+        }),
+        RECENT_OPCODE_LINE_COUNT,
+        |record, repeat_count| RecentOpcodeDisplay {
+            address: Address::from(record.logical_pc),
+            storage_offset: None,
+            bytes: vec![record.opcode],
+            detail: Some(format!("phys={:06X}", record.physical_pc)),
             repeat_count,
             thumb: None,
         },

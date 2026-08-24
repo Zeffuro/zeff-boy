@@ -354,6 +354,7 @@ impl App {
             }
             Some(ConsoleGraphicsData::Gba(_))
             | Some(ConsoleGraphicsData::Nes(_))
+            | Some(ConsoleGraphicsData::Pce(_))
             | Some(ConsoleGraphicsData::Sega8(_)) => {
                 if is_tab_open(&self.debug_dock, DebugTab::TileViewer) {
                     self.debug_windows.tiles.invalidate_cache();

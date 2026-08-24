@@ -309,6 +309,7 @@ fn _assert_dependency_is_public(_: FirmwareDependency) {}
 mod tests {
     use super::*;
     use crate::catalog::{FirmwareVariantSpec, KnownHashes, SizeRule};
+    use crate::digest::DigestSet;
 
     const TEST_VARIANTS: &[FirmwareVariantSpec] = &[
         FirmwareVariantSpec {
@@ -464,6 +465,50 @@ mod tests {
             selected.variant.as_ref().unwrap().as_ref(),
             "nec.pce.cd.system_card.v2"
         );
+    }
+
+    #[test]
+    fn pce_retail_and_open_fixture_plans_reject_each_others_candidates() {
+        let fixture = FirmwareInventoryEntry {
+            bytes: vec![0; 262_144].into(),
+            original_filename: Some("syscard3.pce".to_owned()),
+            digests: DigestSet {
+                md5: None,
+                sha1: None,
+                sha256: crate::catalog::PCE_SYSTEM_CARD_ADPCM_FIXTURE_SHA256,
+            },
+            validation: ValidationStatus::KnownGood {
+                spec_id: "zeff.pce.cd.adpcm_fixture_card".to_owned(),
+                variant_id: "zeff.pce.cd.adpcm_fixture.v1".to_owned(),
+            },
+        };
+        let retail = FirmwareInventoryEntry {
+            bytes: vec![0; 262_144].into(),
+            original_filename: Some("syscard3.pce".to_owned()),
+            digests: DigestSet {
+                md5: None,
+                sha1: None,
+                sha256: crate::catalog::PCE_SYSTEM_CARD_V3_JAPAN_SHA256,
+            },
+            validation: ValidationStatus::KnownGood {
+                spec_id: "nec.pce.cd.system_card".to_owned(),
+                variant_id: "nec.pce.cd.system_card.v3".to_owned(),
+            },
+        };
+
+        let mut inventory = FirmwareInventory::new();
+        inventory.add(fixture);
+        let retail_resolution = FirmwareResolver::new(crate::catalog::catalog_specs(), &inventory)
+            .resolve(&crate::catalog::firmware_plan_for_pce_cdrom2_region(
+                "japan",
+            ));
+        assert!(retail_resolution.has_blocking_failure());
+
+        let mut inventory = FirmwareInventory::new();
+        inventory.add(retail);
+        let fixture_resolution = FirmwareResolver::new(crate::catalog::catalog_specs(), &inventory)
+            .resolve(&crate::catalog::firmware_plan_for_pce_cdrom2_fixture());
+        assert!(fixture_resolution.has_blocking_failure());
     }
 
     #[test]

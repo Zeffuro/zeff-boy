@@ -51,7 +51,7 @@ impl CoreState {
             ActiveCore::Ws(emu) => emu.framebuffer(),
         };
         self.xrgb_buf.resize(fb.len(), 0);
-        for (i, chunk) in fb.chunks_exact(4).enumerate() {
+        for (i, chunk) in fb.as_chunks::<4>().0.iter().enumerate() {
             let r = chunk[0];
             let g = chunk[1];
             let b = chunk[2];
@@ -74,7 +74,7 @@ impl CoreState {
         };
         let pixel_count = fb.len() / 4;
         self.rgb565_buf.resize(pixel_count * 2, 0);
-        for (i, chunk) in fb.chunks_exact(4).enumerate() {
+        for (i, chunk) in fb.as_chunks::<4>().0.iter().enumerate() {
             let r = chunk[0] as u16;
             let g = chunk[1] as u16;
             let b = chunk[2] as u16;

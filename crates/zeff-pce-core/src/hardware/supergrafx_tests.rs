@@ -551,7 +551,9 @@ fn dual_vram_dma_advances_independently_on_the_same_slot() {
 
     let (first, second) = devices.advance_horizontal_pixels(4).unwrap();
     assert_eq!(first.vram_words(), 1);
+    assert_eq!(first.dma_completions(), 0);
     assert_eq!(second.unwrap().vram_words(), 1);
+    assert!(!devices.take_debug_dma_completed());
     assert_eq!(devices.vdc().vram()[0x0200], 0x1111);
     assert_eq!(
         devices.vdc().active_vram_dma().unwrap().remaining_words(),
@@ -575,7 +577,12 @@ fn dual_vram_dma_completes_with_independent_status_and_irq() {
 
     let (first, second) = devices.advance_horizontal_pixels(4).unwrap();
     assert_eq!(first.vram_words(), 1);
-    assert_eq!(second.unwrap().vram_words(), 1);
+    assert_eq!(first.dma_completions(), 1);
+    let second = second.unwrap();
+    assert_eq!(second.vram_words(), 1);
+    assert_eq!(second.dma_completions(), 1);
+    assert!(devices.take_debug_dma_completed());
+    assert!(!devices.take_debug_dma_completed());
     assert_eq!(devices.vdc().vram()[0x0200], 0x1111);
     assert!(
         devices

@@ -10,6 +10,7 @@ use crate::audio_tooling::{
     AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
     AudioVoiceClass, AudioVoiceState, GB_TEMPO_US_PER_BEAT, level_from_u4,
 };
+use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
@@ -235,6 +236,21 @@ impl EmulatorCore for GbBackend {
 
     fn supports_cheats(&self) -> bool {
         true
+    }
+
+    fn install_rom_patches(&mut self, cheats: &[CheatPatch]) {
+        self.emu.clear_rom_patches();
+        for patch in cheats.iter().copied().filter(|patch| patch.is_rom_patch()) {
+            self.emu.add_rom_patch(patch);
+        }
+    }
+
+    fn apply_ram_cheats(&mut self, cheats: &[CheatPatch]) {
+        zeff_emu_common::cheats::apply_ram_cheats_16(&mut self.emu, cheats);
+    }
+
+    fn debug_suspend(&mut self) {
+        self.emu.debug_suspend();
     }
 
     fn supports_debugger(&self) -> bool {
