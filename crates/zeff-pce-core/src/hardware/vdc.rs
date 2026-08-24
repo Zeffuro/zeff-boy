@@ -233,6 +233,7 @@ impl HuC6270 {
     pub fn read_port(&mut self, port: VdcPort) -> u8 {
         match port {
             VdcPort::SelectOrStatus => self.read_status(),
+            VdcPort::Unused => 0,
             VdcPort::DataLow => self.read_data(false),
             VdcPort::DataHigh => self.read_data(true),
         }
@@ -245,6 +246,7 @@ impl HuC6270 {
                 self.selected_register_id = value & 0x1F;
                 VdcPortWriteResult::Applied
             }
+            VdcPort::Unused => VdcPortWriteResult::Applied,
             VdcPort::DataLow => self.write_data(false, value),
             VdcPort::DataHigh => self.write_data(true, value),
         }

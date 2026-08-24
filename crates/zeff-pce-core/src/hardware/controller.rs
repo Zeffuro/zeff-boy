@@ -338,7 +338,7 @@ impl MultitapDevice {
     }
 }
 
-pub const MULTITAP_EXHAUSTED_NIBBLE: u8 = 0x0F;
+pub const MULTITAP_EXHAUSTED_NIBBLE: u8 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MultitapPort {

@@ -164,10 +164,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ZEFF_TEST_GNU_NM_SYM with a large GNU nm symbol file"]
     fn imports_external_fixture_when_configured() {
-        let Ok(path) = std::env::var("ZEFF_TEST_GNU_NM_SYM") else {
-            return;
-        };
+        let path = std::env::var("ZEFF_TEST_GNU_NM_SYM")
+            .expect("ZEFF_TEST_GNU_NM_SYM must name a GNU nm symbol file");
         let data = std::fs::read(path).unwrap();
         let module = GnuNmSymImporter.import(&data, &context()).unwrap();
         assert!(module.symbols.len() > 70_000);

@@ -126,7 +126,10 @@ fn physical_decoder_covers_base_boundaries_and_mirrors() {
         decode_physical_region(0x1F_E3FF),
         PhysicalRegion::Vdc(VdcPort::DataHigh)
     );
-    assert_eq!(decode_physical_region(0x1F_E001), PhysicalRegion::Unmapped);
+    assert_eq!(
+        decode_physical_region(0x1F_E001),
+        PhysicalRegion::Vdc(VdcPort::Unused)
+    );
     assert_eq!(
         decode_physical_region(0x1F_E407),
         PhysicalRegion::Vce(VcePort::from_offset(7))
@@ -205,7 +208,7 @@ fn device_windows_deliver_typed_mirrored_ports() {
     assert_eq!(bus.read(0x1F_F3FF), 0x60);
     assert_eq!(bus.read(0x1F_F402), 0x70);
     assert_eq!(bus.read(0x1F_F7FF), 0x71);
-    assert_eq!(bus.read(0x1F_E001), OPEN_BUS_VALUE);
+    assert_eq!(bus.read(0x1F_E001), 0x11);
     assert_eq!(bus.read(0x1F_F400), OPEN_BUS_VALUE);
 
     bus.write(0x1F_E003, 1);
@@ -226,6 +229,7 @@ fn device_windows_deliver_typed_mirrored_ports() {
             Call::ReadController,
             Call::ReadIrq(IrqPort::Disable),
             Call::ReadIrq(IrqPort::Request),
+            Call::ReadVdc(VdcPort::Unused),
             Call::WriteVdc(VdcPort::DataHigh, 1),
             Call::WriteVce(VcePort::from_offset(6), 2),
             Call::WritePsg(PsgPort::from_offset(15), 3),

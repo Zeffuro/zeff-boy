@@ -431,8 +431,10 @@ impl App {
             }
             WindowEvent::CursorLeft { .. } => {
                 self.cursor_pos = None;
-                self.mouse_left_pressed = false;
-                self.mouse_right_pressed = false;
+                if !self.pce_mouse_captured {
+                    self.mouse_left_pressed = false;
+                    self.mouse_right_pressed = false;
+                }
             }
             WindowEvent::Resized(size) => {
                 self.window_size = (size.width as f32, size.height as f32);
@@ -453,12 +455,17 @@ impl App {
         match state {
             ElementState::Pressed => {
                 let pointer_over_direct_game = self.pointer_over_direct_game_view();
+                let captured = self.pce_mouse_captured;
                 #[cfg(not(target_arch = "wasm32"))]
                 if *button == MouseButton::Left && pointer_over_direct_game {
                     self.capture_pce_mouse();
                 }
-                let pressed =
-                    self.game_view_focused && (!event_consumed_by_egui || pointer_over_direct_game);
+                let pressed = game_mouse_press_reaches_emulator(
+                    self.game_view_focused,
+                    captured,
+                    pointer_over_direct_game,
+                    event_consumed_by_egui,
+                );
                 match button {
                     MouseButton::Left => self.mouse_left_pressed = pressed,
                     MouseButton::Right => self.mouse_right_pressed = pressed,
@@ -543,7 +550,11 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn capture_pce_mouse(&mut self) {
         if self.pce_mouse_captured
-            || self.active_system != crate::emu_backend::ActiveSystem::Pce
+            || !pce_mouse_capture_allowed(
+                self.active_system,
+                self.settings.emulation.pce_controller,
+                self.rom_info.rom_hash,
+            )
             || self.settings.emulation.pce_mouse_cursor_mode
                 != crate::settings::PceMouseCursorMode::Captured
         {
@@ -661,9 +672,40 @@ fn should_pause_on_unfocus(
     pause_on_unfocus && !link_keeps_running && !paused
 }
 
+fn game_mouse_press_reaches_emulator(
+    game_view_focused: bool,
+    pce_mouse_captured: bool,
+    pointer_over_direct_game: bool,
+    event_consumed_by_egui: bool,
+) -> bool {
+    game_view_focused && (pce_mouse_captured || pointer_over_direct_game || !event_consumed_by_egui)
+}
+
+pub(super) fn pce_mouse_capture_allowed(
+    active_system: crate::emu_backend::ActiveSystem,
+    preference: crate::settings::PceControllerPreference,
+    content_hash: Option<[u8; 32]>,
+) -> bool {
+    if active_system != crate::emu_backend::ActiveSystem::Pce {
+        return false;
+    }
+    match preference {
+        crate::settings::PceControllerPreference::Mouse => true,
+        crate::settings::PceControllerPreference::Auto => content_hash.is_some_and(|hash| {
+            crate::emu_backend::pce::automatic_controller_mode(hash)
+                == zeff_pce_core::hardware::PceControllerMode::Mouse
+        }),
+        crate::settings::PceControllerPreference::TwoButton
+        | crate::settings::PceControllerPreference::Multitap => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{any_app_window_focused, should_pause_on_unfocus};
+    use super::{
+        any_app_window_focused, game_mouse_press_reaches_emulator, pce_mouse_capture_allowed,
+        should_pause_on_unfocus,
+    };
 
     #[test]
     fn any_native_window_keeps_the_app_focused() {
@@ -688,5 +730,54 @@ mod tests {
         assert!(!should_pause_on_unfocus(false, true, true, false));
         assert!(!should_pause_on_unfocus(false, true, false, true));
         assert!(!should_pause_on_unfocus(false, false, false, false));
+    }
+
+    #[test]
+    fn captured_mouse_clicks_reach_the_emulator_without_a_cursor_position() {
+        assert!(game_mouse_press_reaches_emulator(true, true, false, true));
+        assert!(!game_mouse_press_reaches_emulator(false, true, false, true));
+    }
+
+    #[test]
+    fn uncaptured_ui_clicks_do_not_leak_into_the_emulator() {
+        assert!(!game_mouse_press_reaches_emulator(true, false, false, true));
+        assert!(game_mouse_press_reaches_emulator(true, false, true, true));
+    }
+
+    #[test]
+    fn pce_mouse_capture_requires_a_mouse_profile_or_explicit_override() {
+        use crate::emu_backend::ActiveSystem;
+        use crate::settings::PceControllerPreference;
+
+        assert!(pce_mouse_capture_allowed(
+            ActiveSystem::Pce,
+            PceControllerPreference::Auto,
+            Some(crate::emu_backend::pce::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
+        ));
+        assert!(!pce_mouse_capture_allowed(
+            ActiveSystem::Pce,
+            PceControllerPreference::Auto,
+            Some([0; 32]),
+        ));
+        assert!(pce_mouse_capture_allowed(
+            ActiveSystem::Pce,
+            PceControllerPreference::Mouse,
+            Some([0; 32]),
+        ));
+        assert!(!pce_mouse_capture_allowed(
+            ActiveSystem::Pce,
+            PceControllerPreference::Multitap,
+            Some(crate::emu_backend::pce::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
+        ));
+        assert!(!pce_mouse_capture_allowed(
+            ActiveSystem::Pce,
+            PceControllerPreference::Auto,
+            Some(crate::emu_backend::pce::TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256,),
+        ));
+        assert!(!pce_mouse_capture_allowed(
+            ActiveSystem::Nes,
+            PceControllerPreference::Mouse,
+            None,
+        ));
     }
 }

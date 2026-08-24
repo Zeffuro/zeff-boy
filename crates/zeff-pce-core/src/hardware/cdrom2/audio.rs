@@ -120,6 +120,7 @@ impl CdRom2 {
         let adpcm_available = (output.len() / 2).min(self.adpcm_audio_samples.len());
         let step = CDDA_SOURCE_RATE / f64::from(self.audio_sample_rate);
         for (index, frame) in output.chunks_exact_mut(2).enumerate() {
+            let cdda_available = !self.audio_source_frames.is_empty();
             while self.audio_resample_position >= 1.0 && self.audio_source_frames.len() > 1 {
                 self.audio_source_frames.pop_front();
                 self.audio_resample_position -= 1.0;
@@ -141,7 +142,13 @@ impl CdRom2 {
                 let cdda = current[side] + (next[side] - current[side]) * fraction;
                 frame[side] = (frame[side] + cdda * CDDA_MIX_GAIN + adpcm).clamp(-1.0, 1.0);
             }
-            self.audio_resample_position += step;
+            // Silence before a CDDA command is not part of the 44.1 kHz source
+            // stream. Advancing here with an empty queue leaves a large stale
+            // position that consumes the beginning of the next track as soon as
+            // its first frames arrive.
+            if cdda_available {
+                self.audio_resample_position += step;
+            }
         }
         self.adpcm_audio_samples.drain(..adpcm_available);
     }
@@ -211,8 +218,10 @@ impl CdRom2 {
 
     pub(super) fn write_adpcm_address_control(&mut self, value: u8) {
         if value & 0x80 != 0 {
+            self.adpcm_address_latch = 0;
             self.adpcm_read_address = 0;
             self.adpcm_write_address = 0;
+            self.adpcm_read_buffer = 0;
             self.adpcm_length = 0;
             self.adpcm_playing = false;
             self.adpcm_stop_pending = false;
@@ -353,6 +362,15 @@ impl CdRom2 {
         self.adpcm_half_irq = false;
     }
 
+    pub(super) fn complete_adpcm_write(&mut self, value: u8) {
+        self.adpcm_half_irq = self.adpcm_length < 0x8000;
+        if self.adpcm_address_control & 0x10 == 0 && self.adpcm_length < 0xFFFF {
+            self.adpcm_length += 1;
+        }
+        self.adpcm_ram[usize::from(self.adpcm_write_address)] = value;
+        self.adpcm_write_address = self.adpcm_write_address.wrapping_add(1);
+    }
+
     fn current_adpcm_output_level(&self) -> i32 {
         if self.adpcm_playing {
             let level =
@@ -460,9 +478,7 @@ impl CdRom2 {
         }
 
         while self.response_index < self.response_available {
-            self.adpcm_ram[usize::from(self.adpcm_write_address)] =
-                self.response[self.response_index];
-            self.adpcm_write_address = self.adpcm_write_address.wrapping_add(1);
+            self.complete_adpcm_write(self.response[self.response_index]);
             self.response_index += 1;
         }
         self.request = false;
@@ -574,9 +590,13 @@ mod tests {
             start(&mut cd, 0x70, 15);
             cd.advance_adpcm_playback(ticks_to_next_nibble(&cd));
             assert_ne!(cd.adpcm_predictor, ADPCM_RESET_PREDICTOR);
+            cd.adpcm_address_latch = 0x1234;
+            cd.adpcm_read_buffer = 0x56;
             cd.write_adpcm_address_control(reset);
             assert!(!cd.adpcm_playing);
             assert_eq!(cd.adpcm_address_control, 0);
+            assert_eq!(cd.adpcm_address_latch, 0);
+            assert_eq!(cd.adpcm_read_buffer, 0);
             assert_eq!(cd.adpcm_predictor, ADPCM_RESET_PREDICTOR);
             assert_eq!(cd.adpcm_resampler.level, 0);
 
@@ -804,6 +824,45 @@ mod tests {
         let mut output = [0.8, 0.8];
         over.mix_audio_samples_into(&mut output);
         assert_eq!(output, [1.0, 1.0]);
+    }
+
+    #[test]
+    fn inactive_output_does_not_skip_the_start_of_later_cdda() {
+        let mut cd = cdrom();
+        let mut silence = [0.0; 256];
+        cd.mix_audio_samples_into(&mut silence);
+        assert_eq!(cd.audio_resample_position, 0.0);
+
+        cd.audio_source_frames.push_back([0.25, -0.25]);
+        cd.audio_source_frames.push_back([0.75, -0.75]);
+        let mut output = [0.0; 2];
+        cd.mix_audio_samples_into(&mut output);
+        assert_eq!(output, [0.125, -0.125]);
+    }
+
+    #[test]
+    fn adpcm_writes_extend_active_stream_length_unless_reload_is_held() {
+        let mut cd = cdrom();
+        cd.adpcm_length = 0x7FFF;
+        cd.complete_adpcm_write(0x12);
+        assert_eq!(cd.adpcm_length, 0x8000);
+        assert!(cd.adpcm_half_irq);
+        assert_eq!(cd.adpcm_ram[0], 0x12);
+
+        cd.complete_adpcm_write(0x34);
+        assert_eq!(cd.adpcm_length, 0x8001);
+        assert!(!cd.adpcm_half_irq);
+        assert_eq!(cd.adpcm_ram[1], 0x34);
+
+        cd.adpcm_address_control = 0x10;
+        cd.complete_adpcm_write(0x56);
+        assert_eq!(cd.adpcm_length, 0x8001);
+        assert_eq!(cd.adpcm_ram[2], 0x56);
+
+        cd.adpcm_address_control = 0;
+        cd.adpcm_length = 0xFFFF;
+        cd.complete_adpcm_write(0x78);
+        assert_eq!(cd.adpcm_length, 0xFFFF);
     }
 
     #[test]

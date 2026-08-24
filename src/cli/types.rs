@@ -1,5 +1,6 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+use zeff_pce_core::hardware::PceControllerMode;
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -93,6 +94,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) gba_dump_memory_dir: Option<std::path::PathBuf>,
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
     pub(crate) sega8_console_region: Option<Sega8Region>,
+    pub(crate) pce_controller_mode: Option<PceControllerMode>,
 }
 
 impl Default for HeadlessOptions {
@@ -148,6 +150,7 @@ impl Default for HeadlessOptions {
             gba_dump_memory_dir: None,
             sega8_video_standard: None,
             sega8_console_region: None,
+            pce_controller_mode: None,
         }
     }
 }

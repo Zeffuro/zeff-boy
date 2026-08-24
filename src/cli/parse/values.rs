@@ -1,4 +1,5 @@
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
+use zeff_pce_core::hardware::PceControllerMode;
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -82,6 +83,22 @@ pub(super) fn parse_sega8_console_region_arg(
             "{flag} requires one of: auto|export|international|japanese|japan|pbc|power-base"
         )
     })
+}
+
+pub(super) fn parse_pce_controller_mode_arg(
+    value: &str,
+    flag: &str,
+) -> anyhow::Result<PceControllerMode> {
+    let token = value.trim().to_ascii_lowercase().replace(['_', '-'], "");
+    match token.as_str() {
+        "auto" | "automatic" => Ok(PceControllerMode::Automatic),
+        "pad" | "twobutton" | "2button" => Ok(PceControllerMode::TwoButton),
+        "mouse" => Ok(PceControllerMode::Mouse),
+        "multitap" | "tap" => Ok(PceControllerMode::Multitap),
+        _ => anyhow::bail!(
+            "{flag} has unknown mode {value:?}; expected auto, pad, mouse, or multitap"
+        ),
+    }
 }
 
 pub(super) fn parse_gba_audio_mute_list_arg(value: &str, flag: &str) -> anyhow::Result<[bool; 6]> {

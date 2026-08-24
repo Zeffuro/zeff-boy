@@ -6,6 +6,8 @@ use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{
     ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
 };
+#[cfg(test)]
+use zeff_pce_core::hardware::PCE_ACTIVE_FRAME_WIDTH;
 use zeff_pce_core::hardware::{
     CDROM2_BRAM_LEN, CdDisc, ControllerPort, FivePortMultitap,
     PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER, PCE_NTSC_REFERENCE_MHZ_DENOMINATOR,
@@ -14,8 +16,6 @@ use zeff_pce_core::hardware::{
     PceConsoleWiring, PceControllerMode, PceCpuDebugSnapshot, PceHardwareTopology, PceHuCardBoard,
     PceMachine,
 };
-#[cfg(test)]
-use zeff_pce_core::hardware::{PCE_ACTIVE_FRAME_WIDTH, PcePresentedFrame};
 
 use super::pce_display::project_presented_frame;
 #[cfg(test)]
@@ -35,14 +35,24 @@ pub(crate) const PCE_PRESENTED_HEIGHT: usize = 480;
 pub(crate) const PCE_PRESENTED_RGBA_BYTES: usize = PCE_PRESENTED_WIDTH * PCE_PRESENTED_HEIGHT * 4;
 const HUCARD_BANK_LEN: usize = 0x2000;
 const PCEAS_HEADER_LEN: usize = 0x200;
-const LEMMINGS_JAPAN_CANONICAL_DISC_SHA256: [u8; 32] = [
+pub(crate) const LEMMINGS_JAPAN_CANONICAL_DISC_SHA256: [u8; 32] = [
     0x0f, 0x29, 0x95, 0xc0, 0x20, 0xab, 0x89, 0x33, 0x6c, 0x1e, 0x6d, 0xba, 0x49, 0xc6, 0x3a, 0xd8,
     0x80, 0x5a, 0xad, 0xd2, 0x01, 0xb9, 0x21, 0x87, 0xf8, 0x1d, 0x53, 0xa1, 0x77, 0x04, 0x9a, 0x52,
 ];
-const TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256: [u8; 32] = [
+pub(crate) const TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256: [u8; 32] = [
     0x18, 0x14, 0xb8, 0xb2, 0x56, 0x34, 0x70, 0x8b, 0x4b, 0x00, 0xef, 0x3f, 0xa0, 0x49, 0xef, 0xb3,
     0x3d, 0xfd, 0xb5, 0x44, 0x20, 0xf0, 0x46, 0x05, 0xed, 0x11, 0xd5, 0xb0, 0x24, 0x1b, 0xe7, 0xc0,
 ];
+
+pub(crate) fn automatic_controller_mode(content_hash: [u8; 32]) -> PceControllerMode {
+    if content_hash == LEMMINGS_JAPAN_CANONICAL_DISC_SHA256 {
+        PceControllerMode::Mouse
+    } else if content_hash == TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256 {
+        PceControllerMode::Multitap
+    } else {
+        PceControllerMode::TwoButton
+    }
+}
 const PCE_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
         id: AudioChannelId(0),
@@ -289,14 +299,37 @@ impl PceBackend {
         self.machine.devices().cdrom2()
     }
 
-    #[cfg(test)]
-    pub(crate) fn debug_step_boundary(&mut self) -> anyhow::Result<u64> {
-        Ok(self.machine.step_boundary()?.frames_published())
-    }
+    pub(crate) fn step_frame_bounded(&mut self) -> anyhow::Result<u64> {
+        const MAX_FRAME_MASTER_TICKS: u64 =
+            zeff_pce_core::hardware::PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE * 263 * 2;
+        const MAX_CPU_BOUNDARIES: u64 = 250_000;
 
-    #[cfg(test)]
-    pub(crate) fn debug_controller_device(&self) -> zeff_pce_core::hardware::ControllerDevice {
-        self.machine.devices().controller().device()
+        anyhow::ensure!(!self.machine.faulted(), "PC Engine machine is faulted");
+        let starting_ticks = self.machine.master_ticks();
+        for cpu_boundaries in 1..=MAX_CPU_BOUNDARIES {
+            let step = self.machine.step_boundary()?;
+            if step.frames_published() != 0 {
+                self.frame_count = self.frame_count.saturating_add(step.frames_published());
+                self.project_presented_frame();
+                return Ok(cpu_boundaries);
+            }
+            let elapsed_ticks = self.machine.master_ticks().saturating_sub(starting_ticks);
+            if elapsed_ticks > MAX_FRAME_MASTER_TICKS {
+                let snapshot = self.machine.debug_snapshot();
+                anyhow::bail!(
+                    "PC Engine produced no frame after {cpu_boundaries} CPU boundaries and {elapsed_ticks} master ticks (PC={:04X}, VCE line={})",
+                    snapshot.registers().pc,
+                    snapshot.vce_line_index(),
+                );
+            }
+        }
+        let snapshot = self.machine.debug_snapshot();
+        anyhow::bail!(
+            "PC Engine produced no frame after {MAX_CPU_BOUNDARIES} CPU boundaries (PC={:04X}, master ticks={}, VCE line={})",
+            snapshot.registers().pc,
+            snapshot.master_ticks(),
+            snapshot.vce_line_index(),
+        )
     }
 
     pub(crate) fn load_cd_bram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
@@ -311,32 +344,6 @@ impl PceBackend {
             })?;
         cdrom.bram_mut().copy_from_slice(bytes);
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn debug_presented_frame(&self) -> PcePresentedFrame<'_> {
-        self.machine.presented_frame()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn debug_vdc_display_registers(&self) -> (u16, u16, u16) {
-        let vdc = self.machine.devices().vdc();
-        (
-            vdc.register(zeff_pce_core::hardware::VdcRegister::BackgroundScrollX),
-            vdc.register(zeff_pce_core::hardware::VdcRegister::MemoryWidth),
-            vdc.register(zeff_pce_core::hardware::VdcRegister::HorizontalDisplay),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn debug_vdc_edge_bat_words(&self) -> Vec<(u16, u16, u16)> {
-        let vram = self.machine.devices().vdc().vram();
-        (0..32)
-            .map(|row| {
-                let base = row * 64;
-                (vram[base], vram[base + 42], vram[base + 43])
-            })
-            .collect()
     }
 
     pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
@@ -420,17 +427,7 @@ impl PceBackend {
 
     fn effective_controller_mode(&self, requested: PceControllerMode) -> PceControllerMode {
         match requested {
-            PceControllerMode::Automatic
-                if self.rom_hash == LEMMINGS_JAPAN_CANONICAL_DISC_SHA256 =>
-            {
-                PceControllerMode::Mouse
-            }
-            PceControllerMode::Automatic
-                if self.rom_hash == TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256 =>
-            {
-                PceControllerMode::Multitap
-            }
-            PceControllerMode::Automatic => PceControllerMode::TwoButton,
+            PceControllerMode::Automatic => automatic_controller_mode(self.rom_hash),
             explicit => explicit,
         }
     }

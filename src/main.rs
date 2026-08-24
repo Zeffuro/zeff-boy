@@ -55,9 +55,6 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(headless_opts) = args.headless {
         let rom_path_arg = args.rom_path.context("--headless requires a ROM path")?;
-        if app::is_native_seven_zip_path(Path::new(&rom_path_arg)) {
-            anyhow::bail!("7z archives are not supported in headless mode");
-        }
         return cli::run_headless(
             Path::new(&rom_path_arg),
             settings.emulation.hardware_mode_preference,

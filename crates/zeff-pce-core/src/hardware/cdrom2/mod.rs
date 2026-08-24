@@ -89,6 +89,37 @@ pub enum CdAudioStatus {
     Stopped = 3,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CdAudioEndMode {
+    Stop,
+    Loop,
+    SignalCompletion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CdAudioFadeTarget {
+    Cdda,
+    Adpcm,
+}
+
+/// Read-only CD audio state intended for debuggers and headless tooling.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CdAudioDebugSnapshot {
+    pub status: CdAudioStatus,
+    pub start_lba: u32,
+    pub end_lba: u32,
+    pub current_lba: u32,
+    pub current_sample: usize,
+    pub end_mode: CdAudioEndMode,
+    pub tick_accumulator: u64,
+    pub queued_source_frames: usize,
+    pub fade_control: u8,
+    pub fade_target: Option<CdAudioFadeTarget>,
+    pub fade_level_q16: u32,
+    pub fade_step_ticks: u64,
+    pub fade_ticks_to_next: u64,
+}
+
 fn formatted_bram() -> Box<[u8; CDROM2_BRAM_LEN]> {
     let mut bram = Box::new([0; CDROM2_BRAM_LEN]);
     bram[..8].copy_from_slice(b"HUBM\x00\xA0\x10\x80");
@@ -271,6 +302,7 @@ impl CdRom2 {
         self.adpcm_address_latch = 0;
         self.adpcm_read_address = 0;
         self.adpcm_write_address = 0;
+        self.adpcm_read_buffer = 0;
         self.adpcm_dma_control = 0;
         self.adpcm_address_control = 0;
         self.adpcm_playback_rate = 0x0F;
@@ -317,6 +349,31 @@ impl CdRom2 {
     #[inline]
     pub fn command_trace(&self) -> &VecDeque<CdCommandTrace> {
         &self.command_trace
+    }
+
+    pub fn audio_debug_snapshot(&self) -> CdAudioDebugSnapshot {
+        CdAudioDebugSnapshot {
+            status: self.audio_status,
+            start_lba: self.audio_start_lba,
+            end_lba: self.audio_end_lba,
+            current_lba: self.audio_current_lba,
+            current_sample: self.audio_current_sample,
+            end_mode: match self.audio_end_behavior {
+                CdAudioEndBehavior::Stop => CdAudioEndMode::Stop,
+                CdAudioEndBehavior::Loop => CdAudioEndMode::Loop,
+                CdAudioEndBehavior::SignalCompletion => CdAudioEndMode::SignalCompletion,
+            },
+            tick_accumulator: self.audio_tick_accumulator,
+            queued_source_frames: self.audio_source_frames.len(),
+            fade_control: self.adpcm_fade_control,
+            fade_target: self.audio_fade_target.map(|target| match target {
+                CdFadeTarget::Cdda => CdAudioFadeTarget::Cdda,
+                CdFadeTarget::Adpcm => CdAudioFadeTarget::Adpcm,
+            }),
+            fade_level_q16: self.audio_fade_level_q16,
+            fade_step_ticks: self.audio_fade_step_ticks,
+            fade_ticks_to_next: self.audio_fade_ticks_to_next,
+        }
     }
 
     #[cfg(test)]
@@ -531,7 +588,11 @@ impl CdRom2 {
 
     fn write_register(&mut self, offset: u8, value: u8) {
         match offset {
-            0 if !self.reset_asserted && self.phase == CdScsiPhase::BusFree => {
+            0 if !self.reset_asserted
+                && (self.phase == CdScsiPhase::BusFree
+                    || (self.phase == CdScsiPhase::Busy
+                        && self.audio_status == CdAudioStatus::Playing)) =>
+            {
                 self.phase = CdScsiPhase::Selection;
                 self.schedule(CdEvent::EnterCommand, PROVISIONAL_CDROM2_SELECTION_TICKS);
             }
@@ -554,8 +615,7 @@ impl CdRom2 {
                 self.reload_adpcm_length_if_held();
             }
             10 => {
-                self.adpcm_ram[usize::from(self.adpcm_write_address)] = value;
-                self.adpcm_write_address = self.adpcm_write_address.wrapping_add(1);
+                self.complete_adpcm_write(value);
             }
             11 => {
                 self.adpcm_dma_control = value & 3;

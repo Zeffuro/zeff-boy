@@ -520,10 +520,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ZEFF_TEST_WLA_SYM with a large WLA-DX symbol file"]
     fn imports_external_wla_fixture_when_configured() {
-        let Ok(path) = std::env::var("ZEFF_TEST_WLA_SYM") else {
-            return;
-        };
+        let path = std::env::var("ZEFF_TEST_WLA_SYM")
+            .expect("ZEFF_TEST_WLA_SYM must name a WLA-DX symbol file");
         let data = std::fs::read(path).unwrap();
         let module = WlaSymImporter.import(&data, &context(System::Sms)).unwrap();
         assert!(module.symbols.len() > 1_000);

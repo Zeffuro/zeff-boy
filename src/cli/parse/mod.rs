@@ -9,7 +9,8 @@ use self::numbers::{
 };
 use self::values::{
     parse_dmg_palette_arg, parse_gba_audio_mute_list_arg, parse_gba_bg_layer_list_arg,
-    parse_memory_dump_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
+    parse_memory_dump_arg, parse_pce_controller_mode_arg, parse_sega8_console_region_arg,
+    parse_sega8_video_standard_arg,
 };
 use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 
@@ -251,6 +252,14 @@ pub(crate) fn parse_args_from(
                 } else {
                     Some(parse_sega8_console_region_arg(value, &args[i])?)
                 };
+                i += 2;
+            }
+            "--pce-controller" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--pce-controller requires auto, pad, mouse, or multitap");
+                };
+                headless.pce_controller_mode =
+                    Some(parse_pce_controller_mode_arg(value, "--pce-controller")?);
                 i += 2;
             }
             "--detect-stuck" => {

@@ -194,6 +194,7 @@ impl App {
                 .emulation
                 .pce_cd_archive_memory_limit
                 .mib(),
+            pce_load_battery_bram: true,
             firmware_search_dirs: self.settings.emulation.firmware_search_dirs(),
             firmware_inventory,
             gb_use_external_boot_rom: matches!(

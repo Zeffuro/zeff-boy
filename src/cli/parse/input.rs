@@ -14,10 +14,10 @@ fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, bool)> {
         }
         parsed_any = true;
         match key.as_str() {
-            "a" => buttons |= 0x01,
-            "b" => buttons |= 0x02,
+            "a" | "i" => buttons |= 0x01,
+            "b" | "ii" => buttons |= 0x02,
             "select" | "sel" => buttons |= 0x04,
-            "start" => buttons |= 0x08,
+            "start" | "run" => buttons |= 0x08,
             "l" | "leftshoulder" | "shoulderl" => buttons |= 0x10,
             "r" | "rightshoulder" | "shoulderr" => buttons |= 0x20,
             "right" => dpad |= 0x01,
@@ -26,7 +26,7 @@ fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, bool)> {
             "down" => dpad |= 0x08,
             "reset" | "softreset" | "softresetbutton" => reset = true,
             _ => anyhow::bail!(
-                "{flag} has unknown key {:?}; expected a,b,select,start,l,r,up,down,left,right,reset",
+                "{flag} has unknown key {:?}; expected a/i,b/ii,select,start/run,l,r,up,down,left,right,reset",
                 raw_key
             ),
         }
@@ -163,4 +163,18 @@ pub(super) fn parse_input_script(path: &str) -> anyhow::Result<Vec<HeadlessInput
         );
     }
     Ok(events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pce_button_names_alias_the_generic_host_buttons() {
+        let events = parse_input_event_arg("i+ii+run@10-11", "--press").unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].buttons, 0x0B);
+        assert_eq!((events[0].start_frame, events[0].end_frame), (10, 11));
+    }
 }

@@ -24,6 +24,7 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) pce_console_wiring: Option<PceConsoleWiring>,
     pub(crate) pce_hucard_board: Option<PceHuCardBoard>,
     pub(crate) pce_cd_archive_memory_limit_mib: usize,
+    pub(crate) pce_load_battery_bram: bool,
     pub(crate) firmware_search_dirs: Vec<PathBuf>,
     pub(crate) firmware_inventory: Option<Arc<zeff_firmware::FirmwareInventory>>,
     pub(crate) gb_use_external_boot_rom: bool,
@@ -49,6 +50,7 @@ impl Default for BackendLoadConfig {
             pce_console_wiring: None,
             pce_hucard_board: None,
             pce_cd_archive_memory_limit_mib: 128,
+            pce_load_battery_bram: true,
             firmware_search_dirs: Vec::new(),
             firmware_inventory: None,
             gb_use_external_boot_rom: false,
@@ -188,7 +190,9 @@ fn load_pce_cd_backend(
     if let Some(sample_rate) = config.sample_rate {
         backend.set_sample_rate(sample_rate);
     }
-    load_pce_cd_bram(&mut backend);
+    if config.pce_load_battery_bram {
+        load_pce_cd_bram(&mut backend);
+    }
     backend.set_firmware_manifests(vec![system_card.manifest]);
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);
@@ -239,7 +243,9 @@ pub(crate) fn prepare_pce_cd_7z_backend(
     if let Some(sample_rate) = config.sample_rate {
         backend.set_sample_rate(sample_rate);
     }
-    load_pce_cd_bram(&mut backend);
+    if config.pce_load_battery_bram {
+        load_pce_cd_bram(&mut backend);
+    }
     backend.set_firmware_manifests(vec![system_card.manifest]);
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);

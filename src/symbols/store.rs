@@ -404,10 +404,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ZEFF_TEST_GNU_NM_SYM with a large GNU nm symbol file"]
     fn indexes_external_gnu_nm_symbols_when_configured() {
-        let Ok(path) = std::env::var("ZEFF_TEST_GNU_NM_SYM") else {
-            return;
-        };
+        let path = std::env::var("ZEFF_TEST_GNU_NM_SYM")
+            .expect("ZEFF_TEST_GNU_NM_SYM must name a GNU nm symbol file");
         let data = std::fs::read(path).unwrap();
         let module = import_symbols(
             "game.sym",

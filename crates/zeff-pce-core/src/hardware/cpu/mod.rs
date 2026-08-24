@@ -31,6 +31,7 @@ pub const RESET_VECTOR_HIGH: u32 = 0x0000_1FFF;
 #[repr(u8)]
 pub enum VdcPort {
     SelectOrStatus = 0,
+    Unused = 1,
     DataLow = 2,
     DataHigh = 3,
 }

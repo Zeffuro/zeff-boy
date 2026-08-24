@@ -23,6 +23,7 @@ use gb::run_gb_headless;
 use gba::run_gba_headless;
 use input::{InputMasks, input_for_frame, input_p2_for_frame};
 use nes::run_nes_headless;
+use pce::{run_pce_headless, run_pce_seven_zip_headless};
 use replay::run_replay_headless;
 use screenshots::*;
 use sega8::run_sega8_headless;
@@ -43,6 +44,7 @@ mod gb;
 mod gba;
 mod input;
 mod nes;
+mod pce;
 mod replay;
 mod screenshots;
 mod sega8;
@@ -59,7 +61,31 @@ pub(crate) fn run_headless(
     firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
-    let (rom_path, rom_data, system) = load_headless_rom(path)?;
+    if crate::app::is_native_seven_zip_path(path) {
+        if opts.replay_path.is_some() {
+            anyhow::bail!("replay playback from 7z archives is not supported in headless mode");
+        }
+        return run_pce_seven_zip_headless(path, mode_preference, firmware_search_dirs, opts);
+    }
+
+    let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;
+    if system == ActiveSystem::Pce {
+        if opts.replay_path.is_some() {
+            anyhow::bail!("PC Engine replay playback is not supported yet");
+        }
+        return run_pce_headless(
+            path,
+            &rom_path,
+            preloaded_data,
+            mode_preference,
+            firmware_search_dirs,
+            opts,
+        );
+    }
+    let rom_data = match preloaded_data {
+        Some(data) => data,
+        None => std::fs::read(path)?,
+    };
 
     if opts.replay_path.is_some() {
         return run_replay_headless(
@@ -76,7 +102,7 @@ pub(crate) fn run_headless(
         ActiveSystem::GameBoy => run_gb_headless(&rom_path, &rom_data, mode_preference, opts),
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
         ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts),
-        ActiveSystem::Pce => anyhow::bail!("PC Engine headless mode is not supported yet"),
+        ActiveSystem::Pce => unreachable!("PC Engine runs dispatch before raw ROM loading"),
         ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             run_sega8_headless(&rom_path, &rom_data, system, opts)

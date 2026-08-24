@@ -146,7 +146,8 @@ fn topology_decoder_maps_exact_32_byte_video_blocks_and_aliases() {
         decode(0x1F_E004),
         PhysicalRegion::Vdc(VdcPort::SelectOrStatus)
     );
-    assert_eq!(decode(0x1F_E005), PhysicalRegion::Unmapped);
+    assert_eq!(decode(0x1F_E001), PhysicalRegion::Vdc(VdcPort::Unused));
+    assert_eq!(decode(0x1F_E005), PhysicalRegion::Vdc(VdcPort::Unused));
     assert_eq!(decode(0x1F_E007), PhysicalRegion::Vdc(VdcPort::DataHigh));
     assert_eq!(
         decode(0x1F_E008),
@@ -164,7 +165,8 @@ fn topology_decoder_maps_exact_32_byte_video_blocks_and_aliases() {
         decode(0x1F_E014),
         PhysicalRegion::Vdc2(VdcPort::SelectOrStatus)
     );
-    assert_eq!(decode(0x1F_E015), PhysicalRegion::Unmapped);
+    assert_eq!(decode(0x1F_E011), PhysicalRegion::Vdc2(VdcPort::Unused));
+    assert_eq!(decode(0x1F_E015), PhysicalRegion::Vdc2(VdcPort::Unused));
     assert_eq!(decode(0x1F_E017), PhysicalRegion::Vdc2(VdcPort::DataHigh));
     assert_eq!(decode(0x1F_E018), PhysicalRegion::Unmapped);
     assert_eq!(decode(0x1F_E01F), PhysicalRegion::Unmapped);

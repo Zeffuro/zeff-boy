@@ -154,10 +154,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ZEFF_TEST_CA65_DBG with a large ca65 debug file"]
     fn imports_external_debug_fixture_when_configured() {
-        let Ok(path) = std::env::var("ZEFF_TEST_CA65_DBG") else {
-            return;
-        };
+        let path = std::env::var("ZEFF_TEST_CA65_DBG")
+            .expect("ZEFF_TEST_CA65_DBG must name a ca65 debug file");
         let data = std::fs::read(path).unwrap();
         let module = Ca65DbgImporter.import(&data, &context()).unwrap();
         assert!(module.symbols.len() > 1_000);

@@ -105,10 +105,10 @@ fn explicit_sidecar_overrides_sibling_discovery() {
 }
 
 #[test]
+#[ignore = "requires ZEFF_TEST_GNU_NM_SYM with a large GNU nm symbol file"]
 fn loads_external_gnu_nm_session_when_configured() {
-    let Ok(path) = std::env::var("ZEFF_TEST_GNU_NM_SYM") else {
-        return;
-    };
+    let path = std::env::var("ZEFF_TEST_GNU_NM_SYM")
+        .expect("ZEFF_TEST_GNU_NM_SYM must name a GNU nm symbol file");
     let sym = PathBuf::from(path);
     let rom = sym.with_extension("gba");
     let started = std::time::Instant::now();

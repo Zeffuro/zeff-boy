@@ -53,9 +53,12 @@ impl App {
     pub(super) fn tick(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         if self.pce_mouse_captured
-            && (self.active_system != crate::emu_backend::ActiveSystem::Pce
-                || self.settings.emulation.pce_mouse_cursor_mode
-                    != crate::settings::PceMouseCursorMode::Captured)
+            && (!super::window_events::pce_mouse_capture_allowed(
+                self.active_system,
+                self.settings.emulation.pce_controller,
+                self.rom_info.rom_hash,
+            ) || self.settings.emulation.pce_mouse_cursor_mode
+                != crate::settings::PceMouseCursorMode::Captured)
         {
             self.release_pce_mouse(false);
         }

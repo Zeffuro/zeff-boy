@@ -48,16 +48,21 @@ pub(super) fn ensure_system_headless_options(
     if opts.sega8_console_region.is_some() && !matches!(system, "sms" | "gg" | "sg") {
         anyhow::bail!("--sega8-console-region is only supported for Sega 8-bit headless runs");
     }
+    if opts.pce_controller_mode.is_some() && system != "pce" {
+        anyhow::bail!("--pce-controller is only supported for PC Engine headless runs");
+    }
     if !opts.input_events_p2.is_empty()
-        && !(matches!(system, "nes" | "sms" | "gg" | "sg")
+        && !(matches!(system, "nes" | "pce" | "sms" | "gg" | "sg")
             || (system == "ws" && opts.ws_link_peer_path.is_some()))
     {
         anyhow::bail!(
-            "--press-p2/--input-p2 is only supported for NES, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
+            "--press-p2/--input-p2 is only supported for NES, PC Engine, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
         );
     }
-    if !opts.memory_dumps.is_empty() && system != "ws" {
-        anyhow::bail!("--dump-mem is only supported for GB/GBC and WonderSwan headless runs");
+    if !opts.memory_dumps.is_empty() && !matches!(system, "pce" | "ws") {
+        anyhow::bail!(
+            "--dump-mem is only supported for GB/GBC, PC Engine, and WonderSwan headless runs"
+        );
     }
     if opts.break_at.is_some() {
         anyhow::bail!("--break-at is only supported for GB/GBC headless runs");
@@ -88,9 +93,11 @@ pub(super) fn ensure_system_headless_options(
     if system != "gba" && opts.gba_audio_mutes.iter().any(|&muted| muted) {
         anyhow::bail!("--gba-mute-audio is only supported for GBA headless runs");
     }
-    if !matches!(system, "gba" | "ws" | "sms" | "gg" | "sg") && opts.audio_dump_path.is_some() {
+    if !matches!(system, "gba" | "pce" | "ws" | "sms" | "gg" | "sg")
+        && opts.audio_dump_path.is_some()
+    {
         anyhow::bail!(
-            "--audio-dump is currently only supported for GBA, WonderSwan, and Sega 8-bit headless runs"
+            "--audio-dump is currently only supported for GBA, PC Engine, WonderSwan, and Sega 8-bit headless runs"
         );
     }
     if opts.gb_dmg_palette_preset.is_some() {

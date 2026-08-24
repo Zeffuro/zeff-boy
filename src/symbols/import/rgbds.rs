@@ -214,10 +214,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ZEFF_TEST_RGBDS_SYM with a large RGBDS symbol file"]
     fn imports_external_fixture_when_configured() {
-        let Ok(path) = std::env::var("ZEFF_TEST_RGBDS_SYM") else {
-            return;
-        };
+        let path = std::env::var("ZEFF_TEST_RGBDS_SYM")
+            .expect("ZEFF_TEST_RGBDS_SYM must name an RGBDS symbol file");
         let data = std::fs::read(path).unwrap();
         let module = RgbdsSymImporter.import(&data, &context()).unwrap();
         assert!(module.symbols.len() > 10_000);

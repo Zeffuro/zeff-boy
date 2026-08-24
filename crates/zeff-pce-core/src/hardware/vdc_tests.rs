@@ -15,6 +15,23 @@ fn write_register(vdc: &mut HuC6270, register: VdcRegister, value: u16) {
 }
 
 #[test]
+fn unused_port_reads_zero_without_clearing_status_or_changing_selection() {
+    let mut vdc = HuC6270::new();
+    select(&mut vdc, VdcRegister::Control);
+    vdc.latch_status(VdcStatus::VERTICAL_BLANK);
+
+    assert_eq!(vdc.read_port(VdcPort::Unused), 0);
+    assert_eq!(vdc.status(), VdcStatus::VERTICAL_BLANK);
+
+    vdc.write_port(VdcPort::Unused, 0xFF);
+    assert_eq!(vdc.selected_register(), Some(VdcRegister::Control));
+    assert_eq!(
+        vdc.read_port(VdcPort::SelectOrStatus),
+        VdcStatus::VERTICAL_BLANK.bits()
+    );
+}
+
+#[test]
 fn register_selection_masks_the_id_and_invalid_registers_are_unavailable() {
     let mut vdc = HuC6270::new();
     let writable_registers = [
@@ -256,6 +273,8 @@ fn mirrored_base_bus_ports_route_to_the_vdc() {
         0x1235
     );
     bus.devices_mut().latch_status(VdcStatus::VERTICAL_BLANK);
+    assert_eq!(bus.read(0x1F_E301), 0);
+    assert_eq!(bus.devices().status(), VdcStatus::VERTICAL_BLANK);
     assert_eq!(bus.read(0x1F_E300), VdcStatus::VERTICAL_BLANK.bits());
     assert_eq!(bus.devices().status(), VdcStatus::empty());
 }

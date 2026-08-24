@@ -1,6 +1,9 @@
 use super::input::parse_zapper_event_arg;
 use super::parse_args_from;
-use super::values::{parse_sega8_console_region_arg, parse_sega8_video_standard_arg};
+use super::values::{
+    parse_pce_controller_mode_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
+};
+use zeff_pce_core::hardware::PceControllerMode;
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
@@ -105,4 +108,21 @@ fn sega8_console_region_values_accept_aliases() {
         Sega8Region::JapanesePowerBaseConverter
     );
     assert!(parse_sega8_console_region_arg("bad", "--sega8-console-region").is_err());
+}
+
+#[test]
+fn pce_controller_values_accept_host_facing_aliases() {
+    assert_eq!(
+        parse_pce_controller_mode_arg("pad", "--pce-controller").unwrap(),
+        PceControllerMode::TwoButton
+    );
+    assert_eq!(
+        parse_pce_controller_mode_arg("mouse", "--pce-controller").unwrap(),
+        PceControllerMode::Mouse
+    );
+    assert_eq!(
+        parse_pce_controller_mode_arg("tap", "--pce-controller").unwrap(),
+        PceControllerMode::Multitap
+    );
+    assert!(parse_pce_controller_mode_arg("bad", "--pce-controller").is_err());
 }

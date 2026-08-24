@@ -75,7 +75,7 @@ impl EnumLabel for PceControllerPreference {
             Self::Auto => "Auto",
             Self::TwoButton => "2-button pad",
             Self::Multitap => "5-port multitap",
-            Self::Mouse => "Mouse",
+            Self::Mouse => "Force mouse",
         }
     }
 
@@ -265,6 +265,13 @@ pub(super) fn draw(
         .small(),
     );
     enum_combo_box(ui, "Controller", &mut settings.emulation.pce_controller);
+    ui.label(
+        egui::RichText::new(
+            "Auto enables special controllers only for recognized disc images. Force mouse may break games that do not support it.",
+        )
+        .weak()
+        .small(),
+    );
     enum_combo_box(
         ui,
         "Mouse cursor",

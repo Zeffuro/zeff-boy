@@ -1,11 +1,11 @@
 use super::cpu::{InterruptSource, IrqPort, LineLevel, StatusFlags};
 use super::{
     BaseBus, CD_USER_SECTOR_BYTES, CDROM2_BRAM_START, CDROM2_REGISTER_START, CDROM2_WORK_RAM_END,
-    CDROM2_WORK_RAM_START, CdAudioStatus, CdDisc, CdRom2, CdScsiPhase, CdTrack, CdTrackMode,
-    ControllerPort, PROVISIONAL_CDROM2_AUTO_ACK_TICKS, PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS,
-    PROVISIONAL_CDROM2_PHASE_TICKS, PROVISIONAL_CDROM2_READ_STARTUP_SECTORS,
-    PROVISIONAL_CDROM2_SELECTION_TICKS, PceConsoleWiring, PceDevices, PceHuCardBoard, PceMachine,
-    SUPER_SYSTEM_CARD_RAM_LEN, SYSTEM_CARD_V1_V2_IMAGE_LEN,
+    CDROM2_WORK_RAM_START, CdAudioEndMode, CdAudioStatus, CdDisc, CdRom2, CdScsiPhase, CdTrack,
+    CdTrackMode, ControllerPort, PROVISIONAL_CDROM2_AUTO_ACK_TICKS,
+    PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS, PROVISIONAL_CDROM2_PHASE_TICKS,
+    PROVISIONAL_CDROM2_READ_STARTUP_SECTORS, PROVISIONAL_CDROM2_SELECTION_TICKS, PceConsoleWiring,
+    PceDevices, PceHuCardBoard, PceMachine, SUPER_SYSTEM_CARD_RAM_LEN, SYSTEM_CARD_V1_V2_IMAGE_LEN,
 };
 
 const READ_STARTUP_TICKS: u64 = 859_090;
@@ -655,6 +655,18 @@ fn audio_end_modes_and_current_leadout_address_are_exact() {
         assert_eq!(cd.audio_status(), status);
         assert_eq!(cd.audio_transport_for_test().1, end);
         assert_eq!(cd.audio_transport_for_test().4, behavior);
+        let snapshot = cd.audio_debug_snapshot();
+        assert_eq!(snapshot.status, status);
+        assert_eq!(snapshot.end_lba, end);
+        assert_eq!(
+            snapshot.end_mode,
+            match behavior {
+                0 => CdAudioEndMode::Stop,
+                1 => CdAudioEndMode::Loop,
+                2 => CdAudioEndMode::SignalCompletion,
+                _ => unreachable!(),
+            }
+        );
     }
 
     let mut cd = CdRom2::new(audio_disc(4));
@@ -671,6 +683,25 @@ fn audio_end_modes_and_current_leadout_address_are_exact() {
     finish_status(&mut cd, 1);
     let sense = request_sense(&mut cd, 0xFF);
     assert_eq!((sense[2], sense[12]), (0x05, 0x22));
+}
+
+#[test]
+fn selection_interrupts_busy_cdda_so_a_read_command_can_take_over() {
+    let mut cd = CdRom2::new(mixed_audio_disc());
+    complete_audio_start(&mut cd, &[0xD8, 1, 0x02, 0, 0, 0, 0, 0, 0, 0x80]);
+
+    select(&mut cd);
+    send_command(&mut cd, &[0xD9, 2, 0, 0, 0, 5, 0, 0, 0, 0]);
+    cd.advance_master_ticks(PROVISIONAL_CDROM2_PHASE_TICKS);
+    assert_eq!(cd.phase(), CdScsiPhase::Busy);
+    assert_eq!(cd.audio_status(), CdAudioStatus::Playing);
+
+    select(&mut cd);
+    send_command(&mut cd, &[0x08, 0, 0, 0, 1, 0]);
+    cd.advance_master_ticks(PROVISIONAL_CDROM2_PHASE_TICKS);
+
+    assert_eq!(cd.phase(), CdScsiPhase::DataIn);
+    assert_eq!(cd.audio_status(), CdAudioStatus::Inactive);
 }
 
 #[test]

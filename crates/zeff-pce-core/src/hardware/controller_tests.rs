@@ -303,7 +303,7 @@ fn multitap_resets_to_port_one_and_advances_on_select_rising_edges() {
     let mut port = ControllerPort::multitap(multitap);
 
     port.write_lines(true, false);
-    assert_eq!(port.read_nibble(), 0x0F);
+    assert_eq!(port.read_nibble(), MULTITAP_EXHAUSTED_NIBBLE);
     port.write_lines(true, true);
     assert_eq!(
         port.multitap_mut().unwrap().active_port(),
@@ -333,6 +333,28 @@ fn multitap_resets_to_port_one_and_advances_on_select_rising_edges() {
     }
 
     port.write_lines(true, false);
+    assert_eq!(port.multitap_mut().unwrap().active_port(), None);
+    assert_eq!(port.read_nibble(), MULTITAP_EXHAUSTED_NIBBLE);
+}
+
+#[test]
+fn multitap_no_port_is_zero_but_a_disconnected_socket_is_pulled_high() {
+    let mut port = ControllerPort::multitap(FivePortMultitap::default());
+    assert_eq!(port.read_nibble(), MULTITAP_EXHAUSTED_NIBBLE);
+
+    port.write_lines(true, false);
+    port.write_lines(true, true);
+    port.write_lines(true, false);
+    assert_eq!(
+        port.multitap_mut().unwrap().active_port(),
+        Some(MultitapPort::One)
+    );
+    assert_eq!(port.read_nibble(), 0x0F);
+
+    for _ in 0..5 {
+        port.write_lines(false, false);
+        port.write_lines(true, false);
+    }
     assert_eq!(port.multitap_mut().unwrap().active_port(), None);
     assert_eq!(port.read_nibble(), MULTITAP_EXHAUSTED_NIBBLE);
 }

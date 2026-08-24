@@ -135,9 +135,10 @@ const fn decode_video_region(topology: PceHardwareTopology, physical_addr: u32) 
 const fn decode_vdc_port(offset: u8, second: bool) -> PhysicalRegion {
     let port = match offset & 3 {
         0 => VdcPort::SelectOrStatus,
+        1 => VdcPort::Unused,
         2 => VdcPort::DataLow,
         3 => VdcPort::DataHigh,
-        _ => return PhysicalRegion::Unmapped,
+        _ => unreachable!(),
     };
     if second {
         PhysicalRegion::Vdc2(port)
