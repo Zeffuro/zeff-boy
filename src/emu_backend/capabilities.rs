@@ -31,7 +31,7 @@ pub(crate) struct CoreCapabilities {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InputCapabilities {
     pub(crate) buttons: &'static [HostButton],
-    pub(crate) supports_player_two: bool,
+    pub(crate) max_players: u8,
     pub(crate) supports_lightgun: bool,
     pub(crate) supports_wonderswan_direct_buttons: bool,
 }
@@ -41,37 +41,37 @@ impl InputCapabilities {
         match system {
             ActiveSystem::GameBoyAdvance => Self {
                 buttons: HostButton::WITH_SHOULDERS,
-                supports_player_two: false,
+                max_players: 1,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: false,
             },
             ActiveSystem::Nes => Self {
                 buttons: HostButton::STANDARD,
-                supports_player_two: true,
+                max_players: 2,
                 supports_lightgun: true,
                 supports_wonderswan_direct_buttons: false,
             },
             ActiveSystem::MasterSystem | ActiveSystem::Sg1000 => Self {
                 buttons: HostButton::STANDARD,
-                supports_player_two: true,
+                max_players: 2,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: false,
             },
             ActiveSystem::WonderSwan => Self {
                 buttons: HostButton::STANDARD,
-                supports_player_two: false,
+                max_players: 1,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: true,
             },
             ActiveSystem::Pce => Self {
                 buttons: HostButton::WITH_SIX_BUTTONS,
-                supports_player_two: true,
+                max_players: 5,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: false,
             },
             ActiveSystem::GameBoy | ActiveSystem::GameGear => Self {
                 buttons: HostButton::STANDARD,
-                supports_player_two: false,
+                max_players: 1,
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: false,
             },

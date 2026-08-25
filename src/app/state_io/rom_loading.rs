@@ -742,6 +742,7 @@ impl App {
         self.rom_info.rom_path = None;
         self.rom_info.source_path = None;
         self.rom_info.rom_hash = None;
+        self.rom_info.pce_controller_profile_hash = None;
         self.rom_info.replay_metadata = None;
         self.symbols = crate::symbols::SymbolSession::default();
         #[cfg(not(target_arch = "wasm32"))]
@@ -847,6 +848,7 @@ impl App {
         self.rom_info.rom_path = Some(rom_path_buf);
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
+        self.rom_info.pce_controller_profile_hash = backend.pce_controller_profile_hash();
         self.rom_info.replay_metadata = Some(backend.replay_metadata());
         self.media_slot_snapshot = backend.media_slot_snapshot();
         #[cfg(not(target_arch = "wasm32"))]

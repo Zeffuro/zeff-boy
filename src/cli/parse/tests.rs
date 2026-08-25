@@ -159,6 +159,25 @@ fn parses_pce_memory_base_headless_option() {
 }
 
 #[test]
+fn parses_pce_multitap_headless_inputs() {
+    let args = parse_args_from([
+        "--headless",
+        "--press-p3",
+        "a@1-2",
+        "--press-p4",
+        "b@3",
+        "--press-p5",
+        "run@4",
+        "game.pce",
+    ])
+    .unwrap();
+    let headless = args.headless.unwrap();
+    assert_eq!(headless.input_events_p3.len(), 1);
+    assert_eq!(headless.input_events_p4.len(), 1);
+    assert_eq!(headless.input_events_p5.len(), 1);
+}
+
+#[test]
 fn parses_headless_apply_mods_option() {
     let args = parse_args_from(["--headless", "--apply-mods", "game.pce"]).unwrap();
     assert!(args.headless.unwrap().apply_mods);

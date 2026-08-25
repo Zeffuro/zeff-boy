@@ -21,6 +21,27 @@ pub(crate) fn publish_owned_framebuffer(shared_fb: &SharedFramebuffer, framebuff
     shared_fb.store(Some(Arc::new(framebuffer)));
 }
 
+#[cfg(feature = "profile-cores")]
+pub(crate) fn profile_frame_publication(framebuffer: &[u8], iterations: u32) {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let shared = new_shared_framebuffer();
+    for _ in 0..10 {
+        publish_framebuffer(&shared, framebuffer);
+    }
+    let start = Instant::now();
+    for _ in 0..iterations {
+        publish_framebuffer(&shared, black_box(framebuffer));
+    }
+    let elapsed = start.elapsed();
+    let frames_per_second = f64::from(iterations) / elapsed.as_secs_f64();
+    black_box(shared.load_full());
+    println!(
+        "frame publication                {iterations:5} frames  {elapsed:>9.2?}  {frames_per_second:>8.1} fps"
+    );
+}
+
 pub(crate) struct RenderSettings {
     pub(crate) color_correction: crate::settings::ColorCorrection,
     pub(crate) color_correction_matrix: [f32; 9],
@@ -74,6 +95,12 @@ pub(crate) struct JoypadInput {
     pub(crate) dpad: u8,
     pub(crate) buttons_p2: u8,
     pub(crate) dpad_p2: u8,
+    pub(crate) buttons_p3: u8,
+    pub(crate) dpad_p3: u8,
+    pub(crate) buttons_p4: u8,
+    pub(crate) dpad_p4: u8,
+    pub(crate) buttons_p5: u8,
+    pub(crate) dpad_p5: u8,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::cli::types::HeadlessOptions;
 use crate::emu_backend::PceBackend;
 use crate::emu_core_trait::EmulatorCore;
+use zeff_pce_core::hardware::VdcDebugSnapshot;
 
 use super::super::{InputMasks, StuckReport, framebuffer_fingerprint};
 use super::{input_json, input_schedule_json, screenshot_json, stuck_report_json};
@@ -13,6 +14,9 @@ pub(in crate::cli::headless_runner) struct PceDebugStateRequest<'a> {
     pub(in crate::cli::headless_runner) opts: &'a HeadlessOptions,
     pub(in crate::cli::headless_runner) input: InputMasks,
     pub(in crate::cli::headless_runner) input_p2: InputMasks,
+    pub(in crate::cli::headless_runner) input_p3: InputMasks,
+    pub(in crate::cli::headless_runner) input_p4: InputMasks,
+    pub(in crate::cli::headless_runner) input_p5: InputMasks,
     pub(in crate::cli::headless_runner) stuck: Option<&'a StuckReport>,
     pub(in crate::cli::headless_runner) screenshot: Option<&'a PathBuf>,
     pub(in crate::cli::headless_runner) audio_samples: u64,
@@ -42,6 +46,10 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
             "shift": arcade.shift,
             "rotate": arcade.rotate,
         })
+    });
+    let video = serde_json::json!({
+        "vdc": vdc_debug_json(&hardware.vdc),
+        "vdc2": hardware.vdc2.as_ref().map(vdc_debug_json),
     });
     let cd = request.backend.cdrom2().map(|cdrom| {
         let audio = cdrom.audio_debug_snapshot();
@@ -137,6 +145,7 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
             "content_sha256": request.backend.rom_hash().iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
             "source_crc32": request.backend.source_crc32().map(|crc| format!("{crc:08x}")),
             "source_normalized_disc_sha256": request.backend.source_disc_hash().map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+            "video": video,
         },
         "cdrom2": cd.unwrap_or_else(|| serde_json::json!({ "present": false })),
         "arcade_card": arcade_card.unwrap_or_else(|| serde_json::json!({
@@ -155,8 +164,51 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
         },
         "input": input_json(request.input),
         "input_p2": input_json(request.input_p2),
+        "input_p3": input_json(request.input_p3),
+        "input_p4": input_json(request.input_p4),
+        "input_p5": input_json(request.input_p5),
         "input_schedule": input_schedule_json(request.opts),
         "stuck": stuck_report_json(request.stuck),
         "screenshot": screenshot_json(request.screenshot),
     })
+}
+
+fn vdc_debug_json(vdc: &VdcDebugSnapshot) -> serde_json::Value {
+    serde_json::json!({
+        "selected_register": vdc.selected_register.map(|register| format!("{register:?}")),
+        "selected_register_id": vdc.selected_register_id,
+        "status": vdc.status.bits(),
+        "status_hex": format!("{:02X}", vdc.status.bits()),
+        "irq_asserted": vdc.irq_asserted,
+        "registers": vdc.registers,
+        "registers_hex": vdc.registers.map(|value| format!("{value:04X}")),
+        "horizontal": {
+            "phase": format!("{:?}", vdc.horizontal_phase),
+            "pixels_remaining": vdc.horizontal_pixels_remaining,
+        },
+        "vertical": {
+            "phase": format!("{:?}", vdc.vertical_phase),
+            "phase_line": vdc.vertical_phase_line,
+            "phase_duration": vdc.vertical_phase_duration,
+            "frame_line": vdc.frame_line,
+            "raster_counter": vdc.raster_counter,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zeff_pce_core::hardware::HuC6270;
+
+    #[test]
+    fn vdc_debug_json_includes_timing_and_register_state() {
+        let value = vdc_debug_json(&HuC6270::new().debug_snapshot());
+
+        assert_eq!(value["status_hex"], "00");
+        assert_eq!(value["registers"].as_array().unwrap().len(), 0x14);
+        assert_eq!(value["registers_hex"].as_array().unwrap().len(), 0x14);
+        assert_eq!(value["horizontal"]["phase"], "DisplayStart");
+        assert_eq!(value["vertical"]["phase"], "VerticalSync");
+    }
 }

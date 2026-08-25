@@ -10,6 +10,15 @@ pub(super) struct HostInputState {
     keyboard_p2_pressed: u16,
     gamepad_p2_pressed: u16,
     remote_p2_pressed: u16,
+    keyboard_p3_pressed: u16,
+    gamepad_p3_pressed: u16,
+    remote_p3_pressed: u16,
+    keyboard_p4_pressed: u16,
+    gamepad_p4_pressed: u16,
+    remote_p4_pressed: u16,
+    keyboard_p5_pressed: u16,
+    gamepad_p5_pressed: u16,
+    remote_p5_pressed: u16,
     gamepad_stick_dpad_pressed: u8,
     tilt_keyboard_pressed: u8,
     ws_keyboard_x_pressed: u8,
@@ -47,6 +56,42 @@ impl HostInputState {
 
     pub(super) fn set_remote_p2(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.remote_p2_pressed, key, pressed);
+    }
+
+    pub(super) fn set_keyboard_p3(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.keyboard_p3_pressed, key, pressed);
+    }
+
+    pub(super) fn set_gamepad_p3(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.gamepad_p3_pressed, key, pressed);
+    }
+
+    pub(super) fn set_remote_p3(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.remote_p3_pressed, key, pressed);
+    }
+
+    pub(super) fn set_keyboard_p4(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.keyboard_p4_pressed, key, pressed);
+    }
+
+    pub(super) fn set_gamepad_p4(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.gamepad_p4_pressed, key, pressed);
+    }
+
+    pub(super) fn set_remote_p4(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.remote_p4_pressed, key, pressed);
+    }
+
+    pub(super) fn set_keyboard_p5(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.keyboard_p5_pressed, key, pressed);
+    }
+
+    pub(super) fn set_gamepad_p5(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.gamepad_p5_pressed, key, pressed);
+    }
+
+    pub(super) fn set_remote_p5(&mut self, key: HostButton, pressed: bool) {
+        Self::set_mask_bit(&mut self.remote_p5_pressed, key, pressed);
     }
 
     pub(super) fn set_tilt_keyboard(&mut self, key: TiltBindingAction, pressed: bool) {
@@ -190,6 +235,30 @@ impl HostInputState {
         ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) >> 4) as u8
     }
 
+    pub(super) fn dpad_p3_pressed(&self) -> u8 {
+        ((self.keyboard_p3_pressed | self.gamepad_p3_pressed | self.remote_p3_pressed) & 0x0F) as u8
+    }
+
+    pub(super) fn buttons_p3_pressed(&self) -> u8 {
+        ((self.keyboard_p3_pressed | self.gamepad_p3_pressed | self.remote_p3_pressed) >> 4) as u8
+    }
+
+    pub(super) fn dpad_p4_pressed(&self) -> u8 {
+        ((self.keyboard_p4_pressed | self.gamepad_p4_pressed | self.remote_p4_pressed) & 0x0F) as u8
+    }
+
+    pub(super) fn buttons_p4_pressed(&self) -> u8 {
+        ((self.keyboard_p4_pressed | self.gamepad_p4_pressed | self.remote_p4_pressed) >> 4) as u8
+    }
+
+    pub(super) fn dpad_p5_pressed(&self) -> u8 {
+        ((self.keyboard_p5_pressed | self.gamepad_p5_pressed | self.remote_p5_pressed) & 0x0F) as u8
+    }
+
+    pub(super) fn buttons_p5_pressed(&self) -> u8 {
+        ((self.keyboard_p5_pressed | self.gamepad_p5_pressed | self.remote_p5_pressed) >> 4) as u8
+    }
+
     pub(super) fn ws_buttons_pressed(&self, display_rotated: bool) -> u8 {
         let mut y_buttons = (self.ws_keyboard_y_pressed | self.ws_gamepad_y_pressed) & 0x0F;
         if display_rotated {
@@ -244,6 +313,39 @@ impl super::App {
 
     pub(super) fn current_host_joypad_p2_input(&self) -> (u8, u8) {
         self.host_joypad_p2_input_for_system(self.active_system)
+    }
+
+    pub(super) fn current_host_joypad_p3_input(&self) -> (u8, u8) {
+        self.host_joypad_multitap_input(3)
+    }
+
+    pub(super) fn current_host_joypad_p4_input(&self) -> (u8, u8) {
+        self.host_joypad_multitap_input(4)
+    }
+
+    pub(super) fn current_host_joypad_p5_input(&self) -> (u8, u8) {
+        self.host_joypad_multitap_input(5)
+    }
+
+    fn host_joypad_multitap_input(&self, player: u8) -> (u8, u8) {
+        if self.active_system != ActiveSystem::Pce {
+            return (0, 0);
+        }
+        match player {
+            3 => (
+                self.host_input.buttons_p3_pressed(),
+                self.host_input.dpad_p3_pressed(),
+            ),
+            4 => (
+                self.host_input.buttons_p4_pressed(),
+                self.host_input.dpad_p4_pressed(),
+            ),
+            5 => (
+                self.host_input.buttons_p5_pressed(),
+                self.host_input.dpad_p5_pressed(),
+            ),
+            _ => (0, 0),
+        }
     }
 
     pub(super) fn host_joypad_input_for_system(&self, system: ActiveSystem) -> (u8, u8) {

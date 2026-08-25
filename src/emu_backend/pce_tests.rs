@@ -138,6 +138,7 @@ fn structural_sf2_image_is_admitted_without_relaxing_plain_cards() {
 #[test]
 fn exact_lemmings_disc_automatically_selects_mouse_but_force_pad_wins() {
     let mut backend = backend_with_board(PceHuCardBoard::SystemCardV3, 0x40_000);
+    backend.rom_hash = [0; 32];
     backend.source_disc_hash = Some(LEMMINGS_JAPAN_CANONICAL_DISC_SHA256);
 
     backend.set_pce_mouse_state(PceControllerMode::Automatic, 1, 2, 1);
@@ -154,13 +155,17 @@ fn exact_lemmings_disc_automatically_selects_mouse_but_force_pad_wins() {
 }
 
 #[test]
-fn exact_deden_disc_automatically_selects_multitap_with_independent_second_pad() {
+fn exact_deden_disc_automatically_selects_multitap_with_independent_five_pads() {
     let mut backend = backend_with_board(PceHuCardBoard::SystemCardV3, 0x40_000);
+    backend.rom_hash = [0; 32];
     backend.source_disc_hash = Some(TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256);
 
     backend.set_pce_mouse_state(PceControllerMode::Automatic, 0, 0, 0);
     backend.set_input(1, 0);
     backend.set_input_p2(2, 0);
+    backend.set_input_p3(4, 0);
+    backend.set_input_p4(8, 0);
+    backend.set_input_p5(0x10, 8);
 
     let zeff_pce_core::hardware::ControllerDevice::Multitap(multitap) =
         backend.machine.devices().controller().device()
@@ -177,8 +182,26 @@ fn exact_deden_disc_automatically_selects_multitap_with_independent_second_pad()
     else {
         panic!("multitap port 2 is not a two-button pad");
     };
+    let zeff_pce_core::hardware::MultitapDevice::TwoButton(p3) =
+        multitap.port(zeff_pce_core::hardware::MultitapPort::Three)
+    else {
+        panic!("multitap port 3 is not a two-button pad");
+    };
+    let zeff_pce_core::hardware::MultitapDevice::TwoButton(p4) =
+        multitap.port(zeff_pce_core::hardware::MultitapPort::Four)
+    else {
+        panic!("multitap port 4 is not a two-button pad");
+    };
+    let zeff_pce_core::hardware::MultitapDevice::TwoButton(p5) =
+        multitap.port(zeff_pce_core::hardware::MultitapPort::Five)
+    else {
+        panic!("multitap port 5 is not a two-button pad");
+    };
     assert_eq!(p1.buttons(), PadButtons::I);
     assert_eq!(p2.buttons(), PadButtons::II);
+    assert_eq!(p3.buttons(), PadButtons::SELECT);
+    assert_eq!(p4.buttons(), PadButtons::RUN);
+    assert_eq!(p5.buttons(), PadButtons::DOWN);
 }
 
 #[test]
@@ -328,11 +351,6 @@ fn cd_backup_ram_is_formatted_battery_backed_and_copyable() {
 fn memory_base_manual_mode_exposes_copyable_battery_ram() {
     let mut backend =
         PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("mb128.pce")).unwrap();
-    assert!(automatic_memory_base_enabled(Some(
-        SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256
-    )));
-    assert!(!automatic_memory_base_enabled(Some([0x55; 32])));
-    assert!(!automatic_memory_base_enabled(None));
     assert_eq!(backend.memory_base_mode(), PceMemoryBaseMode::Disabled);
     assert!(
         backend
@@ -542,11 +560,6 @@ fn backend_state_replay_is_deterministic_for_every_supported_pce_topology() {
 
 #[test]
 fn arcade_card_selection_rejects_incompatible_topology_and_exposes_volatile_ram() {
-    assert!(!automatic_arcade_card_enabled(None));
-    assert!(!automatic_arcade_card_enabled(Some([0x55; 32])));
-    assert!(automatic_arcade_card_enabled(Some(
-        GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256
-    )));
     let error = synthetic_cd_backend_with_arcade_card(
         PceHuCardBoard::SystemCardV1V2,
         PceArcadeCardMode::Enabled,
@@ -942,6 +955,11 @@ fn explicit_console_wiring_overrides_auto_detection() {
 
 #[test]
 fn curated_wiring_hash_propagates_for_direct_and_archive_paths() {
+    let aero_blasters_sha256 = [
+        0xD2, 0xFE, 0x59, 0xCF, 0x24, 0x05, 0x3B, 0xBB, 0xB1, 0xB5, 0xDA, 0x25, 0x21, 0xA9, 0x58,
+        0xE3, 0x8A, 0x98, 0x1C, 0xCE, 0x9B, 0xAB, 0xA0, 0xAF, 0x82, 0x5E, 0xA5, 0x18, 0x9D, 0x84,
+        0x08, 0xDC,
+    ];
     let world_court_tennis_sha256 = [
         0x60, 0xC6, 0x9E, 0xE6, 0x80, 0x6A, 0xA6, 0x14, 0x45, 0x95, 0x49, 0x63, 0x3B, 0xDC, 0x72,
         0x8E, 0x10, 0x5F, 0x85, 0x92, 0xE5, 0x35, 0xFC, 0xC7, 0x96, 0xC2, 0x4C, 0xD6, 0xD7, 0x6A,
@@ -987,6 +1005,17 @@ fn curated_wiring_hash_propagates_for_direct_and_archive_paths() {
         world_court_tennis_sha256,
     )
     .unwrap();
+    let aero_archive = PceBackend::with_validated_paths_and_hash(
+        rom_with_program(&[0xEA]),
+        BackendPaths::with_source_path(
+            PathBuf::from("cards.7z").join("aero.pce"),
+            PathBuf::from("cards.7z"),
+        ),
+        None,
+        None,
+        aero_blasters_sha256,
+    )
+    .unwrap();
 
     assert_eq!(
         direct.machine.devices().console_wiring(),
@@ -994,6 +1023,10 @@ fn curated_wiring_hash_propagates_for_direct_and_archive_paths() {
     );
     assert_eq!(
         world_court_tennis.machine.devices().console_wiring(),
+        PceConsoleWiring::TurboGrafx16
+    );
+    assert_eq!(
+        aero_archive.machine.devices().console_wiring(),
         PceConsoleWiring::TurboGrafx16
     );
     assert_eq!(
@@ -1224,22 +1257,18 @@ fn multi_frame_audio_drains_preserve_fractional_cadence_and_continuity() {
 }
 
 #[test]
-fn machine_error_retains_frame_and_delivers_only_the_first_fault() {
+fn sync_output_write_continues_without_a_runtime_fault() {
     let mut backend = PceBackend::new(
         rom_with_program(&[0x03, 0x05, 0x13, 0x10, 0x23, 0x00, 0x80, 0xFE]),
         PathBuf::from("unsupported.pce"),
     )
     .unwrap();
     backend.framebuffer.fill(0xA5);
-    let before = backend.framebuffer.to_vec();
-
     backend.step_frame();
 
-    assert_eq!(&*backend.framebuffer, before);
-    let fault = backend.take_runtime_fault().unwrap();
-    assert!(fault.contains("ExternalVceSyncNeedsHorizontalScheduler"));
     assert_eq!(backend.take_runtime_fault(), None);
-    backend.step_frame();
-    assert_eq!(backend.take_runtime_fault(), None);
-    assert_eq!(&*backend.framebuffer, before);
+    assert_eq!(backend.frame_count, 1);
+    assert!(backend.machine.devices().vdc().sync_output().horizontal());
+    assert!(!backend.machine.devices().vdc().sync_output().vertical());
+    assert!(backend.framebuffer.iter().any(|&byte| byte != 0xA5));
 }

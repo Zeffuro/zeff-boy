@@ -15,11 +15,21 @@ pub const PROVISIONAL_STOCK_MACHINE_VCE_BOUNDARIES_DRIVE_VDC_HORIZONTAL_AND_VERT
     true;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VdcSyncMode {
-    ExternalHorizontalAndVertical,
-    ExternalVertical,
-    Invalid,
-    Internal,
+pub struct VdcSyncOutput {
+    horizontal: bool,
+    vertical: bool,
+}
+
+impl VdcSyncOutput {
+    #[inline]
+    pub const fn horizontal(self) -> bool {
+        self.horizontal
+    }
+
+    #[inline]
+    pub const fn vertical(self) -> bool {
+        self.vertical
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,12 +54,6 @@ impl VdcVerticalPhase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VdcScanlineAdvanceError {
-    NonAutonomousSync {
-        mode: VdcSyncMode,
-    },
-    ExternalVceSyncNeedsHorizontalScheduler,
-    InvalidSyncMode,
-    InternalSyncUsesAutonomousAdvance,
     InvalidExternalBoundaryCount {
         count: u8,
     },
@@ -438,42 +442,26 @@ impl HuC6270 {
     }
 
     #[inline]
-    pub fn sync_mode(&self) -> VdcSyncMode {
-        match (self.register(VdcRegister::Control) >> 4) & 3 {
-            0 => VdcSyncMode::ExternalHorizontalAndVertical,
-            1 => VdcSyncMode::ExternalVertical,
-            2 => VdcSyncMode::Invalid,
-            _ => VdcSyncMode::Internal,
+    pub fn sync_output(&self) -> VdcSyncOutput {
+        let output = (self.register(VdcRegister::Control) >> 4) & 3;
+        VdcSyncOutput {
+            horizontal: output >= 1,
+            vertical: output >= 2,
         }
     }
 
     pub fn advance_scanline_boundary(
         &mut self,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
-        let sync_mode = self.sync_mode();
-        if sync_mode != VdcSyncMode::Internal {
-            return Err(VdcScanlineAdvanceError::NonAutonomousSync { mode: sync_mode });
-        }
-
         self.scanline_state.external_profile = None;
-        Ok(self.advance_vertical_boundary(None))
+        Ok(self.advance_vertical_boundary(None, false))
     }
 
     pub fn advance_external_vce_scanline(
         &mut self,
         input: VdcExternalVceScanline,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
-        match self.sync_mode() {
-            VdcSyncMode::ExternalHorizontalAndVertical => {}
-            VdcSyncMode::ExternalVertical => {
-                return Err(VdcScanlineAdvanceError::ExternalVceSyncNeedsHorizontalScheduler);
-            }
-            VdcSyncMode::Invalid => return Err(VdcScanlineAdvanceError::InvalidSyncMode),
-            VdcSyncMode::Internal => {
-                return Err(VdcScanlineAdvanceError::InternalSyncUsesAutonomousAdvance);
-            }
-        }
-        self.advance_vce_scanline_core(input)
+        self.advance_vce_scanline_core(input, false)
     }
 
     pub(crate) fn advance_machine_vce_scanline(
@@ -481,20 +469,13 @@ impl HuC6270 {
         input: VdcExternalVceScanline,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
         self.validate_machine_vce_scanline(input)?;
-        self.advance_vce_scanline_core(input)
+        self.advance_vce_scanline_core(input, true)
     }
 
     pub(crate) fn validate_machine_vce_scanline(
         &self,
         input: VdcExternalVceScanline,
     ) -> Result<(), VdcScanlineAdvanceError> {
-        match self.sync_mode() {
-            VdcSyncMode::ExternalHorizontalAndVertical | VdcSyncMode::Internal => {}
-            VdcSyncMode::ExternalVertical => {
-                return Err(VdcScanlineAdvanceError::ExternalVceSyncNeedsHorizontalScheduler);
-            }
-            VdcSyncMode::Invalid => return Err(VdcScanlineAdvanceError::InvalidSyncMode),
-        }
         if input.boundary_count != 1 {
             return Err(VdcScanlineAdvanceError::InvalidExternalBoundaryCount {
                 count: input.boundary_count,
@@ -511,6 +492,7 @@ impl HuC6270 {
     fn advance_vce_scanline_core(
         &mut self,
         input: VdcExternalVceScanline,
+        defer_vertical_blank: bool,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
         if input.boundary_count != 1 {
             return Err(VdcScanlineAdvanceError::InvalidExternalBoundaryCount {
@@ -532,12 +514,13 @@ impl HuC6270 {
             profile
         };
 
-        Ok(self.advance_vertical_boundary(Some(profile)))
+        Ok(self.advance_vertical_boundary(Some(profile), defer_vertical_blank))
     }
 
     fn advance_vertical_boundary(
         &mut self,
         external_profile: Option<ExternalVerticalProfile>,
+        defer_vertical_blank: bool,
     ) -> VdcScanlineBoundary {
         if self.scanline_state.phase_duration == 0 {
             self.scanline_state.phase_duration =
@@ -551,9 +534,19 @@ impl HuC6270 {
             self.scanline_state.raster_counter = ACTIVE_DISPLAY_RASTER_START;
         }
         let vertical_blank_started = self.scanline_state.vertical_blank_pending;
-        self.scanline_state.vertical_blank_pending = false;
+        if !defer_vertical_blank {
+            self.scanline_state.vertical_blank_pending = false;
+        }
         let raster_counter = self.scanline_state.raster_counter;
-        let raster_match = raster_counter == self.register(VdcRegister::RasterCounter);
+        let raster_match_counter = if phase != VdcVerticalPhase::ActiveDisplay
+            && phase.next() == VdcVerticalPhase::ActiveDisplay
+            && phase_line + 1 == self.scanline_state.phase_duration
+        {
+            ACTIVE_DISPLAY_RASTER_START
+        } else {
+            raster_counter.wrapping_add(1) & RASTER_COUNTER_MASK
+        };
+        let raster_match = raster_match_counter == self.register(VdcRegister::RasterCounter);
         let control = self.register(VdcRegister::Control);
 
         if vertical_blank_started {
@@ -563,11 +556,13 @@ impl HuC6270 {
         if raster_match && control & 0x04 != 0 {
             self.latch_status(VdcStatus::RASTER_MATCH);
         }
-        if vertical_blank_started && control & 0x08 != 0 {
+        if vertical_blank_started && !defer_vertical_blank && control & 0x08 != 0 {
             self.latch_status(VdcStatus::VERTICAL_BLANK);
         }
 
-        let satb_dma_started = vertical_blank_started && self.start_satb_dma_for_vertical_blank();
+        let satb_dma_started = vertical_blank_started
+            && !defer_vertical_blank
+            && self.start_satb_dma_for_vertical_blank();
         let vram_dma_aborted = phase == VdcVerticalPhase::ActiveDisplay
             && phase_started
             && self.should_abort_vram_dma_for_active_display()
@@ -624,6 +619,17 @@ impl HuC6270 {
         };
         self.advance_vertical_state(external_profile);
         boundary
+    }
+
+    pub(super) fn start_pending_vertical_blank(&mut self) -> Option<bool> {
+        if !self.scanline_state.vertical_blank_pending {
+            return None;
+        }
+        self.scanline_state.vertical_blank_pending = false;
+        if self.register(VdcRegister::Control) & 0x08 != 0 {
+            self.latch_status(VdcStatus::VERTICAL_BLANK);
+        }
+        Some(self.start_satb_dma_for_vertical_blank())
     }
 
     pub(super) fn latch_full_active_span_sprite_status(

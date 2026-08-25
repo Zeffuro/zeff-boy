@@ -293,6 +293,7 @@ pub(super) struct CachedRomInfo {
     pub(super) rom_path: Option<PathBuf>,
     pub(super) source_path: Option<PathBuf>,
     pub(super) rom_hash: Option<[u8; 32]>,
+    pub(super) pce_controller_profile_hash: Option<[u8; 32]>,
     pub(super) replay_metadata: Option<zeff_emu_common::replay::ReplayMetadata>,
 }
 

@@ -1,15 +1,17 @@
 /// File format (`.zrpl`):
 /// ```text
 /// [4 bytes]  magic: "ZRPL"
-/// [4 bytes]  version: 1 (u32 LE)
+/// [4 bytes]  version: 2 (u32 LE)
 /// [4 bytes]  metadata_length (u32 LE)
 /// [N bytes]  replay metadata
 /// [4 bytes]  save_state_length (u32 LE)
 /// [N bytes]  save state data
 /// [4 bytes]  frame_count (u32 LE)
 /// [remaining] frames: repeated frame records
-///     fixed input record, 18 bytes:
+///     fixed input record, 24 bytes:
 ///         p1_buttons: u8, p1_dpad: u8, p2_buttons: u8, p2_dpad: u8,
+///         p3_buttons: u8, p3_dpad: u8, p4_buttons: u8, p4_dpad: u8,
+///         p5_buttons: u8, p5_dpad: u8,
 ///         zapper_flags: u8, zapper_x: u16 LE, zapper_y: u16 LE,
 ///         tilt_x: f32 LE, tilt_y: f32 LE, reserved: u8
 ///     camera_frame_length: u32 LE
@@ -20,8 +22,9 @@
 use anyhow::{Context, Result, bail};
 
 pub(crate) const MAGIC: &[u8; 4] = b"ZRPL";
-pub(crate) const VERSION: u32 = 1;
-pub(crate) const FRAME_FIXED_BYTES: usize = 18;
+pub(crate) const VERSION: u32 = 2;
+pub(crate) const V1_FRAME_FIXED_BYTES: usize = 18;
+pub(crate) const FRAME_FIXED_BYTES: usize = 24;
 pub(crate) const CAMERA_REPEAT_SENTINEL: u32 = u32::MAX;
 pub(crate) const MAX_REPLAY_CAMERA_FRAME_BYTES: usize = 1024 * 1024;
 // Pre-metadata v1 recordings stored `[save_state_len][save_state][2-byte input frames]`.

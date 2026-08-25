@@ -48,6 +48,8 @@ pub enum VdcPortWriteResult {
 pub struct VdcHorizontalAdvance {
     pixel_clocks: u64,
     phase_transitions: u64,
+    vertical_blank_started: bool,
+    satb_dma_started: bool,
     dma_slots: u64,
     satb_words: u64,
     vram_words: u64,
@@ -63,6 +65,16 @@ impl VdcHorizontalAdvance {
     #[inline]
     pub const fn phase_transitions(self) -> u64 {
         self.phase_transitions
+    }
+
+    #[inline]
+    pub const fn vertical_blank_started(self) -> bool {
+        self.vertical_blank_started
+    }
+
+    #[inline]
+    pub const fn satb_dma_started(self) -> bool {
+        self.satb_dma_started
     }
 
     #[inline]
@@ -208,7 +220,10 @@ impl HuC6270 {
             self.horizontal_state.dma_pixel_remainder += elapsed as u8;
 
             if self.horizontal_state.phase_pixels_remaining == 0 {
-                self.enter_next_horizontal_phase();
+                if let Some(satb_dma_started) = self.enter_next_horizontal_phase() {
+                    advance.vertical_blank_started = true;
+                    advance.satb_dma_started |= satb_dma_started;
+                }
                 advance.phase_transitions += 1;
             }
             if self.horizontal_state.dma_pixel_remainder == VDC_DMA_PIXELS_PER_WORD {
@@ -220,7 +235,7 @@ impl HuC6270 {
         Ok(advance)
     }
 
-    fn enter_next_horizontal_phase(&mut self) {
+    fn enter_next_horizontal_phase(&mut self) -> Option<bool> {
         let next = self.horizontal_state.phase.next();
         self.horizontal_state.phase = next;
         self.horizontal_state.phase_pixels_remaining = self.horizontal_phase_pixels(next);
@@ -234,7 +249,9 @@ impl HuC6270 {
             self.horizontal_state.latched_active_display_pixels =
                 self.horizontal_state.phase_pixels_remaining;
             self.horizontal_state.display_control_latched_for_line = true;
+            return self.start_pending_vertical_blank();
         }
+        None
     }
 
     fn service_scheduled_dma_slot(

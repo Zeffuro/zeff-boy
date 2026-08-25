@@ -911,6 +911,7 @@ fn replay_roundtrip_with_p2_input() {
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x10,
@@ -920,6 +921,7 @@ fn replay_roundtrip_with_p2_input() {
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.25, -0.5),
             camera_frame: Some(vec![1, 2, 3, 4]),
+            ..ReplayJoypadFrame::default()
         },
     ];
 
@@ -942,6 +944,68 @@ fn replay_roundtrip_with_p2_input() {
 }
 
 #[test]
+fn replay_v2_roundtrip_preserves_multitap_players() {
+    let path = unique_path("multitap_input");
+    let frame = ReplayJoypadFrame {
+        buttons: 0x01,
+        dpad: 0x02,
+        buttons_p2: 0x03,
+        dpad_p2: 0x04,
+        buttons_p3: 0x05,
+        dpad_p3: 0x06,
+        buttons_p4: 0x07,
+        dpad_p4: 0x08,
+        buttons_p5: 0x09,
+        dpad_p5: 0x0A,
+        ..ReplayJoypadFrame::default()
+    };
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(path.clone(), vec![0xCC], ReplayMetadata::default());
+    recorder.record_joypad_frame(frame.clone());
+    recorder.finish().expect("finish() should succeed");
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+    assert_eq!(player.next_joypad_frame(), Some(frame));
+    assert_eq!(player.next_joypad_frame(), None);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn replay_v1_input_defaults_multitap_players() {
+    let path = unique_path("v1_multitap_default");
+    let metadata = ReplayMetadata::default().encode();
+    let mut data = Vec::new();
+    data.extend_from_slice(b"ZRPL");
+    data.extend_from_slice(&1u32.to_le_bytes());
+    data.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
+    data.extend_from_slice(&metadata);
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&1u32.to_le_bytes());
+    data.extend_from_slice(&[
+        0x01, 0x02, 0x03, 0x04, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+    data.extend_from_slice(&0u32.to_le_bytes());
+    std::fs::write(&path, data).unwrap();
+
+    let mut player = ReplayPlayer::load(&path).expect("load() should succeed");
+    let frame = player.next_joypad_frame().expect("one frame");
+    assert_eq!((frame.buttons, frame.dpad), (0x01, 0x02));
+    assert_eq!((frame.buttons_p2, frame.dpad_p2), (0x03, 0x04));
+    assert_eq!(
+        [
+            frame.buttons_p3,
+            frame.dpad_p3,
+            frame.buttons_p4,
+            frame.dpad_p4,
+            frame.buttons_p5,
+            frame.dpad_p5,
+        ],
+        [0; 6]
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn replay_roundtrip_with_zapper_input() {
     let path = unique_path("zapper_input");
     let frame = ReplayJoypadFrame {
@@ -957,6 +1021,7 @@ fn replay_roundtrip_with_zapper_input() {
         },
         host_tilt: (0.5, -0.25),
         camera_frame: Some(vec![0x10, 0x20, 0x30]),
+        ..ReplayJoypadFrame::default()
     };
 
     let mut recorder =
@@ -985,6 +1050,7 @@ fn replay_player_reports_host_device_usage() {
         zapper: ReplayZapperFrame::default(),
         host_tilt: (0.0, 0.0),
         camera_frame: None,
+        ..ReplayJoypadFrame::default()
     });
     recorder.record_joypad_frame(ReplayJoypadFrame {
         buttons: 0,
@@ -994,6 +1060,7 @@ fn replay_player_reports_host_device_usage() {
         zapper: ReplayZapperFrame::default(),
         host_tilt: (0.25, 0.0),
         camera_frame: None,
+        ..ReplayJoypadFrame::default()
     });
     recorder.record_joypad_frame(ReplayJoypadFrame {
         buttons: 0,
@@ -1003,6 +1070,7 @@ fn replay_player_reports_host_device_usage() {
         zapper: ReplayZapperFrame::default(),
         host_tilt: (0.0, 0.0),
         camera_frame: Some(vec![0x10, 0x20]),
+        ..ReplayJoypadFrame::default()
     });
     recorder.finish().expect("finish() should succeed");
 
@@ -1026,6 +1094,7 @@ fn replay_roundtrip_with_repeated_camera_input() {
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: Some(camera_frame.clone()),
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x05,
@@ -1035,6 +1104,7 @@ fn replay_roundtrip_with_repeated_camera_input() {
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: Some(camera_frame),
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x09,
@@ -1044,6 +1114,7 @@ fn replay_roundtrip_with_repeated_camera_input() {
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
     ];
 

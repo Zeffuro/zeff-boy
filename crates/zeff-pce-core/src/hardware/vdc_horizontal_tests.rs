@@ -1,8 +1,9 @@
 use super::cpu::{LineLevel, VdcPort};
 use super::{
-    HuC6270, VDC_DMA_PIXELS_PER_WORD, VdcHorizontalPhase, VdcPortWriteResult, VdcRegister,
-    VdcStatus, VdcVramDmaTriggerResult,
+    HuC6270, VDC_DMA_PIXELS_PER_WORD, VceFrameLength, VdcExternalVceScanline, VdcHorizontalPhase,
+    VdcPortWriteResult, VdcRegister, VdcStatus, VdcVramDmaTriggerResult,
 };
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 fn select(vdc: &mut HuC6270, register: VdcRegister) {
     let _ = vdc.write_port(VdcPort::SelectOrStatus, register as u8);
@@ -12,6 +13,64 @@ fn write_register(vdc: &mut HuC6270, register: VdcRegister, value: u16) -> VdcPo
     select(vdc, register);
     let _ = vdc.write_port(VdcPort::DataLow, value as u8);
     vdc.write_port(VdcPort::DataHigh, (value >> 8) as u8)
+}
+
+fn advance_to_deferred_vertical_blank(vdc: &mut HuC6270) {
+    write_register(vdc, VdcRegister::Control, 0x000C);
+    write_register(vdc, VdcRegister::RasterCounter, 66);
+    write_register(vdc, VdcRegister::VerticalSync, 0);
+    write_register(vdc, VdcRegister::VerticalDisplay, 0);
+    write_register(vdc, VdcRegister::VerticalDisplayEnd, 1);
+
+    for line in 0..5 {
+        let boundary = vdc
+            .advance_machine_vce_scanline(VdcExternalVceScanline::new(
+                1,
+                line == 0,
+                VceFrameLength::Lines262,
+            ))
+            .unwrap();
+        if line == 4 {
+            assert!(boundary.raster_match());
+            assert!(boundary.vertical_blank_started());
+        }
+    }
+}
+
+#[test]
+fn vertical_blank_follows_same_line_raster_irq_at_display_start() {
+    let mut vdc = HuC6270::new();
+    advance_to_deferred_vertical_blank(&mut vdc);
+
+    assert_eq!(vdc.read_port(VdcPort::SelectOrStatus), 4);
+    vdc.begin_external_horizontal_line();
+    let before = vdc.advance_horizontal_pixels(7).unwrap();
+    assert!(!before.vertical_blank_started());
+    assert_eq!(vdc.status(), VdcStatus::empty());
+
+    let event = vdc.advance_horizontal_pixels(1).unwrap();
+    assert!(event.vertical_blank_started());
+    assert_eq!(vdc.status(), VdcStatus::VERTICAL_BLANK);
+    assert_eq!(vdc.irq_level(), LineLevel::Low);
+}
+
+#[test]
+fn deferred_vertical_blank_survives_vdc_state_round_trip() {
+    let mut vdc = HuC6270::new();
+    advance_to_deferred_vertical_blank(&mut vdc);
+    assert_eq!(vdc.read_port(VdcPort::SelectOrStatus), 4);
+
+    let mut writer = StateWriter::new();
+    vdc.write_state(&mut writer);
+    let mut restored = HuC6270::new();
+    restored
+        .read_state(&mut StateReader::new(&writer.into_bytes()))
+        .unwrap();
+
+    restored.begin_external_horizontal_line();
+    let event = restored.advance_horizontal_pixels(8).unwrap();
+    assert!(event.vertical_blank_started());
+    assert_eq!(restored.status(), VdcStatus::VERTICAL_BLANK);
 }
 
 #[test]

@@ -45,6 +45,9 @@ impl EmuThread {
         backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_input_p3(input.joypad.buttons_p3, input.joypad.dpad_p3);
+        backend.set_input_p4(input.joypad.buttons_p4, input.joypad.dpad_p4);
+        backend.set_input_p5(input.joypad.buttons_p5, input.joypad.dpad_p5);
         backend.set_zapper_state(
             input.zapper.enabled,
             input.zapper.trigger,
@@ -137,6 +140,9 @@ impl EmuThread {
         backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_input_p3(input.joypad.buttons_p3, input.joypad.dpad_p3);
+        backend.set_input_p4(input.joypad.buttons_p4, input.joypad.dpad_p4);
+        backend.set_input_p5(input.joypad.buttons_p5, input.joypad.dpad_p5);
         backend.set_zapper_state(
             input.zapper.enabled,
             input.zapper.trigger,
@@ -235,6 +241,9 @@ impl EmuThread {
         backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_input_p3(input.joypad.buttons_p3, input.joypad.dpad_p3);
+        backend.set_input_p4(input.joypad.buttons_p4, input.joypad.dpad_p4);
+        backend.set_input_p5(input.joypad.buttons_p5, input.joypad.dpad_p5);
         backend.set_zapper_state(
             input.zapper.enabled,
             input.zapper.trigger,
@@ -333,6 +342,9 @@ impl EmuThread {
         backend.set_pce_memory_base_mode(input.pce_mouse.memory_base_mode);
         backend.set_input(input.joypad.buttons, input.joypad.dpad);
         backend.set_input_p2(input.joypad.buttons_p2, input.joypad.dpad_p2);
+        backend.set_input_p3(input.joypad.buttons_p3, input.joypad.dpad_p3);
+        backend.set_input_p4(input.joypad.buttons_p4, input.joypad.dpad_p4);
+        backend.set_input_p5(input.joypad.buttons_p5, input.joypad.dpad_p5);
         backend.set_zapper_state(
             input.zapper.enabled,
             input.zapper.trigger,

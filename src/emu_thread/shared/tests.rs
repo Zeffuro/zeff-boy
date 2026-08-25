@@ -190,6 +190,7 @@ fn step_n_frames_applies_replay_joypad_input_per_emulated_frame() {
             zapper: Default::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x00,
@@ -199,6 +200,7 @@ fn step_n_frames_applies_replay_joypad_input_per_emulated_frame() {
             zapper: Default::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
     ];
     let mut audio_semantic_frames = Vec::new();
@@ -352,6 +354,7 @@ fn tcp_link_stepper_reuses_replay_input_when_game_boy_link_slice_does_not_advanc
             zapper: Default::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x02,
@@ -361,6 +364,7 @@ fn tcp_link_stepper_reuses_replay_input_when_game_boy_link_slice_does_not_advanc
             zapper: Default::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
     ];
 

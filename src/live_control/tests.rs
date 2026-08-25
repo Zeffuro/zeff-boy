@@ -63,9 +63,18 @@ fn parses_shoulder_button_aliases() {
 }
 
 #[test]
-fn rejects_invalid_player_number() {
-    let err = parse_wire_request(r#"{"command":"press","button":"a","player":3}"#).unwrap_err();
-    assert!(err.contains("player must be 1 or 2"));
+fn parses_multitap_player_commands_and_rejects_player_six() {
+    let parsed = parse_wire_request(r#"{"command":"press","button":"a","player":5}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::Button {
+            player: 5,
+            key: HostButton::A,
+            pressed: true,
+        }
+    ));
+    let err = parse_wire_request(r#"{"command":"press","button":"a","player":6}"#).unwrap_err();
+    assert!(err.contains("player must be 1 through 5"));
 }
 
 #[test]

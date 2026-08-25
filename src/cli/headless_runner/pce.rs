@@ -13,9 +13,10 @@ use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore};
 use super::{
     AudioStats, PceDebugStateRequest, StuckTracker, emit_debug_state, ensure_no_reset_events,
     ensure_system_headless_options, fail_on_stuck_if_needed, input_for_frame, input_p2_for_frame,
-    observe_stuck, pce_debug_state, print_perf, read_headless_state_if_requested,
-    screenshot_path_if_written, write_audio_dump_f32le, write_final_screenshot_if_needed,
-    write_screenshot_if_requested, write_screenshot_sequence_if_requested,
+    input_p3_for_frame, input_p4_for_frame, input_p5_for_frame, observe_stuck, pce_debug_state,
+    print_perf, read_headless_state_if_requested, screenshot_path_if_written,
+    write_audio_dump_f32le, write_final_screenshot_if_needed, write_screenshot_if_requested,
+    write_screenshot_sequence_if_requested,
 };
 
 const PCE_HEADLESS_SAMPLE_RATE: u32 = 44_100;
@@ -153,6 +154,9 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
     let mut screenshot_written = false;
     let mut current_input = Default::default();
     let mut current_input_p2 = Default::default();
+    let mut current_input_p3 = Default::default();
+    let mut current_input_p4 = Default::default();
+    let mut current_input_p5 = Default::default();
     let mut frames_run = 0u64;
     let mut audio_scratch = Vec::new();
     let mut audio_dump = Vec::new();
@@ -186,8 +190,14 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
         }
         current_input = input_for_frame(opts, frame_number);
         current_input_p2 = input_p2_for_frame(opts, frame_number);
+        current_input_p3 = input_p3_for_frame(opts, frame_number);
+        current_input_p4 = input_p4_for_frame(opts, frame_number);
+        current_input_p5 = input_p5_for_frame(opts, frame_number);
         backend.set_input(current_input.buttons, current_input.dpad);
         backend.set_input_p2(current_input_p2.buttons, current_input_p2.dpad);
+        backend.set_input_p3(current_input_p3.buttons, current_input_p3.dpad);
+        backend.set_input_p4(current_input_p4.buttons, current_input_p4.dpad);
+        backend.set_input_p5(current_input_p5.buttons, current_input_p5.dpad);
         if opts.break_at.is_some() {
             backend.step_frame();
         } else {
@@ -324,6 +334,9 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
             opts,
             input: current_input,
             input_p2: current_input_p2,
+            input_p3: current_input_p3,
+            input_p4: current_input_p4,
+            input_p5: current_input_p5,
             stuck: stuck.as_ref().and_then(StuckTracker::current_report),
             screenshot: screenshot_path_if_written(opts, screenshot_written),
             audio_samples: audio_stats.sample_count,

@@ -277,6 +277,11 @@ pub(crate) fn settings_dir() -> PathBuf {
     PathBuf::from(".")
 }
 
+#[cfg(not(test))]
+pub(crate) fn cache_dir() -> PathBuf {
+    settings_dir()
+}
+
 pub(crate) fn load_settings_json() -> Option<String> {
     let storage = web_sys::window()?.local_storage().ok()??;
     storage.get_item("zeff-boy-settings").ok()?

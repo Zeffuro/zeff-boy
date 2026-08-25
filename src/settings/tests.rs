@@ -69,6 +69,11 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.key_bindings_p2.x, KeyCode::Numpad3);
     assert_eq!(s.key_bindings_p2.y, KeyCode::NumpadDecimal);
     assert_eq!(s.gamepad_bindings.get_p2(BindingAction::A), "South");
+    assert_eq!(
+        s.gamepad_bindings.get_for_player(BindingAction::A, 3),
+        "South"
+    );
+    assert_eq!(s.pce_multitap_key_bindings[0].get(BindingAction::A), None);
     assert_eq!(s.gamepad_bindings.get(BindingAction::L), "LeftTrigger");
     assert_eq!(s.gamepad_bindings.get(BindingAction::R), "RightTrigger");
     assert_eq!(s.gamepad_bindings.get(BindingAction::X), "West");

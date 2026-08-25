@@ -2,6 +2,7 @@ mod arcade_card;
 mod blip_buf;
 mod bus;
 mod cartridge;
+mod cartridge_catalog;
 mod cd_media;
 mod cdrom2;
 mod controller;
@@ -122,7 +123,7 @@ pub use vdc_scanline::{
     PROVISIONAL_EXTERNAL_VSYNC_MARKER_RESTARTS_VERTICAL_PROGRESSION,
     PROVISIONAL_STOCK_MACHINE_VCE_BOUNDARIES_DRIVE_VDC_HORIZONTAL_AND_VERTICAL_SYNC,
     VceFrameLength, VdcActiveDisplayLine, VdcExternalVceScanline, VdcScanlineAdvanceError,
-    VdcScanlineBoundary, VdcScanlineTransition, VdcSyncMode, VdcVerticalPhase,
+    VdcScanlineBoundary, VdcScanlineTransition, VdcSyncOutput, VdcVerticalPhase,
 };
 pub use vdc_sprite_render::{
     SpriteBackgroundPriority, SpriteColorMode, SpritePixel, SpriteRenderError, SpriteRenderState,

@@ -882,7 +882,7 @@ fn pce_backend_exposes_bounded_frontend_and_debugger_capabilities() {
         features.input_features,
         crate::emu_backend::InputCapabilities::for_system(ActiveSystem::Pce)
     );
-    assert!(features.input_features.supports_player_two);
+    assert_eq!(features.input_features.max_players, 5);
     assert!(features.supports_save_states);
     assert!(features.supports_state_capture);
     assert!(features.supports_rewind);

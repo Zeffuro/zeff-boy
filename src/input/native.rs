@@ -12,7 +12,7 @@ const RUMBLE_MAGNITUDE: u16 = 40_000;
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
     active_gamepad: Option<GamepadId>,
-    player_gamepads: [Option<GamepadId>; 2],
+    player_gamepads: [Option<GamepadId>; 5],
     #[cfg(not(target_arch = "wasm32"))]
     rumble_effect: Option<ff::Effect>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -26,7 +26,7 @@ impl GamepadHandler {
         Ok(Self {
             gilrs,
             active_gamepad: None,
-            player_gamepads: [None, None],
+            player_gamepads: [None; 5],
             #[cfg(not(target_arch = "wasm32"))]
             rumble_effect: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -37,6 +37,9 @@ impl GamepadHandler {
     pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
         let mut events = Vec::with_capacity(4);
         let mut events_p2 = Vec::with_capacity(4);
+        let mut events_p3 = Vec::with_capacity(4);
+        let mut events_p4 = Vec::with_capacity(4);
+        let mut events_p5 = Vec::with_capacity(4);
         let mut ws_events = Vec::with_capacity(4);
         let mut action_events = Vec::with_capacity(4);
         let mut raw_pressed = Vec::with_capacity(4);
@@ -46,12 +49,15 @@ impl GamepadHandler {
                 EventType::ButtonPressed(button, _) => {
                     let name = button_name(button);
                     raw_pressed.push(name);
-                    if player == 2 {
-                        if let Some(key) = bindings.map_button_name_p2(name) {
-                            events_p2.push((key, true));
+                    if let Some(key) = bindings.map_button_name_for_player(name, player) {
+                        match player {
+                            1 => events.push((key, true)),
+                            2 => events_p2.push((key, true)),
+                            3 => events_p3.push((key, true)),
+                            4 => events_p4.push((key, true)),
+                            5 => events_p5.push((key, true)),
+                            _ => {}
                         }
-                    } else if let Some(key) = bindings.map_button_name(name) {
-                        events.push((key, true));
                     }
                     if player == 1 {
                         if let Some(action) = bindings.map_action_button_name(name) {
@@ -64,12 +70,15 @@ impl GamepadHandler {
                 }
                 EventType::ButtonReleased(button, _) => {
                     let name = button_name(button);
-                    if player == 2 {
-                        if let Some(key) = bindings.map_button_name_p2(name) {
-                            events_p2.push((key, false));
+                    if let Some(key) = bindings.map_button_name_for_player(name, player) {
+                        match player {
+                            1 => events.push((key, false)),
+                            2 => events_p2.push((key, false)),
+                            3 => events_p3.push((key, false)),
+                            4 => events_p4.push((key, false)),
+                            5 => events_p5.push((key, false)),
+                            _ => {}
                         }
-                    } else if let Some(key) = bindings.map_button_name(name) {
-                        events.push((key, false));
                     }
                     if player == 1 {
                         if let Some(action) = bindings.map_action_button_name(name) {
@@ -106,6 +115,9 @@ impl GamepadHandler {
         GamepadPoll {
             events,
             events_p2,
+            events_p3,
+            events_p4,
+            events_p5,
             ws_events,
             action_events,
             left_stick,
@@ -166,17 +178,19 @@ impl GamepadHandler {
             self.active_gamepad = Some(id);
             return 1;
         }
-        if self.player_gamepads[1] == Some(id) {
-            return 2;
+        for (index, slot) in self.player_gamepads.iter().enumerate().skip(1) {
+            if *slot == Some(id) {
+                return u8::try_from(index + 1).unwrap_or(1);
+            }
         }
-        if self.player_gamepads[0].is_none() {
-            self.player_gamepads[0] = Some(id);
-            self.active_gamepad = Some(id);
-            return 1;
-        }
-        if self.player_gamepads[1].is_none() {
-            self.player_gamepads[1] = Some(id);
-            return 2;
+        for (index, slot) in self.player_gamepads.iter_mut().enumerate() {
+            if slot.is_none() {
+                *slot = Some(id);
+                if index == 0 {
+                    self.active_gamepad = Some(id);
+                }
+                return u8::try_from(index + 1).unwrap_or(1);
+            }
         }
         1
     }

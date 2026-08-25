@@ -104,6 +104,12 @@ impl ReplayRecorder {
                 frame.dpad,
                 frame.buttons_p2,
                 frame.dpad_p2,
+                frame.buttons_p3,
+                frame.dpad_p3,
+                frame.buttons_p4,
+                frame.dpad_p4,
+                frame.buttons_p5,
+                frame.dpad_p5,
                 frame.zapper.flags(),
             ])?;
             let (x, y) = frame.zapper.screen_pos.unwrap_or((0, 0));

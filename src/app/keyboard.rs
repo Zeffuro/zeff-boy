@@ -94,6 +94,7 @@ impl App {
         if let Some(gb_key) = self.map_key_p2(key_code) {
             self.host_input.set_keyboard_p2(gb_key, false);
         }
+        self.set_pce_multitap_keyboard_key(key_code, false);
 
         if let Some(ws_key) = self.map_ws_key(key_code) {
             self.host_input.set_ws_keyboard(ws_key, false);
@@ -139,6 +140,15 @@ impl App {
             match action {
                 InputBindingAction::Joypad(a) => self.settings.key_bindings.set(a, key_code),
                 InputBindingAction::JoypadP2(a) => self.settings.key_bindings_p2.set(a, key_code),
+                InputBindingAction::PceMultitap { player, action } => {
+                    if let Some(bindings) = player.checked_sub(3).and_then(|index| {
+                        self.settings
+                            .pce_multitap_key_bindings
+                            .get_mut(usize::from(index))
+                    }) {
+                        bindings.set(action, key_code);
+                    }
+                }
                 InputBindingAction::Tilt(a) => self.settings.tilt.key_bindings.set(a, key_code),
                 InputBindingAction::WonderSwan(a) => self.settings.ws_key_bindings.set(a, key_code),
             }
@@ -405,7 +415,9 @@ impl App {
         } else {
             self.map_key_p2(key_code)
         };
-        if gb_key.is_none() && gb_key_p2.is_none() {
+        let pce_multitap_bound =
+            (3..=5).any(|player| self.map_key_pce_multitap(player, key_code).is_some());
+        if gb_key.is_none() && gb_key_p2.is_none() && !pce_multitap_bound {
             return false;
         }
         match key_event.state {
@@ -417,6 +429,7 @@ impl App {
                     if let Some(gb_key) = gb_key_p2 {
                         self.host_input.set_keyboard_p2(gb_key, true);
                     }
+                    self.set_pce_multitap_keyboard_key(key_code, true);
                     return true;
                 }
             }
@@ -427,11 +440,26 @@ impl App {
                 if let Some(gb_key) = gb_key_p2 {
                     self.host_input.set_keyboard_p2(gb_key, false);
                 }
+                self.set_pce_multitap_keyboard_key(key_code, false);
                 return true;
             }
         }
 
         false
+    }
+
+    fn set_pce_multitap_keyboard_key(&mut self, key_code: KeyCode, pressed: bool) {
+        for player in 3..=5 {
+            let Some(button) = self.map_key_pce_multitap(player, key_code) else {
+                continue;
+            };
+            match player {
+                3 => self.host_input.set_keyboard_p3(button, pressed),
+                4 => self.host_input.set_keyboard_p4(button, pressed),
+                5 => self.host_input.set_keyboard_p5(button, pressed),
+                _ => {}
+            }
+        }
     }
 
     fn handle_ws_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {

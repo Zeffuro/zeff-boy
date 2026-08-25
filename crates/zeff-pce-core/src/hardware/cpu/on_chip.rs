@@ -47,6 +47,7 @@ pub struct InterruptStep {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OnChipIo {
+    io_data_buffer: u8,
     timer_reload: u8,
     timer_counter: Option<u8>,
     timer_running: bool,
@@ -68,6 +69,7 @@ impl Default for OnChipIo {
 impl OnChipIo {
     pub const fn new() -> Self {
         Self {
+            io_data_buffer: OPEN_BUS_VALUE,
             timer_reload: 0,
             timer_counter: None,
             timer_running: false,
@@ -91,6 +93,11 @@ impl OnChipIo {
             nmi_line,
             ..Self::new()
         };
+    }
+
+    #[inline]
+    pub const fn io_data_buffer(&self) -> u8 {
+        self.io_data_buffer
     }
 
     pub fn advance_master_ticks(&mut self, ticks: u64) {
@@ -123,8 +130,15 @@ impl OnChipIo {
 
     #[inline]
     pub fn read_timer_counter(&self) -> u8 {
-        self.timer_counter
-            .unwrap_or(UNINITIALIZED_TIMER_COUNTER_READ)
+        let Some(counter) = self.timer_counter else {
+            return UNINITIALIZED_TIMER_COUNTER_READ;
+        };
+        let ticks_until_decrement = TIMER_MASTER_TICKS - u64::from(self.timer_prescaler);
+        if self.timer_running && counter == 0 && ticks_until_decrement <= 15 {
+            0x7F
+        } else {
+            counter
+        }
     }
 
     pub fn write_timer(&mut self, port: TimerPort, value: u8) {
@@ -398,7 +412,7 @@ impl HuC6280 {
         self.on_chip_io.highest_priority_unmasked_request()
     }
 
-    pub(crate) fn write_state(&self, writer: &mut StateWriter) {
+    pub(crate) fn write_state(&self, writer: &mut StateWriter, state_version: u32) {
         let registers = self.cpu.registers();
         writer.write_u8(registers.a);
         writer.write_u8(registers.x);
@@ -422,6 +436,9 @@ impl HuC6280 {
         writer.write_u8(line_level_to_tag(self.on_chip_io.irq2_line));
         writer.write_u8(line_level_to_tag(self.on_chip_io.nmi_line));
         writer.write_bool(self.on_chip_io.nmi_pending);
+        if state_version >= 2 {
+            writer.write_u8(self.on_chip_io.io_data_buffer);
+        }
         write_option_bool(writer, self.interrupt_poll_disable);
         writer.write_u8(interrupt_to_tag(self.sampled_interrupt));
     }
@@ -430,7 +447,11 @@ impl HuC6280 {
         self.interrupt_poll_disable.is_none()
     }
 
-    pub(crate) fn read_state(&mut self, reader: &mut StateReader<'_>) -> anyhow::Result<()> {
+    pub(crate) fn read_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+        state_version: u32,
+    ) -> anyhow::Result<()> {
         let registers = self.cpu.registers_mut();
         registers.a = reader.read_u8()?;
         registers.x = reader.read_u8()?;
@@ -470,17 +491,27 @@ impl HuC6280 {
         if interrupt_disable & !INTERRUPT_MASK != 0 {
             bail!("invalid HuC6280 interrupt mask in save-state: {interrupt_disable}");
         }
+        let irq1_line = tag_to_line_level(reader.read_u8()?)?;
+        let irq2_line = tag_to_line_level(reader.read_u8()?)?;
+        let nmi_line = tag_to_line_level(reader.read_u8()?)?;
+        let nmi_pending = reader.read_bool()?;
+        let io_data_buffer = if state_version >= 2 {
+            reader.read_u8()?
+        } else {
+            OPEN_BUS_VALUE
+        };
         self.on_chip_io = OnChipIo {
+            io_data_buffer,
             timer_reload,
             timer_counter,
             timer_running,
             timer_prescaler,
             timer_irq_pending,
             interrupt_disable,
-            irq1_line: tag_to_line_level(reader.read_u8()?)?,
-            irq2_line: tag_to_line_level(reader.read_u8()?)?,
-            nmi_line: tag_to_line_level(reader.read_u8()?)?,
-            nmi_pending: reader.read_bool()?,
+            irq1_line,
+            irq2_line,
+            nmi_line,
+            nmi_pending,
         };
         self.interrupt_poll_disable = read_option_bool(reader)?;
         self.sampled_interrupt = tag_to_interrupt(reader.read_u8()?)?;
@@ -590,11 +621,16 @@ impl<B: CpuBus> OnChipBus<'_, B> {
             return Some(OPEN_BUS_VALUE);
         }
         let value = match decode_physical_region(physical_addr) {
-            PhysicalRegion::Timer(TimerPort::CounterReload) => self.on_chip_io.read_timer_counter(),
+            PhysicalRegion::Timer(TimerPort::CounterReload) => {
+                self.on_chip_io.read_timer_counter() | (self.on_chip_io.io_data_buffer & 0x80)
+            }
             PhysicalRegion::Timer(TimerPort::Control) => OPEN_BUS_VALUE,
-            PhysicalRegion::Irq(port) => self.on_chip_io.read_irq(port),
+            PhysicalRegion::Irq(port) => {
+                self.on_chip_io.read_irq(port) | (self.on_chip_io.io_data_buffer & 0xF8)
+            }
             _ => unreachable!(),
         };
+        self.on_chip_io.io_data_buffer = value;
         self.inner
             .observe_internal_read(physical_addr, value, dummy);
         Some(value)
@@ -617,6 +653,7 @@ impl<B: CpuBus> OnChipBus<'_, B> {
             PhysicalRegion::Irq(port) => self.on_chip_io.write_irq(port, value),
             _ => unreachable!(),
         }
+        self.on_chip_io.io_data_buffer = value;
         self.inner
             .observe_internal_write(physical_addr, value, dummy);
         true
@@ -630,7 +667,14 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
         } else {
             let value = self.inner.read(physical_addr);
             self.advance_elapsed_time();
-            value
+            match decode_physical_region(physical_addr) {
+                PhysicalRegion::Psg(_) => self.on_chip_io.io_data_buffer,
+                PhysicalRegion::Controller => {
+                    self.on_chip_io.io_data_buffer = value;
+                    value
+                }
+                _ => value,
+            }
         }
     }
 
@@ -638,6 +682,12 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
         if !self.internal_write(physical_addr, value, false) {
             self.inner.write(physical_addr, value);
             self.advance_elapsed_time();
+            if matches!(
+                decode_physical_region(physical_addr),
+                PhysicalRegion::Psg(_) | PhysicalRegion::Controller
+            ) {
+                self.on_chip_io.io_data_buffer = value;
+            }
         }
     }
 
@@ -647,7 +697,14 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
         } else {
             let value = self.inner.dummy_read(physical_addr);
             self.advance_elapsed_time();
-            value
+            match decode_physical_region(physical_addr) {
+                PhysicalRegion::Psg(_) => self.on_chip_io.io_data_buffer,
+                PhysicalRegion::Controller => {
+                    self.on_chip_io.io_data_buffer = value;
+                    value
+                }
+                _ => value,
+            }
         }
     }
 
@@ -655,6 +712,12 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
         if !self.internal_write(physical_addr, value, true) {
             self.inner.dummy_write(physical_addr, value);
             self.advance_elapsed_time();
+            if matches!(
+                decode_physical_region(physical_addr),
+                PhysicalRegion::Psg(_) | PhysicalRegion::Controller
+            ) {
+                self.on_chip_io.io_data_buffer = value;
+            }
         }
     }
 

@@ -19,6 +19,8 @@ pub(crate) use wasm::EmuThread;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use types::TcpLinkMode;
+#[cfg(feature = "profile-cores")]
+pub(crate) use types::profile_frame_publication;
 pub(crate) use types::{
     AudioConfig, AudioRecordingCapture, EmuCommand, EmuResponse, FrameInput, FrameResult,
     GuestCallRequest, JoypadInput, MemorySearchRequest, PceMouseInput, RenderSettings,

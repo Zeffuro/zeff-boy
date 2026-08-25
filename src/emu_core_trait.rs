@@ -250,6 +250,12 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     #[inline]
     fn set_input_p2(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}
     #[inline]
+    fn set_input_p3(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}
+    #[inline]
+    fn set_input_p4(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}
+    #[inline]
+    fn set_input_p5(&mut self, _buttons_pressed: u8, _dpad_pressed: u8) {}
+    #[inline]
     fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
         None
     }

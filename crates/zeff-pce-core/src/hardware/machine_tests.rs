@@ -18,7 +18,7 @@ use super::{
     PSG_MASTER_CLOCK_DIVISOR, PceCartridgeDescriptor, PceCartridgeHardware, PceClockCounter,
     PceConsoleWiring, PceCpuAction, PceDevices, PceExecutionState, PceMachine, PceMachineError,
     PsgPort, PsgRevision, VDC_SATB_WORDS, VceFrameLength, VcePixelClock, VcePort, VdcDmaChannel,
-    VdcDmaProgress, VdcRegister, VdcScanlineAdvanceError, VdcStatus,
+    VdcDmaProgress, VdcRegister, VdcStatus,
 };
 use zeff_emu_common::debug::{
     DebugEvent, TraceExecMode, TraceWriteKind, TraceWriteWidth, WatchType,
@@ -504,6 +504,32 @@ fn instruction_trace_records_direct_vdc_port_writes_as_io() {
 }
 
 #[test]
+fn instruction_trace_does_not_change_machine_output() {
+    let rom = rom_with_program(&[
+        0xD4, 0xA9, 0xF8, 0x53, 0x02, 0xA9, 0x00, 0x8D, 0x00, 0x20, 0x1A, 0x80, 0xFA,
+    ]);
+    let mut untraced = PceMachine::new(rom.clone()).unwrap();
+    let mut traced = PceMachine::new(rom).unwrap();
+    traced.set_instruction_trace_enabled(true);
+
+    for _ in 0..2 {
+        untraced.run_until_frame().unwrap();
+        traced.run_until_frame().unwrap();
+    }
+
+    assert_eq!(
+        super::save_state::encode_state(&untraced).unwrap(),
+        super::save_state::encode_state(&traced).unwrap()
+    );
+    assert_eq!(untraced.framebuffer(), traced.framebuffer());
+    let mut untraced_audio = Vec::new();
+    let mut traced_audio = Vec::new();
+    untraced.drain_audio_samples_into(&mut untraced_audio);
+    traced.drain_audio_samples_into(&mut traced_audio);
+    assert_eq!(untraced_audio, traced_audio);
+}
+
+#[test]
 fn interrupt_event_breakpoint_suspends_after_service_and_emits_trace_event() {
     let mut rom = rom_with_program(&[0xEA, 0xEA]);
     rom[0x10] = 0xEA;
@@ -570,7 +596,7 @@ fn debug_rom_resolution_tracks_mprs_and_ignores_non_hucard_pages() {
     let snapshot = machine.debug_snapshot();
     assert_eq!(snapshot.physical_page(0x6123), 0x2A);
     assert_eq!(snapshot.physical_address(0x6123), 0x054123);
-    assert_eq!(machine.rom_offset_for_cpu_address(0x6123), Some(0x054123));
+    assert_eq!(machine.rom_offset_for_cpu_address(0x6123), Some(0x014123));
     assert_ne!(machine.rom_mapping_token(), initial_token);
 
     machine.cpu_mut().cpu_mut().set_mapping_register(3, 0xF8);
@@ -781,7 +807,7 @@ fn only_high_byte_vram_cycles_add_dynamic_dma_contention_waits() {
 }
 
 #[test]
-fn failing_line_boundary_commits_only_the_consumed_device_prefix() {
+fn sync_output_change_does_not_interrupt_a_machine_line_boundary() {
     let mut machine = PceMachine::new(high_speed_loop_rom()).unwrap();
     machine
         .cpu_mut()
@@ -791,18 +817,12 @@ fn failing_line_boundary_commits_only_the_consumed_device_prefix() {
     write_vdc_register(machine.devices_mut(), VdcRegister::Control, 0x0010);
 
     let master_before = machine.master_ticks();
-    let error = machine.advance_devices_for_test(12).unwrap_err();
+    assert_eq!(machine.advance_devices_for_test(12).unwrap(), (1, 0));
 
-    assert_eq!(
-        error,
-        PceMachineError::UnsupportedVdcSync(
-            VdcScanlineAdvanceError::ExternalVceSyncNeedsHorizontalScheduler
-        )
-    );
-    assert_eq!(machine.master_ticks(), master_before + 5);
-    assert_eq!(machine.vce_line_accumulator(), 0);
-    assert_eq!(machine.cpu().on_chip_io().timer_prescaler_ticks(), 1_365);
-    assert_eq!(machine.devices().psg().master_tick_remainder(), 3);
+    assert_eq!(machine.master_ticks(), master_before + 12);
+    assert_eq!(machine.vce_line_accumulator(), 7);
+    assert_eq!(machine.cpu().on_chip_io().timer_prescaler_ticks(), 1_372);
+    assert_eq!(machine.devices().psg().master_tick_remainder(), 4);
 }
 
 #[test]
@@ -1524,7 +1544,8 @@ fn magical_chase_cr_switch_continues_at_the_next_vce_boundary() {
     vdc.write_port(VdcPort::DataLow, 0xFF);
     vdc.write_port(VdcPort::DataHigh, 0x0A);
     assert_eq!(vdc.register(VdcRegister::Control), 0x0AFF);
-    assert_eq!(vdc.sync_mode(), super::VdcSyncMode::Internal);
+    assert!(vdc.sync_output().horizontal());
+    assert!(vdc.sync_output().vertical());
 
     let run = machine.run_until_frame().unwrap();
     assert_eq!(run.frames_published(), 1);
@@ -1866,40 +1887,14 @@ fn machine_satb_dma_mirrors_upper_sources_without_faulting() {
 }
 
 #[test]
-fn unsupported_vdc_sync_faults_until_reset_without_mutating_the_front_frame() {
+fn sync_output_change_continues_machine_frames() {
     let mut machine = PceMachine::new(nonblack_video_rom()).unwrap();
     machine.run_until_frame().unwrap();
-    let published = machine.framebuffer().to_vec();
     write_vdc_register(machine.devices_mut(), VdcRegister::Control, 0x0010);
-    loop {
-        match machine.step_boundary() {
-            Ok(_) => {}
-            Err(error) => {
-                assert_eq!(
-                    error,
-                    PceMachineError::UnsupportedVdcSync(
-                        VdcScanlineAdvanceError::ExternalVceSyncNeedsHorizontalScheduler,
-                    )
-                );
-                break;
-            }
-        }
-    }
-    assert_eq!(machine.framebuffer(), published);
-    assert!(machine.faulted());
-    let fault_ticks = machine.master_ticks();
-    let fault_pc = machine.cpu().cpu().registers().pc;
-    assert_eq!(
-        machine.step_boundary(),
-        Err(PceMachineError::FaultedUntilReset)
-    );
-    assert_eq!(machine.master_ticks(), fault_ticks);
-    assert_eq!(machine.cpu().cpu().registers().pc, fault_pc);
-    assert_eq!(machine.framebuffer(), published);
-
-    machine.reset();
+    assert!(machine.devices().vdc().sync_output().horizontal());
+    assert!(!machine.devices().vdc().sync_output().vertical());
+    assert_eq!(machine.run_until_frame().unwrap().frames_published(), 1);
     assert!(!machine.faulted());
-    machine.run_until_frame().unwrap();
     assert_eq!(&machine.framebuffer()[..4], &[0xFF, 0, 0, 0xFF]);
 }
 

@@ -46,6 +46,21 @@ use std::path::Path;
 fn main() -> anyhow::Result<()> {
     platform::init_logging();
 
+    #[cfg(feature = "profile-cores")]
+    if std::env::var("ZEFF_PROFILE_PCE_DISPLAY").as_deref() == Ok("1") {
+        emu_backend::profile_pce_projection();
+        return Ok(());
+    }
+
+    #[cfg(feature = "profile-cores")]
+    if let Ok(archive) = std::env::var("ZEFF_PROFILE_PCE_CD_ARCHIVE") {
+        let cache_root = std::env::var("ZEFF_PROFILE_PCE_CD_CACHE_ROOT")
+            .context("ZEFF_PROFILE_PCE_CD_CACHE_ROOT is required")?;
+        emu_backend::profile_pce_cd_cache(Path::new(&archive), Path::new(&cache_root))
+            .map_err(anyhow::Error::msg)?;
+        return Ok(());
+    }
+
     let mut settings = Settings::load_or_default();
     let args = cli::parse_args()?;
 

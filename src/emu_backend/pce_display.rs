@@ -10,6 +10,7 @@ use super::pce_palette::PCE_COMPOSITE_PALETTE;
 pub(super) const OPAQUE_BLACK: [u8; 4] = [0, 0, 0, 0xFF];
 const TV_SAFE_HEIGHT: usize = 224;
 const TV_SAFE_MASTER_DOTS: usize = 960;
+const RAW_COMPONENT_TO_3_BIT: [u8; 256] = raw_component_to_3_bit_table();
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct ProjectionRow {
@@ -312,7 +313,17 @@ fn copy_pixel(
 }
 
 fn quantize_raw_component(component: u8) -> u8 {
-    ((u16::from(component) * 7 + 127) / 255) as u8
+    RAW_COMPONENT_TO_3_BIT[usize::from(component)]
+}
+
+const fn raw_component_to_3_bit_table() -> [u8; 256] {
+    let mut table = [0; 256];
+    let mut component = 0;
+    while component < table.len() {
+        table[component] = ((component as u16 * 7 + 127) / 255) as u8;
+        component += 1;
+    }
+    table
 }
 
 impl ProjectionRow {
@@ -328,6 +339,86 @@ impl ProjectionRow {
             .checked_mul(self.pixel_clock_divisor)?;
         Some((start, end))
     }
+}
+
+#[cfg(feature = "profile-cores")]
+pub(crate) fn profile_projection() {
+    use sha2::{Digest, Sha256};
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let iterations = std::env::var("ZEFF_PROFILE_DISPLAY_ITERATIONS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(200);
+    let mut source = vec![0; PCE_ACTIVE_FRAME_WIDTH * PCE_ACTIVE_FRAME_HEIGHT * 4];
+    for (index, pixel) in source.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        pixel.copy_from_slice(&[index as u8, (index >> 3) as u8, (index >> 7) as u8, 0xFF]);
+    }
+    let rows = std::array::from_fn::<_, PCE_ACTIVE_FRAME_HEIGHT, _>(|line| ProjectionRow {
+        active_x_origin: 0,
+        active_width: 256,
+        pixel_clock_divisor: 4,
+        active: line < 240,
+    });
+    let bounds = Some((0, 240));
+    let mut output = vec![0; PCE_PRESENTED_RGBA_BYTES];
+
+    for (label, topology, palette) in [
+        (
+            "base raw",
+            PceHardwareTopology::Base,
+            PcePaletteMode::RawRgb,
+        ),
+        (
+            "base composite",
+            PceHardwareTopology::Base,
+            PcePaletteMode::Composite,
+        ),
+        (
+            "SuperGrafx raw",
+            PceHardwareTopology::SuperGrafx,
+            PcePaletteMode::RawRgb,
+        ),
+    ] {
+        let options = ProjectionOptions {
+            overscan: PceOverscanMode::Full,
+            palette,
+        };
+        let project = |output: &mut [u8]| match topology {
+            PceHardwareTopology::Base => project_base_rgba_rows_with_options(
+                &source,
+                PCE_ACTIVE_FRAME_WIDTH,
+                &rows,
+                bounds,
+                options,
+                output,
+            ),
+            PceHardwareTopology::SuperGrafx => project_sgx_rgba_rows_with_options(
+                &source,
+                PCE_ACTIVE_FRAME_WIDTH,
+                &rows,
+                bounds,
+                options,
+                output,
+            ),
+        };
+        for _ in 0..10 {
+            project(&mut output);
+        }
+        let start = Instant::now();
+        for _ in 0..iterations {
+            project(black_box(&mut output));
+        }
+        let elapsed = start.elapsed();
+        let frames_per_second = f64::from(iterations) / elapsed.as_secs_f64();
+        let hash = const_hex::encode_upper(Sha256::digest(&output));
+        println!(
+            "PCE projection {label:14} {iterations:5} frames  {elapsed:>9.2?}  {frames_per_second:>8.1} fps  {hash}"
+        );
+    }
+    crate::emu_thread::profile_frame_publication(&output, iterations);
 }
 
 #[cfg(test)]
@@ -408,6 +499,16 @@ mod tests {
         let white = [255, 255, 255, 255];
         copy_pixel(&white, 0, &mut output, 0, PcePaletteMode::Composite);
         assert_eq!(output, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn component_quantization_table_matches_the_exact_conversion() {
+        for component in 0..=u8::MAX {
+            assert_eq!(
+                quantize_raw_component(component),
+                ((u16::from(component) * 7 + 127) / 255) as u8
+            );
+        }
     }
 
     #[test]

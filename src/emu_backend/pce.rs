@@ -32,6 +32,13 @@ use super::pce_display::project_presented_frame;
 use super::pce_display::{
     OPAQUE_BLACK, ProjectionRow, project_base_rgba_rows, project_sgx_rgba_rows,
 };
+#[cfg(test)]
+use super::pce_profiles::{
+    LEMMINGS_JAPAN_CANONICAL_DISC_SHA256, TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256,
+};
+use super::pce_profiles::{
+    automatic_arcade_card_enabled, automatic_controller_mode, automatic_memory_base_enabled,
+};
 use crate::audio_tooling::{
     AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
     AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
@@ -86,46 +93,6 @@ pub(crate) struct PceGraphicsSnapshot {
 pub(crate) struct PceVdcGraphicsSnapshot {
     pub(crate) vram: Vec<u16>,
     pub(crate) registers: [u16; 0x14],
-}
-pub(crate) const LEMMINGS_JAPAN_CANONICAL_DISC_SHA256: [u8; 32] = [
-    0x0f, 0x29, 0x95, 0xc0, 0x20, 0xab, 0x89, 0x33, 0x6c, 0x1e, 0x6d, 0xba, 0x49, 0xc6, 0x3a, 0xd8,
-    0x80, 0x5a, 0xad, 0xd2, 0x01, 0xb9, 0x21, 0x87, 0xf8, 0x1d, 0x53, 0xa1, 0x77, 0x04, 0x9a, 0x52,
-];
-pub(crate) const TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256: [u8; 32] = [
-    0x18, 0x14, 0xb8, 0xb2, 0x56, 0x34, 0x70, 0x8b, 0x4b, 0x00, 0xef, 0x3f, 0xa0, 0x49, 0xef, 0xb3,
-    0x3d, 0xfd, 0xb5, 0x44, 0x20, 0xf0, 0x46, 0x05, 0xed, 0x11, 0xd5, 0xb0, 0x24, 0x1b, 0xe7, 0xc0,
-];
-pub(crate) const SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256: [u8; 32] = [
-    0x6d, 0x9c, 0x62, 0x34, 0x57, 0x8f, 0x65, 0x3d, 0x4c, 0x81, 0x37, 0x9e, 0x0b, 0xef, 0xfb, 0x4b,
-    0x80, 0xbe, 0x18, 0x16, 0xf6, 0x61, 0x42, 0xfd, 0x08, 0x63, 0xa7, 0x79, 0xe6, 0x8f, 0xab, 0x8f,
-];
-pub(crate) const GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256: [u8; 32] = [
-    0xa3, 0x88, 0x7d, 0xa6, 0x25, 0xbb, 0x8d, 0xee, 0x4f, 0xe3, 0x44, 0x76, 0x51, 0x52, 0xab, 0x43,
-    0x73, 0xe8, 0xc5, 0x3d, 0x80, 0xda, 0x78, 0x1b, 0x1a, 0xc9, 0x3e, 0x7d, 0x0e, 0x6d, 0xb8, 0xb2,
-];
-
-pub(crate) fn automatic_controller_mode(content_hash: [u8; 32]) -> PceControllerMode {
-    if content_hash == LEMMINGS_JAPAN_CANONICAL_DISC_SHA256 {
-        PceControllerMode::Mouse
-    } else if content_hash == TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256 {
-        PceControllerMode::Multitap
-    } else {
-        PceControllerMode::TwoButton
-    }
-}
-
-pub(crate) const fn automatic_memory_base_enabled(normalized_disc_hash: Option<[u8; 32]>) -> bool {
-    matches!(
-        normalized_disc_hash,
-        Some(SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256)
-    )
-}
-
-pub(crate) const fn automatic_arcade_card_enabled(normalized_disc_hash: Option<[u8; 32]>) -> bool {
-    matches!(
-        normalized_disc_hash,
-        Some(GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256)
-    )
 }
 const PCE_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
@@ -543,6 +510,10 @@ impl PceBackend {
         self.cdrom2().map(|cdrom| cdrom.disc().content_hash())
     }
 
+    pub(crate) fn controller_profile_hash(&self) -> [u8; 32] {
+        self.source_disc_hash.unwrap_or(self.rom_hash)
+    }
+
     pub(crate) const fn source_crc32(&self) -> Option<u32> {
         self.source_crc32
     }
@@ -704,7 +675,7 @@ impl PceBackend {
     fn effective_controller_mode(&self, requested: PceControllerMode) -> PceControllerMode {
         match requested {
             PceControllerMode::Automatic => {
-                automatic_controller_mode(self.source_disc_hash.unwrap_or(self.rom_hash))
+                automatic_controller_mode(self.controller_profile_hash())
             }
             explicit => explicit,
         }
@@ -730,9 +701,15 @@ impl PceBackend {
                     zeff_pce_core::hardware::MultitapDevice::TwoButton(
                         zeff_pce_core::hardware::TwoButtonPad::new(),
                     ),
-                    zeff_pce_core::hardware::MultitapDevice::Disconnected,
-                    zeff_pce_core::hardware::MultitapDevice::Disconnected,
-                    zeff_pce_core::hardware::MultitapDevice::Disconnected,
+                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
+                        zeff_pce_core::hardware::TwoButtonPad::new(),
+                    ),
+                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
+                        zeff_pce_core::hardware::TwoButtonPad::new(),
+                    ),
+                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
+                        zeff_pce_core::hardware::TwoButtonPad::new(),
+                    ),
                 ]))
             }
             PceControllerMode::Automatic | PceControllerMode::TwoButton => {
@@ -945,6 +922,30 @@ impl EmulatorCore for PceBackend {
     fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         self.set_multitap_pad_input(
             zeff_pce_core::hardware::MultitapPort::Two,
+            buttons_pressed,
+            dpad_pressed,
+        );
+    }
+
+    fn set_input_p3(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.set_multitap_pad_input(
+            zeff_pce_core::hardware::MultitapPort::Three,
+            buttons_pressed,
+            dpad_pressed,
+        );
+    }
+
+    fn set_input_p4(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.set_multitap_pad_input(
+            zeff_pce_core::hardware::MultitapPort::Four,
+            buttons_pressed,
+            dpad_pressed,
+        );
+    }
+
+    fn set_input_p5(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.set_multitap_pad_input(
+            zeff_pce_core::hardware::MultitapPort::Five,
             buttons_pressed,
             dpad_pressed,
         );

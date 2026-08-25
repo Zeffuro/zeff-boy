@@ -5,8 +5,7 @@ use super::{
     PceCartridgeDescriptor, PceCartridgeHardware, PceDevices, PceHardwareTopology, PceHuCardBoard,
     PceMachine, PceVideoRenderError, PhysicalRegion, PsgRevision, SUPERGRAFX_WORK_RAM_LEN,
     VDC_SATB_WORDS, VceFrameLength, VcePixelClock, VcePort, VdcActiveDisplayLine, VdcDmaChannel,
-    VdcExternalVceScanline, VdcRegister, VdcScanlineAdvanceError, VdcStatus, VpcPort, VpcVdc,
-    decode_physical_region_for,
+    VdcExternalVceScanline, VdcRegister, VdcStatus, VpcPort, VpcVdc, decode_physical_region_for,
 };
 use crate::hardware::{ControllerPort, PceConsoleWiring};
 
@@ -310,15 +309,6 @@ fn dual_vdcs_receive_identical_pixels_and_transactional_line_markers() {
         0x0020,
     );
     let line = VdcExternalVceScanline::new(1, false, VceFrameLength::Lines262);
-    assert_eq!(
-        devices.advance_machine_vce_scanline(line),
-        Err(VdcScanlineAdvanceError::InvalidSyncMode)
-    );
-    write_register(
-        devices.supergrafx_video_mut().unwrap().vdc2_mut(),
-        VdcRegister::Control,
-        0,
-    );
     let next = devices.advance_machine_vce_scanline(line).unwrap();
     assert_eq!(next.0, next.1.unwrap());
 }

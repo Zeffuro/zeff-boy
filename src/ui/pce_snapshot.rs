@@ -549,8 +549,9 @@ fn pce_vdc_section(heading: &'static str, vdc: &VdcDebugSnapshot) -> DebugSectio
                 vdc.raster_counter
             ),
             format!(
-                "sync={:?} VRAM DMA={} SATB DMA={}",
-                vdc.sync_mode,
+                "sync out H={} V={} VRAM DMA={} SATB DMA={}",
+                on_off(vdc.sync_output.horizontal()),
+                on_off(vdc.sync_output.vertical()),
                 vdc.active_vram_dma
                     .or(vdc.pending_vram_dma)
                     .map(|dma| format!(

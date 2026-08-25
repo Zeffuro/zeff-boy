@@ -21,7 +21,10 @@ use audio::AudioStats;
 use debug_state::*;
 use gb::run_gb_headless;
 use gba::run_gba_headless;
-use input::{InputMasks, input_for_frame, input_p2_for_frame};
+use input::{
+    InputMasks, input_for_frame, input_p2_for_frame, input_p3_for_frame, input_p4_for_frame,
+    input_p5_for_frame,
+};
 use nes::run_nes_headless;
 use pce::{run_pce_headless, run_pce_seven_zip_headless};
 use replay::run_replay_headless;

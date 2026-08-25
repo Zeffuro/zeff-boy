@@ -8,6 +8,12 @@ pub struct ReplayJoypadFrame {
     pub dpad: u8,
     pub buttons_p2: u8,
     pub dpad_p2: u8,
+    pub buttons_p3: u8,
+    pub dpad_p3: u8,
+    pub buttons_p4: u8,
+    pub dpad_p4: u8,
+    pub buttons_p5: u8,
+    pub dpad_p5: u8,
     pub zapper: ReplayZapperFrame,
     pub host_tilt: (f32, f32),
     pub camera_frame: Option<Vec<u8>>,
@@ -27,6 +33,12 @@ impl PartialEq for ReplayJoypadFrame {
             && self.dpad == other.dpad
             && self.buttons_p2 == other.buttons_p2
             && self.dpad_p2 == other.dpad_p2
+            && self.buttons_p3 == other.buttons_p3
+            && self.dpad_p3 == other.dpad_p3
+            && self.buttons_p4 == other.buttons_p4
+            && self.dpad_p4 == other.dpad_p4
+            && self.buttons_p5 == other.buttons_p5
+            && self.dpad_p5 == other.dpad_p5
             && self.zapper == other.zapper
             && self.host_tilt.0.to_bits() == other.host_tilt.0.to_bits()
             && self.host_tilt.1.to_bits() == other.host_tilt.1.to_bits()
@@ -43,6 +55,12 @@ impl ReplayJoypadFrame {
             dpad,
             buttons_p2: 0,
             dpad_p2: 0,
+            buttons_p3: 0,
+            dpad_p3: 0,
+            buttons_p4: 0,
+            dpad_p4: 0,
+            buttons_p5: 0,
+            dpad_p5: 0,
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,

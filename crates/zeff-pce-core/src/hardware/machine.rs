@@ -5,8 +5,8 @@ use zeff_emu_common::address::Address;
 use zeff_emu_common::cheats::CheatByteTarget;
 use zeff_emu_common::debug::{
     AddressDebugController, AddressWatchHit, AddressWatchpoint, BreakpointHitCondition, DebugEvent,
-    InstructionTraceRecord, InstructionTraceStore, MAX_TRACE_WRITES, RegisterDelta, TraceExecMode,
-    TraceWrite, TraceWriteKind, TraceWriteWidth, WatchType,
+    InstructionTraceRecord, InstructionTraceStore, MAX_TRACE_INSTRUCTION_BYTES, MAX_TRACE_WRITES,
+    RegisterDelta, TraceExecMode, TraceWrite, TraceWriteKind, TraceWriteWidth, WatchType,
 };
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
@@ -23,7 +23,7 @@ use super::cpu::{
 };
 use super::pce_devices::PceDevices;
 use super::psg::{MAX_PSG_STATE_SECTION_BYTES, PsgRevision};
-use super::save_state::{PceV1Identity, read_section, write_section};
+use super::save_state::{PceStateIdentity, read_section, write_section};
 use super::vdc::{HuC6270, VdcDmaError};
 use super::vdc_scanline::{VceFrameLength, VdcExternalVceScanline, VdcScanlineAdvanceError};
 use super::vdc_video::{PceActiveOnlyVideoFrame, PcePresentedFrame, PceVideoRenderError};
@@ -408,6 +408,7 @@ pub struct PceMachine {
     skip_breakpoint_once: bool,
     opcode_history: PceOpcodeHistory,
     instruction_trace: InstructionTraceStore,
+    trace_scratch: TimedInstructionTrace,
     trace_frame: u64,
     debug: AddressDebugController,
 }
@@ -430,13 +431,40 @@ struct TimedMachineBus<'a> {
     frames_published: u64,
     fault: Option<PceMachineError>,
     pending_debug_write: Option<(u32, u8)>,
-    instruction_bytes: Vec<u8>,
-    trace_writes: Vec<TraceWrite>,
-    trace_write_overflow: u16,
+    trace: Option<&'a mut TimedInstructionTrace>,
     trace_enabled: bool,
     capture_old_writes: bool,
     dma_completed: bool,
     debug: &'a mut AddressDebugController,
+}
+
+#[derive(Debug)]
+struct TimedInstructionTrace {
+    instruction_bytes: [u8; MAX_TRACE_INSTRUCTION_BYTES],
+    instruction_byte_len: u8,
+    trace_writes: [TraceWrite; MAX_TRACE_WRITES],
+    trace_write_len: u8,
+    trace_write_overflow: u16,
+}
+
+impl Default for TimedInstructionTrace {
+    fn default() -> Self {
+        Self {
+            instruction_bytes: [0; MAX_TRACE_INSTRUCTION_BYTES],
+            instruction_byte_len: 0,
+            trace_writes: [TraceWrite::default(); MAX_TRACE_WRITES],
+            trace_write_len: 0,
+            trace_write_overflow: 0,
+        }
+    }
+}
+
+impl TimedInstructionTrace {
+    fn clear(&mut self) {
+        self.instruction_byte_len = 0;
+        self.trace_write_len = 0;
+        self.trace_write_overflow = 0;
+    }
 }
 
 impl<'a> TimedMachineBus<'a> {
@@ -450,9 +478,10 @@ impl<'a> TimedMachineBus<'a> {
         vce_line_index: &'a mut u16,
         vce_frame_length: &'a mut VceFrameLength,
         master_ticks_per_cycle: u64,
-        trace_enabled: bool,
+        trace: Option<&'a mut TimedInstructionTrace>,
         debug: &'a mut AddressDebugController,
     ) -> Self {
+        let trace_enabled = trace.is_some();
         let capture_old_writes = trace_enabled
             || debug.watchpoints.iter().any(|watchpoint| {
                 matches!(
@@ -478,9 +507,7 @@ impl<'a> TimedMachineBus<'a> {
             frames_published: 0,
             fault: None,
             pending_debug_write: None,
-            instruction_bytes: Vec::new(),
-            trace_writes: Vec::new(),
-            trace_write_overflow: 0,
+            trace,
             trace_enabled,
             capture_old_writes,
             dma_completed: false,
@@ -536,13 +563,15 @@ impl<'a> TimedMachineBus<'a> {
     }
 
     fn record_trace_write(&mut self, write: TraceWrite) {
-        if !self.trace_enabled {
+        let Some(trace) = &mut self.trace else {
             return;
-        }
-        if self.trace_writes.len() == MAX_TRACE_WRITES {
-            self.trace_write_overflow = self.trace_write_overflow.saturating_add(1);
+        };
+        let len = usize::from(trace.trace_write_len);
+        if len == MAX_TRACE_WRITES {
+            trace.trace_write_overflow = trace.trace_write_overflow.saturating_add(1);
         } else {
-            self.trace_writes.push(write);
+            trace.trace_writes[len] = write;
+            trace.trace_write_len += 1;
         }
     }
 
@@ -773,8 +802,12 @@ impl CpuBus for TimedMachineBus<'_> {
     }
 
     fn observe_instruction_byte(&mut self, _logical_addr: u16, _physical_addr: u32, value: u8) {
-        if self.trace_enabled {
-            self.instruction_bytes.push(value);
+        if let Some(trace) = &mut self.trace {
+            let len = usize::from(trace.instruction_byte_len);
+            if len < MAX_TRACE_INSTRUCTION_BYTES {
+                trace.instruction_bytes[len] = value;
+                trace.instruction_byte_len += 1;
+            }
         }
     }
 
@@ -815,8 +848,10 @@ impl PceMachine {
         Ok(())
     }
 
-    pub(super) fn write_v1_state(&self, writer: &mut StateWriter) {
-        write_section(writer, |section| self.cpu.write_state(section));
+    pub(super) fn write_state(&self, writer: &mut StateWriter, state_version: u32) {
+        write_section(writer, |section| {
+            self.cpu.write_state(section, state_version)
+        });
         write_section(writer, |section| self.bus.write_state(section));
         write_section(writer, |section| {
             self.bus.devices().vdc().write_state(section)
@@ -859,12 +894,13 @@ impl PceMachine {
         write_section(writer, |section| self.back_video.write_state(section));
     }
 
-    pub(super) fn replace_from_v1_state(
+    pub(super) fn replace_from_state(
         &mut self,
         data: &[u8],
-        identity: PceV1Identity,
+        identity: PceStateIdentity,
+        state_version: u32,
     ) -> anyhow::Result<()> {
-        let PceV1Identity {
+        let PceStateIdentity {
             board,
             topology,
             wiring,
@@ -925,7 +961,7 @@ impl PceMachine {
 
         let mut reader = StateReader::new(data);
         read_section(&mut reader, 256, "CPU", |section| {
-            restored.cpu.read_state(section)
+            restored.cpu.read_state(section, state_version)
         })?;
         if !restored.cpu.at_action_boundary() {
             bail!("PC Engine save-state is not at a CPU action boundary");
@@ -1254,6 +1290,7 @@ impl PceMachine {
             skip_breakpoint_once: false,
             opcode_history: PceOpcodeHistory::default(),
             instruction_trace: InstructionTraceStore::default(),
+            trace_scratch: TimedInstructionTrace::default(),
             trace_frame: 0,
             debug: AddressDebugController::new(),
         };
@@ -1753,6 +1790,9 @@ impl PceMachine {
         let trace_rom_offset = trace_enabled
             .then(|| self.bus.hucard_rom_offset(physical_pc))
             .flatten();
+        if trace_enabled {
+            self.trace_scratch.clear();
+        }
         let trace_frame = self.trace_frame;
         let trace_cycle = self.master_ticks;
         let trace_bank = physical_pc >> 13;
@@ -1769,9 +1809,6 @@ impl PceMachine {
             master_ticks,
             vce_lines,
             frames_published,
-            instruction_bytes,
-            trace_writes,
-            trace_write_overflow,
             dma_completed,
         ) = {
             let mut bus = TimedMachineBus::new(
@@ -1783,7 +1820,7 @@ impl PceMachine {
                 &mut self.vce_line_index,
                 &mut self.vce_frame_length,
                 master_ticks_per_cycle,
-                trace_enabled,
+                trace_enabled.then_some(&mut self.trace_scratch),
                 &mut self.debug,
             );
             let mut action = None;
@@ -1808,9 +1845,6 @@ impl PceMachine {
                 bus.elapsed_master_ticks,
                 bus.vce_lines,
                 bus.frames_published,
-                bus.instruction_bytes,
-                bus.trace_writes,
-                bus.trace_write_overflow,
                 bus.dma_completed,
             )
         };
@@ -1826,6 +1860,7 @@ impl PceMachine {
         }
         let action = action.expect("successful CPU action is present");
         if trace_enabled {
+            let trace = &self.trace_scratch;
             let mut record = InstructionTraceRecord::new(
                 TraceExecMode::HuC6280,
                 u32::from(logical_pc),
@@ -1835,7 +1870,7 @@ impl PceMachine {
                 if matches!(action, PceCpuAction::Interrupt(_)) {
                     &[]
                 } else {
-                    &instruction_bytes
+                    &trace.instruction_bytes[..usize::from(trace.instruction_byte_len)]
                 },
             );
             record.bank = Some(trace_bank);
@@ -1844,10 +1879,10 @@ impl PceMachine {
             } else if dma_completed {
                 record.event = Some(DebugEvent::Dma);
             }
-            for write in trace_writes {
-                record.push_write(write);
+            for write in &trace.trace_writes[..usize::from(trace.trace_write_len)] {
+                record.push_write(*write);
             }
-            record.write_overflow = trace_write_overflow;
+            record.write_overflow = trace.trace_write_overflow;
             push_pce_register_deltas(
                 &mut record,
                 &trace_registers_before.expect("trace state is present"),
@@ -1925,7 +1960,7 @@ impl PceMachine {
                 &mut self.vce_line_index,
                 &mut self.vce_frame_length,
                 1,
-                false,
+                None,
                 &mut self.debug,
             );
             bus.advance_devices(master_ticks);

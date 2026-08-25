@@ -326,6 +326,33 @@ pub(crate) fn parse_args_from(
                     .extend(parse_input_event_arg(value, args[i].as_str())?);
                 i += 2;
             }
+            "--press-p3" | "--input-p3" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires an input spec", args[i]);
+                };
+                headless
+                    .input_events_p3
+                    .extend(parse_input_event_arg(value, args[i].as_str())?);
+                i += 2;
+            }
+            "--press-p4" | "--input-p4" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires an input spec", args[i]);
+                };
+                headless
+                    .input_events_p4
+                    .extend(parse_input_event_arg(value, args[i].as_str())?);
+                i += 2;
+            }
+            "--press-p5" | "--input-p5" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires an input spec", args[i]);
+                };
+                headless
+                    .input_events_p5
+                    .extend(parse_input_event_arg(value, args[i].as_str())?);
+                i += 2;
+            }
             "--input-script" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--input-script requires a file path");
@@ -338,6 +365,19 @@ pub(crate) fn parse_args_from(
                     anyhow::bail!("--input-script-p2 requires a file path");
                 };
                 headless.input_events_p2.extend(parse_input_script(value)?);
+                i += 2;
+            }
+            "--input-script-p3" | "--input-script-p4" | "--input-script-p5" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{} requires a file path", args[i]);
+                };
+                let events = parse_input_script(value)?;
+                match args[i].as_str() {
+                    "--input-script-p3" => headless.input_events_p3.extend(events),
+                    "--input-script-p4" => headless.input_events_p4.extend(events),
+                    "--input-script-p5" => headless.input_events_p5.extend(events),
+                    _ => unreachable!(),
+                }
                 i += 2;
             }
             "--zapper" => {

@@ -97,6 +97,13 @@ pub(crate) fn settings_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
+#[cfg(not(test))]
+pub(crate) fn cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .map(|base| base.join("zeff-boy"))
+        .unwrap_or_else(settings_dir)
+}
+
 pub(crate) fn write_save_data(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::time::{SystemTime, UNIX_EPOCH};

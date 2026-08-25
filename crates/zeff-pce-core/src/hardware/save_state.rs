@@ -5,13 +5,14 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 use super::{PceConsoleWiring, PceHardwareTopology, PceHuCardBoard, PceMachine, PsgRevision};
 
 const MAGIC: &[u8; 8] = b"ZBPCE\0\0\0";
-const VERSION: u32 = 1;
+const LEGACY_VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const CONTENT_HUCARD: u8 = 0;
 const CONTENT_CD: u8 = 1;
 const MAX_BODY_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
-pub(super) struct PceV1Identity {
+pub(super) struct PceStateIdentity {
     pub board: PceHuCardBoard,
     pub topology: PceHardwareTopology,
     pub wiring: PceConsoleWiring,
@@ -41,7 +42,7 @@ pub fn encode_state(machine: &PceMachine) -> anyhow::Result<Vec<u8>> {
     if let Some(cdrom2) = cdrom2 {
         writer.write_bytes(&cdrom2.disc().content_hash());
     }
-    write_section(&mut writer, |section| machine.write_v1_state(section));
+    write_section(&mut writer, |section| machine.write_state(section, VERSION));
     Ok(writer.into_bytes())
 }
 
@@ -55,7 +56,7 @@ pub fn decode_state(machine: &mut PceMachine, data: &[u8]) -> anyhow::Result<()>
         bail!("not a valid PC Engine save-state");
     }
     let version = reader.read_u32()?;
-    if version != VERSION {
+    if !matches!(version, LEGACY_VERSION | VERSION) {
         bail!("unsupported PC Engine save-state version {version}");
     }
     let saved_is_cd = match reader.read_u8()? {
@@ -115,9 +116,9 @@ pub fn decode_state(machine: &mut PceMachine, data: &[u8]) -> anyhow::Result<()>
         bail!("PC Engine save-state has unexpected trailing data");
     }
     machine
-        .replace_from_v1_state(
+        .replace_from_state(
             &body,
-            PceV1Identity {
+            PceStateIdentity {
                 board,
                 topology,
                 wiring,
@@ -125,14 +126,13 @@ pub fn decode_state(machine: &mut PceMachine, data: &[u8]) -> anyhow::Result<()>
                 is_cd: saved_is_cd,
                 has_arcade_card,
             },
+            version,
         )
         .context("invalid PC Engine save-state payload")
 }
 
 pub(super) fn write_section(writer: &mut StateWriter, write: impl FnOnce(&mut StateWriter)) {
-    let mut section = StateWriter::new();
-    write(&mut section);
-    writer.write_vec(&section.into_bytes());
+    writer.write_section(write);
 }
 
 pub(super) fn read_section(
@@ -227,10 +227,10 @@ mod tests {
     use crate::hardware::{
         CD_USER_SECTOR_BYTES, CDROM2_ADPCM_RAM_LEN, CDROM2_BRAM_LEN, CDROM2_REGISTER_START,
         CDROM2_WORK_RAM_LEN, CdAudioStatus, CdDisc, CdScsiPhase, CdTrack, CdTrackMode,
-        ControllerDevice, ControllerPort, HuC6270, PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS,
-        PROVISIONAL_CDROM2_PHASE_TICKS, PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE,
-        PceCartridgeDescriptor, PceCartridgeHardware, PceMouse, PsgPort, SUPERGRAFX_WORK_RAM_LEN,
-        VcePort, VdcRegister, VpcPort,
+        ControllerDevice, ControllerPort, HuC6270, OPEN_BUS_VALUE,
+        PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS, PROVISIONAL_CDROM2_PHASE_TICKS,
+        PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE, PceCartridgeDescriptor, PceCartridgeHardware,
+        PceMouse, PsgPort, SUPERGRAFX_WORK_RAM_LEN, VcePort, VdcRegister, VpcPort,
     };
 
     const VERSION_OFFSET: usize = 8;
@@ -245,6 +245,16 @@ mod tests {
         rom[..10].copy_from_slice(&[0xA9, 0xF8, 0x53, 0x02, 0xEE, 0x00, 0x20, 0x4C, 0x04, 0x00]);
         rom[0x1FFE] = 0;
         rom[0x1FFF] = 0;
+        rom
+    }
+
+    fn io_latch_rom() -> Vec<u8> {
+        let mut rom = vec![0xEA; 0x2000];
+        rom[..12].copy_from_slice(&[
+            0xA9, 0xFF, 0x53, 0x01, 0xA9, 0x20, 0x8D, 0x00, 0x08, 0x4C, 0x09, 0xE0,
+        ]);
+        rom[0x1FFE] = 0;
+        rom[0x1FFF] = 0xE0;
         rom
     }
 
@@ -282,6 +292,36 @@ mod tests {
         }
         let len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         offset + size_of::<u32>()..offset + size_of::<u32>() + len
+    }
+
+    fn remove_body_section_byte(bytes: &mut Vec<u8>, section_index: usize, offset: usize) {
+        let section = body_section_payload(bytes, section_index);
+        let section_len_offset = section.start - size_of::<u32>();
+        let section_len =
+            u32::from_le_bytes(bytes[section_len_offset..section.start].try_into().unwrap());
+        let body_len_offset = BODY_LEN_OFFSET
+            + if bytes[CONTENT_OFFSET] == CONTENT_CD {
+                32
+            } else {
+                0
+            };
+        let body_len = u32::from_le_bytes(
+            bytes[body_len_offset..body_len_offset + size_of::<u32>()]
+                .try_into()
+                .unwrap(),
+        );
+
+        bytes.remove(offset);
+        bytes[section_len_offset..section.start].copy_from_slice(&(section_len - 1).to_le_bytes());
+        bytes[body_len_offset..body_len_offset + size_of::<u32>()]
+            .copy_from_slice(&(body_len - 1).to_le_bytes());
+    }
+
+    fn downgrade_to_v1(mut bytes: Vec<u8>) -> Vec<u8> {
+        let cpu = body_section_payload(&bytes, 0);
+        remove_body_section_byte(&mut bytes, 0, cpu.end - 3);
+        bytes[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&LEGACY_VERSION.to_le_bytes());
+        bytes
     }
 
     fn write_vdc_register(machine: &mut PceMachine, register: VdcRegister, value: u16) {
@@ -432,6 +472,31 @@ mod tests {
     }
 
     #[test]
+    fn v2_roundtrips_the_io_buffer_and_v1_loads_its_reset_value() {
+        let rom = io_latch_rom();
+        let mut saved = test_machine(rom.clone());
+        run_boundaries(&mut saved, 4);
+        let v2 = encode_state(&saved).unwrap();
+        let cpu = body_section_payload(&v2, 0);
+        assert_eq!(
+            u32::from_le_bytes(v2[VERSION_OFFSET..12].try_into().unwrap()),
+            VERSION
+        );
+        assert_eq!(v2[cpu.end - 3], 0x20);
+
+        let mut restored_v2 = test_machine(rom.clone());
+        decode_state(&mut restored_v2, &v2).unwrap();
+        assert_eq!(encode_state(&restored_v2).unwrap(), v2);
+
+        let v1 = downgrade_to_v1(v2);
+        let mut restored_v1 = test_machine(rom);
+        decode_state(&mut restored_v1, &v1).unwrap();
+        let migrated_v1 = encode_state(&restored_v1).unwrap();
+        let cpu = body_section_payload(&migrated_v1, 0);
+        assert_eq!(migrated_v1[cpu.end - 3], OPEN_BUS_VALUE);
+    }
+
+    #[test]
     fn enabled_audio_roundtrips_bytes_and_pcm_continuation_exactly() {
         let rom = test_rom();
         let mut saved = PceMachine::new(rom.clone()).unwrap();
@@ -544,7 +609,7 @@ mod tests {
         );
 
         let mut wrong_version = bytes.clone();
-        wrong_version[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&2_u32.to_le_bytes());
+        wrong_version[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&3_u32.to_le_bytes());
         assert!(decode_state(&mut target, &wrong_version).is_err());
 
         let mut wrong_magic = bytes.clone();

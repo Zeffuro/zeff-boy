@@ -25,7 +25,12 @@ pub(super) fn draw(
             .weak()
             .small(),
     );
-    joypad::draw(ui, settings, state);
+    joypad::draw(
+        ui,
+        settings,
+        state,
+        active_system == Some(ActiveSystem::Pce),
+    );
 
     ui.separator();
     super::draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);

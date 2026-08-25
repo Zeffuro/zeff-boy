@@ -32,8 +32,24 @@ pub(super) fn input_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks 
 }
 
 pub(super) fn input_p2_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
+    input_for_player_frame(&opts.input_events_p2, frame)
+}
+
+pub(super) fn input_p3_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
+    input_for_player_frame(&opts.input_events_p3, frame)
+}
+
+pub(super) fn input_p4_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
+    input_for_player_frame(&opts.input_events_p4, frame)
+}
+
+pub(super) fn input_p5_for_frame(opts: &HeadlessOptions, frame: u64) -> InputMasks {
+    input_for_player_frame(&opts.input_events_p5, frame)
+}
+
+fn input_for_player_frame(events: &[HeadlessInputEvent], frame: u64) -> InputMasks {
     let mut input = InputMasks::default();
-    apply_input_events(&mut input, &opts.input_events_p2, frame);
+    apply_input_events(&mut input, events, frame);
     input
 }
 

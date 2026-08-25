@@ -49,18 +49,29 @@ impl App {
                     self.settings.gamepad_bindings.set(action, button_name);
                     self.debug_windows.rebinding_gamepad = None;
                     self.debug_windows.rebinding_gamepad_p2 = None;
+                    self.debug_windows.rebinding_gamepad_pce_multitap = None;
                 }
             } else if let Some(action) = self.debug_windows.rebinding_gamepad_p2 {
                 if let Some(button_name) = poll.raw_pressed.first() {
                     self.settings.gamepad_bindings.set_p2(action, button_name);
                     self.debug_windows.rebinding_gamepad = None;
                     self.debug_windows.rebinding_gamepad_p2 = None;
+                    self.debug_windows.rebinding_gamepad_pce_multitap = None;
+                }
+            } else if let Some((player, action)) = self.debug_windows.rebinding_gamepad_pce_multitap
+            {
+                if let Some(button_name) = poll.raw_pressed.first() {
+                    self.settings
+                        .gamepad_bindings
+                        .set_for_player(action, player, button_name);
+                    self.debug_windows.rebinding_gamepad_pce_multitap = None;
                 }
             } else if let Some(button) = self.debug_windows.rebinding_ws_gamepad {
                 if let Some(button_name) = poll.raw_pressed.first() {
                     self.settings.gamepad_bindings.set_ws(button, button_name);
                     self.debug_windows.rebinding_ws_gamepad = None;
                     self.debug_windows.rebinding_gamepad_p2 = None;
+                    self.debug_windows.rebinding_gamepad_pce_multitap = None;
                 }
             } else if let Some(action) = self.debug_windows.rebinding_gamepad_action {
                 if let Some(button_name) = poll.raw_pressed.first() {
@@ -69,6 +80,7 @@ impl App {
                         .set_action(action, button_name);
                     self.debug_windows.rebinding_gamepad_action = None;
                     self.debug_windows.rebinding_gamepad_p2 = None;
+                    self.debug_windows.rebinding_gamepad_pce_multitap = None;
                 }
             } else {
                 for (key, pressed) in poll.events {
@@ -76,6 +88,15 @@ impl App {
                 }
                 for (key, pressed) in poll.events_p2 {
                     self.host_input.set_gamepad_p2(key, pressed);
+                }
+                for (key, pressed) in poll.events_p3 {
+                    self.host_input.set_gamepad_p3(key, pressed);
+                }
+                for (key, pressed) in poll.events_p4 {
+                    self.host_input.set_gamepad_p4(key, pressed);
+                }
+                for (key, pressed) in poll.events_p5 {
+                    self.host_input.set_gamepad_p5(key, pressed);
                 }
                 for (button, pressed) in poll.ws_events {
                     self.host_input.set_ws_gamepad(button, pressed);
@@ -160,6 +181,9 @@ impl App {
 
         if self.recording.should_stage_replay_recording_input() {
             let (buttons_p2, dpad_p2) = self.current_host_joypad_p2_input();
+            let (buttons_p3, dpad_p3) = self.current_host_joypad_p3_input();
+            let (buttons_p4, dpad_p4) = self.current_host_joypad_p4_input();
+            let (buttons_p5, dpad_p5) = self.current_host_joypad_p5_input();
             let zapper = if self.active_system == crate::emu_backend::ActiveSystem::Nes {
                 self.nes_zapper_input().into()
             } else {
@@ -181,6 +205,12 @@ impl App {
                     dpad,
                     buttons_p2,
                     dpad_p2,
+                    buttons_p3,
+                    dpad_p3,
+                    buttons_p4,
+                    dpad_p4,
+                    buttons_p5,
+                    dpad_p5,
                     zapper,
                     host_tilt,
                     camera_frame,

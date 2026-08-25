@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use winit::keyboard::KeyCode;
 
 use super::binding_actions::{BindingAction, WonderSwanButton};
-use super::keycode_serde::{keycode_to_string, parse_key_or_default};
+use super::keycode_serde::{keycode_from_string, keycode_to_string, parse_key_or_default};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeyBindings {
@@ -153,6 +153,43 @@ impl<'de> Deserialize<'de> for KeyBindings {
             start: parse_key_or_default(raw.start.as_deref(), d.start),
             select: parse_key_or_default(raw.select.as_deref(), d.select),
         })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub(crate) struct PceMultitapKeyBindings([String; 12]);
+
+impl Default for PceMultitapKeyBindings {
+    fn default() -> Self {
+        Self(std::array::from_fn(|_| String::new()))
+    }
+}
+
+impl PceMultitapKeyBindings {
+    pub(crate) fn get(&self, action: BindingAction) -> Option<KeyCode> {
+        keycode_from_string(&self.0[binding_action_index(action)])
+    }
+
+    pub(crate) fn set(&mut self, action: BindingAction, key: KeyCode) {
+        self.0[binding_action_index(action)] = keycode_to_string(key);
+    }
+}
+
+const fn binding_action_index(action: BindingAction) -> usize {
+    match action {
+        BindingAction::Up => 0,
+        BindingAction::Down => 1,
+        BindingAction::Left => 2,
+        BindingAction::Right => 3,
+        BindingAction::A => 4,
+        BindingAction::B => 5,
+        BindingAction::X => 6,
+        BindingAction::Y => 7,
+        BindingAction::L => 8,
+        BindingAction::R => 9,
+        BindingAction::Start => 10,
+        BindingAction::Select => 11,
     }
 }
 

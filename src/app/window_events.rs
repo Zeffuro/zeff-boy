@@ -773,7 +773,7 @@ impl App {
             || !pce_mouse_capture_allowed(
                 self.active_system,
                 self.settings.emulation.pce_controller,
-                self.rom_info.rom_hash,
+                self.rom_info.pce_controller_profile_hash,
             )
             || self.settings.emulation.pce_mouse_cursor_mode
                 != crate::settings::PceMouseCursorMode::Captured
@@ -926,7 +926,7 @@ pub(super) fn pce_mouse_capture_allowed(
     match preference {
         crate::settings::PceControllerPreference::Mouse => true,
         crate::settings::PceControllerPreference::Auto => content_hash.is_some_and(|hash| {
-            crate::emu_backend::pce::automatic_controller_mode(hash)
+            crate::emu_backend::pce_profiles::automatic_controller_mode(hash)
                 == zeff_pce_core::hardware::PceControllerMode::Mouse
         }),
         crate::settings::PceControllerPreference::TwoButton
@@ -1003,7 +1003,7 @@ mod tests {
         assert!(pce_mouse_capture_allowed(
             ActiveSystem::Pce,
             PceControllerPreference::Auto,
-            Some(crate::emu_backend::pce::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
+            Some(crate::emu_backend::pce_profiles::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
         ));
         assert!(!pce_mouse_capture_allowed(
             ActiveSystem::Pce,
@@ -1018,12 +1018,14 @@ mod tests {
         assert!(!pce_mouse_capture_allowed(
             ActiveSystem::Pce,
             PceControllerPreference::Multitap,
-            Some(crate::emu_backend::pce::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
+            Some(crate::emu_backend::pce_profiles::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
         ));
         assert!(!pce_mouse_capture_allowed(
             ActiveSystem::Pce,
             PceControllerPreference::Auto,
-            Some(crate::emu_backend::pce::TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256,),
+            Some(
+                crate::emu_backend::pce_profiles::TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256,
+            ),
         ));
         assert!(!pce_mouse_capture_allowed(
             ActiveSystem::Nes,

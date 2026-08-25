@@ -62,6 +62,16 @@ impl StateWriter {
         self.write_u32(data.len() as u32);
         self.write_bytes(data);
     }
+
+    pub fn write_section(&mut self, write: impl FnOnce(&mut Self)) {
+        let length_position = self.position();
+        self.write_u32(0);
+        let body_position = self.position();
+        write(self);
+        let length = u32::try_from(self.position() - body_position)
+            .expect("save-state section exceeds u32 length");
+        self.bytes[length_position..body_position].copy_from_slice(&length.to_le_bytes());
+    }
 }
 
 pub struct StateReader<'a> {
@@ -223,5 +233,26 @@ mod tests {
     fn with_capacity_works() {
         let w = StateWriter::with_capacity(1024);
         assert_eq!(w.position(), 0);
+    }
+
+    #[test]
+    fn direct_section_matches_buffered_format() {
+        let mut buffered_inner = StateWriter::new();
+        buffered_inner.write_u16(0x1234);
+        buffered_inner.write_vec(&[5, 6, 7]);
+        let mut buffered = StateWriter::new();
+        buffered.write_u8(0xAB);
+        buffered.write_vec(&buffered_inner.into_bytes());
+        buffered.write_u8(0xCD);
+
+        let mut direct = StateWriter::new();
+        direct.write_u8(0xAB);
+        direct.write_section(|section| {
+            section.write_u16(0x1234);
+            section.write_vec(&[5, 6, 7]);
+        });
+        direct.write_u8(0xCD);
+
+        assert_eq!(direct.into_bytes(), buffered.into_bytes());
     }
 }

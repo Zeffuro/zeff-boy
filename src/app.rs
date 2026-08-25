@@ -182,6 +182,7 @@ pub(crate) fn run(
             rom_path: cached_rom_path,
             source_path: cached_source_path,
             rom_hash: None,
+            pce_controller_profile_hash: None,
             replay_metadata: None,
         },
         symbols: crate::symbols::SymbolSession::default(),

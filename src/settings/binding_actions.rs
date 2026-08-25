@@ -84,6 +84,7 @@ impl WonderSwanButton {
 pub(crate) enum InputBindingAction {
     Joypad(BindingAction),
     JoypadP2(BindingAction),
+    PceMultitap { player: u8, action: BindingAction },
     Tilt(TiltBindingAction),
     WonderSwan(WonderSwanButton),
 }

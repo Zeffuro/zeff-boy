@@ -56,7 +56,7 @@ impl App {
             && (!super::window_events::pce_mouse_capture_allowed(
                 self.active_system,
                 self.settings.emulation.pce_controller,
-                self.rom_info.rom_hash,
+                self.rom_info.pce_controller_profile_hash,
             ) || self.settings.emulation.pce_mouse_cursor_mode
                 != crate::settings::PceMouseCursorMode::Captured)
         {
@@ -225,6 +225,36 @@ impl App {
                                     .unwrap_or((0, 0))
                             },
                         );
+                    let (buttons_pressed_p3, dpad_pressed_p3) =
+                        replay_joypad_frames.as_ref().map_or_else(
+                            || self.current_host_joypad_p3_input(),
+                            |frames| {
+                                frames
+                                    .first()
+                                    .map(|frame| (frame.buttons_p3, frame.dpad_p3))
+                                    .unwrap_or((0, 0))
+                            },
+                        );
+                    let (buttons_pressed_p4, dpad_pressed_p4) =
+                        replay_joypad_frames.as_ref().map_or_else(
+                            || self.current_host_joypad_p4_input(),
+                            |frames| {
+                                frames
+                                    .first()
+                                    .map(|frame| (frame.buttons_p4, frame.dpad_p4))
+                                    .unwrap_or((0, 0))
+                            },
+                        );
+                    let (buttons_pressed_p5, dpad_pressed_p5) =
+                        replay_joypad_frames.as_ref().map_or_else(
+                            || self.current_host_joypad_p5_input(),
+                            |frames| {
+                                frames
+                                    .first()
+                                    .map(|frame| (frame.buttons_p5, frame.dpad_p5))
+                                    .unwrap_or((0, 0))
+                            },
+                        );
                     let zapper = replay_joypad_frames.as_ref().map_or_else(
                         || self.nes_zapper_input(),
                         |frames| {
@@ -264,6 +294,12 @@ impl App {
                             dpad: dpad_pressed,
                             buttons_p2: buttons_pressed_p2,
                             dpad_p2: dpad_pressed_p2,
+                            buttons_p3: buttons_pressed_p3,
+                            dpad_p3: dpad_pressed_p3,
+                            buttons_p4: buttons_pressed_p4,
+                            dpad_p4: dpad_pressed_p4,
+                            buttons_p5: buttons_pressed_p5,
+                            dpad_p5: dpad_pressed_p5,
                         },
                         pce_mouse,
                         zapper,

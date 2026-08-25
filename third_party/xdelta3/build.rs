@@ -7,6 +7,10 @@ fn add_def(v: &mut Vec<(String, String)>, key: &str, val: &str) {
 }
 
 fn main() {
+    const VENDOR_DIR: &str = "vendor";
+    const SOURCE: &str = "vendor/xdelta3.c";
+
+    println!("cargo:rerun-if-changed={VENDOR_DIR}");
     let mut defines = Vec::new();
     let pointer_bytes = env::var("CARGO_CFG_TARGET_POINTER_WIDTH")
         .expect("target pointer width")
@@ -31,20 +35,18 @@ fn main() {
     add_def(&mut defines, "EXTERNAL_COMPRESSION", "0");
     add_def(&mut defines, "XD3_USE_LARGEFILE64", "1");
 
-    #[cfg(windows)]
-    add_def(&mut defines, "XD3_WIN32", "1");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        add_def(&mut defines, "XD3_WIN32", "1");
+    }
     add_def(&mut defines, "SHELL_TESTS", "0");
 
     {
         let mut builder = cc::Build::new();
-        builder.include("xdelta3/xdelta3");
+        builder.include(VENDOR_DIR);
         for (key, val) in &defines {
             builder.define(key, Some(val.as_str()));
         }
 
-        builder
-            .file("xdelta3/xdelta3/xdelta3.c")
-            .warnings(false)
-            .compile("xdelta3");
+        builder.file(SOURCE).warnings(false).compile("xdelta3");
     }
 }

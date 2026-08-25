@@ -41,6 +41,11 @@ pub(crate) mod pce_cd;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod pce_cd_archive;
 mod pce_display;
+pub(crate) mod pce_profiles;
+#[cfg(all(feature = "profile-cores", not(target_arch = "wasm32")))]
+pub(crate) use pce_cd_archive::profile_cache_load as profile_pce_cd_cache;
+#[cfg(feature = "profile-cores")]
+pub(crate) use pce_display::profile_projection as profile_pce_projection;
 mod pce_palette;
 pub(crate) mod runtime;
 pub(crate) mod sega8;
@@ -282,6 +287,13 @@ impl EmuBackend {
 
     pub(crate) fn rom_hash(&self) -> [u8; 32] {
         dispatch!(self, rom_hash())
+    }
+
+    pub(crate) fn pce_controller_profile_hash(&self) -> Option<[u8; 32]> {
+        let Self::Pce(backend) = self else {
+            return None;
+        };
+        Some(backend.controller_profile_hash())
     }
 
     pub(crate) fn save_ram_kind(&self) -> SaveRamKind {
@@ -728,6 +740,9 @@ impl EmuBackend {
     pub(crate) fn apply_replay_input(&mut self, frame: &ReplayJoypadFrame) {
         self.set_input(frame.buttons, frame.dpad);
         self.set_input_p2(frame.buttons_p2, frame.dpad_p2);
+        self.set_input_p3(frame.buttons_p3, frame.dpad_p3);
+        self.set_input_p4(frame.buttons_p4, frame.dpad_p4);
+        self.set_input_p5(frame.buttons_p5, frame.dpad_p5);
         self.set_zapper_state(
             frame.zapper.enabled,
             frame.zapper.trigger,
@@ -765,6 +780,21 @@ impl EmuBackend {
 
     pub(crate) fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         dispatch!(self, set_input_p2(buttons_pressed, dpad_pressed))
+    }
+
+    #[inline]
+    pub(crate) fn set_input_p3(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        dispatch!(self, set_input_p3(buttons_pressed, dpad_pressed))
+    }
+
+    #[inline]
+    pub(crate) fn set_input_p4(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        dispatch!(self, set_input_p4(buttons_pressed, dpad_pressed))
+    }
+
+    #[inline]
+    pub(crate) fn set_input_p5(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        dispatch!(self, set_input_p5(buttons_pressed, dpad_pressed))
     }
 
     pub(crate) fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {

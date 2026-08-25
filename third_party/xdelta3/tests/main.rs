@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::Read;
     use xdelta3::{decode, encode};
 
     #[test]
@@ -12,27 +10,13 @@ mod tests {
     }
 
     #[test]
-    fn xdelta_own_test() {
-        let fixure_path = "xdelta3/xdelta3/examples/iOS/xdelta3-ios-test/xdelta3-ios-test/";
-        let original_fixure = format!("{}/{}", fixure_path, "file_v1.bin");
-        let correct_fixure = format!("{}/{}", fixure_path, "file_v2.bin");
-        let patch_fixure = format!("{}/{}", fixure_path, "file_v1_to_v2.bin");
-        let mut original_fixure = File::open(original_fixure).expect("Failed to open file");
-        let mut original_data = Vec::new();
-        let mut patch_fixure = File::open(patch_fixure).expect("Failed to open patch");
-        let mut patch_data = Vec::new();
-        let mut correct_fixure = File::open(correct_fixure).expect("Failed to open reference");
-        let mut correct_data = Vec::new();
-        original_fixure
-            .read_to_end(&mut original_data)
-            .expect("Failed to read file");
-        patch_fixure
-            .read_to_end(&mut patch_data)
-            .expect("Failed to read file");
-        correct_fixure
-            .read_to_end(&mut correct_data)
-            .expect("Failed to read file");
-        let patched_data = decode(patch_data.as_slice(), original_data.as_slice()).unwrap();
-        assert_eq!(patched_data, correct_data);
+    fn larger_round_trip() {
+        let source: Vec<u8> = (0..32 * 1024).map(|index| (index * 31) as u8).collect();
+        let mut target = source.clone();
+        target[1024..2048].fill(0xA5);
+        target.extend_from_slice(b"tracked xdelta source");
+
+        let patch = encode(&target, &source).unwrap();
+        assert_eq!(decode(&patch, &source).unwrap(), target);
     }
 }

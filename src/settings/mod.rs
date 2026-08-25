@@ -17,7 +17,7 @@ pub(crate) use enums::{
     effective_wonderswan_color_correction,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
-pub(crate) use keyboard_bindings::{KeyBindings, WonderSwanKeyBindings};
+pub(crate) use keyboard_bindings::{KeyBindings, PceMultitapKeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
@@ -49,6 +49,8 @@ pub(crate) struct Settings {
     #[serde(default = "default_p2_key_bindings")]
     pub(crate) key_bindings_p2: KeyBindings,
     #[serde(default)]
+    pub(crate) pce_multitap_key_bindings: [PceMultitapKeyBindings; 3],
+    #[serde(default)]
     pub(crate) ws_key_bindings: WonderSwanKeyBindings,
     #[serde(flatten)]
     pub(crate) tilt: TiltSettings,
@@ -75,6 +77,7 @@ impl Default for Settings {
             ui: UiSettings::default(),
             key_bindings: KeyBindings::default(),
             key_bindings_p2: default_p2_key_bindings(),
+            pce_multitap_key_bindings: std::array::from_fn(|_| PceMultitapKeyBindings::default()),
             ws_key_bindings: WonderSwanKeyBindings::default(),
             tilt: TiltSettings::default(),
             audio: AudioSettings::default(),

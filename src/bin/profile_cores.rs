@@ -1,4 +1,5 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::hint::black_box;
 use std::mem::size_of;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -152,6 +153,70 @@ fn profile_pce_frames(label: &str, frames: u32, machine: &mut zeff_pce_core::har
     );
 }
 
+fn profile_pce_state(iterations: u32) {
+    let mut machine =
+        zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE ROM");
+    for _ in 0..10 {
+        machine.run_until_frame().expect("synthetic PCE frame");
+    }
+
+    let warm_state =
+        zeff_pce_core::hardware::save_state::encode_state(&machine).expect("encode PCE state");
+    let state_size = warm_state.len();
+    black_box(warm_state);
+
+    reset_allocation_counts();
+    let start = Instant::now();
+    for _ in 0..iterations {
+        black_box(
+            zeff_pce_core::hardware::save_state::encode_state(&machine).expect("encode PCE state"),
+        );
+    }
+    let elapsed = start.elapsed();
+    let (allocations, reallocations, allocated_bytes) = allocation_counts();
+    let states_per_second = f64::from(iterations) / elapsed.as_secs_f64();
+    let gib_per_second = state_size as f64 * states_per_second / 1024.0 / 1024.0 / 1024.0;
+    println!(
+        "PC Engine state               {iterations:5} states  {elapsed:>9.2?}  {states_per_second:>8.1} states / s  {gib_per_second:>6.2} GiB / s  {state_size} bytes"
+    );
+    println!(
+        "{:30} {:9} alloc  {:7} realloc  {:9.1} MiB",
+        "",
+        allocations,
+        reallocations,
+        allocated_bytes as f64 / 1024.0 / 1024.0
+    );
+
+    let seconds = iterations.div_ceil(60) as usize;
+    let mut rewind = zeff_emu_common::rewind::RewindBuffer::new(seconds, 1);
+    let warm_state =
+        zeff_pce_core::hardware::save_state::encode_state(&machine).expect("encode PCE state");
+    rewind.push(&warm_state, &[]);
+    rewind.clear();
+
+    reset_allocation_counts();
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let state =
+            zeff_pce_core::hardware::save_state::encode_state(&machine).expect("encode PCE state");
+        rewind.push(&state, &[]);
+    }
+    let elapsed = start.elapsed();
+    let (allocations, reallocations, allocated_bytes) = allocation_counts();
+    let captures_per_second = f64::from(iterations) / elapsed.as_secs_f64();
+    println!(
+        "PC Engine rewind              {iterations:5} captures {elapsed:>9.2?}  {captures_per_second:>8.1} captures / s"
+    );
+    println!(
+        "{:30} {:9} alloc  {:7} realloc  {:9.1} MiB",
+        "",
+        allocations,
+        reallocations,
+        allocated_bytes as f64 / 1024.0 / 1024.0
+    );
+    black_box(rewind);
+}
+
 fn profile_trace_store() {
     use std::hint::black_box;
     use zeff_emu_common::debug::{
@@ -301,19 +366,11 @@ fn profile_synthetic(
     nes.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_frames(&format!("NES synthetic{suffix}"), frames, &mut nes);
 
-    let mut pce = zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE ROM");
-    pce.set_sample_generation_enabled(sample_generation_enabled);
-    pce.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_pce_frames(&format!("PC Engine synthetic{suffix}"), frames, &mut pce);
-
-    let mut pce_writes =
-        zeff_pce_core::hardware::PceMachine::new(pce_write_rom()).expect("synthetic PCE write ROM");
-    pce_writes.set_sample_generation_enabled(sample_generation_enabled);
-    pce_writes.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_pce_frames(
-        &format!("PC Engine RAM writes{suffix}"),
+    profile_pce_synthetic(
         frames,
-        &mut pce_writes,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
     );
 
     let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
@@ -331,6 +388,73 @@ fn profile_synthetic(
     ws.set_apu_sample_generation_enabled(sample_generation_enabled);
     ws.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_wonderswan_frames(&format!("WonderSwan synthetic{suffix}"), frames, &mut ws);
+}
+
+fn profile_pce_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
+    let video_only = std::env::var("ZEFF_PROFILE_PCE_VIDEO_ONLY").as_deref() == Ok("1");
+    if !video_only {
+        let mut pce =
+            zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE ROM");
+        pce.set_sample_generation_enabled(sample_generation_enabled);
+        pce.set_instruction_trace_enabled(instruction_trace_enabled);
+        profile_pce_frames(&format!("PC Engine synthetic{suffix}"), frames, &mut pce);
+
+        let mut pce_writes = zeff_pce_core::hardware::PceMachine::new(pce_write_rom())
+            .expect("synthetic PCE write ROM");
+        pce_writes.set_sample_generation_enabled(sample_generation_enabled);
+        pce_writes.set_instruction_trace_enabled(instruction_trace_enabled);
+        profile_pce_frames(
+            &format!("PC Engine RAM writes{suffix}"),
+            frames,
+            &mut pce_writes,
+        );
+    }
+
+    if video_only || std::env::var("ZEFF_PROFILE_PCE_VIDEO").as_deref() == Ok("1") {
+        use sha2::{Digest, Sha256};
+        use zeff_pce_core::hardware::VdcRegister;
+        use zeff_pce_core::hardware::cpu::VdcPort;
+
+        let mut pce_video =
+            zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE video ROM");
+        let vdc = pce_video.devices_mut().vdc_mut();
+        for (register, value) in [
+            (VdcRegister::Control, 0x0080),
+            (VdcRegister::HorizontalDisplay, 31),
+            (VdcRegister::VerticalSync, 0x0F02),
+            (VdcRegister::VerticalDisplay, 0x00EF),
+            (VdcRegister::VerticalDisplayEnd, 0x0004),
+        ] {
+            vdc.write_port(VdcPort::SelectOrStatus, register as u8);
+            vdc.write_port(VdcPort::DataLow, value as u8);
+            vdc.write_port(VdcPort::DataHigh, (value >> 8) as u8);
+        }
+        pce_video.set_sample_generation_enabled(sample_generation_enabled);
+        pce_video.set_instruction_trace_enabled(instruction_trace_enabled);
+        profile_pce_frames(
+            &format!("PC Engine 240-line video{suffix}"),
+            frames,
+            &mut pce_video,
+        );
+        let framebuffer_hash = Sha256::digest(pce_video.framebuffer());
+        let state = zeff_pce_core::hardware::save_state::encode_state(&pce_video)
+            .expect("encode synthetic PCE video state");
+        let state_hash = Sha256::digest(&state);
+        let framebuffer_hash = framebuffer_hash
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        let state_hash = state_hash
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        println!("  framebuffer {framebuffer_hash}  state {state_hash}");
+    }
 }
 
 fn profile_manifest_roms(frames: u32) {
@@ -372,6 +496,27 @@ fn main() {
         .and_then(|value| value.parse().ok())
         .filter(|&value| value > 0)
         .unwrap_or(DEFAULT_FRAMES);
+
+    if std::env::var("ZEFF_PROFILE_PCE_STATE").as_deref() == Ok("1") {
+        let iterations = std::env::var("ZEFF_PROFILE_STATE_ITERATIONS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(100);
+        profile_pce_state(iterations);
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_PCE_ONLY").as_deref() == Ok("1") {
+        profile_pce_synthetic(frames, false, false, "");
+        if std::env::var("ZEFF_PROFILE_COMPARE_AUDIO").as_deref() == Ok("1") {
+            profile_pce_synthetic(frames, true, false, " + audio");
+        }
+        if std::env::var("ZEFF_PROFILE_COMPARE_TRACE").as_deref() == Ok("1") {
+            profile_pce_synthetic(frames, false, true, " + trace");
+        }
+        return;
+    }
 
     println!("=== Synthetic core baseline ===");
     profile_synthetic(frames, false, false, "");

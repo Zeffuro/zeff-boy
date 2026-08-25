@@ -72,6 +72,79 @@ pub(crate) enum GamepadAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+pub(crate) struct PceMultitapGamepadBindings {
+    a: String,
+    b: String,
+    x: String,
+    y: String,
+    l: String,
+    r: String,
+    start: String,
+    select: String,
+    up: String,
+    down: String,
+    left: String,
+    right: String,
+}
+
+impl Default for PceMultitapGamepadBindings {
+    fn default() -> Self {
+        Self {
+            a: default_gp_a(),
+            b: default_gp_b(),
+            x: default_gp_x(),
+            y: default_gp_y(),
+            l: default_gp_l(),
+            r: default_gp_r(),
+            start: default_gp_start(),
+            select: default_gp_select(),
+            up: default_gp_up(),
+            down: default_gp_down(),
+            left: default_gp_left(),
+            right: default_gp_right(),
+        }
+    }
+}
+
+impl PceMultitapGamepadBindings {
+    pub(crate) fn get(&self, action: BindingAction) -> &str {
+        match action {
+            BindingAction::A => &self.a,
+            BindingAction::B => &self.b,
+            BindingAction::X => &self.x,
+            BindingAction::Y => &self.y,
+            BindingAction::L => &self.l,
+            BindingAction::R => &self.r,
+            BindingAction::Start => &self.start,
+            BindingAction::Select => &self.select,
+            BindingAction::Up => &self.up,
+            BindingAction::Down => &self.down,
+            BindingAction::Left => &self.left,
+            BindingAction::Right => &self.right,
+        }
+    }
+
+    pub(crate) fn set(&mut self, action: BindingAction, button_name: &str) {
+        let value = button_name.to_owned();
+        match action {
+            BindingAction::A => self.a = value,
+            BindingAction::B => self.b = value,
+            BindingAction::X => self.x = value,
+            BindingAction::Y => self.y = value,
+            BindingAction::L => self.l = value,
+            BindingAction::R => self.r = value,
+            BindingAction::Start => self.start = value,
+            BindingAction::Select => self.select = value,
+            BindingAction::Up => self.up = value,
+            BindingAction::Down => self.down = value,
+            BindingAction::Left => self.left = value,
+            BindingAction::Right => self.right = value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub(crate) struct GamepadBindings {
     pub(crate) a: String,
     pub(crate) b: String,
@@ -111,6 +184,8 @@ pub(crate) struct GamepadBindings {
     pub(crate) p2_left: String,
     #[serde(default = "default_gp_right")]
     pub(crate) p2_right: String,
+    #[serde(default)]
+    pub(crate) pce_multitap: [PceMultitapGamepadBindings; 3],
     #[serde(default)]
     pub(crate) speedup: String,
     #[serde(default)]
@@ -172,6 +247,7 @@ impl Default for GamepadBindings {
             p2_down: default_gp_down(),
             p2_left: default_gp_left(),
             p2_right: default_gp_right(),
+            pce_multitap: std::array::from_fn(|_| PceMultitapGamepadBindings::default()),
             speedup: String::new(),
             rewind: String::new(),
             pause: String::new(),
@@ -193,6 +269,16 @@ impl Default for GamepadBindings {
 }
 
 impl GamepadBindings {
+    #[allow(dead_code)]
+    pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::input::HostButton> {
+        self.map_button_name_for_player(name, 1)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn map_button_name_p2(&self, name: &str) -> Option<crate::input::HostButton> {
+        self.map_button_name_for_player(name, 2)
+    }
+
     pub(crate) fn migrate_wonderswan_defaults(&mut self) {
         if !self.wonderswan_defaults_initialized && self.wonderswan_direct_bindings_are_empty() {
             self.reset_wonderswan_defaults();
@@ -244,15 +330,7 @@ impl GamepadBindings {
             && self.ws_start.is_empty()
     }
 
-    pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::input::HostButton> {
-        self.map_button_name_for_player(name, 1)
-    }
-
-    pub(crate) fn map_button_name_p2(&self, name: &str) -> Option<crate::input::HostButton> {
-        self.map_button_name_for_player(name, 2)
-    }
-
-    fn map_button_name_for_player(
+    pub(crate) fn map_button_name_for_player(
         &self,
         name: &str,
         player: u8,
@@ -331,7 +409,13 @@ impl GamepadBindings {
         self.get_for_player(action, 2)
     }
 
-    fn get_for_player(&self, action: BindingAction, player: u8) -> &str {
+    pub(crate) fn get_for_player(&self, action: BindingAction, player: u8) -> &str {
+        if let Some(bindings) = player
+            .checked_sub(3)
+            .and_then(|index| self.pce_multitap.get(usize::from(index)))
+        {
+            return bindings.get(action);
+        }
         if player == 2 {
             return match action {
                 BindingAction::A => &self.p2_a,
@@ -398,6 +482,19 @@ impl GamepadBindings {
             BindingAction::Down => self.p2_down = s,
             BindingAction::Left => self.p2_left = s,
             BindingAction::Right => self.p2_right = s,
+        }
+    }
+
+    pub(crate) fn set_for_player(&mut self, action: BindingAction, player: u8, button_name: &str) {
+        if let Some(bindings) = player
+            .checked_sub(3)
+            .and_then(|index| self.pce_multitap.get_mut(usize::from(index)))
+        {
+            bindings.set(action, button_name);
+        } else if player == 2 {
+            self.set_p2(action, button_name);
+        } else {
+            self.set(action, button_name);
         }
     }
 

@@ -201,10 +201,10 @@ fn required_enabled(request: &WireRequest) -> Result<bool, String> {
 
 fn optional_player(request: &WireRequest) -> Result<u8, String> {
     let player = request.player.unwrap_or(1);
-    if matches!(player, 1 | 2) {
+    if (1..=5).contains(&player) {
         Ok(player)
     } else {
-        Err("player must be 1 or 2".to_string())
+        Err("player must be 1 through 5".to_string())
     }
 }
 

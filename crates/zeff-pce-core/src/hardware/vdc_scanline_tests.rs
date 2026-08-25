@@ -7,7 +7,7 @@ use super::{
     PROVISIONAL_STOCK_MACHINE_VCE_BOUNDARIES_DRIVE_VDC_HORIZONTAL_AND_VERTICAL_SYNC,
     SpriteColorMode, VDC_SATB_WORDS, VceFrameLength, VdcActiveDisplayLine, VdcDmaChannel,
     VdcDmaProgress, VdcExternalVceScanline, VdcRegister, VdcScanlineAdvanceError,
-    VdcScanlineBoundary, VdcScanlineTransition, VdcStatus, VdcSyncMode, VdcVerticalPhase,
+    VdcScanlineBoundary, VdcScanlineTransition, VdcStatus, VdcVerticalPhase,
 };
 
 fn write_register(vdc: &mut HuC6270, register: VdcRegister, value: u16) {
@@ -181,7 +181,7 @@ fn vertical_display_and_end_durations_are_sampled_at_their_period_entries() {
 fn raster_compare_continues_into_non_active_lines() {
     let mut vdc = HuC6270::new();
     compact_frame(&mut vdc, 0, 2);
-    write_register(&mut vdc, VdcRegister::RasterCounter, 65);
+    write_register(&mut vdc, VdcRegister::RasterCounter, 66);
     use_internal_sync(&mut vdc, 0x04);
 
     let active = next_active_display(&mut vdc);
@@ -193,6 +193,32 @@ fn raster_compare_continues_into_non_active_lines() {
     assert_eq!(display_end.raster_counter(), 65);
     assert!(display_end.raster_match());
     assert!(vdc.status().contains(VdcStatus::RASTER_MATCH));
+}
+
+#[test]
+fn raster_compare_is_tested_at_hdw_end_before_the_next_scanline() {
+    let mut vdc = HuC6270::new();
+    compact_frame(&mut vdc, 1, 1);
+    write_register(&mut vdc, VdcRegister::RasterCounter, 64);
+    use_internal_sync(&mut vdc, 0);
+
+    assert!(!vdc.advance_scanline_boundary().unwrap().raster_match());
+    assert!(!vdc.advance_scanline_boundary().unwrap().raster_match());
+    let before_active = vdc.advance_scanline_boundary().unwrap();
+    assert_eq!(before_active.phase(), VdcVerticalPhase::DisplayStart);
+    assert!(before_active.raster_match());
+
+    let mut vdc = HuC6270::new();
+    compact_frame(&mut vdc, 1, 1);
+    write_register(&mut vdc, VdcRegister::RasterCounter, 65);
+    use_internal_sync(&mut vdc, 0);
+
+    for _ in 0..3 {
+        assert!(!vdc.advance_scanline_boundary().unwrap().raster_match());
+    }
+    let first_active = vdc.advance_scanline_boundary().unwrap();
+    assert_eq!(first_active.active_display_line(), Some(0));
+    assert!(first_active.raster_match());
 }
 
 #[test]
@@ -371,13 +397,15 @@ fn raster_and_vertical_blank_status_latch_only_when_enabled_at_the_event() {
     write_register(&mut vdc, VdcRegister::RasterCounter, 64);
     use_internal_sync(&mut vdc, 0);
 
-    for _ in 0..3 {
+    for _ in 0..2 {
         vdc.advance_scanline_boundary().unwrap();
     }
     let raster = vdc.advance_scanline_boundary().unwrap();
     assert!(raster.raster_match());
     assert!(!vdc.status().contains(VdcStatus::RASTER_MATCH));
 
+    let active = vdc.advance_scanline_boundary().unwrap();
+    assert_eq!(active.active_display_line(), Some(0));
     let blank = vdc.advance_scanline_boundary().unwrap();
     assert!(blank.vertical_blank_started());
     assert_eq!(blank.raster_counter(), 65);
@@ -386,10 +414,11 @@ fn raster_and_vertical_blank_status_latch_only_when_enabled_at_the_event() {
 
     use_internal_sync(&mut vdc, 0x0C);
     assert_eq!(vdc.irq_level(), LineLevel::High);
-    for _ in 0..4 {
+    for _ in 0..3 {
         vdc.advance_scanline_boundary().unwrap();
     }
     assert!(vdc.status().contains(VdcStatus::RASTER_MATCH));
+    vdc.advance_scanline_boundary().unwrap();
     let blank = vdc.advance_scanline_boundary().unwrap();
     assert!(blank.vertical_blank_started());
     assert!(vdc.status().contains(VdcStatus::VERTICAL_BLANK));
@@ -478,26 +507,22 @@ fn entering_active_display_aborts_only_an_active_vram_dma() {
 }
 
 #[test]
-fn external_and_invalid_sync_modes_do_not_advance_autonomously() {
-    let mut vdc = HuC6270::new();
-    for (control, mode) in [
-        (0x0000, VdcSyncMode::ExternalHorizontalAndVertical),
-        (0x0010, VdcSyncMode::ExternalVertical),
-        (0x0020, VdcSyncMode::Invalid),
+fn cr_sync_outputs_do_not_select_input_timing() {
+    for (control, horizontal, vertical) in [
+        (0x0000, false, false),
+        (0x0010, true, false),
+        (0x0020, true, true),
+        (0x0030, true, true),
     ] {
+        let mut vdc = HuC6270::new();
         write_register(&mut vdc, VdcRegister::Control, control);
-        assert_eq!(vdc.sync_mode(), mode);
-        assert_eq!(
-            vdc.advance_scanline_boundary(),
-            Err(VdcScanlineAdvanceError::NonAutonomousSync { mode })
-        );
+        assert_eq!(vdc.sync_output().horizontal(), horizontal);
+        assert_eq!(vdc.sync_output().vertical(), vertical);
+        let first = vdc.advance_scanline_boundary().unwrap();
+        assert_eq!(first.phase(), VdcVerticalPhase::VerticalSync);
+        assert_eq!(first.frame_line(), 0);
+        assert!(first.frame_started());
     }
-
-    use_internal_sync(&mut vdc, 0);
-    let first = vdc.advance_scanline_boundary().unwrap();
-    assert_eq!(first.phase(), VdcVerticalPhase::VerticalSync);
-    assert_eq!(first.frame_line(), 0);
-    assert!(first.frame_started());
 }
 
 #[test]
@@ -579,7 +604,7 @@ fn provisional_machine_policy_matches_ex00_and_ex11_vertical_results() {
 }
 
 #[test]
-fn provisional_machine_policy_preserves_profile_across_sync_mode_toggles() {
+fn provisional_machine_policy_preserves_profile_across_sync_output_changes() {
     let frame_length = VceFrameLength::Lines262;
     let mut reference = HuC6270::new();
     let mut toggled = HuC6270::new();
@@ -609,25 +634,16 @@ fn provisional_machine_policy_preserves_profile_across_sync_mode_toggles() {
 }
 
 #[test]
-fn provisional_machine_policy_rejects_ex01_and_ex10_without_advancing() {
+fn provisional_machine_policy_accepts_every_sync_output() {
     let frame_length = VceFrameLength::Lines262;
-    for (control, expected) in [
-        (
-            0x0010,
-            VdcScanlineAdvanceError::ExternalVceSyncNeedsHorizontalScheduler,
-        ),
-        (0x0020, VdcScanlineAdvanceError::InvalidSyncMode),
-    ] {
+    for control in [0x0000, 0x0010, 0x0020, 0x0030] {
         let mut vdc = HuC6270::new();
         external_frame(&mut vdc, frame_length, 1);
-        vdc.advance_machine_vce_scanline(external_input(1, true, frame_length))
+        let first = vdc
+            .advance_machine_vce_scanline(external_input(1, true, frame_length))
             .unwrap();
+        assert!(first.frame_started());
         write_register(&mut vdc, VdcRegister::Control, control);
-        assert_eq!(
-            vdc.advance_machine_vce_scanline(external_input(1, false, frame_length)),
-            Err(expected)
-        );
-        write_register(&mut vdc, VdcRegister::Control, 0);
         let continued = vdc
             .advance_machine_vce_scanline(external_input(1, false, frame_length))
             .unwrap();
@@ -906,26 +922,16 @@ fn external_profile_without_a_vblank_line_is_rejected_transactionally() {
 }
 
 #[test]
-fn external_vce_sync_rejects_wrong_modes_without_advancing() {
+fn external_vce_sync_accepts_every_sync_output() {
     let frame_length = VceFrameLength::Lines262;
-    for (control, expected) in [
-        (
-            0x0010,
-            VdcScanlineAdvanceError::ExternalVceSyncNeedsHorizontalScheduler,
-        ),
-        (0x0020, VdcScanlineAdvanceError::InvalidSyncMode),
-        (
-            0x0030,
-            VdcScanlineAdvanceError::InternalSyncUsesAutonomousAdvance,
-        ),
-    ] {
+    for control in [0x0000, 0x0010, 0x0020, 0x0030] {
         let mut vdc = HuC6270::new();
         external_frame(&mut vdc, frame_length, 1);
         write_register(&mut vdc, VdcRegister::Control, control);
-        assert_eq!(
-            vdc.advance_external_vce_scanline(external_input(1, true, frame_length)),
-            Err(expected)
-        );
+        let first = vdc
+            .advance_external_vce_scanline(external_input(1, true, frame_length))
+            .unwrap();
+        assert!(first.frame_started());
         assert_eq!(vdc.status(), VdcStatus::empty());
     }
 }

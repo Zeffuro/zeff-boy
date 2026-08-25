@@ -90,6 +90,11 @@ impl App {
                 key,
                 pressed,
             } => {
+                if player > 2 && self.active_system != crate::emu_backend::ActiveSystem::Pce {
+                    return LiveReply::error(
+                        "players 3 through 5 are only available for PC Engine",
+                    );
+                }
                 set_remote_player(&mut self.host_input, player, key, pressed);
                 if !pressed {
                     self.live_button_releases
@@ -102,6 +107,11 @@ impl App {
                 key,
                 frames,
             } => {
+                if player > 2 && self.active_system != crate::emu_backend::ActiveSystem::Pce {
+                    return LiveReply::error(
+                        "players 3 through 5 are only available for PC Engine",
+                    );
+                }
                 set_remote_player(&mut self.host_input, player, key, true);
                 self.live_button_releases
                     .retain(|release| !same_pending_button(release, player, key));
@@ -311,21 +321,35 @@ impl App {
     fn live_input_json(&self) -> Value {
         let (buttons, dpad) = self.current_host_joypad_input();
         let (buttons_p2, dpad_p2) = self.current_host_joypad_p2_input();
+        let (buttons_p3, dpad_p3) = self.current_host_joypad_p3_input();
+        let (buttons_p4, dpad_p4) = self.current_host_joypad_p4_input();
+        let (buttons_p5, dpad_p5) = self.current_host_joypad_p5_input();
+        let mut players = serde_json::Map::new();
+        players.insert("1".to_owned(), json!({ "buttons": buttons, "dpad": dpad }));
+        players.insert(
+            "2".to_owned(),
+            json!({ "buttons": buttons_p2, "dpad": dpad_p2 }),
+        );
+        if self.active_system == crate::emu_backend::ActiveSystem::Pce {
+            players.insert(
+                "3".to_owned(),
+                json!({ "buttons": buttons_p3, "dpad": dpad_p3 }),
+            );
+            players.insert(
+                "4".to_owned(),
+                json!({ "buttons": buttons_p4, "dpad": dpad_p4 }),
+            );
+            players.insert(
+                "5".to_owned(),
+                json!({ "buttons": buttons_p5, "dpad": dpad_p5 }),
+            );
+        }
         json!({
             "buttons": buttons,
             "dpad": dpad,
             "buttons_p2": buttons_p2,
             "dpad_p2": dpad_p2,
-            "players": {
-                "1": {
-                    "buttons": buttons,
-                    "dpad": dpad,
-                },
-                "2": {
-                    "buttons": buttons_p2,
-                    "dpad": dpad_p2,
-                },
-            },
+            "players": players,
             "zapper": self.remote_zapper.map(|zapper| json!({
                 "enabled": zapper.enabled,
                 "trigger": zapper.trigger,
@@ -362,7 +386,8 @@ fn core_features_json(features: &CoreCapabilities) -> Value {
 fn input_features_json(features: &crate::emu_backend::InputCapabilities) -> Value {
     json!({
         "buttons": features.buttons.iter().map(|button| button.label()).collect::<Vec<_>>(),
-        "supports_player_two": features.supports_player_two,
+        "supports_player_two": features.max_players >= 2,
+        "max_players": features.max_players,
         "supports_lightgun": features.supports_lightgun,
         "supports_wonderswan_direct_buttons": features.supports_wonderswan_direct_buttons,
     })
@@ -452,10 +477,12 @@ fn set_remote_player(
     key: HostButton,
     pressed: bool,
 ) {
-    if player == 2 {
-        host_input.set_remote_p2(key, pressed);
-    } else {
-        host_input.set_remote(key, pressed);
+    match player {
+        2 => host_input.set_remote_p2(key, pressed),
+        3 => host_input.set_remote_p3(key, pressed),
+        4 => host_input.set_remote_p4(key, pressed),
+        5 => host_input.set_remote_p5(key, pressed),
+        _ => host_input.set_remote(key, pressed),
     }
 }
 

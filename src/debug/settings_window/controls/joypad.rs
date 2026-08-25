@@ -1,7 +1,12 @@
 use crate::debug::DebugWindowState;
 use crate::settings::{BindingAction, InputBindingAction, Settings};
 
-pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWindowState) {
+pub(super) fn draw(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    state: &mut DebugWindowState,
+    show_pce_multitap: bool,
+) {
     egui::CollapsingHeader::new("Joypad Bindings")
         .default_open(true)
         .show(ui, |ui| {
@@ -9,6 +14,9 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                 let label = match action {
                     InputBindingAction::Joypad(a) => joypad_label_for_player(1, a),
                     InputBindingAction::JoypadP2(a) => joypad_label_for_player(2, a),
+                    InputBindingAction::PceMultitap { player, action } => {
+                        joypad_label_for_player(player, action)
+                    }
                     InputBindingAction::Tilt(a) => super::tilt::tilt_label(a).to_string(),
                     InputBindingAction::WonderSwan(a) => a.label().to_string(),
                 };
@@ -26,6 +34,12 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             if state.rebinding_gamepad_p2.is_some() {
                 ui.label(
                     egui::RichText::new("Press a P2 gamepad button...")
+                        .color(egui::Color32::YELLOW),
+                );
+            }
+            if let Some((player, _)) = state.rebinding_gamepad_pce_multitap {
+                ui.label(
+                    egui::RichText::new(format!("Press a P{player} gamepad button..."))
                         .color(egui::Color32::YELLOW),
                 );
             }
@@ -55,6 +69,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                             state.rebinding_action = Some(InputBindingAction::Joypad(action));
                             state.rebinding_gamepad = None;
                             state.rebinding_gamepad_p2 = None;
+                            state.rebinding_gamepad_pce_multitap = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
@@ -70,6 +85,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         if ui.button(gp_label).clicked() {
                             state.rebinding_gamepad = Some(action);
                             state.rebinding_gamepad_p2 = None;
+                            state.rebinding_gamepad_pce_multitap = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_action = None;
                             state.rebinding_shortcut = None;
@@ -89,6 +105,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                             state.rebinding_action = Some(InputBindingAction::JoypadP2(action));
                             state.rebinding_gamepad = None;
                             state.rebinding_gamepad_p2 = None;
+                            state.rebinding_gamepad_pce_multitap = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_shortcut = None;
                             state.rebinding_speedup = false;
@@ -103,6 +120,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         };
                         if ui.button(gp_label_p2).clicked() {
                             state.rebinding_gamepad_p2 = Some(action);
+                            state.rebinding_gamepad_pce_multitap = None;
                             state.rebinding_gamepad = None;
                             state.rebinding_ws_gamepad = None;
                             state.rebinding_action = None;
@@ -114,10 +132,58 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         ui.end_row();
                     }
                 });
+            if show_pce_multitap {
+                ui.separator();
+                ui.label(egui::RichText::new("PC Engine multitap (P3–P5)").strong());
+                for player in 3..=5 {
+                    egui::CollapsingHeader::new(format!("Player {player}")).show(ui, |ui| {
+                        egui::Grid::new(format!("pce_multitap_p{player}"))
+                            .num_columns(3)
+                            .show(ui, |ui| {
+                                ui.strong("Button");
+                                ui.strong("Keyboard");
+                                ui.strong("Gamepad");
+                                ui.end_row();
+                                for &action in BindingAction::ALL {
+                                    ui.label(joypad_label(action));
+                                    let bindings = &settings.pce_multitap_key_bindings
+                                        [usize::from(player - 3)];
+                                    let key_name = bindings
+                                        .get(action)
+                                        .map(|key| format!("{key:?}"))
+                                        .unwrap_or_else(|| "Unbound".to_owned());
+                                    if ui.button(key_name).clicked() {
+                                        state.rebinding_action =
+                                            Some(InputBindingAction::PceMultitap {
+                                                player,
+                                                action,
+                                            });
+                                        state.rebinding_gamepad = None;
+                                        state.rebinding_gamepad_p2 = None;
+                                        state.rebinding_gamepad_pce_multitap = None;
+                                    }
+                                    let button_name = settings
+                                        .gamepad_bindings
+                                        .get_for_player(action, player)
+                                        .to_owned();
+                                    if ui.button(button_name).clicked() {
+                                        state.rebinding_action = None;
+                                        state.rebinding_gamepad = None;
+                                        state.rebinding_gamepad_p2 = None;
+                                        state.rebinding_gamepad_pce_multitap =
+                                            Some((player, action));
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                }
+            }
             if ui.button("Reset gamepad to defaults").clicked() {
                 settings.gamepad_bindings = crate::settings::GamepadBindings::default();
                 state.rebinding_gamepad = None;
                 state.rebinding_gamepad_p2 = None;
+                state.rebinding_gamepad_pce_multitap = None;
                 state.rebinding_ws_gamepad = None;
                 state.rebinding_gamepad_action = None;
             }

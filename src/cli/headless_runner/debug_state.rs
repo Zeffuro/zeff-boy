@@ -101,6 +101,9 @@ fn input_json(input: InputMasks) -> serde_json::Value {
 fn input_schedule_json(opts: &HeadlessOptions) -> serde_json::Value {
     let events = input_events_json(&opts.input_events);
     let p2_events = input_events_json(&opts.input_events_p2);
+    let p3_events = input_events_json(&opts.input_events_p3);
+    let p4_events = input_events_json(&opts.input_events_p4);
+    let p5_events = input_events_json(&opts.input_events_p5);
     let zapper_events = opts
         .zapper_events
         .iter()
@@ -123,6 +126,12 @@ fn input_schedule_json(opts: &HeadlessOptions) -> serde_json::Value {
         "p1_events": events,
         "p2_event_count": p2_events.len(),
         "p2_events": p2_events,
+        "p3_event_count": p3_events.len(),
+        "p3_events": p3_events,
+        "p4_event_count": p4_events.len(),
+        "p4_events": p4_events,
+        "p5_event_count": p5_events.len(),
+        "p5_events": p5_events,
         "zapper_event_count": zapper_events.len(),
         "zapper_events": zapper_events,
     })

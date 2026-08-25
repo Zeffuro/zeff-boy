@@ -24,6 +24,9 @@ pub enum PceCartridgeHardware {
 
 pub const SF2_CE_HUCARD_IMAGE_LEN: usize = 0x28_0000;
 pub const POPULOUS_HUCARD_IMAGE_LEN: usize = 0x08_0000;
+const STANDARD_HUCARD_384K_IMAGE_LEN: usize = 0x06_0000;
+const STANDARD_HUCARD_512K_IMAGE_LEN: usize = 0x08_0000;
+const HUCARD_BANK_LEN: u32 = 0x2000;
 pub const POPULOUS_HUCARD_RAM_LEN: usize = 0x8000;
 pub const SUPER_SYSTEM_CARD_RAM_LEN: usize = 0x30_000;
 pub const SYSTEM_CARD_V1_V2_IMAGE_LEN: usize = 0x40000;
@@ -34,23 +37,6 @@ pub const SF2_CE_CANONICAL_SHA256: [u8; 32] = [
 pub const POPULOUS_CANONICAL_SHA256: [u8; 32] = [
     0x16, 0xA7, 0x96, 0x63, 0x4A, 0x2B, 0x3D, 0xA4, 0x17, 0xA7, 0x75, 0xCB, 0x64, 0xFF, 0xA3, 0x32,
     0x2A, 0xD7, 0xBA, 0xF9, 0x01, 0xC2, 0x88, 0x93, 0x4D, 0x28, 0xDF, 0x96, 0x7F, 0x79, 0x77, 0xF6,
-];
-const TURBOGRAFX16_WIRING_SHA256: [[u8; 32]; 3] = [
-    [
-        0x60, 0xC6, 0x9E, 0xE6, 0x80, 0x6A, 0xA6, 0x14, 0x45, 0x95, 0x49, 0x63, 0x3B, 0xDC, 0x72,
-        0x8E, 0x10, 0x5F, 0x85, 0x92, 0xE5, 0x35, 0xFC, 0xC7, 0x96, 0xC2, 0x4C, 0xD6, 0xD7, 0x6A,
-        0x6B, 0xD1,
-    ],
-    [
-        0x90, 0xE0, 0x4D, 0x9F, 0xCD, 0x0A, 0x57, 0xAD, 0x07, 0xBA, 0x99, 0x53, 0x52, 0xF0, 0x06,
-        0x1E, 0x39, 0x6E, 0x8A, 0x51, 0xC4, 0x70, 0xE1, 0xF1, 0x64, 0x73, 0x9F, 0xB4, 0xB8, 0x61,
-        0x39, 0xCA,
-    ],
-    [
-        0xC5, 0xA3, 0x9C, 0x9D, 0x9B, 0x2D, 0x75, 0x32, 0x44, 0x81, 0x6E, 0xAF, 0xD6, 0x8F, 0x50,
-        0x4A, 0x85, 0x59, 0x08, 0xEE, 0xBA, 0xB1, 0xB1, 0xC8, 0xFE, 0xA2, 0xBB, 0xF7, 0xA4, 0xA8,
-        0x13, 0xC7,
-    ],
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -105,10 +91,7 @@ impl PceCartridgeDescriptor {
         if let Some(console_wiring) = self.console_wiring_override {
             return console_wiring;
         }
-        if self
-            .image_sha256
-            .is_some_and(|hash| TURBOGRAFX16_WIRING_SHA256.contains(&hash))
-        {
+        if self.image_sha256.is_some_and(is_turbografx16_payload) {
             PceConsoleWiring::TurboGrafx16
         } else {
             PceConsoleWiring::PcEngine
@@ -202,7 +185,7 @@ impl PceHuCard {
 
     pub(crate) fn rom_offset(&self, physical_offset: u32) -> Option<u32> {
         match self {
-            Self::Plain(rom) => ((physical_offset as usize) < rom.len()).then_some(physical_offset),
+            Self::Plain(rom) => plain_rom_offset(rom.len(), physical_offset),
             Self::Sf2Ce { bank, .. } => match physical_offset {
                 0..=0x07_FFFF => Some(physical_offset),
                 0x08_0000..=0x0F_FFFF => {
@@ -225,7 +208,9 @@ impl PceHuCard {
 
     pub(crate) fn read(&self, offset: u32) -> u8 {
         match self {
-            Self::Plain(rom) => rom.get(offset as usize).copied().unwrap_or(0xFF),
+            Self::Plain(rom) => plain_rom_offset(rom.len(), offset)
+                .map(|offset| rom[offset as usize])
+                .unwrap_or(0xFF),
             Self::Sf2Ce { rom, bank } => {
                 let image_offset = if offset < 0x08_0000 {
                     offset as usize
@@ -317,6 +302,23 @@ impl PceHuCard {
         }
     }
 }
+
+fn plain_rom_offset(image_len: usize, physical_offset: u32) -> Option<u32> {
+    if physical_offset > 0x0F_FFFF {
+        return None;
+    }
+    let bank = physical_offset / HUCARD_BANK_LEN;
+    let offset_in_bank = physical_offset % HUCARD_BANK_LEN;
+    let mapped_bank = match image_len {
+        STANDARD_HUCARD_384K_IMAGE_LEN if bank < 0x40 => bank & 0x1F,
+        STANDARD_HUCARD_384K_IMAGE_LEN => (bank & 0x0F) + 0x20,
+        STANDARD_HUCARD_512K_IMAGE_LEN if bank < 0x40 => bank,
+        STANDARD_HUCARD_512K_IMAGE_LEN => (bank & 0x1F) + 0x20,
+        _ => bank,
+    };
+    let mapped_offset = mapped_bank * HUCARD_BANK_LEN + offset_in_bank;
+    ((mapped_offset as usize) < image_len).then_some(mapped_offset)
+}
 const SUPERGRAFX_REQUIRED_SHA256: [[u8; 32]; 5] = [
     [
         0x50, 0x06, 0xF2, 0xDA, 0x9C, 0xB6, 0x45, 0x31, 0x2A, 0x0C, 0x58, 0x90, 0x44, 0xDF, 0x50,
@@ -344,5 +346,6 @@ const SUPERGRAFX_REQUIRED_SHA256: [[u8; 32]; 5] = [
         0x02, 0x6D,
     ],
 ];
+use super::cartridge_catalog::is_turbografx16_payload;
 use anyhow::bail;
 use zeff_emu_common::save_state::{StateReader, StateWriter};

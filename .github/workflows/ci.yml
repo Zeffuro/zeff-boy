@@ -262,6 +262,9 @@ jobs:
           grep -Fq 'lzma-rust2 0.19.0' THIRD_PARTY_NOTICES.md
           grep -Fq 'liblzma and liblzma-sys 0.4.8' THIRD_PARTY_NOTICES.md
           grep -Fq 'XZ Utils liblzma 5.8.3' THIRD_PARTY_NOTICES.md
+          grep -Fq '0525275fe4b553a10f38e455d30c60dc6ed9b45d' third_party/xdelta3/ZEFF_PATCH.md
+          test -s third_party/xdelta3/vendor/LICENSE
+          test -s third_party/xdelta3/vendor/xdelta3.c
           grep -Fq 'e8994adc584650d7b179f4d1d68685e064cc7534' third_party/sevenz-rust2/ZEFF_PATCH.md
           for file in \
             third_party/sevenz-rust2/src/archive.rs \

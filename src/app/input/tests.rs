@@ -53,6 +53,22 @@ fn remote_player_two_input_is_kept_separate_from_player_one() {
 }
 
 #[test]
+fn multitap_players_three_through_five_are_independent() {
+    let mut state = HostInputState::new();
+    state.set_keyboard_p3(HostButton::A, true);
+    state.set_gamepad_p4(HostButton::B, true);
+    state.set_remote_p5(HostButton::Start, true);
+    state.set_remote_p5(HostButton::Down, true);
+
+    assert_eq!(state.buttons_p3_pressed(), 0x01);
+    assert_eq!(state.buttons_p4_pressed(), 0x02);
+    assert_eq!(state.buttons_p5_pressed(), 0x08);
+    assert_eq!(state.dpad_p5_pressed(), 0x08);
+    assert_eq!(state.buttons_pressed(), 0);
+    assert_eq!(state.buttons_p2_pressed(), 0);
+}
+
+#[test]
 fn release_clears_bit() {
     let mut state = HostInputState::new();
     state.set_keyboard(HostButton::A, true);

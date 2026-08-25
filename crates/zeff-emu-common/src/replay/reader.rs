@@ -9,7 +9,7 @@ use super::{
     CAMERA_REPEAT_SENTINEL, FRAME_FIXED_BYTES, LEGACY_GB_SAVE_STATE_MAGIC,
     LEGACY_NES_SAVE_STATE_MAGIC, MAGIC, MAX_REPLAY_CAMERA_FRAME_BYTES, ReplayEvent,
     ReplayGameBoyLinkEvent, ReplayJoypadFrame, ReplayMetadata, ReplayWonderSwanLinkEvent,
-    ReplayZapperFrame, VERSION,
+    ReplayZapperFrame, V1_FRAME_FIXED_BYTES, VERSION,
 };
 
 pub struct ReplayPlayer {
@@ -34,7 +34,7 @@ impl ReplayPlayer {
         let mut version_buf = [0u8; 4];
         file.read_exact(&mut version_buf)?;
         let version = u32::from_le_bytes(version_buf);
-        if version != VERSION {
+        if !matches!(version, 1 | VERSION) {
             bail!("unsupported replay version: {version}");
         }
 
@@ -75,7 +75,7 @@ impl ReplayPlayer {
 
         let mut input_data = Vec::new();
         file.read_to_end(&mut input_data)?;
-        let mut frames = decode_input_frames(&input_data)?;
+        let mut frames = decode_input_frames(&input_data, version)?;
         pad_frames_to_metadata_events(&mut frames, &metadata);
 
         log::info!(
@@ -264,7 +264,7 @@ impl ReplayPlayer {
     }
 }
 
-fn decode_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFrame>> {
+fn decode_input_frames(input_data: &[u8], version: u32) -> Result<Vec<ReplayJoypadFrame>> {
     if input_data.len() < 4 {
         bail!("replay input stream is missing frame count");
     }
@@ -275,10 +275,19 @@ fn decode_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFrame>> {
     let mut offset = 4usize;
     let mut previous_camera_frame: Option<Vec<u8>> = None;
     for frame_index in 0..frame_count {
-        let chunk = read_replay_input_exact(input_data, &mut offset, FRAME_FIXED_BYTES)
+        let fixed_len = if version == VERSION {
+            FRAME_FIXED_BYTES
+        } else {
+            V1_FRAME_FIXED_BYTES
+        };
+        let chunk = read_replay_input_exact(input_data, &mut offset, fixed_len)
             .with_context(|| format!("truncated replay input frame {frame_index}"))?;
-        if chunk[17] != 0 {
-            bail!("invalid replay frame reserved byte: {:#04X}", chunk[17]);
+        let player_offset = if version == VERSION { 6 } else { 0 };
+        if chunk[17 + player_offset] != 0 {
+            bail!(
+                "invalid replay frame reserved byte: {:#04X}",
+                chunk[17 + player_offset]
+            );
         }
         let camera_len_bytes = read_replay_input_exact(input_data, &mut offset, 4)
             .with_context(|| format!("truncated replay camera length at frame {frame_index}"))?;
@@ -310,14 +319,30 @@ fn decode_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFrame>> {
             dpad: chunk[1],
             buttons_p2: chunk[2],
             dpad_p2: chunk[3],
+            buttons_p3: if version == VERSION { chunk[4] } else { 0 },
+            dpad_p3: if version == VERSION { chunk[5] } else { 0 },
+            buttons_p4: if version == VERSION { chunk[6] } else { 0 },
+            dpad_p4: if version == VERSION { chunk[7] } else { 0 },
+            buttons_p5: if version == VERSION { chunk[8] } else { 0 },
+            dpad_p5: if version == VERSION { chunk[9] } else { 0 },
             zapper: ReplayZapperFrame::from_parts(
-                chunk[4],
-                u16::from_le_bytes([chunk[5], chunk[6]]),
-                u16::from_le_bytes([chunk[7], chunk[8]]),
+                chunk[4 + player_offset],
+                u16::from_le_bytes([chunk[5 + player_offset], chunk[6 + player_offset]]),
+                u16::from_le_bytes([chunk[7 + player_offset], chunk[8 + player_offset]]),
             )?,
             host_tilt: (
-                f32::from_le_bytes([chunk[9], chunk[10], chunk[11], chunk[12]]),
-                f32::from_le_bytes([chunk[13], chunk[14], chunk[15], chunk[16]]),
+                f32::from_le_bytes([
+                    chunk[9 + player_offset],
+                    chunk[10 + player_offset],
+                    chunk[11 + player_offset],
+                    chunk[12 + player_offset],
+                ]),
+                f32::from_le_bytes([
+                    chunk[13 + player_offset],
+                    chunk[14 + player_offset],
+                    chunk[15 + player_offset],
+                    chunk[16 + player_offset],
+                ]),
             ),
             camera_frame,
         });

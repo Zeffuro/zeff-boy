@@ -7,7 +7,7 @@ use super::cpu::{LineLevel, VdcPort};
 use super::vdc_horizontal::VdcHorizontalPhase;
 use super::vdc_horizontal::VdcHorizontalState;
 use super::vdc_horizontal::VdcPortWriteResult;
-use super::vdc_scanline::{VdcScanlineState, VdcSyncMode, VdcVerticalPhase};
+use super::vdc_scanline::{VdcScanlineState, VdcSyncOutput, VdcVerticalPhase};
 
 mod dma;
 
@@ -41,7 +41,7 @@ pub struct VdcDebugSnapshot {
     pub horizontal_pixels_remaining: u16,
     pub dma_pixel_remainder: u8,
     pub frame_burst: bool,
-    pub sync_mode: VdcSyncMode,
+    pub sync_output: VdcSyncOutput,
     pub vertical_phase: VdcVerticalPhase,
     pub vertical_phase_line: u16,
     pub vertical_phase_duration: u16,
@@ -206,7 +206,7 @@ impl HuC6270 {
             horizontal_pixels_remaining: self.horizontal_phase_pixels_remaining(),
             dma_pixel_remainder: self.dma_pixel_remainder(),
             frame_burst: self.frame_burst_enabled(),
-            sync_mode: self.sync_mode(),
+            sync_output: self.sync_output(),
             vertical_phase: self.vertical_phase(),
             vertical_phase_line: self.vertical_phase_line(),
             vertical_phase_duration: self.current_vertical_phase_duration(),

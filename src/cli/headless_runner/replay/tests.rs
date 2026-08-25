@@ -448,6 +448,7 @@ fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::
             zapper: Default::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x03,
@@ -462,6 +463,7 @@ fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::
             },
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
         ReplayJoypadFrame {
             buttons: 0x08,
@@ -471,6 +473,7 @@ fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::
             zapper: Default::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            ..ReplayJoypadFrame::default()
         },
     ];
     let mut recorder =
@@ -580,6 +583,7 @@ fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
         zapper: Default::default(),
         host_tilt: (0.0, 0.0),
         camera_frame: Some(camera_frame),
+        ..ReplayJoypadFrame::default()
     };
 
     let mut recorder =
@@ -689,6 +693,7 @@ fn loaded_replay_rejects_pocket_camera_input_for_non_camera_rom() -> anyhow::Res
         zapper: Default::default(),
         host_tilt: (0.0, 0.0),
         camera_frame: Some(vec![0x10, 0x20, 0x30, 0x40]),
+        ..ReplayJoypadFrame::default()
     });
     recorder.finish()?;
 
@@ -736,6 +741,7 @@ fn loaded_replay_rejects_zapper_input_for_non_nes_rom() -> anyhow::Result<()> {
         },
         host_tilt: (0.0, 0.0),
         camera_frame: None,
+        ..ReplayJoypadFrame::default()
     });
     recorder.finish()?;
 
@@ -778,6 +784,7 @@ fn loaded_replay_rejects_mbc7_tilt_input_for_non_mbc7_rom() -> anyhow::Result<()
         zapper: Default::default(),
         host_tilt: (0.25, -0.5),
         camera_frame: None,
+        ..ReplayJoypadFrame::default()
     });
     recorder.finish()?;
 

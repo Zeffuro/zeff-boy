@@ -65,6 +65,15 @@ pub(super) fn ensure_system_headless_options(
             "--press-p2/--input-p2 is only supported for NES, PC Engine, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
         );
     }
+    if (!opts.input_events_p3.is_empty()
+        || !opts.input_events_p4.is_empty()
+        || !opts.input_events_p5.is_empty())
+        && system != "pce"
+    {
+        anyhow::bail!(
+            "--press-p3/--press-p4/--press-p5 are only supported for PC Engine headless runs"
+        );
+    }
     if !opts.memory_dumps.is_empty() && !matches!(system, "pce" | "ws") {
         anyhow::bail!(
             "--dump-mem is only supported for GB/GBC, PC Engine, and WonderSwan headless runs"
@@ -128,6 +137,9 @@ pub(super) fn read_headless_state_if_requested(
 pub(super) fn ensure_no_reset_events(system: &str, opts: &HeadlessOptions) -> anyhow::Result<()> {
     if opts.input_events.iter().any(|event| event.reset)
         || opts.input_events_p2.iter().any(|event| event.reset)
+        || opts.input_events_p3.iter().any(|event| event.reset)
+        || opts.input_events_p4.iter().any(|event| event.reset)
+        || opts.input_events_p5.iter().any(|event| event.reset)
     {
         anyhow::bail!("reset input events are not supported for {system} headless runs yet");
     }

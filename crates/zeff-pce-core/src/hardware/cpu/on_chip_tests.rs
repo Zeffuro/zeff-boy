@@ -1,4 +1,4 @@
-use super::super::{BaseBus, BaseBusDevices};
+use super::super::{BaseBus, BaseBusDevices, OPEN_BUS_VALUE};
 use super::{
     Cpu, CpuBus, HuC6280, InterruptSource, IrqPort, LineLevel, OnChipIo, PHYSICAL_ADDRESS_MASK,
     PROVISIONAL_INTERRUPT_ENTRY_CYCLES, SpeedMode, StatusFlags, TIMER_MASTER_TICKS, TimerPort,
@@ -35,6 +35,10 @@ impl BaseBusDevices for Devices {
 
     fn write_irq(&mut self, _port: IrqPort, _value: u8) {
         self.external_irq_accesses += 1;
+    }
+
+    fn read_controller(&mut self) -> u8 {
+        0xB5
     }
 
     fn observe_internal_read(&mut self, physical_addr: u32, value: u8, dummy: bool) {
@@ -128,7 +132,12 @@ fn timer_uses_a_3072_master_tick_cadence_and_periodically_reloads() {
     let mut zero_period = OnChipIo::new();
     zero_period.write_timer(TimerPort::CounterReload, 0);
     zero_period.write_timer(TimerPort::Control, 1);
-    zero_period.advance_master_ticks(TIMER_MASTER_TICKS - 1);
+    zero_period.advance_master_ticks(TIMER_MASTER_TICKS - 16);
+    assert_eq!(zero_period.read_timer_counter(), 0);
+    zero_period.advance_master_ticks(1);
+    assert_eq!(zero_period.read_timer_counter(), 0x7F);
+    zero_period.advance_master_ticks(14);
+    assert_eq!(zero_period.read_timer_counter(), 0x7F);
     assert!(!zero_period.timer_irq_pending());
     zero_period.advance_master_ticks(1);
     assert!(zero_period.timer_irq_pending());
@@ -636,13 +645,52 @@ fn wrapper_intercepts_timer_and_irq_mirrors_before_the_external_base_bus() {
         [
             ObservedAccess::Write(0x1F_EE00, 0x82, false),
             ObservedAccess::Write(0x1F_EE01, 0xFF, false),
-            ObservedAccess::Read(0x1F_EC00, 2, false),
+            ObservedAccess::Read(0x1F_EC00, 0x82, false),
             ObservedAccess::Read(0x1F_EC01, 0xFF, false),
             ObservedAccess::Write(0x1F_F402, 0xFF, false),
-            ObservedAccess::Read(0x1F_F402, 7, false),
+            ObservedAccess::Read(0x1F_F402, 0xFF, false),
             ObservedAccess::Write(0x1F_F403, 0, false),
         ]
     );
+}
+
+#[test]
+fn wrapper_preserves_the_io_data_buffer_across_normal_device_accesses() {
+    let rom = vec![
+        0xA9, 0x20, 0x8D, 0x00, 0x48, 0xAD, 0x03, 0x54, 0xA9, 0x80, 0x8D, 0x00, 0x4C, 0xAD, 0x00,
+        0x4C, 0xAD, 0x00, 0x50, 0xAD, 0x00, 0x48,
+    ];
+    let mut bus = BaseBus::new(rom, Devices::default()).unwrap();
+    let mut cpu = HuC6280::new();
+    cpu.cpu_mut().set_mapping_register(2, 0xFF);
+
+    for _ in 0..2 {
+        cpu.step_instruction(&mut bus).unwrap();
+        cpu.sample_interrupts_after_action();
+    }
+    assert_eq!(cpu.on_chip_io().io_data_buffer(), 0x20);
+
+    cpu.step_instruction(&mut bus).unwrap();
+    cpu.sample_interrupts_after_action();
+    assert_eq!(cpu.cpu().registers().a, 0x20);
+
+    for _ in 0..2 {
+        cpu.step_instruction(&mut bus).unwrap();
+        cpu.sample_interrupts_after_action();
+    }
+    assert_eq!(cpu.on_chip_io().io_data_buffer(), 0x80);
+
+    cpu.step_instruction(&mut bus).unwrap();
+    cpu.sample_interrupts_after_action();
+    assert_eq!(cpu.cpu().registers().a, 0x80);
+
+    cpu.step_instruction(&mut bus).unwrap();
+    cpu.sample_interrupts_after_action();
+    assert_eq!(cpu.cpu().registers().a, 0xB5);
+
+    cpu.step_instruction(&mut bus).unwrap();
+    assert_eq!(cpu.cpu().registers().a, 0xB5);
+    assert_eq!(cpu.on_chip_io().io_data_buffer(), 0xB5);
 }
 
 #[test]
@@ -658,8 +706,8 @@ fn wrapper_observes_internal_dummy_reads_once() {
     assert_eq!(
         bus.devices().observed,
         [
-            ObservedAccess::Read(0x1F_F402, 2, false),
-            ObservedAccess::Read(0x1F_F403, 0, true),
+            ObservedAccess::Read(0x1F_F402, 0xFA, false),
+            ObservedAccess::Read(0x1F_F403, 0xF8, true),
         ]
     );
     assert_eq!(bus.devices().external_irq_accesses, 0);
@@ -703,5 +751,6 @@ fn reset_clears_internal_state_but_preserves_external_line_levels() {
     assert!(!cpu.on_chip_io().timer_running());
     assert_eq!(cpu.on_chip_io().read_irq(IrqPort::Disable), 0);
     assert_eq!(cpu.on_chip_io().read_irq(IrqPort::Request), 3);
+    assert_eq!(cpu.on_chip_io().io_data_buffer(), OPEN_BUS_VALUE);
     assert!(!cpu.on_chip_io().nmi_pending());
 }
