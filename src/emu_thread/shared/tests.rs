@@ -131,6 +131,35 @@ fn rewind_response_reports_serial_device_restored_from_state() {
     ));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn rewind_keeps_same_frame_snapshot_when_current_state_differs() {
+    let mut backend = gb_backend();
+    let older_state = EmuThread::encode_current_state(&backend).unwrap();
+    backend.set_game_boy_serial_device(
+        zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
+    );
+    let latest_state = EmuThread::encode_current_state(&backend).unwrap();
+    backend.set_game_boy_serial_device(zeff_gb_core::hardware::GameBoySerialDevice::Disconnected);
+
+    let mut rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(1, 1);
+    rewind_buffer.push(&older_state, &[]);
+    rewind_buffer.push(&latest_state, &[]);
+    let shared_fb: SharedFramebuffer = Default::default();
+
+    let response = EmuThread::handle_rewind(&mut backend, &mut rewind_buffer, &shared_fb, 1);
+
+    assert!(matches!(
+        response,
+        EmuResponse::RewindOk {
+            game_boy_serial_device: Some(
+                zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
+            ),
+            ..
+        }
+    ));
+}
+
 #[test]
 fn step_n_frames_collects_midi_snapshot_per_emulated_frame() {
     let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(

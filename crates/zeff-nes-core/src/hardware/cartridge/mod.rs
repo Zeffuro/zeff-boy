@@ -201,6 +201,7 @@ impl Cartridge {
                 MapperImpl::Cnrom(mappers::Cnrom::new(
                     prg_rom,
                     chr_rom,
+                    chr_size == 0,
                     header.mirroring,
                     bus_conflicts,
                 ))
@@ -336,6 +337,7 @@ impl Cartridge {
                 MapperImpl::Cnrom(mappers::Cnrom::new(
                     prg_rom,
                     chr_rom,
+                    false,
                     header.mirroring,
                     true,
                 ))

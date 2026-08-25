@@ -308,6 +308,11 @@ profile-cores core="all" frames="3000":
 flamegraph-cores core="all" frames="3000":
     $env:ZEFF_PROFILE_CORE = "{{core}}"; $env:ZEFF_PROFILE_FRAMES = "{{frames}}"; cargo flamegraph --profile profiling --bin profile_cores --features profile-cores -o "flamegraph-{{core}}.svg"
 
+# Train synthetic cores plus available local gameplay and build a PGO release
+[windows]
+build-pgo frames="1200":
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-pgo.ps1 -Frames {{frames}}
+
 # Run one core's Criterion suite: gb, gba, nes, pce, sega8, or ws
 bench core:
     cargo bench --bench "{{core}}_benchmarks" -p "zeff-{{core}}-core"

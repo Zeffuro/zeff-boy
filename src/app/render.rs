@@ -328,10 +328,16 @@ impl App {
                             settings_dirty = true;
                         }
                         MenuAction::OpenPrinterWindow => {
-                            self.show_printer_window = true;
                             #[cfg(not(target_arch = "wasm32"))]
                             {
-                                self.focus_printer_window_pending = true;
+                                request_native_tool_window(
+                                    &mut self.show_printer_window,
+                                    &mut self.focus_printer_window_pending,
+                                );
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                self.show_printer_window = true;
                             }
                         }
                         MenuAction::SetDebugPresentation(presentation) => {
@@ -346,11 +352,24 @@ impl App {
                         }
                         #[cfg(not(target_arch = "wasm32"))]
                         MenuAction::CheckForUpdates => self.update_checker.request(true),
-                        MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
+                        MenuAction::SetAspectRatio(_) => {}
+                        MenuAction::OpenSettings => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            request_native_tool_window(
+                                &mut self.show_settings_window,
+                                &mut self.focus_settings_window_pending,
+                            );
+                        }
                         #[cfg(not(target_arch = "wasm32"))]
-                        MenuAction::OpenMods => {}
+                        MenuAction::OpenMods => request_native_tool_window(
+                            &mut self.show_mods_window,
+                            &mut self.focus_mods_window_pending,
+                        ),
                         #[cfg(not(target_arch = "wasm32"))]
-                        MenuAction::OpenCheats => {}
+                        MenuAction::OpenCheats => request_native_tool_window(
+                            &mut self.show_cheats_window,
+                            &mut self.focus_cheats_window_pending,
+                        ),
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -755,6 +774,32 @@ impl App {
         self.debug_windows.disasm_target = target;
         self.debug_windows.last_disasm_pc = None;
         self.debug_windows.last_disasm_mapping = None;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn request_native_tool_window(show: &mut bool, focus_pending: &mut bool) {
+    *show = true;
+    *focus_pending = true;
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::request_native_tool_window;
+
+    #[test]
+    fn repeat_tool_window_request_marks_an_open_window_for_focus() {
+        let mut visible = true;
+        let mut focus_pending = false;
+
+        request_native_tool_window(&mut visible, &mut focus_pending);
+
+        assert!(visible);
+        assert!(focus_pending);
+
+        focus_pending = false;
+        request_native_tool_window(&mut visible, &mut focus_pending);
+        assert!(focus_pending);
     }
 }
 

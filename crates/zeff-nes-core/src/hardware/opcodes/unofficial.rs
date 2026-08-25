@@ -331,10 +331,9 @@ pub fn ane<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
 
 pub fn atx<B: CpuBus>(cpu: &mut Cpu, bus: &mut B) {
     let val = cpu.fetch8(bus);
-    let result = (cpu.regs.a | UNSTABLE_IMMEDIATE_MASK) & val;
-    cpu.regs.a = result;
-    cpu.regs.x = result;
-    cpu.regs.set_zn(result);
+    cpu.regs.a = val;
+    cpu.regs.x = val;
+    cpu.regs.set_zn(val);
 }
 
 // SBC duplicate at 0xEB:identical to official SBC #imm.

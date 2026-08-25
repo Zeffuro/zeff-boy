@@ -9,6 +9,13 @@ use crate::{
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Fullscreen;
 
+#[cfg(not(target_arch = "wasm32"))]
+fn restore_focus_and_redraw(window: &winit::window::Window) {
+    window.set_minimized(false);
+    window.focus_window();
+    window.request_redraw();
+}
+
 impl App {
     pub(super) fn reset_audio_output(&mut self) {
         if std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1") {
@@ -335,11 +342,19 @@ impl App {
             {
                 log::error!("Failed to open settings window: {err}");
                 self.show_settings_window = false;
+                self.focus_settings_window_pending = false;
                 self.toast_manager.error("Failed to open settings window");
+            }
+            if self.focus_settings_window_pending
+                && let Some(window) = gfx.settings_window()
+            {
+                restore_focus_and_redraw(window);
+                self.focus_settings_window_pending = false;
             }
         } else if gfx.settings_window_id().is_some() {
             gfx.close_settings_window();
             self.settings_window_focused = false;
+            self.focus_settings_window_pending = false;
             self.focus_state_dirty = true;
         }
     }
@@ -355,11 +370,19 @@ impl App {
             {
                 log::error!("Failed to open Mods window: {err}");
                 self.show_mods_window = false;
+                self.focus_mods_window_pending = false;
                 self.toast_manager.error("Failed to open Mods window");
+            }
+            if self.focus_mods_window_pending
+                && let Some(window) = gfx.mods_window()
+            {
+                restore_focus_and_redraw(window);
+                self.focus_mods_window_pending = false;
             }
         } else if gfx.mods_window_id().is_some() {
             gfx.close_mods_window();
             self.mods_window_focused = false;
+            self.focus_mods_window_pending = false;
             self.focus_state_dirty = true;
         }
     }
@@ -375,11 +398,19 @@ impl App {
             {
                 log::error!("Failed to open Cheats window: {err}");
                 self.show_cheats_window = false;
+                self.focus_cheats_window_pending = false;
                 self.toast_manager.error("Failed to open Cheats window");
+            }
+            if self.focus_cheats_window_pending
+                && let Some(window) = gfx.cheats_window()
+            {
+                restore_focus_and_redraw(window);
+                self.focus_cheats_window_pending = false;
             }
         } else if gfx.cheats_window_id().is_some() {
             gfx.close_cheats_window();
             self.cheats_window_focused = false;
+            self.focus_cheats_window_pending = false;
             self.focus_state_dirty = true;
         }
     }
@@ -402,9 +433,7 @@ impl App {
             if self.focus_printer_window_pending
                 && let Some(window) = gfx.printer_window()
             {
-                window.set_minimized(false);
-                window.focus_window();
-                window.request_redraw();
+                restore_focus_and_redraw(window);
                 self.focus_printer_window_pending = false;
             }
         } else if gfx.printer_window_id().is_some() {

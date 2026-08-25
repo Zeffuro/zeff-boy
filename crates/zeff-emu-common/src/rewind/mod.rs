@@ -135,6 +135,12 @@ impl RewindBuffer {
         self.snapshots.pop_back();
     }
 
+    pub fn latest_snapshot_frame_matches_current(&self) -> bool {
+        self.snapshots
+            .back()
+            .is_some_and(|snapshot| snapshot.emulated_frame == self.emulated_frame)
+    }
+
     pub fn peek(&self) -> Option<RewindFrame> {
         self.snapshots.back().and_then(|s| s.decompress())
     }

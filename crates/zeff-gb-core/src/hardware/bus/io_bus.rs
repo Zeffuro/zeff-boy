@@ -197,7 +197,7 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         PPU_LYC => bus.io.ppu.lyc = value,
         PPU_WY => bus.io.ppu.wy = value,
         PPU_WX => bus.io.ppu.wx = value,
-        PPU_BGP => bus.io.ppu.bgp = value,
+        PPU_BGP => bus.io.ppu.write_bgp(value, &bus.vram, &bus.oam),
         PPU_OBP0 => bus.io.ppu.obp0 = value,
         PPU_OBP1 => bus.io.ppu.obp1 = value,
         PPU_DMA => bus.start_oam_dma(value),

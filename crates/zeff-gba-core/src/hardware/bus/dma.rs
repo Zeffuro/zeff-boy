@@ -115,23 +115,6 @@ impl Bus {
         }
     }
 
-    pub(super) fn cycles_until_next_direct_sound_overflow(&self, soundcnt_h: u16) -> u32 {
-        let mut cycles = u32::MAX;
-        if direct_sound_enabled(soundcnt_h, 8) {
-            let timer = direct_sound_timer(soundcnt_h, 10);
-            if let Some(next) = self.timers.cycles_until_overflow(timer) {
-                cycles = cycles.min(next);
-            }
-        }
-        if direct_sound_enabled(soundcnt_h, 12) {
-            let timer = direct_sound_timer(soundcnt_h, 14);
-            if let Some(next) = self.timers.cycles_until_overflow(timer) {
-                cycles = cycles.min(next);
-            }
-        }
-        cycles.max(1)
-    }
-
     fn run_dma(&mut self, channel: usize, ch: &mut DmaChannel) {
         let word = ch.control & (1 << 10) != 0;
         let unit = if word { 4 } else { 2 };
@@ -315,16 +298,4 @@ fn step_dma_addr(addr: u32, mode: u16, unit: u32) -> u32 {
         2 => addr,
         _ => addr,
     }
-}
-
-fn direct_sound_timer(soundcnt_h: u16, timer_select_bit: u16) -> usize {
-    if soundcnt_h & (1 << timer_select_bit) != 0 {
-        1
-    } else {
-        0
-    }
-}
-
-fn direct_sound_enabled(soundcnt_h: u16, right_enable_bit: u16) -> bool {
-    soundcnt_h & ((1 << right_enable_bit) | (1 << (right_enable_bit + 1))) != 0
 }

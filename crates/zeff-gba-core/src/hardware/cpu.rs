@@ -1,5 +1,4 @@
 use super::bus::Bus;
-use std::collections::VecDeque;
 
 mod arm;
 mod decode;
@@ -79,6 +78,74 @@ pub use decode::{
     ArmInstructionClass, DecodedInstruction, FetchedInstruction, ThumbInstructionClass,
 };
 
+const EMPTY_FETCHED_INSTRUCTION: FetchedInstruction = FetchedInstruction {
+    pc: 0,
+    raw: 0,
+    instruction_set: InstructionSet::Arm,
+    width_bytes: 4,
+    fetch_cycles: 0,
+    decoded: DecodedInstruction::Arm {
+        condition: 0,
+        class: ArmInstructionClass::DataProcessing,
+    },
+};
+
+#[derive(Clone, Debug)]
+struct PrefetchQueue {
+    entries: [FetchedInstruction; PREFETCH_QUEUE_LEN],
+    len: u8,
+}
+
+impl PrefetchQueue {
+    fn new() -> Self {
+        Self {
+            entries: [EMPTY_FETCHED_INSTRUCTION; PREFETCH_QUEUE_LEN],
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn front(&self) -> Option<&FetchedInstruction> {
+        (self.len != 0).then(|| &self.entries[0])
+    }
+
+    #[inline]
+    fn back(&self) -> Option<&FetchedInstruction> {
+        (self.len != 0).then(|| &self.entries[usize::from(self.len - 1)])
+    }
+
+    #[inline]
+    fn pop_front(&mut self) -> Option<FetchedInstruction> {
+        if self.len == 0 {
+            return None;
+        }
+
+        let fetched = self.entries[0];
+        if self.len == PREFETCH_QUEUE_LEN as u8 {
+            self.entries[0] = self.entries[1];
+        }
+        self.len -= 1;
+        Some(fetched)
+    }
+
+    #[inline]
+    fn push_back(&mut self, fetched: FetchedInstruction) {
+        debug_assert!(usize::from(self.len) < PREFETCH_QUEUE_LEN);
+        self.entries[usize::from(self.len)] = fetched;
+        self.len += 1;
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
 impl CpuMode {
     pub fn from_bits(bits: u8) -> Self {
         match bits & 0x1F {
@@ -133,7 +200,7 @@ pub struct Cpu {
     pub last_fetch: Option<FetchedInstruction>,
     bios_protected_read_latch: u32,
     pub(crate) swi_wait_return_pc: Option<u32>,
-    prefetch_queue: VecDeque<FetchedInstruction>,
+    prefetch_queue: PrefetchQueue,
     pub(crate) banked_sp: [u32; CPU_BANKS],
     pub(crate) banked_lr: [u32; CPU_BANKS],
     pub(crate) banked_spsr: [u32; CPU_BANKS],
@@ -160,7 +227,7 @@ impl Cpu {
             last_fetch: None,
             bios_protected_read_latch: POST_STARTUP_BIOS_READ_LATCH,
             swi_wait_return_pc: None,
-            prefetch_queue: VecDeque::with_capacity(PREFETCH_QUEUE_LEN),
+            prefetch_queue: PrefetchQueue::new(),
             banked_sp: [0; CPU_BANKS],
             banked_lr: [0; CPU_BANKS],
             banked_spsr: [0; CPU_BANKS],

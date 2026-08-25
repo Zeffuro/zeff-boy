@@ -514,11 +514,21 @@ impl Graphics {
         for action in menu_actions.actions {
             match action {
                 MenuAction::SetAspectRatio(mode) => self.aspect_ratio_mode = mode,
-                MenuAction::OpenSettings => *ctx.show_settings_window = true,
+                MenuAction::OpenSettings => {
+                    *ctx.show_settings_window = true;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    forwarded_actions.push(MenuAction::OpenSettings);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
-                MenuAction::OpenMods => *ctx.show_mods_window = true,
+                MenuAction::OpenMods => {
+                    *ctx.show_mods_window = true;
+                    forwarded_actions.push(MenuAction::OpenMods);
+                }
                 #[cfg(not(target_arch = "wasm32"))]
-                MenuAction::OpenCheats => *ctx.show_cheats_window = true,
+                MenuAction::OpenCheats => {
+                    *ctx.show_cheats_window = true;
+                    forwarded_actions.push(MenuAction::OpenCheats);
+                }
                 other => forwarded_actions.push(other),
             }
         }

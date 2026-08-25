@@ -4,9 +4,17 @@ use super::values::{
     parse_pce_arcade_card_mode_arg, parse_pce_controller_mode_arg, parse_pce_memory_base_mode_arg,
     parse_region_dump_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
 };
+use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBaseMode};
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
+
+#[test]
+fn parses_sgb_mode_override() {
+    let args = parse_args_from(["--mode", "sgb", "game.gb"]).unwrap();
+
+    assert_eq!(args.mode_override, Some(HardwareModePreference::ForceSgb));
+}
 
 #[test]
 fn parses_headless_replay_options() {

@@ -261,6 +261,12 @@ pub(crate) fn run(
         #[cfg(not(target_arch = "wasm32"))]
         printer_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
+        focus_settings_window_pending: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        focus_mods_window_pending: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        focus_cheats_window_pending: false,
+        #[cfg(not(target_arch = "wasm32"))]
         focus_printer_window_pending: false,
         focus_state_dirty: false,
         #[cfg(not(target_arch = "wasm32"))]
@@ -418,6 +424,12 @@ struct App {
     cheats_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
     printer_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    focus_settings_window_pending: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    focus_mods_window_pending: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    focus_cheats_window_pending: bool,
     #[cfg(not(target_arch = "wasm32"))]
     focus_printer_window_pending: bool,
     focus_state_dirty: bool,

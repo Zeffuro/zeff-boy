@@ -3,16 +3,24 @@ use crate::hardware::cartridge::{Mapper, Mirroring};
 pub struct Cnrom {
     prg_rom: Vec<u8>,
     chr: Vec<u8>,
+    chr_is_ram: bool,
     mirroring: Mirroring,
     chr_bank_select: u8,
     bus_conflicts: bool,
 }
 
 impl Cnrom {
-    pub fn new(prg_rom: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring, bus_conflicts: bool) -> Self {
+    pub fn new(
+        prg_rom: Vec<u8>,
+        chr: Vec<u8>,
+        chr_is_ram: bool,
+        mirroring: Mirroring,
+        bus_conflicts: bool,
+    ) -> Self {
         Self {
             prg_rom,
             chr,
+            chr_is_ram,
             mirroring,
             chr_bank_select: 0,
             bus_conflicts,
@@ -65,7 +73,7 @@ impl Mapper for Cnrom {
     }
 
     fn chr_write(&mut self, addr: u16, val: u8) {
-        if self.chr.is_empty() {
+        if self.chr.is_empty() || !self.chr_is_ram {
             return;
         }
         let idx = self.chr_index(addr);
@@ -111,6 +119,7 @@ mod tests {
         let mut mapper = Cnrom::new(
             prg,
             chr_banks(&[0x00, 0x11, 0x22, 0x33]),
+            false,
             Mirroring::Vertical,
             true,
         );
@@ -127,6 +136,7 @@ mod tests {
         let mut mapper = Cnrom::new(
             prg,
             chr_banks(&[0x00, 0x11, 0x22, 0x33]),
+            false,
             Mirroring::Horizontal,
             true,
         );
@@ -144,6 +154,7 @@ mod tests {
         let mut mapper = Cnrom::new(
             prg,
             chr_banks(&[0x00, 0x11, 0x22, 0x33]),
+            false,
             Mirroring::Horizontal,
             false,
         );
@@ -159,6 +170,7 @@ mod tests {
         let mut mapper = Cnrom::new(
             prg(0xFF),
             chr_banks(&[0x00, 0x11, 0x22, 0x33, 0x44]),
+            false,
             Mirroring::Horizontal,
             false,
         );
@@ -166,5 +178,29 @@ mod tests {
         mapper.cpu_write(0x8000, 0x04);
 
         assert_eq!(mapper.chr_read(0x0000), 0x44);
+    }
+
+    #[test]
+    fn chr_writes_only_modify_ram() {
+        let mut rom = Cnrom::new(
+            prg(0xFF),
+            chr_banks(&[0x11]),
+            false,
+            Mirroring::Horizontal,
+            false,
+        );
+        let mut ram = Cnrom::new(
+            prg(0xFF),
+            chr_banks(&[0x11]),
+            true,
+            Mirroring::Horizontal,
+            false,
+        );
+
+        rom.chr_write(0x1234, 0x22);
+        ram.chr_write(0x1234, 0x22);
+
+        assert_eq!(rom.chr_read(0x1234), 0x11);
+        assert_eq!(ram.chr_read(0x1234), 0x22);
     }
 }

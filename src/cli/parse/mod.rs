@@ -40,13 +40,14 @@ pub(crate) fn parse_args_from(
         match args[i].as_str() {
             "--mode" => {
                 let Some(value) = args.get(i + 1) else {
-                    anyhow::bail!("--mode requires one of: auto|dmg|cgb");
+                    anyhow::bail!("--mode requires one of: auto|dmg|sgb|cgb");
                 };
                 mode_override = Some(match value.as_str() {
                     "auto" => HardwareModePreference::Auto,
                     "dmg" => HardwareModePreference::ForceDmg,
+                    "sgb" => HardwareModePreference::ForceSgb,
                     "cgb" => HardwareModePreference::ForceCgb,
-                    _ => anyhow::bail!("invalid --mode value; expected auto|dmg|cgb"),
+                    _ => anyhow::bail!("invalid --mode value; expected auto|dmg|sgb|cgb"),
                 });
                 i += 2;
             }

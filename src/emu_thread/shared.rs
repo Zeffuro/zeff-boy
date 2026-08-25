@@ -528,14 +528,16 @@ impl EmuThread {
         if !backend.supports_rewind() {
             return EmuResponse::RewindFailed("rewind is not supported by this core".to_string());
         }
-        let current_state = Self::encode_current_state(backend).ok();
-        if current_state.as_ref().is_some_and(|current| {
-            rewind_buffer
-                .peek()
-                .is_some_and(|frame| frame.state_bytes == *current)
-        }) && rewind_buffer.len() > 1
-        {
-            rewind_buffer.discard_latest();
+        // Only the first rewind request can land on the current snapshot.
+        if rewind_buffer.latest_snapshot_frame_matches_current() && rewind_buffer.len() > 1 {
+            let current_state = Self::encode_current_state(backend).ok();
+            if current_state.as_ref().is_some_and(|current| {
+                rewind_buffer
+                    .peek()
+                    .is_some_and(|frame| frame.state_bytes == *current)
+            }) {
+                rewind_buffer.discard_latest();
+            }
         }
         if let Some(rewind_frame) = rewind_buffer.pop_steps(steps.max(1)) {
             match backend.load_state_from_bytes(rewind_frame.state_bytes) {

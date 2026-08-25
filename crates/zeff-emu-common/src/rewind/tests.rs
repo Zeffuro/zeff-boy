@@ -162,3 +162,30 @@ fn peek_empty_returns_none() {
     let buf = RewindBuffer::new(10, 4);
     assert!(buf.peek().is_none());
 }
+
+#[test]
+fn latest_snapshot_frame_match_tracks_capture_and_advance() {
+    let mut buf = RewindBuffer::new(10, 4);
+    assert!(!buf.latest_snapshot_frame_matches_current());
+
+    assert!(buf.advance_frames(4));
+    buf.push(&[4], &[]);
+    assert!(buf.latest_snapshot_frame_matches_current());
+
+    assert!(!buf.advance_frames(1));
+    assert!(!buf.latest_snapshot_frame_matches_current());
+}
+
+#[test]
+fn latest_snapshot_frame_no_longer_matches_after_rewind_pop() {
+    let mut buf = RewindBuffer::new(10, 1);
+    for value in 1..=3 {
+        assert!(buf.advance_frames(1));
+        buf.push(&[value], &[]);
+    }
+    assert!(buf.latest_snapshot_frame_matches_current());
+
+    let frame = buf.pop_steps(1).unwrap();
+    assert_eq!(frame.state_bytes, [3]);
+    assert!(!buf.latest_snapshot_frame_matches_current());
+}

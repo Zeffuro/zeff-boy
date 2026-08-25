@@ -1,6 +1,149 @@
 use super::*;
 
 #[test]
+fn dmg_bgp_write_during_mode3_keeps_prior_pixels_and_ors_transition_pixel() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+    for row in 0..8 {
+        vram[row * 2] = 0xFF;
+    }
+
+    let old_bgp = 0xE4;
+    let new_bgp = 0xE8;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::TILE_DATA | Lcdc::BG_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    ppu.bgp = old_bgp;
+    ppu.dmg_palette_preset = DmgPalettePreset::Gray;
+    ppu.cycles = OAM_DOTS + (DRAW_DOTS_BASE - SCREEN_W as u64) + 8 + 3;
+
+    ppu.write_bgp(new_bgp, &vram, &oam);
+    ppu.step(OAM_DOTS + DRAW_DOTS_BASE - ppu.cycles, &vram, &oam, false);
+
+    let line_start = SCREEN_W * 4;
+    let pixel = |x: usize| &ppu.framebuffer[line_start + x * 4..line_start + x * 4 + 4];
+    assert_eq!(
+        pixel(7),
+        apply_dmg_palette(DmgPalettePreset::Gray, old_bgp, 1)
+    );
+    assert_eq!(
+        pixel(8),
+        apply_dmg_palette(DmgPalettePreset::Gray, old_bgp | new_bgp, 1)
+    );
+    assert_eq!(
+        pixel(9),
+        apply_dmg_palette(DmgPalettePreset::Gray, new_bgp, 1)
+    );
+}
+
+#[test]
+fn dmg_bgp_write_finishing_at_hblank_updates_the_last_pixels() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+    for row in 0..8 {
+        vram[row * 2] = 0xFF;
+    }
+
+    let old_bgp = 0xE4;
+    let new_bgp = 0xE8;
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::TILE_DATA | Lcdc::BG_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    ppu.bgp = old_bgp;
+    ppu.dmg_palette_preset = DmgPalettePreset::Gray;
+    ppu.cycles = OAM_DOTS + DRAW_DOTS_BASE - 4;
+
+    ppu.step(4, &vram, &oam, false);
+    ppu.write_bgp(new_bgp, &vram, &oam);
+
+    let line_start = SCREEN_W * 4;
+    let pixel = |x: usize| &ppu.framebuffer[line_start + x * 4..line_start + x * 4 + 4];
+    assert_eq!(
+        pixel(156),
+        apply_dmg_palette(DmgPalettePreset::Gray, old_bgp, 1)
+    );
+    assert_eq!(
+        pixel(157),
+        apply_dmg_palette(DmgPalettePreset::Gray, old_bgp | new_bgp, 1)
+    );
+    assert_eq!(
+        pixel(158),
+        apply_dmg_palette(DmgPalettePreset::Gray, new_bgp, 1)
+    );
+}
+
+#[test]
+fn dmg_bgp_write_on_line_zero_uses_the_later_output_phase() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+    for row in 0..8 {
+        vram[row * 2] = 0xFF;
+    }
+
+    let old_bgp = 0xE4;
+    let new_bgp = 0xE8;
+    ppu.lcd_was_enabled = true;
+    ppu.blank_first_frame_after_lcd_on = false;
+    ppu.bgp = old_bgp;
+    ppu.dmg_palette_preset = DmgPalettePreset::Gray;
+    ppu.cycles = OAM_DOTS + (DRAW_DOTS_BASE - SCREEN_W as u64) + 8 + 3;
+
+    ppu.write_bgp(new_bgp, &vram, &oam);
+    ppu.step(OAM_DOTS + DRAW_DOTS_BASE - ppu.cycles, &vram, &oam, false);
+
+    let pixel = |x: usize| &ppu.framebuffer[x * 4..x * 4 + 4];
+    assert_eq!(
+        pixel(11),
+        apply_dmg_palette(DmgPalettePreset::Gray, old_bgp, 1)
+    );
+    assert_eq!(
+        pixel(12),
+        apply_dmg_palette(DmgPalettePreset::Gray, old_bgp | new_bgp, 1)
+    );
+    assert_eq!(
+        pixel(13),
+        apply_dmg_palette(DmgPalettePreset::Gray, new_bgp, 1)
+    );
+}
+
+#[test]
+fn dmg_partial_line_state_restore_converges_at_the_next_scanline() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+    for row in 0..8 {
+        vram[row * 2] = 0xFF;
+    }
+
+    ppu.lcd_was_enabled = true;
+    ppu.blank_first_frame_after_lcd_on = false;
+    ppu.ly = 1;
+    ppu.bgp = 0xE4;
+    ppu.cycles = OAM_DOTS + (DRAW_DOTS_BASE - SCREEN_W as u64) + 8 + 3;
+    ppu.write_bgp(0xE8, &vram, &oam);
+
+    let mut writer = crate::save_state::StateWriter::new();
+    ppu.write_state(&mut writer);
+    let bytes = writer.into_bytes();
+    let mut reader = crate::save_state::StateReader::new(&bytes);
+    let mut restored = PPU::read_state(&mut reader).unwrap();
+    assert!(reader.is_exhausted());
+
+    let remaining = DOTS_PER_LINE - ppu.cycles;
+    ppu.step(remaining, &vram, &oam, false);
+    restored.step(remaining, &vram, &oam, false);
+
+    let mut expected = crate::save_state::StateWriter::new();
+    ppu.write_state(&mut expected);
+    let mut actual = crate::save_state::StateWriter::new();
+    restored.write_state(&mut actual);
+    assert_eq!(actual.into_bytes(), expected.into_bytes());
+}
+
+#[test]
 fn stat_interrupt_triggers_only_on_rising_edge() {
     let mut ppu = PPU::new();
 

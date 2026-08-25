@@ -609,15 +609,15 @@ fn ane_immediate_uses_corpus_mask() {
 }
 
 #[test]
-fn atx_immediate_uses_corpus_mask_for_a_and_x() {
+fn atx_immediate_matches_corpus_lax_behavior() {
     let (mut cpu, mut bus) = setup(&[0xAB, 0x55]);
     cpu.regs.a = 0x01;
     cpu.regs.x = 0x00;
 
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.regs.a, 0x45);
-    assert_eq!(cpu.regs.x, 0x45);
+    assert_eq!(cpu.regs.a, 0x55);
+    assert_eq!(cpu.regs.x, 0x55);
     assert_eq!(cpu.pc, 0x8002);
     assert!(!cpu.regs.get_flag(StatusFlags::ZERO));
     assert!(!cpu.regs.get_flag(StatusFlags::NEGATIVE));

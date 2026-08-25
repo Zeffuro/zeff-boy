@@ -539,7 +539,6 @@ impl Bus {
             let soundcnt_h = read_io16(&self.io, 0x82);
             let mut step = cycles
                 .min(self.ppu.cycles_until_next_status_event().max(1))
-                .min(self.cycles_until_next_direct_sound_overflow(soundcnt_h))
                 .min(self.cycles_until_irq_event());
             if self.timers.has_clocked_timers() {
                 for timer in 0..4 {

@@ -1,6 +1,6 @@
 use super::{
     DOTS_PER_LINE, DRAW_DOTS_BASE, LCD_ON_INITIAL_MODE0_DOTS, Lcdc, OAM_DOTS, PPU, SCREEN_H,
-    STAT_IRQ_HBLANK_DELAY_DOTS, STAT_IRQ_OAM_DOTS, renderer,
+    SCREEN_W, STAT_IRQ_HBLANK_DELAY_DOTS, STAT_IRQ_OAM_DOTS, renderer,
 };
 
 impl PPU {
@@ -30,6 +30,7 @@ impl PPU {
         self.window_was_active_this_frame = false;
         self.window_y_triggered = false;
         self.rendered_current_line = false;
+        self.dmg_rendered_x = 0;
         self.draw_dots_for_line = DRAW_DOTS_BASE;
         self.prev_cpu_stat_mode0_line = false;
         self.cpu_stat_mode0_pending_before_if = false;
@@ -49,6 +50,7 @@ impl PPU {
         self.window_was_active_this_frame = false;
         self.window_y_triggered = false;
         self.rendered_current_line = false;
+        self.dmg_rendered_x = 0;
         self.draw_dots_for_line = DRAW_DOTS_BASE;
         self.prev_cpu_stat_mode0_line = false;
         self.cpu_stat_mode0_pending_before_if = false;
@@ -142,6 +144,62 @@ impl PPU {
         total & !3
     }
 
+    fn render_dmg_until(&mut self, x: u8, vram: &[u8], oam: &[u8]) {
+        let x = x.min(SCREEN_W as u8);
+        if x <= self.dmg_rendered_x || self.ly >= SCREEN_H as u8 {
+            return;
+        }
+
+        if self.dmg_rendered_x == 0 {
+            renderer::render_scanline_dmg(self, vram, oam);
+            self.dmg_rendered_x = x;
+            return;
+        }
+
+        let line_start = usize::from(self.ly) * SCREEN_W * 4;
+        let prefix_len = usize::from(self.dmg_rendered_x) * 4;
+        let mut prefix = [0; SCREEN_W * 4];
+        prefix[..prefix_len]
+            .copy_from_slice(&self.framebuffer[line_start..line_start + prefix_len]);
+        renderer::render_scanline_dmg(self, vram, oam);
+        self.framebuffer[line_start..line_start + prefix_len]
+            .copy_from_slice(&prefix[..prefix_len]);
+        self.dmg_rendered_x = x;
+    }
+
+    pub(in crate::hardware) fn write_bgp(&mut self, value: u8, vram: &[u8], oam: &[u8]) {
+        let write_dot = self.cycles.saturating_sub(3);
+        if self.cgb_mode
+            || self.ly >= SCREEN_H as u8
+            || self.blank_first_frame_after_lcd_on
+            || write_dot < OAM_DOTS
+            || write_dot >= OAM_DOTS + self.draw_dots_for_line
+        {
+            self.bgp = value;
+            return;
+        }
+
+        let startup_dots = DRAW_DOTS_BASE - SCREEN_W as u64;
+        let output_dot = write_dot + u64::from(self.ly == 0) * 4;
+        let x = output_dot
+            .saturating_sub(OAM_DOTS + startup_dots)
+            .min(SCREEN_W as u64) as u8;
+        let line_was_rendered = self.rendered_current_line;
+        if line_was_rendered {
+            self.dmg_rendered_x = self.dmg_rendered_x.min(x);
+        }
+        let previous = self.bgp;
+        self.render_dmg_until(x, vram, oam);
+        if x < SCREEN_W as u8 && previous != value {
+            self.bgp = previous | value;
+            self.render_dmg_until(x + 1, vram, oam);
+        }
+        self.bgp = value;
+        if line_was_rendered {
+            self.render_dmg_until(SCREEN_W as u8, vram, oam);
+        }
+    }
+
     #[inline]
     pub(in crate::hardware) fn step(
         &mut self,
@@ -186,7 +244,7 @@ impl PPU {
                 if cgb_mode {
                     renderer::render_scanline_cgb(self, vram, oam);
                 } else {
-                    renderer::render_scanline_dmg(self, vram, oam);
+                    self.render_dmg_until(SCREEN_W as u8, vram, oam);
                 }
             }
             self.rendered_current_line = true;
@@ -199,7 +257,7 @@ impl PPU {
                 if cgb_mode {
                     renderer::render_scanline_cgb(self, vram, oam);
                 } else {
-                    renderer::render_scanline_dmg(self, vram, oam);
+                    self.render_dmg_until(SCREEN_W as u8, vram, oam);
                 }
             }
 
@@ -209,6 +267,7 @@ impl PPU {
 
             self.ly += 1;
             self.rendered_current_line = false;
+            self.dmg_rendered_x = 0;
 
             if self.ly == 144 {
                 interrupts |= 0x01;

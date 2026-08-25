@@ -176,6 +176,7 @@ impl App {
                 self.clear_rebinding_state();
                 self.settings.save();
                 self.settings_window_focused = false;
+                self.focus_settings_window_pending = false;
                 self.focus_state_dirty = true;
             }
             WindowEvent::Resized(size) => {
@@ -340,6 +341,7 @@ impl App {
                 self.show_mods_window = false;
                 self.settings.save();
                 self.mods_window_focused = false;
+                self.focus_mods_window_pending = false;
                 self.focus_state_dirty = true;
             }
             WindowEvent::Resized(size) => {
@@ -415,6 +417,7 @@ impl App {
                 self.show_cheats_window = false;
                 self.settings.save();
                 self.cheats_window_focused = false;
+                self.focus_cheats_window_pending = false;
                 self.focus_state_dirty = true;
             }
             WindowEvent::Resized(size) => {

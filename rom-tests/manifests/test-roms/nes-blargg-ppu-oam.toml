@@ -36,7 +36,6 @@ id = "test_ppu_read_buffer"
 archive_path = "nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes"
 sha256 = "230a52fc557c098eba163801d1b6bbf9f57fe8c5ff79a3f968c804dedb1290ba"
 legacy_paths = ["test-roms/nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes"]
-expectation = { kind = "skip", reason = "Current NES test detector does not observe a $6000 status signature for this ROM." }
 
 [[test_groups]]
 id_prefix = "nes/blargg/ppu_open_bus"

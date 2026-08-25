@@ -56,6 +56,11 @@ pub(super) fn run_nes_headless(
     let mut reset_request_active = false;
     let mut tail: VecDeque<String> = VecDeque::with_capacity(64);
     let bus_trace_active = !opts.trace_bus_filters.is_empty();
+    let mut test_output_shadow = (opts.expect_test_pass
+        && emulator
+            .cartridge_effective_mapper_label()
+            .starts_with("CNROM"))
+    .then(|| Box::new([0; 0x2000]));
     write_screenshot_if_requested(
         opts,
         0,
@@ -86,7 +91,7 @@ pub(super) fn run_nes_headless(
             current_input.zapper_screen_pos,
         );
 
-        if opts.trace_opcodes || bus_trace_active {
+        if opts.trace_opcodes || bus_trace_active || test_output_shadow.is_some() {
             emulator.clear_frame_ready();
             let start_cycles = emulator.cpu_cycles();
             let max_cycles = zeff_nes_core::emulator::CPU_CYCLES_PER_FRAME * 2;
@@ -96,12 +101,26 @@ pub(super) fn run_nes_headless(
             {
                 let bus_trace_collecting = bus_trace_active
                     && (opts.trace_bus_limit == 0 || bus_traced < opts.trace_bus_limit);
-                let (pc, op, step_cycles, bus_events) = if bus_trace_collecting {
-                    emulator.step_instruction_with_bus_trace()
-                } else {
-                    let (pc, op, step_cycles) = emulator.step_instruction();
-                    (pc, op, step_cycles, Vec::new())
-                };
+                let (pc, op, step_cycles, bus_events) =
+                    if bus_trace_collecting || test_output_shadow.is_some() {
+                        emulator.step_instruction_with_bus_trace()
+                    } else {
+                        let (pc, op, step_cycles) = emulator.step_instruction();
+                        (pc, op, step_cycles, Vec::new())
+                    };
+                if let Some(shadow) = test_output_shadow.as_mut() {
+                    for event in &bus_events {
+                        if let zeff_nes_core::hardware::bus::DebugTraceEvent::Write {
+                            addr,
+                            written_value,
+                            ..
+                        } = event
+                            && (0x6000..=0x7FFF).contains(addr)
+                        {
+                            shadow[*addr as usize - 0x6000] = *written_value as u8;
+                        }
+                    }
+                }
                 if opts.trace_opcodes
                     && (opts.trace_opcode_limit == 0 || traced < opts.trace_opcode_limit)
                     && should_trace_nes_op(opts, pc, op, emulator.cpu_cycles())
@@ -173,7 +192,8 @@ pub(super) fn run_nes_headless(
         );
 
         if opts.expect_test_pass
-            && let Some((status, text)) = read_nes_memory_test_status(&emulator)
+            && let Some((status, text)) =
+                read_nes_memory_test_status(&emulator, test_output_shadow.as_deref())
         {
             test_status_seen = true;
             last_test_status = Some((status, text.clone()));
@@ -275,20 +295,25 @@ pub(super) fn run_nes_headless(
     Ok(())
 }
 
-fn read_nes_memory_test_status(emulator: &NesEmulator) -> Option<(u8, String)> {
-    let signature = [
-        emulator.cpu_peek(0x6001),
-        emulator.cpu_peek(0x6002),
-        emulator.cpu_peek(0x6003),
-    ];
+fn read_nes_memory_test_status(
+    emulator: &NesEmulator,
+    output_shadow: Option<&[u8; 0x2000]>,
+) -> Option<(u8, String)> {
+    let read = |addr: u16| {
+        output_shadow.map_or_else(
+            || emulator.cpu_peek(addr),
+            |shadow| shadow[addr as usize - 0x6000],
+        )
+    };
+    let signature = [read(0x6001), read(0x6002), read(0x6003)];
     if signature != [0xDE, 0xB0, 0x61] {
         return None;
     }
 
-    let status = emulator.cpu_peek(0x6000);
+    let status = read(0x6000);
     let mut text = Vec::new();
     for addr in 0x6004..=0x7FFF {
-        let byte = emulator.cpu_peek(addr);
+        let byte = read(addr);
         if byte == 0 {
             break;
         }
