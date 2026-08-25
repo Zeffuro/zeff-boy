@@ -84,6 +84,10 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>>;
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>>;
     fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()>;
+    #[inline]
+    fn state_restores_framebuffer(&self) -> bool {
+        false
+    }
     fn rom_path(&self) -> &Path;
     fn rom_hash(&self) -> [u8; 32];
 

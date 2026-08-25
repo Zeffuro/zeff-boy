@@ -8,6 +8,8 @@ use winit::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+mod cheats_window;
+#[cfg(not(target_arch = "wasm32"))]
 mod debugger_window;
 mod egui_integration;
 mod framebuffer;
@@ -20,6 +22,8 @@ mod printer_window;
 mod render_frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod settings_window;
+#[cfg(not(target_arch = "wasm32"))]
+mod tool_window;
 mod viewport;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod window_geometry;
@@ -28,6 +32,8 @@ use egui_integration::EguiRenderer;
 use framebuffer::FramebufferRenderer;
 use gpu::GpuContext;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use cheats_window::CheatsRenderContext;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,6 +65,8 @@ pub(crate) struct Graphics {
     settings_window: Option<settings_window::SettingsWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     mods_window: Option<mods_window::ModsWindow>,
+    #[cfg(not(target_arch = "wasm32"))]
+    cheats_window: Option<cheats_window::CheatsWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     printer_window: Option<printer_window::PrinterWindow>,
 }
@@ -153,6 +161,8 @@ impl Graphics {
             settings_window: None,
             #[cfg(not(target_arch = "wasm32"))]
             mods_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            cheats_window: None,
             #[cfg(not(target_arch = "wasm32"))]
             printer_window: None,
         })
@@ -359,6 +369,66 @@ impl Graphics {
         ctx: ModsRenderContext<'_>,
     ) -> Result<(), FrameError> {
         self.mods_window
+            .as_mut()
+            .ok_or(FrameError::Lost)?
+            .render(ctx)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_cheats_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::Settings,
+    ) -> Result<WindowId> {
+        if let Some(window) = self.cheats_window.as_ref() {
+            window.window().focus_window();
+            return Ok(window.id());
+        }
+        let window = cheats_window::CheatsWindow::new(event_loop, &self.gpu, settings)?;
+        let id = window.id();
+        self.cheats_window = Some(window);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_cheats_window(&mut self) {
+        self.cheats_window = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn cheats_window_id(&self) -> Option<WindowId> {
+        self.cheats_window
+            .as_ref()
+            .map(cheats_window::CheatsWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn cheats_window(&self) -> Option<&Window> {
+        self.cheats_window
+            .as_ref()
+            .map(cheats_window::CheatsWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn cheats_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.cheats_window
+            .as_mut()
+            .is_some_and(|window| window.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_cheats_window(&mut self, width: u32, height: u32) {
+        if let Some(window) = self.cheats_window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_cheats_window(
+        &mut self,
+        ctx: CheatsRenderContext<'_>,
+    ) -> Result<(), FrameError> {
+        self.cheats_window
             .as_mut()
             .ok_or(FrameError::Lost)?
             .render(ctx)

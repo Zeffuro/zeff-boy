@@ -88,6 +88,42 @@ fn load_save_roundtrip() {
 }
 
 #[test]
+fn load_preserves_saved_patch_order_and_appends_new_files() {
+    let dir = std::env::temp_dir().join("zeff_test_mods_order");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.ips", "b.ips", "c.ips"] {
+        std::fs::write(dir.join(name), b"PATCHEOF").unwrap();
+    }
+    save_mod_config(
+        &dir,
+        &[
+            ModEntry {
+                filename: "b.ips".to_owned(),
+                enabled: true,
+                target: None,
+            },
+            ModEntry {
+                filename: "a.ips".to_owned(),
+                enabled: false,
+                target: None,
+            },
+        ],
+    );
+
+    let loaded = load_mod_config(&dir);
+    assert_eq!(
+        loaded
+            .iter()
+            .map(|entry| entry.filename.as_str())
+            .collect::<Vec<_>>(),
+        ["b.ips", "a.ips", "c.ips"]
+    );
+    assert!(loaded[0].enabled);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn apply_enabled_mods_applies_ips_patches() {
     let dir = std::env::temp_dir().join("zeff_test_mods_apply_ips");
     let _ = std::fs::remove_dir_all(&dir);

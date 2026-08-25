@@ -61,20 +61,21 @@ pub(crate) fn load_mod_config(dir: &Path) -> Vec<ModEntry> {
     let discovered = discover_mods(dir);
 
     let mut merged: Vec<ModEntry> = Vec::with_capacity(discovered.len());
-    for disc in &discovered {
-        let enabled = saved
+    for saved in saved {
+        if discovered
             .iter()
-            .find(|s| s.filename == disc.filename)
-            .map(|s| s.enabled)
-            .unwrap_or(false);
-        merged.push(ModEntry {
-            filename: disc.filename.clone(),
-            enabled,
-            target: saved
-                .iter()
-                .find(|saved| saved.filename == disc.filename)
-                .and_then(|saved| saved.target.clone()),
-        });
+            .any(|entry| entry.filename == saved.filename)
+        {
+            merged.push(saved);
+        }
+    }
+    for discovered in discovered {
+        if !merged
+            .iter()
+            .any(|entry| entry.filename == discovered.filename)
+        {
+            merged.push(discovered);
+        }
     }
     merged
 }

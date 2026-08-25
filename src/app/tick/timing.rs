@@ -18,7 +18,13 @@ impl App {
     }
 
     pub(super) fn compute_frames_to_step(&mut self, now: Instant) -> usize {
-        match self.speed_mode() {
+        let speed_mode = self.speed_mode();
+        if speed_mode != self.timing.last_speed_mode {
+            self.timing.last_speed_mode = speed_mode;
+            self.timing.last_frame_time = now;
+        }
+
+        match speed_mode {
             SpeedMode::Uncapped => {
                 self.timing.last_frame_time = now;
                 #[cfg(target_arch = "wasm32")]
@@ -50,9 +56,7 @@ impl App {
                 }
 
                 #[cfg(target_arch = "wasm32")]
-                if matches!(self.speed_mode(), SpeedMode::Normal | SpeedMode::SlowMotion)
-                    && frames > 3
-                {
+                if matches!(speed_mode, SpeedMode::Normal | SpeedMode::SlowMotion) && frames > 3 {
                     self.timing.last_frame_time = now;
                     frames = 3;
                 }

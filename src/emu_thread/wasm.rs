@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use zeff_emu_common::rewind::RewindBuffer;
+use zeff_emu_common::time::Reset as _;
 
 use super::ReplayStartState;
 use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, SharedFramebuffer};
@@ -401,8 +402,9 @@ impl EmuThread {
                     last_cheats.clear();
                 }
             }
-            EmuCommand::Rewind => {
-                let resp = Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer);
+            EmuCommand::Rewind(steps) => {
+                let resp =
+                    Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer, steps);
                 if matches!(&resp, EmuResponse::RewindOk { .. }) {
                     backend.discard_game_boy_printer_jobs();
                     backend.install_rom_patches(last_cheats);
@@ -412,6 +414,16 @@ impl EmuThread {
                     }
                 }
                 pending_responses.push_back(resp);
+            }
+            EmuCommand::Reset => {
+                backend.reset();
+                backend.install_rom_patches(last_cheats);
+                rewind_buffer.clear();
+                *runtime_fault = WorkerRuntimeFault::default();
+                if audio_recording_capture.semantic {
+                    pending_audio_discontinuities
+                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::Reset);
+                }
             }
             EmuCommand::Shutdown => {
                 pending_responses.push_back(EmuResponse::ShutdownComplete);

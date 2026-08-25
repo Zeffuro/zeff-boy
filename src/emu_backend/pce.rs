@@ -918,6 +918,10 @@ impl EmulatorCore for PceBackend {
         &self.framebuffer
     }
 
+    fn state_restores_framebuffer(&self) -> bool {
+        true
+    }
+
     fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
         self.machine.drain_audio_samples_into(buf);
     }

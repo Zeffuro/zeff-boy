@@ -477,18 +477,21 @@ impl EmuThread {
         backend: &mut EmuBackend,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         shared_fb: &SharedFramebuffer,
+        steps: usize,
     ) -> EmuResponse {
         if !backend.supports_rewind() {
             return EmuResponse::RewindFailed("rewind is not supported by this core".to_string());
         }
         let current_state = Self::encode_current_state(backend).ok();
-        while let Some(rewind_frame) = rewind_buffer.pop() {
-            if let Some(current) = current_state.as_ref()
-                && rewind_frame.state_bytes == *current
-                && !rewind_buffer.is_empty()
-            {
-                continue;
-            }
+        if current_state.as_ref().is_some_and(|current| {
+            rewind_buffer
+                .peek()
+                .is_some_and(|frame| frame.state_bytes == *current)
+        }) && rewind_buffer.len() > 1
+        {
+            rewind_buffer.discard_latest();
+        }
+        if let Some(rewind_frame) = rewind_buffer.pop_steps(steps.max(1)) {
             match backend.load_state_from_bytes(rewind_frame.state_bytes) {
                 Ok(()) => {
                     let fb = if rewind_frame.framebuffer.is_empty() {
@@ -526,7 +529,7 @@ impl EmuThread {
             && rewind_buffer.tick()
             && let Ok(bytes) = Self::encode_current_state(backend)
         {
-            rewind_buffer.push(&bytes, backend.framebuffer());
+            rewind_buffer.push(&bytes, backend.rewind_framebuffer());
         }
     }
 

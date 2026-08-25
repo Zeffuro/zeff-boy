@@ -262,6 +262,7 @@ pub(super) struct TimingState {
     pub(super) last_viewer_update: Instant,
     pub(super) uncapped_speed: bool,
     pub(super) last_vsync_mode: crate::settings::VsyncMode,
+    pub(super) last_speed_mode: SpeedMode,
 }
 
 #[derive(Default)]

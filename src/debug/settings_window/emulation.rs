@@ -182,9 +182,8 @@ pub(super) fn draw(
     );
     ui.checkbox(&mut settings.emulation.frame_skip, "Frame skip when behind")
         .on_hover_text(
-            "When enabled, skip emulation frames to stay in real-time if the \
-             host can't keep up. When disabled, the emulator catches up \
-             gradually (more accurate, may drift behind).",
+            "When enabled, discard accumulated timing debt if the host can't keep up. \
+             Emulated frames are not skipped.",
         );
     ui.checkbox(
         &mut settings.emulation.auto_save_state,
@@ -241,12 +240,7 @@ pub(super) fn draw(
                 .range(1..=10)
                 .speed(1),
         );
-        ui.label(match settings.rewind.speed {
-            1 => "(fastest - pop every tick)",
-            2 => "(fast)",
-            3..=4 => "(normal)",
-            _ => "(slow)",
-        });
+        ui.label(format!("({} snapshots/step)", settings.rewind.speed));
     });
 
     ui.separator();

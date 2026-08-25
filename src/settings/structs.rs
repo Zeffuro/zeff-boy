@@ -412,6 +412,10 @@ fn default_mods_window_size() -> [u32; 2] {
     [620, 520]
 }
 
+fn default_cheats_window_size() -> [u32; 2] {
+    [700, 640]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct UiSettings {
@@ -459,6 +463,12 @@ pub(crate) struct UiSettings {
     #[serde(default)]
     pub(crate) mods_window_maximized: bool,
     #[serde(default)]
+    pub(crate) cheats_window_position: Option<[i32; 2]>,
+    #[serde(default = "default_cheats_window_size")]
+    pub(crate) cheats_window_size: [u32; 2],
+    #[serde(default)]
+    pub(crate) cheats_window_maximized: bool,
+    #[serde(default)]
     pub(crate) printer_window_position: Option<[i32; 2]>,
     #[serde(default = "default_printer_window_size")]
     pub(crate) printer_window_size: [u32; 2],
@@ -498,6 +508,9 @@ impl Default for UiSettings {
             mods_window_position: None,
             mods_window_size: default_mods_window_size(),
             mods_window_maximized: false,
+            cheats_window_position: None,
+            cheats_window_size: default_cheats_window_size(),
+            cheats_window_maximized: false,
             printer_window_position: None,
             printer_window_size: default_printer_window_size(),
             printer_window_maximized: false,

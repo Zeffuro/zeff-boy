@@ -263,11 +263,12 @@ pub(crate) enum EmuCommand {
     TriggerBarcodeBoyScan(String),
     RestoreGameBoyLinkState(zeff_emu_common::replay::ReplayGameBoyLinkState),
     UpdateCheats(Vec<crate::cheats::CheatPatch>),
+    Reset,
     #[cfg(not(target_arch = "wasm32"))]
     StartTcpLink(TcpLinkMode),
     #[cfg(not(target_arch = "wasm32"))]
     DisconnectLink,
-    Rewind,
+    Rewind(usize),
     Shutdown,
 }
 

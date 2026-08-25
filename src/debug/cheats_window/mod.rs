@@ -6,7 +6,7 @@ use crate::cheats::{
 };
 use crate::debug::CheatState;
 
-pub(super) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
+pub(crate) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.heading("Cheat Codes");
     let help_text = match state.active_system {
         crate::emu_backend::ActiveSystem::Nes => {

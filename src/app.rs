@@ -129,6 +129,7 @@ pub(crate) fn run(
             last_viewer_update: Instant::now(),
             uncapped_speed,
             last_vsync_mode: vsync_mode,
+            last_speed_mode: SpeedMode::Normal,
         },
         last_audio_output_sample_rate: initial_audio_output_sample_rate,
         speed: SpeedState {
@@ -157,6 +158,8 @@ pub(crate) fn run(
         last_state_dir: None,
         show_settings_window: false,
         show_mods_window: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        show_cheats_window: false,
         show_printer_window: false,
         debug_requests: DebugRequests::default(),
         active_save_slot: 0,
@@ -245,6 +248,8 @@ pub(crate) fn run(
         #[cfg(not(target_arch = "wasm32"))]
         mods_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
+        cheats_window_focused: false,
+        #[cfg(not(target_arch = "wasm32"))]
         printer_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
         focus_printer_window_pending: false,
@@ -255,6 +260,8 @@ pub(crate) fn run(
         last_settings_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_mods_render: Instant::now(),
+        #[cfg(not(target_arch = "wasm32"))]
+        last_cheats_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_printer_render: Instant::now(),
         egui_wants_keyboard: false,
@@ -347,6 +354,8 @@ struct App {
     last_state_dir: Option<std::path::PathBuf>,
     show_settings_window: bool,
     show_mods_window: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    show_cheats_window: bool,
     show_printer_window: bool,
     debug_requests: DebugRequests,
     active_save_slot: u8,
@@ -397,6 +406,8 @@ struct App {
     #[cfg(not(target_arch = "wasm32"))]
     mods_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
+    cheats_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     printer_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
     focus_printer_window_pending: bool,
@@ -407,6 +418,8 @@ struct App {
     last_settings_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_mods_render: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_cheats_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_printer_render: Instant,
     egui_wants_keyboard: bool,
@@ -727,6 +740,7 @@ impl ApplicationHandler for App {
             self.sync_debug_presentation(event_loop);
             self.sync_settings_window(event_loop);
             self.sync_mods_window(event_loop);
+            self.sync_cheats_window(event_loop);
             self.sync_printer_window(event_loop);
         }
         self.apply_focus_state();

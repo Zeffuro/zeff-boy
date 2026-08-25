@@ -8,6 +8,8 @@ pub(crate) const SETTINGS_MIN_SIZE: [u32; 2] = [380, 320];
 pub(crate) const SETTINGS_DEFAULT_SIZE: [u32; 2] = [760, 680];
 pub(crate) const MODS_MIN_SIZE: [u32; 2] = [420, 320];
 pub(crate) const MODS_DEFAULT_SIZE: [u32; 2] = [620, 520];
+pub(crate) const CHEATS_MIN_SIZE: [u32; 2] = [480, 360];
+pub(crate) const CHEATS_DEFAULT_SIZE: [u32; 2] = [700, 640];
 pub(crate) const PRINTER_MIN_SIZE: [u32; 2] = [300, 320];
 pub(crate) const PRINTER_DEFAULT_SIZE: [u32; 2] = [520, 720];
 

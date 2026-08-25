@@ -2,6 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
+use zeff_emu_common::time::Reset as _;
 
 use crate::cheats::CheatPatch;
 use crate::emu_backend::EmuBackend;
@@ -631,11 +632,12 @@ impl EmuLoop {
                 return self.handle_auto_load(buttons_pressed, dpad_pressed);
             }
 
-            EmuCommand::Rewind => {
+            EmuCommand::Rewind(steps) => {
                 let resp = EmuThread::handle_rewind(
                     &mut self.backend,
                     &mut self.rewind_buffer,
                     &self.shared_framebuffer,
+                    steps,
                 );
                 if matches!(&resp, EmuResponse::RewindOk { .. }) {
                     self.backend.discard_game_boy_printer_jobs();
@@ -647,6 +649,16 @@ impl EmuLoop {
                 if !self.send_resp(resp) {
                     return false;
                 }
+            }
+
+            EmuCommand::Reset => {
+                self.backend.reset();
+                self.backend.install_rom_patches(&self.last_cheats);
+                self.rewind_buffer.clear();
+                self.runtime_fault = WorkerRuntimeFault::default();
+                self.mark_audio_discontinuity(
+                    crate::audio_recorder::AudioTimelineDiscontinuity::Reset,
+                );
             }
 
             EmuCommand::Shutdown => {

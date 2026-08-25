@@ -234,6 +234,14 @@ impl EmuBackend {
         dispatch!(self, encode_state_bytes())
     }
 
+    pub(crate) fn rewind_framebuffer(&self) -> &[u8] {
+        if dispatch!(self, state_restores_framebuffer()) {
+            &[]
+        } else {
+            self.framebuffer()
+        }
+    }
+
     pub(crate) fn encode_replay_hash_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes = self.encode_state_bytes()?;
         canonicalize_state_bytes_for_replay_hash(self.system(), &mut bytes);

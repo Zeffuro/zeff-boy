@@ -250,6 +250,15 @@ fn pce_rom() -> Vec<u8> {
     rom
 }
 
+fn pce_write_rom() -> Vec<u8> {
+    let mut rom = vec![0xEA; 0x2000];
+    rom[..13].copy_from_slice(&[
+        0xD4, 0xA9, 0xF8, 0x53, 0x02, 0xA9, 0x00, 0x8D, 0x00, 0x20, 0x1A, 0x80, 0xFA,
+    ]);
+    rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
+    rom
+}
+
 fn ws_rom() -> Vec<u8> {
     use zeff_ws_core::hardware::cartridge::compute_footer_checksum;
 
@@ -296,6 +305,16 @@ fn profile_synthetic(
     pce.set_sample_generation_enabled(sample_generation_enabled);
     pce.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_pce_frames(&format!("PC Engine synthetic{suffix}"), frames, &mut pce);
+
+    let mut pce_writes =
+        zeff_pce_core::hardware::PceMachine::new(pce_write_rom()).expect("synthetic PCE write ROM");
+    pce_writes.set_sample_generation_enabled(sample_generation_enabled);
+    pce_writes.set_instruction_trace_enabled(instruction_trace_enabled);
+    profile_pce_frames(
+        &format!("PC Engine RAM writes{suffix}"),
+        frames,
+        &mut pce_writes,
+    );
 
     let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
         &sega8_rom(),

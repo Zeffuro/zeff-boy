@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use crate::debug::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
     DisassemblyTarget, InputDebugInfo, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug,
-    PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, RomDebugInfo, RomInfoSection,
+    PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, PerfInfo, RomDebugInfo, RomInfoSection,
     huc6280_disassemble_around,
 };
 use crate::emu_backend::PceBackend;
@@ -53,6 +53,21 @@ pub(crate) fn collect_pce_snapshot(
     let rom_debug = request.show_rom_info.then(|| pce_rom_info(backend));
 
     let mut data = super::UiFrameData {
+        perf_info: request.want_perf_info.then(|| PerfInfo {
+            fps: 0.0,
+            target_fps: zeff_emu_common::system::System::Pce.target_fps(),
+            speed_mode_label: super::normal_speed_mode_label(),
+            frames_in_flight: 0,
+            cycles: cpu_snapshot.master_ticks(),
+            platform_name: "PC Engine",
+            hardware_label: format!(
+                "{:?} / {:?}",
+                backend.hardware_topology(),
+                backend.hucard_board()
+            )
+            .into(),
+            hardware_pref_label: format!("{:?}", backend.console_wiring()).into(),
+        }),
         cpu_debug,
         memory_page,
         memory_search_results,
@@ -1160,6 +1175,22 @@ mod tests {
         assert_eq!(field(&info, "Machine", "Console Wiring"), "PcEngine");
         assert_eq!(field(&info, "Machine", "Controller"), "TwoButton");
         assert_eq!(field(&info, "Content", "ROM Path"), "game.pce");
+    }
+
+    #[test]
+    fn snapshot_populates_pce_performance_info() {
+        let mut rom = vec![0xEA; 0x2000];
+        rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
+        let backend = PceBackend::new(rom, PathBuf::from("game.pce")).unwrap();
+        let mut request = disassembly_request();
+        request.show_disassembler = false;
+        request.want_perf_info = true;
+
+        let perf = collect_pce_snapshot(&backend, &request, None)
+            .perf_info
+            .unwrap();
+        assert_eq!(perf.platform_name, "PC Engine");
+        assert!(perf.hardware_label.contains("Base"));
     }
 
     #[test]

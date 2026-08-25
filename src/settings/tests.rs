@@ -47,6 +47,7 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     assert_eq!(s.ui.debugger_window_size, [1100, 760]);
     assert_eq!(s.ui.settings_window_size, [760, 680]);
     assert_eq!(s.ui.mods_window_size, [620, 520]);
+    assert_eq!(s.ui.cheats_window_size, [700, 640]);
     assert_eq!(s.ui.printer_window_size, [520, 720]);
     assert_eq!(s.emulation.slow_motion_divisor, 4);
     assert!(!s.emulation.slow_motion_enabled);

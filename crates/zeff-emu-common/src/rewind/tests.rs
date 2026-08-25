@@ -79,6 +79,19 @@ fn pop_returns_most_recent_first() {
 }
 
 #[test]
+fn pop_steps_skips_newer_snapshots() {
+    let mut buf = RewindBuffer::new(10, 1);
+    for value in 1..=5 {
+        buf.push(&[value], &[value + 10]);
+    }
+
+    let frame = buf.pop_steps(3).unwrap();
+    assert_eq!(frame.state_bytes, vec![3]);
+    assert_eq!(frame.framebuffer, vec![13]);
+    assert_eq!(buf.len(), 2);
+}
+
+#[test]
 fn framebuffer_stored_and_recovered() {
     let mut buf = RewindBuffer::new(10, 4);
     let state = vec![0xAA; 100];

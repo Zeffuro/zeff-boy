@@ -71,7 +71,9 @@ fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
     let mut points = Vec::with_capacity(samples.len());
     let width = rect.width().max(1.0);
     let denom = (samples.len() - 1) as f32;
-    for (i, sample) in samples.iter().enumerate() {
+    let start = triggered_waveform_start(samples);
+    for i in 0..samples.len() {
+        let sample = samples[(start + i) % samples.len()];
         let x = rect.left() + width * (i as f32 / denom);
         let y = mid_y - sample.clamp(-1.0, 1.0) * (rect.height() * 0.45);
         points.push(egui::pos2(x, y));
@@ -81,6 +83,19 @@ fn draw_waveform(ui: &mut egui::Ui, samples: &[f32], height: f32) {
         points,
         egui::Stroke::new(1.25_f32, egui::Color32::from_rgb(90, 220, 140)),
     ));
+}
+
+fn triggered_waveform_start(samples: &[f32]) -> usize {
+    if samples.len() < 4 {
+        return 0;
+    }
+
+    let mean = samples.iter().sum::<f32>() / samples.len() as f32;
+    let target = samples.len() / 4;
+    let crossing = (1..samples.len())
+        .filter(|&index| samples[index - 1] <= mean && samples[index] > mean)
+        .min_by_key(|&index| index.abs_diff(target));
+    crossing.map_or(0, |index| (index + samples.len() - target) % samples.len())
 }
 
 pub(super) fn draw_apu_viewer_content(ui: &mut egui::Ui, data: &ApuDebugInfo) -> Option<Vec<bool>> {
@@ -131,4 +146,23 @@ pub(super) fn draw_apu_viewer_content(ui: &mut egui::Ui, data: &ApuDebugInfo) ->
     }
 
     if mutes_changed { Some(muted) } else { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::triggered_waveform_start;
+
+    #[test]
+    fn waveform_trigger_keeps_a_rising_crossing_at_one_quarter() {
+        let samples = [-1.0, -0.5, 0.5, 1.0, -1.0, -0.5, 0.5, 1.0];
+        let start = triggered_waveform_start(&samples);
+        let quarter = samples.len() / 4;
+        assert!(samples[(start + quarter - 1) % samples.len()] <= 0.0);
+        assert!(samples[(start + quarter) % samples.len()] > 0.0);
+    }
+
+    #[test]
+    fn waveform_trigger_leaves_flat_data_in_order() {
+        assert_eq!(triggered_waveform_start(&[0.25; 8]), 0);
+    }
 }

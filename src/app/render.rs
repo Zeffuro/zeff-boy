@@ -155,6 +155,8 @@ impl App {
             show_settings_window: &mut self.show_settings_window,
             #[cfg(not(target_arch = "wasm32"))]
             show_mods_window: &mut self.show_mods_window,
+            #[cfg(not(target_arch = "wasm32"))]
+            show_cheats_window: &mut self.show_cheats_window,
             #[cfg(target_arch = "wasm32")]
             show_printer_window: &mut self.show_printer_window,
             dock_state: &mut self.debug_dock,
@@ -343,6 +345,8 @@ impl App {
                         MenuAction::SetAspectRatio(_) | MenuAction::OpenSettings => {}
                         #[cfg(not(target_arch = "wasm32"))]
                         MenuAction::OpenMods => {}
+                        #[cfg(not(target_arch = "wasm32"))]
+                        MenuAction::OpenCheats => {}
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -530,6 +534,26 @@ impl App {
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 if let Some(size) = gfx.mods_window().map(winit::window::Window::inner_size) {
                     gfx.resize_mods_window(size.width, size.height);
+                }
+                false
+            }
+            Err(graphics::FrameError::Timeout) => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn render_cheats_frame(&mut self) -> bool {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
+        match gfx.render_cheats_window(graphics::CheatsRenderContext {
+            settings: &self.settings,
+            state: &mut self.debug_windows.cheat,
+        }) {
+            Ok(()) => true,
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
+                if let Some(size) = gfx.cheats_window().map(winit::window::Window::inner_size) {
+                    gfx.resize_cheats_window(size.width, size.height);
                 }
                 false
             }

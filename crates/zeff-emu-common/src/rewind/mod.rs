@@ -81,6 +81,21 @@ impl RewindBuffer {
         self.snapshots.pop_back().and_then(|s| s.decompress())
     }
 
+    pub fn pop_steps(&mut self, steps: usize) -> Option<RewindFrame> {
+        let mut snapshot = None;
+        for _ in 0..steps.max(1) {
+            let Some(next) = self.snapshots.pop_back() else {
+                break;
+            };
+            snapshot = Some(next);
+        }
+        snapshot.and_then(|snapshot| snapshot.decompress())
+    }
+
+    pub fn discard_latest(&mut self) {
+        self.snapshots.pop_back();
+    }
+
     pub fn peek(&self) -> Option<RewindFrame> {
         self.snapshots.back().and_then(|s| s.decompress())
     }

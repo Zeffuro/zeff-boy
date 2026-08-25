@@ -646,6 +646,35 @@ impl App {
     }
 
     pub(in crate::app) fn reset_game(&mut self) {
+        if !self.debug_windows.mod_state.needs_reload
+            && self.recording.replay_player.is_none()
+            && self.recording.replay_recorder.is_none()
+            && let Some(thread) = &self.emu_thread
+        {
+            thread.send(EmuCommand::Reset);
+            if let Some(audio) = &mut self.audio {
+                audio.discard_queued_samples();
+            }
+            self.frames_in_flight = 0;
+            self.cached_ui_data = None;
+            self.latest_frame = None;
+            self.last_core_frame = None;
+            self.last_displayed_frame = None;
+            self.undo_load_state = None;
+            self.rewind = super::super::RewindState {
+                held: false,
+                fill: 0.0,
+                throttle: 0,
+                pops: 0,
+                pending: false,
+                backstep_pending: false,
+            };
+            self.speed.paused = false;
+            self.timing.last_frame_time = crate::platform::Instant::now();
+            self.toast_manager.success("Game reset");
+            return;
+        }
+
         let Some(path) = self.rom_info.source_path.clone() else {
             self.toast_manager.info("No ROM loaded");
             return;

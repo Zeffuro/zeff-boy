@@ -434,6 +434,7 @@ struct TimedMachineBus<'a> {
     trace_writes: Vec<TraceWrite>,
     trace_write_overflow: u16,
     trace_enabled: bool,
+    capture_old_writes: bool,
     dma_completed: bool,
     debug: &'a mut AddressDebugController,
 }
@@ -452,6 +453,13 @@ impl<'a> TimedMachineBus<'a> {
         trace_enabled: bool,
         debug: &'a mut AddressDebugController,
     ) -> Self {
+        let capture_old_writes = trace_enabled
+            || debug.watchpoints.iter().any(|watchpoint| {
+                matches!(
+                    watchpoint.watch_type,
+                    WatchType::Write | WatchType::ReadWrite
+                )
+            });
         Self {
             inner,
             front_video,
@@ -474,6 +482,7 @@ impl<'a> TimedMachineBus<'a> {
             trace_writes: Vec::new(),
             trace_write_overflow: 0,
             trace_enabled,
+            capture_old_writes,
             dma_completed: false,
             debug,
         }
@@ -497,7 +506,7 @@ impl<'a> TimedMachineBus<'a> {
             self.wait_for_vdc_dma(target);
         }
         let completed = self.fault.is_none();
-        if completed && write {
+        if completed && write && self.capture_old_writes {
             self.pending_debug_write = Some((physical_addr, self.inner.peek(physical_addr)));
         }
         completed
@@ -691,16 +700,20 @@ impl CpuBus for TimedMachineBus<'_> {
     }
 
     fn write_vdc(&mut self, port: VdcPort, value: u8) {
-        let old_value = self.inner.peek(0x1F_E000 | u32::from(port.offset()));
+        let old_value = self
+            .trace_enabled
+            .then(|| self.inner.peek(0x1F_E000 | u32::from(port.offset())));
         if self.advance_direct_vdc_access(port) {
             self.inner.write_vdc(port, value);
-            self.record_trace_write(TraceWrite {
-                address: u32::from(port.offset()),
-                old_value: u32::from(old_value),
-                new_value: u32::from(value),
-                width: TraceWriteWidth::Byte,
-                kind: TraceWriteKind::Io,
-            });
+            if let Some(old_value) = old_value {
+                self.record_trace_write(TraceWrite {
+                    address: u32::from(port.offset()),
+                    old_value: u32::from(old_value),
+                    new_value: u32::from(value),
+                    width: TraceWriteWidth::Byte,
+                    kind: TraceWriteKind::Io,
+                });
+            }
         }
     }
 

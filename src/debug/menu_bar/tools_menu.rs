@@ -1,6 +1,8 @@
 use super::MenuAction;
 use crate::debug::DebugWindowState;
-use crate::debug::dock::{DebugTab, toggle_dock_tab};
+use crate::debug::dock::DebugTab;
+#[cfg(target_arch = "wasm32")]
+use crate::debug::dock::toggle_dock_tab;
 use crate::emu_backend::ActiveSystem;
 use egui_dock::DockState;
 
@@ -19,6 +21,8 @@ pub(super) fn draw(
     debug_windows: &mut DebugWindowState,
     state: ToolsMenuState<'_>,
 ) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = dock_state;
     let ToolsMenuState {
         active_system,
         media_slot_snapshot,
@@ -27,6 +31,9 @@ pub(super) fn draw(
         game_boy_serial_device_change_allowed,
     } = state;
     if ui.button("Cheats").clicked() {
+        #[cfg(not(target_arch = "wasm32"))]
+        actions.push(MenuAction::OpenCheats);
+        #[cfg(target_arch = "wasm32")]
         toggle_dock_tab(dock_state, DebugTab::Cheats);
         ui.close();
     }

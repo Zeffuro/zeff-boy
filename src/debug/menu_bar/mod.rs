@@ -21,6 +21,8 @@ pub(crate) enum MenuAction {
     OpenSettings,
     #[cfg(not(target_arch = "wasm32"))]
     OpenMods,
+    #[cfg(not(target_arch = "wasm32"))]
+    OpenCheats,
     OpenPrinterWindow,
     LoadSymbolFile,
     SetDebugPresentation(DebugPresentation),

@@ -102,20 +102,15 @@ impl App {
             && !self.rewind.backstep_pending
             && let Some(thread) = &self.emu_thread
         {
-            thread.send(EmuCommand::Rewind);
+            thread.send(EmuCommand::Rewind(1));
             self.rewind.backstep_pending = true;
         }
 
         if self.rewind.held && supports_rewind && self.settings.rewind.enabled {
-            self.rewind.throttle += 1;
-            let pop_interval = self.settings.rewind.speed.max(1);
-            if self.rewind.throttle >= pop_interval
-                && !self.rewind.pending
-                && !self.rewind.backstep_pending
-            {
+            if !self.rewind.pending && !self.rewind.backstep_pending {
                 self.rewind.throttle = 0;
                 if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::Rewind);
+                    thread.send(EmuCommand::Rewind(self.settings.rewind.speed.max(1)));
                     self.rewind.pending = true;
                 }
             }
@@ -349,7 +344,9 @@ impl App {
                 let background_ui = self.emu_thread.is_none() || {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        self.show_settings_window || self.show_mods_window
+                        self.show_settings_window
+                            || self.show_mods_window
+                            || self.show_cheats_window
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -466,6 +463,18 @@ impl App {
         if mods_visible && now.duration_since(self.last_mods_render) >= SETTINGS_UPDATE_INTERVAL {
             self.render_mods_frame();
             self.last_mods_render = now;
+        }
+
+        let cheats_visible = self.show_cheats_window
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::cheats_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if cheats_visible && now.duration_since(self.last_cheats_render) >= SETTINGS_UPDATE_INTERVAL
+        {
+            self.render_cheats_frame();
+            self.last_cheats_render = now;
         }
 
         let printer_visible = self.show_printer_window

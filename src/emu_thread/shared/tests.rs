@@ -116,7 +116,7 @@ fn rewind_response_reports_serial_device_restored_from_state() {
     rewind_buffer.push(&state, &[]);
     let shared_fb: SharedFramebuffer = Default::default();
 
-    let response = EmuThread::handle_rewind(&mut backend, &mut rewind_buffer, &shared_fb);
+    let response = EmuThread::handle_rewind(&mut backend, &mut rewind_buffer, &shared_fb, 1);
 
     assert!(matches!(
         response,

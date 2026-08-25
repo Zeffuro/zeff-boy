@@ -360,6 +360,26 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn sync_cheats_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if self.show_cheats_window {
+            if gfx.cheats_window_id().is_none()
+                && let Err(err) = gfx.open_cheats_window(event_loop, &self.settings)
+            {
+                log::error!("Failed to open Cheats window: {err}");
+                self.show_cheats_window = false;
+                self.toast_manager.error("Failed to open Cheats window");
+            }
+        } else if gfx.cheats_window_id().is_some() {
+            gfx.close_cheats_window();
+            self.cheats_window_focused = false;
+            self.focus_state_dirty = true;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn sync_printer_window(&mut self, event_loop: &ActiveEventLoop) {
         let Some(gfx) = self.gfx.as_mut() else {
             return;

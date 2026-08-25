@@ -48,6 +48,7 @@ mod ui;
 pub(crate) mod ui_helpers;
 
 pub(crate) use barcode_boy::draw_scan_window as draw_barcode_boy_scan_window;
+pub(crate) use cheats_window::draw_cheats_content;
 pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};
 pub(crate) use disassembler::{
     DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,

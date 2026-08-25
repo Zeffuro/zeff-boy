@@ -34,6 +34,8 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) show_settings_window: &'a mut bool,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) show_mods_window: &'a mut bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) show_cheats_window: &'a mut bool,
     #[cfg(target_arch = "wasm32")]
     pub(crate) show_printer_window: &'a mut bool,
     pub(crate) dock_state: &'a mut egui_dock::DockState<DebugTab>,
@@ -515,6 +517,8 @@ impl Graphics {
                 MenuAction::OpenSettings => *ctx.show_settings_window = true,
                 #[cfg(not(target_arch = "wasm32"))]
                 MenuAction::OpenMods => *ctx.show_mods_window = true,
+                #[cfg(not(target_arch = "wasm32"))]
+                MenuAction::OpenCheats => *ctx.show_cheats_window = true,
                 other => forwarded_actions.push(other),
             }
         }
