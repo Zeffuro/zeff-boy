@@ -132,6 +132,7 @@ impl CdRom2 {
         self.audio_start_lba = lba;
         self.audio_current_lba = lba;
         self.audio_current_sample = 0;
+        self.audio_track_index = self.disc.stored_track_index_at_lba(lba);
         self.audio_end_lba = self.disc.leadout_lba();
         self.audio_end_behavior = CdAudioEndBehavior::Stop;
         self.audio_status = if command[1] & 1 != 0 {

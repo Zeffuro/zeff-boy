@@ -58,11 +58,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         "Enable memory editing",
     )
     .on_hover_text("Allow writing to memory addresses in the Memory Viewer");
-    ui.checkbox(&mut settings.ui.autohide_menu_bar, "Autohide menu bar")
-        .on_hover_text(
-            "Hide the menu bar when the cursor moves away from the top edge. \
-             Hover near the top to reveal it.",
-        );
+    ui.checkbox(&mut settings.ui.autohide_menu_bar, "Autohide menu bar");
 
     ui.horizontal(|ui| {
         const SCALES: &[(f32, &str)] = &[
@@ -87,9 +83,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
                     ui.selectable_value(&mut settings.ui.ui_scale, value, label);
                 }
             });
-    })
-    .response
-    .on_hover_text("Scale all UI elements (menu bar, debug panels, toasts).");
+    });
 }
 
 fn color_row(ui: &mut egui::Ui, label: &str, value: &mut [u8; 4]) {

@@ -5,7 +5,7 @@ const GB_ROM_EXTENSIONS: [&str; 3] = ["gb", "gbc", "sgb"];
 const GBA_ROM_EXTENSIONS: [&str; 1] = ["gba"];
 const NES_ROM_EXTENSIONS: [&str; 2] = ["nes", "fds"];
 #[cfg(not(target_arch = "wasm32"))]
-const PCE_ROM_EXTENSIONS: &[&str] = &["pce", "cue"];
+const PCE_ROM_EXTENSIONS: &[&str] = &["pce", "cue", "chd", "iso"];
 #[cfg(target_arch = "wasm32")]
 const PCE_ROM_EXTENSIONS: &[&str] = &["pce"];
 const WS_ROM_EXTENSIONS: [&str; 2] = ["ws", "wsc"];
@@ -13,12 +13,11 @@ const SMS_ROM_EXTENSIONS: [&str; 1] = ["sms"];
 const GG_ROM_EXTENSIONS: [&str; 1] = ["gg"];
 const SG_ROM_EXTENSIONS: [&str; 2] = ["sg", "sc"];
 #[cfg(not(target_arch = "wasm32"))]
-const ARCHIVE_EXTENSION_LIST: [&str; 2] = ["zip", "7z"];
+const ARCHIVE_EXTENSION_LIST: [&str; 3] = ["zip", "7z", "rar"];
 #[cfg(target_arch = "wasm32")]
 const ARCHIVE_EXTENSION_LIST: [&str; 1] = ["zip"];
 #[cfg(not(target_arch = "wasm32"))]
-const SUPPORTED_EXTENSIONS_LABEL: &str =
-    ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .cue, .ws, .wsc, .sms, .gg, .sg, .sc, .zip, .7z";
+const SUPPORTED_EXTENSIONS_LABEL: &str = ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .cue, .chd, .iso, .ws, .wsc, .sms, .gg, .sg, .sc, .zip, .7z, .rar";
 #[cfg(target_arch = "wasm32")]
 const SUPPORTED_EXTENSIONS_LABEL: &str =
     ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
@@ -59,6 +58,10 @@ pub const ROM_EXTENSIONS: &[&str] = &[
     PCE_ROM_EXTENSIONS[0],
     #[cfg(not(target_arch = "wasm32"))]
     PCE_ROM_EXTENSIONS[1],
+    #[cfg(not(target_arch = "wasm32"))]
+    PCE_ROM_EXTENSIONS[2],
+    #[cfg(not(target_arch = "wasm32"))]
+    PCE_ROM_EXTENSIONS[3],
     WS_ROM_EXTENSIONS[0],
     WS_ROM_EXTENSIONS[1],
     SMS_ROM_EXTENSIONS[0],
@@ -76,6 +79,10 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     PCE_ROM_EXTENSIONS[0],
     #[cfg(not(target_arch = "wasm32"))]
     PCE_ROM_EXTENSIONS[1],
+    #[cfg(not(target_arch = "wasm32"))]
+    PCE_ROM_EXTENSIONS[2],
+    #[cfg(not(target_arch = "wasm32"))]
+    PCE_ROM_EXTENSIONS[3],
     WS_ROM_EXTENSIONS[0],
     WS_ROM_EXTENSIONS[1],
     SMS_ROM_EXTENSIONS[0],
@@ -85,6 +92,8 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     ARCHIVE_EXTENSION_LIST[0],
     #[cfg(not(target_arch = "wasm32"))]
     ARCHIVE_EXTENSION_LIST[1],
+    #[cfg(not(target_arch = "wasm32"))]
+    ARCHIVE_EXTENSION_LIST[2],
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -400,6 +409,15 @@ mod tests {
             Some(System::Pce)
         );
         assert_eq!(
+            System::from_path(&PathBuf::from("game.chd")),
+            Some(System::Pce)
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(
+            System::from_path(&PathBuf::from("game.iso")),
+            Some(System::Pce)
+        );
+        assert_eq!(
             System::from_path(&PathBuf::from("game.ws")),
             Some(System::Ws)
         );
@@ -429,8 +447,9 @@ mod tests {
     fn package_archive_is_native_only_and_never_a_rom_extension() {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            assert_eq!(archive_extensions(), &["zip", "7z"]);
+            assert_eq!(archive_extensions(), &["zip", "7z", "rar"]);
             assert!(ROM_AND_ARCHIVE_EXTENSIONS.contains(&"7z"));
+            assert!(ROM_AND_ARCHIVE_EXTENSIONS.contains(&"rar"));
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -438,6 +457,7 @@ mod tests {
             assert!(!ROM_AND_ARCHIVE_EXTENSIONS.contains(&"7z"));
         }
         assert!(!ROM_EXTENSIONS.contains(&"7z"));
+        assert!(!ROM_EXTENSIONS.contains(&"rar"));
         assert_eq!(System::from_path(Path::new("disc.7z")), None);
     }
 

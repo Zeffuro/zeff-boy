@@ -15,6 +15,7 @@ pub(crate) struct AudioOutput {
     next_play_time: f64,
     left: Vec<f32>,
     right: Vec<f32>,
+    playback_speed: usize,
 }
 
 impl AudioOutput {
@@ -31,6 +32,7 @@ impl AudioOutput {
             next_play_time: 0.0,
             left: Vec::with_capacity(BUFFER_FRAMES),
             right: Vec::with_capacity(BUFFER_FRAMES),
+            playback_speed: 1,
         })
     }
 
@@ -46,15 +48,27 @@ impl AudioOutput {
     }
 
     pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
-        if config.fast_forward_active && config.mute_during_fast_forward {
+        let playback_speed = config.playback_speed.max(1);
+        if playback_speed != self.playback_speed {
+            self.discard_queued_samples();
+            self.playback_speed = playback_speed;
+        }
+
+        if playback_speed > 1 && config.mute_during_fast_forward {
             self.buffer.clear();
             return;
         }
 
         let gain = config.master_volume.clamp(0.0, 1.0);
 
-        for &s in samples {
-            self.buffer.push(s * gain);
+        for frame in samples[..samples.len() & !1]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .step_by(playback_speed)
+        {
+            self.buffer.push(frame[0] * gain);
+            self.buffer.push(frame[1] * gain);
         }
 
         while self.buffer.len() >= BUFFER_FRAMES * 2 {

@@ -193,7 +193,7 @@ impl Ppu {
 
     #[inline]
     pub(crate) fn rendering_enabled(&self) -> bool {
-        self.show_bg() || self.show_sprites()
+        self.effective_mask() & (MASK_SHOW_BG | MASK_SHOW_SPRITES) != 0
     }
 
     #[inline]

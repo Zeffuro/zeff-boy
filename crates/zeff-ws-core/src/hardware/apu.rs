@@ -34,6 +34,7 @@ const CHANNEL_OUTPUT_LEFT_RIGHT_PORT: u16 = 0x009A;
 const CHANNEL_OUTPUT_LEFT_RIGHT_HI_PORT: u16 = 0x009B;
 const CHANNEL_OUTPUT_END_PORT: u16 = 0x009B;
 const SWEEP_CLOCK_PERIOD: i32 = 8192;
+const CHANNEL_ENABLE_MASK: u8 = 0x0F;
 const CHANNEL_2_VOICE: u8 = 0x20;
 const CHANNEL_3_SWEEP: u8 = 0x40;
 const CHANNEL_4_NOISE: u8 = 0x80;
@@ -357,11 +358,23 @@ impl Apu {
     }
 
     pub fn step_cycles(&mut self, cycles: u32, ram: &[u8]) {
+        if !self.sample_generation_enabled {
+            if self.control & CHANNEL_ENABLE_MASK != 0 {
+                self.advance_sound_generators(cycles);
+            }
+            self.sample_cycle_accumulator = ((u64::from(self.sample_cycle_accumulator)
+                + u64::from(cycles) * u64::from(self.sample_rate))
+                % u64::from(CPU_CLOCK_HZ)) as u32;
+            return;
+        }
+
         let mut remaining = cycles;
         while remaining > 0 {
             let clocks_until_sample = self.clocks_until_next_sample().max(1);
             let chunk = remaining.min(clocks_until_sample);
-            self.advance_sound_generators(chunk);
+            if self.control & CHANNEL_ENABLE_MASK != 0 {
+                self.advance_sound_generators(chunk);
+            }
             self.advance_sample_clock(chunk, ram);
             remaining -= chunk;
         }
@@ -830,6 +843,45 @@ mod tests {
         apu.drain_audio_samples_into(&mut samples);
         assert!(samples.is_empty());
         assert_ne!(apu.debug_snapshot().sample_pos[0], 0);
+    }
+
+    #[test]
+    fn disabled_sample_fast_path_matches_sampled_generator_state() {
+        let ram = alternating_wave_ram();
+        let mut sampled = Apu::new(48_000);
+        sampled.write8(0x80, 0x00);
+        sampled.write8(0x81, 0x07);
+        sampled.write8(0x88, 0xFF);
+        sampled.write8(0x90, 0x01);
+        let mut disabled = sampled.clone();
+        disabled.set_sample_generation_enabled(false);
+
+        sampled.step_cycles(4096, &ram);
+        disabled.step_cycles(4096, &ram);
+
+        assert_eq!(disabled.save_state(), sampled.save_state());
+    }
+
+    #[test]
+    fn disabled_channels_leave_generator_state_unchanged() {
+        let ram = alternating_wave_ram();
+        for sample_generation_enabled in [false, true] {
+            let mut apu = Apu::new(48_000);
+            apu.write8(CONTROL_PORT, CHANNEL_3_SWEEP | CHANNEL_4_NOISE);
+            apu.set_sample_generation_enabled(sample_generation_enabled);
+            let mut expected = apu.save_state();
+
+            apu.step_cycles(4096, &ram);
+
+            expected.sample_cycle_accumulator = apu.sample_cycle_accumulator;
+            assert_eq!(apu.save_state(), expected);
+            if sample_generation_enabled {
+                let mut samples = Vec::new();
+                apu.drain_audio_samples_into(&mut samples);
+                assert!(!samples.is_empty());
+                assert!(samples.iter().all(|sample| sample.abs() <= f32::EPSILON));
+            }
+        }
     }
 
     #[test]

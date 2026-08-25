@@ -4,6 +4,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[test]
+fn playback_speed_selects_complete_stereo_frames() {
+    let mut output = vec![99.0];
+    copy_stereo_at_speed(&[0.0, 0.1, 1.0, 1.1, 2.0, 2.1, 3.0, 3.1], 2, &mut output);
+    assert_eq!(output, vec![0.0, 0.1, 2.0, 2.1]);
+
+    copy_stereo_at_speed(&[0.0, 0.1, 1.0, 1.1, 2.0], 1, &mut output);
+    assert_eq!(output, vec![0.0, 0.1, 1.0, 1.1]);
+}
+
+#[test]
 fn ring_buffer_capacity_44100() {
     assert_eq!(ring_buffer_capacity(44100), 17640);
 }

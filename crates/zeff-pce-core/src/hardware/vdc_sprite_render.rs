@@ -169,7 +169,6 @@ impl HuC6270 {
             let height = match (attributes >> 12) & 3 {
                 0 => 16,
                 1 => 32,
-                2 => continue,
                 _ => 64,
             };
             let top = i64::from(self.satb()[base] & 0x03FF) - 64;
@@ -212,71 +211,98 @@ impl HuC6270 {
             return;
         };
 
-        for local_x in visible_x {
-            let display_x = (i64::from(sprite.left) + local_x as i64) as usize;
-            let source_x = if sprite.attributes & 0x0800 == 0 {
-                local_x
-            } else {
-                sprite.width - 1 - local_x
-            };
-            let color = self.sprite_pattern_pixel(state, sprite, source_x);
-            if color == 0 {
-                continue;
-            }
-
-            let destination = &mut output[display_x];
-            if let Some(existing) = destination {
-                if existing.sat_index == 0 && sprite.sat_index != 0 {
-                    *collision = true;
-                }
-                continue;
-            }
-            *destination = Some(SpritePixel::new(
-                0x0100 | ((sprite.attributes & 0x000F) << 4) | u16::from(color),
-                if sprite.attributes & 0x0080 == 0 {
-                    SpriteBackgroundPriority::Background
-                } else {
-                    SpriteBackgroundPriority::Sprite
-                },
-                sprite.sat_index,
-            ));
-        }
-    }
-
-    fn sprite_pattern_pixel(
-        &self,
-        state: &SpriteRenderState,
-        sprite: SpriteLine,
-        source_x: usize,
-    ) -> u8 {
-        let cell_x = source_x / SPRITE_CELL_SIZE;
-        let column = source_x % SPRITE_CELL_SIZE;
         let cell_y = sprite.source_y / SPRITE_CELL_SIZE;
         let row = sprite.source_y % SPRITE_CELL_SIZE;
-        let base = sprite_pattern_cell_base(sprite, cell_x, cell_y);
-        let bit = 15 - column;
-        match state.color_mode {
-            SpriteColorMode::Full => {
-                let mut color = 0;
-                for plane in 0..4 {
-                    let word = self.sprite_pattern_word(base + plane * SPRITE_CELL_SIZE + row);
-                    color |= (((word >> bit) & 1) as u8) << plane;
+        let flipped = sprite.attributes & 0x0800 != 0;
+        let palette = 0x0100 | ((sprite.attributes & 0x000F) << 4);
+        let priority = if sprite.attributes & 0x0080 == 0 {
+            SpriteBackgroundPriority::Background
+        } else {
+            SpriteBackgroundPriority::Sprite
+        };
+        let mut local_x = visible_x.start;
+        while local_x < visible_x.end {
+            let source_x = if flipped {
+                sprite.width - 1 - local_x
+            } else {
+                local_x
+            };
+            let cell_x = source_x / SPRITE_CELL_SIZE;
+            let count = if flipped {
+                (source_x % SPRITE_CELL_SIZE + 1).min(visible_x.end - local_x)
+            } else {
+                (SPRITE_CELL_SIZE - source_x % SPRITE_CELL_SIZE).min(visible_x.end - local_x)
+            };
+            let base = sprite_pattern_cell_base(sprite, cell_x, cell_y);
+            let planes = match state.color_mode {
+                SpriteColorMode::Full => [
+                    self.sprite_pattern_word(base + row),
+                    self.sprite_pattern_word(base + 16 + row),
+                    self.sprite_pattern_word(base + 32 + row),
+                    self.sprite_pattern_word(base + 48 + row),
+                ],
+                SpriteColorMode::PlanePair => {
+                    let first = usize::from(sprite.pattern_code & 1) * 2;
+                    [
+                        self.sprite_pattern_word(base + first * 16 + row),
+                        self.sprite_pattern_word(base + (first + 1) * 16 + row),
+                        0,
+                        0,
+                    ]
                 }
-                color
+            };
+            for offset in 0..count {
+                let source_column = if flipped {
+                    source_x - offset
+                } else {
+                    source_x + offset
+                };
+                let bit = 15 - source_column % 16;
+                let color = ((planes[0] >> bit) & 1) as u8
+                    | (((planes[1] >> bit) & 1) as u8) << 1
+                    | (((planes[2] >> bit) & 1) as u8) << 2
+                    | (((planes[3] >> bit) & 1) as u8) << 3;
+                write_sprite_pixel(
+                    &mut output[(i64::from(sprite.left) + (local_x + offset) as i64) as usize],
+                    color,
+                    palette,
+                    priority,
+                    sprite.sat_index,
+                    collision,
+                );
             }
-            SpriteColorMode::PlanePair => {
-                let first_plane = usize::from(sprite.pattern_code & 1) * 2;
-                let low = self.sprite_pattern_word(base + first_plane * SPRITE_CELL_SIZE + row);
-                let high =
-                    self.sprite_pattern_word(base + (first_plane + 1) * SPRITE_CELL_SIZE + row);
-                ((low >> bit) & 1) as u8 | (((high >> bit) & 1) as u8) << 1
-            }
+            local_x += count;
         }
     }
 
     #[inline]
     fn sprite_pattern_word(&self, word: usize) -> u16 {
         self.read_logical_vram_word(word as u16)
+    }
+}
+
+#[inline]
+fn write_sprite_pixel(
+    destination: &mut Option<SpritePixel>,
+    color: u8,
+    palette: u16,
+    priority: SpriteBackgroundPriority,
+    sat_index: u8,
+    collision: &mut bool,
+) {
+    if color == 0 {
+        return;
+    }
+    if let Some(existing) = destination {
+        if existing.sat_index == 0 && sat_index != 0 {
+            *collision = true;
+        }
+    } else {
+        *destination = Some(SpritePixel::new(
+            palette | u16::from(color),
+            priority,
+            sat_index,
+        ));
     }
 }
 

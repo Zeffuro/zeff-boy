@@ -221,6 +221,73 @@ fn parse_cheat_for_system_pce_raw_multi_code() {
 }
 
 #[test]
+fn parse_cheat_for_system_pce_libretro_physical_ram() {
+    let (patches, ty) = parse_cheat_for_system("1f008d:09+1F6098:70", ActiveSystem::Pce)
+        .expect("PCE physical RAM cheats should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert_eq!(
+        patches,
+        [
+            CheatPatch::WideRamWrite {
+                address: 0x1F_008D,
+                value: CheatValue::Constant(0x09),
+            },
+            CheatPatch::WideRamWrite {
+                address: 0x1F_6098,
+                value: CheatValue::Constant(0x70),
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_cheat_for_system_pce_physical_ram_is_bounded() {
+    assert!(parse_cheat_for_system("000100:01", ActiveSystem::Pce).is_err());
+    assert!(parse_cheat_for_system("1EFFFF:01", ActiveSystem::Pce).is_err());
+    assert!(parse_cheat_for_system("1F8000:01", ActiveSystem::Pce).is_err());
+    assert!(parse_cheat_for_system("1FE800:01", ActiveSystem::Pce).is_err());
+    assert!(parse_cheat_for_system("1F0000F:0C", ActiveSystem::Pce).is_err());
+}
+
+#[test]
+fn parse_cht_file_for_system_pce_physical_ram() {
+    let content = r#"
+        cheats = 1
+        cheat0_desc = "Synthetic physical RAM write"
+        cheat0_code = "1f008d:09+1f0094:99"
+        cheat0_enable = false
+    "#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::Pce);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "Synthetic physical RAM write");
+    assert!(!cheats[0].enabled);
+    assert_eq!(cheats[0].patches.len(), 2);
+    assert!(
+        cheats[0]
+            .patches
+            .iter()
+            .all(|patch| matches!(patch, CheatPatch::WideRamWrite { .. }))
+    );
+}
+
+#[test]
+fn parse_cht_file_rejects_an_entire_malformed_pce_multi_code() {
+    let content = r#"
+        cheats = 2
+        cheat0_desc = "No partial writes"
+        cheat0_code = "1f008d:09+1f0000f:0c"
+        cheat0_enable = true
+        cheat1_desc = "Valid neighbor"
+        cheat1_code = "1f0094:99"
+        cheat1_enable = true
+    "#;
+    let cheats = parse_cht_file_for_system(content, ActiveSystem::Pce);
+    assert_eq!(cheats.len(), 1);
+    assert_eq!(cheats[0].name, "Valid neighbor");
+    assert_eq!(cheats[0].patches.len(), 1);
+}
+
+#[test]
 fn parse_cheat_for_system_sega8_raw_multi_code() {
     let result = parse_cheat_for_system("$C000:01+0xD000=02", ActiveSystem::GameGear);
     let (patches, ty) = result.expect("Sega 8-bit raw multi-code should parse");

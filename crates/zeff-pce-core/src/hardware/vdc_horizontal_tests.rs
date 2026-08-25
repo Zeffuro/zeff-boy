@@ -1,7 +1,7 @@
 use super::cpu::{LineLevel, VdcPort};
 use super::{
     HuC6270, VDC_DMA_PIXELS_PER_WORD, VceFrameLength, VdcExternalVceScanline, VdcHorizontalPhase,
-    VdcPortWriteResult, VdcRegister, VdcStatus, VdcVramDmaTriggerResult,
+    VdcPortWriteResult, VdcRegister, VdcStatus, VdcVerticalPhase, VdcVramDmaTriggerResult,
 };
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
@@ -50,8 +50,137 @@ fn vertical_blank_follows_same_line_raster_irq_at_display_start() {
 
     let event = vdc.advance_horizontal_pixels(1).unwrap();
     assert!(event.vertical_blank_started());
+    assert!(vdc.frame_burst_enabled());
     assert_eq!(vdc.status(), VdcStatus::VERTICAL_BLANK);
     assert_eq!(vdc.irq_level(), LineLevel::Low);
+}
+
+#[test]
+fn deferred_machine_vblank_latches_frame_burst_when_horizontal_timing_consumes_it() {
+    let mut vdc = HuC6270::new();
+    write_register(&mut vdc, VdcRegister::Control, 0x000C);
+    write_register(&mut vdc, VdcRegister::VerticalSync, 0);
+    write_register(&mut vdc, VdcRegister::VerticalDisplay, 0);
+    write_register(&mut vdc, VdcRegister::VerticalDisplayEnd, 1);
+
+    for line in 0..5 {
+        vdc.advance_machine_vce_scanline(VdcExternalVceScanline::new(
+            1,
+            line == 0,
+            VceFrameLength::Lines262,
+        ))
+        .unwrap();
+        vdc.begin_external_horizontal_line();
+        assert!(!vdc.frame_burst_enabled());
+        let horizontal = vdc.advance_horizontal_pixels(8).unwrap();
+        if horizontal.vertical_blank_started() {
+            assert!(vdc.frame_burst_enabled());
+            return;
+        }
+    }
+
+    panic!("deferred machine vertical blank did not reach horizontal timing");
+}
+
+#[test]
+fn raster_irq_precedes_next_line_vblank_for_dragon_egg_geometry() {
+    let mut vdc = HuC6270::new();
+    write_register(&mut vdc, VdcRegister::VerticalSync, 0x0F02);
+    write_register(&mut vdc, VdcRegister::VerticalDisplay, 0x00EF);
+    write_register(&mut vdc, VdcRegister::VerticalDisplayEnd, 0x0010);
+
+    for line in 0..259 {
+        vdc.advance_machine_vce_scanline(VdcExternalVceScanline::new(
+            1,
+            line == 0,
+            VceFrameLength::Lines263,
+        ))
+        .unwrap();
+    }
+
+    write_register(&mut vdc, VdcRegister::Control, 0x000C);
+    write_register(&mut vdc, VdcRegister::RasterCounter, 0x0130);
+    write_register(&mut vdc, VdcRegister::HorizontalSync, 0x0202);
+    write_register(&mut vdc, VdcRegister::HorizontalDisplay, 0x041F);
+    vdc.begin_external_horizontal_line();
+
+    vdc.advance_horizontal_pixels(265).unwrap();
+    assert_eq!(vdc.status(), VdcStatus::empty());
+    vdc.advance_horizontal_pixels(1).unwrap();
+    assert_eq!(vdc.read_port(VdcPort::SelectOrStatus), 4);
+
+    vdc.advance_horizontal_pixels(75).unwrap();
+    let boundary = vdc
+        .advance_machine_vce_scanline(VdcExternalVceScanline::new(
+            1,
+            false,
+            VceFrameLength::Lines263,
+        ))
+        .unwrap();
+    assert!(boundary.raster_match());
+    assert!(vdc.status().is_empty());
+
+    vdc.begin_external_horizontal_line();
+    vdc.advance_horizontal_pixels(23).unwrap();
+    assert!(vdc.status().is_empty());
+    let vblank = vdc.advance_horizontal_pixels(1).unwrap();
+    assert!(vblank.vertical_blank_started());
+    assert_eq!(vdc.read_port(VdcPort::SelectOrStatus), 0x20);
+}
+
+#[test]
+fn raster_compare_falls_back_to_line_end_when_hdw_is_not_reached() {
+    let mut vdc = HuC6270::new();
+    vdc.advance_machine_vce_scanline(VdcExternalVceScanline::new(
+        1,
+        true,
+        VceFrameLength::Lines263,
+    ))
+    .unwrap();
+    write_register(&mut vdc, VdcRegister::Control, 0x0004);
+    write_register(&mut vdc, VdcRegister::RasterCounter, 2);
+    write_register(&mut vdc, VdcRegister::HorizontalSync, 0x7F00);
+
+    vdc.begin_external_horizontal_line();
+    vdc.advance_horizontal_pixels(341).unwrap();
+    assert_eq!(vdc.horizontal_phase(), VdcHorizontalPhase::DisplayStart);
+    vdc.advance_machine_vce_scanline(VdcExternalVceScanline::new(
+        1,
+        false,
+        VceFrameLength::Lines263,
+    ))
+    .unwrap();
+    assert_eq!(vdc.read_port(VdcPort::SelectOrStatus), 4);
+}
+
+#[test]
+fn wrapped_horizontal_line_does_not_repeat_its_raster_match_at_external_boundary() {
+    let mut vdc = HuC6270::new();
+    vdc.advance_machine_vce_scanline(VdcExternalVceScanline::new(
+        1,
+        true,
+        VceFrameLength::Lines263,
+    ))
+    .unwrap();
+    write_register(&mut vdc, VdcRegister::Control, 0x0004);
+    write_register(&mut vdc, VdcRegister::RasterCounter, 2);
+    write_register(&mut vdc, VdcRegister::HorizontalSync, 0x0202);
+    write_register(&mut vdc, VdcRegister::HorizontalDisplay, 0x031F);
+
+    vdc.begin_external_horizontal_line();
+    vdc.advance_horizontal_pixels(341).unwrap();
+    assert_eq!(vdc.horizontal_phase(), VdcHorizontalPhase::DisplayStart);
+    assert_eq!(vdc.read_port(VdcPort::SelectOrStatus), 4);
+
+    let boundary = vdc
+        .advance_machine_vce_scanline(VdcExternalVceScanline::new(
+            1,
+            false,
+            VceFrameLength::Lines263,
+        ))
+        .unwrap();
+    assert!(boundary.raster_match());
+    assert!(vdc.status().is_empty());
 }
 
 #[test]
@@ -124,7 +253,7 @@ fn dma_slot_remainder_survives_calls_and_external_line_reset() {
 }
 
 #[test]
-fn vram_dma_trigger_is_rejected_in_nonburst_active_display() {
+fn vram_dma_trigger_is_queued_in_nonburst_active_display() {
     let mut vdc = HuC6270::new();
     write_register(&mut vdc, VdcRegister::Control, 0x00B0);
     write_register(&mut vdc, VdcRegister::VerticalSync, 0);
@@ -138,8 +267,20 @@ fn vram_dma_trigger_is_rejected_in_nonburst_active_display() {
 
     assert_eq!(
         write_register(&mut vdc, VdcRegister::DmaLength, 0),
-        VdcPortWriteResult::VramDma(VdcVramDmaTriggerResult::RejectedOutsideTransferWindow)
+        VdcPortWriteResult::VramDma(VdcVramDmaTriggerResult::Queued)
     );
+    assert!(vdc.pending_vram_dma().is_some());
+    assert_eq!(vdc.active_vram_dma(), None);
+    assert_eq!(vdc.advance_horizontal_pixels(4).unwrap().vram_words(), 0);
+    assert!(vdc.pending_vram_dma().is_some());
+
+    loop {
+        let boundary = vdc.advance_scanline_boundary().unwrap();
+        if boundary.phase() != VdcVerticalPhase::ActiveDisplay {
+            break;
+        }
+    }
+    assert_eq!(vdc.advance_horizontal_pixels(4).unwrap().vram_words(), 1);
     assert_eq!(vdc.pending_vram_dma(), None);
     assert_eq!(vdc.active_vram_dma(), None);
 }
@@ -201,6 +342,7 @@ fn display_enables_latch_at_hdw_entry_for_the_active_line_snapshot() {
     write_register(&mut vdc, VdcRegister::Control, 0x00B0);
     write_register(&mut vdc, VdcRegister::VerticalSync, 0);
     write_register(&mut vdc, VdcRegister::VerticalDisplay, 1);
+    write_register(&mut vdc, VdcRegister::HorizontalDisplay, 0);
     vdc.begin_external_horizontal_line();
     vdc.advance_horizontal_pixels(8).unwrap();
     write_register(&mut vdc, VdcRegister::HorizontalDisplay, 31);
@@ -270,7 +412,7 @@ fn frame_burst_latch_defers_control_changes_and_prevents_active_abort() {
 }
 
 #[test]
-fn entering_nonburst_active_display_discards_an_unstarted_transfer() {
+fn entering_nonburst_active_display_preserves_an_unstarted_transfer() {
     let mut vdc = HuC6270::new();
     write_register(&mut vdc, VdcRegister::Control, 0x00B0);
     write_register(&mut vdc, VdcRegister::VerticalSync, 0);
@@ -285,16 +427,16 @@ fn entering_nonburst_active_display_discards_an_unstarted_transfer() {
             break boundary;
         }
     };
-    assert!(active.vram_dma_aborted());
-    assert_eq!(vdc.pending_vram_dma(), None);
+    assert!(!active.vram_dma_aborted());
+    assert!(vdc.pending_vram_dma().is_some());
     assert_eq!(vdc.active_vram_dma(), None);
     assert_eq!(vdc.advance_horizontal_pixels(64).unwrap().vram_words(), 0);
 
     assert_eq!(
         write_register(&mut vdc, VdcRegister::DmaLength, 1),
-        VdcPortWriteResult::VramDma(VdcVramDmaTriggerResult::RejectedOutsideTransferWindow)
+        VdcPortWriteResult::VramDma(VdcVramDmaTriggerResult::RejectedWhilePending)
     );
-    assert_eq!(vdc.pending_vram_dma(), None);
+    assert!(vdc.pending_vram_dma().is_some());
 }
 
 #[test]
@@ -369,7 +511,7 @@ fn sync_width_write_waits_until_the_following_sync_entry() {
 }
 
 #[test]
-fn active_entry_aborts_partial_dma_without_completion_status_or_irq() {
+fn active_entry_pauses_partial_dma_without_completion_status_or_irq() {
     let mut vdc = HuC6270::new();
     write_register(&mut vdc, VdcRegister::Control, 0x00B0);
     write_register(&mut vdc, VdcRegister::VerticalSync, 0);
@@ -390,12 +532,30 @@ fn active_entry_aborts_partial_dma_without_completion_status_or_irq() {
             break boundary;
         }
     };
-    assert!(active.vram_dma_aborted());
+    assert!(!active.vram_dma_aborted());
     assert_eq!(vdc.pending_vram_dma(), None);
-    assert_eq!(vdc.active_vram_dma(), None);
+    assert!(vdc.active_vram_dma().is_some());
     assert!(!vdc.status().contains(VdcStatus::VRAM_DMA_COMPLETE));
     assert_eq!(vdc.irq_level(), LineLevel::High);
     assert_eq!(vdc.register(VdcRegister::DmaSource), 1);
     assert_eq!(vdc.register(VdcRegister::DmaDestination), 0x0101);
     assert_eq!(vdc.register(VdcRegister::DmaLength), 2);
+
+    assert_eq!(vdc.advance_horizontal_pixels(64).unwrap().vram_words(), 0);
+    assert_eq!(vdc.register(VdcRegister::DmaSource), 1);
+    assert_eq!(vdc.register(VdcRegister::DmaDestination), 0x0101);
+    assert_eq!(vdc.register(VdcRegister::DmaLength), 2);
+
+    loop {
+        let boundary = vdc.advance_scanline_boundary().unwrap();
+        if boundary.phase() != VdcVerticalPhase::ActiveDisplay {
+            break;
+        }
+    }
+    let resumed = vdc.advance_horizontal_pixels(12).unwrap();
+    assert_eq!(resumed.vram_words(), 3);
+    assert_eq!(resumed.dma_completions(), 1);
+    assert_eq!(vdc.active_vram_dma(), None);
+    assert!(vdc.status().contains(VdcStatus::VRAM_DMA_COMPLETE));
+    assert_eq!(vdc.irq_level(), LineLevel::Low);
 }

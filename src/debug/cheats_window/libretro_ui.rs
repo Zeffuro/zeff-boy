@@ -18,7 +18,12 @@ pub(super) fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
 
         ui.label(format!("Platform: {}", state.libretro_platform.label()));
         if let Some(crc32) = state.rom_crc32 {
-            ui.label(format!("ROM CRC32: {crc32:08X}"));
+            let label = if state.active_system == ActiveSystem::Pce {
+                "Game key"
+            } else {
+                "ROM CRC32"
+            };
+            ui.label(format!("{label}: {crc32:08X}"));
         }
         if let Some(ref title) = state.rom_metadata_title {
             ui.label(format!("Matched metadata: {title}"));
@@ -188,7 +193,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
                 ui.label("NES");
             }
             ActiveSystem::Pce => {
-                ui.label("PC Engine");
+                ui.label(state.libretro_platform.label());
             }
             ActiveSystem::GameBoyAdvance => {
                 ui.label("GBA");
@@ -215,8 +220,18 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             let url = libretro_cheats::browse_url(state.libretro_platform);
             crate::platform::open_url(&url);
         }
+        let metadata_supported = matches!(
+            state.libretro_platform,
+            LibretroPlatform::Gb
+                | LibretroPlatform::Gbc
+                | LibretroPlatform::Nes
+                | LibretroPlatform::Gba
+                | LibretroPlatform::MasterSystem
+                | LibretroPlatform::GameGear
+        );
         let can_refresh = !state.libretro_busy;
-        if ui
+        if metadata_supported
+            && ui
             .add_enabled(can_refresh, egui::Button::new("⬇ Refresh metadata").small())
             .on_hover_text(
                 "Download/compile local metadata cache from libretro dat files (GB+GBC+GBA+NES+SMS+GG)",

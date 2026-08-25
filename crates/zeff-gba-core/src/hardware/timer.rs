@@ -8,6 +8,9 @@ pub struct Timer {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Timers {
     timers: [Timer; 4],
+    // Only enabled, non-cascading timers consume CPU cycles. Keeping this derived
+    // mask avoids walking the four disabled timer registers at every instruction.
+    clocked_timer_mask: u8,
     cycle_accum: [u32; 4],
     enable_delay_pending: [bool; 4],
     enable_delay_cycles: [u32; 4],
@@ -57,6 +60,7 @@ impl Timers {
                 } else if timer.control & 0x0080 == 0 {
                     self.first_overflow_irq_extra_delay[index] = 0;
                 }
+                self.refresh_clocked_timer_mask(index);
             } else {
                 timer.reload = value;
                 if timer.control & 0x0080 != 0 && self.first_overflow_irq_extra_delay[index] != 0 {
@@ -68,6 +72,9 @@ impl Timers {
     }
 
     pub fn begin_step_window(&mut self, cycles: u32) {
+        if self.clocked_timer_mask == 0 {
+            return;
+        }
         for index in 0..self.timers.len() {
             if self.enable_delay_pending[index] {
                 let immediate_overflow_delay = u32::from(self.timers[index].counter == 0xFFFF);
@@ -87,6 +94,9 @@ impl Timers {
         &mut self,
         cycles: u32,
     ) -> (u16, TimerOverflowCounts, TimerIrqExtraDelays) {
+        if self.clocked_timer_mask == 0 {
+            return (0, [0; 4], [0; 4]);
+        }
         let mut irq_flags = 0u16;
         let mut overflow_counts = [0u32; 4];
         let mut irq_extra_delays = [0u32; 4];
@@ -128,10 +138,13 @@ impl Timers {
     }
 
     pub fn cycles_until_overflow(&self, index: usize) -> Option<u32> {
-        let timer = self.timers.get(index).copied()?;
-        if timer.control & 0x0080 == 0 || timer.control & 0x0004 != 0 {
+        if index >= self.timers.len() {
             return None;
         }
+        if self.clocked_timer_mask & (1 << index) == 0 {
+            return None;
+        }
+        let timer = self.timers.get(index).copied()?;
         let period = timer_period(timer.control);
         let accum = self.cycle_accum.get(index).copied().unwrap_or(0);
         let enable_delay = self.enable_delay_cycles.get(index).copied().unwrap_or(0);
@@ -150,10 +163,32 @@ impl Timers {
 
     pub fn set_all(&mut self, timers: [Timer; 4]) {
         self.timers = timers;
+        self.clocked_timer_mask = self
+            .timers
+            .iter()
+            .enumerate()
+            .fold(0, |mask, (index, timer)| {
+                mask | (u8::from(timer.control & 0x0084 == 0x0080) << index)
+            });
         self.cycle_accum = [0; 4];
         self.enable_delay_pending = [false; 4];
         self.enable_delay_cycles = [0; 4];
         self.first_overflow_irq_extra_delay = [0; 4];
+    }
+
+    #[inline]
+    pub(crate) const fn has_clocked_timers(&self) -> bool {
+        self.clocked_timer_mask != 0
+    }
+
+    #[inline]
+    fn refresh_clocked_timer_mask(&mut self, index: usize) {
+        let bit = 1 << index;
+        if self.timers[index].control & 0x0084 == 0x0080 {
+            self.clocked_timer_mask |= bit;
+        } else {
+            self.clocked_timer_mask &= !bit;
+        }
     }
 
     fn increment_cascade(
@@ -229,6 +264,26 @@ mod tests {
         timers.write16(0, true, 0x0080);
 
         assert_eq!(timers.read16(0, false), 0x1234);
+    }
+
+    #[test]
+    fn scheduler_mask_tracks_enabled_non_cascading_timers() {
+        let mut timers = Timers::default();
+        assert!(!timers.has_clocked_timers());
+
+        timers.write16(1, true, 0x0084);
+        assert!(!timers.has_clocked_timers());
+
+        timers.write16(0, true, 0x0080);
+        assert!(timers.has_clocked_timers());
+
+        timers.write16(0, true, 0);
+        assert!(!timers.has_clocked_timers());
+
+        let mut restored = [Timer::default(); 4];
+        restored[2].control = 0x0080;
+        timers.set_all(restored);
+        assert!(timers.has_clocked_timers());
     }
 
     #[test]

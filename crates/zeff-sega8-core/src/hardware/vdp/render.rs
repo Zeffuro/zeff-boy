@@ -11,6 +11,16 @@ pub(super) fn render_mode4_background_rgba(
     mode4::render_background_rgba(vdp, framebuffer, area);
 }
 
+#[cfg(test)]
+pub(super) fn render_mode4_background_rgba_with_color(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    color_mode: Mode4ColorMode,
+) {
+    mode4::render_background_rgba_with_color(vdp, framebuffer, area, color_mode);
+}
+
 pub(super) fn render_mode4_frame_rgba(
     vdp: &Vdp,
     framebuffer: &mut [u8],

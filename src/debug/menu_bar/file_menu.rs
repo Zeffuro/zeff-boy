@@ -21,6 +21,8 @@ pub(super) fn draw(
     settings: &Settings,
     state: &FileMenuState<'_>,
 ) {
+    ui.set_min_width(220.0);
+
     if ui.button("Open").clicked() {
         actions.push(MenuAction::OpenFile);
         ui.close();

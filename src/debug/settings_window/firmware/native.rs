@@ -42,7 +42,6 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         ui.label("Additional folder");
         if ui
             .text_edit_singleline(&mut settings.emulation.firmware_directory)
-            .on_hover_text("Dedicated BIOS/firmware/system folders scan one subfolder level.")
             .changed()
         {
             state.firmware_inventory.needs_refresh = true;

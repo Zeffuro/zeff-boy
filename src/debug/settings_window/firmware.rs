@@ -33,14 +33,12 @@ pub(super) fn draw_gba_boot_mode(ui: &mut egui::Ui, settings: &mut Settings) {
             &mut settings.emulation.gba_bios_mode,
             crate::settings::GbaBiosMode::Hle,
             "HLE",
-        )
-        .on_hover_text("Skip the boot animation and use built-in BIOS services.");
+        );
         ui.selectable_value(
             &mut settings.emulation.gba_bios_mode,
             crate::settings::GbaBiosMode::External,
             "External BIOS",
-        )
-        .on_hover_text("Run a recognized gba_bios.bin from reset.");
+        );
     });
     ui.label(
         egui::RichText::new("Applies when a ROM is next loaded.")
@@ -64,7 +62,7 @@ pub(super) fn draw_gb_boot_mode(ui: &mut egui::Ui, settings: &mut Settings) {
         );
     });
     ui.label(
-        egui::RichText::new("Uses the recognized DMG or CGB boot ROM for the selected hardware mode on the next ROM load.")
+        egui::RichText::new("Applies on next ROM load.")
             .weak()
             .small(),
     );
@@ -85,11 +83,9 @@ pub(super) fn draw_sega_boot_mode(ui: &mut egui::Ui, settings: &mut Settings) {
         );
     });
     ui.label(
-        egui::RichText::new(
-            "Uses recognized regional SMS firmware or bios.gg on the next ROM load.",
-        )
-        .weak()
-        .small(),
+        egui::RichText::new("Applies on next ROM load.")
+            .weak()
+            .small(),
     );
 }
 

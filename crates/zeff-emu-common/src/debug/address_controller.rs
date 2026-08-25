@@ -157,7 +157,11 @@ impl AddressDebugController {
         });
     }
 
+    #[inline]
     pub fn should_break(&mut self, pc: Address) -> bool {
+        if self.breakpoints.is_empty() && !self.break_on_next {
+            return false;
+        }
         if self.breakpoints.binary_search(&pc).is_ok() {
             if let Some(condition) = self
                 .hit_conditions

@@ -44,13 +44,12 @@ pub(super) fn project_presented_frame(
             active: metadata.is_active(),
         }
     });
+    let signal = frame.signal_bounds();
     let bounds = visible_vertical_bounds(
-        frame.active_bounds().map(|bounds| {
-            (
-                usize::from(bounds.first_row()),
-                usize::from(bounds.row_end()),
-            )
-        }),
+        Some((
+            usize::from(signal.first_row()),
+            usize::from(signal.row_end()),
+        )),
         overscan_mode,
     );
     match topology {

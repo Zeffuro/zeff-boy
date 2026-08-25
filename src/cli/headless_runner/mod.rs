@@ -26,7 +26,7 @@ use input::{
     input_p5_for_frame,
 };
 use nes::run_nes_headless;
-use pce::{run_pce_headless, run_pce_seven_zip_headless};
+use pce::{run_pce_archive_headless, run_pce_headless};
 use replay::run_replay_headless;
 use screenshots::*;
 use sega8::run_sega8_headless;
@@ -36,7 +36,7 @@ use stuck::{
 };
 use support::{
     ensure_no_reset_events, ensure_system_headless_options, flush_battery, load_headless_rom,
-    print_perf, read_headless_state_if_requested,
+    print_memory_region_dumps, print_perf, read_headless_state_if_requested,
 };
 use trace::*;
 use ws::run_ws_headless;
@@ -64,11 +64,11 @@ pub(crate) fn run_headless(
     firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
-    if crate::app::is_native_seven_zip_path(path) {
+    if crate::app::is_native_archive_path(path) {
         if opts.replay_path.is_some() {
-            anyhow::bail!("replay playback from 7z archives is not supported in headless mode");
+            anyhow::bail!("replay playback from archives is not supported in headless mode");
         }
-        return run_pce_seven_zip_headless(path, mode_preference, firmware_search_dirs, opts);
+        return run_pce_archive_headless(path, mode_preference, firmware_search_dirs, opts);
     }
 
     let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;

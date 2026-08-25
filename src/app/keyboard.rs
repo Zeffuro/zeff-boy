@@ -203,8 +203,9 @@ impl App {
         if !egui_kb && key_code == self.settings.rewind.key_code() {
             if self.core_supports_rewind() {
                 match key_event.state {
-                    ElementState::Pressed => self.rewind.held = true,
+                    ElementState::Pressed if !key_event.repeat => self.rewind.held = true,
                     ElementState::Released => self.rewind.held = false,
+                    _ => {}
                 }
             } else {
                 self.rewind.held = false;

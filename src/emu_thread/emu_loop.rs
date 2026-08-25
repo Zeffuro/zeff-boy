@@ -14,7 +14,7 @@ use crate::link::{
 
 use super::{
     AudioRecordingCapture, DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_SNAPSHOTS_PER_SECOND, ReplayStartState, SharedFramebuffer, TcpLinkMode,
+    REWIND_CAPTURE_INTERVAL_FRAMES, ReplayStartState, SharedFramebuffer, TcpLinkMode,
     WorkerRuntimeFault,
 };
 
@@ -35,6 +35,7 @@ pub(super) struct EmuLoop {
     pub(super) resp_tx: Sender<EmuResponse>,
     pub(super) shared_framebuffer: SharedFramebuffer,
     uncapped_mode: bool,
+    uncapped_batch_size: usize,
     audio_recording_capture: AudioRecordingCapture,
     pending_audio_discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
     last_cheats: Vec<CheatPatch>,
@@ -56,6 +57,7 @@ impl EmuLoop {
         resp_tx: Sender<EmuResponse>,
         shared_framebuffer: SharedFramebuffer,
     ) -> Self {
+        let frame_duration_ns = backend.system().frame_duration_ns();
         Self {
             backend,
             cmd_rx,
@@ -64,6 +66,7 @@ impl EmuLoop {
             resp_tx,
             shared_framebuffer,
             uncapped_mode: false,
+            uncapped_batch_size: super::DEFAULT_UNCAPPED_BATCH_SIZE,
             audio_recording_capture: AudioRecordingCapture::default(),
             pending_audio_discontinuities: Vec::new(),
             last_cheats: Vec::new(),
@@ -71,9 +74,10 @@ impl EmuLoop {
             pending_tcp_link: None,
             game_boy_replay_link: None,
             wonder_swan_replay_link: None,
-            rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new(
+            rewind_buffer: zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                 DEFAULT_REWIND_SECONDS,
-                REWIND_SNAPSHOTS_PER_SECOND,
+                REWIND_CAPTURE_INTERVAL_FRAMES,
+                frame_duration_ns,
             ),
             rewind_seconds: DEFAULT_REWIND_SECONDS,
             runtime_fault: WorkerRuntimeFault::default(),
@@ -120,6 +124,7 @@ impl EmuLoop {
                     self.audio_recording_capture,
                     &mut self.pending_audio_discontinuities,
                     &mut self.runtime_fault,
+                    self.uncapped_batch_size,
                 );
                 if !self.runtime_fault.can_step() {
                     self.uncapped_mode = false;
@@ -147,6 +152,10 @@ impl EmuLoop {
                 self.uncapped_mode = on && self.runtime_fault.can_step();
                 self.backend
                     .set_apu_sample_generation_enabled(!self.uncapped_mode);
+            }
+
+            EmuCommand::SetUncappedBatchSize(frames) => {
+                self.uncapped_batch_size = frames.clamp(1, super::MAX_UNCAPPED_BATCH_SIZE);
             }
 
             EmuCommand::UpdateCheats(cheats) => {

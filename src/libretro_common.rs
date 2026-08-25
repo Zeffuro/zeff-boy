@@ -7,6 +7,9 @@ pub(crate) enum LibretroPlatform {
     Gba = 3,
     MasterSystem = 4,
     GameGear = 5,
+    Pce = 6,
+    PceCd = 7,
+    SuperGrafx = 8,
 }
 
 impl LibretroPlatform {
@@ -18,6 +21,9 @@ impl LibretroPlatform {
             Self::Gba => "Nintendo - Game Boy Advance",
             Self::MasterSystem => "Sega - Master System - Mark III",
             Self::GameGear => "Sega - Game Gear",
+            Self::Pce => "NEC - PC Engine - TurboGrafx 16",
+            Self::PceCd => "NEC - PC Engine CD - TurboGrafx-CD",
+            Self::SuperGrafx => "NEC - PC Engine SuperGrafx",
         }
     }
 
@@ -29,6 +35,9 @@ impl LibretroPlatform {
             Self::Gba => "GBA",
             Self::MasterSystem => "Master System / Mark III",
             Self::GameGear => "Game Gear",
+            Self::Pce => "PC Engine / TurboGrafx-16",
+            Self::PceCd => "PC Engine CD / TurboGrafx-CD",
+            Self::SuperGrafx => "SuperGrafx",
         }
     }
 
@@ -40,6 +49,9 @@ impl LibretroPlatform {
             Self::Gba => "gba",
             Self::MasterSystem => "sms",
             Self::GameGear => "gg",
+            Self::Pce => "pce",
+            Self::PceCd => "pce-cd",
+            Self::SuperGrafx => "supergrafx",
         }
     }
 
@@ -51,6 +63,16 @@ impl LibretroPlatform {
             Self::Gba => &[".gba"],
             Self::MasterSystem => &[".sms", ".sg", ".sc", ".mv"],
             Self::GameGear => &[".gg"],
+            Self::Pce => &[".pce"],
+            Self::PceCd => &[".cue", ".chd"],
+            Self::SuperGrafx => &[".pce"],
+        }
+    }
+
+    pub(crate) fn cheat_extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::Pce | Self::PceCd | Self::SuperGrafx => &[".cht", ".txt"],
+            _ => &[".cht"],
         }
     }
 }

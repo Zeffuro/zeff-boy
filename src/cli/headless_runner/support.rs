@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::emu_backend::ActiveSystem;
+use crate::emu_core_trait::EmulatorCore;
 
 use super::HeadlessOptions;
 
@@ -78,6 +79,9 @@ pub(super) fn ensure_system_headless_options(
         anyhow::bail!(
             "--dump-mem is only supported for GB/GBC, PC Engine, and WonderSwan headless runs"
         );
+    }
+    if !opts.region_dumps.is_empty() && system != "pce" {
+        anyhow::bail!("--dump-region is only supported for PC Engine headless runs");
     }
     if opts.break_at.is_some() && system != "pce" {
         anyhow::bail!("--break-at is only supported for GB/GBC and PC Engine headless runs");
@@ -161,10 +165,89 @@ pub(super) fn print_perf(system: &str, frames_run: u64, start: Instant) {
     );
 }
 
+pub(super) fn print_memory_region_dumps(
+    emulator: &mut impl EmulatorCore,
+    opts: &HeadlessOptions,
+) -> anyhow::Result<()> {
+    let mut bytes = Vec::new();
+    for dump in &opts.region_dumps {
+        let region = emulator.copy_memory_region(&dump.region, &mut bytes)?;
+        let lines = memory_region_dump_lines(region.id, &bytes, dump.offset, dump.len)?;
+        for line in lines {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn memory_region_dump_lines(
+    region: &str,
+    bytes: &[u8],
+    offset: usize,
+    len: usize,
+) -> anyhow::Result<Vec<String>> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| anyhow::anyhow!("memory region dump range overflows usize"))?;
+    anyhow::ensure!(
+        end <= bytes.len(),
+        "memory region '{region}' range 0x{offset:X}..0x{end:X} exceeds its 0x{:X}-byte size",
+        bytes.len()
+    );
+
+    let mut lines = vec![format!(
+        "[region] id={region} offset={offset:08X} len={len}"
+    )];
+    for (line_index, chunk) in bytes[offset..end].chunks(16).enumerate() {
+        let address = offset + line_index * 16;
+        let values = chunk
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(format!("[region] {address:08X}: {values}"));
+    }
+    Ok(lines)
+}
+
 pub(super) fn flush_battery(path: &Path, sram_bytes: Option<Vec<u8>>) {
     match crate::save_paths::flush_battery_sram(path, sram_bytes) {
         Ok(Some(save_path)) => log::info!("Saved battery RAM to {}", save_path),
         Ok(None) => {}
         Err(err) => log::error!("Failed to save battery RAM: {}", err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_system_headless_options, memory_region_dump_lines};
+    use crate::cli::types::{HeadlessOptions, HeadlessRegionDump};
+
+    #[test]
+    fn region_dump_formats_only_the_requested_range() {
+        let bytes = (0..32).collect::<Vec<u8>>();
+        let lines = memory_region_dump_lines("video_ram", &bytes, 14, 4).unwrap();
+
+        assert_eq!(lines[0], "[region] id=video_ram offset=0000000E len=4");
+        assert_eq!(lines[1], "[region] 0000000E: 0E 0F 10 11");
+    }
+
+    #[test]
+    fn region_dump_rejects_out_of_bounds_and_overflowing_ranges() {
+        assert!(memory_region_dump_lines("video_ram", &[0; 8], 7, 2).is_err());
+        assert!(memory_region_dump_lines("video_ram", &[0; 8], usize::MAX, 2).is_err());
+    }
+
+    #[test]
+    fn region_dump_is_rejected_until_a_headless_system_wires_it() {
+        let mut opts = HeadlessOptions::default();
+        opts.region_dumps.push(HeadlessRegionDump {
+            region: "video_ram".to_owned(),
+            offset: 0,
+            len: 1,
+        });
+
+        ensure_system_headless_options("pce", &opts).unwrap();
+        assert!(ensure_system_headless_options("gba", &opts).is_err());
     }
 }

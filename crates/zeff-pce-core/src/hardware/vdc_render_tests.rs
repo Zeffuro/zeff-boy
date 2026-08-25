@@ -1,5 +1,7 @@
 use super::cpu::VdcPort;
-use super::{BackgroundColorMode, BackgroundScanlineStatus, HuC6270, VdcRegister};
+use super::{
+    BackgroundColorMode, BackgroundRenderState, BackgroundScanlineStatus, HuC6270, VdcRegister,
+};
 
 fn write_register(vdc: &mut HuC6270, register: VdcRegister, value: u16) {
     vdc.write_port(VdcPort::SelectOrStatus, register as u8);
@@ -24,6 +26,42 @@ fn set_pattern_row(vdc: &mut HuC6270, code: usize, row: usize, colors: [u8; 8]) 
     let (planes_zero_one, planes_two_three) = encode_row(colors);
     vdc.vram_mut()[code * 16 + row] = planes_zero_one;
     vdc.vram_mut()[code * 16 + 8 + row] = planes_two_three;
+}
+
+fn reference_background_pixel(
+    vdc: &HuC6270,
+    state: &BackgroundRenderState,
+    display_line: usize,
+) -> u8 {
+    let width_pixels = state.width_tiles() * 8;
+    let height_pixels = state.height_tiles() * 8;
+    let virtual_y = (state.scroll_y() + display_line % height_pixels) % height_pixels;
+    let virtual_x = state.scroll_x() % width_pixels;
+    let entry = vdc.vram()[(virtual_y / 8) * state.width_tiles() + virtual_x / 8];
+    let base = usize::from(entry & 0x0FFF) << 4;
+    let row = virtual_y % 8;
+    let bit = 7 - virtual_x % 8;
+    let (planes_zero_one, planes_two_three) = match state.color_mode() {
+        BackgroundColorMode::Full => (
+            vdc.read_logical_vram_word((base + row) as u16),
+            vdc.read_logical_vram_word((base + 8 + row) as u16),
+        ),
+        BackgroundColorMode::PlanesZeroAndOne => {
+            (vdc.read_logical_vram_word((base + row) as u16), 0)
+        }
+        BackgroundColorMode::PlanesTwoAndThree => {
+            (0, vdc.read_logical_vram_word((base + 8 + row) as u16))
+        }
+    };
+    let pattern = ((planes_zero_one >> bit) & 1) as u8
+        | (((planes_zero_one >> (bit + 8)) & 1) as u8) << 1
+        | (((planes_two_three >> bit) & 1) as u8) << 2
+        | (((planes_two_three >> (bit + 8)) & 1) as u8) << 3;
+    if pattern == 0 {
+        0
+    } else {
+        ((entry >> 8) as u8 & 0xF0) | pattern
+    }
 }
 
 #[test]
@@ -221,4 +259,36 @@ fn after_burner_upper_pattern_word_ccc0_reads_lower_mirror_4cc0() {
         Ok(BackgroundScanlineStatus::Rendered)
     );
     assert_eq!(output, [0x35; 8]);
+}
+
+#[test]
+fn tile_cached_background_rendering_matches_the_pixel_reference_for_all_bat_coordinates() {
+    let mut vdc = HuC6270::new();
+    write_register(&mut vdc, VdcRegister::Control, 0x80);
+    for (index, word) in vdc.vram_mut().iter_mut().enumerate() {
+        *word = (index as u16).wrapping_mul(0x9E37).rotate_left(5);
+    }
+
+    for memory_width in [0x00, 0x10, 0x20, 0x40, 0x50, 0x60, 0x03, 0x83] {
+        write_register(&mut vdc, VdcRegister::MemoryWidth, memory_width);
+        write_register(&mut vdc, VdcRegister::BackgroundScrollY, 0);
+        let dimensions = vdc.background_render_state();
+        let width = dimensions.width_tiles() * 8;
+        let height = dimensions.height_tiles() * 8;
+        for scroll_x in 0..width {
+            write_register(&mut vdc, VdcRegister::BackgroundScrollX, scroll_x as u16);
+            let state = vdc.background_render_state();
+            for display_line in 0..height {
+                let expected = reference_background_pixel(&vdc, &state, display_line);
+                let mut actual = [0xFF];
+                vdc.render_background_scanline(&state, display_line, &mut actual)
+                    .unwrap();
+                assert_eq!(
+                    actual,
+                    [expected],
+                    "MWR {memory_width:#04X}, x {scroll_x}, y {display_line}"
+                );
+            }
+        }
+    }
 }

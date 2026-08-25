@@ -34,13 +34,6 @@ pub(super) fn draw(
             144 * settings.video.offscreen_scale
         ));
     });
-    ui.label(
-        egui::RichText::new(
-            "Applies to the Game View dock tab only. Direct rendering uses the window resolution.",
-        )
-        .small()
-        .weak(),
-    );
 
     ui.separator();
     ui.heading("Effects");
@@ -111,13 +104,6 @@ fn draw_gb_palette_section(
             Some("Load GBC matrix"),
         );
     }
-    ui.label(
-        egui::RichText::new(
-            "Applies as a display post-process to GB/GBC output. DMG palette selection below still controls the raw DMG colors before this correction.",
-        )
-        .weak()
-        .small(),
-    );
 
     let gb_mode = gb_hardware_mode_label.unwrap_or_default();
     let cgb_active = gb_mode.starts_with("CGB");
@@ -131,31 +117,19 @@ fn draw_gb_palette_section(
     if !gb_mode.is_empty() {
         if cgb_active {
             ui.label(
-                egui::RichText::new(
-                    "Current game is running in CGB mode. DMG palettes apply to DMG rendering only.",
-                )
-                .weak()
-                .small(),
+                egui::RichText::new("DMG palette inactive in CGB mode.")
+                    .weak()
+                    .small(),
             );
         } else if sgb_active {
             ui.label(
-                egui::RichText::new(
-                    "Current game is running in SGB mode. SGB palettes/borders override DMG palette presets.",
-                )
-                .weak()
-                .small(),
+                egui::RichText::new("SGB palette overrides DMG palette.")
+                    .weak()
+                    .small(),
             );
         } else if is_pocket_camera {
             ui.label(
-                egui::RichText::new(
-                    "Pocket Camera output uses cartridge-specific grayscale behavior; DMG palette presets are not applied.",
-                )
-                .weak()
-                .small(),
-            );
-        } else {
-            ui.label(
-                egui::RichText::new("DMG palette preset is active for the current game.")
+                egui::RichText::new("Pocket Camera uses its own grayscale.")
                     .weak()
                     .small(),
             );
@@ -198,13 +172,6 @@ fn draw_gba_display_section(
             None,
         );
     }
-    ui.label(
-        egui::RichText::new(
-            "Applies as a shader post-process to raw GBA RGB555 output. AGB LCD is a punchier handheld-screen simulation; LCD response is the stronger handheld LCD-response model.",
-        )
-        .weak()
-        .small(),
-    );
 }
 
 fn draw_wonderswan_display_section(
@@ -229,13 +196,6 @@ fn draw_wonderswan_display_section(
             Some("Load WSC LCD matrix"),
         );
     }
-    ui.label(
-        egui::RichText::new(
-            "Applies as a shader post-process to WonderSwan output. WSC/SwanCrystal LCD uses the cross-channel handheld LCD mix; Original WS LCD is intended for monochrome WS output.",
-        )
-        .weak()
-        .small(),
-    );
 }
 
 fn draw_nes_palette_section(
@@ -300,12 +260,6 @@ fn draw_nes_palette_section(
                 );
             }
         }
-    } else if settings.video.nes_palette_mode != NesPaletteMode::Raw {
-        ui.label(
-            egui::RichText::new("Applies to NES rendering and NES palette debug views.")
-                .weak()
-                .small(),
-        );
     }
 }
 

@@ -23,6 +23,7 @@ fn settings_with_modified_values_roundtrip() {
     s.rewind.speed = 5;
     s.rewind.seconds = 30;
     s.rewind.enabled = false;
+    s.rewind.mode = RewindMode::Fast;
     s.video.shader_preset = ShaderPreset::Crt;
     s.video.custom_shader_path = "C:/shaders/custom.wgsl".to_string();
     s.ui.autohide_menu_bar = true;
@@ -39,6 +40,7 @@ fn settings_backward_compat_missing_fields_use_defaults() {
     let s: Settings = serde_json::from_str(json).unwrap();
     assert_eq!(s.rewind.speed, default_rewind_speed());
     assert_eq!(s.rewind.seconds, default_rewind_seconds());
+    assert_eq!(s.rewind.mode, RewindMode::RealTime);
     assert_eq!(s.video.shader_preset, ShaderPreset::None);
     assert!(!s.ui.autohide_menu_bar);
     assert_eq!(s.ui.debug_presentation, DebugPresentation::default());
@@ -515,6 +517,17 @@ fn recent_roms_truncates_at_max() {
 #[test]
 fn default_rewind_speed_is_3() {
     assert_eq!(Settings::default().rewind.speed, 3);
+}
+
+#[test]
+fn legacy_rewind_settings_default_to_real_time_playback() {
+    let settings: Settings = serde_json::from_str(
+        r#"{"rewind_enabled":true,"rewind_key":"KeyR","rewind_speed":7,"rewind_seconds":30}"#,
+    )
+    .unwrap();
+
+    assert_eq!(settings.rewind.mode, RewindMode::RealTime);
+    assert_eq!(settings.rewind.speed, 7);
 }
 
 #[test]

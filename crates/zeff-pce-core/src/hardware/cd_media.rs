@@ -149,6 +149,10 @@ impl CdTrack {
     pub fn end_lba(&self) -> u32 {
         self.stored_start_lba.saturating_add(self.sector_count())
     }
+
+    pub fn payload_hash(&self) -> [u8; 32] {
+        Sha256::digest(&self.stored_data).into()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -220,19 +224,42 @@ impl CdDisc {
         })
     }
 
-    fn stored_track_at_lba(&self, lba: u32) -> Option<&CdTrack> {
+    pub(crate) fn stored_track_index_at_lba(&self, lba: u32) -> Option<usize> {
         let index = self
             .tracks
             .partition_point(|track| track.stored_start_lba <= lba)
             .checked_sub(1)?;
-        let track = &self.tracks[index];
-        (lba < track.end_lba()).then_some(track)
+        (lba < self.tracks[index].end_lba()).then_some(index)
+    }
+
+    fn stored_track_at_lba(&self, lba: u32) -> Option<&CdTrack> {
+        self.stored_track_index_at_lba(lba)
+            .map(|index| &self.tracks[index])
     }
 
     pub fn read_audio_sample(&self, lba: u32, sample: usize) -> Result<(i16, i16), CdReadError> {
         let track = self
             .stored_track_at_lba(lba)
             .ok_or(CdReadError::LbaOutOfRange(lba))?;
+        Self::read_audio_sample_from_track(track, lba, sample)
+    }
+
+    pub(crate) fn read_audio_sample_from_track_index(
+        &self,
+        track_index: usize,
+        lba: u32,
+        sample: usize,
+    ) -> Option<Result<(i16, i16), CdReadError>> {
+        let track = self.tracks.get(track_index)?;
+        ((track.stored_start_lba..track.end_lba()).contains(&lba))
+            .then(|| Self::read_audio_sample_from_track(track, lba, sample))
+    }
+
+    fn read_audio_sample_from_track(
+        track: &CdTrack,
+        lba: u32,
+        sample: usize,
+    ) -> Result<(i16, i16), CdReadError> {
         if track.mode != CdTrackMode::Audio {
             return Err(CdReadError::DataTrack {
                 lba,

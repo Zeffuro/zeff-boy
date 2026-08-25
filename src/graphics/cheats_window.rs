@@ -5,7 +5,7 @@ use winit::window::{Window, WindowId};
 use crate::debug::types::CheatState;
 use crate::settings::Settings;
 
-use super::tool_window::{ToolWindow, ToolWindowConfig};
+use super::tool_window::{ToolWindow, ToolWindowConfig, ToolWindowStyle};
 use super::window_geometry::{CHEATS_DEFAULT_SIZE, CHEATS_MIN_SIZE};
 use super::{FrameError, GpuContext};
 
@@ -54,11 +54,15 @@ impl CheatsWindow {
     }
 
     pub(super) fn render(&mut self, ctx: CheatsRenderContext<'_>) -> Result<(), FrameError> {
-        self.0
-            .render(ctx.settings, "cheats_root_ui", "cheats egui pass", |ui| {
+        self.0.render(
+            ToolWindowStyle::from(ctx.settings),
+            "cheats_root_ui",
+            "cheats egui pass",
+            |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| crate::debug::draw_cheats_content(ui, ctx.state));
-            })
+            },
+        )
     }
 }

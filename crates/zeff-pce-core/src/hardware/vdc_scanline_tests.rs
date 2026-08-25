@@ -222,18 +222,26 @@ fn raster_compare_is_tested_at_hdw_end_before_the_next_scanline() {
 }
 
 #[test]
-fn memory_width_latches_at_vertical_blank_for_the_next_frame() {
+fn memory_width_latches_at_vertical_sync_for_the_next_frame() {
     let mut vdc = HuC6270::new();
     compact_frame(&mut vdc, 0, 1);
     use_internal_sync(&mut vdc, 0);
-    write_register(&mut vdc, VdcRegister::MemoryWidth, 0x0010);
 
     let initial = next_active_display(&mut vdc);
     assert_eq!(initial.background().width_tiles(), 32);
     assert_eq!(initial.background().height_tiles(), 32);
     assert_eq!(initial.sprites().color_mode(), SpriteColorMode::Full);
 
+    write_register(&mut vdc, VdcRegister::MemoryWidth, 0x0010);
     next_vertical_blank(&mut vdc);
+    let sync = loop {
+        let boundary = vdc.advance_scanline_boundary().unwrap();
+        if boundary.phase() == VdcVerticalPhase::VerticalSync {
+            break boundary;
+        }
+    };
+    assert_eq!(sync.phase(), VdcVerticalPhase::VerticalSync);
+    assert_eq!(sync.phase_line(), 0);
     write_register(&mut vdc, VdcRegister::MemoryWidth, 0x0064);
     let first_latched = next_active_display(&mut vdc);
     assert_eq!(first_latched.background().width_tiles(), 64);
@@ -487,7 +495,7 @@ fn vertical_blank_starts_pending_and_repeating_satb_dma() {
 }
 
 #[test]
-fn entering_active_display_aborts_only_an_active_vram_dma() {
+fn entering_active_display_preserves_an_active_vram_dma() {
     let mut vdc = HuC6270::new();
     compact_frame(&mut vdc, 0, 1);
     use_internal_sync(&mut vdc, 0);
@@ -501,8 +509,8 @@ fn entering_active_display_aborts_only_an_active_vram_dma() {
     assert!(!vdc.advance_scanline_boundary().unwrap().vram_dma_aborted());
     let active = vdc.advance_scanline_boundary().unwrap();
     assert_eq!(active.active_display_line(), Some(0));
-    assert!(active.vram_dma_aborted());
-    assert!(vdc.active_vram_dma().is_none());
+    assert!(!active.vram_dma_aborted());
+    assert!(vdc.active_vram_dma().is_some());
     assert!(!vdc.status().contains(VdcStatus::VRAM_DMA_COMPLETE));
 }
 
@@ -548,6 +556,31 @@ fn reset_restores_the_deterministic_first_boundary() {
     assert_eq!(active.background().width_tiles(), 32);
     assert_eq!(active.background().height_tiles(), 32);
     assert_eq!(active.sprites().color_mode(), SpriteColorMode::Full);
+}
+
+#[test]
+fn reset_geometry_delivers_one_first_frame_vblank_at_the_mature_reference_line() {
+    let mut vdc = HuC6270::new();
+    write_register(&mut vdc, VdcRegister::Control, 0x0008);
+
+    let mut vblank_lines = Vec::new();
+    for line in 0..VceFrameLength::Lines262.scanlines() {
+        let boundary = vdc
+            .advance_external_vce_scanline(external_input(1, line == 0, VceFrameLength::Lines262))
+            .unwrap();
+        if boundary.vertical_blank_started() {
+            vblank_lines.push(line);
+            assert_eq!(vdc.status(), VdcStatus::VERTICAL_BLANK);
+            assert_eq!(vdc.irq_level(), LineLevel::Low);
+            assert_eq!(
+                vdc.read_port(VdcPort::SelectOrStatus),
+                VdcStatus::VERTICAL_BLANK.bits()
+            );
+            assert_eq!(vdc.irq_level(), LineLevel::High);
+        }
+    }
+
+    assert_eq!(vblank_lines, [243]);
 }
 
 #[test]
@@ -651,6 +684,27 @@ fn provisional_machine_policy_accepts_every_sync_output() {
         assert_eq!(continued.phase_line(), 0);
         assert_eq!(continued.frame_line(), 1);
     }
+}
+
+#[test]
+fn machine_vsync_latches_memory_width_before_active_display() {
+    let frame_length = VceFrameLength::Lines262;
+    let mut vdc = HuC6270::new();
+    external_frame(&mut vdc, frame_length, 1);
+    write_register(&mut vdc, VdcRegister::MemoryWidth, 0x0070);
+
+    for line in 0..frame_length.scanlines() {
+        let boundary = vdc
+            .advance_machine_vce_scanline(external_input(1, line == 0, frame_length))
+            .unwrap();
+        if let Some(display) = boundary.active_display() {
+            assert_eq!(display.background().width_tiles(), 128);
+            assert_eq!(display.background().height_tiles(), 64);
+            return;
+        }
+    }
+
+    panic!("frame has no active display");
 }
 
 #[test]
@@ -993,6 +1047,7 @@ fn short_external_profile_free_runs_until_an_external_marker() {
     let frame_length = VceFrameLength::Lines262;
     let mut vdc = HuC6270::new();
     write_register(&mut vdc, VdcRegister::Control, 0);
+    write_register(&mut vdc, VdcRegister::VerticalDisplay, 0);
 
     let phases = std::array::from_fn::<_, 5, _>(|line| {
         vdc.advance_external_vce_scanline(external_input(1, line == 0, frame_length))

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::cli::types::HeadlessOptions;
 use crate::emu_backend::PceBackend;
 use crate::emu_core_trait::EmulatorCore;
-use zeff_pce_core::hardware::VdcDebugSnapshot;
+use zeff_pce_core::hardware::{CdDisc, VdcDebugSnapshot};
 
 use super::super::{InputMasks, StuckReport, framebuffer_fingerprint};
 use super::{input_json, input_schedule_json, screenshot_json, stuck_report_json};
@@ -50,6 +50,7 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
     let video = serde_json::json!({
         "vdc": vdc_debug_json(&hardware.vdc),
         "vdc2": hardware.vdc2.as_ref().map(vdc_debug_json),
+        "background_lines": background_lines_json(request.backend),
     });
     let cd = request.backend.cdrom2().map(|cdrom| {
         let audio = cdrom.audio_debug_snapshot();
@@ -90,6 +91,7 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
             "command_count": commands.len(),
             "commands": commands,
             "bram_unlocked": cdrom.bram_unlocked(),
+            "tracks": cd_tracks_json(cdrom.disc()),
         })
     });
 
@@ -173,6 +175,46 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
     })
 }
 
+fn background_lines_json(backend: &PceBackend) -> serde_json::Value {
+    serde_json::Value::Array(
+        backend
+            .debug_presented_frame()
+            .rows()
+            .iter()
+            .enumerate()
+            .filter_map(|(line, row)| {
+                let background = row.background()?;
+                Some(serde_json::json!({
+                    "line": line,
+                    "scroll_x": background.scroll_x(),
+                    "virtual_y": background.virtual_y(),
+                    "first_bat_word": background.first_bat_word(),
+                    "first_bat_word_hex": format!("{:04X}", background.first_bat_word()),
+                }))
+            })
+            .collect(),
+    )
+}
+
+fn cd_tracks_json(disc: &CdDisc) -> serde_json::Value {
+    serde_json::Value::Array(
+        disc.tracks()
+            .iter()
+            .map(|track| {
+                serde_json::json!({
+                    "number": track.number(),
+                    "mode": format!("{:?}", track.mode()),
+                    "index0_lba": track.index0_lba(),
+                    "index1_lba": track.index1_lba(),
+                    "stored_start_lba": track.stored_start_lba(),
+                    "frames": track.sector_count(),
+                    "payload_sha256": track.payload_hash().iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                })
+            })
+            .collect(),
+    )
+}
+
 fn vdc_debug_json(vdc: &VdcDebugSnapshot) -> serde_json::Value {
     serde_json::json!({
         "selected_register": vdc.selected_register.map(|register| format!("{register:?}")),
@@ -182,6 +224,8 @@ fn vdc_debug_json(vdc: &VdcDebugSnapshot) -> serde_json::Value {
         "irq_asserted": vdc.irq_asserted,
         "registers": vdc.registers,
         "registers_hex": vdc.registers.map(|value| format!("{value:04X}")),
+        "satb": vdc.satb.as_slice(),
+        "satb_hex": vdc.satb.iter().map(|value| format!("{value:04X}")).collect::<Vec<_>>(),
         "horizontal": {
             "phase": format!("{:?}", vdc.horizontal_phase),
             "pixels_remaining": vdc.horizontal_pixels_remaining,
@@ -199,7 +243,7 @@ fn vdc_debug_json(vdc: &VdcDebugSnapshot) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeff_pce_core::hardware::HuC6270;
+    use zeff_pce_core::hardware::{CdTrack, CdTrackMode, HuC6270};
 
     #[test]
     fn vdc_debug_json_includes_timing_and_register_state() {
@@ -208,7 +252,33 @@ mod tests {
         assert_eq!(value["status_hex"], "00");
         assert_eq!(value["registers"].as_array().unwrap().len(), 0x14);
         assert_eq!(value["registers_hex"].as_array().unwrap().len(), 0x14);
+        assert_eq!(value["satb"].as_array().unwrap().len(), 0x100);
+        assert_eq!(value["satb_hex"].as_array().unwrap().len(), 0x100);
         assert_eq!(value["horizontal"]["phase"], "DisplayStart");
         assert_eq!(value["vertical"]["phase"], "VerticalSync");
+    }
+
+    #[test]
+    fn cd_tracks_json_includes_track_identity_and_layout() {
+        let disc = CdDisc::new(vec![
+            CdTrack::from_stored_data(
+                1,
+                4,
+                Some(0),
+                1,
+                CdTrackMode::Mode1_2352,
+                vec![0; 2 * 2_352],
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let tracks = cd_tracks_json(&disc);
+
+        assert_eq!(tracks[0]["number"], 1);
+        assert_eq!(tracks[0]["mode"], "Mode1_2352");
+        assert_eq!(tracks[0]["index0_lba"], 0);
+        assert_eq!(tracks[0]["index1_lba"], 1);
+        assert_eq!(tracks[0]["frames"], 2);
+        assert_eq!(tracks[0]["payload_sha256"].as_str().unwrap().len(), 64);
     }
 }

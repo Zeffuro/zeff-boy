@@ -92,8 +92,11 @@ fn triggered_waveform_start(samples: &[f32]) -> usize {
 
     let mean = samples.iter().sum::<f32>() / samples.len() as f32;
     let target = samples.len() / 4;
-    let crossing = (1..samples.len())
-        .filter(|&index| samples[index - 1] <= mean && samples[index] > mean)
+    let crossing = (0..samples.len())
+        .filter(|&index| {
+            let previous = (index + samples.len() - 1) % samples.len();
+            samples[previous] <= mean && samples[index] > mean
+        })
         .min_by_key(|&index| index.abs_diff(target));
     crossing.map_or(0, |index| (index + samples.len() - target) % samples.len())
 }
@@ -164,5 +167,14 @@ mod tests {
     #[test]
     fn waveform_trigger_leaves_flat_data_in_order() {
         assert_eq!(triggered_waveform_start(&[0.25; 8]), 0);
+    }
+
+    #[test]
+    fn waveform_trigger_handles_a_crossing_at_the_history_wrap() {
+        let samples = [0.5, 1.0, -1.0, -0.5, -0.5, -1.0, -0.5, -0.5];
+        let start = triggered_waveform_start(&samples);
+        let quarter = samples.len() / 4;
+        assert!(samples[(start + quarter - 1) % samples.len()] <= 0.0);
+        assert!(samples[(start + quarter) % samples.len()] > 0.0);
     }
 }

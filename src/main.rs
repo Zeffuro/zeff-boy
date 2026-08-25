@@ -79,7 +79,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let (backend, deferred_initial_rom_load) = match args.rom_path {
-        Some(path) if app::is_native_seven_zip_path(Path::new(&path)) => (None, Some(path.into())),
+        Some(path) if app::is_native_archive_path(Path::new(&path)) => (None, Some(path.into())),
         Some(path) => (Some(create_backend(&path, &settings)?), None),
         None => (None, None),
     };

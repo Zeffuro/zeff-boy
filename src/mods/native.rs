@@ -1,8 +1,31 @@
 use std::io::Read;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use super::ModEntry;
 use crate::emu_backend::ActiveSystem;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PceCdPatchTarget {
+    File {
+        reference: String,
+        segment: usize,
+    },
+    Track {
+        number: u8,
+        segment: usize,
+        bytes: Range<usize>,
+    },
+}
+
+impl PceCdPatchTarget {
+    fn segment_and_bytes(&self, segment_len: usize) -> (usize, Range<usize>) {
+        match self {
+            Self::File { segment, .. } => (*segment, 0..segment_len),
+            Self::Track { segment, bytes, .. } => (*segment, bytes.clone()),
+        }
+    }
+}
 
 pub(crate) fn mods_dir_for_rom(system: ActiveSystem, rom_crc32: u32) -> PathBuf {
     mods_root()
@@ -160,8 +183,8 @@ pub(crate) fn apply_enabled_mods(rom: &mut Vec<u8>, dir: &Path, mods: &[ModEntry
 }
 
 pub(crate) fn apply_enabled_pce_cd_mods(
-    files: &mut [Vec<u8>],
-    file_references: &[String],
+    segments: &mut [Vec<u8>],
+    targets: &[PceCdPatchTarget],
     dir: &Path,
     mods: &[ModEntry],
 ) -> Vec<String> {
@@ -192,11 +215,24 @@ pub(crate) fn apply_enabled_pce_cd_mods(
             .and_then(|patch| {
                 if extension.is_some_and(|extension| extension.eq_ignore_ascii_case("ppf")) {
                     missing_ppf_validation = !crate::patching::ppf_has_source_validation(&patch);
-                    crate::patching::apply_ppf_patch_segments(files, &patch)
+                    crate::patching::apply_ppf_patch_segments(segments, &patch)
                 } else {
-                    let index = xdelta_target_index(entry, file_references)?;
-                    let patched = crate::patching::apply_xdelta_patch(&files[index], &patch)?;
-                    files[index] = patched;
+                    let target = xdelta_target(entry, targets)?;
+                    let (segment, bytes) =
+                        target.segment_and_bytes(segments[target_segment(&target)].len());
+                    let source = &segments[segment][bytes.clone()];
+                    let patched = crate::patching::apply_xdelta_patch(source, &patch)?;
+                    if patched.len() == source.len() {
+                        segments[segment][bytes].copy_from_slice(&patched);
+                    } else {
+                        anyhow::ensure!(
+                            matches!(target, PceCdPatchTarget::Track { .. })
+                                && bytes.start == 0
+                                && bytes.end == segments[segment].len(),
+                            "size-changing xdelta patches require a whole Track NN target"
+                        );
+                        segments[segment] = patched;
+                    }
                     Ok(())
                 }
             });
@@ -222,9 +258,24 @@ pub(crate) fn apply_enabled_pce_cd_mods(
     warnings
 }
 
-fn xdelta_target_index(entry: &ModEntry, references: &[String]) -> anyhow::Result<usize> {
-    if references.len() == 1 {
-        return Ok(0);
+fn target_segment(target: &PceCdPatchTarget) -> usize {
+    match target {
+        PceCdPatchTarget::File { segment, .. } | PceCdPatchTarget::Track { segment, .. } => {
+            *segment
+        }
+    }
+}
+
+fn xdelta_target(
+    entry: &ModEntry,
+    targets: &[PceCdPatchTarget],
+) -> anyhow::Result<PceCdPatchTarget> {
+    let files = targets
+        .iter()
+        .filter(|target| matches!(target, PceCdPatchTarget::File { .. }))
+        .collect::<Vec<_>>();
+    if files.len() == 1 && entry.target.is_none() && infer_track_hint(&entry.filename).is_none() {
+        return Ok((*files[0]).clone());
     }
 
     let hint = entry
@@ -238,18 +289,25 @@ fn xdelta_target_index(entry: &ModEntry, references: &[String]) -> anyhow::Resul
             "xdelta target is ambiguous; include Track NN in the patch filename or set target in mods.json"
         );
     };
-    let normalized_hint = normalize_target(&hint);
-    let matches = references
-        .iter()
-        .enumerate()
-        .filter(|(_, reference)| normalize_target(reference).contains(&normalized_hint))
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
+    let matches = if let Some(number) = track_number_hint(&hint) {
+        targets
+            .iter()
+            .filter(|target| matches!(target, PceCdPatchTarget::Track { number: candidate, .. } if *candidate == number))
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        let normalized_hint = normalize_target(&hint);
+        files
+            .into_iter()
+            .filter(|target| matches!(target, PceCdPatchTarget::File { reference, .. } if normalize_target(reference).contains(&normalized_hint)))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     anyhow::ensure!(
         matches.len() == 1,
-        "xdelta target '{hint}' did not match one CUE file"
+        "xdelta target '{hint}' did not match one CD file or track"
     );
-    Ok(matches[0])
+    Ok(matches.into_iter().next().unwrap())
 }
 
 fn infer_track_hint(filename: &str) -> Option<String> {
@@ -261,6 +319,12 @@ fn infer_track_hint(filename: &str) -> Option<String> {
         .take_while(char::is_ascii_digit)
         .collect::<String>();
     (!digits.is_empty()).then(|| format!("track{digits}"))
+}
+
+fn track_number_hint(value: &str) -> Option<u8> {
+    let normalized = normalize_target(value);
+    let digits = normalized.strip_prefix("track")?;
+    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
 fn normalize_target(value: &str) -> String {

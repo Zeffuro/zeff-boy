@@ -1,4 +1,4 @@
-use super::{App, SpeedMode};
+use super::App;
 use crate::debug::{ConsoleGraphicsData, DebugTab, RomInfoSection, is_tab_open};
 use crate::emu_thread::{EmuResponse, FrameResult};
 use crate::platform::Instant;
@@ -100,6 +100,7 @@ impl App {
                     EmuResponse::RewindOk {
                         media_slot_snapshot,
                         game_boy_serial_device,
+                        rewound_frames,
                     } => {
                         self.media_slot_snapshot = media_slot_snapshot;
                         if let Some(device) = game_boy_serial_device {
@@ -116,7 +117,16 @@ impl App {
                             self.toast_manager.info("⏮ Stepped back");
                         } else {
                             self.rewind.pending = false;
-                            self.rewind.pops += 1;
+                            if self.settings.rewind.mode == crate::settings::RewindMode::RealTime {
+                                self.rewind.pacer.reconcile(
+                                    self.active_system.frame_duration_ns(),
+                                    self.rewind.scheduled_frames,
+                                    rewound_frames,
+                                );
+                            }
+                            self.rewind.scheduled_frames = 0;
+                            self.rewind.frames_rewound =
+                                self.rewind.frames_rewound.saturating_add(rewound_frames);
                         }
                     }
                     EmuResponse::RewindFailed(msg) => {
@@ -125,6 +135,8 @@ impl App {
                             self.toast_manager.info(format!("Can't step back: {msg}"));
                         } else {
                             self.rewind.pending = false;
+                            self.rewind.held = false;
+                            self.rewind.reset_pacing();
                             log::debug!("Rewind: {}", msg);
                         }
                     }
@@ -196,13 +208,12 @@ impl App {
             gamepad.set_rumble(result.rumble);
         }
 
-        let fast_forward = matches!(self.speed_mode(), SpeedMode::FastForward);
         if let Some(audio) = &mut self.audio {
             audio.queue_samples(
                 &result.audio_samples,
                 &crate::audio::AudioQueueConfig {
                     master_volume: self.settings.audio.volume,
-                    fast_forward_active: fast_forward,
+                    playback_speed: result.audio_playback_speed,
                     mute_during_fast_forward: self.settings.audio.mute_during_fast_forward,
                     low_pass_enabled: self.settings.audio.low_pass_enabled,
                     low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,

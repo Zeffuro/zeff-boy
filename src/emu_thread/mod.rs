@@ -29,4 +29,6 @@ pub(crate) use types::{
 };
 
 pub(crate) const DEFAULT_REWIND_SECONDS: usize = 10;
-pub(crate) const REWIND_SNAPSHOTS_PER_SECOND: usize = 4;
+pub(crate) const REWIND_CAPTURE_INTERVAL_FRAMES: usize = 4;
+pub(crate) const DEFAULT_UNCAPPED_BATCH_SIZE: usize = 60;
+pub(crate) const MAX_UNCAPPED_BATCH_SIZE: usize = 240;

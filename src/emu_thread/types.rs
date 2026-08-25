@@ -147,6 +147,7 @@ impl From<zeff_emu_common::replay::ReplayZapperFrame> for ZapperInput {
 pub(crate) struct AudioConfig {
     pub(crate) apu_capture_enabled: bool,
     pub(crate) skip_audio: bool,
+    pub(crate) playback_speed: usize,
     pub(crate) recording_capture: AudioRecordingCapture,
 }
 
@@ -193,6 +194,7 @@ pub(crate) struct FrameResult {
     pub(crate) runtime_fault: Option<String>,
     pub(crate) rumble: bool,
     pub(crate) audio_samples: Vec<f32>,
+    pub(crate) audio_playback_speed: usize,
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
     pub(crate) is_pocket_camera: bool,
@@ -284,6 +286,7 @@ pub(crate) enum EmuCommand {
     },
     SetSampleRate(u32),
     SetUncapped(bool),
+    SetUncappedBatchSize(usize),
     ApplyMediaEvent(zeff_emu_common::media::MediaEvent),
     SetGameBoySerialDevice(zeff_gb_core::hardware::GameBoySerialDevice),
     QueueBardigunBarcodeScan(Vec<u8>),
@@ -311,6 +314,7 @@ pub(crate) enum EmuResponse {
     RewindOk {
         media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
         game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
+        rewound_frames: u64,
     },
     RewindFailed(String),
     StateCaptured(Vec<u8>),

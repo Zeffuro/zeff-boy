@@ -420,9 +420,11 @@ impl Bus {
                 .min(self.ppu.cycles_until_next_status_event().max(1))
                 .min(self.cycles_until_next_direct_sound_overflow(soundcnt_h))
                 .min(self.cycles_until_irq_event());
-            for timer in 0..4 {
-                if let Some(next) = self.timers.cycles_until_overflow(timer) {
-                    step = step.min(next.max(1));
+            if self.timers.has_clocked_timers() {
+                for timer in 0..4 {
+                    if let Some(next) = self.timers.cycles_until_overflow(timer) {
+                        step = step.min(next.max(1));
+                    }
                 }
             }
 
@@ -474,9 +476,11 @@ impl Bus {
         let mut cycles = 64;
         cycles = cycles.min(self.ppu.cycles_until_next_status_event().max(1));
         cycles = cycles.min(self.cycles_until_irq_event());
-        for timer in 0..4 {
-            if let Some(next) = self.timers.cycles_until_overflow(timer) {
-                cycles = cycles.min(next.max(1));
+        if self.timers.has_clocked_timers() {
+            for timer in 0..4 {
+                if let Some(next) = self.timers.cycles_until_overflow(timer) {
+                    cycles = cycles.min(next.max(1));
+                }
             }
         }
         cycles.max(1)

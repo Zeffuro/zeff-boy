@@ -14,12 +14,39 @@ pub const PCE_ACTIVE_FRAME_WIDTH: usize = 1024;
 pub const PCE_ACTIVE_FRAME_HEIGHT: usize = 512;
 pub const PCE_ACTIVE_FRAME_RGBA_BYTES: usize = PCE_ACTIVE_FRAME_WIDTH * PCE_ACTIVE_FRAME_HEIGHT * 4;
 pub const PCE_ACTIVE_FRAME_UNUSED_RGBA: [u8; 4] = [0, 0, 0, 0xFF];
+pub const PCE_SIGNAL_FIRST_ROW: u16 = 17;
+pub const PCE_SIGNAL_ROW_END: u16 = 259;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PceVideoRowMetadata {
     active_x_origin: u16,
     active_width: u16,
     pixel_clock: Option<VcePixelClock>,
+    background: Option<PceBackgroundLineDebug>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PceBackgroundLineDebug {
+    scroll_x: u16,
+    virtual_y: u16,
+    first_bat_word: u16,
+}
+
+impl PceBackgroundLineDebug {
+    #[inline]
+    pub const fn scroll_x(self) -> u16 {
+        self.scroll_x
+    }
+
+    #[inline]
+    pub const fn virtual_y(self) -> u16 {
+        self.virtual_y
+    }
+
+    #[inline]
+    pub const fn first_bat_word(self) -> u16 {
+        self.first_bat_word
+    }
 }
 
 impl PceVideoRowMetadata {
@@ -42,6 +69,11 @@ impl PceVideoRowMetadata {
     pub const fn pixel_clock(self) -> Option<VcePixelClock> {
         self.pixel_clock
     }
+
+    #[inline]
+    pub const fn background(self) -> Option<PceBackgroundLineDebug> {
+        self.background
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +81,29 @@ pub struct PceVideoActiveBounds {
     first_row: u16,
     row_end: u16,
     maximum_width: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PceVideoSignalBounds {
+    first_row: u16,
+    row_end: u16,
+}
+
+impl PceVideoSignalBounds {
+    #[inline]
+    pub const fn first_row(self) -> u16 {
+        self.first_row
+    }
+
+    #[inline]
+    pub const fn row_end(self) -> u16 {
+        self.row_end
+    }
+
+    #[inline]
+    pub const fn height(self) -> u16 {
+        self.row_end - self.first_row
+    }
 }
 
 impl PceVideoActiveBounds {
@@ -78,6 +133,7 @@ pub struct PcePresentedFrame<'a> {
     rgba: &'a [u8],
     rows: &'a [PceVideoRowMetadata; PCE_ACTIVE_FRAME_HEIGHT],
     active_bounds: Option<PceVideoActiveBounds>,
+    signal_bounds: PceVideoSignalBounds,
 }
 
 impl<'a> PcePresentedFrame<'a> {
@@ -99,6 +155,11 @@ impl<'a> PcePresentedFrame<'a> {
     #[inline]
     pub const fn active_bounds(self) -> Option<PceVideoActiveBounds> {
         self.active_bounds
+    }
+
+    #[inline]
+    pub const fn signal_bounds(self) -> PceVideoSignalBounds {
+        self.signal_bounds
     }
 }
 
@@ -178,6 +239,10 @@ impl PceActiveOnlyVideoFrame {
                 row_end,
                 maximum_width,
             }),
+            signal_bounds: PceVideoSignalBounds {
+                first_row: PCE_SIGNAL_FIRST_ROW,
+                row_end: PCE_SIGNAL_ROW_END,
+            },
         }
     }
 
@@ -225,6 +290,7 @@ impl PceActiveOnlyVideoFrame {
                 active_x_origin,
                 active_width,
                 pixel_clock,
+                background: None,
             };
         }
         *self = restored;
@@ -236,12 +302,13 @@ impl PceActiveOnlyVideoFrame {
         vdc: &mut HuC6270,
         vce: &HuC6260,
         display: VdcActiveDisplayLine,
+        destination_line: u16,
         pixel_clock: VcePixelClock,
     ) -> Result<(), PceVideoRenderError> {
-        let line = usize::from(display.display_line());
+        let line = usize::from(destination_line);
         if line >= PCE_ACTIVE_FRAME_HEIGHT {
             return Err(PceVideoRenderError::ActiveLineOutOfBounds {
-                line: display.display_line(),
+                line: destination_line,
             });
         }
         let width = usize::from(display.source_width());
@@ -277,6 +344,7 @@ impl PceActiveOnlyVideoFrame {
             active_x_origin: display.source_start(),
             active_width: display.source_width(),
             pixel_clock: Some(pixel_clock),
+            background: background_line_debug(display),
         };
         vdc.latch_full_active_span_sprite_status(display, sprite_status);
         Ok(())
@@ -360,6 +428,7 @@ impl PceActiveOnlyVideoFrame {
             active_x_origin: union_start as u16,
             active_width: width as u16,
             pixel_clock: Some(pixel_clock),
+            background: None,
         };
         if let (Some(display), Some(status)) = (display_one, status_one) {
             vdc_one.latch_full_active_span_sprite_status(display, status);
@@ -369,6 +438,21 @@ impl PceActiveOnlyVideoFrame {
         }
         Ok(())
     }
+}
+
+fn background_line_debug(display: VdcActiveDisplayLine) -> Option<PceBackgroundLineDebug> {
+    let state = display.background();
+    if !state.enabled() {
+        return None;
+    }
+    let height = state.height_tiles() * 8;
+    let virtual_y = (state.scroll_y() + usize::from(display.display_line()) % height) % height;
+    let first_bat_word = (virtual_y / 8) * state.width_tiles() + state.scroll_x() / 8;
+    Some(PceBackgroundLineDebug {
+        scroll_x: state.scroll_x() as u16,
+        virtual_y: virtual_y as u16,
+        first_bat_word: first_bat_word as u16,
+    })
 }
 
 fn render_vdc_output_line(

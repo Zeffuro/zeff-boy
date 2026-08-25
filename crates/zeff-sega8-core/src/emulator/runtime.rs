@@ -2,7 +2,8 @@ use crate::emulator::Emulator;
 use crate::hardware::bus::CpuAccessTraceEvent;
 use crate::hardware::cartridge::Sega8System;
 use crate::hardware::constants::{
-    GG_SCREEN_H, GG_SCREEN_W, GG_VIEWPORT_X, GG_VIEWPORT_Y, SMS_SCREEN_H, SMS_SCREEN_W,
+    GG_SCREEN_H, GG_SCREEN_W, GG_VIEWPORT_X, GG_VIEWPORT_Y, SMS_SCANLINE_Z80_CYCLES, SMS_SCREEN_H,
+    SMS_SCREEN_W,
 };
 use crate::hardware::cpu::FetchedInstruction;
 use crate::hardware::vdp::{Mode4ColorMode, Mode4RenderArea, Tms9918ColorMode};
@@ -18,16 +19,26 @@ impl Emulator {
         if self.cpu.is_suspended() {
             return;
         }
-        let target_cycles = self
-            .cpu
-            .cycles()
-            .wrapping_add(u64::from(self.video_standard.cycles_per_frame()));
+        let target_cycles = self.next_frame_cycle_target();
         while self.cpu.cycles() < target_cycles {
             if self.step_instruction().is_none() || self.cpu.is_suspended() {
                 return;
             }
         }
         self.finish_frame();
+    }
+
+    pub fn next_frame_cycle_target(&self) -> u64 {
+        let vdp = self.bus.vdp();
+        let cycles_into_frame =
+            u32::from(vdp.scanline()) * SMS_SCANLINE_Z80_CYCLES + vdp.scanline_cycle();
+        let frame_cycles = self.video_standard.cycles_per_frame();
+        let remaining = if cycles_into_frame == 0 {
+            frame_cycles
+        } else {
+            frame_cycles - cycles_into_frame
+        };
+        self.cpu.cycles().wrapping_add(u64::from(remaining))
     }
 
     pub fn finish_frame(&mut self) {

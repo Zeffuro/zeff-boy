@@ -44,10 +44,67 @@ impl RecycledBuffers {
 pub(super) struct RewindState {
     pub(super) held: bool,
     pub(super) fill: f32,
-    pub(super) throttle: usize,
-    pub(super) pops: usize,
+    pub(super) frames_rewound: u64,
     pub(super) pending: bool,
     pub(super) backstep_pending: bool,
+    pub(super) pacer: RewindPacer,
+    pub(super) pace_updated_at: Option<Instant>,
+    pub(super) scheduled_frames: u64,
+    pub(super) active_mode: Option<crate::settings::RewindMode>,
+}
+
+impl RewindState {
+    pub(super) fn reset_pacing(&mut self) {
+        self.pacer.reset();
+        self.pace_updated_at = None;
+        self.scheduled_frames = 0;
+        self.active_mode = None;
+    }
+}
+
+#[derive(Default)]
+pub(super) struct RewindPacer {
+    ahead: Duration,
+}
+
+impl RewindPacer {
+    pub(super) fn elapse(&mut self, elapsed: Duration) {
+        self.ahead = self.ahead.saturating_sub(elapsed);
+    }
+
+    pub(super) fn ready(&self) -> bool {
+        self.ahead.is_zero()
+    }
+
+    pub(super) fn schedule(&mut self, frame_duration_ns: u64, frames: u64) {
+        self.ahead = self
+            .ahead
+            .saturating_add(rewind_duration(frame_duration_ns, frames));
+    }
+
+    pub(super) fn reconcile(
+        &mut self,
+        frame_duration_ns: u64,
+        scheduled_frames: u64,
+        actual_frames: u64,
+    ) {
+        if actual_frames >= scheduled_frames {
+            self.schedule(frame_duration_ns, actual_frames - scheduled_frames);
+        } else {
+            self.ahead = self.ahead.saturating_sub(rewind_duration(
+                frame_duration_ns,
+                scheduled_frames - actual_frames,
+            ));
+        }
+    }
+
+    pub(super) fn reset(&mut self) {
+        self.ahead = Duration::ZERO;
+    }
+}
+
+fn rewind_duration(frame_duration_ns: u64, frames: u64) -> Duration {
+    Duration::from_nanos(frame_duration_ns.saturating_mul(frames))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -261,6 +318,7 @@ pub(super) struct TimingState {
     pub(super) last_render_time: Instant,
     pub(super) last_viewer_update: Instant,
     pub(super) uncapped_speed: bool,
+    pub(super) last_uncapped_frames_per_tick: usize,
     pub(super) last_vsync_mode: crate::settings::VsyncMode,
     pub(super) last_speed_mode: SpeedMode,
 }
@@ -330,6 +388,36 @@ pub(super) const SETTINGS_UPDATE_INTERVAL: Duration = Duration::from_millis(250)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewind_pacer_uses_emulated_frame_duration() {
+        let mut pacer = RewindPacer::default();
+        pacer.schedule(16_742_706, 4);
+        assert!(!pacer.ready());
+
+        pacer.elapse(Duration::from_nanos(4 * 16_742_706 - 1));
+        assert!(!pacer.ready());
+        pacer.elapse(Duration::from_nanos(1));
+        assert!(pacer.ready());
+    }
+
+    #[test]
+    fn rewind_pacer_reconciles_uneven_snapshot_gaps() {
+        let mut pacer = RewindPacer::default();
+        pacer.schedule(10, 4);
+        pacer.reconcile(10, 4, 7);
+        pacer.elapse(Duration::from_nanos(69));
+        assert!(!pacer.ready());
+        pacer.elapse(Duration::from_nanos(1));
+        assert!(pacer.ready());
+
+        pacer.schedule(10, 4);
+        pacer.reconcile(10, 4, 2);
+        pacer.elapse(Duration::from_nanos(19));
+        assert!(!pacer.ready());
+        pacer.elapse(Duration::from_nanos(1));
+        assert!(pacer.ready());
+    }
 
     fn recording_state() -> RecordingState {
         RecordingState {

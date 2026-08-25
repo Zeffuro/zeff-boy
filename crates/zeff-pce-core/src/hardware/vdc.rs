@@ -22,8 +22,17 @@ pub const VDC_VRAM_WORDS: usize = VDC_VRAM_BYTES / 2;
 pub const VDC_VRAM_WORD_ADDRESS_MASK: usize = VDC_VRAM_WORDS - 1;
 pub const VDC_UNAVAILABLE_READ_VALUE: u8 = 0xFF;
 pub const DETERMINISTIC_VDC_RESET_VALUE: u16 = 0;
+pub const DETERMINISTIC_VDC_RESET_HORIZONTAL_DISPLAY: u16 = 0x001F;
+pub const DETERMINISTIC_VDC_RESET_VERTICAL_DISPLAY: u16 = 0x00EF;
 pub const DETERMINISTIC_VDC_INITIAL_VRAM_WORD: u16 = 0;
 pub const DETERMINISTIC_VDC_RESET_PRESERVES_VRAM: bool = true;
+
+const fn reset_registers() -> [u16; 0x14] {
+    let mut registers = [DETERMINISTIC_VDC_RESET_VALUE; 0x14];
+    registers[VdcRegister::HorizontalDisplay as usize] = DETERMINISTIC_VDC_RESET_HORIZONTAL_DISPLAY;
+    registers[VdcRegister::VerticalDisplay as usize] = DETERMINISTIC_VDC_RESET_VERTICAL_DISPLAY;
+    registers
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VdcDebugSnapshot {
@@ -161,7 +170,7 @@ impl HuC6270 {
         Self {
             vram: Box::new([DETERMINISTIC_VDC_INITIAL_VRAM_WORD; VDC_VRAM_WORDS]),
             satb: [DETERMINISTIC_VDC_INITIAL_SATB_WORD; VDC_SATB_WORDS],
-            registers: [DETERMINISTIC_VDC_RESET_VALUE; 0x14],
+            registers: reset_registers(),
             selected_register_id: DETERMINISTIC_VDC_RESET_VALUE as u8,
             vram_read_buffer: DETERMINISTIC_VDC_RESET_VALUE,
             status: VdcStatus::empty(),
@@ -175,7 +184,7 @@ impl HuC6270 {
     }
 
     pub fn reset(&mut self) {
-        self.registers.fill(DETERMINISTIC_VDC_RESET_VALUE);
+        self.registers = reset_registers();
         self.selected_register_id = DETERMINISTIC_VDC_RESET_VALUE as u8;
         self.vram_read_buffer = DETERMINISTIC_VDC_RESET_VALUE;
         self.status = VdcStatus::empty();

@@ -5,7 +5,6 @@ use zeff_emu_common::debug::TraceWriteKind;
 use zeff_emu_common::debug::TraceWriteWidth;
 use zeff_sega8_core::emulator::Emulator as Sega8Emulator;
 use zeff_sega8_core::hardware::bus::CpuAccessTraceEvent as Sega8BusTraceEvent;
-use zeff_sega8_core::hardware::constants::SMS_Z80_CYCLES_PER_FRAME;
 use zeff_sega8_core::hardware::cpu::FetchedInstruction as Sega8FetchedInstruction;
 
 use crate::cli::types::{HeadlessBusTraceAccess, HeadlessOptions};
@@ -33,10 +32,7 @@ pub(super) fn step_sega8_frame_with_trace(
     state: &mut Sega8FrameTraceState<'_>,
 ) -> bool {
     let mut expected_sdsc_seen = false;
-    let target_cycles = emulator
-        .cpu()
-        .cycles()
-        .wrapping_add(u64::from(SMS_Z80_CYCLES_PER_FRAME));
+    let target_cycles = emulator.next_frame_cycle_target();
     while emulator.cpu().cycles() < target_cycles && !emulator.is_suspended() {
         let before_cycles = emulator.cpu().cycles();
         let bus_trace_printing = !opts.trace_bus_filters.is_empty()
@@ -344,5 +340,48 @@ mod tests {
         assert!(line.contains("pc=0002"));
         assert!(line.contains("op=D3"));
         assert!(line.contains("iowrite port=7F value=90"));
+    }
+
+    #[test]
+    fn traced_frame_path_matches_normal_frame_boundaries() {
+        let rom = [0xC3, 0x00, 0x00];
+        let mut normal =
+            Sega8Emulator::new_with_hint(&rom, 48_000, SystemHint::MasterSystem).unwrap();
+        let mut traced =
+            Sega8Emulator::new_with_hint(&rom, 48_000, SystemHint::MasterSystem).unwrap();
+        let opts = HeadlessOptions::default();
+        let mut traced_ops = 0;
+        let mut traced_bus = 0;
+        let mut tail = VecDeque::new();
+        let mut sdsc_capture = Sega8SdscCapture::default();
+
+        for _ in 0..200 {
+            normal.step_frame();
+            let config = Sega8FrameTraceConfig {
+                bus_trace_active: false,
+                sdsc_capture_active: false,
+                expected_sdsc_text: None,
+            };
+            let mut state = Sega8FrameTraceState {
+                traced: &mut traced_ops,
+                bus_traced: &mut traced_bus,
+                tail: &mut tail,
+                sdsc_capture: &mut sdsc_capture,
+            };
+            assert!(!step_sega8_frame_with_trace(
+                &opts,
+                &mut traced,
+                config,
+                &mut state,
+            ));
+        }
+
+        assert_eq!(normal.cpu().cycles(), traced.cpu().cycles());
+        assert_eq!(normal.bus().vdp().scanline(), traced.bus().vdp().scanline());
+        assert_eq!(
+            normal.bus().vdp().scanline_cycle(),
+            traced.bus().vdp().scanline_cycle()
+        );
+        assert_eq!(normal.framebuffer(), traced.framebuffer());
     }
 }

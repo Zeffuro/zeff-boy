@@ -103,7 +103,13 @@ fn active_only_frame_uses_backdrop_zero_and_host_black_outside_the_row() {
     let mut frame = PceActiveOnlyVideoFrame::new();
 
     frame
-        .render_active_line(&mut vdc, &vce, display, vce.pixel_clock())
+        .render_active_line(
+            &mut vdc,
+            &vce,
+            display,
+            display.display_line(),
+            vce.pixel_clock(),
+        )
         .unwrap();
 
     assert_eq!(frame.dimensions(), (1024, 512));
@@ -121,6 +127,33 @@ fn active_only_frame_uses_backdrop_zero_and_host_black_outside_the_row() {
     assert_eq!(pixel(&frame, 0, 0), PCE_ACTIVE_FRAME_UNUSED_RGBA);
     assert_eq!(frame.row_metadata(0).unwrap().active_width(), 0);
     assert_eq!(frame.row_metadata(0).unwrap().pixel_clock(), None);
+}
+
+#[test]
+fn active_row_records_effective_background_fetch_origin() {
+    let mut vdc = HuC6270::new();
+    configure_frame(&mut vdc, 0, 1, 0x0080);
+    write_vdc(&mut vdc, VdcRegister::MemoryWidth, 0x0050);
+    write_vdc(&mut vdc, VdcRegister::BackgroundScrollX, 19);
+    write_vdc(&mut vdc, VdcRegister::BackgroundScrollY, 7);
+    let display = next_active(&mut vdc);
+    let vce = HuC6260::new();
+    let mut frame = PceActiveOnlyVideoFrame::new();
+
+    frame
+        .render_active_line(
+            &mut vdc,
+            &vce,
+            display,
+            display.display_line(),
+            vce.pixel_clock(),
+        )
+        .unwrap();
+
+    let background = frame.row_metadata(0).unwrap().background().unwrap();
+    assert_eq!(background.scroll_x(), 19);
+    assert_eq!(background.virtual_y(), 7);
+    assert_eq!(background.first_bat_word(), 2);
 }
 
 #[test]
@@ -142,7 +175,7 @@ fn each_active_row_records_the_current_vce_pixel_clock() {
         let display = next_active(&mut vdc);
         assert_eq!(usize::from(display.display_line()), line);
         frame
-            .render_active_line(&mut vdc, &vce, display, clock)
+            .render_active_line(&mut vdc, &vce, display, display.display_line(), clock)
             .unwrap();
         assert_eq!(frame.row_metadata(line).unwrap().pixel_clock(), Some(clock));
     }
@@ -161,7 +194,13 @@ fn pixel_clock_is_boundary_owned_while_palette_lookup_uses_the_current_vce() {
     let mut frame = PceActiveOnlyVideoFrame::new();
 
     frame
-        .render_active_line(&mut vdc, &vce, display, captured_clock)
+        .render_active_line(
+            &mut vdc,
+            &vce,
+            display,
+            display.display_line(),
+            captured_clock,
+        )
         .unwrap();
 
     assert_eq!(vce.pixel_clock(), VcePixelClock::DivideByTwo);
@@ -195,6 +234,7 @@ fn full_width_render_latches_off_crop_collision_and_overflow() {
             &mut vdc,
             &HuC6260::new(),
             display,
+            display.display_line(),
             VcePixelClock::DivideByFour,
         )
         .unwrap();
@@ -217,6 +257,7 @@ fn upper_sprite_patterns_mirror_and_commit_frame_metadata_and_status() {
             &mut vdc,
             &HuC6260::new(),
             display,
+            display.display_line(),
             VcePixelClock::DivideByFour,
         ),
         Ok(())
@@ -241,6 +282,7 @@ fn sprite_interrupt_enables_are_captured_at_the_active_boundary() {
             &mut vdc,
             &HuC6260::new(),
             display,
+            display.display_line(),
             VcePixelClock::DivideByFour,
         )
         .unwrap();
@@ -266,6 +308,7 @@ fn boundary_enabled_sprite_events_latch_after_live_control_is_disabled() {
             &mut vdc,
             &HuC6260::new(),
             display,
+            display.display_line(),
             VcePixelClock::DivideByFour,
         )
         .unwrap();
@@ -278,6 +321,7 @@ fn boundary_enabled_sprite_events_latch_after_live_control_is_disabled() {
 fn upper_background_patterns_mirror_into_the_committed_row() {
     let mut vdc = HuC6270::new();
     configure_frame(&mut vdc, 0, 1, 0x0080);
+    write_vdc(&mut vdc, VdcRegister::HorizontalDisplay, 0);
     vdc.vram_mut()[0] = 0x0FFF;
     vdc.vram_mut()[0x7FF0] = 0x0080;
     let display = next_active(&mut vdc);
@@ -286,7 +330,13 @@ fn upper_background_patterns_mirror_into_the_committed_row() {
     let mut frame = PceActiveOnlyVideoFrame::new();
 
     assert_eq!(
-        frame.render_active_line(&mut vdc, &vce, display, VcePixelClock::DivideByFour,),
+        frame.render_active_line(
+            &mut vdc,
+            &vce,
+            display,
+            display.display_line(),
+            VcePixelClock::DivideByFour,
+        ),
         Ok(())
     );
     assert_eq!(pixel(&frame, 0, 0), [255, 0, 0, 255]);
@@ -314,7 +364,13 @@ fn zero_vcr_mwr_latch_flows_into_the_visible_pipeline() {
     write_color(&mut vce, 1, 0x01C0);
     let mut frame = PceActiveOnlyVideoFrame::new();
     frame
-        .render_active_line(&mut vdc, &vce, display, vce.pixel_clock())
+        .render_active_line(
+            &mut vdc,
+            &vce,
+            display,
+            display.display_line(),
+            vce.pixel_clock(),
+        )
         .unwrap();
     assert_eq!(pixel(&frame, 0, 0), [0, 255, 0, 255]);
 }
@@ -335,7 +391,13 @@ fn maximum_active_line_and_width_fit_the_bounded_frame() {
     let mut frame = PceActiveOnlyVideoFrame::new();
 
     frame
-        .render_active_line(&mut vdc, &vce, display, vce.pixel_clock())
+        .render_active_line(
+            &mut vdc,
+            &vce,
+            display,
+            display.display_line(),
+            vce.pixel_clock(),
+        )
         .unwrap();
 
     let metadata = frame.row_metadata(PCE_ACTIVE_FRAME_HEIGHT - 1).unwrap();

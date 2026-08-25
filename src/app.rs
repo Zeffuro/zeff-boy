@@ -54,7 +54,7 @@ type PendingGfx = Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Gr
 
 pub(crate) use state_io::detect_and_extract_rom;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use state_io::is_native_seven_zip_path;
+pub(crate) use state_io::is_native_archive_path;
 
 pub(crate) fn run(
     backend: Option<EmuBackend>,
@@ -63,6 +63,10 @@ pub(crate) fn run(
 ) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let uncapped_speed = settings.emulation.uncapped_speed;
+    let uncapped_frames_per_tick = settings
+        .emulation
+        .uncapped_frames_per_tick
+        .clamp(1, crate::emu_thread::MAX_UNCAPPED_BATCH_SIZE);
     let vsync_mode = settings.video.vsync_mode;
     let initial_audio_output_sample_rate = settings.audio.output_sample_rate;
     let initial_debug_presentation = effective_debug_presentation(settings.ui.debug_presentation);
@@ -128,6 +132,7 @@ pub(crate) fn run(
             last_render_time: Instant::now(),
             last_viewer_update: Instant::now(),
             uncapped_speed,
+            last_uncapped_frames_per_tick: uncapped_frames_per_tick,
             last_vsync_mode: vsync_mode,
             last_speed_mode: SpeedMode::Normal,
         },
@@ -224,10 +229,13 @@ pub(crate) fn run(
         rewind: RewindState {
             held: false,
             fill: 0.0,
-            throttle: 0,
-            pops: 0,
+            frames_rewound: 0,
             pending: false,
             backstep_pending: false,
+            pacer: RewindPacer::default(),
+            pace_updated_at: None,
+            scheduled_frames: 0,
+            active_mode: None,
         },
         remote_debug_frames_remaining: 0,
         remote_memory_view_start: None,

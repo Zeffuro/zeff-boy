@@ -20,13 +20,6 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
     }
 
     ui.heading("Camera");
-    ui.label(
-        egui::RichText::new(
-            "Host-camera tuning for Pocket Camera input. Use these controls to avoid over-driving the in-game exposure slider.",
-        )
-        .small()
-        .weak(),
-    );
 
     ui.separator();
     ui.heading("Host Device");
@@ -61,36 +54,31 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         egui::DragValue::new(&mut settings.camera.device_index)
             .range(0..=64)
             .speed(1),
-    )
-    .on_hover_text("Manual camera index override in case enumeration labels are wrong.");
+    );
 
     if let Some(err) = &state.camera_device_error {
         ui.label(egui::RichText::new(err).small().weak());
     }
 
-    ui.checkbox(&mut settings.camera.auto_levels, "Auto-levels")
-        .on_hover_text("Stretches luma histogram to use the full 0-255 range before quantization.");
+    ui.checkbox(&mut settings.camera.auto_levels, "Auto-levels");
 
     ui.add(
         egui::Slider::new(&mut settings.camera.brightness, -1.0..=1.0)
             .text("Brightness")
             .step_by(0.01),
-    )
-    .on_hover_text("Applies a linear brightness offset before gamma.");
+    );
 
     ui.add(
         egui::Slider::new(&mut settings.camera.contrast, 0.25..=3.0)
             .text("Contrast")
             .step_by(0.01),
-    )
-    .on_hover_text("Scales distance from mid-gray before gamma.");
+    );
 
     ui.add(
         egui::Slider::new(&mut settings.camera.gamma, 0.4..=2.5)
             .text("Gamma")
             .step_by(0.01),
-    )
-    .on_hover_text("Gamma correction on the grayscale frame.");
+    );
 
     if ui.button("Reset camera tuning").clicked() {
         settings.camera.auto_levels = false;
@@ -98,13 +86,4 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         settings.camera.contrast = 1.65;
         settings.camera.gamma = 1.05;
     }
-
-    ui.separator();
-    ui.label(
-        egui::RichText::new(
-            "Host-camera support requires a camera-enabled build. Non-camera builds fall back to checkerboard test pattern.",
-        )
-        .small()
-        .weak(),
-    );
 }

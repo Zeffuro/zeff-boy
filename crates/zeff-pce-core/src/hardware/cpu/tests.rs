@@ -154,6 +154,7 @@ fn nop_matches_the_published_single_step_bus_sequence() {
         step,
         CpuStep {
             pc: 21_367,
+            physical_pc: 488_311,
             opcode: 0xEA,
             cycles: 2,
         }

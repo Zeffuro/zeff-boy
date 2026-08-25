@@ -107,6 +107,10 @@ impl Windows {
         self.control(x, y) & (1 << 5) != 0
     }
 
+    pub(super) fn effects_are_uniform(&self) -> bool {
+        !self.enabled()
+    }
+
     fn enabled(&self) -> bool {
         self.win0_enabled || self.win1_enabled || self.obj_window_enabled
     }

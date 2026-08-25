@@ -9,8 +9,6 @@ use super::AudioRecordingCapture;
 use super::types::publish_framebuffer;
 use super::{EmuThread, FrameResult, SharedFramebuffer, WorkerRuntimeFault};
 
-const UNCAPPED_BATCH_SIZE: usize = 60;
-
 impl EmuThread {
     pub(crate) fn frame_requires_preserved_delivery(
         result: &FrameResult,
@@ -67,10 +65,12 @@ impl EmuThread {
             .replay_events
             .append(&mut replacement.replay_events);
         replacement.replay_events = replaced.replay_events;
-        replaced
-            .audio_samples
-            .append(&mut replacement.audio_samples);
-        replacement.audio_samples = replaced.audio_samples;
+        if replaced.audio_playback_speed == replacement.audio_playback_speed {
+            replaced
+                .audio_samples
+                .append(&mut replacement.audio_samples);
+            replacement.audio_samples = replaced.audio_samples;
+        }
         replaced
             .audio_semantic_frames
             .append(&mut replacement.audio_semantic_frames);
@@ -108,6 +108,7 @@ impl EmuThread {
         recording_capture: AudioRecordingCapture,
         pending_discontinuities: &mut Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
         runtime_fault: &mut WorkerRuntimeFault,
+        batch_size: usize,
     ) {
         runtime_fault.latch(backend.take_runtime_fault());
         if !runtime_fault.can_step() {
@@ -134,7 +135,7 @@ impl EmuThread {
         let advanced_frames = if tcp_link.is_some() {
             Self::step_n_frames_with_tcp_link_and_runtime_fault(
                 backend,
-                UNCAPPED_BATCH_SIZE,
+                batch_size,
                 cheats,
                 tcp_link,
                 recording_capture.semantic,
@@ -145,7 +146,7 @@ impl EmuThread {
         } else {
             Self::step_n_frames_with_runtime_fault(
                 backend,
-                UNCAPPED_BATCH_SIZE,
+                batch_size,
                 cheats,
                 recording_capture.semantic,
                 &mut audio_semantic_frames,
@@ -191,6 +192,7 @@ impl EmuThread {
             runtime_fault,
             rumble: backend.rumble_active(),
             audio_samples: Vec::new(),
+            audio_playback_speed: 1,
             ui_data: ui::UiFrameData::default(),
             is_mbc7: backend.is_mbc7(),
             is_pocket_camera: backend.is_pocket_camera(),
@@ -218,6 +220,7 @@ mod tests {
             runtime_fault: None,
             rumble: false,
             audio_samples: Vec::new(),
+            audio_playback_speed: 1,
             ui_data: ui::UiFrameData::default(),
             is_mbc7: false,
             is_pocket_camera: false,
@@ -342,6 +345,20 @@ mod tests {
     }
 
     #[test]
+    fn replacement_drops_audio_from_a_different_playback_speed() {
+        let mut older = empty_result();
+        older.audio_samples = vec![1.0, 2.0];
+        older.audio_playback_speed = 4;
+        let mut newer = empty_result();
+        newer.audio_samples = vec![3.0, 4.0];
+
+        let merged = EmuThread::merge_replaced_frame(older, newer);
+
+        assert_eq!(merged.audio_playback_speed, 1);
+        assert_eq!(merged.audio_samples, vec![3.0, 4.0]);
+    }
+
+    #[test]
     fn repeated_replacement_applies_bounded_backpressure() {
         let (frame_tx, frame_rx) = crossbeam_channel::bounded(2);
         let drain_rx = frame_rx.clone();
@@ -443,11 +460,12 @@ mod tests {
             },
             &mut discontinuities,
             &mut runtime_fault,
+            7,
         );
 
         let result = frame_rx.recv().unwrap();
-        assert_eq!(result.advanced_frames, UNCAPPED_BATCH_SIZE);
-        assert_eq!(result.audio_semantic_frames.len(), UNCAPPED_BATCH_SIZE);
+        assert_eq!(result.advanced_frames, 7);
+        assert_eq!(result.audio_semantic_frames.len(), 7);
     }
 
     #[test]
@@ -479,6 +497,7 @@ mod tests {
             AudioRecordingCapture::default(),
             &mut discontinuities,
             &mut runtime_fault,
+            3,
         );
 
         assert_eq!(backend.frame_count(), frame_before);
@@ -498,6 +517,7 @@ mod tests {
             AudioRecordingCapture::default(),
             &mut discontinuities,
             &mut runtime_fault,
+            3,
         );
         assert!(frame_rx.try_recv().is_err());
     }

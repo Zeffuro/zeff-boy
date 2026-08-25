@@ -7,7 +7,7 @@ use crate::settings::Settings;
 
 use super::FrameError;
 use super::gpu::GpuContext;
-use super::tool_window::{ToolWindow, ToolWindowConfig};
+use super::tool_window::{ToolWindow, ToolWindowConfig, ToolWindowStyle};
 use super::window_geometry::{MODS_DEFAULT_SIZE, MODS_MIN_SIZE};
 
 pub(crate) struct ModsRenderContext<'a> {
@@ -55,9 +55,13 @@ impl ModsWindow {
     }
 
     pub(super) fn render(&mut self, ctx: ModsRenderContext<'_>) -> Result<(), FrameError> {
-        self.0
-            .render(ctx.settings, "mods_root_ui", "mods egui pass", |ui| {
+        self.0.render(
+            ToolWindowStyle::from(ctx.settings),
+            "mods_root_ui",
+            "mods egui pass",
+            |ui| {
                 crate::debug::draw_mods_content(ui, ctx.state);
-            })
+            },
+        )
     }
 }

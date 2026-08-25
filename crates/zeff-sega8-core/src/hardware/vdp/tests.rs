@@ -30,6 +30,25 @@ fn render_area(width: usize, height: usize, source_x: usize, source_y: usize) ->
     Mode4RenderArea::new(width, height, source_x, source_y)
 }
 
+fn reference_mode4_background_rgba(
+    vdp: &Vdp,
+    area: Mode4RenderArea,
+    color_mode: Mode4ColorMode,
+) -> Vec<u8> {
+    let mut framebuffer = vec![0; area.expected_rgba_len()];
+    let name_table_base = vdp.mode4_name_table_base();
+    for y in 0..area.height {
+        for x in 0..area.width {
+            let pixel =
+                vdp.mode4_background_pixel(name_table_base, area.source_x + x, area.source_y + y);
+            let rgba = vdp.mode4_color_rgba(pixel.color_index, color_mode);
+            let offset = (y * area.width + x) * RGBA_CHANNELS;
+            framebuffer[offset..offset + RGBA_CHANNELS].copy_from_slice(&rgba);
+        }
+    }
+    framebuffer
+}
+
 fn set_name_entry(vdp: &mut Vdp, tile_x: usize, tile_y: usize, entry: u16) {
     vdp.registers[MODE4_NAME_TABLE_REGISTER] = MODE4_NAME_TABLE_MASK;
     let base = vdp.mode4_name_table_base();
@@ -104,6 +123,78 @@ fn control_port_register_write_updates_registers() {
 
     assert_eq!(vdp.registers()[2], 0xE4);
     assert_eq!(vdp.code(), VDP_CODE_REGISTER_WRITE);
+}
+
+#[test]
+fn mode4_background_spans_match_per_pixel_reference() {
+    let mut vdp = Vdp::new_with_video_standard_and_color_mode(
+        Sega8VideoStandard::Ntsc,
+        Mode4ColorMode::GameGear,
+    );
+    vdp.registers[VDP_REGISTER_HORIZONTAL_SCROLL] = 13;
+    vdp.registers[VDP_REGISTER_VERTICAL_SCROLL] = 241;
+    for (index, byte) in vdp.vram.iter_mut().enumerate() {
+        *byte = index.wrapping_mul(37).wrapping_add(19) as u8;
+    }
+    for (index, byte) in vdp.cram.iter_mut().enumerate() {
+        *byte = index.wrapping_mul(11).wrapping_add(7) as u8;
+    }
+
+    for (mode_control_1, mode_control_2, name_table_register, areas) in [
+        (
+            VDP_REG0_MODE4,
+            VDP_REG1_DISPLAY_ENABLE,
+            MODE4_NAME_TABLE_MASK,
+            [
+                render_area(SMS_SCREEN_W, SMS_SCREEN_H, 0, 0),
+                render_area(160, 144, 48, 24),
+                render_area(23, 19, 181, 7),
+            ],
+        ),
+        (
+            VDP_REG0_MODE4 | VDP_REG0_MODE4_EXTENDED_HEIGHT,
+            VDP_REG1_DISPLAY_ENABLE | VDP_REG1_MODE4_224_LINE,
+            0x0C,
+            [
+                render_area(SMS_SCREEN_W, 224, 0, 0),
+                render_area(160, 144, 48, 24),
+                render_area(23, 19, 181, 207),
+            ],
+        ),
+        (
+            VDP_REG0_MODE4
+                | VDP_REG0_MODE4_EXTENDED_HEIGHT
+                | VDP_REG0_HORIZONTAL_SCROLL_LOCK
+                | VDP_REG0_VERTICAL_SCROLL_LOCK,
+            VDP_REG1_DISPLAY_ENABLE | VDP_REG1_MODE4_240_LINE,
+            0x0C,
+            [
+                render_area(SMS_SCREEN_W, 240, 0, 0),
+                render_area(160, 144, 48, 24),
+                render_area(23, 19, 181, 223),
+            ],
+        ),
+    ] {
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_1] = mode_control_1;
+        vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = mode_control_2;
+        vdp.registers[MODE4_NAME_TABLE_REGISTER] = name_table_register;
+        for area in areas {
+            for color_mode in [Mode4ColorMode::Sms, Mode4ColorMode::GameGear] {
+                let mut actual = vec![0; area.expected_rgba_len()];
+                render::render_mode4_background_rgba_with_color(
+                    &vdp,
+                    &mut actual,
+                    area,
+                    color_mode,
+                );
+                assert_eq!(
+                    actual,
+                    reference_mode4_background_rgba(&vdp, area, color_mode),
+                    "area {area:?}, color mode {color_mode:?}",
+                );
+            }
+        }
+    }
 }
 
 #[test]

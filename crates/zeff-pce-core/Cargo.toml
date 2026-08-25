@@ -15,3 +15,8 @@ zeff-emu-common = { path = "../zeff-emu-common" }
 
 [dev-dependencies]
 blip_buf = "0.2.1"
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "pce_benchmarks"
+harness = false

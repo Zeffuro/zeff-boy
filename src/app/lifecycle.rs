@@ -34,6 +34,11 @@ impl App {
         }
         if let Some(backend) = self.initial_backend.take() {
             self.emu_thread = Some(EmuThread::spawn(backend));
+            if let Some(thread) = &self.emu_thread {
+                thread.send(EmuCommand::SetUncappedBatchSize(
+                    self.settings.emulation.uncapped_frames_per_tick,
+                ));
+            }
             if self.timing.uncapped_speed
                 && self.recording.allows_uncapped_worker()
                 && let Some(thread) = &self.emu_thread

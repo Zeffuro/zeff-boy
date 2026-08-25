@@ -30,6 +30,15 @@ fn capacity_limits_snapshots() {
 }
 
 #[test]
+fn capacity_tracks_the_system_frame_duration() {
+    let sixty_hz = RewindBuffer::new_with_frame_duration(10, 4, 16_666_667);
+    let wonder_swan = RewindBuffer::new_with_frame_duration(10, 4, 13_250_298);
+
+    assert_eq!(sixty_hz.capacity(), 150);
+    assert_eq!(wonder_swan.capacity(), 189);
+}
+
+#[test]
 fn fill_ratio_tracks_usage() {
     let mut buf = RewindBuffer::new(10, 4);
     assert_eq!(buf.fill_ratio(), 0.0);
@@ -54,11 +63,43 @@ fn clear_resets_buffer() {
 #[test]
 fn tick_fires_at_interval() {
     let mut buf = RewindBuffer::new(10, 4);
-    assert!(!buf.tick()); // 1
-    assert!(!buf.tick()); // 2
-    assert!(!buf.tick()); // 3
-    assert!(buf.tick()); // 4 -> fires
-    assert!(!buf.tick()); // 1 again
+    assert!(!buf.advance_frames(1));
+    assert!(!buf.advance_frames(1));
+    assert!(!buf.advance_frames(1));
+    assert!(buf.advance_frames(1));
+    assert!(!buf.advance_frames(1));
+}
+
+#[test]
+fn capture_cadence_uses_emulated_frames_in_batched_steps() {
+    let mut buf = RewindBuffer::new(10, 4);
+    assert!(!buf.advance_frames(2));
+    assert!(buf.advance_frames(3));
+    buf.push(&[5], &[]);
+    assert!(!buf.advance_frames(2));
+    assert!(buf.advance_frames(2));
+    buf.push(&[9], &[]);
+
+    let latest = buf.pop().unwrap();
+    assert_eq!(latest.state_bytes, [9]);
+    assert_eq!(latest.rewound_frames, 0);
+    let earlier = buf.pop().unwrap();
+    assert_eq!(earlier.state_bytes, [5]);
+    assert_eq!(earlier.rewound_frames, 4);
+}
+
+#[test]
+fn pop_reports_actual_emulated_time_across_uneven_batches() {
+    let mut buf = RewindBuffer::new(10, 4);
+    assert!(buf.advance_frames(5));
+    buf.push(&[5], &[]);
+    assert!(buf.advance_frames(7));
+    buf.push(&[12], &[]);
+    assert!(!buf.advance_frames(2));
+
+    let frame = buf.pop_steps(2).unwrap();
+    assert_eq!(frame.state_bytes, [5]);
+    assert_eq!(frame.rewound_frames, 9);
 }
 
 #[test]

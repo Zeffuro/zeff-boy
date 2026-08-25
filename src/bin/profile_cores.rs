@@ -123,6 +123,170 @@ fn profile_wonderswan_frames(
     );
 }
 
+fn profile_gb_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
+    use sha2::{Digest, Sha256};
+    use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
+
+    let mut gb =
+        zeff_gb_core::emulator::Emulator::from_rom_data(&gb_rom(), HardwareModePreference::Auto)
+            .expect("synthetic GB ROM");
+    gb.set_apu_sample_generation_enabled(sample_generation_enabled);
+    gb.set_instruction_trace_enabled(instruction_trace_enabled);
+    profile_frames(&format!("GB synthetic{suffix}"), frames, &mut gb);
+
+    let framebuffer_hash = Sha256::digest(gb.framebuffer());
+    let state_hash = Sha256::digest(gb.encode_state_bytes().expect("encode synthetic GB state"));
+    let mut audio = Vec::new();
+    gb.drain_audio_samples_into(&mut audio);
+    let audio_bytes = audio
+        .iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect::<Vec<_>>();
+    let audio_hash = Sha256::digest(audio_bytes);
+    let hash_string = |hash: &[u8]| {
+        hash.iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>()
+    };
+    println!(
+        "  framebuffer {}  state {}  audio {}",
+        hash_string(&framebuffer_hash),
+        hash_string(&state_hash),
+        hash_string(&audio_hash),
+    );
+}
+
+fn profile_gba_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
+    use sha2::{Digest, Sha256};
+
+    let mut gba =
+        zeff_gba_core::emulator::Emulator::from_rom_data(&gba_rom()).expect("synthetic GBA ROM");
+    gba.set_apu_sample_generation_enabled(sample_generation_enabled);
+    gba.set_apu_debug_capture_enabled(false);
+    gba.set_instruction_trace_enabled(instruction_trace_enabled);
+    profile_frames(&format!("GBA synthetic{suffix}"), frames, &mut gba);
+
+    let framebuffer_hash = Sha256::digest(gba.framebuffer());
+    let state = gba.encode_state().expect("encode synthetic GBA state");
+    let state_hash = Sha256::digest(state);
+    let mut audio = Vec::new();
+    gba.drain_audio_samples_into(&mut audio);
+    let audio_bytes = audio
+        .iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect::<Vec<_>>();
+    let audio_hash = Sha256::digest(audio_bytes);
+    let hash_string = |hash: &[u8]| {
+        hash.iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>()
+    };
+    println!(
+        "  framebuffer {}  state {}  audio {}",
+        hash_string(&framebuffer_hash),
+        hash_string(&state_hash),
+        hash_string(&audio_hash),
+    );
+}
+
+fn profile_sega8_video(frames: u32, sample_generation_enabled: bool) {
+    use sha2::{Digest, Sha256};
+    use zeff_sega8_core::hardware::cartridge::SystemHint;
+
+    let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
+        &sega8_rom(),
+        48_000,
+        SystemHint::MasterSystem,
+    )
+    .expect("synthetic Sega 8-bit video ROM");
+    let vdp = sega.bus_mut().vdp_mut();
+    for (register, value) in [(0, 0x04), (1, 0x40), (2, 0x0E), (5, 0x7E), (8, 13), (9, 29)] {
+        vdp.write_control(value);
+        vdp.write_control(0x80 | register);
+    }
+    vdp.write_control(0);
+    vdp.write_control(0x40);
+    let mut pattern = 0xA5A5_5A5A_u32;
+    for _ in 0..0x2000 {
+        pattern = pattern.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        vdp.write_data((pattern >> 24) as u8);
+    }
+    vdp.write_control(0);
+    vdp.write_control(0x78);
+    for index in 0..(32 * 28) {
+        let tile = (index % 256) as u16;
+        let attributes = match index % 4 {
+            0 => 0,
+            1 => 1 << 10,
+            2 => 1 << 11,
+            _ => (1 << 9) | (1 << 12),
+        };
+        for byte in (tile | attributes).to_le_bytes() {
+            vdp.write_data(byte);
+        }
+    }
+    vdp.write_control(0);
+    vdp.write_control(0x7F);
+    vdp.write_data(0xD0);
+    vdp.write_control(0);
+    vdp.write_control(0xC0);
+    for color in 0..32 {
+        vdp.write_data((color * 11) as u8);
+    }
+
+    sega.set_apu_sample_generation_enabled(sample_generation_enabled);
+    profile_frames(
+        if sample_generation_enabled {
+            "Sega 8-bit Mode 4 video + audio"
+        } else {
+            "Sega 8-bit Mode 4 video"
+        },
+        frames,
+        &mut sega,
+    );
+    assert!(
+        sega.framebuffer()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[..3] != [0, 0, 0]),
+        "synthetic Sega 8-bit video fixture did not produce visible pixels"
+    );
+    let framebuffer_hash = Sha256::digest(sega.framebuffer());
+    let state_hash = Sha256::digest(
+        sega.encode_state()
+            .expect("encode synthetic Sega 8-bit state"),
+    );
+    let mut audio = Vec::new();
+    sega.drain_audio_samples_into(&mut audio);
+    let audio_bytes = audio
+        .iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect::<Vec<_>>();
+    let audio_hash = Sha256::digest(audio_bytes);
+    let hash_string = |hash: &[u8]| {
+        hash.iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>()
+    };
+    println!(
+        "  framebuffer {}  state {}  audio {}",
+        hash_string(&framebuffer_hash),
+        hash_string(&state_hash),
+        hash_string(&audio_hash),
+    );
+}
+
 fn profile_pce_frames(label: &str, frames: u32, machine: &mut zeff_pce_core::hardware::PceMachine) {
     for _ in 0..10 {
         machine.run_until_frame().expect("synthetic PCE frame");
@@ -343,28 +507,26 @@ fn profile_synthetic(
     instruction_trace_enabled: bool,
     suffix: &str,
 ) {
-    use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
-    use zeff_sega8_core::hardware::cartridge::SystemHint;
+    profile_gb_synthetic(
+        frames,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
+    );
 
-    let mut gb =
-        zeff_gb_core::emulator::Emulator::from_rom_data(&gb_rom(), HardwareModePreference::Auto)
-            .expect("synthetic GB ROM");
-    gb.set_apu_sample_generation_enabled(sample_generation_enabled);
-    gb.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_frames(&format!("GB synthetic{suffix}"), frames, &mut gb);
+    profile_gba_synthetic(
+        frames,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
+    );
 
-    let mut gba =
-        zeff_gba_core::emulator::Emulator::from_rom_data(&gba_rom()).expect("synthetic GBA ROM");
-    gba.set_apu_sample_generation_enabled(sample_generation_enabled);
-    gba.set_apu_debug_capture_enabled(false);
-    gba.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_frames(&format!("GBA synthetic{suffix}"), frames, &mut gba);
-
-    let mut nes =
-        zeff_nes_core::emulator::Emulator::from_rom_data(&nes_rom()).expect("synthetic NES ROM");
-    nes.set_apu_sample_generation_enabled(sample_generation_enabled);
-    nes.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_frames(&format!("NES synthetic{suffix}"), frames, &mut nes);
+    profile_nes_synthetic(
+        frames,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
+    );
 
     profile_pce_synthetic(
         frames,
@@ -372,6 +534,42 @@ fn profile_synthetic(
         instruction_trace_enabled,
         suffix,
     );
+
+    profile_sega8_synthetic(
+        frames,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
+    );
+
+    profile_ws_synthetic(
+        frames,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
+    );
+}
+
+fn profile_nes_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
+    let mut nes =
+        zeff_nes_core::emulator::Emulator::from_rom_data(&nes_rom()).expect("synthetic NES ROM");
+    nes.set_apu_sample_generation_enabled(sample_generation_enabled);
+    nes.set_instruction_trace_enabled(instruction_trace_enabled);
+    profile_frames(&format!("NES synthetic{suffix}"), frames, &mut nes);
+}
+
+fn profile_sega8_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
+    use zeff_sega8_core::hardware::cartridge::SystemHint;
 
     let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
         &sega8_rom(),
@@ -382,7 +580,14 @@ fn profile_synthetic(
     sega.set_apu_sample_generation_enabled(sample_generation_enabled);
     sega.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_frames(&format!("Sega 8-bit synthetic{suffix}"), frames, &mut sega);
+}
 
+fn profile_ws_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
     let mut ws = zeff_ws_core::emulator::Emulator::from_rom_data(&ws_rom())
         .expect("synthetic WonderSwan ROM");
     ws.set_apu_sample_generation_enabled(sample_generation_enabled);
@@ -455,6 +660,92 @@ fn profile_pce_synthetic(
             .collect::<String>();
         println!("  framebuffer {framebuffer_hash}  state {state_hash}");
     }
+
+    if std::env::var("ZEFF_PROFILE_PCE_SPRITES").as_deref() == Ok("1") {
+        use sha2::{Digest, Sha256};
+        use zeff_pce_core::hardware::cpu::VdcPort;
+        use zeff_pce_core::hardware::{VcePort, VdcDmaChannel, VdcDmaProgress, VdcRegister};
+
+        let mut pce_sprites =
+            zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE sprite ROM");
+        let vdc = pce_sprites.devices_mut().vdc_mut();
+        for (register, value) in [
+            (VdcRegister::Control, 0x0040),
+            (VdcRegister::HorizontalDisplay, 31),
+            (VdcRegister::VerticalSync, 0x0F02),
+            (VdcRegister::VerticalDisplay, 0x00EF),
+            (VdcRegister::VerticalDisplayEnd, 0x0004),
+            (VdcRegister::SatbSource, 0x7F00),
+        ] {
+            vdc.write_port(VdcPort::SelectOrStatus, register as u8);
+            vdc.write_port(VdcPort::DataLow, value as u8);
+            vdc.write_port(VdcPort::DataHigh, (value >> 8) as u8);
+        }
+        let mut pattern = 0xA5A5_5A5A_u32;
+        for word in vdc.vram_mut().iter_mut() {
+            pattern = pattern.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *word = (pattern >> 16) as u16;
+        }
+        for group in 0..4 {
+            for column in 0..16 {
+                let entry = (group * 16 + column) * 4;
+                vdc.vram_mut()[0x7F00 + entry..0x7F00 + entry + 4].copy_from_slice(&[
+                    (64 + group * 64) as u16,
+                    (32 + column * 32) as u16,
+                    (2 + column * 2) as u16,
+                    0x3180,
+                ]);
+            }
+        }
+        assert!(vdc.start_satb_dma_for_vertical_blank());
+        for _ in 0..255 {
+            assert!(matches!(
+                vdc.service_dma_slot(VdcDmaChannel::Satb),
+                Ok(VdcDmaProgress::Transferred { .. })
+            ));
+        }
+        assert_eq!(
+            vdc.service_dma_slot(VdcDmaChannel::Satb),
+            Ok(VdcDmaProgress::Complete)
+        );
+        let vce = pce_sprites.devices_mut().vce_mut();
+        vce.write_port(VcePort::from_offset(2), 1);
+        vce.write_port(VcePort::from_offset(3), 1);
+        for color in 1..=15 {
+            let raw = (color * 0x11) as u16;
+            vce.write_port(VcePort::from_offset(4), raw as u8);
+            vce.write_port(VcePort::from_offset(5), (raw >> 8) as u8);
+        }
+        pce_sprites.set_sample_generation_enabled(sample_generation_enabled);
+        pce_sprites.set_instruction_trace_enabled(instruction_trace_enabled);
+        profile_pce_frames(
+            &format!("PC Engine 240-line sprites{suffix}"),
+            frames,
+            &mut pce_sprites,
+        );
+        assert!(
+            pce_sprites
+                .framebuffer()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[..3] != [0, 0, 0]),
+            "synthetic PCE sprite fixture did not produce visible pixels"
+        );
+        let framebuffer_hash = Sha256::digest(pce_sprites.framebuffer());
+        let state = zeff_pce_core::hardware::save_state::encode_state(&pce_sprites)
+            .expect("encode synthetic PCE sprite state");
+        let state_hash = Sha256::digest(&state);
+        let framebuffer_hash = framebuffer_hash
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        let state_hash = state_hash
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        println!("  framebuffer {framebuffer_hash}  state {state_hash}");
+    }
 }
 
 fn profile_manifest_roms(frames: u32) {
@@ -507,6 +798,64 @@ fn main() {
         return;
     }
 
+    if let Ok(core) = std::env::var("ZEFF_PROFILE_CORE") {
+        let sample_generation_enabled = std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1");
+        let instruction_trace_enabled = std::env::var("ZEFF_PROFILE_TRACE").as_deref() == Ok("1");
+        let suffix = match (sample_generation_enabled, instruction_trace_enabled) {
+            (false, false) => "",
+            (true, false) => " + audio",
+            (false, true) => " + trace",
+            (true, true) => " + audio + trace",
+        };
+
+        match core.as_str() {
+            "all" => profile_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            "gb" => profile_gb_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            "gba" => profile_gba_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            "nes" => profile_nes_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            "pce" => profile_pce_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            "sega8" => profile_sega8_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            "ws" => profile_ws_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
+            _ => panic!("unknown core {core:?}; expected all, gb, gba, nes, pce, sega8, or ws"),
+        }
+        return;
+    }
+
     if std::env::var("ZEFF_PROFILE_PCE_ONLY").as_deref() == Ok("1") {
         profile_pce_synthetic(frames, false, false, "");
         if std::env::var("ZEFF_PROFILE_COMPARE_AUDIO").as_deref() == Ok("1") {
@@ -515,6 +864,44 @@ fn main() {
         if std::env::var("ZEFF_PROFILE_COMPARE_TRACE").as_deref() == Ok("1") {
             profile_pce_synthetic(frames, false, true, " + trace");
         }
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_GB_ONLY").as_deref() == Ok("1") {
+        let sample_generation_enabled = std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1");
+        profile_gb_synthetic(
+            frames,
+            sample_generation_enabled,
+            false,
+            if sample_generation_enabled {
+                " + audio"
+            } else {
+                ""
+            },
+        );
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_SEGA8_VIDEO_ONLY").as_deref() == Ok("1") {
+        profile_sega8_video(
+            frames,
+            std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1"),
+        );
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_GBA_ONLY").as_deref() == Ok("1") {
+        let sample_generation_enabled = std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1");
+        profile_gba_synthetic(
+            frames,
+            sample_generation_enabled,
+            false,
+            if sample_generation_enabled {
+                " + audio"
+            } else {
+                ""
+            },
+        );
         return;
     }
 

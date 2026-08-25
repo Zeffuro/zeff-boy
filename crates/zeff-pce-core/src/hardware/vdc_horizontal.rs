@@ -6,7 +6,7 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 pub const VDC_DMA_PIXELS_PER_WORD: u8 = 4;
 pub const DETERMINISTIC_VDC_RESET_FRAME_BURST: bool = false;
 pub const PROVISIONAL_VDC_DMA_SATB_FIRST: bool = true;
-pub const PROVISIONAL_VDC_REJECTS_ACTIVE_NONBURST_DMA_TRIGGER: bool = true;
+pub const PROVISIONAL_VDC_REJECTS_ACTIVE_NONBURST_DMA_TRIGGER: bool = false;
 pub const PROVISIONAL_VDC_REJECTS_DMA_TRIGGER_WHILE_ACTIVE: bool = true;
 pub const PROVISIONAL_VCE_CLOCK_DIVIDER_PRESERVES_MASTER_PHASE: bool = true;
 
@@ -212,12 +212,23 @@ impl HuC6270 {
         while pixel_clocks != 0 {
             let pixels_to_dma =
                 u64::from(VDC_DMA_PIXELS_PER_WORD - self.horizontal_state.dma_pixel_remainder);
+            let pixels_to_raster_event = self.pixels_to_raster_event().unwrap_or(u16::MAX);
+            let phase_pixels_before = self.horizontal_state.phase_pixels_remaining;
             let elapsed = pixel_clocks
                 .min(u64::from(self.horizontal_state.phase_pixels_remaining))
-                .min(pixels_to_dma);
+                .min(pixels_to_dma)
+                .min(u64::from(pixels_to_raster_event));
             pixel_clocks -= elapsed;
             self.horizontal_state.phase_pixels_remaining -= elapsed as u16;
             self.horizontal_state.dma_pixel_remainder += elapsed as u8;
+
+            if self.horizontal_state.phase == VdcHorizontalPhase::ActiveDisplay
+                && phase_pixels_before > self.raster_event_remaining_pixels()
+                && self.horizontal_state.phase_pixels_remaining
+                    == self.raster_event_remaining_pixels()
+            {
+                self.latch_horizontal_raster_match();
+            }
 
             if self.horizontal_state.phase_pixels_remaining == 0 {
                 if let Some(satb_dma_started) = self.enter_next_horizontal_phase() {
@@ -249,9 +260,42 @@ impl HuC6270 {
             self.horizontal_state.latched_active_display_pixels =
                 self.horizontal_state.phase_pixels_remaining;
             self.horizontal_state.display_control_latched_for_line = true;
+            if self.horizontal_state.latched_active_display_pixels == 8 {
+                self.latch_horizontal_raster_match();
+            }
             return self.start_pending_vertical_blank();
         }
         None
+    }
+
+    fn pixels_to_raster_event(&self) -> Option<u16> {
+        if self.horizontal_state.phase != VdcHorizontalPhase::ActiveDisplay {
+            return None;
+        }
+        self.horizontal_state
+            .phase_pixels_remaining
+            .checked_sub(self.raster_event_remaining_pixels())
+            .filter(|&pixels| pixels != 0)
+    }
+
+    fn raster_event_remaining_pixels(&self) -> u16 {
+        if self.horizontal_state.latched_active_display_pixels == 8 {
+            8
+        } else {
+            14
+        }
+    }
+
+    pub(super) fn horizontal_raster_event_reached(&self) -> bool {
+        match self.horizontal_state.phase {
+            VdcHorizontalPhase::DisplayStart => {
+                self.horizontal_state.display_control_latched_for_line
+            }
+            VdcHorizontalPhase::ActiveDisplay => {
+                self.horizontal_state.phase_pixels_remaining <= self.raster_event_remaining_pixels()
+            }
+            VdcHorizontalPhase::DisplayEnd | VdcHorizontalPhase::Sync => true,
+        }
     }
 
     fn service_scheduled_dma_slot(
@@ -330,11 +374,6 @@ impl HuC6270 {
     }
 
     #[inline]
-    pub(super) const fn should_abort_vram_dma_for_active_display(&self) -> bool {
-        !self.horizontal_state.frame_burst
-    }
-
-    #[inline]
     pub(super) fn vram_transfer_window_open(&self) -> bool {
         self.scanline_state.current_phase() != VdcVerticalPhase::ActiveDisplay
             || self.horizontal_state.frame_burst
@@ -346,9 +385,6 @@ impl HuC6270 {
         }
         if self.pending_vram_dma().is_some() {
             return VdcVramDmaTriggerResult::RejectedWhilePending;
-        }
-        if !self.vram_transfer_window_open() {
-            return VdcVramDmaTriggerResult::RejectedOutsideTransferWindow;
         }
         self.queue_vram_dma();
         VdcVramDmaTriggerResult::Queued

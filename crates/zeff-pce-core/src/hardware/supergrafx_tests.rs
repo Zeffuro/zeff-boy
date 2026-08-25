@@ -725,3 +725,60 @@ fn machine_vce_conversion_feeds_both_vdcs_from_one_fractional_remainder() {
         3
     );
 }
+
+#[test]
+fn base_and_supergrafx_use_the_same_absolute_vertical_timeline() {
+    let mut base = PceMachine::new(rom_with_program(&[0xD4, 0xEA, 0x80, 0xFD])).unwrap();
+    let mut supergrafx =
+        PceMachine::with_supergrafx_substrate_for_test(rom_with_program(&[0xD4, 0xEA, 0x80, 0xFD]))
+            .unwrap();
+
+    for machine in [&mut base, &mut supergrafx] {
+        write_register(
+            machine.devices_mut().vdc_mut(),
+            VdcRegister::VerticalSync,
+            0x0E02,
+        );
+        write_register(
+            machine.devices_mut().vdc_mut(),
+            VdcRegister::VerticalDisplay,
+            0x00EF,
+        );
+        write_register(
+            machine.devices_mut().vdc_mut(),
+            VdcRegister::VerticalDisplayEnd,
+            0x0004,
+        );
+    }
+    let vdc2 = supergrafx
+        .devices_mut()
+        .supergrafx_video_mut()
+        .unwrap()
+        .vdc2_mut();
+    write_register(vdc2, VdcRegister::VerticalSync, 0x0E02);
+    write_register(vdc2, VdcRegister::VerticalDisplay, 0x00EF);
+    write_register(vdc2, VdcRegister::VerticalDisplayEnd, 0x0004);
+
+    base.run_until_frame().unwrap();
+    supergrafx.run_until_frame().unwrap();
+
+    for machine in [&base, &supergrafx] {
+        let frame = machine.presented_frame();
+        let active = frame.active_bounds().unwrap();
+        assert_eq!((active.first_row(), active.row_end()), (19, 259));
+        assert_eq!(
+            (
+                frame.signal_bounds().first_row(),
+                frame.signal_bounds().row_end()
+            ),
+            (17, 259)
+        );
+    }
+    assert_eq!(
+        base.presented_frame().rows().map(|row| row.is_active()),
+        supergrafx
+            .presented_frame()
+            .rows()
+            .map(|row| row.is_active())
+    );
+}

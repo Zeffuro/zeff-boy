@@ -72,15 +72,5 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                         ui.end_row();
                     }
                 });
-            ui.label(
-                egui::RichText::new(
-                    "Additional hardcoded bindings: Ctrl-R = Reset, \
-                     Alt-Enter = Fullscreen, ` = Speed-up, \
-                     LShift = Turbo (rapid-fire), 0-9 = select save slot, \
-                     Ctrl-Alt-A/B = FDS side A/B",
-                )
-                .weak()
-                .small(),
-            );
         });
 }

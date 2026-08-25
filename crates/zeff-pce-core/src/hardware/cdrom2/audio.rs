@@ -472,9 +472,7 @@ impl CdRom2 {
         while self.audio_tick_accumulator >= CDDA_TICK_DENOMINATOR {
             self.audio_tick_accumulator -= CDDA_TICK_DENOMINATOR;
             let sample = if self.audio_status == CdAudioStatus::Playing {
-                self.disc
-                    .read_audio_sample(self.audio_current_lba, self.audio_current_sample)
-                    .unwrap_or((0, 0))
+                self.read_current_audio_sample()
             } else {
                 (0, 0)
             };
@@ -514,10 +512,32 @@ impl CdRom2 {
 
     pub(super) fn stop_audio(&mut self, status: CdAudioStatus) {
         self.audio_status = status;
+        self.audio_track_index = None;
         self.audio_left_sample = 0;
         self.audio_right_sample = 0;
         self.audio_source_frames.clear();
         self.audio_resample_position = 0.0;
+    }
+
+    fn read_current_audio_sample(&mut self) -> (i16, i16) {
+        let lba = self.audio_current_lba;
+        let sample = self.audio_current_sample;
+        if let Some(track_index) = self.audio_track_index
+            && let Some(result) =
+                self.disc
+                    .read_audio_sample_from_track_index(track_index, lba, sample)
+        {
+            return result.unwrap_or((0, 0));
+        }
+
+        self.audio_track_index = self.disc.stored_track_index_at_lba(lba);
+        self.audio_track_index
+            .and_then(|track_index| {
+                self.disc
+                    .read_audio_sample_from_track_index(track_index, lba, sample)
+            })
+            .and_then(Result::ok)
+            .unwrap_or((0, 0))
     }
 
     pub(super) fn service_adpcm_dma(&mut self) {
@@ -581,6 +601,18 @@ mod tests {
         }
         let track = CdTrack::from_index1_data(1, 0, None, 0, CdTrackMode::Audio, raw).unwrap();
         CdRom2::new(CdDisc::new(vec![track]).unwrap())
+    }
+
+    fn two_track_audio_cdrom() -> CdRom2 {
+        let track = |number: u8, lba: u32, sample: i16| {
+            let mut raw = vec![0; 2_352];
+            for frame in raw.as_chunks_mut::<4>().0 {
+                frame[..2].copy_from_slice(&sample.to_le_bytes());
+                frame[2..].copy_from_slice(&(-sample).to_le_bytes());
+            }
+            CdTrack::from_index1_data(number, 0, None, lba, CdTrackMode::Audio, raw).unwrap()
+        };
+        CdRom2::new(CdDisc::new(vec![track(1, 0, 0x1111), track(2, 1, 0x2222)]).unwrap())
     }
 
     fn start(cd: &mut CdRom2, byte: u8, rate: u8) {
@@ -1085,6 +1117,30 @@ mod tests {
         cd.advance_cdda(488);
         assert_eq!(cd.audio_source_frames.front(), Some(&[0.25, -0.25]));
         assert_eq!(cd.audio_source_frames.get(1), Some(&[0.5, -0.5]));
+    }
+
+    #[test]
+    fn cdda_track_cache_revalidates_at_track_boundaries_and_is_transient() {
+        let mut cd = two_track_audio_cdrom();
+        cd.audio_status = CdAudioStatus::Playing;
+        cd.audio_end_lba = 2;
+        cd.audio_current_sample = 587;
+        cd.audio_track_index = Some(0);
+
+        cd.advance_cdda(488);
+        assert_eq!(cd.audio_left_sample, 0x1111);
+        assert_eq!((cd.audio_current_lba, cd.audio_current_sample), (1, 0));
+        assert_eq!(cd.audio_track_index, Some(0));
+
+        cd.advance_cdda(488);
+        assert_eq!(cd.audio_left_sample, 0x2222);
+        assert_eq!(cd.audio_track_index, Some(1));
+
+        cd.stop_audio(CdAudioStatus::Stopped);
+        assert_eq!(cd.audio_track_index, None);
+        cd.audio_track_index = Some(1);
+        cd.reset();
+        assert_eq!(cd.audio_track_index, None);
     }
 
     #[test]

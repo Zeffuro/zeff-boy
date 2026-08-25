@@ -121,6 +121,7 @@ pub enum SpeedMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CpuStep {
     pub pc: u16,
+    pub physical_pc: u32,
     pub opcode: u8,
     pub cycles: u32,
 }
@@ -171,7 +172,7 @@ impl Cpu {
             .registers
             .status
             .contains(StatusFlags::MEMORY_OPERATION);
-        let opcode = self.fetch(bus);
+        let (opcode, physical_pc) = self.fetch_with_physical_address(bus);
 
         self.registers.status.remove(StatusFlags::MEMORY_OPERATION);
 
@@ -222,7 +223,12 @@ impl Cpu {
             }
         };
 
-        Ok(CpuStep { pc, opcode, cycles })
+        Ok(CpuStep {
+            pc,
+            physical_pc,
+            opcode,
+            cycles,
+        })
     }
 
     #[inline]
@@ -311,13 +317,18 @@ impl Cpu {
 
     #[inline]
     pub(super) fn fetch<B: CpuBus>(&mut self, bus: &mut B) -> u8 {
+        self.fetch_with_physical_address(bus).0
+    }
+
+    #[inline]
+    fn fetch_with_physical_address<B: CpuBus>(&mut self, bus: &mut B) -> (u8, u32) {
         let logical_addr = self.registers.pc;
         let physical_addr = self.logical_to_physical(logical_addr);
         let value = bus.read(physical_addr);
         bus.observe_logical_read(logical_addr, physical_addr, value, false);
         bus.observe_instruction_byte(logical_addr, physical_addr, value);
         self.registers.pc = self.registers.pc.wrapping_add(1);
-        value
+        (value, physical_addr)
     }
 
     #[inline]

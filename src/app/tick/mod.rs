@@ -87,6 +87,10 @@ impl App {
 
         self.drain_emu_responses();
         let supports_rewind = self.core_supports_rewind();
+        let rewind_available = supports_rewind && !self.recording.is_replay_active();
+        if !rewind_available {
+            self.rewind.held = false;
+        }
         let supports_audio = self.core_supports_audio();
         let supports_cheats = self.core_supports_cheats();
         #[cfg(not(target_arch = "wasm32"))]
@@ -96,7 +100,7 @@ impl App {
 
         // Handle backstep: pop one rewind snapshot and pause
         if std::mem::take(&mut self.debug_requests.backstep)
-            && supports_rewind
+            && rewind_available
             && self.settings.rewind.enabled
             && !self.rewind.pending
             && !self.rewind.backstep_pending
@@ -106,20 +110,41 @@ impl App {
             self.rewind.backstep_pending = true;
         }
 
-        if self.rewind.held && supports_rewind && self.settings.rewind.enabled {
+        if self.rewind.held && rewind_available && self.settings.rewind.enabled {
+            let now = Instant::now();
+            if self.rewind.active_mode != Some(self.settings.rewind.mode) {
+                self.rewind.reset_pacing();
+                self.rewind.active_mode = Some(self.settings.rewind.mode);
+            }
+            if let Some(previous) = self.rewind.pace_updated_at.replace(now) {
+                self.rewind.pacer.elapse(now.duration_since(previous));
+            }
             if !self.rewind.pending && !self.rewind.backstep_pending {
-                self.rewind.throttle = 0;
-                if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::Rewind(self.settings.rewind.speed.max(1)));
+                let steps = match self.settings.rewind.mode {
+                    crate::settings::RewindMode::RealTime if self.rewind.pacer.ready() => {
+                        let frames = self.settings.rewind.capture_interval() as u64;
+                        self.rewind
+                            .pacer
+                            .schedule(self.active_system.frame_duration_ns(), frames);
+                        self.rewind.scheduled_frames = frames;
+                        1
+                    }
+                    crate::settings::RewindMode::RealTime => 0,
+                    crate::settings::RewindMode::Fast => self.settings.rewind.speed.max(1),
+                };
+                if steps > 0
+                    && let Some(thread) = &self.emu_thread
+                {
+                    thread.send(EmuCommand::Rewind(steps));
                     self.rewind.pending = true;
                 }
             }
         } else {
-            if self.rewind.throttle > 0 {
+            if self.rewind.pace_updated_at.is_some() {
                 self.timing.last_frame_time = Instant::now();
-                self.rewind.throttle = 0;
             }
-            self.rewind.pops = 0;
+            self.rewind.reset_pacing();
+            self.rewind.frames_rewound = 0;
             let max_in_flight = if self.recording.limits_in_flight_for_replay() {
                 1
             } else {
@@ -283,6 +308,12 @@ impl App {
                     };
                     let snapshot = self.build_snapshot_request(&reqs, want_viewer_update);
                     let buffers = self.take_reusable_buffers();
+                    let audio_playback_speed = match self.speed_mode() {
+                        SpeedMode::FastForward => {
+                            self.settings.emulation.fast_forward_multiplier.clamp(1, 16)
+                        }
+                        SpeedMode::Normal | SpeedMode::SlowMotion | SpeedMode::Uncapped => 1,
+                    };
 
                     let input = FrameInput {
                         frames: frames_to_step,
@@ -323,6 +354,7 @@ impl App {
                                     }
                                     SpeedMode::Normal | SpeedMode::SlowMotion => false,
                                 },
+                            playback_speed: audio_playback_speed,
                             recording_capture: AudioRecordingCapture {
                                 active: supports_audio && self.recording.audio_recorder.is_some(),
                                 semantic: supports_audio
@@ -341,6 +373,7 @@ impl App {
                         buffers,
                         rewind_enabled: supports_rewind
                             && self.settings.rewind.enabled
+                            && !self.recording.is_replay_active()
                             && !self.rewind.held,
                         rewind_seconds: self.settings.rewind.seconds,
                     };

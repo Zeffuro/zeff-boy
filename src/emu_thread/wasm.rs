@@ -6,7 +6,7 @@ use zeff_emu_common::time::Reset as _;
 
 use super::ReplayStartState;
 use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, SharedFramebuffer};
-use super::{DEFAULT_REWIND_SECONDS, REWIND_SNAPSHOTS_PER_SECOND, WorkerRuntimeFault};
+use super::{DEFAULT_REWIND_SECONDS, REWIND_CAPTURE_INTERVAL_FRAMES, WorkerRuntimeFault};
 use crate::cheats::CheatPatch;
 use crate::emu_backend::{CoreCapabilities, EmuBackend};
 use zeff_emu_common::time::MachineTiming;
@@ -34,6 +34,7 @@ pub(crate) struct EmuThread {
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
         let capabilities = backend.capabilities();
+        let frame_duration_ns = backend.system().frame_duration_ns();
         let audio_recording_context =
             backend
                 .audio_topology()
@@ -50,9 +51,10 @@ impl EmuThread {
                 pending_frames: VecDeque::new(),
                 pending_responses: VecDeque::new(),
                 uncapped_mode: false,
-                rewind_buffer: RewindBuffer::new(
+                rewind_buffer: RewindBuffer::new_with_frame_duration(
                     DEFAULT_REWIND_SECONDS,
-                    REWIND_SNAPSHOTS_PER_SECOND,
+                    REWIND_CAPTURE_INTERVAL_FRAMES,
+                    frame_duration_ns,
                 ),
                 rewind_seconds: DEFAULT_REWIND_SECONDS,
                 last_cheats: Vec::new(),
@@ -143,6 +145,7 @@ impl EmuThread {
                 *uncapped_mode = on && runtime_fault.can_step();
                 backend.set_apu_sample_generation_enabled(!*uncapped_mode);
             }
+            EmuCommand::SetUncappedBatchSize(_) => {}
             EmuCommand::ApplyMediaEvent(event) => {
                 let resp = match backend.apply_media_event(&event) {
                     Ok(()) => match backend.media_slot_snapshot() {

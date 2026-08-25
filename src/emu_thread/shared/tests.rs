@@ -41,12 +41,14 @@ fn build_frame_result_does_not_republish_stale_recycled_audio() {
         Vec::new(),
         0.0,
         0,
+        1,
     );
 
     assert!(
         result.audio_samples.is_empty(),
         "stale recycled audio samples must be cleared before draining new core audio"
     );
+    assert_eq!(result.audio_playback_speed, 1);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -146,6 +148,36 @@ fn step_n_frames_collects_midi_snapshot_per_emulated_frame() {
     assert_eq!(backend.frame_count(), 3);
     assert_eq!(advanced_frames, 3);
     assert_eq!(audio_semantic_frames.len(), 3);
+}
+
+#[test]
+fn gbc_rewind_cadence_tracks_advanced_frames_across_batches() {
+    let rom = vec![0; 0x8000];
+    let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
+        &rom,
+        zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::ForceCgb,
+    )
+    .unwrap();
+    let mut backend = EmuBackend::from_gb(gb, PathBuf::from("test.gbc"));
+    let mut rewind = zeff_emu_common::rewind::RewindBuffer::new(1, 4);
+    let mut semantic = Vec::new();
+
+    for frames in [2, 3, 1, 3] {
+        let advanced =
+            EmuThread::step_n_frames(&mut backend, frames, &[], false, &mut semantic, None);
+        EmuThread::capture_rewind_snapshot(&backend, &mut rewind, true, advanced);
+    }
+    assert_eq!(rewind.len(), 2);
+
+    let shared_fb: SharedFramebuffer = Default::default();
+    let response = EmuThread::handle_rewind(&mut backend, &mut rewind, &shared_fb, 1);
+    assert!(matches!(
+        response,
+        EmuResponse::RewindOk {
+            rewound_frames: 4,
+            ..
+        }
+    ));
 }
 
 #[test]

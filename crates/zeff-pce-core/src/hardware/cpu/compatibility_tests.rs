@@ -58,6 +58,7 @@ fn reserved_compatibility_nops_share_the_two_cycle_trace() {
             cpu.step(&mut bus),
             Ok(CpuStep {
                 pc: 0x4000,
+                physical_pc: 0x024000,
                 opcode,
                 cycles: 2,
             })

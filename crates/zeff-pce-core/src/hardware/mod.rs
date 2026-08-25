@@ -131,8 +131,9 @@ pub use vdc_sprite_render::{
 };
 pub use vdc_video::{
     PCE_ACTIVE_FRAME_HEIGHT, PCE_ACTIVE_FRAME_RGBA_BYTES, PCE_ACTIVE_FRAME_UNUSED_RGBA,
-    PCE_ACTIVE_FRAME_WIDTH, PceActiveOnlyVideoFrame, PcePresentedFrame, PceVideoActiveBounds,
-    PceVideoRenderError, PceVideoRowMetadata,
+    PCE_ACTIVE_FRAME_WIDTH, PCE_SIGNAL_FIRST_ROW, PCE_SIGNAL_ROW_END, PceActiveOnlyVideoFrame,
+    PcePresentedFrame, PceVideoActiveBounds, PceVideoRenderError, PceVideoRowMetadata,
+    PceVideoSignalBounds,
 };
 pub use vpc::{
     DETERMINISTIC_VPC_RESET_REGISTERS, HuC6202, PROVISIONAL_VPC_PRIORITY_MODE_POLICY,

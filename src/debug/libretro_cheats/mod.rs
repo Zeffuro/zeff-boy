@@ -69,10 +69,10 @@ fn fetch_cheat_list_via_trees(platform: LibretroPlatform) -> anyhow::Result<Vec<
     let tree_json = crate::libretro_common::ureq_get_github_json(&tree_url)?
         .read_to_string()
         .context("failed to read platform tree")?;
-    let names = parse_tree_blob_names(&tree_json);
+    let names = parse_tree_blob_names(&tree_json, platform);
 
     if names.is_empty() {
-        anyhow::bail!("no .cht files found for {}", platform.label());
+        anyhow::bail!("no cheat files found for {}", platform.label());
     }
 
     log::info!("Found {} cheat files for {}", names.len(), platform.label());
@@ -262,12 +262,16 @@ fn parse_dir_entry_sha(json_body: &str, dir_name: &str) -> anyhow::Result<String
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_tree_blob_names(json_body: &str) -> Vec<String> {
+fn parse_tree_blob_names(json_body: &str, platform: LibretroPlatform) -> Vec<String> {
     let mut names = Vec::new();
     for segment in json_body.split(r#""path":""#).skip(1) {
         if let Some(end) = segment.find('"') {
             let path = &segment[..end];
-            if path.ends_with(".cht") {
+            if platform
+                .cheat_extensions()
+                .iter()
+                .any(|extension| path.ends_with(extension))
+            {
                 names.push(path.to_string());
             }
         }

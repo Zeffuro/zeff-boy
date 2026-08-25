@@ -256,10 +256,6 @@ ci-local-wasm: sync-ci-toolchain lint-wasm check-wasm build-wasm-ghpages
 fuzz-check:
     cargo +nightly check --manifest-path fuzz/Cargo.toml
 
-# Run criterion benchmarks
-bench:
-    cargo bench --workspace
-
 # Audit dependencies for vulnerabilities and license issues (requires cargo-deny)
 deny:
     cargo deny check
@@ -304,24 +300,21 @@ flamegraph rom frames="1800":
 flamegraph-named rom name frames="1800":
     cargo flamegraph --profile profiling -o "{{name}}.svg" -- --headless --no-apu --max-frames {{frames}} "{{rom}}"
 
-# Run the core profiling harness (3000 frames per ROM from manifests)
-profile-cores:
-    cargo run --profile profiling --bin profile_cores --features profile-cores
+# Profile all cores, or one of: gb, gba, nes, pce, sega8, ws
+profile-cores core="all" frames="3000":
+    $env:ZEFF_PROFILE_CORE = "{{core}}"; $env:ZEFF_PROFILE_FRAMES = "{{frames}}"; cargo run --profile profiling --bin profile_cores --features profile-cores
 
-# Generate a flamegraph from the core profiling harness (requires admin on Windows)
-flamegraph-cores:
-    cargo flamegraph --profile profiling --bin profile_cores --features profile-cores -o flamegraph.svg
+# Flamegraph all cores, or one selected core (requires admin on Windows)
+flamegraph-cores core="all" frames="3000":
+    $env:ZEFF_PROFILE_CORE = "{{core}}"; $env:ZEFF_PROFILE_FRAMES = "{{frames}}"; cargo flamegraph --profile profiling --bin profile_cores --features profile-cores -o "flamegraph-{{core}}.svg"
 
-# Run Criterion benchmarks for GB core
-bench-gb:
-    cargo bench --bench gb_benchmarks -p zeff-gb-core
+# Run one core's Criterion suite: gb, gba, nes, pce, sega8, or ws
+bench core:
+    cargo bench --bench "{{core}}_benchmarks" -p "zeff-{{core}}-core"
 
-# Run Criterion benchmarks for NES core
-bench-nes:
-    cargo bench --bench nes_benchmarks -p zeff-nes-core
-
-# Run all Criterion benchmarks (GB + NES)
-bench-all: bench-gb bench-nes
+# Run all Criterion benchmarks
+bench-all:
+    cargo bench --workspace
 
 # ──────────────────────────── Cleaning ───────────────────────────────
 

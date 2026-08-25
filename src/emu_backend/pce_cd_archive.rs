@@ -101,11 +101,11 @@ impl PceCdPackageProgress {
         self.phase.store(phase as u8, Ordering::Release);
     }
 
-    fn set_total_bytes(&self, total: u64) {
+    pub(super) fn set_total_bytes(&self, total: u64) {
         self.total_bytes.store(total, Ordering::Release);
     }
 
-    fn set_completed_bytes(&self, completed: u64) {
+    pub(super) fn set_completed_bytes(&self, completed: u64) {
         self.completed_bytes.store(completed, Ordering::Release);
     }
 

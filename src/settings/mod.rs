@@ -24,8 +24,8 @@ pub(crate) use structs::{
     AudioSettings, CameraSettings, DebugColors, EmulationSettings, GbBootRomMode, GbaBiosMode,
     PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
     PceControllerPreference, PceMemoryBasePreference, PceMouseCursorMode, RecentRomEntry,
-    RewindSettings, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, SegaBootRomMode,
-    TiltSettings, UiSettings, VideoSettings,
+    RewindMode, RewindSettings, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference,
+    SegaBootRomMode, TiltSettings, UiSettings, VideoSettings,
 };
 pub(crate) use tilt_bindings::TiltBindingAction;
 

@@ -83,6 +83,16 @@ pub(crate) enum PreparedSevenZipBackend {
     Selection(Vec<crate::rom_archive::ArchiveRomEntry>),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) enum PreparedNativeArchiveBackend {
+    Ready {
+        rom_path: PathBuf,
+        system: ActiveSystem,
+        loaded: LoadedBackend,
+    },
+    Selection(Vec<crate::rom_archive::ArchiveRomEntry>),
+}
+
 pub(crate) fn load_backend_from_rom_source(
     system: ActiveSystem,
     source_path: &Path,
@@ -90,7 +100,7 @@ pub(crate) fn load_backend_from_rom_source(
     preloaded_data: Option<Vec<u8>>,
     config: BackendLoadConfig,
 ) -> anyhow::Result<LoadedBackend> {
-    if system == ActiveSystem::Pce && is_pce_cd_cue_path(rom_path) {
+    if system == ActiveSystem::Pce && is_pce_cd_path(rom_path) {
         return load_pce_cd_backend(source_path, rom_path, preloaded_data, &config);
     }
     let mut rom_data = match preloaded_data {
@@ -140,10 +150,14 @@ pub(crate) fn load_backend_from_rom_source(
     })
 }
 
-fn is_pce_cd_cue_path(path: &Path) -> bool {
+fn is_pce_cd_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("cue"))
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cue")
+                || extension.eq_ignore_ascii_case("chd")
+                || extension.eq_ignore_ascii_case("iso")
+        })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -156,8 +170,20 @@ fn load_pce_cd_backend(
     if preloaded_data.is_some() {
         return Err(super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
     }
-    let loaded_disc = if source_path == cue_path {
-        super::pce_cd::load_direct_cue_with_mods(cue_path, config.apply_mods)?
+    let (cue_path, loaded_disc) = if source_path == cue_path && path_extension_is(cue_path, "cue") {
+        (
+            cue_path.to_path_buf(),
+            super::pce_cd::load_direct_cue_with_mods(cue_path, config.apply_mods)?,
+        )
+    } else if source_path == cue_path && path_extension_is(cue_path, "chd") {
+        (
+            cue_path.to_path_buf(),
+            super::pce_cd::load_direct_chd_with_mods(cue_path, config.apply_mods)?,
+        )
+    } else if source_path == cue_path && path_extension_is(cue_path, "iso") {
+        let actual_cue = super::pce_cd::cue_path_for_iso(cue_path)?;
+        let loaded = super::pce_cd::load_direct_cue_with_mods(&actual_cue, config.apply_mods)?;
+        (actual_cue, loaded)
     } else if path_extension_is(source_path, "7z") {
         let cancel = AtomicBool::new(false);
         let progress = super::pce_cd_archive::PceCdPackageProgress::default();
@@ -171,7 +197,20 @@ fn load_pce_cd_backend(
         if actual != cue_path {
             return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
         }
-        loaded
+        (actual, loaded)
+    } else if path_extension_is(source_path, "rar") {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(super::pce_cd_archive::PceCdPackageProgress::default());
+        let (actual, loaded) = super::pce_cd_rar::load_rar_cue_with_control_and_mods(
+            source_path,
+            cancel,
+            progress,
+            config.apply_mods,
+        )?;
+        if actual != cue_path {
+            return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
+        }
+        (actual, loaded)
     } else {
         return Err(super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
     };
@@ -184,6 +223,89 @@ fn load_pce_cd_backend(
     )?;
     let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
     let system_card_board = pce_system_card_board(system_card_profile);
+    let mut backend = super::PceBackend::new_cdrom2(
+        system_card.bytes,
+        loaded_disc.disc,
+        super::pce::PceCdBackendConfig {
+            system_card_board,
+            cue_path,
+            source_path: source_path.to_path_buf(),
+            content_hash: loaded_disc.content_sha256,
+            content_crc32: loaded_disc.content_crc32,
+            source_disc_hash: loaded_disc.source_disc_sha256,
+            console_wiring,
+            arcade_card_mode: config.pce_arcade_card_mode,
+        },
+    )?;
+    if let Some(sample_rate) = config.sample_rate {
+        backend.set_sample_rate(sample_rate);
+    }
+    if config.pce_load_battery_bram {
+        load_pce_cd_bram(&mut backend);
+        log_sram_result(backend.try_load_memory_base128());
+    }
+    backend.set_firmware_manifests(vec![system_card.manifest]);
+    if let Some((buttons, dpad)) = config.initial_input {
+        backend.set_input(buttons, dpad);
+    }
+    Ok(LoadedBackend {
+        backend: EmuBackend::from_pce(backend),
+        original_crc32: loaded_disc.mod_crc32,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn prepare_pce_cd_7z_backend(
+    source_path: &Path,
+    expected_cue_path: Option<&Path>,
+    config: &BackendLoadConfig,
+    cancel: &AtomicBool,
+    progress: &super::pce_cd_archive::PceCdPackageProgress,
+) -> anyhow::Result<(PathBuf, LoadedBackend)> {
+    check_package_cancel(cancel)?;
+    let (cue_path, loaded_disc) = super::pce_cd_archive::load_7z_cue_with_control_and_mods(
+        source_path,
+        cancel,
+        progress,
+        config.pce_cd_archive_memory_limit_mib,
+        config.apply_mods,
+    )?;
+    if expected_cue_path.is_some_and(|expected| expected != cue_path) {
+        return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
+    }
+    let loaded = finish_prepared_pce_cd_backend(
+        source_path,
+        &cue_path,
+        loaded_disc,
+        config,
+        cancel,
+        progress,
+    )?;
+    Ok((cue_path, loaded))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn finish_prepared_pce_cd_backend(
+    source_path: &Path,
+    cue_path: &Path,
+    loaded_disc: super::pce_cd::LoadedPceCd,
+    config: &BackendLoadConfig,
+    cancel: &AtomicBool,
+    progress: &super::pce_cd_archive::PceCdPackageProgress,
+) -> anyhow::Result<LoadedBackend> {
+    check_package_cancel(cancel)?;
+    progress.set_phase(super::pce_cd_archive::PceCdPackageLoadPhase::Firmware);
+    let console_wiring = pce_cd_console_wiring(config, loaded_disc.content_sha256);
+    let system_card = resolve_pce_cd_system_card(
+        config,
+        source_path,
+        console_wiring,
+        loaded_disc.disc.content_hash() == super::pce_cd::ADPCM_FIXTURE_DISC_SHA256,
+    )?;
+    let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
+    let system_card_board = pce_system_card_board(system_card_profile);
+    check_package_cancel(cancel)?;
+    progress.set_phase(super::pce_cd_archive::PceCdPackageLoadPhase::Building);
     let mut backend = super::PceBackend::new_cdrom2(
         system_card.bytes,
         loaded_disc.disc,
@@ -209,78 +331,12 @@ fn load_pce_cd_backend(
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);
     }
-    Ok(LoadedBackend {
-        backend: EmuBackend::from_pce(backend),
-        original_crc32: loaded_disc.content_crc32,
-    })
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn prepare_pce_cd_7z_backend(
-    source_path: &Path,
-    expected_cue_path: Option<&Path>,
-    config: &BackendLoadConfig,
-    cancel: &AtomicBool,
-    progress: &super::pce_cd_archive::PceCdPackageProgress,
-) -> anyhow::Result<(PathBuf, LoadedBackend)> {
-    check_package_cancel(cancel)?;
-    let (cue_path, loaded_disc) = super::pce_cd_archive::load_7z_cue_with_control_and_mods(
-        source_path,
-        cancel,
-        progress,
-        config.pce_cd_archive_memory_limit_mib,
-        config.apply_mods,
-    )?;
-    if expected_cue_path.is_some_and(|expected| expected != cue_path) {
-        return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
-    }
-    check_package_cancel(cancel)?;
-    progress.set_phase(super::pce_cd_archive::PceCdPackageLoadPhase::Firmware);
-    let console_wiring = pce_cd_console_wiring(config, loaded_disc.content_sha256);
-    let system_card = resolve_pce_cd_system_card(
-        config,
-        source_path,
-        console_wiring,
-        loaded_disc.disc.content_hash() == super::pce_cd::ADPCM_FIXTURE_DISC_SHA256,
-    )?;
-    let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
-    let system_card_board = pce_system_card_board(system_card_profile);
-    check_package_cancel(cancel)?;
-    progress.set_phase(super::pce_cd_archive::PceCdPackageLoadPhase::Building);
-    let mut backend = super::PceBackend::new_cdrom2(
-        system_card.bytes,
-        loaded_disc.disc,
-        super::pce::PceCdBackendConfig {
-            system_card_board,
-            cue_path: cue_path.clone(),
-            source_path: source_path.to_path_buf(),
-            content_hash: loaded_disc.content_sha256,
-            content_crc32: loaded_disc.content_crc32,
-            source_disc_hash: loaded_disc.source_disc_sha256,
-            console_wiring,
-            arcade_card_mode: config.pce_arcade_card_mode,
-        },
-    )?;
-    if let Some(sample_rate) = config.sample_rate {
-        backend.set_sample_rate(sample_rate);
-    }
-    if config.pce_load_battery_bram {
-        load_pce_cd_bram(&mut backend);
-        log_sram_result(backend.try_load_memory_base128());
-    }
-    backend.set_firmware_manifests(vec![system_card.manifest]);
-    if let Some((buttons, dpad)) = config.initial_input {
-        backend.set_input(buttons, dpad);
-    }
     check_package_cancel(cancel)?;
     progress.set_phase(super::pce_cd_archive::PceCdPackageLoadPhase::Complete);
-    Ok((
-        cue_path,
-        LoadedBackend {
-            backend: EmuBackend::from_pce(backend),
-            original_crc32: loaded_disc.content_crc32,
-        },
-    ))
+    Ok(LoadedBackend {
+        backend: EmuBackend::from_pce(backend),
+        original_crc32: loaded_disc.mod_crc32,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -353,6 +409,72 @@ pub(crate) fn prepare_seven_zip_backend(
             })
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn prepare_native_archive_backend(
+    source_path: &Path,
+    selected_entry_index: Option<usize>,
+    expected_rom_path: Option<&Path>,
+    config: &BackendLoadConfig,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<super::pce_cd_archive::PceCdPackageProgress>,
+) -> anyhow::Result<PreparedNativeArchiveBackend> {
+    if path_extension_is(source_path, "7z") {
+        return Ok(
+            match prepare_seven_zip_backend(
+                source_path,
+                selected_entry_index,
+                expected_rom_path,
+                config,
+                cancel,
+                progress,
+            )? {
+                PreparedSevenZipBackend::Ready {
+                    rom_path,
+                    system,
+                    loaded,
+                } => PreparedNativeArchiveBackend::Ready {
+                    rom_path,
+                    system,
+                    loaded,
+                },
+                PreparedSevenZipBackend::Selection(entries) => {
+                    PreparedNativeArchiveBackend::Selection(entries)
+                }
+            },
+        );
+    }
+    if !path_extension_is(source_path, "rar") || selected_entry_index.is_some() {
+        return Err(super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
+    }
+    check_package_cancel(cancel)?;
+    let cue_path = super::pce_cd_rar::inspect_rar_cue_path(source_path)?;
+    if expected_rom_path.is_some_and(|expected| expected != cue_path) {
+        return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
+    }
+    let (actual, loaded_disc) = super::pce_cd_rar::load_rar_cue_with_control_and_mods(
+        source_path,
+        Arc::clone(cancel),
+        Arc::clone(progress),
+        config.apply_mods,
+    )?;
+    if actual != cue_path {
+        return Err(super::pce_cd::PceCdLoadError::ArchiveChanged.into());
+    }
+    let loaded = finish_prepared_pce_cd_backend(
+        source_path,
+        &cue_path,
+        loaded_disc,
+        config,
+        cancel,
+        progress,
+    )?;
+    Ok(PreparedNativeArchiveBackend::Ready {
+        rom_path: cue_path,
+        system: ActiveSystem::Pce,
+        loaded,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -454,14 +454,14 @@ impl HuC6270 {
         &mut self,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
         self.scanline_state.external_profile = None;
-        Ok(self.advance_vertical_boundary(None, false))
+        Ok(self.advance_vertical_boundary(None, false, false))
     }
 
     pub fn advance_external_vce_scanline(
         &mut self,
         input: VdcExternalVceScanline,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
-        self.advance_vce_scanline_core(input, false)
+        self.advance_vce_scanline_core(input, false, false)
     }
 
     pub(crate) fn advance_machine_vce_scanline(
@@ -469,7 +469,7 @@ impl HuC6270 {
         input: VdcExternalVceScanline,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
         self.validate_machine_vce_scanline(input)?;
-        self.advance_vce_scanline_core(input, true)
+        self.advance_vce_scanline_core(input, true, self.horizontal_raster_event_reached())
     }
 
     pub(crate) fn validate_machine_vce_scanline(
@@ -493,6 +493,7 @@ impl HuC6270 {
         &mut self,
         input: VdcExternalVceScanline,
         defer_vertical_blank: bool,
+        raster_event_reached: bool,
     ) -> Result<VdcScanlineBoundary, VdcScanlineAdvanceError> {
         if input.boundary_count != 1 {
             return Err(VdcScanlineAdvanceError::InvalidExternalBoundaryCount {
@@ -514,13 +515,18 @@ impl HuC6270 {
             profile
         };
 
-        Ok(self.advance_vertical_boundary(Some(profile), defer_vertical_blank))
+        Ok(self.advance_vertical_boundary(
+            Some(profile),
+            defer_vertical_blank,
+            raster_event_reached,
+        ))
     }
 
     fn advance_vertical_boundary(
         &mut self,
         external_profile: Option<ExternalVerticalProfile>,
         defer_vertical_blank: bool,
+        raster_event_reached: bool,
     ) -> VdcScanlineBoundary {
         if self.scanline_state.phase_duration == 0 {
             self.scanline_state.phase_duration =
@@ -538,22 +544,17 @@ impl HuC6270 {
             self.scanline_state.vertical_blank_pending = false;
         }
         let raster_counter = self.scanline_state.raster_counter;
-        let raster_match_counter = if phase != VdcVerticalPhase::ActiveDisplay
-            && phase.next() == VdcVerticalPhase::ActiveDisplay
-            && phase_line + 1 == self.scanline_state.phase_duration
-        {
-            ACTIVE_DISPLAY_RASTER_START
-        } else {
-            raster_counter.wrapping_add(1) & RASTER_COUNTER_MASK
-        };
+        let raster_match_counter = self.next_raster_counter();
         let raster_match = raster_match_counter == self.register(VdcRegister::RasterCounter);
         let control = self.register(VdcRegister::Control);
 
-        if vertical_blank_started {
+        if phase == VdcVerticalPhase::VerticalSync && phase_started {
             self.scanline_state.latched_memory_width = self.register(VdcRegister::MemoryWidth);
+        }
+        if vertical_blank_started {
             self.latch_frame_burst_for_next_frame();
         }
-        if raster_match && control & 0x04 != 0 {
+        if raster_match && !raster_event_reached && control & 0x04 != 0 {
             self.latch_status(VdcStatus::RASTER_MATCH);
         }
         if vertical_blank_started && !defer_vertical_blank && control & 0x08 != 0 {
@@ -563,10 +564,10 @@ impl HuC6270 {
         let satb_dma_started = vertical_blank_started
             && !defer_vertical_blank
             && self.start_satb_dma_for_vertical_blank();
-        let vram_dma_aborted = phase == VdcVerticalPhase::ActiveDisplay
-            && phase_started
-            && self.should_abort_vram_dma_for_active_display()
-            && self.abort_vram_dma_for_active_display();
+        // A LENR write starts a VRAM DMA even when VDW currently owns the VRAM bus.
+        // Keep the transfer queued/active until the scheduler reaches an allowed slot;
+        // entering active display must not discard it.
+        let vram_dma_aborted = false;
         let active_display = if phase == VdcVerticalPhase::ActiveDisplay {
             let background_scroll_y = self.background_scroll_y_for_active_line(phase_line);
             let active_control = self.active_line_control(control);
@@ -626,10 +627,31 @@ impl HuC6270 {
             return None;
         }
         self.scanline_state.vertical_blank_pending = false;
+        self.latch_frame_burst_for_next_frame();
         if self.register(VdcRegister::Control) & 0x08 != 0 {
             self.latch_status(VdcStatus::VERTICAL_BLANK);
         }
         Some(self.start_satb_dma_for_vertical_blank())
+    }
+
+    pub(super) fn latch_horizontal_raster_match(&mut self) -> bool {
+        let matched = self.next_raster_counter() == self.register(VdcRegister::RasterCounter);
+        if matched && self.register(VdcRegister::Control) & 0x04 != 0 {
+            self.latch_status(VdcStatus::RASTER_MATCH);
+        }
+        matched
+    }
+
+    fn next_raster_counter(&self) -> u16 {
+        let state = &self.scanline_state;
+        if state.phase != VdcVerticalPhase::ActiveDisplay
+            && state.phase.next() == VdcVerticalPhase::ActiveDisplay
+            && state.phase_line + 1 == state.phase_duration
+        {
+            ACTIVE_DISPLAY_RASTER_START
+        } else {
+            state.raster_counter.wrapping_add(1) & RASTER_COUNTER_MASK
+        }
     }
 
     pub(super) fn latch_full_active_span_sprite_status(

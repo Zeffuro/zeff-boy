@@ -5,7 +5,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::settings::{Settings, VsyncMode};
+use crate::settings::{DebugColors, Settings, UiDensity, UiThemePreset, VsyncMode};
 
 use super::FrameError;
 use super::egui_integration::EguiRenderer;
@@ -25,6 +25,27 @@ pub(super) struct ToolWindowConfig {
     pub(super) minimum: [u32; 2],
     pub(super) fallback: [u32; 2],
     pub(super) maximized: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ToolWindowStyle {
+    theme_preset: UiThemePreset,
+    density: UiDensity,
+    debug_monospace_scale: f32,
+    debug_colors: DebugColors,
+    ui_scale: f32,
+}
+
+impl From<&Settings> for ToolWindowStyle {
+    fn from(settings: &Settings) -> Self {
+        Self {
+            theme_preset: settings.ui.theme_preset,
+            density: settings.ui.ui_density,
+            debug_monospace_scale: settings.ui.debug_monospace_scale,
+            debug_colors: settings.ui.effective_debug_colors(),
+            ui_scale: settings.ui.ui_scale,
+        }
+    }
 }
 
 impl ToolWindow {
@@ -58,6 +79,12 @@ impl ToolWindow {
             size.height.max(1),
             VsyncMode::On,
         )?;
+        gpu.clear(wgpu::Color {
+            r: 0.08,
+            g: 0.08,
+            b: 0.12,
+            a: 1.0,
+        });
         let egui = EguiRenderer::new(&window, &gpu.device, gpu.config.format)?;
         window.request_redraw();
         Ok(Self { window, gpu, egui })
@@ -83,7 +110,7 @@ impl ToolWindow {
 
     pub(super) fn render(
         &mut self,
-        settings: &Settings,
+        style: ToolWindowStyle,
         root_id: &'static str,
         label: &'static str,
         draw: impl FnOnce(&mut egui::Ui),
@@ -105,12 +132,12 @@ impl ToolWindow {
 
         self.egui.begin_frame(&self.window);
         self.egui.apply_style(
-            settings.ui.theme_preset,
-            settings.ui.ui_density,
-            settings.ui.debug_monospace_scale,
-            settings.ui.effective_debug_colors(),
+            style.theme_preset,
+            style.density,
+            style.debug_monospace_scale,
+            style.debug_colors,
         );
-        let target_ppp = self.window.scale_factor() as f32 * settings.ui.ui_scale.clamp(0.5, 3.0);
+        let target_ppp = self.window.scale_factor() as f32 * style.ui_scale.clamp(0.5, 3.0);
         if (self.egui.context().pixels_per_point() - target_ppp).abs() > 0.01 {
             self.egui.context().set_pixels_per_point(target_ppp);
         }

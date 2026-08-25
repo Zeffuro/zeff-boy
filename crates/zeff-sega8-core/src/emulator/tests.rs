@@ -915,6 +915,20 @@ fn step_instruction_clocks_vdp_timing() {
 }
 
 #[test]
+fn step_frame_keeps_instruction_overshoot_at_the_vdp_frame_boundary() {
+    let mut emu = Emulator::new_with_hint(&[0xC3, 0x00, 0x00], 48_000, SystemHint::MasterSystem)
+        .expect("emulator should initialize");
+
+    for _ in 0..200 {
+        emu.step_frame();
+        assert_eq!(emu.bus().vdp().scanline(), 0);
+        assert!(emu.bus().vdp().scanline_cycle() < 10);
+    }
+
+    assert_eq!(emu.bus().vdp().scanline_cycle(), 0);
+}
+
+#[test]
 fn step_frame_generates_psg_audio_samples() {
     let mut emu = Emulator::new_with_hint(&[0x76], 48_000, SystemHint::MasterSystem)
         .expect("emulator should initialize");

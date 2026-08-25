@@ -135,10 +135,10 @@ impl CheatCapabilities {
             },
             ActiveSystem::Pce => Self {
                 supports_user_cheats: true,
-                supports_libretro_database: false,
+                supports_libretro_database: true,
                 supports_ram_writes: true,
                 supports_rom_patches: false,
-                formats: &["Raw"],
+                formats: &["Raw logical", "Raw physical RAM"],
             },
         }
     }

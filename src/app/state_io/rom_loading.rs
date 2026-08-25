@@ -22,10 +22,12 @@ fn is_zip_path(path: &Path) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn is_native_seven_zip_path(path: &Path) -> bool {
+pub(crate) fn is_native_archive_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("7z"))
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("7z") || extension.eq_ignore_ascii_case("rar")
+        })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -395,7 +397,7 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn begin_seven_zip_preparation(
+    fn begin_native_archive_preparation(
         &mut self,
         source_path: &Path,
         selected_entry_index: Option<usize>,
@@ -416,9 +418,9 @@ impl App {
         let worker_progress = Arc::clone(&progress);
         let (sender, receiver) = std::sync::mpsc::channel();
         let worker = std::thread::Builder::new()
-            .name("zeff-seven-zip-load".to_owned())
+            .name("zeff-archive-load".to_owned())
             .spawn(move || {
-                let result = crate::emu_backend::loader::prepare_seven_zip_backend(
+                let result = crate::emu_backend::loader::prepare_native_archive_backend(
                     &worker_source_path,
                     selected_entry_index,
                     expected_rom_path.as_deref(),
@@ -430,7 +432,7 @@ impl App {
                     super::super::RomPreparationOutcome::Cancelled
                 } else {
                     match result {
-                        Ok(crate::emu_backend::loader::PreparedSevenZipBackend::Ready {
+                        Ok(crate::emu_backend::loader::PreparedNativeArchiveBackend::Ready {
                             rom_path,
                             system,
                             loaded,
@@ -441,9 +443,11 @@ impl App {
                             auto_load_state,
                             loaded,
                         },
-                        Ok(crate::emu_backend::loader::PreparedSevenZipBackend::Selection(
-                            entries,
-                        )) => super::super::RomPreparationOutcome::ArchiveSelection {
+                        Ok(
+                            crate::emu_backend::loader::PreparedNativeArchiveBackend::Selection(
+                                entries,
+                            ),
+                        ) => super::super::RomPreparationOutcome::ArchiveSelection {
                             source_path: worker_source_path,
                             entries,
                         },
@@ -534,8 +538,8 @@ impl App {
 
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
         #[cfg(not(target_arch = "wasm32"))]
-        if is_native_seven_zip_path(path) {
-            self.begin_seven_zip_preparation(path, None, None, auto_load_state);
+        if is_native_archive_path(path) {
+            self.begin_native_archive_preparation(path, None, None, auto_load_state);
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -566,8 +570,8 @@ impl App {
         auto_load_state: bool,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
-        if is_native_seven_zip_path(archive_path) {
-            self.begin_seven_zip_preparation(
+        if is_native_archive_path(archive_path) {
+            self.begin_native_archive_preparation(
                 archive_path,
                 Some(entry_index),
                 None,
@@ -604,8 +608,8 @@ impl App {
         auto_load_state: bool,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
-        if is_native_seven_zip_path(archive_path) {
-            self.begin_seven_zip_preparation(
+        if is_native_archive_path(archive_path) {
+            self.begin_native_archive_preparation(
                 archive_path,
                 None,
                 Some(virtual_rom_path.to_path_buf()),
@@ -664,10 +668,13 @@ impl App {
             self.rewind = super::super::RewindState {
                 held: false,
                 fill: 0.0,
-                throttle: 0,
-                pops: 0,
+                frames_rewound: 0,
                 pending: false,
                 backstep_pending: false,
+                pacer: super::super::RewindPacer::default(),
+                pace_updated_at: None,
+                scheduled_frames: 0,
+                active_mode: None,
             };
             self.speed.paused = false;
             self.timing.last_frame_time = crate::platform::Instant::now();
@@ -681,8 +688,13 @@ impl App {
         };
 
         #[cfg(not(target_arch = "wasm32"))]
-        if is_native_seven_zip_path(&path) {
-            self.begin_seven_zip_preparation(&path, None, self.rom_info.rom_path.clone(), false);
+        if is_native_archive_path(&path) {
+            self.begin_native_archive_preparation(
+                &path,
+                None,
+                self.rom_info.rom_path.clone(),
+                false,
+            );
             return;
         }
 
@@ -757,10 +769,13 @@ impl App {
         self.speed.paused = false;
         self.rewind.held = false;
         self.rewind.fill = 0.0;
-        self.rewind.throttle = 0;
-        self.rewind.pops = 0;
+        self.rewind.frames_rewound = 0;
         self.rewind.pending = false;
         self.rewind.backstep_pending = false;
+        self.rewind.pacer.reset();
+        self.rewind.pace_updated_at = None;
+        self.rewind.scheduled_frames = 0;
+        self.rewind.active_mode = None;
 
         self.debug_windows.cheat.rom_title = None;
         self.debug_windows.cheat.rom_crc32 = None;
@@ -1050,8 +1065,7 @@ impl App {
 mod tests {
     use super::{
         RomPreparationPoll, automatic_symbol_loading_available, cancel_rom_preparation_slot,
-        dismiss_archive_selection_for_new_load, is_native_seven_zip_path,
-        poll_rom_preparation_slot,
+        dismiss_archive_selection_for_new_load, is_native_archive_path, poll_rom_preparation_slot,
     };
     use crate::emu_backend::{EmuBackend, PceBackend};
     use std::path::PathBuf;
@@ -1088,8 +1102,9 @@ mod tests {
     }
 
     #[test]
-    fn native_seven_zip_route_is_separate_from_system_detection() {
-        assert!(is_native_seven_zip_path(&PathBuf::from("games.7Z")));
+    fn native_archive_route_is_separate_from_system_detection() {
+        assert!(is_native_archive_path(&PathBuf::from("games.7Z")));
+        assert!(is_native_archive_path(&PathBuf::from("disc.RAR")));
         assert_eq!(
             crate::emu_backend::ActiveSystem::from_path(&PathBuf::from("disc.7z")),
             None

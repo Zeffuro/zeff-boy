@@ -232,6 +232,13 @@ pub(super) fn default_rewind_seconds() -> usize {
     10
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) enum RewindMode {
+    #[default]
+    RealTime,
+    Fast,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct RewindSettings {
@@ -243,6 +250,8 @@ pub(crate) struct RewindSettings {
     pub(crate) speed: usize,
     #[serde(rename = "rewind_seconds", default = "default_rewind_seconds")]
     pub(crate) seconds: usize,
+    #[serde(rename = "rewind_mode", default)]
+    pub(crate) mode: RewindMode,
 }
 
 impl Default for RewindSettings {
@@ -252,6 +261,7 @@ impl Default for RewindSettings {
             key: "KeyR".to_string(),
             speed: default_rewind_speed(),
             seconds: default_rewind_seconds(),
+            mode: RewindMode::default(),
         }
     }
 }

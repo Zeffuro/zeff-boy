@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
@@ -6,7 +7,7 @@ use zeff_emu_common::time::FrameLifecycle;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use crate::cli::types::HeadlessOptions;
-use crate::emu_backend::loader::{PreparedSevenZipBackend, prepare_seven_zip_backend};
+use crate::emu_backend::loader::{PreparedNativeArchiveBackend, prepare_native_archive_backend};
 use crate::emu_backend::{ActiveSystem, BackendLoadConfig, EmuBackend, PceBackend};
 use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore};
 
@@ -14,9 +15,9 @@ use super::{
     AudioStats, PceDebugStateRequest, StuckTracker, emit_debug_state, ensure_no_reset_events,
     ensure_system_headless_options, fail_on_stuck_if_needed, input_for_frame, input_p2_for_frame,
     input_p3_for_frame, input_p4_for_frame, input_p5_for_frame, observe_stuck, pce_debug_state,
-    print_perf, read_headless_state_if_requested, screenshot_path_if_written,
-    write_audio_dump_f32le, write_final_screenshot_if_needed, write_screenshot_if_requested,
-    write_screenshot_sequence_if_requested,
+    print_memory_region_dumps, print_perf, read_headless_state_if_requested,
+    screenshot_path_if_written, write_audio_dump_f32le, write_final_screenshot_if_needed,
+    write_screenshot_if_requested, write_screenshot_sequence_if_requested,
 };
 
 const PCE_HEADLESS_SAMPLE_RATE: u32 = 44_100;
@@ -52,15 +53,15 @@ pub(super) fn run_pce_headless(
     run_loaded_pce_headless(loaded.backend, opts)
 }
 
-pub(super) fn run_pce_seven_zip_headless(
+pub(super) fn run_pce_archive_headless(
     source_path: &Path,
     mode_preference: HardwareModePreference,
     firmware_search_dirs: Vec<PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
-    let cancel = AtomicBool::new(false);
-    let progress = crate::emu_backend::pce_cd_archive::PceCdPackageProgress::default();
-    let prepared = prepare_seven_zip_backend(
+    let cancel = Arc::new(AtomicBool::new(false));
+    let progress = Arc::new(crate::emu_backend::pce_cd_archive::PceCdPackageProgress::default());
+    let prepared = prepare_native_archive_backend(
         source_path,
         None,
         None,
@@ -76,17 +77,17 @@ pub(super) fn run_pce_seven_zip_headless(
         &progress,
     )?;
     match prepared {
-        PreparedSevenZipBackend::Ready {
+        PreparedNativeArchiveBackend::Ready {
             system: ActiveSystem::Pce,
             loaded,
             ..
         } => run_loaded_pce_headless(loaded.backend, opts),
-        PreparedSevenZipBackend::Ready { system, .. } => anyhow::bail!(
-            "headless 7z loading currently supports PC Engine content; archive contains {}",
+        PreparedNativeArchiveBackend::Ready { system, .. } => anyhow::bail!(
+            "headless archive loading currently supports PC Engine content; archive contains {}",
             system.code()
         ),
-        PreparedSevenZipBackend::Selection(entries) => anyhow::bail!(
-            "headless 7z loading requires a single ROM or PC Engine CD set; archive contains {} selectable ROMs",
+        PreparedNativeArchiveBackend::Selection(entries) => anyhow::bail!(
+            "headless archive loading requires a single ROM or PC Engine CD set; archive contains {} selectable ROMs",
             entries.len()
         ),
     }
@@ -319,6 +320,7 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
     );
     print_perf("pce", frames_run, start);
     print_pce_memory_dumps(&backend, opts);
+    print_memory_region_dumps(backend.as_mut(), opts)?;
     write_final_screenshot_if_needed(
         opts,
         frames_run,

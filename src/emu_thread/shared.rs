@@ -82,14 +82,21 @@ impl EmuThread {
             );
             if input.rewind_seconds != *rewind_seconds {
                 *rewind_seconds = input.rewind_seconds;
-                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
-                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                    super::REWIND_CAPTURE_INTERVAL_FRAMES,
+                    backend.system().frame_duration_ns(),
                 );
             }
-            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
+            Self::capture_rewind_snapshot(
+                backend,
+                rewind_buffer,
+                input.rewind_enabled,
+                advanced_frames,
+            );
         }
 
+        let audio_playback_speed = input.audio.playback_speed;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
@@ -103,6 +110,7 @@ impl EmuThread {
             audio_semantic_frames,
             rewind_buffer.fill_ratio(),
             advanced_frames,
+            audio_playback_speed,
         )
     }
 
@@ -181,14 +189,21 @@ impl EmuThread {
             );
             if input.rewind_seconds != *rewind_seconds {
                 *rewind_seconds = input.rewind_seconds;
-                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
-                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                    super::REWIND_CAPTURE_INTERVAL_FRAMES,
+                    backend.system().frame_duration_ns(),
                 );
             }
-            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
+            Self::capture_rewind_snapshot(
+                backend,
+                rewind_buffer,
+                input.rewind_enabled,
+                advanced_frames,
+            );
         }
 
+        let audio_playback_speed = input.audio.playback_speed;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
@@ -202,6 +217,7 @@ impl EmuThread {
             audio_semantic_frames,
             rewind_buffer.fill_ratio(),
             advanced_frames,
+            audio_playback_speed,
         );
         result.replay_error = replay_error;
         result
@@ -282,14 +298,21 @@ impl EmuThread {
             );
             if input.rewind_seconds != *rewind_seconds {
                 *rewind_seconds = input.rewind_seconds;
-                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
-                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                    super::REWIND_CAPTURE_INTERVAL_FRAMES,
+                    backend.system().frame_duration_ns(),
                 );
             }
-            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
+            Self::capture_rewind_snapshot(
+                backend,
+                rewind_buffer,
+                input.rewind_enabled,
+                advanced_frames,
+            );
         }
 
+        let audio_playback_speed = input.audio.playback_speed;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
@@ -303,6 +326,7 @@ impl EmuThread {
             audio_semantic_frames,
             rewind_buffer.fill_ratio(),
             advanced_frames,
+            audio_playback_speed,
         );
         result.replay_error = replay_error;
         result
@@ -386,14 +410,21 @@ impl EmuThread {
         if runtime_fault.can_step() {
             if input.rewind_seconds != *rewind_seconds {
                 *rewind_seconds = input.rewind_seconds;
-                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new(
+                *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
-                    super::REWIND_SNAPSHOTS_PER_SECOND,
+                    super::REWIND_CAPTURE_INTERVAL_FRAMES,
+                    backend.system().frame_duration_ns(),
                 );
             }
-            Self::capture_rewind_snapshot(backend, rewind_buffer, input.rewind_enabled);
+            Self::capture_rewind_snapshot(
+                backend,
+                rewind_buffer,
+                input.rewind_enabled,
+                advanced_frames,
+            );
         }
 
+        let audio_playback_speed = input.audio.playback_speed;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
 
@@ -407,6 +438,7 @@ impl EmuThread {
             audio_semantic_frames,
             rewind_buffer.fill_ratio(),
             advanced_frames,
+            audio_playback_speed,
         );
         result.replay_events = replay_events;
         result
@@ -419,6 +451,7 @@ impl EmuThread {
         shared_fb: &SharedFramebuffer,
         runtime_fault: &mut WorkerRuntimeFault,
     ) -> FrameResult {
+        let audio_playback_speed = input.audio.playback_speed;
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
         publish_framebuffer(shared_fb, backend.framebuffer());
@@ -430,6 +463,7 @@ impl EmuThread {
             Vec::new(),
             rewind_fill,
             0,
+            audio_playback_speed,
         )
     }
 
@@ -515,6 +549,7 @@ impl EmuThread {
                     return EmuResponse::RewindOk {
                         media_slot_snapshot: backend.media_slot_snapshot(),
                         game_boy_serial_device: backend.game_boy_serial_device(),
+                        rewound_frames: rewind_frame.rewound_frames,
                     };
                 }
                 Err(err) => {
@@ -535,10 +570,11 @@ impl EmuThread {
         backend: &EmuBackend,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         enabled: bool,
+        advanced_frames: usize,
     ) {
         if enabled
             && backend.supports_rewind()
-            && rewind_buffer.tick()
+            && rewind_buffer.advance_frames(advanced_frames)
             && let Ok(bytes) = Self::encode_current_state(backend)
         {
             rewind_buffer.push(&bytes, backend.rewind_framebuffer());
@@ -860,6 +896,7 @@ impl EmuThread {
         audio_semantic_frames: Vec<AudioSemanticFrame>,
         rewind_fill: f32,
         advanced_frames: usize,
+        audio_playback_speed: usize,
     ) -> FrameResult {
         let rumble = backend.rumble_active();
         let mut audio_samples = reusable_audio.unwrap_or_default();
@@ -881,6 +918,7 @@ impl EmuThread {
             runtime_fault,
             rumble,
             audio_samples,
+            audio_playback_speed,
             ui_data,
             is_mbc7,
             is_pocket_camera,

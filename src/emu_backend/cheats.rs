@@ -381,6 +381,24 @@ mod tests {
     }
 
     #[test]
+    fn pce_libretro_cheats_write_physical_work_ram() {
+        let mut backend = pce_backend();
+
+        backend.apply_ram_cheats(&[CheatPatch::WideRamWrite {
+            address: 0x1F_2345,
+            value: CheatValue::Constant(0x6C),
+        }]);
+
+        let EmuBackend::Pce(pce) = &backend else {
+            panic!("expected PCE backend");
+        };
+        assert_eq!(
+            pce.debug_peek8(zeff_emu_common::address::Address::from(0x2345_u16)),
+            0x6C
+        );
+    }
+
+    #[test]
     fn sega8_conditional_ram_cheats_check_existing_value() {
         let mut backend = sega8_backend();
         let EmuBackend::Sega8(sega8) = &mut backend else {

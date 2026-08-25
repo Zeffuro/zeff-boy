@@ -1,8 +1,12 @@
 use super::cpu::{Cpu, LineLevel, VdcPort};
+use super::vdc::{
+    DETERMINISTIC_VDC_RESET_HORIZONTAL_DISPLAY, DETERMINISTIC_VDC_RESET_VERTICAL_DISPLAY,
+};
 use super::{
     BaseBus, DETERMINISTIC_VDC_INITIAL_VRAM_WORD, DETERMINISTIC_VDC_RESET_PRESERVES_VRAM,
     DETERMINISTIC_VDC_RESET_VALUE, HuC6270, VDC_UNAVAILABLE_READ_VALUE, VdcRegister, VdcStatus,
 };
+use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 fn select(vdc: &mut HuC6270, register: VdcRegister) {
     vdc.write_port(VdcPort::SelectOrStatus, register as u8);
@@ -226,6 +230,14 @@ fn status_read_clears_events_but_keeps_busy_and_updates_irq_level() {
 #[test]
 fn reset_uses_named_internal_and_external_vram_policies() {
     let mut vdc = HuC6270::new();
+    assert_eq!(
+        vdc.register(VdcRegister::HorizontalDisplay),
+        DETERMINISTIC_VDC_RESET_HORIZONTAL_DISPLAY
+    );
+    assert_eq!(
+        vdc.register(VdcRegister::VerticalDisplay),
+        DETERMINISTIC_VDC_RESET_VERTICAL_DISPLAY
+    );
     assert_eq!(vdc.vram()[0], DETERMINISTIC_VDC_INITIAL_VRAM_WORD);
     assert_eq!(
         vdc.vram()[vdc.vram().len() - 1],
@@ -252,9 +264,64 @@ fn reset_uses_named_internal_and_external_vram_policies() {
         vdc.register(VdcRegister::Control),
         DETERMINISTIC_VDC_RESET_VALUE
     );
+    assert_eq!(
+        vdc.register(VdcRegister::HorizontalDisplay),
+        DETERMINISTIC_VDC_RESET_HORIZONTAL_DISPLAY
+    );
+    assert_eq!(
+        vdc.register(VdcRegister::VerticalDisplay),
+        DETERMINISTIC_VDC_RESET_VERTICAL_DISPLAY
+    );
+    for register in [
+        VdcRegister::MemoryAddressWrite,
+        VdcRegister::MemoryAddressRead,
+        VdcRegister::VramData,
+        VdcRegister::Control,
+        VdcRegister::RasterCounter,
+        VdcRegister::BackgroundScrollX,
+        VdcRegister::BackgroundScrollY,
+        VdcRegister::MemoryWidth,
+        VdcRegister::HorizontalSync,
+        VdcRegister::VerticalSync,
+        VdcRegister::VerticalDisplayEnd,
+        VdcRegister::DmaControl,
+        VdcRegister::DmaSource,
+        VdcRegister::DmaDestination,
+        VdcRegister::DmaLength,
+        VdcRegister::SatbSource,
+    ] {
+        assert_eq!(vdc.register(register), DETERMINISTIC_VDC_RESET_VALUE);
+    }
     assert_eq!(vdc.vram_read_buffer(), DETERMINISTIC_VDC_RESET_VALUE);
     assert_eq!(vdc.status(), VdcStatus::empty());
     assert_eq!(vdc.irq_level(), LineLevel::High);
+}
+
+#[test]
+fn reset_register_state_round_trip_is_byte_deterministic() {
+    let reset = HuC6270::new();
+    let mut writer = StateWriter::new();
+    reset.write_state(&mut writer);
+    let reset_state = writer.into_bytes();
+
+    let mut restored = HuC6270::new();
+    write_register(&mut restored, VdcRegister::HorizontalDisplay, 0);
+    write_register(&mut restored, VdcRegister::VerticalDisplay, 0);
+    restored
+        .read_state(&mut StateReader::new(&reset_state))
+        .unwrap();
+    assert_eq!(
+        restored.register(VdcRegister::HorizontalDisplay),
+        DETERMINISTIC_VDC_RESET_HORIZONTAL_DISPLAY
+    );
+    assert_eq!(
+        restored.register(VdcRegister::VerticalDisplay),
+        DETERMINISTIC_VDC_RESET_VERTICAL_DISPLAY
+    );
+
+    let mut restored_writer = StateWriter::new();
+    restored.write_state(&mut restored_writer);
+    assert_eq!(restored_writer.into_bytes(), reset_state);
 }
 
 #[test]

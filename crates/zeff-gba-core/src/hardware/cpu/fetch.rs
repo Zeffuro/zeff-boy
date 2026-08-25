@@ -41,7 +41,7 @@ impl Cpu {
         if queued_front_matches {
             return self
                 .prefetch_queue
-                .remove(0)
+                .pop_front()
                 .expect("prefetch queue front existed");
         }
 

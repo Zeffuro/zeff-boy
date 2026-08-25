@@ -10,7 +10,8 @@ use self::numbers::{
 use self::values::{
     parse_dmg_palette_arg, parse_gba_audio_mute_list_arg, parse_gba_bg_layer_list_arg,
     parse_memory_dump_arg, parse_pce_arcade_card_mode_arg, parse_pce_controller_mode_arg,
-    parse_pce_memory_base_mode_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
+    parse_pce_memory_base_mode_arg, parse_region_dump_arg, parse_sega8_console_region_arg,
+    parse_sega8_video_standard_arg,
 };
 use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 
@@ -202,6 +203,15 @@ pub(crate) fn parse_args_from(
                 headless
                     .memory_dumps
                     .push(parse_memory_dump_arg(value, "--dump-mem")?);
+                i += 2;
+            }
+            "--dump-region" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--dump-region requires region:offset:len");
+                };
+                headless
+                    .region_dumps
+                    .push(parse_region_dump_arg(value, "--dump-region")?);
                 i += 2;
             }
             "--break-at" => {

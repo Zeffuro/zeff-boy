@@ -5,8 +5,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use super::AudioQueueConfig;
 use super::resampler;
+use super::{AudioQueueConfig, copy_stereo_at_speed};
 
 const NORMAL_QUEUE_MS: usize = 200;
 const FAST_FORWARD_QUEUE_MS: usize = 40;
@@ -51,6 +51,8 @@ pub(crate) struct AudioOutput {
     playback_preroll_samples: Arc<AtomicUsize>,
     session_generation: u64,
     playback_generation: Arc<AtomicU64>,
+    playback_speed: usize,
+    speedup_samples: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -212,6 +214,8 @@ impl AudioOutput {
                         playback_preroll_samples,
                         session_generation: 0,
                         playback_generation,
+                        playback_speed: 1,
+                        speedup_samples: Vec::new(),
                     });
                 }
                 Err(err) => {
@@ -344,13 +348,20 @@ impl AudioOutput {
     }
 
     pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
+        let playback_speed = config.playback_speed.max(1);
+        if playback_speed != self.playback_speed {
+            self.discard_queued_samples();
+            self.playback_speed = playback_speed;
+        }
+
         flush_staged_samples(
             &mut self.producer,
             &mut self.staged_samples,
             self.session_generation,
         );
 
-        if config.fast_forward_active && config.mute_during_fast_forward {
+        let fast_forward_active = playback_speed > 1;
+        if fast_forward_active && config.mute_during_fast_forward {
             return;
         }
 
@@ -361,7 +372,7 @@ impl AudioOutput {
 
         let gain = config.master_volume.clamp(0.0, 1.0);
 
-        let queue_ms = if config.fast_forward_active {
+        let queue_ms = if fast_forward_active {
             FAST_FORWARD_QUEUE_MS
         } else {
             NORMAL_QUEUE_MS
@@ -388,6 +399,13 @@ impl AudioOutput {
             samples
         };
 
+        let samples = if fast_forward_active {
+            copy_stereo_at_speed(samples, playback_speed, &mut self.speedup_samples);
+            self.speedup_samples.as_slice()
+        } else {
+            samples
+        };
+
         if samples.is_empty() {
             return;
         }
@@ -397,8 +415,8 @@ impl AudioOutput {
         }
         let alpha = low_pass_alpha(self.sample_rate, config.low_pass_cutoff_hz);
 
-        if config.fast_forward_active {
-            let available = self.producer.slots().min(samples.len());
+        if fast_forward_active {
+            let available = self.producer.slots().min(samples.len()) & !1;
             write_processed_samples(
                 &mut self.producer,
                 &samples[..available],

@@ -665,7 +665,7 @@ impl<'a> TimedMachineBus<'a> {
                 if let Some(display) = boundary.active_display() {
                     let (vdc, vce) = self.inner.devices_mut().video_devices_mut();
                     self.back_video
-                        .render_active_line(vdc, vce, display, pixel_clock)
+                        .render_active_line(vdc, vce, display, *self.vce_line_index, pixel_clock)
                         .map_err(PceMachineError::VideoRender)?;
                 }
             }
@@ -1624,6 +1624,11 @@ impl PceMachine {
     }
 
     #[inline]
+    pub fn mapped_work_ram_mut(&mut self) -> &mut [u8] {
+        self.bus.mapped_work_ram_mut()
+    }
+
+    #[inline]
     pub const fn hardware_topology(&self) -> PceHardwareTopology {
         self.bus.topology()
     }
@@ -1784,18 +1789,15 @@ impl PceMachine {
         execute: impl FnOnce(&mut HuC6280, &mut TimedMachineBus<'_>) -> Result<PceCpuAction, CpuTrap>,
     ) -> Result<PceMachineStep, PceMachineError> {
         let logical_pc = self.cpu.cpu().registers().pc;
-        let physical_pc = self.cpu.cpu().logical_to_physical(logical_pc);
         let trace_enabled = self.instruction_trace.is_enabled();
+        let trace_physical_pc =
+            trace_enabled.then(|| self.cpu.cpu().logical_to_physical(logical_pc));
         let trace_registers_before = trace_enabled.then(|| pce_trace_registers(&self.cpu));
-        let trace_rom_offset = trace_enabled
-            .then(|| self.bus.hucard_rom_offset(physical_pc))
-            .flatten();
         if trace_enabled {
             self.trace_scratch.clear();
         }
         let trace_frame = self.trace_frame;
         let trace_cycle = self.master_ticks;
-        let trace_bank = physical_pc >> 13;
         self.refresh_vdc_irq1();
         self.refresh_cdrom2_irq2();
         let entering_speed = self.cpu.cpu().speed_mode();
@@ -1860,6 +1862,11 @@ impl PceMachine {
         }
         let action = action.expect("successful CPU action is present");
         if trace_enabled {
+            let physical_pc = match action {
+                PceCpuAction::Instruction(step) => step.physical_pc,
+                PceCpuAction::Interrupt(_) => trace_physical_pc.expect("trace physical PC"),
+            };
+            let trace_rom_offset = self.bus.hucard_rom_offset(physical_pc);
             let trace = &self.trace_scratch;
             let mut record = InstructionTraceRecord::new(
                 TraceExecMode::HuC6280,
@@ -1873,7 +1880,7 @@ impl PceMachine {
                     &trace.instruction_bytes[..usize::from(trace.instruction_byte_len)]
                 },
             );
-            record.bank = Some(trace_bank);
+            record.bank = Some(physical_pc >> 13);
             if matches!(action, PceCpuAction::Interrupt(_)) {
                 record.event = Some(DebugEvent::Interrupt);
             } else if dma_completed {
@@ -1893,7 +1900,7 @@ impl PceMachine {
         if let PceCpuAction::Instruction(step) = action {
             self.opcode_history.push(PceOpcodeHistoryEntry {
                 logical_pc: step.pc,
-                physical_pc,
+                physical_pc: step.physical_pc,
                 opcode: step.opcode,
                 master_ticks: self.master_ticks,
             });

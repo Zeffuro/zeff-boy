@@ -26,6 +26,33 @@ fn try_parse_raw16(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     zeff_emu_common::cheats::parse_raw16_cheats(input).map(|patches| (patches, CheatType::Raw))
 }
 
+fn try_parse_pce_physical_ram(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
+    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let (address_text, value_text) = cleaned
+        .split_once(':')
+        .or_else(|| cleaned.split_once('='))?;
+    let address_text = address_text
+        .strip_prefix("0x")
+        .or_else(|| address_text.strip_prefix("0X"))
+        .or_else(|| address_text.strip_prefix('$'))
+        .unwrap_or(address_text);
+    if address_text.len() != 6 || value_text.len() != 2 {
+        return None;
+    }
+    let address = u32::from_str_radix(address_text, 16).ok()?;
+    let value = u8::from_str_radix(value_text, 16).ok()?;
+    if !(0x1F_0000..=0x1F_7FFF).contains(&address) {
+        return None;
+    }
+    Some((
+        vec![CheatPatch::WideRamWrite {
+            address,
+            value: CheatValue::constant(value),
+        }],
+        CheatType::Raw,
+    ))
+}
+
 fn try_parse_gba_codebreaker(input: &str) -> Option<(Vec<CheatPatch>, CheatType)> {
     zeff_emu_common::cheats::parse_gba_codebreaker_cheats(input)
         .map(|patches| (patches, CheatType::XPloder))
@@ -59,7 +86,7 @@ fn try_parse_single_for_system(
         ActiveSystem::Nes => zeff_gb_core::cheats::parse_cheat(input)
             .ok()
             .or_else(|| try_parse_nes_game_genie(input)),
-        ActiveSystem::Pce => try_parse_raw16(input),
+        ActiveSystem::Pce => try_parse_raw16(input).or_else(|| try_parse_pce_physical_ram(input)),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             zeff_sega8_core::cheats::parse_cheat(input).ok()
         }
@@ -107,7 +134,7 @@ pub(crate) fn parse_cheat_for_system(
                 all_patches.extend(patches);
             } else {
                 return Err(
-                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For PCE: raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
+                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For PCE: logical raw (AAAA:VV), physical RAM (1Fxxxx:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
                 );
             }
         }
@@ -120,7 +147,7 @@ pub(crate) fn parse_cheat_for_system(
     }
 
     Err(
-        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For PCE: raw (AAAA:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
+        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For PCE: logical raw (AAAA:VV), physical RAM (1Fxxxx:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
     )
 }
 

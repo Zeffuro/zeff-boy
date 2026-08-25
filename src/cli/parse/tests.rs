@@ -2,7 +2,7 @@ use super::input::parse_zapper_event_arg;
 use super::parse_args_from;
 use super::values::{
     parse_pce_arcade_card_mode_arg, parse_pce_controller_mode_arg, parse_pce_memory_base_mode_arg,
-    parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
+    parse_region_dump_arg, parse_sega8_console_region_arg, parse_sega8_video_standard_arg,
 };
 use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBaseMode};
 use zeff_sega8_core::hardware::region::Sega8Region;
@@ -181,6 +181,34 @@ fn parses_pce_multitap_headless_inputs() {
 fn parses_headless_apply_mods_option() {
     let args = parse_args_from(["--headless", "--apply-mods", "game.pce"]).unwrap();
     assert!(args.headless.unwrap().apply_mods);
+}
+
+#[test]
+fn region_dump_requires_a_bounded_nonempty_range() {
+    let dump = parse_region_dump_arg("vram:0x7000:0x1000", "--dump-region").unwrap();
+    assert_eq!(dump.region, "vram");
+    assert_eq!(dump.offset, 0x7000);
+    assert_eq!(dump.len, 0x1000);
+
+    assert!(parse_region_dump_arg(":0:1", "--dump-region").is_err());
+    assert!(parse_region_dump_arg("vram:0:0", "--dump-region").is_err());
+    assert!(parse_region_dump_arg("vram:0:4097", "--dump-region").is_err());
+    assert!(parse_region_dump_arg("vram:0", "--dump-region").is_err());
+}
+
+#[test]
+fn parses_headless_region_dump_option() {
+    let args = parse_args_from([
+        "--headless",
+        "--dump-region",
+        "video_ram:0x7000:32",
+        "game.pce",
+    ])
+    .unwrap();
+    let dump = &args.headless.unwrap().region_dumps[0];
+    assert_eq!(dump.region, "video_ram");
+    assert_eq!(dump.offset, 0x7000);
+    assert_eq!(dump.len, 32);
 }
 
 #[test]

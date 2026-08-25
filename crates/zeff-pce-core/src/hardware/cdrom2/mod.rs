@@ -270,6 +270,8 @@ pub struct CdRom2 {
     audio_end_lba: u32,
     audio_current_lba: u32,
     audio_current_sample: usize,
+    // Derived cache: never part of persistent emulation state.
+    audio_track_index: Option<usize>,
     audio_end_behavior: CdAudioEndBehavior,
     audio_tick_accumulator: u64,
     audio_left_sample: i16,
@@ -350,6 +352,7 @@ impl CdRom2 {
             audio_end_lba: 0,
             audio_current_lba: 0,
             audio_current_sample: 0,
+            audio_track_index: None,
             audio_end_behavior: CdAudioEndBehavior::Stop,
             audio_tick_accumulator: 0,
             audio_left_sample: 0,

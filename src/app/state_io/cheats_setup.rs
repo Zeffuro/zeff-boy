@@ -109,6 +109,8 @@ impl App {
                 rom_title,
                 Some(ws.emu.rom_crc32()),
             );
+        } else if let EmuBackend::Pce(pce) = backend {
+            apply_pce_cheat_rom_info(&mut self.debug_windows.cheat, system, path, pce);
         } else {
             self.debug_windows.cheat.rom_title = None;
             self.debug_windows.cheat.rom_crc32 = None;
@@ -135,6 +137,40 @@ impl App {
         self.debug_windows.mod_state.needs_reload = false;
         self.debug_windows.mod_state.status_message =
             (!warnings.is_empty()).then(|| warnings.join("\n"));
+    }
+}
+
+fn apply_pce_cheat_rom_info(
+    cheat: &mut CheatState,
+    system: ActiveSystem,
+    path: &Path,
+    pce: &crate::emu_backend::PceBackend,
+) {
+    let rom_title = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("PC Engine game")
+        .to_string();
+    let rom_crc32 = Some(crc32fast::hash(&pce.controller_profile_hash()));
+    apply_cheat_rom_info(
+        cheat,
+        system,
+        rom_title,
+        rom_crc32,
+        pce_libretro_platform(pce.cdrom2().is_some(), pce.hardware_topology()),
+    );
+}
+
+fn pce_libretro_platform(
+    has_cd: bool,
+    topology: zeff_pce_core::hardware::PceHardwareTopology,
+) -> LibretroPlatform {
+    if has_cd {
+        LibretroPlatform::PceCd
+    } else if topology == zeff_pce_core::hardware::PceHardwareTopology::SuperGrafx {
+        LibretroPlatform::SuperGrafx
+    } else {
+        LibretroPlatform::Pce
     }
 }
 
@@ -193,4 +229,72 @@ fn apply_local_cheat_rom_info(
         crate::cheats::load_game_cheats(system, cheat.rom_title.as_deref(), rom_crc32);
     cheat.user_codes = user;
     cheat.libretro_codes = libretro;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emu_core_trait::EmulatorCore;
+    use zeff_emu_common::time::FrameLifecycle;
+    use zeff_pce_core::hardware::PceHardwareTopology;
+
+    #[test]
+    fn pce_cheat_database_follows_loaded_hardware() {
+        assert_eq!(
+            pce_libretro_platform(false, PceHardwareTopology::Base),
+            LibretroPlatform::Pce
+        );
+        assert_eq!(
+            pce_libretro_platform(true, PceHardwareTopology::Base),
+            LibretroPlatform::PceCd
+        );
+        assert_eq!(
+            pce_libretro_platform(false, PceHardwareTopology::SuperGrafx),
+            LibretroPlatform::SuperGrafx
+        );
+    }
+
+    #[test]
+    fn pce_setup_import_and_application_use_physical_work_ram() {
+        let mut rom = vec![0xEA; 0x2000];
+        rom[..6].copy_from_slice(&[0xA9, 0xF8, 0x53, 0x02, 0x80, 0xFE]);
+        rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
+        let mut backend =
+            crate::emu_backend::PceBackend::new(rom, Path::new("Synthetic PCE.pce").to_path_buf())
+                .expect("PCE backend should initialize");
+        backend.step_frame();
+
+        let mut state = CheatState::new();
+        state.active_system = ActiveSystem::Pce;
+        apply_pce_cheat_rom_info(
+            &mut state,
+            ActiveSystem::Pce,
+            Path::new("Synthetic PCE.pce"),
+            &backend,
+        );
+        assert_eq!(state.rom_title.as_deref(), Some("Synthetic PCE"));
+        assert_eq!(state.libretro_platform, LibretroPlatform::Pce);
+        assert_eq!(
+            state.rom_crc32,
+            Some(crc32fast::hash(&backend.controller_profile_hash()))
+        );
+        assert!(
+            crate::emu_backend::CheatCapabilities::for_system(ActiveSystem::Pce)
+                .supports_libretro_database
+        );
+
+        state.user_codes.clear();
+        state.libretro_codes = crate::cheats::parse_cht_file_for_system(
+            "cheat0_desc = \"Lives\"\ncheat0_code = \"1f008d:09\"\ncheat0_enable = true\n",
+            ActiveSystem::Pce,
+        );
+        let patches =
+            crate::cheats::collect_enabled_patches(&state.user_codes, &state.libretro_codes);
+        EmulatorCore::apply_ram_cheats(&mut backend, &patches);
+
+        assert_eq!(
+            backend.debug_peek8(zeff_emu_common::address::Address::from(0x208D_u16)),
+            0x09
+        );
+    }
 }

@@ -113,50 +113,41 @@ impl HuC6270 {
 
         let width_pixels = state.width_tiles * TILE_SIZE;
         let height_pixels = state.height_tiles * TILE_SIZE;
-        let virtual_y = (state.scroll_y + display_line % height_pixels) % height_pixels;
-        for (display_x, pixel) in output.iter_mut().enumerate() {
-            *pixel = self.background_palette_index(state, virtual_y, display_x, width_pixels);
+        let virtual_y = (state.scroll_y + display_line) & (height_pixels - 1);
+        let tile_y = virtual_y / TILE_SIZE;
+        let row = virtual_y % TILE_SIZE;
+        let width_mask = width_pixels - 1;
+        let mut display_x = 0;
+        while display_x < output.len() {
+            let virtual_x = (state.scroll_x + display_x) & width_mask;
+            let tile_x = virtual_x / TILE_SIZE;
+            let column = virtual_x % TILE_SIZE;
+            let entry = self.vram()[tile_y * state.width_tiles + tile_x];
+            let (planes_zero_one, planes_two_three) =
+                self.background_pattern_row(usize::from(entry & 0x0FFF), row, state.color_mode);
+            let pixels = (TILE_SIZE - column).min(output.len() - display_x);
+            let palette = (entry >> 8) as u8 & 0xF0;
+            for offset in 0..pixels {
+                let bit = 7 - column - offset;
+                let pattern = ((planes_zero_one >> bit) & 1) as u8
+                    | (((planes_zero_one >> (bit + 8)) & 1) as u8) << 1
+                    | (((planes_two_three >> bit) & 1) as u8) << 2
+                    | (((planes_two_three >> (bit + 8)) & 1) as u8) << 3;
+                output[display_x + offset] = if pattern == 0 { 0 } else { palette | pattern };
+            }
+            display_x += pixels;
         }
         Ok(BackgroundScanlineStatus::Rendered)
     }
 
-    fn background_palette_index(
-        &self,
-        state: &BackgroundRenderState,
-        virtual_y: usize,
-        display_x: usize,
-        width_pixels: usize,
-    ) -> u8 {
-        let virtual_x = (state.scroll_x + display_x % width_pixels) % width_pixels;
-        let tile_x = virtual_x / TILE_SIZE;
-        let column = virtual_x % TILE_SIZE;
-        let tile_y = virtual_y / TILE_SIZE;
-        let row = virtual_y % TILE_SIZE;
-        let bat_word = tile_y * state.width_tiles + tile_x;
-        let entry = self.vram()[bat_word];
-        let pattern = self.background_pattern_pixel(
-            usize::from(entry & 0x0FFF),
-            row,
-            column,
-            state.color_mode,
-        );
-        if pattern == 0 {
-            0
-        } else {
-            ((entry >> 8) as u8 & 0xF0) | pattern
-        }
-    }
-
-    fn background_pattern_pixel(
+    fn background_pattern_row(
         &self,
         character_code: usize,
         row: usize,
-        column: usize,
         color_mode: BackgroundColorMode,
-    ) -> u8 {
+    ) -> (u16, u16) {
         let base = character_code << 4;
-        let bit = 7 - column;
-        let (planes_zero_one, planes_two_three) = match color_mode {
+        match color_mode {
             BackgroundColorMode::Full => (
                 self.background_pattern_word(base + row),
                 self.background_pattern_word(base + 8 + row),
@@ -165,11 +156,7 @@ impl HuC6270 {
             BackgroundColorMode::PlanesTwoAndThree => {
                 (0, self.background_pattern_word(base + 8 + row))
             }
-        };
-        ((planes_zero_one >> bit) & 1) as u8
-            | (((planes_zero_one >> (bit + 8)) & 1) as u8) << 1
-            | (((planes_two_three >> bit) & 1) as u8) << 2
-            | (((planes_two_three >> (bit + 8)) & 1) as u8) << 3
+        }
     }
 
     #[inline]

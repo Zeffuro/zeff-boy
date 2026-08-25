@@ -99,6 +99,7 @@ fn semantic_result() -> FrameResult {
         runtime_fault: None,
         rumble: false,
         audio_samples: Vec::new(),
+        audio_playback_speed: 1,
         ui_data: crate::ui::UiFrameData::default(),
         is_mbc7: false,
         is_pocket_camera: false,
@@ -148,6 +149,7 @@ fn frame_input(frames: usize) -> FrameInput {
         audio: AudioConfig {
             apu_capture_enabled: false,
             skip_audio: true,
+            playback_speed: 1,
             recording_capture: AudioRecordingCapture::default(),
         },
         debug_actions: crate::debug::DebugUiActions::none(),
@@ -215,6 +217,23 @@ fn direct_step_commands_are_inert_after_runtime_fault() {
 
     assert!(emu_loop.handle_command(EmuCommand::SetUncapped(true)));
     assert!(!emu_loop.uncapped_mode);
+}
+
+#[test]
+fn uncapped_batch_size_command_clamps_invalid_settings() {
+    let (mut emu_loop, _responses) = test_loop();
+
+    assert!(emu_loop.handle_command(EmuCommand::SetUncappedBatchSize(0)));
+    assert_eq!(emu_loop.uncapped_batch_size, 1);
+
+    assert!(emu_loop.handle_command(EmuCommand::SetUncappedBatchSize(17)));
+    assert_eq!(emu_loop.uncapped_batch_size, 17);
+
+    assert!(emu_loop.handle_command(EmuCommand::SetUncappedBatchSize(usize::MAX)));
+    assert_eq!(
+        emu_loop.uncapped_batch_size,
+        super::super::MAX_UNCAPPED_BATCH_SIZE
+    );
 }
 
 fn replay_link_state(

@@ -73,6 +73,64 @@ fn forced_blank_overrides_rendered_layers_with_white() {
 }
 
 #[test]
+fn scanline_backdrop_matches_frame_renderer_for_all_effect_modes() {
+    for first_target in [false, true] {
+        for second_target in [false, true] {
+            for blend_mode in 0..4 {
+                let mut frame_bus = Bus::new(cartridge(), 48_000);
+                let mut scanline_bus = Bus::new(cartridge(), 48_000);
+                for bus in [&mut frame_bus, &mut scanline_bus] {
+                    bus.write16(0x0500_0000, 0x421F);
+                    bus.write16(
+                        0x0400_0050,
+                        (u16::from(first_target) << 5)
+                            | (u16::from(second_target) << 13)
+                            | (blend_mode << 6),
+                    );
+                    bus.write16(0x0400_0052, 0x1010);
+                    bus.write16(0x0400_0054, 9);
+                }
+
+                frame_bus.render_frame();
+                scanline_bus.step_cycles(1006);
+                assert_eq!(
+                    &scanline_bus.ppu.framebuffer()[..SCREEN_WIDTH * 4],
+                    &frame_bus.ppu.framebuffer()[..SCREEN_WIDTH * 4],
+                    "first target {first_target}, second target {second_target}, mode {blend_mode}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn scanline_backdrop_keeps_per_pixel_window_effects() {
+    let mut frame_bus = Bus::new(cartridge(), 48_000);
+    let mut scanline_bus = Bus::new(cartridge(), 48_000);
+    for bus in [&mut frame_bus, &mut scanline_bus] {
+        bus.write16(0x0400_0000, 1 << 13);
+        bus.write16(0x0400_0040, 2);
+        bus.write16(0x0400_0044, 1);
+        bus.write16(0x0400_0048, 0);
+        bus.write16(0x0400_004A, 1 << 5);
+        bus.write16(0x0400_0050, (1 << 5) | (2 << 6));
+        bus.write16(0x0400_0054, 16);
+        bus.write16(0x0500_0000, 0x001F);
+    }
+
+    frame_bus.render_frame();
+    scanline_bus.step_cycles(1006);
+    assert_eq!(
+        &scanline_bus.ppu.framebuffer()[..SCREEN_WIDTH * 4],
+        &frame_bus.ppu.framebuffer()[..SCREEN_WIDTH * 4],
+    );
+    assert_ne!(
+        framebuffer_pixel(&scanline_bus, 0, 0),
+        framebuffer_pixel(&scanline_bus, 2, 0),
+    );
+}
+
+#[test]
 fn mode3_brightness_increase_applies_to_selected_bg2_target() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.write16(0x0400_0000, 3);

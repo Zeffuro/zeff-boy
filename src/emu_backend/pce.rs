@@ -55,6 +55,8 @@ const PCEAS_HEADER_LEN: usize = 0x200;
 const BACKEND_STATE_MAGIC: &[u8; 8] = b"ZBPCEBE\0";
 const BACKEND_STATE_VERSION: u32 = 1;
 const MAX_CORE_STATE_BYTES: usize = 8 * 1024 * 1024;
+const PCE_PHYSICAL_WORK_RAM_START: u32 = 0x1F_0000;
+const PCE_PHYSICAL_WORK_RAM_END: u32 = 0x1F_7FFF;
 const MEMORY_BASE128_ALIASES: &[&str] = &["mb128", "memorybase128", "memory_base"];
 const MEMORY_BASE128_REGION: MemoryRegionDescriptor = MemoryRegionDescriptor {
     id: "memory_base_128",
@@ -341,6 +343,10 @@ impl PceBackend {
 
     pub(crate) fn debug_cpu_snapshot(&self) -> PceCpuDebugSnapshot {
         self.machine.debug_snapshot()
+    }
+
+    pub(crate) fn debug_presented_frame(&self) -> zeff_pce_core::hardware::PcePresentedFrame<'_> {
+        self.machine.presented_frame()
     }
 
     pub(crate) fn debug_suspend(&mut self) {
@@ -1142,6 +1148,8 @@ impl EmulatorCore for PceBackend {
 
     fn apply_ram_cheats(&mut self, cheats: &[crate::cheats::CheatPatch]) {
         zeff_emu_common::cheats::apply_ram_cheats_16(&mut self.machine, cheats);
+        let mut physical_ram = PcePhysicalRam::new(self.machine.mapped_work_ram_mut());
+        zeff_emu_common::cheats::apply_wide_ram_cheats(&mut physical_ram, cheats);
     }
 
     fn debug_suspend(&mut self) {
@@ -1354,6 +1362,36 @@ fn append_words_le(out: &mut Vec<u8>, words: &[u16]) {
     out.reserve(size_of_val(words));
     for &word in words {
         out.extend_from_slice(&word.to_le_bytes());
+    }
+}
+
+struct PcePhysicalRam<'a> {
+    bytes: &'a mut [u8],
+}
+
+impl<'a> PcePhysicalRam<'a> {
+    fn new(bytes: &'a mut [u8]) -> Self {
+        debug_assert!(bytes.len().is_power_of_two());
+        Self { bytes }
+    }
+
+    fn offset(&self, address: u32) -> Option<usize> {
+        if !(PCE_PHYSICAL_WORK_RAM_START..=PCE_PHYSICAL_WORK_RAM_END).contains(&address) {
+            return None;
+        }
+        Some((address as usize - PCE_PHYSICAL_WORK_RAM_START as usize) & (self.bytes.len() - 1))
+    }
+}
+
+impl zeff_emu_common::cheats::CheatByteTarget<Address> for PcePhysicalRam<'_> {
+    fn cheat_peek8(&self, address: Address) -> u8 {
+        self.offset(address).map_or(0, |offset| self.bytes[offset])
+    }
+
+    fn cheat_write8(&mut self, address: Address, value: u8) {
+        if let Some(offset) = self.offset(address) {
+            self.bytes[offset] = value;
+        }
     }
 }
 

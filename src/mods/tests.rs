@@ -155,7 +155,8 @@ fn apply_enabled_pce_cd_mods_targets_track_from_xdelta_filename() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let source = b"original data track".to_vec();
-    let target = b"translated data track".to_vec();
+    let mut target = source.clone();
+    target[..5].copy_from_slice(b"local");
     let patch = xdelta3::encode(&target, &source).unwrap();
     std::fs::write(dir.join("translation-track02.xdelta"), patch).unwrap();
     let entries = vec![ModEntry {
@@ -164,12 +165,60 @@ fn apply_enabled_pce_cd_mods_targets_track_from_xdelta_filename() {
         target: None,
     }];
     let mut files = vec![vec![0; source.len()], source];
-    let references = vec![
-        "Game (Track 01).bin".to_owned(),
-        "Game (Track 02).bin".to_owned(),
+    let targets = vec![
+        PceCdPatchTarget::File {
+            reference: "Game (Track 01).bin".to_owned(),
+            segment: 0,
+        },
+        PceCdPatchTarget::File {
+            reference: "Game (Track 02).bin".to_owned(),
+            segment: 1,
+        },
+        PceCdPatchTarget::Track {
+            number: 1,
+            segment: 0,
+            bytes: 0..files[0].len(),
+        },
+        PceCdPatchTarget::Track {
+            number: 2,
+            segment: 1,
+            bytes: 0..files[1].len(),
+        },
     ];
 
-    let warnings = apply_enabled_pce_cd_mods(&mut files, &references, &dir, &entries);
+    let warnings = apply_enabled_pce_cd_mods(&mut files, &targets, &dir, &entries);
+
+    assert!(warnings.is_empty());
+    assert_eq!(files[1], target);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn apply_enabled_pce_cd_mods_allows_a_whole_track_to_change_length() {
+    let dir = std::env::temp_dir().join("zeff_test_mods_apply_pce_cd_longer_track");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = b"short track".to_vec();
+    let target = b"a replacement track with a different length".to_vec();
+    std::fs::write(
+        dir.join("dub-track02.xdelta"),
+        xdelta3::encode(&target, &source).unwrap(),
+    )
+    .unwrap();
+    let entries = vec![ModEntry {
+        filename: "dub-track02.xdelta".to_owned(),
+        enabled: true,
+        target: None,
+    }];
+    let mut files = vec![vec![0; 8], source];
+    let targets = vec![PceCdPatchTarget::Track {
+        number: 2,
+        segment: 1,
+        bytes: 0..files[1].len(),
+    }];
+
+    let warnings = apply_enabled_pce_cd_mods(&mut files, &targets, &dir, &entries);
 
     assert!(warnings.is_empty());
     assert_eq!(files[1], target);
@@ -244,8 +293,17 @@ fn apply_enabled_pce_cd_mods_treats_cue_files_as_one_image() {
     }];
     assert_eq!(mod_advisories(&dir, &entries).len(), 1);
     let mut files = vec![vec![0; 4], vec![0; 4]];
-    let references = vec!["Track 01.bin".to_owned(), "Track 02.bin".to_owned()];
-    let warnings = apply_enabled_pce_cd_mods(&mut files, &references, &dir, &entries);
+    let targets = vec![
+        PceCdPatchTarget::File {
+            reference: "Track 01.bin".to_owned(),
+            segment: 0,
+        },
+        PceCdPatchTarget::File {
+            reference: "Track 02.bin".to_owned(),
+            segment: 1,
+        },
+    ];
+    let warnings = apply_enabled_pce_cd_mods(&mut files, &targets, &dir, &entries);
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("no source check"));
     assert_eq!(files, vec![vec![0, 0, 0, 1], vec![2, 3, 0, 0]]);

@@ -39,7 +39,7 @@ pub(super) fn render_presented_frame_rgba(
     fill_disabled_scanlines_backdrop_rgba(vdp, framebuffer, area, color_mode);
 }
 
-fn render_background_rgba_with_color(
+pub(super) fn render_background_rgba_with_color(
     vdp: &Vdp,
     framebuffer: &mut [u8],
     area: Mode4RenderArea,
@@ -51,13 +51,70 @@ fn render_background_rgba_with_color(
     }
 
     let name_table_base = vdp.mode4_name_table_base();
+    let name_table_rows = vdp.mode4_name_table_rows();
     for y in 0..area.height {
-        for x in 0..area.width {
+        let full_y = area.source_y + y;
+        let h_scroll = if vdp.horizontal_scroll_locked_for_y(full_y) {
+            0
+        } else {
+            usize::from(vdp.registers[VDP_REGISTER_HORIZONTAL_SCROLL])
+        };
+        let mut x = 0;
+        while x < area.width {
             let full_x = area.source_x + x;
-            let pixel = vdp.mode4_background_pixel(name_table_base, full_x, area.source_y + y);
-            let rgba = vdp.mode4_color_rgba(pixel.color_index, color_mode);
-            let offset = (y * area.width + x) * RGBA_CHANNELS;
-            framebuffer[offset..offset + RGBA_CHANNELS].copy_from_slice(&rgba);
+            let v_scroll = if vdp.vertical_scroll_locked_for_x(full_x) {
+                0
+            } else {
+                usize::from(vdp.registers[VDP_REGISTER_VERTICAL_SCROLL])
+            };
+            let screen_y = (full_y + v_scroll) % (name_table_rows * SMS_TILE_SIZE);
+            let tile_y = (screen_y / SMS_TILE_SIZE) % name_table_rows;
+            let row_in_tile = screen_y % SMS_TILE_SIZE;
+            let screen_x = full_x.wrapping_sub(h_scroll) % (SMS_NAME_TABLE_COLUMNS * SMS_TILE_SIZE);
+            let tile_x = (screen_x / SMS_TILE_SIZE) % SMS_NAME_TABLE_COLUMNS;
+            let col_in_tile = screen_x % SMS_TILE_SIZE;
+            let tile_entry = vdp.mode4_name_table_entry(name_table_base, tile_x, tile_y);
+            let tile_index = usize::from(tile_entry & MODE4_TILE_INDEX_MASK);
+            let pattern_row = if tile_entry & MODE4_TILE_VFLIP != 0 {
+                SMS_TILE_SIZE - 1 - row_in_tile
+            } else {
+                row_in_tile
+            };
+            let pattern_base = tile_index * SMS_MODE4_TILE_BYTES + pattern_row * 4;
+            let planes = [
+                vdp.vram[pattern_base % vdp.vram.len()],
+                vdp.vram[(pattern_base + 1) % vdp.vram.len()],
+                vdp.vram[(pattern_base + 2) % vdp.vram.len()],
+                vdp.vram[(pattern_base + 3) % vdp.vram.len()],
+            ];
+            let palette_offset = if tile_entry & MODE4_TILE_PALETTE != 0 {
+                MODE4_PALETTE_COLOR_OFFSET
+            } else {
+                0
+            };
+            let mut span = (SMS_TILE_SIZE - col_in_tile).min(area.width - x);
+            if full_x < 24 * SMS_TILE_SIZE {
+                span = span.min(24 * SMS_TILE_SIZE - full_x);
+            }
+
+            for offset in 0..span {
+                let col = (col_in_tile + offset) % SMS_TILE_SIZE;
+                let pattern_col = if tile_entry & MODE4_TILE_HFLIP != 0 {
+                    SMS_TILE_SIZE - 1 - col
+                } else {
+                    col
+                };
+                let bit = MODE4_PATTERN_LEFT_PIXEL_MASK >> pattern_col;
+                let color = usize::from(planes[0] & bit != 0)
+                    | (usize::from(planes[1] & bit != 0) << 1)
+                    | (usize::from(planes[2] & bit != 0) << 2)
+                    | (usize::from(planes[3] & bit != 0) << 3);
+                let rgba = vdp.mode4_color_rgba(color + palette_offset, color_mode);
+                let dest_x = x + offset;
+                let pixel_offset = (y * area.width + dest_x) * RGBA_CHANNELS;
+                framebuffer[pixel_offset..pixel_offset + RGBA_CHANNELS].copy_from_slice(&rgba);
+            }
+            x += span;
         }
     }
 }

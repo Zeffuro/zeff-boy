@@ -2,6 +2,8 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::io::{BufReader, Read};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crc32fast::Hasher as Crc32;
@@ -29,6 +31,7 @@ pub(crate) struct LoadedPceCd {
     pub(crate) disc: CdDisc,
     pub(crate) content_sha256: [u8; 32],
     pub(crate) content_crc32: u32,
+    pub(crate) mod_crc32: u32,
     pub(crate) source_disc_sha256: [u8; 32],
 }
 
@@ -38,14 +41,22 @@ pub(crate) enum PceCdLoadError {
     CueUnreadable(PathBuf),
     CueTooLarge(u64),
     CueNotUtf8,
+    IsoCueMissing(PathBuf),
+    IsoCueAmbiguous(Vec<PathBuf>),
     MissingFile,
     DuplicateFile,
     TooManyFileReferences,
     UnsafeFileReference(String),
+    AmbiguousFileReference(String),
     BinUnreadable(PathBuf),
+    ChdUnreadable(PathBuf),
     DataTooLarge(u64),
     UnsupportedFileType(String),
     UnsupportedTrackMode(String),
+    UnsupportedChdTrack(String),
+    UnsupportedChdPregap(u8),
+    UnsupportedChdPostgap(u8),
+    InvalidChdMetadata,
     MalformedLine(usize),
     DuplicateTrack(u8),
     MissingIndex1(u8),
@@ -53,6 +64,7 @@ pub(crate) enum PceCdLoadError {
         track: u8,
         index: u8,
     },
+    DuplicatePregap(u8),
     InvalidIndexOrder(u8),
     InvalidTrackOrder,
     MisalignedBin {
@@ -134,6 +146,21 @@ struct CueTrack {
     mode: CdTrackMode,
     index0: Option<u32>,
     index1: Option<u32>,
+    pregap: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChdTrack {
+    number: u8,
+    mode: CdTrackMode,
+    frames: u32,
+    pregap: u32,
+}
+
+impl ChdTrack {
+    fn payload_bytes(&self) -> usize {
+        sector_bytes(self.mode)
+    }
 }
 
 #[cfg(test)]
@@ -157,7 +184,7 @@ pub(crate) fn load_direct_cue_with_mods(
     let mut data = Vec::with_capacity(sheet.files.len());
     let mut total = 0_u64;
     for file in &sheet.files {
-        let path = parent.join(portable_path(&file.reference));
+        let path = resolve_direct_file_reference(parent, &file.reference)?;
         let metadata =
             std::fs::metadata(&path).map_err(|_| PceCdLoadError::BinUnreadable(path.clone()))?;
         total = total
@@ -169,6 +196,189 @@ pub(crate) fn load_direct_cue_with_mods(
         data.push(std::fs::read(&path).map_err(|_| PceCdLoadError::BinUnreadable(path.clone()))?);
     }
     build_disc_with_mods(cue_bytes, &sheet, data, apply_mods)
+}
+
+pub(crate) fn cue_path_for_iso(iso_path: &Path) -> Result<PathBuf, PceCdLoadError> {
+    let canonical_iso = std::fs::canonicalize(iso_path)
+        .map_err(|_| PceCdLoadError::BinUnreadable(iso_path.to_path_buf()))?;
+    let parent = iso_path.parent().unwrap_or_else(|| Path::new(""));
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    let entries = std::fs::read_dir(parent)
+        .map_err(|_| PceCdLoadError::BinUnreadable(iso_path.to_path_buf()))?;
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        let cue_path = entry.path();
+        if !cue_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cue"))
+        {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.len() > PCE_CD_CUE_BYTES_LIMIT as u64 {
+            continue;
+        }
+        let Ok(cue_bytes) = std::fs::read(&cue_path) else {
+            continue;
+        };
+        let Ok(sheet) = parse_cue_bytes(&cue_bytes) else {
+            continue;
+        };
+        let references_iso = sheet.files.iter().any(|file| {
+            resolve_direct_file_reference(parent, &file.reference)
+                .and_then(|referenced| {
+                    std::fs::canonicalize(referenced)
+                        .map_err(|_| PceCdLoadError::BinUnreadable(iso_path.to_path_buf()))
+                })
+                .is_ok_and(|canonical| canonical == canonical_iso)
+        });
+        if references_iso {
+            matches.push(cue_path);
+        }
+    }
+    matches.sort();
+    match matches.as_slice() {
+        [cue] => Ok(cue.clone()),
+        [] => Err(PceCdLoadError::IsoCueMissing(iso_path.to_path_buf())),
+        _ => Err(PceCdLoadError::IsoCueAmbiguous(matches)),
+    }
+}
+
+fn resolve_direct_file_reference(
+    parent: &Path,
+    reference: &str,
+) -> Result<PathBuf, PceCdLoadError> {
+    let candidate = parent.join(portable_path(reference));
+    let mut resolved = if parent.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        parent.to_path_buf()
+    };
+    for component in reference.split('/') {
+        let entries = std::fs::read_dir(&resolved)
+            .map_err(|_| PceCdLoadError::BinUnreadable(candidate.clone()))?;
+        let mut matches = entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(component))
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        matches.sort();
+        resolved = match matches.as_slice() {
+            [path] => path.clone(),
+            [] => return Err(PceCdLoadError::BinUnreadable(candidate)),
+            _ => {
+                return Err(PceCdLoadError::AmbiguousFileReference(reference.to_owned()));
+            }
+        };
+    }
+    if std::fs::metadata(&resolved).is_ok_and(|metadata| metadata.is_file()) {
+        Ok(resolved)
+    } else {
+        Err(PceCdLoadError::BinUnreadable(candidate))
+    }
+}
+
+pub(crate) fn load_direct_chd_with_mods(
+    chd_path: &Path,
+    apply_mods: bool,
+) -> Result<LoadedPceCd, PceCdLoadError> {
+    let file = std::fs::File::open(chd_path)
+        .map_err(|_| PceCdLoadError::ChdUnreadable(chd_path.to_path_buf()))?;
+    let mut chd = chd::Chd::open(BufReader::new(file), None)
+        .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
+    if chd.header().unit_bytes() != 2_448 || !chd.header().hunk_size().is_multiple_of(2_448) {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    let metadata: Vec<chd::metadata::Metadata> = chd
+        .metadata_refs()
+        .try_into()
+        .map_err(|error: chd::Error| PceCdLoadError::Disc(error.to_string()))?;
+    let mut tracks = metadata
+        .iter()
+        .filter(|entry| entry.metatag == u32::from_be_bytes(*b"CHT2"))
+        .map(|entry| parse_chd_track_metadata(&entry.value))
+        .collect::<Result<Vec<_>, _>>()?;
+    if tracks.is_empty() || tracks.len() > 99 {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    tracks.sort_by_key(|track| track.number);
+    for (index, track) in tracks.iter().enumerate() {
+        if track.number != (index + 1) as u8 {
+            return Err(PceCdLoadError::InvalidTrackOrder);
+        }
+    }
+    let total_frames = tracks.iter().try_fold(0_u64, |total, track| {
+        total
+            .checked_add(u64::from(padded_chd_frames(track.frames)))
+            .ok_or(PceCdLoadError::DataTooLarge(u64::MAX))
+    })?;
+    if total_frames != chd.header().logical_bytes() / 2_448
+        || !chd.header().logical_bytes().is_multiple_of(2_448)
+    {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    let data_bytes = tracks.iter().try_fold(0_u64, |total, track| {
+        total
+            .checked_add(u64::from(track.frames) * track.payload_bytes() as u64)
+            .ok_or(PceCdLoadError::DataTooLarge(u64::MAX))
+    })?;
+    if data_bytes > PCE_CD_DATA_BYTES_LIMIT as u64 {
+        return Err(PceCdLoadError::DataTooLarge(data_bytes));
+    }
+    let mut payloads = tracks
+        .iter()
+        .map(|track| Vec::with_capacity(track.frames as usize * track.payload_bytes()))
+        .collect::<Vec<_>>();
+    let mut compressed = Vec::new();
+    let mut decoded = chd.get_hunksized_buffer();
+    let mut frame = 0_u64;
+    let mut track_index = 0_usize;
+    let mut track_end = u64::from(padded_chd_frames(tracks[track_index].frames));
+    'decode: for hunk_number in 0..chd.header().hunk_count() {
+        let mut hunk = chd
+            .hunk(hunk_number)
+            .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
+        hunk.read_hunk_in(&mut compressed, &mut decoded)
+            .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
+        let (sectors, remainder) = decoded.as_chunks::<2_448>();
+        debug_assert!(remainder.is_empty());
+        for sector in sectors {
+            if frame == total_frames {
+                break 'decode;
+            }
+            while frame == track_end && track_index + 1 < tracks.len() {
+                track_index += 1;
+                track_end += u64::from(padded_chd_frames(tracks[track_index].frames));
+            }
+            if frame
+                < track_end
+                    - u64::from(
+                        padded_chd_frames(tracks[track_index].frames) - tracks[track_index].frames,
+                    )
+            {
+                payloads[track_index]
+                    .extend_from_slice(&sector[..tracks[track_index].payload_bytes()]);
+            }
+            frame += 1;
+        }
+    }
+    if frame != total_frames {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    normalize_chd_audio_payloads(&tracks, &mut payloads);
+    build_chd_disc_with_mods(chd_path, tracks, payloads, apply_mods)
 }
 
 pub(super) fn parse_cue_bytes(cue_bytes: &[u8]) -> Result<CueSheet, PceCdLoadError> {
@@ -250,7 +460,30 @@ fn parse_cue(cue: &str) -> Result<CueSheet, PceCdLoadError> {
                 mode,
                 index0: None,
                 index1: None,
+                pregap: None,
             });
+            continue;
+        }
+        if keyword.eq_ignore_ascii_case("PREGAP") {
+            let track = tracks
+                .last_mut()
+                .ok_or(PceCdLoadError::MalformedLine(line_number))?;
+            if track.index0.is_some() || track.index1.is_some() {
+                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
+            }
+            let mut fields = line.split_ascii_whitespace();
+            fields.next();
+            let pregap = fields
+                .next()
+                .and_then(parse_msf)
+                .filter(|pregap| *pregap != 0)
+                .ok_or(PceCdLoadError::MalformedLine(line_number))?;
+            if fields.next().is_some() {
+                return Err(PceCdLoadError::MalformedLine(line_number));
+            }
+            if track.pregap.replace(pregap).is_some() {
+                return Err(PceCdLoadError::DuplicatePregap(track.number));
+            }
             continue;
         }
         if keyword.eq_ignore_ascii_case("INDEX") {
@@ -272,7 +505,7 @@ fn parse_cue(cue: &str) -> Result<CueSheet, PceCdLoadError> {
                 return Err(PceCdLoadError::MalformedLine(line_number));
             }
             let destination = if index == 0 {
-                if track.index1.is_some() {
+                if track.index1.is_some() || track.pregap.is_some() {
                     return Err(PceCdLoadError::InvalidIndexOrder(track.number));
                 }
                 &mut track.index0
@@ -379,20 +612,19 @@ pub(super) fn build_disc_with_mods(
     }
 
     let (content_sha256, content_crc32) = content_identity(&cue_bytes, sheet, &files);
+    let normalized_source_disc_sha256 = normalized_disc_identity(sheet, &files)?;
+    let canonical_mod_crc32 = crc32fast::hash(&normalized_source_disc_sha256);
+    let mut mod_crc32 = canonical_mod_crc32;
     let mut source_disc_sha256 = None;
     if apply_mods {
-        let dir = crate::mods::mods_dir_for_rom(super::ActiveSystem::Pce, content_crc32);
-        let mods = crate::mods::load_mod_config(&dir);
+        let (dir, mods, selected_crc32) = pce_cd_mod_config(canonical_mod_crc32, content_crc32);
+        mod_crc32 = selected_crc32;
         let enabled = mods.iter().filter(|entry| entry.enabled).count();
         if enabled != 0 {
-            source_disc_sha256 = Some(normalized_disc_identity(sheet, &files)?);
-            let file_references = sheet
-                .files
-                .iter()
-                .map(|file| file.reference.clone())
-                .collect::<Vec<_>>();
+            source_disc_sha256 = Some(normalized_source_disc_sha256);
+            let targets = cue_patch_targets(sheet, &files)?;
             let warnings =
-                crate::mods::apply_enabled_pce_cd_mods(&mut files, &file_references, &dir, &mods);
+                crate::mods::apply_enabled_pce_cd_mods(&mut files, &targets, &dir, &mods);
             for warning in &warnings {
                 log::warn!("Mod warning: {warning}");
             }
@@ -441,6 +673,7 @@ pub(super) fn build_disc_with_mods(
             return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
         }
         let base = cursor;
+        let mut virtual_offset = 0_u32;
         for (track_offset, track) in file_tracks.iter().enumerate() {
             debug_assert_eq!(track.file_index, file_index);
             let raw_index1 = track
@@ -456,20 +689,32 @@ pub(super) fn build_disc_with_mods(
             if raw_index1 >= end || end > total_sectors {
                 return Err(PceCdLoadError::TrackOutsideBin(track.number));
             }
+            let virtual_pregap = track.pregap.unwrap_or(0);
             let index1 = raw_index1
                 .checked_sub(anchor)
                 .and_then(|index| base.checked_add(index))
+                .and_then(|index| index.checked_add(virtual_offset))
+                .and_then(|index| index.checked_add(virtual_pregap))
                 .ok_or(PceCdLoadError::InvalidTrackOrder)?;
-            let index0 = track
-                .index0
-                .and_then(|index| index.checked_sub(anchor))
-                .map(|index| {
-                    base.checked_add(index)
-                        .ok_or(PceCdLoadError::InvalidTrackOrder)
-                })
-                .transpose()?;
-            let raw_stored_start = if index0.is_some() {
-                track.index0.unwrap()
+            let index0 = if virtual_pregap != 0 {
+                Some(
+                    index1
+                        .checked_sub(virtual_pregap)
+                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
+                )
+            } else {
+                track
+                    .index0
+                    .and_then(|index| index.checked_sub(anchor))
+                    .map(|index| {
+                        base.checked_add(index)
+                            .and_then(|index| index.checked_add(virtual_offset))
+                            .ok_or(PceCdLoadError::InvalidTrackOrder)
+                    })
+                    .transpose()?
+            };
+            let raw_stored_start = if virtual_pregap == 0 {
+                index0.and(track.index0).unwrap_or(raw_index1)
             } else {
                 raw_index1
             };
@@ -482,7 +727,20 @@ pub(super) fn build_disc_with_mods(
             } else {
                 bytes[start_byte..end_byte].to_vec()
             };
-            normalized.push(
+            let track = if virtual_pregap != 0 {
+                CdTrack::from_index1_data(
+                    track.number,
+                    if track.mode == CdTrackMode::Audio {
+                        0
+                    } else {
+                        4
+                    },
+                    index0,
+                    index1,
+                    track.mode,
+                    track_bytes,
+                )
+            } else {
                 CdTrack::from_stored_data(
                     track.number,
                     if track.mode == CdTrackMode::Audio {
@@ -495,8 +753,12 @@ pub(super) fn build_disc_with_mods(
                     track.mode,
                     track_bytes,
                 )
-                .map_err(|error| PceCdLoadError::Disc(error.to_string()))?,
-            );
+            }
+            .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
+            normalized.push(track);
+            virtual_offset = virtual_offset
+                .checked_add(virtual_pregap)
+                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
         }
         cursor = cursor
             .checked_add(
@@ -504,6 +766,7 @@ pub(super) fn build_disc_with_mods(
                     .checked_sub(anchor)
                     .ok_or(PceCdLoadError::InvalidTrackOrder)?,
             )
+            .and_then(|cursor| cursor.checked_add(virtual_offset))
             .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
 
@@ -513,7 +776,306 @@ pub(super) fn build_disc_with_mods(
         disc,
         content_sha256,
         content_crc32,
+        mod_crc32,
     })
+}
+
+fn pce_cd_mod_config(
+    mod_crc32: u32,
+    legacy_crc32: u32,
+) -> (PathBuf, Vec<crate::mods::ModEntry>, u32) {
+    let canonical = crate::mods::mods_dir_for_rom(super::ActiveSystem::Pce, mod_crc32);
+    let mods = crate::mods::load_mod_config(&canonical);
+    if !mods.is_empty() || mod_crc32 == legacy_crc32 {
+        return (canonical, mods, mod_crc32);
+    }
+    let legacy = crate::mods::mods_dir_for_rom(super::ActiveSystem::Pce, legacy_crc32);
+    let legacy_mods = crate::mods::load_mod_config(&legacy);
+    if legacy_mods.is_empty() {
+        (canonical, mods, mod_crc32)
+    } else {
+        log::info!("Using legacy PC Engine CD mod directory; move it to {mod_crc32:08x}");
+        (legacy, legacy_mods, legacy_crc32)
+    }
+}
+
+fn cue_patch_targets(
+    sheet: &CueSheet,
+    files: &[Vec<u8>],
+) -> Result<Vec<crate::mods::PceCdPatchTarget>, PceCdLoadError> {
+    let mut targets = sheet
+        .files
+        .iter()
+        .enumerate()
+        .map(|(segment, file)| crate::mods::PceCdPatchTarget::File {
+            reference: file.reference.clone(),
+            segment,
+        })
+        .collect::<Vec<_>>();
+    for (file_index, (cue_file, bytes)) in sheet.files.iter().zip(files).enumerate() {
+        let file_tracks = cue_file
+            .track_indices
+            .iter()
+            .map(|index| &sheet.tracks[*index])
+            .collect::<Vec<_>>();
+        let sector_len = sector_bytes(file_tracks[0].mode);
+        if file_tracks
+            .iter()
+            .any(|track| sector_bytes(track.mode) != sector_len)
+        {
+            return Err(PceCdLoadError::MixedSectorSizes);
+        }
+        if !bytes.len().is_multiple_of(sector_len) {
+            return Err(PceCdLoadError::MisalignedBin {
+                bytes: bytes.len(),
+                sector_bytes: sector_len,
+            });
+        }
+        let total_sectors = u32::try_from(bytes.len() / sector_len)
+            .map_err(|_| PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
+        for (track_offset, track) in file_tracks.iter().enumerate() {
+            let index1 = track
+                .index1
+                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
+            let end = file_tracks
+                .get(track_offset + 1)
+                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
+                .unwrap_or(total_sectors);
+            let start = track.index0.unwrap_or(index1);
+            if index1 >= end || end > total_sectors || start > index1 {
+                return Err(PceCdLoadError::TrackOutsideBin(track.number));
+            }
+            targets.push(crate::mods::PceCdPatchTarget::Track {
+                number: track.number,
+                segment: file_index,
+                bytes: Range {
+                    start: start as usize * sector_len,
+                    end: end as usize * sector_len,
+                },
+            });
+        }
+    }
+    Ok(targets)
+}
+
+fn parse_chd_track_metadata(value: &[u8]) -> Result<ChdTrack, PceCdLoadError> {
+    let value = std::str::from_utf8(value)
+        .map_err(|_| PceCdLoadError::InvalidChdMetadata)?
+        .trim_end_matches('\0');
+    let mut fields = value.split_ascii_whitespace();
+    let track = fields
+        .next()
+        .and_then(|field| field.strip_prefix("TRACK:"))
+        .and_then(|number| number.parse::<u8>().ok())
+        .filter(|number| *number != 0)
+        .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+    let mode = match fields.next().and_then(|field| field.strip_prefix("TYPE:")) {
+        Some("AUDIO") => CdTrackMode::Audio,
+        Some("MODE1") => CdTrackMode::Mode1_2048,
+        Some("MODE1_RAW") => CdTrackMode::Mode1_2352,
+        Some(mode) => return Err(PceCdLoadError::UnsupportedChdTrack(mode.to_owned())),
+        None => return Err(PceCdLoadError::InvalidChdMetadata),
+    };
+    if fields.next() != Some("SUBTYPE:NONE") {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    let frames = fields
+        .next()
+        .and_then(|field| field.strip_prefix("FRAMES:"))
+        .and_then(|frames| frames.parse::<u32>().ok())
+        .filter(|frames| *frames != 0)
+        .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+    let pregap = fields
+        .next()
+        .and_then(|field| field.strip_prefix("PREGAP:"))
+        .and_then(|pregap| pregap.parse::<u32>().ok())
+        .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+    let pgtype = fields
+        .next()
+        .and_then(|field| field.strip_prefix("PGTYPE:"))
+        .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+    if pregap > frames || (pregap != 0 && pgtype != valid_chd_pregap_type(mode)) {
+        return Err(PceCdLoadError::UnsupportedChdPregap(track));
+    }
+    if fields.next() != Some("PGSUB:NONE") {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    let postgap = fields
+        .next()
+        .and_then(|field| field.strip_prefix("POSTGAP:"))
+        .and_then(|postgap| postgap.parse::<u32>().ok())
+        .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+    if postgap != 0 {
+        return Err(PceCdLoadError::UnsupportedChdPostgap(track));
+    }
+    if fields.next().is_some() {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    Ok(ChdTrack {
+        number: track,
+        mode,
+        frames,
+        pregap,
+    })
+}
+
+fn valid_chd_pregap_type(mode: CdTrackMode) -> &'static str {
+    match mode {
+        CdTrackMode::Audio => "VAUDIO",
+        CdTrackMode::Mode1_2048 => "VMODE1",
+        CdTrackMode::Mode1_2352 => "VMODE1_RAW",
+    }
+}
+
+fn padded_chd_frames(frames: u32) -> u32 {
+    frames.next_multiple_of(4)
+}
+
+fn build_chd_disc_with_mods(
+    chd_path: &Path,
+    mut tracks: Vec<ChdTrack>,
+    mut payloads: Vec<Vec<u8>>,
+    apply_mods: bool,
+) -> Result<LoadedPceCd, PceCdLoadError> {
+    let clean_disc = build_chd_disc(&tracks, &payloads)?;
+    let source_disc_sha256 = clean_disc.content_hash();
+    let canonical_mod_crc32 = crc32fast::hash(&source_disc_sha256);
+    let mut mod_crc32 = canonical_mod_crc32;
+    let (content_sha256, content_crc32) = chd_content_identity(chd_path, &tracks)?;
+    if apply_mods {
+        let (dir, mods, selected_crc32) = pce_cd_mod_config(canonical_mod_crc32, content_crc32);
+        mod_crc32 = selected_crc32;
+        let enabled = mods.iter().filter(|entry| entry.enabled).count();
+        if enabled != 0 {
+            let targets = tracks
+                .iter()
+                .enumerate()
+                .map(|(segment, track)| crate::mods::PceCdPatchTarget::Track {
+                    number: track.number,
+                    segment,
+                    bytes: 0..payloads[segment].len(),
+                })
+                .collect::<Vec<_>>();
+            let warnings =
+                crate::mods::apply_enabled_pce_cd_mods(&mut payloads, &targets, &dir, &mods);
+            for warning in &warnings {
+                log::warn!("Mod warning: {warning}");
+            }
+            log::info!(
+                "Applied {enabled} mod(s) to PC Engine CD set ({} warnings)",
+                warnings.len()
+            );
+            refresh_chd_track_lengths(&mut tracks, &payloads)?;
+        }
+    }
+    let disc = if apply_mods {
+        build_chd_disc(&tracks, &payloads)?
+    } else {
+        clean_disc
+    };
+    Ok(LoadedPceCd {
+        disc,
+        content_sha256,
+        content_crc32,
+        mod_crc32,
+        source_disc_sha256,
+    })
+}
+
+fn refresh_chd_track_lengths(
+    tracks: &mut [ChdTrack],
+    payloads: &[Vec<u8>],
+) -> Result<(), PceCdLoadError> {
+    if tracks.len() != payloads.len() {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    for (track, payload) in tracks.iter_mut().zip(payloads) {
+        let sector_bytes = track.payload_bytes();
+        if !payload.len().is_multiple_of(sector_bytes) {
+            return Err(PceCdLoadError::MisalignedBin {
+                bytes: payload.len(),
+                sector_bytes,
+            });
+        }
+        track.frames = u32::try_from(payload.len() / sector_bytes)
+            .map_err(|_| PceCdLoadError::InvalidChdMetadata)?;
+        if track.frames == 0 || track.pregap > track.frames {
+            return Err(PceCdLoadError::InvalidChdMetadata);
+        }
+    }
+    Ok(())
+}
+
+fn build_chd_disc(tracks: &[ChdTrack], payloads: &[Vec<u8>]) -> Result<CdDisc, PceCdLoadError> {
+    if tracks.len() != payloads.len() {
+        return Err(PceCdLoadError::InvalidChdMetadata);
+    }
+    let mut cursor = 0_u32;
+    let mut disc_tracks = Vec::with_capacity(tracks.len());
+    for (track, payload) in tracks.iter().zip(payloads) {
+        if payload.len() != track.frames as usize * track.payload_bytes() {
+            return Err(PceCdLoadError::InvalidChdMetadata);
+        }
+        let index0 = (track.pregap != 0).then_some(cursor);
+        let index1 = cursor
+            .checked_add(track.pregap)
+            .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+        disc_tracks.push(
+            CdTrack::from_stored_data(
+                track.number,
+                if track.mode == CdTrackMode::Audio {
+                    0
+                } else {
+                    4
+                },
+                index0,
+                index1,
+                track.mode,
+                payload.clone(),
+            )
+            .map_err(|error| PceCdLoadError::Disc(error.to_string()))?,
+        );
+        cursor = cursor
+            .checked_add(track.frames)
+            .ok_or(PceCdLoadError::InvalidChdMetadata)?;
+    }
+    CdDisc::new(disc_tracks).map_err(|error| PceCdLoadError::Disc(error.to_string()))
+}
+
+fn normalize_chd_audio_payloads(tracks: &[ChdTrack], payloads: &mut [Vec<u8>]) {
+    for (track, payload) in tracks.iter().zip(payloads) {
+        if track.mode == CdTrackMode::Audio {
+            let (samples, remainder) = payload.as_chunks_mut::<2>();
+            debug_assert!(remainder.is_empty());
+            for sample in samples {
+                sample.swap(0, 1);
+            }
+        }
+    }
+}
+
+fn chd_content_identity(
+    chd_path: &Path,
+    tracks: &[ChdTrack],
+) -> Result<([u8; 32], u32), PceCdLoadError> {
+    let file = std::fs::File::open(chd_path)
+        .map_err(|_| PceCdLoadError::ChdUnreadable(chd_path.to_path_buf()))?;
+    let mut reader = BufReader::new(file);
+    let mut header = [0_u8; 124];
+    reader
+        .read_exact(&mut header)
+        .map_err(|_| PceCdLoadError::ChdUnreadable(chd_path.to_path_buf()))?;
+    let mut sha = Sha256::new();
+    let mut crc = Crc32::new();
+    update_identity(&mut sha, &mut crc, b"zeff-boy:pce-cd-chd:v1");
+    update_identity(&mut sha, &mut crc, &header[64..124]);
+    for track in tracks {
+        update_identity(&mut sha, &mut crc, &[track.number]);
+        update_identity(&mut sha, &mut crc, &[track.mode as u8]);
+        update_identity(&mut sha, &mut crc, &track.frames.to_le_bytes());
+        update_identity(&mut sha, &mut crc, &track.pregap.to_le_bytes());
+    }
+    Ok((sha.finalize().into(), crc.finalize()))
 }
 
 fn normalized_disc_identity(
@@ -560,6 +1122,7 @@ fn normalized_disc_identity(
             return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
         }
 
+        let mut virtual_offset = 0_u32;
         for (track_offset, track) in file_tracks.iter().enumerate() {
             let raw_index1 = track
                 .index1
@@ -568,23 +1131,39 @@ fn normalized_disc_identity(
                 .get(track_offset + 1)
                 .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
                 .unwrap_or(total_sectors);
+            let virtual_pregap = track.pregap.unwrap_or(0);
             let index1 = raw_index1
                 .checked_sub(anchor)
                 .and_then(|index| cursor.checked_add(index))
+                .and_then(|index| index.checked_add(virtual_offset))
+                .and_then(|index| index.checked_add(virtual_pregap))
                 .ok_or(PceCdLoadError::InvalidTrackOrder)?;
             if track.index0.is_some_and(|index0| index0 > raw_index1) {
                 return Err(PceCdLoadError::InvalidIndexOrder(track.number));
             }
-            let index0 = track
-                .index0
-                .and_then(|index| index.checked_sub(anchor))
-                .map(|index| {
-                    cursor
-                        .checked_add(index)
-                        .ok_or(PceCdLoadError::InvalidTrackOrder)
-                })
-                .transpose()?;
-            let stored_start = index0.unwrap_or(index1);
+            let index0 = if virtual_pregap != 0 {
+                Some(
+                    index1
+                        .checked_sub(virtual_pregap)
+                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
+                )
+            } else {
+                track
+                    .index0
+                    .and_then(|index| index.checked_sub(anchor))
+                    .map(|index| {
+                        cursor
+                            .checked_add(index)
+                            .and_then(|index| index.checked_add(virtual_offset))
+                            .ok_or(PceCdLoadError::InvalidTrackOrder)
+                    })
+                    .transpose()?
+            };
+            let stored_start = if virtual_pregap != 0 {
+                index1
+            } else {
+                index0.unwrap_or(index1)
+            };
             let raw_start = track.index0.unwrap_or(raw_index1);
             let start_byte = raw_start as usize * sector_len;
             let end_byte = end as usize * sector_len;
@@ -615,6 +1194,9 @@ fn normalized_disc_identity(
             }]);
             hasher.update((stored_data.len() as u64).to_le_bytes());
             hasher.update(stored_data);
+            virtual_offset = virtual_offset
+                .checked_add(virtual_pregap)
+                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
         }
         cursor = cursor
             .checked_add(
@@ -622,6 +1204,7 @@ fn normalized_disc_identity(
                     .checked_sub(anchor)
                     .ok_or(PceCdLoadError::InvalidTrackOrder)?,
             )
+            .and_then(|cursor| cursor.checked_add(virtual_offset))
             .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
     Ok(hasher.finalize().into())
@@ -683,6 +1266,7 @@ mod tests {
     use crate::emu_backend::{
         ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
     };
+    use crate::emu_core_trait::EmulatorCore;
 
     fn temp_set(name: &str, files: &[(&str, &[u8])], cue: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("zeff-pce-cd-{}-{name}", std::process::id()));
@@ -708,6 +1292,46 @@ mod tests {
         assert_eq!(loaded.disc.track(1).unwrap().index0_lba(), None);
         assert_eq!(loaded.disc.track(1).unwrap().index1_lba(), 0);
         assert_eq!(loaded.disc.read_user_sector(0).unwrap()[0], 0x4C);
+    }
+
+    #[test]
+    fn selecting_iso_uses_its_unique_referencing_cue() {
+        let data = vec![0x5A; 2 * 2_048];
+        let cue = "FILE \"DISC.ISO\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
+        let cue_path = temp_set("iso-sidecar", &[("disc.iso", &data)], cue);
+        let iso_path = cue_path.with_extension("iso");
+
+        assert_eq!(cue_path_for_iso(&iso_path).unwrap(), cue_path);
+        let via_cue = load_direct_cue(&cue_path).unwrap();
+        let via_iso = load_direct_cue(&cue_path_for_iso(&iso_path).unwrap()).unwrap();
+        assert_eq!(via_iso.disc, via_cue.disc);
+        assert_eq!(via_iso.content_sha256, via_cue.content_sha256);
+    }
+
+    #[test]
+    fn selecting_iso_rejects_missing_and_ambiguous_cue_metadata() {
+        let missing_root =
+            std::env::temp_dir().join(format!("zeff-pce-cd-{}-iso-missing", std::process::id()));
+        std::fs::create_dir_all(&missing_root).unwrap();
+        let missing_iso = missing_root.join("disc.iso");
+        std::fs::write(&missing_iso, [0; 2_048]).unwrap();
+        assert_eq!(
+            cue_path_for_iso(&missing_iso),
+            Err(PceCdLoadError::IsoCueMissing(missing_iso.clone()))
+        );
+
+        let ambiguous_root =
+            std::env::temp_dir().join(format!("zeff-pce-cd-{}-iso-ambiguous", std::process::id()));
+        std::fs::create_dir_all(&ambiguous_root).unwrap();
+        let ambiguous_iso = ambiguous_root.join("disc.iso");
+        std::fs::write(&ambiguous_iso, [0; 2_048]).unwrap();
+        let cue = "FILE \"disc.iso\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
+        std::fs::write(ambiguous_root.join("one.cue"), cue).unwrap();
+        std::fs::write(ambiguous_root.join("two.cue"), cue).unwrap();
+        assert!(matches!(
+            cue_path_for_iso(&ambiguous_iso),
+            Err(PceCdLoadError::IsoCueAmbiguous(cues)) if cues.len() == 2
+        ));
     }
 
     #[test]
@@ -741,6 +1365,30 @@ mod tests {
         assert_eq!(second.index1_lba(), 3);
         assert_eq!(loaded.disc.read_user_sector(2).unwrap()[0], 0x20);
         assert_eq!(loaded.disc.read_user_sector(3).unwrap()[0], 0x21);
+    }
+
+    #[test]
+    fn same_file_virtual_pregap_advances_timeline_without_consuming_payload() {
+        let mut data = vec![0; 5 * 2_048];
+        data[2 * 2_048] = 0x22;
+        let cue = "FILE \"disc.iso\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nTRACK 02 MODE1/2048\nPREGAP 00:00:02\nINDEX 01 00:00:02\n";
+        let path = temp_set("virtual-pregap", &[("disc.iso", &data)], cue);
+        let loaded = load_direct_cue(&path).unwrap();
+        let first = loaded.disc.track(1).unwrap();
+        let second = loaded.disc.track(2).unwrap();
+
+        assert_eq!(first.end_lba(), 2);
+        assert_eq!(second.index0_lba(), Some(2));
+        assert_eq!(second.index1_lba(), 4);
+        assert_eq!(second.stored_start_lba(), 4);
+        assert!(loaded.disc.read_user_sector(2).is_err());
+        assert_eq!(loaded.disc.read_user_sector(4).unwrap()[0], 0x22);
+    }
+
+    #[test]
+    fn cue_rejects_stored_and_virtual_pregap_on_the_same_track() {
+        let cue = "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nPREGAP 00:00:02\nINDEX 00 00:00:00\nINDEX 01 00:00:01\n";
+        assert_eq!(parse_cue(cue), Err(PceCdLoadError::InvalidIndexOrder(1)));
     }
 
     #[test]
@@ -919,6 +1567,133 @@ mod tests {
     }
 
     #[test]
+    fn chd_track_metadata_preserves_embedded_pregap_and_rejects_virtual_pregap() {
+        let track = parse_chd_track_metadata(
+            b"TRACK:2 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:3 PREGAP:1 PGTYPE:VMODE1_RAW PGSUB:NONE POSTGAP:0",
+        )
+        .unwrap();
+        assert_eq!(track.number, 2);
+        assert_eq!(track.mode, CdTrackMode::Mode1_2352);
+        assert_eq!(track.frames, 3);
+        assert_eq!(track.pregap, 1);
+        assert_eq!(
+            parse_chd_track_metadata(
+                b"TRACK:2 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:3 PREGAP:1 PGTYPE:MODE1_RAW PGSUB:NONE POSTGAP:0",
+            ),
+            Err(PceCdLoadError::UnsupportedChdPregap(2))
+        );
+    }
+
+    #[test]
+    fn resized_chd_track_payload_updates_the_reconstructed_toc() {
+        let mut tracks = vec![ChdTrack {
+            number: 1,
+            mode: CdTrackMode::Audio,
+            frames: 1,
+            pregap: 0,
+        }];
+        let payloads = vec![vec![0; 3 * 2_352]];
+
+        refresh_chd_track_lengths(&mut tracks, &payloads).unwrap();
+        let disc = build_chd_disc(&tracks, &payloads).unwrap();
+
+        assert_eq!(tracks[0].frames, 3);
+        assert_eq!(disc.tracks()[0].end_lba(), 3);
+    }
+
+    #[test]
+    fn reconstructed_chd_tracks_match_cue_disc_and_mod_identity() {
+        let cue = b"FILE \"one.bin\" BINARY\nTRACK 01 MODE1/2352\nINDEX 01 00:00:00\nFILE \"two.bin\" BINARY\nTRACK 02 AUDIO\nINDEX 00 00:00:00\nINDEX 01 00:00:01\n";
+        let sheet = parse_cue_bytes(cue).unwrap();
+        let first = vec![0x11; 2 * 2_352];
+        let second = vec![0x22; 2 * 2_352];
+        let loaded = build_disc(cue.to_vec(), &sheet, vec![first.clone(), second.clone()]).unwrap();
+        let tracks = vec![
+            ChdTrack {
+                number: 1,
+                mode: CdTrackMode::Mode1_2352,
+                frames: 2,
+                pregap: 0,
+            },
+            ChdTrack {
+                number: 2,
+                mode: CdTrackMode::Audio,
+                frames: 2,
+                pregap: 1,
+            },
+        ];
+        let chd_disc = build_chd_disc(&tracks, &[first, second]).unwrap();
+        assert_eq!(chd_disc, loaded.disc);
+        assert_eq!(crc32fast::hash(&chd_disc.content_hash()), loaded.mod_crc32);
+    }
+
+    #[test]
+    fn chd_audio_payload_is_normalized_for_the_cd_audio_reader() {
+        let tracks = vec![ChdTrack {
+            number: 1,
+            mode: CdTrackMode::Audio,
+            frames: 1,
+            pregap: 0,
+        }];
+        let payload = vec![0x12, 0x34, 0x56, 0x78]
+            .into_iter()
+            .cycle()
+            .take(2_352)
+            .collect::<Vec<_>>();
+        let mut payloads = vec![payload];
+        normalize_chd_audio_payloads(&tracks, &mut payloads);
+        let disc = build_chd_disc(&tracks, &payloads).unwrap();
+        assert_eq!(disc.read_audio_sample(0, 0), Ok((0x1234, 0x5678)));
+    }
+
+    #[test]
+    fn chd_audio_xdelta_targets_the_normalized_track_payload() {
+        let tracks = vec![ChdTrack {
+            number: 1,
+            mode: CdTrackMode::Audio,
+            frames: 1,
+            pregap: 0,
+        }];
+        let raw = vec![0x12, 0x34, 0x56, 0x78]
+            .into_iter()
+            .cycle()
+            .take(2_352)
+            .collect::<Vec<_>>();
+        let mut payloads = vec![raw];
+        normalize_chd_audio_payloads(&tracks, &mut payloads);
+        let source = payloads[0].clone();
+        let mut expected = source.clone();
+        expected[..4].copy_from_slice(&[0xCD, 0xAB, 0x34, 0x12]);
+
+        let dir =
+            std::env::temp_dir().join(format!("zeff-pce-chd-audio-xdelta-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("translation-track01.xdelta"),
+            xdelta3::encode(&expected, &source).unwrap(),
+        )
+        .unwrap();
+        let targets = vec![crate::mods::PceCdPatchTarget::Track {
+            number: 1,
+            segment: 0,
+            bytes: 0..payloads[0].len(),
+        }];
+        let entries = vec![crate::mods::ModEntry {
+            filename: "translation-track01.xdelta".to_owned(),
+            enabled: true,
+            target: None,
+        }];
+
+        assert!(
+            crate::mods::apply_enabled_pce_cd_mods(&mut payloads, &targets, &dir, &entries)
+                .is_empty()
+        );
+        assert_eq!(payloads[0], expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn direct_loader_mounts_cd_with_test_system_card() {
         let bin = vec![0; 2_048];
         let cue = "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
@@ -941,6 +1716,35 @@ mod tests {
             zeff_pce_core::hardware::PceHuCardBoard::SystemCardV3
         );
         assert_eq!(backend.source_path(), cue_path);
+    }
+
+    #[test]
+    fn direct_iso_route_mounts_the_referencing_cue() {
+        let data = vec![0; 2_048];
+        let cue = "FILE \"disc.iso\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
+        let cue_path = temp_set("iso-loader", &[("disc.iso", &data)], cue);
+        let iso_path = cue_path.with_extension("iso");
+        let system_card: &'static [u8] = Box::leak(vec![0; 262_144].into_boxed_slice());
+        let loaded = load_backend_from_rom_source(
+            ActiveSystem::Pce,
+            &iso_path,
+            &iso_path,
+            None,
+            BackendLoadConfig {
+                pce_cd_system_card_override: Some(system_card),
+                pce_cd_system_card_sha256_override: Some(
+                    zeff_firmware::PCE_SYSTEM_CARD_V3_USA_SHA256,
+                ),
+                pce_console_wiring: Some(zeff_pce_core::hardware::PceConsoleWiring::TurboGrafx16),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap();
+        let EmuBackend::Pce(backend) = loaded.backend else {
+            panic!("ISO loader returned a non-PCE backend");
+        };
+        assert_eq!(backend.rom_path(), cue_path);
+        assert_eq!(backend.source_path(), iso_path);
     }
 
     #[test]

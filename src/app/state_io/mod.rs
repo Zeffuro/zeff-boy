@@ -18,7 +18,7 @@ pub(super) use archive_and_slots::{
 };
 pub(crate) use rom_loading::detect_and_extract_rom;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use rom_loading::is_native_seven_zip_path;
+pub(crate) use rom_loading::is_native_archive_path;
 
 use crate::debug::FpsTracker;
 use crate::emu_backend::EmuBackend;
@@ -45,6 +45,11 @@ impl App {
 
     pub(super) fn spawn_emu_thread(&mut self, backend: EmuBackend) {
         self.emu_thread = Some(EmuThread::spawn(backend));
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::SetUncappedBatchSize(
+                self.settings.emulation.uncapped_frames_per_tick,
+            ));
+        }
         if let (Some(thread), Some(recorder)) =
             (&self.emu_thread, self.recording.audio_recorder.as_ref())
         {

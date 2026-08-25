@@ -467,6 +467,11 @@ impl<D> BaseBus<D> {
     }
 
     #[inline]
+    pub fn mapped_work_ram_mut(&mut self) -> &mut [u8] {
+        self.work_ram.mapped_mut()
+    }
+
+    #[inline]
     pub const fn topology(&self) -> PceHardwareTopology {
         self.topology
     }

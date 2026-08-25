@@ -9,6 +9,22 @@ fn rom_with_program(program: &[u8]) -> Vec<u8> {
     rom
 }
 
+#[test]
+fn physical_cheat_ram_follows_base_mirroring_and_supergrafx_banks() {
+    use zeff_emu_common::cheats::CheatByteTarget;
+
+    let mut base = [0; zeff_pce_core::hardware::WORK_RAM_LEN];
+    let mut base_target = PcePhysicalRam::new(&mut base);
+    base_target.cheat_write8(0x1F_2345, 0x42);
+    assert_eq!(base_target.cheat_peek8(0x1F_0345), 0x42);
+
+    let mut supergrafx = [0; zeff_pce_core::hardware::SUPERGRAFX_WORK_RAM_LEN];
+    let mut supergrafx_target = PcePhysicalRam::new(&mut supergrafx);
+    supergrafx_target.cheat_write8(0x1F_2345, 0x66);
+    assert_eq!(supergrafx_target.cheat_peek8(0x1F_2345), 0x66);
+    assert_eq!(supergrafx_target.cheat_peek8(0x1F_0345), 0x00);
+}
+
 fn memory_base_clock(controller: &mut ControllerPort, bit: bool) {
     controller.write_lines(bit, false);
     controller.write_lines(bit, true);
@@ -915,6 +931,55 @@ fn projection_keeps_empty_and_inactive_rows_opaque_black() {
     project_sgx_rgba_rows(&source, 4, &rows, Some((0, 2)), &mut output);
     assert_eq!(pixel(&output, 10, 10), OPAQUE_BLACK);
     assert_eq!(pixel(&output, 10, 470), [0x7F; 4]);
+}
+
+#[test]
+fn fixed_signal_window_preserves_224_margins_and_distinguishes_239_from_240() {
+    let first = usize::from(zeff_pce_core::hardware::PCE_SIGNAL_FIRST_ROW);
+    let end = usize::from(zeff_pce_core::hardware::PCE_SIGNAL_ROW_END);
+
+    let project = |active_start: usize, active_end: usize, final_color: [u8; 4]| {
+        let mut source = vec![0; zeff_pce_core::hardware::PCE_ACTIVE_FRAME_HEIGHT * 4];
+        for pixel in source.as_chunks_mut::<4>().0 {
+            pixel.copy_from_slice(&OPAQUE_BLACK);
+        }
+        let rows = std::array::from_fn::<_, { zeff_pce_core::hardware::PCE_ACTIVE_FRAME_HEIGHT }, _>(
+            |line| ProjectionRow {
+                active_x_origin: 0,
+                active_width: 1,
+                pixel_clock_divisor: 4,
+                active: (active_start..active_end).contains(&line),
+            },
+        );
+        for line in active_start..active_end {
+            source[line * 4..line * 4 + 4].copy_from_slice(&[0x40, line as u8, 0, 0xFF]);
+        }
+        source[(active_end - 1) * 4..active_end * 4].copy_from_slice(&final_color);
+        let mut base = vec![0; PCE_PRESENTED_RGBA_BYTES];
+        let mut supergrafx = vec![0; PCE_PRESENTED_RGBA_BYTES];
+        project_base_rgba_rows(&source, 1, &rows, Some((first, end)), &mut base);
+        project_sgx_rgba_rows(&source, 1, &rows, Some((first, end)), &mut supergrafx);
+        assert_eq!(base, supergrafx);
+        base
+    };
+
+    let mode_224 = project(28, 252, [0xE0, 0, 0, 0xFF]);
+    assert_eq!(pixel(&mode_224, 0, 0), OPAQUE_BLACK);
+    assert_ne!(pixel(&mode_224, 0, 22), OPAQUE_BLACK);
+    assert_eq!(pixel(&mode_224, 0, PCE_PRESENTED_HEIGHT - 1), OPAQUE_BLACK);
+
+    let mode_239 = project(20, 260, [0xEF, 0, 0, 0xFF]);
+    assert_ne!(
+        pixel(&mode_239, 0, PCE_PRESENTED_HEIGHT - 1),
+        [0xEF, 0, 0, 0xFF]
+    );
+
+    let mode_240 = project(19, 259, [0xF0, 0, 0, 0xFF]);
+    assert_eq!(
+        pixel(&mode_240, 0, PCE_PRESENTED_HEIGHT - 1),
+        [0xF0, 0, 0, 0xFF]
+    );
+    assert_ne!(mode_239, mode_240);
 }
 
 #[test]

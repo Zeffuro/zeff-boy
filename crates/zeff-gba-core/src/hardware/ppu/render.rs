@@ -444,6 +444,20 @@ impl Ppu {
         pixel_colors: &mut [u16; SCREEN_WIDTH],
     ) {
         let raw_color = read_le16(palette_ram, 0);
+        if windows.effects_are_uniform() {
+            let color = effects.apply_pixel(raw_color, Layer::Backdrop, None, false, true);
+            let [r, g, b] = bgr555_to_rgb(color);
+            let start = y * SCREEN_WIDTH * 4;
+            let end = start + SCREEN_WIDTH * 4;
+            self.framebuffer[start..end]
+                .as_chunks_mut::<4>()
+                .0
+                .fill([r, g, b, 0xFF]);
+            pixel_layers.fill(Layer::Backdrop);
+            pixel_colors.fill(color);
+            return;
+        }
+
         for x in 0..SCREEN_WIDTH {
             let color = effects.apply_pixel(
                 raw_color,

@@ -109,7 +109,9 @@ fn component_has_archive_extension(component: &str) -> bool {
 }
 
 fn is_archive_extension(extension: &str) -> bool {
-    extension.eq_ignore_ascii_case("zip") || extension.eq_ignore_ascii_case("7z")
+    extension.eq_ignore_ascii_case("zip")
+        || extension.eq_ignore_ascii_case("7z")
+        || extension.eq_ignore_ascii_case("rar")
 }
 
 pub(crate) fn flush_battery_sram(
@@ -167,6 +169,14 @@ mod tests {
     fn sram_for_7z_virtual_member_uses_archive_stem() {
         assert_eq!(
             sram_path_for_rom(Path::new(r"roms\pce-cd\Game.7z\Game.cue")),
+            PathBuf::from(r"roms\pce-cd\Game.sav")
+        );
+    }
+
+    #[test]
+    fn sram_for_rar_virtual_member_uses_archive_stem() {
+        assert_eq!(
+            sram_path_for_rom(Path::new(r"roms\pce-cd\Game.rar\Game.cue")),
             PathBuf::from(r"roms\pce-cd\Game.sav")
         );
     }

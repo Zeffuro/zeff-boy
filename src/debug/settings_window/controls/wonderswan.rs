@@ -5,17 +5,6 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
     egui::CollapsingHeader::new("WonderSwan Controls")
         .default_open(true)
         .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(
-                    "WonderSwan has two four-way button diamonds. Horizontal games usually use \
-                     the X diamond for movement; vertical games usually use the Y diamond. The \
-                     generic gamepad d-pad follows display rotation automatically, while these \
-                     direct bindings always target the named WS button.",
-                )
-                .weak()
-                .small(),
-            );
-
             egui::Grid::new("wonderswan_key_bindings")
                 .num_columns(4)
                 .spacing([12.0, 4.0])

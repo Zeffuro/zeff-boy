@@ -3,7 +3,7 @@ use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBas
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
-use super::super::types::HeadlessMemoryDump;
+use super::super::types::{HeadlessMemoryDump, HeadlessRegionDump};
 use super::numbers::{parse_addr_arg, parse_u64_arg, parse_usize_arg};
 
 pub(super) fn parse_memory_dump_arg(value: &str, flag: &str) -> anyhow::Result<HeadlessMemoryDump> {
@@ -24,6 +24,33 @@ pub(super) fn parse_memory_dump_arg(value: &str, flag: &str) -> anyhow::Result<H
     Ok(HeadlessMemoryDump {
         start_addr: addr as u16,
         len: len as u16,
+    })
+}
+
+pub(super) fn parse_region_dump_arg(value: &str, flag: &str) -> anyhow::Result<HeadlessRegionDump> {
+    let mut fields = value.split(':');
+    let (Some(region), Some(offset_raw), Some(len_raw), None) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        anyhow::bail!("{flag} must be region:offset:len, e.g. video_ram:0x7000:0x1000");
+    };
+    if region.trim().is_empty() {
+        anyhow::bail!("{flag} region must not be empty");
+    }
+    let offset = usize::try_from(parse_u64_arg(offset_raw, flag)?)
+        .map_err(|_| anyhow::anyhow!("{flag} offset does not fit this platform"))?;
+    let len = usize::try_from(parse_u64_arg(len_raw, flag)?)
+        .map_err(|_| anyhow::anyhow!("{flag} length does not fit this platform"))?;
+    if len == 0 {
+        anyhow::bail!("{flag} length must be greater than zero");
+    }
+    if len > 4096 {
+        anyhow::bail!("{flag} length is capped at 4096 bytes");
+    }
+    Ok(HeadlessRegionDump {
+        region: region.trim().to_owned(),
+        offset,
+        len,
     })
 }
 

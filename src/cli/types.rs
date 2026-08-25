@@ -43,6 +43,13 @@ pub(crate) struct HeadlessMemoryDump {
     pub(crate) len: u16,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeadlessRegionDump {
+    pub(crate) region: String,
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
+}
+
 pub(crate) struct HeadlessOptions {
     pub(crate) max_frames: u64,
     pub(crate) expect_serial: Option<String>,
@@ -62,6 +69,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) trace_bus_filters: Vec<HeadlessBusTraceFilter>,
     pub(crate) trace_bus_limit: u64,
     pub(crate) memory_dumps: Vec<HeadlessMemoryDump>,
+    pub(crate) region_dumps: Vec<HeadlessRegionDump>,
     pub(crate) break_at: Option<u16>,
     pub(crate) no_apu: bool,
     pub(crate) no_sram: bool,
@@ -124,6 +132,7 @@ impl Default for HeadlessOptions {
             trace_bus_filters: Vec::new(),
             trace_bus_limit: 512,
             memory_dumps: Vec::new(),
+            region_dumps: Vec::new(),
             break_at: None,
             no_apu: false,
             no_sram: false,

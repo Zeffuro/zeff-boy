@@ -29,11 +29,6 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
                 );
             }
         });
-    ui.label(
-        egui::RichText::new("Uses the nearest rate supported by your current output device.")
-            .weak()
-            .small(),
-    );
 
     ui.separator();
     ui.heading("Filtering");
@@ -48,11 +43,6 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
                 .custom_formatter(|value, _| format!("{value:.0} Hz")),
         );
     });
-    ui.label(
-        egui::RichText::new("Lower cutoff removes more high-frequency noise but dulls treble.")
-            .weak()
-            .small(),
-    );
 
     ui.separator();
     ui.heading("Recording");
@@ -67,14 +57,4 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
             .weak(),
         );
     }
-    ui.label(
-        egui::RichText::new(
-            "16-bit PCM: smaller files, standard compatibility.\n\
-             32-bit Float: lossless sample precision, ideal for editing.\n\
-             OGG Vorbis: compressed lossy format, much smaller files.\n\
-             MIDI: records APU channel notes/volumes as a Standard MIDI File.",
-        )
-        .weak()
-        .small(),
-    );
 }

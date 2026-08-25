@@ -20,11 +20,6 @@ pub(super) fn draw(
 
     ui.separator();
     ui.heading("Shared Console Input");
-    ui.label(
-        egui::RichText::new("Applies across supported consoles.")
-            .weak()
-            .small(),
-    );
     joypad::draw(
         ui,
         settings,
@@ -38,13 +33,6 @@ pub(super) fn draw(
 
     ui.separator();
     super::draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
-    ui.label(
-        egui::RichText::new(
-            "NES-specific input bindings can be added here as console features expand.",
-        )
-        .weak()
-        .small(),
-    );
 
     ui.separator();
     super::draw_console_section_header(ui, "WonderSwan", active_system, ActiveSystem::WonderSwan);

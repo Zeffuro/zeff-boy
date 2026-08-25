@@ -76,6 +76,11 @@ fn active_system_detects_supported_rom_extensions() {
         Some(ActiveSystem::Sg1000)
     );
     assert_eq!(ActiveSystem::from_path(&PathBuf::from("game.7z")), None);
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.iso")),
+        Some(ActiveSystem::Pce)
+    );
+    assert_eq!(ActiveSystem::from_path(&PathBuf::from("game.rar")), None);
 }
 
 #[test]
@@ -432,9 +437,9 @@ fn system_specs_map_to_shared_backend_loader() {
                     ..BackendLoadConfig::default()
                 },
             );
-            if *extension == "cue" {
+            if matches!(*extension, "cue" | "chd" | "iso") {
                 let error = match result {
-                    Ok(_) => panic!("packaged CUE unexpectedly loaded"),
+                    Ok(_) => panic!("packaged PC Engine CD media unexpectedly loaded"),
                     Err(error) => error,
                 };
                 assert!(error.to_string().contains("PackagedCdSetUnsupported"));

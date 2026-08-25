@@ -70,7 +70,7 @@ fn parse_dir_entry_sha_returns_error_for_missing() {
 #[test]
 fn parse_tree_blob_names_extracts_cht_files() {
     let json = r#"{"sha":"abc","tree":[{"path":"Game A (USA).cht","mode":"100644","type":"blob","sha":"x"},{"path":"Game B.cht","mode":"100644","type":"blob","sha":"y"},{"path":"README.md","mode":"100644","type":"blob","sha":"z"}],"truncated":false}"#;
-    let names = parse_tree_blob_names(json);
+    let names = parse_tree_blob_names(json, LibretroPlatform::Gb);
     assert_eq!(names.len(), 2);
     assert!(names.contains(&"Game A (USA).cht".to_string()));
     assert!(names.contains(&"Game B.cht".to_string()));
@@ -79,8 +79,21 @@ fn parse_tree_blob_names_extracts_cht_files() {
 #[test]
 fn parse_tree_blob_names_handles_empty_tree() {
     let json = r#"{"sha":"abc","tree":[],"truncated":false}"#;
-    let names = parse_tree_blob_names(json);
+    let names = parse_tree_blob_names(json, LibretroPlatform::Pce);
     assert!(names.is_empty());
+}
+
+#[test]
+fn parse_tree_blob_names_includes_pce_text_files_only_for_pce() {
+    let json = r#"{"tree":[{"path":"Game.cht"},{"path":"Legacy.txt"},{"path":"README.md"}]}"#;
+    assert_eq!(
+        parse_tree_blob_names(json, LibretroPlatform::Pce),
+        ["Game.cht", "Legacy.txt"]
+    );
+    assert_eq!(
+        parse_tree_blob_names(json, LibretroPlatform::Gb),
+        ["Game.cht"]
+    );
 }
 
 #[test]

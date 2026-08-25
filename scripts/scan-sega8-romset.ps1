@@ -1,5 +1,6 @@
 param(
-    [string]$RomRoot = "Z:\Android\Roms",
+    [Parameter(Mandatory = $true)]
+    [string]$RomRoot,
     [string[]]$SystemDirs = @("."),
     [string[]]$Extensions = @(),
     [int]$Limit = 0,

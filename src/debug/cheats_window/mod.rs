@@ -12,7 +12,9 @@ pub(crate) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
         crate::emu_backend::ActiveSystem::Nes => {
             "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)"
         }
-        crate::emu_backend::ActiveSystem::Pce => "PC Engine raw RAM cheats (AAAA:VV)",
+        crate::emu_backend::ActiveSystem::Pce => {
+            "PC Engine logical RAM (AAAA:VV) or physical work RAM (1Fxxxx:VV)"
+        }
         crate::emu_backend::ActiveSystem::GameBoy => {
             "GameShark (01VVAAAA, supports ??/?0/0?), Game Genie (XXX-YYY or XXX-YYY-ZZZ), XPloder ($XXXXXXXX), or raw (AAAA:VV)"
         }
@@ -114,13 +116,7 @@ pub(crate) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
 }
 
 fn libretro_database_supported(system: crate::emu_backend::ActiveSystem) -> bool {
-    matches!(
-        system,
-        crate::emu_backend::ActiveSystem::GameBoy
-            | crate::emu_backend::ActiveSystem::Nes
-            | crate::emu_backend::ActiveSystem::MasterSystem
-            | crate::emu_backend::ActiveSystem::GameGear
-    )
+    crate::emu_backend::CheatCapabilities::for_system(system).supports_libretro_database
 }
 
 fn draw_import_export(ui: &mut egui::Ui, state: &mut CheatState, changed: &mut bool) {

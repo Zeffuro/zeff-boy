@@ -7,8 +7,8 @@ use super::{
     BASE_PCE_NO_CD_CONTROLLER_UPPER_BITS, BASE_TURBOGRAFX16_NO_CD_CONTROLLER_UPPER_BITS, BaseBus,
     ControllerPort, HUCARD_ROM_REGION_LEN, HuC6280Psg, MAX_PSG_SAMPLE_RATE,
     PCE_ACTIVE_FRAME_HEIGHT, PCE_ACTIVE_FRAME_RGBA_BYTES, PCE_ACTIVE_FRAME_UNUSED_RGBA,
-    PCE_ACTIVE_FRAME_WIDTH, PCE_VDC_VCE_ACCESS_WAIT_CYCLES,
-    PROVISIONAL_PCE_HIGH_SPEED_MASTER_TICKS_PER_CPU_CYCLE,
+    PCE_ACTIVE_FRAME_WIDTH, PCE_SIGNAL_FIRST_ROW, PCE_SIGNAL_ROW_END,
+    PCE_VDC_VCE_ACCESS_WAIT_CYCLES, PROVISIONAL_PCE_HIGH_SPEED_MASTER_TICKS_PER_CPU_CYCLE,
     PROVISIONAL_PCE_LOW_SPEED_MASTER_TICKS_PER_CPU_CYCLE,
     PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE,
     PROVISIONAL_PCE_VSYNC_ASSERT_NORMALIZED_TO_LINE_ZERO,
@@ -616,6 +616,9 @@ fn reset_presented_frame_is_empty_and_describes_fixed_storage() {
     assert_eq!(frame.rows().len(), PCE_ACTIVE_FRAME_HEIGHT);
     assert!(frame.rows().iter().all(|row| !row.is_active()));
     assert_eq!(frame.active_bounds(), None);
+    assert_eq!(frame.signal_bounds().first_row(), PCE_SIGNAL_FIRST_ROW);
+    assert_eq!(frame.signal_bounds().row_end(), PCE_SIGNAL_ROW_END);
+    assert_eq!(frame.signal_bounds().height(), 242);
     assert!(
         frame
             .rgba()
@@ -624,6 +627,55 @@ fn reset_presented_frame_is_empty_and_describes_fixed_storage() {
             .iter()
             .all(|pixel| *pixel == PCE_ACTIVE_FRAME_UNUSED_RGBA)
     );
+}
+
+#[test]
+fn absolute_vce_rows_preserve_224_239_and_full_240_signal_placement() {
+    for vce_control in [0, 0x04] {
+        for (vertical_sync, vertical_display, vertical_end, expected) in [
+            (0x1702, 0x00DF, 0x000A, (28, 252, 224)),
+            (0x0F02, 0x00EF, 0x0004, (20, 260, 239)),
+            (0x0E02, 0x00EF, 0x0004, (19, 259, 240)),
+        ] {
+            let mut machine = PceMachine::new(high_speed_loop_rom()).unwrap();
+            machine
+                .devices_mut()
+                .vce_mut()
+                .write_port(VcePort::from_offset(0), vce_control);
+            write_vdc_register(
+                machine.devices_mut(),
+                VdcRegister::VerticalSync,
+                vertical_sync,
+            );
+            write_vdc_register(
+                machine.devices_mut(),
+                VdcRegister::VerticalDisplay,
+                vertical_display,
+            );
+            write_vdc_register(
+                machine.devices_mut(),
+                VdcRegister::VerticalDisplayEnd,
+                vertical_end,
+            );
+
+            machine.run_until_frame().unwrap();
+
+            let frame = machine.presented_frame();
+            let active = frame.active_bounds().unwrap();
+            assert_eq!(
+                (active.first_row(), active.row_end()),
+                (expected.0, expected.1)
+            );
+            let signal = frame.signal_bounds();
+            assert_eq!(
+                (signal.first_row(), signal.row_end()),
+                (PCE_SIGNAL_FIRST_ROW, PCE_SIGNAL_ROW_END)
+            );
+            let visible_start = active.first_row().max(signal.first_row());
+            let visible_end = active.row_end().min(signal.row_end());
+            assert_eq!(visible_end - visible_start, expected.2);
+        }
+    }
 }
 
 #[test]
@@ -640,19 +692,19 @@ fn presented_frame_reports_variable_active_widths_clocks_and_bounds() {
     machine.run_until_frame().unwrap();
 
     let frame = machine.presented_frame();
-    assert_eq!(frame.rows()[0].active_width(), 256);
+    assert_eq!(frame.rows()[3].active_width(), 256);
     assert_eq!(
-        frame.rows()[0].pixel_clock(),
+        frame.rows()[3].pixel_clock(),
         Some(VcePixelClock::DivideByFour)
     );
-    assert_eq!(frame.rows()[1].active_width(), 512);
+    assert_eq!(frame.rows()[4].active_width(), 512);
     assert_eq!(
-        frame.rows()[1].pixel_clock(),
+        frame.rows()[4].pixel_clock(),
         Some(VcePixelClock::DivideByThree)
     );
     let bounds = frame.active_bounds().unwrap();
-    assert_eq!(bounds.first_row(), 0);
-    assert_eq!(bounds.row_end(), 258);
+    assert_eq!(bounds.first_row(), 3);
+    assert_eq!(bounds.row_end(), 261);
     assert_eq!(bounds.height(), 258);
     assert_eq!(bounds.maximum_width(), 512);
 }
@@ -752,6 +804,7 @@ fn satb_dma_completes_on_selected_clock_1024_not_1023_in_every_mode() {
 #[test]
 fn final_cycle_video_writes_do_not_retroactively_change_earlier_instruction_time() {
     let mut hsr = PceMachine::new(rom_with_program(&[0x23, 0x7F])).unwrap();
+    write_vdc_register(hsr.devices_mut(), VdcRegister::HorizontalDisplay, 0);
     write_vdc_register(hsr.devices_mut(), VdcRegister::HorizontalSync, 0);
     let step = hsr.step_boundary().unwrap();
     assert_eq!(step.wait_cycles(), 1);
@@ -1528,7 +1581,18 @@ fn provisional_ex11_machine_policy_publishes_exact_262_and_263_line_frames() {
             assert!(run.master_ticks() < frame_ticks + 12);
             assert_eq!(run.frames_published(), 1);
             assert_eq!(machine.vce_frame_length(), frame_length);
-            assert_eq!(&machine.framebuffer()[..4], &[0xFF, 0, 0, 0xFF]);
+            let first = usize::from(
+                machine
+                    .presented_frame()
+                    .active_bounds()
+                    .unwrap()
+                    .first_row(),
+            ) * PCE_ACTIVE_FRAME_WIDTH
+                * 4;
+            assert_eq!(
+                &machine.framebuffer()[first..first + 4],
+                &[0xFF, 0, 0, 0xFF]
+            );
             rendered.push(machine.framebuffer().to_vec());
         }
         assert_eq!(rendered[0], rendered[1]);
@@ -1574,7 +1638,18 @@ fn cpu_program_configures_external_video_and_publishes_nonblack_backdrop() {
     let mut machine = PceMachine::new(nonblack_video_rom()).unwrap();
     machine.run_until_frame().unwrap();
 
-    assert_eq!(&machine.framebuffer()[..4], &[0xFF, 0, 0, 0xFF]);
+    let first = usize::from(
+        machine
+            .presented_frame()
+            .active_bounds()
+            .unwrap()
+            .first_row(),
+    ) * PCE_ACTIVE_FRAME_WIDTH
+        * 4;
+    assert_eq!(
+        &machine.framebuffer()[first..first + 4],
+        &[0xFF, 0, 0, 0xFF]
+    );
     let published = machine.framebuffer().to_vec();
     machine.step_boundary().unwrap();
     assert_eq!(machine.framebuffer(), published);
@@ -1834,7 +1909,18 @@ fn machine_satb_copy_is_visible_on_the_following_active_span() {
     machine.run_until_frame().unwrap();
     machine.run_until_frame().unwrap();
 
-    assert_eq!(&machine.framebuffer()[..4], &[0xFF, 0, 0, 0xFF]);
+    let first = usize::from(
+        machine
+            .presented_frame()
+            .active_bounds()
+            .unwrap()
+            .first_row(),
+    ) * PCE_ACTIVE_FRAME_WIDTH
+        * 4;
+    assert_eq!(
+        &machine.framebuffer()[first..first + 4],
+        &[0xFF, 0, 0, 0xFF]
+    );
 }
 
 #[test]
@@ -1895,7 +1981,18 @@ fn sync_output_change_continues_machine_frames() {
     assert!(!machine.devices().vdc().sync_output().vertical());
     assert_eq!(machine.run_until_frame().unwrap().frames_published(), 1);
     assert!(!machine.faulted());
-    assert_eq!(&machine.framebuffer()[..4], &[0xFF, 0, 0, 0xFF]);
+    let first = usize::from(
+        machine
+            .presented_frame()
+            .active_bounds()
+            .unwrap()
+            .first_row(),
+    ) * PCE_ACTIVE_FRAME_WIDTH
+        * 4;
+    assert_eq!(
+        &machine.framebuffer()[first..first + 4],
+        &[0xFF, 0, 0, 0xFF]
+    );
 }
 
 #[test]
@@ -1981,7 +2078,7 @@ fn zero_length_block_transfer_advances_u64_master_and_vce_time() {
         (samples.len() / 2).abs_diff(expected_audio_frames(expected_ticks, MAX_PSG_SAMPLE_RATE))
             <= 1
     );
-    let last_active_row = 257 * PCE_ACTIVE_FRAME_WIDTH * 4;
+    let last_active_row = 260 * PCE_ACTIVE_FRAME_WIDTH * 4;
     assert_eq!(
         &machine.framebuffer()[last_active_row..last_active_row + 4],
         &[0xFF, 0, 0, 0xFF]
@@ -2009,10 +2106,10 @@ fn multiple_wraps_publish_complete_newest_frame_metadata() {
     assert!(step.frames_published() > 1);
     let frame = machine.presented_frame();
     let bounds = frame.active_bounds().unwrap();
-    assert_eq!(bounds.first_row(), 0);
-    assert_eq!(bounds.row_end(), 258);
+    assert_eq!(bounds.first_row(), 3);
+    assert_eq!(bounds.row_end(), 261);
     assert_eq!(bounds.maximum_width(), 512);
-    for line in [0, 257] {
+    for line in [3, 260] {
         assert_eq!(frame.rows()[line].active_width(), 512);
         assert_eq!(
             frame.rows()[line].pixel_clock(),
