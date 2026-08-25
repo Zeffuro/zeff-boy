@@ -175,7 +175,7 @@ impl Bus {
             self.record_read(aligned, u32::from(value), 2);
             return value;
         }
-        let value = u16::from_le_bytes([self.read8_raw(aligned), self.read8_raw(aligned + 1)]);
+        let value = self.read16_raw(aligned);
         self.record_read(aligned, u32::from(value), 2);
         value
     }
@@ -186,7 +186,30 @@ impl Bus {
             return u16::from_le_bytes([byte, byte]);
         }
         let aligned = addr & !1;
-        u16::from_le_bytes([self.read8_raw(aligned), self.read8_raw(aligned + 1)])
+        match aligned {
+            0x0200_0000..=0x02FF_FFFF => {
+                let index = (aligned as usize) & (EWRAM_SIZE - 1);
+                u16::from_le_bytes([self.ewram[index], self.ewram[index + 1]])
+            }
+            0x0300_0000..=0x03FF_FFFF => {
+                let index = (aligned as usize) & (IWRAM_SIZE - 1);
+                u16::from_le_bytes([self.iwram[index], self.iwram[index + 1]])
+            }
+            0x0500_0000..=0x05FF_FFFF => {
+                let index = (aligned as usize) & (PALETTE_RAM_SIZE - 1);
+                u16::from_le_bytes([self.palette_ram[index], self.palette_ram[index + 1]])
+            }
+            0x0600_0000..=0x06FF_FFFF => {
+                let index = vram_index(aligned);
+                u16::from_le_bytes([self.vram[index], self.vram[index + 1]])
+            }
+            0x0700_0000..=0x07FF_FFFF => {
+                let index = (aligned as usize) & (OAM_SIZE - 1);
+                u16::from_le_bytes([self.oam[index], self.oam[index + 1]])
+            }
+            0x0800_0000..=0x0DFF_FFFF => self.cartridge.rom_read16(aligned),
+            _ => u16::from_le_bytes([self.read8_raw(aligned), self.read8_raw(aligned + 1)]),
+        }
     }
 
     pub fn read32(&self, addr: u32) -> u32 {
@@ -197,12 +220,7 @@ impl Bus {
             return value;
         }
         let aligned = addr & !3;
-        let value = u32::from_le_bytes([
-            self.read8_raw(aligned),
-            self.read8_raw(aligned + 1),
-            self.read8_raw(aligned + 2),
-            self.read8_raw(aligned + 3),
-        ]);
+        let value = self.read32_raw(aligned);
         self.record_read(aligned, value, 4);
         value
     }
@@ -213,15 +231,73 @@ impl Bus {
             return u32::from_le_bytes([byte, byte, byte, byte]);
         }
         let aligned = addr & !3;
-        u32::from_le_bytes([
-            self.read8_raw(aligned),
-            self.read8_raw(aligned + 1),
-            self.read8_raw(aligned + 2),
-            self.read8_raw(aligned + 3),
-        ])
+        match aligned {
+            0x0200_0000..=0x02FF_FFFF => {
+                let index = (aligned as usize) & (EWRAM_SIZE - 1);
+                u32::from_le_bytes([
+                    self.ewram[index],
+                    self.ewram[index + 1],
+                    self.ewram[index + 2],
+                    self.ewram[index + 3],
+                ])
+            }
+            0x0300_0000..=0x03FF_FFFF => {
+                let index = (aligned as usize) & (IWRAM_SIZE - 1);
+                u32::from_le_bytes([
+                    self.iwram[index],
+                    self.iwram[index + 1],
+                    self.iwram[index + 2],
+                    self.iwram[index + 3],
+                ])
+            }
+            0x0500_0000..=0x05FF_FFFF => {
+                let index = (aligned as usize) & (PALETTE_RAM_SIZE - 1);
+                u32::from_le_bytes([
+                    self.palette_ram[index],
+                    self.palette_ram[index + 1],
+                    self.palette_ram[index + 2],
+                    self.palette_ram[index + 3],
+                ])
+            }
+            0x0600_0000..=0x06FF_FFFF => {
+                let index = vram_index(aligned);
+                u32::from_le_bytes([
+                    self.vram[index],
+                    self.vram[index + 1],
+                    self.vram[index + 2],
+                    self.vram[index + 3],
+                ])
+            }
+            0x0700_0000..=0x07FF_FFFF => {
+                let index = (aligned as usize) & (OAM_SIZE - 1);
+                u32::from_le_bytes([
+                    self.oam[index],
+                    self.oam[index + 1],
+                    self.oam[index + 2],
+                    self.oam[index + 3],
+                ])
+            }
+            0x0800_0000..=0x0DFF_FFFF => self.cartridge.rom_read32(aligned),
+            _ => u32::from_le_bytes([
+                self.read8_raw(aligned),
+                self.read8_raw(aligned + 1),
+                self.read8_raw(aligned + 2),
+                self.read8_raw(aligned + 3),
+            ]),
+        }
     }
 
     pub fn write8(&mut self, addr: u32, value: u8) {
+        if self.debug_trace_enabled && self.debug_trace_writes {
+            self.write8_traced(addr, value);
+        } else {
+            self.write8_raw(addr, value);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write8_traced(&mut self, addr: u32, value: u8) {
         let old_value = self.read8_raw(addr);
         self.write8_raw(addr, value);
         self.record_write(
@@ -253,6 +329,31 @@ impl Bus {
     }
 
     pub fn write16(&mut self, addr: u32, value: u16) {
+        if self.debug_trace_enabled && self.debug_trace_writes {
+            self.write16_traced(addr, value);
+            return;
+        }
+
+        if is_backup_addr(addr) {
+            let byte = value.to_le_bytes()[(addr & 1) as usize];
+            self.cartridge.backup_write8(addr, byte);
+            return;
+        }
+        let aligned = addr & !1;
+        if self.cartridge.is_eeprom_access_addr(aligned) {
+            self.cartridge.eeprom_write16(aligned, value);
+            return;
+        }
+        if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
+            self.io_write16(aligned, value);
+            return;
+        }
+        self.write16_raw(aligned, value.to_le_bytes());
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write16_traced(&mut self, addr: u32, value: u16) {
         if is_backup_addr(addr) {
             let old_value = u32::from(self.cartridge.backup_read8(addr));
             let byte = value.to_le_bytes()[(addr & 1) as usize];
@@ -282,8 +383,7 @@ impl Bus {
             self.record_write(aligned, u32::from(old_value), new_value, 2);
             return;
         }
-        let bytes = value.to_le_bytes();
-        self.write16_raw(aligned, bytes);
+        self.write16_raw(aligned, value.to_le_bytes());
         self.record_write(
             aligned,
             u32::from(old_value),
@@ -293,6 +393,28 @@ impl Bus {
     }
 
     pub fn write32(&mut self, addr: u32, value: u32) {
+        if self.debug_trace_enabled && self.debug_trace_writes {
+            self.write32_traced(addr, value);
+            return;
+        }
+
+        if is_backup_addr(addr) {
+            self.cartridge
+                .backup_write8(addr, value.to_le_bytes()[(addr & 3) as usize]);
+            return;
+        }
+        let aligned = addr & !3;
+        if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
+            self.io_write16(aligned, value as u16);
+            self.io_write16(aligned + 2, (value >> 16) as u16);
+            return;
+        }
+        self.write32_raw(aligned, value.to_le_bytes());
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write32_traced(&mut self, addr: u32, value: u32) {
         if is_backup_addr(addr) {
             let old_value = u32::from(self.cartridge.backup_read8(addr));
             let byte = value.to_le_bytes()[(addr & 3) as usize];
@@ -318,8 +440,7 @@ impl Bus {
             self.record_write(aligned, old_value, new_value, 4);
             return;
         }
-        let bytes = value.to_le_bytes();
-        self.write32_raw(aligned, bytes);
+        self.write32_raw(aligned, value.to_le_bytes());
         self.record_write(aligned, old_value, self.read32_raw(aligned), 4);
     }
 

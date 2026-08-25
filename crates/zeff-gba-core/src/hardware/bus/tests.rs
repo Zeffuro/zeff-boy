@@ -120,6 +120,23 @@ fn backup_region_mirrors_across_0e_and_0f_address_space() {
 }
 
 #[test]
+fn native_width_reads_preserve_ram_and_video_mirroring() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+
+    for addr in [
+        0x0204_0000,
+        0x0300_8000,
+        0x0500_0400,
+        0x0601_8000,
+        0x0700_0400,
+    ] {
+        bus.write32(addr, 0x4433_2211);
+        assert_eq!(bus.peek16(addr), 0x2211, "halfword at {addr:08X}");
+        assert_eq!(bus.peek32(addr), 0x4433_2211, "word at {addr:08X}");
+    }
+}
+
+#[test]
 fn debug_trace_events_preserve_width_without_access_timing() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.debug_trace_enabled = true;

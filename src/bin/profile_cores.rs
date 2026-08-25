@@ -55,6 +55,30 @@ fn allocation_counts() -> (u64, u64, u64) {
     )
 }
 
+fn hash_string(hash: &[u8]) -> String {
+    hash.iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>()
+}
+
+fn print_accuracy_hashes(framebuffer: &[u8], state: &[u8], audio: &[f32]) {
+    use sha2::{Digest, Sha256};
+
+    let framebuffer_hash = Sha256::digest(framebuffer);
+    let state_hash = Sha256::digest(state);
+    let mut audio_hasher = Sha256::new();
+    for sample in audio {
+        audio_hasher.update(sample.to_le_bytes());
+    }
+    let audio_hash = audio_hasher.finalize();
+    println!(
+        "  framebuffer {}  state {}  audio {}",
+        hash_string(&framebuffer_hash),
+        hash_string(&state_hash),
+        hash_string(&audio_hash),
+    );
+}
+
 fn profile_frames<M: FrameLifecycle>(label: &str, frames: u32, machine: &mut M) {
     profile_frames_with_prepare(label, frames, machine, |_| {});
 }
@@ -129,7 +153,6 @@ fn profile_gb_synthetic(
     instruction_trace_enabled: bool,
     suffix: &str,
 ) {
-    use sha2::{Digest, Sha256};
     use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
     let mut gb =
@@ -139,26 +162,10 @@ fn profile_gb_synthetic(
     gb.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_frames(&format!("GB synthetic{suffix}"), frames, &mut gb);
 
-    let framebuffer_hash = Sha256::digest(gb.framebuffer());
-    let state_hash = Sha256::digest(gb.encode_state_bytes().expect("encode synthetic GB state"));
+    let state = gb.encode_state_bytes().expect("encode synthetic GB state");
     let mut audio = Vec::new();
     gb.drain_audio_samples_into(&mut audio);
-    let audio_bytes = audio
-        .iter()
-        .flat_map(|sample| sample.to_le_bytes())
-        .collect::<Vec<_>>();
-    let audio_hash = Sha256::digest(audio_bytes);
-    let hash_string = |hash: &[u8]| {
-        hash.iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>()
-    };
-    println!(
-        "  framebuffer {}  state {}  audio {}",
-        hash_string(&framebuffer_hash),
-        hash_string(&state_hash),
-        hash_string(&audio_hash),
-    );
+    print_accuracy_hashes(gb.framebuffer(), &state, &audio);
 }
 
 fn profile_gba_synthetic(
@@ -167,40 +174,25 @@ fn profile_gba_synthetic(
     instruction_trace_enabled: bool,
     suffix: &str,
 ) {
-    use sha2::{Digest, Sha256};
+    for (label, rom) in [
+        ("GBA synthetic", gba_rom()),
+        ("GBA RAM writes", gba_write_rom()),
+    ] {
+        let mut gba =
+            zeff_gba_core::emulator::Emulator::from_rom_data(&rom).expect("synthetic GBA ROM");
+        gba.set_apu_sample_generation_enabled(sample_generation_enabled);
+        gba.set_apu_debug_capture_enabled(false);
+        gba.set_instruction_trace_enabled(instruction_trace_enabled);
+        profile_frames(&format!("{label}{suffix}"), frames, &mut gba);
 
-    let mut gba =
-        zeff_gba_core::emulator::Emulator::from_rom_data(&gba_rom()).expect("synthetic GBA ROM");
-    gba.set_apu_sample_generation_enabled(sample_generation_enabled);
-    gba.set_apu_debug_capture_enabled(false);
-    gba.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_frames(&format!("GBA synthetic{suffix}"), frames, &mut gba);
-
-    let framebuffer_hash = Sha256::digest(gba.framebuffer());
-    let state = gba.encode_state().expect("encode synthetic GBA state");
-    let state_hash = Sha256::digest(state);
-    let mut audio = Vec::new();
-    gba.drain_audio_samples_into(&mut audio);
-    let audio_bytes = audio
-        .iter()
-        .flat_map(|sample| sample.to_le_bytes())
-        .collect::<Vec<_>>();
-    let audio_hash = Sha256::digest(audio_bytes);
-    let hash_string = |hash: &[u8]| {
-        hash.iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>()
-    };
-    println!(
-        "  framebuffer {}  state {}  audio {}",
-        hash_string(&framebuffer_hash),
-        hash_string(&state_hash),
-        hash_string(&audio_hash),
-    );
+        let state = gba.encode_state().expect("encode synthetic GBA state");
+        let mut audio = Vec::new();
+        gba.drain_audio_samples_into(&mut audio);
+        print_accuracy_hashes(gba.framebuffer(), &state, &audio);
+    }
 }
 
 fn profile_sega8_video(frames: u32, sample_generation_enabled: bool) {
-    use sha2::{Digest, Sha256};
     use zeff_sega8_core::hardware::cartridge::SystemHint;
 
     let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
@@ -262,29 +254,12 @@ fn profile_sega8_video(frames: u32, sample_generation_enabled: bool) {
             .any(|pixel| pixel[..3] != [0, 0, 0]),
         "synthetic Sega 8-bit video fixture did not produce visible pixels"
     );
-    let framebuffer_hash = Sha256::digest(sega.framebuffer());
-    let state_hash = Sha256::digest(
-        sega.encode_state()
-            .expect("encode synthetic Sega 8-bit state"),
-    );
+    let state = sega
+        .encode_state()
+        .expect("encode synthetic Sega 8-bit state");
     let mut audio = Vec::new();
     sega.drain_audio_samples_into(&mut audio);
-    let audio_bytes = audio
-        .iter()
-        .flat_map(|sample| sample.to_le_bytes())
-        .collect::<Vec<_>>();
-    let audio_hash = Sha256::digest(audio_bytes);
-    let hash_string = |hash: &[u8]| {
-        hash.iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>()
-    };
-    println!(
-        "  framebuffer {}  state {}  audio {}",
-        hash_string(&framebuffer_hash),
-        hash_string(&state_hash),
-        hash_string(&audio_hash),
-    );
+    print_accuracy_hashes(sega.framebuffer(), &state, &audio);
 }
 
 fn profile_pce_frames(label: &str, frames: u32, machine: &mut zeff_pce_core::hardware::PceMachine) {
@@ -315,6 +290,14 @@ fn profile_pce_frames(label: &str, frames: u32, machine: &mut zeff_pce_core::har
         reallocations,
         allocated_bytes as f64 / 1024.0
     );
+}
+
+fn print_pce_accuracy_hashes(machine: &mut zeff_pce_core::hardware::PceMachine) {
+    let state = zeff_pce_core::hardware::save_state::encode_state(machine)
+        .expect("encode synthetic PCE state");
+    let mut audio = Vec::new();
+    machine.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(machine.framebuffer(), &state, &audio);
 }
 
 fn profile_pce_state(iterations: u32) {
@@ -453,6 +436,18 @@ fn gba_rom() -> Vec<u8> {
     rom
 }
 
+fn gba_write_rom() -> Vec<u8> {
+    let mut rom = gba_rom();
+    for (offset, instruction) in [0xE3A0_0402_u32, 0xE580_1000, 0xE281_1001, 0xEAFF_FFFC]
+        .into_iter()
+        .enumerate()
+    {
+        let start = offset * 4;
+        rom[start..start + 4].copy_from_slice(&instruction.to_le_bytes());
+    }
+    rom
+}
+
 fn nes_rom() -> Vec<u8> {
     let mut rom = vec![0; 16 + 0x4000 + 0x2000];
     rom[0..4].copy_from_slice(b"NES\x1A");
@@ -463,6 +458,20 @@ fn nes_rom() -> Vec<u8> {
     rom[prg + 4] = 0x80;
     rom[prg + 0x3FFC] = 0x00;
     rom[prg + 0x3FFD] = 0x80;
+    rom
+}
+
+fn nes_ram_write_rom() -> Vec<u8> {
+    let mut rom = nes_rom();
+    let prg = 16;
+    rom[prg..prg + 5].copy_from_slice(&[0xE6, 0x00, 0x4C, 0x00, 0x80]);
+    rom
+}
+
+fn nes_video_rom() -> Vec<u8> {
+    let mut rom = nes_rom();
+    let prg = 16;
+    rom[prg..prg + 9].copy_from_slice(&[0xA9, 0x1E, 0x8D, 0x01, 0x20, 0xEA, 0x4C, 0x05, 0x80]);
     rom
 }
 
@@ -556,11 +565,22 @@ fn profile_nes_synthetic(
     instruction_trace_enabled: bool,
     suffix: &str,
 ) {
-    let mut nes =
-        zeff_nes_core::emulator::Emulator::from_rom_data(&nes_rom()).expect("synthetic NES ROM");
-    nes.set_apu_sample_generation_enabled(sample_generation_enabled);
-    nes.set_instruction_trace_enabled(instruction_trace_enabled);
-    profile_frames(&format!("NES synthetic{suffix}"), frames, &mut nes);
+    for (label, rom) in [
+        ("NES synthetic", nes_rom()),
+        ("NES RAM writes", nes_ram_write_rom()),
+        ("NES rendering", nes_video_rom()),
+    ] {
+        let mut nes =
+            zeff_nes_core::emulator::Emulator::from_rom_data(&rom).expect("synthetic NES ROM");
+        nes.set_apu_sample_generation_enabled(sample_generation_enabled);
+        nes.set_instruction_trace_enabled(instruction_trace_enabled);
+        profile_frames(&format!("{label}{suffix}"), frames, &mut nes);
+
+        let state = nes.encode_state().expect("encode synthetic NES state");
+        let mut audio = Vec::new();
+        nes.drain_audio_samples_into(&mut audio);
+        print_accuracy_hashes(nes.framebuffer(), &state, &audio);
+    }
 }
 
 fn profile_sega8_synthetic(
@@ -580,6 +600,13 @@ fn profile_sega8_synthetic(
     sega.set_apu_sample_generation_enabled(sample_generation_enabled);
     sega.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_frames(&format!("Sega 8-bit synthetic{suffix}"), frames, &mut sega);
+
+    let state = sega
+        .encode_state()
+        .expect("encode synthetic Sega 8-bit state");
+    let mut audio = Vec::new();
+    sega.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(sega.framebuffer(), &state, &audio);
 }
 
 fn profile_ws_synthetic(
@@ -593,6 +620,13 @@ fn profile_ws_synthetic(
     ws.set_apu_sample_generation_enabled(sample_generation_enabled);
     ws.set_instruction_trace_enabled(instruction_trace_enabled);
     profile_wonderswan_frames(&format!("WonderSwan synthetic{suffix}"), frames, &mut ws);
+
+    let state = ws
+        .encode_state()
+        .expect("encode synthetic WonderSwan state");
+    let mut audio = Vec::new();
+    ws.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(ws.framebuffer(), &state, &audio);
 }
 
 fn profile_pce_synthetic(
@@ -608,6 +642,7 @@ fn profile_pce_synthetic(
         pce.set_sample_generation_enabled(sample_generation_enabled);
         pce.set_instruction_trace_enabled(instruction_trace_enabled);
         profile_pce_frames(&format!("PC Engine synthetic{suffix}"), frames, &mut pce);
+        print_pce_accuracy_hashes(&mut pce);
 
         let mut pce_writes = zeff_pce_core::hardware::PceMachine::new(pce_write_rom())
             .expect("synthetic PCE write ROM");
@@ -618,10 +653,10 @@ fn profile_pce_synthetic(
             frames,
             &mut pce_writes,
         );
+        print_pce_accuracy_hashes(&mut pce_writes);
     }
 
     if video_only || std::env::var("ZEFF_PROFILE_PCE_VIDEO").as_deref() == Ok("1") {
-        use sha2::{Digest, Sha256};
         use zeff_pce_core::hardware::VdcRegister;
         use zeff_pce_core::hardware::cpu::VdcPort;
 
@@ -646,23 +681,10 @@ fn profile_pce_synthetic(
             frames,
             &mut pce_video,
         );
-        let framebuffer_hash = Sha256::digest(pce_video.framebuffer());
-        let state = zeff_pce_core::hardware::save_state::encode_state(&pce_video)
-            .expect("encode synthetic PCE video state");
-        let state_hash = Sha256::digest(&state);
-        let framebuffer_hash = framebuffer_hash
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
-        let state_hash = state_hash
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
-        println!("  framebuffer {framebuffer_hash}  state {state_hash}");
+        print_pce_accuracy_hashes(&mut pce_video);
     }
 
     if std::env::var("ZEFF_PROFILE_PCE_SPRITES").as_deref() == Ok("1") {
-        use sha2::{Digest, Sha256};
         use zeff_pce_core::hardware::cpu::VdcPort;
         use zeff_pce_core::hardware::{VcePort, VdcDmaChannel, VdcDmaProgress, VdcRegister};
 
@@ -732,19 +754,7 @@ fn profile_pce_synthetic(
                 .any(|pixel| pixel[..3] != [0, 0, 0]),
             "synthetic PCE sprite fixture did not produce visible pixels"
         );
-        let framebuffer_hash = Sha256::digest(pce_sprites.framebuffer());
-        let state = zeff_pce_core::hardware::save_state::encode_state(&pce_sprites)
-            .expect("encode synthetic PCE sprite state");
-        let state_hash = Sha256::digest(&state);
-        let framebuffer_hash = framebuffer_hash
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
-        let state_hash = state_hash
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
-        println!("  framebuffer {framebuffer_hash}  state {state_hash}");
+        print_pce_accuracy_hashes(&mut pce_sprites);
     }
 }
 

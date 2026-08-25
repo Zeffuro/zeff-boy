@@ -178,6 +178,33 @@ impl Cartridge {
             .unwrap_or_else(|| gamepak_open_bus_read8(addr))
     }
 
+    pub fn rom_read16(&self, addr: u32) -> u16 {
+        let aligned = addr & !1;
+        if self.rtc.is_none()
+            && let Some(offset) = gba_rom_offset(aligned)
+            && let Some(bytes) = self.rom.get(offset..offset + 2)
+        {
+            return u16::from_le_bytes([bytes[0], bytes[1]]);
+        }
+        u16::from_le_bytes([self.rom_read8(aligned), self.rom_read8(aligned + 1)])
+    }
+
+    pub fn rom_read32(&self, addr: u32) -> u32 {
+        let aligned = addr & !3;
+        if self.rtc.is_none()
+            && let Some(offset) = gba_rom_offset(aligned)
+            && let Some(bytes) = self.rom.get(offset..offset + 4)
+        {
+            return u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        }
+        u32::from_le_bytes([
+            self.rom_read8(aligned),
+            self.rom_read8(aligned + 1),
+            self.rom_read8(aligned + 2),
+            self.rom_read8(aligned + 3),
+        ])
+    }
+
     pub fn rom_write16(&mut self, addr: u32, value: u16) -> bool {
         self.rtc
             .as_mut()
@@ -327,6 +354,54 @@ mod tests {
         assert_eq!(cart.rom_read8(0x0924_68AD), 0x34);
         assert_eq!(cart.rom_read8(0x0924_68AE), 0x57);
         assert_eq!(cart.rom_read8(0x0924_68AF), 0x34);
+    }
+
+    #[test]
+    fn native_width_rom_reads_match_byte_reads() {
+        let mut rom = minimal_rom();
+        rom[0xB8..0xBC].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        let cart = Cartridge::load(&rom).unwrap();
+
+        for addr in [0x0800_00B8, 0x0A00_00B8, 0x0924_68AC] {
+            assert_eq!(
+                cart.rom_read16(addr),
+                u16::from_le_bytes([cart.rom_read8(addr), cart.rom_read8(addr + 1)])
+            );
+            assert_eq!(
+                cart.rom_read32(addr),
+                u32::from_le_bytes([
+                    cart.rom_read8(addr),
+                    cart.rom_read8(addr + 1),
+                    cart.rom_read8(addr + 2),
+                    cart.rom_read8(addr + 3),
+                ])
+            );
+        }
+    }
+
+    #[test]
+    fn native_width_rom_reads_preserve_rtc_gpio_intercepts() {
+        let mut rom = minimal_rom();
+        rom.resize(0xCA, 0);
+        rom[GAME_CODE_START..GAME_CODE_END].copy_from_slice(b"BPEE");
+        let mut cart = Cartridge::load(&rom).unwrap();
+        assert!(cart.rom_write16(0x0800_00C8, 1));
+
+        for addr in [0x0800_00C4, 0x0800_00C8] {
+            assert_eq!(
+                cart.rom_read16(addr),
+                u16::from_le_bytes([cart.rom_read8(addr), cart.rom_read8(addr + 1)])
+            );
+            assert_eq!(
+                cart.rom_read32(addr),
+                u32::from_le_bytes([
+                    cart.rom_read8(addr),
+                    cart.rom_read8(addr + 1),
+                    cart.rom_read8(addr + 2),
+                    cart.rom_read8(addr + 3),
+                ])
+            );
+        }
     }
 
     #[test]

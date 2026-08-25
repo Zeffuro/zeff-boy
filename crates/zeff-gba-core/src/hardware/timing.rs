@@ -85,7 +85,8 @@ pub fn access_cycles_with_waitcnt(
     access: AccessType,
     waitcnt: u16,
 ) -> u32 {
-    let base = match (region_for_addr(addr), access) {
+    let region = region_for_addr(addr);
+    let base = match (region, access) {
         (BusRegion::Bios, _) => 1,
         (BusRegion::Ewram, _) => 3,
         (BusRegion::Iwram, _) => 1,
@@ -119,13 +120,35 @@ pub fn access_cycles_with_waitcnt(
         (BusRegion::Unused, _) => 1,
     };
 
-    if width_bytes >= WORD_BYTES {
-        match region_for_addr(addr) {
-            BusRegion::GamePak0 | BusRegion::GamePak1 | BusRegion::GamePak2 => {
-                base + sequential_cycles_with_waitcnt(addr + HALFWORD_BYTES, waitcnt)
+    if width_bytes >= WORD_BYTES
+        && matches!(
+            region,
+            BusRegion::GamePak0 | BusRegion::GamePak1 | BusRegion::GamePak2
+        )
+    {
+        let second_halfword = if addr & 0x01FF_FFFF <= 0x01FF_FFFD {
+            match region {
+                BusRegion::GamePak0 => gamepak_second_access_cycles(
+                    waitcnt,
+                    WAITCNT_GAMEPAK0_SECOND_SHIFT,
+                    GAMEPAK0_SECOND_CYCLES,
+                ),
+                BusRegion::GamePak1 => gamepak_second_access_cycles(
+                    waitcnt,
+                    WAITCNT_GAMEPAK1_SECOND_SHIFT,
+                    GAMEPAK1_SECOND_CYCLES,
+                ),
+                BusRegion::GamePak2 => gamepak_second_access_cycles(
+                    waitcnt,
+                    WAITCNT_GAMEPAK2_SECOND_SHIFT,
+                    GAMEPAK2_SECOND_CYCLES,
+                ),
+                _ => unreachable!(),
             }
-            _ => base,
-        }
+        } else {
+            sequential_cycles_with_waitcnt(addr + HALFWORD_BYTES, waitcnt)
+        };
+        base + second_halfword
     } else {
         base
     }
@@ -229,6 +252,19 @@ mod tests {
         assert_eq!(
             access_cycles_with_waitcnt(0x0800_0000, 4, AccessType::NonSequential, waitcnt),
             5
+        );
+    }
+
+    #[test]
+    fn word_gamepak_access_preserves_waitstate_window_crossing() {
+        assert_eq!(
+            access_cycles_with_waitcnt(
+                0x09FF_FFFE,
+                4,
+                AccessType::NonSequential,
+                1 << WAITCNT_GAMEPAK1_SECOND_SHIFT,
+            ),
+            7
         );
     }
 }
