@@ -290,6 +290,7 @@ pub(crate) fn run(
             occupied: [false; 10],
         },
         undo_load_state: None,
+        undo_save_state_path: None,
         paused_by_unfocus: false,
         suppress_unfocus_pause_until_focus: false,
     };
@@ -451,6 +452,7 @@ struct App {
     ws_display_rotated: bool,
     cached_slot_info: state_io::SlotInfo,
     undo_load_state: Option<Vec<u8>>,
+    undo_save_state_path: Option<std::path::PathBuf>,
     paused_by_unfocus: bool,
     suppress_unfocus_pause_until_focus: bool,
 }

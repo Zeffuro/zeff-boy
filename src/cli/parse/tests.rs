@@ -167,6 +167,30 @@ fn parses_pce_memory_base_headless_option() {
 }
 
 #[test]
+fn parses_pce_save_state_out_headless_option() {
+    let args = parse_args_from([
+        "--headless",
+        "--pce-save-state-out",
+        "target/checkpoint.pcestate",
+        "game.pce",
+    ])
+    .unwrap();
+    assert_eq!(
+        args.headless.unwrap().pce_save_state_path,
+        Some(std::path::PathBuf::from("target/checkpoint.pcestate"))
+    );
+
+    let err = match parse_args_from(["--headless", "--pce-save-state-out"]) {
+        Ok(_) => panic!("the output option must require a path"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("--pce-save-state-out requires a file path")
+    );
+}
+
+#[test]
 fn parses_pce_multitap_headless_inputs() {
     let args = parse_args_from([
         "--headless",

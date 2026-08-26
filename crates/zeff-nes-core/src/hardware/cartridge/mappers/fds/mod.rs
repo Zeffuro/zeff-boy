@@ -35,7 +35,8 @@ const FDS_SIDE_CHANGE_SETTLE_CPU_CYCLES: u32 =
 const FDS_SIDE_CHANGE_TOTAL_CPU_CYCLES: u32 =
     FDS_SIDE_CHANGE_EJECT_CPU_CYCLES + FDS_SIDE_CHANGE_SETTLE_CPU_CYCLES;
 const FDS_DRIVE_STATE_MARKER_V1: [u8; 8] = *b"FDSDRV1!";
-const FDS_DRIVE_STATE_MARKER: [u8; 8] = *b"FDSDRV2!";
+const FDS_DRIVE_STATE_MARKER_V2: [u8; 8] = *b"FDSDRV2!";
+const FDS_DRIVE_STATE_MARKER: [u8; 8] = *b"FDSDRV3!";
 const FDS_SAVE_MAGIC: [u8; 8] = *b"ZBFDSSAV";
 const FDS_SAVE_VERSION_V1: u32 = 1;
 const FDS_SAVE_VERSION_V2: u32 = 2;
@@ -65,6 +66,7 @@ pub struct Fds {
     irq_pending: bool,
 
     io_enabled: bool,
+    audio_enabled: bool,
     disk_reg: u8,
     disk_control: u8,
     disk_data: u8,
@@ -102,6 +104,7 @@ impl Fds {
             irq_repeat: false,
             irq_pending: false,
             io_enabled: false,
+            audio_enabled: false,
             disk_reg: 0,
             disk_control: 0,
             disk_data: 0,
@@ -652,6 +655,10 @@ impl Mapper for Fds {
             }
             0x4023 => {
                 self.io_enabled = val & 0x01 != 0;
+                self.audio_enabled = val & 0x02 != 0;
+                if !self.audio_enabled {
+                    self.audio.reset_for_master_disable();
+                }
                 if !self.io_enabled {
                     self.irq_enabled = false;
                     self.irq_pending = false;
@@ -700,7 +707,9 @@ impl Mapper for Fds {
     }
 
     fn clock_cpu(&mut self) {
-        self.audio.tick();
+        if self.audio_enabled {
+            self.audio.tick();
+        }
         self.disk_media_change_counter = self.disk_media_change_counter.saturating_sub(1);
         self.clock_disk_drive();
 
@@ -719,7 +728,11 @@ impl Mapper for Fds {
     }
 
     fn audio_output(&self) -> f32 {
-        self.audio.output()
+        if self.audio_enabled {
+            self.audio.output()
+        } else {
+            0.0
+        }
     }
 
     fn dump_battery_data(&self) -> Option<Vec<u8>> {

@@ -307,6 +307,7 @@ impl App {
         self.debug_windows.last_disasm_mapping = None;
         self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
+        self.undo_save_state_path = None;
 
         if self.recording.audio_recorder.is_some() {
             let next_audio_context = backend.audio_topology().map(|topology| {
@@ -749,6 +750,7 @@ impl App {
         self.last_core_frame = None;
         self.last_displayed_frame = None;
         self.undo_load_state = None;
+        self.undo_save_state_path = None;
         self.media_slot_snapshot = None;
         self.recording.pending_media_commands.clear();
         self.rom_info.rom_path = None;

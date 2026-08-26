@@ -58,6 +58,9 @@ pub(super) fn ensure_system_headless_options(
     if opts.pce_arcade_card_mode.is_some() && system != "pce" {
         anyhow::bail!("--pce-arcade-card is only supported for PC Engine headless runs");
     }
+    if opts.pce_save_state_path.is_some() && system != "pce" {
+        anyhow::bail!("--pce-save-state-out is only supported for PC Engine headless runs");
+    }
     if !opts.input_events_p2.is_empty()
         && !(matches!(system, "nes" | "pce" | "sms" | "gg" | "sg")
             || (system == "ws" && opts.ws_link_peer_path.is_some()))
@@ -249,5 +252,17 @@ mod tests {
 
         ensure_system_headless_options("pce", &opts).unwrap();
         assert!(ensure_system_headless_options("gba", &opts).is_err());
+    }
+
+    #[test]
+    fn pce_state_output_is_rejected_until_a_headless_system_wires_it() {
+        let opts = HeadlessOptions {
+            pce_save_state_path: Some(std::path::PathBuf::from("target/endpoint.pcestate")),
+            ..HeadlessOptions::default()
+        };
+
+        ensure_system_headless_options("pce", &opts).unwrap();
+        let error = ensure_system_headless_options("gba", &opts).unwrap_err();
+        assert!(error.to_string().contains("--pce-save-state-out"));
     }
 }

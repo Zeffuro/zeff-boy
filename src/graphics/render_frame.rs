@@ -62,6 +62,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) slot_occupied: [bool; 10],
     pub(crate) active_save_slot: u8,
     pub(crate) can_undo_load_state: bool,
+    pub(crate) can_undo_save_state: bool,
     pub(crate) archive_selection: Option<&'a PendingArchiveSelection>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) package_load: Option<PackageLoadView>,
@@ -498,6 +499,7 @@ impl Graphics {
                     slot_occupied: &ctx.slot_occupied,
                     active_save_slot: ctx.active_save_slot,
                     can_undo_load_state: ctx.can_undo_load_state,
+                    can_undo_save_state: ctx.can_undo_save_state,
                     external_debugger: !ctx.show_debug_dock,
                     debugger_window_open: ctx.debugger_window_open,
                     debug_presentation: ctx.debug_presentation,

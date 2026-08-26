@@ -64,6 +64,7 @@ pub struct Psg {
     tone_output_high: [bool; PSG_TONE_CHANNEL_COUNT],
     noise_counter_cycles: i32,
     noise_lfsr: u16,
+    clock_hz: u32,
     sample_rate: u32,
     sample_generation_enabled: bool,
     sample_cycle_accumulator: u32,
@@ -88,6 +89,10 @@ impl Psg {
     }
 
     pub fn new_with_sample_rate(sample_rate: u32) -> Self {
+        Self::new_with_sample_rate_and_clock_hz(sample_rate, SEGA8_Z80_CLOCK_HZ_APPROX)
+    }
+
+    pub fn new_with_sample_rate_and_clock_hz(sample_rate: u32, clock_hz: u32) -> Self {
         let mut psg = Self {
             last_write: None,
             write_count: 0,
@@ -100,6 +105,7 @@ impl Psg {
             tone_output_high: [true; PSG_TONE_CHANNEL_COUNT],
             noise_counter_cycles: 512,
             noise_lfsr: NOISE_LFSR_RESET,
+            clock_hz: clock_hz.max(1),
             sample_rate: sample_rate.max(1),
             sample_generation_enabled: true,
             sample_cycle_accumulator: 0,
@@ -118,7 +124,8 @@ impl Psg {
 
     pub fn reset(&mut self) {
         let sample_rate = self.sample_rate;
-        *self = Self::new_with_sample_rate(sample_rate);
+        let clock_hz = self.clock_hz;
+        *self = Self::new_with_sample_rate_and_clock_hz(sample_rate, clock_hz);
     }
 
     pub fn write_data(&mut self, value: u8) {
@@ -155,9 +162,20 @@ impl Psg {
         if sample_rate == 0 {
             self.sample_rate = PSG_DEFAULT_SAMPLE_RATE;
         }
-        self.sample_cycle_accumulator %= SEGA8_Z80_CLOCK_HZ_APPROX;
+        self.sample_cycle_accumulator %= self.clock_hz;
         self.sample_buffer.clear();
         self.clear_debug_sample_history();
+    }
+
+    pub fn set_clock_hz(&mut self, clock_hz: u32) {
+        let clock_hz = clock_hz.max(1);
+        if self.clock_hz == clock_hz {
+            return;
+        }
+        self.sample_cycle_accumulator = (u64::from(self.sample_cycle_accumulator)
+            * u64::from(clock_hz)
+            / u64::from(self.clock_hz)) as u32;
+        self.clock_hz = clock_hz;
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -393,7 +411,7 @@ impl Psg {
     }
 
     fn clocks_until_next_sample(&self) -> u32 {
-        let remaining = u64::from(SEGA8_Z80_CLOCK_HZ_APPROX - self.sample_cycle_accumulator);
+        let remaining = u64::from(self.clock_hz - self.sample_cycle_accumulator);
         let rate = u64::from(self.sample_rate);
         remaining.div_ceil(rate).min(u64::from(u32::MAX)) as u32
     }
@@ -401,8 +419,8 @@ impl Psg {
     fn advance_sample_clock(&mut self, cycles: u32) {
         let mut accumulator = u64::from(self.sample_cycle_accumulator)
             + u64::from(cycles) * u64::from(self.sample_rate);
-        while accumulator >= u64::from(SEGA8_Z80_CLOCK_HZ_APPROX) {
-            accumulator -= u64::from(SEGA8_Z80_CLOCK_HZ_APPROX);
+        while accumulator >= u64::from(self.clock_hz) {
+            accumulator -= u64::from(self.clock_hz);
             if self.sample_generation_enabled {
                 let (left, right, channels) = self.mix_current_sample();
                 self.sample_buffer.push(left);

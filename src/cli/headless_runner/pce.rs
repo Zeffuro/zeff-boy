@@ -17,7 +17,8 @@ use super::{
     input_p3_for_frame, input_p4_for_frame, input_p5_for_frame, observe_stuck, pce_debug_state,
     print_memory_region_dumps, print_perf, read_headless_state_if_requested,
     screenshot_path_if_written, write_audio_dump_f32le, write_final_screenshot_if_needed,
-    write_screenshot_if_requested, write_screenshot_sequence_if_requested,
+    write_pce_state_artifact, write_screenshot_if_requested,
+    write_screenshot_sequence_if_requested,
 };
 
 const PCE_HEADLESS_SAMPLE_RATE: u32 = 44_100;
@@ -357,6 +358,16 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
         );
         anyhow::bail!("expected PC Engine test fixture pass before max frame limit; {detail}");
     }
+    if let Some(path) = &opts.pce_save_state_path {
+        let state = backend.encode_state_bytes()?;
+        let saved_path = write_pce_state_artifact(path, &state)?;
+        println!(
+            "[headless] pce-save-state={} bytes={} sha256={}",
+            saved_path.display(),
+            state.len(),
+            zeff_firmware::sha256_hex(&state),
+        );
+    }
     if !opts.no_sram {
         match backend.flush_battery_sram() {
             Ok(Some(path)) => log::info!("Saved battery RAM to {path}"),
@@ -516,7 +527,41 @@ fn print_pce_memory_dumps(backend: &PceBackend, opts: &HeadlessOptions) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
+
+    const RESET_PC: u16 = 0xE000;
+
+    struct TestTempDir {
+        path: PathBuf,
+    }
+
+    impl Drop for TestTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn test_temp_dir(label: &str) -> TestTempDir {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "zeff-boy-pce-state-{label}-{}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        TestTempDir { path }
+    }
+
+    fn pce_test_rom() -> Vec<u8> {
+        let mut rom = vec![0xEA; 0x2000];
+        rom[0x1FFE..0x2000].copy_from_slice(&RESET_PC.to_le_bytes());
+        rom
+    }
 
     #[test]
     fn pce_test_status_requires_magic_and_decodes_little_endian_u24_counters() {
@@ -531,5 +576,24 @@ mod tests {
         assert_eq!(status.counter, 0x12_34_56);
         assert_eq!(status.half_counter, 0xAB_CD_EF);
         assert_eq!(status.end_counter, 0x01_02_03);
+    }
+
+    #[test]
+    fn encoded_pce_endpoint_state_survives_new_file_and_identity_checked_load() -> anyhow::Result<()>
+    {
+        let rom = pce_test_rom();
+        let mut source = PceBackend::new(rom.clone(), PathBuf::from("endpoint.pce"))?;
+        source.step_frame();
+        let state = source.encode_state_bytes()?;
+
+        let temp = test_temp_dir("roundtrip");
+        let state_path = temp.path.join("endpoint.pcestate");
+        super::super::state_artifacts::write_new_state_file(&state_path, &state)?;
+
+        let mut restored = PceBackend::new(rom, PathBuf::from("endpoint.pce"))?;
+        restored.load_state_from_bytes(std::fs::read(&state_path)?)?;
+        assert_eq!(restored.encode_state_bytes()?, state);
+        assert!(state_path.is_file());
+        Ok(())
     }
 }

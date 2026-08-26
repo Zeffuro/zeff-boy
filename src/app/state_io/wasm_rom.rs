@@ -54,6 +54,7 @@ impl App {
         self.debug_windows.last_disasm_mapping = None;
         self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
+        self.undo_save_state_path = None;
 
         let path = PathBuf::from(&name);
         let is_zip = path

@@ -348,11 +348,55 @@ fn disk_scan_reset_rewinds_to_start_of_side() {
 #[test]
 fn audio_wavetable_write_read() {
     let mut fds = make_fds();
+    assert!(!fds.audio_enabled);
     fds.cpu_write(0x4089, 0x80);
     fds.cpu_write(0x4040, 0x20);
     fds.cpu_write(0x4041, 0x3F);
     assert_eq!(fds.cpu_peek(0x4040), 0x20);
     assert_eq!(fds.cpu_peek(0x4041), 0x3F);
+}
+
+#[test]
+fn audio_master_disable_resets_output_but_keeps_registers_writable() {
+    let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x03);
+    fds.cpu_write(0x4089, 0x80);
+    for i in 0..64u8 {
+        fds.cpu_write(0x4040 + i as u16, (i & 0x3F) | 0x20);
+    }
+    fds.cpu_write(0x4089, 0x00);
+    fds.cpu_write(0x4080, 0x80 | 0x1F);
+    fds.cpu_write(0x4082, 0xFF);
+    fds.cpu_write(0x4083, 0x03);
+    for _ in 0..1000 {
+        fds.clock_cpu();
+    }
+    assert!(fds.audio_output() > 0.0);
+
+    fds.cpu_write(0x4023, 0x01);
+    assert!(!fds.audio_enabled);
+    assert_eq!(fds.audio_output(), 0.0);
+    assert_eq!(fds.cpu_peek(0x4090) & 0x3F, 0);
+
+    fds.cpu_write(0x4089, 0x80);
+    fds.cpu_write(0x4040, 0x2A);
+    fds.cpu_write(0x4080, 0x80 | 0x1A);
+    assert_eq!(fds.cpu_peek(0x4040), 0x2A);
+    assert_eq!(fds.cpu_peek(0x4090) & 0x3F, 0x1A);
+    for _ in 0..100 {
+        fds.clock_cpu();
+    }
+    assert_eq!(fds.audio_output(), 0.0);
+
+    fds.cpu_write(0x4023, 0x03);
+    fds.cpu_write(0x4089, 0x00);
+    fds.cpu_write(0x4080, 0x80 | 0x1F);
+    fds.cpu_write(0x4082, 0xFF);
+    fds.cpu_write(0x4083, 0x03);
+    for _ in 0..1000 {
+        fds.clock_cpu();
+    }
+    assert!(fds.audio_output() > 0.0);
 }
 
 #[test]
@@ -632,6 +676,7 @@ fn fds_save_container_rejects_different_source_media() {
 #[test]
 fn audio_produces_output_when_playing() {
     let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x02);
     fds.cpu_write(0x4089, 0x80);
     for i in 0..64u8 {
         fds.cpu_write(0x4040 + i as u16, (i & 0x3F) | 0x20);
@@ -650,6 +695,7 @@ fn audio_produces_output_when_playing() {
 #[test]
 fn audio_silent_when_halted() {
     let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x02);
     fds.cpu_write(0x4083, 0x80);
     for _ in 0..100 {
         fds.clock_cpu();
@@ -718,7 +764,7 @@ fn save_state_roundtrip() {
     let image = FdsImage::parse(&side).expect("FDS image should parse");
     let mut fds = Fds::with_disk_image(vec![0xFF; FDS_BIOS_SIZE], image, Mirroring::Horizontal);
     fds.cpu_write(0x6000, 0xAA);
-    fds.cpu_write(0x4023, 0x01);
+    fds.cpu_write(0x4023, 0x03);
     fds.cpu_write(0x4025, 0xE5);
     clock_until_next_disk_byte(&mut fds);
     assert_eq!(fds.cpu_read(0x4031), 0x11);
@@ -745,6 +791,31 @@ fn save_state_roundtrip() {
     assert_eq!(fds2.cpu_peek(0x4040), 0x20);
     clock_until_next_disk_byte(&mut fds2);
     assert_eq!(fds2.cpu_read(0x4031), 0x22);
+}
+
+#[test]
+fn save_state_roundtrip_preserves_disabled_audio_master() {
+    let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x01);
+    fds.cpu_write(0x4089, 0x80);
+    fds.cpu_write(0x4040, 0x2A);
+    fds.cpu_write(0x4080, 0x80 | 0x1A);
+
+    let mut writer = crate::save_state::StateWriter::new();
+    fds.write_state(&mut writer);
+    let bytes = writer.into_bytes();
+
+    let mut restored = make_fds();
+    restored
+        .read_state(&mut crate::save_state::StateReader::new(&bytes))
+        .expect("read_state ok");
+    assert!(!restored.audio_enabled);
+    assert_eq!(restored.cpu_peek(0x4040), 0x2A);
+    assert_eq!(restored.cpu_peek(0x4090) & 0x3F, 0x1A);
+    for _ in 0..100 {
+        restored.clock_cpu();
+    }
+    assert_eq!(restored.audio_output(), 0.0);
 }
 
 #[test]
@@ -793,6 +864,7 @@ fn legacy_drive_marker_restores_selected_side_unprotected() {
         .windows(FDS_DRIVE_STATE_MARKER.len())
         .position(|window| window == FDS_DRIVE_STATE_MARKER)
         .unwrap();
+    state.remove(marker + FDS_DRIVE_STATE_MARKER.len());
     state[marker..marker + FDS_DRIVE_STATE_MARKER.len()]
         .copy_from_slice(&FDS_DRIVE_STATE_MARKER_V1);
 
@@ -809,4 +881,27 @@ fn legacy_drive_marker_restores_selected_side_unprotected() {
     assert_eq!(restored.selected_side(), Some(1));
     assert!(restored.media_slot.inserted());
     assert!(!restored.media_slot.write_protected);
+    assert!(restored.audio_enabled);
+}
+
+#[test]
+fn v2_drive_marker_migrates_audio_master_as_enabled() {
+    let mut source = make_fds();
+    source.cpu_write(0x4023, 0x01);
+    let mut writer = crate::save_state::StateWriter::new();
+    source.write_state(&mut writer);
+    let mut state = writer.into_bytes();
+    let marker = state
+        .windows(FDS_DRIVE_STATE_MARKER.len())
+        .position(|window| window == FDS_DRIVE_STATE_MARKER)
+        .unwrap();
+    state.remove(marker + FDS_DRIVE_STATE_MARKER.len());
+    state[marker..marker + FDS_DRIVE_STATE_MARKER.len()]
+        .copy_from_slice(&FDS_DRIVE_STATE_MARKER_V2);
+
+    let mut restored = make_fds();
+    restored
+        .read_state(&mut crate::save_state::StateReader::new(&state))
+        .expect("v2 FDS mapper state should migrate");
+    assert!(restored.audio_enabled);
 }

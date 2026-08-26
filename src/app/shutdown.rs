@@ -45,8 +45,8 @@ impl App {
         {
             thread.send(EmuCommand::AutoSaveState);
             match self.recv_cold_response() {
-                Some(EmuResponse::SaveStateOk(path)) => {
-                    log::info!("Auto-saved state to {}", path);
+                Some(EmuResponse::SaveStateOk { path, .. }) => {
+                    log::info!("Auto-saved state to {}", path.display());
                 }
                 Some(EmuResponse::SaveStateFailed(err)) => {
                     log::warn!("Auto-save failed: {}", err);

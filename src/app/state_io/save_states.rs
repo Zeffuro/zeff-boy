@@ -14,6 +14,10 @@ fn all_state_file_extensions() -> Vec<&'static str> {
 }
 
 impl App {
+    fn update_undo_save_path(&mut self, path: PathBuf, backup_created: bool) {
+        self.undo_save_state_path = backup_created.then_some(path);
+    }
+
     fn refresh_framebuffer_after_load(&mut self) {
         if let Some(thread) = &self.emu_thread {
             self.latest_frame = thread.shared_framebuffer().load_full();
@@ -94,6 +98,26 @@ impl App {
         }
     }
 
+    pub(in crate::app) fn undo_save_state(&mut self) {
+        let Some(path) = self.undo_save_state_path.take() else {
+            self.toast_manager.info("No saved state to undo");
+            return;
+        };
+
+        match crate::save_paths::restore_state_file_backup(&path) {
+            Ok(()) => {
+                log::info!("Undid saved state at {}", path.display());
+                self.undo_save_state_path = Some(path);
+                self.refresh_slot_info();
+                self.toast_manager.success("Restored previous save state");
+            }
+            Err(err) => {
+                log::error!("Failed to undo saved state at {}: {err}", path.display());
+                self.toast_manager.error(format!("Undo save failed: {err}"));
+            }
+        }
+    }
+
     pub(in crate::app) fn save_state_slot(&mut self, slot: u8) {
         if !self.core_supports_save_states() {
             return;
@@ -102,8 +126,12 @@ impl App {
             thread.send(EmuCommand::SaveStateSlot(slot));
         }
         match self.recv_cold_response() {
-            Some(EmuResponse::SaveStateOk(path)) => {
-                log::info!("Saved state to {}", path);
+            Some(EmuResponse::SaveStateOk {
+                path,
+                backup_created,
+            }) => {
+                log::info!("Saved state to {}", path.display());
+                self.update_undo_save_path(path, backup_created);
                 self.toast_manager.success(format!("Saved to slot {slot}"));
                 self.refresh_slot_info();
             }
@@ -214,8 +242,12 @@ impl App {
                 thread.send(EmuCommand::SaveStateToPath(path.clone()));
             }
             match self.recv_cold_response() {
-                Some(EmuResponse::SaveStateOk(saved)) => {
-                    log::info!("Saved state to {}", saved);
+                Some(EmuResponse::SaveStateOk {
+                    path,
+                    backup_created,
+                }) => {
+                    log::info!("Saved state to {}", path.display());
+                    self.update_undo_save_path(path, backup_created);
                     self.toast_manager.success("State saved to file");
                 }
                 Some(EmuResponse::SaveStateFailed(err)) => {
@@ -235,6 +267,7 @@ impl App {
                 Some(EmuResponse::StateCaptured(bytes)) => {
                     let filename = self.default_state_file_name();
                     crate::platform::download_file(&filename, &bytes);
+                    self.undo_save_state_path = None;
                     self.toast_manager.success("State exported to download");
                 }
                 Some(EmuResponse::StateCaptureFailed(err)) => {

@@ -734,7 +734,7 @@ fn validate_replay_host_input_frame_shapes(
 
 fn response_kind(response: &EmuResponse) -> &'static str {
     match response {
-        EmuResponse::SaveStateOk(_) => "SaveStateOk",
+        EmuResponse::SaveStateOk { .. } => "SaveStateOk",
         EmuResponse::SaveStateFailed(_) => "SaveStateFailed",
         EmuResponse::LoadStateOk { .. } => "LoadStateOk",
         EmuResponse::LoadStateFailed(_) => "LoadStateFailed",

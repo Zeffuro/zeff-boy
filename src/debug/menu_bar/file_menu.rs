@@ -7,6 +7,7 @@ pub(super) struct FileMenuState<'a> {
     pub slot_occupied: &'a [bool; 10],
     pub active_slot: u8,
     pub can_undo_load_state: bool,
+    pub can_undo_save_state: bool,
     pub is_recording_audio: bool,
     pub is_recording_replay: bool,
     pub is_playing_replay: bool,
@@ -63,6 +64,16 @@ pub(super) fn draw(
         ui.menu_button("Save State", |ui| {
             draw_slot_menu(ui, actions, state, false, MenuAction::SaveStateSlot);
             ui.separator();
+            if ui
+                .add_enabled(
+                    state.can_undo_save_state,
+                    egui::Button::new("Undo Last Save State"),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::UndoSaveState);
+                ui.close();
+            }
             if ui.button("Save to File...").clicked() {
                 actions.push(MenuAction::SaveStateFile);
                 ui.close();
@@ -71,22 +82,22 @@ pub(super) fn draw(
         ui.menu_button("Load State", |ui| {
             draw_slot_menu(ui, actions, state, true, MenuAction::LoadStateSlot);
             ui.separator();
+            if ui
+                .add_enabled(
+                    state.can_undo_load_state,
+                    egui::Button::new("Undo Last Load State"),
+                )
+                .on_hover_text("Restore the emulator state from before the last successful load")
+                .clicked()
+            {
+                actions.push(MenuAction::UndoLoadState);
+                ui.close();
+            }
             if ui.button("Load from File...").clicked() {
                 actions.push(MenuAction::LoadStateFile);
                 ui.close();
             }
         });
-        if ui
-            .add_enabled(
-                state.can_undo_load_state,
-                egui::Button::new("Undo Last Load State"),
-            )
-            .on_hover_text("Restore the emulator state from before the last successful load")
-            .clicked()
-        {
-            actions.push(MenuAction::UndoLoadState);
-            ui.close();
-        }
     }
     if state.is_recording_audio {
         ui.separator();

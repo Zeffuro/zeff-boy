@@ -61,6 +61,12 @@ fn bus_with_banked_rom(bank_count: usize) -> Bus {
     Bus::new(cart)
 }
 
+fn bus_with_banked_rom_and_video_standard(video_standard: Sega8VideoStandard) -> Bus {
+    let cart = Cartridge::load_with_hint(&banked_rom(4), SystemHint::MasterSystem)
+        .expect("banked ROM should load");
+    Bus::new_with_sample_rate_and_video_standard(cart, 48_000, video_standard)
+}
+
 fn game_gear_bus_with_banked_rom(bank_count: usize) -> Bus {
     let cart = Cartridge::load_with_hint(&banked_rom(bank_count), SystemHint::GameGear)
         .expect("banked ROM should load");
@@ -811,6 +817,30 @@ fn stepping_bus_advances_vdp_timing() {
     assert_eq!(bus.vdp().scanline(), 1);
     assert_eq!(bus.io_read(IO_PORT_V_COUNTER), 1);
     assert!(bus.apu().buffered_sample_count() > 0);
+}
+
+#[test]
+fn psg_sample_cadence_uses_the_selected_video_standard_across_reset() {
+    for (video_standard, expected_samples) in [
+        (Sega8VideoStandard::Ntsc, 1_600),
+        (Sega8VideoStandard::Pal, 1_920),
+    ] {
+        let mut bus = bus_with_banked_rom_and_video_standard(video_standard);
+        bus.step_cycles(video_standard.cycles_per_frame());
+        let mut samples = Vec::new();
+        bus.drain_audio_samples_into(&mut samples);
+        assert_eq!(samples.len(), expected_samples, "{video_standard:?}");
+
+        bus.reset();
+        bus.step_cycles(video_standard.cycles_per_frame());
+        samples.clear();
+        bus.drain_audio_samples_into(&mut samples);
+        assert_eq!(
+            samples.len(),
+            expected_samples,
+            "{video_standard:?} after reset"
+        );
+    }
 }
 
 #[test]

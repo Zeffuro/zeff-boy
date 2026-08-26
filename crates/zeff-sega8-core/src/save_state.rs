@@ -343,6 +343,29 @@ mod tests {
     }
 
     #[test]
+    fn pal_state_load_restores_pal_sample_cadence_with_runtime_audio_rate() {
+        let rom = test_rom();
+        let saved = Emulator::new_with_hint_and_video_standard(
+            &rom,
+            48_000,
+            SystemHint::MasterSystem,
+            Sega8VideoStandard::Pal,
+        )
+        .unwrap();
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new_with_hint(&rom, 44_100, SystemHint::MasterSystem).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+        restored.step_frame();
+
+        let mut samples = Vec::new();
+        restored.drain_audio_samples_into(&mut samples);
+        assert_eq!(restored.video_standard(), Sega8VideoStandard::Pal);
+        assert_eq!(restored.sample_rate(), 44_100);
+        assert_eq!(samples.len(), 1_764);
+    }
+
+    #[test]
     fn roundtrips_sms_memory_control_state() {
         let rom = test_rom();
         let mut saved = Emulator::new_with_hint(&rom, 48_000, SystemHint::MasterSystem).unwrap();

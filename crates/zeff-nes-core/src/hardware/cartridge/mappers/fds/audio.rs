@@ -154,6 +154,15 @@ impl FdsAudio {
         }
     }
 
+    pub fn reset_for_master_disable(&mut self) {
+        self.vol_gain = 0;
+        self.wave_phase = 0;
+        self.wave_pos = 0;
+        self.mod_counter = 0;
+        self.mod_output = 0;
+        self.output = 0.0;
+    }
+
     pub fn tick(&mut self) {
         self.clock_modulator();
         self.clock_main_wave();

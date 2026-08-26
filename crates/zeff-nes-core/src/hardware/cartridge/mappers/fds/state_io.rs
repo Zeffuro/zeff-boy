@@ -1,9 +1,10 @@
 use super::{
     FDS_DISK_BYTE_PERIOD_CPU_CYCLES, FDS_DRIVE_SLOT_ID, FDS_DRIVE_STATE_MARKER,
-    FDS_DRIVE_STATE_MARKER_V1, FDS_INTER_BLOCK_GAP_CPU_CYCLES, FDS_LEAD_IN_GAP_CPU_CYCLES,
-    FDS_SAVE_MAGIC, FDS_SAVE_VERSION, FDS_SAVE_VERSION_V1, FDS_SAVE_VERSION_V2,
-    FDS_SIDE_CHANGE_TOTAL_CPU_CYCLES, FDS_SIDE_SIZE, FDS_SYNTHETIC_CRC_BYTE_COUNT, Fds, FdsImage,
-    MAX_MEDIA_ID_LEN, PRG_RAM_SIZE, inserted_fds_media_slot,
+    FDS_DRIVE_STATE_MARKER_V1, FDS_DRIVE_STATE_MARKER_V2, FDS_INTER_BLOCK_GAP_CPU_CYCLES,
+    FDS_LEAD_IN_GAP_CPU_CYCLES, FDS_SAVE_MAGIC, FDS_SAVE_VERSION, FDS_SAVE_VERSION_V1,
+    FDS_SAVE_VERSION_V2, FDS_SIDE_CHANGE_TOTAL_CPU_CYCLES, FDS_SIDE_SIZE,
+    FDS_SYNTHETIC_CRC_BYTE_COUNT, Fds, FdsImage, MAX_MEDIA_ID_LEN, PRG_RAM_SIZE,
+    inserted_fds_media_slot,
 };
 use crate::save_state::{StateReader, StateWriter};
 use zeff_emu_common::media::MediaSlotState;
@@ -177,6 +178,7 @@ impl Fds {
         w.write_bool(self.io_enabled);
         w.write_u8(self.disk_reg);
         w.write_bytes(&FDS_DRIVE_STATE_MARKER);
+        w.write_bool(self.audio_enabled);
         w.write_u8(self.disk_control);
         w.write_u8(self.disk_data);
         w.write_u32(self.disk_position as u32);
@@ -222,7 +224,17 @@ impl Fds {
         let mut marker = [0; FDS_DRIVE_STATE_MARKER.len()];
         r.read_exact(&mut marker)?;
         self.disk_media_change_counter = 0;
-        if marker == FDS_DRIVE_STATE_MARKER || marker == FDS_DRIVE_STATE_MARKER_V1 {
+        if matches!(
+            marker,
+            FDS_DRIVE_STATE_MARKER | FDS_DRIVE_STATE_MARKER_V2 | FDS_DRIVE_STATE_MARKER_V1
+        ) {
+            let has_current_drive_state = marker == FDS_DRIVE_STATE_MARKER;
+            let has_modern_drive_state = marker != FDS_DRIVE_STATE_MARKER_V1;
+            self.audio_enabled = if has_current_drive_state {
+                r.read_bool()?
+            } else {
+                true
+            };
             self.disk_control = r.read_u8()?;
             self.disk_data = r.read_u8()?;
             self.disk_position = (r.read_u32()? as usize).min(FDS_SIDE_SIZE);
@@ -245,26 +257,24 @@ impl Fds {
             self.disk_irq_pending = r.read_bool()?;
             self.disk_end_of_head = r.read_bool()?;
             self.disk_media_change_counter = r.read_u32()?.min(FDS_SIDE_CHANGE_TOTAL_CPU_CYCLES);
-            let inserted_tag = (marker == FDS_DRIVE_STATE_MARKER)
-                .then(|| r.read_bool())
-                .transpose()?;
+            let inserted_tag = has_modern_drive_state.then(|| r.read_bool()).transpose()?;
             let side = if r.read_bool()? {
                 Some(r.read_u8()?)
             } else {
                 None
             };
             let inserted = inserted_tag.unwrap_or(side.is_some());
-            let write_protected = if marker == FDS_DRIVE_STATE_MARKER {
+            let write_protected = if has_modern_drive_state {
                 r.read_bool()?
             } else {
                 false
             };
-            self.disk_crc_accumulator = if marker == FDS_DRIVE_STATE_MARKER {
+            self.disk_crc_accumulator = if has_modern_drive_state {
                 r.read_u16()?
             } else {
                 0
             };
-            self.disk_write_in_gap = if marker == FDS_DRIVE_STATE_MARKER {
+            self.disk_write_in_gap = if has_modern_drive_state {
                 r.read_bool()?
             } else {
                 true
@@ -284,6 +294,7 @@ impl Fds {
             }
         } else {
             r.set_position(marker_pos);
+            self.audio_enabled = true;
             self.disk_control = 0;
             self.disk_data = 0;
             self.media_slot = self

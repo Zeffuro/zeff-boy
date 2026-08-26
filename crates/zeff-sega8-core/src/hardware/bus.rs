@@ -108,7 +108,10 @@ impl Bus {
             work_ram: [0; SMS_WORK_RAM_SIZE],
             cartridge_ram: [0; SMS_CARTRIDGE_RAM_SIZE],
             vdp: Vdp::new_with_video_standard_and_color_mode(video_standard, color_mode),
-            apu: Apu::new_with_sample_rate(sample_rate),
+            apu: Apu::new_with_sample_rate_and_clock_hz(
+                sample_rate,
+                video_standard.clock_hz_approx(),
+            ),
             input: Input::new(),
             game_gear_serial: GameGearSerial::new(),
             memory_control: MEMORY_CONTROL_DEFAULT,
@@ -233,6 +236,7 @@ impl Bus {
 
     pub fn set_video_standard(&mut self, video_standard: Sega8VideoStandard) {
         self.vdp.set_video_standard(video_standard);
+        self.apu.set_clock_hz(video_standard.clock_hz_approx());
     }
 
     pub fn console_region(&self) -> Sega8Region {

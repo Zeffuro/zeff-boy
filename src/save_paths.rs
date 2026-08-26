@@ -42,24 +42,36 @@ pub(crate) fn backup_state_path(path: &Path) -> PathBuf {
 pub(crate) fn write_state_bytes_to_file_with_backup(
     path: &Path,
     bytes: &[u8],
-) -> anyhow::Result<()> {
-    if platform::save_data_exists(path) {
+) -> anyhow::Result<bool> {
+    let backup_created = if let Some(previous) = platform::read_save_data(path)? {
         let backup_path = backup_state_path(path);
-        if let Some(parent) = backup_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create backup directory: {}", parent.display())
-            })?;
-        }
-        std::fs::copy(path, &backup_path).with_context(|| {
+        platform::write_save_data(&backup_path, &previous).with_context(|| {
             format!(
                 "failed to back up existing save state from {} to {}",
                 path.display(),
                 backup_path.display()
             )
         })?;
-    }
+        true
+    } else {
+        false
+    };
 
-    write_state_bytes_to_file(path, bytes)
+    write_state_bytes_to_file(path, bytes)?;
+    Ok(backup_created)
+}
+
+pub(crate) fn restore_state_file_backup(path: &Path) -> anyhow::Result<()> {
+    let backup_path = backup_state_path(path);
+    let bytes = platform::read_save_data(&backup_path)?
+        .with_context(|| format!("no save-state backup exists for {}", path.display()))?;
+    anyhow::ensure!(
+        platform::save_data_exists(path),
+        "save state no longer exists: {}",
+        path.display()
+    );
+    write_state_bytes_to_file_with_backup(path, &bytes)?;
+    Ok(())
 }
 
 pub(crate) fn write_sram_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
@@ -148,6 +160,28 @@ pub(crate) fn try_load_battery_sram(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir(PathBuf);
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_dir() -> TestDir {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "zeff-boy-state-backup-{}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        TestDir(path)
+    }
 
     #[test]
     fn sram_for_regular_rom_uses_rom_stem() {
@@ -179,5 +213,33 @@ mod tests {
             sram_path_for_rom(Path::new(r"roms\pce-cd\Game.rar\Game.cue")),
             PathBuf::from(r"roms\pce-cd\Game.sav")
         );
+    }
+
+    #[test]
+    fn state_backup_outcome_tracks_only_overwrites() {
+        let dir = test_dir();
+        let path = dir.0.join("slot.state");
+        std::fs::write(backup_state_path(&path), b"stale").unwrap();
+
+        assert!(!write_state_bytes_to_file_with_backup(&path, b"first").unwrap());
+        assert!(write_state_bytes_to_file_with_backup(&path, b"second").unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(std::fs::read(backup_state_path(&path)).unwrap(), b"first");
+    }
+
+    #[test]
+    fn restoring_state_backup_toggles_previous_and_current_bytes() {
+        let dir = test_dir();
+        let path = dir.0.join("slot.state");
+        write_state_bytes_to_file_with_backup(&path, b"first").unwrap();
+        write_state_bytes_to_file_with_backup(&path, b"second").unwrap();
+
+        restore_state_file_backup(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        assert_eq!(std::fs::read(backup_state_path(&path)).unwrap(), b"second");
+
+        restore_state_file_backup(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(std::fs::read(backup_state_path(&path)).unwrap(), b"first");
     }
 }

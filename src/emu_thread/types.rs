@@ -303,7 +303,10 @@ pub(crate) enum EmuCommand {
 }
 
 pub(crate) enum EmuResponse {
-    SaveStateOk(String),
+    SaveStateOk {
+        path: PathBuf,
+        backup_created: bool,
+    },
     SaveStateFailed(String),
     LoadStateOk {
         path: String,

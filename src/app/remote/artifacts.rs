@@ -49,10 +49,16 @@ impl App {
         }
 
         match self.recv_cold_response() {
-            Some(EmuResponse::SaveStateOk(saved)) => Ok(json!({
-                "path": saved,
-                "requested_path": path.display().to_string(),
-            })),
+            Some(EmuResponse::SaveStateOk {
+                path: saved,
+                backup_created,
+            }) => {
+                self.undo_save_state_path = backup_created.then_some(saved.clone());
+                Ok(json!({
+                    "path": saved.display().to_string(),
+                    "requested_path": path.display().to_string(),
+                }))
+            }
             Some(EmuResponse::SaveStateFailed(err)) => anyhow::bail!(err),
             Some(_) => anyhow::bail!("unexpected emulator response while saving state"),
             None => anyhow::bail!("emulator thread stopped while saving state"),

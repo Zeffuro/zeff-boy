@@ -20,7 +20,10 @@ impl EmuThread {
                     let resp = match crate::save_paths::write_state_bytes_to_file_with_backup(
                         &path, &bytes,
                     ) {
-                        Ok(()) => EmuResponse::SaveStateOk(path.display().to_string()),
+                        Ok(backup_created) => EmuResponse::SaveStateOk {
+                            path,
+                            backup_created,
+                        },
                         Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
                     };
                     if tx.send(resp).is_err() {

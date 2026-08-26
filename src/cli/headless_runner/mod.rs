@@ -30,6 +30,7 @@ use pce::{run_pce_archive_headless, run_pce_headless};
 use replay::run_replay_headless;
 use screenshots::*;
 use sega8::run_sega8_headless;
+use state_artifacts::*;
 use stuck::{
     StuckReport, StuckTracker, fail_on_stuck_if_needed, format_pc, framebuffer_fingerprint,
     observe_stuck,
@@ -51,6 +52,7 @@ mod pce;
 mod replay;
 mod screenshots;
 mod sega8;
+mod state_artifacts;
 mod stuck;
 mod support;
 #[cfg(test)]
