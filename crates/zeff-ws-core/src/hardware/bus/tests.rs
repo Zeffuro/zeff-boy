@@ -960,9 +960,19 @@ fn rtc_command_status_reports_ready() {
 
     bus.io_write8(RTC_COMMAND_STATUS_PORT, 0x13);
 
-    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
-    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
-    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_READY);
+    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE | 0x03);
+    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE | 0x03);
+    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_READY | 0x03);
+}
+
+#[test]
+fn rtc_status_echoes_unsupported_command_nibble_while_active() {
+    let mut bus = Bus::new(color_cart());
+
+    bus.io_write8(RTC_COMMAND_STATUS_PORT, 0x1F);
+
+    assert_eq!(bus.io_peek8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE | 0x0F);
+    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE | 0x0F);
 }
 
 #[test]
@@ -977,8 +987,14 @@ fn rtc_datetime_payload_can_be_written_and_read_back() {
     }
 
     bus.io_write8(RTC_COMMAND_STATUS_PORT, RTC_READ_DATETIME_COMMAND);
-    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
-    assert_eq!(bus.io_read8(RTC_COMMAND_STATUS_PORT), RTC_ACTIVE);
+    assert_eq!(
+        bus.io_read8(RTC_COMMAND_STATUS_PORT),
+        RTC_ACTIVE | (RTC_READ_DATETIME_COMMAND & 0x0F)
+    );
+    assert_eq!(
+        bus.io_read8(RTC_COMMAND_STATUS_PORT),
+        RTC_ACTIVE | (RTC_READ_DATETIME_COMMAND & 0x0F)
+    );
     let mut read_back = [0; 7];
     for value in &mut read_back {
         *value = bus.io_read8(RTC_PAYLOAD_PORT);

@@ -1,5 +1,6 @@
 use super::{
     Cpu, CpuBus, CpuStep, RESET_VECTOR_HIGH, RESET_VECTOR_LOW, Registers, SpeedMode, StatusFlags,
+    physical_address_for_page,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +60,25 @@ fn logical_addresses_use_the_selected_8k_mapping_register() {
     assert_eq!(cpu.logical_to_physical(0x2000), 0x042000);
     assert_eq!(cpu.logical_to_physical(0xA123), 0x0CA123);
     assert_eq!(cpu.logical_to_physical(0xFFFF), 0x1FFFFF);
+}
+
+#[test]
+fn cached_mapping_page_bases_match_the_original_formula_exhaustively() {
+    let mut cpu = Cpu::new();
+
+    for page in 0..8 {
+        for mapping in 0..=u8::MAX {
+            cpu.set_mapping_register(page, mapping);
+            for offset in 0..=0x1FFF {
+                let logical_addr = ((page as u16) << 13) | offset;
+                assert_eq!(
+                    cpu.logical_to_physical(logical_addr),
+                    physical_address_for_page(logical_addr, mapping),
+                    "page={page} mapping={mapping:02X} offset={offset:04X}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

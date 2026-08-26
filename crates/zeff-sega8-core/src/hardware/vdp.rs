@@ -1065,8 +1065,13 @@ impl Vdp {
 
             sprites_on_line += 1;
             if sprites_on_line > TMS_MAX_SPRITES_PER_LINE {
-                self.status = (self.status & !0x1F) | (sprite_index as u8 & 0x1F);
-                self.status |= VDP_STATUS_SPRITE_OVERFLOW;
+                // The TMS9918 status register reports the first sprite that could
+                // not be displayed. Keep that result latched until a status read
+                // (or reset) clears the fifth-sprite flag.
+                if self.status & VDP_STATUS_SPRITE_OVERFLOW == 0 {
+                    self.status = (self.status & !0x1F) | (sprite_index as u8 & 0x1F);
+                    self.status |= VDP_STATUS_SPRITE_OVERFLOW;
+                }
                 break;
             }
 

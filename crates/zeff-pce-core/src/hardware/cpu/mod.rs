@@ -135,6 +135,7 @@ pub enum CpuTrap {
 pub struct Cpu {
     registers: Registers,
     mpr: [u8; MPR_COUNT],
+    mpr_page_bases: [u32; MPR_COUNT],
     speed_mode: SpeedMode,
 }
 
@@ -149,12 +150,13 @@ impl Cpu {
         Self {
             registers: Registers::default(),
             mpr: [0; MPR_COUNT],
+            mpr_page_bases: [0; MPR_COUNT],
             speed_mode: SpeedMode::Low,
         }
     }
 
     pub fn reset<B: CpuBus>(&mut self, bus: &mut B) {
-        self.mpr[7] = 0;
+        self.set_mapping_register(7, 0);
         self.registers.status.insert(StatusFlags::INTERRUPT);
         self.registers
             .status
@@ -254,6 +256,7 @@ impl Cpu {
     #[inline]
     pub fn set_mapping_register(&mut self, index: usize, value: u8) {
         self.mpr[index] = value;
+        self.mpr_page_bases[index] = u32::from(value) << LOGICAL_PAGE_SHIFT;
     }
 
     #[inline]
@@ -269,7 +272,7 @@ impl Cpu {
     #[inline]
     pub fn logical_to_physical(&self, logical_addr: u16) -> u32 {
         let page = usize::from(logical_addr >> LOGICAL_PAGE_SHIFT);
-        physical_address_for_page(logical_addr, self.mpr[page])
+        self.mpr_page_bases[page] | u32::from(logical_addr & LOGICAL_PAGE_MASK)
     }
 
     #[inline]
@@ -309,7 +312,7 @@ impl Cpu {
         bus.idle();
         for index in 0..MPR_COUNT {
             if selection & (1 << index) != 0 {
-                self.mpr[index] = self.registers.a;
+                self.set_mapping_register(index, self.registers.a);
             }
         }
         5

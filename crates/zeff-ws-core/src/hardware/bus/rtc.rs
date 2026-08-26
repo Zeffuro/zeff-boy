@@ -68,20 +68,21 @@ impl Rtc {
     }
 
     pub(super) fn peek_status(&self) -> u8 {
+        let command = self.command & 0x0F;
         if self.invalid_command {
-            return RTC_ACTIVE;
+            return RTC_ACTIVE | command;
         }
         if self.ready_delay_reads > 0 {
-            return RTC_ACTIVE;
+            return RTC_ACTIVE | command;
         }
 
         let remaining = self.payload_len.saturating_sub(self.payload_index);
         if self.is_write_command() {
-            RTC_READY | (u8::from(remaining > 0) * RTC_ACTIVE)
+            RTC_READY | (u8::from(remaining > 0) * RTC_ACTIVE) | command
         } else if remaining == 0 {
-            0
+            command
         } else {
-            RTC_READY | (u8::from(remaining > 1) * RTC_ACTIVE)
+            RTC_READY | (u8::from(remaining > 1) * RTC_ACTIVE) | command
         }
     }
 

@@ -641,27 +641,33 @@ impl Mapper for Fds {
                 self.irq_latch = (self.irq_latch & 0x00FF) | ((val as u16) << 8);
             }
             0x4022 => {
-                self.irq_repeat = val & 0x01 != 0;
-                self.irq_enabled = val & 0x02 != 0;
-                if self.irq_enabled {
-                    self.irq_counter = self.irq_latch;
+                if self.io_enabled {
+                    self.irq_repeat = val & 0x01 != 0;
+                    self.irq_enabled = val & 0x02 != 0;
+                    if self.irq_enabled {
+                        self.irq_counter = self.irq_latch;
+                    }
+                    self.irq_pending = false;
                 }
-                self.irq_pending = false;
             }
             0x4023 => {
                 self.io_enabled = val & 0x01 != 0;
                 if !self.io_enabled {
                     self.irq_enabled = false;
                     self.irq_pending = false;
-                    self.acknowledge_disk_transfer();
+                    self.update_disk_control(0x06);
                 }
             }
             0x4024 => {
-                self.disk_reg = val;
-                self.acknowledge_disk_transfer();
+                if self.io_enabled {
+                    self.disk_reg = val;
+                    self.acknowledge_disk_transfer();
+                }
             }
             0x4025 => {
-                self.update_disk_control(val);
+                if self.io_enabled {
+                    self.update_disk_control(val);
+                }
             }
             0x4026 => {}
             0x4040..=0x408A => {

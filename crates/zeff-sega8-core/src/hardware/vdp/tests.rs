@@ -1250,6 +1250,42 @@ fn tms9918_transparent_sprites_count_for_fifth_sprite_status() {
 }
 
 #[test]
+fn tms9918_fifth_sprite_number_latches_the_first_overflow_until_status_read() {
+    let mut vdp = Vdp::new();
+
+    vdp.registers[VDP_REGISTER_MODE_CONTROL_2] = VDP_REG1_DISPLAY_ENABLE;
+    vdp.registers[TMS_REGISTER_SPRITE_ATTRIBUTE_TABLE] = 0x00;
+
+    // The first overflowing line drops sprite 4. A later line drops sprite 9,
+    // but the status register must retain the earlier fifth-sprite number until
+    // the CPU acknowledges the status latch.
+    for sprite in 0..5usize {
+        set_tms_sprite(&mut vdp, sprite, 0, sprite as u8 * 8, sprite as u8, 1);
+    }
+    for sprite in 5..10usize {
+        set_tms_sprite(&mut vdp, sprite, 8, sprite as u8 * 8, sprite as u8, 1);
+    }
+    vdp.vram[10 * TMS_SPRITE_ATTRIBUTE_BYTES] = TMS_SPRITE_TERMINATOR_Y;
+
+    vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES * 2);
+    assert_eq!(
+        vdp.status() & VDP_STATUS_SPRITE_OVERFLOW,
+        VDP_STATUS_SPRITE_OVERFLOW
+    );
+    assert_eq!(vdp.status() & 0x1F, 4);
+
+    let _ = vdp.read_status();
+    vdp.scanline = 8;
+    vdp.step_cycles(SMS_SCANLINE_Z80_CYCLES);
+
+    assert_eq!(
+        vdp.status() & VDP_STATUS_SPRITE_OVERFLOW,
+        VDP_STATUS_SPRITE_OVERFLOW
+    );
+    assert_eq!(vdp.status() & 0x1F, 9);
+}
+
+#[test]
 fn tms9918_sprite_terminator_stops_status_scan() {
     let mut vdp = Vdp::new();
 

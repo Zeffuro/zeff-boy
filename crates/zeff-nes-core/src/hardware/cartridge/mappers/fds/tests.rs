@@ -184,6 +184,7 @@ fn chr_ram_read_write() {
 #[test]
 fn irq_counter_fires() {
     let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x01);
     fds.cpu_write(0x4020, 0x02);
     fds.cpu_write(0x4021, 0x00);
     fds.cpu_write(0x4022, 0x02);
@@ -197,10 +198,57 @@ fn irq_counter_fires() {
 #[test]
 fn mirroring_toggle() {
     let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x01);
     assert_eq!(fds.mirroring(), Mirroring::Horizontal);
     fds.cpu_write(0x4025, 0x00);
     assert_eq!(fds.mirroring(), Mirroring::Vertical);
     fds.cpu_write(0x4025, 0x08);
+    assert_eq!(fds.mirroring(), Mirroring::Horizontal);
+}
+
+#[test]
+fn disabled_disk_io_resets_control_and_requires_fresh_register_programming() {
+    let mut fds = make_fds();
+
+    fds.cpu_write(0x4023, 0x01);
+    fds.cpu_write(0x4024, 0x3C);
+    fds.cpu_write(0x4025, 0xED);
+    fds.cpu_write(0x4020, 0x00);
+    fds.cpu_write(0x4021, 0x00);
+    fds.cpu_write(0x4022, 0x03);
+    assert!(fds.irq_enabled);
+    assert_eq!(fds.disk_control, 0xED);
+    assert_eq!(fds.disk_reg, 0x3C);
+    assert_eq!(fds.mirroring(), Mirroring::Horizontal);
+
+    fds.disk_transfer_flag = true;
+    fds.disk_irq_pending = true;
+    fds.cpu_write(0x4023, 0x00);
+    assert!(!fds.io_enabled);
+    assert!(!fds.irq_enabled);
+    assert!(!fds.irq_pending);
+    assert!(!fds.disk_transfer_flag);
+    assert!(!fds.disk_irq_pending);
+    assert_eq!(fds.disk_control, 0x06);
+    assert_eq!(fds.mirroring(), Mirroring::Vertical);
+
+    fds.cpu_write(0x4022, 0x03);
+    fds.cpu_write(0x4024, 0xA5);
+    fds.cpu_write(0x4025, 0xED);
+    assert!(!fds.irq_enabled);
+    assert_eq!(fds.disk_reg, 0x3C);
+    assert_eq!(fds.disk_control, 0x06);
+    assert_eq!(fds.mirroring(), Mirroring::Vertical);
+
+    fds.cpu_write(0x4023, 0x01);
+    assert_eq!(fds.disk_control, 0x06);
+    assert!(!fds.irq_enabled);
+    fds.cpu_write(0x4024, 0xA5);
+    fds.cpu_write(0x4025, 0xED);
+    fds.cpu_write(0x4022, 0x03);
+    assert_eq!(fds.disk_reg, 0xA5);
+    assert_eq!(fds.disk_control, 0xED);
+    assert!(fds.irq_enabled);
     assert_eq!(fds.mirroring(), Mirroring::Horizontal);
 }
 
@@ -612,6 +660,7 @@ fn audio_silent_when_halted() {
 #[test]
 fn irq_repeat_mode() {
     let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x01);
     fds.cpu_write(0x4020, 0x01);
     fds.cpu_write(0x4021, 0x00);
     fds.cpu_write(0x4022, 0x03);
@@ -628,6 +677,7 @@ fn irq_repeat_mode() {
 #[test]
 fn irq_no_repeat_disables_after_fire() {
     let mut fds = make_fds();
+    fds.cpu_write(0x4023, 0x01);
     fds.cpu_write(0x4020, 0x01);
     fds.cpu_write(0x4021, 0x00);
     fds.cpu_write(0x4022, 0x02);
