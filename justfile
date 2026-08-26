@@ -144,6 +144,18 @@ romtest-run-local-ws:
 romtest-run-local-sega8:
     cargo run -p zeff-romtest -- run --tier local --tag sega8 --report-json rom-tests/results/local-sega8.json --report-md rom-tests/results/local-sega8.md --report-junit rom-tests/results/local-sega8.junit.xml --report-baseline rom-tests/results/local-sega8.baseline.json
 
+romtest-report-mgba-suite:
+    cargo run -p zeff-romtest -- run --manifest-dir rom-tests/manifests/test-roms/gba.toml --tier local --tag mgba-suite --allow-missing --report-json rom-tests/results/mgba-suite.json --report-md rom-tests/results/mgba-suite.md --report-junit rom-tests/results/mgba-suite.junit.xml --report-baseline rom-tests/results/mgba-suite.baseline.json
+
+romtest-report-ws-suite:
+    cargo run -p zeff-romtest -- run --manifest-dir rom-tests/manifests/test-roms/ws-asiekierka-local.toml --allow-missing --report-json rom-tests/results/ws-asiekierka-suite.json --report-md rom-tests/results/ws-asiekierka-suite.md --report-junit rom-tests/results/ws-asiekierka-suite.junit.xml --report-baseline rom-tests/results/ws-asiekierka-suite.baseline.json
+
+romtest-report-sega8-generated:
+    cargo run -p zeff-romtest -- run --manifest-dir rom-tests/manifests/test-roms/sega8-generated-local.toml --allow-missing --report-json rom-tests/results/sega8-generated.json --report-md rom-tests/results/sega8-generated.md --report-junit rom-tests/results/sega8-generated.junit.xml --report-baseline rom-tests/results/sega8-generated.baseline.json
+
+romtest-report-pce-cd-fixture:
+    cargo run -p zeff-romtest -- run --manifest-dir rom-tests/manifests/test-roms/pce-generated-local.toml --allow-missing --report-json rom-tests/results/pce-cd-fixture.json --report-md rom-tests/results/pce-cd-fixture.md --report-junit rom-tests/results/pce-cd-fixture.junit.xml --report-baseline rom-tests/results/pce-cd-fixture.baseline.json
+
 # Run all Sega 8-bit ROM tests, including source-backed accuracy and local suites.
 romtest-run-sega8:
     cargo run -p zeff-romtest -- run --tag sega8 --report-json rom-tests/results/sega8.json --report-md rom-tests/results/sega8.md --report-junit rom-tests/results/sega8.junit.xml --report-baseline rom-tests/results/sega8.baseline.json

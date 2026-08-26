@@ -1,12 +1,13 @@
 use super::super::Emulator;
 use crate::hardware::rom_header::RomHeader;
+use crate::hardware::types::constants::GB_T_CYCLES_PER_SECOND;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::hardware::types::{CpuState, ImeState};
 use zeff_emu_common::time::{
     ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
 };
 
-const MASTER_CLOCK_RATE: ClockRate = ClockRate::from_hz(4_194_304);
+const MASTER_CLOCK_RATE: ClockRate = ClockRate::from_hz(GB_T_CYCLES_PER_SECOND);
 
 impl Emulator {
     pub fn has_boot_rom(&self) -> bool {

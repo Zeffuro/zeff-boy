@@ -83,6 +83,10 @@ impl Sega8VideoStandard {
         self.cycles_per_frame() * self.frame_rate_approx()
     }
 
+    pub fn nominal_frame_duration_ns(self) -> u64 {
+        1_000_000_000u64.div_ceil(u64::from(self.frame_rate_approx()))
+    }
+
     pub fn v_counter_for_scanline(self, display_height: Sega8DisplayHeight, scanline: u16) -> u8 {
         let scanline = scanline % self.total_scanlines();
         match (self, display_height) {
@@ -233,6 +237,18 @@ mod tests {
             Some(Sega8VideoStandard::Ntsc)
         );
         assert_eq!(Sega8VideoStandard::from_path(Path::new("Game.sms")), None);
+    }
+
+    #[test]
+    fn nominal_frame_duration_tracks_the_video_standard() {
+        assert_eq!(
+            Sega8VideoStandard::Ntsc.nominal_frame_duration_ns(),
+            16_666_667
+        );
+        assert_eq!(
+            Sega8VideoStandard::Pal.nominal_frame_duration_ns(),
+            20_000_000
+        );
     }
 
     #[test]

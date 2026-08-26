@@ -8,7 +8,7 @@ impl Bus {
         if self.hardware_mode != HardwareMode::DMG
             || !(OAM_START..=0xFEFF).contains(&addr)
             || !self.io.ppu.lcd_enabled()
-            || self.io.ppu.ly >= 144
+            || self.io.ppu.ly >= crate::hardware::ppu::SCREEN_H as u8
         {
             return;
         }
@@ -24,6 +24,7 @@ impl Bus {
         }
 
         self.apply_oam_corruption(row, kind);
+        self.io.ppu.mark_mode2_selection_legacy_for_line();
     }
 
     #[inline]

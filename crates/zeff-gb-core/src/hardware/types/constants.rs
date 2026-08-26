@@ -1,5 +1,17 @@
 pub use super::apu_constants::*;
 
+pub const GB_T_CYCLES_PER_SECOND: u64 = 4_194_304;
+pub const LCD_WIDTH_PIXELS: usize = zeff_emu_common::system::GAME_BOY_SCREEN_SIZE.0 as usize;
+pub const LCD_HEIGHT_PIXELS: usize = zeff_emu_common::system::GAME_BOY_SCREEN_SIZE.1 as usize;
+pub const LCD_DOTS_PER_SCANLINE: u64 = 456;
+pub const LCD_SCANLINES_PER_FRAME: u8 = 154;
+pub const NORMAL_SPEED_T_CYCLES_PER_FRAME: u64 =
+    LCD_DOTS_PER_SCANLINE * LCD_SCANLINES_PER_FRAME as u64;
+pub const DOUBLE_SPEED_T_CYCLES_PER_FRAME: u64 = NORMAL_SPEED_T_CYCLES_PER_FRAME * 2;
+pub const FRAME_RATE_HZ: f64 =
+    GB_T_CYCLES_PER_SECOND as f64 / NORMAL_SPEED_T_CYCLES_PER_FRAME as f64;
+pub const GB_DEFAULT_HOST_SAMPLE_RATE_HZ: u32 = 48_000;
+
 pub const ROM_BANK_0_START: u16 = 0x0000;
 pub const ROM_BANK_N_END: u16 = 0x7FFF;
 pub const VRAM_START: u16 = 0x8000;
@@ -75,3 +87,17 @@ pub const INT_STAT: u16 = 0x0048;
 pub const INT_TIMER: u16 = 0x0050;
 pub const INT_SERIAL: u16 = 0x0058;
 pub const INT_JOYPAD: u16 = 0x0060;
+
+#[cfg(test)]
+mod tests {
+    use super::{LCD_HEIGHT_PIXELS, LCD_WIDTH_PIXELS};
+
+    #[test]
+    fn lcd_geometry_matches_the_shared_system_spec() {
+        assert_eq!(
+            (LCD_WIDTH_PIXELS as u32, LCD_HEIGHT_PIXELS as u32),
+            zeff_emu_common::system::GAME_BOY_SCREEN_SIZE
+        );
+        assert_eq!((LCD_WIDTH_PIXELS, LCD_HEIGHT_PIXELS), (160, 144));
+    }
+}

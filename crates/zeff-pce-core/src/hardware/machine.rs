@@ -29,9 +29,6 @@ use super::vdc_scanline::{VceFrameLength, VdcExternalVceScanline, VdcScanlineAdv
 use super::vdc_video::{PceActiveOnlyVideoFrame, PcePresentedFrame, PceVideoRenderError};
 use super::vpc::VpcVdc;
 
-pub const PCE_NTSC_REFERENCE_MHZ_NUMERATOR: u64 = 315;
-pub const PCE_NTSC_REFERENCE_MHZ_DENOMINATOR: u64 = 88;
-pub const PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER: u64 = 6;
 pub const PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE: u64 = 1_365;
 pub const PROVISIONAL_PCE_HIGH_SPEED_MASTER_TICKS_PER_CPU_CYCLE: u64 = 3;
 pub const PROVISIONAL_PCE_LOW_SPEED_MASTER_TICKS_PER_CPU_CYCLE: u64 = 12;

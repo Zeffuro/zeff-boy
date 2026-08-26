@@ -1,7 +1,10 @@
 use super::apu::Apu;
 use super::cartridge::Cartridge;
 use super::constants::{
-    BIOS_SIZE, EWRAM_SIZE, IO_SIZE, IWRAM_SIZE, OAM_SIZE, PALETTE_RAM_SIZE, VRAM_SIZE,
+    BACKUP_END, BACKUP_START, BIOS_END, BIOS_SIZE, BIOS_START, EWRAM_END, EWRAM_SIZE, EWRAM_START,
+    GAMEPAK_ROM_END, GAMEPAK0_START, IO_END, IO_SIZE, IO_START, IWRAM_END, IWRAM_SIZE, IWRAM_START,
+    OAM_END, OAM_SIZE, OAM_START, PALETTE_RAM_END, PALETTE_RAM_SIZE, PALETTE_RAM_START, VRAM_END,
+    VRAM_SIZE, VRAM_START,
 };
 use super::dma::DmaController;
 use super::keypad::Keypad;
@@ -146,18 +149,20 @@ impl Bus {
 
     fn read8_raw(&self, addr: u32) -> u8 {
         match addr {
-            0x0000_0000..=0x0000_3FFF => self
+            BIOS_START..=BIOS_END => self
                 .bios
                 .as_deref()
                 .map_or_else(|| bios_stub_read8(addr), |bios| bios[addr as usize]),
-            0x0200_0000..=0x02FF_FFFF => self.ewram[(addr as usize) & (EWRAM_SIZE - 1)],
-            0x0300_0000..=0x03FF_FFFF => self.iwram[(addr as usize) & (IWRAM_SIZE - 1)],
-            0x0400_0000..=0x0400_03FF => self.io_read8(addr),
-            0x0500_0000..=0x05FF_FFFF => self.palette_ram[(addr as usize) & (PALETTE_RAM_SIZE - 1)],
-            0x0600_0000..=0x06FF_FFFF => self.vram[vram_index(addr)],
-            0x0700_0000..=0x07FF_FFFF => self.oam[(addr as usize) & (OAM_SIZE - 1)],
-            0x0800_0000..=0x0DFF_FFFF => self.cartridge.rom_read8(addr),
-            0x0E00_0000..=0x0FFF_FFFF => self.cartridge.backup_read8(addr),
+            EWRAM_START..=EWRAM_END => self.ewram[(addr as usize) & (EWRAM_SIZE - 1)],
+            IWRAM_START..=IWRAM_END => self.iwram[(addr as usize) & (IWRAM_SIZE - 1)],
+            IO_START..=IO_END => self.io_read8(addr),
+            PALETTE_RAM_START..=PALETTE_RAM_END => {
+                self.palette_ram[(addr as usize) & (PALETTE_RAM_SIZE - 1)]
+            }
+            VRAM_START..=VRAM_END => self.vram[vram_index(addr)],
+            OAM_START..=OAM_END => self.oam[(addr as usize) & (OAM_SIZE - 1)],
+            GAMEPAK0_START..=GAMEPAK_ROM_END => self.cartridge.rom_read8(addr),
+            BACKUP_START..=BACKUP_END => self.cartridge.backup_read8(addr),
             _ => 0xFF,
         }
     }
@@ -187,27 +192,27 @@ impl Bus {
         }
         let aligned = addr & !1;
         match aligned {
-            0x0200_0000..=0x02FF_FFFF => {
+            EWRAM_START..=EWRAM_END => {
                 let index = (aligned as usize) & (EWRAM_SIZE - 1);
                 u16::from_le_bytes([self.ewram[index], self.ewram[index + 1]])
             }
-            0x0300_0000..=0x03FF_FFFF => {
+            IWRAM_START..=IWRAM_END => {
                 let index = (aligned as usize) & (IWRAM_SIZE - 1);
                 u16::from_le_bytes([self.iwram[index], self.iwram[index + 1]])
             }
-            0x0500_0000..=0x05FF_FFFF => {
+            PALETTE_RAM_START..=PALETTE_RAM_END => {
                 let index = (aligned as usize) & (PALETTE_RAM_SIZE - 1);
                 u16::from_le_bytes([self.palette_ram[index], self.palette_ram[index + 1]])
             }
-            0x0600_0000..=0x06FF_FFFF => {
+            VRAM_START..=VRAM_END => {
                 let index = vram_index(aligned);
                 u16::from_le_bytes([self.vram[index], self.vram[index + 1]])
             }
-            0x0700_0000..=0x07FF_FFFF => {
+            OAM_START..=OAM_END => {
                 let index = (aligned as usize) & (OAM_SIZE - 1);
                 u16::from_le_bytes([self.oam[index], self.oam[index + 1]])
             }
-            0x0800_0000..=0x0DFF_FFFF => self.cartridge.rom_read16(aligned),
+            GAMEPAK0_START..=GAMEPAK_ROM_END => self.cartridge.rom_read16(aligned),
             _ => u16::from_le_bytes([self.read8_raw(aligned), self.read8_raw(aligned + 1)]),
         }
     }
@@ -232,7 +237,7 @@ impl Bus {
         }
         let aligned = addr & !3;
         match aligned {
-            0x0200_0000..=0x02FF_FFFF => {
+            EWRAM_START..=EWRAM_END => {
                 let index = (aligned as usize) & (EWRAM_SIZE - 1);
                 u32::from_le_bytes([
                     self.ewram[index],
@@ -241,7 +246,7 @@ impl Bus {
                     self.ewram[index + 3],
                 ])
             }
-            0x0300_0000..=0x03FF_FFFF => {
+            IWRAM_START..=IWRAM_END => {
                 let index = (aligned as usize) & (IWRAM_SIZE - 1);
                 u32::from_le_bytes([
                     self.iwram[index],
@@ -250,7 +255,7 @@ impl Bus {
                     self.iwram[index + 3],
                 ])
             }
-            0x0500_0000..=0x05FF_FFFF => {
+            PALETTE_RAM_START..=PALETTE_RAM_END => {
                 let index = (aligned as usize) & (PALETTE_RAM_SIZE - 1);
                 u32::from_le_bytes([
                     self.palette_ram[index],
@@ -259,7 +264,7 @@ impl Bus {
                     self.palette_ram[index + 3],
                 ])
             }
-            0x0600_0000..=0x06FF_FFFF => {
+            VRAM_START..=VRAM_END => {
                 let index = vram_index(aligned);
                 u32::from_le_bytes([
                     self.vram[index],
@@ -268,7 +273,7 @@ impl Bus {
                     self.vram[index + 3],
                 ])
             }
-            0x0700_0000..=0x07FF_FFFF => {
+            OAM_START..=OAM_END => {
                 let index = (aligned as usize) & (OAM_SIZE - 1);
                 u32::from_le_bytes([
                     self.oam[index],
@@ -277,7 +282,7 @@ impl Bus {
                     self.oam[index + 3],
                 ])
             }
-            0x0800_0000..=0x0DFF_FFFF => self.cartridge.rom_read32(aligned),
+            GAMEPAK0_START..=GAMEPAK_ROM_END => self.cartridge.rom_read32(aligned),
             _ => u32::from_le_bytes([
                 self.read8_raw(aligned),
                 self.read8_raw(aligned + 1),
@@ -310,20 +315,20 @@ impl Bus {
 
     fn write8_raw(&mut self, addr: u32, value: u8) {
         match addr {
-            0x0200_0000..=0x02FF_FFFF => self.ewram[(addr as usize) & (EWRAM_SIZE - 1)] = value,
-            0x0300_0000..=0x03FF_FFFF => self.iwram[(addr as usize) & (IWRAM_SIZE - 1)] = value,
-            0x0400_0000..=0x0400_03FF => self.io_write8(addr, value),
-            0x0500_0000..=0x05FF_FFFF => {
+            EWRAM_START..=EWRAM_END => self.ewram[(addr as usize) & (EWRAM_SIZE - 1)] = value,
+            IWRAM_START..=IWRAM_END => self.iwram[(addr as usize) & (IWRAM_SIZE - 1)] = value,
+            IO_START..=IO_END => self.io_write8(addr, value),
+            PALETTE_RAM_START..=PALETTE_RAM_END => {
                 write_repeated_video_byte(&mut self.palette_ram, addr as usize, value);
             }
-            0x0600_0000..=0x06FF_FFFF => {
+            VRAM_START..=VRAM_END => {
                 let index = vram_index(addr);
                 if vram_byte_write_hits_bg(index, read_io16(&self.io, 0)) {
                     write_repeated_video_byte(&mut self.vram, index, value);
                 }
             }
-            0x0700_0000..=0x07FF_FFFF => {}
-            0x0E00_0000..=0x0FFF_FFFF => self.cartridge.backup_write8(addr, value),
+            OAM_START..=OAM_END => {}
+            BACKUP_START..=BACKUP_END => self.cartridge.backup_write8(addr, value),
             _ => {}
         }
     }
@@ -344,7 +349,7 @@ impl Bus {
             self.cartridge.eeprom_write16(aligned, value);
             return;
         }
-        if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
+        if matches!(aligned, IO_START..=IO_END) {
             self.io_write16(aligned, value);
             return;
         }
@@ -373,7 +378,7 @@ impl Bus {
             return;
         }
         let old_value = self.read16_raw(aligned);
-        if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
+        if matches!(aligned, IO_START..=IO_END) {
             self.io_write16(aligned, value);
             let new_value = if is_sound_fifo_register(aligned) {
                 u32::from(value)
@@ -404,7 +409,7 @@ impl Bus {
             return;
         }
         let aligned = addr & !3;
-        if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
+        if matches!(aligned, IO_START..=IO_END) {
             self.io_write16(aligned, value as u16);
             self.io_write16(aligned + 2, (value >> 16) as u16);
             return;
@@ -429,7 +434,7 @@ impl Bus {
         }
         let aligned = addr & !3;
         let old_value = self.read32_raw(aligned);
-        if matches!(aligned, 0x0400_0000..=0x0400_03FF) {
+        if matches!(aligned, IO_START..=IO_END) {
             self.io_write16(aligned, value as u16);
             self.io_write16(aligned + 2, (value >> 16) as u16);
             let new_value = if is_sound_fifo_register(aligned) {
@@ -446,35 +451,35 @@ impl Bus {
 
     fn write16_raw(&mut self, addr: u32, bytes: [u8; 2]) {
         match addr {
-            0x0200_0000..=0x02FF_FFFF => {
+            EWRAM_START..=EWRAM_END => {
                 let index = (addr as usize) & (EWRAM_SIZE - 1);
                 self.ewram[index] = bytes[0];
                 self.ewram[(index + 1) & (EWRAM_SIZE - 1)] = bytes[1];
             }
-            0x0300_0000..=0x03FF_FFFF => {
+            IWRAM_START..=IWRAM_END => {
                 let index = (addr as usize) & (IWRAM_SIZE - 1);
                 self.iwram[index] = bytes[0];
                 self.iwram[(index + 1) & (IWRAM_SIZE - 1)] = bytes[1];
             }
-            0x0500_0000..=0x05FF_FFFF => {
+            PALETTE_RAM_START..=PALETTE_RAM_END => {
                 let index = (addr as usize) & (PALETTE_RAM_SIZE - 1);
                 self.palette_ram[index] = bytes[0];
                 self.palette_ram[(index + 1) & (PALETTE_RAM_SIZE - 1)] = bytes[1];
             }
-            0x0600_0000..=0x06FF_FFFF => {
+            VRAM_START..=VRAM_END => {
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.vram[vram_index(addr + offset as u32)] = byte;
                 }
             }
-            0x0700_0000..=0x07FF_FFFF => {
+            OAM_START..=OAM_END => {
                 let index = (addr as usize) & (OAM_SIZE - 1);
                 self.oam[index] = bytes[0];
                 self.oam[(index + 1) & (OAM_SIZE - 1)] = bytes[1];
             }
-            0x0800_0000..=0x0DFF_FFFF => {
+            GAMEPAK0_START..=GAMEPAK_ROM_END => {
                 self.cartridge.rom_write16(addr, u16::from_le_bytes(bytes));
             }
-            0x0E00_0000..=0x0FFF_FFFF => {
+            BACKUP_START..=BACKUP_END => {
                 self.cartridge.backup_write8(addr, bytes[0]);
                 self.cartridge.backup_write8(addr.wrapping_add(1), bytes[1]);
             }
@@ -484,36 +489,36 @@ impl Bus {
 
     fn write32_raw(&mut self, addr: u32, bytes: [u8; 4]) {
         match addr {
-            0x0200_0000..=0x02FF_FFFF => {
+            EWRAM_START..=EWRAM_END => {
                 let index = (addr as usize) & (EWRAM_SIZE - 1);
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.ewram[(index + offset) & (EWRAM_SIZE - 1)] = byte;
                 }
             }
-            0x0300_0000..=0x03FF_FFFF => {
+            IWRAM_START..=IWRAM_END => {
                 let index = (addr as usize) & (IWRAM_SIZE - 1);
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.iwram[(index + offset) & (IWRAM_SIZE - 1)] = byte;
                 }
             }
-            0x0500_0000..=0x05FF_FFFF => {
+            PALETTE_RAM_START..=PALETTE_RAM_END => {
                 let index = (addr as usize) & (PALETTE_RAM_SIZE - 1);
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.palette_ram[(index + offset) & (PALETTE_RAM_SIZE - 1)] = byte;
                 }
             }
-            0x0600_0000..=0x06FF_FFFF => {
+            VRAM_START..=VRAM_END => {
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.vram[vram_index(addr + offset as u32)] = byte;
                 }
             }
-            0x0700_0000..=0x07FF_FFFF => {
+            OAM_START..=OAM_END => {
                 let index = (addr as usize) & (OAM_SIZE - 1);
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.oam[(index + offset) & (OAM_SIZE - 1)] = byte;
                 }
             }
-            0x0800_0000..=0x0DFF_FFFF => {
+            GAMEPAK0_START..=GAMEPAK_ROM_END => {
                 self.cartridge
                     .rom_write16(addr, u16::from_le_bytes([bytes[0], bytes[1]]));
                 self.cartridge.rom_write16(
@@ -521,7 +526,7 @@ impl Bus {
                     u16::from_le_bytes([bytes[2], bytes[3]]),
                 );
             }
-            0x0E00_0000..=0x0FFF_FFFF => {
+            BACKUP_START..=BACKUP_END => {
                 for (offset, byte) in bytes.into_iter().enumerate() {
                     self.cartridge
                         .backup_write8(addr.wrapping_add(offset as u32), byte);
@@ -802,7 +807,7 @@ fn is_sound_fifo_register(addr: u32) -> bool {
 }
 
 fn is_backup_addr(addr: u32) -> bool {
-    matches!(addr, 0x0E00_0000..=0x0FFF_FFFF)
+    matches!(addr, BACKUP_START..=BACKUP_END)
 }
 
 fn write_repeated_video_byte(memory: &mut [u8], addr: usize, value: u8) {
@@ -817,7 +822,7 @@ fn vram_byte_write_hits_bg(index: usize, dispcnt: u16) -> bool {
 }
 
 fn vram_index(addr: u32) -> usize {
-    let mut offset = ((addr - 0x0600_0000) as usize) & 0x1FFFF;
+    let mut offset = ((addr - VRAM_START) as usize) & 0x1FFFF;
     if offset >= VRAM_SIZE {
         offset -= 0x8000;
     }

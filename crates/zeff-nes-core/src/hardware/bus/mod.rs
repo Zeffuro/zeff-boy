@@ -10,9 +10,10 @@ use crate::hardware::cartridge::{Cartridge, NesMapper};
 use crate::hardware::constants::*;
 use crate::hardware::controller::{Controller, ExpansionDevice};
 use crate::hardware::ppu::{
-    NES_PALETTE, NES_RGB_2C03_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu, SCREEN_H,
-    SCREEN_W, VBLANK_SCANLINE, apply_nes_emphasis, apply_nes_palette_mode, apply_rgb_ppu_emphasis,
+    NES_PALETTE, NES_RGB_2C03_PALETTE, NesBasePalette, NesPalette, NesPaletteMode, Ppu,
+    apply_nes_emphasis, apply_nes_palette_mode, apply_rgb_ppu_emphasis,
 };
+use crate::hardware::timing::{CpuPpuClock, NesTiming};
 use dma::DmaController;
 use std::fmt;
 pub use timing::PeripheralTickEvents;
@@ -40,6 +41,8 @@ pub struct Bus {
     pub expansion_device: ExpansionDevice,
 
     pub(crate) ppu_cycles: u64,
+    pub(crate) timing: NesTiming,
+    pub(crate) ppu_clock: CpuPpuClock,
     pub(crate) sprite_fetch_a12: [bool; 8],
 
     pub(crate) dma_stall_cycles: u64,
@@ -71,6 +74,14 @@ pub struct Bus {
 
 impl Bus {
     pub fn new(cartridge: Cartridge, sample_rate: f64) -> Self {
+        Self::new_with_timing(cartridge, sample_rate, NesTiming::Ntsc)
+    }
+
+    pub(crate) fn new_with_timing(
+        cartridge: Cartridge,
+        sample_rate: f64,
+        timing: NesTiming,
+    ) -> Self {
         let qualified_ppu_a12 = cartridge.uses_qualified_ppu_a12();
         let palette_mode = NesPaletteMode::default();
         let rgb_ppu_emphasis = Self::uses_rgb_2c03_palette(&cartridge);
@@ -79,9 +90,9 @@ impl Bus {
         } else {
             NES_PALETTE
         };
-        let mut ppu = Ppu::new();
-        ppu.set_odd_frame_dot_skip_enabled(!rgb_ppu_emphasis);
-        let mut apu = Apu::new(sample_rate);
+        let mut ppu = Ppu::new_with_timing(timing);
+        ppu.set_odd_frame_dot_skip_enabled(timing.odd_frame_dot_skip() && !rgb_ppu_emphasis);
+        let mut apu = Apu::new_with_timing(sample_rate, timing);
         if Self::mapper_is_vs_system(cartridge.header().mapper_kind()) {
             apu.set_tonal_noise_supported(false);
         }
@@ -96,6 +107,8 @@ impl Bus {
             controller2: Controller::new(),
             expansion_device: ExpansionDevice::None,
             ppu_cycles: 0,
+            timing,
+            ppu_clock: CpuPpuClock::new(timing),
             sprite_fetch_a12: [false; 8],
             dma_stall_cycles: 0,
             dma: DmaController::default(),
@@ -218,8 +231,8 @@ impl Bus {
         screen_pos: Option<(u16, u16)>,
         fallback_hit: bool,
     ) {
-        self.zapper_screen_pos =
-            screen_pos.filter(|&(x, y)| usize::from(x) < SCREEN_W && usize::from(y) < SCREEN_H);
+        self.zapper_screen_pos = screen_pos
+            .filter(|&(x, y)| usize::from(x) < SCREEN_WIDTH && usize::from(y) < SCREEN_HEIGHT);
         self.zapper_fallback_hit = fallback_hit;
     }
 
@@ -228,7 +241,7 @@ impl Bus {
             return self.zapper_fallback_hit;
         };
 
-        if self.ppu.scanline >= VBLANK_SCANLINE || self.ppu.scanline < y {
+        if self.ppu.scanline >= VBLANK_START_SCANLINE || self.ppu.scanline < y {
             return false;
         }
         if self.ppu.scanline == y && self.ppu.dot <= x.saturating_add(1) {
@@ -246,12 +259,12 @@ impl Bus {
         let center_y = i32::from(y);
 
         for sample_y in (center_y - ZAPPER_SENSOR_SAMPLE_RADIUS).max(0)
-            ..=(center_y + ZAPPER_SENSOR_SAMPLE_RADIUS).min((SCREEN_H - 1) as i32)
+            ..=(center_y + ZAPPER_SENSOR_SAMPLE_RADIUS).min((SCREEN_HEIGHT - 1) as i32)
         {
             for sample_x in (center_x - ZAPPER_SENSOR_SAMPLE_RADIUS).max(0)
-                ..=(center_x + ZAPPER_SENSOR_SAMPLE_RADIUS).min((SCREEN_W - 1) as i32)
+                ..=(center_x + ZAPPER_SENSOR_SAMPLE_RADIUS).min((SCREEN_WIDTH - 1) as i32)
             {
-                let idx = ((sample_y as usize * SCREEN_W + sample_x as usize) * 4)
+                let idx = ((sample_y as usize * SCREEN_WIDTH + sample_x as usize) * 4)
                     .min(self.ppu.framebuffer.len().saturating_sub(4));
                 let r = self.ppu.framebuffer[idx];
                 let g = self.ppu.framebuffer[idx + 1];

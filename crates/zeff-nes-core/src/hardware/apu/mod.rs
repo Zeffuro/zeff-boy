@@ -6,6 +6,7 @@ mod pulse;
 mod runtime;
 mod triangle;
 
+use crate::hardware::timing::NesTiming;
 use filter::NesOutputFilter;
 use std::collections::VecDeque;
 use std::fmt;
@@ -45,9 +46,11 @@ pub struct Apu {
     pending_frame_counter_value: Option<u8>,
     frame_clock_block: u8,
     clock_half_rate_timers: bool,
+    timing: NesTiming,
 
     pub sample_buffer: Vec<f32>,
     pub output_sample_rate: f64,
+    cpu_clock_hz: f64,
     sample_accumulator: f64,
     sample_generation_enabled: bool,
     output_filter: NesOutputFilter,
@@ -64,12 +67,17 @@ pub struct Apu {
 
 impl Apu {
     pub fn new(output_sample_rate: f64) -> Self {
+        Self::new_with_timing(output_sample_rate, NesTiming::Ntsc)
+    }
+
+    pub(crate) fn new_with_timing(output_sample_rate: f64, timing: NesTiming) -> Self {
+        let (cpu_clock_hz_numerator, cpu_clock_hz_denominator) = timing.cpu_clock_hz_ratio();
         Self {
             pulse1: pulse::Pulse::new(true),
             pulse2: pulse::Pulse::new(false),
             triangle: triangle::Triangle::new(),
-            noise: noise::Noise::new(),
-            dmc: dmc::Dmc::new(),
+            noise: noise::Noise::new_with_timing(timing),
+            dmc: dmc::Dmc::new_with_timing(timing),
             five_step_mode: false,
             irq_inhibit: false,
             frame_irq: false,
@@ -78,8 +86,10 @@ impl Apu {
             pending_frame_counter_value: None,
             frame_clock_block: 0,
             clock_half_rate_timers: false,
+            timing,
             sample_buffer: Vec::with_capacity(INITIAL_SAMPLE_CAPACITY),
             output_sample_rate,
+            cpu_clock_hz: cpu_clock_hz_numerator as f64 / cpu_clock_hz_denominator as f64,
             sample_accumulator: 0.0,
             sample_generation_enabled: true,
             output_filter: NesOutputFilter::new(output_sample_rate),

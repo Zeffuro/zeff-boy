@@ -32,6 +32,21 @@ fn make_cgb_compat_test_bus() -> Bus {
     Bus::new(rom, &header, HardwareMode::CGBNormal).expect("test bus should initialize")
 }
 
+#[test]
+fn dmg_oam_corruption_invalidates_cached_mode2_selection() {
+    let mut bus = make_test_bus();
+    bus.io.ppu.lcd_was_enabled = true;
+    bus.oam[0] = 16;
+    bus.step_ppu(16);
+    let scanned_y = bus.oam[0];
+
+    bus.maybe_trigger_oam_corruption(OAM_START, OamCorruptionType::Read);
+
+    assert_ne!(bus.oam[0], scanned_y);
+    assert!(bus.io.ppu.mode2_selection_is_legacy_for_line());
+    assert!(bus.io.ppu.obj_fetch_is_legacy_for_line());
+}
+
 fn printer_packet(command: u8, payload: &[u8]) -> Vec<u8> {
     let len = u16::try_from(payload.len()).unwrap();
     let mut bytes = vec![0x88, 0x33, command, 0, len as u8, (len >> 8) as u8];
@@ -239,7 +254,8 @@ fn barcode_boy_bus_state_restores_mid_external_byte_exactly_once() {
     bus.write_state(&mut writer);
     let bytes = writer.into_bytes();
     let mut reader = crate::save_state::StateReader::new(&bytes);
-    let mut restored = Bus::read_state(&mut reader, 9).unwrap();
+    let mut restored =
+        Bus::read_state(&mut reader, crate::save_state::SAVE_STATE_FORMAT_VERSION).unwrap();
 
     assert!(reader.is_exhausted());
     assert_ne!(restored.read_byte(SERIAL_SC) & 0x80, 0);

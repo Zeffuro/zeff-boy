@@ -6,3 +6,4 @@ pub mod controller;
 pub mod cpu;
 pub(crate) mod opcodes;
 pub mod ppu;
+pub(crate) mod timing;

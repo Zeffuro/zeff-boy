@@ -10,7 +10,6 @@ mod wave;
 
 use std::fmt;
 
-const APU_T_CYCLES_PER_SECOND: f64 = 4_194_304.0;
 const APU_INITIAL_SAMPLE_CAPACITY: usize = 2048;
 const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
 const DEBUG_CAPTURE_DECIMATION_T_CYCLES: u64 = 64;
@@ -192,7 +191,7 @@ impl Apu {
             ch4_background_counter_active: false,
             ch4_did_step_counter: false,
             ch4_countdown_reloaded: false,
-            sample_rate: 48_000,
+            sample_rate: crate::hardware::types::constants::GB_DEFAULT_HOST_SAMPLE_RATE_HZ,
             sample_buffer: Vec::with_capacity(APU_INITIAL_SAMPLE_CAPACITY),
             sample_cycle_accum: 0.0,
             cgb_hardware: false,

@@ -252,11 +252,11 @@ impl Cpu {
 
         let loaded = if byte {
             let value = u32::from(self.cpu_read8(bus, addr));
-            bus.write8(addr, store_value as u8);
+            self.cpu_write8(bus, addr, store_value as u8);
             value
         } else {
             let value = rotate_right(self.cpu_read32(bus, addr), (addr & 3) * 8);
-            bus.write32(addr, store_value);
+            self.cpu_write32(bus, addr, store_value);
             value
         };
         self.write_reg(rd, loaded, false);
@@ -297,9 +297,10 @@ impl Cpu {
             };
             self.write_reg(rd, value, false);
         } else if byte {
-            bus.write8(addr, self.reg_read_arm(rd, pc) as u8);
+            self.cpu_write8(bus, addr, self.reg_read_arm(rd, pc) as u8);
         } else {
-            bus.write32(
+            self.cpu_write32(
+                bus,
                 addr,
                 self.reg_read_arm(rd, pc)
                     .wrapping_add(if rd == 15 { 4 } else { 0 }),
@@ -342,7 +343,7 @@ impl Cpu {
             };
             self.write_reg(rd, value, false);
         } else if mode == 0b01 {
-            bus.write16(addr, self.reg_read_arm(rd, pc) as u16);
+            self.cpu_write16(bus, addr, self.reg_read_arm(rd, pc) as u16);
         }
 
         if (!pre_index || writeback) && !(load && rn == rd) {
@@ -350,12 +351,12 @@ impl Cpu {
         }
     }
 
-    pub(super) fn load_arm_unsigned_halfword(&self, bus: &Bus, addr: u32) -> u32 {
+    pub(super) fn load_arm_unsigned_halfword(&mut self, bus: &Bus, addr: u32) -> u32 {
         let value = u32::from(self.cpu_read16(bus, addr));
         rotate_right(value, (addr & 1) * 8)
     }
 
-    pub(super) fn load_arm_signed_halfword(&self, bus: &Bus, addr: u32) -> u32 {
+    pub(super) fn load_arm_signed_halfword(&mut self, bus: &Bus, addr: u32) -> u32 {
         if addr & 1 != 0 {
             sign_extend(u32::from(self.cpu_read8(bus, addr)), 8) as u32
         } else {
@@ -402,15 +403,20 @@ impl Cpu {
                     self.write_reg(15, value, false);
                 }
             } else {
-                bus.write32(addr, pc.wrapping_add(12));
+                self.cpu_write32(bus, addr, pc.wrapping_add(12));
             }
         } else {
+            let mut first_access = true;
             for reg in 0..16 {
                 if reg_list & (1 << reg) == 0 {
                     continue;
                 }
                 if load {
-                    let value = self.cpu_read32(bus, addr);
+                    let value = if first_access {
+                        self.cpu_read32(bus, addr)
+                    } else {
+                        self.cpu_read32_sequential(bus, addr)
+                    };
                     if restore_cpsr && reg == 15 {
                         exception_return_pc = Some(value);
                     } else {
@@ -424,8 +430,13 @@ impl Cpu {
                     if reg == 15 {
                         value = value.wrapping_add(4);
                     }
-                    bus.write32(addr, value);
+                    if first_access {
+                        self.cpu_write32(bus, addr, value);
+                    } else {
+                        self.cpu_write32_sequential(bus, addr, value);
+                    }
                 }
+                first_access = false;
                 addr = addr.wrapping_add(4);
             }
         }

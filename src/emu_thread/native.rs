@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{self as chan, Receiver, Sender};
@@ -18,12 +20,15 @@ pub(crate) struct EmuThread {
     join: Option<JoinHandle<()>>,
     shared_framebuffer: SharedFramebuffer,
     capabilities: CoreCapabilities,
+    frame_duration_ns: Arc<AtomicU64>,
     audio_recording_context: Option<crate::audio_tooling::AudioRecordingContext>,
 }
 
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
         let capabilities = backend.capabilities();
+        let frame_duration_ns = backend.nominal_frame_duration_ns();
+        let shared_frame_duration_ns = Arc::new(AtomicU64::new(frame_duration_ns));
         let audio_recording_context =
             backend
                 .audio_topology()
@@ -41,10 +46,12 @@ impl EmuThread {
         let shared_fb = types::new_shared_framebuffer();
         types::publish_framebuffer(&shared_fb, backend.framebuffer());
         let emu_fb = shared_fb.clone();
+        let emu_frame_duration_ns = Arc::clone(&shared_frame_duration_ns);
 
         let join = thread::spawn(move || {
             let mut emu_loop =
                 emu_loop::EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, emu_fb);
+            emu_loop.set_frame_duration_handle(emu_frame_duration_ns);
             emu_loop.run();
         });
 
@@ -55,6 +62,7 @@ impl EmuThread {
             join: Some(join),
             shared_framebuffer: shared_fb,
             capabilities,
+            frame_duration_ns: shared_frame_duration_ns,
             audio_recording_context,
         }
     }
@@ -67,6 +75,10 @@ impl EmuThread {
 
     pub(crate) fn capabilities(&self) -> &CoreCapabilities {
         &self.capabilities
+    }
+
+    pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
+        self.frame_duration_ns.load(Ordering::Acquire)
     }
 
     pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {

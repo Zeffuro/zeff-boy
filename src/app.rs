@@ -602,7 +602,7 @@ impl App {
     }
 
     fn effective_frame_duration(&self) -> std::time::Duration {
-        let base = std::time::Duration::from_nanos(self.active_system.frame_duration_ns());
+        let base = std::time::Duration::from_nanos(self.nominal_frame_duration_ns());
         match self.speed_mode() {
             SpeedMode::FastForward => {
                 let multi = self.settings.emulation.fast_forward_multiplier.max(1) as u32;
@@ -614,6 +614,13 @@ impl App {
             }
             _ => base,
         }
+    }
+
+    fn nominal_frame_duration_ns(&self) -> u64 {
+        self.emu_thread.as_ref().map_or_else(
+            || self.active_system.frame_duration_ns(),
+            EmuThread::nominal_frame_duration_ns,
+        )
     }
 
     fn left_stick_controls_tilt(&self, is_mbc7: bool) -> bool {

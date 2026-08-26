@@ -6042,6 +6042,7 @@ name = "zeff-libretro"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cc",
  "chrono",
  "env_logger",
  "libloading",

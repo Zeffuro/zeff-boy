@@ -1,5 +1,8 @@
 use crate::debug::{CallStackEntry, DebugController, OpcodeLog};
 use crate::hardware::rom_header::RomHeader;
+use crate::hardware::types::constants::{
+    DOUBLE_SPEED_T_CYCLES_PER_FRAME, NORMAL_SPEED_T_CYCLES_PER_FRAME,
+};
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use crate::hardware::{bus::Bus, cpu::Cpu};
 use std::fmt;
@@ -12,8 +15,6 @@ mod state_io;
 
 pub use runtime::{FrameSliceCursor, FrameSliceOutcome, FrameSliceProgress};
 
-const CYCLES_PER_FRAME_NORMAL: u64 = 70224;
-const CYCLES_PER_FRAME_DOUBLE: u64 = 140448;
 type RegisterSeed = (u8, u8, u8, u8, u8, u8, u8, u8);
 
 const DMG_POST_BOOT_REGISTERS: RegisterSeed = (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D);

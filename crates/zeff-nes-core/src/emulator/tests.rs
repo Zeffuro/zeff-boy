@@ -1,12 +1,13 @@
 use super::{DEFAULT_SAMPLE_RATE, Emulator};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cartridge::mappers::{FDS_BIOS_SIZE, FDS_HEADER_SIZE, FDS_SIDE_SIZE};
-use crate::hardware::cartridge::{NesMapper, RomFormat};
+use crate::hardware::cartridge::{Cartridge, NesMapper, RomFormat};
 use crate::hardware::constants::{
     APU_STATUS, CTRL_NMI_ENABLE, FRAME_STEP_4_IRQ_START, NMI_VECTOR_HI, NMI_VECTOR_LO, OAM_DMA,
     PPU_REG_CTRL,
 };
-use crate::hardware::cpu::{CpuState, CpuStepKind, StatusFlags};
+use crate::hardware::cpu::{Cpu, CpuState, CpuStepKind, StatusFlags};
+use crate::hardware::timing::NesTiming;
 use zeff_emu_common::debug::DebugEvent;
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{ClockRate, MasterTicks};
@@ -25,6 +26,30 @@ fn build_test_rom_with_program(program: &[u8]) -> Vec<u8> {
 
 fn build_test_rom() -> Vec<u8> {
     build_test_rom_with_program(&[0xEA])
+}
+
+fn make_emulator_with_timing(rom: &[u8], timing: NesTiming) -> Emulator {
+    let cartridge = Cartridge::load(rom).expect("test ROM should load");
+    let mut emu = Emulator::new(rom, DEFAULT_SAMPLE_RATE).expect("test ROM should load as NTSC");
+    emu.bus = crate::hardware::bus::Bus::new_with_timing(cartridge, DEFAULT_SAMPLE_RATE, timing);
+    emu.cpu = Cpu::new();
+    emu.cpu.power_on(&mut emu.bus);
+    emu
+}
+
+fn build_timing_exercise_rom() -> Vec<u8> {
+    build_test_rom_with_program(&[
+        0x78, // SEI
+        0xA9, 0x01, // LDA #$01
+        0x8D, 0x15, 0x40, // STA $4015
+        0xA9, 0xBF, // LDA #$BF
+        0x8D, 0x00, 0x40, // STA $4000
+        0xA9, 0x40, // LDA #$40
+        0x8D, 0x02, 0x40, // STA $4002
+        0xA9, 0x08, // LDA #$08
+        0x8D, 0x03, 0x40, // STA $4003
+        0x4C, 0x14, 0x80, // JMP $8014
+    ])
 }
 
 #[test]
@@ -61,6 +86,69 @@ fn accepts_nes2_multiregion_timing_with_the_current_ntsc_machine_policy() {
         .expect("MultiRegion content should keep the current NTSC-machine behavior");
 
     assert_eq!(emu.step_instruction(), (0x8000, 0xEA, 2));
+}
+
+#[test]
+fn internal_pal_and_dendy_full_machine_runs_are_deterministic() {
+    let rom = build_timing_exercise_rom();
+
+    for timing in [NesTiming::Pal, NesTiming::Dendy] {
+        let mut left = make_emulator_with_timing(&rom, timing);
+        let mut right = make_emulator_with_timing(&rom, timing);
+
+        for _ in 0..12 {
+            left.step_frame();
+            right.step_frame();
+        }
+
+        assert_eq!(left.frame_count(), 12, "{timing:?}");
+        assert_eq!(left.framebuffer(), right.framebuffer(), "{timing:?}");
+        assert_eq!(
+            left.drain_audio_samples(),
+            right.drain_audio_samples(),
+            "{timing:?}"
+        );
+        let state = left.encode_state().expect("state should encode");
+        assert_eq!(
+            state,
+            right.encode_state().expect("state should encode"),
+            "{timing:?}"
+        );
+
+        let mut restored = make_emulator_with_timing(&rom, timing);
+        restored
+            .load_state_from_bytes(state)
+            .expect("matching timing state should load");
+        for _ in 0..12 {
+            left.step_frame();
+            restored.step_frame();
+        }
+
+        assert_eq!(left.framebuffer(), restored.framebuffer(), "{timing:?}");
+        assert_eq!(
+            left.encode_state().expect("state should encode"),
+            restored.encode_state().expect("state should encode"),
+            "{timing:?}"
+        );
+    }
+}
+
+#[test]
+fn internal_region_clock_and_frame_guard_follow_the_selected_machine() {
+    let rom = build_test_rom();
+    for (timing, expected_rate, expected_duration, expected_guard) in [
+        (NesTiming::Ntsc, (236_250_000, 132), 16_639_267, 29_781),
+        (NesTiming::Pal, (53_203_425, 32), 19_997_209, 33_248),
+        (NesTiming::Dendy, (53_203_425, 30), 19_997_209, 35_464),
+    ] {
+        let emu = make_emulator_with_timing(&rom, timing);
+        assert_eq!(
+            emu.timing_snapshot().rate(),
+            ClockRate::from_ratio(expected_rate.0, expected_rate.1)
+        );
+        assert_eq!(emu.nominal_frame_duration_ns(), expected_duration);
+        assert_eq!(emu.max_cpu_cycles_per_frame(), expected_guard);
+    }
 }
 
 #[test]
@@ -116,7 +204,7 @@ fn timing_snapshot_tracks_and_restores_cpu_cycles() {
     let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).unwrap();
     let start = emu.timing_snapshot();
     assert_eq!(start.now(), MasterTicks::new(emu.cpu_cycles()));
-    assert_eq!(start.rate(), ClockRate::from_ratio(21_477_272, 12));
+    assert_eq!(start.rate(), ClockRate::from_ratio(236_250_000, 132));
 
     emu.step_instruction();
     let saved_clock = emu.timing_snapshot();

@@ -4,8 +4,8 @@ use crate::audio_tooling::{
 };
 use crate::emu_backend::EmuBackend;
 use crate::emu_thread::{
-    AudioConfig, AudioRecordingCapture, EmuCommand, FrameInput, FrameResult, JoypadInput,
-    RenderSettings, ReusableBuffers, SnapshotRequest, ZapperInput,
+    AudioConfig, AudioRecordingCapture, EmuCommand, EmuResponse, EmuThread, FrameInput,
+    FrameResult, JoypadInput, RenderSettings, ReusableBuffers, SnapshotRequest, ZapperInput,
 };
 use crate::link::transport::TcpLinkTransport;
 use crate::link::{LinkEndpointId, LinkSession, LinkSystemType, RemoteLink};
@@ -23,6 +23,29 @@ fn test_loop() -> (
     )
     .unwrap();
     let backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
+    let (_cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+    let (frame_tx, frame_rx) = crossbeam_channel::bounded(2);
+    let drain_rx = frame_rx.clone();
+    let (resp_tx, resp_rx) = crossbeam_channel::unbounded();
+    let shared = crate::emu_thread::types::new_shared_framebuffer();
+    (
+        EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, shared),
+        resp_rx,
+    )
+}
+
+fn test_pal_sega8_loop() -> (
+    EmuLoop,
+    crossbeam_channel::Receiver<crate::emu_thread::EmuResponse>,
+) {
+    let emu = zeff_sega8_core::emulator::Emulator::new_with_hint_and_video_standard(
+        &[0x00],
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal,
+    )
+    .unwrap();
+    let backend = EmuBackend::from_sega8(emu, PathBuf::from("test-pal.sms"));
     let (_cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (frame_tx, frame_rx) = crossbeam_channel::bounded(2);
     let drain_rx = frame_rx.clone();
@@ -234,6 +257,50 @@ fn uncapped_batch_size_command_clamps_invalid_settings() {
         emu_loop.uncapped_batch_size,
         super::super::MAX_UNCAPPED_BATCH_SIZE
     );
+}
+
+#[test]
+fn pal_sega8_loop_uses_pal_pacing_and_rewind_duration() {
+    let (emu_loop, _responses) = test_pal_sega8_loop();
+
+    assert_eq!(emu_loop.backend.nominal_frame_duration_ns(), 20_000_000);
+    assert_eq!(emu_loop.rewind_buffer.capacity(), 125);
+}
+
+#[test]
+fn native_scheduler_tracks_a_pal_sega8_state_load() {
+    let emu = zeff_sega8_core::emulator::Emulator::new_with_hint(
+        &[0x00],
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+    )
+    .unwrap();
+    let thread = EmuThread::spawn(EmuBackend::from_sega8(emu, PathBuf::from("test.sms")));
+    assert_eq!(thread.nominal_frame_duration_ns(), 16_666_667);
+
+    let pal = zeff_sega8_core::emulator::Emulator::new_with_hint_and_video_standard(
+        &[0x00],
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal,
+    )
+    .unwrap();
+    thread.send(EmuCommand::LoadStateBytes {
+        state_bytes: pal.encode_state().unwrap(),
+        buttons_pressed: 0,
+        dpad_pressed: 0,
+        replay_events: None,
+        game_boy_link_start_state: None,
+        game_boy_link_coordinator_start_state: None,
+        game_boy_link_start_tick: None,
+        wonder_swan_link_start_tick: None,
+    });
+
+    assert!(matches!(
+        thread.recv(),
+        Some(EmuResponse::LoadStateOk { .. })
+    ));
+    assert_eq!(thread.nominal_frame_duration_ns(), 20_000_000);
 }
 
 fn replay_link_state(

@@ -1,5 +1,6 @@
 use super::constants::{
-    CYCLES_PER_SCANLINE, FRAMEBUFFER_LEN, SCANLINES_PER_FRAME, SCREEN_HEIGHT, SCREEN_WIDTH,
+    CYCLES_PER_SCANLINE, FRAMEBUFFER_LEN, RGBA_BYTES_PER_PIXEL, SCANLINES_PER_FRAME, SCREEN_HEIGHT,
+    SCREEN_WIDTH,
 };
 
 const VISIBLE_SCANLINES: u16 = SCREEN_HEIGHT as u16;
@@ -50,7 +51,7 @@ impl Default for Ppu {
 impl Ppu {
     pub fn new() -> Self {
         let mut framebuffer = vec![0; FRAMEBUFFER_LEN];
-        for px in framebuffer.as_chunks_mut::<4>().0 {
+        for px in framebuffer.as_chunks_mut::<RGBA_BYTES_PER_PIXEL>().0 {
             px.copy_from_slice(&[0xC8, 0xD0, 0xB0, 0xFF]);
         }
         Self {
@@ -179,7 +180,7 @@ impl Ppu {
     }
 
     fn render_power_on_frame(&mut self) {
-        for px in self.framebuffer.as_chunks_mut::<4>().0 {
+        for px in self.framebuffer.as_chunks_mut::<RGBA_BYTES_PER_PIXEL>().0 {
             px.copy_from_slice(&[0xC8, 0xD0, 0xB0, 0xFF]);
         }
     }
@@ -314,9 +315,9 @@ fn render_scanline(
 }
 
 fn fill_scanline(framebuffer: &mut [u8], y: usize, color: [u8; 4]) {
-    let row = y * SCREEN_WIDTH * 4;
-    for pixel in framebuffer[row..row + SCREEN_WIDTH * 4]
-        .as_chunks_mut::<4>()
+    let row = y * SCREEN_WIDTH * RGBA_BYTES_PER_PIXEL;
+    for pixel in framebuffer[row..row + SCREEN_WIDTH * RGBA_BYTES_PER_PIXEL]
+        .as_chunks_mut::<RGBA_BYTES_PER_PIXEL>()
         .0
     {
         pixel.copy_from_slice(&color);
@@ -614,7 +615,7 @@ fn draw_pixel(
 }
 
 fn set_rgba(framebuffer: &mut [u8], x: usize, y: usize, rgba: [u8; 4]) {
-    let pixel = (y * SCREEN_WIDTH + x) * 4;
+    let pixel = (y * SCREEN_WIDTH + x) * RGBA_BYTES_PER_PIXEL;
     framebuffer[pixel..pixel + 4].copy_from_slice(&rgba);
 }
 

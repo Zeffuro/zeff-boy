@@ -155,6 +155,10 @@ impl NesBackend {
         self.paths.source_path()
     }
 
+    pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
+        self.emu.nominal_frame_duration_ns()
+    }
+
     pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
         self.paths.firmware_manifests()
     }

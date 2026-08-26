@@ -18,6 +18,7 @@ struct Inner {
     uncapped_mode: bool,
     rewind_buffer: RewindBuffer,
     rewind_seconds: usize,
+    frame_duration_ns: u64,
     last_cheats: Vec<CheatPatch>,
     audio_recording_capture: super::AudioRecordingCapture,
     pending_audio_discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
@@ -34,7 +35,7 @@ pub(crate) struct EmuThread {
 impl EmuThread {
     pub(crate) fn spawn(backend: EmuBackend) -> Self {
         let capabilities = backend.capabilities();
-        let frame_duration_ns = backend.system().frame_duration_ns();
+        let frame_duration_ns = backend.nominal_frame_duration_ns();
         let audio_recording_context =
             backend
                 .audio_topology()
@@ -57,6 +58,7 @@ impl EmuThread {
                     frame_duration_ns,
                 ),
                 rewind_seconds: DEFAULT_REWIND_SECONDS,
+                frame_duration_ns,
                 last_cheats: Vec::new(),
                 audio_recording_capture: super::AudioRecordingCapture::default(),
                 pending_audio_discontinuities: Vec::new(),
@@ -78,6 +80,10 @@ impl EmuThread {
         &self.capabilities
     }
 
+    pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
+        self.inner.borrow().frame_duration_ns
+    }
+
     pub(crate) fn shared_framebuffer(&self) -> &SharedFramebuffer {
         &self.shared_framebuffer
     }
@@ -91,6 +97,7 @@ impl EmuThread {
             uncapped_mode,
             rewind_buffer,
             rewind_seconds,
+            frame_duration_ns,
             last_cheats,
             audio_recording_capture,
             pending_audio_discontinuities,
@@ -182,7 +189,14 @@ impl EmuThread {
                     dpad_pressed,
                     &self.shared_framebuffer,
                 );
-                Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                Self::finalize_load_state(
+                    &resp,
+                    rewind_buffer,
+                    *rewind_seconds,
+                    frame_duration_ns,
+                    backend,
+                    last_cheats,
+                );
                 if matches!(&resp, EmuResponse::LoadStateOk { .. })
                     && audio_recording_capture.semantic
                 {
@@ -209,7 +223,14 @@ impl EmuThread {
                     dpad_pressed,
                     &self.shared_framebuffer,
                 );
-                Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                Self::finalize_load_state(
+                    &resp,
+                    rewind_buffer,
+                    *rewind_seconds,
+                    frame_duration_ns,
+                    backend,
+                    last_cheats,
+                );
                 if matches!(&resp, EmuResponse::LoadStateOk { .. })
                     && audio_recording_capture.semantic
                 {
@@ -243,7 +264,14 @@ impl EmuThread {
                     }
                     None => EmuResponse::LoadStateFailed("no auto-save path".to_string()),
                 };
-                Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                Self::finalize_load_state(
+                    &resp,
+                    rewind_buffer,
+                    *rewind_seconds,
+                    frame_duration_ns,
+                    backend,
+                    last_cheats,
+                );
                 if matches!(&resp, EmuResponse::LoadStateOk { .. })
                     && audio_recording_capture.semantic
                 {
@@ -367,7 +395,14 @@ impl EmuThread {
                     dpad_pressed,
                     &self.shared_framebuffer,
                 );
-                Self::finalize_load_state(&resp, rewind_buffer, backend, last_cheats);
+                Self::finalize_load_state(
+                    &resp,
+                    rewind_buffer,
+                    *rewind_seconds,
+                    frame_duration_ns,
+                    backend,
+                    last_cheats,
+                );
                 if matches!(&resp, EmuResponse::LoadStateOk { .. })
                     && audio_recording_capture.semantic
                 {

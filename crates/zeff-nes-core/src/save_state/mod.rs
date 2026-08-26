@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow, bail};
 pub use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const NES_SAVE_STATE_MAGIC: [u8; 8] = *b"ZBNSTATE";
-pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 9;
+pub const NES_SAVE_STATE_FORMAT_VERSION: u32 = 10;
 
 const FORMAT_VERSION_V1_UNCOMPRESSED: u32 = 1;
 const FORMAT_VERSION_V2_COMPRESSED: u32 = 2;
@@ -12,6 +12,7 @@ const FORMAT_VERSION_V5_COMPRESSED: u32 = 5;
 const FORMAT_VERSION_V6_COMPRESSED: u32 = 6;
 const FORMAT_VERSION_V7_COMPRESSED: u32 = 7;
 const FORMAT_VERSION_V8_COMPRESSED: u32 = 8;
+const FORMAT_VERSION_V9_COMPRESSED: u32 = 9;
 
 const CHR_MAX_SIZE: usize = 2 * 1024 * 1024;
 
@@ -61,6 +62,8 @@ pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
     // Write the raw state payload (CPU + Bus)
     let mut payload = StateWriter::new();
     payload.write_bytes(&emu.rom_hash);
+    payload.write_u8(emu.bus.timing.state_tag());
+    payload.write_u8(emu.bus.ppu_clock.master_phase());
     emu.cpu.write_state(&mut payload);
     emu.bus.write_state(&mut payload);
     emu.cpu.write_jam_state(&mut payload);
@@ -102,10 +105,20 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
         has_ppu_runtime_state,
         has_mutable_media_state,
         has_sprite_evaluation_state,
-    ): (&[u8], bool, bool, bool, bool, bool, bool) = match format_version {
+        has_timing_state,
+    ): (&[u8], bool, bool, bool, bool, bool, bool, bool) = match format_version {
         FORMAT_VERSION_V1_UNCOMPRESSED => {
             // V1: raw bytes after magic(8) + version(4)
-            (&bytes[12..], false, false, false, false, false, false)
+            (
+                &bytes[12..],
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
         }
         FORMAT_VERSION_V2_COMPRESSED
         | FORMAT_VERSION_V3_COMPRESSED
@@ -114,6 +127,7 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
         | FORMAT_VERSION_V6_COMPRESSED
         | FORMAT_VERSION_V7_COMPRESSED
         | FORMAT_VERSION_V8_COMPRESSED
+        | FORMAT_VERSION_V9_COMPRESSED
         | NES_SAVE_STATE_FORMAT_VERSION => {
             payload = lz4_flex::decompress_size_prepended(&bytes[12..])
                 .map_err(|e| anyhow!("failed to decompress save-state: {e}"))?;
@@ -124,12 +138,13 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
                 format_version >= FORMAT_VERSION_V5_COMPRESSED,
                 format_version >= FORMAT_VERSION_V6_COMPRESSED,
                 format_version >= FORMAT_VERSION_V7_COMPRESSED,
+                format_version >= FORMAT_VERSION_V9_COMPRESSED,
                 format_version >= NES_SAVE_STATE_FORMAT_VERSION,
             )
         }
         other => {
             bail!(
-                "unsupported NES save-state format version {} (expected {}, {}, {}, {}, {}, {}, {}, {}, or {})",
+                "unsupported NES save-state format version {} (expected {}, {}, {}, {}, {}, {}, {}, {}, {}, or {})",
                 other,
                 FORMAT_VERSION_V1_UNCOMPRESSED,
                 FORMAT_VERSION_V2_COMPRESSED,
@@ -139,6 +154,7 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
                 FORMAT_VERSION_V6_COMPRESSED,
                 FORMAT_VERSION_V7_COMPRESSED,
                 FORMAT_VERSION_V8_COMPRESSED,
+                FORMAT_VERSION_V9_COMPRESSED,
                 NES_SAVE_STATE_FORMAT_VERSION
             );
         }
@@ -151,6 +167,25 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
     if rom_hash != emu.rom_hash {
         bail!("save-state ROM hash does not match the currently loaded ROM");
     }
+
+    let restored_ppu_clock = if has_timing_state {
+        let saved_timing = crate::hardware::timing::NesTiming::from_state_tag(r.read_u8()?)?;
+        if saved_timing != emu.bus.timing {
+            bail!(
+                "save-state timing {:?} does not match the currently loaded {:?} machine",
+                saved_timing,
+                emu.bus.timing
+            );
+        }
+        let mut clock = crate::hardware::timing::CpuPpuClock::new(saved_timing);
+        clock.restore_master_phase(r.read_u8()?)?;
+        clock
+    } else {
+        if emu.bus.timing != crate::hardware::timing::NesTiming::Ntsc {
+            bail!("legacy NES save-state does not identify non-NTSC machine timing");
+        }
+        crate::hardware::timing::CpuPpuClock::new(crate::hardware::timing::NesTiming::Ntsc)
+    };
 
     // CPU
     emu.cpu.read_state(&mut r)?;
@@ -174,10 +209,11 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
     } else {
         emu.bus.reset_mutable_media_to_source();
     }
-
     if !r.is_exhausted() {
         bail!("save-state has unexpected trailing data");
     }
+
+    emu.bus.ppu_clock = restored_ppu_clock;
 
     Ok(())
 }

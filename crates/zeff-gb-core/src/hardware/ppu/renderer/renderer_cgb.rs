@@ -144,6 +144,8 @@ pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             bg_color_ids: Some(&bg_color_ids),
             cgb_bg_priority_flags: Some(&bg_priority_flags),
             dmg_palette_preset: ppu.dmg_palette_preset,
+            selected_obj_indices: (!ppu.legacy_sprite_selection_for_line)
+                .then_some((ppu.selected_obj_indices, ppu.selected_obj_count)),
         });
     }
 }

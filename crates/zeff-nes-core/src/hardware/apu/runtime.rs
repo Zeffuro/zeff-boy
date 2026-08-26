@@ -1,5 +1,6 @@
 use super::Apu;
-use crate::hardware::constants::*;
+#[cfg(test)]
+use crate::hardware::constants::{FRAME_STEP_2, FRAME_STEP_4_IRQ_START};
 
 #[derive(Clone, Copy)]
 struct FrameClocks {
@@ -152,6 +153,7 @@ impl Apu {
     }
 
     fn run_frame_event(&mut self) -> bool {
+        let steps = self.timing.apu_frame_counter_cycles();
         let clocks = self.frame_clocks_this_tick();
         if clocks.quarter {
             self.clock_quarter_frame();
@@ -161,50 +163,44 @@ impl Apu {
         }
 
         if !self.five_step_mode {
-            match self.frame_cycle {
-                FRAME_STEP_4_IRQ_START => {
-                    if !self.irq_inhibit {
-                        self.frame_irq = true;
-                    }
+            if self.frame_cycle == steps.step_4_irq_start || self.frame_cycle == steps.step_4_clock
+            {
+                if !self.irq_inhibit {
+                    self.frame_irq = true;
                 }
-                FRAME_STEP_4_CLOCK => {
-                    if !self.irq_inhibit {
-                        self.frame_irq = true;
-                    }
+            } else if self.frame_cycle == steps.step_4_reset {
+                if !self.irq_inhibit {
+                    self.frame_irq = true;
                 }
-                FRAME_STEP_4_RESET => {
-                    if !self.irq_inhibit {
-                        self.frame_irq = true;
-                    }
-                    self.frame_cycle = 0;
-                }
-                _ => {}
-            }
-        } else {
-            if self.frame_cycle == FRAME_STEP_5_RESET {
                 self.frame_cycle = 0;
             }
+        } else if self.frame_cycle == steps.step_5_reset {
+            self.frame_cycle = 0;
         }
 
         clocks.quarter
     }
 
     fn frame_clocks_this_tick(&self) -> FrameClocks {
-        match (self.five_step_mode, self.frame_cycle) {
-            (_, FRAME_STEP_1 | FRAME_STEP_3) => FrameClocks {
+        let steps = self.timing.apu_frame_counter_cycles();
+        if self.frame_cycle == steps.step_1 || self.frame_cycle == steps.step_3 {
+            FrameClocks {
                 quarter: true,
                 half: false,
-            },
-            (false, FRAME_STEP_2 | FRAME_STEP_4_CLOCK) | (true, FRAME_STEP_2 | FRAME_STEP_5) => {
-                FrameClocks {
-                    quarter: true,
-                    half: true,
-                }
             }
-            _ => FrameClocks {
+        } else if self.frame_cycle == steps.step_2
+            || (!self.five_step_mode && self.frame_cycle == steps.step_4_clock)
+            || (self.five_step_mode && self.frame_cycle == steps.step_5)
+        {
+            FrameClocks {
+                quarter: true,
+                half: true,
+            }
+        } else {
+            FrameClocks {
                 quarter: false,
                 half: false,
-            },
+            }
         }
     }
 
@@ -239,6 +235,7 @@ impl Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hardware::timing::NesTiming;
 
     fn length_counter(apu: &Apu, channel: usize) -> u8 {
         match channel {
@@ -435,5 +432,35 @@ mod tests {
 
         apu.tick();
         assert_eq!(apu.peek_status() & 0x41, 0x40);
+    }
+
+    #[test]
+    fn pal_frame_counter_uses_pal_half_frame_and_irq_cycles() {
+        let pal_steps = NesTiming::Pal.apu_frame_counter_cycles();
+        let mut pal = Apu::new_with_timing(44_100.0, NesTiming::Pal);
+        pal.write_register(0x4015, 0x01, false);
+        pal.pulse1.length_counter = 2;
+        pal.frame_cycle = pal_steps.step_2;
+
+        pal.tick();
+
+        assert_eq!(pal.pulse1.length_counter, 1);
+        pal.frame_cycle = pal_steps.step_4_irq_start;
+        pal.frame_irq = false;
+        pal.tick();
+        assert!(pal.frame_irq);
+    }
+
+    #[test]
+    fn dendy_frame_counter_uses_ntsc_sequence() {
+        let ntsc_steps = NesTiming::Ntsc.apu_frame_counter_cycles();
+        let mut dendy = Apu::new_with_timing(44_100.0, NesTiming::Dendy);
+        dendy.write_register(0x4015, 0x01, false);
+        dendy.pulse1.length_counter = 2;
+        dendy.frame_cycle = ntsc_steps.step_2;
+
+        dendy.tick();
+
+        assert_eq!(dendy.pulse1.length_counter, 1);
     }
 }

@@ -19,3 +19,5 @@ mod irq;
 mod swi;
 #[path = "tests/thumb.rs"]
 mod thumb;
+#[path = "tests/timing.rs"]
+mod timing;

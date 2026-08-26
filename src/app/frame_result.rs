@@ -119,7 +119,7 @@ impl App {
                             self.rewind.pending = false;
                             if self.settings.rewind.mode == crate::settings::RewindMode::RealTime {
                                 self.rewind.pacer.reconcile(
-                                    self.active_system.frame_duration_ns(),
+                                    self.nominal_frame_duration_ns(),
                                     self.rewind.scheduled_frames,
                                     rewound_frames,
                                 );

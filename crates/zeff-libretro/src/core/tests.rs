@@ -951,11 +951,8 @@ fn expected_system_label(system: System) -> &'static str {
 fn expected_system_ram_size(system: System) -> usize {
     match system {
         System::Gb => zeff_gb_core::hardware::types::constants::WRAM_SIZE * 8,
-        System::Gba => {
-            zeff_gba_core::hardware::constants::EWRAM_SIZE
-                + zeff_gba_core::hardware::constants::IWRAM_SIZE
-        }
-        System::Nes => 0x800,
+        System::Gba => zeff_gba_core::hardware::constants::SYSTEM_RAM_SIZE,
+        System::Nes => zeff_nes_core::hardware::constants::SYSTEM_RAM_SIZE,
         System::Pce => zeff_pce_core::hardware::WORK_RAM_LEN,
         System::Ws => zeff_ws_core::hardware::constants::WSC_INTERNAL_RAM_SIZE,
         System::Sms | System::Gg => zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,

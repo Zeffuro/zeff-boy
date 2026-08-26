@@ -148,7 +148,7 @@ impl CdRom2 {
             self.adpcm_resampler.flush(&mut self.adpcm_audio_samples);
         }
         let adpcm_available = (output.len() / 2).min(self.adpcm_audio_samples.len());
-        let step = CDDA_SOURCE_RATE / f64::from(self.audio_sample_rate);
+        let step = f64::from(CDDA_SOURCE_SAMPLE_RATE_HZ) / f64::from(self.audio_sample_rate);
         for (index, frame) in output.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let cdda_available = !self.audio_source_frames.is_empty();
             while self.audio_resample_position >= 1.0 && self.audio_source_frames.len() > 1 {

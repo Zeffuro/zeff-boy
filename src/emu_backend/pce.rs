@@ -16,13 +16,13 @@ use zeff_emu_common::time::{
 };
 use zeff_pce_core::hardware::{
     ARCADE_CARD_RAM_LEN, CDROM2_BRAM_LEN, CdDisc, ControllerPort, FivePortMultitap,
-    HUCARD_BANK_LEN, MEMORY_BASE128_RAM_LEN, PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER,
-    PCE_NTSC_REFERENCE_MHZ_DENOMINATOR, PCE_NTSC_REFERENCE_MHZ_NUMERATOR, POPULOUS_HUCARD_RAM_LEN,
-    PSG_CLOCK_DENOMINATOR, PSG_CLOCK_NUMERATOR, PSG_ZERO_FREQUENCY_PERIOD, PadButtons,
-    PceArcadeCardMode, PceCartridgeDescriptor, PceConsoleWiring, PceControllerMode,
-    PceCpuDebugSnapshot, PceHardwareDebugSnapshot, PceHardwareTopology, PceHuCardBoard, PceMachine,
-    PceMemoryBaseMode, SixButtonExtraButtons, VCE_PALETTE_COLORS, VDC_SATB_WORDS, VDC_VRAM_BYTES,
-    VceColor, normalize_hucard_image,
+    HUCARD_BANK_LEN, MEMORY_BASE128_RAM_LEN, PCE_NTSC_MASTER_CLOCK_HZ_DENOMINATOR,
+    PCE_NTSC_MASTER_CLOCK_HZ_NUMERATOR, POPULOUS_HUCARD_RAM_LEN, PSG_CLOCK_DENOMINATOR,
+    PSG_CLOCK_NUMERATOR, PSG_ZERO_FREQUENCY_PERIOD, PadButtons, PceArcadeCardMode,
+    PceCartridgeDescriptor, PceConsoleWiring, PceControllerMode, PceCpuDebugSnapshot,
+    PceHardwareDebugSnapshot, PceHardwareTopology, PceHuCardBoard, PceMachine, PceMemoryBaseMode,
+    SixButtonExtraButtons, VCE_PALETTE_COLORS, VDC_SATB_WORDS, VDC_VRAM_BYTES, VceColor,
+    normalize_hucard_image,
 };
 #[cfg(test)]
 use zeff_pce_core::hardware::{PCE_ACTIVE_FRAME_WIDTH, PCEAS_HEADER_LEN};
@@ -47,9 +47,10 @@ use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore};
 use crate::settings::{PceOverscanMode, PcePaletteMode};
 
-pub(crate) const PCE_PRESENTED_WIDTH: usize = 640;
-pub(crate) const PCE_PRESENTED_HEIGHT: usize = 480;
-pub(crate) const PCE_PRESENTED_RGBA_BYTES: usize = PCE_PRESENTED_WIDTH * PCE_PRESENTED_HEIGHT * 4;
+pub(crate) const PCE_PRESENTED_WIDTH: usize = zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH;
+pub(crate) const PCE_PRESENTED_HEIGHT: usize = zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT;
+pub(crate) const PCE_PRESENTED_RGBA_BYTES: usize =
+    zeff_pce_core::hardware::PCE_HOST_FRAME_RGBA_BYTES;
 const BACKEND_STATE_MAGIC: &[u8; 8] = b"ZBPCEBE\0";
 const BACKEND_STATE_VERSION: u32 = 1;
 const MAX_CORE_STATE_BYTES: usize = 8 * 1024 * 1024;
@@ -1259,10 +1260,8 @@ impl MachineTiming for PceBackend {
         TimingSnapshot::new(
             MasterTicks::new(self.machine.master_ticks()),
             ClockRate::from_ratio(
-                PCE_NTSC_REFERENCE_MHZ_NUMERATOR
-                    * 1_000_000
-                    * PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER,
-                PCE_NTSC_REFERENCE_MHZ_DENOMINATOR,
+                PCE_NTSC_MASTER_CLOCK_HZ_NUMERATOR,
+                PCE_NTSC_MASTER_CLOCK_HZ_DENOMINATOR,
             ),
         )
     }

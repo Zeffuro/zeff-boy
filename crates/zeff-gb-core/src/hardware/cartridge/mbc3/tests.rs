@@ -55,7 +55,7 @@ fn rtc_overflow_sets_carry_and_wraps_day_counter() {
         latched: [0; RTC_REG_COUNT],
         subsecond_cycles: 0,
     };
-    rtc.advance_cycles(T_CYCLES_PER_SECOND);
+    rtc.advance_cycles(GB_T_CYCLES_PER_SECOND);
 
     assert_eq!(rtc.internal[RTC_SECONDS], 0);
     assert_eq!(rtc.internal[RTC_MINUTES], 0);
@@ -91,7 +91,7 @@ fn rtc_tick_based_on_t_cycles() {
     mbc3.write_ram(0xA000, 0); // seconds = 0
 
     // Advance just under 1 second - should not tick
-    mbc3.step(T_CYCLES_PER_SECOND - 1);
+    mbc3.step(GB_T_CYCLES_PER_SECOND - 1);
     mbc3.write_rom(0x6000, 0x00);
     mbc3.write_rom(0x6000, 0x01);
     assert_eq!(mbc3.read_ram(0xA000), 0);
@@ -109,7 +109,7 @@ fn rtc_subsecond_preserved_on_non_seconds_write() {
     mbc3.write_rom(0x0000, 0x0A);
 
     // Advance 500ms worth of cycles
-    let half_second = T_CYCLES_PER_SECOND / 2;
+    let half_second = GB_T_CYCLES_PER_SECOND / 2;
     mbc3.step(half_second);
 
     // Write to minutes register (should preserve sub-second)
@@ -130,7 +130,7 @@ fn rtc_subsecond_reset_on_seconds_write() {
     mbc3.write_rom(0x0000, 0x0A);
 
     // Advance 500ms worth of cycles
-    let half_second = T_CYCLES_PER_SECOND / 2;
+    let half_second = GB_T_CYCLES_PER_SECOND / 2;
     mbc3.step(half_second);
 
     // Write to seconds register (should reset sub-second)

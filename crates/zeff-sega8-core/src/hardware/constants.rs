@@ -1,17 +1,15 @@
-pub const SMS_SCREEN_W: usize = 256;
-pub const SMS_SCREEN_H: usize = 192;
-pub const GG_SCREEN_W: usize = 160;
-pub const GG_SCREEN_H: usize = 144;
-pub const RGBA_CHANNELS: usize = 4;
+pub const SMS_SCREEN_W: usize = zeff_emu_common::system::SMS_SCREEN_SIZE.0 as usize;
+pub const SMS_SCREEN_H: usize = zeff_emu_common::system::SMS_SCREEN_SIZE.1 as usize;
+pub const GG_SCREEN_W: usize = zeff_emu_common::system::GG_SCREEN_SIZE.0 as usize;
+pub const GG_SCREEN_H: usize = zeff_emu_common::system::GG_SCREEN_SIZE.1 as usize;
+pub const RGBA_CHANNELS: usize = zeff_emu_common::system::RGBA_BYTES_PER_PIXEL;
+pub const SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ: u32 = 48_000;
 pub const SMS_VISIBLE_SCANLINES: u16 = 192;
 pub const SMS_NTSC_TOTAL_SCANLINES: u16 = 262;
 pub const SMS_PAL_TOTAL_SCANLINES: u16 = 313;
-pub const SMS_TOTAL_SCANLINES: u16 = SMS_NTSC_TOTAL_SCANLINES;
 pub const SMS_SCANLINE_Z80_CYCLES: u32 = 228;
 pub const SEGA8_NTSC_FRAME_RATE_APPROX: u32 = 60;
 pub const SEGA8_PAL_FRAME_RATE_APPROX: u32 = 50;
-pub const SMS_Z80_CYCLES_PER_FRAME: u32 = SMS_SCANLINE_Z80_CYCLES * (SMS_TOTAL_SCANLINES as u32);
-pub const SEGA8_Z80_CLOCK_HZ_APPROX: u32 = SMS_Z80_CYCLES_PER_FRAME * SEGA8_NTSC_FRAME_RATE_APPROX;
 
 pub const ROM_BANK_SIZE: usize = 0x4000;
 pub const ROM_PAGE_8K_SIZE: usize = 0x2000;

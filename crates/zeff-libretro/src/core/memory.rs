@@ -361,8 +361,8 @@ impl CoreState {
     pub fn system_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gb(emu) => emu.system_ram().len(),
-            ActiveCore::Gba(_) => 0x48000,
-            ActiveCore::Nes(_) => 0x800,
+            ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::SYSTEM_RAM_SIZE,
+            ActiveCore::Nes(_) => zeff_nes_core::hardware::constants::SYSTEM_RAM_SIZE,
             ActiveCore::Pce(host) => host.machine().mapped_work_ram().len(),
             ActiveCore::Sega8(emu) => emu.system_ram().len(),
             ActiveCore::Ws(emu) => emu.system_ram().len(),

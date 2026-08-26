@@ -172,6 +172,14 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
+        match self {
+            Self::Nes(backend) => backend.nominal_frame_duration_ns(),
+            Self::Sega8(backend) => backend.nominal_frame_duration_ns(),
+            _ => self.system().frame_duration_ns(),
+        }
+    }
+
     pub(crate) fn core_family(&self) -> CoreFamily {
         self.system().core_family()
     }

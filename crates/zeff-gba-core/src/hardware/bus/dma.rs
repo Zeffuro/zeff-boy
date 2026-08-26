@@ -1,3 +1,4 @@
+use super::super::constants::{GAMEPAK_ROM_END, GAMEPAK0_START};
 use super::super::dma::DmaChannel;
 use super::super::timer::TimerOverflowCounts;
 use super::super::timing::{AccessType, access_cycles_with_waitcnt};
@@ -284,7 +285,7 @@ fn dma_source_uses_latch(addr: u32) -> bool {
 }
 
 fn effective_dma_source_step_mode(channel: usize, addr: u32, configured_mode: u16) -> u16 {
-    if channel != 0 && matches!(addr, 0x0800_0000..=0x0DFF_FFFF) {
+    if channel != 0 && matches!(addr, GAMEPAK0_START..=GAMEPAK_ROM_END) {
         0
     } else {
         configured_mode

@@ -6,7 +6,8 @@ use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::{Cartridge, Sega8MapperKind, Sega8System, SystemHint};
 use crate::hardware::constants::{
-    GG_SCREEN_H, GG_SCREEN_W, RGBA_CHANNELS, SMS_SCREEN_H, SMS_SCREEN_W,
+    GG_SCREEN_H, GG_SCREEN_W, RGBA_CHANNELS, SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ, SMS_SCREEN_H,
+    SMS_SCREEN_W,
 };
 use crate::hardware::cpu::Cpu;
 use crate::hardware::region::Sega8Region;
@@ -19,7 +20,7 @@ mod state_io;
 #[cfg(test)]
 mod tests;
 
-pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+pub const DEFAULT_SAMPLE_RATE: u32 = SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ;
 const HOST_DPAD_RIGHT: u8 = 1 << 0;
 const HOST_DPAD_LEFT: u8 = 1 << 1;
 const HOST_DPAD_UP: u8 = 1 << 2;

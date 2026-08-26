@@ -5,7 +5,6 @@ mod psg;
 
 use psg::Psg;
 
-const GBA_CPU_HZ: f64 = 16_777_216.0;
 const FIFO_CAPACITY: usize = 32;
 const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
 
@@ -109,7 +108,7 @@ pub(crate) struct ApuSaveState {
 
 impl Default for Apu {
     fn default() -> Self {
-        Self::new(48_000)
+        Self::new(crate::hardware::constants::GBA_DEFAULT_HOST_SAMPLE_RATE_HZ)
     }
 }
 

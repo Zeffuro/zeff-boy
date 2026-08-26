@@ -3,7 +3,7 @@ use crate::hardware::types::constants::*;
 
 impl Apu {
     pub(super) fn generate_samples(&mut self, t_cycles: u64) {
-        let cycles_per_sample = super::APU_T_CYCLES_PER_SECOND / self.sample_rate as f64;
+        let cycles_per_sample = GB_T_CYCLES_PER_SECOND as f64 / self.sample_rate as f64;
         self.sample_cycle_accum += t_cycles as f64;
         while self.sample_cycle_accum >= cycles_per_sample {
             self.sample_cycle_accum -= cycles_per_sample;

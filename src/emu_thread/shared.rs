@@ -85,7 +85,7 @@ impl EmuThread {
                 *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
                     super::REWIND_CAPTURE_INTERVAL_FRAMES,
-                    backend.system().frame_duration_ns(),
+                    backend.nominal_frame_duration_ns(),
                 );
             }
             Self::capture_rewind_snapshot(
@@ -192,7 +192,7 @@ impl EmuThread {
                 *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
                     super::REWIND_CAPTURE_INTERVAL_FRAMES,
-                    backend.system().frame_duration_ns(),
+                    backend.nominal_frame_duration_ns(),
                 );
             }
             Self::capture_rewind_snapshot(
@@ -301,7 +301,7 @@ impl EmuThread {
                 *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
                     super::REWIND_CAPTURE_INTERVAL_FRAMES,
-                    backend.system().frame_duration_ns(),
+                    backend.nominal_frame_duration_ns(),
                 );
             }
             Self::capture_rewind_snapshot(
@@ -413,7 +413,7 @@ impl EmuThread {
                 *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
                     *rewind_seconds,
                     super::REWIND_CAPTURE_INTERVAL_FRAMES,
-                    backend.system().frame_duration_ns(),
+                    backend.nominal_frame_duration_ns(),
                 );
             }
             Self::capture_rewind_snapshot(
@@ -490,14 +490,31 @@ impl EmuThread {
     pub(crate) fn finalize_load_state(
         resp: &EmuResponse,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
+        rewind_seconds: usize,
+        frame_duration_ns: &mut u64,
         backend: &mut EmuBackend,
         cheats: &[crate::cheats::CheatPatch],
     ) {
         if matches!(resp, EmuResponse::LoadStateOk { .. }) {
             backend.discard_game_boy_printer_jobs();
-            rewind_buffer.clear();
+            *frame_duration_ns =
+                Self::reset_rewind_for_loaded_state(rewind_buffer, rewind_seconds, backend);
             backend.install_rom_patches(cheats);
         }
+    }
+
+    pub(crate) fn reset_rewind_for_loaded_state(
+        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
+        rewind_seconds: usize,
+        backend: &EmuBackend,
+    ) -> u64 {
+        let frame_duration_ns = backend.nominal_frame_duration_ns();
+        *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
+            rewind_seconds,
+            super::REWIND_CAPTURE_INTERVAL_FRAMES,
+            frame_duration_ns,
+        );
+        frame_duration_ns
     }
 
     pub(crate) fn respond_load_state(

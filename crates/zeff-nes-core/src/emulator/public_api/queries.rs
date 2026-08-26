@@ -4,8 +4,6 @@ use zeff_emu_common::time::{
     ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
 };
 
-const MASTER_CLOCK_RATE: ClockRate = ClockRate::from_ratio(21_477_272, 12);
-
 impl Emulator {
     pub fn framebuffer(&self) -> &[u8] {
         &self.bus.ppu.framebuffer[..]
@@ -13,8 +11,8 @@ impl Emulator {
 
     pub fn framebuffer_dimensions(&self) -> (usize, usize) {
         (
-            crate::hardware::ppu::SCREEN_W,
-            crate::hardware::ppu::SCREEN_H,
+            crate::hardware::constants::SCREEN_WIDTH,
+            crate::hardware::constants::SCREEN_HEIGHT,
         )
     }
 
@@ -36,6 +34,14 @@ impl Emulator {
 
     pub fn frame_count(&self) -> u64 {
         self.bus.ppu.frame_count + u64::from(self.bus.ppu.frame_ready)
+    }
+
+    pub fn nominal_frame_duration_ns(&self) -> u64 {
+        self.bus.timing.nominal_frame_duration_ns()
+    }
+
+    pub fn max_cpu_cycles_per_frame(&self) -> u64 {
+        self.bus.timing.max_cpu_cycles_per_frame()
     }
 
     pub fn cpu_pc(&self) -> u16 {
@@ -201,7 +207,11 @@ impl Emulator {
 
 impl MachineTiming for Emulator {
     fn timing_snapshot(&self) -> TimingSnapshot {
-        TimingSnapshot::new(MasterTicks::new(self.cpu.cycles), MASTER_CLOCK_RATE)
+        let (numerator_hz, denominator) = self.bus.timing.cpu_clock_hz_ratio();
+        TimingSnapshot::new(
+            MasterTicks::new(self.cpu.cycles),
+            ClockRate::from_ratio(numerator_hz, denominator),
+        )
     }
 }
 

@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 
 use super::bus::OPEN_BUS_VALUE;
 use super::cd_media::{CD_USER_SECTOR_BYTES, CdDisc};
+use super::constants::{PCE_NTSC_MASTER_CLOCK_HZ_DENOMINATOR, PCE_NTSC_MASTER_CLOCK_HZ_NUMERATOR};
 use super::cpu::LineLevel;
 
 pub const CDROM2_WORK_RAM_LEN: usize = 0x1_0000;
@@ -35,14 +36,14 @@ const CDROM2_SECTOR_TICKS_NUMERATOR: u64 = 3_150_000;
 const CDROM2_SECTOR_TICKS_DENOMINATOR: u64 = 11;
 const CDDA_TICK_NUMERATOR: u64 = 77;
 const CDDA_TICK_DENOMINATOR: u64 = 37_500;
-const CDDA_SOURCE_RATE: f64 = 44_100.0;
+pub(super) const CDDA_SOURCE_SAMPLE_RATE_HZ: u32 = 44_100;
 const CDDA_MIX_GAIN: f32 = 0.5;
 const CDDA_SAMPLE_LATCH_TICKS: u64 = 700;
 const CD_COMMAND_TRACE_CAPACITY: usize = 128;
 const ADPCM_CLOCK_NUMERATOR: u64 = 176;
 const ADPCM_CLOCK_DENOMINATOR: u64 = 118_125;
-const CDROM2_MASTER_CLOCK_NUMERATOR: u64 = 315_000_000 * 6;
-const CDROM2_MASTER_CLOCK_DENOMINATOR: u64 = 88;
+const CDROM2_MASTER_CLOCK_NUMERATOR: u64 = PCE_NTSC_MASTER_CLOCK_HZ_NUMERATOR;
+const CDROM2_MASTER_CLOCK_DENOMINATOR: u64 = PCE_NTSC_MASTER_CLOCK_HZ_DENOMINATOR;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CdCommandTrace {
@@ -373,7 +374,7 @@ impl CdRom2 {
             audio_sample_latch_last_clock: 0,
             audio_source_frames: VecDeque::new(),
             audio_resample_position: 0.0,
-            audio_sample_rate: 44_100,
+            audio_sample_rate: CDDA_SOURCE_SAMPLE_RATE_HZ,
             audio_sample_generation_enabled: true,
             adpcm_address_latch: 0,
             adpcm_read_address: 0,
@@ -396,7 +397,7 @@ impl CdRom2 {
             adpcm_step_index: 0,
             adpcm_end_irq: false,
             adpcm_half_irq: false,
-            adpcm_resampler: audio::MonoBlipResampler::new(44_100),
+            adpcm_resampler: audio::MonoBlipResampler::new(CDDA_SOURCE_SAMPLE_RATE_HZ),
             adpcm_audio_samples: Vec::new(),
             debug_adpcm_dma_completed: false,
         }

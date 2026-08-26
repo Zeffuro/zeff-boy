@@ -1,4 +1,4 @@
-use super::{CYCLES_PER_FRAME_DOUBLE, CYCLES_PER_FRAME_NORMAL, Emulator};
+use super::{DOUBLE_SPEED_T_CYCLES_PER_FRAME, Emulator, NORMAL_SPEED_T_CYCLES_PER_FRAME};
 use crate::debug::{CallStackEntry, CallStackKind};
 use crate::hardware::bus::CpuAccessTraceEvent;
 use crate::hardware::types::hardware_mode::HardwareMode;
@@ -49,9 +49,9 @@ pub struct FrameSliceProgress {
 impl Emulator {
     pub fn cycles_per_frame(mode: HardwareMode) -> u64 {
         if mode == HardwareMode::CGBDouble {
-            CYCLES_PER_FRAME_DOUBLE
+            DOUBLE_SPEED_T_CYCLES_PER_FRAME
         } else {
-            CYCLES_PER_FRAME_NORMAL
+            NORMAL_SPEED_T_CYCLES_PER_FRAME
         }
     }
 

@@ -12,7 +12,9 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 pub const PCE_ACTIVE_FRAME_WIDTH: usize = 1024;
 pub const PCE_ACTIVE_FRAME_HEIGHT: usize = 512;
-pub const PCE_ACTIVE_FRAME_RGBA_BYTES: usize = PCE_ACTIVE_FRAME_WIDTH * PCE_ACTIVE_FRAME_HEIGHT * 4;
+pub const PCE_ACTIVE_FRAME_RGBA_BYTES: usize = PCE_ACTIVE_FRAME_WIDTH
+    * PCE_ACTIVE_FRAME_HEIGHT
+    * zeff_emu_common::system::RGBA_BYTES_PER_PIXEL;
 pub const PCE_ACTIVE_FRAME_UNUSED_RGBA: [u8; 4] = [0, 0, 0, 0xFF];
 pub const PCE_SIGNAL_FIRST_ROW: u16 = 17;
 pub const PCE_SIGNAL_ROW_END: u16 = 259;

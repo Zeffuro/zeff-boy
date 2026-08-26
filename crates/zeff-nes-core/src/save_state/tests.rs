@@ -1,5 +1,9 @@
 use super::*;
+use crate::hardware::bus::Bus;
+use crate::hardware::cartridge::Cartridge;
+use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::CpuState;
+use crate::hardware::timing::NesTiming;
 
 fn build_test_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -21,6 +25,16 @@ fn build_test_rom() -> Vec<u8> {
 fn make_emulator() -> crate::emulator::Emulator {
     let rom = build_test_rom();
     crate::emulator::Emulator::new(&rom, 44_100.0).expect("test ROM should load")
+}
+
+fn make_emulator_with_timing(timing: NesTiming) -> crate::emulator::Emulator {
+    let rom = build_test_rom();
+    let cartridge = Cartridge::load(&rom).expect("test ROM should load");
+    let mut emu = make_emulator();
+    emu.bus = Bus::new_with_timing(cartridge, 44_100.0, timing);
+    emu.cpu = Cpu::new();
+    emu.cpu.power_on(&mut emu.bus);
+    emu
 }
 
 fn make_jam_emulator() -> crate::emulator::Emulator {
@@ -62,6 +76,15 @@ fn write_legacy_ppu_runtime_state(emu: &crate::emulator::Emulator, payload: &mut
     }
     payload.write_u8(sprite_a12);
     emu.bus.cartridge.write_ppu_runtime_state(payload);
+}
+
+fn replace_current_payload_byte(state: &[u8], offset: usize, value: u8) -> Vec<u8> {
+    let mut payload = lz4_flex::decompress_size_prepended(&state[12..]).expect("state payload");
+    payload[offset] = value;
+    let compressed = lz4_flex::compress_prepend_size(&payload);
+    let mut replaced = state[..12].to_vec();
+    replaced.extend_from_slice(&compressed);
+    replaced
 }
 
 #[test]
@@ -120,6 +143,119 @@ fn save_state_roundtrip_preserves_bus_state() {
     assert_eq!(emu.bus.ram[0], 0x42);
     assert_eq!(emu.bus.ppu_cycles, ppu_cycles_before);
     assert_eq!(emu.bus.cpu_open_bus, open_bus_before);
+}
+
+#[test]
+fn save_state_v10_preserves_pal_cpu_ppu_phase_and_continuation() {
+    let mut emu = make_emulator_with_timing(NesTiming::Pal);
+    emu.bus.tick_peripherals(2);
+    assert_eq!(emu.bus.ppu_clock.master_phase(), 2);
+    let state = encode_state(&emu).expect("PAL state should encode");
+
+    emu.bus.tick_peripherals(37);
+    let expected = encode_state(&emu).expect("continued PAL state should encode");
+
+    let mut restored = make_emulator_with_timing(NesTiming::Pal);
+    decode_state(&mut restored, &state).expect("PAL state should decode");
+    assert_eq!(restored.bus.ppu_clock.master_phase(), 2);
+    restored.bus.tick_peripherals(37);
+
+    assert_eq!(
+        encode_state(&restored).expect("restored PAL continuation should encode"),
+        expected
+    );
+}
+
+#[test]
+fn save_state_v10_rejects_region_mismatch_before_machine_state_mutation() {
+    let mut saved = make_emulator_with_timing(NesTiming::Pal);
+    saved.bus.tick_peripherals(2);
+    let state = encode_state(&saved).expect("PAL state should encode");
+
+    let mut restored = make_emulator_with_timing(NesTiming::Dendy);
+    restored.bus.ram[0] = 0x5A;
+    let error = decode_state(&mut restored, &state).expect_err("region mismatch should reject");
+
+    assert!(error.to_string().contains("timing"));
+    assert_eq!(restored.bus.ram[0], 0x5A);
+}
+
+#[test]
+fn save_state_v10_rejects_invalid_timing_tag_before_machine_state_mutation() {
+    let emu = make_emulator();
+    let state = encode_state(&emu).expect("state should encode");
+    let corrupted = replace_current_payload_byte(&state, 32, 0xFF);
+    let mut restored = make_emulator();
+    restored.bus.ram[0] = 0x5A;
+
+    let error = decode_state(&mut restored, &corrupted).expect_err("timing tag should reject");
+
+    assert!(error.to_string().contains("timing tag"));
+    assert_eq!(restored.bus.ram[0], 0x5A);
+}
+
+#[test]
+fn save_state_v10_rejects_invalid_clock_phase_before_machine_state_mutation() {
+    let emu = make_emulator();
+    let state = encode_state(&emu).expect("state should encode");
+    let corrupted = replace_current_payload_byte(&state, 33, 1);
+    let mut restored = make_emulator();
+    restored.bus.ram[0] = 0x5A;
+
+    let error = decode_state(&mut restored, &corrupted).expect_err("clock phase should reject");
+
+    assert!(error.to_string().contains("master-clock phase"));
+    assert_eq!(restored.bus.ram[0], 0x5A);
+}
+
+#[test]
+fn save_state_v9_migrates_as_exact_ntsc_clock_phase() {
+    let mut emu = make_emulator();
+    emu.bus.tick_peripherals(7);
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    emu.bus.write_apu_runtime_state(&mut payload);
+    emu.bus.write_ppu_runtime_state(&mut payload);
+    emu.bus.write_mutable_media_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V9_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_emulator();
+    decode_state(&mut restored, &state).expect("V9 NTSC state should load");
+
+    assert_eq!(restored.bus.timing, NesTiming::Ntsc);
+    assert_eq!(restored.bus.ppu_clock.master_phase(), 0);
+}
+
+#[test]
+fn save_state_v9_rejects_non_ntsc_destination() {
+    let emu = make_emulator();
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    emu.bus.write_apu_runtime_state(&mut payload);
+    emu.bus.write_ppu_runtime_state(&mut payload);
+    emu.bus.write_mutable_media_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V9_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_emulator_with_timing(NesTiming::Pal);
+    let error = decode_state(&mut restored, &state).expect_err("legacy PAL state should reject");
+
+    assert!(error.to_string().contains("legacy"));
 }
 
 #[test]

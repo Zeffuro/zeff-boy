@@ -142,13 +142,13 @@ impl Bus {
 
     pub(super) fn write_sound_dma_control(&mut self, value: u8) {
         let old_control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
+        let was_enabled = old_control & SOUND_DMA_ENABLE != 0;
         let mut control = value & SOUND_DMA_CONTROL_MASK;
-        if control & SOUND_DMA_ENABLE != 0 && self.sound_dma_length() == 0 {
+        if !was_enabled && control & SOUND_DMA_ENABLE != 0 && self.sound_dma_length() == 0 {
             control &= !SOUND_DMA_ENABLE;
         }
         self.io[usize::from(SOUND_DMA_CONTROL_PORT)] = control;
 
-        let was_enabled = old_control & SOUND_DMA_ENABLE != 0;
         let is_enabled = control & SOUND_DMA_ENABLE != 0;
         if is_enabled && !was_enabled {
             self.sound_dma.reload_source = self.sound_dma_source();

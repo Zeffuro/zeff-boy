@@ -2,7 +2,10 @@ use anyhow::{Context, bail};
 use std::cell::RefCell;
 use zeff_emu_common::save_ram::SaveRamKind;
 
-use super::constants::{EEPROM_SIZE, FLASH_1M_SIZE, SRAM_SIZE};
+use super::constants::{
+    EEPROM_SIZE, FLASH_1M_SIZE, GAMEPAK0_END, GAMEPAK0_START, GAMEPAK1_END, GAMEPAK1_START,
+    GAMEPAK2_END, GAMEPAK2_START, SRAM_SIZE,
+};
 
 mod backup;
 mod rtc;
@@ -245,9 +248,9 @@ fn is_emerald_rtc(header: &RomHeader) -> bool {
 
 fn gba_rom_offset(addr: u32) -> Option<usize> {
     match addr {
-        0x0800_0000..=0x09FF_FFFF => Some((addr - 0x0800_0000) as usize),
-        0x0A00_0000..=0x0BFF_FFFF => Some((addr - 0x0A00_0000) as usize),
-        0x0C00_0000..=0x0DFF_FFFF => Some((addr - 0x0C00_0000) as usize),
+        GAMEPAK0_START..=GAMEPAK0_END => Some((addr - GAMEPAK0_START) as usize),
+        GAMEPAK1_START..=GAMEPAK1_END => Some((addr - GAMEPAK1_START) as usize),
+        GAMEPAK2_START..=GAMEPAK2_END => Some((addr - GAMEPAK2_START) as usize),
         _ => None,
     }
 }

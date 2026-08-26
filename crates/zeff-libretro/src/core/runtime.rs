@@ -94,9 +94,9 @@ impl CoreState {
 
     pub fn fps(&self) -> f64 {
         match &self.core {
-            ActiveCore::Gb(_) => 59.7275,
+            ActiveCore::Gb(_) => zeff_gb_core::hardware::types::constants::FRAME_RATE_HZ,
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::FPS,
-            ActiveCore::Nes(_) => 60.0988,
+            ActiveCore::Nes(_) => zeff_nes_core::hardware::constants::NTSC_FRAME_RATE_HZ,
             ActiveCore::Pce(_) => zeff_emu_common::system::System::Pce.target_fps(),
             ActiveCore::Sega8(emu) => emu.video_standard().frame_rate_approx() as f64,
             ActiveCore::Ws(_) => zeff_ws_core::hardware::constants::FPS,

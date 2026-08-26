@@ -127,7 +127,11 @@ pub extern "C" fn retro_get_system_av_info(info: *mut retro_system_av_info) {
                 state.sample_rate as f64,
             )
         } else {
-            (core::CoreState::default_video_geometry(), 59.7275, 48000.0)
+            (
+                core::CoreState::default_video_geometry(),
+                zeff_gb_core::hardware::types::constants::FRAME_RATE_HZ,
+                f64::from(core::LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ),
+            )
         }
     };
 
@@ -213,13 +217,13 @@ pub extern "C" fn retro_run() {
 
         if use_xrgb {
             let xrgb = state.framebuffer_as_xrgb8888();
-            let pitch = w as usize * 4;
+            let pitch = w as usize * zeff_emu_common::system::RGBA_BYTES_PER_PIXEL;
             if let Some(cb) = *lock(&CB_VIDEO_REFRESH) {
                 unsafe { cb(xrgb.as_ptr() as *const c_void, w, h, pitch) };
             }
         } else {
             let rgb565 = state.framebuffer_as_rgb565();
-            let pitch = w as usize * 2;
+            let pitch = w as usize * core::LIBRETRO_RGB565_BYTES_PER_PIXEL;
             if let Some(cb) = *lock(&CB_VIDEO_REFRESH) {
                 unsafe { cb(rgb565.as_ptr() as *const c_void, w, h, pitch) };
             }

@@ -6,7 +6,7 @@ pub(crate) const MAX_CDROM2_STATE_SECTION_BYTES: usize = 2 * 1024 * 1024;
 
 const MAX_COMMAND_BYTES: usize = 10;
 const MAX_RESPONSE_BYTES: usize = 256 * CD_USER_SECTOR_BYTES;
-const MAX_CDDA_SOURCE_FRAMES: usize = 44_100;
+const MAX_CDDA_SOURCE_FRAMES: usize = CDDA_SOURCE_SAMPLE_RATE_HZ as usize;
 const MAX_ADPCM_AUDIO_SAMPLES: usize = super::super::psg::MAX_PSG_SAMPLE_RATE as usize;
 
 impl CdRom2 {

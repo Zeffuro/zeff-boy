@@ -125,7 +125,7 @@ impl App {
                         let frames = self.settings.rewind.capture_interval() as u64;
                         self.rewind
                             .pacer
-                            .schedule(self.active_system.frame_duration_ns(), frames);
+                            .schedule(self.nominal_frame_duration_ns(), frames);
                         self.rewind.scheduled_frames = frames;
                         1
                     }

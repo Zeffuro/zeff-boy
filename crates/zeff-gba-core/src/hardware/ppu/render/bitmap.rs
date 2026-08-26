@@ -6,6 +6,9 @@ use super::{draw_bg_color, draw_bg_color_line, read_le16};
 use crate::hardware::constants::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::hardware::ppu::Ppu;
 
+const MODE5_WIDTH_PIXELS: usize = 160;
+const MODE5_HEIGHT_PIXELS: usize = 128;
+
 impl Ppu {
     pub(super) fn render_mode3(
         &mut self,
@@ -127,13 +130,13 @@ impl Ppu {
         self.fill_backdrop(palette_ram, effects, windows, pixel_layers, pixel_colors);
         let priority = (read_le16(io, 0x0C) & 0x3) as u8;
         let use_mosaic = read_le16(io, 0x0C) & (1 << 6) != 0;
-        for y in 0..128usize {
-            for x in 0..160usize {
+        for y in 0..MODE5_HEIGHT_PIXELS {
+            for x in 0..MODE5_WIDTH_PIXELS {
                 if !windows.allows_bg(2, x, y) {
                     continue;
                 }
                 let (sample_x, sample_y) = mosaic.bg_sample(x, y, use_mosaic);
-                let src = page + (sample_y * 160 + sample_x) * 2;
+                let src = page + (sample_y * MODE5_WIDTH_PIXELS + sample_x) * 2;
                 draw_bg_color(
                     &mut self.framebuffer,
                     pixel_layers,
@@ -268,18 +271,18 @@ impl Ppu {
         pixel_colors: &mut [u16; SCREEN_WIDTH],
         mosaic: Mosaic,
     ) {
-        if y >= 128 {
+        if y >= MODE5_HEIGHT_PIXELS {
             return;
         }
         let page = if dispcnt & (1 << 4) != 0 { 0xA000 } else { 0 };
         let priority = (read_le16(io, 0x0C) & 0x3) as u8;
         let use_mosaic = read_le16(io, 0x0C) & (1 << 6) != 0;
-        for x in 0..160usize {
+        for x in 0..MODE5_WIDTH_PIXELS {
             if !windows.allows_bg(2, x, y) {
                 continue;
             }
             let (sample_x, sample_y) = mosaic.bg_sample(x, y, use_mosaic);
-            let src = page + (sample_y * 160 + sample_x) * 2;
+            let src = page + (sample_y * MODE5_WIDTH_PIXELS + sample_x) * 2;
             draw_bg_color_line(
                 &mut self.framebuffer,
                 pixel_layers,

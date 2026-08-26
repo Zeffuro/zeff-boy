@@ -6,6 +6,7 @@ use zeff_emu_common::cheats::{
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
+use super::constants::{PCE_PHYSICAL_WORK_RAM_END, PCE_PHYSICAL_WORK_RAM_START};
 use super::{
     ControllerPort, PCE_HOST_FRAME_RGBA_BYTES, POPULOUS_HUCARD_RAM_LEN, PadButtons,
     PceCartridgeDescriptor, PceFrameRun, PceHuCardBoard, PceMachine, PceMachineError,
@@ -17,8 +18,6 @@ pub const PCEAS_HEADER_LEN: usize = 0x200;
 const STATE_MAGIC: &[u8; 8] = b"ZBPCEHC\0";
 const STATE_VERSION: u32 = 1;
 const MAX_CORE_STATE_BYTES: usize = 8 * 1024 * 1024;
-const PHYSICAL_WORK_RAM_START: u32 = 0x1F_0000;
-const PHYSICAL_WORK_RAM_END: u32 = 0x1F_7FFF;
 
 pub struct PceHuCardHost {
     machine: PceMachine,
@@ -239,10 +238,10 @@ impl<'a> PcePhysicalWorkRam<'a> {
     }
 
     fn offset(&self, address: u32) -> Option<usize> {
-        if !(PHYSICAL_WORK_RAM_START..=PHYSICAL_WORK_RAM_END).contains(&address) {
+        if !(PCE_PHYSICAL_WORK_RAM_START..=PCE_PHYSICAL_WORK_RAM_END).contains(&address) {
             return None;
         }
-        Some((address as usize - PHYSICAL_WORK_RAM_START as usize) & (self.bytes.len() - 1))
+        Some((address as usize - PCE_PHYSICAL_WORK_RAM_START as usize) & (self.bytes.len() - 1))
     }
 }
 

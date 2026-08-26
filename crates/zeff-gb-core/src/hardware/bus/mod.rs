@@ -394,10 +394,13 @@ impl Bus {
         let cgb_mode = self.is_cgb_mode();
         self.io.ppu.cgb_double_speed =
             self.hardware_mode == HardwareMode::CGBDouble && !self.cgb_dmg_compat;
-        let interrupts = self
-            .io
-            .ppu
-            .step(system_t_cycles, &self.vram, &self.oam, cgb_mode);
+        let interrupts = self.io.ppu.step_with_oam_dma(
+            system_t_cycles,
+            &self.vram,
+            &self.oam,
+            cgb_mode,
+            self.oam_dma_active,
+        );
         if self.io.ppu.drain_cpu_stat_interrupt_pending_before_if() {
             self.cpu_interrupt_pending_before_if |= 0x02;
         }

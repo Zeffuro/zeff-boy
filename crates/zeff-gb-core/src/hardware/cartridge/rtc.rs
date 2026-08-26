@@ -1,5 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::hardware::types::constants::GB_T_CYCLES_PER_SECOND;
+
 pub(super) const RTC_SECONDS: usize = 0;
 pub(super) const RTC_MINUTES: usize = 1;
 pub(super) const RTC_HOURS: usize = 2;
@@ -10,8 +12,6 @@ pub(super) const RTC_REG_COUNT: usize = 5;
 pub(super) const RTC_DH_DAY_HIGH_BIT: u8 = 0x01;
 pub(super) const RTC_DH_HALT_BIT: u8 = 0x40;
 pub(super) const RTC_DH_CARRY_BIT: u8 = 0x80;
-
-pub(super) const T_CYCLES_PER_SECOND: u64 = 4_194_304;
 
 #[derive(Clone)]
 pub(super) struct Rtc {
@@ -36,8 +36,8 @@ impl Rtc {
 
         self.subsecond_cycles = self.subsecond_cycles.saturating_add(t_cycles);
 
-        while self.subsecond_cycles >= T_CYCLES_PER_SECOND {
-            self.subsecond_cycles -= T_CYCLES_PER_SECOND;
+        while self.subsecond_cycles >= GB_T_CYCLES_PER_SECOND {
+            self.subsecond_cycles -= GB_T_CYCLES_PER_SECOND;
             self.tick_one_second();
         }
     }

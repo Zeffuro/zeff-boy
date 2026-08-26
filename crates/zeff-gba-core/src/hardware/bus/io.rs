@@ -68,7 +68,7 @@ impl Bus {
         } else {
             (existing & 0x00FF) | (u16::from(value) << 8)
         };
-        self.io_write16(0x0400_0000 | aligned, value16);
+        self.io_write16(IO_START | aligned, value16);
     }
 
     pub(super) fn io_write16(&mut self, addr: u32, value: u16) {

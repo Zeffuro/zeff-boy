@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 
-use super::constants::SEGA8_Z80_CLOCK_HZ_APPROX;
+use super::constants::SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ;
+use super::timing::Sega8VideoStandard;
 
 pub const PSG_CHANNEL_COUNT: usize = 4;
 pub const PSG_TONE_CHANNEL_COUNT: usize = 3;
 
-const PSG_DEFAULT_SAMPLE_RATE: u32 = 48_000;
 const TONE_CLOCK_DIVIDER: i32 = 16;
 const MIX_GAIN: f32 = 0.75 / PSG_CHANNEL_COUNT as f32;
 const DEFAULT_STEREO_CONTROL: u8 = 0xFF;
@@ -15,7 +15,7 @@ const NOISE_MODE_WHITE: u8 = 0x04;
 const NOISE_PERIOD_MASK: u8 = 0x03;
 const MAX_SAVED_SAMPLE_BUFFER_LEN: usize = 262_144;
 const DEBUG_WAVEFORM_SAMPLE_COUNT: usize = 512;
-const CANONICAL_SAVED_SAMPLE_RATE: u32 = PSG_DEFAULT_SAMPLE_RATE;
+const CANONICAL_SAVED_SAMPLE_RATE: u32 = SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ;
 
 // SN76489 volume registers use 2 dB attenuation steps; 15 is silent.
 const VOLUME_TABLE: [f32; 16] = [
@@ -85,11 +85,14 @@ impl Default for Psg {
 
 impl Psg {
     pub fn new() -> Self {
-        Self::new_with_sample_rate(PSG_DEFAULT_SAMPLE_RATE)
+        Self::new_with_sample_rate(SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ)
     }
 
     pub fn new_with_sample_rate(sample_rate: u32) -> Self {
-        Self::new_with_sample_rate_and_clock_hz(sample_rate, SEGA8_Z80_CLOCK_HZ_APPROX)
+        Self::new_with_sample_rate_and_clock_hz(
+            sample_rate,
+            Sega8VideoStandard::Ntsc.clock_hz_approx(),
+        )
     }
 
     pub fn new_with_sample_rate_and_clock_hz(sample_rate: u32, clock_hz: u32) -> Self {
@@ -117,7 +120,7 @@ impl Psg {
             channel_mutes: [false; PSG_CHANNEL_COUNT],
         };
         if sample_rate == 0 {
-            psg.sample_rate = PSG_DEFAULT_SAMPLE_RATE;
+            psg.sample_rate = SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ;
         }
         psg
     }
@@ -160,7 +163,7 @@ impl Psg {
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate.max(1);
         if sample_rate == 0 {
-            self.sample_rate = PSG_DEFAULT_SAMPLE_RATE;
+            self.sample_rate = SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ;
         }
         self.sample_cycle_accumulator %= self.clock_hz;
         self.sample_buffer.clear();
@@ -615,13 +618,17 @@ fn read_latched_register(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::constants::SMS_Z80_CYCLES_PER_FRAME;
+    use crate::hardware::timing::Sega8VideoStandard;
 
     fn peak(samples: &[f32]) -> f32 {
         samples
             .iter()
             .copied()
             .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+    }
+
+    fn ntsc_cycles_per_frame() -> u32 {
+        Sega8VideoStandard::Ntsc.cycles_per_frame()
     }
 
     #[test]
@@ -668,7 +675,7 @@ mod tests {
         psg.write_data(0x04);
         psg.write_data(0x90);
 
-        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME);
+        psg.step_cycles(ntsc_cycles_per_frame());
         let mut samples = Vec::new();
         psg.drain_audio_samples_into(&mut samples);
 
@@ -689,7 +696,7 @@ mod tests {
         psg.write_data(0x04);
         psg.write_data(0x90);
 
-        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME);
+        psg.step_cycles(ntsc_cycles_per_frame());
         let buffered_before = psg.buffered_sample_count();
         let debug_samples = psg.master_debug_samples_ordered();
 
@@ -705,7 +712,7 @@ mod tests {
         psg.write_data(0x04);
         psg.write_data(0x90);
 
-        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME);
+        psg.step_cycles(ntsc_cycles_per_frame());
         let mut drained = Vec::new();
         psg.drain_audio_samples_into(&mut drained);
 
@@ -729,7 +736,7 @@ mod tests {
             psg.write_data(0x80 | period);
             psg.write_data(0x90);
 
-            psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME / 4);
+            psg.step_cycles(ntsc_cycles_per_frame() / 4);
             let mut samples = Vec::new();
             psg.drain_audio_samples_into(&mut samples);
 
@@ -751,7 +758,7 @@ mod tests {
         psg.write_data(0x90);
         psg.set_sample_generation_enabled(false);
 
-        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME);
+        psg.step_cycles(ntsc_cycles_per_frame());
 
         assert_eq!(psg.buffered_sample_count(), 0);
         assert_eq!(psg.tone_periods()[0], 0x040);
@@ -765,7 +772,7 @@ mod tests {
         psg.write_data(0x90);
         psg.write_stereo_control(0x10);
 
-        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME / 10);
+        psg.step_cycles(ntsc_cycles_per_frame() / 10);
         let mut samples = Vec::new();
         psg.drain_audio_samples_into(&mut samples);
 
@@ -794,7 +801,7 @@ mod tests {
         psg.write_data(0x90);
         psg.set_channel_mutes([true, false, false, false]);
 
-        psg.step_cycles(SMS_Z80_CYCLES_PER_FRAME / 10);
+        psg.step_cycles(ntsc_cycles_per_frame() / 10);
         let mut samples = Vec::new();
         psg.drain_audio_samples_into(&mut samples);
 

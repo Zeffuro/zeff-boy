@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
-use super::{Apu, FIFO_CAPACITY, FifoDmaRequests, GBA_CPU_HZ};
+use super::{Apu, FIFO_CAPACITY, FifoDmaRequests};
+use crate::hardware::constants::CPU_CLOCK_HZ;
 
 const GBA_MASTER_OUTPUT_GAIN: f32 = 0.75;
 const GBA_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
@@ -71,7 +72,7 @@ impl Apu {
     }
 
     fn advance_dac_phase(&mut self, cycles: u32, soundbias: u16) -> usize {
-        let dac_rate = GBA_CPU_HZ as u32 / soundbias_sample_interval(soundbias).max(1);
+        let dac_rate = CPU_CLOCK_HZ / soundbias_sample_interval(soundbias).max(1);
         advance_phase(&mut self.dac_phase, cycles, dac_rate)
     }
 
@@ -223,8 +224,8 @@ fn gba_output_sample(sample: f32) -> f32 {
 fn advance_phase(phase: &mut f64, cycles: u32, rate: u32) -> usize {
     let mut samples = 0;
     *phase += f64::from(cycles) * f64::from(rate.max(1));
-    while *phase >= GBA_CPU_HZ {
-        *phase -= GBA_CPU_HZ;
+    while *phase >= CPU_CLOCK_HZ as f64 {
+        *phase -= CPU_CLOCK_HZ as f64;
         samples += 1;
     }
     samples

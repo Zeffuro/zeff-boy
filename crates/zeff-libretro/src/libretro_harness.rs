@@ -2,7 +2,7 @@
 
 use libloading::{Library, Symbol};
 use sha2::{Digest, Sha256};
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::raw::c_uint;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -18,14 +18,18 @@ const RETRO_ENVIRONMENT_GET_VARIABLE: c_uint = 15;
 const RETRO_ENVIRONMENT_SET_VARIABLES: c_uint = 16;
 const RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: c_uint = 17;
 const RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME: c_uint = 18;
+const RETRO_ENVIRONMENT_GET_LOG_INTERFACE: c_uint = 27;
 const RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: c_uint = 31;
 const RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: c_uint = 32;
 const RETRO_ENVIRONMENT_SET_MEMORY_MAPS: c_uint = 36;
 const RETRO_ENVIRONMENT_SET_GEOMETRY: c_uint = 37;
+const RETRO_ENVIRONMENT_GET_LANGUAGE: c_uint = 39;
 const RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS: c_uint = 42;
 const RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE: c_uint = 47 | 0x10000;
 const RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: c_uint = 52;
 const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: c_uint = 67;
+const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: c_uint = 68;
+const RETRO_PIXEL_FORMAT_0RGB1555: c_uint = 0;
 const RETRO_PIXEL_FORMAT_XRGB8888: c_uint = 1;
 const RETRO_PIXEL_FORMAT_RGB565: c_uint = 2;
 const RETRO_NUM_CORE_OPTION_VALUES_MAX: usize = 128;
@@ -91,6 +95,22 @@ struct RetroCoreOptionV2Definition {
 struct RetroCoreOptionsV2 {
     categories: *const c_void,
     definitions: *const RetroCoreOptionV2Definition,
+}
+
+#[repr(C)]
+struct RetroCoreOptionsV2Intl {
+    us: *const RetroCoreOptionsV2,
+    local: *const RetroCoreOptionsV2,
+}
+
+#[repr(C)]
+struct RetroLogCallback {
+    log: Option<unsafe extern "C" fn(c_int, *const c_char, ...)>,
+}
+
+#[link(name = "zeff_libretro_harness_log", kind = "static")]
+unsafe extern "C" {
+    fn zeff_libretro_harness_log(level: c_int, format: *const c_char, ...);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,6 +197,8 @@ pub struct HarnessResult {
     pub elapsed: Duration,
     pub frames_per_second: f64,
     pub callbacks: CallbackCounts,
+    pub video_pixel_format: c_uint,
+    pub invalid_audio_buffer_len: bool,
     pub video_hash: [u8; 32],
     pub audio_hash: [u8; 32],
     pub unsupported_environment_commands: Vec<c_uint>,
@@ -209,6 +231,7 @@ struct CoreOptionValue {
 #[derive(Default)]
 struct CallbackState {
     requested_pixel_format: c_uint,
+    active_pixel_format: c_uint,
     frame_index: usize,
     inputs: Vec<JoypadInput>,
     options: Vec<CoreOptionValue>,
@@ -218,6 +241,9 @@ struct CallbackState {
     last_video: VideoFrameInfo,
     video_hasher: Sha256,
     audio_hasher: Sha256,
+    invalid_video_pitch: bool,
+    invalid_video_buffer_len: bool,
+    invalid_audio_buffer_len: bool,
     unsupported_environment_commands: Vec<c_uint>,
 }
 
@@ -231,7 +257,12 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
         RETRO_ENVIRONMENT_SET_PIXEL_FORMAT if !data.is_null() => {
             let format = unsafe { *data.cast::<c_uint>() };
-            format == state.requested_pixel_format
+            if format == state.requested_pixel_format {
+                state.active_pixel_format = format;
+                true
+            } else {
+                false
+            }
         }
         RETRO_ENVIRONMENT_GET_CAN_DUPE if !data.is_null() => {
             unsafe { *data.cast::<bool>() = true };
@@ -239,6 +270,10 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => copy_directory(data, &state.system_directory),
         RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => copy_directory(data, &state.save_directory),
+        RETRO_ENVIRONMENT_GET_LOG_INTERFACE if !data.is_null() => {
+            unsafe { (*data.cast::<RetroLogCallback>()).log = Some(zeff_libretro_harness_log) };
+            true
+        }
         RETRO_ENVIRONMENT_GET_VARIABLE if !data.is_null() => get_variable(data, state),
         RETRO_ENVIRONMENT_SET_VARIABLES if !data.is_null() => {
             unsafe { register_default_variables(data, state) };
@@ -250,6 +285,14 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 if !data.is_null() => {
             unsafe { register_default_v2_variables(data, state) };
+            true
+        }
+        RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL if !data.is_null() => {
+            unsafe { register_default_v2_intl_variables(data, state) };
+            true
+        }
+        RETRO_ENVIRONMENT_GET_LANGUAGE if !data.is_null() => {
+            unsafe { *data.cast::<c_uint>() = 0 };
             true
         }
         RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE if !data.is_null() => {
@@ -318,19 +361,32 @@ unsafe fn register_default_variables(data: *mut c_void, state: &mut CallbackStat
 }
 
 unsafe fn register_default_v2_variables(data: *mut c_void, state: &mut CallbackState) {
-    let definitions = unsafe { (*data.cast::<RetroCoreOptionsV2>()).definitions };
+    let options = unsafe { &*data.cast::<RetroCoreOptionsV2>() };
+    unsafe { register_default_v2_option_definitions(options.definitions, state) };
+}
+
+unsafe fn register_default_v2_intl_variables(data: *mut c_void, state: &mut CallbackState) {
+    let options = unsafe { &*data.cast::<RetroCoreOptionsV2Intl>() };
+    if !options.us.is_null() {
+        let options = unsafe { &*options.us };
+        unsafe { register_default_v2_option_definitions(options.definitions, state) };
+    }
+}
+
+unsafe fn register_default_v2_option_definitions(
+    mut definitions: *const RetroCoreOptionV2Definition,
+    state: &mut CallbackState,
+) {
     if definitions.is_null() {
         return;
     }
-
-    let mut definition = definitions;
-    while !(unsafe { (*definition).key }).is_null() {
-        let key = unsafe { CStr::from_ptr((*definition).key) };
-        let value = unsafe { (*definition).default_value };
+    while !(unsafe { (*definitions).key }).is_null() {
+        let key = unsafe { CStr::from_ptr((*definitions).key) };
+        let value = unsafe { (*definitions).default_value };
         if !value.is_null() {
             register_default_option(key, unsafe { CStr::from_ptr(value) }.to_owned(), state);
         }
-        definition = unsafe { definition.add(1) };
+        definitions = unsafe { definitions.add(1) };
     }
 }
 
@@ -380,11 +436,37 @@ unsafe extern "C" fn video_refresh(
         height,
         pitch,
     };
-    if !data.is_null() {
-        let bytes = unsafe {
-            std::slice::from_raw_parts(data.cast::<u8>(), pitch.saturating_mul(height as usize))
+    if !data.is_null() && width != 0 && height != 0 && pitch == 0 {
+        state.invalid_video_pitch = true;
+        return;
+    }
+    if !data.is_null() && pitch != 0 {
+        let bytes_per_pixel = match state.active_pixel_format {
+            RETRO_PIXEL_FORMAT_XRGB8888 => 4,
+            RETRO_PIXEL_FORMAT_0RGB1555 | RETRO_PIXEL_FORMAT_RGB565 => 2,
+            _ => unreachable!(),
         };
-        state.video_hasher.update(bytes);
+        let visible_row_bytes = (width as usize).saturating_mul(bytes_per_pixel);
+        if pitch < visible_row_bytes {
+            state.invalid_video_pitch = true;
+            return;
+        }
+        let Some(frame_bytes) = pitch
+            .checked_mul(height as usize)
+            .filter(|length| *length <= isize::MAX as usize)
+        else {
+            state.invalid_video_buffer_len = true;
+            return;
+        };
+        let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), frame_bytes) };
+        state
+            .video_hasher
+            .update(state.active_pixel_format.to_le_bytes());
+        state.video_hasher.update(width.to_le_bytes());
+        state.video_hasher.update(height.to_le_bytes());
+        for row in bytes.chunks_exact(pitch).take(height as usize) {
+            state.video_hasher.update(&row[..visible_row_bytes]);
+        }
     }
 }
 
@@ -412,7 +494,14 @@ unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
         .audio_bytes
         .saturating_add(frames.saturating_mul(std::mem::size_of::<i16>() * 2));
     if !data.is_null() {
-        let samples = unsafe { std::slice::from_raw_parts(data, frames.saturating_mul(2)) };
+        let Some(sample_count) = frames
+            .checked_mul(2)
+            .filter(|count| *count <= isize::MAX as usize)
+        else {
+            state.invalid_audio_buffer_len = true;
+            return 0;
+        };
+        let samples = unsafe { std::slice::from_raw_parts(data, sample_count) };
         for sample in samples {
             state.audio_hasher.update(sample.to_le_bytes());
         }
@@ -633,9 +722,9 @@ unsafe fn run_loaded_core(
     let elapsed = start.elapsed();
     let state_size = unsafe { serialize_size() };
     anyhow::ensure!(state_size > 0, "retro_serialize_size returned zero");
-    let mut state = vec![0; state_size];
     let undersized_serialize_rejected =
-        state_size > 1 && !unsafe { serialize(state.as_mut_ptr().cast(), state_size - 1) };
+        unsafe { serialize_rejects_undersized_buffer(*serialize, state_size)? };
+    let mut state = vec![0; state_size];
     anyhow::ensure!(
         unsafe { serialize(state.as_mut_ptr().cast(), state_size) },
         "retro_serialize failed"
@@ -654,10 +743,13 @@ unsafe fn run_loaded_core(
     let callback_state = callback_guard
         .as_ref()
         .expect("libretro harness is not active");
+    validate_callback_buffers(callback_state)?;
     Ok(HarnessResult {
         elapsed,
         frames_per_second: config.measurement_frames as f64 / elapsed.as_secs_f64(),
         callbacks: callback_state.counts,
+        video_pixel_format: callback_state.active_pixel_format,
+        invalid_audio_buffer_len: callback_state.invalid_audio_buffer_len,
         video_hash: callback_state.video_hasher.clone().finalize().into(),
         audio_hash: callback_state.audio_hasher.clone().finalize().into(),
         unsupported_environment_commands: callback_state.unsupported_environment_commands.clone(),
@@ -670,6 +762,26 @@ unsafe fn run_loaded_core(
     })
 }
 
+fn validate_callback_buffers(callback_state: &CallbackState) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !callback_state.invalid_video_pitch,
+        "libretro core supplied pitch {} for a {}x{} frame in pixel format {}",
+        callback_state.last_video.pitch,
+        callback_state.last_video.width,
+        callback_state.last_video.height,
+        callback_state.active_pixel_format
+    );
+    anyhow::ensure!(
+        !callback_state.invalid_video_buffer_len,
+        "libretro core supplied an invalid video buffer length"
+    );
+    anyhow::ensure!(
+        !callback_state.invalid_audio_buffer_len,
+        "libretro core supplied an invalid audio buffer length"
+    );
+    Ok(())
+}
+
 fn set_frame_index(frame_index: usize) {
     CALLBACK_STATE
         .lock()
@@ -677,6 +789,20 @@ fn set_frame_index(frame_index: usize) {
         .as_mut()
         .expect("libretro harness is not active")
         .frame_index = frame_index;
+}
+
+unsafe fn serialize_rejects_undersized_buffer(
+    serialize: unsafe extern "C" fn(*mut c_void, usize) -> bool,
+    state_size: usize,
+) -> anyhow::Result<bool> {
+    if state_size <= 1 {
+        return Ok(false);
+    }
+    let probe_size = state_size
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("retro_serialize_size is too large to probe"))?;
+    let mut probe = vec![0; probe_size];
+    Ok(!unsafe { serialize(probe.as_mut_ptr().cast(), state_size - 1) })
 }
 
 fn reset_measurement_callbacks() {
@@ -699,10 +825,14 @@ pub fn load_rom(path: &Path) -> anyhow::Result<Vec<u8>> {
 mod tests {
     use super::{
         CALLBACK_STATE, CallbackState, CoreOptionValue, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
-        RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, RETRO_NUM_CORE_OPTION_VALUES_MAX,
-        RetroCoreOptionV2Definition, RetroCoreOptionValue, RetroCoreOptionsV2, RetroVariable,
-        environment, get_variable, percentile,
+        RETRO_ENVIRONMENT_GET_LANGUAGE, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
+        RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+        RETRO_NUM_CORE_OPTION_VALUES_MAX, RETRO_PIXEL_FORMAT_RGB565, RetroCoreOptionV2Definition,
+        RetroCoreOptionValue, RetroCoreOptionsV2, RetroCoreOptionsV2Intl, RetroLogCallback,
+        RetroVariable, audio_batch, environment, get_variable, percentile,
+        serialize_rejects_undersized_buffer, validate_callback_buffers, video_refresh,
     };
+    use sha2::Digest;
     use std::ffi::CString;
 
     #[test]
@@ -725,6 +855,178 @@ mod tests {
             &mut CallbackState::default()
         ));
         assert!(variable.value.is_null());
+    }
+
+    #[test]
+    fn undersized_serialize_probe_keeps_an_ignoring_core_in_bounds() {
+        unsafe extern "C" fn ignores_size(buffer: *mut std::ffi::c_void, _size: usize) -> bool {
+            unsafe { std::ptr::write_bytes(buffer, 0xA5, 4) };
+            true
+        }
+
+        assert!(!unsafe { serialize_rejects_undersized_buffer(ignores_size, 4) }.unwrap());
+    }
+
+    #[test]
+    fn undersized_serialize_probe_reports_a_rejecting_core() {
+        unsafe extern "C" fn requires_exact_size(
+            _buffer: *mut std::ffi::c_void,
+            size: usize,
+        ) -> bool {
+            size == 4
+        }
+
+        assert!(unsafe { serialize_rejects_undersized_buffer(requires_exact_size, 4) }.unwrap());
+    }
+
+    #[test]
+    fn environment_supplies_english_and_a_log_callback() {
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState::default());
+        let mut language = u32::MAX;
+        let mut log = RetroLogCallback { log: None };
+
+        unsafe {
+            assert!(environment(
+                RETRO_ENVIRONMENT_GET_LANGUAGE,
+                std::ptr::from_mut(&mut language).cast(),
+            ));
+            assert!(environment(
+                RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
+                std::ptr::from_mut(&mut log).cast(),
+            ));
+        }
+        CALLBACK_STATE.lock().unwrap().take();
+
+        assert_eq!(language, 0);
+        assert!(log.log.is_some());
+    }
+
+    #[test]
+    fn video_hash_ignores_pitch_padding() {
+        let tight = [1_u8, 2, 3, 4, 5, 6, 7, 8];
+        let padded = [1_u8, 2, 3, 4, 90, 91, 5, 6, 7, 8, 92, 93];
+        let changed_pixel = [1_u8, 2, 3, 9, 5, 6, 7, 8];
+
+        let hash = |bytes: &[u8], width, height, pitch| {
+            *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+                requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+                active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+                ..CallbackState::default()
+            });
+            unsafe { video_refresh(bytes.as_ptr().cast(), width, height, pitch) };
+            CALLBACK_STATE
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .video_hasher
+                .finalize()
+        };
+
+        let tight_hash = hash(&tight, 2, 2, 4);
+        assert_eq!(tight_hash, hash(&padded, 2, 2, 6));
+        assert_ne!(tight_hash, hash(&changed_pixel, 2, 2, 4));
+        assert_ne!(tight_hash, hash(&tight, 1, 4, 2));
+    }
+
+    #[test]
+    fn video_refresh_rejects_pitch_shorter_than_the_visible_row() {
+        let bytes = [0_u8; 8];
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+            requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            ..CallbackState::default()
+        });
+
+        unsafe { video_refresh(bytes.as_ptr().cast(), 2, 2, 3) };
+
+        assert!(
+            CALLBACK_STATE
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .invalid_video_pitch
+        );
+    }
+
+    #[test]
+    fn callback_validation_rejects_zero_pitch_for_a_non_null_visible_frame() {
+        let byte = 0_u8;
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState::default());
+
+        unsafe { video_refresh(std::ptr::null(), 1, 1, 0) };
+        let duplicate_frame = CALLBACK_STATE.lock().unwrap().take().unwrap();
+
+        assert!(validate_callback_buffers(&duplicate_frame).is_ok());
+
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+            requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            ..CallbackState::default()
+        });
+
+        unsafe { video_refresh(std::ptr::from_ref(&byte).cast(), 1, 1, 0) };
+        let callback_state = CALLBACK_STATE.lock().unwrap().take().unwrap();
+        let error = validate_callback_buffers(&callback_state).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "libretro core supplied pitch 0 for a 1x1 frame in pixel format 2"
+        );
+    }
+
+    #[test]
+    fn video_refresh_rejects_an_unrepresentable_buffer_length() {
+        let byte = 0_u8;
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+            requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            ..CallbackState::default()
+        });
+
+        unsafe { video_refresh(std::ptr::from_ref(&byte).cast(), 1, 2, usize::MAX) };
+
+        assert!(
+            CALLBACK_STATE
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .invalid_video_buffer_len
+        );
+    }
+
+    #[test]
+    fn audio_batch_rejects_an_unrepresentable_buffer_length() {
+        let sample = 0_i16;
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState::default());
+
+        assert_eq!(unsafe { audio_batch(&sample, usize::MAX) }, 0);
+
+        assert!(
+            CALLBACK_STATE
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .invalid_audio_buffer_len
+        );
+    }
+
+    #[test]
+    fn callback_validation_rejects_an_invalid_audio_buffer_length() {
+        let callback_state = CallbackState {
+            invalid_audio_buffer_len: true,
+            ..CallbackState::default()
+        };
+
+        let error = validate_callback_buffers(&callback_state).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "libretro core supplied an invalid audio buffer length"
+        );
     }
 
     #[test]
@@ -800,5 +1102,58 @@ mod tests {
         assert_eq!(state.options[0].value.as_c_str(), speed_override.as_c_str());
         assert_eq!(state.options[1].key.as_c_str(), filter_key.as_c_str());
         assert_eq!(state.options[1].value.as_c_str(), filter_default.as_c_str());
+    }
+
+    #[test]
+    fn v2_international_core_options_register_english_defaults() {
+        let key = CString::new("core_region").unwrap();
+        let default = CString::new("ntsc").unwrap();
+        let empty_value = RetroCoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        };
+        let definitions = [
+            RetroCoreOptionV2Definition {
+                key: key.as_ptr(),
+                desc: std::ptr::null(),
+                desc_categorized: std::ptr::null(),
+                info: std::ptr::null(),
+                info_categorized: std::ptr::null(),
+                category_key: std::ptr::null(),
+                values: [empty_value; RETRO_NUM_CORE_OPTION_VALUES_MAX],
+                default_value: default.as_ptr(),
+            },
+            RetroCoreOptionV2Definition {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                desc_categorized: std::ptr::null(),
+                info: std::ptr::null(),
+                info_categorized: std::ptr::null(),
+                category_key: std::ptr::null(),
+                values: [empty_value; RETRO_NUM_CORE_OPTION_VALUES_MAX],
+                default_value: std::ptr::null(),
+            },
+        ];
+        let options = RetroCoreOptionsV2 {
+            categories: std::ptr::null(),
+            definitions: definitions.as_ptr(),
+        };
+        let international = RetroCoreOptionsV2Intl {
+            us: std::ptr::from_ref(&options),
+            local: std::ptr::null(),
+        };
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState::default());
+
+        unsafe {
+            assert!(environment(
+                RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+                std::ptr::from_ref(&international).cast_mut().cast(),
+            ));
+        }
+        let state = CALLBACK_STATE.lock().unwrap().take().unwrap();
+
+        assert_eq!(state.options.len(), 1);
+        assert_eq!(state.options[0].key.as_c_str(), key.as_c_str());
+        assert_eq!(state.options[0].value.as_c_str(), default.as_c_str());
     }
 }

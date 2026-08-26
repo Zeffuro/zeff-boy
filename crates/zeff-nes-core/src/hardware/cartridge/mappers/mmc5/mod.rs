@@ -1,6 +1,7 @@
 mod banking;
 
 use crate::hardware::cartridge::{ChrFetchKind, Mapper, Mirroring};
+use crate::hardware::constants::SCREEN_HEIGHT;
 
 pub struct Mmc5 {
     pub(super) prg_rom: Vec<u8>,
@@ -299,14 +300,17 @@ impl Mapper for Mmc5 {
         self.consecutive_nt_reads = count;
         if count == 3 {
             let sl = self.current_scanline;
-            if sl >= 240 {
+            if sl >= SCREEN_HEIGHT as u16 {
                 self.current_scanline = 0;
                 self.in_frame = true;
             } else {
                 let new_sl = sl + 1;
                 self.current_scanline = new_sl;
-                self.in_frame = new_sl < 240;
-                if new_sl < 240 && self.irq_enabled && new_sl as u8 == self.irq_line_compare {
+                self.in_frame = new_sl < SCREEN_HEIGHT as u16;
+                if new_sl < SCREEN_HEIGHT as u16
+                    && self.irq_enabled
+                    && new_sl as u8 == self.irq_line_compare
+                {
                     self.irq_pending = true;
                 }
             }

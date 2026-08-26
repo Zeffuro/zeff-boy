@@ -1,6 +1,9 @@
 use super::apu::{Apu, ApuDebugSnapshot};
 use super::cartridge::Cartridge;
-use super::constants::{ADDRESS_MASK, IO_PORT_COUNT, WS_INTERNAL_RAM_SIZE, WSC_INTERNAL_RAM_SIZE};
+use super::constants::{
+    ADDRESS_MASK, IO_PORT_COUNT, WS_DEFAULT_HOST_SAMPLE_RATE_HZ, WS_INTERNAL_RAM_SIZE,
+    WSC_INTERNAL_RAM_SIZE,
+};
 use super::keypad::Keypad;
 use super::ppu::{Ppu, PpuDebugSnapshot};
 mod dma;
@@ -85,7 +88,7 @@ impl Bus {
         Self {
             cartridge,
             ppu: Ppu::new(),
-            apu: Apu::new(48_000),
+            apu: Apu::new(WS_DEFAULT_HOST_SAMPLE_RATE_HZ),
             keypad: Keypad::new(),
             ram: vec![0; ram_size],
             io: vec![0; IO_PORT_COUNT],

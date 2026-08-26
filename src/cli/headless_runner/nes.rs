@@ -1,5 +1,10 @@
 use super::*;
 
+const NES_FRAMEBUFFER_DIMENSIONS: (usize, usize) = (
+    zeff_emu_common::system::NES_SCREEN_SIZE.0 as usize,
+    zeff_emu_common::system::NES_SCREEN_SIZE.1 as usize,
+);
+
 pub(super) fn run_nes_headless(
     path: &Path,
     rom_data: &[u8],
@@ -65,10 +70,15 @@ pub(super) fn run_nes_headless(
         opts,
         0,
         emulator.framebuffer(),
-        (256, 240),
+        NES_FRAMEBUFFER_DIMENSIONS,
         &mut screenshot_written,
     )?;
-    write_screenshot_sequence_if_requested(opts, 0, emulator.framebuffer(), (256, 240))?;
+    write_screenshot_sequence_if_requested(
+        opts,
+        0,
+        emulator.framebuffer(),
+        NES_FRAMEBUFFER_DIMENSIONS,
+    )?;
 
     'frames: for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
@@ -94,7 +104,7 @@ pub(super) fn run_nes_headless(
         if opts.trace_opcodes || bus_trace_active || test_output_shadow.is_some() {
             emulator.clear_frame_ready();
             let start_cycles = emulator.cpu_cycles();
-            let max_cycles = zeff_nes_core::emulator::CPU_CYCLES_PER_FRAME * 2;
+            let max_cycles = emulator.max_cpu_cycles_per_frame() * 2;
             while !emulator.ppu_frame_ready()
                 && emulator.cpu_cycles().wrapping_sub(start_cycles) < max_cycles
                 && !emulator.is_cpu_suspended()
@@ -168,14 +178,14 @@ pub(super) fn run_nes_headless(
             opts,
             frames_run,
             emulator.framebuffer(),
-            (256, 240),
+            NES_FRAMEBUFFER_DIMENSIONS,
             &mut screenshot_written,
         )?;
         write_screenshot_sequence_if_requested(
             opts,
             frames_run,
             emulator.framebuffer(),
-            (256, 240),
+            NES_FRAMEBUFFER_DIMENSIONS,
         )?;
 
         observe_stuck(
@@ -259,7 +269,7 @@ pub(super) fn run_nes_headless(
         opts,
         frames_run,
         emulator.framebuffer(),
-        (256, 240),
+        NES_FRAMEBUFFER_DIMENSIONS,
         &mut screenshot_written,
     )?;
     emit_debug_state(

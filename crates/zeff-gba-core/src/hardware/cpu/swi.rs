@@ -3,9 +3,29 @@ use crate::hardware::bus::Bus;
 
 impl Cpu {
     pub(super) fn execute_software_interrupt(&mut self, bus: &mut Bus, function: u32) {
+        #[cfg(test)]
+        let standalone_timing = !self.data_access_timing_active;
+        #[cfg(test)]
+        let timing_start_cycle = self.cycles;
+        #[cfg(test)]
+        if standalone_timing {
+            self.begin_data_access_timing(0);
+        }
         if bus.has_external_bios() {
             self.enter_software_interrupt_exception();
+            #[cfg(test)]
+            if standalone_timing {
+                self.finish_data_access_timing(
+                    self.cycles
+                        .wrapping_sub(timing_start_cycle)
+                        .min(u64::from(u32::MAX)) as u32,
+                );
+            }
             return;
+        }
+        #[cfg(test)]
+        {
+            self.hle_data_accesses = true;
         }
 
         match function {
@@ -37,6 +57,14 @@ impl Cpu {
         }
         self.bios_protected_read_latch = super::POST_SWI_BIOS_READ_LATCH;
         self.cycles = self.cycles.wrapping_add(4);
+        #[cfg(test)]
+        if standalone_timing {
+            self.finish_data_access_timing(
+                self.cycles
+                    .wrapping_sub(timing_start_cycle)
+                    .min(u64::from(u32::MAX)) as u32,
+            );
+        }
     }
 
     fn enter_software_interrupt_exception(&mut self) {
@@ -55,7 +83,7 @@ impl Cpu {
     }
 
     fn swi_soft_reset(&mut self, bus: &mut Bus) {
-        let return_to_wram = bus.read8(0x0300_7FFA) != 0;
+        let return_to_wram = self.cpu_read8(bus, 0x0300_7FFA) != 0;
 
         bus.iwram[0x7E00..0x8000].fill(0);
 
@@ -160,29 +188,29 @@ impl Cpu {
         let word = fast || mode & (1 << 26) != 0;
         let count = mode & 0x1F_FFFF;
         if word {
-            let fill = cpu_set_read32(bus, src);
+            let fill = self.cpu_set_read32(bus, src);
             let units = if fast { (count + 7) & !7 } else { count };
             for _ in 0..units {
                 let value = if fixed_source {
                     fill
                 } else {
-                    cpu_set_read32(bus, src)
+                    self.cpu_set_read32(bus, src)
                 };
-                bus.write32(dst, value);
+                self.cpu_write32(bus, dst, value);
                 if !fixed_source {
                     src = src.wrapping_add(4);
                 }
                 dst = dst.wrapping_add(4);
             }
         } else {
-            let fill = cpu_set_read16(bus, src);
+            let fill = self.cpu_set_read16(bus, src);
             for _ in 0..count {
                 let value = if fixed_source {
                     fill
                 } else {
-                    cpu_set_read16(bus, src)
+                    self.cpu_set_read16(bus, src)
                 };
-                bus.write16(dst, value);
+                self.cpu_write16(bus, dst, value);
                 if !fixed_source {
                     src = src.wrapping_add(2);
                 }
@@ -197,13 +225,13 @@ impl Cpu {
         let mut src = self.regs[0];
         let mut dst = self.regs[1];
         for _ in 0..self.regs[2] {
-            let center_x = read_i32(bus, src);
-            let center_y = read_i32(bus, src.wrapping_add(4));
-            let display_x = i32::from(read_i16(bus, src.wrapping_add(8)));
-            let display_y = i32::from(read_i16(bus, src.wrapping_add(10)));
-            let scale_x = read_i16(bus, src.wrapping_add(12));
-            let scale_y = read_i16(bus, src.wrapping_add(14));
-            let angle = bus.read16(src.wrapping_add(16));
+            let center_x = self.cpu_read32(bus, src) as i32;
+            let center_y = self.cpu_read32(bus, src.wrapping_add(4)) as i32;
+            let display_x = i32::from(self.cpu_read16(bus, src.wrapping_add(8)) as i16);
+            let display_y = i32::from(self.cpu_read16(bus, src.wrapping_add(10)) as i16);
+            let scale_x = self.cpu_read16(bus, src.wrapping_add(12)) as i16;
+            let scale_y = self.cpu_read16(bus, src.wrapping_add(14)) as i16;
+            let angle = self.cpu_read16(bus, src.wrapping_add(16));
             let params = affine_params(scale_x, scale_y, angle);
             let start_x = center_x
                 .wrapping_sub(i32::from(params.pa).wrapping_mul(display_x))
@@ -212,12 +240,12 @@ impl Cpu {
                 .wrapping_sub(i32::from(params.pc).wrapping_mul(display_x))
                 .wrapping_sub(i32::from(params.pd).wrapping_mul(display_y));
 
-            write_i16(bus, dst, params.pa);
-            write_i16(bus, dst.wrapping_add(2), params.pb);
-            write_i16(bus, dst.wrapping_add(4), params.pc);
-            write_i16(bus, dst.wrapping_add(6), params.pd);
-            write_i32(bus, dst.wrapping_add(8), start_x);
-            write_i32(bus, dst.wrapping_add(12), start_y);
+            self.cpu_write16(bus, dst, params.pa as u16);
+            self.cpu_write16(bus, dst.wrapping_add(2), params.pb as u16);
+            self.cpu_write16(bus, dst.wrapping_add(4), params.pc as u16);
+            self.cpu_write16(bus, dst.wrapping_add(6), params.pd as u16);
+            self.cpu_write32(bus, dst.wrapping_add(8), start_x as u32);
+            self.cpu_write32(bus, dst.wrapping_add(12), start_y as u32);
 
             src = src.wrapping_add(20);
             dst = dst.wrapping_add(16);
@@ -231,15 +259,23 @@ impl Cpu {
         let mut dst = self.regs[1];
         let offset = self.regs[3];
         for _ in 0..self.regs[2] {
-            let scale_x = read_i16(bus, src);
-            let scale_y = read_i16(bus, src.wrapping_add(2));
-            let angle = bus.read16(src.wrapping_add(4));
+            let scale_x = self.cpu_read16(bus, src) as i16;
+            let scale_y = self.cpu_read16(bus, src.wrapping_add(2)) as i16;
+            let angle = self.cpu_read16(bus, src.wrapping_add(4));
             let params = affine_params(scale_x, scale_y, angle);
 
-            write_i16(bus, dst, params.pa);
-            write_i16(bus, dst.wrapping_add(offset), params.pb);
-            write_i16(bus, dst.wrapping_add(offset.wrapping_mul(2)), params.pc);
-            write_i16(bus, dst.wrapping_add(offset.wrapping_mul(3)), params.pd);
+            self.cpu_write16(bus, dst, params.pa as u16);
+            self.cpu_write16(bus, dst.wrapping_add(offset), params.pb as u16);
+            self.cpu_write16(
+                bus,
+                dst.wrapping_add(offset.wrapping_mul(2)),
+                params.pc as u16,
+            );
+            self.cpu_write16(
+                bus,
+                dst.wrapping_add(offset.wrapping_mul(3)),
+                params.pd as u16,
+            );
 
             src = src.wrapping_add(6);
             dst = dst.wrapping_add(offset.wrapping_mul(4));
@@ -251,7 +287,7 @@ impl Cpu {
     fn swi_lz77_uncomp(&mut self, bus: &mut Bus, write_mode: DecompWriteMode) {
         let mut src = self.regs[0];
         let dst = self.regs[1];
-        let header = bus.read32(src);
+        let header = self.cpu_read32(bus, src);
         src = src.wrapping_add(4);
         if header & 0xFF != 0x10 {
             return;
@@ -259,18 +295,18 @@ impl Cpu {
         let out_len = (header >> 8) as usize;
         let mut out = Vec::with_capacity(out_len);
         while out.len() < out_len {
-            let flags = bus.read8(src);
+            let flags = self.cpu_read8(bus, src);
             src = src.wrapping_add(1);
             for bit in (0..8).rev() {
                 if out.len() >= out_len {
                     break;
                 }
                 if flags & (1 << bit) == 0 {
-                    out.push(bus.read8(src));
+                    out.push(self.cpu_read8(bus, src));
                     src = src.wrapping_add(1);
                 } else {
-                    let first = bus.read8(src);
-                    let second = bus.read8(src.wrapping_add(1));
+                    let first = self.cpu_read8(bus, src);
+                    let second = self.cpu_read8(bus, src.wrapping_add(1));
                     src = src.wrapping_add(2);
                     let len = usize::from(first >> 4) + 3;
                     let disp = ((usize::from(first & 0x0F) << 8) | usize::from(second)) + 1;
@@ -284,7 +320,7 @@ impl Cpu {
                 }
             }
         }
-        let dst = write_decompressed_output(bus, dst, &out, write_mode);
+        let dst = self.write_decompressed_output(bus, dst, &out, write_mode);
         self.regs[0] = src;
         self.regs[1] = dst;
     }
@@ -292,7 +328,7 @@ impl Cpu {
     fn swi_rl_uncomp(&mut self, bus: &mut Bus, write_mode: DecompWriteMode) {
         let mut src = self.regs[0];
         let dst = self.regs[1];
-        let header = bus.read32(src);
+        let header = self.cpu_read32(bus, src);
         src = src.wrapping_add(4);
         if header & 0xFF != 0x30 {
             return;
@@ -300,11 +336,11 @@ impl Cpu {
         let out_len = (header >> 8) as usize;
         let mut out = Vec::with_capacity(out_len);
         while out.len() < out_len {
-            let control = bus.read8(src);
+            let control = self.cpu_read8(bus, src);
             src = src.wrapping_add(1);
             if control & 0x80 != 0 {
                 let count = usize::from(control & 0x7F) + 3;
-                let value = bus.read8(src);
+                let value = self.cpu_read8(bus, src);
                 src = src.wrapping_add(1);
                 for _ in 0..count {
                     if out.len() >= out_len {
@@ -318,13 +354,13 @@ impl Cpu {
                     if out.len() >= out_len {
                         break;
                     }
-                    let value = bus.read8(src);
+                    let value = self.cpu_read8(bus, src);
                     src = src.wrapping_add(1);
                     out.push(value);
                 }
             }
         }
-        let dst = write_decompressed_output(bus, dst, &out, write_mode);
+        let dst = self.write_decompressed_output(bus, dst, &out, write_mode);
         self.regs[0] = src;
         self.regs[1] = dst;
     }
@@ -332,7 +368,7 @@ impl Cpu {
     fn swi_huff_uncomp(&mut self, bus: &mut Bus) {
         let mut src = self.regs[0];
         let dst = self.regs[1];
-        let header = bus.read32(src);
+        let header = self.cpu_read32(bus, src);
         src = src.wrapping_add(4);
         if (header >> 4) & 0xF != 0x2 {
             return;
@@ -342,7 +378,7 @@ impl Cpu {
             return;
         }
         let out_len = (header >> 8) as usize;
-        let tree_size = usize::from(bus.read8(src));
+        let tree_size = usize::from(self.cpu_read8(bus, src));
         let tree_header = src;
         let tree_base = src.wrapping_add(1);
         let bitstream = tree_header.wrapping_add(((tree_size + 1) * 2) as u32);
@@ -355,18 +391,18 @@ impl Cpu {
 
         while out.len() < out_len {
             if bit_mask == 0 {
-                bit_word = bus.read32(bit_addr);
+                bit_word = self.cpu_read32(bus, bit_addr);
                 bit_addr = bit_addr.wrapping_add(4);
                 bit_mask = 1 << 31;
             }
             let bit = u32::from(bit_word & bit_mask != 0);
             bit_mask >>= 1;
 
-            let node = bus.read8(node_addr);
+            let node = self.cpu_read8(bus, node_addr);
             let child_addr = (node_addr & !1)
                 .wrapping_add(u32::from(node & 0x3F) * 2)
                 .wrapping_add(2 + bit);
-            let child = bus.read8(child_addr);
+            let child = self.cpu_read8(bus, child_addr);
             let terminal = if bit == 0 {
                 node & 0x80 != 0
             } else {
@@ -390,7 +426,7 @@ impl Cpu {
             }
         }
 
-        let dst = write_words(bus, dst, &out);
+        let dst = self.write_words(bus, dst, &out);
         self.regs[0] = bit_addr;
         self.regs[1] = dst;
     }
@@ -399,10 +435,10 @@ impl Cpu {
         let mut src = self.regs[0];
         let mut dst = self.regs[1];
         let info = self.regs[2];
-        let source_len = u32::from(bus.read16(info));
-        let source_width = u32::from(bus.read8(info.wrapping_add(2))).max(1);
-        let dest_width = u32::from(bus.read8(info.wrapping_add(3))).max(1);
-        let offset = bus.read32(info.wrapping_add(4));
+        let source_len = u32::from(self.cpu_read16(bus, info));
+        let source_width = u32::from(self.cpu_read8(bus, info.wrapping_add(2))).max(1);
+        let dest_width = u32::from(self.cpu_read8(bus, info.wrapping_add(3))).max(1);
+        let offset = self.cpu_read32(bus, info.wrapping_add(4));
         let offset_value = offset & 0x7FFF_FFFF;
         let zero_data = offset & 0x8000_0000 != 0;
         let source_mask = (1u32 << source_width.min(31)).wrapping_sub(1);
@@ -415,7 +451,7 @@ impl Cpu {
         let mut accum_bits = 0u32;
         let mut out = Vec::new();
         for _ in 0..source_len {
-            let byte = bus.read8(src);
+            let byte = self.cpu_read8(bus, src);
             src = src.wrapping_add(1);
             let mut bit = 0u32;
             while bit < 8 {
@@ -439,7 +475,7 @@ impl Cpu {
         for chunk in out.chunks(4) {
             let mut word = [0; 4];
             word[..chunk.len()].copy_from_slice(chunk);
-            bus.write32(dst, u32::from_le_bytes(word));
+            self.cpu_write32(bus, dst, u32::from_le_bytes(word));
             dst = dst.wrapping_add(4);
         }
         self.regs[0] = src;
@@ -449,7 +485,7 @@ impl Cpu {
     fn swi_diff_8bit_unfilter(&mut self, bus: &mut Bus, write_mode: DecompWriteMode) {
         let mut src = self.regs[0];
         let dst = self.regs[1];
-        let header = bus.read32(src);
+        let header = self.cpu_read32(bus, src);
         src = src.wrapping_add(4);
         if header & 0xFF != 0x81 {
             return;
@@ -458,7 +494,7 @@ impl Cpu {
         let mut out = Vec::with_capacity(out_len);
         let mut last = 0u8;
         for i in 0..out_len {
-            let diff = bus.read8(src);
+            let diff = self.cpu_read8(bus, src);
             src = src.wrapping_add(1);
             last = if i == 0 {
                 diff
@@ -467,7 +503,7 @@ impl Cpu {
             };
             out.push(last);
         }
-        let dst = write_decompressed_output(bus, dst, &out, write_mode);
+        let dst = self.write_decompressed_output(bus, dst, &out, write_mode);
         self.regs[0] = src;
         self.regs[1] = dst;
     }
@@ -475,7 +511,7 @@ impl Cpu {
     fn swi_diff_16bit_unfilter(&mut self, bus: &mut Bus) {
         let mut src = self.regs[0];
         let mut dst = self.regs[1];
-        let header = bus.read32(src);
+        let header = self.cpu_read32(bus, src);
         src = src.wrapping_add(4);
         if header & 0xFF != 0x82 {
             return;
@@ -483,14 +519,14 @@ impl Cpu {
         let out_len = (header >> 8) as usize;
         let mut last = 0u16;
         for i in (0..out_len).step_by(2) {
-            let diff = bus.read16(src);
+            let diff = self.cpu_read16(bus, src);
             src = src.wrapping_add(2);
             last = if i == 0 {
                 diff
             } else {
                 last.wrapping_add(diff)
             };
-            bus.write16(dst, last);
+            self.cpu_write16(bus, dst, last);
             dst = dst.wrapping_add(2);
         }
         self.regs[0] = src;
@@ -590,75 +626,66 @@ fn bios_poly_mul_add(lhs: i32, rhs: i32, add: i32) -> i32 {
     (lhs.wrapping_mul(rhs) >> 14).wrapping_add(add)
 }
 
-fn cpu_set_read32(bus: &Bus, addr: u32) -> u32 {
-    if cpu_set_zero_read_addr(addr) {
-        0
-    } else {
-        bus.read32(addr)
-    }
-}
-
-fn cpu_set_read16(bus: &Bus, addr: u32) -> u16 {
-    if cpu_set_zero_read_addr(addr) {
-        0
-    } else if addr & 1 == 0 {
-        bus.read16(addr)
-    } else {
-        u16::from(bus.read8(addr))
-    }
-}
-
 fn cpu_set_zero_read_addr(addr: u32) -> bool {
     matches!(addr, 0x0000_4000..=0x01FF_FFFF | 0x1000_0000..=0xFFFF_FFFF)
 }
 
-fn read_i16(bus: &Bus, addr: u32) -> i16 {
-    bus.read16(addr) as i16
-}
-
-fn read_i32(bus: &Bus, addr: u32) -> i32 {
-    bus.read32(addr) as i32
-}
-
-fn write_i16(bus: &mut Bus, addr: u32, value: i16) {
-    bus.write16(addr, value as u16);
-}
-
-fn write_i32(bus: &mut Bus, addr: u32, value: i32) {
-    bus.write32(addr, value as u32);
-}
-
-fn write_decompressed_output(
-    bus: &mut Bus,
-    mut dst: u32,
-    out: &[u8],
-    mode: DecompWriteMode,
-) -> u32 {
-    match mode {
-        DecompWriteMode::Byte => {
-            for &value in out {
-                bus.write8(dst, value);
-                dst = dst.wrapping_add(1);
-            }
-        }
-        DecompWriteMode::Halfword => {
-            for chunk in out.chunks(2) {
-                let lo = chunk[0];
-                let hi = chunk.get(1).copied().unwrap_or(0);
-                bus.write16(dst, u16::from_le_bytes([lo, hi]));
-                dst = dst.wrapping_add(2);
-            }
+impl Cpu {
+    fn cpu_set_read32(&mut self, bus: &Bus, addr: u32) -> u32 {
+        if cpu_set_zero_read_addr(addr) {
+            #[cfg(test)]
+            self.record_data_access_only(bus, addr, 4);
+            0
+        } else {
+            self.cpu_read32(bus, addr)
         }
     }
-    dst
-}
 
-fn write_words(bus: &mut Bus, mut dst: u32, out: &[u8]) -> u32 {
-    for chunk in out.chunks(4) {
-        let mut word = [0; 4];
-        word[..chunk.len()].copy_from_slice(chunk);
-        bus.write32(dst, u32::from_le_bytes(word));
-        dst = dst.wrapping_add(4);
+    fn cpu_set_read16(&mut self, bus: &Bus, addr: u32) -> u16 {
+        if cpu_set_zero_read_addr(addr) {
+            #[cfg(test)]
+            self.record_data_access_only(bus, addr, 2);
+            0
+        } else if addr & 1 == 0 {
+            self.cpu_read16(bus, addr)
+        } else {
+            u16::from(self.cpu_read8(bus, addr))
+        }
     }
-    dst
+
+    fn write_decompressed_output(
+        &mut self,
+        bus: &mut Bus,
+        mut dst: u32,
+        out: &[u8],
+        mode: DecompWriteMode,
+    ) -> u32 {
+        match mode {
+            DecompWriteMode::Byte => {
+                for &value in out {
+                    self.cpu_write8(bus, dst, value);
+                    dst = dst.wrapping_add(1);
+                }
+            }
+            DecompWriteMode::Halfword => {
+                for chunk in out.chunks(2) {
+                    let lo = chunk[0];
+                    let hi = chunk.get(1).copied().unwrap_or(0);
+                    self.cpu_write16(bus, dst, u16::from_le_bytes([lo, hi]));
+                    dst = dst.wrapping_add(2);
+                }
+            }
+        }
+        dst
+    }
+
+    fn write_words(&mut self, bus: &mut Bus, mut dst: u32, out: &[u8]) -> u32 {
+        for chunk in out.chunks(4) {
+            let mut word = [0; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.cpu_write32(bus, dst, u32::from_le_bytes(word));
+            dst = dst.wrapping_add(4);
+        }
+        dst
+    }
 }

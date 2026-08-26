@@ -60,7 +60,7 @@ impl IO {
             joypad: Joypad::read_state(reader)?,
             serial: Serial::read_state(reader)?,
             timer: Timer::read_state(reader)?,
-            ppu: PPU::read_state(reader)?,
+            ppu: PPU::read_state(reader, format_version)?,
             apu: Apu::read_state(reader, format_version)?,
             sgb: SgbState::read_state(reader)?,
             serial_device: SerialDevicePort::read_state(reader, format_version)?,

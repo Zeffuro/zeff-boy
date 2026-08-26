@@ -172,6 +172,10 @@ impl Sega8Backend {
     pub(crate) fn system(&self) -> ActiveSystem {
         active_system_for_sega8(self.emu.system())
     }
+
+    pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
+        self.emu.video_standard().nominal_frame_duration_ns()
+    }
 }
 
 impl EmulatorCore for Sega8Backend {
@@ -293,6 +297,7 @@ impl EmulatorCore for Sega8Backend {
     fn audio_semantic_frame(&self) -> Option<AudioSemanticFrame> {
         Some(sega8_audio_semantic_frame(
             self.emu.frame_count(),
+            self.emu.video_standard(),
             self.emu.bus().apu().debug_snapshot(),
         ))
     }
@@ -370,6 +375,7 @@ impl FrameLifecycle for Sega8Backend {
 
 fn sega8_audio_semantic_frame(
     frame: u64,
+    video_standard: Sega8VideoStandard,
     snap: zeff_sega8_core::hardware::apu::ApuDebugSnapshot,
 ) -> AudioSemanticFrame {
     let mut voices = Vec::with_capacity(zeff_sega8_core::hardware::apu::PSG_CHANNEL_COUNT);
@@ -395,7 +401,8 @@ fn sega8_audio_semantic_frame(
                 AudioVoiceClass::Noise
             },
             active,
-            pitch_hz: tone_channel.then(|| sega8_tone_freq_to_hz(snap.tone_period[channel])),
+            pitch_hz: tone_channel
+                .then(|| sega8_tone_freq_to_hz(video_standard, snap.tone_period[channel])),
             level: Some(level),
         });
     }
@@ -407,12 +414,11 @@ fn sega8_audio_semantic_frame(
     }
 }
 
-fn sega8_tone_freq_to_hz(period: u16) -> f64 {
+fn sega8_tone_freq_to_hz(video_standard: Sega8VideoStandard, period: u16) -> f64 {
     if period <= 1 {
         return 0.0;
     }
-    f64::from(zeff_sega8_core::hardware::constants::SEGA8_Z80_CLOCK_HZ_APPROX)
-        / (32.0 * f64::from(period))
+    f64::from(video_standard.clock_hz_approx()) / (32.0 * f64::from(period))
 }
 
 pub(crate) fn hint_for_active_system(system: ActiveSystem) -> Option<SystemHint> {
@@ -460,4 +466,26 @@ pub(crate) fn try_load_battery_sram(
     crate::save_paths::try_load_battery_sram(rom_path, "Sega 8-bit", emu.has_battery(), |bytes| {
         emu.load_battery_sram(bytes)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tone_pitch_uses_the_selected_video_standard_clock() {
+        let period = 0x20;
+        let ntsc = sega8_tone_freq_to_hz(Sega8VideoStandard::Ntsc, period);
+        let pal = sega8_tone_freq_to_hz(Sega8VideoStandard::Pal, period);
+
+        assert_eq!(
+            ntsc,
+            f64::from(Sega8VideoStandard::Ntsc.clock_hz_approx()) / (32.0 * f64::from(period))
+        );
+        assert_eq!(
+            pal,
+            f64::from(Sega8VideoStandard::Pal.clock_hz_approx()) / (32.0 * f64::from(period))
+        );
+        assert!(pal < ntsc);
+    }
 }

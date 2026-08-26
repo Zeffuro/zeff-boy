@@ -1,6 +1,7 @@
 use std::fmt;
 
 use super::Apu;
+use crate::hardware::constants::PSG_CLOCK_HZ;
 
 mod frame_seq;
 mod mixing;
@@ -9,7 +10,6 @@ mod runtime;
 mod square;
 mod wave;
 
-const APU_T_CYCLES_PER_SECOND: f64 = 4_194_304.0;
 const APU_INITIAL_SAMPLE_CAPACITY: usize = 2048;
 const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
 const DEBUG_CAPTURE_DECIMATION_T_CYCLES: u64 = 64;

@@ -1,9 +1,10 @@
 use super::CartridgeDebugInfo;
-use super::rtc::{RTC_REG_COUNT, Rtc, T_CYCLES_PER_SECOND, sanitize_rtc_register};
+use super::rtc::{RTC_REG_COUNT, Rtc, sanitize_rtc_register};
 use super::{
     MAX_SAVE_RAM, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram, read_banked_rom,
     read_fixed_rom, rom_offset_for_bank, write_banked_ram,
 };
+use crate::hardware::types::constants::GB_T_CYCLES_PER_SECOND;
 use crate::save_state::{StateReader, StateWriter, StateWriterGbExt};
 use anyhow::Result;
 
@@ -173,7 +174,7 @@ impl Mbc3 {
 
         let raw_value = reader.read_u64()?;
 
-        let subsecond_cycles = if raw_value < T_CYCLES_PER_SECOND {
+        let subsecond_cycles = if raw_value < GB_T_CYCLES_PER_SECOND {
             raw_value
         } else {
             0

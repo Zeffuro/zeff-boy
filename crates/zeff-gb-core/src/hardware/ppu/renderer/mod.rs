@@ -54,6 +54,7 @@ pub(super) struct SpriteRenderContext<'a> {
     pub(super) bg_color_ids: Option<&'a [u8; SCREEN_W]>,
     pub(super) cgb_bg_priority_flags: Option<&'a [bool; SCREEN_W]>,
     pub(super) dmg_palette_preset: DmgPalettePreset,
+    pub(super) selected_obj_indices: Option<([u8; 10], u8)>,
 }
 
 pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
@@ -66,16 +67,25 @@ pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
 
     let mut sprites_on_line: ArrayVec<SpriteEntry, 10> = ArrayVec::new();
 
-    for i in 0..40 {
-        let sprite = SpriteEntry::from_oam(ctx.oam, i);
-        let sy = sprite.y;
-
-        if (ctx.ly as i32) >= sy && (ctx.ly as i32) < sy + sprite_height as i32 {
-            sprites_on_line.push(sprite);
-            if sprites_on_line.is_full() {
-                break;
+    if let Some((selected, count)) = ctx.selected_obj_indices {
+        let selected = &selected[..usize::from(count.min(10))];
+        let cached_selection_is_valid = selected.iter().all(|&index| {
+            let base = usize::from(index) * 4;
+            index < 40
+                && ctx.oam.get(base).is_some_and(|&y| {
+                    let sy = i32::from(y) - 16;
+                    ctx.ly as i32 >= sy && (ctx.ly as i32) < sy + i32::from(sprite_height)
+                })
+        });
+        if cached_selection_is_valid {
+            for &index in selected {
+                sprites_on_line.push(SpriteEntry::from_oam(ctx.oam, usize::from(index)));
             }
+        } else {
+            collect_sprites_on_line(ctx.oam, ctx.ly, sprite_height, &mut sprites_on_line);
         }
+    } else {
+        collect_sprites_on_line(ctx.oam, ctx.ly, sprite_height, &mut sprites_on_line);
     }
 
     sprites_on_line.sort_by(|a, b| {
@@ -168,6 +178,25 @@ pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
             };
             let fb_offset = (ctx.ly * SCREEN_W + screen_x_usize) * 4;
             ctx.framebuffer[fb_offset..fb_offset + 4].copy_from_slice(&rgba);
+        }
+    }
+}
+
+fn collect_sprites_on_line(
+    oam: &[u8],
+    ly: usize,
+    sprite_height: u8,
+    sprites: &mut ArrayVec<SpriteEntry, 10>,
+) {
+    for i in 0..40 {
+        let sprite = SpriteEntry::from_oam(oam, i);
+        let sy = sprite.y;
+
+        if ly as i32 >= sy && (ly as i32) < sy + i32::from(sprite_height) {
+            sprites.push(sprite);
+            if sprites.is_full() {
+                break;
+            }
         }
     }
 }

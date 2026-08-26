@@ -1,7 +1,13 @@
 use super::super::bus::Bus;
+#[cfg(test)]
+use super::super::timing::{
+    AccessType, DataAccessCompletion, DataAccessOrigin, TimerIoAccessKind, TimerIoAccessWidth,
+    TimerIoCompletionEvent,
+};
 use super::*;
 
 impl Cpu {
+    #[cfg(not(test))]
     pub(crate) fn cpu_read8(&self, bus: &Bus, addr: u32) -> u8 {
         if self.protected_bios_data_read_addr(addr) {
             (self.bios_protected_read_latch >> ((addr & 3) * 8)) as u8
@@ -14,6 +20,7 @@ impl Cpu {
         }
     }
 
+    #[cfg(not(test))]
     pub(crate) fn cpu_read16(&self, bus: &Bus, addr: u32) -> u16 {
         if self.protected_bios_data_read_addr(addr) {
             (self.bios_protected_read_latch >> ((addr & 2) * 8)) as u16
@@ -26,6 +33,7 @@ impl Cpu {
         }
     }
 
+    #[cfg(not(test))]
     pub(crate) fn cpu_read32(&self, bus: &Bus, addr: u32) -> u32 {
         if self.protected_bios_data_read_addr(addr) {
             self.bios_protected_read_latch
@@ -42,6 +50,266 @@ impl Cpu {
             ) << 16)
         } else {
             bus.read32(addr)
+        }
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn cpu_read32_sequential(&self, bus: &Bus, addr: u32) -> u32 {
+        self.cpu_read32(bus, addr)
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn cpu_write8(&self, bus: &mut Bus, addr: u32, value: u8) {
+        bus.write8(addr, value);
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn cpu_write16(&self, bus: &mut Bus, addr: u32, value: u16) {
+        bus.write16(addr, value);
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn cpu_write32(&self, bus: &mut Bus, addr: u32, value: u32) {
+        bus.write32(addr, value);
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn cpu_write32_sequential(&self, bus: &mut Bus, addr: u32, value: u32) {
+        bus.write32(addr, value);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cpu_read8(&mut self, bus: &Bus, addr: u32) -> u8 {
+        self.cpu_read8_with_access(bus, addr, AccessType::NonSequential)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cpu_read16(&mut self, bus: &Bus, addr: u32) -> u16 {
+        self.cpu_read16_with_access(bus, addr, AccessType::NonSequential)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cpu_read32(&mut self, bus: &Bus, addr: u32) -> u32 {
+        self.cpu_read32_with_access(bus, addr, AccessType::NonSequential)
+    }
+
+    #[cfg(test)]
+    pub(super) fn cpu_read32_sequential(&mut self, bus: &Bus, addr: u32) -> u32 {
+        self.cpu_read32_with_access(bus, addr, AccessType::Sequential)
+    }
+
+    #[cfg(test)]
+    pub(super) fn cpu_write8(&mut self, bus: &mut Bus, addr: u32, value: u8) {
+        self.cpu_write8_with_access(bus, addr, value, AccessType::NonSequential);
+    }
+
+    #[cfg(test)]
+    pub(super) fn cpu_write16(&mut self, bus: &mut Bus, addr: u32, value: u16) {
+        self.cpu_write16_with_access(bus, addr, value, AccessType::NonSequential);
+    }
+
+    #[cfg(test)]
+    pub(super) fn cpu_write32(&mut self, bus: &mut Bus, addr: u32, value: u32) {
+        self.cpu_write32_with_access(bus, addr, value, AccessType::NonSequential);
+    }
+
+    #[cfg(test)]
+    pub(super) fn cpu_write32_sequential(&mut self, bus: &mut Bus, addr: u32, value: u32) {
+        self.cpu_write32_with_access(bus, addr, value, AccessType::Sequential);
+    }
+
+    #[cfg(test)]
+    fn cpu_read8_with_access(&mut self, bus: &Bus, addr: u32, access: AccessType) -> u8 {
+        let completion = self.advance_data_access(bus, addr, 1, access);
+        let value = if self.protected_bios_data_read_addr(addr) {
+            (self.bios_protected_read_latch >> ((addr & 3) * 8)) as u8
+        } else if gba_open_bus_read_addr(addr) {
+            (self.open_bus_value(bus) >> ((addr & 3) * 8)) as u8
+        } else if let Some(value) = self.cpu_io_read16(bus, addr & !1) {
+            (value >> ((addr & 1) * 8)) as u8
+        } else {
+            bus.read8(addr)
+        };
+        self.record_timer_io_access(
+            completion.map(|completion| completion.completion_cycle),
+            addr,
+            TimerIoAccessKind::Read,
+            TimerIoAccessWidth::Byte,
+            u16::from(value),
+        );
+        value
+    }
+
+    #[cfg(test)]
+    fn cpu_read16_with_access(&mut self, bus: &Bus, addr: u32, access: AccessType) -> u16 {
+        let completion = self.advance_data_access(bus, addr, 2, access);
+        let value = if self.protected_bios_data_read_addr(addr) {
+            (self.bios_protected_read_latch >> ((addr & 2) * 8)) as u16
+        } else if gba_open_bus_read_addr(addr) {
+            (self.open_bus_value(bus) >> ((addr & 2) * 8)) as u16
+        } else if let Some(value) = self.cpu_io_read16(bus, addr) {
+            value
+        } else {
+            bus.read16(addr)
+        };
+        self.record_timer_io_access(
+            completion.map(|completion| completion.completion_cycle),
+            addr & !1,
+            TimerIoAccessKind::Read,
+            TimerIoAccessWidth::Halfword,
+            value,
+        );
+        value
+    }
+
+    #[cfg(test)]
+    fn cpu_read32_with_access(&mut self, bus: &Bus, addr: u32, access: AccessType) -> u32 {
+        let completion = self.advance_data_access(bus, addr, 4, access);
+        let value = if self.protected_bios_data_read_addr(addr) {
+            self.bios_protected_read_latch
+        } else if gba_open_bus_read_addr(addr) {
+            self.open_bus_value(bus)
+        } else if gba_io_read_addr(addr) {
+            let aligned = addr & !3;
+            u32::from(
+                self.cpu_io_read16(bus, aligned)
+                    .unwrap_or_else(|| bus.read16(aligned)),
+            ) | (u32::from(
+                self.cpu_io_read16(bus, aligned + 2)
+                    .unwrap_or_else(|| bus.read16(aligned + 2)),
+            ) << 16)
+        } else {
+            bus.read32(addr)
+        };
+        if let Some(completion) = completion {
+            let aligned = addr & !3;
+            self.record_timer_io_access(
+                Some(completion.first_completion_cycle),
+                aligned,
+                TimerIoAccessKind::Read,
+                TimerIoAccessWidth::Halfword,
+                value as u16,
+            );
+            self.record_timer_io_access(
+                Some(
+                    completion
+                        .second_halfword_completion_cycle
+                        .unwrap_or(completion.completion_cycle),
+                ),
+                aligned.wrapping_add(2),
+                TimerIoAccessKind::Read,
+                TimerIoAccessWidth::Halfword,
+                (value >> 16) as u16,
+            );
+        }
+        value
+    }
+
+    #[cfg(test)]
+    fn cpu_write8_with_access(&mut self, bus: &mut Bus, addr: u32, value: u8, access: AccessType) {
+        let completion = self.advance_data_access(bus, addr, 1, access);
+        bus.write8(addr, value);
+        self.record_timer_io_access(
+            completion.map(|completion| completion.completion_cycle),
+            addr,
+            TimerIoAccessKind::Write,
+            TimerIoAccessWidth::Byte,
+            u16::from(value),
+        );
+    }
+
+    #[cfg(test)]
+    fn cpu_write16_with_access(
+        &mut self,
+        bus: &mut Bus,
+        addr: u32,
+        value: u16,
+        access: AccessType,
+    ) {
+        let completion = self.advance_data_access(bus, addr, 2, access);
+        bus.write16(addr, value);
+        self.record_timer_io_access(
+            completion.map(|completion| completion.completion_cycle),
+            addr & !1,
+            TimerIoAccessKind::Write,
+            TimerIoAccessWidth::Halfword,
+            value,
+        );
+    }
+
+    #[cfg(test)]
+    fn cpu_write32_with_access(
+        &mut self,
+        bus: &mut Bus,
+        addr: u32,
+        value: u32,
+        access: AccessType,
+    ) {
+        let completion = self.advance_data_access(bus, addr, 4, access);
+        bus.write32(addr, value);
+        if let Some(completion) = completion {
+            let aligned = addr & !3;
+            self.record_timer_io_access(
+                Some(completion.first_completion_cycle),
+                aligned,
+                TimerIoAccessKind::Write,
+                TimerIoAccessWidth::Halfword,
+                value as u16,
+            );
+            self.record_timer_io_access(
+                Some(
+                    completion
+                        .second_halfword_completion_cycle
+                        .unwrap_or(completion.completion_cycle),
+                ),
+                aligned.wrapping_add(2),
+                TimerIoAccessKind::Write,
+                TimerIoAccessWidth::Halfword,
+                (value >> 16) as u16,
+            );
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn record_data_access_only(&mut self, bus: &Bus, addr: u32, width_bytes: u8) {
+        let _ = self.advance_data_access(bus, addr, width_bytes, AccessType::NonSequential);
+    }
+
+    #[cfg(test)]
+    fn advance_data_access(
+        &mut self,
+        bus: &Bus,
+        addr: u32,
+        width_bytes: u8,
+        access: AccessType,
+    ) -> Option<DataAccessCompletion> {
+        self.data_access_timing_active.then(|| {
+            self.data_access_cursor
+                .advance(addr, width_bytes, access, bus.waitcnt())
+        })
+    }
+
+    #[cfg(test)]
+    fn record_timer_io_access(
+        &mut self,
+        completion_cycle: Option<u32>,
+        address: u32,
+        kind: TimerIoAccessKind,
+        width: TimerIoAccessWidth,
+        value: u16,
+    ) {
+        let Some(completion_cycle) = completion_cycle else {
+            return;
+        };
+        if let Some(event) = TimerIoCompletionEvent::new(
+            DataAccessOrigin::Cpu,
+            completion_cycle,
+            address,
+            kind,
+            width,
+            value,
+        ) {
+            self.timer_io_completion_events.push(event);
         }
     }
 
@@ -102,7 +370,7 @@ impl Cpu {
 
     fn cpu_io_read16(&self, bus: &Bus, addr: u32) -> Option<u16> {
         let aligned = addr & !1;
-        if !matches!(aligned, 0x0400_0000..=0x0400_03FE) {
+        if !matches!(aligned, IO_START..=IO_LAST_ALIGNED_HALFWORD_ADDR) {
             return None;
         }
 
@@ -117,7 +385,9 @@ impl Cpu {
 pub(super) fn gba_open_bus_read_addr(addr: u32) -> bool {
     matches!(
         addr,
-        0x0000_4000..=0x01FF_FFFF | 0x0400_0400..=0x04FF_FFFF | 0x1000_0000..=0xFFFF_FFFF
+        0x0000_4000..=0x01FF_FFFF
+            | IO_UNUSED_START..=0x04FF_FFFF
+            | 0x1000_0000..=0xFFFF_FFFF
     )
 }
 
@@ -126,7 +396,7 @@ pub(super) fn gba_bios_addr(addr: u32) -> bool {
 }
 
 fn gba_io_read_addr(addr: u32) -> bool {
-    matches!(addr, 0x0400_0000..=0x0400_03FF)
+    matches!(addr, IO_START..=IO_END)
 }
 
 fn gba_io_open_bus_read16_addr(addr: u32) -> bool {

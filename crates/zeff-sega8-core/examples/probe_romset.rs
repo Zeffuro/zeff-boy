@@ -10,7 +10,7 @@ use zeff_sega8_core::hardware::bus::CpuAccessTraceEvent;
 use zeff_sega8_core::hardware::cartridge::{Sega8MapperKind, Sega8System};
 use zeff_sega8_core::hardware::constants::{
     MAPPER_FRAME_CONTROL, MAPPER_SLOT0_BANK, MAPPER_SLOT1_BANK, MAPPER_SLOT2_BANK, SLOT0_END,
-    SLOT0_START, SLOT1_END, SLOT1_START, SLOT2_END, SLOT2_START, SMS_Z80_CYCLES_PER_FRAME,
+    SLOT0_START, SLOT1_END, SLOT1_START, SLOT2_END, SLOT2_START,
 };
 use zeff_sega8_core::hardware::cpu::CpuTrap;
 use zeff_sega8_core::hardware::vdp::Tms9918Mode;
@@ -635,7 +635,7 @@ fn run_frame_probe(
         let target_cycles = emulator
             .cpu()
             .cycles()
-            .wrapping_add(u64::from(SMS_Z80_CYCLES_PER_FRAME));
+            .wrapping_add(u64::from(emulator.video_standard().cycles_per_frame()));
         while emulator.cpu().cycles() < target_cycles && !emulator.is_suspended() {
             let (instruction, bus_trace) = emulator.step_instruction_with_bus_trace();
             for event in bus_trace {

@@ -1,12 +1,16 @@
 use super::{Bus, OamCorruptionType};
-use crate::hardware::ppu::Lcdc;
+use crate::hardware::ppu::{Lcdc, SCREEN_H};
 use crate::hardware::types::constants::{
     ECHO_RAM_END, ECHO_RAM_OFFSET, ECHO_RAM_START, ERAM_END, ERAM_START, HRAM_END, HRAM_START,
-    IE_ADDR, IO_END, IO_START, NOT_USABLE_END, NOT_USABLE_START, OAM_END, OAM_START, PPU_DMA,
-    ROM_BANK_0_START, ROM_BANK_N_END, VRAM_END, VRAM_START, WRAM_0_END, WRAM_0_START, WRAM_N_END,
-    WRAM_N_START,
+    IE_ADDR, IO_END, IO_START, NOT_USABLE_END, NOT_USABLE_START, OAM_END, OAM_SIZE, OAM_START,
+    PPU_DMA, ROM_BANK_0_START, ROM_BANK_N_END, VRAM_END, VRAM_START, WRAM_0_END, WRAM_0_START,
+    WRAM_N_END, WRAM_N_START,
 };
 use crate::hardware::types::hardware_mode::HardwareMode;
+
+const OAM_DMA_T_CYCLES_PER_BYTE: u64 = 4;
+const HDMA_BLOCK_BYTES: u16 = 0x10;
+const GDMA_BLOCK_T_CYCLES: u64 = 32;
 
 impl Bus {
     pub fn step_oam_dma(&mut self, t_cycles: u64) {
@@ -15,16 +19,16 @@ impl Bus {
         }
 
         self.oam_dma_t_cycle_accum = self.oam_dma_t_cycle_accum.wrapping_add(t_cycles);
-        while self.oam_dma_t_cycle_accum >= 4 {
-            self.oam_dma_t_cycle_accum -= 4;
+        while self.oam_dma_t_cycle_accum >= OAM_DMA_T_CYCLES_PER_BYTE {
+            self.oam_dma_t_cycle_accum -= OAM_DMA_T_CYCLES_PER_BYTE;
 
-            if self.oam_dma_active && self.oam_dma_index < 160 {
+            if self.oam_dma_active && self.oam_dma_index < OAM_SIZE as u16 {
                 let source_addr = self.oam_dma_source_base.wrapping_add(self.oam_dma_index);
                 let value = self.read_oam_dma_source_byte(source_addr);
                 self.oam[self.oam_dma_index as usize] = value;
                 self.oam_dma_index += 1;
 
-                if self.oam_dma_index >= 160 {
+                if self.oam_dma_index >= OAM_SIZE as u16 {
                     self.oam_dma_active = false;
                 }
             }
@@ -187,15 +191,15 @@ impl Bus {
         let source = self.hdma_source_addr();
         let dest = self.hdma_dest_addr();
 
-        for i in 0..0x10u16 {
+        for i in 0..HDMA_BLOCK_BYTES {
             let src = source.wrapping_add(i);
             let dst = dest.wrapping_add(i);
             let value = self.read_byte(src);
             self.write_vram_dma(dst, value);
         }
 
-        let source_end = source.wrapping_add(0x10);
-        let dest_end = dest.wrapping_add(0x10);
+        let source_end = source.wrapping_add(HDMA_BLOCK_BYTES);
+        let dest_end = dest.wrapping_add(HDMA_BLOCK_BYTES);
         self.hdma1 = (source_end >> 8) as u8;
         self.hdma2 = (source_end as u8) & 0xF0;
         self.hdma3 = ((dest_end >> 8) as u8) & 0x1F;
@@ -226,7 +230,7 @@ impl Bus {
         if self.hdma_hblank {
             self.hdma5 = self.hdma_blocks_left.wrapping_sub(1) & 0x7F;
             if !self.io.ppu.lcdc.contains(Lcdc::LCD_ENABLE)
-                || (self.io.ppu.ly < 144 && self.io.ppu.mode() == 0)
+                || (self.io.ppu.ly < SCREEN_H as u8 && self.io.ppu.mode() == 0)
             {
                 self.transfer_one_hdma_block();
             }
@@ -235,8 +239,8 @@ impl Bus {
 
         let blocks = self.hdma_blocks_left as u64;
         let per_block_t_cycles = match self.hardware_mode {
-            HardwareMode::CGBDouble => 64,
-            _ => 32,
+            HardwareMode::CGBDouble => GDMA_BLOCK_T_CYCLES * 2,
+            _ => GDMA_BLOCK_T_CYCLES,
         };
 
         while self.hdma_active {
@@ -251,7 +255,7 @@ impl Bus {
             return;
         }
 
-        if !self.io.ppu.lcdc.contains(Lcdc::LCD_ENABLE) || self.io.ppu.ly >= 144 {
+        if !self.io.ppu.lcdc.contains(Lcdc::LCD_ENABLE) || self.io.ppu.ly >= SCREEN_H as u8 {
             return;
         }
 

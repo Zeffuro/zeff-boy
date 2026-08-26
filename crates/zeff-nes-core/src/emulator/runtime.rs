@@ -1,4 +1,4 @@
-use super::{CPU_CYCLES_PER_FRAME, Emulator};
+use super::Emulator;
 use crate::debug::{CallStackEntry, CallStackKind};
 use crate::hardware::bus::DebugTraceEvent;
 use crate::hardware::cpu::{CpuState, CpuStepKind};
@@ -243,7 +243,7 @@ impl Emulator {
 
         self.bus.ppu.frame_ready = false;
         let start_cycles = self.cpu.cycles;
-        let max_cycles = CPU_CYCLES_PER_FRAME * 2;
+        let max_cycles = self.bus.timing.max_cpu_cycles_per_frame() * 2;
 
         if self.debug.any_active() || self.opcode_log.enabled || self.instruction_trace.is_enabled()
         {

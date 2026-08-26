@@ -1,4 +1,9 @@
 use super::bus::Bus;
+use super::constants::{
+    BIOS_END, GAMEPAK0_START, IO_END, IO_LAST_ALIGNED_HALFWORD_ADDR, IO_START, IO_UNUSED_START,
+};
+#[cfg(test)]
+use super::timing::{CpuInstructionTimeline, DataAccessCursor, TimerIoCompletionEvent};
 
 mod arm;
 mod decode;
@@ -8,7 +13,7 @@ mod ops;
 mod swi;
 mod thumb;
 
-pub const RESET_VECTOR: u32 = 0x0800_0000;
+pub const RESET_VECTOR: u32 = GAMEPAK0_START;
 pub const CPSR_MODE_MASK: u32 = 0x1F;
 pub const CPSR_THUMB: u32 = 1 << 5;
 const CPSR_NEGATIVE: u32 = 1 << 31;
@@ -28,7 +33,6 @@ const R8_R12_USER_SYSTEM_BANK: usize = 0;
 const R8_R12_FIQ_BANK: usize = 1;
 const R8_R12_BANKS: usize = 2;
 const PREFETCH_QUEUE_LEN: usize = 2;
-const BIOS_END: u32 = 0x0000_3FFF;
 const POST_BIOS_CPSR: u32 = 0x1F;
 const POST_STARTUP_BIOS_READ_LATCH: u32 = 0xE129_F000;
 const POST_SWI_BIOS_READ_LATCH: u32 = 0xE3A0_2004;
@@ -201,6 +205,16 @@ pub struct Cpu {
     bios_protected_read_latch: u32,
     pub(crate) swi_wait_return_pc: Option<u32>,
     prefetch_queue: PrefetchQueue,
+    #[cfg(test)]
+    data_access_cursor: DataAccessCursor,
+    #[cfg(test)]
+    timer_io_completion_events: Vec<TimerIoCompletionEvent>,
+    #[cfg(test)]
+    instruction_timeline: CpuInstructionTimeline,
+    #[cfg(test)]
+    data_access_timing_active: bool,
+    #[cfg(test)]
+    hle_data_accesses: bool,
     pub(crate) banked_sp: [u32; CPU_BANKS],
     pub(crate) banked_lr: [u32; CPU_BANKS],
     pub(crate) banked_spsr: [u32; CPU_BANKS],
@@ -228,6 +242,16 @@ impl Cpu {
             bios_protected_read_latch: POST_STARTUP_BIOS_READ_LATCH,
             swi_wait_return_pc: None,
             prefetch_queue: PrefetchQueue::new(),
+            #[cfg(test)]
+            data_access_cursor: DataAccessCursor::default(),
+            #[cfg(test)]
+            timer_io_completion_events: Vec::new(),
+            #[cfg(test)]
+            instruction_timeline: CpuInstructionTimeline::default(),
+            #[cfg(test)]
+            data_access_timing_active: false,
+            #[cfg(test)]
+            hle_data_accesses: false,
             banked_sp: [0; CPU_BANKS],
             banked_lr: [0; CPU_BANKS],
             banked_spsr: [0; CPU_BANKS],
@@ -359,13 +383,21 @@ impl Cpu {
             return None;
         }
 
+        #[cfg(test)]
+        let instruction_start_cycle = self.cycles;
         let fetched = self.fetch_decode_stub(bus);
         let condition_passed = self.fetched_condition_passed(fetched);
+        let base_cycles = instruction_base_cycles(fetched, condition_passed);
+        #[cfg(test)]
+        self.begin_data_access_timing(fetched.fetch_cycles);
         self.execute_fetched(bus, fetched);
-        self.cycles = self.cycles.wrapping_add(u64::from(instruction_base_cycles(
-            fetched,
-            condition_passed,
-        )));
+        self.cycles = self.cycles.wrapping_add(u64::from(base_cycles));
+        #[cfg(test)]
+        self.finish_data_access_timing(
+            self.cycles
+                .wrapping_sub(instruction_start_cycle)
+                .min(u64::from(u32::MAX)) as u32,
+        );
         if bus.take_halt_request() {
             self.state = CpuState::Halted;
         }
@@ -375,6 +407,64 @@ impl Cpu {
         }
 
         Some(fetched)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn data_access_cycles(&self) -> u32 {
+        self.data_access_cursor.elapsed_cycles()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn timer_io_completion_events(&self) -> &[TimerIoCompletionEvent] {
+        &self.timer_io_completion_events
+    }
+
+    #[cfg(test)]
+    pub(crate) fn instruction_timeline(&self) -> CpuInstructionTimeline {
+        self.instruction_timeline
+    }
+
+    #[cfg(test)]
+    fn begin_data_access_timing(&mut self, fetch_cycles: u32) {
+        self.data_access_cursor.reset(fetch_cycles);
+        self.timer_io_completion_events.clear();
+        self.instruction_timeline = CpuInstructionTimeline {
+            fetch_cycles,
+            total_cycles: fetch_cycles,
+            data_access_cycles: 0,
+            data_access_count: 0,
+            replaced_legacy_data_cycles: 0,
+            incremental_non_data_cycles: 0,
+            required_cycles: fetch_cycles,
+        };
+        self.hle_data_accesses = false;
+        self.data_access_timing_active = true;
+    }
+
+    #[cfg(test)]
+    fn finish_data_access_timing(&mut self, total_cycles: u32) {
+        let data_access_count = self.data_access_cursor.access_count();
+        let incremental_cycles =
+            total_cycles.saturating_sub(self.instruction_timeline.fetch_cycles);
+        let replaced_legacy_data_cycles = if self.hle_data_accesses {
+            0
+        } else {
+            data_access_count.min(incremental_cycles)
+        };
+        let incremental_non_data_cycles =
+            incremental_cycles.saturating_sub(replaced_legacy_data_cycles);
+        let data_access_cycles = self.data_access_cursor.elapsed_cycles();
+        self.instruction_timeline.total_cycles = total_cycles;
+        self.instruction_timeline.data_access_cycles = data_access_cycles;
+        self.instruction_timeline.data_access_count = data_access_count;
+        self.instruction_timeline.replaced_legacy_data_cycles = replaced_legacy_data_cycles;
+        self.instruction_timeline.incremental_non_data_cycles = incremental_non_data_cycles;
+        self.instruction_timeline.required_cycles = self
+            .instruction_timeline
+            .fetch_cycles
+            .saturating_add(incremental_non_data_cycles)
+            .saturating_add(data_access_cycles);
+        self.data_access_timing_active = false;
     }
 
     pub(crate) fn try_service_irq(&mut self, interrupt_pending: bool) -> bool {

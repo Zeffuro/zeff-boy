@@ -1,7 +1,8 @@
 use super::Bus;
 use crate::hardware::cartridge::{ChrFetchKind, Mirroring};
-use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
-use crate::hardware::ppu::{PRE_RENDER_SCANLINE, VBLANK_SCANLINE};
+use crate::hardware::constants::{
+    CTRL_NMI_ENABLE, SCREEN_HEIGHT, STATUS_VBLANK, VBLANK_START_SCANLINE,
+};
 
 impl Bus {
     pub(super) fn ppu_read_register(&mut self, addr: u16) -> u8 {
@@ -10,7 +11,7 @@ impl Bus {
         let (result, refresh_mask) = match addr {
             0x2002 => {
                 let status = (self.ppu.regs.status & 0xE0) | (latch & 0x1F);
-                if self.ppu.scanline == VBLANK_SCANLINE && self.ppu.dot == 1 {
+                if self.ppu.scanline == VBLANK_START_SCANLINE && self.ppu.dot == 1 {
                     self.ppu.suppress_vblank_edge = true;
                 }
                 self.ppu.regs.clear_vblank();
@@ -116,7 +117,8 @@ impl Bus {
     #[inline]
     fn rendering_active_scanline(&self) -> bool {
         self.ppu.rendering_enabled()
-            && (self.ppu.scanline < 240 || self.ppu.scanline == PRE_RENDER_SCANLINE)
+            && (self.ppu.scanline < SCREEN_HEIGHT as u16
+                || self.ppu.scanline == self.ppu.pre_render_scanline())
     }
 
     #[inline]
@@ -237,6 +239,7 @@ mod tests {
     use crate::hardware::cartridge::Cartridge;
     use crate::hardware::constants::{CTRL_NMI_ENABLE, OAM_DMA, STATUS_VBLANK};
     use crate::hardware::ppu::PPU_IO_LATCH_DECAY_PPU_CYCLES;
+    use crate::hardware::timing::NesTiming;
 
     fn test_bus() -> Bus {
         let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -269,7 +272,7 @@ mod tests {
     #[test]
     fn disabling_nmi_between_vblank_edge_and_cpu_sample_cancels_it() {
         let mut bus = test_bus();
-        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.scanline = VBLANK_START_SCANLINE;
         bus.ppu.dot = 0;
         bus.ppu.regs.ctrl = CTRL_NMI_ENABLE;
         bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
@@ -285,7 +288,7 @@ mod tests {
     #[test]
     fn reading_status_between_vblank_edge_and_cpu_sample_cancels_it() {
         let mut bus = test_bus();
-        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.scanline = VBLANK_START_SCANLINE;
         bus.ppu.dot = 0;
         bus.ppu.regs.ctrl = CTRL_NMI_ENABLE;
         bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
@@ -301,20 +304,20 @@ mod tests {
     #[test]
     fn timed_ppumask_access_occurs_after_two_ppu_dots() {
         let mut enable = test_bus();
-        enable.ppu.scanline = PRE_RENDER_SCANLINE;
+        enable.ppu.scanline = NesTiming::Ntsc.pre_render_scanline();
         enable.ppu.dot = 337;
         enable.ppu.odd_frame = true;
         enable.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
 
         enable.cpu_write_timed(0x2001, 0x18);
 
-        assert_eq!(enable.ppu.scanline, PRE_RENDER_SCANLINE);
+        assert_eq!(enable.ppu.scanline, NesTiming::Ntsc.pre_render_scanline());
         assert_eq!(enable.ppu.dot, 340);
         assert!(enable.ppu.rendering_enabled());
 
         let mut disable = test_bus();
         disable.ppu.regs.mask = 0x18;
-        disable.ppu.scanline = PRE_RENDER_SCANLINE;
+        disable.ppu.scanline = NesTiming::Ntsc.pre_render_scanline();
         disable.ppu.dot = 337;
         disable.ppu.odd_frame = true;
         disable.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
@@ -345,7 +348,7 @@ mod tests {
     #[test]
     fn reading_ppustatus_on_vblank_edge_suppresses_flag_and_nmi() {
         let mut bus = test_bus();
-        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.scanline = VBLANK_START_SCANLINE;
         bus.ppu.dot = 1;
         bus.ppu_write_register(0x2000, CTRL_NMI_ENABLE);
 
@@ -363,7 +366,7 @@ mod tests {
     #[test]
     fn reading_ppustatus_right_after_vblank_edge_clears_the_nmi_line() {
         let mut bus = test_bus();
-        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.scanline = VBLANK_START_SCANLINE;
         bus.ppu.dot = 2;
         bus.ppu.regs.set_vblank();
         bus.ppu.nmi_output = true;
@@ -470,7 +473,7 @@ mod tests {
     fn ppudata_access_outside_rendering_uses_ppuctrl_increment() {
         let mut bus = test_bus();
         bus.ppu.regs.ctrl = 0x04;
-        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.scanline = VBLANK_START_SCANLINE;
         bus.ppu.dot = 10;
         bus.ppu.v = 0x2000;
 
@@ -498,7 +501,7 @@ mod tests {
     fn oamdata_write_outside_rendering_still_writes_and_increments() {
         let mut bus = test_bus();
         bus.ppu.regs.mask = 0x18;
-        bus.ppu.scanline = VBLANK_SCANLINE;
+        bus.ppu.scanline = VBLANK_START_SCANLINE;
         bus.ppu.dot = 10;
         bus.ppu.oam_addr = 0x02;
 

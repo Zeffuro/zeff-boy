@@ -105,6 +105,26 @@ fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
     ));
 }
 
+#[test]
+fn loaded_pal_sega8_state_rebuilds_rewind_timing() {
+    let emu = zeff_sega8_core::emulator::Emulator::new_with_hint_and_video_standard(
+        &[0x00],
+        44_100,
+        zeff_sega8_core::hardware::cartridge::SystemHint::MasterSystem,
+        zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal,
+    )
+    .unwrap();
+    let backend = EmuBackend::from_sega8(emu, PathBuf::from("test.sms"));
+    let mut rewind_buffer =
+        zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(10, 4, 16_666_667);
+
+    let frame_duration_ns =
+        EmuThread::reset_rewind_for_loaded_state(&mut rewind_buffer, 10, &backend);
+
+    assert_eq!(frame_duration_ns, 20_000_000);
+    assert_eq!(rewind_buffer.capacity(), 125);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn rewind_response_reports_serial_device_restored_from_state() {

@@ -15,12 +15,19 @@ pub use renderer::parse_nes_palette_bytes;
 use std::fmt;
 
 use crate::hardware::constants::{
-    MASK_SHOW_BG, MASK_SHOW_BG_LEFT8, MASK_SHOW_SPRITES, MASK_SHOW_SPRITES_LEFT8,
+    FRAMEBUFFER_LEN, MASK_SHOW_BG, MASK_SHOW_BG_LEFT8, MASK_SHOW_SPRITES, MASK_SHOW_SPRITES_LEFT8,
+    PPU_DOTS_PER_SCANLINE, PPU_PALETTE_RAM_BYTES, PRIMARY_OAM_BYTES, SCREEN_WIDTH,
+    SECONDARY_OAM_BYTES, VBLANK_START_SCANLINE,
 };
+use crate::hardware::timing::NesTiming;
 
-pub const SCREEN_W: usize = 256;
-pub const SCREEN_H: usize = 240;
-pub const FRAMEBUFFER_SIZE: usize = SCREEN_W * SCREEN_H * 4;
+pub const SCREEN_W: usize = crate::hardware::constants::SCREEN_WIDTH;
+pub const SCREEN_H: usize = crate::hardware::constants::SCREEN_HEIGHT;
+pub const FRAMEBUFFER_SIZE: usize = crate::hardware::constants::FRAMEBUFFER_LEN;
+pub const SCANLINES_PER_FRAME: u16 = crate::hardware::constants::NTSC_SCANLINES_PER_FRAME;
+pub const DOTS_PER_SCANLINE: u16 = crate::hardware::constants::PPU_DOTS_PER_SCANLINE;
+pub const VBLANK_SCANLINE: u16 = crate::hardware::constants::VBLANK_START_SCANLINE;
+pub const PRE_RENDER_SCANLINE: u16 = SCANLINES_PER_FRAME - 1;
 
 // blargg's ppu_open_bus test documents the PPU I/O latch as a per-bit
 // dynamic latch where bits that are not refreshed with a 1 decay to 0 after
@@ -28,10 +35,8 @@ pub const FRAMEBUFFER_SIZE: usize = SCREEN_W * SCREEN_H * 4;
 pub(crate) const PPU_IO_LATCH_DECAY_PPU_CYCLES: u64 =
     crate::hardware::constants::CPU_CYCLES_PER_FRAME * 3 * 36;
 
-pub const SCANLINES_PER_FRAME: u16 = 262;
-pub const DOTS_PER_SCANLINE: u16 = 341;
-pub const VBLANK_SCANLINE: u16 = 241;
-pub const PRE_RENDER_SCANLINE: u16 = 261;
+const LAST_DOT: u16 = PPU_DOTS_PER_SCANLINE - 1;
+const ODD_FRAME_SKIP_DOT: u16 = LAST_DOT - 1;
 
 const COARSE_X_MASK: u16 = 0x001F;
 const NAMETABLE_X_BIT: u16 = 0x0400;
@@ -54,10 +59,10 @@ pub struct Ppu {
     pub(crate) suppress_vblank_edge: bool,
 
     pub(crate) nametable_ram: [u8; 0x1000],
-    pub(crate) palette_ram: [u8; 32],
+    pub(crate) palette_ram: [u8; PPU_PALETTE_RAM_BYTES],
 
-    pub(crate) oam: [u8; 256],
-    pub(crate) secondary_oam: [u8; 32],
+    pub(crate) oam: [u8; PRIMARY_OAM_BYTES],
+    pub(crate) secondary_oam: [u8; SECONDARY_OAM_BYTES],
     pub(crate) oam_addr: u8,
 
     pub(crate) v: u16,
@@ -71,10 +76,11 @@ pub struct Ppu {
     pub(crate) io_latch_decay_at_ppu_cycle: [u64; 8],
     rendering_mask_delay: u8,
     rendering_mask_latched_bits: u8,
-    pub(crate) framebuffer: Box<[u8; FRAMEBUFFER_SIZE]>,
+    pub(crate) framebuffer: Box<[u8; FRAMEBUFFER_LEN]>,
     pub(crate) frame_ready: bool,
     pub(crate) frame_count: u64,
     pub(crate) odd_frame_dot_skip_enabled: bool,
+    pre_render_scanline: u16,
 
     pub(crate) bg_shift_pattern_lo: u16,
     pub(crate) bg_shift_pattern_hi: u16,
@@ -109,6 +115,10 @@ impl Default for Ppu {
 
 impl Ppu {
     pub fn new() -> Self {
+        Self::new_with_timing(NesTiming::Ntsc)
+    }
+
+    pub(crate) fn new_with_timing(timing: NesTiming) -> Self {
         Self {
             regs: PpuRegisters::new(),
             scanline: 0,
@@ -118,9 +128,9 @@ impl Ppu {
             odd_frame: false,
             suppress_vblank_edge: false,
             nametable_ram: [0; 0x1000],
-            palette_ram: [0; 32],
-            oam: [0; 256],
-            secondary_oam: [0xFF; 32],
+            palette_ram: [0; PPU_PALETTE_RAM_BYTES],
+            oam: [0; PRIMARY_OAM_BYTES],
+            secondary_oam: [0xFF; SECONDARY_OAM_BYTES],
             oam_addr: 0,
             v: 0,
             t: 0,
@@ -131,10 +141,11 @@ impl Ppu {
             io_latch_decay_at_ppu_cycle: [0; 8],
             rendering_mask_delay: 0,
             rendering_mask_latched_bits: 0,
-            framebuffer: Box::new([0u8; FRAMEBUFFER_SIZE]),
+            framebuffer: Box::new([0u8; FRAMEBUFFER_LEN]),
             frame_ready: false,
             frame_count: 0,
-            odd_frame_dot_skip_enabled: true,
+            odd_frame_dot_skip_enabled: timing.odd_frame_dot_skip(),
+            pre_render_scanline: timing.pre_render_scanline(),
             bg_shift_pattern_lo: 0,
             bg_shift_pattern_hi: 0,
             bg_shift_attrib_lo: 0,
@@ -222,6 +233,10 @@ impl Ppu {
         self.odd_frame_dot_skip_enabled = enabled;
     }
 
+    pub(crate) const fn pre_render_scanline(&self) -> u16 {
+        self.pre_render_scanline
+    }
+
     #[inline]
     pub(crate) fn io_latch_value_at(&self, ppu_cycles: u64) -> u8 {
         let mut value = self.io_latch;
@@ -280,7 +295,7 @@ impl Ppu {
     pub fn tick(&mut self) -> bool {
         let mut raise_nmi = false;
 
-        if self.scanline == VBLANK_SCANLINE && self.dot == 1 {
+        if self.scanline == VBLANK_START_SCANLINE && self.dot == 1 {
             if self.suppress_vblank_edge {
                 self.suppress_vblank_edge = false;
                 self.in_vblank = false;
@@ -296,7 +311,7 @@ impl Ppu {
             }
         }
 
-        if self.scanline == PRE_RENDER_SCANLINE {
+        if self.scanline == self.pre_render_scanline {
             if self.dot == 1 {
                 self.in_vblank = false;
                 self.regs.clear_vblank();
@@ -306,7 +321,7 @@ impl Ppu {
             }
 
             if self.odd_frame_dot_skip_enabled
-                && self.dot == 339
+                && self.dot == ODD_FRAME_SKIP_DOT
                 && self.odd_frame
                 && self.rendering_enabled()
             {
@@ -322,10 +337,10 @@ impl Ppu {
         self.tick_rendering_mask_delay();
 
         self.dot += 1;
-        if self.dot > 340 {
+        if self.dot > LAST_DOT {
             self.dot = 0;
             self.scanline += 1;
-            if self.scanline > PRE_RENDER_SCANLINE {
+            if self.scanline > self.pre_render_scanline {
                 self.scanline = 0;
                 self.odd_frame = !self.odd_frame;
                 self.frame_count += 1;
@@ -418,7 +433,7 @@ impl Ppu {
 
     #[inline]
     pub fn update_sprite_shifters(&mut self) {
-        if self.show_sprites() && (1..=256).contains(&self.dot) {
+        if self.show_sprites() && (1..=SCREEN_WIDTH as u16).contains(&self.dot) {
             for i in 0..self.sprite_count as usize {
                 if self.sprite_x_counters[i] > 0 {
                     self.sprite_x_counters[i] -= 1;
@@ -548,14 +563,15 @@ impl fmt::Debug for Ppu {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRE_RENDER_SCANLINE, Ppu};
+    use super::{LAST_DOT, ODD_FRAME_SKIP_DOT, Ppu};
+    use crate::hardware::timing::NesTiming;
 
     #[test]
     fn odd_frame_dot_skip_is_enabled_by_default() {
         let mut ppu = Ppu::new();
         ppu.regs.mask = 0x18;
-        ppu.scanline = PRE_RENDER_SCANLINE;
-        ppu.dot = 339;
+        ppu.scanline = NesTiming::Ntsc.pre_render_scanline();
+        ppu.dot = ODD_FRAME_SKIP_DOT;
         ppu.odd_frame = true;
 
         ppu.tick();
@@ -570,15 +586,36 @@ mod tests {
         let mut ppu = Ppu::new();
         ppu.set_odd_frame_dot_skip_enabled(false);
         ppu.regs.mask = 0x18;
-        ppu.scanline = PRE_RENDER_SCANLINE;
-        ppu.dot = 339;
+        ppu.scanline = NesTiming::Ntsc.pre_render_scanline();
+        ppu.dot = ODD_FRAME_SKIP_DOT;
         ppu.odd_frame = true;
 
         ppu.tick();
 
-        assert_eq!(ppu.scanline, PRE_RENDER_SCANLINE);
-        assert_eq!(ppu.dot, 340);
+        assert_eq!(ppu.scanline, NesTiming::Ntsc.pre_render_scanline());
+        assert_eq!(ppu.dot, LAST_DOT);
         assert!(ppu.odd_frame);
+    }
+
+    #[test]
+    fn pal_and_dendy_frames_use_312_scanlines_without_odd_frame_skip() {
+        for timing in [NesTiming::Pal, NesTiming::Dendy] {
+            let mut ppu = Ppu::new_with_timing(timing);
+            ppu.regs.mask = 0x18;
+            ppu.scanline = timing.pre_render_scanline();
+            ppu.dot = ODD_FRAME_SKIP_DOT;
+            ppu.odd_frame = true;
+
+            ppu.tick();
+            assert_eq!(
+                (ppu.scanline, ppu.dot),
+                (timing.pre_render_scanline(), LAST_DOT)
+            );
+            ppu.tick();
+            assert_eq!((ppu.scanline, ppu.dot), (0, 0));
+            assert!(!ppu.odd_frame);
+            assert_eq!(ppu.frame_count, 1);
+        }
     }
 
     #[test]

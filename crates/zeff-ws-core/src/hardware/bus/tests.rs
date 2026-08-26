@@ -864,6 +864,57 @@ fn sound_dma_hold_writes_zero_without_consuming_length() {
 }
 
 #[test]
+fn sound_dma_repeat_control_update_and_address_wrap_match_source_oracle() {
+    let mut bus = Bus::new(color_cart());
+
+    bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x5555);
+    bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x5555);
+    bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0xFFFF);
+    bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0xFFFF);
+    assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_SEGMENT_PORT), 0x000F);
+    assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_SEGMENT_PORT), 0x000F);
+
+    bus.write8(0x1234, 0x55);
+    bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0x1234);
+    bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0x0000);
+    bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0001);
+    bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+    bus.io_write8(
+        SOUND_DMA_CONTROL_PORT,
+        SOUND_DMA_ENABLE | SOUND_DMA_REPEAT | 0x03,
+    );
+    bus.step_cycles(128);
+    assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0000);
+
+    let control = bus.io_read8(SOUND_DMA_CONTROL_PORT) | SOUND_DMA_HOLD;
+    bus.io_write8(SOUND_DMA_CONTROL_PORT, control);
+    assert_ne!(bus.io_read8(SOUND_DMA_CONTROL_PORT) & SOUND_DMA_ENABLE, 0);
+    bus.step_cycles(128);
+    assert_eq!(bus.io_read8(SOUND_VOLUME_CHANNEL2_PORT), 0x00);
+    assert_eq!(bus.io_read16(SOUND_DMA_LENGTH_LO_PORT), 0x0000);
+
+    let control = bus.io_read8(SOUND_DMA_CONTROL_PORT) & !SOUND_DMA_HOLD;
+    bus.io_write8(SOUND_DMA_CONTROL_PORT, control);
+    bus.step_cycles(128);
+    assert_eq!(bus.io_read8(SOUND_VOLUME_CHANNEL2_PORT), 0x55);
+
+    bus.io_write8(SOUND_DMA_CONTROL_PORT, 0);
+    bus.write8(0x000D, 0xFF);
+    bus.write8(0x000E, 0xAA);
+    bus.write8(0x000F, 0x55);
+    bus.io_write16(SOUND_DMA_SOURCE_LO_PORT, 0xFFFF);
+    bus.io_write16(SOUND_DMA_SOURCE_SEGMENT_PORT, 0x000F);
+    bus.io_write16(SOUND_DMA_LENGTH_LO_PORT, 0x0010);
+    bus.io_write16(SOUND_DMA_LENGTH_SEGMENT_PORT, 0x0000);
+    bus.io_write8(SOUND_DMA_CONTROL_PORT, SOUND_DMA_ENABLE | 0x03);
+    bus.step_cycles(128 * 16);
+
+    assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_LO_PORT), 0x000F);
+    assert_eq!(bus.io_read16(SOUND_DMA_SOURCE_SEGMENT_PORT), 0x0000);
+    assert_eq!(bus.io_read8(SOUND_VOLUME_CHANNEL2_PORT), 0xAA);
+}
+
+#[test]
 fn sound_dma_decrement_direction_reads_source_backwards() {
     let mut bus = Bus::new(color_cart());
     bus.write8(0x1234, 0x22);

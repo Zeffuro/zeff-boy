@@ -1,3 +1,10 @@
+use crate::hardware::constants::{
+    BACKUP_START, BIOS_END, BIOS_START, EWRAM_END, EWRAM_START, GAMEPAK0_END, GAMEPAK0_START,
+    GAMEPAK1_END, GAMEPAK1_START, GAMEPAK2_END, GAMEPAK2_START, IO_END, IO_START, IWRAM_END,
+    IWRAM_START, OAM_END, OAM_START, PALETTE_RAM_END, PALETTE_RAM_START, SRAM_TIMING_END, VRAM_END,
+    VRAM_START,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessType {
     NonSequential,
@@ -20,28 +27,218 @@ pub enum BusRegion {
     Unused,
 }
 
-const BIOS_START: u32 = 0x0000_0000;
-const BIOS_END: u32 = 0x0000_3FFF;
-const EWRAM_START: u32 = 0x0200_0000;
-const EWRAM_END: u32 = 0x02FF_FFFF;
-const IWRAM_START: u32 = 0x0300_0000;
-const IWRAM_END: u32 = 0x03FF_FFFF;
-const IO_START: u32 = 0x0400_0000;
-const IO_END: u32 = 0x0400_03FF;
-const PALETTE_RAM_START: u32 = 0x0500_0000;
-const PALETTE_RAM_END: u32 = 0x05FF_FFFF;
-const VRAM_START: u32 = 0x0600_0000;
-const VRAM_END: u32 = 0x06FF_FFFF;
-const OAM_START: u32 = 0x0700_0000;
-const OAM_END: u32 = 0x07FF_FFFF;
-const GAMEPAK0_START: u32 = 0x0800_0000;
-const GAMEPAK0_END: u32 = 0x09FF_FFFF;
-const GAMEPAK1_START: u32 = 0x0A00_0000;
-const GAMEPAK1_END: u32 = 0x0BFF_FFFF;
-const GAMEPAK2_START: u32 = 0x0C00_0000;
-const GAMEPAK2_END: u32 = 0x0DFF_FFFF;
-const SRAM_START: u32 = 0x0E00_0000;
-const SRAM_END: u32 = 0x0E00_FFFF;
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DataAccessOrigin {
+    Cpu,
+    #[cfg(test)]
+    Dma {
+        channel: u8,
+    },
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TimerIoRegister {
+    CounterReload,
+    Control,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TimerIoAccessKind {
+    Read,
+    Write,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TimerIoAccessWidth {
+    Byte,
+    Halfword,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TimerIoCompletionEvent {
+    pub origin: DataAccessOrigin,
+    pub completion_cycle: u32,
+    pub address: u32,
+    pub timer: u8,
+    pub register: TimerIoRegister,
+    pub kind: TimerIoAccessKind,
+    pub width: TimerIoAccessWidth,
+    pub value: u16,
+}
+
+#[cfg(test)]
+impl TimerIoCompletionEvent {
+    pub(crate) fn new(
+        origin: DataAccessOrigin,
+        completion_cycle: u32,
+        address: u32,
+        kind: TimerIoAccessKind,
+        width: TimerIoAccessWidth,
+        value: u16,
+    ) -> Option<Self> {
+        let aligned = address & !u32::from(matches!(width, TimerIoAccessWidth::Halfword));
+        let offset = aligned.checked_sub(IO_START + 0x100)?;
+        if offset > 0x0F {
+            return None;
+        }
+
+        Some(Self {
+            origin,
+            completion_cycle,
+            address: aligned,
+            timer: (offset / 4) as u8,
+            register: if offset & 2 == 0 {
+                TimerIoRegister::CounterReload
+            } else {
+                TimerIoRegister::Control
+            },
+            kind,
+            width,
+            value,
+        })
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DataAccessCursor {
+    timeline_origin_cycle: u32,
+    elapsed_cycles: u32,
+    access_count: u32,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CpuInstructionTimeline {
+    pub fetch_cycles: u32,
+    pub total_cycles: u32,
+    pub data_access_cycles: u32,
+    pub data_access_count: u32,
+    pub replaced_legacy_data_cycles: u32,
+    pub incremental_non_data_cycles: u32,
+    pub required_cycles: u32,
+}
+
+#[cfg(test)]
+impl CpuInstructionTimeline {
+    pub(crate) fn completion_events_are_bounded(self, events: &[TimerIoCompletionEvent]) -> bool {
+        self.completion_events_fit(events, self.total_cycles)
+    }
+
+    pub(crate) fn completion_events_fit_required_timeline(
+        self,
+        events: &[TimerIoCompletionEvent],
+    ) -> bool {
+        self.completion_events_fit(events, self.required_cycles)
+    }
+
+    fn completion_events_fit(self, events: &[TimerIoCompletionEvent], end_cycle: u32) -> bool {
+        if self.fetch_cycles > end_cycle {
+            return false;
+        }
+
+        let mut previous_cycle = self.fetch_cycles;
+        events.iter().all(|event| {
+            let bounded = event.origin == DataAccessOrigin::Cpu
+                && event.completion_cycle >= previous_cycle
+                && event.completion_cycle <= end_cycle;
+            previous_cycle = event.completion_cycle;
+            bounded
+        })
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DataAccessCompletion {
+    pub first_completion_cycle: u32,
+    pub second_halfword_completion_cycle: Option<u32>,
+    pub completion_cycle: u32,
+}
+
+#[cfg(test)]
+impl DataAccessCursor {
+    pub(crate) fn reset(&mut self, timeline_origin_cycle: u32) {
+        self.timeline_origin_cycle = timeline_origin_cycle;
+        self.elapsed_cycles = 0;
+        self.access_count = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn elapsed_cycles(self) -> u32 {
+        self.elapsed_cycles
+    }
+
+    pub(crate) fn access_count(self) -> u32 {
+        self.access_count
+    }
+
+    pub(crate) fn advance(
+        &mut self,
+        addr: u32,
+        width_bytes: u8,
+        access: AccessType,
+        waitcnt: u16,
+    ) -> DataAccessCompletion {
+        self.access_count = self.access_count.saturating_add(1);
+        let aligned = match width_bytes {
+            2 => addr & !1,
+            4 => addr & !3,
+            _ => addr,
+        };
+        if width_bytes == WORD_BYTES && word_access_uses_halfwords(aligned) {
+            let first_cycles = access_cycles_with_waitcnt(aligned, 2, access, waitcnt);
+            let first_completion_cycle = self
+                .timeline_origin_cycle
+                .saturating_add(self.elapsed_cycles)
+                .saturating_add(first_cycles);
+            let second_cycles = access_cycles_with_waitcnt(
+                aligned.wrapping_add(HALFWORD_BYTES),
+                2,
+                AccessType::Sequential,
+                waitcnt,
+            );
+            self.elapsed_cycles = self
+                .elapsed_cycles
+                .saturating_add(first_cycles)
+                .saturating_add(second_cycles);
+            DataAccessCompletion {
+                first_completion_cycle,
+                second_halfword_completion_cycle: Some(
+                    self.timeline_origin_cycle
+                        .saturating_add(self.elapsed_cycles),
+                ),
+                completion_cycle: self
+                    .timeline_origin_cycle
+                    .saturating_add(self.elapsed_cycles),
+            }
+        } else {
+            self.elapsed_cycles = self
+                .elapsed_cycles
+                .saturating_add(access_cycles_with_waitcnt(
+                    aligned,
+                    width_bytes,
+                    access,
+                    waitcnt,
+                ));
+            DataAccessCompletion {
+                first_completion_cycle: self
+                    .timeline_origin_cycle
+                    .saturating_add(self.elapsed_cycles),
+                second_halfword_completion_cycle: None,
+                completion_cycle: self
+                    .timeline_origin_cycle
+                    .saturating_add(self.elapsed_cycles),
+            }
+        }
+    }
+}
+
 const HALFWORD_BYTES: u32 = 2;
 const WORD_BYTES: u8 = 4;
 const WAITCNT_MASK_2BIT: u16 = 0x03;
@@ -70,7 +267,7 @@ pub fn region_for_addr(addr: u32) -> BusRegion {
         GAMEPAK0_START..=GAMEPAK0_END => BusRegion::GamePak0,
         GAMEPAK1_START..=GAMEPAK1_END => BusRegion::GamePak1,
         GAMEPAK2_START..=GAMEPAK2_END => BusRegion::GamePak2,
-        SRAM_START..=SRAM_END => BusRegion::Sram,
+        BACKUP_START..=SRAM_TIMING_END => BusRegion::Sram,
         _ => BusRegion::Unused,
     }
 }
@@ -193,6 +390,19 @@ fn sram_access_cycles(waitcnt: u16) -> u32 {
 }
 
 #[cfg(test)]
+fn word_access_uses_halfwords(addr: u32) -> bool {
+    matches!(
+        region_for_addr(addr),
+        BusRegion::Ewram
+            | BusRegion::PaletteRam
+            | BusRegion::Vram
+            | BusRegion::GamePak0
+            | BusRegion::GamePak1
+            | BusRegion::GamePak2
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -265,6 +475,133 @@ mod tests {
                 1 << WAITCNT_GAMEPAK1_SECOND_SHIFT,
             ),
             7
+        );
+    }
+
+    #[test]
+    fn data_cursor_uses_region_bus_width_for_word_accesses() {
+        let mut cursor = DataAccessCursor::default();
+        cursor.reset(0);
+        let ewram = cursor.advance(0x0200_0000, 4, AccessType::NonSequential, 0);
+        let io = cursor.advance(0x0400_0100, 4, AccessType::NonSequential, 0);
+        let palette = cursor.advance(0x0500_0000, 4, AccessType::NonSequential, 0);
+        let vram = cursor.advance(0x0600_0000, 4, AccessType::NonSequential, 0);
+        let oam = cursor.advance(0x0700_0000, 4, AccessType::NonSequential, 0);
+
+        assert_eq!(ewram.first_completion_cycle, 3);
+        assert_eq!(ewram.second_halfword_completion_cycle, Some(6));
+        assert_eq!(io.first_completion_cycle, 7);
+        assert_eq!(io.second_halfword_completion_cycle, None);
+        assert_eq!(palette.first_completion_cycle, 8);
+        assert_eq!(palette.second_halfword_completion_cycle, Some(9));
+        assert_eq!(vram.first_completion_cycle, 10);
+        assert_eq!(vram.second_halfword_completion_cycle, Some(11));
+        assert_eq!(oam.first_completion_cycle, 12);
+        assert_eq!(oam.second_halfword_completion_cycle, None);
+        assert_eq!(cursor.elapsed_cycles(), 12);
+    }
+
+    #[test]
+    fn data_cursor_keeps_io_words_on_single_cycle_transactions() {
+        let mut cursor = DataAccessCursor::default();
+        cursor.reset(8);
+
+        let first = cursor.advance(0x0400_00FC, 4, AccessType::NonSequential, 0);
+        let second = cursor.advance(0x0400_0100, 4, AccessType::Sequential, 0);
+
+        assert_eq!(first.first_completion_cycle, 9);
+        assert_eq!(first.second_halfword_completion_cycle, None);
+        assert_eq!(second.first_completion_cycle, 10);
+        assert_eq!(second.second_halfword_completion_cycle, None);
+        assert_eq!(cursor.elapsed_cycles(), 2);
+    }
+
+    #[test]
+    fn data_cursor_applies_waitcnt_to_each_gamepak_halfword() {
+        let waitcnt = (0b10 << 2) | (1 << 4);
+        let mut cursor = DataAccessCursor::default();
+        cursor.reset(0);
+        let first = cursor.advance(0x0800_0000, 4, AccessType::NonSequential, waitcnt);
+        let second = cursor.advance(0x0800_0004, 4, AccessType::Sequential, waitcnt);
+
+        assert_eq!(first.first_completion_cycle, 3);
+        assert_eq!(first.second_halfword_completion_cycle, Some(5));
+        assert_eq!(second.first_completion_cycle, 7);
+        assert_eq!(second.second_halfword_completion_cycle, Some(9));
+        assert_eq!(cursor.elapsed_cycles(), 9);
+    }
+
+    #[test]
+    fn data_cursor_offsets_completions_from_instruction_fetch() {
+        let mut cursor = DataAccessCursor::default();
+        cursor.reset(8);
+
+        let access = cursor.advance(0x0400_0100, 2, AccessType::NonSequential, 0);
+
+        assert_eq!(access.first_completion_cycle, 9);
+        assert_eq!(access.completion_cycle, 9);
+        assert_eq!(cursor.elapsed_cycles(), 1);
+    }
+
+    #[test]
+    fn instruction_timeline_rejects_late_or_reordered_completions() {
+        let timeline = CpuInstructionTimeline {
+            fetch_cycles: 8,
+            total_cycles: 10,
+            data_access_cycles: 2,
+            data_access_count: 2,
+            replaced_legacy_data_cycles: 2,
+            incremental_non_data_cycles: 0,
+            required_cycles: 10,
+        };
+        let event = |completion_cycle| TimerIoCompletionEvent {
+            origin: DataAccessOrigin::Cpu,
+            completion_cycle,
+            address: 0x0400_0100,
+            timer: 0,
+            register: TimerIoRegister::CounterReload,
+            kind: TimerIoAccessKind::Read,
+            width: TimerIoAccessWidth::Halfword,
+            value: 0,
+        };
+
+        assert!(timeline.completion_events_are_bounded(&[event(9), event(10)]));
+        assert!(!timeline.completion_events_are_bounded(&[event(10), event(9)]));
+        assert!(!timeline.completion_events_are_bounded(&[event(11)]));
+    }
+
+    #[test]
+    fn timer_io_events_keep_register_lane_and_origin() {
+        assert_eq!(
+            TimerIoCompletionEvent::new(
+                DataAccessOrigin::Dma { channel: 2 },
+                17,
+                0x0400_0107,
+                TimerIoAccessKind::Write,
+                TimerIoAccessWidth::Byte,
+                0x5A,
+            ),
+            Some(TimerIoCompletionEvent {
+                origin: DataAccessOrigin::Dma { channel: 2 },
+                completion_cycle: 17,
+                address: 0x0400_0107,
+                timer: 1,
+                register: TimerIoRegister::Control,
+                kind: TimerIoAccessKind::Write,
+                width: TimerIoAccessWidth::Byte,
+                value: 0x5A,
+            })
+        );
+        assert!(
+            TimerIoCompletionEvent::new(
+                DataAccessOrigin::Cpu,
+                1,
+                0x0400_0110,
+                TimerIoAccessKind::Read,
+                TimerIoAccessWidth::Halfword,
+                0,
+            )
+            .is_none()
         );
     }
 }

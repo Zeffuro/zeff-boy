@@ -7,6 +7,10 @@ pub(crate) enum ActiveCore {
     Ws(Box<zeff_ws_core::emulator::Emulator>),
 }
 
+pub(crate) const LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ: u32 =
+    zeff_sega8_core::emulator::DEFAULT_SAMPLE_RATE;
+pub(crate) const LIBRETRO_RGB565_BYTES_PER_PIXEL: usize = 2;
+
 pub(crate) struct CoreState {
     pub core: ActiveCore,
     pub rom_data: Vec<u8>,

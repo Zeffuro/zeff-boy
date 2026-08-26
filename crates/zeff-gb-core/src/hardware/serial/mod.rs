@@ -18,6 +18,9 @@ mod device;
 pub use device::GameBoySerialDevice;
 pub(super) use device::SerialDevicePort;
 
+const NORMAL_SERIAL_TRANSFER_T_CYCLES: u64 = 4096;
+const FAST_SERIAL_TRANSFER_T_CYCLES: u64 = 128;
+
 #[derive(Debug)]
 pub(super) struct DisconnectedDevice;
 
@@ -84,11 +87,15 @@ impl Serial {
     fn transfer_period(&self) -> u64 {
         let cgb_mode = matches!(self.mode, HardwareMode::CGBNormal | HardwareMode::CGBDouble);
         let fast_serial = cgb_mode && (self.sc & 0x02) != 0;
-        match (self.mode, fast_serial) {
-            (HardwareMode::CGBDouble, false) => 2048,
-            (HardwareMode::CGBDouble, true) => 64,
-            (_, false) => 4096,
-            (_, true) => 128,
+        let normal_speed_period = if fast_serial {
+            FAST_SERIAL_TRANSFER_T_CYCLES
+        } else {
+            NORMAL_SERIAL_TRANSFER_T_CYCLES
+        };
+        if self.mode == HardwareMode::CGBDouble {
+            normal_speed_period / 2
+        } else {
+            normal_speed_period
         }
     }
 

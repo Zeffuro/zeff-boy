@@ -1,3 +1,4 @@
+use zeff_emu_common::system::RGBA_BYTES_PER_PIXEL;
 use zeff_pce_core::hardware::{
     PCE_ACTIVE_FRAME_HEIGHT, PCE_ACTIVE_FRAME_WIDTH, PceHardwareTopology, PcePresentedFrame,
     project_full_raw_frame,
@@ -133,7 +134,7 @@ fn project_base_rgba_rows_with_options(
             continue;
         };
         let source_row_start = source_y * source_width * 4;
-        let destination_row_start = destination_y * PCE_PRESENTED_WIDTH * 4;
+        let destination_row_start = destination_y * PCE_PRESENTED_WIDTH * RGBA_BYTES_PER_PIXEL;
         for destination_x in 0..PCE_PRESENTED_WIDTH {
             let source_x = source_x_offset + destination_x * visible_width / PCE_PRESENTED_WIDTH;
             copy_pixel(
@@ -223,7 +224,7 @@ fn project_sgx_rgba_rows_with_options(
             continue;
         };
         let source_row_start = source_y * source_width * 4;
-        let destination_row_start = destination_y * PCE_PRESENTED_WIDTH * 4;
+        let destination_row_start = destination_y * PCE_PRESENTED_WIDTH * RGBA_BYTES_PER_PIXEL;
         for destination_x in 0..PCE_PRESENTED_WIDTH {
             let master_position = frame_start + destination_x * frame_width / PCE_PRESENTED_WIDTH;
             if !(row_start..row_end).contains(&master_position) {

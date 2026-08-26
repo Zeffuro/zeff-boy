@@ -221,9 +221,9 @@ impl Cpu {
             let ro = ((raw >> 6) & 0x7) as usize;
             let addr = self.regs[rb].wrapping_add(self.regs[ro]);
             match (raw >> 9) & 0x7 {
-                0b000 => bus.write32(addr, self.regs[rd]),
-                0b001 => bus.write16(addr, self.regs[rd] as u16),
-                0b010 => bus.write8(addr, self.regs[rd] as u8),
+                0b000 => self.cpu_write32(bus, addr, self.regs[rd]),
+                0b001 => self.cpu_write16(bus, addr, self.regs[rd] as u16),
+                0b010 => self.cpu_write8(bus, addr, self.regs[rd] as u8),
                 0b011 => {
                     self.regs[rd] = sign_extend(u32::from(self.cpu_read8(bus, addr)), 8) as u32
                 }
@@ -245,9 +245,9 @@ impl Cpu {
                     rotate_right(self.cpu_read32(bus, addr), (addr & 3) * 8)
                 };
             } else if byte {
-                bus.write8(addr, self.regs[rd] as u8);
+                self.cpu_write8(bus, addr, self.regs[rd] as u8);
             } else {
-                bus.write32(addr, self.regs[rd]);
+                self.cpu_write32(bus, addr, self.regs[rd]);
             }
         }
     }
@@ -260,7 +260,7 @@ impl Cpu {
         if load {
             self.regs[rd] = self.load_arm_unsigned_halfword(bus, addr);
         } else {
-            bus.write16(addr, self.regs[rd] as u16);
+            self.cpu_write16(bus, addr, self.regs[rd] as u16);
         }
     }
 
@@ -271,7 +271,7 @@ impl Cpu {
         if load {
             self.regs[rd] = rotate_right(self.cpu_read32(bus, addr), (addr & 3) * 8);
         } else {
-            bus.write32(addr, self.regs[rd]);
+            self.cpu_write32(bus, addr, self.regs[rd]);
         }
     }
 
@@ -301,14 +301,24 @@ impl Cpu {
         let extra = raw & (1 << 8) != 0;
         let list = raw & 0xFF;
         if pop {
+            let mut first_access = true;
             for reg in 0..8 {
                 if list & (1 << reg) != 0 {
-                    self.regs[reg] = self.cpu_read32(bus, self.regs[13]);
+                    self.regs[reg] = if first_access {
+                        self.cpu_read32(bus, self.regs[13])
+                    } else {
+                        self.cpu_read32_sequential(bus, self.regs[13])
+                    };
+                    first_access = false;
                     self.regs[13] = self.regs[13].wrapping_add(4);
                 }
             }
             if extra {
-                let pc = self.cpu_read32(bus, self.regs[13]);
+                let pc = if first_access {
+                    self.cpu_read32(bus, self.regs[13])
+                } else {
+                    self.cpu_read32_sequential(bus, self.regs[13])
+                };
                 self.regs[13] = self.regs[13].wrapping_add(4);
                 self.write_reg(15, pc, true);
             }
@@ -316,14 +326,24 @@ impl Cpu {
             let count = list.count_ones() + u32::from(extra);
             self.regs[13] = self.regs[13].wrapping_sub(4 * count);
             let mut addr = self.regs[13];
+            let mut first_access = true;
             for reg in 0..8 {
                 if list & (1 << reg) != 0 {
-                    bus.write32(addr, self.regs[reg]);
+                    if first_access {
+                        self.cpu_write32(bus, addr, self.regs[reg]);
+                    } else {
+                        self.cpu_write32_sequential(bus, addr, self.regs[reg]);
+                    }
+                    first_access = false;
                     addr = addr.wrapping_add(4);
                 }
             }
             if extra {
-                bus.write32(addr, self.regs[14]);
+                if first_access {
+                    self.cpu_write32(bus, addr, self.regs[14]);
+                } else {
+                    self.cpu_write32_sequential(bus, addr, self.regs[14]);
+                }
             }
         }
     }
@@ -335,29 +355,40 @@ impl Cpu {
         let mut addr = self.regs[rb];
         if list == 0 {
             if load {
-                self.write_reg(15, self.cpu_read32(bus, addr), true);
+                let value = self.cpu_read32(bus, addr);
+                self.write_reg(15, value, true);
             } else {
-                bus.write32(addr, self.regs[15].wrapping_add(4));
+                self.cpu_write32(bus, addr, self.regs[15].wrapping_add(4));
             }
             self.regs[rb] = self.regs[rb].wrapping_add(0x40);
             return;
         }
         let final_addr = addr.wrapping_add(4 * list.count_ones());
         let base_is_first_stored_reg = list & ((1 << rb) - 1) == 0;
+        let mut first_access = true;
         for reg in 0..8 {
             if list & (1 << reg) == 0 {
                 continue;
             }
             if load {
-                self.regs[reg] = self.cpu_read32(bus, addr);
+                self.regs[reg] = if first_access {
+                    self.cpu_read32(bus, addr)
+                } else {
+                    self.cpu_read32_sequential(bus, addr)
+                };
             } else {
                 let value = if reg == rb && !base_is_first_stored_reg {
                     final_addr
                 } else {
                     self.regs[reg]
                 };
-                bus.write32(addr, value);
+                if first_access {
+                    self.cpu_write32(bus, addr, value);
+                } else {
+                    self.cpu_write32_sequential(bus, addr, value);
+                }
             }
+            first_access = false;
             addr = addr.wrapping_add(4);
         }
         if !load || list & (1 << rb) == 0 {

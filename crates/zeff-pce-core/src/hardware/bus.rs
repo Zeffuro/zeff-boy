@@ -6,6 +6,7 @@ use super::cartridge::{
     POPULOUS_HUCARD_IMAGE_LEN, PceHuCard, PceHuCardBoard, SF2_CE_HUCARD_IMAGE_LEN,
     SYSTEM_CARD_V1_V2_IMAGE_LEN,
 };
+use super::constants::{PCE_PHYSICAL_WORK_RAM_END, PCE_PHYSICAL_WORK_RAM_START};
 use super::cpu::{CpuBus, IrqPort, PHYSICAL_ADDRESS_MASK, TimerPort, VdcPort};
 use super::vpc::VpcPort;
 
@@ -15,8 +16,6 @@ pub const SUPERGRAFX_WORK_RAM_LEN: usize = 0x8000;
 pub const OPEN_BUS_VALUE: u8 = 0xFF;
 
 const HUCARD_END: u32 = 0x0F_FFFF;
-const WORK_RAM_START: u32 = 0x1F_0000;
-const WORK_RAM_END: u32 = 0x1F_7FFF;
 const VDC_START: u32 = 0x1F_E000;
 const VDC_END: u32 = 0x1F_E3FF;
 const VCE_START: u32 = 0x1F_E400;
@@ -95,12 +94,14 @@ pub const fn decode_physical_region_for(
     let physical_addr = physical_addr & PHYSICAL_ADDRESS_MASK;
     match physical_addr {
         0..=HUCARD_END => PhysicalRegion::HuCard(physical_addr),
-        WORK_RAM_START..=WORK_RAM_END => PhysicalRegion::WorkRam(match topology {
-            PceHardwareTopology::Base => (physical_addr as u16) & (WORK_RAM_LEN as u16 - 1),
-            PceHardwareTopology::SuperGrafx => {
-                (physical_addr as u16) & (SUPERGRAFX_WORK_RAM_LEN as u16 - 1)
-            }
-        }),
+        PCE_PHYSICAL_WORK_RAM_START..=PCE_PHYSICAL_WORK_RAM_END => {
+            PhysicalRegion::WorkRam(match topology {
+                PceHardwareTopology::Base => (physical_addr as u16) & (WORK_RAM_LEN as u16 - 1),
+                PceHardwareTopology::SuperGrafx => {
+                    (physical_addr as u16) & (SUPERGRAFX_WORK_RAM_LEN as u16 - 1)
+                }
+            })
+        }
         VDC_START..=VDC_END => decode_video_region(topology, physical_addr),
         VCE_START..=VCE_END => PhysicalRegion::Vce(VcePort::from_offset(physical_addr as u8)),
         PSG_START..=PSG_END => PhysicalRegion::Psg(PsgPort::from_offset(physical_addr as u8)),

@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 
 use super::{Apu, ApuChannelSnapshot, DEBUG_SAMPLE_CAPACITY, INITIAL_SAMPLE_CAPACITY};
-use crate::hardware::constants::*;
 
 impl Apu {
     #[inline]
@@ -11,8 +10,8 @@ impl Apu {
         }
 
         self.sample_accumulator += self.output_sample_rate;
-        if self.sample_accumulator >= APU_CPU_CLOCK_NTSC {
-            self.sample_accumulator -= APU_CPU_CLOCK_NTSC;
+        if self.sample_accumulator >= self.cpu_clock_hz {
+            self.sample_accumulator -= self.cpu_clock_hz;
 
             let p1_raw = self.pulse1.output() as f32;
             let p2_raw = self.pulse2.output() as f32;
@@ -158,6 +157,7 @@ impl Apu {
 #[cfg(test)]
 mod tests {
     use super::Apu;
+    use crate::hardware::timing::NesTiming;
 
     #[test]
     fn channel_snapshot_includes_dmc_gate_and_dac_level() {
@@ -169,5 +169,25 @@ mod tests {
 
         assert!(snapshot.dmc_enabled);
         assert_eq!(snapshot.dmc_output_level, 0x55);
+    }
+
+    #[test]
+    fn region_cpu_clock_controls_audio_resampling_cadence() {
+        let mut ntsc = Apu::new_with_timing(48_000.0, NesTiming::Ntsc);
+        let mut pal = Apu::new_with_timing(48_000.0, NesTiming::Pal);
+        let mut dendy = Apu::new_with_timing(48_000.0, NesTiming::Dendy);
+
+        ntsc.set_debug_collection_enabled(false);
+        pal.set_debug_collection_enabled(false);
+        dendy.set_debug_collection_enabled(false);
+        for _ in 0..100_000 {
+            ntsc.tick();
+            pal.tick();
+            dendy.tick();
+        }
+
+        assert_eq!(ntsc.sample_buffer.len(), 2_681);
+        assert_eq!(pal.sample_buffer.len(), 2_887);
+        assert_eq!(dendy.sample_buffer.len(), 2_706);
     }
 }

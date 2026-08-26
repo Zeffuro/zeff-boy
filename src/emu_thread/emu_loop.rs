@@ -1,4 +1,6 @@
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -45,6 +47,7 @@ pub(super) struct EmuLoop {
     wonder_swan_replay_link: Option<crate::link::ws_replay::WonderSwanReplayLink>,
     rewind_buffer: zeff_emu_common::rewind::RewindBuffer,
     rewind_seconds: usize,
+    frame_duration_ns: Arc<AtomicU64>,
     runtime_fault: WorkerRuntimeFault,
 }
 
@@ -57,7 +60,9 @@ impl EmuLoop {
         resp_tx: Sender<EmuResponse>,
         shared_framebuffer: SharedFramebuffer,
     ) -> Self {
-        let frame_duration_ns = backend.system().frame_duration_ns();
+        let frame_duration_ns = backend.nominal_frame_duration_ns();
+        let runtime_frame_duration_ns = Arc::new(AtomicU64::new(frame_duration_ns));
+        runtime_frame_duration_ns.store(frame_duration_ns, Ordering::Release);
         Self {
             backend,
             cmd_rx,
@@ -80,8 +85,14 @@ impl EmuLoop {
                 frame_duration_ns,
             ),
             rewind_seconds: DEFAULT_REWIND_SECONDS,
+            frame_duration_ns: runtime_frame_duration_ns,
             runtime_fault: WorkerRuntimeFault::default(),
         }
+    }
+
+    pub(super) fn set_frame_duration_handle(&mut self, frame_duration_ns: Arc<AtomicU64>) {
+        frame_duration_ns.store(self.backend.nominal_frame_duration_ns(), Ordering::Release);
+        self.frame_duration_ns = frame_duration_ns;
     }
 
     pub(super) fn run(&mut self) {
@@ -853,13 +864,23 @@ impl EmuLoop {
         );
         if state_loaded {
             self.backend.discard_game_boy_printer_jobs();
-            self.rewind_buffer.clear();
+            self.reset_rewind_buffer();
             self.backend.install_rom_patches(&self.last_cheats);
             self.mark_audio_discontinuity(
                 crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad,
             );
         }
         self.send_resp(resp)
+    }
+
+    fn reset_rewind_buffer(&mut self) {
+        let frame_duration_ns = EmuThread::reset_rewind_for_loaded_state(
+            &mut self.rewind_buffer,
+            self.rewind_seconds,
+            &self.backend,
+        );
+        self.frame_duration_ns
+            .store(frame_duration_ns, Ordering::Release);
     }
 
     fn mark_audio_discontinuity(

@@ -1,11 +1,13 @@
 use super::Bus;
 use crate::hardware::cartridge::ChrFetchKind;
-use crate::hardware::constants::{ATTRIBUTE_TABLE_BASE, NAMETABLE_BASE};
-use crate::hardware::ppu::{PRE_RENDER_SCANLINE, Ppu, SCREEN_H, SCREEN_W};
+use crate::hardware::constants::{
+    ATTRIBUTE_TABLE_BASE, NAMETABLE_BASE, SCREEN_HEIGHT, SCREEN_WIDTH,
+};
+use crate::hardware::ppu::Ppu;
 
 const FIRST_VISIBLE_DOT: u16 = 1;
-const LAST_VISIBLE_DOT: u16 = SCREEN_W as u16;
-const LAST_VISIBLE_SCANLINE: u16 = SCREEN_H as u16 - 1;
+const LAST_VISIBLE_DOT: u16 = SCREEN_WIDTH as u16;
+const LAST_VISIBLE_SCANLINE: u16 = SCREEN_HEIGHT as u16 - 1;
 const BG_PREFETCH_START_DOT: u16 = 321;
 const BG_PREFETCH_END_DOT: u16 = 337;
 const BG_FETCH_PHASE_DOTS: u16 = 8;
@@ -52,7 +54,7 @@ impl Bus {
         let dot = self.ppu.dot;
         let rendering = self.ppu.rendering_enabled();
         let visible_line = scanline <= LAST_VISIBLE_SCANLINE;
-        let pre_render = scanline == PRE_RENDER_SCANLINE;
+        let pre_render = scanline == self.ppu.pre_render_scanline();
         let render_line = visible_line || pre_render;
 
         if rendering && render_line && self.qualified_ppu_a12 {
@@ -202,7 +204,7 @@ impl Bus {
 
         let x = (dot - FIRST_VISIBLE_DOT) as usize;
         let y = scanline as usize;
-        let offset = (y * SCREEN_W + x) * 4;
+        let offset = (y * SCREEN_WIDTH + x) * 4;
         ppu.framebuffer[offset..offset + 4].copy_from_slice(&[r, g, b, RGB_ALPHA]);
     }
 
@@ -395,15 +397,20 @@ mod tests {
     use super::*;
     use crate::hardware::cartridge::Cartridge;
     use crate::hardware::constants::STATUS_SPRITE_OVERFLOW;
+    use crate::hardware::timing::NesTiming;
 
     fn test_bus() -> Bus {
+        test_bus_with_timing(NesTiming::Ntsc)
+    }
+
+    fn test_bus_with_timing(timing: NesTiming) -> Bus {
         let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
         rom[0..4].copy_from_slice(b"NES\x1A");
         rom[4] = 1;
         rom[5] = 1;
 
         let cart = Cartridge::load(&rom).expect("test ROM should load");
-        Bus::new(cart, 44_100.0)
+        Bus::new_with_timing(cart, 44_100.0, timing)
     }
 
     fn mmc3_test_bus() -> Bus {
@@ -544,7 +551,7 @@ mod tests {
         bus.ppu.regs.mask = 0x0A;
         bus.ppu.palette_ram[0] = 0x0F;
         bus.ppu.palette_ram[1] = 0x12;
-        bus.ppu.scanline = PRE_RENDER_SCANLINE;
+        bus.ppu.scanline = NesTiming::Ntsc.pre_render_scanline();
         bus.ppu.dot = 337;
         bus.ppu.bg_shift_pattern_lo = 0x4000;
         bus.ppu.bg_shift_pattern_hi = 0;
@@ -561,6 +568,25 @@ mod tests {
         bus.ppu_render_dot();
 
         assert_eq!(&bus.ppu.framebuffer[0..4], &[48, 50, 236, 0xFF]);
+    }
+
+    #[test]
+    fn pal_and_dendy_run_pre_render_sprite_reset_and_vertical_copy() {
+        for timing in [NesTiming::Pal, NesTiming::Dendy] {
+            let mut bus = test_bus_with_timing(timing);
+            bus.ppu.regs.mask = 0x18;
+            bus.ppu.scanline = timing.pre_render_scanline();
+            bus.ppu.sprite_count = 3;
+            bus.ppu.dot = SPRITE_EVALUATION_DOT;
+            bus.ppu_render_dot();
+            assert_eq!(bus.ppu.sprite_count, 0);
+
+            bus.ppu.v = 0;
+            bus.ppu.t = 0x7BE0;
+            bus.ppu.dot = VERTICAL_COPY_START_DOT;
+            bus.ppu_render_dot();
+            assert_eq!(bus.ppu.v, 0x7BE0);
+        }
     }
 
     #[test]
@@ -615,7 +641,7 @@ mod tests {
         let mut bus = mmc3_test_bus();
         enable_mmc3_irq(&mut bus);
         bus.ppu.regs.ctrl = 0x10;
-        bus.ppu.scanline = PRE_RENDER_SCANLINE;
+        bus.ppu.scanline = NesTiming::Ntsc.pre_render_scanline();
 
         for dot in 313..=321 {
             bus.ppu.dot = dot;

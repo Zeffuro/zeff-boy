@@ -1,6 +1,7 @@
 pub(crate) mod audio;
 
 use crate::hardware::cartridge::{Mapper, Mirroring};
+use crate::hardware::constants::PPU_DOTS_PER_SCANLINE;
 use audio::Vrc7Audio;
 
 pub struct Vrc7 {
@@ -49,7 +50,7 @@ impl Vrc7 {
             chr_banks: [0; 8],
             irq_latch: 0,
             irq_counter: 0,
-            irq_prescaler: 341,
+            irq_prescaler: i32::from(PPU_DOTS_PER_SCANLINE),
             irq_enabled: false,
             irq_enabled_after_ack: false,
             irq_cycle_mode: false,
@@ -138,7 +139,7 @@ impl Mapper for Vrc7 {
                 self.irq_cycle_mode = val & 0x04 != 0;
                 if self.irq_enabled {
                     self.irq_counter = self.irq_latch;
-                    self.irq_prescaler = 341;
+                    self.irq_prescaler = i32::from(PPU_DOTS_PER_SCANLINE);
                 }
             }
             0xF010 => {
@@ -181,7 +182,7 @@ impl Mapper for Vrc7 {
         } else {
             self.irq_prescaler -= 3;
             if self.irq_prescaler <= 0 {
-                self.irq_prescaler += 341;
+                self.irq_prescaler += i32::from(PPU_DOTS_PER_SCANLINE);
                 self.clock_irq_counter();
             }
         }

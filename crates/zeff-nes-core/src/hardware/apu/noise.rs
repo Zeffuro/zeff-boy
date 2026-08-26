@@ -1,4 +1,5 @@
 use super::pulse::LENGTH_TABLE;
+use crate::hardware::timing::NesTiming;
 
 pub struct Noise {
     pub enabled: bool,
@@ -20,16 +21,27 @@ pub struct Noise {
     envelope_decay: u8,
     length_halt_override: Option<bool>,
     skip_length_clock: bool,
+    timing: NesTiming,
 }
 
 #[rustfmt::skip]
-static NOISE_PERIOD_TABLE: [u16; 16] = [
+const NTSC_NOISE_TIMER_PERIOD_CPU_CYCLES: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160,
     202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
+#[rustfmt::skip]
+const PAL_NOISE_TIMER_PERIOD_CPU_CYCLES: [u16; 16] = [
+    4, 8, 14, 30, 60, 88, 118, 148,
+    188, 236, 354, 472, 708, 944, 1890, 3778,
+];
+
 impl Noise {
     pub fn new() -> Self {
+        Self::new_with_timing(NesTiming::Ntsc)
+    }
+
+    pub(crate) fn new_with_timing(timing: NesTiming) -> Self {
         Self {
             enabled: false,
             length_counter: 0,
@@ -46,6 +58,7 @@ impl Noise {
             envelope_decay: 0,
             length_halt_override: None,
             skip_length_clock: false,
+            timing,
         }
     }
 
@@ -61,7 +74,11 @@ impl Noise {
             }
             2 => {
                 self.mode = self.tonal_mode_supported && val & 0x80 != 0;
-                self.timer_period = NOISE_PERIOD_TABLE[(val & 0x0F) as usize];
+                let periods = match self.timing {
+                    NesTiming::Pal => &PAL_NOISE_TIMER_PERIOD_CPU_CYCLES,
+                    NesTiming::Ntsc | NesTiming::Dendy => &NTSC_NOISE_TIMER_PERIOD_CPU_CYCLES,
+                };
+                self.timer_period = periods[(val & 0x0F) as usize];
             }
             3 => {
                 let old_length = self.length_counter;
@@ -190,7 +207,8 @@ impl Noise {
 
 #[cfg(test)]
 mod tests {
-    use super::Noise;
+    use super::{NTSC_NOISE_TIMER_PERIOD_CPU_CYCLES, Noise, PAL_NOISE_TIMER_PERIOD_CPU_CYCLES};
+    use crate::hardware::timing::NesTiming;
 
     #[test]
     fn tonal_mode_can_be_disabled_for_vs_system_cpu() {
@@ -209,5 +227,30 @@ mod tests {
         noise.write(2, 0x80, false);
 
         assert!(noise.mode);
+    }
+
+    #[test]
+    fn region_selects_noise_timer_periods() {
+        let mut ntsc = Noise::new_with_timing(NesTiming::Ntsc);
+        let mut pal = Noise::new_with_timing(NesTiming::Pal);
+        let mut dendy = Noise::new_with_timing(NesTiming::Dendy);
+
+        for index in 0..16 {
+            ntsc.write(2, index, false);
+            pal.write(2, index, false);
+            dendy.write(2, index, false);
+            assert_eq!(
+                ntsc.timer_period,
+                NTSC_NOISE_TIMER_PERIOD_CPU_CYCLES[index as usize]
+            );
+            assert_eq!(
+                pal.timer_period,
+                PAL_NOISE_TIMER_PERIOD_CPU_CYCLES[index as usize]
+            );
+            assert_eq!(
+                dendy.timer_period,
+                NTSC_NOISE_TIMER_PERIOD_CPU_CYCLES[index as usize]
+            );
+        }
     }
 }

@@ -2,9 +2,10 @@ use super::{
     PCE_ACTIVE_FRAME_HEIGHT, PCE_ACTIVE_FRAME_WIDTH, PceHardwareTopology, PcePresentedFrame,
 };
 
-pub const PCE_HOST_FRAME_WIDTH: usize = 640;
-pub const PCE_HOST_FRAME_HEIGHT: usize = 480;
-pub const PCE_HOST_FRAME_RGBA_BYTES: usize = PCE_HOST_FRAME_WIDTH * PCE_HOST_FRAME_HEIGHT * 4;
+pub const PCE_HOST_FRAME_WIDTH: usize = zeff_emu_common::system::PCE_SCREEN_SIZE.0 as usize;
+pub const PCE_HOST_FRAME_HEIGHT: usize = zeff_emu_common::system::PCE_SCREEN_SIZE.1 as usize;
+pub const PCE_HOST_FRAME_RGBA_BYTES: usize =
+    PCE_HOST_FRAME_WIDTH * PCE_HOST_FRAME_HEIGHT * zeff_emu_common::system::RGBA_BYTES_PER_PIXEL;
 const OPAQUE_BLACK: [u8; 4] = [0, 0, 0, 0xFF];
 
 #[derive(Clone, Copy, Default)]

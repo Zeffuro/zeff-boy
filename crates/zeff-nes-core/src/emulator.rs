@@ -1,6 +1,7 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::{Cartridge, TimingMode};
 use crate::hardware::cpu::Cpu;
+use crate::hardware::timing::NesTiming;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
@@ -13,7 +14,8 @@ mod tests;
 
 pub use crate::hardware::constants::CPU_CYCLES_PER_FRAME;
 
-pub const DEFAULT_SAMPLE_RATE: f64 = 48000.0;
+pub const DEFAULT_SAMPLE_RATE: f64 =
+    crate::hardware::constants::NES_DEFAULT_HOST_SAMPLE_RATE_HZ as f64;
 
 pub struct Emulator {
     pub(crate) cpu: Cpu,
@@ -56,16 +58,21 @@ impl Emulator {
         rom_crc32: u32,
         sample_rate: f64,
     ) -> anyhow::Result<Self> {
-        match cartridge.header().timing {
-            TimingMode::Pal => anyhow::bail!(
+        let timing = match cartridge.header().timing {
+            TimingMode::Ntsc | TimingMode::MultiRegion => NesTiming::Ntsc,
+            TimingMode::Pal => NesTiming::Pal,
+            TimingMode::Dendy => NesTiming::Dendy,
+        };
+        match timing {
+            NesTiming::Pal => anyhow::bail!(
                 "NES PAL timing is not supported yet; this core currently emulates NTSC timing only"
             ),
-            TimingMode::Dendy => anyhow::bail!(
+            NesTiming::Dendy => anyhow::bail!(
                 "NES Dendy timing is not supported yet; this core currently emulates NTSC timing only"
             ),
-            TimingMode::Ntsc | TimingMode::MultiRegion => {}
+            NesTiming::Ntsc => {}
         }
-        let bus = Bus::new(cartridge, sample_rate);
+        let bus = Bus::new_with_timing(cartridge, sample_rate, timing);
 
         let mut emu = Self {
             cpu: Cpu::new(),

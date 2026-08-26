@@ -223,7 +223,7 @@ fn print_busy_time_uses_image_bands_copies_and_feed() {
     exchange_packet(&mut printer, 0x04, 0, &[]);
     let replies = exchange_packet(&mut printer, 0x02, 0, &[2, 0x21, 0xE4, 0x40]);
     assert_eq!(replies.last(), Some(&STATUS_UNPROCESSED_DATA));
-    let expected_cycles = (8 * DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
+    let expected_cycles = (8 * GB_T_CYCLES_PER_SECOND * PRINT_BANDS_PER_SECOND_DENOMINATOR)
         .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR);
     assert_eq!(printer.busy_cycles_remaining, expected_cycles);
 
@@ -242,7 +242,7 @@ fn camera_image_uses_physical_printer_band_timing() {
     exchange_packet(&mut printer, 0x02, 0, &[1, 0x13, 0xE4, 0x40]);
 
     // Nine image bands plus one pre-feed and three post-feed bands at 1.1 bands/s.
-    let expected_cycles = (13 * DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
+    let expected_cycles = (13 * GB_T_CYCLES_PER_SECOND * PRINT_BANDS_PER_SECOND_DENOMINATOR)
         .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR);
     assert_eq!(printer.busy_cycles_remaining, expected_cycles);
     assert_eq!(expected_cycles, 49_569_048);
@@ -266,7 +266,7 @@ fn empty_buffer_and_zero_copy_prints_are_feed_only() {
     let mut empty = GameboyPrinter::new();
     exchange_packet(&mut empty, 0x04, 0, &[]);
     exchange_packet(&mut empty, 0x02, 0, &[5, 0x13, 0xE4, 0x40]);
-    let fifteen_feeds = (15 * DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
+    let fifteen_feeds = (15 * GB_T_CYCLES_PER_SECOND * PRINT_BANDS_PER_SECOND_DENOMINATOR)
         .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR);
     assert_eq!(empty.busy_cycles_remaining, fifteen_feeds);
     assert_eq!(empty.job_count(), 1);
@@ -287,7 +287,7 @@ fn empty_buffer_and_zero_copy_prints_are_feed_only() {
     exchange_packet(&mut zero_copy, 0x04, 0, &vec![0; BYTES_PER_TILE_ROW]);
     exchange_packet(&mut zero_copy, 0x04, 0, &[]);
     exchange_packet(&mut zero_copy, 0x02, 0, &[0, 0x13, 0xE4, 0x40]);
-    let three_feeds = (3 * DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
+    let three_feeds = (3 * GB_T_CYCLES_PER_SECOND * PRINT_BANDS_PER_SECOND_DENOMINATOR)
         .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR);
     assert_eq!(zero_copy.busy_cycles_remaining, three_feeds);
     assert_eq!(zero_copy.job_count(), 1);

@@ -1,3 +1,5 @@
+use crate::hardware::constants::PRIMARY_OAM_BYTES;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct DmaController {
     oam: Option<OamTransfer>,
@@ -108,7 +110,7 @@ impl DmaController {
         let transfer = self.oam.as_mut()?;
         let value = transfer.read_latch.take()?;
         transfer.index += 1;
-        if transfer.index == 256 {
+        if transfer.index == PRIMARY_OAM_BYTES as u16 {
             self.oam = None;
         }
         Some(value)
@@ -138,7 +140,7 @@ impl DmaController {
         let oam = if r.read_bool()? {
             let page = r.read_u8()?;
             let index = r.read_u16()?;
-            if index >= 256 {
+            if index >= PRIMARY_OAM_BYTES as u16 {
                 anyhow::bail!("invalid OAM DMA byte index {index}");
             }
             let has_latch = r.read_bool()?;

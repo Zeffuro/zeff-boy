@@ -1,9 +1,8 @@
 use std::collections::VecDeque;
 
-use super::constants::CPU_CLOCK_HZ;
+use super::constants::{CPU_CLOCK_HZ, WS_DEFAULT_HOST_SAMPLE_RATE_HZ};
 
 const CHANNEL_COUNT: usize = 4;
-const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 const DEBUG_WAVEFORM_SAMPLE_COUNT: usize = 512;
 const HYPER_VOICE_LEFT_LO_PORT: u16 = 0x0064;
 const HYPER_VOICE_LEFT_HI_PORT: u16 = 0x0065;
@@ -173,7 +172,7 @@ impl Apu {
             channel_mutes: [false; CHANNEL_COUNT],
         };
         if sample_rate == 0 {
-            apu.sample_rate = DEFAULT_SAMPLE_RATE;
+            apu.sample_rate = WS_DEFAULT_HOST_SAMPLE_RATE_HZ;
         }
         apu
     }
@@ -388,7 +387,7 @@ impl Apu {
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.sample_rate = rate.max(1);
         if rate == 0 {
-            self.sample_rate = DEFAULT_SAMPLE_RATE;
+            self.sample_rate = WS_DEFAULT_HOST_SAMPLE_RATE_HZ;
         }
         self.sample_cycle_accumulator %= CPU_CLOCK_HZ;
     }

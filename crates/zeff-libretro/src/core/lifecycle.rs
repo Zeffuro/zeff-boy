@@ -1,4 +1,4 @@
-use super::{ActiveCore, CoreState};
+use super::{ActiveCore, CoreState, LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ};
 use chrono::{Datelike, Local, Timelike};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_gba_core::hardware::cartridge::RtcDateTime;
@@ -13,7 +13,7 @@ impl CoreState {
             .unwrap_or("")
             .to_ascii_lowercase();
 
-        let sample_rate = 48000u32;
+        let sample_rate = LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ;
 
         let core = match ext.as_str() {
             "pce" => {

@@ -1,5 +1,6 @@
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::{Cartridge, MinimumSystem};
+use crate::hardware::constants::WS_DEFAULT_HOST_SAMPLE_RATE_HZ;
 use crate::hardware::cpu::{Cpu, FetchedInstruction};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -12,7 +13,7 @@ mod state_io;
 #[cfg(test)]
 mod tests;
 
-pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+pub const DEFAULT_SAMPLE_RATE: u32 = WS_DEFAULT_HOST_SAMPLE_RATE_HZ;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WsOpcodeRecord {

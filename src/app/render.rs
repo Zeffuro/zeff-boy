@@ -98,6 +98,7 @@ impl App {
                 eta,
             }
         });
+        let nominal_frame_duration_ns = self.nominal_frame_duration_ns();
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
@@ -137,7 +138,7 @@ impl App {
         let autohide_menu_bar = self.settings.ui.autohide_menu_bar;
         let cursor_y = self.cursor_pos.map(|(_, y)| y);
         let rewind_seconds_back = (self.rewind.frames_rewound as f64
-            * self.active_system.frame_duration_ns() as f64
+            * nominal_frame_duration_ns as f64
             / 1_000_000_000.0) as f32;
         let slot_labels = &self.cached_slot_info.labels;
         let slot_occupied = self.cached_slot_info.occupied;

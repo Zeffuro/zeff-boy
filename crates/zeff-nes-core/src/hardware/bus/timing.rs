@@ -2,7 +2,6 @@ use super::Bus;
 use crate::hardware::constants::RAM_MIRROR_MASK;
 use zeff_emu_common::time::MasterTicks;
 
-const PPU_DOTS_BEFORE_CPU_ACCESS: u8 = 2;
 const PPU_DOTS_AFTER_CPU_ACCESS: u8 = 1;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -23,7 +22,8 @@ impl Bus {
     }
 
     pub(super) fn begin_timed_cpu_cycle(&mut self) {
-        self.clock_ppu_dots(PPU_DOTS_BEFORE_CPU_ACCESS);
+        let ppu_dots = self.ppu_clock.next_cpu_cycle_ppu_dots();
+        self.clock_ppu_dots(ppu_dots - PPU_DOTS_AFTER_CPU_ACCESS);
     }
 
     pub(super) fn finish_timed_cpu_cycle(&mut self, stolen: bool) {
@@ -210,5 +210,39 @@ impl Bus {
         self.cpu_step_start_tick = None;
         self.cpu_access_elapsed_cycles = 0;
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Bus;
+    use crate::hardware::cartridge::Cartridge;
+    use crate::hardware::timing::NesTiming;
+
+    fn test_bus(timing: NesTiming) -> Bus {
+        let mut rom = vec![0_u8; 16 + 0x4000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[5] = 1;
+        let cartridge = Cartridge::load(&rom).expect("test ROM should load");
+        Bus::new_with_timing(cartridge, 48_000.0, timing)
+    }
+
+    #[test]
+    fn bus_applies_each_region_cpu_to_ppu_clock_ratio() {
+        let mut ntsc = test_bus(NesTiming::Ntsc);
+        let mut pal = test_bus(NesTiming::Pal);
+        let mut dendy = test_bus(NesTiming::Dendy);
+
+        ntsc.tick_peripherals(5);
+        pal.tick_peripherals(5);
+        dendy.tick_peripherals(5);
+
+        assert_eq!(ntsc.ppu_cycles, 15);
+        assert_eq!(pal.ppu_cycles, 16);
+        assert_eq!(dendy.ppu_cycles, 15);
+        assert_eq!(ntsc.ppu.pre_render_scanline(), 261);
+        assert_eq!(pal.ppu.pre_render_scanline(), 311);
+        assert_eq!(dendy.ppu.pre_render_scanline(), 311);
     }
 }

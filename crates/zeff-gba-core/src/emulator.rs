@@ -12,7 +12,7 @@ mod state_io;
 #[cfg(test)]
 mod tests;
 
-pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+pub const DEFAULT_SAMPLE_RATE: u32 = crate::hardware::constants::GBA_DEFAULT_HOST_SAMPLE_RATE_HZ;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GbaOpcodeRecord {

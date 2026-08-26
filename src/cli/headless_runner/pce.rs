@@ -21,7 +21,7 @@ use super::{
     write_screenshot_sequence_if_requested,
 };
 
-const PCE_HEADLESS_SAMPLE_RATE: u32 = 44_100;
+const PCE_HEADLESS_SAMPLE_RATE: u32 = zeff_pce_core::hardware::PCE_DEFAULT_AUDIO_SAMPLE_RATE_HZ;
 const PCE_FRAMEBUFFER_DIMENSIONS: (usize, usize) = (
     crate::emu_backend::pce::PCE_PRESENTED_WIDTH,
     crate::emu_backend::pce::PCE_PRESENTED_HEIGHT,

@@ -1,12 +1,9 @@
-use super::constants::{FRAMEBUFFER_LEN, SCREEN_HEIGHT, SCREEN_WIDTH};
+use super::constants::{
+    CYCLES_PER_SCANLINE, FRAMEBUFFER_LEN, HBLANK_START_CYCLE, SCANLINES_PER_FRAME, SCREEN_HEIGHT,
+    SCREEN_WIDTH, VBLANK_END_SCANLINE, VISIBLE_SCANLINES,
+};
 
 mod render;
-
-const CYCLES_PER_SCANLINE: u32 = 1232;
-const HBLANK_START_CYCLES: u32 = 1006;
-const SCANLINES_PER_FRAME: u16 = 228;
-const VISIBLE_SCANLINES: u16 = 160;
-const VBLANK_END_SCANLINE: u16 = 227;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PpuDebugFlags {
@@ -96,12 +93,12 @@ impl Ppu {
     }
 
     pub fn in_hblank(&self) -> bool {
-        self.line_cycles >= HBLANK_START_CYCLES
+        self.line_cycles >= HBLANK_START_CYCLE
     }
 
     pub fn cycles_until_next_status_event(&self) -> u32 {
-        if self.line_cycles < HBLANK_START_CYCLES {
-            HBLANK_START_CYCLES - self.line_cycles
+        if self.line_cycles < HBLANK_START_CYCLE {
+            HBLANK_START_CYCLE - self.line_cycles
         } else {
             CYCLES_PER_SCANLINE - self.line_cycles
         }

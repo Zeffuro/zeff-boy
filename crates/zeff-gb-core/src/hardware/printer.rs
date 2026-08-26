@@ -1,11 +1,11 @@
 use crate::hardware::serial::SerialDevice;
+use crate::hardware::types::constants::GB_T_CYCLES_PER_SECOND;
 use anyhow::{Result, bail};
 
 const DEVICE_ID: u8 = 0x81;
 const BUFFER_CAPACITY: usize = 8 * 1024;
 const MAX_PACKET_PAYLOAD: usize = u16::MAX as usize;
 const MAX_SAVED_JOBS: usize = 1024;
-const DMG_CLOCK_HZ: u64 = 4_194_304;
 const PRINT_BANDS_PER_SECOND_NUMERATOR: u64 = 11;
 const PRINT_BANDS_PER_SECOND_DENOMINATOR: u64 = 10;
 
@@ -359,7 +359,7 @@ impl GameboyPrinter {
             .saturating_add(feed_after)
             .saturating_mul(copies.max(1));
         total_bands
-            .saturating_mul(DMG_CLOCK_HZ * PRINT_BANDS_PER_SECOND_DENOMINATOR)
+            .saturating_mul(GB_T_CYCLES_PER_SECOND * PRINT_BANDS_PER_SECOND_DENOMINATOR)
             .div_ceil(PRINT_BANDS_PER_SECOND_NUMERATOR)
     }
 

@@ -1,3 +1,5 @@
+use crate::hardware::timing::NesTiming;
+
 pub struct Dmc {
     pub enabled: bool,
     pub irq_enabled: bool,
@@ -19,24 +21,39 @@ pub struct Dmc {
     bits_remaining: u8,
     sample_buffer: Option<u8>,
     silence_flag: bool,
+    timing: NesTiming,
 }
 
 #[rustfmt::skip]
-static DMC_RATE_TABLE: [u16; 16] = [
+const NTSC_DMC_TIMER_PERIOD_CPU_CYCLES: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214,
     190, 160, 142, 128, 106, 84, 72, 54,
 ];
 
+#[rustfmt::skip]
+const PAL_DMC_TIMER_PERIOD_CPU_CYCLES: [u16; 16] = [
+    398, 354, 316, 298, 276, 236, 210, 198,
+    176, 148, 132, 118, 98, 78, 66, 50,
+];
+
 impl Dmc {
     pub fn new() -> Self {
+        Self::new_with_timing(NesTiming::Ntsc)
+    }
+
+    pub(crate) fn new_with_timing(timing: NesTiming) -> Self {
+        let timer_period = match timing {
+            NesTiming::Pal => PAL_DMC_TIMER_PERIOD_CPU_CYCLES[0],
+            NesTiming::Ntsc | NesTiming::Dendy => NTSC_DMC_TIMER_PERIOD_CPU_CYCLES[0],
+        };
         Self {
             enabled: false,
             irq_enabled: false,
             irq_flag: false,
             loop_flag: false,
             rate_index: 0,
-            timer_period: DMC_RATE_TABLE[0],
-            timer_counter: DMC_RATE_TABLE[0] - 1,
+            timer_period,
+            timer_counter: timer_period - 1,
             output_level: 0,
             sample_address: 0xC000,
             current_address: 0xC000,
@@ -46,6 +63,7 @@ impl Dmc {
             bits_remaining: 0,
             sample_buffer: None,
             silence_flag: true,
+            timing,
         }
     }
 
@@ -55,7 +73,11 @@ impl Dmc {
                 self.irq_enabled = val & 0x80 != 0;
                 self.loop_flag = val & 0x40 != 0;
                 self.rate_index = val & 0x0F;
-                self.timer_period = DMC_RATE_TABLE[self.rate_index as usize];
+                let periods = match self.timing {
+                    NesTiming::Pal => &PAL_DMC_TIMER_PERIOD_CPU_CYCLES,
+                    NesTiming::Ntsc | NesTiming::Dendy => &NTSC_DMC_TIMER_PERIOD_CPU_CYCLES,
+                };
+                self.timer_period = periods[self.rate_index as usize];
                 if !self.irq_enabled {
                     self.irq_flag = false;
                 }
@@ -214,5 +236,30 @@ mod tests {
         dmc.tick();
         assert_eq!(dmc.bits_remaining, 7);
         assert_eq!(dmc.timer_counter, 3);
+    }
+
+    #[test]
+    fn region_selects_dmc_timer_periods() {
+        let mut ntsc = Dmc::new_with_timing(NesTiming::Ntsc);
+        let mut pal = Dmc::new_with_timing(NesTiming::Pal);
+        let mut dendy = Dmc::new_with_timing(NesTiming::Dendy);
+
+        for index in 0..16 {
+            ntsc.write(0, index);
+            pal.write(0, index);
+            dendy.write(0, index);
+            assert_eq!(
+                ntsc.timer_period,
+                NTSC_DMC_TIMER_PERIOD_CPU_CYCLES[index as usize]
+            );
+            assert_eq!(
+                pal.timer_period,
+                PAL_DMC_TIMER_PERIOD_CPU_CYCLES[index as usize]
+            );
+            assert_eq!(
+                dendy.timer_period,
+                NTSC_DMC_TIMER_PERIOD_CPU_CYCLES[index as usize]
+            );
+        }
     }
 }
