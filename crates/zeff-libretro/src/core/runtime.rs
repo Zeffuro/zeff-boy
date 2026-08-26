@@ -149,4 +149,15 @@ impl CoreState {
     pub fn serialize_size(&self) -> usize {
         self.encode_state().map_or(0, |v| v.len())
     }
+
+    pub fn fixed_serialize_size(&self) -> Option<usize> {
+        match &self.core {
+            ActiveCore::Pce(host) => Some(host.max_encoded_state_bytes()),
+            ActiveCore::Gb(_)
+            | ActiveCore::Gba(_)
+            | ActiveCore::Nes(_)
+            | ActiveCore::Sega8(_)
+            | ActiveCore::Ws(_) => None,
+        }
+    }
 }

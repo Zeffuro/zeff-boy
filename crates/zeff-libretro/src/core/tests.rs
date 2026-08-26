@@ -589,6 +589,7 @@ fn libretro_registers_pce_hucards_with_fixed_host_geometry() {
     assert_eq!(state.video_geometry().base_height, 480);
     assert_eq!(state.video_geometry().max_width, 640);
     assert_eq!(state.video_geometry().max_height, 480);
+    assert_eq!(state.video_geometry().aspect_ratio, 4.0 / 3.0);
 }
 
 #[test]
@@ -676,6 +677,10 @@ fn pce_libretro_abi_serialization_roundtrips_above_four_mib() {
     let serialize_size = crate::serialization::retro_serialize_size();
     assert!(serialize_size > expected.len());
     let mut buffer = vec![0; serialize_size];
+    assert!(!crate::serialization::retro_serialize(
+        buffer.as_mut_ptr().cast(),
+        buffer.len() - 1
+    ));
     assert!(crate::serialization::retro_serialize(
         buffer.as_mut_ptr().cast(),
         buffer.len()
@@ -848,8 +853,13 @@ fn video_geometry_matches_registered_system_matrix() {
                 "unexpected maximum geometry for {}",
                 spec.code
             );
+            let expected_aspect = if spec.system == System::Pce {
+                4.0 / 3.0
+            } else {
+                0.0
+            };
             assert_eq!(
-                geometry.aspect_ratio, 0.0,
+                geometry.aspect_ratio, expected_aspect,
                 "unexpected aspect hint for {}",
                 spec.code
             );

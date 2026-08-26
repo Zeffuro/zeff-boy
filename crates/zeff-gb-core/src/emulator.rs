@@ -93,6 +93,20 @@ mod tests {
     }
 
     #[test]
+    fn cgb_hle_divider_uses_the_cartridge_header_boot_path() {
+        let mut rom = boot_test_rom(false);
+        rom[0x144..=0x145].copy_from_slice(b"ZZ");
+        rom[0x14B] = 0x33;
+
+        let emulator = Emulator::from_rom_data(&rom, HardwareModePreference::ForceCgb).unwrap();
+
+        assert_eq!(
+            emulator.cpu_peek8(crate::hardware::types::constants::TIMER_DIV),
+            0x26
+        );
+    }
+
+    #[test]
     fn boot_rom_overlay_unmaps_and_reset_reenables_it() {
         let rom = boot_test_rom(false);
         let mut boot_rom = vec![0; 0x100];

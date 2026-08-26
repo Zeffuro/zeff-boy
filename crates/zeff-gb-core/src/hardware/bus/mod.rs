@@ -112,7 +112,7 @@ impl Bus {
         self.io.timer.set_tima_raw(0x00);
         self.io.timer.set_tma_raw(0x00);
         self.io.timer.set_tac_raw(0x00);
-        self.io.timer.set_divider_counter_raw(0xABCC);
+        self.io.timer.set_hle_post_boot_divider_counter(0xABCC);
 
         self.io.apu.apply_dmg_post_boot_io();
 
@@ -128,6 +128,15 @@ impl Bus {
         self.io_bank[(PPU_DMA - IO_START) as usize] = 0xFF;
         self.if_reg = 0xE1;
         self.ie = 0x00;
+    }
+
+    pub(crate) fn apply_cgb_post_boot_timer_state(&mut self, divider_counter: u16) {
+        self.io.timer.set_tima_raw(0x00);
+        self.io.timer.set_tma_raw(0x00);
+        self.io.timer.set_tac_raw(0x00);
+        self.io
+            .timer
+            .set_hle_post_boot_divider_counter(divider_counter);
     }
 
     pub(crate) fn apply_boot_rom_power_on_state(&mut self) {

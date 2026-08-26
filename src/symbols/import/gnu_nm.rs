@@ -132,6 +132,19 @@ fn gba_rom_offset(address: u32) -> Option<u64> {
 }
 
 #[cfg(test)]
+pub(crate) fn generated_large_fixture(symbol_count: usize) -> Vec<u8> {
+    use std::fmt::Write as _;
+
+    let mut text = String::with_capacity(symbol_count * 36);
+    for index in 0..symbol_count {
+        let address = 0x0800_0000 + u32::try_from(index).unwrap() * 4;
+        let binding = if index & 1 == 0 { 'g' } else { 'l' };
+        writeln!(text, "{address:08X} {binding} 00000004 symbol_{index:05X}").unwrap();
+    }
+    text.into_bytes()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::symbols::{AddressSpaceId, ImageId, RegionId};
@@ -164,11 +177,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ZEFF_TEST_GNU_NM_SYM with a large GNU nm symbol file"]
-    fn imports_external_fixture_when_configured() {
-        let path = std::env::var("ZEFF_TEST_GNU_NM_SYM")
-            .expect("ZEFF_TEST_GNU_NM_SYM must name a GNU nm symbol file");
-        let data = std::fs::read(path).unwrap();
+    fn imports_large_generated_fixture() {
+        let data = generated_large_fixture(70_001);
         let module = GnuNmSymImporter.import(&data, &context()).unwrap();
         assert!(module.symbols.len() > 70_000);
         assert!(module.diagnostics.is_empty());

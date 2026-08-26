@@ -38,6 +38,61 @@ fn game_gear_boot_rom_maps_only_its_one_kib_image() {
 }
 
 #[test]
+fn sms_boot_rom_can_disable_itself_and_continue_in_cartridge_code() {
+    let mut rom = vec![0; 0x8000];
+    rom[4..10].copy_from_slice(&[
+        0x3E, 0xA5, // LD A,$A5
+        0x32, 0x00, 0xC0, // LD ($C000),A
+        0x76, // HALT
+    ]);
+    let mut boot_rom = vec![0; 0x2000];
+    boot_rom[..5].copy_from_slice(&[
+        0x3E, 0x08, // LD A,$08
+        0xD3, 0x3E, // OUT ($3E),A: disable the boot ROM
+        0x00, // the next fetch comes from cartridge address $0004
+    ]);
+    let config = Sega8LoadConfig::new(48_000).with_system_hint(SystemHint::MasterSystem);
+    let mut emu = Emulator::new_with_config_and_boot_rom(&rom, config, &boot_rom).unwrap();
+
+    for _ in 0..4 {
+        emu.step_instruction();
+    }
+
+    assert!(!emu.bus().boot_rom_enabled());
+    assert_eq!(emu.bus().cpu_read(0xC000), 0xA5);
+}
+
+#[test]
+fn game_gear_boot_rom_can_disable_itself_and_continue_in_cartridge_code() {
+    let mut rom = vec![0; 0x8000];
+    rom[4..10].copy_from_slice(&[
+        0x3E, 0xA5, // LD A,$A5
+        0x32, 0x00, 0xC0, // LD ($C000),A
+        0x76, // HALT
+    ]);
+    let mut boot_rom = vec![0; 0x400];
+    boot_rom[..5].copy_from_slice(&[
+        0x3E, 0x08, // LD A,$08
+        0xD3, 0x3E, // OUT ($3E),A: disable the boot ROM
+        0x00, // the next fetch comes from cartridge address $0004
+    ]);
+    let config = Sega8LoadConfig::new(48_000).with_system_hint(SystemHint::GameGear);
+    let mut emu = Emulator::new_with_config_and_boot_rom(&rom, config, &boot_rom).unwrap();
+
+    emu.step_instruction();
+    emu.step_instruction();
+
+    assert!(!emu.bus().boot_rom_enabled());
+    assert_eq!(emu.cpu().regs().pc, 0x0004);
+    assert_eq!(emu.bus().cpu_read(0x0004), 0x3E);
+
+    emu.step_instruction();
+    emu.step_instruction();
+
+    assert_eq!(emu.bus().cpu_read(0xC000), 0xA5);
+}
+
+#[test]
 fn post_boot_sega8_state_does_not_require_boot_rom() {
     let rom = vec![0; 0x8000];
     let boot_rom = vec![0; 0x2000];

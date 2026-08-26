@@ -8,6 +8,7 @@ const TILE_SIZE: usize = 8;
 const WSC_PALETTE_BYTES: usize = 0xFE00;
 const BG_COLOR_INDEX: u8 = 64;
 const DEFAULT_MONO_LUMA: [u8; 8] = [0xF0, 0xD0, 0xA8, 0x80, 0x60, 0x40, 0x28, 0x18];
+const MAX_SPRITES_PER_SCANLINE: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct Ppu {
@@ -272,8 +273,8 @@ fn render_scanline(
         return;
     }
 
-    let color_palette = (mode.color_vdp && mode.color_mode)
-        .then(|| std::array::from_fn(|pen| color_for_pen_uncached(ram, io, mode, pen as u8)));
+    let color_palette =
+        (mode.color_vdp && mode.color_mode).then(|| build_wsc_color_palette(ram, io, mode));
     let context = RenderContext {
         ram,
         io,
@@ -286,14 +287,29 @@ fn render_scanline(
     if display_control & 0x01 != 0 {
         render_background(framebuffer, y, context);
     }
+    let sprite_selection_end = sprite_selection_end(sprite_cache, y);
     if display_control & 0x04 != 0 {
-        render_sprites(framebuffer, y, context, sprite_cache, false);
+        render_sprites(
+            framebuffer,
+            y,
+            context,
+            sprite_cache,
+            sprite_selection_end,
+            false,
+        );
     }
     if display_control & 0x02 != 0 {
         render_foreground(framebuffer, y, context);
     }
     if display_control & 0x04 != 0 {
-        render_sprites(framebuffer, y, context, sprite_cache, true);
+        render_sprites(
+            framebuffer,
+            y,
+            context,
+            sprite_cache,
+            sprite_selection_end,
+            true,
+        );
     }
 }
 
@@ -402,17 +418,17 @@ fn render_sprites(
     y: usize,
     context: RenderContext<'_>,
     sprite_cache: &SpriteCache,
+    sprite_selection_end: usize,
     front_priority: bool,
 ) {
     let RenderContext { ram, io, mode, .. } = context;
     let first = usize::from(sprite_cache.start);
-    let count = usize::from(sprite_cache.count);
-    if count == 0 {
+    if first >= sprite_selection_end {
         return;
     }
     let window_enabled = io.first().copied().unwrap_or(0) & 0x08 != 0;
 
-    for sprite in (first..first.saturating_add(count)).rev() {
+    for sprite in (first..sprite_selection_end).rev() {
         let entry = sprite * 4;
         if entry + 3 >= sprite_cache.table.len() {
             continue;
@@ -432,8 +448,8 @@ fn render_sprites(
             tile_line = 7 - tile_line;
         }
 
-        let clips_inside_window = tile_data & 0x1000 != 0;
-        if window_enabled && !sprite_line_visible(y, io, clips_inside_window) {
+        let draw_outside_window = tile_data & 0x1000 != 0;
+        if window_enabled && !sprite_line_visible(y, io, draw_outside_window) {
             continue;
         }
 
@@ -445,12 +461,34 @@ fn render_sprites(
             if x_offset >= SCREEN_WIDTH {
                 continue;
             }
-            if window_enabled && !sprite_pixel_visible(x_offset, io, clips_inside_window) {
+            if window_enabled && !sprite_pixel_visible(x_offset, io, draw_outside_window) {
                 continue;
             }
             draw_pixel(framebuffer, y, x_offset, context, tile_palette, pixel.value);
         }
     }
+}
+
+fn sprite_selection_end(sprite_cache: &SpriteCache, y: usize) -> usize {
+    let first = usize::from(sprite_cache.start);
+    let configured_end = first
+        .saturating_add(usize::from(sprite_cache.count))
+        .min(sprite_cache.table.len() / 4);
+    let mut selected = 0;
+
+    for sprite in first..configured_end {
+        let entry = sprite * 4;
+        let sprite_y = usize::from(sprite_cache.table[entry + 2]);
+        let tile_line = y.wrapping_sub(sprite_y) & 0xFF;
+        if tile_line < TILE_SIZE {
+            selected += 1;
+            if selected == MAX_SPRITES_PER_SCANLINE {
+                return sprite + 1;
+            }
+        }
+    }
+
+    configured_end
 }
 
 fn tile_pixels(
@@ -608,6 +646,16 @@ fn color_for_pen(
     color_for_pen_uncached(ram, io, mode, pen)
 }
 
+fn build_wsc_color_palette(ram: &[u8], io: &[u8], mode: VideoMode) -> [[u8; 4]; 256] {
+    let Some(palette_ram) = ram.get(WSC_PALETTE_BYTES..WSC_PALETTE_BYTES + 512) else {
+        return std::array::from_fn(|pen| color_for_pen_uncached(ram, io, mode, pen as u8));
+    };
+    std::array::from_fn(|pen| {
+        let offset = pen * 2;
+        rgb444(u16::from_le_bytes([palette_ram[offset], palette_ram[offset + 1]]) & 0x0FFF)
+    })
+}
+
 fn color_for_pen_uncached(ram: &[u8], io: &[u8], mode: VideoMode, pen: u8) -> [u8; 4] {
     if mode.color_vdp && mode.color_mode {
         let color = vram_word_by_byte(ram, mode, WSC_PALETTE_BYTES + usize::from(pen) * 2) & 0x0FFF;
@@ -691,21 +739,18 @@ fn window_contains_x(window: WindowMode, x: usize, io: &[u8]) -> bool {
     }
 }
 
-fn sprite_line_visible(y: usize, io: &[u8], clips_inside_window: bool) -> bool {
+fn sprite_line_visible(y: usize, io: &[u8], draw_outside_window: bool) -> bool {
     let top = usize::from(io.get(0x0D).copied().unwrap_or(0));
     let bottom = usize::from(io.get(0x0F).copied().unwrap_or(0));
-    if clips_inside_window {
-        true
-    } else {
-        y >= top && y <= bottom
-    }
+    let inside = y >= top && y <= bottom;
+    if draw_outside_window { !inside } else { inside }
 }
 
-fn sprite_pixel_visible(x: usize, io: &[u8], clips_inside_window: bool) -> bool {
+fn sprite_pixel_visible(x: usize, io: &[u8], draw_outside_window: bool) -> bool {
     let left = usize::from(io.get(0x0C).copied().unwrap_or(0));
     let right = usize::from(io.get(0x0E).copied().unwrap_or(0));
     let inside = x >= left && x <= right;
-    if clips_inside_window { !inside } else { inside }
+    if draw_outside_window { !inside } else { inside }
 }
 
 fn vram_word(ram: &[u8], mode: VideoMode, word_index: usize) -> u16 {
@@ -889,6 +934,86 @@ mod tests {
         let ppu = Ppu::new();
         assert_eq!(ppu.dimensions(), (SCREEN_WIDTH, SCREEN_HEIGHT));
         assert_eq!(ppu.framebuffer().len(), FRAMEBUFFER_LEN);
+    }
+
+    #[test]
+    fn fast_wsc_palette_matches_individual_pen_lookup() {
+        let mut ram = vec![0; 0x10000];
+        let mut value = 0xA5A5_5A5A_u32;
+        for byte in &mut ram[WSC_PALETTE_BYTES..WSC_PALETTE_BYTES + 512] {
+            value = value.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *byte = (value >> 24) as u8;
+        }
+        let io = default_io();
+        let mode = VideoMode {
+            color_vdp: true,
+            color_mode: true,
+            colors_16: true,
+            packed_tiles: false,
+        };
+
+        let actual = build_wsc_color_palette(&ram, &io, mode);
+        let expected =
+            std::array::from_fn(|pen| color_for_pen_uncached(&ram, &io, mode, pen as u8));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn sprite_window_clips_inside_and_outside_sprites_on_inclusive_boundaries() {
+        let mut io = default_io();
+        io[0x0C] = 10;
+        io[0x0D] = 30;
+        io[0x0E] = 20;
+        io[0x0F] = 40;
+
+        for (x, inside) in [(10, true), (20, true), (9, false), (21, false)] {
+            assert_eq!(sprite_pixel_visible(x, &io, false), inside);
+            assert_eq!(sprite_pixel_visible(x, &io, true), !inside);
+        }
+        for (y, inside) in [(30, true), (40, true), (29, false), (41, false)] {
+            assert_eq!(sprite_line_visible(y, &io, false), inside);
+            assert_eq!(sprite_line_visible(y, &io, true), !inside);
+        }
+    }
+
+    #[test]
+    fn scanline_sprite_limit_counts_offscreen_and_window_clipped_entries() {
+        let mut ram = vec![0; 0x10000];
+        solid_2bpp_tile(&mut ram, 0);
+        for index in 0..16 {
+            write_sprite(&mut ram, index, 0, 0x00, 0, 240);
+        }
+        for index in 16..32 {
+            write_sprite(&mut ram, index, 0, 0x10, 0, 0);
+        }
+        write_sprite(&mut ram, 32, 0, 0x00, 0, 0);
+
+        let mut hidden_io = sprite_io();
+        hidden_io[0x00] |= 0x08;
+        hidden_io[0x06] = 32;
+        hidden_io[0x0C] = 0;
+        hidden_io[0x0D] = 0;
+        hidden_io[0x0E] = 223;
+        hidden_io[0x0F] = 143;
+        let mut hidden = Ppu::new();
+        hidden.render_frame(&ram, &hidden_io);
+
+        let mut over_limit_io = hidden_io.clone();
+        over_limit_io[0x06] = 33;
+        let mut over_limit = Ppu::new();
+        over_limit.render_frame(&ram, &over_limit_io);
+        assert_eq!(
+            frame_pixel(over_limit.framebuffer(), 0, 0),
+            frame_pixel(hidden.framebuffer(), 0, 0)
+        );
+
+        write_sprite(&mut ram, 31, 0, 0x00, 0, 0);
+        let mut visible = Ppu::new();
+        visible.render_frame(&ram, &hidden_io);
+        assert_ne!(
+            frame_pixel(visible.framebuffer(), 0, 0),
+            frame_pixel(hidden.framebuffer(), 0, 0)
+        );
     }
 
     #[test]

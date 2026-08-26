@@ -546,12 +546,19 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ZEFF_TEST_WLA_SYM with a large WLA-DX symbol file"]
-    fn imports_external_wla_fixture_when_configured() {
-        let path = std::env::var("ZEFF_TEST_WLA_SYM")
-            .expect("ZEFF_TEST_WLA_SYM must name a WLA-DX symbol file");
-        let data = std::fs::read(path).unwrap();
-        let module = WlaSymImporter.import(&data, &context(System::Sms)).unwrap();
+    fn imports_large_generated_wla_fixture() {
+        use std::fmt::Write as _;
+
+        let mut data = String::with_capacity(32_000);
+        data.push_str("[information]\nversion 3\nwlasymbol true\n[labels]\n");
+        for index in 0..1_001 {
+            let bank = index % 0x100;
+            let address = 0x8000 + index % 0x4000;
+            writeln!(data, "{bank:02X}:{address:04X} symbol_{index:04X}").unwrap();
+        }
+        let module = WlaSymImporter
+            .import(data.as_bytes(), &context(System::Sms))
+            .unwrap();
         assert!(module.symbols.len() > 1_000);
         assert!(module.diagnostics.is_empty());
     }

@@ -279,37 +279,6 @@ struct TextBgParams {
     use_mosaic: bool,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{TextBgParams, TextTileEntryCache};
-
-    #[test]
-    fn cached_tile_rows_match_per_pixel_lookup() {
-        let mut vram = vec![0; 0x1_8000];
-        for (i, byte) in vram.iter_mut().enumerate() {
-            *byte = (i as u8).wrapping_mul(37).wrapping_add((i >> 8) as u8);
-        }
-        let io = [0; 0x60];
-
-        for size in 0..4 {
-            for color_256 in [false, true] {
-                let control = (size << 14) | (0x1A << 8) | if color_256 { 1 << 7 } else { 0 };
-                let params = TextBgParams::new(control, &io, 0);
-                let mut cache = TextTileEntryCache::default();
-                for y in 0..params.height {
-                    for x in 0..params.width {
-                        assert_eq!(
-                            params.color_index_cached(&vram, x, y, &mut cache),
-                            params.color_index(&vram, x, y),
-                            "size={size} color_256={color_256} x={x} y={y}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
 impl TextBgParams {
     fn new(control: u16, io: &[u8], bg: usize) -> Self {
         let size = (control >> 14) & 0x3;
@@ -385,6 +354,37 @@ impl TextBgParams {
                 None
             } else {
                 Some((palette_bank * 16 + usize::from(nibble)) as u16)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TextBgParams, TextTileEntryCache};
+
+    #[test]
+    fn cached_tile_rows_match_per_pixel_lookup() {
+        let mut vram = vec![0; 0x1_8000];
+        for (i, byte) in vram.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(37).wrapping_add((i >> 8) as u8);
+        }
+        let io = [0; 0x60];
+
+        for size in 0..4 {
+            for color_256 in [false, true] {
+                let control = (size << 14) | (0x1A << 8) | if color_256 { 1 << 7 } else { 0 };
+                let params = TextBgParams::new(control, &io, 0);
+                let mut cache = TextTileEntryCache::default();
+                for y in 0..params.height {
+                    for x in 0..params.width {
+                        assert_eq!(
+                            params.color_index_cached(&vram, x, y, &mut cache),
+                            params.color_index(&vram, x, y),
+                            "size={size} color_256={color_256} x={x} y={y}"
+                        );
+                    }
+                }
             }
         }
     }

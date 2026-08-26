@@ -44,6 +44,23 @@ fn raw_divider_counter_preserves_the_sub_byte_phase() {
 }
 
 #[test]
+fn hle_post_boot_counter_translates_the_cpu_handoff_phase() {
+    let mut t = make_timer();
+    t.set_hle_post_boot_divider_counter(0xABCC);
+    assert_eq!(t.div(), 0xAB);
+
+    t.step(0x38);
+    assert_eq!(t.div(), 0xAC);
+
+    let mut t = make_timer();
+    t.set_hle_post_boot_divider_counter(0x2678);
+    assert_eq!(t.div(), 0x26);
+
+    t.step(0x8C);
+    assert_eq!(t.div(), 0x27);
+}
+
+#[test]
 fn tima_does_not_increment_when_disabled() {
     let mut t = make_timer();
     t.reset_div();

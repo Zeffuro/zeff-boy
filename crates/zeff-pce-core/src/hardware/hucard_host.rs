@@ -29,6 +29,9 @@ pub struct PceHuCardHost {
 }
 
 impl PceHuCardHost {
+    /// Largest host-state payload accepted by `load_state`.
+    pub const MAX_ENCODED_STATE_BYTES: usize = MAX_CORE_STATE_BYTES + 24;
+
     pub fn new(hucard_image: Vec<u8>, sample_rate: u32) -> anyhow::Result<Self> {
         let normalized = normalize_hucard_image(hucard_image)?;
         let image_sha256: [u8; 32] = Sha256::digest(&normalized).into();
@@ -154,6 +157,10 @@ impl PceHuCardHost {
 
     pub const fn frame_count(&self) -> u64 {
         self.frame_count
+    }
+
+    pub const fn max_encoded_state_bytes(&self) -> usize {
+        Self::MAX_ENCODED_STATE_BYTES
     }
 
     pub fn take_runtime_fault(&mut self) -> Option<String> {

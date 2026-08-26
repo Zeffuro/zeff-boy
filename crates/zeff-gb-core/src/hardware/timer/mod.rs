@@ -193,6 +193,10 @@ impl Timer {
         self.div_apu_secondary_events = 0;
     }
 
+    pub(super) fn set_hle_post_boot_divider_counter(&mut self, value: u16) {
+        self.set_divider_counter_raw(value.wrapping_sub(4));
+    }
+
     fn increment_tima(&mut self) -> bool {
         let (new_tima, overflow) = self.tima.overflowing_add(1);
         if overflow {

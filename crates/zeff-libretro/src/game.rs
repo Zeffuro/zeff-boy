@@ -59,6 +59,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
                 let input_descriptor_config = state.input_descriptor_config();
                 let system_label = state.system_label();
                 let geometry = state.video_geometry();
+                let fixed_serialize_size = state.fixed_serialize_size();
                 retro_log_info(&format!(
                     "retro_load_game OK: {}x{} @ {:.2} Hz, sample_rate={}, sram_size={}, system={}",
                     geometry.base_width,
@@ -80,7 +81,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
                 }
                 *lock(&CORE) = Some(state);
                 *lock(&FRAME_COUNTER) = 0;
-                *lock(&MAX_SERIALIZE_SIZE) = 0;
+                *lock(&MAX_SERIALIZE_SIZE) = fixed_serialize_size.unwrap_or(0);
 
                 crate::input::set_input_descriptors(input_descriptor_config);
 

@@ -259,7 +259,18 @@ fn disk_scan_streams_side_bytes_and_raises_transfer_irq() {
 
     assert!(fds.irq_pending());
     assert_eq!(fds.cpu_read(0x4030) & 0x80, 0x80);
+    assert!(
+        fds.irq_pending(),
+        "$4030 acknowledges timer IRQs but must leave the byte-transfer IRQ pending"
+    );
+    assert_eq!(
+        fds.cpu_read(0x4030) & 0x80,
+        0x80,
+        "$4030 status reads must not clear the byte-transfer flag"
+    );
+    assert_eq!(fds.cpu_read(0x4031), 0x01);
     assert!(!fds.irq_pending());
+    assert_eq!(fds.cpu_read(0x4030) & 0x80, 0x00);
 
     clock_until_next_disk_byte(&mut fds);
     assert!(fds.irq_pending());

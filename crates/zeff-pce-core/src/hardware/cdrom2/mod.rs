@@ -154,6 +154,16 @@ pub struct CdAudioDebugSnapshot {
     pub fade_ticks_to_next: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CdAdpcmDebugSnapshot {
+    pub address_latch: u16,
+    pub read_address: u16,
+    pub write_address: u16,
+    pub remaining_length: u32,
+    pub playback_rate: u8,
+    pub playing: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CdRom2DebugSnapshot {
     pub phase: CdScsiPhase,
@@ -553,6 +563,18 @@ impl CdRom2 {
             fade_level_q16: self.audio_fade_level_q16,
             fade_step_ticks: self.audio_fade_step_ticks,
             fade_ticks_to_next: self.audio_fade_ticks_to_next,
+        }
+    }
+
+    #[inline]
+    pub const fn adpcm_debug_snapshot(&self) -> CdAdpcmDebugSnapshot {
+        CdAdpcmDebugSnapshot {
+            address_latch: self.adpcm_address_latch,
+            read_address: self.adpcm_read_address,
+            write_address: self.adpcm_write_address,
+            remaining_length: self.adpcm_length,
+            playback_rate: self.adpcm_playback_rate,
+            playing: self.adpcm_playing,
         }
     }
 

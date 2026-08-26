@@ -415,11 +415,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ZEFF_TEST_GNU_NM_SYM with a large GNU nm symbol file"]
-    fn indexes_external_gnu_nm_symbols_when_configured() {
-        let path = std::env::var("ZEFF_TEST_GNU_NM_SYM")
-            .expect("ZEFF_TEST_GNU_NM_SYM must name a GNU nm symbol file");
-        let data = std::fs::read(path).unwrap();
+    fn indexes_large_generated_gnu_nm_symbols() {
+        let data = crate::symbols::import::gnu_nm::generated_large_fixture(70_001);
         let module = import_symbols(
             "game.sym",
             &data,
@@ -437,10 +434,7 @@ mod tests {
         let started = std::time::Instant::now();
         let mut store = SymbolStore::default();
         store.extend(module.symbols);
-        eprintln!(
-            "external GNU nm index: {} ms",
-            started.elapsed().as_millis()
-        );
+        eprintln!("large GNU nm index: {} ms", started.elapsed().as_millis());
         assert!(store.len() > 70_000);
     }
 

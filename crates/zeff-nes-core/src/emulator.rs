@@ -1,5 +1,5 @@
 use crate::hardware::bus::Bus;
-use crate::hardware::cartridge::Cartridge;
+use crate::hardware::cartridge::{Cartridge, TimingMode};
 use crate::hardware::cpu::Cpu;
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -56,6 +56,15 @@ impl Emulator {
         rom_crc32: u32,
         sample_rate: f64,
     ) -> anyhow::Result<Self> {
+        match cartridge.header().timing {
+            TimingMode::Pal => anyhow::bail!(
+                "NES PAL timing is not supported yet; this core currently emulates NTSC timing only"
+            ),
+            TimingMode::Dendy => anyhow::bail!(
+                "NES Dendy timing is not supported yet; this core currently emulates NTSC timing only"
+            ),
+            TimingMode::Ntsc | TimingMode::MultiRegion => {}
+        }
         let bus = Bus::new(cartridge, sample_rate);
 
         let mut emu = Self {

@@ -5,6 +5,7 @@ use super::constants::ROM_BANK_SIZE;
 
 const FOOTER_SIZE: usize = 10;
 const DEFAULT_OPEN_BUS: u8 = 0xFF;
+const LINEAR_WINDOW_BANKS: usize = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MinimumSystem {
@@ -180,6 +181,7 @@ pub struct Cartridge {
     bank1: u16,
     ram_bank: u8,
     linear_bank: u8,
+    linear_bank_offsets: [usize; LINEAR_WINDOW_BANKS],
 }
 
 impl Cartridge {
@@ -194,6 +196,7 @@ impl Cartridge {
             bank1: 0,
             ram_bank: 0,
             linear_bank: 0,
+            linear_bank_offsets: [0; LINEAR_WINDOW_BANKS],
         };
         cart.reset_banks();
         Ok(cart)
@@ -247,6 +250,7 @@ impl Cartridge {
         self.bank1 = 0xFF;
         self.ram_bank = 0;
         self.linear_bank = self.last_linear_bank();
+        self.rebuild_linear_bank_offsets();
     }
 
     pub fn set_bank0(&mut self, value: u8) {
@@ -259,6 +263,7 @@ impl Cartridge {
 
     pub fn set_linear_bank(&mut self, value: u8) {
         self.linear_bank = value & 0x0F;
+        self.rebuild_linear_bank_offsets();
     }
 
     pub fn set_ram_bank(&mut self, value: u8) {
@@ -393,11 +398,17 @@ impl Cartridge {
     }
 
     fn linear_rom_offset(&self, offset: usize) -> usize {
+        self.linear_bank_offsets[offset / ROM_BANK_SIZE] + (offset & (ROM_BANK_SIZE - 1))
+    }
+
+    fn rebuild_linear_bank_offsets(&mut self) {
         let banks = self.rom_bank_count().max(1);
-        let physical_bank = 4 + (offset / ROM_BANK_SIZE);
-        let selected_bank =
-            (((usize::from(self.linear_bank) & 0x0F) << 4) | (physical_bank & 0x0F)) % banks;
-        selected_bank * ROM_BANK_SIZE + (offset & (ROM_BANK_SIZE - 1))
+        self.linear_bank_offsets = std::array::from_fn(|window| {
+            let physical_bank = 4 + window;
+            let selected_bank =
+                (((usize::from(self.linear_bank) & 0x0F) << 4) | physical_bank) % banks;
+            selected_bank * ROM_BANK_SIZE
+        });
     }
 
     fn save_read8(&self, offset: usize) -> u8 {
@@ -584,6 +595,44 @@ mod tests {
         cart.set_linear_bank(0x0E);
 
         assert_eq!(cart.rom_read8(0x8_D000), 0x42);
+    }
+
+    #[test]
+    fn cached_linear_offsets_match_original_mapping_formula() {
+        fn original_offset(rom_len: usize, linear_bank: u8, offset: usize) -> usize {
+            let banks = rom_len.div_ceil(ROM_BANK_SIZE).max(1);
+            let physical_bank = 4 + (offset / ROM_BANK_SIZE);
+            let selected_bank =
+                (((usize::from(linear_bank) & 0x0F) << 4) | (physical_bank & 0x0F)) % banks;
+            selected_bank * ROM_BANK_SIZE + (offset & (ROM_BANK_SIZE - 1))
+        }
+
+        for size in [
+            ROM_BANK_SIZE,
+            2 * ROM_BANK_SIZE,
+            3 * ROM_BANK_SIZE,
+            3 * ROM_BANK_SIZE + 123,
+            48 * ROM_BANK_SIZE,
+            64 * ROM_BANK_SIZE,
+            96 * ROM_BANK_SIZE,
+        ] {
+            let mut cart = Cartridge::load(&sized_test_rom(size)).unwrap();
+            for linear_bank in 0..=0x0F {
+                cart.set_linear_bank(linear_bank);
+                for window in 0..LINEAR_WINDOW_BANKS {
+                    for within_bank in [0, 1, ROM_BANK_SIZE / 2, ROM_BANK_SIZE - 1] {
+                        let offset = window * ROM_BANK_SIZE + within_bank;
+                        let expected = original_offset(size, linear_bank, offset);
+                        assert_eq!(cart.linear_rom_offset(offset), expected);
+                        assert_eq!(
+                            cart.rom_offset_for_address(0x40000 + offset as u32),
+                            (expected < size).then_some(expected),
+                            "size={size:#X} bank={linear_bank:#X} offset={offset:#X}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

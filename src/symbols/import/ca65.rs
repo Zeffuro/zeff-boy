@@ -154,12 +154,20 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ZEFF_TEST_CA65_DBG with a large ca65 debug file"]
-    fn imports_external_debug_fixture_when_configured() {
-        let path = std::env::var("ZEFF_TEST_CA65_DBG")
-            .expect("ZEFF_TEST_CA65_DBG must name a ca65 debug file");
-        let data = std::fs::read(path).unwrap();
-        let module = Ca65DbgImporter.import(&data, &context()).unwrap();
+    fn imports_large_generated_debug_fixture() {
+        use std::fmt::Write as _;
+
+        let mut data = String::with_capacity(80_000);
+        data.push_str("version\tmajor=2,minor=0\n");
+        for index in 0..1_001 {
+            writeln!(
+                data,
+                "sym\tid={index},name=\"symbol_{index:04X}\",size=1,val=0x{:04X},type=lab",
+                0x8000 + index
+            )
+            .unwrap();
+        }
+        let module = Ca65DbgImporter.import(data.as_bytes(), &context()).unwrap();
         assert!(module.symbols.len() > 1_000);
     }
 }

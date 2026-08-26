@@ -1110,6 +1110,29 @@ fn adpcm_playback_length_drives_half_end_status_and_live_irq2() {
 }
 
 #[test]
+fn adpcm_debug_snapshot_reports_playback_position_and_remaining_length() {
+    let mut cd = CdRom2::new(disc());
+    cd.write_physical(CDROM2_REGISTER_START + 8, 2);
+    cd.write_physical(CDROM2_REGISTER_START + 9, 0);
+    cd.write_physical(CDROM2_REGISTER_START + 13, 0x1C);
+    cd.write_physical(CDROM2_REGISTER_START + 13, 0x2C);
+
+    let started = cd.adpcm_debug_snapshot();
+    assert_eq!(started.address_latch, 2);
+    assert_eq!(started.read_address, 2);
+    assert_eq!(started.write_address, 0);
+    assert_eq!(started.remaining_length, 2);
+    assert_eq!(started.playback_rate, 0x0F);
+    assert!(started.playing);
+
+    cd.advance_master_ticks(1_343);
+    let progressed = cd.adpcm_debug_snapshot();
+    assert_eq!(progressed.read_address, 3);
+    assert_eq!(progressed.remaining_length, 1);
+    assert!(progressed.playing);
+}
+
+#[test]
 fn request_sense_zero_allocation_still_returns_fixed_record() {
     let mut cd = CdRom2::new(disc());
     select(&mut cd);

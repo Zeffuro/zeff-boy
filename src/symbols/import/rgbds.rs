@@ -214,12 +214,18 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ZEFF_TEST_RGBDS_SYM with a large RGBDS symbol file"]
-    fn imports_external_fixture_when_configured() {
-        let path = std::env::var("ZEFF_TEST_RGBDS_SYM")
-            .expect("ZEFF_TEST_RGBDS_SYM must name an RGBDS symbol file");
-        let data = std::fs::read(path).unwrap();
-        let module = RgbdsSymImporter.import(&data, &context()).unwrap();
+    fn imports_large_generated_fixture() {
+        use std::fmt::Write as _;
+
+        let mut data = String::with_capacity(320_000);
+        for index in 0..10_001 {
+            let bank = index % 0xFF + 1;
+            let address = 0x4000 + index % 0x4000;
+            writeln!(data, "{bank:02X}:{address:04X} symbol_{index:04X}").unwrap();
+        }
+        let module = RgbdsSymImporter
+            .import(data.as_bytes(), &context())
+            .unwrap();
         assert!(module.symbols.len() > 10_000);
         assert!(module.diagnostics.is_empty());
     }

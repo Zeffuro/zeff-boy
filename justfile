@@ -23,6 +23,15 @@ build-release:
 build-libretro:
     cargo build --release -p zeff-libretro
 
+# Smoke the public C ABI with a synthetic HuCard in both pixel formats.
+smoke-libretro-abi: build-libretro
+    cargo run -p zeff-libretro --bin abi_smoke -- --pixel-format xrgb8888
+    cargo run -p zeff-libretro --bin abi_smoke -- --pixel-format rgb565
+
+# Fixed-frame ABI comparison; input is `frame:port:joypad-mask`.
+libretro-harness core rom warmup="120" frames="600" format="xrgb8888" repeat="1":
+    cargo run -p zeff-libretro --bin libretro_harness -- "{{core}}" "{{rom}}" --warmup {{warmup}} --frames {{frames}} --pixel-format {{format}} --repeat {{repeat}}
+
 # Install the libretro core into RetroArch (Windows)
 # Usage: just install-libretro "/path/to/RetroArch"
 [windows]
@@ -312,6 +321,11 @@ flamegraph-cores core="all" frames="3000":
 [windows]
 build-pgo frames="1200":
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-pgo.ps1 -Frames {{frames}}
+
+# List the deterministic local PGO corpus without compiling or training.
+[windows]
+pgo-corpus:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-pgo.ps1 -ListGameplayCorpus
 
 # Run one core's Criterion suite: gb, gba, nes, pce, sega8, or ws
 bench core:

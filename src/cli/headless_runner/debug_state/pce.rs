@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::cli::types::HeadlessOptions;
 use crate::emu_backend::PceBackend;
 use crate::emu_core_trait::EmulatorCore;
-use zeff_pce_core::hardware::{CdDisc, VdcDebugSnapshot};
+use zeff_pce_core::hardware::{CdAdpcmDebugSnapshot, CdDisc, VdcDebugSnapshot};
 
 use super::super::{InputMasks, StuckReport, framebuffer_fingerprint};
 use super::{input_json, input_schedule_json, screenshot_json, stuck_report_json};
@@ -54,6 +54,7 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
     });
     let cd = request.backend.cdrom2().map(|cdrom| {
         let audio = cdrom.audio_debug_snapshot();
+        let adpcm = cdrom.adpcm_debug_snapshot();
         let commands = cdrom
             .command_trace()
             .iter()
@@ -88,6 +89,7 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
                 "step_ticks": audio.fade_step_ticks,
                 "ticks_to_next": audio.fade_ticks_to_next,
             },
+            "adpcm": adpcm_debug_json(adpcm),
             "command_count": commands.len(),
             "commands": commands,
             "bram_unlocked": cdrom.bram_unlocked(),
@@ -172,6 +174,20 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
         "input_schedule": input_schedule_json(request.opts),
         "stuck": stuck_report_json(request.stuck),
         "screenshot": screenshot_json(request.screenshot),
+    })
+}
+
+fn adpcm_debug_json(adpcm: CdAdpcmDebugSnapshot) -> serde_json::Value {
+    serde_json::json!({
+        "address_latch": adpcm.address_latch,
+        "address_latch_hex": format!("{:04X}", adpcm.address_latch),
+        "address": adpcm.read_address,
+        "address_hex": format!("{:04X}", adpcm.read_address),
+        "write_address": adpcm.write_address,
+        "write_address_hex": format!("{:04X}", adpcm.write_address),
+        "remaining_length": adpcm.remaining_length,
+        "playback_rate": adpcm.playback_rate,
+        "playing": adpcm.playing,
     })
 }
 
@@ -280,5 +296,24 @@ mod tests {
         assert_eq!(tracks[0]["index1_lba"], 1);
         assert_eq!(tracks[0]["frames"], 2);
         assert_eq!(tracks[0]["payload_sha256"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn adpcm_debug_json_reports_compact_playback_progress() {
+        let value = adpcm_debug_json(CdAdpcmDebugSnapshot {
+            address_latch: 0x1234,
+            read_address: 0x1235,
+            write_address: 0x5678,
+            remaining_length: 0x4321,
+            playback_rate: 0x0F,
+            playing: true,
+        });
+
+        assert_eq!(value["address_latch_hex"], "1234");
+        assert_eq!(value["address"], 0x1235);
+        assert_eq!(value["write_address_hex"], "5678");
+        assert_eq!(value["remaining_length"], 0x4321);
+        assert_eq!(value["playback_rate"], 0x0F);
+        assert_eq!(value["playing"], true);
     }
 }

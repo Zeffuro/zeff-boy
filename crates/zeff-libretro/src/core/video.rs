@@ -29,11 +29,16 @@ impl CoreState {
         } else {
             (256, 240)
         };
-        Self::video_geometry_for_size(base_width, base_height, max_width, max_height)
+        let aspect_ratio = if matches!(self.core, ActiveCore::Pce(_)) {
+            4.0 / 3.0
+        } else {
+            0.0
+        };
+        Self::video_geometry_for_size(base_width, base_height, max_width, max_height, aspect_ratio)
     }
 
     pub(crate) fn default_video_geometry() -> retro_game_geometry {
-        Self::video_geometry_for_size(160, 144, 256, 240)
+        Self::video_geometry_for_size(160, 144, 256, 240, 0.0)
     }
 
     fn video_geometry_for_size(
@@ -41,13 +46,14 @@ impl CoreState {
         base_height: u32,
         max_width: u32,
         max_height: u32,
+        aspect_ratio: f32,
     ) -> retro_game_geometry {
         retro_game_geometry {
             base_width,
             base_height,
             max_width,
             max_height,
-            aspect_ratio: 0.0,
+            aspect_ratio,
         }
     }
 

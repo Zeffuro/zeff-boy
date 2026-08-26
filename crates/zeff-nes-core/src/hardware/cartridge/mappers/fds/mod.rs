@@ -615,7 +615,6 @@ impl Mapper for Fds {
             0x4030 => {
                 let val = self.disk_status();
                 self.irq_pending = false;
-                self.acknowledge_disk_transfer();
                 val
             }
             0x4031 => {

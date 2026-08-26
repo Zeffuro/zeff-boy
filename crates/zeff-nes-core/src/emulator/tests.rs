@@ -28,6 +28,42 @@ fn build_test_rom() -> Vec<u8> {
 }
 
 #[test]
+fn rejects_header_declared_pal_timing_until_the_full_machine_model_exists() {
+    let mut rom = build_test_rom();
+    rom[9] = 0x01;
+
+    let err = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap_err();
+
+    assert!(err.to_string().contains("PAL timing is not supported yet"));
+}
+
+#[test]
+fn rejects_header_declared_dendy_timing_until_the_full_machine_model_exists() {
+    let mut rom = build_test_rom();
+    rom[7] = 0x08;
+    rom[12] = 0x03;
+
+    let err = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Dendy timing is not supported yet")
+    );
+}
+
+#[test]
+fn accepts_nes2_multiregion_timing_with_the_current_ntsc_machine_policy() {
+    let mut rom = build_test_rom();
+    rom[7] = 0x08;
+    rom[12] = 0x02;
+
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE)
+        .expect("MultiRegion content should keep the current NTSC-machine behavior");
+
+    assert_eq!(emu.step_instruction(), (0x8000, 0xEA, 2));
+}
+
+#[test]
 fn power_on_and_debug_writes_do_not_advance_the_bus_clock() {
     let mut emu = Emulator::new(&build_test_rom(), DEFAULT_SAMPLE_RATE).unwrap();
     assert_eq!(emu.bus.ppu_cycles, 0);
@@ -507,6 +543,37 @@ fn new_fds_builds_emulator_from_bios_and_disk_image() {
     assert_eq!(emu.cpu.pc, 0xE000);
     assert_eq!(emu.rom_crc32, crc32fast::hash(&disk));
     assert_eq!(emu.rom_hash, sha256(&disk));
+}
+
+#[test]
+fn fds_bios_program_polls_disk_transfer_and_stores_first_byte() {
+    let mut disk = build_fds_image(0);
+    disk[0] = 0xA5;
+    let mut bios = vec![0xEA; FDS_BIOS_SIZE];
+    bios[..24].copy_from_slice(&[
+        0xA9, 0x01, // LDA #$01
+        0x8D, 0x23, 0x40, // STA $4023: enable FDS I/O
+        0xA9, 0xE5, // LDA #$E5
+        0x8D, 0x25, 0x40, // STA $4025: motor on, read mode, transfer IRQ
+        0xAD, 0x30, 0x40, // LDA $4030
+        0x10, 0xFB, // BPL $E00A: wait for the transfer bit
+        0xAD, 0x31, 0x40, // LDA $4031
+        0x8D, 0x00, 0x60, // STA $6000
+        0x4C, 0x15, 0xE0, // JMP $E015
+    ]);
+    bios[FDS_BIOS_SIZE - 4] = 0x00;
+    bios[FDS_BIOS_SIZE - 3] = 0xE0;
+    let mut emu = Emulator::new_fds(&disk, bios, DEFAULT_SAMPLE_RATE)
+        .expect("synthetic FDS image should load");
+
+    for _ in 0..200_000 {
+        emu.step_instruction();
+        if emu.cpu_peek8(0x6000) == 0xA5 {
+            break;
+        }
+    }
+
+    assert_eq!(emu.cpu_peek8(0x6000), 0xA5);
 }
 
 #[test]

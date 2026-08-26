@@ -70,6 +70,7 @@ pub const RETRO_ENVIRONMENT_SET_GEOMETRY: c_uint = 37;
 pub const RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS: c_uint = 42;
 pub const RETRO_ENVIRONMENT_SET_MEMORY_MAPS: c_uint = 36;
 pub const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: c_uint = 67;
+pub const RETRO_NUM_CORE_OPTION_VALUES_MAX: usize = 128;
 pub const RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE: c_uint = 47 | 0x10000;
 
 pub const RETRO_PIXEL_FORMAT_0RGB1555: c_uint = 0;
@@ -191,7 +192,7 @@ pub struct retro_core_option_v2_definition {
     pub info: *const c_char,
     pub info_categorized: *const c_char,
     pub category_key: *const c_char,
-    pub values: [retro_core_option_value; 24],
+    pub values: [retro_core_option_value; RETRO_NUM_CORE_OPTION_VALUES_MAX],
     pub default_value: *const c_char,
 }
 
@@ -217,4 +218,36 @@ pub struct retro_memory_descriptor {
 pub struct retro_memory_map {
     pub descriptors: *const retro_memory_descriptor,
     pub num_descriptors: c_uint,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RETRO_NUM_CORE_OPTION_VALUES_MAX, retro_core_option_v2_definition, retro_core_option_value,
+    };
+    use std::mem::{align_of, offset_of, size_of};
+    use std::os::raw::c_char;
+
+    #[test]
+    fn core_option_v2_definition_matches_the_official_abi_layout() {
+        let pointer_size = size_of::<*const c_char>();
+        assert_eq!(RETRO_NUM_CORE_OPTION_VALUES_MAX, 128);
+        assert_eq!(size_of::<retro_core_option_value>(), pointer_size * 2);
+        assert_eq!(
+            offset_of!(retro_core_option_v2_definition, values),
+            pointer_size * 6
+        );
+        assert_eq!(
+            offset_of!(retro_core_option_v2_definition, default_value),
+            pointer_size * 6 + size_of::<retro_core_option_value>() * 128
+        );
+        assert_eq!(
+            size_of::<retro_core_option_v2_definition>(),
+            offset_of!(retro_core_option_v2_definition, default_value) + pointer_size
+        );
+        assert_eq!(
+            align_of::<retro_core_option_v2_definition>(),
+            align_of::<*const c_char>()
+        );
+    }
 }

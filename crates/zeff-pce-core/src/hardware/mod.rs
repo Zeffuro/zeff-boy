@@ -45,7 +45,7 @@ pub use cd_media::{
 pub use cdrom2::{
     CDROM2_ADPCM_RAM_LEN, CDROM2_BRAM_END, CDROM2_BRAM_LEN, CDROM2_BRAM_START, CDROM2_REGISTER_END,
     CDROM2_REGISTER_START, CDROM2_WORK_RAM_END, CDROM2_WORK_RAM_LEN, CDROM2_WORK_RAM_START,
-    CdAudioDebugSnapshot, CdAudioEndMode, CdAudioFadeTarget, CdAudioStatus,
+    CdAdpcmDebugSnapshot, CdAudioDebugSnapshot, CdAudioEndMode, CdAudioFadeTarget, CdAudioStatus,
     CdProtocolEventDebugKind, CdProtocolEventDebugSnapshot, CdRom2, CdRom2DebugSnapshot,
     CdScsiPhase, PROVISIONAL_CDROM2_ADPCM_MIX_GAIN,
     PROVISIONAL_CDROM2_ADPCM_RATE_WRITE_PRESERVES_PHASE,

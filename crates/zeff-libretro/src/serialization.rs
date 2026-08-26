@@ -7,16 +7,20 @@ const SERIALIZE_LENGTH_PREFIX: usize = 4;
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_serialize_size() -> usize {
     catch_unwind(|| {
+        let known_maximum = *lock(&MAX_SERIALIZE_SIZE);
+        if known_maximum != 0 {
+            return SERIALIZE_LENGTH_PREFIX + known_maximum + 4096;
+        }
         let core = lock(&CORE);
         let actual = core
             .as_ref()
             .and_then(|s| s.encode_state().ok())
             .map_or(0, |v| v.len());
-        let mut max = lock(&MAX_SERIALIZE_SIZE);
-        if actual > *max {
-            *max = actual;
+        let mut maximum = lock(&MAX_SERIALIZE_SIZE);
+        if actual > *maximum {
+            *maximum = actual;
         }
-        SERIALIZE_LENGTH_PREFIX + *max + 4096
+        SERIALIZE_LENGTH_PREFIX + *maximum + 4096
     })
     .unwrap_or(0)
 }
@@ -32,6 +36,17 @@ pub extern "C" fn retro_serialize(data: *mut c_void, size: usize) -> bool {
         let Some(state) = core.as_ref() else {
             return false;
         };
+        let required_size = {
+            let maximum = *lock(&MAX_SERIALIZE_SIZE);
+            if maximum == 0 {
+                SERIALIZE_LENGTH_PREFIX
+            } else {
+                SERIALIZE_LENGTH_PREFIX + maximum + 4096
+            }
+        };
+        if size < required_size {
+            return false;
+        }
         match state.encode_state() {
             Ok(bytes) if SERIALIZE_LENGTH_PREFIX + bytes.len() <= size => {
                 unsafe {

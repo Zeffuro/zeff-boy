@@ -1,6 +1,7 @@
 use super::{CGB_POST_BOOT_REGISTERS, DMG_POST_BOOT_REGISTERS, Emulator, RegisterSeed};
 use crate::debug::{DebugController, OpcodeLog};
 use crate::hardware::bus::Bus;
+use crate::hardware::rom_header::RomHeader;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 use sha2::{Digest, Sha256};
 
@@ -9,6 +10,30 @@ impl Emulator {
         match mode {
             HardwareMode::CGBNormal | HardwareMode::CGBDouble => CGB_POST_BOOT_REGISTERS,
             HardwareMode::DMG | HardwareMode::SGB1 | HardwareMode::SGB2 => DMG_POST_BOOT_REGISTERS,
+        }
+    }
+
+    fn cgb_post_boot_divider_counter(header: &RomHeader) -> u16 {
+        let new_licensee = header.new_licensee_code.as_deref().unwrap_or_default();
+        let new_starts_with_zero = new_licensee.as_bytes().first() == Some(&b'0');
+        let new_ends_with_one = new_licensee.as_bytes().get(1) == Some(&b'1');
+
+        if header.cgb_flag & 0x80 != 0 {
+            return match header.old_licensee_code {
+                0x01 => 0x2FA8,
+                0x33 if new_starts_with_zero && new_ends_with_one => 0x2FC8,
+                0x33 if new_starts_with_zero => 0x1EC0,
+                0x33 => 0x1E9C,
+                _ => 0x1EA0,
+            };
+        }
+
+        match header.old_licensee_code {
+            0x01 => 0x3784,
+            0x33 if new_starts_with_zero && new_ends_with_one => 0x37A4,
+            0x33 if new_starts_with_zero => 0x269C,
+            0x33 => 0x2678,
+            _ => 0x267C,
         }
     }
 
@@ -151,6 +176,9 @@ impl Emulator {
             HardwareMode::DMG | HardwareMode::SGB1 | HardwareMode::SGB2
         ) {
             self.bus.apply_dmg_post_boot_io_state();
+        } else {
+            let divider_counter = Self::cgb_post_boot_divider_counter(&self.header);
+            self.bus.apply_cgb_post_boot_timer_state(divider_counter);
         }
     }
 

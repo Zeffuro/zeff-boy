@@ -105,20 +105,22 @@ fn explicit_sidecar_overrides_sibling_discovery() {
 }
 
 #[test]
-#[ignore = "requires ZEFF_TEST_GNU_NM_SYM with a large GNU nm symbol file"]
-fn loads_external_gnu_nm_session_when_configured() {
-    let path = std::env::var("ZEFF_TEST_GNU_NM_SYM")
-        .expect("ZEFF_TEST_GNU_NM_SYM must name a GNU nm symbol file");
-    let sym = PathBuf::from(path);
-    let rom = sym.with_extension("gba");
+fn loads_large_generated_gnu_nm_session() {
+    let dir = temp_dir();
+    let rom = dir.join("game.gba");
+    let sym = dir.join("game.sym");
+    std::fs::write(&rom, []).unwrap();
+    std::fs::write(
+        &sym,
+        crate::symbols::import::gnu_nm::generated_large_fixture(70_001),
+    )
+    .unwrap();
     let started = std::time::Instant::now();
     let session = SymbolSession::load_sidecar(System::Gba, &rom, &rom, [0; 32]);
-    eprintln!(
-        "external GNU nm session: {} ms",
-        started.elapsed().as_millis()
-    );
+    eprintln!("large GNU nm session: {} ms", started.elapsed().as_millis());
     assert_eq!(session.modules[0].format, "GNU nm .sym");
     assert!(session.modules[0].symbol_count > 70_000);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

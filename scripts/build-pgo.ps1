@@ -8,6 +8,8 @@ param(
     [ValidateRange(1, 100)]
     [int]$GameplayRomsPerCore = 2,
 
+    [switch]$ListGameplayCorpus,
+
     [switch]$SkipGameplayTraining
 )
 
@@ -22,34 +24,6 @@ $useTarget = Join-Path $sessionRoot 'use'
 $mergedProfile = Join-Path $dataDir 'merged.profdata'
 $outputDir = Join-Path $repoRoot 'target\pgo'
 $outputExe = Join-Path $outputDir 'zeff-boy.exe'
-
-$targetLibDir = (& rustc --print target-libdir).Trim()
-if ($LASTEXITCODE -ne 0) {
-    throw 'rustc --print target-libdir failed'
-}
-
-$llvmProfdata = Join-Path (Split-Path -Parent $targetLibDir) 'bin\llvm-profdata.exe'
-if (-not (Test-Path -LiteralPath $llvmProfdata -PathType Leaf)) {
-    throw "llvm-profdata was not found. Run: rustup component add llvm-tools-preview"
-}
-
-# Let Cargo create its target roots so it also writes the cache-directory tag
-# required by `cargo clean --target-dir`.
-New-Item -ItemType Directory -Path $dataDir, $outputDir -Force | Out-Null
-
-$savedEnvironment = @{}
-foreach ($name in @(
-    'CARGO_TARGET_DIR',
-    'LLVM_PROFILE_FILE',
-    'RUSTFLAGS',
-    'ZEFF_MUTE_AUDIO',
-    'ZEFF_PROFILE_AUDIO',
-    'ZEFF_PROFILE_CORE',
-    'ZEFF_PROFILE_FRAMES',
-    'ZEFF_PROFILE_TRACE'
-)) {
-    $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
-}
 
 function Invoke-Cargo {
     param([Parameter(Mandatory)][string[]]$Arguments)
@@ -86,6 +60,11 @@ function Resolve-GameplayRomPath {
         return (Resolve-Path -LiteralPath $RomPath).Path
     }
 
+    $repoCandidate = Join-Path $repoRoot $RomPath
+    if (Test-Path -LiteralPath $repoCandidate -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $repoCandidate).Path
+    }
+
     $testRoms = Join-Path $repoRoot 'test-roms'
     $relativeCandidate = Join-Path $testRoms $RomPath
     if (Test-Path -LiteralPath $relativeCandidate -PathType Leaf) {
@@ -106,91 +85,299 @@ function Resolve-GameplayRomPath {
     return $null
 }
 
+function Add-GameplayCorpusEntry {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.HashSet[string]]$Seen,
+        [Parameter(Mandatory)][string]$Core,
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$RomPath,
+        [Nullable[int]]$MaxFrames,
+        [AllowEmptyString()][string]$Input,
+        [Parameter(Mandatory)][string]$InputSource,
+        [Parameter(Mandatory)][int]$SourcePriority
+    )
+
+    $path = Resolve-GameplayRomPath -RomPath $RomPath
+    if ($null -eq $path -or -not $Seen.Add($path)) {
+        return
+    }
+
+    $Entries.Add([pscustomobject]@{
+        Core = $Core
+        Label = $Label
+        Path = $path
+        MaxFrames = $MaxFrames
+        Input = $Input
+        InputSource = $InputSource
+        SourcePriority = $SourcePriority
+    })
+}
+
+function ConvertFrom-ManifestInput {
+    param([Parameter(Mandatory)][string]$Value)
+
+    try {
+        return @($Value | ConvertFrom-Json) -join ','
+    }
+    catch {
+        return $null
+    }
+}
+
+function Select-GameplayCorpusEntries {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries,
+        [Parameter(Mandatory)][int]$RomsPerCore
+    )
+
+    $selected = [System.Collections.Generic.List[object]]::new()
+    foreach ($coreGroup in $Entries | Group-Object Core | Sort-Object Name) {
+        $remaining = [Math]::Min($RomsPerCore, $coreGroup.Count)
+        foreach ($priorityGroup in $coreGroup.Group | Group-Object SourcePriority | Sort-Object Name) {
+            if ($remaining -eq 0) {
+                break
+            }
+            # Keep real benchmark/compat entries ahead of diagnostics. Where
+            # only diagnostics exist, prefer the longest declared coverage
+            # before supplementing it with short hardware probes.
+            $ordered = @($priorityGroup.Group | Sort-Object @{ Expression = {
+                        if ($null -eq $_.MaxFrames) { [int]::MaxValue } else { -[int]$_.MaxFrames }
+                    }
+                }, Path)
+            $take = [Math]::Min($remaining, $ordered.Count)
+            for ($i = 0; $i -lt $take; $i++) {
+                $index = if ($take -eq 1) {
+                    0
+                }
+                else {
+                    [Math]::Floor($i * ($ordered.Count - 1) / ($take - 1))
+                }
+                $selected.Add($ordered[$index])
+            }
+            $remaining -= $take
+        }
+    }
+
+    return @($selected)
+}
+
+function Test-GameplayCorpusSelectionPriorities {
+    $entries = [System.Collections.Generic.List[object]]@(
+        [pscustomobject]@{ Core = 'test'; Label = 'real-a'; Path = 'a'; MaxFrames = $null; SourcePriority = 0 },
+        [pscustomobject]@{ Core = 'test'; Label = 'real-b'; Path = 'b'; MaxFrames = $null; SourcePriority = 0 },
+        [pscustomobject]@{ Core = 'test'; Label = 'diagnostic'; Path = 'c'; MaxFrames = 600; SourcePriority = 1 }
+    )
+    $selected = @(Select-GameplayCorpusEntries -Entries $entries -RomsPerCore 2)
+    $labels = @($selected | ForEach-Object Label)
+    if ($labels.Count -ne 2 -or $labels -notcontains 'real-a' -or $labels -notcontains 'real-b') {
+        throw 'PGO corpus selection did not exhaust the highest-priority entries first.'
+    }
+}
+
+function Add-ManifestGameplayCorpus {
+    param(
+        [Parameter(Mandatory)][string]$ManifestPath,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.HashSet[string]]$Seen,
+        [Parameter(Mandatory)][bool]$UseGenericInput,
+        [Parameter(Mandatory)][int]$SourcePriority
+    )
+
+    $test = $null
+    $group = $null
+    $groupRom = $null
+    $section = $null
+
+    foreach ($line in Get-Content -LiteralPath $ManifestPath) {
+        if ($line -match '^\s*\[\[(?<section>[^\]]+)\]\]\s*$') {
+            if ($null -ne $test -and $null -ne $test.Core -and $null -ne $test.Path) {
+                Add-GameplayCorpusEntry -Entries $Entries -Seen $Seen -Core $test.Core `
+                    -Label $test.Label -RomPath $test.Path -MaxFrames $test.MaxFrames `
+                    -Input $test.Input -InputSource $test.InputSource -SourcePriority $SourcePriority
+            }
+            if ($null -ne $groupRom -and $null -ne $groupRom.Core -and $null -ne $groupRom.Path) {
+                Add-GameplayCorpusEntry -Entries $Entries -Seen $Seen -Core $groupRom.Core `
+                    -Label $groupRom.Label -RomPath $groupRom.Path -MaxFrames $groupRom.MaxFrames `
+                    -Input $groupRom.Input -InputSource $groupRom.InputSource -SourcePriority $SourcePriority
+            }
+            $test = $null
+            $groupRom = $null
+            $section = $Matches.section
+            switch ($section) {
+                'tests' {
+                    $test = [pscustomobject]@{
+                        Core = $null; Label = $null; Path = $null; MaxFrames = $null
+                        Input = $null; InputSource = if ($UseGenericInput) { 'generic' } else { 'none' }
+                    }
+                }
+                'test_groups' {
+                    $group = [pscustomobject]@{
+                        Core = $null; CachePrefix = $null; MaxFrames = $null
+                        Input = $null; InputSource = 'none'
+                    }
+                }
+                'test_groups.roms' {
+                    if ($null -ne $group) {
+                        $groupRom = [pscustomobject]@{
+                            Core = $group.Core; Label = $null; Path = $null; MaxFrames = $group.MaxFrames
+                            Input = $group.Input; InputSource = $group.InputSource
+                            CachePrefix = $group.CachePrefix
+                        }
+                    }
+                }
+            }
+            continue
+        }
+        if ($line -match '^\s*\[(?<section>[^\]]+)\]\s*$') {
+            $section = $Matches.section
+            continue
+        }
+        if ($line -match '^\s*id\s*=\s*"(?<value>[^"]+)"\s*$') {
+            if ($null -ne $test -and $section -eq 'tests') {
+                $test.Label = $Matches.value
+            }
+            elseif ($null -ne $groupRom -and $section -eq 'test_groups.roms') {
+                $groupRom.Label = $Matches.value
+            }
+            continue
+        }
+        if ($line -match '^\s*core\s*=\s*"(?<value>[^"]+)"\s*$') {
+            if ($null -ne $test) {
+                $test.Core = $Matches.value
+            }
+            elseif ($null -ne $group -and $null -eq $groupRom) {
+                $group.Core = $Matches.value
+            }
+            continue
+        }
+        if ($line -match '^\s*max_frames\s*=\s*(?<value>\d+)\s*$') {
+            $maxFrames = [int]$Matches.value
+            if ($null -ne $test) {
+                $test.MaxFrames = $maxFrames
+            }
+            elseif ($null -ne $group -and $null -eq $groupRom) {
+                $group.MaxFrames = $maxFrames
+            }
+            continue
+        }
+        if ($line -match '^\s*input\s*=\s*(?<value>\[.*\])\s*$') {
+            $input = ConvertFrom-ManifestInput -Value $Matches.value
+            if ($null -eq $input) {
+                continue
+            }
+            if ($null -ne $test) {
+                $test.Input = $input
+                $test.InputSource = 'manifest'
+            }
+            elseif ($null -ne $group -and $null -eq $groupRom) {
+                $group.Input = $input
+                $group.InputSource = 'manifest'
+            }
+            continue
+        }
+        if ($line -match '^\s*cache_prefix\s*=\s*"(?<value>[^"]+)"\s*$' -and $null -ne $group) {
+            $group.CachePrefix = $Matches.value
+            continue
+        }
+        if ($line -match '^\s*path\s*=\s*"(?<value>[^"]+)"\s*$' -and $null -ne $test -and $section -eq 'tests.rom') {
+            $test.Path = $Matches.value
+            continue
+        }
+        if ($line -match '^\s*archive_path\s*=\s*"(?<value>[^"]+)"\s*$' -and $null -ne $groupRom) {
+            if ($null -ne $groupRom.CachePrefix) {
+                $groupRom.Path = Join-Path $groupRom.CachePrefix $Matches.value
+            }
+        }
+    }
+
+    if ($null -ne $test -and $null -ne $test.Core -and $null -ne $test.Path) {
+        Add-GameplayCorpusEntry -Entries $Entries -Seen $Seen -Core $test.Core `
+            -Label $test.Label -RomPath $test.Path -MaxFrames $test.MaxFrames `
+            -Input $test.Input -InputSource $test.InputSource -SourcePriority $SourcePriority
+    }
+    if ($null -ne $groupRom -and $null -ne $groupRom.Core -and $null -ne $groupRom.Path) {
+        Add-GameplayCorpusEntry -Entries $Entries -Seen $Seen -Core $groupRom.Core `
+            -Label $groupRom.Label -RomPath $groupRom.Path -MaxFrames $groupRom.MaxFrames `
+            -Input $groupRom.Input -InputSource $groupRom.InputSource -SourcePriority $SourcePriority
+    }
+}
+
 function Get-GameplayCorpus {
     $entries = [System.Collections.Generic.List[object]]::new()
     $seen = [System.Collections.Generic.HashSet[string]]::new(
         [StringComparer]::OrdinalIgnoreCase
     )
     $testRoms = Join-Path $repoRoot 'test-roms'
-    if (-not (Test-Path -LiteralPath $testRoms -PathType Container)) {
-        return @()
-    }
 
     # Existing ignored benchmark manifests are deliberately local-only. Their
     # simple format is label<TAB>path-relative-to-test-roms.
-    Get-ChildItem -LiteralPath $testRoms -Filter '*-bench-roms.txt' -File |
-        Sort-Object Name |
-        ForEach-Object {
-            $core = $_.BaseName.Substring(0, $_.BaseName.Length - '-bench-roms'.Length)
-            foreach ($line in Get-Content -LiteralPath $_.FullName) {
-                if ([String]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#')) {
-                    continue
-                }
-                $parts = $line.Split("`t", 2)
-                if ($parts.Count -ne 2) {
-                    continue
-                }
-                $path = Resolve-GameplayRomPath -RomPath $parts[1].Trim()
-                if ($null -ne $path -and $seen.Add($path)) {
-                    $entries.Add([pscustomobject]@{
-                        Core = $core
-                        Label = $parts[0].Trim()
-                        Path = $path
-                    })
+    if (Test-Path -LiteralPath $testRoms -PathType Container) {
+        Get-ChildItem -LiteralPath $testRoms -Filter '*-bench-roms.txt' -File |
+            Sort-Object Name |
+            ForEach-Object {
+                $core = $_.BaseName.Substring(0, $_.BaseName.Length - '-bench-roms'.Length)
+                foreach ($line in Get-Content -LiteralPath $_.FullName) {
+                    if ([String]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#')) {
+                        continue
+                    }
+                    $parts = $line.Split("`t", 2)
+                    if ($parts.Count -ne 2) {
+                        continue
+                    }
+                    Add-GameplayCorpusEntry -Entries $entries -Seen $seen -Core $core `
+                        -Label $parts[0].Trim() -RomPath $parts[1].Trim() -InputSource 'generic' -SourcePriority 0
                 }
             }
-        }
+    }
 
-    # Generated local compatibility manifests cover additional cores while
-    # keeping copyrighted titles, hashes, and paths outside Git.
+    # Local compatibility manifests cover user-owned games while retaining
+    # their paths outside Git. They receive the generic gameplay schedule.
     $compatRoot = Join-Path $repoRoot 'rom-tests\manifests\compat-games'
     if (Test-Path -LiteralPath $compatRoot -PathType Container) {
         Get-ChildItem -LiteralPath $compatRoot -Filter 'local*.toml' -File |
             Sort-Object Name |
             ForEach-Object {
-                $core = $null
-                foreach ($line in Get-Content -LiteralPath $_.FullName) {
-                    if ($line -match '^\s*core\s*=\s*"(?<core>[^"]+)"') {
-                        $core = $Matches.core
-                        continue
-                    }
-                    if ($null -eq $core -or $line -notmatch '^\s*path\s*=\s*(?<path>".*")\s*$') {
-                        continue
-                    }
-                    try {
-                        $manifestPath = $Matches.path | ConvertFrom-Json
-                    }
-                    catch {
-                        continue
-                    }
-                    $path = Resolve-GameplayRomPath -RomPath $manifestPath
-                    if ($null -ne $path -and $seen.Add($path)) {
-                        $entries.Add([pscustomobject]@{
-                            Core = $core
-                            Label = [IO.Path]::GetFileNameWithoutExtension($path)
-                            Path = $path
-                        })
-                    }
-                }
+                Add-ManifestGameplayCorpus -ManifestPath $_.FullName -Entries $entries -Seen $seen -UseGenericInput $true -SourcePriority 0
             }
     }
 
-    $selected = [System.Collections.Generic.List[object]]::new()
-    foreach ($group in $entries | Group-Object Core | Sort-Object Name) {
-        $ordered = @($group.Group | Sort-Object Path)
-        $take = [Math]::Min($GameplayRomsPerCore, $ordered.Count)
-        for ($i = 0; $i -lt $take; $i++) {
-            $index = if ($take -eq 1) {
-                0
+    # Source-backed and generated local manifest fixtures cover systems that
+    # do not yet have a checked local commercial-game corpus. Their declared
+    # frame caps and input schedules are preserved; absent input stays absent.
+    $testManifestRoot = Join-Path $repoRoot 'rom-tests\manifests\test-roms'
+    if (Test-Path -LiteralPath $testManifestRoot -PathType Container) {
+        $manifestEntries = [System.Collections.Generic.List[object]]::new()
+        $manifestSeen = [System.Collections.Generic.HashSet[string]]::new(
+            [StringComparer]::OrdinalIgnoreCase
+        )
+        Get-ChildItem -LiteralPath $testManifestRoot -Filter '*.toml' -File |
+            Sort-Object Name |
+            ForEach-Object {
+                Add-ManifestGameplayCorpus -ManifestPath $_.FullName -Entries $manifestEntries -Seen $manifestSeen -UseGenericInput $false -SourcePriority 1
             }
-            else {
-                [Math]::Floor($i * ($ordered.Count - 1) / ($take - 1))
-            }
-            $selected.Add($ordered[$index])
+        foreach ($entry in $manifestEntries | Where-Object { $_.Core -in @('sms', 'gg', 'sg', 'pce', 'ws') }) {
+            Add-GameplayCorpusEntry -Entries $entries -Seen $seen -Core $entry.Core `
+                -Label $entry.Label -RomPath $entry.Path -MaxFrames $entry.MaxFrames `
+                -Input $entry.Input -InputSource $entry.InputSource -SourcePriority $entry.SourcePriority
         }
     }
 
-    return @($selected)
+    return @(Select-GameplayCorpusEntries -Entries $entries -RomsPerCore $GameplayRomsPerCore)
+}
+
+function Show-GameplayCorpus {
+    $corpus = @(Get-GameplayCorpus)
+    if ($corpus.Count -eq 0) {
+        Write-Output 'No ignored local PGO corpus is available.'
+        return
+    }
+
+    Write-Output "Selected $($corpus.Count) deterministic local PGO entries:"
+    foreach ($entry in $corpus) {
+        $frameCap = if ($null -eq $entry.MaxFrames) { 'requested' } else { $entry.MaxFrames }
+        Write-Output "  $($entry.Core): $($entry.Label) (frames: $frameCap; input: $($entry.InputSource))"
+    }
 }
 
 function Invoke-GameplayTraining {
@@ -203,9 +390,9 @@ function Invoke-GameplayTraining {
     }
 
     # These deterministic pulses aim to pass common title/menu screens and
-    # exercise movement/action paths. Per-title replays remain the stronger
-    # option when a curated gameplay checkpoint is available.
-    $input = @(
+    # exercise movement/action paths. Manifest-defined schedules override
+    # them; diagnostic fixtures without an input declaration remain idle.
+    $genericInput = @(
         'start@30-31',
         'start@90-91',
         'start@150-151',
@@ -218,18 +405,64 @@ function Invoke-GameplayTraining {
         'right@540-599'
     ) -join ','
 
-    Write-Output "Training $($corpus.Count) local gameplay ROMs for $GameplayFrames frames each"
+    Write-Output "Training $($corpus.Count) local deterministic ROM entries for up to $GameplayFrames frames each"
     $completed = 0
     foreach ($entry in $corpus) {
-        Write-Output "  $($entry.Core): $($entry.Label)"
-        & $Executable --headless --max-frames $GameplayFrames --no-sram --press $input $entry.Path
+        $entryFrames = if ($null -eq $entry.MaxFrames) {
+            $GameplayFrames
+        }
+        else {
+            [Math]::Min($GameplayFrames, $entry.MaxFrames)
+        }
+        $input = if ($entry.InputSource -eq 'manifest') { $entry.Input } elseif ($entry.InputSource -eq 'generic') { $genericInput } else { $null }
+        Write-Output "  $($entry.Core): $($entry.Label) ($entryFrames frames; input: $($entry.InputSource))"
+        $arguments = @('--headless', '--max-frames', $entryFrames, '--no-sram')
+        if (-not [String]::IsNullOrWhiteSpace($input)) {
+            $arguments += @('--press', $input)
+        }
+        $arguments += $entry.Path
+        & $Executable @arguments
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Skipping failed gameplay training entry: $($entry.Path)"
+            Write-Warning "Skipping failed gameplay training entry: $($entry.Core) / $($entry.Label)"
             continue
         }
         $completed++
     }
     Write-Output "Completed $completed/$($corpus.Count) local gameplay training runs"
+}
+
+if ($ListGameplayCorpus) {
+    Test-GameplayCorpusSelectionPriorities
+    Show-GameplayCorpus
+    exit 0
+}
+
+$targetLibDir = (& rustc --print target-libdir).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw 'rustc --print target-libdir failed'
+}
+
+$llvmProfdata = Join-Path (Split-Path -Parent $targetLibDir) 'bin\llvm-profdata.exe'
+if (-not (Test-Path -LiteralPath $llvmProfdata -PathType Leaf)) {
+    throw "llvm-profdata was not found. Run: rustup component add llvm-tools-preview"
+}
+
+# Let Cargo create its target roots so it also writes the cache-directory tag
+# required by `cargo clean --target-dir`.
+New-Item -ItemType Directory -Path $dataDir, $outputDir -Force | Out-Null
+
+$savedEnvironment = @{}
+foreach ($name in @(
+    'CARGO_TARGET_DIR',
+    'LLVM_PROFILE_FILE',
+    'RUSTFLAGS',
+    'ZEFF_MUTE_AUDIO',
+    'ZEFF_PROFILE_AUDIO',
+    'ZEFF_PROFILE_CORE',
+    'ZEFF_PROFILE_FRAMES',
+    'ZEFF_PROFILE_TRACE'
+)) {
+    $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
 try {

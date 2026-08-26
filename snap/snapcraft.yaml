@@ -4,7 +4,7 @@ adopt-info: zeff-boy
 summary: Multi-system emulator for classic consoles and handhelds
 description: |
   Zeff Boy emulates Game Boy, Game Boy Color, Game Boy Advance, NES,
-  WonderSwan, and Sega 8-bit systems. It includes save states, cheats,
+  PC Engine, WonderSwan, and Sega 8-bit systems. It includes save states, cheats,
   debugging tools, link support, and configurable video and audio output.
 license: MIT OR Apache-2.0
 website: https://github.com/Zeffuro/zeff-boy
