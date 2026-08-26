@@ -1,5 +1,7 @@
 use super::super::*;
 
+type Mode4Palette = [[u8; RGBA_CHANNELS]; SMS_GG_COLOR_INDEX_MASK + 1];
+
 pub(super) fn render_background_rgba(vdp: &Vdp, framebuffer: &mut [u8], area: Mode4RenderArea) {
     render_background_rgba_with_color(vdp, framebuffer, area, Mode4ColorMode::Sms);
 }
@@ -44,6 +46,16 @@ pub(super) fn render_background_rgba_with_color(
     framebuffer: &mut [u8],
     area: Mode4RenderArea,
     color_mode: Mode4ColorMode,
+) {
+    let palette = mode4_palette(vdp, color_mode);
+    render_background_rgba_with_palette(vdp, framebuffer, area, &palette);
+}
+
+fn render_background_rgba_with_palette(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    palette: &Mode4Palette,
 ) {
     let expected_len = area.expected_rgba_len();
     if framebuffer.len() < expected_len {
@@ -109,7 +121,7 @@ pub(super) fn render_background_rgba_with_color(
                     | (usize::from(planes[1] & bit != 0) << 1)
                     | (usize::from(planes[2] & bit != 0) << 2)
                     | (usize::from(planes[3] & bit != 0) << 3);
-                let rgba = vdp.mode4_color_rgba(color + palette_offset, color_mode);
+                let rgba = palette[color + palette_offset];
                 let dest_x = x + offset;
                 let pixel_offset = (y * area.width + dest_x) * RGBA_CHANNELS;
                 framebuffer[pixel_offset..pixel_offset + RGBA_CHANNELS].copy_from_slice(&rgba);
@@ -191,6 +203,16 @@ fn render_sprites_rgba(
     area: Mode4RenderArea,
     color_mode: Mode4ColorMode,
 ) {
+    let palette = mode4_palette(vdp, color_mode);
+    render_sprites_rgba_with_palette(vdp, framebuffer, area, &palette);
+}
+
+fn render_sprites_rgba_with_palette(
+    vdp: &Vdp,
+    framebuffer: &mut [u8],
+    area: Mode4RenderArea,
+    palette: &Mode4Palette,
+) {
     let expected_len = area.expected_rgba_len();
     if framebuffer.len() < expected_len {
         return;
@@ -208,7 +230,6 @@ fn render_sprites_rgba(
         name_table_base,
         sprite_pattern_base,
         sprite_scale,
-        color_mode,
     };
 
     for dest_y in 0..area.height {
@@ -232,7 +253,7 @@ fn render_sprites_rgba(
         }
 
         for (sprite, row) in sprites[..sprites_on_line].iter().rev().flatten().copied() {
-            render_sprite_row_rgba(vdp, framebuffer, context, dest_y, sprite, row);
+            render_sprite_row_rgba(vdp, framebuffer, context, palette, dest_y, (sprite, row));
         }
     }
 }
@@ -241,10 +262,11 @@ fn render_sprite_row_rgba(
     vdp: &Vdp,
     framebuffer: &mut [u8],
     context: Mode4SpriteRenderContext,
+    palette: &Mode4Palette,
     dest_y: usize,
-    sprite: Mode4Sprite,
-    row: usize,
+    sprite_row: (Mode4Sprite, usize),
 ) {
+    let (sprite, row) = sprite_row;
     let area = context.area;
     let sprite_scale = context.sprite_scale;
     let pattern_y = row / sprite_scale;
@@ -272,8 +294,12 @@ fn render_sprite_row_rgba(
         {
             continue;
         }
-        let rgba = vdp.mode4_color_rgba(color + MODE4_PALETTE_COLOR_OFFSET, context.color_mode);
+        let rgba = palette[color + MODE4_PALETTE_COLOR_OFFSET];
         let offset = (dest_y * area.width + dest_x as usize) * RGBA_CHANNELS;
         framebuffer[offset..offset + RGBA_CHANNELS].copy_from_slice(&rgba);
     }
+}
+
+fn mode4_palette(vdp: &Vdp, color_mode: Mode4ColorMode) -> Mode4Palette {
+    std::array::from_fn(|color| vdp.mode4_color_rgba(color, color_mode))
 }

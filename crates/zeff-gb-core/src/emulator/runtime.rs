@@ -628,6 +628,29 @@ mod tests {
     }
 
     #[test]
+    fn dmg_stop_keeps_guest_execution_frozen_and_wakes_on_input() {
+        let rom = vec![0u8; 0x8000];
+        let mut emu = Emulator::from_rom_data(&rom, HardwareModePreference::Auto).unwrap();
+        emu.cpu.pc = 0xC000;
+        emu.cpu.running = CpuState::Stopped;
+        let ly_before = emu.ppu_ly();
+        let cycles_before = emu.cpu.cycles;
+
+        emu.step_frame();
+
+        assert_eq!(emu.cpu.pc, 0xC000);
+        assert_eq!(emu.cpu.running, CpuState::Stopped);
+        assert_eq!(emu.ppu_ly(), ly_before);
+        assert!(emu.cpu.cycles > cycles_before);
+        assert!(emu.framebuffer().iter().all(|&channel| channel == 255));
+
+        emu.write_byte(0xFF00, 0x10);
+        emu.set_input(0x01, 0);
+        assert_eq!(emu.cpu.running, CpuState::Running);
+        assert!(emu.framebuffer().iter().any(|&channel| channel != 255));
+    }
+
+    #[test]
     #[should_panic(expected = "frame slice cursor resumed after its origin frame changed")]
     fn incomplete_frame_slice_rejects_a_changed_origin_frame() {
         let rom = vec![0u8; 0x8000];

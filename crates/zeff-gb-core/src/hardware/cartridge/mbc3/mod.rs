@@ -60,9 +60,9 @@ impl Mbc3 {
                 let bank = (value & 0x7F) as usize;
                 self.rom_bank = if bank == 0 { 1 } else { bank };
             }
-            0x4000..=0x5FFF => self.ram_or_rtc_select = value,
+            0x4000..=0x5FFF => self.ram_or_rtc_select = value & 0x0F,
             0x6000..=0x7FFF => {
-                if self.has_rtc && self.rtc_latch_write == 0x00 && value == 0x01 {
+                if self.has_rtc {
                     self.rtc.latch();
                 }
                 self.rtc_latch_write = value;
@@ -77,6 +77,9 @@ impl Mbc3 {
         }
         if self.has_rtc && (0x08..=0x0C).contains(&self.ram_or_rtc_select) {
             return self.rtc.read_latched(self.ram_or_rtc_select);
+        }
+        if self.has_rtc && self.ram_or_rtc_select > 0x03 {
+            return 0xFF;
         }
         if self.ram.is_empty() {
             return 0xFF;
@@ -93,6 +96,9 @@ impl Mbc3 {
 
         if self.has_rtc && (0x08..=0x0C).contains(&self.ram_or_rtc_select) {
             self.rtc.write_internal(self.ram_or_rtc_select, value);
+            return;
+        }
+        if self.has_rtc && self.ram_or_rtc_select > 0x03 {
             return;
         }
 
@@ -153,7 +159,7 @@ impl Mbc3 {
         let has_rtc = reader.read_bool()?;
         let ram_enable = reader.read_bool()?;
         let rom_bank = reader.read_u64()? as usize;
-        let ram_or_rtc_select = reader.read_u8()?;
+        let ram_or_rtc_select = reader.read_u8()? & 0x0F;
         let rtc_latch_write = reader.read_u8()?;
 
         let mut internal = [0u8; RTC_REG_COUNT];

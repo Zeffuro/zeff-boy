@@ -14,18 +14,18 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 use zeff_emu_common::time::{
     ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
 };
-#[cfg(test)]
-use zeff_pce_core::hardware::PCE_ACTIVE_FRAME_WIDTH;
 use zeff_pce_core::hardware::{
     ARCADE_CARD_RAM_LEN, CDROM2_BRAM_LEN, CdDisc, ControllerPort, FivePortMultitap,
-    MEMORY_BASE128_RAM_LEN, PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER,
+    HUCARD_BANK_LEN, MEMORY_BASE128_RAM_LEN, PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER,
     PCE_NTSC_REFERENCE_MHZ_DENOMINATOR, PCE_NTSC_REFERENCE_MHZ_NUMERATOR, POPULOUS_HUCARD_RAM_LEN,
     PSG_CLOCK_DENOMINATOR, PSG_CLOCK_NUMERATOR, PSG_ZERO_FREQUENCY_PERIOD, PadButtons,
     PceArcadeCardMode, PceCartridgeDescriptor, PceConsoleWiring, PceControllerMode,
     PceCpuDebugSnapshot, PceHardwareDebugSnapshot, PceHardwareTopology, PceHuCardBoard, PceMachine,
     PceMemoryBaseMode, SixButtonExtraButtons, VCE_PALETTE_COLORS, VDC_SATB_WORDS, VDC_VRAM_BYTES,
-    VceColor,
+    VceColor, normalize_hucard_image,
 };
+#[cfg(test)]
+use zeff_pce_core::hardware::{PCE_ACTIVE_FRAME_WIDTH, PCEAS_HEADER_LEN};
 
 use super::pce_display::project_presented_frame;
 #[cfg(test)]
@@ -50,13 +50,9 @@ use crate::settings::{PceOverscanMode, PcePaletteMode};
 pub(crate) const PCE_PRESENTED_WIDTH: usize = 640;
 pub(crate) const PCE_PRESENTED_HEIGHT: usize = 480;
 pub(crate) const PCE_PRESENTED_RGBA_BYTES: usize = PCE_PRESENTED_WIDTH * PCE_PRESENTED_HEIGHT * 4;
-const HUCARD_BANK_LEN: usize = 0x2000;
-const PCEAS_HEADER_LEN: usize = 0x200;
 const BACKEND_STATE_MAGIC: &[u8; 8] = b"ZBPCEBE\0";
 const BACKEND_STATE_VERSION: u32 = 1;
 const MAX_CORE_STATE_BYTES: usize = 8 * 1024 * 1024;
-const PCE_PHYSICAL_WORK_RAM_START: u32 = 0x1F_0000;
-const PCE_PHYSICAL_WORK_RAM_END: u32 = 0x1F_7FFF;
 const MEMORY_BASE128_ALIASES: &[&str] = &["mb128", "memorybase128", "memory_base"];
 const MEMORY_BASE128_REGION: MemoryRegionDescriptor = MemoryRegionDescriptor {
     id: "memory_base_128",
@@ -788,24 +784,6 @@ fn memory_base128_path() -> PathBuf {
     crate::platform::save_dir("pce").join("mb128.sav")
 }
 
-fn normalize_hucard_image(hucard_rom: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    if hucard_rom.len().is_multiple_of(HUCARD_BANK_LEN) {
-        return Ok(hucard_rom);
-    }
-    let payload_len = hucard_rom.len().saturating_sub(PCEAS_HEADER_LEN);
-    let has_pceas_header = hucard_rom.len() > PCEAS_HEADER_LEN
-        && payload_len.is_multiple_of(HUCARD_BANK_LEN)
-        && usize::from(hucard_rom[0]) == payload_len / HUCARD_BANK_LEN
-        && hucard_rom[1..PCEAS_HEADER_LEN]
-            .iter()
-            .all(|&byte| byte == 0);
-    anyhow::ensure!(
-        has_pceas_header,
-        "PC Engine HuCard image length must be a multiple of {HUCARD_BANK_LEN} bytes or carry a valid PCEAS header"
-    );
-    Ok(hucard_rom[PCEAS_HEADER_LEN..].to_vec())
-}
-
 impl DebuggableEmulator for PceBackend {
     fn add_breakpoint(&mut self, addr: Address) {
         if let Ok(addr) = u16::try_from(addr) {
@@ -1147,9 +1125,7 @@ impl EmulatorCore for PceBackend {
     }
 
     fn apply_ram_cheats(&mut self, cheats: &[crate::cheats::CheatPatch]) {
-        zeff_emu_common::cheats::apply_ram_cheats_16(&mut self.machine, cheats);
-        let mut physical_ram = PcePhysicalRam::new(self.machine.mapped_work_ram_mut());
-        zeff_emu_common::cheats::apply_wide_ram_cheats(&mut physical_ram, cheats);
+        zeff_pce_core::hardware::apply_pce_cheats(&mut self.machine, cheats);
     }
 
     fn debug_suspend(&mut self) {
@@ -1362,36 +1338,6 @@ fn append_words_le(out: &mut Vec<u8>, words: &[u16]) {
     out.reserve(size_of_val(words));
     for &word in words {
         out.extend_from_slice(&word.to_le_bytes());
-    }
-}
-
-struct PcePhysicalRam<'a> {
-    bytes: &'a mut [u8],
-}
-
-impl<'a> PcePhysicalRam<'a> {
-    fn new(bytes: &'a mut [u8]) -> Self {
-        debug_assert!(bytes.len().is_power_of_two());
-        Self { bytes }
-    }
-
-    fn offset(&self, address: u32) -> Option<usize> {
-        if !(PCE_PHYSICAL_WORK_RAM_START..=PCE_PHYSICAL_WORK_RAM_END).contains(&address) {
-            return None;
-        }
-        Some((address as usize - PCE_PHYSICAL_WORK_RAM_START as usize) & (self.bytes.len() - 1))
-    }
-}
-
-impl zeff_emu_common::cheats::CheatByteTarget<Address> for PcePhysicalRam<'_> {
-    fn cheat_peek8(&self, address: Address) -> u8 {
-        self.offset(address).map_or(0, |offset| self.bytes[offset])
-    }
-
-    fn cheat_write8(&mut self, address: Address, value: u8) {
-        if let Some(offset) = self.offset(address) {
-            self.bytes[offset] = value;
-        }
     }
 }
 

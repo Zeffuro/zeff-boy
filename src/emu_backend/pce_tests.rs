@@ -11,18 +11,31 @@ fn rom_with_program(program: &[u8]) -> Vec<u8> {
 
 #[test]
 fn physical_cheat_ram_follows_base_mirroring_and_supergrafx_banks() {
-    use zeff_emu_common::cheats::CheatByteTarget;
+    let mut base_machine = PceMachine::with_cartridge_and_controller(
+        rom_with_program(&[0xEA]),
+        PceCartridgeDescriptor::default(),
+        ControllerPort::two_button(),
+    )
+    .unwrap();
+    zeff_pce_core::hardware::apply_pce_cheats(
+        &mut base_machine,
+        &[zeff_emu_common::cheats::CheatPatch::WideRamWrite {
+            address: 0x1F_2345,
+            value: zeff_emu_common::cheats::CheatValue::Constant(0x42),
+        }],
+    );
+    assert_eq!(base_machine.mapped_work_ram()[0x345], 0x42);
 
-    let mut base = [0; zeff_pce_core::hardware::WORK_RAM_LEN];
-    let mut base_target = PcePhysicalRam::new(&mut base);
-    base_target.cheat_write8(0x1F_2345, 0x42);
-    assert_eq!(base_target.cheat_peek8(0x1F_0345), 0x42);
-
-    let mut supergrafx = [0; zeff_pce_core::hardware::SUPERGRAFX_WORK_RAM_LEN];
-    let mut supergrafx_target = PcePhysicalRam::new(&mut supergrafx);
-    supergrafx_target.cheat_write8(0x1F_2345, 0x66);
-    assert_eq!(supergrafx_target.cheat_peek8(0x1F_2345), 0x66);
-    assert_eq!(supergrafx_target.cheat_peek8(0x1F_0345), 0x00);
+    let mut supergrafx_target = synthetic_supergrafx_backend();
+    zeff_pce_core::hardware::apply_pce_cheats(
+        &mut supergrafx_target.machine,
+        &[zeff_emu_common::cheats::CheatPatch::WideRamWrite {
+            address: 0x1F_2345,
+            value: zeff_emu_common::cheats::CheatValue::Constant(0x66),
+        }],
+    );
+    assert_eq!(supergrafx_target.machine.mapped_work_ram()[0x2345], 0x66);
+    assert_eq!(supergrafx_target.machine.mapped_work_ram()[0x0345], 0x00);
 }
 
 fn memory_base_clock(controller: &mut ControllerPort, bit: bool) {

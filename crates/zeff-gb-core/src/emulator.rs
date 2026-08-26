@@ -17,7 +17,7 @@ const CYCLES_PER_FRAME_DOUBLE: u64 = 140448;
 type RegisterSeed = (u8, u8, u8, u8, u8, u8, u8, u8);
 
 const DMG_POST_BOOT_REGISTERS: RegisterSeed = (0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D);
-const CGB_POST_BOOT_REGISTERS: RegisterSeed = (0x11, 0x80, 0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D);
+const CGB_POST_BOOT_REGISTERS: RegisterSeed = (0x11, 0x80, 0x00, 0x00, 0x00, 0x08, 0x00, 0x7C);
 
 pub struct Emulator {
     pub(crate) cpu: Cpu,
@@ -63,6 +63,7 @@ impl fmt::Debug for Emulator {
 mod tests {
     use super::*;
     use crate::debug::WatchType;
+    use crate::hardware::types::CpuState;
     use crate::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_SC};
     use zeff_emu_common::save_ram::SaveRamKind;
     use zeff_emu_common::time::{ClockRate, MachineTiming, MasterTicks};
@@ -73,6 +74,22 @@ mod tests {
             rom[0x143] = 0x80;
         }
         rom
+    }
+
+    #[test]
+    fn cgb_without_boot_rom_uses_hardware_post_boot_registers() {
+        let emulator = Emulator::new(&boot_test_rom(true), 48_000).unwrap();
+
+        assert_eq!(emulator.cpu.regs.a, 0x11);
+        assert_eq!(emulator.cpu.regs.f, 0x80);
+        assert_eq!(emulator.cpu.regs.b, 0x00);
+        assert_eq!(emulator.cpu.regs.c, 0x00);
+        assert_eq!(emulator.cpu.regs.d, 0x00);
+        assert_eq!(emulator.cpu.regs.e, 0x08);
+        assert_eq!(emulator.cpu.regs.h, 0x00);
+        assert_eq!(emulator.cpu.regs.l, 0x7C);
+        assert_eq!(emulator.cpu.sp, 0xFFFE);
+        assert_eq!(emulator.cpu.pc, 0x0100);
     }
 
     #[test]
@@ -128,6 +145,23 @@ mod tests {
             crate::hardware::GameBoySerialDevice::BardigunBarcodeReader
         );
         assert_eq!(emulator.bus.bardigun_pending_bytes(), 0);
+    }
+
+    #[test]
+    fn stopped_state_roundtrip_keeps_dmg_lcd_blank_until_input() {
+        let rom = boot_test_rom(false);
+        let mut emulator = Emulator::new(&rom, 48_000).unwrap();
+        emulator.cpu.running = CpuState::Stopped;
+        let saved = emulator.encode_state().unwrap();
+
+        emulator.cpu.running = CpuState::Running;
+        emulator.load_state(&saved).unwrap();
+
+        assert_eq!(emulator.cpu.running, CpuState::Stopped);
+        assert!(emulator.framebuffer().iter().all(|&channel| channel == 255));
+        emulator.write_byte(0xFF00, 0x10);
+        emulator.set_input(0x01, 0);
+        assert_eq!(emulator.cpu.running, CpuState::Running);
     }
 
     #[test]

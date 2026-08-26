@@ -764,12 +764,11 @@ fn speed_switch_delay_skips_normal_cpu_clocked_devices() {
     bus.write_byte(0xFF4D, 0x01);
     assert!(bus.maybe_switch_cgb_speed());
 
-    let timer_div = bus.timer_div();
     let ppu_ly = bus.ppu_ly();
     let pending_dma = bus.oam_dma_pending_source_base;
-    assert_eq!(bus.advance_cgb_speed_switch_delay(), (16_400, 4_100));
+    assert_eq!(bus.advance_cgb_speed_switch_delay(), (131_088, 65_544));
 
-    assert_eq!(bus.timer_div(), timer_div);
+    assert_eq!(bus.timer_div(), 0);
     assert_ne!(bus.ppu_ly(), ppu_ly);
     assert!(!bus.oam_dma_active);
     assert_eq!(bus.oam_dma_pending_source_base, pending_dma);

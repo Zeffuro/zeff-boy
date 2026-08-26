@@ -57,6 +57,12 @@ fn gb_rom() -> Vec<u8> {
     vec![0u8; 0x8000]
 }
 
+fn pce_rom() -> Vec<u8> {
+    let mut rom = vec![0xEA; 0x2000];
+    rom[0x1FFE..0x2000].copy_from_slice(&0xE000_u16.to_le_bytes());
+    rom
+}
+
 fn codemasters_rom(bank_count: usize) -> Vec<u8> {
     use zeff_sega8_core::hardware::constants::{
         CODEMASTERS_HEADER_OFFSET, CODEMASTERS_HEADER_SIZE, ROM_BANK_SIZE,
@@ -85,8 +91,8 @@ fn sega8_extensions_select_expected_systems() {
     let mut sms = load_sega8("sms");
     assert!(matches!(sms.core, ActiveCore::Sega8(_)));
     assert_eq!(sms.system_label(), "SMS");
-    assert_eq!(sms.native_width(), 256);
-    assert_eq!(sms.native_height(), 192);
+    assert_eq!(sms.video_geometry().base_width, 256);
+    assert_eq!(sms.video_geometry().base_height, 192);
     assert_eq!(sms.sram_size(), 0);
     assert_eq!(
         sms.memory_region_size(MemoryRegionKind::PaletteRam),
@@ -97,8 +103,8 @@ fn sega8_extensions_select_expected_systems() {
     let mut gg = load_sega8("gg");
     assert!(matches!(gg.core, ActiveCore::Sega8(_)));
     assert_eq!(gg.system_label(), "Game Gear");
-    assert_eq!(gg.native_width(), 160);
-    assert_eq!(gg.native_height(), 144);
+    assert_eq!(gg.video_geometry().base_width, 160);
+    assert_eq!(gg.video_geometry().base_height, 144);
     assert_eq!(gg.sram_size(), 0);
     assert_eq!(
         gg.memory_region_size(MemoryRegionKind::PaletteRam),
@@ -110,8 +116,8 @@ fn sega8_extensions_select_expected_systems() {
         let mut sg = load_sega8(ext);
         assert!(matches!(sg.core, ActiveCore::Sega8(_)));
         assert_eq!(sg.system_label(), "SG-1000/SC-3000");
-        assert_eq!(sg.native_width(), 256);
-        assert_eq!(sg.native_height(), 192);
+        assert_eq!(sg.video_geometry().base_width, 256);
+        assert_eq!(sg.video_geometry().base_height, 192);
         assert_eq!(sg.sram_size(), 0);
         assert_eq!(sg.memory_region_size(MemoryRegionKind::PaletteRam), 0);
         assert_copyable_regions(&mut sg);
@@ -554,13 +560,13 @@ fn gb_memory_regions_are_copyable_by_descriptor() {
 }
 
 #[test]
-fn libretro_valid_extensions_include_gba_and_sega8() {
+fn libretro_valid_extensions_include_registered_systems() {
     let extensions = crate::callbacks::VALID_EXTENSIONS
         .to_str()
         .expect("valid extensions should be UTF-8");
 
     for ext in [
-        "gb", "gbc", "sgb", "gba", "nes", "fds", "ws", "wsc", "sms", "gg", "sg", "sc",
+        "gb", "gbc", "sgb", "gba", "nes", "fds", "pce", "ws", "wsc", "sms", "gg", "sg", "sc",
     ] {
         assert!(
             extensions.split('|').any(|entry| entry == ext),
@@ -570,13 +576,203 @@ fn libretro_valid_extensions_include_gba_and_sega8() {
 }
 
 #[test]
-fn libretro_does_not_register_pce() {
+fn libretro_registers_pce_hucards_with_fixed_host_geometry() {
     let extensions = crate::callbacks::VALID_EXTENSIONS
         .to_str()
         .expect("valid extensions should be UTF-8");
 
-    assert!(!extensions.split('|').any(|entry| entry == "pce"));
-    assert!(CoreState::from_rom(&[0xEA; 0x2000], "test.pce").is_err());
+    assert!(extensions.split('|').any(|entry| entry == "pce"));
+    let state = CoreState::from_rom(&pce_rom(), "test.pce").expect("PCE HuCard should load");
+    assert!(matches!(state.core, ActiveCore::Pce(_)));
+    assert_eq!(state.system_label(), "PC Engine");
+    assert_eq!(state.video_geometry().base_width, 640);
+    assert_eq!(state.video_geometry().base_height, 480);
+    assert_eq!(state.video_geometry().max_width, 640);
+    assert_eq!(state.video_geometry().max_height, 480);
+}
+
+#[test]
+fn pce_libretro_normalizes_pceas_headers_before_catalog_hashing() {
+    let rom = pce_rom();
+    let plain = CoreState::from_rom(&rom, "plain.pce").unwrap();
+    let mut headered = vec![0; 0x200];
+    headered[0] = 1;
+    headered.extend_from_slice(&rom);
+    let headered = CoreState::from_rom(&headered, "headered.pce").unwrap();
+
+    let (ActiveCore::Pce(plain), ActiveCore::Pce(headered)) = (&plain.core, &headered.core) else {
+        panic!("expected PCE hosts");
+    };
+    assert_eq!(headered.image_sha256(), plain.image_sha256());
+    assert_eq!(
+        headered.machine().hucard_board(),
+        plain.machine().hucard_board()
+    );
+    assert_eq!(
+        headered.machine().hardware_topology(),
+        plain.machine().hardware_topology()
+    );
+}
+
+#[test]
+fn pce_libretro_formats_exact_640_by_480_xrgb8888_and_rgb565_frames() {
+    let mut state = CoreState::from_rom(&pce_rom(), "video.pce").unwrap();
+    state.step_frame();
+    let ActiveCore::Pce(host) = &state.core else {
+        panic!("expected PCE host");
+    };
+    let rgba = host.framebuffer().to_vec();
+
+    let xrgb = state.framebuffer_as_xrgb8888().to_vec();
+    let rgb565 = state.framebuffer_as_rgb565().to_vec();
+    assert_eq!(xrgb.len(), 640 * 480 * 4);
+    assert_eq!(rgb565.len(), 640 * 480 * 2);
+
+    for index in [0, 319, 640 * 240, 640 * 480 - 1] {
+        let source = &rgba[index * 4..index * 4 + 4];
+        assert_eq!(
+            &xrgb[index * 4..index * 4 + 4],
+            &[source[2], source[1], source[0], 0]
+        );
+        let expected = (((u16::from(source[0]) >> 3) << 11)
+            | ((u16::from(source[1]) >> 2) << 5)
+            | (u16::from(source[2]) >> 3))
+            .to_le_bytes();
+        assert_eq!(&rgb565[index * 2..index * 2 + 2], &expected);
+    }
+}
+
+#[test]
+fn pce_libretro_roundtrips_serialize_payload_above_four_mib() {
+    let mut state = CoreState::from_rom(&pce_rom(), "state.pce").unwrap();
+    state.set_input(0x0F, 0x09);
+    state.step_frame();
+    let encoded = state.encode_state().unwrap();
+    assert!(encoded.len() > 4 * 1024 * 1024);
+    let expected_frame = match &state.core {
+        ActiveCore::Pce(host) => host.framebuffer().to_vec(),
+        _ => unreachable!(),
+    };
+
+    state.reset();
+    state.load_state(&encoded).unwrap();
+
+    assert_eq!(state.encode_state().unwrap(), encoded);
+    let ActiveCore::Pce(host) = &state.core else {
+        panic!("expected PCE host");
+    };
+    assert_eq!(host.framebuffer(), expected_frame);
+}
+
+#[test]
+fn pce_libretro_abi_serialization_roundtrips_above_four_mib() {
+    let mut state = CoreState::from_rom(&pce_rom(), "abi-state.pce").unwrap();
+    state.step_frame();
+    let expected = state.encode_state().unwrap();
+    assert!(expected.len() > 4 * 1024 * 1024);
+    *crate::callbacks::lock(&crate::callbacks::CORE) = Some(state);
+    *crate::callbacks::lock(&crate::callbacks::MAX_SERIALIZE_SIZE) = 0;
+
+    let serialize_size = crate::serialization::retro_serialize_size();
+    assert!(serialize_size > expected.len());
+    let mut buffer = vec![0; serialize_size];
+    assert!(crate::serialization::retro_serialize(
+        buffer.as_mut_ptr().cast(),
+        buffer.len()
+    ));
+    crate::callbacks::lock(&crate::callbacks::CORE)
+        .as_mut()
+        .unwrap()
+        .reset();
+    assert!(crate::serialization::retro_unserialize(
+        buffer.as_ptr().cast(),
+        buffer.len()
+    ));
+
+    let restored = crate::callbacks::lock(&crate::callbacks::CORE)
+        .as_ref()
+        .unwrap()
+        .encode_state()
+        .unwrap();
+    assert_eq!(restored, expected);
+    *crate::callbacks::lock(&crate::callbacks::CORE) = None;
+}
+
+#[test]
+fn pce_libretro_forwards_two_button_player_one_input() {
+    let mut state = CoreState::from_rom(&pce_rom(), "input.pce").unwrap();
+    state.set_input(0x0F, 0x09);
+
+    let ActiveCore::Pce(host) = &state.core else {
+        panic!("expected PCE host");
+    };
+    let zeff_pce_core::hardware::ControllerDevice::TwoButton(pad) =
+        host.machine().devices().controller().device()
+    else {
+        panic!("expected two-button controller");
+    };
+    let expected = zeff_pce_core::hardware::PadButtons::I
+        | zeff_pce_core::hardware::PadButtons::II
+        | zeff_pce_core::hardware::PadButtons::SELECT
+        | zeff_pce_core::hardware::PadButtons::RUN
+        | zeff_pce_core::hardware::PadButtons::RIGHT
+        | zeff_pce_core::hardware::PadButtons::DOWN;
+    assert_eq!(pad.buttons(), expected);
+}
+
+#[test]
+fn pce_libretro_applies_logical_ram_cheats() {
+    let mut state = CoreState::from_rom(&pce_rom(), "logical-cheat.pce").unwrap();
+    let ActiveCore::Pce(host) = &mut state.core else {
+        panic!("expected PCE host");
+    };
+    host.machine_mut()
+        .cpu_mut()
+        .cpu_mut()
+        .set_mapping_register(2, 0xF8);
+
+    state.cheat_set("4005:42");
+    state.apply_ram_cheats();
+
+    let ActiveCore::Pce(host) = &state.core else {
+        unreachable!();
+    };
+    assert_eq!(host.machine().mapped_work_ram()[5], 0x42);
+}
+
+#[test]
+fn pce_libretro_applies_six_digit_physical_work_ram_cheats() {
+    let mut state = CoreState::from_rom(&pce_rom(), "physical-cheat.pce").unwrap();
+
+    state.cheat_set("1F2345:66");
+    state.apply_ram_cheats();
+
+    let ActiveCore::Pce(host) = &state.core else {
+        panic!("expected PCE host");
+    };
+    assert_eq!(host.machine().mapped_work_ram()[0x345], 0x66);
+}
+
+#[test]
+fn pce_libretro_cheat_reset_stops_logical_and_physical_writes() {
+    let mut state = CoreState::from_rom(&pce_rom(), "reset-cheats.pce").unwrap();
+    let ActiveCore::Pce(host) = &mut state.core else {
+        panic!("expected PCE host");
+    };
+    host.machine_mut()
+        .cpu_mut()
+        .cpu_mut()
+        .set_mapping_register(2, 0xF8);
+    state.cheat_set("4005:42 + 1F2345:66");
+    state.cheat_reset();
+
+    state.apply_ram_cheats();
+
+    let ActiveCore::Pce(host) = &state.core else {
+        unreachable!();
+    };
+    assert_eq!(host.machine().mapped_work_ram()[5], 0);
+    assert_eq!(host.machine().mapped_work_ram()[0x345], 0);
 }
 
 #[test]
@@ -585,11 +781,11 @@ fn system_specs_map_to_libretro_core_state() {
         .to_str()
         .expect("valid extensions should be UTF-8");
 
-    for spec in System::specs()
-        .iter()
-        .filter(|spec| spec.system != System::Pce)
-    {
+    for spec in System::specs() {
         for extension in spec.rom_extensions {
+            if spec.system == System::Pce && *extension != "pce" {
+                continue;
+            }
             assert!(
                 valid_extensions.split('|').any(|entry| entry == *extension),
                 "libretro valid extension list is missing {extension}"
@@ -609,13 +805,52 @@ fn system_specs_map_to_libretro_core_state() {
             });
 
             assert_eq!(active_core_family(&state), spec.core_family);
-            assert_eq!(state.native_width(), spec.screen_size.0);
-            assert_eq!(state.native_height(), spec.screen_size.1);
+            assert_eq!(state.video_geometry().base_width, spec.screen_size.0);
+            assert_eq!(state.video_geometry().base_height, spec.screen_size.1);
             assert_eq!(state.system_label(), expected_system_label(spec.system));
             assert_eq!(
                 state.system_ram_size(),
                 expected_system_ram_size(spec.system),
                 "unexpected system RAM size for {}",
+                spec.code
+            );
+        }
+    }
+}
+
+#[test]
+fn video_geometry_matches_registered_system_matrix() {
+    for spec in System::specs() {
+        for extension in spec.rom_extensions {
+            if *extension == "fds" || spec.system == System::Pce && *extension != "pce" {
+                continue;
+            }
+
+            let rom = rom_for_system(spec.system);
+            let state = CoreState::from_rom(&rom, &format!("geometry.{extension}"))
+                .unwrap_or_else(|err| panic!("{} geometry fixture failed: {err}", spec.code));
+            let geometry = state.video_geometry();
+
+            assert_eq!(
+                (geometry.base_width, geometry.base_height),
+                spec.screen_size,
+                "unexpected base geometry for {}",
+                spec.code
+            );
+            let expected_maximum = if spec.system == System::Pce {
+                (640, 480)
+            } else {
+                (256, 240)
+            };
+            assert_eq!(
+                (geometry.max_width, geometry.max_height),
+                expected_maximum,
+                "unexpected maximum geometry for {}",
+                spec.code
+            );
+            assert_eq!(
+                geometry.aspect_ratio, 0.0,
+                "unexpected aspect hint for {}",
                 spec.code
             );
         }
@@ -646,8 +881,8 @@ fn wonderswan_extensions_select_ws_core() {
 
         assert!(matches!(state.core, ActiveCore::Ws(_)));
         assert_eq!(state.system_label(), "WonderSwan");
-        assert_eq!(state.native_width(), 224);
-        assert_eq!(state.native_height(), 144);
+        assert_eq!(state.video_geometry().base_width, 224);
+        assert_eq!(state.video_geometry().base_height, 144);
         assert_eq!(state.video_ram_size(), state.system_ram_size());
         assert!(state.video_ram_size() > 0);
         let regions = state.memory_regions();
@@ -673,7 +908,7 @@ fn rom_for_system(system: System) -> Vec<u8> {
         System::Gb => gb_rom(),
         System::Gba => gba_rom(),
         System::Nes => nes_rom(),
-        System::Pce => panic!("PC Engine is not registered in libretro"),
+        System::Pce => pce_rom(),
         System::Ws => ws_rom(),
         System::Sms | System::Gg | System::Sg => vec![0x76],
     }
@@ -684,6 +919,7 @@ fn active_core_family(state: &CoreState) -> CoreFamily {
         ActiveCore::Gb(_) => CoreFamily::GameBoy,
         ActiveCore::Gba(_) => CoreFamily::GameBoyAdvance,
         ActiveCore::Nes(_) => CoreFamily::Nes,
+        ActiveCore::Pce(_) => CoreFamily::PcEngine,
         ActiveCore::Sega8(_) => CoreFamily::Sega8,
         ActiveCore::Ws(_) => CoreFamily::WonderSwan,
     }
@@ -694,7 +930,7 @@ fn expected_system_label(system: System) -> &'static str {
         System::Gb => "GB/GBC",
         System::Gba => "GBA",
         System::Nes => "NES",
-        System::Pce => panic!("PC Engine is not registered in libretro"),
+        System::Pce => "PC Engine",
         System::Ws => "WonderSwan",
         System::Sms => "SMS",
         System::Gg => "Game Gear",
@@ -710,7 +946,7 @@ fn expected_system_ram_size(system: System) -> usize {
                 + zeff_gba_core::hardware::constants::IWRAM_SIZE
         }
         System::Nes => 0x800,
-        System::Pce => panic!("PC Engine is not registered in libretro"),
+        System::Pce => zeff_pce_core::hardware::WORK_RAM_LEN,
         System::Ws => zeff_ws_core::hardware::constants::WSC_INTERNAL_RAM_SIZE,
         System::Sms | System::Gg => zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,
         System::Sg => zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,

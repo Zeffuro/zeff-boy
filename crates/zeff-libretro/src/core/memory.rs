@@ -11,6 +11,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.dump_battery_sram(),
             ActiveCore::Gba(emu) => emu.dump_battery_sram(),
             ActiveCore::Nes(emu) => emu.dump_battery_sram(),
+            ActiveCore::Pce(_) => None,
             ActiveCore::Sega8(emu) => emu.dump_battery_sram(),
             ActiveCore::Ws(emu) => emu.dump_battery_sram(),
         }
@@ -21,6 +22,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.save_ram_kind(),
             ActiveCore::Gba(emu) => emu.save_ram_kind(),
             ActiveCore::Nes(emu) => emu.save_ram_kind(),
+            ActiveCore::Pce(host) => host.save_ram_kind(),
             ActiveCore::Sega8(emu) => emu.save_ram_kind(),
             ActiveCore::Ws(emu) => emu.save_ram_kind(),
         }
@@ -38,6 +40,7 @@ impl CoreState {
             ActiveCore::Nes(emu) => {
                 let _ = emu.load_battery_sram(data);
             }
+            ActiveCore::Pce(_) => {}
             ActiveCore::Sega8(emu) => {
                 let _ = emu.load_battery_sram(data);
             }
@@ -177,6 +180,40 @@ impl CoreState {
                 copy_optional_region(out, emu.dump_battery_sram(), region.id)?;
                 Ok(region)
             }
+            (ActiveCore::Pce(host), MemoryRegionKind::SystemRam) => {
+                copy_slice_to_vec(out, host.machine().mapped_work_ram());
+                Ok(region)
+            }
+            (ActiveCore::Pce(host), MemoryRegionKind::VideoRam) => {
+                out.clear();
+                append_words_le(out, host.machine().devices().vdc().vram());
+                if let Some(video) = host.machine().devices().supergrafx_video() {
+                    append_words_le(out, video.vdc2().vram());
+                }
+                Ok(region)
+            }
+            (ActiveCore::Pce(host), MemoryRegionKind::PaletteRam) => {
+                out.clear();
+                for color in host.machine().devices().vce().palette() {
+                    out.extend_from_slice(&color.raw().to_le_bytes());
+                }
+                Ok(region)
+            }
+            (ActiveCore::Pce(host), MemoryRegionKind::Oam) => {
+                out.clear();
+                append_words_le(out, host.machine().devices().vdc().satb());
+                if let Some(video) = host.machine().devices().supergrafx_video() {
+                    append_words_le(out, video.vdc2().satb());
+                }
+                Ok(region)
+            }
+            (ActiveCore::Pce(host), MemoryRegionKind::SaveRam) => {
+                let ram = host.machine().hucard_ram().ok_or_else(|| {
+                    anyhow::anyhow!("memory region '{}' is unavailable", region.id)
+                })?;
+                copy_slice_to_vec(out, ram);
+                Ok(region)
+            }
             (ActiveCore::Sega8(emu), MemoryRegionKind::SystemRam) => {
                 copy_slice_to_vec(out, emu.system_ram());
                 Ok(region)
@@ -210,6 +247,7 @@ impl CoreState {
                     ActiveCore::Gb(emu) => emu.framebuffer(),
                     ActiveCore::Gba(emu) => emu.framebuffer(),
                     ActiveCore::Nes(emu) => emu.framebuffer(),
+                    ActiveCore::Pce(host) => host.framebuffer(),
                     ActiveCore::Sega8(emu) => emu.framebuffer(),
                     ActiveCore::Ws(emu) => emu.framebuffer(),
                 };
@@ -238,6 +276,11 @@ impl CoreState {
             }
             ActiveCore::Nes(emu) => {
                 let ram = emu.system_ram();
+                self.system_ram_buf.resize(ram.len(), 0);
+                self.system_ram_buf.copy_from_slice(ram);
+            }
+            ActiveCore::Pce(host) => {
+                let ram = host.machine().mapped_work_ram();
                 self.system_ram_buf.resize(ram.len(), 0);
                 self.system_ram_buf.copy_from_slice(ram);
             }
@@ -271,6 +314,16 @@ impl CoreState {
                 self.video_ram_buf.resize(vram.len(), 0);
                 self.video_ram_buf.copy_from_slice(&vram);
             }
+            ActiveCore::Pce(host) => {
+                self.video_ram_buf.clear();
+                append_words_le(
+                    &mut self.video_ram_buf,
+                    host.machine().devices().vdc().vram(),
+                );
+                if let Some(video) = host.machine().devices().supergrafx_video() {
+                    append_words_le(&mut self.video_ram_buf, video.vdc2().vram());
+                }
+            }
             ActiveCore::Sega8(emu) => {
                 let vram = emu.video_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
@@ -288,7 +341,9 @@ impl CoreState {
         match &self.core {
             ActiveCore::Gba(_) => 32,
             ActiveCore::Ws(_) => 20,
-            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) => 16,
+            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Pce(_) | ActiveCore::Sega8(_) => {
+                16
+            }
         }
     }
 
@@ -297,6 +352,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.framebuffer().len(),
             ActiveCore::Gba(emu) => emu.framebuffer().len(),
             ActiveCore::Nes(emu) => emu.framebuffer().len(),
+            ActiveCore::Pce(host) => host.framebuffer().len(),
             ActiveCore::Sega8(emu) => emu.framebuffer().len(),
             ActiveCore::Ws(emu) => emu.framebuffer().len(),
         }
@@ -307,6 +363,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.system_ram().len(),
             ActiveCore::Gba(_) => 0x48000,
             ActiveCore::Nes(_) => 0x800,
+            ActiveCore::Pce(host) => host.machine().mapped_work_ram().len(),
             ActiveCore::Sega8(emu) => emu.system_ram().len(),
             ActiveCore::Ws(emu) => emu.system_ram().len(),
         }
@@ -315,14 +372,22 @@ impl CoreState {
     pub fn external_work_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gba(emu) => emu.system_ram().0.len(),
-            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
+            ActiveCore::Gb(_)
+            | ActiveCore::Nes(_)
+            | ActiveCore::Pce(_)
+            | ActiveCore::Sega8(_)
+            | ActiveCore::Ws(_) => 0,
         }
     }
 
     pub fn internal_work_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gba(emu) => emu.system_ram().1.len(),
-            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
+            ActiveCore::Gb(_)
+            | ActiveCore::Nes(_)
+            | ActiveCore::Pce(_)
+            | ActiveCore::Sega8(_)
+            | ActiveCore::Ws(_) => 0,
         }
     }
 
@@ -331,6 +396,11 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.video_ram_snapshot().len(),
             ActiveCore::Gba(emu) => emu.video_ram_snapshot().len(),
             ActiveCore::Nes(_) => 0x2000,
+            ActiveCore::Pce(host) => {
+                let multiplier =
+                    usize::from(host.machine().devices().supergrafx_video().is_some()) + 1;
+                zeff_pce_core::hardware::VDC_VRAM_BYTES * multiplier
+            }
             ActiveCore::Sega8(emu) => emu.video_ram_snapshot().len(),
             ActiveCore::Ws(emu) => emu.video_ram_snapshot().len(),
         }
@@ -340,6 +410,7 @@ impl CoreState {
         match &self.core {
             ActiveCore::Gba(emu) => emu.palette_ram_snapshot().len(),
             ActiveCore::Nes(emu) => emu.ppu_palette_ram().len(),
+            ActiveCore::Pce(_) => zeff_pce_core::hardware::VCE_PALETTE_COLORS * 2,
             ActiveCore::Sega8(emu) => match emu.system() {
                 zeff_sega8_core::hardware::cartridge::Sega8System::MasterSystem
                 | zeff_sega8_core::hardware::cartridge::Sega8System::GameGear => {
@@ -355,6 +426,11 @@ impl CoreState {
         match &self.core {
             ActiveCore::Gba(emu) => emu.oam_snapshot().len(),
             ActiveCore::Nes(emu) => emu.ppu_oam().len(),
+            ActiveCore::Pce(host) => {
+                let multiplier =
+                    usize::from(host.machine().devices().supergrafx_video().is_some()) + 1;
+                zeff_pce_core::hardware::VDC_SATB_WORDS * 2 * multiplier
+            }
             ActiveCore::Gb(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
         }
     }
@@ -362,7 +438,11 @@ impl CoreState {
     pub fn io_registers_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gba(emu) => emu.io_snapshot().len(),
-            ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
+            ActiveCore::Gb(_)
+            | ActiveCore::Nes(_)
+            | ActiveCore::Pce(_)
+            | ActiveCore::Sega8(_)
+            | ActiveCore::Ws(_) => 0,
         }
     }
 }
@@ -371,6 +451,13 @@ impl CoreState {
 fn copy_slice_to_vec(out: &mut Vec<u8>, data: &[u8]) {
     out.clear();
     out.extend_from_slice(data);
+}
+
+fn append_words_le(out: &mut Vec<u8>, words: &[u16]) {
+    out.reserve(words.len() * 2);
+    for word in words {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
 }
 
 #[allow(dead_code)]

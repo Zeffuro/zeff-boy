@@ -7,6 +7,8 @@ mod cd_media;
 mod cdrom2;
 mod controller;
 pub mod cpu;
+mod host_video;
+mod hucard_host;
 mod machine;
 mod pce_devices;
 mod psg;
@@ -63,6 +65,12 @@ pub use controller::{
     SixButtonExtraButtons, SixButtonPad, SixButtonPhase, TwoButtonPad,
 };
 pub use cpu::{IrqPort, TimerPort, physical_address_for_page};
+pub use host_video::{
+    PCE_HOST_FRAME_HEIGHT, PCE_HOST_FRAME_RGBA_BYTES, PCE_HOST_FRAME_WIDTH, project_full_raw_frame,
+};
+pub use hucard_host::{
+    HUCARD_BANK_LEN, PCEAS_HEADER_LEN, PceHuCardHost, apply_pce_cheats, normalize_hucard_image,
+};
 pub use machine::{
     PCE_MASTER_CLOCK_NTSC_REFERENCE_MULTIPLIER, PCE_NTSC_REFERENCE_MHZ_DENOMINATOR,
     PCE_NTSC_REFERENCE_MHZ_NUMERATOR, PCE_VDC_VCE_ACCESS_WAIT_CYCLES,

@@ -192,6 +192,69 @@ fn profile_gba_synthetic(
     }
 }
 
+fn profile_gba_active_video(frames: u32, sample_generation_enabled: bool) {
+    let mut gba =
+        zeff_gba_core::emulator::Emulator::from_rom_data(&gba_rom()).expect("synthetic GBA ROM");
+    let mut pattern = 0xA5A5_5A5A_u32;
+    for offset in (0..0x4000_u32).step_by(2) {
+        pattern = pattern.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        gba.cpu_write16(0x0600_0000 + offset, (pattern >> 16) as u16);
+    }
+    for index in 0..(32 * 32_u32) {
+        let tile = (index * 13) & 0x01FF;
+        let attributes = ((index & 0x0F) << 12) | ((index & 1) << 10) | ((index & 2) << 10);
+        gba.cpu_write16(0x0600_4000 + index * 2, (tile | attributes) as u16);
+    }
+    for color in 0..256_u32 {
+        let r = color & 0x1F;
+        let g = (color * 3) & 0x1F;
+        let b = (color * 7) & 0x1F;
+        gba.cpu_write16(0x0500_0000 + color * 2, (r | (g << 5) | (b << 10)) as u16);
+    }
+
+    gba.cpu_write16(0x0200_0000, 0x03FF);
+    gba.cpu_write32(0x0400_00B0, 0x0200_0000);
+    gba.cpu_write32(0x0400_00B4, 0x0500_0002);
+    gba.cpu_write16(0x0400_00B8, 1);
+    gba.cpu_write16(0x0400_00BA, 0xA340);
+    gba.cpu_write16(0x0400_0100, 0xFFC0);
+    gba.cpu_write16(0x0400_0102, 0x0081);
+    gba.cpu_write16(0x0400_0104, 0xFFF0);
+    gba.cpu_write16(0x0400_0106, 0x0084);
+    gba.cpu_write16(0x0400_0008, 8 << 8);
+    gba.cpu_write16(0x0400_0000, 1 << 8);
+
+    gba.set_apu_sample_generation_enabled(sample_generation_enabled);
+    gba.set_apu_debug_capture_enabled(false);
+    profile_frames(
+        if sample_generation_enabled {
+            "GBA active video + DMA + timers + audio"
+        } else {
+            "GBA active video + DMA + timers"
+        },
+        frames,
+        &mut gba,
+    );
+    assert_eq!(
+        gba.cpu_peek16(0x0500_0002),
+        0x03FF,
+        "synthetic GBA HBlank DMA did not update palette RAM"
+    );
+    let first_pixel = &gba.framebuffer()[..4];
+    assert!(
+        gba.framebuffer()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel != first_pixel),
+        "synthetic GBA active-video fixture produced a flat frame"
+    );
+    let state = gba.encode_state().expect("encode GBA active-video state");
+    let mut audio = Vec::new();
+    gba.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(gba.framebuffer(), &state, &audio);
+}
+
 fn profile_sega8_video(frames: u32, sample_generation_enabled: bool) {
     use zeff_sega8_core::hardware::cartridge::SystemHint;
 
@@ -257,6 +320,75 @@ fn profile_sega8_video(frames: u32, sample_generation_enabled: bool) {
     let state = sega
         .encode_state()
         .expect("encode synthetic Sega 8-bit state");
+    let mut audio = Vec::new();
+    sega.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(sega.framebuffer(), &state, &audio);
+}
+
+fn profile_sega8_sprites(frames: u32, sample_generation_enabled: bool) {
+    use zeff_sega8_core::hardware::cartridge::SystemHint;
+
+    let mut sega = zeff_sega8_core::emulator::Emulator::new_with_hint(
+        &sega8_rom(),
+        48_000,
+        SystemHint::MasterSystem,
+    )
+    .expect("synthetic Sega 8-bit sprite ROM");
+    let vdp = sega.bus_mut().vdp_mut();
+    for (register, value) in [(0, 0x04), (1, 0x40), (2, 0x0E), (5, 0x7E), (6, 0x00)] {
+        vdp.write_control(value);
+        vdp.write_control(0x80 | register);
+    }
+
+    vdp.write_control(0x20);
+    vdp.write_control(0x40);
+    let mut pattern = 0xA5A5_5A5A_u32;
+    for _ in 0..(64 * 32) {
+        pattern = pattern.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        vdp.write_data((pattern >> 24) as u8);
+    }
+
+    vdp.write_control(0);
+    vdp.write_control(0x7F);
+    for sprite in 0..64_u8 {
+        vdp.write_data((sprite / 8) * 24);
+    }
+    vdp.write_control(0x80);
+    vdp.write_control(0x7F);
+    for sprite in 0..64_u8 {
+        vdp.write_data((sprite % 8) * 28);
+        vdp.write_data(sprite + 1);
+    }
+
+    vdp.write_control(0);
+    vdp.write_control(0xC0);
+    vdp.write_data(0);
+    for color in 1..32 {
+        vdp.write_data((color * 11) as u8);
+    }
+
+    sega.set_apu_sample_generation_enabled(sample_generation_enabled);
+    profile_frames(
+        if sample_generation_enabled {
+            "Sega 8-bit Mode 4 sprites + audio"
+        } else {
+            "Sega 8-bit Mode 4 sprites"
+        },
+        frames,
+        &mut sega,
+    );
+    let background = &sega.framebuffer()[..4];
+    assert!(
+        sega.framebuffer()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel != background),
+        "synthetic Sega 8-bit sprite fixture produced a flat frame"
+    );
+    let state = sega
+        .encode_state()
+        .expect("encode synthetic Sega 8-bit sprite state");
     let mut audio = Vec::new();
     sega.drain_audio_samples_into(&mut audio);
     print_accuracy_hashes(sega.framebuffer(), &state, &audio);
@@ -510,6 +642,17 @@ fn ws_rom() -> Vec<u8> {
     rom
 }
 
+fn ws_color_rom() -> Vec<u8> {
+    use zeff_ws_core::hardware::cartridge::compute_footer_checksum;
+
+    let mut rom = ws_rom();
+    let footer = rom.len() - 10;
+    rom[footer + 1] = 0x01;
+    let checksum = compute_footer_checksum(&rom);
+    rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+    rom
+}
+
 fn profile_synthetic(
     frames: u32,
     sample_generation_enabled: bool,
@@ -624,6 +767,66 @@ fn profile_ws_synthetic(
     let state = ws
         .encode_state()
         .expect("encode synthetic WonderSwan state");
+    let mut audio = Vec::new();
+    ws.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(ws.framebuffer(), &state, &audio);
+}
+
+fn profile_ws_video(frames: u32, sample_generation_enabled: bool) {
+    let mut ws = zeff_ws_core::emulator::Emulator::from_rom_data(&ws_color_rom())
+        .expect("synthetic WonderSwan Color ROM");
+    let mut pattern = 0xA5A5_5A5A_u32;
+    for address in 0..=0xFFFF {
+        pattern = pattern.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ws.cpu_write8(address, (pattern >> 24) as u8);
+    }
+
+    ws.io_write8(0x00, 0x07);
+    ws.io_write8(0x04, 0x30);
+    ws.io_write8(0x05, 0);
+    ws.io_write8(0x06, 64);
+    ws.io_write8(0x07, 0x21);
+    ws.io_write8(0x10, 13);
+    ws.io_write8(0x11, 29);
+    ws.io_write8(0x12, 47);
+    ws.io_write8(0x13, 71);
+    ws.io_write8(0x14, 0x01);
+    ws.io_write8(0x60, 0xC0);
+    for sprite in 0..64_u32 {
+        let entry = 0x6000 + sprite * 4;
+        let tile = (sprite * 7) & 0x01FF;
+        let attributes = ((sprite & 7) << 9)
+            | ((sprite & 1) << 13)
+            | ((sprite & 2) << 13)
+            | ((sprite & 4) << 13);
+        let tile_data = (tile | attributes) as u16;
+        let [lo, hi] = tile_data.to_le_bytes();
+        ws.cpu_write8(entry, lo);
+        ws.cpu_write8(entry + 1, hi);
+        ws.cpu_write8(entry + 2, ((sprite * 19) % 144) as u8);
+        ws.cpu_write8(entry + 3, ((sprite * 37) % 224) as u8);
+    }
+
+    ws.set_apu_sample_generation_enabled(sample_generation_enabled);
+    profile_wonderswan_frames(
+        if sample_generation_enabled {
+            "WonderSwan color video + audio"
+        } else {
+            "WonderSwan color video"
+        },
+        frames,
+        &mut ws,
+    );
+    let first_pixel = &ws.framebuffer()[..4];
+    assert!(
+        ws.framebuffer()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel != first_pixel),
+        "synthetic WonderSwan video fixture produced a flat frame"
+    );
+    let state = ws.encode_state().expect("encode WonderSwan video state");
     let mut audio = Vec::new();
     ws.drain_audio_samples_into(&mut audio);
     print_accuracy_hashes(ws.framebuffer(), &state, &audio);
@@ -805,6 +1008,30 @@ fn main() {
             .filter(|&value| value > 0)
             .unwrap_or(100);
         profile_pce_state(iterations);
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_WS_VIDEO_ONLY").as_deref() == Ok("1") {
+        profile_ws_video(
+            frames,
+            std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1"),
+        );
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_SEGA8_SPRITES_ONLY").as_deref() == Ok("1") {
+        profile_sega8_sprites(
+            frames,
+            std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1"),
+        );
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_GBA_ACTIVE_VIDEO_ONLY").as_deref() == Ok("1") {
+        profile_gba_active_video(
+            frames,
+            std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1"),
+        );
         return;
     }
 

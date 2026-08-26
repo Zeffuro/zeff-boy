@@ -90,13 +90,7 @@ pub(crate) fn apply_core_options(state: &mut crate::core::CoreState) {
         let now_active = state.sgb_border_active();
 
         if was_active != now_active {
-            let mut geom = retro_game_geometry {
-                base_width: state.native_width(),
-                base_height: state.native_height(),
-                max_width: 256,
-                max_height: 240,
-                aspect_ratio: 0.0,
-            };
+            let mut geom = state.video_geometry();
             env_cmd(
                 RETRO_ENVIRONMENT_SET_GEOMETRY,
                 &mut geom as *mut retro_game_geometry as *mut c_void,

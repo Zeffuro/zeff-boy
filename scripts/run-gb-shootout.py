@@ -16,6 +16,11 @@ FPS = 59.7275
 SCREEN_SIZE = (160, 144)
 SGB_SCREEN_SIZE = (256, 224)
 
+# rtc3test-3 documents a 26-second runtime despite 20 seconds in Shootout metadata.
+MINIMUM_RUNTIME_SECONDS = {
+    "ax6/rtc3test-3.gb": 26.0,
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -94,7 +99,8 @@ def encoded_png(image):
 
 
 def run_test(executable, test, args):
-    frame_limit = math.ceil((test.runtime + args.extra_seconds) * FPS)
+    runtime = max(test.runtime, MINIMUM_RUNTIME_SECONDS.get(test.name, test.runtime))
+    frame_limit = math.ceil((runtime + args.extra_seconds) * FPS)
     with tempfile.TemporaryDirectory(prefix="zeff-gb-shootout-") as temp_dir:
         command = [
             str(executable),

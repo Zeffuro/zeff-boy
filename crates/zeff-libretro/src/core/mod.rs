@@ -2,6 +2,7 @@ pub(crate) enum ActiveCore {
     Gb(Box<zeff_gb_core::emulator::Emulator>),
     Gba(Box<zeff_gba_core::emulator::Emulator>),
     Nes(Box<zeff_nes_core::emulator::Emulator>),
+    Pce(Box<zeff_pce_core::hardware::PceHuCardHost>),
     Sega8(Box<zeff_sega8_core::emulator::Emulator>),
     Ws(Box<zeff_ws_core::emulator::Emulator>),
 }

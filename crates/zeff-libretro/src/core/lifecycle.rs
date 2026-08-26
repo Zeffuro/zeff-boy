@@ -16,7 +16,10 @@ impl CoreState {
         let sample_rate = 48000u32;
 
         let core = match ext.as_str() {
-            "pce" => anyhow::bail!("PC Engine is not supported by the libretro core"),
+            "pce" => {
+                let host = zeff_pce_core::hardware::PceHuCardHost::new(data.to_vec(), sample_rate)?;
+                ActiveCore::Pce(Box::new(host))
+            }
             "gba" => {
                 let mut emu = zeff_gba_core::emulator::Emulator::new(data, sample_rate)?;
                 if emu.has_rtc()
@@ -77,6 +80,7 @@ impl CoreState {
             }
             ActiveCore::Gba(emu) => emu.reset(),
             ActiveCore::Nes(emu) => emu.reset(),
+            ActiveCore::Pce(host) => host.reset(),
             ActiveCore::Sega8(emu) => emu.reset(),
             ActiveCore::Ws(emu) => emu.reset(),
         }

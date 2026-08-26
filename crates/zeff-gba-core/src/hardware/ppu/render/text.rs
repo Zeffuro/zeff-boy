@@ -200,6 +200,8 @@ impl Ppu {
         mosaic: Mosaic,
     ) {
         let params = TextBgParams::new(control, io, bg);
+        let mut tile_entry = TextTileEntryCache::default();
+        let cache_tile_entries = windows.effects_are_uniform();
         for x in 0..SCREEN_WIDTH {
             if !windows.allows_bg(bg, x, y) {
                 continue;
@@ -207,7 +209,12 @@ impl Ppu {
             let (sample_x, sample_y) = mosaic.bg_sample(x, y, params.use_mosaic);
             let sx = (sample_x + params.hofs) % params.width;
             let sy = (sample_y + params.vofs) % params.height;
-            let Some(color_index) = params.color_index(vram, sx, sy) else {
+            let color_index = if cache_tile_entries {
+                params.color_index_cached(vram, sx, sy, &mut tile_entry)
+            } else {
+                params.color_index(vram, sx, sy)
+            };
+            let Some(color_index) = color_index else {
                 continue;
             };
             if color_index == 0 {
@@ -237,6 +244,30 @@ impl Ppu {
     }
 }
 
+struct TextTileEntryCache {
+    offset: usize,
+    entry: u16,
+}
+
+impl Default for TextTileEntryCache {
+    fn default() -> Self {
+        Self {
+            offset: usize::MAX,
+            entry: 0,
+        }
+    }
+}
+
+impl TextTileEntryCache {
+    fn read(&mut self, vram: &[u8], offset: usize) -> u16 {
+        if self.offset != offset {
+            self.offset = offset;
+            self.entry = read_le16(vram, offset);
+        }
+        self.entry
+    }
+}
+
 struct TextBgParams {
     char_base: usize,
     screen_base: usize,
@@ -246,6 +277,37 @@ struct TextBgParams {
     hofs: usize,
     vofs: usize,
     use_mosaic: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TextBgParams, TextTileEntryCache};
+
+    #[test]
+    fn cached_tile_rows_match_per_pixel_lookup() {
+        let mut vram = vec![0; 0x1_8000];
+        for (i, byte) in vram.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(37).wrapping_add((i >> 8) as u8);
+        }
+        let io = [0; 0x60];
+
+        for size in 0..4 {
+            for color_256 in [false, true] {
+                let control = (size << 14) | (0x1A << 8) | if color_256 { 1 << 7 } else { 0 };
+                let params = TextBgParams::new(control, &io, 0);
+                let mut cache = TextTileEntryCache::default();
+                for y in 0..params.height {
+                    for x in 0..params.width {
+                        assert_eq!(
+                            params.color_index_cached(&vram, x, y, &mut cache),
+                            params.color_index(&vram, x, y),
+                            "size={size} color_256={color_256} x={x} y={y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl TextBgParams {
@@ -269,7 +331,7 @@ impl TextBgParams {
         }
     }
 
-    fn color_index(&self, vram: &[u8], x: usize, y: usize) -> Option<u16> {
+    fn entry_offset(&self, x: usize, y: usize) -> usize {
         let screen_x = x / 256;
         let screen_y = y / 256;
         let block = match (self.width > 256, screen_y > 0, screen_x > 0) {
@@ -281,8 +343,26 @@ impl TextBgParams {
         };
         let tile_x = (x % 256) / 8;
         let tile_y = (y % 256) / 8;
-        let entry_offset = self.screen_base + block * 0x800 + (tile_y * 32 + tile_x) * 2;
-        let entry = read_le16(vram, entry_offset);
+        self.screen_base + block * 0x800 + (tile_y * 32 + tile_x) * 2
+    }
+
+    fn color_index(&self, vram: &[u8], x: usize, y: usize) -> Option<u16> {
+        let entry = read_le16(vram, self.entry_offset(x, y));
+        self.color_index_from_entry(vram, x, y, entry)
+    }
+
+    fn color_index_cached(
+        &self,
+        vram: &[u8],
+        x: usize,
+        y: usize,
+        cache: &mut TextTileEntryCache,
+    ) -> Option<u16> {
+        let entry = cache.read(vram, self.entry_offset(x, y));
+        self.color_index_from_entry(vram, x, y, entry)
+    }
+
+    fn color_index_from_entry(&self, vram: &[u8], x: usize, y: usize, entry: u16) -> Option<u16> {
         let tile = usize::from(entry & 0x03FF);
         let hflip = entry & (1 << 10) != 0;
         let vflip = entry & (1 << 11) != 0;

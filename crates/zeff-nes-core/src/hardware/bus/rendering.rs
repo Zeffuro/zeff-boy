@@ -36,11 +36,8 @@ const TILE_BYTES: u16 = 16;
 const TILE_PLANE_BYTES: u16 = 8;
 const SMALL_SPRITE_HEIGHT: u16 = 8;
 const TALL_SPRITE_HEIGHT: u16 = 16;
-const SPRITE_COUNT: usize = 64;
 const SPRITES_PER_SCANLINE: u8 = 8;
 const OAM_ENTRY_BYTES: usize = 4;
-const OAM_INDEX_MASK: usize = 0xFF;
-const OAM_OVERFLOW_BUG_M_MASK: u8 = 0x03;
 const OAM_SPRITE_Y_OFFSET: u16 = 1;
 const SPRITE_ATTR_FLIP_HORIZONTAL: u8 = 0x40;
 const SPRITE_ATTR_FLIP_VERTICAL: u8 = 0x80;
@@ -84,6 +81,10 @@ impl Bus {
         }
 
         if rendering && render_line {
+            if visible_line && dot <= LAST_VISIBLE_DOT && dot.is_multiple_of(2) {
+                self.clock_sprite_evaluation();
+            }
+
             let in_bg_range = (FIRST_VISIBLE_DOT..=LAST_VISIBLE_DOT).contains(&dot)
                 || (BG_PREFETCH_START_DOT..=BG_PREFETCH_END_DOT).contains(&dot);
 
@@ -140,9 +141,9 @@ impl Bus {
             if dot == SPRITE_EVALUATION_DOT {
                 self.ppu.copy_horizontal_bits();
                 if visible_line && scanline < LAST_VISIBLE_SCANLINE {
-                    self.evaluate_sprites_for_scanline(scanline + 1);
+                    self.load_evaluated_sprites_for_scanline(scanline + 1);
                 } else if pre_render {
-                    self.evaluate_sprites_for_scanline(0);
+                    self.clear_sprite_render_state();
                 }
             }
 
@@ -206,61 +207,149 @@ impl Bus {
     }
 
     #[inline]
-    fn evaluate_sprites_for_scanline(&mut self, target: u16) {
-        let sprite_height: u16 = if self.ppu.regs.tall_sprites() {
+    fn sprite_is_in_range(&self, y: u8) -> bool {
+        let height = if self.ppu.regs.tall_sprites() {
             TALL_SPRITE_HEIGHT
         } else {
             SMALL_SPRITE_HEIGHT
         };
-        let pattern_base = self.ppu.regs.sprite_pattern_addr();
-        let default_a12 = if sprite_height == TALL_SPRITE_HEIGHT {
+        self.ppu.scanline.wrapping_sub(u16::from(y)) < height
+    }
+
+    #[inline]
+    fn begin_sprite_evaluation(&mut self) {
+        self.ppu.sprite_eval_oam_addr = 0;
+        self.ppu.sprite_eval_secondary_addr = 0;
+        self.ppu.sprite_eval_latch = 0xFF;
+        self.ppu.sprite_eval_in_range = false;
+        self.ppu.sprite_eval_done = false;
+        self.ppu.sprite_eval_sprite_zero = false;
+        self.ppu.sprite_eval_overflow_remaining = 0;
+    }
+
+    #[inline]
+    fn clock_sprite_evaluation(&mut self) {
+        let dot = self.ppu.dot;
+        if (FIRST_VISIBLE_DOT..65).contains(&dot) {
+            if dot == 2 {
+                self.begin_sprite_evaluation();
+            }
+            self.ppu.secondary_oam[(dot / 2 - 1) as usize] = 0xFF;
+            return;
+        }
+
+        if !(65..=LAST_VISIBLE_DOT).contains(&dot) {
+            return;
+        }
+
+        if dot == 66 {
+            self.begin_sprite_evaluation();
+        }
+
+        self.ppu.sprite_eval_latch = self.ppu.oam[self.ppu.sprite_eval_oam_addr as usize];
+
+        if self.ppu.sprite_eval_done {
+            self.ppu.sprite_eval_oam_addr = self.ppu.sprite_eval_oam_addr.wrapping_add(4);
+            return;
+        }
+
+        if self.ppu.sprite_eval_secondary_addr < 32 {
+            let secondary = self.ppu.sprite_eval_secondary_addr as usize;
+            self.ppu.secondary_oam[secondary] = self.ppu.sprite_eval_latch;
+
+            if self.ppu.sprite_eval_oam_addr & 0x03 == 0 {
+                self.ppu.sprite_eval_in_range = self.sprite_is_in_range(self.ppu.sprite_eval_latch);
+                if !self.ppu.sprite_eval_in_range {
+                    self.advance_sprite_eval_to_next_sprite();
+                    return;
+                }
+                if self.ppu.sprite_eval_oam_addr == 0 {
+                    self.ppu.sprite_eval_sprite_zero = true;
+                }
+            }
+
+            self.ppu.sprite_eval_secondary_addr += 1;
+            self.ppu.sprite_eval_oam_addr = self.ppu.sprite_eval_oam_addr.wrapping_add(1);
+            if self.ppu.sprite_eval_oam_addr & 0x03 == 0 {
+                self.ppu.sprite_eval_in_range = false;
+                if self.ppu.sprite_eval_oam_addr == 0 {
+                    self.ppu.sprite_eval_done = true;
+                }
+            }
+            return;
+        }
+
+        if self.ppu.sprite_eval_overflow_remaining > 0 {
+            self.ppu.sprite_eval_oam_addr = self.ppu.sprite_eval_oam_addr.wrapping_add(1);
+            self.ppu.sprite_eval_overflow_remaining -= 1;
+            if self.ppu.sprite_eval_overflow_remaining == 0 {
+                self.ppu.sprite_eval_oam_addr &= !0x03;
+                self.ppu.sprite_eval_done = true;
+            }
+            return;
+        }
+
+        if self.sprite_is_in_range(self.ppu.sprite_eval_latch) {
+            self.ppu.regs.set_sprite_overflow();
+            self.ppu.sprite_eval_oam_addr = self.ppu.sprite_eval_oam_addr.wrapping_add(1);
+            self.ppu.sprite_eval_overflow_remaining = 3;
+        } else {
+            let n = (self.ppu.sprite_eval_oam_addr >> 2).wrapping_add(1) & 0x3F;
+            let m = self.ppu.sprite_eval_oam_addr.wrapping_add(1) & 0x03;
+            self.ppu.sprite_eval_oam_addr = (n << 2) | m;
+            if n == 0 {
+                self.ppu.sprite_eval_done = true;
+            }
+        }
+    }
+
+    fn advance_sprite_eval_to_next_sprite(&mut self) {
+        self.ppu.sprite_eval_oam_addr =
+            (self.ppu.sprite_eval_oam_addr & !0x03).wrapping_add(OAM_ENTRY_BYTES as u8);
+        self.ppu.sprite_eval_in_range = false;
+        if self.ppu.sprite_eval_oam_addr == 0 {
+            self.ppu.sprite_eval_done = true;
+        }
+    }
+
+    fn clear_sprite_render_state(&mut self) {
+        let default_a12 = if self.ppu.regs.tall_sprites() {
             true
         } else {
-            pattern_base != 0
+            self.ppu.regs.sprite_pattern_addr() != 0
         };
         self.sprite_fetch_a12 = [default_a12; 8];
-
         self.ppu.sprite_count = 0;
         self.ppu.sprite_zero_rendering = false;
         self.ppu.sprite_patterns_lo = [0; 8];
         self.ppu.sprite_patterns_hi = [0; 8];
         self.ppu.sprite_attribs = [0; 8];
         self.ppu.sprite_x_counters = [OAM_EMPTY_X; 8];
-        self.ppu.overflow_bug_m = 0;
+    }
 
-        let mut count: u8 = 0;
+    #[inline]
+    fn load_evaluated_sprites_for_scanline(&mut self, target: u16) {
+        let sprite_height: u16 = if self.ppu.regs.tall_sprites() {
+            TALL_SPRITE_HEIGHT
+        } else {
+            SMALL_SPRITE_HEIGHT
+        };
+        let pattern_base = self.ppu.regs.sprite_pattern_addr();
+        self.clear_sprite_render_state();
+        self.ppu.sprite_zero_rendering = self.ppu.sprite_eval_sprite_zero;
+        let count =
+            (self.ppu.sprite_eval_secondary_addr / OAM_ENTRY_BYTES as u8).min(SPRITES_PER_SCANLINE);
 
-        for i in 0..SPRITE_COUNT {
+        for i in 0..count as usize {
             let base = i * OAM_ENTRY_BYTES;
-
-            let oam_y = if count >= SPRITES_PER_SCANLINE {
-                self.ppu.oam[(base + self.ppu.overflow_bug_m as usize) & OAM_INDEX_MASK] as u16
-            } else {
-                self.ppu.oam[base] as u16
-            };
-
-            let effective_y = oam_y.wrapping_add(OAM_SPRITE_Y_OFFSET);
+            let effective_y =
+                u16::from(self.ppu.secondary_oam[base]).wrapping_add(OAM_SPRITE_Y_OFFSET);
             let diff = target.wrapping_sub(effective_y);
-            if diff >= sprite_height {
-                if count >= SPRITES_PER_SCANLINE {
-                    self.ppu.overflow_bug_m =
-                        self.ppu.overflow_bug_m.wrapping_add(1) & OAM_OVERFLOW_BUG_M_MASK;
-                }
-                continue;
-            }
+            debug_assert!(diff < sprite_height);
 
-            if count >= SPRITES_PER_SCANLINE {
-                self.ppu.regs.set_sprite_overflow();
-                break;
-            }
-
-            if i == 0 {
-                self.ppu.sprite_zero_rendering = true;
-            }
-
-            let tile_index = self.ppu.oam[base + 1];
-            let attributes = self.ppu.oam[base + 2];
-            let sprite_x = self.ppu.oam[base + 3];
+            let tile_index = self.ppu.secondary_oam[base + 1];
+            let attributes = self.ppu.secondary_oam[base + 2];
+            let sprite_x = self.ppu.secondary_oam[base + 3];
             let flip_h = attributes & SPRITE_ATTR_FLIP_HORIZONTAL != 0;
             let flip_v = attributes & SPRITE_ATTR_FLIP_VERTICAL != 0;
 
@@ -290,14 +379,11 @@ impl Bus {
                 hi = hi.reverse_bits();
             }
 
-            let idx = count as usize;
-            self.sprite_fetch_a12[idx] = lo_addr & 0x1000 != 0;
-            self.ppu.sprite_patterns_lo[idx] = lo;
-            self.ppu.sprite_patterns_hi[idx] = hi;
-            self.ppu.sprite_attribs[idx] = attributes;
-            self.ppu.sprite_x_counters[idx] = sprite_x;
-
-            count += 1;
+            self.sprite_fetch_a12[i] = lo_addr & 0x1000 != 0;
+            self.ppu.sprite_patterns_lo[i] = lo;
+            self.ppu.sprite_patterns_hi[i] = hi;
+            self.ppu.sprite_attribs[i] = attributes;
+            self.ppu.sprite_x_counters[i] = sprite_x;
         }
 
         self.ppu.sprite_count = count;
@@ -308,6 +394,7 @@ impl Bus {
 mod tests {
     use super::*;
     use crate::hardware::cartridge::Cartridge;
+    use crate::hardware::constants::STATUS_SPRITE_OVERFLOW;
 
     fn test_bus() -> Bus {
         let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -337,6 +424,100 @@ mod tests {
         bus.ppu.regs.mask = 0x18;
     }
 
+    fn run_sprite_evaluation(bus: &mut Bus, scanline: u16, dots: std::ops::RangeInclusive<u16>) {
+        bus.ppu.scanline = scanline;
+        for dot in dots {
+            bus.ppu.dot = dot;
+            bus.ppu_render_dot();
+        }
+    }
+
+    #[test]
+    fn sprite_evaluation_clears_secondary_oam_on_even_dots() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.secondary_oam = [0; 32];
+
+        run_sprite_evaluation(&mut bus, 0, 1..=1);
+        assert_eq!(bus.ppu.secondary_oam[0], 0);
+
+        run_sprite_evaluation(&mut bus, 0, 2..=2);
+        assert_eq!(bus.ppu.secondary_oam[0], 0xFF);
+        assert_eq!(bus.ppu.secondary_oam[1], 0);
+    }
+
+    #[test]
+    fn sprite_evaluation_rejects_a_sprite_in_two_dots() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.oam = [0xFF; 256];
+
+        run_sprite_evaluation(&mut bus, 20, 65..=66);
+
+        assert_eq!(bus.ppu.sprite_eval_oam_addr, 4);
+        assert_eq!(bus.ppu.sprite_eval_secondary_addr, 0);
+    }
+
+    #[test]
+    fn sprite_evaluation_copies_an_in_range_sprite_in_eight_dots() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.oam = [0xFF; 256];
+        bus.ppu.oam[..4].copy_from_slice(&[20, 3, 2, 44]);
+
+        run_sprite_evaluation(&mut bus, 20, 65..=72);
+
+        assert_eq!(&bus.ppu.secondary_oam[..4], &[20, 3, 2, 44]);
+        assert_eq!(bus.ppu.sprite_eval_oam_addr, 4);
+        assert_eq!(bus.ppu.sprite_eval_secondary_addr, 4);
+        assert!(bus.ppu.sprite_eval_sprite_zero);
+    }
+
+    #[test]
+    fn sprite_overflow_is_set_on_the_ninth_sprite_even_dot() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.oam = [0xFF; 256];
+        for sprite in 0..9 {
+            bus.ppu.oam[sprite * 4] = 20;
+        }
+
+        run_sprite_evaluation(&mut bus, 20, 65..=129);
+        assert_eq!(bus.ppu.regs.status & STATUS_SPRITE_OVERFLOW, 0);
+
+        run_sprite_evaluation(&mut bus, 20, 130..=130);
+        assert_ne!(bus.ppu.regs.status & STATUS_SPRITE_OVERFLOW, 0);
+    }
+
+    #[test]
+    fn last_visible_scanline_still_evaluates_y_239_for_overflow() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.oam = [0xFF; 256];
+        for sprite in 0..9 {
+            bus.ppu.oam[sprite * 4] = 239;
+        }
+
+        run_sprite_evaluation(&mut bus, 239, 1..=130);
+
+        assert_ne!(bus.ppu.regs.status & STATUS_SPRITE_OVERFLOW, 0);
+    }
+
+    #[test]
+    fn full_secondary_oam_uses_the_diagonal_overflow_increment() {
+        let mut bus = test_bus();
+        bus.ppu.regs.mask = 0x18;
+        bus.ppu.oam = [0xFF; 256];
+        for sprite in 0..8 {
+            bus.ppu.oam[sprite * 4] = 20;
+        }
+
+        run_sprite_evaluation(&mut bus, 20, 65..=130);
+
+        assert_eq!(bus.ppu.sprite_eval_oam_addr, 9 * 4 + 1);
+        assert_eq!(bus.ppu.regs.status & STATUS_SPRITE_OVERFLOW, 0);
+    }
+
     #[test]
     fn sprite_evaluation_prepares_next_visible_scanline_at_dot_257() {
         let mut bus = test_bus();
@@ -347,14 +528,7 @@ mod tests {
         bus.ppu.oam[2] = 0x01;
         bus.ppu.oam[3] = 24;
 
-        bus.ppu.scanline = 5;
-        bus.ppu.dot = 0;
-        bus.ppu_render_dot();
-        assert_eq!(bus.ppu.sprite_count, 0);
-
-        bus.ppu.scanline = 4;
-        bus.ppu.dot = 257;
-        bus.ppu_render_dot();
+        run_sprite_evaluation(&mut bus, 4, 1..=257);
         assert_eq!(bus.ppu.sprite_count, 1);
         assert_eq!(bus.ppu.sprite_attribs[0], 0x01);
         assert_eq!(bus.ppu.sprite_x_counters[0], 24);

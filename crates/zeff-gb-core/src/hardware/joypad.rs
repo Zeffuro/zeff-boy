@@ -130,15 +130,12 @@ impl Joypad {
     }
 
     pub fn apply_pressed_masks(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
-        let old_buttons = self.buttons;
-        let old_dpad = self.dpad;
+        let old_lines = self.read() & 0x0F;
 
         self.buttons = (!buttons_pressed) & 0x0F;
         self.dpad = (!dpad_pressed) & 0x0F;
 
-        let newly_pressed_buttons = old_buttons & !self.buttons;
-        let newly_pressed_dpad = old_dpad & !self.dpad;
-        (newly_pressed_buttons | newly_pressed_dpad) != 0
+        old_lines & !(self.read() & 0x0F) != 0
     }
 
     fn set_key_state(&mut self, key: JoypadKey, pressed: bool) -> bool {
@@ -231,6 +228,29 @@ mod tests {
 
         jp.write(0x20);
         jp.write(0x30);
+    }
+
+    #[test]
+    fn pressed_masks_report_only_selected_line_falling_edges() {
+        let mut joypad = Joypad::new();
+
+        assert!(!joypad.apply_pressed_masks(0x01, 0));
+        joypad.write(0x20);
+        assert!(!joypad.apply_pressed_masks(0x03, 0));
+        assert!(joypad.apply_pressed_masks(0x03, 0x01));
+
+        joypad.write(0x10);
+        assert!(!joypad.apply_pressed_masks(0, 0x01));
+        assert!(joypad.apply_pressed_masks(0x01, 0x01));
+    }
+
+    #[test]
+    fn pressed_masks_do_not_repeat_an_already_low_shared_line() {
+        let mut joypad = Joypad::new();
+        joypad.write(0x00);
+
+        assert!(joypad.apply_pressed_masks(0x01, 0));
+        assert!(!joypad.apply_pressed_masks(0x01, 0x01));
     }
 
     fn push_p1(out: &mut Vec<u8>, jp: &Joypad) {

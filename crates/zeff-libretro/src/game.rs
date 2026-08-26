@@ -58,10 +58,11 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
                 let sram_size = state.sram_size();
                 let input_descriptor_config = state.input_descriptor_config();
                 let system_label = state.system_label();
+                let geometry = state.video_geometry();
                 retro_log_info(&format!(
                     "retro_load_game OK: {}x{} @ {:.2} Hz, sample_rate={}, sram_size={}, system={}",
-                    state.native_width(),
-                    state.native_height(),
+                    geometry.base_width,
+                    geometry.base_height,
                     state.fps(),
                     state.sample_rate,
                     sram_size,

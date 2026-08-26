@@ -55,6 +55,15 @@ fn make_fds_emulator_with_sides(side_count: usize) -> crate::emulator::Emulator 
     crate::emulator::Emulator::new_fds(&disk, bios, 44_100.0).expect("test FDS image should load")
 }
 
+fn write_legacy_ppu_runtime_state(emu: &crate::emulator::Emulator, payload: &mut StateWriter) {
+    let mut sprite_a12 = 0u8;
+    for (index, high) in emu.bus.sprite_fetch_a12.iter().copied().enumerate() {
+        sprite_a12 |= u8::from(high) << index;
+    }
+    payload.write_u8(sprite_a12);
+    emu.bus.cartridge.write_ppu_runtime_state(payload);
+}
+
 #[test]
 fn save_state_roundtrip_preserves_cpu_state() {
     let mut emu = make_emulator();
@@ -232,7 +241,61 @@ fn save_state_v6_roundtrips_mmc3_ppu_runtime() {
 }
 
 #[test]
-fn save_state_v8_roundtrips_mutated_fds_media() {
+fn save_state_v9_roundtrips_sprite_evaluation_runtime() {
+    let mut emu = make_emulator();
+    emu.bus.ppu.sprite_eval_oam_addr = 0x25;
+    emu.bus.ppu.sprite_eval_secondary_addr = 17;
+    emu.bus.ppu.sprite_eval_latch = 0x9A;
+    emu.bus.ppu.sprite_eval_in_range = true;
+    emu.bus.ppu.sprite_eval_done = false;
+    emu.bus.ppu.sprite_eval_sprite_zero = true;
+    emu.bus.ppu.sprite_eval_overflow_remaining = 2;
+
+    let state = encode_state(&emu).expect("sprite evaluation state should encode");
+    let mut restored = make_emulator();
+    decode_state(&mut restored, &state).expect("sprite evaluation state should decode");
+
+    assert_eq!(restored.bus.ppu.sprite_eval_oam_addr, 0x25);
+    assert_eq!(restored.bus.ppu.sprite_eval_secondary_addr, 17);
+    assert_eq!(restored.bus.ppu.sprite_eval_latch, 0x9A);
+    assert!(restored.bus.ppu.sprite_eval_in_range);
+    assert!(!restored.bus.ppu.sprite_eval_done);
+    assert!(restored.bus.ppu.sprite_eval_sprite_zero);
+    assert_eq!(restored.bus.ppu.sprite_eval_overflow_remaining, 2);
+}
+
+#[test]
+fn save_state_v8_defaults_sprite_evaluation_runtime() {
+    let emu = make_emulator();
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    emu.bus.write_apu_runtime_state(&mut payload);
+    write_legacy_ppu_runtime_state(&emu, &mut payload);
+    emu.bus.write_mutable_media_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V8_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
+
+    let mut restored = make_emulator();
+    restored.bus.ppu.sprite_eval_oam_addr = 0x25;
+    restored.bus.ppu.sprite_eval_secondary_addr = 17;
+    restored.bus.ppu.sprite_eval_in_range = true;
+    decode_state(&mut restored, &state).expect("V8 state should load");
+
+    assert_eq!(restored.bus.ppu.sprite_eval_oam_addr, 0);
+    assert_eq!(restored.bus.ppu.sprite_eval_secondary_addr, 0);
+    assert!(restored.bus.ppu.sprite_eval_done);
+    assert!(!restored.bus.ppu.sprite_eval_in_range);
+}
+
+#[test]
+fn current_save_state_roundtrips_mutated_fds_media() {
     let mut emu = make_fds_emulator();
     let pristine = emu
         .dump_persistent_data()
@@ -263,7 +326,7 @@ fn save_state_v8_roundtrips_mutated_fds_media() {
 }
 
 #[test]
-fn save_state_v8_roundtrips_fds_media_attachment_and_protection() {
+fn current_save_state_roundtrips_fds_media_attachment_and_protection() {
     use zeff_emu_common::media::MediaEvent;
 
     let mut protected = make_fds_emulator();
@@ -298,8 +361,20 @@ fn save_state_v8_roundtrips_fds_media_attachment_and_protection() {
 #[test]
 fn save_state_v7_with_mutable_media_remains_readable() {
     let emu = make_fds_emulator();
-    let mut state = encode_state(&emu).unwrap();
-    state[8..12].copy_from_slice(&FORMAT_VERSION_V7_COMPRESSED.to_le_bytes());
+    let mut payload = StateWriter::new();
+    payload.write_bytes(&emu.rom_hash);
+    emu.cpu.write_state(&mut payload);
+    emu.bus.write_state(&mut payload);
+    emu.cpu.write_jam_state(&mut payload);
+    emu.bus.write_dma_state(&mut payload);
+    emu.bus.write_apu_runtime_state(&mut payload);
+    write_legacy_ppu_runtime_state(&emu, &mut payload);
+    emu.bus.write_mutable_media_state(&mut payload);
+    let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&FORMAT_VERSION_V7_COMPRESSED.to_le_bytes());
+    state.extend_from_slice(&compressed);
 
     let mut restored = make_fds_emulator();
     decode_state(&mut restored, &state).expect("V7 FDS state should load");
@@ -324,7 +399,7 @@ fn save_state_v6_fds_load_preserves_source_media() {
     emu.cpu.write_jam_state(&mut payload);
     emu.bus.write_dma_state(&mut payload);
     emu.bus.write_apu_runtime_state(&mut payload);
-    emu.bus.write_ppu_runtime_state(&mut payload);
+    write_legacy_ppu_runtime_state(&emu, &mut payload);
     let compressed = lz4_flex::compress_prepend_size(&payload.into_bytes());
     let mut state = Vec::with_capacity(12 + compressed.len());
     state.extend_from_slice(&NES_SAVE_STATE_MAGIC);

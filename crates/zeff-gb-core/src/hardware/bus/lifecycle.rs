@@ -134,15 +134,40 @@ impl Bus {
         system_t_cycles
     }
 
-    pub(in crate::hardware) fn advance_cgb_speed_switch_delay(&mut self) -> (u64, u64) {
-        const DELAY_T_CYCLES: u64 = 8_200;
+    pub(in crate::hardware) fn enter_stop_mode(&mut self) {
+        if self.io.timer.reset_div() {
+            self.if_reg |= 0x04;
+        }
+        self.clock_apu_div_events();
+    }
 
-        let double_speed = self.hardware_mode == HardwareMode::CGBDouble;
-        let system_t_cycles = if double_speed {
-            DELAY_T_CYCLES / 2
+    pub(in crate::hardware) fn advance_stopped_t_cycles(&mut self, cpu_t_cycles: u64) -> u64 {
+        let system_t_cycles = if self.hardware_mode == HardwareMode::CGBDouble {
+            cpu_t_cycles / 2
         } else {
-            DELAY_T_CYCLES
+            cpu_t_cycles
         };
+
+        if self.is_cgb_hardware() {
+            self.step_apu(system_t_cycles);
+            let previous_ppu_mode = self.ppu_mode();
+            let (ppu_interrupt, current_ppu_mode) = self.step_ppu(system_t_cycles);
+            self.if_reg |= ppu_interrupt;
+            self.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
+        }
+        self.cartridge.step(system_t_cycles);
+
+        system_t_cycles
+    }
+
+    pub(in crate::hardware) fn advance_cgb_speed_switch_delay(&mut self) -> (u64, u64) {
+        let double_speed = self.hardware_mode == HardwareMode::CGBDouble;
+        let system_t_cycles = if double_speed { 65_544 } else { 65_538 };
+
+        if self.io.timer.reset_div() {
+            self.if_reg |= 0x04;
+        }
+        self.clock_apu_div_events();
 
         self.step_apu(system_t_cycles);
 
@@ -152,9 +177,9 @@ impl Bus {
         self.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
 
         let cpu_t_cycles = if double_speed {
-            DELAY_T_CYCLES * 2
+            system_t_cycles * 2
         } else {
-            DELAY_T_CYCLES
+            system_t_cycles
         };
         (cpu_t_cycles, system_t_cycles)
     }

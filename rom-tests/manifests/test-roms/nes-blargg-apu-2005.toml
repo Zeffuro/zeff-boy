@@ -1,0 +1,100 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/apu_2005_07_30"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 30
+tags = ["nes", "blargg", "apu", "timing", "legacy"]
+notes = "Older APU timing ROMs report result code 1 on-screen instead of using the $6000 protocol. The exact screenshot oracle rejects every documented failure code."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "screenshot_exact"
+screenshot_frame = 30
+screenshot_sha256 = "c143729cc1cd893c35d87d1db9c192590c84c98944fb5207e6e9f668db0f7e98"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "01-len_ctr"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes"
+sha256 = "e1e3a29ab5369ab84a6f5f2f426c64bde86b9a1d26a906739d43fbf624bb8829"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes"]
+
+[[test_groups.roms]]
+id = "02-len_table"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/02.len_table.nes"
+sha256 = "63cc6a57fae3da5e30df9520d02b723c5b93789e8a6eef6793f876345b245b51"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/02.len_table.nes"]
+
+[[test_groups.roms]]
+id = "03-irq_flag"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/03.irq_flag.nes"
+sha256 = "6f71c7e3de4b6c00da92c20a86c1c2095196a55dc201ee3286004ecf33a08c2f"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/03.irq_flag.nes"]
+
+[[test_groups.roms]]
+id = "04-clock_jitter"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/04.clock_jitter.nes"
+sha256 = "46fa69b26fe8c24dc1d0b5908f90ab0141972eeb607bd563d28f53d6f4543fe6"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/04.clock_jitter.nes"]
+
+[[test_groups.roms]]
+id = "05-len_timing_mode0"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
+sha256 = "606802d6849ccfcf74e907a8512c03a50d443752d1f616e62a242a1fa7eca0ff"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes"]
+
+[[test_groups.roms]]
+id = "06-len_timing_mode1"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
+sha256 = "0f34e26d56ad235d8d6d63565ed4728fbd0b9b8590a4fd4048eaf64283b429d4"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes"]
+
+[[test_groups.roms]]
+id = "07-irq_flag_timing"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
+sha256 = "851c9698941d51da34b4bfbc9644aa08ee41b39c6c814cc9b8412c204ea68085"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes"]
+
+[[test_groups.roms]]
+id = "08-irq_timing"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/08.irq_timing.nes"
+sha256 = "0a20a2b9ca9a8e78d65b500b161294c889399f0ff048edd104b07b15255946ca"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/08.irq_timing.nes"]
+
+[[test_groups.roms]]
+id = "09-reset_timing"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/09.reset_timing.nes"
+sha256 = "bb04f8328a51abb2d17e6e5362b8375f3cbfbf0641733d068b22f23e7dc588e6"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/09.reset_timing.nes"]
+
+[[test_groups.roms]]
+id = "10-len_halt_timing"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/10.len_halt_timing.nes"
+sha256 = "cbdaa9a5cf9c19ba2360d3349a47922eec25a3e610374d963c422f2b67c57ac9"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/10.len_halt_timing.nes"]
+
+[[test_groups.roms]]
+id = "11-len_reload_timing"
+archive_path = "nes-test-roms/blargg_apu_2005.07.30/11.len_reload_timing.nes"
+sha256 = "40e633285a4a8710780bfd80d346dee62406f4be161eb75615f469cd9e84e132"
+legacy_paths = ["test-roms/nes-test-roms/blargg_apu_2005.07.30/11.len_reload_timing.nes"]

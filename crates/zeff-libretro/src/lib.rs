@@ -118,32 +118,26 @@ pub extern "C" fn retro_get_system_av_info(info: *mut retro_system_av_info) {
     if info.is_null() {
         return;
     }
-    let (w, h, fps, sr) = {
+    let (geometry, fps, sr) = {
         let core = lock(&CORE);
         if let Some(state) = core.as_ref() {
             (
-                state.native_width(),
-                state.native_height(),
+                state.video_geometry(),
                 state.fps(),
                 state.sample_rate as f64,
             )
         } else {
-            (160, 144, 59.7275, 48000.0)
+            (core::CoreState::default_video_geometry(), 59.7275, 48000.0)
         }
     };
 
     retro_log_info(&format!(
-        "retro_get_system_av_info: {w}x{h} @ {fps:.2} Hz, sr={sr}"
+        "retro_get_system_av_info: {}x{} @ {fps:.2} Hz, sr={sr}",
+        geometry.base_width, geometry.base_height
     ));
 
     unsafe {
-        (*info).geometry = retro_game_geometry {
-            base_width: w,
-            base_height: h,
-            max_width: 256,
-            max_height: 240,
-            aspect_ratio: 0.0,
-        };
+        (*info).geometry = geometry;
         (*info).timing = retro_system_timing {
             fps,
             sample_rate: sr,
@@ -208,9 +202,13 @@ pub extern "C" fn retro_run() {
         }
 
         state.step_frame();
+        if let Some(fault) = state.take_runtime_fault() {
+            retro_log_error(&format!("PC Engine runtime fault: {fault}"));
+        }
 
-        let w = state.native_width();
-        let h = state.native_height();
+        let geometry = state.video_geometry();
+        let w = geometry.base_width;
+        let h = geometry.base_height;
         let use_xrgb = USE_XRGB8888.load(Ordering::Relaxed);
 
         if use_xrgb {

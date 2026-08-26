@@ -422,17 +422,57 @@ impl Bus {
         }
         w.write_u8(sprite_a12);
         self.cartridge.write_ppu_runtime_state(w);
+        w.write_u8(self.ppu.sprite_eval_oam_addr);
+        w.write_u8(self.ppu.sprite_eval_secondary_addr);
+        w.write_u8(self.ppu.sprite_eval_latch);
+        w.write_bool(self.ppu.sprite_eval_in_range);
+        w.write_bool(self.ppu.sprite_eval_done);
+        w.write_bool(self.ppu.sprite_eval_sprite_zero);
+        w.write_u8(self.ppu.sprite_eval_overflow_remaining);
     }
 
     pub(crate) fn read_ppu_runtime_state(
         &mut self,
         r: &mut crate::save_state::StateReader,
+        has_sprite_evaluation_state: bool,
     ) -> anyhow::Result<()> {
         let sprite_a12 = r.read_u8()?;
         for (index, high) in self.sprite_fetch_a12.iter_mut().enumerate() {
             *high = sprite_a12 & (1 << index) != 0;
         }
-        self.cartridge.read_ppu_runtime_state(r)
+        self.cartridge.read_ppu_runtime_state(r)?;
+
+        if has_sprite_evaluation_state {
+            self.ppu.sprite_eval_oam_addr = r.read_u8()?;
+            self.ppu.sprite_eval_secondary_addr = r.read_u8()?;
+            if self.ppu.sprite_eval_secondary_addr > 32 {
+                anyhow::bail!(
+                    "invalid secondary OAM evaluation address {}",
+                    self.ppu.sprite_eval_secondary_addr
+                );
+            }
+            self.ppu.sprite_eval_latch = r.read_u8()?;
+            self.ppu.sprite_eval_in_range = r.read_bool()?;
+            self.ppu.sprite_eval_done = r.read_bool()?;
+            self.ppu.sprite_eval_sprite_zero = r.read_bool()?;
+            self.ppu.sprite_eval_overflow_remaining = r.read_u8()?;
+            if self.ppu.sprite_eval_overflow_remaining > 3 {
+                anyhow::bail!(
+                    "invalid sprite overflow evaluation counter {}",
+                    self.ppu.sprite_eval_overflow_remaining
+                );
+            }
+        } else {
+            self.ppu.sprite_eval_oam_addr = 0;
+            self.ppu.sprite_eval_secondary_addr = 0;
+            self.ppu.sprite_eval_latch = 0xFF;
+            self.ppu.sprite_eval_in_range = false;
+            self.ppu.sprite_eval_done = true;
+            self.ppu.sprite_eval_sprite_zero = false;
+            self.ppu.sprite_eval_overflow_remaining = 0;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn write_mutable_media_state(&self, w: &mut crate::save_state::StateWriter) {

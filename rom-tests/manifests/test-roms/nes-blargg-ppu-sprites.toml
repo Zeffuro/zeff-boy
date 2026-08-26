@@ -1,0 +1,182 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/sprite_hit_2005_10_05"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 120
+tags = ["nes", "blargg", "ppu", "sprite", "sprite-zero-hit", "timing"]
+notes = "Sprite-zero-hit tests report pass/fail on-screen instead of using the $6000 protocol. Exact screenshots distinguish every result."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "screenshot_exact"
+screenshot_frame = 120
+screenshot_sha256 = "702be9f5d1a03f2a83dd7952f4074ac409541dc903758f0c761c4d7321f56486"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "01-basics"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/01.basics.nes"
+sha256 = "51819e8e502bd88fe3b7244198a074dbeef2e848f66c587be04b04f1f0d4bb52"
+
+[[test_groups.roms]]
+id = "02-alignment"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/02.alignment.nes"
+sha256 = "125bbb3ce1e67370f1f4559c2ad3221e52a3e98880b9789400292b5f3a8b39e6"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "5365c7b28abf2c2d2ef6c8e3c6f9ad6f41896bb4dca74dbd739566793e0daab1" }
+
+[[test_groups.roms]]
+id = "03-corners"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/03.corners.nes"
+sha256 = "9dd57776bc6267fe6183c5521d67cbe3fccc6662ae545eb2c419949bf39644d3"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "d12197450ba550ce6bee8d23495fd572298d83e7a87b72a606506c7c8c34cd7b" }
+
+[[test_groups.roms]]
+id = "04-flip"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/04.flip.nes"
+sha256 = "5f7142bddb51b7577f93fa22f9f668efebbeea00346d7255089e1863acb9d46a"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "34a85ce1319fbad6897b584bbe7072d10cc25000b1ebcefb2c6492cfc77d2e74" }
+
+[[test_groups.roms]]
+id = "05-left_clip"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/05.left_clip.nes"
+sha256 = "69b329658c17b953f149c2f0de77eb272089df22c815bd2fd3d6f43206791c13"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "9df404878a1cbb8ef9d5256419bf324fa93ca59c0245da1fe7deadef76a5f363" }
+
+[[test_groups.roms]]
+id = "06-right_edge"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/06.right_edge.nes"
+sha256 = "8e6653fcb869e06873e29e5e4423122ea72ba0bf38f3ba9e39f471420db759a4"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "1707343a0bc3642ca55772d99aff4dab32b7f2255512cd54b906885daa69bd9f" }
+
+[[test_groups.roms]]
+id = "07-screen_bottom"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/07.screen_bottom.nes"
+sha256 = "05849956f80267838c5b6556310266b794078a4300841cbb36339fd141905a0b"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "6509ac9de2107e3de5f9590705aeac76457ba1ed189ca3fcc75af3459d515725" }
+
+[[test_groups.roms]]
+id = "08-double_height"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/08.double_height.nes"
+sha256 = "127fd966b6b32d6d88a53c5f59d7e938827783c9ad056091f119be1c4ab21c71"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "a0a77c2e480289042be57aeed0fcc993ada567ebe53446f1313b31a4c82d1008" }
+
+[[test_groups.roms]]
+id = "09-timing_basics"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/09.timing_basics.nes"
+sha256 = "311698c717e50150edd0b5fd0016c41de686463205c20efb5630d6adb90859fd"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "be6d09d764cf4a078a5d005e5c8813b70701e00a40deb1e78e74818bb6736e27" }
+
+[[test_groups.roms]]
+id = "10-timing_order"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/10.timing_order.nes"
+sha256 = "0f36bc07bfe51c416e3cc1a5231053572aa6b15aa60e6d2fd0568be49b6dc2e9"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "ea57bb17ef28c6ac1d857bb244d41dbec2538dee3965fc31bb041326d6e494fb" }
+
+[[test_groups.roms]]
+id = "11-edge_timing"
+archive_path = "nes-test-roms/sprite_hit_tests_2005.10.05/11.edge_timing.nes"
+sha256 = "5a7c121f6e76617be88a0a7035c0e402293be5c685c95b97190a8d70835736ab"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "84e20e19e0fbdd637d5811b68062afe9db14494e49b7aef827d6629e1f190065" }
+
+[[test_groups]]
+id_prefix = "nes/blargg/sprite_overflow"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 180
+tags = ["nes", "blargg", "ppu", "sprite", "sprite-overflow", "timing"]
+notes = "Sprite-overflow tests report pass/fail on-screen. The pinned suite documentation says all five pass on NTSC hardware."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "screenshot_exact"
+screenshot_frame = 120
+screenshot_sha256 = "6b7192e4bc6694a5a331bf868fe64dec50d2bff96372d5cf17e68ec3108e23d9"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "1-basics"
+archive_path = "nes-test-roms/sprite_overflow_tests/1.Basics.nes"
+sha256 = "1a6782f63ccb3a3dd1aa6a24272036c9c3aa232c2d1ff0b21e872741a3ee4fe2"
+
+[[test_groups.roms]]
+id = "2-details"
+archive_path = "nes-test-roms/sprite_overflow_tests/2.Details.nes"
+sha256 = "6405a7ff1042fe7a50d9bfe521e43460a3251799425bd3e1863b29b67e7cd587"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "b4baf8af5ba17ef7c9576087a38f898899edf798499b0df7cd1cf0ab7f3d06bf" }
+
+[[test_groups.roms]]
+id = "3-timing"
+archive_path = "nes-test-roms/sprite_overflow_tests/3.Timing.nes"
+sha256 = "2252ec8fc35932b408f409ef9b6863edf084aa871fc10ad180b0ac4c2468ef8c"
+pass = { kind = "screenshot_exact", screenshot_frame = 180, screenshot_sha256 = "024f9abfbd8c47730ddb92f30686b5617b34e44c0fb1d38697551a2b53a26e7b" }
+
+[[test_groups.roms]]
+id = "4-obscure"
+archive_path = "nes-test-roms/sprite_overflow_tests/4.Obscure.nes"
+sha256 = "aebf2199344321465ae0d8dcd81f6c528c7f661f31f1814711365b4e573a8263"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "0f617beb53fd8fb46bd67397cdf11278838a97e8a29c57b71f78c3e2b7aa18fa" }
+
+[[test_groups.roms]]
+id = "5-emulator"
+archive_path = "nes-test-roms/sprite_overflow_tests/5.Emulator.nes"
+sha256 = "cf994454219696de82794f0b84f2bd63458444d12a1171c85bba8697ab94acb4"
+pass = { kind = "screenshot_exact", screenshot_frame = 120, screenshot_sha256 = "c06c9634ad0ab0593f845b2a033a1d453dde9cf0a2b7a39897d5a13a335a0dcb" }
+
+[[tests]]
+id = "nes/blargg/oam_stress"
+core = "nes"
+tier = "local"
+max_frames = 18000
+tags = ["nes", "blargg", "ppu", "oam", "stress"]
+notes = "The pinned ROM documents its $6000 result protocol and passes with Zeff's deterministic PPU/CPU startup phase. Real NTSC hardware passes in one of four startup phases."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[tests.rom]
+path = "rom-tests/cache/nes/nes-test-roms/oam_stress/oam_stress.nes"
+archive_path = "nes-test-roms/oam_stress/oam_stress.nes"
+sha256 = "95882d72a7acabe928fd277e3b3e0372f21ef3d41e36d7d8fb17fc017a356f70"
+
+[tests.pass]
+kind = "nes_6000_status"
+
+[tests.expectation]
+kind = "pass"

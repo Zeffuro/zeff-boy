@@ -15,6 +15,7 @@ pub fn stop(cpu: &mut Cpu, bus: &mut impl GbCpuBus) {
         cpu.account_timing(timing);
         return;
     }
+    bus.enter_stop_mode();
     cpu.running = CpuState::Stopped;
 }
 

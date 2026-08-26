@@ -92,7 +92,13 @@ pub struct Ppu {
     pub(crate) sprite_x_counters: [u8; 8],
     pub(crate) sprite_zero_rendering: bool,
 
-    pub(crate) overflow_bug_m: u8,
+    pub(crate) sprite_eval_oam_addr: u8,
+    pub(crate) sprite_eval_secondary_addr: u8,
+    pub(crate) sprite_eval_latch: u8,
+    pub(crate) sprite_eval_in_range: bool,
+    pub(crate) sprite_eval_done: bool,
+    pub(crate) sprite_eval_sprite_zero: bool,
+    pub(crate) sprite_eval_overflow_remaining: u8,
 }
 
 impl Default for Ppu {
@@ -143,7 +149,13 @@ impl Ppu {
             sprite_attribs: [0; 8],
             sprite_x_counters: [0xFF; 8],
             sprite_zero_rendering: false,
-            overflow_bug_m: 0,
+            sprite_eval_oam_addr: 0,
+            sprite_eval_secondary_addr: 0,
+            sprite_eval_latch: 0xFF,
+            sprite_eval_in_range: false,
+            sprite_eval_done: false,
+            sprite_eval_sprite_zero: false,
+            sprite_eval_overflow_remaining: 0,
         }
     }
 

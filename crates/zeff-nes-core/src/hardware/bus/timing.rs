@@ -81,11 +81,17 @@ impl Bus {
             .map(|start| MasterTicks::new(start.get().wrapping_add(self.cpu_step_elapsed_cycles)))
     }
 
-    fn dma_dummy_read(&mut self, addr: u16) {
+    fn dma_dummy_read(&mut self, addr: u16, controller_read_clocked: &mut bool) {
+        if matches!(addr, 0x4016 | 0x4017) {
+            if *controller_read_clocked {
+                return;
+            }
+            *controller_read_clocked = true;
+        }
         self.cpu_read_for_dma_with_trace(addr, self.dma_access_tick(), false);
     }
 
-    fn run_dma_cycle(&mut self, halted_read_addr: u16) {
+    fn run_dma_cycle(&mut self, halted_read_addr: u16, controller_read_clocked: &mut bool) {
         self.begin_timed_cpu_cycle();
         let get_cycle = !self.cpu_cycle_is_odd(self.cpu_step_elapsed_cycles.wrapping_add(1));
         if get_cycle && self.dma.dmc_is_ready() {
@@ -101,14 +107,14 @@ impl Bus {
                 self.dma.store_oam_read(byte);
             } else {
                 self.dma.consume_cycle_setup();
-                self.dma_dummy_read(halted_read_addr);
+                self.dma_dummy_read(halted_read_addr, controller_read_clocked);
             }
         } else if let Some(byte) = self.dma.take_oam_write() {
             self.dma.consume_cycle_setup();
             self.write_oam_data(byte);
         } else {
             self.dma.consume_cycle_setup();
-            self.dma_dummy_read(halted_read_addr);
+            self.dma_dummy_read(halted_read_addr, controller_read_clocked);
         }
         self.finish_timed_cpu_cycle(true);
     }
@@ -118,13 +124,14 @@ impl Bus {
             return;
         }
 
+        let mut controller_read_clocked = false;
         self.begin_timed_cpu_cycle();
         self.dma.consume_cycle_setup();
-        self.dma_dummy_read(halted_read_addr);
+        self.dma_dummy_read(halted_read_addr, &mut controller_read_clocked);
         self.finish_timed_cpu_cycle(true);
 
         while self.dma.is_active() {
-            self.run_dma_cycle(halted_read_addr);
+            self.run_dma_cycle(halted_read_addr, &mut controller_read_clocked);
         }
     }
 

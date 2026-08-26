@@ -112,6 +112,7 @@ impl Bus {
         self.io.timer.set_tima_raw(0x00);
         self.io.timer.set_tma_raw(0x00);
         self.io.timer.set_tac_raw(0x00);
+        self.io.timer.set_divider_counter_raw(0xABCC);
 
         self.io.apu.apply_dmg_post_boot_io();
 

@@ -11,3 +11,5 @@
 /rom-tests/cache/
 /rom-tests/results/
 /rom-tests/manifests/compat-games/local*.toml
+__pycache__/
+*.pyc

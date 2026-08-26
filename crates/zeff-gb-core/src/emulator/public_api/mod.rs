@@ -3,6 +3,7 @@ mod debug;
 mod queries;
 
 use super::Emulator;
+use crate::hardware::types::CpuState;
 
 impl Emulator {
     pub fn game_boy_serial_device(&self) -> crate::hardware::GameBoySerialDevice {
@@ -137,6 +138,9 @@ impl Emulator {
     pub fn set_input(&mut self, buttons: u8, dpad: u8) {
         if self.bus.apply_joypad_pressed_masks(buttons, dpad) {
             self.bus.if_reg |= 0x10;
+            if matches!(self.cpu.running, CpuState::Stopped) {
+                self.cpu.running = CpuState::Running;
+            }
         }
     }
 

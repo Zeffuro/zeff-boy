@@ -21,8 +21,8 @@ fn stop_switches_to_cgb_double_speed_when_key1_prepare_set() {
     assert_eq!(bus.hardware_mode, HardwareMode::CGBDouble);
     assert_eq!(bus.key1, 0xFE);
     assert!(matches!(cpu.running, CpuState::Running));
-    assert_eq!(cpu.timed_cycles_accounted, 16_404);
-    assert_eq!(cpu.timed_master_ticks_accounted, 4_104);
+    assert_eq!(cpu.timed_cycles_accounted, 131_092);
+    assert_eq!(cpu.timed_master_ticks_accounted, 65_548);
 }
 
 #[test]
@@ -36,8 +36,8 @@ fn stop_switches_back_to_cgb_normal_speed() {
     assert_eq!(bus.hardware_mode, HardwareMode::CGBNormal);
     assert_eq!(bus.key1, 0x7E);
     assert!(matches!(cpu.running, CpuState::Running));
-    assert_eq!(cpu.timed_cycles_accounted, 8_204);
-    assert_eq!(cpu.timed_master_ticks_accounted, 8_202);
+    assert_eq!(cpu.timed_cycles_accounted, 65_542);
+    assert_eq!(cpu.timed_master_ticks_accounted, 65_540);
 }
 
 #[test]

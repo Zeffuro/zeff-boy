@@ -185,6 +185,14 @@ impl Timer {
         self.tac = value;
     }
 
+    pub(super) fn set_divider_counter_raw(&mut self, value: u16) {
+        self.sys_counter = value;
+        self.div = (value >> 8) as u8;
+        self.prev_bit = self.timer_tick_bit();
+        self.div_apu_events = 0;
+        self.div_apu_secondary_events = 0;
+    }
+
     fn increment_tima(&mut self) -> bool {
         let (new_tima, overflow) = self.tima.overflowing_add(1);
         if overflow {

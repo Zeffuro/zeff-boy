@@ -348,6 +348,20 @@ mod tests {
     }
 
     #[test]
+    fn dmc_dma_clocks_a_nes_controller_only_once_during_a_halted_read() {
+        let mut bus = test_bus();
+        bus.controller1.press(Button::B);
+        bus.controller1.write(1);
+        bus.controller1.write(0);
+        bus.apu.dmc.set_enabled(true);
+        bus.dma.request_dmc();
+        bus.begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::ZERO);
+
+        assert_eq!(bus.cpu_read_timed(CONTROLLER1) & 0x01, 1);
+        assert_eq!(bus.cpu_read_timed(CONTROLLER1) & 0x01, 0);
+    }
+
+    #[test]
     fn second_controller_reads_preserve_high_open_bus_bits() {
         let mut bus = test_bus();
         bus.controller2.press(Button::B);

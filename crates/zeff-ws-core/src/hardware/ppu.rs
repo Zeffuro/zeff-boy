@@ -242,6 +242,7 @@ struct RenderContext<'a> {
     ram: &'a [u8],
     io: &'a [u8],
     mode: VideoMode,
+    color_palette: Option<&'a [[u8; 4]; 256]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -260,7 +261,6 @@ fn render_scanline(
     mode: VideoMode,
     sprite_cache: &SpriteCache,
 ) {
-    let context = RenderContext { ram, io, mode };
     let display_control = io.first().copied().unwrap_or(0);
     if io.get(0x14).copied().unwrap_or(0) & 0x01 == 0 {
         let color = if mode.color_vdp && mode.color_mode {
@@ -272,7 +272,16 @@ fn render_scanline(
         return;
     }
 
-    fill_scanline(framebuffer, y, background_color(ram, io, mode));
+    let color_palette = (mode.color_vdp && mode.color_mode)
+        .then(|| std::array::from_fn(|pen| color_for_pen_uncached(ram, io, mode, pen as u8)));
+    let context = RenderContext {
+        ram,
+        io,
+        mode,
+        color_palette: color_palette.as_ref(),
+    };
+
+    fill_scanline(framebuffer, y, background_color(context));
 
     if display_control & 0x01 != 0 {
         render_background(framebuffer, y, context);
@@ -353,7 +362,7 @@ fn render_tile_layer(
     context: RenderContext<'_>,
     params: TileLayerParams,
 ) {
-    let RenderContext { ram, io, mode } = context;
+    let RenderContext { ram, io, mode, .. } = context;
     let TileLayerParams {
         map_base,
         scroll_x,
@@ -395,7 +404,7 @@ fn render_sprites(
     sprite_cache: &SpriteCache,
     front_priority: bool,
 ) {
-    let RenderContext { ram, io, mode } = context;
+    let RenderContext { ram, io, mode, .. } = context;
     let first = usize::from(sprite_cache.start);
     let count = usize::from(sprite_cache.count);
     if count == 0 {
@@ -535,13 +544,18 @@ fn draw_pixel(
     tile_palette: u8,
     value: u8,
 ) {
-    let RenderContext { ram, io, mode } = context;
+    let RenderContext { ram, io, mode, .. } = context;
     if mode.colors_16 {
         if value == 0 {
             return;
         }
         let pen = tile_palette.wrapping_shl(4) | value;
-        set_rgba(framebuffer, x, y, color_for_pen(ram, io, mode, pen));
+        set_rgba(
+            framebuffer,
+            x,
+            y,
+            color_for_pen(ram, io, mode, pen, context.color_palette),
+        );
         return;
     }
 
@@ -553,7 +567,12 @@ fn draw_pixel(
     } else {
         tile_palette.wrapping_shl(2) | value
     };
-    set_rgba(framebuffer, x, y, color_for_pen(ram, io, mode, pen));
+    set_rgba(
+        framebuffer,
+        x,
+        y,
+        color_for_pen(ram, io, mode, pen, context.color_palette),
+    );
 }
 
 fn set_rgba(framebuffer: &mut [u8], x: usize, y: usize, rgba: [u8; 4]) {
@@ -561,16 +580,35 @@ fn set_rgba(framebuffer: &mut [u8], x: usize, y: usize, rgba: [u8; 4]) {
     framebuffer[pixel..pixel + 4].copy_from_slice(&rgba);
 }
 
-fn background_color(ram: &[u8], io: &[u8], mode: VideoMode) -> [u8; 4] {
+fn background_color(context: RenderContext<'_>) -> [u8; 4] {
+    let RenderContext {
+        ram,
+        io,
+        mode,
+        color_palette,
+    } = context;
     let bg_control = io.get(0x01).copied().unwrap_or(0);
     if mode.color_mode {
-        color_for_pen(ram, io, mode, bg_control)
+        color_for_pen(ram, io, mode, bg_control, color_palette)
     } else {
-        color_for_pen(ram, io, mode, BG_COLOR_INDEX)
+        color_for_pen(ram, io, mode, BG_COLOR_INDEX, color_palette)
     }
 }
 
-fn color_for_pen(ram: &[u8], io: &[u8], mode: VideoMode, pen: u8) -> [u8; 4] {
+fn color_for_pen(
+    ram: &[u8],
+    io: &[u8],
+    mode: VideoMode,
+    pen: u8,
+    color_palette: Option<&[[u8; 4]; 256]>,
+) -> [u8; 4] {
+    if let Some(color_palette) = color_palette {
+        return color_palette[usize::from(pen)];
+    }
+    color_for_pen_uncached(ram, io, mode, pen)
+}
+
+fn color_for_pen_uncached(ram: &[u8], io: &[u8], mode: VideoMode, pen: u8) -> [u8; 4] {
     if mode.color_vdp && mode.color_mode {
         let color = vram_word_by_byte(ram, mode, WSC_PALETTE_BYTES + usize::from(pen) * 2) & 0x0FFF;
         return rgb444(color);

@@ -1,0 +1,58 @@
+manifest_version = 1
+
+[suite]
+id = "nes-local-accuracy"
+name = "NES local accuracy tests"
+core = "nes"
+upstream_url = "https://www.nesdev.org/wiki/Emulator_tests"
+license = "mixed/unknown; see per-test artifact metadata"
+
+[[test_groups]]
+id_prefix = "nes/blargg/dmc_dma_during_read4"
+cache_prefix = "rom-tests/cache/nes"
+core = "nes"
+tier = "local"
+max_frames = 30
+tags = ["nes", "blargg", "apu", "dmc", "dma", "ppu", "controller", "timing"]
+notes = "Local-only DMC collision tests. The pinned source supplies exact CRC or pass/fail output; screenshot gates reject the documented failure screens."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://github.com/christopherpow/nes-test-roms/archive/95d8f621ae55cee0d09b91519a8989ae0e64753b.zip"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-95d8f621"
+
+[test_groups.pass]
+kind = "screenshot_exact"
+screenshot_frame = 30
+screenshot_sha256 = "8f28bd99838796766dbcb62ed9aa9fb49ef0e6700ba9f9cf046b68cb59e1ddcc"
+
+[test_groups.expectation]
+kind = "pass"
+
+[[test_groups.roms]]
+id = "dma_2007_read"
+archive_path = "nes-test-roms/dmc_dma_during_read4/dma_2007_read.nes"
+sha256 = "a2e0fa3f6f155cbe0b8c9517b2f6a57f1fd68f13711c11d6d2fe5676c522d7b2"
+notes = "Zeff's deterministic CPU/PPU phase produces the source-documented 5E3DF9C4 result."
+
+[[test_groups.roms]]
+id = "dma_2007_write"
+archive_path = "nes-test-roms/dmc_dma_during_read4/dma_2007_write.nes"
+sha256 = "54c75d491c685fb4cfff281bcf3e199a41e95f6c523e2b0607d67ba039f19f84"
+pass = { kind = "screenshot_exact", screenshot_frame = 30, screenshot_sha256 = "ac61b0097841818c2af6d972284543a2902c8fe45ecd3f8b09343e938f3d8a23" }
+
+[[test_groups.roms]]
+id = "dma_4016_read"
+archive_path = "nes-test-roms/dmc_dma_during_read4/dma_4016_read.nes"
+sha256 = "c6af72e11c197b449129921a9992db2351d9121bb593b3d0ab71895b646b0ebe"
+pass = { kind = "screenshot_exact", screenshot_frame = 30, screenshot_sha256 = "70b686d1396c5655f16598facf8fc20d822ca3a794c0630a88ba780a6d99d1f3" }
+
+[[test_groups.roms]]
+id = "read_write_2007"
+archive_path = "nes-test-roms/dmc_dma_during_read4/read_write_2007.nes"
+sha256 = "bc5281ca3f12a6d0ac9fe1a5e727ecc3cac5fc6a47f45ac130d644f0dbd522cf"
+pass = { kind = "screenshot_exact", screenshot_frame = 30, screenshot_sha256 = "429c02cbb333be0954b540b3861d0153a170118fb72731f2bbbda78e4fa91a73" }

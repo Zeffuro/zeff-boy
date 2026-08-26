@@ -7,6 +7,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.step_frame(),
             ActiveCore::Gba(emu) => emu.step_frame(),
             ActiveCore::Nes(emu) => emu.step_frame(),
+            ActiveCore::Pce(host) => host.step_frame(),
             ActiveCore::Sega8(emu) => emu.step_frame(),
             ActiveCore::Ws(emu) => emu.step_frame(),
         }
@@ -25,6 +26,9 @@ impl CoreState {
             ActiveCore::Nes(emu) => {
                 emu.drain_audio_samples_into(&mut self.audio_buf);
             }
+            ActiveCore::Pce(host) => {
+                host.drain_audio_samples_into(&mut self.audio_buf);
+            }
             ActiveCore::Sega8(emu) => {
                 emu.drain_audio_samples_into(&mut self.audio_buf);
             }
@@ -39,6 +43,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Gba(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Nes(emu) => emu.set_input(buttons, dpad),
+            ActiveCore::Pce(host) => host.set_input(buttons, dpad),
             ActiveCore::Sega8(emu) => emu.set_input(buttons, dpad),
             ActiveCore::Ws(emu) => emu.set_input(buttons, dpad),
         }
@@ -48,7 +53,7 @@ impl CoreState {
         match &mut self.core {
             ActiveCore::Nes(emu) => emu.set_input_p2(buttons, dpad),
             ActiveCore::Sega8(emu) => emu.set_input_p2(buttons, dpad),
-            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Ws(_) => {}
+            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Pce(_) | ActiveCore::Ws(_) => {}
         }
     }
 
@@ -65,7 +70,9 @@ impl CoreState {
                 emu.system(),
                 zeff_sega8_core::hardware::cartridge::Sega8System::GameGear
             ),
-            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Ws(_) => false,
+            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Pce(_) | ActiveCore::Ws(_) => {
+                false
+            }
         }
     }
 
@@ -90,6 +97,7 @@ impl CoreState {
             ActiveCore::Gb(_) => 59.7275,
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::FPS,
             ActiveCore::Nes(_) => 60.0988,
+            ActiveCore::Pce(_) => zeff_emu_common::system::System::Pce.target_fps(),
             ActiveCore::Sega8(emu) => emu.video_standard().frame_rate_approx() as f64,
             ActiveCore::Ws(_) => zeff_ws_core::hardware::constants::FPS,
         }
@@ -104,11 +112,23 @@ impl CoreState {
         )
     }
 
+    pub fn take_runtime_fault(&mut self) -> Option<String> {
+        match &mut self.core {
+            ActiveCore::Pce(host) => host.take_runtime_fault(),
+            ActiveCore::Gb(_)
+            | ActiveCore::Gba(_)
+            | ActiveCore::Nes(_)
+            | ActiveCore::Sega8(_)
+            | ActiveCore::Ws(_) => None,
+        }
+    }
+
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {
         match &self.core {
             ActiveCore::Gb(emu) => emu.encode_state(),
             ActiveCore::Gba(emu) => emu.encode_state(),
             ActiveCore::Nes(emu) => emu.encode_state(),
+            ActiveCore::Pce(host) => host.encode_state(),
             ActiveCore::Sega8(emu) => emu.encode_state(),
             ActiveCore::Ws(emu) => emu.encode_state(),
         }
@@ -119,6 +139,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.load_state(data),
             ActiveCore::Gba(emu) => emu.load_state(data),
             ActiveCore::Nes(emu) => emu.load_state(data),
+            ActiveCore::Pce(host) => host.load_state(data),
             ActiveCore::Sega8(emu) => emu.load_state(data),
             ActiveCore::Ws(emu) => emu.load_state(data),
         }

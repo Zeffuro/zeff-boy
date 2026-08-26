@@ -170,7 +170,6 @@ struct Mode4SpriteRenderContext {
     name_table_base: usize,
     sprite_pattern_base: usize,
     sprite_scale: usize,
-    color_mode: Mode4ColorMode,
 }
 
 #[derive(Clone, Copy)]

@@ -1,11 +1,18 @@
 use super::Emulator;
 use crate::debug::{DebugInfo, PpuSnapshot, WatchpointInfo};
+use crate::hardware::ppu::{SCREEN_H, SCREEN_W};
 use crate::hardware::types::hardware_mode::HardwareMode;
 use crate::hardware::types::{CpuState, ImeState};
 
+static DMG_STOPPED_FRAMEBUFFER: [u8; SCREEN_W * SCREEN_H * 4] = [255; SCREEN_W * SCREEN_H * 4];
+
 impl Emulator {
     pub fn framebuffer(&self) -> &[u8] {
-        self.bus.ppu_framebuffer()
+        if self.cpu.running == CpuState::Stopped && self.hardware_mode == HardwareMode::DMG {
+            &DMG_STOPPED_FRAMEBUFFER
+        } else {
+            self.bus.ppu_framebuffer()
+        }
     }
 
     pub fn vram(&self) -> &[u8] {

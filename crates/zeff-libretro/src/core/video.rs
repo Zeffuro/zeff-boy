@@ -1,44 +1,53 @@
 use super::{ActiveCore, CoreState};
+use crate::api::retro_game_geometry;
 use zeff_gb_core::hardware::ppu::DmgPalettePreset;
 use zeff_nes_core::hardware::ppu::NesPaletteMode;
 use zeff_sega8_core::hardware::cartridge::Sega8System;
 
 impl CoreState {
-    pub fn native_width(&self) -> u32 {
-        match &self.core {
+    pub(crate) fn video_geometry(&self) -> retro_game_geometry {
+        let (base_width, base_height) = match &self.core {
             ActiveCore::Gb(emu) => {
-                let (w, _) = emu.framebuffer_dimensions();
-                w as u32
+                let (width, height) = emu.framebuffer_dimensions();
+                (width as u32, height as u32)
             }
-            ActiveCore::Gba(_) => 240,
-            ActiveCore::Nes(_) => 256,
+            ActiveCore::Gba(_) => (240, 160),
+            ActiveCore::Nes(_) => (256, 240),
+            ActiveCore::Pce(_) => (640, 480),
             ActiveCore::Sega8(emu) => {
-                let (w, _) = emu.framebuffer_dimensions();
-                w as u32
+                let (width, height) = emu.framebuffer_dimensions();
+                (width as u32, height as u32)
             }
             ActiveCore::Ws(emu) => {
-                let (w, _) = emu.framebuffer_dimensions();
-                w as u32
+                let (width, height) = emu.framebuffer_dimensions();
+                (width as u32, height as u32)
             }
-        }
+        };
+
+        let (max_width, max_height) = if matches!(self.core, ActiveCore::Pce(_)) {
+            (640, 480)
+        } else {
+            (256, 240)
+        };
+        Self::video_geometry_for_size(base_width, base_height, max_width, max_height)
     }
 
-    pub fn native_height(&self) -> u32 {
-        match &self.core {
-            ActiveCore::Gb(emu) => {
-                let (_, h) = emu.framebuffer_dimensions();
-                h as u32
-            }
-            ActiveCore::Gba(_) => 160,
-            ActiveCore::Nes(_) => 240,
-            ActiveCore::Sega8(emu) => {
-                let (_, h) = emu.framebuffer_dimensions();
-                h as u32
-            }
-            ActiveCore::Ws(emu) => {
-                let (_, h) = emu.framebuffer_dimensions();
-                h as u32
-            }
+    pub(crate) fn default_video_geometry() -> retro_game_geometry {
+        Self::video_geometry_for_size(160, 144, 256, 240)
+    }
+
+    fn video_geometry_for_size(
+        base_width: u32,
+        base_height: u32,
+        max_width: u32,
+        max_height: u32,
+    ) -> retro_game_geometry {
+        retro_game_geometry {
+            base_width,
+            base_height,
+            max_width,
+            max_height,
+            aspect_ratio: 0.0,
         }
     }
 
@@ -47,6 +56,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
+            ActiveCore::Pce(host) => host.framebuffer(),
             ActiveCore::Sega8(emu) => emu.framebuffer(),
             ActiveCore::Ws(emu) => emu.framebuffer(),
         };
@@ -69,6 +79,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
+            ActiveCore::Pce(host) => host.framebuffer(),
             ActiveCore::Sega8(emu) => emu.framebuffer(),
             ActiveCore::Ws(emu) => emu.framebuffer(),
         };
@@ -122,6 +133,7 @@ impl CoreState {
             ActiveCore::Gb(_) => "GB/GBC",
             ActiveCore::Gba(_) => "GBA",
             ActiveCore::Nes(_) => "NES",
+            ActiveCore::Pce(_) => "PC Engine",
             ActiveCore::Sega8(emu) => match emu.system() {
                 Sega8System::MasterSystem => "SMS",
                 Sega8System::GameGear => "Game Gear",

@@ -1,9 +1,9 @@
 # Software Information
-display_name = "Nintendo / Bandai / Sega - GB / GBC / GBA / NES / WS / SMS / GG / SG-1000 (zeff-boy)"
+display_name = "Nintendo / NEC / Bandai / Sega - GB / GBC / GBA / NES / PCE / WS / SMS / GG / SG-1000 (zeff-boy)"
 authors = "Zeffuro"
-supported_extensions = "gb|gbc|gba|nes|ws|wsc|sms|gg|sg|sc"
+supported_extensions = "gb|gbc|gba|nes|pce|ws|wsc|sms|gg|sg|sc"
 corename = "zeff-boy"
-manufacturer = "Nintendo/Bandai/Sega"
+manufacturer = "Nintendo/NEC/Bandai/Sega"
 categories = "Emulator"
 systemname = "Game Boy/Game Boy Color/Game Boy Advance/NES/WonderSwan/Master System/Game Gear/SG-1000"
 systemid = "multi_system"

@@ -5,7 +5,7 @@ use crate::hardware::cartridge::rtc::{
 };
 
 #[test]
-fn rtc_registers_are_latched_on_00_to_01_transition() {
+fn rtc_registers_are_latched_on_every_latch_write() {
     let mut mbc3 = Mbc3::new(vec![0; 0x8000], 0x2000, true);
     mbc3.write_rom(0x0000, 0x0A);
 
@@ -16,8 +16,7 @@ fn rtc_registers_are_latched_on_00_to_01_transition() {
     mbc3.write_rom(0x4000, 0x0A);
     mbc3.write_ram(0xA000, 56);
 
-    mbc3.write_rom(0x6000, 0x00);
-    mbc3.write_rom(0x6000, 0x01);
+    mbc3.write_rom(0x6000, 0xA5);
 
     mbc3.write_rom(0x4000, 0x08);
     assert_eq!(mbc3.read_ram(0xA000), 12);
@@ -25,6 +24,28 @@ fn rtc_registers_are_latched_on_00_to_01_transition() {
     assert_eq!(mbc3.read_ram(0xA000), 34);
     mbc3.write_rom(0x4000, 0x0A);
     assert_eq!(mbc3.read_ram(0xA000), 24);
+
+    mbc3.write_rom(0x4000, 0x08);
+    mbc3.write_ram(0xA000, 45);
+    mbc3.write_rom(0x6000, 0xA5);
+    assert_eq!(mbc3.read_ram(0xA000), 45);
+}
+
+#[test]
+fn rtc_mapper_uses_four_select_bits_and_leaves_invalid_banks_open() {
+    let mut mbc3 = Mbc3::new(vec![0; 0x8000], 0x8000, true);
+    mbc3.write_rom(0x0000, 0x0A);
+
+    mbc3.write_rom(0x4000, 0x00);
+    mbc3.write_ram(0xA000, 0x42);
+    mbc3.write_rom(0x4000, 0x04);
+    mbc3.write_ram(0xA000, 0x99);
+    assert_eq!(mbc3.read_ram(0xA000), 0xFF);
+
+    mbc3.write_rom(0x4000, 0x10);
+    assert_eq!(mbc3.read_ram(0xA000), 0x42);
+    mbc3.write_rom(0x4000, 0x1D);
+    assert_eq!(mbc3.read_ram(0xA000), 0xFF);
 }
 
 #[test]

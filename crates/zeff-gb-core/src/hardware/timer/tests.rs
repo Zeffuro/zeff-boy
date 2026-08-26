@@ -34,6 +34,16 @@ fn reset_div_clears_sys_counter() {
 }
 
 #[test]
+fn raw_divider_counter_preserves_the_sub_byte_phase() {
+    let mut t = make_timer();
+    t.set_divider_counter_raw(0xABCC);
+    assert_eq!(t.div(), 0xAB);
+
+    t.step(0x34);
+    assert_eq!(t.div(), 0xAC);
+}
+
+#[test]
 fn tima_does_not_increment_when_disabled() {
     let mut t = make_timer();
     t.reset_div();

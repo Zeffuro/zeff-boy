@@ -36,6 +36,10 @@ pub trait GbCpuBus {
         access_start_master_ticks: u64,
     ) -> GbCpuTiming;
     fn advance_cpu_t_cycles(&mut self, cpu_t_cycles: u64) -> GbCpuTiming;
+    fn advance_stopped_t_cycles(&mut self, cpu_t_cycles: u64) -> GbCpuTiming {
+        self.advance_cpu_t_cycles(cpu_t_cycles)
+    }
+    fn enter_stop_mode(&mut self) {}
     fn pending_interrupts_for_cpu(&self) -> u8;
     fn pending_interrupts_for_halt(&self) -> u8;
     fn clear_interrupt_bit(&mut self, bit: usize);
@@ -100,6 +104,19 @@ impl GbCpuBus for Bus {
             cpu_t_cycles,
             master_ticks: Bus::advance_cpu_t_cycles(self, cpu_t_cycles),
         }
+    }
+
+    #[inline]
+    fn advance_stopped_t_cycles(&mut self, cpu_t_cycles: u64) -> GbCpuTiming {
+        GbCpuTiming {
+            cpu_t_cycles,
+            master_ticks: Bus::advance_stopped_t_cycles(self, cpu_t_cycles),
+        }
+    }
+
+    #[inline]
+    fn enter_stop_mode(&mut self) {
+        Bus::enter_stop_mode(self);
     }
 
     #[inline]
@@ -179,6 +196,12 @@ impl Cpu {
     pub fn step_with_bus(&mut self, bus: &mut impl GbCpuBus) {
         self.timed_cycles_accounted = 0;
         self.timed_master_ticks_accounted = 0;
+
+        if self.running == CpuState::Stopped {
+            self.account_timing(bus.advance_stopped_t_cycles(4));
+            self.commit_step_cycles();
+            return;
+        }
 
         if self.running == CpuState::Halted {
             let pending = bus.pending_interrupts_for_halt();

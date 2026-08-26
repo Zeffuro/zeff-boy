@@ -6049,6 +6049,7 @@ dependencies = [
  "zeff-gb-core",
  "zeff-gba-core",
  "zeff-nes-core",
+ "zeff-pce-core",
  "zeff-sega8-core",
  "zeff-ws-core",
 ]

@@ -1,5 +1,6 @@
 use zeff_pce_core::hardware::{
     PCE_ACTIVE_FRAME_HEIGHT, PCE_ACTIVE_FRAME_WIDTH, PceHardwareTopology, PcePresentedFrame,
+    project_full_raw_frame,
 };
 
 use crate::settings::{PceOverscanMode, PcePaletteMode};
@@ -33,6 +34,11 @@ pub(super) fn project_presented_frame(
     palette_mode: PcePaletteMode,
     output: &mut [u8],
 ) {
+    if overscan_mode == PceOverscanMode::Full && palette_mode == PcePaletteMode::RawRgb {
+        project_full_raw_frame(frame, topology, output);
+        return;
+    }
+
     let rows = std::array::from_fn::<_, PCE_ACTIVE_FRAME_HEIGHT, _>(|line| {
         let metadata = frame.rows()[line];
         ProjectionRow {

@@ -249,6 +249,40 @@ fn halt_does_not_wake_from_timer_irq_before_if_becomes_readable() {
 }
 
 #[test]
+fn stopped_cpu_does_not_execute_or_wake_for_interrupts() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    cpu.pc = 0xC123;
+    cpu.running = CpuState::Stopped;
+    cpu.ime = ImeState::Enabled;
+    bus.ie = 0x11;
+    bus.if_reg = 0x11;
+    bus.write_byte(0xC123, 0x00);
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.last_step_cycles, 4);
+    assert_eq!(cpu.pc, 0xC123);
+    assert_eq!(cpu.running, CpuState::Stopped);
+    assert_eq!(bus.if_reg & 0x1F, 0x11);
+}
+
+#[test]
+fn dmg_stop_ticks_freeze_timer_and_ppu() {
+    let mut bus = make_test_bus(HardwareMode::DMG);
+    GbCpuBus::advance_cpu_t_cycles(&mut bus, 1_024);
+    let div_before = bus.timer_div();
+    let ly_before = bus.ppu_ly();
+
+    let timing = GbCpuBus::advance_stopped_t_cycles(&mut bus, 456);
+
+    assert_eq!(timing.cpu_t_cycles, 456);
+    assert_eq!(timing.master_ticks, 456);
+    assert_eq!(bus.timer_div(), div_before);
+    assert_eq!(bus.ppu_ly(), ly_before);
+}
+
+#[test]
 fn interrupt_high_push_to_ie_can_cancel_dispatch() {
     let mut cpu = Cpu::new();
     let mut bus = make_test_bus(HardwareMode::DMG);
